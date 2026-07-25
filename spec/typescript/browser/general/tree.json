@@ -44,6 +44,7 @@
       "numeric_shorthand": false,
       "repeatable": false,
       "short": "-a",
+      "short_value": true,
       "value_kind": "none",
       "value_optional": false
     },
@@ -53,6 +54,7 @@
       "numeric_shorthand": false,
       "repeatable": false,
       "short": "-L",
+      "short_value": true,
       "value_kind": "text",
       "value_optional": false
     },
@@ -62,6 +64,7 @@
       "numeric_shorthand": false,
       "repeatable": false,
       "short": "-I",
+      "short_value": true,
       "value_kind": "text",
       "value_optional": false
     },
@@ -71,6 +74,7 @@
       "numeric_shorthand": false,
       "repeatable": false,
       "short": "-d",
+      "short_value": true,
       "value_kind": "none",
       "value_optional": false
     },
@@ -80,6 +84,7 @@
       "numeric_shorthand": false,
       "repeatable": false,
       "short": "-P",
+      "short_value": true,
       "value_kind": "text",
       "value_optional": false
     }

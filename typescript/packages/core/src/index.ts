@@ -260,8 +260,14 @@ export { sha512sumGeneric } from './commands/builtin/generic/sha512sum.ts'
 export { jqGeneric } from './commands/builtin/generic/jq.ts'
 export { grepGeneric } from './commands/builtin/generic/grep.ts'
 export { rgGeneric } from './commands/builtin/generic/rg.ts'
-export { cpGeneric, cpWalk } from './commands/builtin/generic/cp.ts'
-export { mvGeneric } from './commands/builtin/generic/mv.ts'
+export {
+  cpFlags,
+  cpGeneric,
+  cpWalk,
+  parseCpFlags,
+  type CpFlags,
+} from './commands/builtin/generic/cp.ts'
+export { mvFlags, mvGeneric, parseMvFlags, type MvFlags } from './commands/builtin/generic/mv.ts'
 export { awkGeneric } from './commands/builtin/generic/awk.ts'
 export { catGeneric } from './commands/builtin/generic/cat.ts'
 export { headGeneric } from './commands/builtin/generic/head.ts'

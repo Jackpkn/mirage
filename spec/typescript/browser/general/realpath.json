@@ -44,6 +44,7 @@
       "numeric_shorthand": false,
       "repeatable": false,
       "short": "-e",
+      "short_value": true,
       "value_kind": "none",
       "value_optional": false
     },
@@ -53,6 +54,7 @@
       "numeric_shorthand": false,
       "repeatable": false,
       "short": "-m",
+      "short_value": true,
       "value_kind": "none",
       "value_optional": false
     }

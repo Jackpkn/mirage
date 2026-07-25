@@ -247,8 +247,10 @@ async function runOnMount(
   // ls/stat render stat rows from the backend's own stat, which never sees
   // namespace attr overlays (chmod/chown/touch on overlay backends) or the
   // default owner; inject the merge so ls -l and stat -c agree.
+  // cp/mv -u freshness checks compare the same merged mtimes.
   const statOverlay =
-    (cmdName === 'ls' || cmdName === 'stat') && namespace !== undefined
+    (cmdName === 'ls' || cmdName === 'stat' || cmdName === 'cp' || cmdName === 'mv') &&
+    namespace !== undefined
       ? (virtual: string, stat: FileStat) => namespaceStatOverlay(namespace, virtual, stat)
       : null
 
@@ -449,7 +451,9 @@ export async function handleCommand(
       return [null, intercept, new ExecutionNode({ command: cmdStr, exitCode: intercept.exitCode })]
   }
 
-  if (isCrossMount(cmdName, pathScopes, registry)) {
+  // Path-valued flags count: `cp -t /other/mount/dir src` spans mounts
+  // exactly like a positional destination would.
+  if (isCrossMount(cmdName, routingScopes, registry)) {
     // Parse against the shared spec so flags and text operands do not
     // depend on the source mount: raw argv would hand flag tokens ("-c")
     // to the generic as the search pattern. The bound single-mount runner

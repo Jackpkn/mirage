@@ -16,11 +16,30 @@ import { resolvePath } from '../../utils/path.ts'
 import { AMBIGUOUS_NAMES, NUMERIC_SHORT } from './constants.ts'
 import { type CommandSpec, OperandKind, ParsedArgs } from './types.ts'
 
+// Copy a spelling's value onto its counterpart so the last one wins. GNU
+// treats -u and --update as one option, so the final occurrence decides
+// (`cp --update=all -u` is `--update=older`). Flags are stored per spelling,
+// which would otherwise let a fixed short/long read order override
+// command-line order. Only aliased for optional-value options, whose two
+// spellings genuinely disagree; repeatable options accumulate instead and
+// are never mirrored.
+function mirrorAlias(
+  flags: Record<string, string | boolean | string[]>,
+  name: string,
+  alias: ReadonlyMap<string, string>,
+): void {
+  const other = alias.get(name)
+  if (other === undefined) return
+  const value = flags[name]
+  if (value !== undefined) flags[other] = value
+}
+
 function setValueFlag(
   flags: Record<string, string | boolean | string[]>,
   name: string,
   value: string,
   repeatFlags: ReadonlySet<string>,
+  alias: ReadonlyMap<string, string> = new Map(),
 ): void {
   if (repeatFlags.has(name)) {
     const prev = flags[name]
@@ -32,6 +51,16 @@ function setValueFlag(
   } else {
     flags[name] = value
   }
+  mirrorAlias(flags, name, alias)
+}
+
+function setBoolFlag(
+  flags: Record<string, string | boolean | string[]>,
+  name: string,
+  alias: ReadonlyMap<string, string>,
+): void {
+  flags[name] = true
+  mirrorAlias(flags, name, alias)
 }
 
 interface MixedCluster {
@@ -75,6 +104,9 @@ export function parseCommand(spec: CommandSpec, argv: string[], cwd: string): Pa
   const longOptionalFlags = new Set<string>()
   const valueFlagKinds = new Map<string, OperandKind>()
   const repeatFlags = new Set<string>()
+  // Spelling -> counterpart spelling, so an optional-value option's short
+  // and long forms stay in lockstep and the last one on the line wins.
+  const alias = new Map<string, string>()
   let numericShorthandFlag: string | null = null
 
   for (const opt of spec.options) {
@@ -83,7 +115,7 @@ export function parseCommand(spec: CommandSpec, argv: string[], cwd: string): Pa
         boolFlags.add(opt.short)
       } else if (opt.valueOptional) {
         boolFlags.add(opt.short)
-        optionalValueFlags.add(opt.short)
+        if (opt.shortValue) optionalValueFlags.add(opt.short)
         valueFlagKinds.set(opt.short, opt.valueKind)
       } else {
         valueFlags.add(opt.short)
@@ -106,6 +138,13 @@ export function parseCommand(spec: CommandSpec, argv: string[], cwd: string): Pa
         valueFlagKinds.set(opt.long, opt.valueKind)
         if (opt.repeatable) repeatFlags.add(opt.long)
       }
+    }
+  }
+
+  for (const opt of spec.options) {
+    if (opt.short !== null && opt.long !== null && opt.valueOptional && !opt.repeatable) {
+      alias.set(opt.short, opt.long)
+      alias.set(opt.long, opt.short)
     }
   }
 
@@ -184,10 +223,10 @@ export function parseCommand(spec: CommandSpec, argv: string[], cwd: string): Pa
 
     if (tok.startsWith('--')) {
       if (longBoolFlags.has(tok)) {
-        flags[tok] = true
+        setBoolFlag(flags, tok, alias)
         i += 1
       } else if (longValueFlags.has(tok) && i + 1 < filteredArgv.length) {
-        setValueFlag(flags, tok, filteredArgv[i + 1] ?? '', repeatFlags)
+        setValueFlag(flags, tok, filteredArgv[i + 1] ?? '', repeatFlags, alias)
         wordKinds[origIndices[i + 1] ?? -1] = valueFlagKinds.get(tok) ?? null
         i += 2
       } else {
@@ -196,7 +235,7 @@ export function parseCommand(spec: CommandSpec, argv: string[], cwd: string): Pa
           eq !== -1 &&
           (longValueFlags.has(tok.slice(0, eq)) || longOptionalFlags.has(tok.slice(0, eq)))
         ) {
-          setValueFlag(flags, tok.slice(0, eq), tok.slice(eq + 1), repeatFlags)
+          setValueFlag(flags, tok.slice(0, eq), tok.slice(eq + 1), repeatFlags, alias)
         } else if (longValueFlags.has(tok)) {
           // Declared value flag at end of line with no argument.
           needsValueOptions.push(tok)
@@ -220,7 +259,7 @@ export function parseCommand(spec: CommandSpec, argv: string[], cwd: string): Pa
       let matchedOptional = false
       for (const vf of optionalValueFlags) {
         if (tok.startsWith(vf) && tok.length > vf.length) {
-          setValueFlag(flags, vf, tok.slice(vf.length), repeatFlags)
+          setValueFlag(flags, vf, tok.slice(vf.length), repeatFlags, alias)
           i += 1
           matchedOptional = true
           break
@@ -230,14 +269,14 @@ export function parseCommand(spec: CommandSpec, argv: string[], cwd: string): Pa
       let matchedValue = false
       for (const vf of valueFlags) {
         if (tok === vf && i + 1 < filteredArgv.length) {
-          setValueFlag(flags, vf, filteredArgv[i + 1] ?? '', repeatFlags)
+          setValueFlag(flags, vf, filteredArgv[i + 1] ?? '', repeatFlags, alias)
           wordKinds[origIndices[i + 1] ?? -1] = valueFlagKinds.get(vf) ?? null
           i += 2
           matchedValue = true
           break
         }
         if (tok.startsWith(vf) && tok.length > vf.length) {
-          setValueFlag(flags, vf, tok.slice(vf.length), repeatFlags)
+          setValueFlag(flags, vf, tok.slice(vf.length), repeatFlags, alias)
           i += 1
           matchedValue = true
           break
@@ -246,7 +285,7 @@ export function parseCommand(spec: CommandSpec, argv: string[], cwd: string): Pa
       if (matchedValue) continue
 
       if (boolFlags.has(tok)) {
-        flags[tok] = true
+        setBoolFlag(flags, tok, alias)
         i += 1
         continue
       }
@@ -259,7 +298,7 @@ export function parseCommand(spec: CommandSpec, argv: string[], cwd: string): Pa
         }
       }
       if (allBool && tok.length > 1) {
-        for (const ch of tok.slice(1)) flags[`-${ch}`] = true
+        for (const ch of tok.slice(1)) setBoolFlag(flags, `-${ch}`, alias)
         i += 1
         continue
       }
@@ -267,14 +306,14 @@ export function parseCommand(spec: CommandSpec, argv: string[], cwd: string): Pa
       const mixed = matchMixedCluster(tok, boolFlags, valueFlags)
       if (mixed !== null) {
         if (mixed.attached !== null) {
-          for (const name of mixed.bools) flags[name] = true
-          setValueFlag(flags, mixed.valueFlag, mixed.attached, repeatFlags)
+          for (const name of mixed.bools) setBoolFlag(flags, name, alias)
+          setValueFlag(flags, mixed.valueFlag, mixed.attached, repeatFlags, alias)
           i += 1
           continue
         }
         if (i + 1 < filteredArgv.length) {
-          for (const name of mixed.bools) flags[name] = true
-          setValueFlag(flags, mixed.valueFlag, filteredArgv[i + 1] ?? '', repeatFlags)
+          for (const name of mixed.bools) setBoolFlag(flags, name, alias)
+          setValueFlag(flags, mixed.valueFlag, filteredArgv[i + 1] ?? '', repeatFlags, alias)
           wordKinds[origIndices[i + 1] ?? -1] = valueFlagKinds.get(mixed.valueFlag) ?? null
           i += 2
           continue

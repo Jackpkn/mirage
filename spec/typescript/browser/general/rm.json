@@ -28,6 +28,7 @@
       "numeric_shorthand": false,
       "repeatable": false,
       "short": "-r",
+      "short_value": true,
       "value_kind": "none",
       "value_optional": false
     },
@@ -37,6 +38,7 @@
       "numeric_shorthand": false,
       "repeatable": false,
       "short": "-R",
+      "short_value": true,
       "value_kind": "none",
       "value_optional": false
     },
@@ -46,6 +48,7 @@
       "numeric_shorthand": false,
       "repeatable": false,
       "short": "-f",
+      "short_value": true,
       "value_kind": "none",
       "value_optional": false
     },
@@ -55,6 +58,7 @@
       "numeric_shorthand": false,
       "repeatable": false,
       "short": "-v",
+      "short_value": true,
       "value_kind": "none",
       "value_optional": false
     },
@@ -64,6 +68,7 @@
       "numeric_shorthand": false,
       "repeatable": false,
       "short": "-d",
+      "short_value": true,
       "value_kind": "none",
       "value_optional": false
     },
@@ -73,6 +78,7 @@
       "numeric_shorthand": false,
       "repeatable": false,
       "short": "-i",
+      "short_value": true,
       "value_kind": "none",
       "value_optional": false
     },
@@ -82,6 +88,7 @@
       "numeric_shorthand": false,
       "repeatable": false,
       "short": "-I",
+      "short_value": true,
       "value_kind": "none",
       "value_optional": false
     },
@@ -91,6 +98,7 @@
       "numeric_shorthand": false,
       "repeatable": false,
       "short": null,
+      "short_value": true,
       "value_kind": "none",
       "value_optional": false
     },
@@ -100,6 +108,7 @@
       "numeric_shorthand": false,
       "repeatable": false,
       "short": null,
+      "short_value": true,
       "value_kind": "none",
       "value_optional": false
     },
@@ -109,6 +118,7 @@
       "numeric_shorthand": false,
       "repeatable": false,
       "short": null,
+      "short_value": true,
       "value_kind": "none",
       "value_optional": false
     }

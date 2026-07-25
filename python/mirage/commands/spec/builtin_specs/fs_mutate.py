@@ -66,20 +66,72 @@ SPECS: dict[str, CommandSpec] = {
     CommandSpec(
         options=(
             Option(short="-r"),
-            Option(short="-R"),
-            Option(short="-a"),
-            Option(short="-f"),
-            Option(short="-n"),
-            Option(short="-v"),
+            Option(short="-R", long="--recursive"),
+            Option(short="-a", long="--archive"),
+            # Non-interactive control plane (rm precedent): -f/-i are
+            # accepted no-ops — there is no prompt, and an overwrite
+            # proceeds unless -n/--update say otherwise.
+            Option(short="-f", long="--force"),
+            Option(short="-i", long="--interactive"),
+            Option(short="-n", long="--no-clobber"),
+            Option(short="-v", long="--verbose"),
+            # GNU: -u/-b never take an argument; only --update=/--backup=
+            # carry values, so the shorts stay clusterable (-bv).
+            Option(short="-u",
+                   long="--update",
+                   value_kind=OperandKind.TEXT,
+                   value_optional=True,
+                   short_value=False),
+            Option(short="-b",
+                   long="--backup",
+                   value_kind=OperandKind.TEXT,
+                   value_optional=True,
+                   short_value=False),
+            Option(short="-S", long="--suffix", value_kind=OperandKind.TEXT),
+            Option(short="-t",
+                   long="--target-directory",
+                   value_kind=OperandKind.PATH),
+            Option(short="-T", long="--no-target-directory"),
+            # PathSpec normalizes trailing slashes everywhere, so the GNU
+            # spelling is an accepted no-op.
+            Option(long="--strip-trailing-slashes"),
         ),
         rest=Operand(kind=OperandKind.PATH),
     ),
     'mv':
     CommandSpec(
         options=(
-            Option(short="-f"),
-            Option(short="-n"),
-            Option(short="-v"),
+            # Non-interactive control plane (rm precedent): -f/-i are
+            # accepted no-ops — there is no prompt, and an overwrite
+            # proceeds unless -n/--update say otherwise.
+            Option(short="-f", long="--force"),
+            Option(short="-i", long="--interactive"),
+            Option(short="-n", long="--no-clobber"),
+            Option(short="-v", long="--verbose"),
+            # GNU: -u/-b never take an argument; only --update=/--backup=
+            # carry values, so the shorts stay clusterable (-bv).
+            Option(short="-u",
+                   long="--update",
+                   value_kind=OperandKind.TEXT,
+                   value_optional=True,
+                   short_value=False),
+            Option(short="-b",
+                   long="--backup",
+                   value_kind=OperandKind.TEXT,
+                   value_optional=True,
+                   short_value=False),
+            Option(short="-S", long="--suffix", value_kind=OperandKind.TEXT),
+            Option(short="-t",
+                   long="--target-directory",
+                   value_kind=OperandKind.PATH),
+            Option(short="-T", long="--no-target-directory"),
+            Option(long="--exchange"),
+            # Cross-mount moves are copy+remove; --no-copy turns them into
+            # GNU's cross-device refusal instead.
+            Option(long="--no-copy"),
+            # PathSpec normalizes trailing slashes everywhere, so the GNU
+            # spelling is an accepted no-op.
+            Option(long="--strip-trailing-slashes"),
         ),
         rest=Operand(kind=OperandKind.PATH),
     ),

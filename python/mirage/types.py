@@ -149,6 +149,9 @@ class NativeCopy:
     copy: CopyFn
     find: FindFn
     dir_copy: CopyFn | None = None
+    # Lets the per-entry policy path (--update/--backup, which cannot use a
+    # whole-tree dir_copy) still materialize directories that hold no files.
+    mkdir: CopyFn | None = None
 
 
 @dataclass(frozen=True, slots=True)

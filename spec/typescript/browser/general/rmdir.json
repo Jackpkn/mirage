@@ -25,6 +25,7 @@
       "numeric_shorthand": false,
       "repeatable": false,
       "short": "-v",
+      "short_value": true,
       "value_kind": "none",
       "value_optional": false
     }

@@ -326,9 +326,10 @@ async def run_on_mount(
     # ls/stat render stat rows from the backend's own stat, which never
     # sees namespace attr overlays (chmod/chown/touch on overlay backends)
     # or the default owner; inject the merge so ls -l and stat -c agree.
+    # cp/mv -u freshness checks compare the same merged mtimes.
     stat_overlay = (functools.partial(_namespace_stat_overlay, namespace)
-                    if cmd_name in ("ls", "stat") and namespace is not None
-                    else None)
+                    if cmd_name in ("ls", "stat", "cp", "mv")
+                    and namespace is not None else None)
 
     line_runtime, denial = _line_runtime(cmd_name, registry, routing_decision)
     if denial is not None:
@@ -678,7 +679,9 @@ async def handle_command(
                                       exit_code=1,
                                       stderr=msg.encode())
 
-    if is_cross_mount(cmd_name, path_scopes, registry):
+    # Path-valued flags count: `cp -t /other/mount/dir src` spans mounts
+    # exactly like a positional destination would.
+    if is_cross_mount(cmd_name, routing_scopes, registry):
         # Cross-mount execution bypasses a resource command handler. Parse
         # against the shared spec so flags and text operands do not depend on
         # the source mount. The bound single-mount runner lets the strategy

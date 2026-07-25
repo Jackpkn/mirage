@@ -329,6 +329,11 @@ export interface NativeCopy {
   copy: CopyFn
   find: FindFn
   dirCopy?: CopyFn
+  /**
+   * Lets the per-entry policy path (--update/--backup, which cannot use a
+   * whole-tree dirCopy) still materialize directories that hold no files.
+   */
+  mkdir?: CopyFn<[path: PathSpec]>
 }
 
 export interface PrimitiveCopy {

@@ -51,6 +51,7 @@
       "numeric_shorthand": false,
       "repeatable": false,
       "short": "-c",
+      "short_value": true,
       "value_kind": "text",
       "value_optional": false
     },
@@ -60,6 +61,7 @@
       "numeric_shorthand": false,
       "repeatable": false,
       "short": "-f",
+      "short_value": true,
       "value_kind": "text",
       "value_optional": false
     }

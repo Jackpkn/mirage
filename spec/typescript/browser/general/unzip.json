@@ -25,6 +25,7 @@
       "numeric_shorthand": false,
       "repeatable": false,
       "short": "-o",
+      "short_value": true,
       "value_kind": "none",
       "value_optional": false
     },
@@ -34,6 +35,7 @@
       "numeric_shorthand": false,
       "repeatable": false,
       "short": "-l",
+      "short_value": true,
       "value_kind": "none",
       "value_optional": false
     },
@@ -43,6 +45,7 @@
       "numeric_shorthand": false,
       "repeatable": false,
       "short": "-d",
+      "short_value": true,
       "value_kind": "path",
       "value_optional": false
     },
@@ -52,6 +55,7 @@
       "numeric_shorthand": false,
       "repeatable": false,
       "short": "-q",
+      "short_value": true,
       "value_kind": "none",
       "value_optional": false
     },
@@ -61,6 +65,7 @@
       "numeric_shorthand": false,
       "repeatable": false,
       "short": "-p",
+      "short_value": true,
       "value_kind": "none",
       "value_optional": false
     },
@@ -70,6 +75,7 @@
       "numeric_shorthand": false,
       "repeatable": false,
       "short": "-t",
+      "short_value": true,
       "value_kind": "none",
       "value_optional": false
     }
