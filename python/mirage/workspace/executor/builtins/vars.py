@@ -22,10 +22,13 @@ from mirage.io import IOResult
 from mirage.io.async_line_iterator import AsyncLineIterator
 from mirage.io.stream import async_chain
 from mirage.io.types import ByteSource
+from mirage.shell.array import array_extent, array_unset
 from mirage.shell.call_stack import CallStack
 from mirage.shell.errors import ExitSignal
 from mirage.shell.types import SET_FLAG_TO_OPTION
+from mirage.workspace.executor.builtins.text import _PRINTF_TARGET_RE
 from mirage.workspace.executor.control import ReturnSignal
+from mirage.workspace.expand.variable import _array_index
 from mirage.workspace.mount.namespace import Namespace
 from mirage.workspace.session import Session
 from mirage.workspace.types import ExecutionNode
@@ -76,21 +79,130 @@ async def handle_readonly(
     return None, IOResult(), ExecutionNode(command="readonly", exit_code=0)
 
 
+def _unset_variable(session: Session, name: str) -> str:
+    """Remove a scalar/array variable, or one array element ``name[idx]``.
+
+    Clearing an element keeps the indices of the elements after it, as
+    bash does: it leaves a hole, which neither expands in ``${arr[@]}``
+    nor counts toward ``${#arr[@]}`` but keeps ``${arr[i]}`` addressing
+    the same values. Trailing holes are dropped, so ``arr+=(x)`` refills
+    the slot a trailing unset freed.
+
+    A subscript on a scalar names element 0 only: ``x[0]`` unsets the
+    scalar and any other subscript is an error. A subscript on a name
+    that holds nothing at all is a silent no-op, but on an existing array
+    a negative subscript still below zero after the extent is added is a
+    bad-subscript error.
+
+    Args:
+        session (Session): shell session state.
+        name (str): a variable name or ``name[subscript]``.
+
+    Returns:
+        str: ``"ok"``, ``"notarray"`` when a non-zero subscript was
+            applied to a scalar, or ``"subscript"`` for a negative
+            subscript outside an existing array.
+    """
+    match = _PRINTF_TARGET_RE.match(name)
+    if match is not None and match.group(2) is not None:
+        base, subscript = match.group(1), match.group(2)
+        arr = session.arrays.get(base)
+        if arr is None:
+            if base not in session.env:
+                return "ok"
+            if _array_index(subscript, session.env) != 0:
+                return "notarray"
+            session.env.pop(base, None)
+            return "ok"
+        idx = _array_index(subscript, session.env)
+        if idx < 0:
+            idx += array_extent(arr)
+            if idx < 0:
+                return "subscript"
+        array_unset(arr, idx)
+        return "ok"
+    session.env.pop(name, None)
+    session.arrays.pop(name, None)
+    if name == "OPTIND":
+        session._getopts_optind = None
+    return "ok"
+
+
 async def handle_unset(
-    names: list[str],
+    args: list[str],
     session: Session,
 ) -> tuple[ByteSource | None, IOResult, ExecutionNode]:
-    for name in names:
-        if name in session.readonly_vars:
-            err = (f"bash: unset: {name}: cannot unset: "
+    """Unset shell variables, arrays, or functions, with bash's flags.
+
+    ``-v`` targets a variable only, ``-f`` a function only, and a bare
+    name a variable if one exists or else a function. A ``name[idx]``
+    operand clears one element; the readonly guard resolves it to the
+    base name first, since that is what ``readonly`` records. ``-n``
+    (unset a nameref itself) has no referent here — mirage has no
+    nameref attribute — so it matches bash on a non-nameref name and
+    leaves it untouched.
+
+    Args:
+        args (list[str]): option words followed by names to unset.
+        session (Session): shell session state.
+    """
+    mode = "auto"
+    i = 0
+    while i < len(args) and args[i].startswith("-") and args[i] != "-":
+        tok = args[i]
+        if tok == "--":
+            i += 1
+            break
+        if all(ch in "vfn" for ch in tok[1:]):
+            if "f" in tok[1:]:
+                mode = "f"
+            elif "n" in tok[1:]:
+                mode = "n"
+            else:
+                mode = "v"
+            i += 1
+            continue
+        err = f"bash: unset: {tok}: invalid option\n".encode()
+        return None, IOResult(exit_code=2,
+                              stderr=err), ExecutionNode(command="unset",
+                                                         exit_code=2,
+                                                         stderr=err)
+    for name in args[i:]:
+        if mode == "n":
+            # No nameref attribute exists, so as in bash on a plain
+            # variable this leaves the name untouched.
+            continue
+        if mode == "f":
+            session.functions.pop(name, None)
+            continue
+        target = _PRINTF_TARGET_RE.match(name)
+        is_element = target is not None and target.group(2) is not None
+        # `readonly arr` records the base name, so an `arr[i]` operand has
+        # to be resolved before the guard, as bash does (which also names
+        # the base, not the element, in the error).
+        base = target.group(1) if target is not None else name
+        if base in session.readonly_vars:
+            err = (f"bash: unset: {base}: cannot unset: "
                    f"readonly variable\n").encode()
             return None, IOResult(exit_code=1,
                                   stderr=err), ExecutionNode(command="unset",
                                                              exit_code=1,
                                                              stderr=err)
-        session.env.pop(name, None)
-        if name == "OPTIND":
-            session._getopts_optind = None
+        existed = is_element or name in session.env or name in session.arrays
+        status = _unset_variable(session, name)
+        if status != "ok":
+            # bash names the base for "not an array variable" but prints
+            # only the bracketed part for a bad subscript.
+            detail = (f"unset: {base}: not an array variable"
+                      if status == "notarray" else
+                      f"unset: {name[len(base):]}: bad array subscript")
+            err = f"bash: {detail}\n".encode()
+            return None, IOResult(exit_code=1,
+                                  stderr=err), ExecutionNode(command="unset",
+                                                             exit_code=1,
+                                                             stderr=err)
+        if mode == "auto" and not existed and name in session.functions:
+            session.functions.pop(name, None)
     return None, IOResult(), ExecutionNode(command="unset", exit_code=0)
 
 
@@ -315,6 +427,30 @@ async def handle_read(
         # the variable_assignment path.
         session.arrays.pop(var, None)
     return None, IOResult(), ExecutionNode(command="read", exit_code=0)
+
+
+def note_local_array(session: Session, name: str) -> bool:
+    """Record the caller's array before a function shadows ``name``.
+
+    ``local -a`` / ``declare -a`` inside a function shadow the caller's
+    array, so the old value (or its absence) has to be remembered for the
+    teardown in ``execute_command``.
+
+    Args:
+        session (Session): shell session state.
+        name (str): the array name being declared.
+
+    Returns:
+        bool: True when a function scope is active, so the caller should
+            shadow rather than reuse whatever is already there.
+    """
+    local_arrays = session._local_arrays
+    if local_arrays is None:
+        return False
+    if name not in local_arrays:
+        existing = session.arrays.get(name)
+        local_arrays[name] = None if existing is None else list(existing)
+    return True
 
 
 async def handle_local(

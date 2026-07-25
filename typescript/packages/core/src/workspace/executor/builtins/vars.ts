@@ -22,9 +22,13 @@ import { ExitSignal } from '../../../shell/errors.ts'
 import { shellJoin } from '../../../shell/join.ts'
 import { SET_FLAG_TO_OPTION } from '../../../shell/types.ts'
 import type { Namespace } from '../../mount/namespace/namespace.ts'
+import { arrayExtent, arrayUnset } from '../../../shell/array.ts'
+import { arrayIndex } from '../../expand/variable.ts'
+import { sessionEntry } from '../../session/session.ts'
 import type { Session } from '../../session/session.ts'
 import { ExecutionNode } from '../../types.ts'
 import { ReturnSignal } from '../command.ts'
+import { PRINTF_TARGET_RE } from './text.ts'
 import type { ExecuteStringFn, Result } from './scope.ts'
 
 export function handleExport(assignments: string[], session: Session): Result {
@@ -70,11 +74,102 @@ export function handleReadonly(assignments: string[], session: Session): Result 
   return [null, new IOResult(), new ExecutionNode({ command: 'readonly', exitCode: 0 })]
 }
 
-export function handleUnset(names: string[], session: Session): Result {
-  for (const name of names) {
-    if (session.readonlyVars.has(name)) {
+/**
+ * Remove a scalar/array variable, or one array element `name[idx]`.
+ *
+ * Clearing an element keeps the indices of the elements after it, as bash
+ * does: it leaves a hole, which neither expands in `${arr[@]}` nor counts
+ * toward `${#arr[@]}` but keeps `${arr[i]}` addressing the same values.
+ * Trailing holes are dropped, so `arr+=(x)` refills the slot a trailing
+ * unset freed.
+ *
+ * A subscript on a scalar names element 0 only: `x[0]` unsets the scalar
+ * and any other subscript reports `notarray`. A subscript on a name that
+ * holds nothing at all is a silent no-op, but on an existing array a
+ * negative subscript still below zero after the extent is added reports
+ * `subscript`.
+ */
+function unsetVariable(session: Session, name: string): 'ok' | 'notarray' | 'subscript' {
+  const match = PRINTF_TARGET_RE.exec(name)
+  if (match?.[2] !== undefined) {
+    const base = match[1] ?? ''
+    const arr = sessionEntry(session.arrays, base)
+    if (arr === undefined) {
+      if (sessionEntry(session.env, base) === undefined) return 'ok'
+      if (arrayIndex(match[2], session.env) !== 0) return 'notarray'
+      // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
+      delete session.env[base]
+      return 'ok'
+    }
+    let idx = arrayIndex(match[2], session.env)
+    if (idx < 0) {
+      idx += arrayExtent(arr)
+      if (idx < 0) return 'subscript'
+    }
+    arrayUnset(arr, idx)
+    return 'ok'
+  }
+  // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
+  delete session.env[name]
+  // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
+  delete session.arrays[name]
+  if (name === 'OPTIND') session.getoptsOptind = null
+  return 'ok'
+}
+
+/**
+ * Unset shell variables, arrays, or functions, with bash's flags.
+ *
+ * `-v` targets a variable only, `-f` a function only, and a bare name a
+ * variable if one exists or else a function. A `name[idx]` operand clears
+ * one element; the readonly guard resolves it to the base name first,
+ * since that is what `readonly` records. `-n` (unset a nameref itself)
+ * has no referent here — mirage has no nameref attribute — so it matches
+ * bash on a non-nameref name and leaves it untouched.
+ */
+export function handleUnset(args: string[], session: Session): Result {
+  let mode: 'auto' | 'v' | 'f' | 'n' = 'auto'
+  let i = 0
+  while (i < args.length && (args[i] ?? '').startsWith('-') && args[i] !== '-') {
+    const tok = args[i] ?? ''
+    if (tok === '--') {
+      i += 1
+      break
+    }
+    if (/^-[vfn]+$/.test(tok)) {
+      if (tok.includes('f')) mode = 'f'
+      else if (tok.includes('n')) mode = 'n'
+      else mode = 'v'
+      i += 1
+      continue
+    }
+    const err = new TextEncoder().encode(`bash: unset: ${tok}: invalid option\n`)
+    return [
+      null,
+      new IOResult({ exitCode: 2, stderr: err }),
+      new ExecutionNode({ command: 'unset', exitCode: 2, stderr: err }),
+    ]
+  }
+  for (const name of args.slice(i)) {
+    if (mode === 'n') {
+      // No nameref attribute exists, so this leaves the name untouched,
+      // matching bash on a plain variable.
+      continue
+    }
+    if (mode === 'f') {
+      // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
+      delete session.functions[name]
+      continue
+    }
+    const match = PRINTF_TARGET_RE.exec(name)
+    const isElement = match?.[2] !== undefined
+    // `readonly arr` records the base name, so an `arr[i]` operand has to
+    // be resolved before the guard, as bash does (which also names the
+    // base, not the element, in the error).
+    const base = match?.[1] ?? name
+    if (session.readonlyVars.has(base)) {
       const err = new TextEncoder().encode(
-        `bash: unset: ${name}: cannot unset: readonly variable\n`,
+        `bash: unset: ${base}: cannot unset: readonly variable\n`,
       )
       return [
         null,
@@ -82,9 +177,26 @@ export function handleUnset(names: string[], session: Session): Result {
         new ExecutionNode({ command: 'unset', exitCode: 1, stderr: err }),
       ]
     }
-    // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
-    delete session.env[name]
-    if (name === 'OPTIND') session.getoptsOptind = null
+    const existed = isElement || name in session.env || name in session.arrays
+    const status = unsetVariable(session, name)
+    if (status !== 'ok') {
+      // bash names the base for "not an array variable" but prints only
+      // the bracketed part for a bad subscript.
+      const detail =
+        status === 'notarray'
+          ? `unset: ${base}: not an array variable`
+          : `unset: ${name.slice(base.length)}: bad array subscript`
+      const err = new TextEncoder().encode(`bash: ${detail}\n`)
+      return [
+        null,
+        new IOResult({ exitCode: 1, stderr: err }),
+        new ExecutionNode({ command: 'unset', exitCode: 1, stderr: err }),
+      ]
+    }
+    if (mode === 'auto' && !existed && name in session.functions) {
+      // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
+      delete session.functions[name]
+    }
   }
   return [null, new IOResult(), new ExecutionNode({ command: 'unset', exitCode: 0 })]
 }
@@ -253,6 +365,24 @@ export function handleWhoami(namespace: Namespace): Result {
   }
   const out = new TextEncoder().encode(`${namespace.user}\n`)
   return [out, new IOResult(), new ExecutionNode({ command: 'whoami', exitCode: 0 })]
+}
+
+/**
+ * Record the caller's array before a function shadows `name`.
+ *
+ * `local -a` / `declare -a` inside a function shadow the caller's array,
+ * so the old value (or its absence) has to be remembered for the teardown
+ * in `executeCommand`. Returns true when a function scope is active, so
+ * the caller should shadow rather than reuse whatever is already there.
+ */
+export function noteLocalArray(session: Session, name: string): boolean {
+  const localArrays = session.localArrays
+  if (localArrays === null) return false
+  if (!localArrays.has(name)) {
+    const existing = sessionEntry(session.arrays, name)
+    localArrays.set(name, existing === undefined ? null : [...existing])
+  }
+  return true
 }
 
 export function handleLocal(assignments: string[], session: Session): Result {

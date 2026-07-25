@@ -556,14 +556,17 @@ async function runArgv(
   if (name === SB.ECHO) {
     return handleEcho(args)
   }
-  if (name === SB.PRINTF) return handlePrintf(args)
+  if (name === SB.PRINTF) return handlePrintf(args, session)
   if (name === SB.SLEEP) return handleSleep(args, signal)
   if (name === SB.READ) {
     return handleRead(args, session, stdin)
   }
   if (name === SB.SOURCE || name === SB.DOT) {
     const target = operands[0] ?? ''
-    return handleSource(dispatch, executeFn, target, session)
+    // Positional parameters keep the words as typed, so a path operand
+    // contributes its spelling, not its resolved mount path.
+    const sourceArgs = operands.slice(1).map((o) => wordText(o))
+    return handleSource(dispatch, executeFn, target, session, sourceArgs)
   }
   if (name === SB.RETURN) {
     return handleReturn(args, session, callStack)
