@@ -22,6 +22,7 @@ from mirage.commands.builtin.generic.crossmount import (handle_cross_mount,
                                                         is_cross_mount)
 from mirage.commands.builtin.generic.crossmount.detect import strategy_for
 from mirage.commands.builtin.generic.crossmount.types import Strategy
+from mirage.commands.builtin.generic.ls import LS_FAILURE
 from mirage.commands.builtin.utils.safeguard import (CommandTimeoutError,
                                                      maybe_with_timeout)
 from mirage.commands.config import version_request
@@ -369,7 +370,10 @@ async def run_on_mount(
         return None, IOResult(exit_code=1,
                               stderr=format_fs_error(cmd_name, exc, paths))
 
-    if cmd_name == "ls" and io.exit_code == 0:
+    # A minor problem (exit 1: an entry below the operand could not be
+    # stat'd) still lists the directory, so the mount and link rows belong
+    # in that output; only a failed operand (exit 2) has nothing to augment.
+    if cmd_name == "ls" and io.exit_code != LS_FAILURE:
         stdout = await _inject_child_mounts(stdout, registry, paths,
                                             flag_kwargs, session.cwd)
         if namespace is not None and namespace.has_links():

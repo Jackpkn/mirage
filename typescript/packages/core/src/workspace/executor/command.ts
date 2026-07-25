@@ -37,6 +37,7 @@ import type { RoutingDecision } from './route/index.ts'
 import type { Session } from '../session/session.ts'
 import { ExecutionNode } from '../types.ts'
 import { asyncChain } from '../../io/stream.ts'
+import { LS_FAILURE } from '../../commands/builtin/generic/ls.ts'
 import { strategyFor } from '../../commands/builtin/generic/crossmount/detect.ts'
 import type { Cmd } from '../../commands/builtin/generic/crossmount/types.ts'
 import { Strategy } from '../../commands/builtin/generic/crossmount/types.ts'
@@ -276,7 +277,10 @@ async function runOnMount(
       safeguardOverride,
     })
     let stdout = initialStdout
-    if (cmdName === 'ls' && io.exitCode === 0) {
+    // A minor problem (exit 1: an entry below the operand could not be
+    // stat'd) still lists the directory, so the mount and link rows belong in
+    // that output; only a failed operand (exit 2) has nothing to augment.
+    if (cmdName === 'ls' && io.exitCode !== LS_FAILURE) {
       stdout = await injectChildMounts(stdout, registry, paths, flags, session.cwd)
       if (namespace?.hasLinks() === true) {
         stdout = await injectLinks(stdout, namespace, paths, flags, session.cwd)

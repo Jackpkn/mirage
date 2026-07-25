@@ -229,7 +229,7 @@
       ],
       "command": "ls /memories/mem-beta.json/inner",
       "expect": {
-        "exit": 1,
+        "exit": 2,
         "stdout": "",
         "stderr": "ls: cannot access '/memories/mem-beta.json/inner': No such file or directory\n"
       }
