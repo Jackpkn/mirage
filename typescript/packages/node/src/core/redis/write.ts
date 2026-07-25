@@ -12,7 +12,13 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { ResourceName, invalidateAfterWrite, record, type PathSpec } from '@struktoai/mirage-core'
+import {
+  ResourceName,
+  enoentWithMessage,
+  invalidateAfterWrite,
+  record,
+  type PathSpec,
+} from '@struktoai/mirage-core'
 import type { RedisAccessor } from '../../accessor/redis.ts'
 import { norm, nowIso, parent } from './utils.ts'
 
@@ -26,7 +32,7 @@ export async function writeBytes(
   const par = parent(p)
   const store = accessor.store
   if (par !== '/' && !(await store.hasDir(par))) {
-    throw new Error(`parent directory does not exist: ${par}`)
+    throw enoentWithMessage(`parent directory does not exist: ${par}`, path)
   }
   await store.setFile(p, data)
   await store.setModified(p, nowIso())

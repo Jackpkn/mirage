@@ -138,6 +138,21 @@ export function eaccesReadOnly(
   return err
 }
 
+// A missing-parent write refusal, keeping the backend's human message (tests
+// and logs read 'parent directory does not exist') while stamping ENOENT +
+// operand so fs chokepoints render 'No such file or directory'. Mirrors
+// Python, which raises FileNotFoundError with the same prose — an untyped
+// Error here leaked the prose to the user as if it were the path.
+export function enoentWithMessage(
+  message: string,
+  path: string | { virtual: string; rawPath?: string },
+): FsError {
+  const err = new Error(message) as FsError
+  err.code = 'ENOENT'
+  err.virtualPath = virtualOf(path)
+  return err
+}
+
 const STRERROR: Record<string, string> = {
   ENOENT: 'No such file or directory',
   ENOTDIR: 'Not a directory',

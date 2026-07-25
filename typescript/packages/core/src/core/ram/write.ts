@@ -17,6 +17,7 @@ import type { RAMAccessor } from '../../accessor/ram.ts'
 import { ResourceName, type PathSpec } from '../../types.ts'
 import { norm, nowIso, parent } from './utils.ts'
 import { invalidateAfterWrite } from '../../cache/context.ts'
+import { enoentWithMessage } from '../../utils/errors.ts'
 
 export async function writeBytes(
   accessor: RAMAccessor,
@@ -27,7 +28,7 @@ export async function writeBytes(
   const p = norm(path.mountPath)
   const par = parent(p)
   if (par !== '/' && !accessor.store.dirs.has(par)) {
-    throw new Error(`parent directory does not exist: ${par}`)
+    throw enoentWithMessage(`parent directory does not exist: ${par}`, path)
   }
   accessor.store.files.set(p, data)
   accessor.store.modified.set(p, nowIso())
