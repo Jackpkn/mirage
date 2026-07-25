@@ -140,6 +140,11 @@ _REDIRECT_NODE_TYPES = frozenset({
     NT.HERESTRING_REDIRECT,
 })
 
+# RAW_STRING (single quotes) belongs here alongside STRING (double
+# quotes): quoting a redirect target is purely syntactic in bash, so
+# `> 'f'`, `> "f"` and `> f` name the same file. Omitting it left
+# target_node None and target "", which silently redirected every
+# single-quoted target to one phantom empty path instead of the file.
 _TARGET_TYPES = frozenset({
     NT.WORD,
     NT.CONCATENATION,
@@ -147,6 +152,7 @@ _TARGET_TYPES = frozenset({
     NT.EXPANSION,
     NT.COMMAND_SUBSTITUTION,
     NT.STRING,
+    NT.RAW_STRING,
     NT.PROCESS_SUBSTITUTION,
 })
 

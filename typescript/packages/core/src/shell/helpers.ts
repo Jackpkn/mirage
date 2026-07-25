@@ -106,6 +106,11 @@ const REDIRECT_NODE_TYPES: ReadonlySet<string> = new Set([
   NT.HERESTRING_REDIRECT,
 ])
 
+// RAW_STRING (single quotes) belongs here alongside STRING (double
+// quotes): quoting a redirect target is purely syntactic in bash, so
+// `> 'f'`, `> "f"` and `> f` name the same file. Omitting it left
+// targetNode null and target '', which silently redirected every
+// single-quoted target to one phantom empty path instead of the file.
 const TARGET_TYPES: ReadonlySet<string> = new Set([
   NT.WORD,
   NT.CONCATENATION,
@@ -113,6 +118,7 @@ const TARGET_TYPES: ReadonlySet<string> = new Set([
   NT.EXPANSION,
   NT.COMMAND_SUBSTITUTION,
   NT.STRING,
+  NT.RAW_STRING,
   NT.PROCESS_SUBSTITUTION,
 ])
 
