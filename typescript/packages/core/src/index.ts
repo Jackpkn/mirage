@@ -188,6 +188,7 @@ export {
   makeSedProvision,
   makeTransformProvision,
   metadataProvision,
+  overlaidStat,
   pureProvision,
   resolveGlobOf,
   withDefaultProvisions,
