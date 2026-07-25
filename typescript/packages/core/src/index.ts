@@ -1244,7 +1244,10 @@ export {
   type FsError,
   gnuStrerror,
   isMissingOp,
+  isMissingPath,
   type MissingOpError,
+  noMount,
+  type NoMountError,
 } from './utils/errors.ts'
 
 export {
