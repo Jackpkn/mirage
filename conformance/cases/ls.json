@@ -77,7 +77,7 @@
       },
       "expect": {
         "exit": 0,
-        "stdout_text": "deep\nnested.txt\nrc=2\n",
+        "stdout_text": "/data/sub:\ndeep\nnested.txt\nrc=2\n",
         "stderr_text": ""
       }
     }
