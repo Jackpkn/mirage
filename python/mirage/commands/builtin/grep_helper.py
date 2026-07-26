@@ -26,6 +26,7 @@ from mirage.commands.spec.types import FlagView
 from mirage.io.async_line_iterator import AsyncLineIterator
 from mirage.io.types import IOResult
 from mirage.types import FileType, PathSpec
+from mirage.utils.errors import WALK_ERRORS
 from mirage.utils.key_prefix import mount_prefix_of
 
 BINARY_EXTENSIONS = frozenset({
@@ -483,14 +484,14 @@ async def grep_recursive(
     results: list[str] = []
     try:
         entries = await readdir_fn(path)
-    except (FileNotFoundError, ValueError) as exc:
+    except WALK_ERRORS as exc:
         if warnings is not None:
             warnings.append(f"grep: {path}: {exc}")
         return results
     for entry in entries:
         try:
             s = await stat_fn(entry)
-        except (FileNotFoundError, ValueError) as exc:
+        except WALK_ERRORS as exc:
             if warnings is not None:
                 warnings.append(f"grep: {entry}: {exc}")
             continue
@@ -597,7 +598,7 @@ async def grep_files_only(
         try:
             s = await stat_fn(path)
             operand_is_file = s.type != FileType.DIRECTORY
-        except (FileNotFoundError, ValueError):
+        except WALK_ERRORS:
             operand_is_file = False
         if not operand_is_file:
             return await grep_recursive(
@@ -652,7 +653,7 @@ async def grep_files_only(
                 warnings,
                 read_stream_fn,
             )
-    except (FileNotFoundError, ValueError) as exc:
+    except WALK_ERRORS as exc:
         if warnings is not None:
             warnings.append(f"grep: {path}: {exc}")
         try:
@@ -672,7 +673,7 @@ async def grep_files_only(
                 warnings,
                 read_stream_fn,
             )
-        except (FileNotFoundError, ValueError) as exc2:
+        except WALK_ERRORS as exc2:
             if warnings is not None:
                 warnings.append(f"grep: {path}: {exc2}")
 

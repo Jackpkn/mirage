@@ -1277,6 +1277,7 @@ export {
   type MissingOpError,
   noMount,
   type NoMountError,
+  readdirError,
 } from './utils/errors.ts'
 
 export {

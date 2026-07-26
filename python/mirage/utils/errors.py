@@ -13,6 +13,7 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import errno
+from collections.abc import Awaitable, Callable
 
 from mirage.types import PathSpec
 
@@ -42,6 +43,13 @@ _FS_STRERROR: list[tuple[type[OSError], str]] = [
 # set and the strerror table can never drift apart (mirrors TS isFsError).
 FS_ERRORS: tuple[type[OSError], ...] = tuple(t for t, _ in _FS_STRERROR)
 
+# What a tree walk over a user operand tolerates: every recoverable
+# filesystem error, plus the ValueError store backends raise for "not a
+# directory". Catch sites that warn and keep walking (tree, grep -r, rg) use
+# this so an errno split like ENOENT/ENOTDIR cannot make one of them abort
+# while its siblings keep going.
+WALK_ERRORS: tuple[type[Exception], ...] = (*FS_ERRORS, ValueError)
+
 
 def _virtual_of(path: object) -> str:
     original = getattr(path, "virtual", None)
@@ -58,6 +66,43 @@ def enotdir(path: object) -> NotADirectoryError:
 
 def eisdir(path: object) -> IsADirectoryError:
     return IsADirectoryError(_virtual_of(path))
+
+
+async def readdir_error(path: str | PathSpec, key: str,
+                        is_file: Callable[[str], Awaitable[bool]],
+                        is_dir: Callable[[str], Awaitable[bool]]) -> OSError:
+    """The errno a failed directory listing should report.
+
+    ``opendir`` reports ENOTDIR only when a component of the path exists and
+    is not a directory (GNU ``ls /f.txt/x`` -> "Not a directory"); a component
+    that does not exist at all is ENOENT (``ls /nope`` -> "No such file or
+    directory"), however deep it is. Store-backed backends have no kernel to
+    draw that line for them, so they walk the ancestors and ask here instead
+    of collapsing both cases into one errno.
+
+    The walk stops at the first component that resolves to neither a
+    directory nor a file, the way the kernel stops resolving there: a store
+    can hold a key whose parent is not a directory, and looking past that
+    gap would report ENOTDIR for a path the kernel never reaches.
+    Mirrors TS ``readdirError``.
+
+    Args:
+        path (str | PathSpec): The operand; ``virtual`` is the reported
+            spelling.
+        key (str): The mount-local normalized path that was looked up.
+        is_file (Callable[[str], Awaitable[bool]]): Probe reporting whether a
+            mount-local path exists as a non-directory.
+        is_dir (Callable[[str], Awaitable[bool]]): Probe reporting whether a
+            mount-local path exists as a directory.
+    """
+    segments = [s for s in key.split("/") if s]
+    for i in range(1, len(segments) + 1):
+        component = "/" + "/".join(segments[:i])
+        if await is_file(component):
+            return enotdir(path)
+        if not await is_dir(component):
+            return enoent(path)
+    return enoent(path)
 
 
 def enotsup(resource: str, op_name: str,

@@ -126,11 +126,39 @@ describe('RAMResource readdir', () => {
     expect(await call(registry, 'readdir', ram, '/')).toEqual(['/a', '/b'])
   })
 
-  it('throws when path is not a directory', async () => {
+  it('throws ENOENT when the path does not exist', async () => {
     const { ram, registry } = setup()
     await expect(call(registry, 'readdir', ram, '/missing')).rejects.toMatchObject({
+      code: 'ENOENT',
+    })
+    await expect(call(registry, 'readdir', ram, '/missing/deeper')).rejects.toMatchObject({
+      code: 'ENOENT',
+    })
+  })
+
+  it('throws ENOTDIR when a path component is a file', async () => {
+    const { ram, registry } = setup()
+    await call(registry, 'write', ram, '/a.txt', new Uint8Array())
+    await expect(call(registry, 'readdir', ram, '/a.txt')).rejects.toMatchObject({
       code: 'ENOTDIR',
     })
+    await expect(call(registry, 'readdir', ram, '/a.txt/x')).rejects.toMatchObject({
+      code: 'ENOTDIR',
+    })
+  })
+
+  it('throws ENOENT for an orphan whose parent directory is missing', async () => {
+    // rename stores the destination key without adding its ancestors, so the
+    // store can hold a file under a parent that is not a directory. The walk
+    // must stop at /missing, the way the kernel would.
+    const { ram, registry } = setup()
+    await call(registry, 'write', ram, '/a.txt', new Uint8Array())
+    await call(registry, 'rename', ram, '/a.txt', PathSpec.fromStrPath('/missing/a.txt'))
+    for (const p of ['/missing', '/missing/a.txt/x', '/missing/a.txt/x/y']) {
+      await expect(call(registry, 'readdir', ram, p)).rejects.toMatchObject({
+        code: 'ENOENT',
+      })
+    }
   })
 })
 
@@ -169,7 +197,7 @@ describe('RAMResource unlink + rmdir', () => {
     const { ram, registry } = setup()
     await call(registry, 'mkdir', ram, '/d')
     await call(registry, 'rmdir', ram, '/d')
-    await expect(call(registry, 'readdir', ram, '/d')).rejects.toMatchObject({ code: 'ENOTDIR' })
+    await expect(call(registry, 'readdir', ram, '/d')).rejects.toMatchObject({ code: 'ENOENT' })
   })
 })
 

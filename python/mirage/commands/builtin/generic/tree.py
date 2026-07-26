@@ -5,6 +5,7 @@ from mirage.commands.builtin.utils.output import (format_optional_records,
                                                   format_records)
 from mirage.io.types import IOResult
 from mirage.types import FileStat, FileType, PathSpec
+from mirage.utils.errors import WALK_ERRORS
 from mirage.utils.fnmatch import fnmatch
 from mirage.utils.key_prefix import rekey
 
@@ -37,7 +38,7 @@ async def _walk(
     files = 0
     try:
         entries = sorted(await readdir(path, index))
-    except (FileNotFoundError, ValueError) as exc:
+    except WALK_ERRORS as exc:
         warnings.append(f"tree: '{path.raw_path}': {exc}")
         return lines, dirs, files
 
@@ -50,7 +51,7 @@ async def _walk(
                                                   path.resource_path, entry))
         try:
             s = await stat(entry_spec, index)
-        except (FileNotFoundError, ValueError) as exc:
+        except WALK_ERRORS as exc:
             warnings.append(f"tree: '{entry}': {exc}")
             continue
         if not show_hidden and s.name.startswith("."):
