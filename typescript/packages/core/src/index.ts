@@ -186,9 +186,10 @@ export {
   record,
   recordStream,
   revisionFor,
+  runWithMountPrefix,
   runWithRecording,
   runWithRevisions,
-  setVirtualPrefix,
+  withMountPrefix,
 } from './observe/context.ts'
 export { guessType } from './utils/filetype.ts'
 export { newSessionId, newWorkspaceId, uuid7 } from './utils/ids.ts'
