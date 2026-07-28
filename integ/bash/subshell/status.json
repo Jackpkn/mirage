@@ -1,8 +1,8 @@
 {
   "cases": [
     {
-      "id": "ctl_group_pipes_whole",
-      "seq": 502121,
+      "id": "subshell_status_after_false",
+      "seq": 516,
       "targets": [
         "ram",
         "disk",
@@ -27,16 +27,16 @@
         "gdrive-folder",
         "box"
       ],
-      "command": "{ echo a; echo b; } | wc -l",
+      "command": "(false; echo subshell=$?)",
       "expect": {
         "exit": 0,
-        "stdout": "2\n",
+        "stdout": "subshell=1\n",
         "stderr": ""
       }
     },
     {
-      "id": "ctl_group_exit_last",
-      "seq": 502122,
+      "id": "subshell_status_true_then_false",
+      "seq": 517,
       "targets": [
         "ram",
         "disk",
@@ -61,48 +61,16 @@
         "gdrive-folder",
         "box"
       ],
-      "command": "{ echo a; false; }; echo $?",
+      "command": "(true; false; echo s=$?)",
       "expect": {
         "exit": 0,
-        "stdout": "a\n1\n",
+        "stdout": "s=1\n",
         "stderr": ""
       }
     },
     {
-      "id": "ctl_group_redirect_writes",
-      "seq": 502123,
-      "targets": [
-        "ram",
-        "disk",
-        "redis",
-        "opfs",
-        "s3",
-        "databricks",
-        "gridfs",
-        "s3-prefix",
-        "databricks-prefix",
-        "gridfs-prefix",
-        "dropbox",
-        "dropbox-root",
-        "onedrive",
-        "sharepoint",
-        "sharepoint-prefix",
-        "ssh",
-        "nextcloud",
-        "gdrive",
-        "gdrive-folder",
-        "box"
-      ],
-      "command": "{ echo x; echo y; } > /data/zctg.txt && cat /data/zctg.txt",
-      "expect": {
-        "exit": 0,
-        "stdout": "x\ny\n",
-        "stderr": ""
-      }
-    },
-    {
-      "id": "ctl_group_status_inside",
-      "seq": 502124,
+      "id": "subshell_status_false_then_true",
+      "seq": 518,
       "targets": [
         "ram",
         "disk",
@@ -127,16 +95,16 @@
         "gdrive-folder",
         "box"
       ],
-      "command": "{ false; echo group=$?; }",
+      "command": "(false; true; echo s=$?)",
       "expect": {
         "exit": 0,
-        "stdout": "group=1\n",
+        "stdout": "s=0\n",
         "stderr": ""
       }
     },
     {
-      "id": "ctl_group_status_true_then_false",
-      "seq": 502125,
+      "id": "subshell_status_lazy_grep",
+      "seq": 519,
       "targets": [
         "ram",
         "disk",
@@ -161,44 +129,10 @@
         "gdrive-folder",
         "box"
       ],
-      "command": "{ true; false; echo mid=$?; }",
+      "command": "(grep zzz /data/dup.txt; echo s=$?)",
       "expect": {
         "exit": 0,
-        "stdout": "mid=1\n",
-        "stderr": ""
-      }
-    },
-    {
-      "id": "ctl_group_status_lazy_grep",
-      "seq": 502126,
-      "targets": [
-        "ram",
-        "disk",
-        "redis",
-        "opfs",
-        "s3",
-        "databricks",
-        "gridfs",
-        "s3-prefix",
-        "databricks-prefix",
-        "gridfs-prefix",
-        "hf",
-        "hf-prefix",
-        "dropbox",
-        "dropbox-root",
-        "onedrive",
-        "sharepoint",
-        "sharepoint-prefix",
-        "ssh",
-        "nextcloud",
-        "gdrive",
-        "gdrive-folder",
-        "box"
-      ],
-      "command": "{ grep zzz /data/dup.txt; echo mid=$?; }",
-      "expect": {
-        "exit": 0,
-        "stdout": "mid=1\n",
+        "stdout": "s=1\n",
         "stderr": ""
       }
     }
