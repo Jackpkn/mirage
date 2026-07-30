@@ -12,8 +12,19 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-export { decideLine, evaluatorOf } from './decide.ts'
-export { RoutingDecisionError } from './errors.ts'
-export { commandFacts } from './facts.ts'
-export { ScriptSource, routeContextFromPayload, routeContextPayload } from './types.ts'
-export type { CommandFacts, RoutingDecision, RouteContext, RouteFn, RouteScript } from './types.ts'
+/**
+ * An evaluation that could not produce a value. The message carries
+ * the evaluator's own diagnostics (a traceback, a transport failure,
+ * a non-serializable result); `syntax` is true when the program
+ * failed to parse, so callers can distinguish "bad script" from
+ * "script raised".
+ */
+export class EvalError extends Error {
+  readonly syntax: boolean
+
+  constructor(message: string, options: { syntax?: boolean; cause?: unknown } = {}) {
+    super(message, options.cause !== undefined ? { cause: options.cause } : {})
+    this.name = 'EvalError'
+    this.syntax = options.syntax ?? false
+  }
+}

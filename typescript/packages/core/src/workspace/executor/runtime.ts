@@ -14,50 +14,7 @@
 
 import type { BridgeDispatchFn } from './python/mirage_bridge.ts'
 import { ScriptSource, type RouteScript } from './route/types.ts'
-
-/** One interpreter execution request, language-agnostic. */
-export interface RunArgs {
-  code: string
-  args: string[]
-  env: Record<string, string>
-  stdin: Uint8Array | null
-  /**
-   * Interpreter-level switches parsed by the command's spec (e.g. js
-   * module mode). Each runtime reads its own switches and ignores the
-   * rest.
-   */
-  flags?: Record<string, unknown>
-}
-
-/** Outcome of one interpreter execution. */
-export interface RunResult {
-  stdout: Uint8Array
-  /** Captured standard error, null when empty (mirrors Python). */
-  stderr: Uint8Array | null
-  exitCode: number
-}
-
-/** Constructor options every runtime accepts (a yaml entry's keys). */
-export interface RuntimeOptions<C extends object = Record<string, unknown>> {
-  /**
-   * Commands this runtime claims, overriding the class default; ["*"]
-   * claims every line for a runsLines runtime.
-   */
-  captures?: readonly string[]
-  /**
-   * The runtime's implementation knobs (a yaml entry's `config`
-   * block), coerced against the runtime's own key list so a field the
-   * runtime does not have fails loud.
-   */
-  config?: C
-  /**
-   * Per-line admission script for the routing ladder, answering "do I
-   * want this line": a function taking a RouteContext, or a
-   * config-borne ScriptSource. Absent = always willing. Policy, not
-   * capability: it can only refuse lines the captures already allow.
-   */
-  script?: RouteScript
-}
+import type { RunArgs, RunResult, RuntimeOptions } from './runtime_types.ts'
 
 /**
  * A constructor's config option as the runtime's own config, mirroring

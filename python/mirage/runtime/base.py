@@ -14,65 +14,10 @@
 
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
-from dataclasses import dataclass, field
 from typing import Any, Callable, ClassVar
 
 from mirage.runtime.config import RuntimeConfig
-
-
-@dataclass(frozen=True, slots=True)
-class ScriptSource:
-    """Script source arriving from a workspace config, not from code.
-
-    The programmatic API takes callables; a yaml ``script:``/``route:``
-    value references a ``.py`` file whose content is embedded here at
-    load. The source sees ctx as a dict and its LAST EXPRESSION is the
-    verdict. It runs on the routing interpreter (monty today; a
-    sandbox runtime may take this over later).
-
-    Args:
-        source (str): the script program.
-    """
-
-    source: str
-
-
-@dataclass(frozen=True, slots=True)
-class RunArgs:
-    """One interpreter execution request, language-agnostic.
-
-    Args:
-        code (str): the source to run (script body or -c/-e payload).
-        args (list[str]): argv exposed to the script.
-        env (dict[str, str]): extra environment merged over the
-            runtime's own.
-        stdin (bytes | None): bytes fed to the interpreter's stdin.
-        flags (dict[str, Any]): interpreter-level switches parsed by
-            the command's spec (e.g. js module mode). Each runtime
-            reads its own switches and ignores the rest.
-    """
-
-    code: str
-    args: list[str] = field(default_factory=list)
-    env: dict[str, str] = field(default_factory=dict)
-    stdin: bytes | None = None
-    flags: dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass(frozen=True, slots=True)
-class RunResult:
-    """Outcome of one interpreter execution.
-
-    Args:
-        stdout (bytes): captured standard output.
-        stderr (bytes | None): captured standard error, None when
-            empty.
-        exit_code (int): interpreter exit code.
-    """
-
-    stdout: bytes
-    stderr: bytes | None
-    exit_code: int
+from mirage.runtime.types import RunArgs, RunResult, ScriptSource
 
 
 class Runtime(ABC):

@@ -484,18 +484,28 @@ export {
 export { handleCommand, ReturnSignal } from './workspace/executor/command.ts'
 export {
   bindCommands,
-  runtimeBindingsFor,
   DEFAULT_ENTRIES,
-  VfsRuntime,
   Runtime,
+  runtimeBindingsFor,
+  VfsRuntime,
+  type RuntimeEntry,
+} from './workspace/executor/runtime.ts'
+export { EvalError } from './workspace/executor/runtime_errors.ts'
+export { EVALUATOR, isEvaluator, type Evaluator } from './workspace/executor/runtime_mixin.ts'
+export {
+  type EvalResult,
+  type EvalStatus,
+  type EvalValue,
   type RunArgs,
   type RunResult,
-  type RuntimeEntry,
   type RuntimeOptions,
-} from './workspace/executor/runtime.ts'
+} from './workspace/executor/runtime_types.ts'
 export {
   commandFacts,
   decideLine,
+  evaluatorOf,
+  routeContextFromPayload,
+  routeContextPayload,
   ScriptSource,
   RoutingDecisionError,
   type CommandFacts,

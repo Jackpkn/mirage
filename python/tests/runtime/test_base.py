@@ -16,8 +16,9 @@ import asyncio
 
 import pytest
 
-from mirage.runtime.base import RunArgs, RunResult, Runtime
+from mirage.runtime.base import Runtime
 from mirage.runtime.config import RuntimeConfig
+from mirage.runtime.types import RunArgs, RunResult
 
 
 class EchoRuntime(Runtime):
@@ -26,14 +27,6 @@ class EchoRuntime(Runtime):
 
     async def run(self, args: RunArgs) -> RunResult:
         return RunResult(stdout=args.code.encode(), stderr=None, exit_code=0)
-
-
-def test_run_args_defaults():
-    args = RunArgs(code="x")
-    assert args.args == []
-    assert args.env == {}
-    assert args.stdin is None
-    assert args.flags == {}
 
 
 def test_attach_defaults_to_noop():
