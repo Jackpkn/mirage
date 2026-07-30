@@ -147,20 +147,22 @@ await ws.fuseReady()
 ws.fuseMountpoints['/data'] // => /Volumes/mirage-<id>, tagged fskit
 ```
 
-The same rules as Python apply, enforced at mount time: macOS-only, the
+The same rules as Python apply, checked at mount time: macOS-only, the
 mountpoint must be under `/Volumes` (named by mirage, created by the
-system), and every mounted resource must report exact sizes
-(`sizesAlwaysKnown`; the `checkSizes` guard refuses anything else by name).
+system), and every mounted resource should report exact sizes
+(`sizesAlwaysKnown`; the `checkSizes` guard warns about anything else by
+name, and those files read as empty).
 
-Unlike Python, **TS fskit mounts are read-mostly**: in-place writes and
-`unlink` work, while `create`, `mkdir` and `rename` return ENOSYS, and a
-failed create can still apply. The FSKit shim finalizes new items through
-macFUSE's Darwin-only `setattr_x`/`renamex` callbacks; Python declares them
-at runtime (`mirage/fuse/darwin.py`), but `@zkochan/fuse-native`'s compiled
-op table cannot gain new C callbacks from JavaScript, so fixing this side
-needs a native-binding change. See
-[the Python page](/python/setup/fuse#mounting-without-the-kernel-extension-fskit)
-for the working end state.
+**TS fskit mounts are read-mostly**, twice over. The shim's data-write
+zeroing (see
+[the Python page](/python/setup/fuse#mounting-without-the-kernel-extension-fskit))
+applies to both languages, and `checkWrites` warns at mount time on
+writable fskit mounts. On top of that, TypeScript cannot create new names:
+`create`, `mkdir` and `rename` return ENOSYS (and a failed create can
+still apply). The shim finalizes new items through macFUSE's Darwin-only
+`setattr_x`/`renamex` callbacks, which Python installs at runtime
+(`mirage/fuse/darwin.py`) but `@zkochan/fuse-native`'s compiled op table
+cannot gain from JavaScript.
 
 <Warning>
   **A wedged FSKit mount blocks more than itself.** A TS mount is served by

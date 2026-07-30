@@ -16,6 +16,7 @@ import { posix } from 'node:path'
 import {
   KERNEL_BACKENDS,
   MountBackend,
+  MountMode,
   rstripSlash,
   sizesAlwaysKnown,
   type Workspace,
@@ -104,23 +105,68 @@ export function unsizedMounts(ws: Workspace, rootPrefix = ''): [string, string][
 }
 
 /**
- * Refuse an fskit mount that would serve silently empty files.
+ * Warn when an fskit mount will serve size-unknown files as empty.
  *
  * FSKit drives reads from the size the filesystem reports and has no
  * `direct_io` escape hatch, so a resource that cannot size a file without
  * fetching it reports 0, the kernel issues no reads, and every such file
- * comes back empty with exit code 0. That is worse than a failed mount, so
- * it fails here by name instead.
+ * comes back empty with exit code 0 (verified on a live fskit mount: the
+ * read clamp is pinned at lookup-time size and never refreshed). The mount
+ * proceeds anyway: per-backend size push-down is closing this gap, so the
+ * degraded mounts are named loudly here rather than refused.
  */
 export function checkSizes(backend: MountBackend, ws: Workspace, rootPrefix = ''): void {
   if (backend !== MountBackend.FSKIT) return
   const offenders = unsizedMounts(ws, rootPrefix)
   if (offenders.length === 0) return
   const listed = offenders.map(([prefix, kind]) => `${prefix} (${kind})`).join(', ')
-  throw new Error(
-    'the fskit mount backend cannot serve resources whose file sizes are only known after a ' +
-      `read; these mounts would return empty files: ${listed}. Mount them with backend 'fuse', ` +
-      'or scope the fskit mount to a byte-store resource (ram, disk, redis, s3, gridfs).',
+  console.warn(
+    'mirage: the fskit mount backend cannot serve resources whose file sizes are only known ' +
+      `after a read; size-unknown files under these mounts will read as empty: ${listed}. ` +
+      "Mount them with backend 'fuse', or scope the fskit mount to a byte-store resource " +
+      '(ram, disk, redis, s3, gridfs).',
+  )
+}
+
+/**
+ * Mounts that accept writes, in mount resolution order. Mirrors Python's
+ * `Ops.writable_mounts`.
+ */
+export function writableMounts(ws: Workspace, rootPrefix = ''): [string, string][] {
+  const root = rstripSlash(rootPrefix)
+  const found: [string, string][] = []
+  for (const m of ws.mounts()) {
+    const bare = rstripSlash(m.prefix)
+    if (root !== '' && bare !== root && !m.prefix.startsWith(root + '/')) continue
+    if (m.mode !== MountMode.READ) found.push([m.prefix, m.resource.kind])
+  }
+  return found
+}
+
+/**
+ * Warn when an fskit mount accepts writes the shim may corrupt.
+ *
+ * Measured on live fskit mounts and pinned in `integ/fuse/truth_fskit.json`: the
+ * macFUSE FSKit shim flushes pages a file did not already have (a new file,
+ * an empty file, a truncate-then-write) as NUL bytes of the right length,
+ * and appended regions arrive intact or zeroed depending on cache state.
+ * Metadata ops (create, mkdir, rename, unlink) are reliable. The writer sees
+ * no error either way, so the corruption is silent; the mount proceeds with
+ * a warning naming the writable mounts.
+ */
+export function checkWrites(backend: MountBackend, ws: Workspace, rootPrefix = ''): void {
+  if (backend !== MountBackend.FSKIT) return
+  // /dev is mounted writable into every workspace, and a zeroed flush
+  // cannot corrupt a discard/byte-source device, so it never warns.
+  const offenders = writableMounts(ws, rootPrefix).filter(
+    ([prefix]) => rstripSlash(prefix) !== '/dev',
+  )
+  if (offenders.length === 0) return
+  const listed = offenders.map(([prefix, kind]) => `${prefix} (${kind})`).join(', ')
+  console.warn(
+    'mirage: file data written through an fskit mount may be flushed by the macFUSE FSKit ' +
+      `shim as zeroed pages (metadata ops are reliable; the writer sees no error): ${listed}. ` +
+      "Mount them read-only, or use backend 'fuse' for writes.",
   )
 }
 
@@ -140,6 +186,9 @@ export function prepareBackend(
   requireKernelBackend(backend)
   checkPlatform(backend)
   if (mountpoint !== undefined) checkMountpoint(backend, mountpoint)
-  if (ws !== undefined) checkSizes(backend, ws, rootPrefix)
+  if (ws !== undefined) {
+    checkSizes(backend, ws, rootPrefix)
+    checkWrites(backend, ws, rootPrefix)
+  }
   return backend
 }

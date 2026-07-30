@@ -13,17 +13,19 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { MountBackend, MountMode, RAMResource } from '@struktoai/mirage-core'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Workspace } from '../workspace.ts'
 import {
   checkMountpoint,
   checkPlatform,
   checkSizes,
+  checkWrites,
   FSKIT_MOUNT_ROOT,
   prepareBackend,
   requireKernelBackend,
   resolveBackend,
   unsizedMounts,
+  writableMounts,
 } from './backend.ts'
 
 describe('resolveBackend', () => {
@@ -170,5 +172,57 @@ describe('unsizedMounts / checkSizes', () => {
     expect(() => {
       checkSizes(MountBackend.FSKIT, ws, '/ram/')
     }).not.toThrow()
+  })
+
+  it('warns for a size-unknown mount but lets it proceed', () => {
+    class UnsizedResource extends RAMResource {
+      override readonly sizesAlwaysKnown: boolean = false
+    }
+    const ws = new Workspace({ '/api/': new UnsizedResource() }, { mode: MountMode.READ })
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    try {
+      expect(() => {
+        checkSizes(MountBackend.FSKIT, ws, '')
+      }).not.toThrow()
+      expect(warn).toHaveBeenCalledOnce()
+      const message = String(warn.mock.calls[0]?.[0])
+      expect(message).toContain('will read as empty')
+      expect(message).toContain('/api/')
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  it('writableMounts lists write-capable mounts', () => {
+    const ws = new Workspace({ '/data/': new RAMResource() }, { mode: MountMode.WRITE })
+    const prefixes = writableMounts(ws, '').map(([prefix]) => prefix)
+    expect(prefixes).toContain('/data/')
+  })
+
+  it('warns when an fskit mount accepts writes', () => {
+    const ws = new Workspace({ '/data/': new RAMResource() }, { mode: MountMode.WRITE })
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    try {
+      checkWrites(MountBackend.FSKIT, ws, '')
+      expect(warn).toHaveBeenCalledOnce()
+      const message = String(warn.mock.calls[0]?.[0])
+      expect(message).toContain('zeroed pages')
+      expect(message).toContain('/data/')
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  it('write warning stays silent for read mounts and the fuse backend', () => {
+    const readOnly = new Workspace({ '/data/': new RAMResource() }, { mode: MountMode.READ })
+    const writable = new Workspace({ '/data/': new RAMResource() }, { mode: MountMode.WRITE })
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    try {
+      checkWrites(MountBackend.FSKIT, readOnly, '')
+      checkWrites(MountBackend.FUSE, writable, '')
+      expect(warn).not.toHaveBeenCalled()
+    } finally {
+      warn.mockRestore()
+    }
   })
 })

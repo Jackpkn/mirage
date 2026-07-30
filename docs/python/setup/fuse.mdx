@@ -127,15 +127,25 @@ There is deliberately **no `auto`** value: auto-selecting FSKit would silently
 break every API-backed mount, and an option whose safe value is always the
 default is a trap. `MountBackend.FSKIT` is macOS-only and raises elsewhere.
 
-The full write surface works: create, mkdir, rename, in-place writes and
-unlink, pinned by `integ/truth_fskit.json`. This depends on
-`mirage/fuse/darwin.py`, which declares macFUSE's Darwin-only callbacks
+The metadata write surface works: create, mkdir, rename, unlink and
+in-place overwrites, pinned by `integ/fuse/truth_fskit.json`. This depends
+on `mirage/fuse/darwin.py`, which declares macFUSE's Darwin-only callbacks
 (`setattr_x`, `renamex`) that the FSKit shim uses to finalize new items and
 route renames; stock mfusepy leaves those slots NULL, which fails every
 create with ENOSYS after the file already landed.
 
 <Warning>
-  **Two upstream FSKit-shim caveats remain** (macFUSE 5.3.3):
+  **Treat fskit mounts as read-mostly.** The macFUSE FSKit shim flushes
+  pages a file did not already have (a new file, `cp`, `>` truncation) as
+  NUL bytes; appends are hit-or-miss. The writer sees no error, and the
+  kernel page cache serves the written data back, so the corruption only
+  shows in the backing store. Mirage warns at mount time on writable fskit
+  mounts (`check_writes`); use `MountBackend.FUSE` for writes. Pinned in
+  `integ/fuse/truth_fskit.json` so a shim fix flips the test.
+</Warning>
+
+<Warning>
+  **Two more upstream FSKit-shim caveats** (macFUSE 5.3.3):
   [#1181](https://github.com/macfuse/macfuse/issues/1181), running a binary
   off an fskit mount fails until the file has been read once; and
   [#1165](https://github.com/macfuse/macfuse/issues/1165), new entries in
@@ -144,17 +154,16 @@ create with ENOSYS after the file already landed.
 </Warning>
 
 <Warning>
-  **FSKit cannot serve size-unknown resources.** There is no `direct_io`, so
-  reads are driven entirely by the size `stat` reports; a resource that
-  stats 0 pre-open would return empty files with exit code 0. Mirage refuses
-  such a mount by name at mount time (`SIZES_ALWAYS_KNOWN`). Byte stores
-  (ram, disk, redis, s3, gridfs) qualify; API-backed resources need
-  `MountBackend.FUSE`, or scope the fskit mount to the byte-store subtree.
+  **Size-unknown files read as empty.** There is no `direct_io`, so reads
+  stop at the size `stat` reported; a file that stats 0 pre-open reads as
+  empty with exit code 0. Mirage warns at mount time, naming the degraded
+  mounts (`SIZES_ALWAYS_KNOWN`). Byte stores (ram, disk, redis, s3,
+  gridfs) and Linear (size push-down) qualify; for the rest, use
+  `MountBackend.FUSE` or scope the fskit mount to a sized subtree.
 </Warning>
 
-`examples/python/fuse/fskit.py` runs all of this end to end: the size guard
-refusing a resource that cannot size its files, a live mount with reads
-matching their stat size, and each write op with the errno it returns.
+`examples/python/fuse/fskit.py` runs all of this end to end: the size
+warning, exact reads on a live mount, and each write op with its result.
 
 TypeScript supports the same backend with the same guards
 ([details](/typescript/setup/fuse#mounting-without-the-kernel-extension-fskit));
