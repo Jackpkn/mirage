@@ -3,9 +3,6 @@
   "cases": [
     {
       "id": "runtime_arg_per_line",
-      "hosts": [
-        "python"
-      ],
       "world": {
         "runtimes": [
           "monty",
@@ -45,9 +42,6 @@
     },
     {
       "id": "entry_script_fallthrough",
-      "hosts": [
-        "python"
-      ],
       "world": {
         "runtimes": [
           {
@@ -115,9 +109,6 @@
     },
     {
       "id": "global_policy",
-      "hosts": [
-        "python"
-      ],
       "world": {
         "runtimes": [
           "monty",
@@ -150,9 +141,6 @@
     },
     {
       "id": "add_runtime_local",
-      "hosts": [
-        "python"
-      ],
       "world": {
         "runtimes": [
           "monty",
@@ -477,6 +465,54 @@
           "expect": {
             "exit": 0,
             "stdout": "42\n"
+          }
+        }
+      ]
+    },
+    {
+      "id": "policy_script_bad_verdict",
+      "world": {
+        "runtimes": [
+          "monty",
+          "vfs"
+        ],
+        "mounts": {
+          "/ram": {
+            "resource": "ram"
+          }
+        },
+        "policy": "{'runtme': 'monty'}"
+      },
+      "steps": [
+        {
+          "command": "python3 -c \"print(1)\"",
+          "expect": {
+            "throws_contains": "unknown policy verdict keys"
+          }
+        }
+      ]
+    },
+    {
+      "id": "entry_script_verdict_shape",
+      "world": {
+        "runtimes": [
+          {
+            "name": "monty",
+            "script": "{'deny': 'nope'}"
+          },
+          "vfs"
+        ],
+        "mounts": {
+          "/ram": {
+            "resource": "ram"
+          }
+        }
+      },
+      "steps": [
+        {
+          "command": "python3 -c \"print(1)\"",
+          "expect": {
+            "throws_contains": "entry scripts answer a boolean"
           }
         }
       ]

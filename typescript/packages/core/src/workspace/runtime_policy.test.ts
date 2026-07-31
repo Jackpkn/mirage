@@ -16,6 +16,7 @@ import { describe, expect, it } from 'vitest'
 import { Runtime, VfsRuntime } from './executor/runtime.ts'
 import type { RunArgs, RunResult } from './executor/runtime_types.ts'
 import { MontyRuntime } from './executor/python/runtimes/monty.ts'
+import { QuickJsRuntime } from './executor/js/quickjs.ts'
 import {
   DenyResult,
   parseVerdict,
@@ -201,6 +202,35 @@ describe('routing ladder', () => {
     }
   })
 
+  it('a JS policy script reads mounted content through the fs bridge', async () => {
+    const parser = await getTestParser()
+    const ws = new Workspace(
+      { '/': new RAMResource() },
+      {
+        mode: MountMode.EXEC,
+        shellParser: parser,
+        runtimes: [new QuickJsRuntime(), 'vfs'],
+        policy: new ScriptSource(
+          "const f = std.open('/deny.txt', 'r'); " +
+            'const blocked = f !== null && f.readAsString().includes(ctx.command); ' +
+            'if (f !== null) f.close(); ' +
+            "blocked ? { deny: 'listed in /deny.txt' } : null",
+        ),
+      },
+    )
+    try {
+      await ws.execute('echo node > /deny.txt')
+      const denied = await ws.execute('node -e "1"')
+      expect(denied.exitCode).toBe(126)
+      expect(DEC.decode(denied.stderr)).toBe('node: policy denied: listed in /deny.txt\n')
+      const ok = await ws.execute('echo ok')
+      expect(DEC.decode(ok.stdout)).toBe('ok\n')
+      expect(ok.exitCode).toBe(0)
+    } finally {
+      await ws.close()
+    }
+  })
+
   it('a deny verdict folds into the line result', async () => {
     const parser = await getTestParser()
     const ws = new Workspace(
@@ -298,6 +328,30 @@ describe('routing ladder', () => {
     } finally {
       await ws.close()
     }
+  })
+
+  it('an entry script answering a verdict shape fails loud', async () => {
+    const parser = await getTestParser()
+    const alpha = new NamedFakeRuntime('alpha')
+    alpha.script = new ScriptSource("{'deny': 'nope'}")
+    const ws = new Workspace(
+      { '/': new RAMResource() },
+      {
+        mode: MountMode.EXEC,
+        shellParser: parser,
+        runtimes: [alpha, new MontyRuntime(), 'vfs'],
+      },
+    )
+    try {
+      await expect(ws.execute('python3 -c "x"')).rejects.toThrow(/answer a boolean/)
+    } finally {
+      await ws.close()
+    }
+  })
+
+  it('parseVerdict folds a Map verdict into the wire object', () => {
+    expect(parseVerdict(new Map([['runtime', 'beta']]))).toBe('beta')
+    expect(() => parseVerdict(new Map([['deny', 'nope']]))).toThrow(PolicyDeny)
   })
 
   it('parseVerdict fails loud on bad verdict objects', () => {
