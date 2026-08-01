@@ -533,7 +533,12 @@ export async function executeNode(
     // Array literals are staged, not stored: `readonly -a a=(y)` on an
     // already-readonly name has to fail with the old value intact.
     const staged: { name: string; append: boolean; items: string[] }[] = []
+    // Option words are kept verbatim, in order, so `--` survives as an
+    // end-of-options marker and the handlers can name the *first* bad option
+    // letter the way bash does.
+    const flagWords: string[] = []
     const flagChars = new Set<string>()
+    let optsDone = false
     for (const child of node.namedChildren) {
       if (child.type === NT.VARIABLE_ASSIGNMENT) {
         const valNodes = child.namedChildren.filter((c) => c.type !== NT.VARIABLE_NAME)
@@ -562,8 +567,10 @@ export async function executeNode(
       ) {
         const expanded = await expandNode(child, session, executeFn, callStack)
         if (expanded === '') continue
-        if (expanded.startsWith('-') && expanded.length > 1) {
-          for (const ch of expanded.slice(1)) flagChars.add(ch)
+        if (!optsDone && expanded.startsWith('-') && expanded.length > 1) {
+          flagWords.push(expanded)
+          if (expanded === '--') optsDone = true
+          else for (const ch of expanded.slice(1)) flagChars.add(ch)
         } else {
           assignments.push(expanded)
         }
@@ -620,7 +627,11 @@ export async function executeNode(
     }
     if (isReadonly) {
       // An array assignment stores itself above, but the name still has
-      // to be marked readonly.
+      // to be marked readonly. Only the `readonly` keyword owns -p /
+      // illegal-option handling; `declare -r` keeps names only.
+      if (keyword === 'readonly') {
+        return handleReadonly([...flagWords, ...assignments, ...arrayNames], session)
+      }
       return handleReadonly([...assignments, ...arrayNames], session)
     }
     // declare/typeset scope like `local` inside a function (bash
@@ -629,7 +640,8 @@ export async function executeNode(
     if (keyword === NT.LOCAL || keyword === 'declare' || keyword === 'typeset') {
       return handleLocal(assignments, session)
     }
-    return handleExport(assignments, session)
+    // Pass export flags through so -p / bare print and illegal options work.
+    return handleExport([...flagWords, ...assignments], session)
   }
 
   if (kind === NodeKind.UNSET) {

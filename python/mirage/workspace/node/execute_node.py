@@ -484,7 +484,12 @@ async def execute_node(
         # Array literals are staged, not stored: `readonly -a a=(y)` on an
         # already-readonly name has to fail with the old value intact.
         staged: list[tuple[str, bool, list[str]]] = []
+        # Option words are kept verbatim, in order, so `--` survives as an
+        # end-of-options marker and the handlers can name the *first* bad
+        # option letter the way bash does.
+        flag_words: list[str] = []
         flag_chars: set[str] = set()
+        opts_done = False
         for child in node.named_children:
             if child.type == NT.VARIABLE_ASSIGNMENT:
                 val_nodes = [
@@ -507,8 +512,13 @@ async def execute_node(
                 expanded = await expand_node(child, session, execute_fn, cs)
                 if not expanded:
                     continue
-                if expanded.startswith("-") and len(expanded) > 1:
-                    flag_chars.update(expanded[1:])
+                if (not opts_done and expanded.startswith("-")
+                        and len(expanded) > 1):
+                    flag_words.append(expanded)
+                    if expanded == "--":
+                        opts_done = True
+                    else:
+                        flag_chars.update(expanded[1:])
                 else:
                     assignments.append(expanded)
         array_names = [name for name, _, _ in staged]
@@ -546,14 +556,19 @@ async def execute_node(
                     session.arrays[bare] = [] if scalar is None else [scalar]
         if is_readonly:
             # An array assignment stores itself above, but the name still
-            # has to be marked readonly.
+            # has to be marked readonly. Only the `readonly` keyword owns
+            # -p / illegal-option handling; `declare -r` keeps names only.
+            if keyword == "readonly":
+                return await handle_readonly(
+                    flag_words + assignments + array_names, session)
             return await handle_readonly(assignments + array_names, session)
         # declare/typeset scope like `local` inside a function (bash
         # semantics) and assign globally at top level, which is exactly
         # handle_local's fallback when no function scope is active.
         if keyword in (NT.LOCAL, "declare", "typeset"):
             return await handle_local(assignments, session)
-        return await handle_export(assignments, session)
+        # Pass export flags through so -p / bare print and bad options work.
+        return await handle_export(flag_words + assignments, session)
 
     # ── unset ───────────────────────────────────
     if kind == NodeKind.UNSET:

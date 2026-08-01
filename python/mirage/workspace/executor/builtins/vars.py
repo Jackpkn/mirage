@@ -34,6 +34,23 @@ from mirage.workspace.session import Session
 from mirage.workspace.types import ExecutionNode
 
 _ENV_HELP_HINT = "Try 'env --help' for more information.\n"
+_EXPORT_USAGE = "export: usage: export [-fn] [name[=value] ...] or export -p\n"
+_READONLY_USAGE = (
+    "readonly: usage: readonly [-aAf] [name[=value] ...] or readonly -p\n")
+_EXPORT_FLAGS = frozenset("fnp")
+_READONLY_FLAGS = frozenset("aAfp")
+_ANSI_C_ESCAPES = {
+    "\\": "\\\\",
+    "'": "\\'",
+    "\a": "\\a",
+    "\b": "\\b",
+    "\t": "\\t",
+    "\n": "\\n",
+    "\v": "\\v",
+    "\f": "\\f",
+    "\r": "\\r",
+    "\x1b": "\\E",
+}
 
 
 def _env_error(message: str) -> tuple[None, IOResult, ExecutionNode]:
@@ -44,11 +61,163 @@ def _env_error(message: str) -> tuple[None, IOResult, ExecutionNode]:
                                                      stderr=err)
 
 
+def _is_control(ch: str) -> bool:
+    return ord(ch) < 0x20 or ord(ch) == 0x7F
+
+
+def _bash_declare_quote(value: str) -> str:
+    """Quote a value the way bash ``declare -p`` / ``export -p`` does.
+
+    A value holding any control character takes the ``$'...'`` form, with
+    the named escapes bash uses (``\\a \\b \\t \\n \\v \\f \\r``, and
+    ``\\E`` for escape) and three-digit octal for the rest; ``"``, ``$``
+    and backtick need no escaping there because ``$'...'`` does not
+    expand. Everything else is double-quoted with escapes for ``\\``,
+    ``"``, ``$`` and backtick. Non-ASCII printable text stays literal,
+    which is what bash emits in a UTF-8 locale.
+
+    Args:
+        value (str): the variable value to serialize.
+
+    Returns:
+        str: the quoted value, ready to follow ``declare -x NAME=``.
+    """
+    parts: list[str] = []
+    if any(_is_control(ch) for ch in value):
+        for ch in value:
+            escape = _ANSI_C_ESCAPES.get(ch)
+            if escape is not None:
+                parts.append(escape)
+            elif _is_control(ch):
+                parts.append(f"\\{ord(ch):03o}")
+            else:
+                parts.append(ch)
+        return "$'" + "".join(parts) + "'"
+    for ch in value:
+        if ch in '\\"$`':
+            parts.append("\\" + ch)
+        else:
+            parts.append(ch)
+    return '"' + "".join(parts) + '"'
+
+
+def _split_decl_flags(
+    args: list[str],
+    allowed: frozenset[str],
+) -> tuple[set[str], list[str], str | None]:
+    """Split leading ``-xyz`` flag clusters from declaration operands.
+
+    Returns:
+        ``(flags, operands, bad)`` where ``bad`` is the first illegal
+        option character, or ``None`` when every flag is allowed.
+    """
+    flags: set[str] = set()
+    i = 0
+    while i < len(args):
+        tok = args[i]
+        if tok == "--":
+            i += 1
+            break
+        if tok.startswith("-") and len(tok) > 1 and tok != "-":
+            body = tok[1:]
+            illegal = next((c for c in body if c not in allowed), None)
+            if illegal is not None:
+                return flags, args[i:], illegal
+            flags.update(body)
+            i += 1
+            continue
+        break
+    return flags, args[i:], None
+
+
+def _export_lines(session: Session, flags: set[str]) -> list[str]:
+    """Build sorted ``declare -x`` lines for every variable in the env.
+
+    Mirage keeps shell variables in ``session.env`` and treats that map
+    as the exported environment (``printenv`` / ``env`` already do), so
+    ``export -p`` lists the same set. ``-f`` selects shell functions
+    instead of variables; mirage tracks no export attribute on functions,
+    so that form lists nothing, as bash does with none exported.
+
+    Args:
+        session (Session): shell session state.
+        flags (set[str]): option letters the caller supplied.
+
+    Returns:
+        list[str]: one ``declare -x`` line per selected name.
+    """
+    if "f" in flags:
+        return []
+    lines: list[str] = []
+    for name in sorted(session.env):
+        lines.append(
+            f"declare -x {name}={_bash_declare_quote(session.env[name])}")
+    return lines
+
+
+def _readonly_lines(session: Session, flags: set[str]) -> list[str]:
+    """Build sorted ``declare -r`` / ``declare -ar`` readonly lines.
+
+    ``-a`` narrows the listing to indexed arrays, the way bash does.
+    ``-f`` selects functions and ``-A`` associative arrays, neither of
+    which mirage carries a readonly attribute for, so those forms list
+    nothing. Bare and ``-p`` list every readonly name.
+
+    Args:
+        session (Session): shell session state.
+        flags (set[str]): option letters the caller supplied.
+
+    Returns:
+        list[str]: one declaration line per selected name.
+    """
+    if "f" in flags or "A" in flags:
+        return []
+    arrays_only = "a" in flags
+    lines: list[str] = []
+    for name in sorted(session.readonly_vars):
+        arr = session.arrays.get(name)
+        if arr is not None:
+            parts = [
+                f"[{i}]={_bash_declare_quote(v)}" for i, v in enumerate(arr)
+                if v is not None
+            ]
+            lines.append(f"declare -ar {name}=({' '.join(parts)})")
+            continue
+        if arrays_only:
+            continue
+        if name in session.env:
+            lines.append(
+                f"declare -r {name}={_bash_declare_quote(session.env[name])}")
+        else:
+            lines.append(f"declare -r {name}")
+    return lines
+
+
 async def handle_export(
     assignments: list[str],
     session: Session,
 ) -> tuple[ByteSource | None, IOResult, ExecutionNode]:
-    for assign in assignments:
+    """Export names, or print them (``export -p`` / bare ``export``).
+
+    With no name operands, prints every entry in ``session.env`` as
+    ``declare -x NAME="value"`` (bash's ``-p`` form). Invalid option
+    characters fail with status 2 and the GNU usage line.
+    """
+    flags, names, bad = _split_decl_flags(assignments, _EXPORT_FLAGS)
+    if bad is not None:
+        err = (f"bash: export: -{bad}: invalid option\n"
+               f"{_EXPORT_USAGE}").encode()
+        return None, IOResult(exit_code=2,
+                              stderr=err), ExecutionNode(command="export",
+                                                         exit_code=2,
+                                                         stderr=err)
+    # -p with names is ignored for display; bare / -p alone print.
+    if not names:
+        lines = _export_lines(session, flags)
+        out = (("\n".join(lines) + "\n") if lines else "").encode()
+        return out, IOResult(), ExecutionNode(command="export", exit_code=0)
+    # -f/-n accepted; name path matches prior export semantics.
+    for assign in names:
         if "=" in assign:
             key, _, val = assign.partition("=")
             if key in session.readonly_vars:
@@ -65,7 +234,25 @@ async def handle_readonly(
     assignments: list[str],
     session: Session,
 ) -> tuple[ByteSource | None, IOResult, ExecutionNode]:
-    for assign in assignments:
+    """Mark names readonly, or print them (``readonly -p`` / bare form).
+
+    With no name operands, prints every readonly name as ``declare -r``
+    (or ``declare -ar`` for arrays). Invalid options fail with status 2.
+    """
+    flags, names, bad = _split_decl_flags(assignments, _READONLY_FLAGS)
+    if bad is not None:
+        err = (f"bash: readonly: -{bad}: invalid option\n"
+               f"{_READONLY_USAGE}").encode()
+        return None, IOResult(exit_code=2,
+                              stderr=err), ExecutionNode(command="readonly",
+                                                         exit_code=2,
+                                                         stderr=err)
+    if not names:
+        lines = _readonly_lines(session, flags)
+        out = (("\n".join(lines) + "\n") if lines else "").encode()
+        return out, IOResult(), ExecutionNode(command="readonly", exit_code=0)
+    # -a/-A/-f accepted; array shape is applied by the declaration path.
+    for assign in names:
         if "=" in assign:
             key, _, val = assign.partition("=")
             if key in session.readonly_vars:

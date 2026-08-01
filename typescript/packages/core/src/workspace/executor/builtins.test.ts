@@ -31,6 +31,7 @@ import {
   handleEval,
   handleExport,
   handleLocal,
+  handleReadonly,
   handleMan,
   handlePrintenv,
   handlePrintf,
@@ -93,6 +94,127 @@ describe('handleExport / handleUnset / handlePrintenv', () => {
     handleExport(['X', 'Y'], s)
     expect(s.env.X).toBe('existing')
     expect(s.env.Y).toBe('')
+  })
+
+  it('export -p prints declare -x lines', () => {
+    const s = new Session({ sessionId: 'test', env: { ZZZ: '1', AAA: 'a"b' } })
+    const [out, io] = handleExport(['-p'], s)
+    expect(io.exitCode).toBe(0)
+    const text = decode(out as Uint8Array)
+    expect(text).toContain('declare -x AAA="a\\"b"\n')
+    expect(text).toContain('declare -x ZZZ="1"\n')
+    expect(text.indexOf('AAA')).toBeLessThan(text.indexOf('ZZZ'))
+  })
+
+  it('bare export prints like -p', () => {
+    const s = new Session({ sessionId: 'test', env: { FOO: 'bar' } })
+    const [out, io] = handleExport([], s)
+    expect(io.exitCode).toBe(0)
+    expect(decode(out as Uint8Array)).toBe('declare -x FOO="bar"\n')
+  })
+
+  it('export -z is invalid option exit 2', () => {
+    const s = new Session({ sessionId: 'test' })
+    const [, io] = handleExport(['-z'], s)
+    expect(io.exitCode).toBe(2)
+    expect(decode(io.stderr as Uint8Array)).toContain('invalid option')
+    expect(decode(io.stderr as Uint8Array)).toContain('usage: export')
+  })
+
+  it('export -p with a name does not print', () => {
+    const s = new Session({ sessionId: 'test', env: { KEEP: '1' } })
+    const [out, io] = handleExport(['-p', 'FOO=bar'], s)
+    expect(io.exitCode).toBe(0)
+    expect(out).toBeNull()
+    expect(s.env.FOO).toBe('bar')
+  })
+
+  it('readonly -p prints scalars and arrays', () => {
+    const s = new Session({ sessionId: 'test', env: { VAL: 'x' } })
+    s.readonlyVars.add('VAL')
+    s.readonlyVars.add('ONLY')
+    s.arrays.AR = ['a', 'b c']
+    s.readonlyVars.add('AR')
+    const [out, io] = handleReadonly(['-p'], s)
+    expect(io.exitCode).toBe(0)
+    const text = decode(out as Uint8Array)
+    expect(text).toContain('declare -ar AR=([0]="a" [1]="b c")\n')
+    expect(text).toContain('declare -r ONLY\n')
+    expect(text).toContain('declare -r VAL="x"\n')
+  })
+
+  it('readonly -z is invalid option exit 2', () => {
+    const s = new Session({ sessionId: 'test' })
+    const [, io] = handleReadonly(['-z'], s)
+    expect(io.exitCode).toBe(2)
+    expect(decode(io.stderr as Uint8Array)).toContain('invalid option')
+  })
+
+  it('export -p quotes control characters like bash', () => {
+    const s = new Session({
+      sessionId: 'test',
+      env: {
+        TAB: 'a\tb',
+        ESC: 'a\x1bb',
+        BEL: 'a\x07b',
+        SOH: 'a\x01b',
+        DEL: 'a\x7fb',
+        UTF: 'café',
+      },
+    })
+    const [out, io] = handleExport(['-p'], s)
+    expect(io.exitCode).toBe(0)
+    const text = decode(out as Uint8Array)
+    // GNU bash uses $'...' for any control character, named escapes where it
+    // has one and three-digit octal otherwise.
+    expect(text).toContain("declare -x TAB=$'a\\tb'\n")
+    expect(text).toContain("declare -x ESC=$'a\\Eb'\n")
+    expect(text).toContain("declare -x BEL=$'a\\ab'\n")
+    expect(text).toContain("declare -x SOH=$'a\\001b'\n")
+    expect(text).toContain("declare -x DEL=$'a\\177b'\n")
+    // Printable non-ASCII stays literal, as bash does in a UTF-8 locale.
+    expect(text).toContain('declare -x UTF="café"\n')
+  })
+
+  it('export -p -- still prints', () => {
+    const s = new Session({ sessionId: 'test', env: { FOO: 'bar' } })
+    const [out, io] = handleExport(['-p', '--'], s)
+    expect(io.exitCode).toBe(0)
+    expect(decode(out as Uint8Array)).toBe('declare -x FOO="bar"\n')
+  })
+
+  it('export -f lists no variables', () => {
+    const s = new Session({ sessionId: 'test', env: { FOO: 'bar' } })
+    const [out, io] = handleExport(['-f'], s)
+    expect(io.exitCode).toBe(0)
+    expect(decode(out as Uint8Array)).toBe('')
+  })
+
+  it('export reports the first invalid option letter', () => {
+    const s = new Session({ sessionId: 'test' })
+    const [, io] = handleExport(['-zq'], s)
+    expect(decode(io.stderr as Uint8Array)).toContain('export: -z: invalid option')
+    expect(decode(io.stderr as Uint8Array)).not.toContain('-q: invalid option')
+  })
+
+  it('readonly -a lists arrays only', () => {
+    const s = new Session({ sessionId: 'test', env: { VAL: 'x' } })
+    s.readonlyVars.add('VAL')
+    s.arrays.AR = ['a']
+    s.readonlyVars.add('AR')
+    const [out, io] = handleReadonly(['-a'], s)
+    expect(io.exitCode).toBe(0)
+    expect(decode(out as Uint8Array)).toBe('declare -ar AR=([0]="a")\n')
+  })
+
+  it('readonly -f and -A list nothing', () => {
+    const s = new Session({ sessionId: 'test', env: { VAL: 'x' } })
+    s.readonlyVars.add('VAL')
+    for (const flag of ['-f', '-A']) {
+      const [out, io] = handleReadonly([flag], s)
+      expect(io.exitCode).toBe(0)
+      expect(decode(out as Uint8Array)).toBe('')
+    }
   })
 
   it('unset removes keys', () => {
