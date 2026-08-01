@@ -1,5 +1,13 @@
 {
   "_meta": {
+    "by_resource": {
+      "": {
+        "filetypes": [],
+        "has_aggregate": false,
+        "has_provision": false,
+        "has_write": false
+      }
+    },
     "filetypes": [],
     "has_aggregate": false,
     "has_provision": false,
@@ -11,7 +19,7 @@
   "ignore_tokens": [],
   "options": [
     {
-      "description": "Add a header to the request.",
+      "description": "Add a custom header to the request.",
       "long": null,
       "numeric_shorthand": false,
       "repeatable": false,
@@ -41,7 +49,7 @@
       "value_optional": false
     },
     {
-      "description": "Send the given body as POST data.",
+      "description": "Send the given data as the request body.",
       "long": null,
       "numeric_shorthand": false,
       "repeatable": false,
@@ -61,7 +69,7 @@
       "value_optional": false
     },
     {
-      "description": "Write output to the given file.",
+      "description": "Write response body to the given file.",
       "long": null,
       "numeric_shorthand": false,
       "repeatable": false,
@@ -91,7 +99,7 @@
       "value_optional": false
     },
     {
-      "description": "Run silently without progress output.",
+      "description": "Run silently with no progress or messages.",
       "long": null,
       "numeric_shorthand": false,
       "repeatable": false,

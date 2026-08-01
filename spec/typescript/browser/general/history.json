@@ -1,10 +1,20 @@
 {
   "_meta": {
+    "by_resource": {
+      "history": {
+        "filetypes": [],
+        "has_aggregate": false,
+        "has_provision": false,
+        "has_write": false
+      }
+    },
     "filetypes": [],
     "has_aggregate": false,
     "has_provision": false,
     "has_write": false,
-    "resources": []
+    "resources": [
+      "history"
+    ]
   },
   "description": "Show command history for the session.",
   "epilog": null,
@@ -21,7 +31,7 @@
       "value_optional": false
     },
     {
-      "description": "Delete the history entry at the given offset.",
+      "description": "Delete the entry at the given position; negative counts back from the end.",
       "long": null,
       "numeric_shorthand": false,
       "repeatable": false,
@@ -31,7 +41,7 @@
       "value_optional": false
     },
     {
-      "description": "Append the args as a single entry without running.",
+      "description": "Append the args to the history as a single entry without executing them.",
       "long": null,
       "numeric_shorthand": false,
       "repeatable": false,

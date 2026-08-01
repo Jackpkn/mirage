@@ -12,7 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -24,8 +24,63 @@ import type { CommandSpec, Operand, Option, RegisteredCommand } from '@struktoai
 
 const __dirname = resolve(fileURLToPath(import.meta.url), '..')
 const SPEC_ROOT = resolve(__dirname, '..', '..', 'spec', 'typescript')
+const PACKAGES = resolve(__dirname, '..', 'packages')
+
+// Bespoke Google Workspace API passthroughs. They register command names that
+// are not in SPECS, so they contribute nothing to the spec dump and stay
+// internal to the gws resource rather than being re-exported.
+const UNEXPORTED_COMMAND_GROUPS: ReadonlySet<string> = new Set([
+  'GWS_DOCS_API_COMMANDS',
+  'GWS_DRIVE_API_COMMANDS',
+  'GWS_GMAIL_API_COMMANDS',
+  'GWS_SHEETS_API_COMMANDS',
+  'GWS_SLIDES_API_COMMANDS',
+])
 
 type ModuleBag = Record<string, unknown>
+
+function declaredCommandGroups(pkg: string): string[] {
+  const root = resolve(PACKAGES, pkg, 'src', 'commands', 'builtin')
+  const names: string[] = []
+  for (const entry of readdirSync(root, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue
+    let source: string
+    try {
+      source = readFileSync(resolve(root, entry.name, 'index.ts'), 'utf8')
+    } catch (err) {
+      // A directory with no index.ts declares no command group. Any other
+      // read failure means the scan is incomplete, which is exactly when
+      // the reachability assertion below must not be trusted.
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') continue
+      throw err
+    }
+    for (const m of source.matchAll(/^export const ([A-Z0-9_]+_COMMANDS)\b/gm)) {
+      names.push(m[1] as string)
+    }
+  }
+  return names
+}
+
+// The registry below can only see command groups the package index re-exports.
+// A backend that defines its commands but forgets the re-export silently drops
+// out of the spec dump (and out of the cross-language parity check with it),
+// so fail loudly instead of emitting a quietly incomplete spec.
+function assertGroupsReachable(pkgs: readonly string[], modules: ModuleBag[]): void {
+  const reachable = new Set(modules.flatMap((m) => Object.keys(m)))
+  const missing: string[] = []
+  for (const pkg of pkgs) {
+    for (const name of declaredCommandGroups(pkg)) {
+      if (reachable.has(name) || UNEXPORTED_COMMAND_GROUPS.has(name)) continue
+      missing.push(`${name} (packages/${pkg})`)
+    }
+  }
+  if (missing.length > 0) {
+    throw new Error(
+      `command groups are not re-exported from their package index, so their ` +
+        `registrations are invisible to the spec dump: ${missing.join(', ')}`,
+    )
+  }
+}
 
 function collectRegistrations(modules: ModuleBag[]): Record<string, RegisteredCommand[]> {
   const out: Record<string, RegisteredCommand[]> = {}
@@ -41,6 +96,36 @@ function collectRegistrations(modules: ModuleBag[]): Record<string, RegisteredCo
   return out
 }
 
+// The union flags below cannot say *which* resource carries a provision, an
+// aggregate, the write flag or a filetype, so dropping one backend's
+// provision while another keeps it leaves every union unchanged. Key the same
+// facts by resource so the parity check sees that difference.
+function byResource(rcs: RegisteredCommand[]): Record<string, unknown> {
+  const out: Record<
+    string,
+    { has_provision: boolean; has_aggregate: boolean; has_write: boolean; filetypes: Set<string> }
+  > = {}
+  for (const rc of rcs) {
+    const key = rc.resource ?? ''
+    const entry = (out[key] ??= {
+      has_provision: false,
+      has_aggregate: false,
+      has_write: false,
+      filetypes: new Set<string>(),
+    })
+    entry.has_provision ||= rc.provisionFn !== null
+    entry.has_aggregate ||= rc.aggregate !== null
+    entry.has_write ||= rc.write
+    if (rc.filetype !== null) entry.filetypes.add(rc.filetype)
+  }
+  return Object.fromEntries(
+    Object.entries(out).map(([key, entry]) => [
+      key,
+      { ...entry, filetypes: [...entry.filetypes].sort() },
+    ]),
+  )
+}
+
 function metaFor(rcs: RegisteredCommand[]): Record<string, unknown> {
   const resources = [
     ...new Set(rcs.map((r) => r.resource).filter((r): r is string => r !== null)),
@@ -49,6 +134,7 @@ function metaFor(rcs: RegisteredCommand[]): Record<string, unknown> {
     ...new Set(rcs.map((r) => r.filetype).filter((f): f is string => f !== null)),
   ].sort()
   return {
+    by_resource: byResource(rcs),
     filetypes,
     has_aggregate: rcs.some((r) => r.aggregate !== null),
     has_provision: rcs.some((r) => r.provisionFn !== null),
@@ -101,7 +187,8 @@ function sortedStringify(value: unknown): string {
   )
 }
 
-function emitVariant(name: string, modules: ModuleBag[]): void {
+function emitVariant(name: string, pkgs: readonly string[], modules: ModuleBag[]): void {
+  assertGroupsReachable(pkgs, modules)
   const registry = collectRegistrations(modules)
   const outDir = resolve(SPEC_ROOT, name, 'general')
   mkdirSync(outDir, { recursive: true })
@@ -116,8 +203,16 @@ function emitVariant(name: string, modules: ModuleBag[]): void {
 }
 
 function main(): void {
-  emitVariant('node', [Core as unknown as ModuleBag, Node as unknown as ModuleBag])
-  emitVariant('browser', [Core as unknown as ModuleBag, Browser as unknown as ModuleBag])
+  emitVariant(
+    'node',
+    ['core', 'node'],
+    [Core as unknown as ModuleBag, Node as unknown as ModuleBag],
+  )
+  emitVariant(
+    'browser',
+    ['core', 'browser'],
+    [Core as unknown as ModuleBag, Browser as unknown as ModuleBag],
+  )
 }
 
 main()
