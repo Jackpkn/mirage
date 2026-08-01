@@ -753,7 +753,7 @@ async function openQdrant(target: Target): Promise<Open> {
     points: QDRANT_ROWS.map(([id, label, kind, name]) => ({
       id,
       vector: Array<number>(QDRANT_EMBED_DIM).fill(0.1),
-      payload: { label, kind, name },
+      payload: { label, kind, name, image_bytes: btoa(`PNG-${String(id)}`) },
     })),
   })
   for (const field of ['label', 'kind']) {
@@ -769,6 +769,8 @@ async function openQdrant(target: Target): Promise<Open> {
       groupBy: ['label', 'kind'],
       idField: 'id',
       textField: 'name',
+      blobField: 'image_bytes',
+      blobExt: 'png',
     })
     mounts[mount.path] = mount.mode === 'read' ? [resource, MountMode.READ] : resource
   }
@@ -1285,6 +1287,27 @@ async function openGitHub(target: Target): Promise<Open> {
   return { ws: ws as unknown as ExecWorkspace, cleanup: () => ws.close() }
 }
 
+// Reuses the external github_server.py process on GITHUB_URL, which also
+// serves the fixed Actions dataset (workflows/runs/jobs/artifacts).
+async function openGitHubCI(target: Target): Promise<Open> {
+  let base = process.env.GITHUB_URL ?? ''
+  while (base.endsWith('/')) base = base.slice(0, -1)
+  if (base === '') throw new Error('github_ci target requires GITHUB_URL')
+  const mounts: Record<string, GitHubCIResource | [GitHubCIResource, MountMode]> = {}
+  for (const m of target.mounts) {
+    const [owner, repo] = String(m.repo).split('/')
+    const resource = new GitHubCIResource({
+      token: 'ghp-integ',
+      owner: owner ?? '',
+      repo: repo ?? '',
+      baseUrl: base,
+    })
+    mounts[m.path] = m.mode === 'read' ? [resource, MountMode.READ] : resource
+  }
+  const ws = new Workspace(mounts, { mode: MountMode.WRITE })
+  return { ws: ws as unknown as ExecWorkspace, cleanup: () => ws.close() }
+}
+
 async function openDify(target: Target): Promise<Open> {
   const endpoint = process.env.DIFY_ENDPOINT
   if (!endpoint) throw new Error('dify target requires DIFY_ENDPOINT')
@@ -1313,6 +1336,28 @@ async function openTrello(target: Target): Promise<Open> {
       apiKey: 'integ-key',
       apiToken: 'integ-token',
       baseUrl: endpoint,
+    })
+  }
+  const ws = new Workspace(mounts, { mode: MountMode.WRITE })
+  return { ws: ws as unknown as ExecWorkspace, cleanup: () => ws.close() }
+}
+
+async function openDiscord(target: Target): Promise<Open> {
+  const endpoint = process.env.DISCORD_ENDPOINT
+  if (!endpoint) throw new Error('discord target requires DISCORD_ENDPOINT')
+  // The server outlives a single run here, so posted messages have to be
+  // rolled back to the fixture before the write cases run again.
+  const reset = await fetch(`${endpoint}/reset`, { method: 'POST' })
+  if (!reset.ok) throw new Error(`discord /reset failed: ${String(reset.status)}`)
+  const mounts: Record<string, DiscordResource | RAMResource> = {}
+  for (const m of target.mounts) {
+    if (m.resource === 'ram') {
+      mounts[m.path] = new RAMResource()
+      continue
+    }
+    mounts[m.path] = new DiscordResource({
+      token: 'integ-bot-token',
+      baseUrl: `${endpoint}/api/v10`,
     })
   }
   const ws = new Workspace(mounts, { mode: MountMode.WRITE })
@@ -1472,8 +1517,10 @@ export const ADAPTERS: Record<string, (target: Target) => Promise<Open>> = {
   lancedb: openLancedb,
   notion: openNotion,
   github: openGitHub,
+  github_ci: openGitHubCI,
   slack: openSlack,
   trello: openTrello,
+  discord: openDiscord,
   linear: openLinear,
   langfuse: openLangfuse,
   jaeger: openJaeger,

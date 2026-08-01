@@ -359,6 +359,11 @@ def _load_trello_server() -> ModuleType:
         Path(__file__).resolve().parents[2] / "server" / "trello_server.py")
 
 
+def _load_discord_server() -> ModuleType:
+    return _load_module(
+        Path(__file__).resolve().parents[2] / "server" / "discord_server.py")
+
+
 def _load_linear_server() -> ModuleType:
     return _load_module(
         Path(__file__).resolve().parents[2] / "server" / "linear_server.py")
@@ -990,6 +995,35 @@ class GitHubService:
         return None
 
 
+class GitHubCIService:
+    """Points github_ci mounts at the fake api.github.com server.
+
+    Reuses the external github_server.py process on GITHUB_URL, which also
+    serves the fixed Actions dataset (workflows/runs/jobs/artifacts).
+
+    Args:
+        url (str): GITHUB_URL origin the fake is listening on.
+    """
+
+    def __init__(self, url: str) -> None:
+        self.url = url
+
+    @classmethod
+    async def create(cls) -> "GitHubCIService":
+        return cls(os.environ["GITHUB_URL"].rstrip("/"))
+
+    def resource(self, mount: dict) -> GitHubCIResource:
+        owner, _, repo = mount["repo"].partition("/")
+        return GitHubCIResource(
+            GitHubCIConfig(token="ghp-integ",
+                           owner=owner,
+                           repo=repo,
+                           base_url=self.url))
+
+    async def teardown(self) -> None:
+        return None
+
+
 class DifyService:
 
     def __init__(self, runner, base: str, dataset: str) -> None:
@@ -1031,6 +1065,34 @@ class TrelloService:
             TrelloConfig(api_key="integ-key",
                          api_token="integ-token",
                          base_url=self.base))
+
+    async def teardown(self) -> None:
+        await self.runner.cleanup()
+
+
+class DiscordService:
+    """Points discord mounts at the fake discord.com/api server.
+
+    The server (integ/server/discord_server.py) mirrors the documented
+    shapes: newest-first message pages, after/limit pagination, and a CDN
+    route that serves attachment bytes without the bot token.
+    """
+
+    def __init__(self, state, runner, base: str) -> None:
+        self.state = state
+        self.runner = runner
+        self.base = base
+
+    @classmethod
+    async def create(cls) -> "DiscordService":
+        module = _load_discord_server()
+        state, _server, runner = await module.start_fake_discord()
+        return cls(state, runner, state.base)
+
+    def resource(self, mount: dict) -> DiscordResource:
+        return DiscordResource(
+            DiscordConfig(token="integ-bot-token",
+                          base_url=f"{self.base}/api/v10"))
 
     async def teardown(self) -> None:
         await self.runner.cleanup()
@@ -1247,18 +1309,23 @@ class QdrantService:
                 collection,
                 vectors_config=models.VectorParams(
                     size=QDRANT_EMBED_DIM, distance=models.Distance.COSINE))
-            await client.upsert(collection,
-                                points=[
-                                    models.PointStruct(id=i,
-                                                       vector=[0.1] *
-                                                       QDRANT_EMBED_DIM,
-                                                       payload={
-                                                           "label": label,
-                                                           "kind": kind,
-                                                           "name": name
-                                                       })
-                                    for i, label, kind, name in QDRANT_ROWS
-                                ])
+            await client.upsert(
+                collection,
+                points=[
+                    models.PointStruct(
+                        id=i,
+                        vector=[0.1] * QDRANT_EMBED_DIM,
+                        payload={
+                            "label":
+                            label,
+                            "kind":
+                            kind,
+                            "name":
+                            name,
+                            "image_bytes":
+                            base64.b64encode(f"PNG-{i}".encode()).decode(),
+                        }) for i, label, kind, name in QDRANT_ROWS
+                ])
             for field in ("label", "kind"):
                 await client.create_payload_index(
                     collection,
@@ -1276,7 +1343,9 @@ class QdrantService:
                          collection=self.collection,
                          group_by=["label", "kind"],
                          id_field="id",
-                         text_field="name"))
+                         text_field="name",
+                         blob_field="image_bytes",
+                         blob_ext="png"))
 
     async def teardown(self) -> None:
         client = AsyncQdrantClient(host=self.host, port=self.port)
@@ -1656,6 +1725,13 @@ def build_trello(
     return service.resource(mount), _noop
 
 
+def build_discord(
+        mount: dict, run_id: str, service: Service | None
+) -> tuple[object, Callable[[], Awaitable[None]]]:
+    assert isinstance(service, DiscordService)
+    return service.resource(mount), _noop
+
+
 def build_linear(
         mount: dict, run_id: str, service: Service | None
 ) -> tuple[object, Callable[[], Awaitable[None]]]:
@@ -1737,6 +1813,13 @@ def build_github(
         mount: dict, run_id: str, service: Service | None
 ) -> tuple[object, Callable[[], Awaitable[None]]]:
     assert isinstance(service, GitHubService)
+    return service.resource(mount), _noop
+
+
+def build_github_ci(
+        mount: dict, run_id: str, service: Service | None
+) -> tuple[object, Callable[[], Awaitable[None]]]:
+    assert isinstance(service, GitHubCIService)
     return service.resource(mount), _noop
 
 
@@ -1871,8 +1954,10 @@ BUILDERS = {
     "box": build_box,
     "dropbox": build_dropbox,
     "github": build_github,
+    "github_ci": build_github_ci,
     "slack": build_slack,
     "trello": build_trello,
+    "discord": build_discord,
     "linear": build_linear,
     "langfuse": build_langfuse,
     "jaeger": build_jaeger,
@@ -1924,10 +2009,14 @@ async def make_service(target: dict, run_id: str) -> "Service | None":
         return await DropboxService.create(target)
     if target.get("service") == "github":
         return await GitHubService.create()
+    if target.get("service") == "github_ci":
+        return await GitHubCIService.create()
     if target.get("service") == "slack":
         return await SlackService.create()
     if target.get("service") == "trello":
         return await TrelloService.create()
+    if target.get("service") == "discord":
+        return await DiscordService.create()
     if target.get("service") == "linear":
         return await LinearService.create()
     if target.get("service") == "dify":
