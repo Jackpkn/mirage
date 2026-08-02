@@ -12,12 +12,6 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from mirage.commands.cli.types import CLISpec, WalkResult
-from mirage.commands.cli.walk import node_help, walk
-
-__all__ = [
-    "CLISpec",
-    "WalkResult",
-    "node_help",
-    "walk",
-]
+# git prints usage errors at tree levels with exit 129; leaf spec errors
+# keep the GNU exit-2 machinery they already ride.
+USAGE_EXIT = 129

@@ -35,7 +35,22 @@ function flagDisplay(opt: Option): string {
   return parts.join(', ') + VALUE_LABEL[opt.valueKind]
 }
 
-export function renderHelp(name: string, spec: CommandSpec): string {
+/** Display rows [flag spelling, description] for a spec's options. */
+function flagRows(spec: CommandSpec): [string, string][] {
+  return spec.options.map((o) => [flagDisplay(o), o.description ?? ''])
+}
+
+/**
+ * Render one command's help; a CLI group is the same shape plus a Commands
+ * section. `subcommands` carries (name, one-line help) rows for a CLI
+ * group node; when given, the usage line reads `<command> [<args>]`
+ * instead of the operand slots.
+ */
+export function renderHelp(
+  name: string,
+  spec: CommandSpec,
+  subcommands: readonly [string, string][] = [],
+): string {
   const lines: string[] = []
   if (spec.description !== null && spec.description !== '') {
     lines.push(`${name}: ${spec.description}`)
@@ -46,6 +61,7 @@ export function renderHelp(name: string, spec: CommandSpec): string {
 
   const usageBits = [name]
   if (spec.options.length > 0) usageBits.push('[flags]')
+  if (subcommands.length > 0) usageBits.push('<command> [<args>]')
   for (const op of spec.positional) {
     usageBits.push(op.kind === OperandKind.PATH ? '<path>' : '<text>')
   }
@@ -54,16 +70,24 @@ export function renderHelp(name: string, spec: CommandSpec): string {
   }
   lines.push(`Usage: ${usageBits.join(' ')}`)
 
+  if (subcommands.length > 0) {
+    lines.push('')
+    lines.push('Commands:')
+    const width = Math.max(...subcommands.map(([sub]) => sub.length))
+    const sorted = [...subcommands].sort((a, b) => (a[0] < b[0] ? -1 : 1))
+    for (const [sub, desc] of sorted) {
+      const first = desc.split('\n')[0] ?? ''
+      lines.push(first === '' ? `  ${sub}` : `  ${sub.padEnd(width, ' ')}  ${first}`)
+    }
+  }
+
   if (spec.options.length > 0) {
     lines.push('')
     lines.push('Flags:')
-    const rows = spec.options.map((o) => [flagDisplay(o), o.description ?? ''])
-    const width = Math.max(...rows.map((r) => (r[0] ?? '').length))
+    const rows = flagRows(spec)
+    const width = Math.max(...rows.map(([flag]) => flag.length))
     for (const [flag, desc] of rows) {
-      const flagStr = flag ?? ''
-      const descStr = desc ?? ''
-      const padded = flagStr.padEnd(width, ' ')
-      lines.push(descStr === '' ? `  ${flagStr}` : `  ${padded}  ${descStr}`)
+      lines.push(desc === '' ? `  ${flag}` : `  ${flag.padEnd(width, ' ')}  ${desc}`)
     }
   }
 

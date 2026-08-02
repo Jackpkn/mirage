@@ -12,14 +12,18 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from dataclasses import dataclass
-from typing import Any, Callable
+from dataclasses import dataclass, field
+from typing import Any, Callable, Literal
 
 from pydantic import BaseModel
 
 from mirage.commands.cli.compile import validate_cli
 from mirage.commands.spec.types import CommandSpec
 from mirage.types import CommandSafeguard
+
+# The group-level flag bag the walk accumulates, keyed by canonical
+# dashed spelling like ParsedArgs.flags.
+FlagBag = dict[str, str | bool | int | list[str]]
 
 
 @dataclass(frozen=True)
@@ -68,3 +72,34 @@ class CLISpec(CommandSpec):
 
     def __post_init__(self) -> None:
         validate_cli(self)
+
+
+@dataclass(frozen=True)
+class WalkResult:
+    """Outcome of walking a CLI tree with one command line.
+
+    Exactly one of two shapes: ``leaf`` set (dispatch: the resolved verb,
+    the group flags collected on the way down, and the argv remainder the
+    leaf's own spec parses), or ``leaf`` None (rendered: ``output`` goes
+    to ``stream`` and the line exits with ``exit_code``, covering help,
+    bare-group usage, unknown verbs, and group-level option errors).
+
+    Args:
+        leaf (CLISpec | None): resolved verb node, None for a rendered
+            outcome.
+        path (tuple[str, ...]): words consumed below the head, including
+            the leaf name.
+        group_flags (dict): flags consumed at group levels, keyed by
+            canonical dashed spelling like ParsedArgs.flags.
+        argv (tuple[str, ...]): remaining tokens for the leaf's spec.
+        output (bytes): rendered bytes when ``leaf`` is None.
+        stream (Literal["stdout", "stderr"]): where ``output`` goes.
+        exit_code (int): exit status for a rendered outcome.
+    """
+    leaf: "CLISpec | None" = None
+    path: tuple[str, ...] = ()
+    group_flags: FlagBag = field(default_factory=dict)
+    argv: tuple[str, ...] = ()
+    output: bytes = b""
+    stream: Literal["stdout", "stderr"] = "stdout"
+    exit_code: int = 0
