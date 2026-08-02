@@ -1,0 +1,54 @@
+# ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
+
+from collections.abc import Awaitable
+from dataclasses import dataclass, field
+from typing import Any, Protocol, TypeAlias
+
+from mirage.io import IOResult
+from mirage.resource.base import BaseResource
+from mirage.runtime.policy.safeguard import CommandSafeguard
+from mirage.types import MountBackend, MountMode, PathSpec
+from mirage.workspace.mount.spec import Mount
+
+ResourceMount: TypeAlias = (BaseResource | Mount
+                            | tuple[BaseResource, MountMode]
+                            | tuple[BaseResource, MountMode,
+                                    dict[str, CommandSafeguard]])
+
+
+class DispatchFn(Protocol):
+    """The workspace op dispatch: run ``op`` against the mount owning
+    ``path`` and return its result with the accounting IOResult."""
+
+    def __call__(self, op: str, path: PathSpec,
+                 **kwargs: Any) -> Awaitable[tuple[Any, IOResult]]:
+        ...
+
+
+@dataclass(frozen=True, slots=True)
+class MountSpec:
+    """One entry of the ``resources`` mapping, in resolved form.
+
+    Every accepted spelling (bare resource, ``(resource, mode)`` tuple,
+    full ``Mount``) narrows to this before the registry sees it, so the
+    mount loop reads one shape instead of a union.
+    """
+
+    prefix: str
+    resource: BaseResource
+    mode: MountMode
+    backend: MountBackend = MountBackend.VFS
+    mountpoint: str | None = None
+    safeguards: dict[str, CommandSafeguard] = field(default_factory=dict)
