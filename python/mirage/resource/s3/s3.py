@@ -86,6 +86,17 @@ class S3Resource(BaseResource):
         for fn in S3_OPS:
             self.register_op(fn)
 
+    def storage_id(self) -> str:
+        # Endpoint, bucket and key prefix pin the object namespace. The
+        # endpoint matters because the same bucket name on two providers
+        # (AWS vs MinIO vs R2) is two different stores. The prefix joins
+        # path-like so two mounts whose prefixes nest still resolve to
+        # one key once the mount-relative path is appended.
+        cfg = self.config
+        prefix = (cfg.key_prefix or "").strip("/")
+        base = f"{self.name}:{cfg.endpoint_url or 'aws'}:{cfg.bucket}"
+        return f"{base}/{prefix}" if prefix else base
+
     async def resolve_glob(self, paths, prefix: str = ""):
         if prefix:
             paths = [

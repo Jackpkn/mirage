@@ -91,12 +91,22 @@ class RedisResource(BaseResource):
         key_prefix: str = "mirage:fs:",
     ) -> None:
         super().__init__()
+        self.url = url
+        self.key_prefix = key_prefix
         self._store = RedisStore(url=url, key_prefix=key_prefix)
         self.accessor = RedisAccessor(self._store)
         for fn in REDIS_COMMANDS:
             self.register(fn)
         for ro in REDIS_OPS:
             self.register_op(ro)
+
+    def storage_id(self) -> str:
+        # The server URL (host, port and db) plus the key prefix pin the
+        # keyspace two mounts would share. The prefix is joined path-like
+        # so nested prefixes collapse onto one key.
+        prefix = self.key_prefix.strip("/")
+        base = f"{self.name}:{self.url}"
+        return f"{base}/{prefix}" if prefix else base
 
     async def resolve_glob(self, paths, prefix: str = ""):
         if prefix:

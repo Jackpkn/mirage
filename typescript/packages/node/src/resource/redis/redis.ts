@@ -25,6 +25,7 @@ import {
   type RegisteredCommand,
   type RegisteredOp,
   type Resource,
+  stripSlash,
 } from '@struktoai/mirage-core'
 import { REDIS_COMMANDS } from '../../commands/builtin/redis/index.ts'
 import type { RedisClientType } from 'redis'
@@ -115,6 +116,15 @@ export class RedisResource extends BaseResource implements Resource {
     this.keyPrefix = options.keyPrefix ?? 'mirage:fs:'
     this.store = new RedisStore({ url: this.url, keyPrefix: this.keyPrefix })
     this.accessor = new RedisAccessor(this.store)
+  }
+
+  // The server URL (host, port and db) plus the key prefix pin the keyspace
+  // two mounts would share. The prefix is joined path-like so nested
+  // prefixes collapse onto one key.
+  override storageId(): string {
+    const prefix = stripSlash(this.keyPrefix)
+    const base = `${this.kind}:${this.url}`
+    return prefix === '' ? base : `${base}/${prefix}`
   }
 
   async open(): Promise<void> {
