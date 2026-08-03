@@ -19,6 +19,7 @@ import { applyOpSafeguard, runWithTimeout } from '../commands/builtin/utils/safe
 import { getExtension } from '../commands/resolve.ts'
 import { IOResult } from '../io/types.ts'
 import { eaccesReadOnly } from '../utils/errors.ts'
+import { Policies, postOpsGate, preOpsGate } from '../policy/index.ts'
 import { mountKey } from '../utils/key_prefix.ts'
 import { rstripSlash } from '../utils/slash.ts'
 import { runWithMountPrefix, runWithRevisions } from '../observe/context.ts'
@@ -47,6 +48,10 @@ const DISPATCH_WRITE_OPS = new Set([
   'rmdir',
   'rename',
 ])
+// setattr mutates the mount but keeps its own overlay bookkeeping in
+// the metadata builtin, so it is a write for policy admission without
+// joining the dispatcher's post-write invalidation path.
+const POLICY_WRITE_OPS = new Set([...DISPATCH_WRITE_OPS, 'setattr'])
 
 export type ResolveFn = (path: string) => Promise<[Resource, PathSpec, MountMode]>
 
@@ -54,6 +59,7 @@ export class Dispatcher {
   private readonly namespace: Namespace
   private readonly cache: FileCache & Resource
   private readonly opsRegistry: OpsRegistry
+  private readonly policies: Policies
   readonly reconciler: Reconciler
 
   constructor(
@@ -61,10 +67,12 @@ export class Dispatcher {
     cache: FileCache & Resource,
     opsRegistry: OpsRegistry,
     consistency: ConsistencyPolicy = ConsistencyPolicy.LAZY,
+    policies?: Policies,
   ) {
     this.namespace = namespace
     this.cache = cache
     this.opsRegistry = opsRegistry
+    this.policies = policies ?? new Policies()
     this.reconciler = new Reconciler(cache, namespace, opsRegistry, consistency)
   }
 
@@ -76,14 +84,22 @@ export class Dispatcher {
     }
     const [resource, scope, mode] = await this.namespace.resolve(p.virtual, false)
     const mount = this.namespace.mountFor(p.virtual)
+    const mountPrefix = mount?.prefix ?? '/'
+    // Admission policies fire at the door, before the warm-cache early
+    // return below: a cached read must be refused exactly like a cold
+    // one, or the cache becomes a policy bypass. This dispatcher is the
+    // one door in TypeScript: shell internals, programmatic access, and
+    // FUSE all route through Workspace.dispatch.
+    const opWrite = POLICY_WRITE_OPS.has(opName)
+    await preOpsGate(this.policies, opName, p, opWrite, mountPrefix)
     const caches = cachesReads(resource)
     if (caches && mount !== null && DISPATCH_READ_OPS.has(opName)) {
       const cached = await this.cache.get(p.virtual)
       if (cached !== null && (await this.reconciler.mayServeCached(mount, p.virtual))) {
+        await postOpsGate(this.policies, opName, p, opWrite, mountPrefix, cached)
         return [cached, new IOResult({ reads: { [p.virtual]: cached } })]
       }
     }
-    const mountPrefix = mount?.prefix ?? '/'
     if (
       effectiveMountMode(mountPrefix, mode) === MountMode.READ &&
       this.opsRegistry.find(opName, resource.kind)?.write === true
@@ -162,8 +178,9 @@ export class Dispatcher {
       }
     }
     if (opName === 'stat' && result instanceof FileStat) {
-      return [mergeOverlayStat(this.namespace.metaFor(p.virtual), result), new IOResult()]
+      result = mergeOverlayStat(this.namespace.metaFor(p.virtual), result)
     }
+    await postOpsGate(this.policies, opName, p, opWrite, mountPrefix, result)
     return [result, new IOResult()]
   }
 

@@ -12,9 +12,12 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import errno
+
 import pytest
 
 from mirage import Action, CommandContext, Deny, GuardSpec, Policy, Workspace
+from mirage.policy import OpsContext, OpsResultContext
 from mirage.resource.ram import RAMResource
 from mirage.types import MountMode
 
@@ -123,5 +126,93 @@ async def test_guards_cover_path_valued_flags():
         assert b"prod is protected" in result.stderr
         listing = await ws.execute("ls /data/prod")
         assert b"out" not in listing.stdout
+    finally:
+        await ws.close()
+
+
+class ReadOnlyProd(Policy):
+
+    async def pre_ops(self, ctx: OpsContext) -> Action | None:
+        if ctx.write and ctx.path.virtual.startswith("/data/prod/"):
+            return Deny("prod is read-only\n")
+        return None
+
+
+@pytest.mark.asyncio
+async def test_path_guards_hold_at_the_programmatic_door():
+    # ws.ops is the same seam FUSE comes through; a path-only guard
+    # must refuse it, not just shell commands (#675).
+    ws = Workspace({"/data/": RAMResource()},
+                   mode=MountMode.WRITE,
+                   guards=[
+                       GuardSpec(reason="prod is protected",
+                                 paths=("/data/prod/*", ))
+                   ])
+    try:
+        await ws.execute("mkdir -p /data/other")
+        await ws.ops.write("/data/other/ok.txt", b"fine\n")
+        with pytest.raises(PermissionError) as excinfo:
+            await ws.ops.write("/data/prod/x.txt", b"nope\n")
+        assert excinfo.value.errno == errno.EACCES
+        assert "prod is protected" in str(excinfo.value)
+        with pytest.raises(PermissionError):
+            await ws.ops.read("/data/prod/x.txt")
+    finally:
+        await ws.close()
+
+
+class SuppressProdWrites(Policy):
+
+    async def post_ops(self, ctx: OpsResultContext) -> Action | None:
+        if ctx.write and ctx.path.virtual.startswith("/data/prod/"):
+            return Deny("write suppressed\n")
+        return None
+
+
+@pytest.mark.asyncio
+async def test_touch_on_an_existing_file_is_a_write_at_the_op_door():
+    # touch on an existing file mutates via setattr, not create; the
+    # write classification must cover that op too.
+    ws = Workspace({"/data/": RAMResource()}, mode=MountMode.WRITE)
+    try:
+        await ws.execute("mkdir -p /data/prod")
+        await ws.ops.write("/data/prod/x.txt", b"keep\n")
+        ws.policies.add(ReadOnlyProd())
+        result = await ws.execute("touch /data/prod/x.txt")
+        assert result.exit_code != 0
+        assert b"Permission denied" in result.stderr
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_post_ops_deny_still_records_the_completed_write():
+    # A post deny suppresses the result, not the effect: the backend
+    # already mutated, so observation and caches must reflect the op.
+    ws = Workspace({"/data/": RAMResource()}, mode=MountMode.WRITE)
+    try:
+        await ws.execute("mkdir -p /data/prod")
+        ws.policies.add(SuppressProdWrites())
+        with pytest.raises(PermissionError):
+            await ws.ops.write("/data/prod/x.txt", b"data\n")
+        assert any(r.op == "write" for r in ws.ops.records)
+        assert await ws.ops.read("/data/prod/x.txt") == b"data\n"
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_pre_ops_policy_holds_on_the_dispatcher_door():
+    # touch routes through the shell's internal dispatcher, not
+    # handle_command; a pre_ops-only policy must still refuse it.
+    ws = Workspace({"/data/": RAMResource()}, mode=MountMode.WRITE)
+    try:
+        ws.policies.add(ReadOnlyProd())
+        await ws.execute("mkdir -p /data/prod")
+        result = await ws.execute("touch /data/prod/x")
+        assert result.exit_code != 0
+        assert b"Permission denied" in result.stderr
+        ok = await ws.execute("touch /data/free && echo done")
+        assert b"done" in ok.stdout
     finally:
         await ws.close()
