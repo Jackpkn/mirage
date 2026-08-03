@@ -18,12 +18,12 @@ import { appendBlocks, getChildBlocks, getPage } from '../../../core/notion/page
 import { IOResult } from '../../../io/types.ts'
 import { ResourceName, type PathSpec } from '../../../types.ts'
 import { command, type CommandFnResult, type CommandOpts } from '../../config.ts'
-import { CommandSpec, OperandKind, Option } from '../../spec/types.ts'
+import { CommandSpec, Option } from '../../spec/types.ts'
 
 const SPEC = new CommandSpec({
   options: [
-    new Option({ long: '--params', valueKind: OperandKind.TEXT }),
-    new Option({ long: '--json', valueKind: OperandKind.TEXT }),
+    new Option({ long: '--params', type: 'str' }),
+    new Option({ long: '--json', type: 'str' }),
   ],
 })
 

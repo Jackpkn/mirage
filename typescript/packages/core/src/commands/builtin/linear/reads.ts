@@ -50,7 +50,7 @@ import {
   type CommandOpts,
   type RegisteredCommand,
 } from '../../config.ts'
-import { CommandSpec, OperandKind, Operand, Option } from '../../spec/types.ts'
+import { CommandSpec, Operand, Option } from '../../spec/types.ts'
 
 const ISSUE_KEY_RE = /^[A-Za-z][A-Za-z0-9]*-\d+$/
 
@@ -63,17 +63,17 @@ interface LinearRead {
 }
 
 const SPEC_NONE = new CommandSpec({})
-const SPEC_ARG = new CommandSpec({ rest: new Operand({ kind: OperandKind.TEXT }) })
+const SPEC_ARG = new CommandSpec({ rest: new Operand({ type: 'str' }) })
 const SPEC_TEAM = new CommandSpec({
-  options: [new Option({ long: '--team', valueKind: OperandKind.TEXT })],
+  options: [new Option({ long: '--team', type: 'str' })],
 })
 const SPEC_TEAM_ARG = new CommandSpec({
-  options: [new Option({ long: '--team', valueKind: OperandKind.TEXT })],
-  rest: new Operand({ kind: OperandKind.TEXT }),
+  options: [new Option({ long: '--team', type: 'str' })],
+  rest: new Operand({ type: 'str' }),
 })
 const SEARCH_SPEC = new CommandSpec({
-  options: [new Option({ long: '--query', valueKind: OperandKind.TEXT })],
-  rest: new Operand({ kind: OperandKind.TEXT }),
+  options: [new Option({ long: '--query', type: 'str' })],
+  rest: new Operand({ type: 'str' }),
 })
 
 function first(texts: string[], label: string): string {

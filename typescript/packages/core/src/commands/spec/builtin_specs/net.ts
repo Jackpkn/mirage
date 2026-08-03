@@ -12,7 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { CommandSpec, Operand, OperandKind, Option } from '../types.ts'
+import { CommandSpec, Operand, Option } from '../types.ts'
 
 export const SPECS: Record<string, CommandSpec> = {
   curl: new CommandSpec({
@@ -20,32 +20,32 @@ export const SPECS: Record<string, CommandSpec> = {
     options: [
       new Option({
         short: '-H',
-        valueKind: OperandKind.TEXT,
+        type: 'str',
         description: 'Add a custom header to the request.',
       }),
       new Option({
         short: '-A',
-        valueKind: OperandKind.TEXT,
+        type: 'str',
         description: 'Set the User-Agent header.',
       }),
       new Option({
         short: '-X',
-        valueKind: OperandKind.TEXT,
+        type: 'str',
         description: 'Specify the HTTP request method.',
       }),
       new Option({
         short: '-d',
-        valueKind: OperandKind.TEXT,
+        type: 'str',
         description: 'Send the given data as the request body.',
       }),
       new Option({
         short: '-F',
-        valueKind: OperandKind.TEXT,
+        type: 'str',
         description: 'Submit a multipart/form-data field.',
       }),
       new Option({
         short: '-o',
-        valueKind: OperandKind.PATH,
+        type: 'path',
         description: 'Write response body to the given file.',
       }),
       new Option({ short: '-L', description: 'Follow HTTP redirects.' }),
@@ -57,14 +57,14 @@ export const SPECS: Record<string, CommandSpec> = {
       new Option({ short: '-s', description: 'Run silently with no progress or messages.' }),
       new Option({ short: '-S', description: 'Show errors even when silent.' }),
     ],
-    rest: new Operand({ kind: OperandKind.TEXT }),
+    rest: new Operand({ type: 'str' }),
   }),
   wget: new CommandSpec({
     description: 'Retrieve files from the web.',
     options: [
       new Option({
         short: '-O',
-        valueKind: OperandKind.PATH,
+        type: 'path',
         description: 'Write the downloaded content to the given file.',
       }),
       new Option({ short: '-q', description: 'Run quietly with no output.' }),
@@ -73,7 +73,7 @@ export const SPECS: Record<string, CommandSpec> = {
         description: 'Check that the URL exists without downloading it.',
       }),
     ],
-    positional: [new Operand({ kind: OperandKind.TEXT })],
-    rest: new Operand({ kind: OperandKind.PATH }),
+    positional: [new Operand({ type: 'str' })],
+    rest: new Operand({ type: 'path' }),
   }),
 }

@@ -15,7 +15,6 @@
 import {
   CommandSpec,
   IOResult,
-  OperandKind,
   Option,
   ResourceName,
   command,
@@ -31,8 +30,8 @@ const ENC = new TextEncoder()
 
 const SPEC = new CommandSpec({
   options: [
-    new Option({ long: '--uid', valueKind: OperandKind.TEXT }),
-    new Option({ long: '--folder', valueKind: OperandKind.TEXT }),
+    new Option({ long: '--uid', type: 'str' }),
+    new Option({ long: '--folder', type: 'str' }),
   ],
 })
 

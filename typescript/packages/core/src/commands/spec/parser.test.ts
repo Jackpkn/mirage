@@ -15,12 +15,12 @@
 import { describe, expect, it } from 'vitest'
 import { specOf } from './builtins.ts'
 import { parseCommand, parseToKwargs } from './parser.ts'
-import { CommandSpec, Operand, OperandKind, Option, ParsedArgs } from './types.ts'
+import { CommandSpec, Operand, Option, ParsedArgs } from './types.ts'
 
 describe('parseCommand — bool short flags', () => {
   const spec = new CommandSpec({
     options: [new Option({ short: '-l' }), new Option({ short: '-a' })],
-    rest: new Operand({ kind: OperandKind.PATH }),
+    rest: new Operand({ type: 'path' }),
   })
 
   it('parses single short flag', () => {
@@ -43,11 +43,8 @@ describe('parseCommand — bool short flags', () => {
 
 describe('parseCommand — value flags', () => {
   const spec = new CommandSpec({
-    options: [
-      new Option({ short: '-n', valueKind: OperandKind.TEXT }),
-      new Option({ short: '-o', valueKind: OperandKind.PATH }),
-    ],
-    rest: new Operand({ kind: OperandKind.PATH }),
+    options: [new Option({ short: '-n', type: 'str' }), new Option({ short: '-o', type: 'path' })],
+    rest: new Operand({ type: 'path' }),
   })
 
   it('parses separate value form: -n 5', () => {
@@ -75,8 +72,8 @@ describe('parseCommand — value flags', () => {
 
 describe('parseCommand — numericShorthand', () => {
   const spec = new CommandSpec({
-    options: [new Option({ short: '-n', valueKind: OperandKind.TEXT, numericShorthand: true })],
-    rest: new Operand({ kind: OperandKind.PATH }),
+    options: [new Option({ short: '-n', type: 'str', numericShorthand: true })],
+    rest: new Operand({ type: 'path' }),
   })
 
   it('treats -3 as -n 3 (GNU head/tail shorthand)', () => {
@@ -97,8 +94,8 @@ describe('parseCommand — numericShorthand', () => {
 
   it('is opt-in: spec without numericShorthand ignores -3', () => {
     const noShortcut = new CommandSpec({
-      options: [new Option({ short: '-n', valueKind: OperandKind.TEXT })],
-      rest: new Operand({ kind: OperandKind.PATH }),
+      options: [new Option({ short: '-n', type: 'str' })],
+      rest: new Operand({ type: 'path' }),
     })
     const p = parseCommand(noShortcut, ['-3', '/ram/x'], '/')
     expect(p.flags['-n']).toBeUndefined()
@@ -107,11 +104,8 @@ describe('parseCommand — numericShorthand', () => {
 
 describe('parseCommand — long flags', () => {
   const spec = new CommandSpec({
-    options: [
-      new Option({ long: '--verbose' }),
-      new Option({ long: '--name', valueKind: OperandKind.TEXT }),
-    ],
-    rest: new Operand({ kind: OperandKind.PATH }),
+    options: [new Option({ long: '--verbose' }), new Option({ long: '--name', type: 'str' })],
+    rest: new Operand({ type: 'path' }),
   })
 
   it('parses long bool', () => {
@@ -127,26 +121,26 @@ describe('parseCommand — long flags', () => {
 
 describe('parseCommand — positional classification', () => {
   const spec = new CommandSpec({
-    positional: [new Operand({ kind: OperandKind.TEXT }), new Operand({ kind: OperandKind.PATH })],
+    positional: [new Operand({ type: 'str' }), new Operand({ type: 'path' })],
   })
 
   it('classifies args by positional kind', () => {
     const p = parseCommand(spec, ['pattern', '/ram/x'], '/')
     expect(p.args).toEqual([
-      ['pattern', OperandKind.TEXT],
-      ['/ram/x', OperandKind.PATH],
+      ['pattern', 'str'],
+      ['/ram/x', 'path'],
     ])
   })
 
   it('passes overflow args through like the last slot when no rest', () => {
     const p = parseCommand(spec, ['pattern', '/ram/x', 'extra'], '/')
     expect(p.args).toHaveLength(3)
-    expect(p.args[2]?.[1]).toBe(OperandKind.PATH)
+    expect(p.args[2]?.[1]).toBe('path')
   })
 })
 
 describe('parseCommand — --cache extraction', () => {
-  const spec = new CommandSpec({ rest: new Operand({ kind: OperandKind.PATH }) })
+  const spec = new CommandSpec({ rest: new Operand({ type: 'path' }) })
 
   it('greedily consumes non-flag args into cachePaths, matching Python', () => {
     const p = parseCommand(spec, ['--cache', '/ram/cached', '/ram/x'], '/')
@@ -157,7 +151,7 @@ describe('parseCommand — --cache extraction', () => {
   it('stops --cache loop at the next flag token', () => {
     const spec2 = new CommandSpec({
       options: [new Option({ short: '-l' })],
-      rest: new Operand({ kind: OperandKind.PATH }),
+      rest: new Operand({ type: 'path' }),
     })
     const p = parseCommand(spec2, ['--cache', '/ram/cached', '-l', '/ram/x'], '/')
     expect(p.cachePaths).toEqual(['/ram/cached'])
@@ -178,8 +172,8 @@ describe('parseCommand — clustered flags shift positionals when one is missing
       // -I deliberately missing
       new Option({ short: '-l' }),
     ],
-    positional: [new Operand({ kind: OperandKind.TEXT })],
-    rest: new Operand({ kind: OperandKind.PATH }),
+    positional: [new Operand({ type: 'str' })],
+    rest: new Operand({ type: 'path' }),
   })
 
   const grepLikeFull = new CommandSpec({
@@ -188,8 +182,8 @@ describe('parseCommand — clustered flags shift positionals when one is missing
       new Option({ short: '-I' }),
       new Option({ short: '-l' }),
     ],
-    positional: [new Operand({ kind: OperandKind.TEXT })],
-    rest: new Operand({ kind: OperandKind.PATH }),
+    positional: [new Operand({ type: 'str' })],
+    rest: new Operand({ type: 'path' }),
   })
 
   it('reports the missing cluster char without shifting positionals', () => {
@@ -214,12 +208,9 @@ describe('parseCommand — providedBy frees the positional slot', () => {
   // providedBy, the pattern positional still consumed the first raw arg, so
   // the file path was classified as TEXT and paths() came back empty.
   const grepLike = new CommandSpec({
-    options: [
-      new Option({ short: '-n' }),
-      new Option({ short: '-e', valueKind: OperandKind.TEXT }),
-    ],
-    positional: [new Operand({ kind: OperandKind.TEXT, providedBy: ['-e'] })],
-    rest: new Operand({ kind: OperandKind.PATH }),
+    options: [new Option({ short: '-n' }), new Option({ short: '-e', type: 'str' })],
+    positional: [new Operand({ type: 'str', providedBy: ['-e'] })],
+    rest: new Operand({ type: 'path' }),
   })
 
   it('classifies remaining args as rest paths when the flag is present', () => {
@@ -285,8 +276,8 @@ describe('parseCommand — multiple value flags accumulate newline-joined', () =
 
   it('long =value and separate forms of a multiple flag accumulate', () => {
     const spec = new CommandSpec({
-      options: [new Option({ long: '--tag', valueKind: OperandKind.TEXT, multiple: true })],
-      rest: new Operand({ kind: OperandKind.PATH }),
+      options: [new Option({ long: '--tag', type: 'str', multiple: true })],
+      rest: new Operand({ type: 'path' }),
     })
     const p = parseCommand(spec, ['--tag=a', '--tag', 'b', '/x'], '/')
     expect(p.flags['--tag']).toEqual(['a', 'b'])
@@ -514,17 +505,9 @@ describe('parseCommand — awk spec', () => {
 describe('overflow operand pass-through', () => {
   it('classifies overflow like the last positional slot', () => {
     const uniq = parseCommand(specOf('uniq'), ['a.txt', 'b.txt', 'c.txt'], '/data')
-    expect(uniq.args.map(([, k]) => k)).toEqual([
-      OperandKind.PATH,
-      OperandKind.PATH,
-      OperandKind.PATH,
-    ])
+    expect(uniq.args.map(([, k]) => k)).toEqual(['path', 'path', 'path'])
     const tr = parseCommand(specOf('tr'), ['a', 'b', 'extra.txt'], '/data')
-    expect(tr.args.map(([, k]) => k)).toEqual([
-      OperandKind.TEXT,
-      OperandKind.TEXT,
-      OperandKind.TEXT,
-    ])
+    expect(tr.args.map(([, k]) => k)).toEqual(['str', 'str', 'str'])
   })
 })
 
@@ -598,7 +581,7 @@ describe('attached short values land on the canonical dest', () => {
 describe('count flags accumulate occurrences', () => {
   const spec = new CommandSpec({
     options: [new Option({ short: '-v', long: '--verbose', count: true })],
-    rest: new Operand({ kind: OperandKind.PATH }),
+    rest: new Operand({ type: 'path' }),
   })
 
   it('parses -vvv and -v -v alike', () => {
@@ -630,7 +613,7 @@ describe('choices violations are reported, never thrown', () => {
       options: [
         new Option({
           short: '-m',
-          valueKind: OperandKind.TEXT,
+          type: 'str',
           multiple: true,
           choices: ['x', 'y'],
         }),
@@ -644,7 +627,7 @@ describe('choices violations are reported, never thrown', () => {
 describe('required and default', () => {
   it('reports an absent required option', () => {
     const spec = new CommandSpec({
-      options: [new Option({ long: '--out', valueKind: OperandKind.TEXT, required: true })],
+      options: [new Option({ long: '--out', type: 'str', required: true })],
     })
     expect(parseCommand(spec, [], '/').missingRequiredOptions).toEqual(['--out'])
     expect(parseCommand(spec, ['--out', 'x'], '/').missingRequiredOptions).toEqual([])
@@ -655,7 +638,7 @@ describe('required and default', () => {
       options: [
         new Option({
           long: '--mode',
-          valueKind: OperandKind.TEXT,
+          type: 'str',
           required: true,
           default: 'fast',
         }),
@@ -669,7 +652,7 @@ describe('required and default', () => {
 
   it('resolves and routes a PATH default', () => {
     const spec = new CommandSpec({
-      options: [new Option({ long: '--file', valueKind: OperandKind.PATH, default: 'cfg.txt' })],
+      options: [new Option({ long: '--file', type: 'path', default: 'cfg.txt' })],
     })
     const parsed = parseCommand(spec, [], '/data')
     expect(parsed.flags['--file']).toBe('/data/cfg.txt')
@@ -684,7 +667,7 @@ describe('multiple + default', () => {
         new Option({
           short: '-f',
           long: '--file',
-          valueKind: OperandKind.PATH,
+          type: 'path',
           multiple: true,
           default: 'cfg.txt',
         }),
@@ -712,8 +695,8 @@ describe('long-option abbreviation', () => {
   it('reports ambiguous prefixes with possibilities in declaration order', () => {
     const spec = new CommandSpec({
       options: [
-        new Option({ long: '--context', valueKind: OperandKind.TEXT }),
-        new Option({ long: '--color', valueOptional: true, valueKind: OperandKind.TEXT }),
+        new Option({ long: '--context', type: 'str' }),
+        new Option({ long: '--color', valueOptional: true, type: 'str' }),
         new Option({ long: '--count' }),
       ],
     })
@@ -726,7 +709,7 @@ describe('long-option abbreviation', () => {
     const spec = new CommandSpec({
       options: [
         new Option({ long: '--binary' }),
-        new Option({ long: '--binary-files', valueKind: OperandKind.TEXT }),
+        new Option({ long: '--binary-files', type: 'str' }),
       ],
     })
     const parsed = parseCommand(spec, ['--binary'], '/')
@@ -737,8 +720,8 @@ describe('long-option abbreviation', () => {
   it('carries attached and detached values through abbreviation', () => {
     const spec = new CommandSpec({
       options: [
-        new Option({ long: '--color', valueOptional: true, valueKind: OperandKind.TEXT }),
-        new Option({ long: '--exclude', valueKind: OperandKind.TEXT }),
+        new Option({ long: '--color', valueOptional: true, type: 'str' }),
+        new Option({ long: '--exclude', type: 'str' }),
       ],
     })
     expect(parseCommand(spec, ['--colo=never'], '/').flags['--color']).toBe('never')
@@ -748,7 +731,7 @@ describe('long-option abbreviation', () => {
   it('keeps exact-only matching for free-text commands', () => {
     const spec = new CommandSpec({
       options: [new Option({ long: '--verbose' })],
-      rest: new Operand({ kind: OperandKind.TEXT }),
+      rest: new Operand({ type: 'str' }),
     })
     const parsed = parseCommand(spec, ['--verb', 'hi'], '/')
     expect(parsed.flags['--verbose']).toBeUndefined()
@@ -759,7 +742,7 @@ describe('long-option abbreviation', () => {
 describe('int-typed values', () => {
   it('reports a non-integer value, never throws', () => {
     const spec = new CommandSpec({
-      options: [new Option({ long: '--port', valueKind: OperandKind.TEXT, type: 'int' })],
+      options: [new Option({ long: '--port', type: 'int' })],
     })
     const parsed = parseCommand(spec, ['--port', 'abc'], '/')
     expect(parsed.invalidIntOptions).toEqual([['--port', 'abc']])
@@ -770,9 +753,7 @@ describe('int-typed values', () => {
 
   it('checks every value of a multiple flag', () => {
     const spec = new CommandSpec({
-      options: [
-        new Option({ long: '--id', valueKind: OperandKind.TEXT, multiple: true, type: 'int' }),
-      ],
+      options: [new Option({ long: '--id', type: 'int', multiple: true })],
     })
     const parsed = parseCommand(spec, ['--id', '1', '--id', 'x'], '/')
     expect(parsed.invalidIntOptions).toEqual([['--id', 'x']])
@@ -792,9 +773,9 @@ describe('synonym long spellings', () => {
   it('lists synonyms in an ambiguity like GNU', () => {
     const spec = new CommandSpec({
       options: [
-        new Option({ long: '--context', valueKind: OperandKind.TEXT }),
-        new Option({ long: '--color', valueOptional: true, valueKind: OperandKind.TEXT }),
-        new Option({ long: '--colour', valueOptional: true, valueKind: OperandKind.TEXT }),
+        new Option({ long: '--context', type: 'str' }),
+        new Option({ long: '--color', valueOptional: true, type: 'str' }),
+        new Option({ long: '--colour', valueOptional: true, type: 'str' }),
         new Option({ long: '--count' }),
       ],
     })
@@ -806,10 +787,7 @@ describe('synonym long spellings', () => {
 
   it('keeps scan order in optionErrorKinds', () => {
     const spec = new CommandSpec({
-      options: [
-        new Option({ long: '--context', valueKind: OperandKind.TEXT }),
-        new Option({ long: '--count' }),
-      ],
+      options: [new Option({ long: '--context', type: 'str' }), new Option({ long: '--count' })],
     })
     expect(parseCommand(spec, ['--c', '--bogus'], '/').optionErrorKinds).toEqual([
       'ambiguous',
@@ -819,5 +797,24 @@ describe('synonym long spellings', () => {
       'invalid',
       'ambiguous',
     ])
+  })
+})
+
+describe('float-typed values', () => {
+  it('reports non-numbers and accepts the portable core', () => {
+    const spec = new CommandSpec({ options: [new Option({ long: '--ratio', type: 'float' })] })
+    expect(parseCommand(spec, ['--ratio', '5x'], '/').invalidFloatOptions).toEqual([
+      ['--ratio', '5x'],
+    ])
+    for (const good of ['2.5', '-3', '.5', '1e3', '+0.25']) {
+      const ok = parseCommand(spec, ['--ratio', good], '/')
+      expect(ok.invalidFloatOptions).toEqual([])
+      expect(ok.flags['--ratio']).toBe(good)
+    }
+    for (const bad of ['inf', 'nan', '1_000', '.']) {
+      expect(parseCommand(spec, ['--ratio', bad], '/').invalidFloatOptions).toEqual([
+        ['--ratio', bad],
+      ])
+    }
   })
 })

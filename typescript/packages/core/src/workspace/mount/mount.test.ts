@@ -15,7 +15,7 @@
 import { mountPrefixOf } from '../../utils/key_prefix.ts'
 import { describe, expect, it } from 'vitest'
 import { command, type CommandFn, RegisteredCommand } from '../../commands/config.ts'
-import { CommandSpec, Operand, OperandKind } from '../../commands/spec/types.ts'
+import { CommandSpec, Operand } from '../../commands/spec/types.ts'
 import { IOResult } from '../../io/types.ts'
 import type { Accessor } from '../../accessor/base.ts'
 import { revisionFor } from '../../observe/context.ts'
@@ -34,7 +34,7 @@ class StubResource implements Resource {
   }
 }
 
-const BASIC_SPEC = new CommandSpec({ rest: new Operand({ kind: OperandKind.PATH }) })
+const BASIC_SPEC = new CommandSpec({ rest: new Operand({ type: 'path' }) })
 
 const OK_CMD: CommandFn = () => [null, new IOResult({ exitCode: 0 })]
 const OK_CMD_STDOUT: CommandFn = () => [new TextEncoder().encode('ok'), new IOResult()]

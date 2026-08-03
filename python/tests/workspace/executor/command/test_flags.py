@@ -13,7 +13,7 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 from mirage.commands.spec import SPECS
-from mirage.commands.spec.types import CommandSpec, OperandKind, Option
+from mirage.commands.spec.types import CommandSpec, Option
 from mirage.workspace.executor.command.flags import (option_error, parse_flags,
                                                      synthesize_path_spec)
 
@@ -47,9 +47,8 @@ def test_classified_path_wins_over_synthesis():
 
 
 def test_option_error_reports_the_first_scan_error_like_gnu():
-    spec = CommandSpec(
-        options=(Option(long="--context", value_kind=OperandKind.TEXT),
-                 Option(long="--count")))
+    spec = CommandSpec(options=(Option(long="--context", type="str"),
+                                Option(long="--count")))
     ambiguous_first = parse_flags(["--c", "--bogus", "x"], spec, "grep", "/")
     refusal = option_error("grep", ambiguous_first)
     assert refusal is not None
@@ -58,3 +57,16 @@ def test_option_error_reports_the_first_scan_error_like_gnu():
     refusal = option_error("grep", invalid_first)
     assert refusal is not None
     assert refusal[0].startswith(b"grep: unrecognized option '--bogus'")
+
+
+def test_option_error_reports_numeric_conversion_before_choices():
+    # Numeric-typed values before choices, argparse's order, matching
+    # the walk's _finish_node: a non-numeric value on a float option
+    # that also declares choices refuses the conversion, not the list.
+    spec = CommandSpec(
+        options=(Option(long="--ratio", type="float", choices=("0.5",
+                                                               "1.0")), ))
+    parsed = parse_flags(["--ratio", "5x", "p"], spec, "cmd", "/")
+    refusal = option_error("cmd", parsed)
+    assert refusal is not None
+    assert b"invalid float value: '5x'" in refusal[0]

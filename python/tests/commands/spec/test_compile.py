@@ -15,16 +15,14 @@
 import pytest
 
 from mirage.commands.spec.compile import compile_spec, expand_long
-from mirage.commands.spec.types import (CommandSpec, Operand, OperandKind,
-                                        Option)
+from mirage.commands.spec.types import CommandSpec, Operand, Option
 
 
 def test_dest_prefers_long_and_keeps_short_only_identity():
     spec = CommandSpec(options=(
         Option(short="-a", long="--append"),
-        Option(short="-e", value_kind=OperandKind.TEXT, multiple=True),
-        Option(
-            long="--color", value_kind=OperandKind.TEXT, value_optional=True),
+        Option(short="-e", type="str", multiple=True),
+        Option(long="--color", type="str", value_optional=True),
     ))
     cs = compile_spec(spec)
     assert cs.dest_of("-a") == "--append"
@@ -34,9 +32,8 @@ def test_dest_prefers_long_and_keeps_short_only_identity():
 
 
 def test_multiple_dests_are_canonical():
-    spec = CommandSpec(options=(Option(
-        short="-k", long="--key", value_kind=OperandKind.TEXT, multiple=True),
-                                ))
+    spec = CommandSpec(options=(
+        Option(short="-k", long="--key", type="str", multiple=True), ))
     cs = compile_spec(spec)
     assert cs.multiple_dests == frozenset({"--key"})
 
@@ -45,33 +42,30 @@ def test_value_spellings_ordered_longest_first():
     # -name must win an attached match over -n, deterministically, not by
     # set iteration order.
     spec = CommandSpec(options=(
-        Option(short="-n", value_kind=OperandKind.TEXT),
-        Option(short="-name", value_kind=OperandKind.TEXT),
+        Option(short="-n", type="str"),
+        Option(short="-name", type="str"),
     ))
     cs = compile_spec(spec)
     assert cs.value_spellings == ("-name", "-n")
 
 
 def test_numeric_dest_is_canonical():
-    spec = CommandSpec(options=(Option(short="-n",
-                                       long="--lines",
-                                       value_kind=OperandKind.TEXT,
-                                       numeric_shorthand=True), ))
+    spec = CommandSpec(options=(Option(
+        short="-n", long="--lines", type="str", numeric_shorthand=True), ))
     cs = compile_spec(spec)
     assert cs.numeric_dest == "--lines"
 
 
 def test_kind_tables_split_spelling_and_dest():
     spec = CommandSpec(
-        options=(Option(short="-f", long="--file",
-                        value_kind=OperandKind.PATH), ),
-        rest=Operand(kind=OperandKind.TEXT),
+        options=(Option(short="-f", long="--file", type="path"), ),
+        rest=Operand(type="str"),
     )
     cs = compile_spec(spec)
-    assert cs.kind_of["-f"] == OperandKind.PATH
-    assert cs.kind_of["--file"] == OperandKind.PATH
-    assert cs.kind_by_dest == {"--file": OperandKind.PATH}
-    assert cs.rest_kind == OperandKind.TEXT
+    assert cs.kind_of["-f"] == "path"
+    assert cs.kind_of["--file"] == "path"
+    assert cs.kind_by_dest == {"--file": "path"}
+    assert cs.rest_kind == "str"
 
 
 def test_compile_is_cached_per_spec():
@@ -82,11 +76,8 @@ def test_compile_is_cached_per_spec():
 def test_count_choices_required_default_tables():
     spec = CommandSpec(options=(
         Option(short="-v", long="--verbose", count=True),
-        Option(long="--mode",
-               value_kind=OperandKind.TEXT,
-               choices=("a", "b"),
-               default="a"),
-        Option(long="--out", value_kind=OperandKind.TEXT, required=True),
+        Option(long="--mode", type="str", choices=("a", "b"), default="a"),
+        Option(long="--out", type="str", required=True),
     ))
     cs = compile_spec(spec)
     assert cs.count_dests == frozenset({"--verbose"})
@@ -96,8 +87,8 @@ def test_count_choices_required_default_tables():
 
 
 def test_count_on_a_value_flag_is_a_spec_error():
-    spec = CommandSpec(options=(
-        Option(long="--level", value_kind=OperandKind.TEXT, count=True), ))
+    spec = CommandSpec(
+        options=(Option(long="--level", type="str", count=True), ))
     try:
         compile_spec(spec)
     except ValueError as exc:
@@ -117,10 +108,8 @@ def test_choices_on_a_boolean_flag_is_a_spec_error():
 
 
 def test_default_outside_choices_is_a_spec_error():
-    spec = CommandSpec(options=(Option(long="--mode",
-                                       value_kind=OperandKind.TEXT,
-                                       choices=("a", "b"),
-                                       default="c"), ))
+    spec = CommandSpec(options=(
+        Option(long="--mode", type="str", choices=("a", "b"), default="c"), ))
     try:
         compile_spec(spec)
     except ValueError as exc:
@@ -129,27 +118,25 @@ def test_default_outside_choices_is_a_spec_error():
         raise AssertionError("expected ValueError")
 
 
-def test_type_int_requires_a_value_flag():
-    with pytest.raises(ValueError, match="requires a value flag"):
+def test_type_float_default_must_be_a_number():
+    with pytest.raises(ValueError, match="is not a number"):
         compile_spec(
-            CommandSpec(options=(Option(long="--fast", type="int"), )))
+            CommandSpec(options=(
+                Option(long="--ratio", type="float", default="fast"), )))
 
 
 def test_type_int_default_must_be_an_integer():
     with pytest.raises(ValueError, match="is not an integer"):
         compile_spec(
-            CommandSpec(options=(Option(long="--port",
-                                        value_kind=OperandKind.TEXT,
-                                        type="int",
-                                        default="auto"), )))
+            CommandSpec(
+                options=(Option(long="--port", type="int", default="auto"), )))
 
 
 def test_expand_long_exact_prefix_ambiguous_and_unknown():
     cs = compile_spec(
-        CommandSpec(options=(
-            Option(long="--binary"),
-            Option(long="--binary-files", value_kind=OperandKind.TEXT),
-            Option(long="--count"))))
+        CommandSpec(options=(Option(long="--binary"),
+                             Option(long="--binary-files", type="str"),
+                             Option(long="--count"))))
     assert expand_long(cs, "--binary") == ("--binary", )
     assert expand_long(cs, "--bin") == ("--binary", "--binary-files")
     assert expand_long(cs, "--co") == ("--count", )

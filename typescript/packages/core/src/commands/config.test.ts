@@ -14,9 +14,9 @@
 
 import { describe, expect, it } from 'vitest'
 import { command, crossCommand, RegisteredCommand } from './config.ts'
-import { CommandSpec, Operand, OperandKind } from './spec/types.ts'
+import { CommandSpec, Operand } from './spec/types.ts'
 
-const STUB_SPEC = new CommandSpec({ rest: new Operand({ kind: OperandKind.PATH }) })
+const STUB_SPEC = new CommandSpec({ rest: new Operand({ type: 'path' }) })
 const STUB_FN = () => Promise.resolve([null, { exitCode: 0 } as never] as [null, never])
 
 describe('RegisteredCommand', () => {

@@ -16,12 +16,12 @@ import { parseCommand, parseToKwargs } from '../../../commands/spec/parser.ts'
 import {
   ambiguousOptionError,
   invalidArgumentError,
+  invalidFloatError,
   invalidIntError,
   missingRequiredError,
   missingValueError,
   unknownOptionError,
 } from '../../../commands/spec/usage.ts'
-import { OperandKind } from '../../../commands/spec/types.ts'
 import type { CommandSpec } from '../../../commands/spec/types.ts'
 import { PathSpec } from '../../../types.ts'
 import { rstripSlash } from '../../../utils/slash.ts'
@@ -67,6 +67,7 @@ export function parseFlags(
   string[],
   [string, string, readonly string[]][],
   [string, string][],
+  [string, string][],
   string[],
 ] {
   const argv: string[] = parts.map((item) => (item instanceof PathSpec ? item.virtual : item))
@@ -95,7 +96,7 @@ export function parseFlags(
     const paths: PathSpec[] = []
     const texts: string[] = []
     for (const [value, kind] of parsed.args) {
-      if (kind === OperandKind.PATH) {
+      if (kind === 'path') {
         const existing = scopeMap.get(value)
         paths.push(existing ?? synthesizePathSpec(value))
       } else {
@@ -113,6 +114,7 @@ export function parseFlags(
       parsed.needsValueOptions,
       parsed.invalidValueOptions,
       parsed.invalidIntOptions,
+      parsed.invalidFloatOptions,
       parsed.missingRequiredOptions,
     ]
   }
@@ -123,7 +125,7 @@ export function parseFlags(
     if (item instanceof PathSpec) paths.push(item)
     else texts.push(item)
   }
-  return [paths, texts, {}, [], [], [], [], [], [], [], []]
+  return [paths, texts, {}, [], [], [], [], [], [], [], [], []]
 }
 
 // GNU-shaped refusal for option errors the parser reported. find is
@@ -137,6 +139,7 @@ export function optionError(
   needsValue: readonly string[],
   invalidValue: readonly [string, string, readonly string[]][],
   invalidInt: readonly [string, string][],
+  invalidFloat: readonly [string, string][],
   missingRequired: readonly string[],
 ): [Uint8Array, number] | null {
   if (cmdName === 'find') return null
@@ -150,10 +153,16 @@ export function optionError(
   if (invalid.length > 0) return unknownOptionError(cmdName, invalid[0] ?? '')
   if (ambiguousFirst !== undefined) return ambiguousOptionError(cmdName, ...ambiguousFirst)
   if (needsValue.length > 0) return missingValueError(cmdName, needsValue[0] ?? '')
-  const badValue = invalidValue[0]
-  if (badValue !== undefined) return invalidArgumentError(cmdName, ...badValue)
+  // Numeric-typed values before choices, argparse's order (choices are
+  // checked against the converted value), matching the walk's finishNode:
+  // a non-numeric value on an int/float option that also declares choices
+  // reports the conversion failure, not the choice list.
   const badInt = invalidInt[0]
   if (badInt !== undefined) return invalidIntError(cmdName, ...badInt)
+  const badFloat = invalidFloat[0]
+  if (badFloat !== undefined) return invalidFloatError(cmdName, ...badFloat)
+  const badValue = invalidValue[0]
+  if (badValue !== undefined) return invalidArgumentError(cmdName, ...badValue)
   if (missingRequired.length > 0) return missingRequiredError(cmdName, missingRequired[0] ?? '')
   return null
 }

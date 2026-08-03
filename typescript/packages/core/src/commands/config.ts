@@ -22,7 +22,7 @@ import type { StatOverlay } from '../ops/config.ts'
 import { VERSION } from '../version.ts'
 import type { AggregateResult } from './builtin/aggregators.ts'
 import { renderHelp } from './spec/help.ts'
-import { CommandSpec, OperandKind, Option } from './spec/types.ts'
+import { CommandSpec, Option } from './spec/types.ts'
 
 /**
  * Options bag passed to command functions. Mirrors Python's keyword arguments
@@ -141,13 +141,13 @@ export interface CommandOptions<A extends Accessor = Accessor> {
 
 export const HELP_OPTION = new Option({
   long: '--help',
-  valueKind: OperandKind.NONE,
+  type: 'bool',
   description: 'Show this help and exit',
 })
 
 const VERSION_OPTION = new Option({
   long: '--version',
-  valueKind: OperandKind.NONE,
+  type: 'bool',
   description: 'Show version information and exit',
 })
 

@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { describe, expect, it } from 'vitest'
-import { OperandKind, Option } from '../spec/types.ts'
+import { Option } from '../spec/types.ts'
 import { CLISpec, type CLIVerbFn } from './types.ts'
 import { walk } from './walk.ts'
 
@@ -33,7 +33,7 @@ function tree(): CLISpec {
       new Option({
         short: '-C',
         long: '--cwd',
-        valueKind: OperandKind.TEXT,
+        type: 'str',
         description: 'run as if started there',
       }),
       new Option({ short: '-v', long: '--verbose', count: true }),
@@ -45,7 +45,7 @@ function tree(): CLISpec {
         options: [
           new Option({
             long: '--account',
-            valueKind: OperandKind.TEXT,
+            type: 'str',
             default: 'primary',
             choices: ['primary', 'work'],
           }),
@@ -214,7 +214,7 @@ describe('walk', () => {
   it('handles an optional-value long at group level', () => {
     const spec = new CLISpec({
       name: 'tool',
-      options: [new Option({ long: '--color', valueKind: OperandKind.TEXT, valueOptional: true })],
+      options: [new Option({ long: '--color', type: 'str', valueOptional: true })],
       subcommands: [new CLISpec({ name: 'run', fn: verb })],
     })
     const attached = walk('tool', spec, ['--color=auto', 'run'])
@@ -228,7 +228,7 @@ describe('walk', () => {
   it('handles a multi-char short at group level', () => {
     const spec = new CLISpec({
       name: 'tool',
-      options: [new Option({ short: '-name', valueKind: OperandKind.TEXT })],
+      options: [new Option({ short: '-name', type: 'str' })],
       subcommands: [new CLISpec({ name: 'run', fn: verb })],
     })
     const detached = walk('tool', spec, ['-name', 'foo', 'run'])
@@ -245,7 +245,7 @@ describe('walk', () => {
   it('exits 129 for a missing required group option', () => {
     const spec = new CLISpec({
       name: 'tool',
-      options: [new Option({ long: '--token', valueKind: OperandKind.TEXT, required: true })],
+      options: [new Option({ long: '--token', type: 'str', required: true })],
       subcommands: [new CLISpec({ name: 'run', fn: verb })],
     })
     const result = walk('tool', spec, ['run'])
@@ -301,10 +301,7 @@ describe('walk argparse/git alignment', () => {
   it('refuses an ambiguous group prefix with git wording', () => {
     const spec = new CLISpec({
       name: 'tool',
-      options: [
-        new Option({ long: '--context', valueKind: OperandKind.TEXT }),
-        new Option({ long: '--count' }),
-      ],
+      options: [new Option({ long: '--context', type: 'str' }), new Option({ long: '--count' })],
       subcommands: [new CLISpec({ name: 'run', fn: verb })],
     })
     const result = walk('tool', spec, ['--co', 'run'])
@@ -324,7 +321,7 @@ describe('walk argparse/git alignment', () => {
   it('refuses a non-integer int-typed group value with git wording', () => {
     const spec = new CLISpec({
       name: 'tool',
-      options: [new Option({ long: '--depth', valueKind: OperandKind.TEXT, type: 'int' })],
+      options: [new Option({ long: '--depth', type: 'int' })],
       subcommands: [new CLISpec({ name: 'run', fn: verb })],
     })
     const bad = walk('tool', spec, ['--depth', 'x', 'run'])
@@ -335,5 +332,23 @@ describe('walk argparse/git alignment', () => {
     const ok = walk('tool', spec, ['--depth', '-3', 'run'])
     expect(ok.leaf).not.toBeNull()
     expect(ok.groupFlags).toEqual({ '--depth': '-3' })
+  })
+})
+
+describe('walk float-typed group options', () => {
+  it('refuses non-numbers with git wording', () => {
+    const spec = new CLISpec({
+      name: 'tool',
+      options: [new Option({ long: '--ratio', type: 'float' })],
+      subcommands: [new CLISpec({ name: 'run', fn: verb })],
+    })
+    const bad = walk('tool', spec, ['--ratio', '5x', 'run'])
+    expect(bad.exitCode).toBe(129)
+    expect(text(bad.output).startsWith("error: option '--ratio' expects a numerical value")).toBe(
+      true,
+    )
+    const ok = walk('tool', spec, ['--ratio', '2.5', 'run'])
+    expect(ok.leaf).not.toBeNull()
+    expect(ok.groupFlags).toEqual({ '--ratio': '2.5' })
   })
 })

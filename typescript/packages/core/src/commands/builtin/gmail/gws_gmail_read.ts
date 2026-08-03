@@ -17,7 +17,7 @@ import { getMessageProcessed } from '../../../core/gmail/messages.ts'
 import { IOResult, type ByteSource } from '../../../io/types.ts'
 import { ResourceName, type PathSpec } from '../../../types.ts'
 import { command, type CommandFnResult, type CommandOpts } from '../../config.ts'
-import { CommandSpec, OperandKind, Option } from '../../spec/types.ts'
+import { CommandSpec, Option } from '../../spec/types.ts'
 
 const ENC = new TextEncoder()
 
@@ -27,7 +27,7 @@ const SPEC = new CommandSpec({
   options: [
     new Option({
       long: '--id',
-      valueKind: OperandKind.TEXT,
+      type: 'str',
       description: 'Gmail message ID (required)',
     }),
   ],

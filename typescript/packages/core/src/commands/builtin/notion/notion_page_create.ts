@@ -19,14 +19,14 @@ import { parseSegment } from '../../../core/notion/pathing.ts'
 import { IOResult } from '../../../io/types.ts'
 import { ResourceName, type PathSpec } from '../../../types.ts'
 import { command, type CommandFnResult, type CommandOpts } from '../../config.ts'
-import { CommandSpec, OperandKind, Option } from '../../spec/types.ts'
+import { CommandSpec, Option } from '../../spec/types.ts'
 
 const ENC = new TextEncoder()
 
 const SPEC = new CommandSpec({
   options: [
-    new Option({ long: '--parent', valueKind: OperandKind.PATH }),
-    new Option({ long: '--title', valueKind: OperandKind.TEXT }),
+    new Option({ long: '--parent', type: 'path' }),
+    new Option({ long: '--title', type: 'str' }),
   ],
 })
 

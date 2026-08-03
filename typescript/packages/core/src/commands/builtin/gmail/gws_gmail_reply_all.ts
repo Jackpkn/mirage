@@ -17,7 +17,7 @@ import { replyAllMessage } from '../../../core/gmail/send.ts'
 import { IOResult, type ByteSource } from '../../../io/types.ts'
 import { ResourceName, type PathSpec } from '../../../types.ts'
 import { command, type CommandFnResult, type CommandOpts } from '../../config.ts'
-import { CommandSpec, OperandKind, Option } from '../../spec/types.ts'
+import { CommandSpec, Option } from '../../spec/types.ts'
 
 const ENC = new TextEncoder()
 
@@ -26,12 +26,12 @@ const SPEC = new CommandSpec({
   options: [
     new Option({
       long: '--message-id',
-      valueKind: OperandKind.TEXT,
+      type: 'str',
       description: 'Gmail message ID to reply to (required)',
     }),
     new Option({
       long: '--body',
-      valueKind: OperandKind.TEXT,
+      type: 'str',
       description: "Reply body; use $'\\n' or printf for real newlines (required)",
     }),
   ],

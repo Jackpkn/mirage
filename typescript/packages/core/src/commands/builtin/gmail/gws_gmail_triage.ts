@@ -17,7 +17,7 @@ import { extractHeader, getMessageRaw, listMessages } from '../../../core/gmail/
 import { IOResult, type ByteSource } from '../../../io/types.ts'
 import { ResourceName, type PathSpec } from '../../../types.ts'
 import { command, type CommandFnResult, type CommandOpts } from '../../config.ts'
-import { CommandSpec, OperandKind, Option } from '../../spec/types.ts'
+import { CommandSpec, Option } from '../../spec/types.ts'
 
 const ENC = new TextEncoder()
 
@@ -27,12 +27,12 @@ const SPEC = new CommandSpec({
   options: [
     new Option({
       long: '--query',
-      valueKind: OperandKind.TEXT,
+      type: 'str',
       description: 'Gmail search query, e.g. "is:unread" (default: is:unread)',
     }),
     new Option({
       long: '--max',
-      valueKind: OperandKind.TEXT,
+      type: 'str',
       description: 'Max results to return (default: 20)',
     }),
   ],

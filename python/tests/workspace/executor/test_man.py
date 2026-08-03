@@ -16,7 +16,7 @@ import asyncio
 from unittest.mock import MagicMock
 
 from mirage.commands.config import RegisteredCommand
-from mirage.commands.spec.types import CommandSpec, OperandKind, Option
+from mirage.commands.spec.types import CommandSpec, Option
 from mirage.workspace.executor.builtins import (_collect_man_hits,
                                                 _render_man_entry,
                                                 _render_man_index, handle_man)
@@ -112,9 +112,7 @@ def test_render_man_entry_with_options():
     spec = CommandSpec(
         description="Print a sequence.",
         options=(
-            Option(short="-s",
-                   value_kind=OperandKind.TEXT,
-                   description="separator"),
+            Option(short="-s", type="str", description="separator"),
             Option(short="-w", description="zero-pad"),
         ),
     )
@@ -124,8 +122,8 @@ def test_render_man_entry_with_options():
     out = _render_man_entry("seq", hits)
     assert "## OPTIONS" in out
     assert "| short | long | value | description |" in out
-    assert "| -s |  | text | separator |" in out
-    assert "| -w |  | none | zero-pad |" in out
+    assert "| -s |  | str | separator |" in out
+    assert "| -w |  | bool | zero-pad |" in out
 
 
 def test_render_man_entry_dedupes_by_kind_and_filetype():

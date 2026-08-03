@@ -21,7 +21,7 @@ import {
   slidesBase,
 } from '../../../core/google/_client.ts'
 import { ResourceName } from '../../../types.ts'
-import { CommandSpec, OperandKind, Option } from '../../spec/types.ts'
+import { CommandSpec, Option } from '../../spec/types.ts'
 
 // The official gws CLI generates one command per Discovery method and
 // speaks raw API resources: `--params` carries path/query parameters,
@@ -249,12 +249,12 @@ export function gwsMethodDescription(m: GwsMethod): string {
 export function gwsMethodSpec(m: GwsMethod): CommandSpec {
   return new CommandSpec({
     options: [
-      new Option({ long: '--params', valueKind: OperandKind.TEXT, description: PARAMS_HELP }),
-      new Option({ long: '--json', valueKind: OperandKind.TEXT, description: JSON_HELP }),
+      new Option({ long: '--params', type: 'str', description: PARAMS_HELP }),
+      new Option({ long: '--json', type: 'str', description: JSON_HELP }),
       new Option({ long: '--page-all', description: PAGE_ALL_HELP }),
       new Option({
         long: '--page-limit',
-        valueKind: OperandKind.TEXT,
+        type: 'str',
         description: PAGE_LIMIT_HELP,
       }),
     ],

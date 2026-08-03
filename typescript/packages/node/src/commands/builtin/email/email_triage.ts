@@ -15,7 +15,6 @@
 import {
   CommandSpec,
   IOResult,
-  OperandKind,
   Option,
   ResourceName,
   command,
@@ -32,15 +31,15 @@ const ENC = new TextEncoder()
 
 const SPEC = new CommandSpec({
   options: [
-    new Option({ long: '--folder', valueKind: OperandKind.TEXT }),
-    new Option({ long: '--max', valueKind: OperandKind.TEXT }),
+    new Option({ long: '--folder', type: 'str' }),
+    new Option({ long: '--max', type: 'str' }),
     new Option({ long: '--unseen' }),
-    new Option({ long: '--subject', valueKind: OperandKind.TEXT }),
-    new Option({ long: '--from', valueKind: OperandKind.TEXT }),
-    new Option({ long: '--to', valueKind: OperandKind.TEXT }),
-    new Option({ long: '--body', valueKind: OperandKind.TEXT }),
-    new Option({ long: '--since', valueKind: OperandKind.TEXT }),
-    new Option({ long: '--before', valueKind: OperandKind.TEXT }),
+    new Option({ long: '--subject', type: 'str' }),
+    new Option({ long: '--from', type: 'str' }),
+    new Option({ long: '--to', type: 'str' }),
+    new Option({ long: '--body', type: 'str' }),
+    new Option({ long: '--since', type: 'str' }),
+    new Option({ long: '--before', type: 'str' }),
   ],
 })
 

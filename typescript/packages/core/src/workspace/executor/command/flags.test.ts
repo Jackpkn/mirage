@@ -16,7 +16,7 @@ import { describe, expect, it } from 'vitest'
 
 import { SPECS } from '../../../commands/spec/index.ts'
 import { PathSpec } from '../../../types.ts'
-import { CommandSpec, OperandKind, Option } from '../../../commands/spec/types.ts'
+import { CommandSpec, Option } from '../../../commands/spec/types.ts'
 import { optionError, parseFlags } from './flags.ts'
 
 function path(virtual: string): PathSpec {
@@ -51,10 +51,7 @@ describe('parseFlags', () => {
 describe('optionError scan order', () => {
   it('reports the first scan error like GNU', () => {
     const spec = new CommandSpec({
-      options: [
-        new Option({ long: '--context', valueKind: OperandKind.TEXT }),
-        new Option({ long: '--count' }),
-      ],
+      options: [new Option({ long: '--context', type: 'str' }), new Option({ long: '--count' })],
     })
     const dec = new TextDecoder()
     const ambiguousFirst = parseFlags(['--c', '--bogus', 'x'], spec, 'grep', '/')
@@ -68,6 +65,7 @@ describe('optionError scan order', () => {
         ambiguousFirst[8],
         ambiguousFirst[9],
         ambiguousFirst[10],
+        ambiguousFirst[11],
       ] as const),
     )
     expect(refusal).not.toBeNull()
@@ -83,9 +81,35 @@ describe('optionError scan order', () => {
         invalidFirst[8],
         invalidFirst[9],
         invalidFirst[10],
+        invalidFirst[11],
       ] as const),
     )
     expect(flipped).not.toBeNull()
     expect(dec.decode(flipped?.[0]).startsWith("grep: unrecognized option '--bogus'")).toBe(true)
+  })
+
+  it('reports the numeric conversion before the choice list', () => {
+    // Numeric-typed values before choices, argparse's order, matching
+    // the walk's finishNode: a non-numeric value on a float option that
+    // also declares choices refuses the conversion, not the list.
+    const spec = new CommandSpec({
+      options: [new Option({ long: '--ratio', type: 'float', choices: ['0.5', '1.0'] })],
+    })
+    const parsed = parseFlags(['--ratio', '5x', 'p'], spec, 'cmd', '/')
+    const refusal = optionError(
+      'cmd',
+      ...([
+        parsed[4],
+        parsed[5],
+        parsed[6],
+        parsed[7],
+        parsed[8],
+        parsed[9],
+        parsed[10],
+        parsed[11],
+      ] as const),
+    )
+    expect(refusal).not.toBeNull()
+    expect(new TextDecoder().decode(refusal?.[0])).toContain("invalid float value: '5x'")
   })
 })
