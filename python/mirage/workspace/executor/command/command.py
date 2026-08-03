@@ -33,7 +33,6 @@ from mirage.shell.job_table import JobTable
 from mirage.types import PathSpec
 from mirage.workspace.executor.command.flags import option_error, parse_flags
 from mirage.workspace.executor.command.functions import run_shell_function
-from mirage.workspace.executor.command.guard import check_mount_root_guard
 from mirage.workspace.executor.command.routing import (CWD_DEFAULT_RAW,
                                                        default_cwd_operand,
                                                        merge_scopes,
@@ -117,19 +116,10 @@ async def handle_command(
     # Use dispatch to read/write across mounts directly.
     path_scopes = [p for p in parts[1:] if isinstance(p, PathSpec)]
     raw_argv = [p.virtual if isinstance(p, PathSpec) else p for p in parts[1:]]
-    early_guard = check_mount_root_guard(cmd_name, path_scopes, registry,
-                                         raw_argv)
-    if early_guard is not None:
-        msg, code = early_guard
-        return None, IOResult(exit_code=code,
-                              stderr=msg.encode()), ExecutionNode(
-                                  command=cmd_str,
-                                  exit_code=code,
-                                  stderr=msg.encode())
-
     # Unknown name: nobody registers it; fail like bash before any
-    # backend work. The mount-root guard stays ahead of this so
-    # protective refusals keep their specific messages.
+    # backend work. The admission policies (fired upstream at the
+    # dispatch chokepoint) stay ahead of this so protective refusals
+    # keep their specific messages.
     if route(cmd_name, session, registry) is Consumer.UNKNOWN:
         err = f"{cmd_name}: command not found\n".encode()
         return None, IOResult(exit_code=127,
