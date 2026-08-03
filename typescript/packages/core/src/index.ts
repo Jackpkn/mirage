@@ -507,7 +507,7 @@ export {
   type RuntimeOptions,
 } from './workspace/executor/runtime_types.ts'
 export {
-  commandFacts,
+  parsedCommands,
   decideLine,
   evaluatorOf,
   policyContextFromPayload,
@@ -519,7 +519,7 @@ export {
   PolicyError,
   RouteResult,
   type PolicyResult,
-  type CommandFacts,
+  type ParsedCommand,
   type PolicyDecision,
   type PolicyContext,
   type PolicyFn,
@@ -635,6 +635,7 @@ export {
   CLISpec,
   type CLISpecInit,
   type CLIVerbFn,
+  type CLIConfigModel,
   type CLIVerbOpts,
   type WalkFlagBag,
   WalkResult,
