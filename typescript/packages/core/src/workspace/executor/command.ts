@@ -210,7 +210,16 @@ export async function handleCommand(
     const csParsed = parseFlags(parts.slice(1), SPECS[cmdName] ?? null, cmdName, session.cwd)
     const csFlags = csParsed[2]
     const csTexts = findExprTokens ?? csParsed[1]
-    const csRefusal = optionError(cmdName, csParsed[4], csParsed[5], csParsed[6], csParsed[7])
+    const csRefusal = optionError(
+      cmdName,
+      csParsed[4],
+      csParsed[5],
+      csParsed[6],
+      csParsed[7],
+      csParsed[8],
+      csParsed[9],
+      csParsed[10],
+    )
     if (csRefusal !== null) {
       const [msg, code] = csRefusal
       return [
@@ -332,15 +341,21 @@ export async function handleCommand(
     flagKwargs,
     parseWarnings,
     invalidOptions,
+    ambiguousOptions,
+    optionErrorKinds,
     needsValueOptions,
     invalidValueOptions,
+    invalidIntOptions,
     missingRequiredOptions,
   ] = parseFlags(parts.slice(1), mount.specFor(cmdName), cmdName, session.cwd)
   const refusal = optionError(
     cmdName,
     invalidOptions,
+    ambiguousOptions,
+    optionErrorKinds,
     needsValueOptions,
     invalidValueOptions,
+    invalidIntOptions,
     missingRequiredOptions,
   )
   if (refusal !== null) {

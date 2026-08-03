@@ -14,10 +14,9 @@
 
 from mirage.commands.spec import (CommandSpec, OperandKind, flag_kwarg_name,
                                   parse_command, parse_to_kwargs)
-from mirage.commands.spec.usage import (invalid_argument_error,
-                                        missing_required_error,
-                                        missing_value_error,
-                                        unknown_option_error)
+from mirage.commands.spec.usage import (  # yapf: disable
+    ambiguous_option_error, invalid_argument_error, invalid_int_error,
+    missing_required_error, missing_value_error, unknown_option_error)
 from mirage.types import PathSpec
 from mirage.workspace.executor.command.types import ParsedCommand
 
@@ -132,16 +131,16 @@ def parse_flags(
                 paths.append(scope)
             else:
                 texts.append(value)
-        return ParsedCommand(paths, texts, flag_kwargs, parsed.warnings,
-                             parsed.invalid_options,
-                             parsed.needs_value_options,
-                             parsed.invalid_value_options,
-                             parsed.missing_required_options)
+        return ParsedCommand(
+            paths, texts, flag_kwargs, parsed.warnings, parsed.invalid_options,
+            parsed.ambiguous_options, parsed.option_error_kinds,
+            parsed.needs_value_options, parsed.invalid_value_options,
+            parsed.invalid_int_options, parsed.missing_required_options)
 
     # No spec: separate by type
     paths = [item for item in parts if isinstance(item, PathSpec)]
     texts = [item for item in parts if not isinstance(item, PathSpec)]
-    return ParsedCommand(paths, texts, {}, [], [], [], [], [])
+    return ParsedCommand(paths, texts, {}, [], [], [], [], [], [], [], [])
 
 
 def option_error(cmd_name: str,
@@ -157,13 +156,26 @@ def option_error(cmd_name: str,
     """
     if cmd_name == "find":
         return None
+    # Scan-order between unknown and ambiguous options: GNU stops at the
+    # first offending token, so `grep --c --bogus` reports the ambiguity
+    # and the reversed line reports --bogus.
+    if (parsed.option_error_kinds
+            and parsed.option_error_kinds[0] == "ambiguous"):
+        token, candidates = parsed.ambiguous_options[0]
+        return ambiguous_option_error(cmd_name, token, candidates)
     if parsed.invalid_options:
         return unknown_option_error(cmd_name, parsed.invalid_options[0])
+    if parsed.ambiguous_options:
+        token, candidates = parsed.ambiguous_options[0]
+        return ambiguous_option_error(cmd_name, token, candidates)
     if parsed.needs_value_options:
         return missing_value_error(cmd_name, parsed.needs_value_options[0])
     if parsed.invalid_value_options:
         option, value, choices = parsed.invalid_value_options[0]
         return invalid_argument_error(cmd_name, option, value, choices)
+    if parsed.invalid_int_options:
+        option, value = parsed.invalid_int_options[0]
+        return invalid_int_error(cmd_name, option, value)
     if parsed.missing_required_options:
         return missing_required_error(cmd_name,
                                       parsed.missing_required_options[0])

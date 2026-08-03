@@ -15,6 +15,7 @@
 from dataclasses import dataclass, field
 from functools import lru_cache
 
+from mirage.commands.spec.constants import INT_VALUE
 from mirage.commands.spec.types import CommandSpec, OperandKind
 
 
@@ -53,6 +54,16 @@ class CompiledSpec:
         count_dests (frozenset[str]): canonical spellings of boolean
             flags whose occurrences accumulate into an int (click count,
             ``-vvv``).
+        long_spellings (tuple[str, ...]): every long spelling in
+            declaration order (the order GNU's ambiguity refusal lists
+            possibilities), for getopt_long prefix expansion.
+        long_signatures (dict[str, str]): behavior signature per long
+            spelling. Prefix candidates whose signatures all match are
+            one option in glibc's eyes (same action struct), so the
+            prefix resolves instead of refusing as ambiguous.
+        int_dests (frozenset[str]): canonical spellings of int-typed
+            options; the parser refuses a non-integer value at parse
+            time (argparse ``type=int``).
         choices_by_dest (dict[str, tuple[str, ...]]): allowed values per
             canonical spelling, in declaration order (the order GNU's
             ARGMATCH refusal lists them).
@@ -72,6 +83,9 @@ class CompiledSpec:
     long_bool_spellings: frozenset[str] = frozenset()
     long_value_spellings: frozenset[str] = frozenset()
     long_optional_spellings: frozenset[str] = frozenset()
+    long_spellings: tuple[str, ...] = ()
+    long_signatures: dict[str, str] = field(default_factory=dict)
+    int_dests: frozenset[str] = frozenset()
     kind_of: dict[str, OperandKind] = field(default_factory=dict)
     kind_by_dest: dict[str, OperandKind] = field(default_factory=dict)
     dest: dict[str, str] = field(default_factory=dict)
@@ -92,6 +106,38 @@ class CompiledSpec:
         return self.dest.get(spelling, spelling)
 
 
+def expand_long(cs: CompiledSpec, spelling: str) -> tuple[str, ...]:
+    """getopt_long prefix matching for a long spelling.
+
+    An exact declared spelling always wins (GNU: ``--binary`` never
+    trips over ``--binary-files``); otherwise the candidates are every
+    declared long the typed spelling prefixes. Candidates whose behavior
+    signatures all match count as one option, the way glibc treats
+    several table entries with one action struct (``grep --colo``
+    resolves despite ``--color``/``--colour`` being separate entries),
+    and the prefix resolves to the first. The result length tells the
+    caller everything: 0 unknown, 1 match, 2+ ambiguous (every matching
+    spelling in declaration order, the order GNU lists possibilities,
+    synonyms included like GNU's own listing).
+
+    Args:
+        cs (CompiledSpec): compiled tables to match against.
+        spelling (str): the typed long spelling, without any ``=value``.
+    """
+    if spelling in cs.dest:
+        return (spelling, )
+    if len(spelling) <= 2:
+        return ()
+    matches = tuple(declared for declared in cs.long_spellings
+                    if declared.startswith(spelling))
+    if not matches:
+        return ()
+    signatures = {cs.long_signatures[declared] for declared in matches}
+    if len(signatures) == 1:
+        return (matches[0], )
+    return matches
+
+
 @lru_cache(maxsize=512)
 def compile_spec(spec: CommandSpec) -> CompiledSpec:
     """Lower a CommandSpec into parser lookup tables.
@@ -105,6 +151,9 @@ def compile_spec(spec: CommandSpec) -> CompiledSpec:
     long_bool_spellings: set[str] = set()
     long_value_spellings: set[str] = set()
     long_optional_spellings: set[str] = set()
+    long_spellings: list[str] = []
+    long_signatures: dict[str, str] = {}
+    int_dests: set[str] = set()
     kind_of: dict[str, OperandKind] = {}
     kind_by_dest: dict[str, OperandKind] = {}
     dest: dict[str, str] = {}
@@ -130,6 +179,14 @@ def compile_spec(spec: CommandSpec) -> CompiledSpec:
                 and opt.default not in opt.choices):
             raise ValueError(f"option {canonical!r}: default "
                              f"{opt.default!r} is not one of its choices")
+        if opt.type == "int":
+            if opt.value_kind == OperandKind.NONE:
+                raise ValueError(f"option {canonical!r}: type 'int' "
+                                 "requires a value flag")
+            if opt.default is not None and not INT_VALUE.match(opt.default):
+                raise ValueError(f"option {canonical!r}: default "
+                                 f"{opt.default!r} is not an integer")
+            int_dests.add(canonical)
         if opt.short:
             dest[opt.short] = canonical
         if opt.long:
@@ -163,6 +220,13 @@ def compile_spec(spec: CommandSpec) -> CompiledSpec:
                 if opt.numeric_shorthand:
                     numeric_dest = canonical
         if opt.long:
+            long_spellings.append(opt.long)
+            # Everything parsing-relevant except the spellings and the
+            # help text: two options that agree here are one action.
+            long_signatures[opt.long] = "|".join(
+                (opt.value_kind.value, str(opt.value_optional),
+                 str(opt.multiple), str(opt.count), ",".join(opt.choices),
+                 str(opt.required), str(opt.default), opt.type))
             if opt.value_kind == OperandKind.NONE:
                 long_bool_spellings.add(opt.long)
             elif opt.value_optional:
@@ -187,6 +251,9 @@ def compile_spec(spec: CommandSpec) -> CompiledSpec:
         long_bool_spellings=frozenset(long_bool_spellings),
         long_value_spellings=frozenset(long_value_spellings),
         long_optional_spellings=frozenset(long_optional_spellings),
+        long_spellings=tuple(long_spellings),
+        long_signatures=long_signatures,
+        int_dests=frozenset(int_dests),
         kind_of=kind_of,
         kind_by_dest=kind_by_dest,
         dest=dest,
