@@ -46,6 +46,8 @@ import {
   GridFSResource,
   GSheetsResource,
   GSlidesResource,
+  GWS,
+  HIMALAYA,
   HfBucketsResource,
   JaegerResource,
   LanceDBResource,
@@ -437,6 +439,17 @@ async function openEmail(target: Target): Promise<Open> {
     })
   }
   const ws = new Workspace(mounts, { mode: MountMode.WRITE })
+  if (target.clis?.includes('himalaya') === true) {
+    ws.registerCli('himalaya', HIMALAYA, {
+      imapHost: host,
+      imapPort: EMAIL_IMAP_PORT,
+      smtpHost: host,
+      smtpPort: EMAIL_SMTP_PORT,
+      username: EMAIL_USERNAME,
+      password: EMAIL_PASSWORD,
+      useSsl: false,
+    })
+  }
   return { ws: ws as unknown as ExecWorkspace, cleanup: () => ws.close() }
 }
 
@@ -1229,6 +1242,13 @@ async function openGws(target: Target): Promise<Open> {
     await seedGwsMail(base, JSON.parse(readFileSync(manifest, 'utf8')) as MailEntry[])
   }
   const ws = new Workspace(mounts, { mode: MountMode.WRITE })
+  if (target.clis?.includes('gws') === true) {
+    ws.registerCli('gws', GWS, {
+      clientId: 'integ',
+      clientSecret: 'integ',
+      refreshToken: 'integ',
+    })
+  }
   const cleanup = async (): Promise<void> => {
     await ws.close()
   }
