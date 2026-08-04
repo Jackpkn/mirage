@@ -13,11 +13,13 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { NOOPAccessor } from '../accessor/base.ts'
+import { applyOpLimit } from '../commands/builtin/utils/limit.ts'
 import { getExtension } from '../commands/resolve.ts'
 import { OpRecord } from '../observe/record.ts'
 import { NO_FOLLOW_OPS, type NamespaceLinks } from '../ops/config.ts'
 import type { StatOverlay } from '../ops/types.ts'
 import type { OpKwargs, OpsRegistry } from '../ops/registry.ts'
+import { type Policies, postOpsGate, preOpsGate } from '../policy/policies.ts'
 import type { Resource } from '../resource/base.ts'
 import type { FileStat, MountMode, PathSpec } from '../types.ts'
 import { FileType } from '../types.ts'
@@ -29,6 +31,8 @@ export type Resolver = (path: string) => Promise<[Resource, PathSpec, MountMode]
 
 export type OpSink = (rec: OpRecord) => Promise<void>
 
+export type PrefixOf = (path: string) => string
+
 export class WorkspaceFS {
   private readonly resolver: Resolver
   private readonly ops: OpsRegistry
@@ -38,6 +42,12 @@ export class WorkspaceFS {
   // so the facade and dispatch can never disagree on the operand.
   readonly links: NamespaceLinks | null
   private readonly statOverlay: StatOverlay | null
+  // Policy seam: this facade is an op door like the dispatcher (FUSE and
+  // programmatic access read through it), so pre/post op hooks must fire
+  // here too, mirroring the Python Ops door. Null means ungated, for
+  // direct construction in tests.
+  private readonly policies: Policies | null
+  private readonly prefixOf: PrefixOf | null
 
   constructor(
     resolver: Resolver,
@@ -45,17 +55,49 @@ export class WorkspaceFS {
     sink: OpSink | null = null,
     links: NamespaceLinks | null = null,
     statOverlay: StatOverlay | null = null,
+    policies: Policies | null = null,
+    prefixOf: PrefixOf | null = null,
   ) {
     this.resolver = resolver
     this.ops = ops
     this.sink = sink
     this.links = links
     this.statOverlay = statOverlay
+    this.policies = policies
+    this.prefixOf = prefixOf
   }
 
   private follow(op: string, path: string): string {
     if (this.links === null || NO_FOLLOW_OPS.has(op)) return path
     return this.links.follow(path)
+  }
+
+  private async firePreOps(
+    op: string,
+    path: string,
+    pathSpec: PathSpec,
+    write: boolean,
+  ): Promise<void> {
+    if (this.policies === null) return
+    const prefix = this.prefixOf !== null ? this.prefixOf(path) : ''
+    await preOpsGate(this.policies, op, pathSpec, write, prefix)
+  }
+
+  // Bookkeeping precedes this gate: a denied result is still a completed
+  // backend op, so recording runs first and the deny only suppresses
+  // what the caller sees (mirrors the Python Ops door).
+  private async firePostOps(
+    op: string,
+    path: string,
+    pathSpec: PathSpec,
+    write: boolean,
+    result: unknown,
+  ): Promise<unknown> {
+    if (this.policies === null) return result
+    const prefix = this.prefixOf !== null ? this.prefixOf(path) : ''
+    const bound = await postOpsGate(this.policies, op, pathSpec, write, prefix, result)
+    if (bound !== null) return applyOpLimit(result, bound)
+    return result
   }
 
   private async record(
@@ -86,6 +128,7 @@ export class WorkspaceFS {
     const kwargs: OpKwargs = {}
     if (filetype !== null) kwargs.filetype = filetype
     if (resource.index !== undefined) kwargs.index = resource.index
+    await this.firePreOps('read', path, pathSpec, false)
     const result = (await this.ops.call(
       'read',
       resource.kind,
@@ -95,7 +138,7 @@ export class WorkspaceFS {
       kwargs,
     )) as Uint8Array
     await this.record('read', path, resource.kind, result.byteLength, start)
-    return result
+    return (await this.firePostOps('read', path, pathSpec, false, result)) as Uint8Array
   }
 
   async readFileText(path: string, encoding = 'utf-8'): Promise<string> {
@@ -109,6 +152,7 @@ export class WorkspaceFS {
     const [resource, pathSpec] = await this.resolver(path)
     const bytes = typeof data === 'string' ? new TextEncoder().encode(data) : data
     const kwargs = resource.index !== undefined ? { index: resource.index } : {}
+    await this.firePreOps('write', path, pathSpec, true)
     await this.ops.call(
       'write',
       resource.kind,
@@ -118,6 +162,7 @@ export class WorkspaceFS {
       kwargs,
     )
     await this.record('write', path, resource.kind, bytes.byteLength, start)
+    await this.firePostOps('write', path, pathSpec, true, null)
   }
 
   async readdir(path: string): Promise<string[]> {
@@ -125,6 +170,7 @@ export class WorkspaceFS {
     path = this.follow('readdir', path)
     const [resource, pathSpec] = await this.resolver(path)
     const kwargs = resource.index !== undefined ? { index: resource.index } : {}
+    await this.firePreOps('readdir', path, pathSpec, false)
     const result = (await this.ops.call(
       'readdir',
       resource.kind,
@@ -134,7 +180,9 @@ export class WorkspaceFS {
       kwargs,
     )) as string[] | null
     await this.record('readdir', path, resource.kind, 0, start)
-    return result ?? []
+    return (
+      ((await this.firePostOps('readdir', path, pathSpec, false, result)) as string[] | null) ?? []
+    )
   }
 
   async stat(path: string): Promise<FileStat> {
@@ -142,7 +190,8 @@ export class WorkspaceFS {
     path = this.follow('stat', path)
     const [resource, pathSpec] = await this.resolver(path)
     const kwargs = resource.index !== undefined ? { index: resource.index } : {}
-    const result = (await this.ops.call(
+    await this.firePreOps('stat', path, pathSpec, false)
+    let result = (await this.ops.call(
       'stat',
       resource.kind,
       resource.accessor ?? NOOP_ACCESSOR_INSTANCE,
@@ -151,6 +200,7 @@ export class WorkspaceFS {
       kwargs,
     )) as FileStat
     await this.record('stat', path, resource.kind, 0, start)
+    result = (await this.firePostOps('stat', path, pathSpec, false, result)) as FileStat
     if (this.statOverlay !== null) return this.statOverlay(path, result)
     return result
   }
@@ -194,6 +244,7 @@ export class WorkspaceFS {
     const start = Date.now()
     path = this.follow('mkdir', path)
     const [resource, pathSpec] = await this.resolver(path)
+    await this.firePreOps('mkdir', path, pathSpec, true)
     await this.ops.call(
       'mkdir',
       resource.kind,
@@ -201,12 +252,14 @@ export class WorkspaceFS {
       pathSpec,
     )
     await this.record('mkdir', path, resource.kind, 0, start)
+    await this.firePostOps('mkdir', path, pathSpec, true, null)
   }
 
   async unlink(path: string): Promise<void> {
     const start = Date.now()
     path = this.follow('unlink', path)
     const [resource, pathSpec] = await this.resolver(path)
+    await this.firePreOps('unlink', path, pathSpec, true)
     await this.ops.call(
       'unlink',
       resource.kind,
@@ -214,12 +267,14 @@ export class WorkspaceFS {
       pathSpec,
     )
     await this.record('unlink', path, resource.kind, 0, start)
+    await this.firePostOps('unlink', path, pathSpec, true, null)
   }
 
   async rmdir(path: string): Promise<void> {
     const start = Date.now()
     path = this.follow('rmdir', path)
     const [resource, pathSpec] = await this.resolver(path)
+    await this.firePreOps('rmdir', path, pathSpec, true)
     await this.ops.call(
       'rmdir',
       resource.kind,
@@ -227,6 +282,7 @@ export class WorkspaceFS {
       pathSpec,
     )
     await this.record('rmdir', path, resource.kind, 0, start)
+    await this.firePostOps('rmdir', path, pathSpec, true, null)
   }
 
   async rename(src: string, dst: string): Promise<void> {
@@ -235,6 +291,7 @@ export class WorkspaceFS {
     dst = this.follow('rename', dst)
     const [resource, srcSpec] = await this.resolver(src)
     const [, dstSpec] = await this.resolver(dst)
+    await this.firePreOps('rename', src, srcSpec, true)
     await this.ops.call(
       'rename',
       resource.kind,
@@ -243,6 +300,7 @@ export class WorkspaceFS {
       [dstSpec],
     )
     await this.record('rename', src, resource.kind, 0, start)
+    await this.firePostOps('rename', src, srcSpec, true, null)
   }
 
   async cat(path: string): Promise<string> {

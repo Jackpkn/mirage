@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import type { ByteSource } from '../../io/types.ts'
-import type { CommandSafeguard, PathSpec } from '../../types.ts'
+import type { Limit, PathSpec } from '../../types.ts'
 import type { CommandFnResult } from '../config.ts'
 import { compileSpec } from '../spec/compile.ts'
 import type { ZodObject, ZodRawShape } from 'zod'
@@ -50,7 +50,7 @@ export interface CLISpecInit extends CommandSpecInit {
   fn?: CLIVerbFn | null
   subcommands?: readonly CLISpec[]
   write?: boolean
-  safeguard?: CommandSafeguard | null
+  limit?: Limit | null
   configModel?: CLIConfigModel | null
 }
 
@@ -84,7 +84,7 @@ export class CLISpec extends CommandSpec {
   readonly fn: CLIVerbFn | null
   readonly subcommands: readonly CLISpec[]
   readonly write: boolean
-  readonly safeguard: CommandSafeguard | null
+  readonly limit: Limit | null
   readonly configModel: CLIConfigModel | null
 
   constructor(init: CLISpecInit) {
@@ -94,7 +94,7 @@ export class CLISpec extends CommandSpec {
     this.fn = init.fn ?? null
     this.subcommands = Object.freeze([...(init.subcommands ?? [])])
     this.write = init.write ?? false
-    this.safeguard = init.safeguard ?? null
+    this.limit = init.limit ?? null
     this.configModel = init.configModel ?? null
     if (this.name === '' || /\s/.test(this.name)) {
       throw new Error(`cli name '${this.name}' must be a single non-empty word`)

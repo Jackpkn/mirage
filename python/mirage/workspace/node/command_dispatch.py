@@ -15,16 +15,15 @@
 import asyncio
 from typing import Any
 
-from mirage.commands.builtin.utils.safeguard import run_with_timeout
+from mirage.commands.builtin.utils.limit import run_with_timeout
 from mirage.io import IOResult
 from mirage.io.types import materialize
-from mirage.policy import CommandContext
+from mirage.policy import CommandContext, resolve_limit
 from mirage.runtime.policy import PolicyDecision
-from mirage.runtime.policy.safeguard import resolve_safeguard
 from mirage.shell.types import NodeType as NT
 from mirage.shell.types import ShellBuiltin as SB
 from mirage.shell.xtrace import trace_command
-from mirage.types import PathSpec, word_text
+from mirage.types import PathSpec, Producer, word_text
 from mirage.utils.path import CycleError
 from mirage.workspace.executor.command import handle_command
 from mirage.workspace.executor.command.routing import path_flag_scopes
@@ -225,9 +224,9 @@ async def _dispatch_command_body(
 
     argv = await expand_argv(parts, session, execute_fn, call_stack, registry)
 
-    # Safeguards resolve against the expanded name, so `$CMD`-style
+    # Limits resolve against the expanded name, so `$CMD`-style
     # invocations get their real command's policy.
-    resolved = resolve_safeguard(argv.name) if argv.name else None
+    resolved = resolve_limit(argv.name) if argv.name else None
     timeout = (resolved.timeout_seconds if resolved is not None else None)
     body = _run_argv(recurse, dispatch, registry, namespace, execute_fn, argv,
                      session, stdin, call_stack, job_table, cancel,
@@ -237,6 +236,11 @@ async def _dispatch_command_body(
     xtrace = bool(session.shell_options.get("xtrace"))
     stdout, io, exec_node = await run_with_timeout(body, timeout, argv.name
                                                    or "?")
+    if io.producer is None and argv.name:
+        # Builtins and other non-mount routes return no rider; stamp the
+        # expanded name here so post_execute policies keyed on a command
+        # (echo, printf, ...) still see it.
+        io.producer = Producer(command=argv.name)
     if proc_sub_stderr:
         io.stderr = b"".join(proc_sub_stderr) + await materialize(io.stderr)
         exec_node.stderr = io.stderr

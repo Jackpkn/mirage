@@ -16,7 +16,7 @@ import type { Accessor } from '../accessor/base.ts'
 import type { IndexCacheStore } from '../cache/index/index.ts'
 import { IOResult, type ByteSource } from '../io/types.ts'
 import type { Resource } from '../resource/base.ts'
-import type { CommandSafeguard, PathSpec } from '../types.ts'
+import type { Limit, PathSpec } from '../types.ts'
 import type { Runtime } from '../workspace/executor/runtime.ts'
 import type { LinkView, StatOverlay, StatPath } from '../ops/types.ts'
 import { VERSION } from '../version.ts'
@@ -105,7 +105,7 @@ export interface RegisteredCommandInit {
   src?: string | null
   dst?: string | null
   write?: boolean
-  safeguard?: CommandSafeguard | null
+  limit?: Limit | null
 }
 
 export class RegisteredCommand {
@@ -119,7 +119,7 @@ export class RegisteredCommand {
   readonly src: string | null
   readonly dst: string | null
   readonly write: boolean
-  readonly safeguard: CommandSafeguard | null
+  readonly limit: Limit | null
 
   constructor(init: RegisteredCommandInit) {
     this.name = init.name
@@ -132,7 +132,7 @@ export class RegisteredCommand {
     this.src = init.src ?? null
     this.dst = init.dst ?? null
     this.write = init.write ?? false
-    this.safeguard = init.safeguard ?? null
+    this.limit = init.limit ?? null
   }
 }
 
@@ -145,7 +145,7 @@ export interface CommandOptions<A extends Accessor = Accessor> {
   provision?: ProvisionFn<A> | null
   aggregate?: AggregateFn | null
   write?: boolean
-  safeguard?: CommandSafeguard | null
+  limit?: Limit | null
 }
 
 export const HELP_OPTION = new Option({
@@ -239,7 +239,7 @@ export function command<A extends Accessor = Accessor>(
         provisionFn: (options.provision ?? null) as ProvisionFn | null,
         aggregate: options.aggregate ?? null,
         write: options.write ?? false,
-        safeguard: options.safeguard ?? null,
+        limit: options.limit ?? null,
       }),
   )
 }
