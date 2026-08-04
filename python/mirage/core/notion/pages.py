@@ -16,13 +16,14 @@ from typing import Any
 
 from mirage.core.notion._client import (notion_get, notion_patch, notion_post,
                                         paginate_list, paginate_post)
-from mirage.resource.notion.config import NotionConfig
+from mirage.core.notion.config import NotionConfig
 
 
 async def search_pages(
     config: NotionConfig,
     query: str = "",
     page_size: int = 100,
+    max_results: int | None = None,
 ) -> list[dict[str, Any]]:
     body: dict[str, Any] = {
         "filter": {
@@ -32,7 +33,13 @@ async def search_pages(
     }
     if query:
         body["query"] = query
-    return await paginate_post(config, "/search", body, page_size=page_size)
+    return await paginate_post(
+        config,
+        "/search",
+        body,
+        page_size=page_size,
+        max_results=max_results,
+    )
 
 
 async def search_databases(
@@ -60,11 +67,12 @@ async def query_database(
     config: NotionConfig,
     database_id: str,
     page_size: int = 100,
+    body: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     return await paginate_post(
         config,
         f"/databases/{database_id}/query",
-        {},
+        body or {},
         page_size=page_size,
     )
 
@@ -136,3 +144,8 @@ async def append_blocks(config: NotionConfig, block_id: str,
 async def create_comment(config: NotionConfig,
                          body: dict[str, Any]) -> dict[str, Any]:
     return await notion_post(config, "/comments", body)
+
+
+async def update_page(config: NotionConfig, page_id: str,
+                      body: dict[str, Any]) -> dict[str, Any]:
+    return await notion_patch(config, f"/pages/{page_id}", body)
