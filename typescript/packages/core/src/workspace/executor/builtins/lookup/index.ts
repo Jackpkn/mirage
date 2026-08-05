@@ -12,13 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-export {
-  JOB_BUILTINS,
-  NAMESPACE_COMMANDS,
-  NO_FOLLOW_COMMANDS,
-  UNSUPPORTED_BUILTINS,
-  dereferences,
-  reportsLink,
-} from './constants.ts'
-export { route, routeAll } from './route.ts'
-export { Consumer, SHELL_CONSUMERS, WordPolicy, wordPolicy } from './types.ts'
+// The package's public surface: what other packages consume. Inside
+// the package, and in its tests, the modules are imported directly.
+export { classify, describe } from './classify.ts'
+export { handleType, handleWhich } from './handle.ts'

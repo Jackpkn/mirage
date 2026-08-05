@@ -14,7 +14,7 @@
 
 import type { CLISpec } from '../../commands/cli/types.ts'
 import { BUILTIN_SPECS } from '../../commands/spec/builtins.ts'
-import { JOB_BUILTINS, NAMESPACE_COMMANDS, SHELL_NAMES } from '../route/constants.ts'
+import { JOB_BUILTINS, KEYWORDS, NAMESPACE_COMMANDS, SHELL_NAMES } from '../route/constants.ts'
 import { z } from 'zod'
 
 import type { CLIInstall } from './types.ts'
@@ -27,6 +27,16 @@ import type { CLIInstall } from './types.ts'
  * storage was mounted. Install is fail-loud: a bad name, a colliding
  * name, or a config the spec's configModel rejects throws at install
  * time, so a workspace that loads has only valid entries.
+ *
+ * The lifecycle is host-side only, and must stay that way: install and
+ * uninstall are called by the program embedding mirage, never by a line
+ * the agent types, so an agent cannot take away the tools it was given.
+ * Do not add an `install`/`uninstall` shell builtin. What an agent can
+ * do is shadow a head word with a shell function, which is bash's own
+ * rule, reversible with `unset -f`, bypassable with `command <name>`,
+ * and visible through `type -a`. Pinning a head word against that
+ * belongs in the policy layer's `preExecute`, since it is a
+ * per-deployment call rather than a property of the registry.
  */
 export class CLIRegistry {
   private readonly installs = new Map<string, CLIInstall>()
@@ -46,6 +56,11 @@ export class CLIRegistry {
     }
     if (SHELL_NAMES.has(name) || JOB_BUILTINS.has(name)) {
       throw new Error(`CLI name '${name}' collides with a shell builtin`)
+    }
+    // A reserved word never reaches dispatch (the parser consumes it), so
+    // an install under one would be unreachable rather than wrong.
+    if (KEYWORDS.has(name)) {
+      throw new Error(`CLI name '${name}' is a shell keyword`)
     }
     if (NAMESPACE_COMMANDS.has(name) || name in BUILTIN_SPECS) {
       throw new Error(`CLI name '${name}' collides with a general command`)
