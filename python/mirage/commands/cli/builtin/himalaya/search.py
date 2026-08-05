@@ -15,32 +15,41 @@
 import json
 
 from mirage.accessor.email import EmailAccessor
-from mirage.commands.cli.builtin.himalaya.util import first_text
+from mirage.commands.cli.builtin.himalaya.list import DEFAULT_PAGE_SIZE
+from mirage.commands.cli.builtin.himalaya.query import (page_slice,
+                                                        parse_query,
+                                                        sort_headers,
+                                                        uid_budget)
 from mirage.commands.spec.types import FlagView
-from mirage.core.email._client import fetch_message, fetch_raw_message
+from mirage.core.email._client import fetch_headers, list_message_uids
 from mirage.core.email.config import EmailConfig
 from mirage.io.stream import yield_bytes
 from mirage.io.types import ByteSource, IOResult
 from mirage.types import PathSpec
 
 
-async def read(
+async def search_envelopes(
     config: EmailConfig,
     paths: list[PathSpec],
     *texts: str,
     **flags: object,
 ) -> tuple[ByteSource | None, IOResult]:
     fl = FlagView(flags)
-    uid = first_text(texts, "message id")
     mailbox = fl.as_str("mailbox") or "INBOX"
+    page = fl.as_int("page") or 1
+    page_size = fl.as_int("page_size") or DEFAULT_PAGE_SIZE
+    # The shell already split the query; upstream joins argv the same
+    # way before parsing, so a pattern with spaces needs literal quotes.
+    query = parse_query(" ".join(texts))
+    budget = uid_budget(page, page_size, query.sorters, config.max_messages)
     accessor = EmailAccessor(config)
     try:
-        if fl.as_bool("raw"):
-            return yield_bytes(await fetch_raw_message(accessor, mailbox,
-                                                       uid)), IOResult()
-        processed = await fetch_message(accessor, mailbox, uid)
+        uids = await list_message_uids(accessor, mailbox, query.criteria,
+                                       budget)
+        headers = await fetch_headers(accessor, mailbox, uids) if uids else []
     finally:
         await accessor.close()
-    out = json.dumps(processed, ensure_ascii=False,
+    page_of = page_slice(sort_headers(headers, query.sorters), page, page_size)
+    out = json.dumps(page_of, ensure_ascii=False,
                      separators=(",", ":")).encode()
     return yield_bytes(out), IOResult()
