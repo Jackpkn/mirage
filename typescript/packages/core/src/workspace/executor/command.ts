@@ -129,6 +129,7 @@ export async function handleCommand(
   const cliInstall = registry.clis.get(cmdName)
   if (cliInstall !== null) {
     return handleCli(cliInstall, parts, session, stdin, {
+      entries: registry.runtimeEntries,
       dispatch,
       statPath: (path: string) => pathStat(dispatch, path, null),
       mountRoot: (path: string) => mountRootOf(registry, path),
