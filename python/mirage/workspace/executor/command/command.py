@@ -39,7 +39,8 @@ from mirage.workspace.executor.command.routing import (CWD_DEFAULT_RAW,
                                                        default_cwd_operand,
                                                        merge_scopes,
                                                        path_flag_scopes)
-from mirage.workspace.executor.command.run import (exec_node, mount_root_of,
+from mirage.workspace.executor.command.run import (drop_service_caches,
+                                                   exec_node, mount_root_of,
                                                    run_on_mount,
                                                    scalar_find_flags)
 from mirage.workspace.executor.command.types import ExecuteNodeFn
@@ -119,6 +120,8 @@ async def handle_command(
             stat_path=(functools.partial(path_stat, dispatch)
                        if dispatch is not None else None),
             mount_root=functools.partial(mount_root_of, registry),
+            drop_caches=functools.partial(drop_service_caches, registry,
+                                          cli_install.spec.serves),
         )
 
     if cmd_name in CWD_DEFAULT_RAW:

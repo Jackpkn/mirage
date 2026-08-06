@@ -51,7 +51,7 @@ import { versionRequest } from '../../commands/config.ts'
 
 import { handleCli } from './command/cli.ts'
 import { pathStat } from './builtins/links.ts'
-import { mountRootOf } from './command/run.ts'
+import { dropServiceCaches, mountRootOf } from './command/run.ts'
 import { optionError, parseFlags } from './command/flags.ts'
 import { executeShellFunction } from './command/functions.ts'
 import {
@@ -128,12 +128,19 @@ export async function handleCommand(
   // through the facts below; the rest never read them.
   const cliInstall = registry.clis.get(cmdName)
   if (cliInstall !== null) {
-    return handleCli(cliInstall, parts, session, stdin, {
-      entries: registry.runtimeEntries,
-      dispatch,
-      statPath: (path: string) => pathStat(dispatch, path, null),
-      mountRoot: (path: string) => mountRootOf(registry, path),
-    })
+    return handleCli(
+      cliInstall,
+      parts,
+      session,
+      stdin,
+      {
+        entries: registry.runtimeEntries,
+        dispatch,
+        statPath: (path: string) => pathStat(dispatch, path, null),
+        mountRoot: (path: string) => mountRootOf(registry, path),
+      },
+      () => dropServiceCaches(registry, cliInstall.spec.serves),
+    )
   }
 
   if (cmdName in CWD_DEFAULT_RAW) {

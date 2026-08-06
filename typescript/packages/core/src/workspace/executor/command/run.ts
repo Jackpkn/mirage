@@ -17,7 +17,7 @@ import { IOResult, materialize } from '../../../io/types.ts'
 import type { Resource } from '../../../resource/base.ts'
 import { assertMountAllowed, MountNotAllowedError } from '../../../context/session_context.ts'
 import type { PathSpec } from '../../../types.ts'
-import type { FileStat } from '../../../types.ts'
+import type { FileStat, ResourceName } from '../../../types.ts'
 import type { MountEntry } from '../../mount/mount.ts'
 import type { LinkView, StatOverlay, StatPath } from '../../../ops/types.ts'
 import type { Namespace } from '../../mount/namespace/namespace.ts'
@@ -124,6 +124,36 @@ function namespaceStatOverlay(namespace: Namespace, virtual: string, stat: FileS
  */
 export function mountRootOf(registry: MountRegistry, virtual: string): string {
   return registry.mountFor(virtual)?.prefix ?? '/'
+}
+
+/**
+ * Drop cached listings and bodies for the mounts a CLI's service backs.
+ *
+ * An account CLI mutates its service by id, so no vfs path can be derived from
+ * the call and per-path invalidation has nothing to aim at: after
+ * `gws sheets spreadsheets create` the new file has no cache entry to expire,
+ * which is exactly the case that matters. What is known is the service, so the
+ * mounts it backs drop their caches and the next read refetches.
+ *
+ * Both caches go, because the two hide different writes. A stale listing hides
+ * a create or a delete; a stale body hides an edit, and these resources cache
+ * reads, so a `cat` after `gws docs documents batchUpdate` would otherwise keep
+ * serving the pre-edit content without ever reaching Google.
+ *
+ * Scoped by the spec's declared `serves` rather than a blanket reset, so a
+ * Slack or S3 mount alongside keeps its cache.
+ */
+export async function dropServiceCaches(
+  registry: MountRegistry,
+  serves: readonly ResourceName[],
+): Promise<void> {
+  if (serves.length === 0) return
+  const wanted = new Set<string>(serves)
+  for (const mount of registry.allMounts()) {
+    if (!wanted.has(mount.resource.kind)) continue
+    await mount.resource.index?.clear()
+    await mount.cacheManager?.dropPrefix()
+  }
 }
 
 // Run one already-parsed command on the mount that owns its paths. The shared

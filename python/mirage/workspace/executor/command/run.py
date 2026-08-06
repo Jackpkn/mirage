@@ -25,7 +25,7 @@ from mirage.ops.types import LinkView
 from mirage.runtime.base import Runtime
 from mirage.runtime.policy import PolicyDecision
 from mirage.runtime.table import VfsRuntime
-from mirage.types import FileStat, PathSpec
+from mirage.types import FileStat, PathSpec, ResourceName
 from mirage.utils.errors import format_fs_error
 from mirage.workspace.executor.builtins.links import (link_target_stat,
                                                       path_exists, path_stat)
@@ -154,6 +154,42 @@ def mount_root_of(registry: MountRegistry, virtual: str) -> str:
         return registry.mount_for(virtual).prefix
     except ValueError:
         return "/"
+
+
+async def drop_service_caches(registry: MountRegistry,
+                              serves: tuple[ResourceName, ...]) -> None:
+    """Drop cached listings and bodies for the mounts a CLI's service backs.
+
+    An account CLI mutates its service by id, so no vfs path can be
+    derived from the call and per-path invalidation has nothing to aim
+    at: after `gws sheets spreadsheets create` the new file has no cache
+    entry to expire, which is exactly the case that matters. What is
+    known is the service, so the mounts it backs drop their caches and
+    the next read refetches.
+
+    Both caches go, because the two hide different writes. A stale
+    listing hides a create or a delete; a stale body hides an edit, and
+    these resources cache reads, so a `cat` after `gws docs documents
+    batchUpdate` would otherwise keep serving the pre-edit content
+    without ever reaching Google.
+
+    Scoped by the spec's declared ``serves`` rather than a blanket
+    reset, so a Slack or S3 mount alongside keeps its cache.
+
+    Args:
+        registry (MountRegistry): registry holding the mount table.
+        serves (tuple[ResourceName, ...]): resources the CLI's service
+            backs; empty drops nothing.
+    """
+    if not serves:
+        return
+    wanted = set(serves)
+    for mount in registry.mounts():
+        if mount.resource.name not in wanted:
+            continue
+        await mount.resource.index.clear()
+        if mount.cache_manager is not None:
+            await mount.cache_manager.drop_prefix()
 
 
 def namespace_stat_overlay(namespace: Namespace, virtual: str,
