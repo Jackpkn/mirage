@@ -157,7 +157,11 @@ export async function expandParts(
       // A quoted word stays a word even when it expands to "" (echo ""
       // or "$EMPTY"), except "$@"/"${a[@]}" which yield zero words.
       if (expanded !== '' || !hasAtExpansion(p)) result.push(expanded)
-    } else if (p.type === NT.RAW_STRING) {
+    } else if (
+      p.type === NT.RAW_STRING ||
+      p.type === NT.ANSI_C_STRING ||
+      p.type === NT.TRANSLATED_STRING
+    ) {
       result.push(expanded)
     } else if (expanded !== '') {
       result.push(expanded)

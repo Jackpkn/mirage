@@ -21,6 +21,8 @@ const WORD_TYPES: ReadonlySet<string> = new Set([
   'word',
   'string',
   'raw_string',
+  'ansi_c_string',
+  'translated_string',
   'number',
   'concatenation',
 ])

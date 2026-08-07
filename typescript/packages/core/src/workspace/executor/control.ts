@@ -415,7 +415,7 @@ export async function handleCase(
   let ran = false
   let fallthrough = false
   for (const [patterns, body, terminator] of items) {
-    if (!(fallthrough || patterns.some((p) => fnmatch(word, p.trim())))) continue
+    if (!(fallthrough || patterns.some((p) => fnmatch(word, p)))) continue
     ran = true
     for (const stmt of body) {
       const [rawStdout, io, execNode] = await executeNode(stmt, session, stageStdin, callStack)

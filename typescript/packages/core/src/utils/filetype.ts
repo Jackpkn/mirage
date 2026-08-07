@@ -28,7 +28,7 @@ const EXTENSION_MAP: Readonly<Record<string, FileType>> = Object.freeze({
   yml: FileType.TEXT,
   toml: FileType.TEXT,
   png: FileType.IMAGE_PNG,
-  jpg: FileType.IMAGE_PNG,
+  jpg: FileType.IMAGE_JPEG,
   jpeg: FileType.IMAGE_JPEG,
   gif: FileType.IMAGE_GIF,
   zip: FileType.ZIP,
@@ -41,6 +41,39 @@ export function guessType(path: string): FileType {
   if (dot === -1 || path.slice(dot).includes('/')) return FileType.BINARY
   const ext = path.slice(dot + 1).toLowerCase()
   return EXTENSION_MAP[ext] ?? FileType.BINARY
+}
+
+// Extension-guessed like upstream mailers' mime_guess, as a deliberate
+// fixed subset: platform MIME tables differ, and the python and
+// TypeScript implementations must guess identically for serialized
+// bytes to match. Anything else is application/octet-stream, which
+// every client treats as "download me".
+const MIME_BY_EXTENSION: Readonly<Record<string, string>> = Object.freeze({
+  csv: 'text/csv',
+  gif: 'image/gif',
+  gz: 'application/gzip',
+  htm: 'text/html',
+  html: 'text/html',
+  jpeg: 'image/jpeg',
+  jpg: 'image/jpeg',
+  json: 'application/json',
+  md: 'text/markdown',
+  pdf: 'application/pdf',
+  png: 'image/png',
+  svg: 'image/svg+xml',
+  tar: 'application/x-tar',
+  txt: 'text/plain',
+  xml: 'text/xml',
+  zip: 'application/zip',
+})
+
+const OCTET_STREAM = 'application/octet-stream'
+
+/** Guesses a MIME content type from the filename's extension. */
+export function mimeTypeFor(filename: string): string {
+  const dot = filename.lastIndexOf('.')
+  if (dot < 0) return OCTET_STREAM
+  return MIME_BY_EXTENSION[filename.slice(dot + 1).toLowerCase()] ?? OCTET_STREAM
 }
 
 const MIMETYPE_MAP: Readonly<Record<string, FileType>> = Object.freeze({

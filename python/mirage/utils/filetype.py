@@ -38,6 +38,45 @@ EXTENSION_MAP: dict[str, FileType] = {
 
 DEFAULT_TYPE = FileType.BINARY
 
+# Extension-guessed like upstream mailers' mime_guess, as a deliberate
+# fixed subset: the stdlib mimetypes module consults platform tables,
+# and the python and TypeScript implementations must guess identically
+# for serialized bytes to match. Anything else is
+# application/octet-stream, which every client treats as "download me".
+MIME_BY_EXTENSION: dict[str, str] = {
+    "csv": "text/csv",
+    "gif": "image/gif",
+    "gz": "application/gzip",
+    "htm": "text/html",
+    "html": "text/html",
+    "jpeg": "image/jpeg",
+    "jpg": "image/jpeg",
+    "json": "application/json",
+    "md": "text/markdown",
+    "pdf": "application/pdf",
+    "png": "image/png",
+    "svg": "image/svg+xml",
+    "tar": "application/x-tar",
+    "txt": "text/plain",
+    "xml": "text/xml",
+    "zip": "application/zip",
+}
+
+OCTET_STREAM = "application/octet-stream"
+
+
+def mime_type_for(filename: str) -> str:
+    """Guess a MIME content type from the filename's extension.
+
+    Args:
+        filename (str): a file's basename.
+    """
+    _, dot, extension = filename.rpartition(".")
+    if not dot:
+        return OCTET_STREAM
+    return MIME_BY_EXTENSION.get(extension.lower(), OCTET_STREAM)
+
+
 _MIMETYPE_MAP: dict[str, FileType] = {
     "application/pdf": FileType.PDF,
     "application/zip": FileType.ZIP,

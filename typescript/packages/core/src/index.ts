@@ -206,7 +206,16 @@ export {
   runWithRevisions,
   withMountPrefix,
 } from './observe/context.ts'
-export { guessType } from './utils/filetype.ts'
+export { guessType, mimeTypeFor } from './utils/filetype.ts'
+export {
+  assertHeaderValue,
+  encodeBase64Lines,
+  encodeText as encodeMimeText,
+  foldAddressList,
+  foldContentDisposition,
+  foldUnstructured,
+  type EncodedText,
+} from './utils/mime.ts'
 export { newSessionId, newWorkspaceId, uuid7 } from './utils/ids.ts'
 export { Accessor, NOOPAccessor, RAMAccessor } from './accessor/index.ts'
 export {
@@ -626,6 +635,7 @@ export { MountEntry, type MountInit } from './workspace/mount/mount.ts'
 export { normMountPrefix } from './workspace/snapshot/utils.ts'
 export {
   command,
+  type CommandDispatch,
   type CommandFn,
   type CommandFnResult,
   type CommandOptions,
@@ -640,6 +650,7 @@ export {
   CLISpec,
   type CLISpecInit,
   type CLIVerbFn,
+  type CLIVerbOpts,
   type CLIConfigModel,
   type CLIInvocation,
   type WalkFlagBag,

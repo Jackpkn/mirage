@@ -43,6 +43,7 @@ import { ERREXIT_EXEMPT_TYPES, NodeType as NT, Redirect, RedirectKind } from '..
 import { NodeKind, nodeKind } from '../../shell/node_kind.ts'
 import { expandRedirects } from '../expand/redirects.ts'
 import { type ExecuteFn, expandArith, expandNode } from '../expand/node.ts'
+import { expandPattern } from '../expand/pattern.ts'
 import { evaluateArith } from '../../shell/arith.ts'
 import {
   type ShellArray,
@@ -515,7 +516,14 @@ export async function executeNode(
   if (kind === NodeKind.CASE) {
     const wordNode = getCaseWord(node)
     const word = await expandNode(wordNode, session, executeFn, callStack)
-    const items = getCaseItems(node)
+    const items: [string[], TSNodeLike[], string][] = []
+    for (const [patternNodes, body, terminator] of getCaseItems(node)) {
+      const patterns: string[] = []
+      for (const patternNode of patternNodes) {
+        patterns.push(await expandPattern(patternNode, session, executeFn, callStack))
+      }
+      items.push([patterns, body, terminator])
+    }
     return handleCase(recurse, word, items, session, stdin, callStack)
   }
 
@@ -561,8 +569,13 @@ export async function executeNode(
         child.type === NT.CONCATENATION ||
         child.type === NT.WORD ||
         // A bare `readonly NAME` / `export NAME` operand parses as a
-        // variable_name, not a word.
-        child.type === NT.VARIABLE_NAME
+        // variable_name, not a word, and a quoted assignment
+        // (`export 'FOO=bar'`) as a plain string operand.
+        child.type === NT.VARIABLE_NAME ||
+        child.type === NT.STRING ||
+        child.type === NT.RAW_STRING ||
+        child.type === NT.ANSI_C_STRING ||
+        child.type === NT.TRANSLATED_STRING
       ) {
         const expanded = await expandNode(child, session, executeFn, callStack)
         if (expanded === '') continue

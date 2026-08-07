@@ -13,10 +13,25 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { describe, expect, it, vi } from 'vitest'
-import { cliSpecFor, materialize, type IOResult } from '@struktoai/mirage-core'
+import {
+  cliSpecFor,
+  enoent,
+  materialize,
+  type CLIVerbOpts,
+  type IOResult,
+  type PathSpec,
+} from '@struktoai/mirage-core'
 import { EmailAccessor } from '../../../../accessor/email.ts'
 import { Workspace } from '../../../../workspace.ts'
-import { build, composeBody, hasPrefix, quoteText, splitAddresses } from './builder.ts'
+import {
+  build,
+  composeBody,
+  hasPrefix,
+  mixedBoundary,
+  quoteText,
+  splitAddresses,
+  type Attachment,
+} from './builder.ts'
 import { forward } from './forward.ts'
 import { HIMALAYA } from './index.ts'
 import { listEnvelopes } from './list.ts'
@@ -254,6 +269,122 @@ describe('message builder', () => {
       }),
     ).toThrow('no recipient')
   })
+
+  it.each([
+    'evil\nname.txt',
+    'evil\rname.txt',
+    'tail\n',
+    'evil\vname.txt',
+    'evil\fname.txt',
+    'evil\x1cname.txt',
+    'evil\x1dname.txt',
+    'evil\x1ename.txt',
+  ])('refuses the ASCII attachment filename %j like EmailMessage', (bad) => {
+    // Header injection through the quoted-string form; python's
+    // EmailMessage raises the same ValueError, trailing terminators
+    // included (pinned in test_builder.py).
+    const attachment: Attachment = {
+      filename: bad,
+      contentType: 'text/plain',
+      data: new TextEncoder().encode('x'),
+    }
+    expect(() =>
+      build({
+        sender: 'a@example.com',
+        to: ['b@example.com'],
+        cc: [],
+        bcc: [],
+        subject: null,
+        body: 'hi',
+        signature: null,
+        attachments: [attachment],
+      }),
+    ).toThrow('Header values may not contain linefeed or carriage return characters')
+  })
+
+  it('percent-encodes a line break in a non-ASCII filename', () => {
+    // The RFC 2231 path never refuses; byte-exactness with python is
+    // pinned by the attachment_nonascii_filename_with_line_break
+    // parity case.
+    const attachment: Attachment = {
+      filename: 'naïve\nname.txt',
+      contentType: 'text/plain',
+      data: new TextEncoder().encode('x'),
+    }
+    const raw = build({
+      sender: 'a@example.com',
+      to: ['b@example.com'],
+      cc: [],
+      bcc: [],
+      subject: null,
+      body: 'hi',
+      signature: null,
+      attachments: [attachment],
+    })
+    expect(new TextDecoder().decode(raw)).toContain("filename*=utf-8''na%C3%AFve%0Aname.txt")
+  })
+
+  it('derives a deterministic content-addressed boundary', () => {
+    const attachments: Attachment[] = [
+      { filename: 'a.txt', contentType: 'text/plain', data: new TextEncoder().encode('data') },
+    ]
+    const first = mixedBoundary('body', attachments)
+    expect(mixedBoundary('body', attachments)).toBe(first)
+    expect(mixedBoundary('other body', attachments)).not.toBe(first)
+    expect(first).toHaveLength(32)
+  })
+
+  it('promotes the message to multipart/mixed with attachments', () => {
+    const attachments: Attachment[] = [
+      {
+        filename: 'note.txt',
+        contentType: 'text/plain',
+        data: new TextEncoder().encode('the note\n'),
+      },
+      {
+        filename: 'blob.bin',
+        contentType: 'application/octet-stream',
+        data: new Uint8Array([0, 1]),
+      },
+    ]
+    const boundary = mixedBoundary('see attached', attachments)
+    const text = decode(
+      build({
+        sender: 'me@x',
+        to: ['a@x'],
+        cc: [],
+        bcc: [],
+        subject: 'files',
+        body: 'see attached',
+        signature: null,
+        attachments,
+      }),
+    )
+    expect(text).toContain('MIME-Version: 1.0\r\nContent-Type: multipart/mixed; ')
+    expect(text).toContain(`boundary="${boundary}"`)
+    expect(text).toContain('Content-Disposition: attachment; filename="note.txt"')
+    expect(text).toContain(Buffer.from('the note\n').toString('base64'))
+    expect(text.endsWith(`\r\n--${boundary}--\r\n`)).toBe(true)
+  })
+
+  it('serializes an empty attachment as zero payload lines', () => {
+    const attachments: Attachment[] = [
+      { filename: 'void.bin', contentType: 'application/octet-stream', data: new Uint8Array(0) },
+    ]
+    const text = decode(
+      build({
+        sender: 'me@x',
+        to: ['a@x'],
+        cc: [],
+        bcc: [],
+        subject: 'empty',
+        body: 'nothing inside',
+        signature: null,
+        attachments,
+      }),
+    )
+    expect(text).toContain('MIME-Version: 1.0\r\n\r\n\r\n--')
+  })
 })
 
 describe('himalaya verbs', () => {
@@ -299,6 +430,78 @@ describe('himalaya verbs', () => {
       to: 'a@b.com',
       subject: 'Hi',
     })
+  })
+
+  it('compose --attach reads through the dispatcher into multipart', async () => {
+    sendRawMock.mockClear()
+    const files: Record<string, Uint8Array> = {
+      '/scratch/note.txt': new TextEncoder().encode('the note body\n'),
+    }
+    const ops: CLIVerbOpts = {
+      dispatch: (op: string, path: PathSpec) => {
+        const data = files[path.virtual]
+        if (op !== 'read' || data === undefined) return Promise.reject(enoent(path))
+        return Promise.resolve([data, { exitCode: 0 }]) as never
+      },
+    }
+    const [out, io] = (await import('./compose.ts').then((m) =>
+      m.compose({
+        config: CONFIG,
+        argv: [],
+        paths: [],
+        texts: [],
+        flags: {
+          to: 'a@b.com',
+          subject: 'files',
+          body: 'see attached',
+          attach: ['/scratch/note.txt'],
+        },
+        stdin: null,
+        env: {},
+        ops,
+      }),
+    )) as [Uint8Array, IOResult]
+    expect(io.exitCode).toBe(0)
+    const text = decode(await materialize(out))
+    expect(text).toContain('Content-Type: multipart/mixed; boundary="')
+    expect(text).toContain('Content-Disposition: attachment; filename="note.txt"')
+    expect(text).toContain(Buffer.from('the note body\n').toString('base64'))
+  })
+
+  it('compose --attach of a missing file names the path', async () => {
+    const ops: CLIVerbOpts = {
+      dispatch: (_op: string, path: PathSpec) => Promise.reject(enoent(path)),
+    }
+    await expect(
+      import('./compose.ts').then((m) =>
+        m.compose({
+          config: CONFIG,
+          argv: [],
+          paths: [],
+          texts: [],
+          flags: { to: 'a@b.com', body: 'yo', attach: ['/scratch/gone.txt'] },
+          stdin: null,
+          env: {},
+          ops,
+        }),
+      ),
+    ).rejects.toThrow('read attachment /scratch/gone.txt: No such file or directory')
+  })
+
+  it('compose --attach outside a workspace is refused', async () => {
+    await expect(
+      import('./compose.ts').then((m) =>
+        m.compose({
+          config: CONFIG,
+          argv: [],
+          paths: [],
+          texts: [],
+          flags: { to: 'a@b.com', body: 'yo', attach: ['/scratch/note.txt'] },
+          stdin: null,
+          env: {},
+        }),
+      ),
+    ).rejects.toThrow('--attach needs a workspace to read files from')
   })
 
   it('reply derives subject, recipients and threading', async () => {

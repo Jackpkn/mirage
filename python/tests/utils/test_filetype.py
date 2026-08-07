@@ -13,7 +13,8 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 from mirage.types import FileType
-from mirage.utils.filetype import filetype_from_mimetype, guess_type
+from mirage.utils.filetype import (filetype_from_mimetype, guess_type,
+                                   mime_type_for)
 
 
 def test_jpg_extension_maps_to_jpeg():
@@ -53,3 +54,12 @@ def test_filetype_from_mimetype_empty():
 def test_filetype_from_mimetype_unknown():
     assert filetype_from_mimetype(
         "application/octet-stream") == FileType.BINARY
+
+
+def test_mime_type_for_uses_the_fixed_table():
+    # The table is a deliberate fixed subset shared verbatim with the
+    # TypeScript implementation (himalaya attachments pin the bytes).
+    assert mime_type_for("report.PDF") == "application/pdf"
+    assert mime_type_for("notes.txt") == "text/plain"
+    assert mime_type_for("archive.weird") == "application/octet-stream"
+    assert mime_type_for("no_extension") == "application/octet-stream"

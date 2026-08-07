@@ -18,6 +18,7 @@ from enum import StrEnum
 from typing import Any, Literal
 
 from mirage.commands.spec.constants import flag_kwarg_name
+from mirage.types import PathSpec
 
 
 class CommandName(StrEnum):
@@ -230,6 +231,17 @@ class FlagView:
         if isinstance(value, list):
             return [item for item in value if isinstance(item, str)]
         if isinstance(value, str):
+            return [value]
+        return []
+
+    def as_paths(self, name: str) -> list[PathSpec]:
+        # PATH-typed flag values arrive as PathSpec in the python
+        # executor; the TypeScript flag bag carries their resolved
+        # virtual-path strings, so its counterpart is asList.
+        value = self._flags.get(self._key(name))
+        if isinstance(value, list):
+            return [item for item in value if isinstance(item, PathSpec)]
+        if isinstance(value, PathSpec):
             return [value]
         return []
 
