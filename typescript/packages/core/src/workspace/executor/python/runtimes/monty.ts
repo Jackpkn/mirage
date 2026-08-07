@@ -444,6 +444,27 @@ export class MontyRuntime extends Runtime implements Evaluator {
         case 'Path.write_bytes':
         case 'Path.write_text':
           return writeBack(bridge, path, args[1])
+        case 'Path.mkdir':
+          return mutate(bridge, 'MKDIR', path)
+        case 'Path.rmdir':
+          return mutate(bridge, 'RMDIR', path)
+        case 'Path.unlink':
+          return mutate(bridge, 'UNLINK', path)
+        case 'Path.rename': {
+          const dst = pathArg(args[1])
+          // A destination outside the workspace has no mount to rename
+          // into; decline rather than half-apply the move.
+          if (dst === null || !this.underWorkspaceMount(dst)) return notHandled
+          // The dispatcher picks the mount from the source alone and
+          // reads the destination against that same backend, so a
+          // cross-mount rename would drop the source and write the
+          // target into the wrong store. POSIX answers this with
+          // EXDEV, which is also what tells a caller to copy instead.
+          if (this.mountOf(path) !== this.mountOf(dst)) {
+            return Promise.reject(guestError('EXDEV', path, dst))
+          }
+          return mutate(bridge, 'RENAME', path, dst)
+        }
         case 'Path.iterdir':
           return listEntries(bridge, path).then((entries) => entries.map((e) => e.path))
         case 'Path.is_dir':
@@ -483,6 +504,22 @@ export class MontyRuntime extends Runtime implements Evaluator {
       return path.startsWith(norm) || path === norm.slice(0, -1)
     })
   }
+
+  /**
+   * The mount prefix serving `path`, longest match first, or null when
+   * none does. Two paths belong to the same mount only when this
+   * agrees for both, which is what a rename needs to know.
+   */
+  private mountOf(path: string): string | null {
+    let best: string | null = null
+    for (const p of this.listMounts()) {
+      const norm = p.endsWith('/') ? p : p + '/'
+      if (path.startsWith(norm) || path === norm.slice(0, -1)) {
+        if (best === null || norm.length > best.length) best = norm
+      }
+    }
+    return best
+  }
 }
 
 function pathArg(value: unknown): string | null {
@@ -496,11 +533,36 @@ function pathArg(value: unknown): string | null {
 
 // fs error codes -> the python exception the guest should catch, with
 // CPython's errno message shape.
-const CODE_TO_GUEST_EXC: Record<string, { name: string; errno: number; phrase: string }> = {
+const CODE_TO_GUEST_EXC = {
   ENOENT: { name: 'FileNotFoundError', errno: 2, phrase: 'No such file or directory' },
   EISDIR: { name: 'IsADirectoryError', errno: 21, phrase: 'Is a directory' },
   ENOTDIR: { name: 'NotADirectoryError', errno: 20, phrase: 'Not a directory' },
   EACCES: { name: 'PermissionError', errno: 13, phrase: 'Permission denied' },
+  EEXIST: { name: 'FileExistsError', errno: 17, phrase: 'File exists' },
+  EXDEV: { name: 'OSError', errno: 18, phrase: 'Invalid cross-device link' },
+} as const
+
+type GuestCode = keyof typeof CODE_TO_GUEST_EXC
+
+function isGuestCode(code: string | undefined): code is GuestCode {
+  return code !== undefined && code in CODE_TO_GUEST_EXC
+}
+
+/**
+ * Build the guest-side exception for one fs code, in CPython's message
+ * shape. `target` renders rename's two-path form.
+ *
+ * Args:
+ *   code: the fs error code, e.g. ENOENT.
+ *   path: the path the operation names.
+ *   target: rename's destination, when there is one.
+ */
+function guestError(code: GuestCode, path: string, target?: string): Error {
+  const mapped = CODE_TO_GUEST_EXC[code]
+  const where = target === undefined ? `'${path}'` : `'${path}' -> '${target}'`
+  const guest = new Error(`[Errno ${String(mapped.errno)}] ${mapped.phrase}: ${where}`)
+  guest.name = mapped.name
+  return guest
 }
 
 /**
@@ -511,11 +573,34 @@ const CODE_TO_GUEST_EXC: Record<string, { name: string; errno: number; phrase: s
  */
 function asGuestError(err: unknown, path: string): unknown {
   const code = (err as { code?: string }).code
-  const mapped = code !== undefined ? CODE_TO_GUEST_EXC[code] : undefined
-  if (mapped === undefined) return err
-  const guest = new Error(`[Errno ${String(mapped.errno)}] ${mapped.phrase}: '${path}'`)
-  guest.name = mapped.name
-  return guest
+  if (!isGuestCode(code)) return err
+  return guestError(code, path)
+}
+
+/**
+ * Run one mutating bridge op, translating a coded failure the way the
+ * read and write helpers do. Without this the raw workspace error
+ * reaches monty with `name` still `Error`, so guest code cannot catch
+ * the `FileNotFoundError` or `FileExistsError` the operation implies.
+ *
+ * Args:
+ *   bridge: the workspace dispatch callable.
+ *   op: the mutation to run.
+ *   path: the path the operation names.
+ *   dst: rename's destination.
+ */
+async function mutate(
+  bridge: BridgeDispatchFn,
+  op: 'MKDIR' | 'RMDIR' | 'UNLINK' | 'RENAME',
+  path: string,
+  dst?: string,
+): Promise<null> {
+  try {
+    await bridge(op, path, undefined, dst)
+  } catch (caught) {
+    throw asGuestError(caught, path)
+  }
+  return null
 }
 
 async function readBytes(bridge: BridgeDispatchFn, path: string): Promise<Uint8Array> {
