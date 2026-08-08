@@ -13,6 +13,7 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -80,10 +81,12 @@ def test_build_r2_uses_r2_config():
     assert isinstance(p, R2Resource)
 
 
+@pytest.mark.skipif(not os.environ.get("REDIS_URL"),
+                    reason="REDIS_URL not set")
 def test_build_redis_takes_raw_kwargs():
     from mirage.resource.redis import RedisResource
     p = build_resource("redis", {
-        "url": "redis://localhost:6379/15",
+        "url": os.environ["REDIS_URL"],
         "key_prefix": "test:",
     })
     assert isinstance(p, RedisResource)
