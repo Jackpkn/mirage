@@ -59,7 +59,7 @@ async def sha1sum(
                         status=fl.as_bool("status"),
                         quiet=fl.as_bool("quiet"),
                         warn=w or fl.as_bool("warn"),
-                       cwd=cwd), err)
+                        cwd=cwd), err)
 
 
 BUILDER = Builder('sha1sum', sha1sum, None, False, None, read=True)

@@ -12,6 +12,8 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+from typing import TypeVar, overload
+
 from mirage.accessor.ram import RAMAccessor
 from mirage.commands.builtin.ram import COMMANDS
 from mirage.ops.ram import OPS as RAM_OPS
@@ -21,6 +23,8 @@ from mirage.types import ResourceName
 
 _DEV_NAMES = frozenset({"null", "zero"})
 _ZERO_CHUNK_SIZE = 1 << 20
+_POP_MISSING = object()
+_T = TypeVar("_T")
 
 
 class _DevFiles(dict[str, bytes]):
@@ -80,8 +84,22 @@ class _DevFiles(dict[str, bytes]):
             return
         raise KeyError(key)
 
-    def pop(self, key: str, default: bytes | None = None) -> bytes | None:
+    @overload
+    def pop(self, key: str, /) -> bytes:
+        ...
+
+    @overload
+    def pop(self, key: str, default: bytes, /) -> bytes:
+        ...
+
+    @overload
+    def pop(self, key: str, default: _T, /) -> bytes | _T:
+        ...
+
+    def pop(self, key: str, default: object = _POP_MISSING, /) -> object:
         if key not in self:
+            if default is _POP_MISSING:
+                raise KeyError(key)
             return default
         value = self[key]
         del self[key]

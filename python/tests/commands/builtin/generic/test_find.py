@@ -826,7 +826,6 @@ def _stat_map(stats: dict[str, FileStat | None]):
 _DIR_STAT = FileStat(name="d", type=FileType.DIRECTORY)
 _FILE_STAT = FileStat(name="f", size=6, type=FileType.TEXT)
 
-
 # GNU findutils 4.10.0, pinned on debian:stable-slim:
 #   find A B           -> A's rows, then B's rows (operand order, never
 #                         re-sorted across operands)

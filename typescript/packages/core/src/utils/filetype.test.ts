@@ -56,10 +56,7 @@ describe('shared parity fixture', () => {
   // integ/fixtures/filetype/tables.json is the contract: the python suite
   // (tests/utils/test_filetype.py) asserts the same tables, so an edit on
   // one side fails the other until the fixture moves with it.
-  const tables = JSON.parse(readFileSync(FIXTURE, 'utf8')) as Record<
-    string,
-    Record<string, string>
-  >
+  const tables = JSON.parse(readFileSync(FIXTURE, 'utf8')) as Record<string, Record<string, string>>
 
   it('pins the extension table', () => {
     expect({ ...EXTENSION_MAP }).toEqual(tables.extension_map)

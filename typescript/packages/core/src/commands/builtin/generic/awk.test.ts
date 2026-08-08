@@ -206,11 +206,7 @@ describe('awkGeneric', () => {
   it('propagates a -f read failure that is not absence', async () => {
     const raw = new Error('S3 GET prog.awk failed: 403 Forbidden')
     function stream(): AsyncIterable<Uint8Array> {
-      async function* gen(): AsyncIterable<Uint8Array> {
-        await Promise.resolve()
-        throw raw
-      }
-      return gen()
+      throw raw
     }
     await expect(
       awkGeneric([spec('/data.txt')], [], opts({ f: '/prog.awk' }), stream),

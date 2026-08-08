@@ -74,10 +74,7 @@ export async function stat(
   }
   if (resolved.entry === null) throw enoent(spec.virtual)
   const detail = await getDocumentDetail(accessor, resolved.entry.id)
-  let sourceSize = extractDocumentSize(detail)
-  if (sourceSize === null) {
-    sourceSize = resolved.entry.size
-  }
+  const sourceSize = extractDocumentSize(detail) ?? resolved.entry.size
   const extra: Record<string, unknown> = { ...resolved.entry.extra }
   extra.document_id = resolved.entry.id
   // size stays null: the API reports the uploaded source file's size (e.g.
@@ -104,14 +101,14 @@ export async function stat(
   })
 }
 
-// Mirrors the Python timestamp_to_zulu: epoch seconds render with second
-// precision and a literal Z, unlike tree.ts's timestampToIso (+millis).
+// Mirrors the Python timestamp_to_zulu over its real domain (the API
+// sends epoch seconds or nothing): second precision and a literal Z,
+// unlike tree.ts's timestampToIso (+millis); strings pass through.
 function timestampToZulu(value: unknown): string | null {
-  if (value === null || value === undefined) return null
   if (typeof value === 'number') {
     return new Date(value * 1000).toISOString().replace(/\.\d{3}Z$/, 'Z')
   }
-  return String(value)
+  return typeof value === 'string' ? value : null
 }
 
 function statName(virtualKey: string, mountPrefix: string): string {

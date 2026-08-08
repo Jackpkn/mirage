@@ -378,8 +378,9 @@ async def find(
             continue
         results.extend(rows)
     if missing:
-        return format_records(results), IOResult(
-            stderr=("\n".join(missing) + "\n").encode(), exit_code=1)
+        return format_records(results), IOResult(stderr=("\n".join(missing) +
+                                                         "\n").encode(),
+                                                 exit_code=1)
     return format_records(results), IOResult()
 
 

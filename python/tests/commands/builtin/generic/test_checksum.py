@@ -53,7 +53,8 @@ def _fs(files: dict[str, str]):
     return read_bytes, read_stream
 
 
-async def _run_check(files: dict[str, str], cwd: str = "/",
+async def _run_check(files: dict[str, str],
+                     cwd: str = "/",
                      **flags: bool) -> tuple[str, str, int]:
     read_bytes, read_stream = _fs(files)
     out, io = await hashsum([_spec("/sums.txt")],
@@ -94,8 +95,7 @@ async def test_relative_recorded_name_resolves_against_cwd():
         {
             "/sums.txt": "5aabc  f.txt\n",
             "/data/f.txt": "abc",
-        },
-        cwd="/data")
+        }, cwd="/data")
     assert stdout == "f.txt: OK\n"
     assert stderr == ""
     assert code == 0
@@ -134,8 +134,7 @@ async def test_mismatch_counts_into_not_match_warning():
 
 @pytest.mark.asyncio
 async def test_all_malformed_fails_alone():
-    stdout, stderr, code = await _run_check(
-        {"/sums.txt": "junk\nmore junk\n"})
+    stdout, stderr, code = await _run_check({"/sums.txt": "junk\nmore junk\n"})
     assert stdout == ""
     assert stderr == ("md5sum: /sums.txt: no properly formatted checksum "
                       "lines found\n")
@@ -170,7 +169,8 @@ async def test_warn_adds_per_line_diagnostics():
         {
             "/sums.txt": "bad line\n5aabc  /ok.txt\n",
             "/ok.txt": "abc",
-        }, warn=True)
+        },
+        warn=True)
     assert stdout == "/ok.txt: OK\n"
     assert stderr == ("md5sum: /sums.txt: 1: improperly formatted MD5 "
                       "checksum line\n"

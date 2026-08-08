@@ -22,8 +22,7 @@ from mirage.commands.builtin.generic_bind.adapter import CommandIO
 from mirage.io.stream import materialize
 from mirage.io.types import ByteSource, IOResult
 from mirage.types import FileType, PathSpec
-from mirage.utils.errors import (FS_ERRORS, MISS_ERRORS, eisdir,
-                                 fs_error_line)
+from mirage.utils.errors import FS_ERRORS, MISS_ERRORS, eisdir, fs_error_line
 from mirage.utils.path import norm, parent
 
 

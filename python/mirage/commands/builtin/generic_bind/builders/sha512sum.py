@@ -62,7 +62,7 @@ async def sha512sum(
                                 status=fl.as_bool("status"),
                                 quiet=fl.as_bool("quiet"),
                                 warn=w or fl.as_bool("warn"),
-                       cwd=cwd), err)
+                                cwd=cwd), err)
 
 
 BUILDER = Builder('sha512sum', sha512sum, None, False, None, read=True)
