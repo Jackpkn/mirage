@@ -36,10 +36,6 @@ FILE_MIME_MAP: dict[str, str] = {
     "application/zip": "application/zip",
     "application/gzip": "application/gzip",
     "application/pdf": "application/pdf",
-    "parquet": "application/octet-stream",
-    "orc": "application/octet-stream",
-    "feather": "application/octet-stream",
-    "hdf5": "application/octet-stream",
 }
 
 # GNU `file -i` reports a symlink by its inode type, never by whatever

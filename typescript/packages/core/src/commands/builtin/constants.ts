@@ -36,10 +36,6 @@ export const FILE_MIME_MAP: Readonly<Record<string, string>> = Object.freeze({
   'application/zip': 'application/zip',
   'application/gzip': 'application/gzip',
   'application/pdf': 'application/pdf',
-  parquet: 'application/octet-stream',
-  orc: 'application/octet-stream',
-  feather: 'application/octet-stream',
-  hdf5: 'application/octet-stream',
 })
 
 // od and split both read their counts with xstrtoumax, which skips leading
