@@ -96,6 +96,7 @@ async function checkFile(
   let readFailures = 0
   let malformed = 0
   let lineno = 0
+  let parsedAny = false
   for (const line of data.split('\n')) {
     lineno += 1
     if (line.trim() === '') continue
@@ -110,6 +111,7 @@ async function checkFile(
       }
       continue
     }
+    parsedAny = true
     const [expected, filename] = parsed
     let digest: string
     try {
@@ -133,18 +135,17 @@ async function checkFile(
       mismatched += 1
     }
   }
-  // GNU's terminal diagnostics and WARNING block, in its order: the two
-  // fatal shapes come alone, the summaries print even without --warn, and
-  // --status silences the summaries but not the per-file strerror lines
-  // (pinned against coreutils 9.7).
-  if (verified === 0 && mismatched === 0 && readFailures === 0 && malformed > 0) {
+  // GNU's terminal diagnostics and WARNING block, in its order (pinned
+  // against coreutils 9.7): a file with no properly formatted line is
+  // fatal on its own, even under --status. "No file was verified" means
+  // --ignore-missing left zero OK lines — mismatches included — and
+  // follows the summaries; --status silences it (and the summaries, but
+  // not the per-file strerror lines) while its exit 1 stands.
+  if (!parsedAny) {
     errors.push(`${name}: ${checkLabel}: no properly formatted checksum lines found`)
     return [null, ENC.encode(`${errors.join('\n')}\n`), 1]
   }
-  if (fl.asBool('ignore_missing') && verified === 0 && mismatched === 0 && readFailures === 0) {
-    errors.push(`${name}: ${checkLabel}: no file was verified`)
-    return [null, ENC.encode(`${errors.join('\n')}\n`), 1]
-  }
+  const nothingVerified = fl.asBool('ignore_missing') && verified === 0
   if (!fl.asBool('status')) {
     if (malformed > 0) {
       errors.push(
@@ -161,8 +162,12 @@ async function checkFile(
         `${name}: WARNING: ${countNoun(mismatched, '1 computed checksum', 'computed checksums')} did NOT match`,
       )
     }
+    if (nothingVerified) {
+      errors.push(`${name}: ${checkLabel}: no file was verified`)
+    }
   }
-  const failed = mismatched > 0 || readFailures > 0 || (fl.asBool('strict') && malformed > 0)
+  const failed =
+    mismatched > 0 || readFailures > 0 || nothingVerified || (fl.asBool('strict') && malformed > 0)
   const stdout = output.length > 0 ? ENC.encode(`${output.join('\n')}\n`) : null
   const stderr = errors.length > 0 ? ENC.encode(`${errors.join('\n')}\n`) : null
   return [stdout, stderr, failed ? 1 : 0]

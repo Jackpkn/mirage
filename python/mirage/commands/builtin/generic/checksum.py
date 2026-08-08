@@ -121,6 +121,7 @@ async def _hash_check(
     check_label = path.raw_path or path.virtual
     lines: list[str] = []
     stderr_lines: list[str] = []
+    parsed_lines = 0
     verified = 0
     mismatched = 0
     read_failures = 0
@@ -136,6 +137,7 @@ async def _hash_check(
                     f"{prog}: {check_label}: {lineno}: improperly formatted "
                     f"{algorithm.upper()} checksum line")
             continue
+        parsed_lines += 1
         expected_hash, filename = parsed
         target = _resolve_check_target(filename, cwd, mount_prefix)
         h = factory()
@@ -160,19 +162,18 @@ async def _hash_check(
         else:
             lines.append(f"{filename}: FAILED")
             mismatched += 1
-    # GNU's terminal diagnostics and WARNING block, in its order: the two
-    # fatal shapes come alone, the summaries print even without --warn,
-    # and --status silences the summaries but not the per-file strerror
-    # lines (pinned against coreutils 9.7).
-    if not verified and not mismatched and not read_failures and malformed:
+    # GNU's terminal diagnostics and WARNING block, in its order (pinned
+    # against coreutils 9.7): a file with no properly formatted line is
+    # fatal on its own, even under --status. "No file was verified" means
+    # --ignore-missing left zero OK lines — mismatches included — and
+    # follows the summaries; --status silences it (and the summaries, but
+    # not the per-file strerror lines) while its exit 1 stands.
+    if not parsed_lines:
         stderr_lines.append(
             f"{prog}: {check_label}: no properly formatted checksum lines "
             "found")
         return b"", ("\n".join(stderr_lines) + "\n").encode(), 1
-    if ignore_missing and not verified and not mismatched \
-            and not read_failures:
-        stderr_lines.append(f"{prog}: {check_label}: no file was verified")
-        return b"", ("\n".join(stderr_lines) + "\n").encode(), 1
+    nothing_verified = ignore_missing and not verified
     if not status:
         if malformed:
             noun = _count_noun(malformed, "1 line is", "lines are")
@@ -185,10 +186,12 @@ async def _hash_check(
             noun = _count_noun(mismatched, "1 computed checksum",
                                "computed checksums")
             stderr_lines.append(f"{prog}: WARNING: {noun} did NOT match")
+        if nothing_verified:
+            stderr_lines.append(f"{prog}: {check_label}: no file was verified")
     stderr = ("\n".join(stderr_lines) +
               "\n").encode() if stderr_lines else None
-    exit_code = 1 if mismatched or read_failures or (strict
-                                                     and malformed) else 0
+    exit_code = 1 if (mismatched or read_failures or nothing_verified or
+                      (strict and malformed)) else 0
     output = b"" if status else (("\n".join(lines) +
                                   "\n").encode() if lines else b"")
     return output, stderr, exit_code

@@ -150,6 +150,53 @@ describe('checksum --check', () => {
     expect(code).toBe(1)
   })
 
+  it('--status silences no-file-verified but keeps its exit 1', async () => {
+    const [out, err, code] = await runCheck(
+      { '/sums.txt': '5aabc  /gone.txt\n' },
+      { ignore_missing: true, status: true },
+    )
+    expect(out).toBe('')
+    expect(err).toBe('')
+    expect(code).toBe(1)
+  })
+
+  it('--status keeps the no-properly-formatted fatal', async () => {
+    const [out, err, code] = await runCheck({ '/sums.txt': 'junk\n' }, { status: true })
+    expect(out).toBe('')
+    expect(err).toBe('md5sum: /sums.txt: no properly formatted checksum lines found\n')
+    expect(code).toBe(1)
+  })
+
+  it('a malformed line plus an ignored skip is no-file-verified', async () => {
+    // A parsed line whose target --ignore-missing skips must not read as
+    // "no properly formatted checksum lines found".
+    const [out, err, code] = await runCheck(
+      { '/sums.txt': 'junk\n5aabc  /gone.txt\n' },
+      { ignore_missing: true },
+    )
+    expect(out).toBe('')
+    expect(err).toBe(
+      'md5sum: WARNING: 1 line is improperly formatted\n' +
+        'md5sum: /sums.txt: no file was verified\n',
+    )
+    expect(code).toBe(1)
+  })
+
+  it('--ignore-missing with only a mismatch reports both diagnostics', async () => {
+    // GNU: zero OK lines under --ignore-missing is "no file was verified"
+    // even when a mismatch was read and reported.
+    const [out, err, code] = await runCheck(
+      { '/sums.txt': '5aface  /a.txt\n', '/a.txt': 'cafe' },
+      { ignore_missing: true },
+    )
+    expect(out).toBe('/a.txt: FAILED\n')
+    expect(err).toBe(
+      'md5sum: WARNING: 1 computed checksum did NOT match\n' +
+        'md5sum: /sums.txt: no file was verified\n',
+    )
+    expect(code).toBe(1)
+  })
+
   it('--status keeps the strerror lines and drops the summaries', async () => {
     const [out, err, code] = await runCheck(
       { '/sums.txt': '5aabc  /ok.txt\n5aabc  /miss.txt\n', '/ok.txt': 'abc' },

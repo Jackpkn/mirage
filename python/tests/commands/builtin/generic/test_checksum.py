@@ -151,6 +151,54 @@ async def test_ignore_missing_with_nothing_verified():
 
 
 @pytest.mark.asyncio
+async def test_status_silences_no_file_verified_but_keeps_exit():
+    stdout, stderr, code = await _run_check({"/sums.txt": "5aabc  /gone\n"},
+                                            ignore_missing=True,
+                                            status=True)
+    assert stdout == ""
+    assert stderr == ""
+    assert code == 1
+
+
+@pytest.mark.asyncio
+async def test_status_keeps_the_no_properly_formatted_fatal():
+    stdout, stderr, code = await _run_check({"/sums.txt": "junk\n"},
+                                            status=True)
+    assert stdout == ""
+    assert stderr == ("md5sum: /sums.txt: no properly formatted checksum "
+                      "lines found\n")
+    assert code == 1
+
+
+@pytest.mark.asyncio
+async def test_malformed_plus_ignored_skip_is_no_file_verified():
+    # A parsed line whose target --ignore-missing skips must not read as
+    # "no properly formatted checksum lines found".
+    stdout, stderr, code = await _run_check(
+        {"/sums.txt": "junk\n5aabc  /gone\n"}, ignore_missing=True)
+    assert stdout == ""
+    assert stderr == ("md5sum: WARNING: 1 line is improperly formatted\n"
+                      "md5sum: /sums.txt: no file was verified\n")
+    assert code == 1
+
+
+@pytest.mark.asyncio
+async def test_ignore_missing_with_only_a_mismatch_reports_both():
+    # GNU: zero OK lines under --ignore-missing is "no file was verified"
+    # even when a mismatch was read and reported.
+    stdout, stderr, code = await _run_check(
+        {
+            "/sums.txt": "5aface  /a.txt\n",
+            "/a.txt": "cafe",
+        },
+        ignore_missing=True)
+    assert stdout == "/a.txt: FAILED\n"
+    assert stderr == ("md5sum: WARNING: 1 computed checksum did NOT match\n"
+                      "md5sum: /sums.txt: no file was verified\n")
+    assert code == 1
+
+
+@pytest.mark.asyncio
 async def test_status_keeps_strerror_lines_and_drops_summaries():
     stdout, stderr, code = await _run_check(
         {

@@ -37,6 +37,14 @@ function call(
   return registry.call(name, ResourceName.RAM, dev.accessor, PathSpec.fromStrPath(path), args)
 }
 
+async function makeWs(): Promise<Workspace> {
+  const parser = await getTestParser()
+  const ops = new OpsRegistry()
+  const data = new RAMResource()
+  ops.registerResource(data)
+  return new Workspace({ '/data': data }, { mode: MountMode.WRITE, ops, shellParser: parser })
+}
+
 describe('DevResource', () => {
   it('reports kind = ram (matching Python parity)', () => {
     expect(new DevResource().kind).toBe(ResourceName.RAM)
@@ -87,14 +95,6 @@ describe('DevResource', () => {
 })
 
 describe('dev file removal (GNU rm /dev/null semantics)', () => {
-  async function makeWs(): Promise<Workspace> {
-    const parser = await getTestParser()
-    const ops = new OpsRegistry()
-    const data = new RAMResource()
-    ops.registerResource(data)
-    return new Workspace({ '/data': data }, { mode: MountMode.WRITE, ops, shellParser: parser })
-  }
-
   it('rm /dev/null exits 0 and the path is gone', async () => {
     const ws = await makeWs()
     const rm = await ws.execute('rm /dev/null')
