@@ -17,7 +17,7 @@ import { cacheAwareStream } from '../../../cache/read_through.ts'
 import { exitOnEmpty } from '../../../io/stream.ts'
 import { IOResult, materialize, type ByteSource } from '../../../io/types.ts'
 import { FileType, PathSpec, type FileStat } from '../../../types.ts'
-import { fsStrerror, isFsError } from '../../../utils/errors.ts'
+import { fsStrerror, isFsError, isWalkError } from '../../../utils/errors.ts'
 import { respellRaw } from '../../../utils/path.ts'
 import type { CommandFnResult, CommandOpts } from '../../config.ts'
 import { specOf } from '../../spec/builtins.ts'
@@ -152,11 +152,13 @@ export async function rgGeneric(
   try {
     const s = await stat(first)
     isDir = s.type === FileType.DIRECTORY
-  } catch {
+  } catch (err) {
+    if (!isWalkError(err)) throw err
     try {
       await readdir(first)
       isDir = true
-    } catch {
+    } catch (probeErr) {
+      if (!isWalkError(probeErr)) throw probeErr
       // not readable
     }
   }
