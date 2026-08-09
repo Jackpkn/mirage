@@ -22,7 +22,7 @@
       "dify": {
         "filetypes": [],
         "has_aggregate": false,
-        "has_provision": false,
+        "has_provision": true,
         "has_write": false
       },
       "discord": {
