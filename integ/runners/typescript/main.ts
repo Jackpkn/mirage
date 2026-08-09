@@ -24,6 +24,7 @@ import {
   loadServices,
   loadTargets,
   missingEnv,
+  parseAllowSkip,
   bindMount,
   runCase,
   runScenario,
@@ -47,19 +48,22 @@ function parseArgs(): {
   emit: string | undefined
   facet: string | undefined
   strict: boolean
+  allowSkip: string
 } {
   const targets: string[] = []
   let emit: string | undefined
   let facet: string | undefined
   let strict = false
+  let allowSkip = ''
   const argv = process.argv.slice(2)
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--target' && i + 1 < argv.length) targets.push(argv[++i])
     else if (argv[i] === '--facet' && i + 1 < argv.length) facet = argv[++i]
     else if (argv[i] === '--emit' && i + 1 < argv.length) emit = argv[++i]
     else if (argv[i] === '--strict') strict = true
+    else if (argv[i] === '--allow-skip' && i + 1 < argv.length) allowSkip = argv[++i]
   }
-  return { targets, emit, facet, strict }
+  return { targets, emit, facet, strict, allowSkip }
 }
 
 async function runTarget(
@@ -130,7 +134,7 @@ async function main(): Promise<void> {
   const services = loadServices(root)
   const cases = loadCases(root)
 
-  const { targets, emit: emitPath, facet, strict } = parseArgs()
+  const { targets, emit: emitPath, facet, strict, allowSkip } = parseArgs()
   // Targets are grouped into facets so CI can run one backend family per job; a
   // target with no facet belongs to "core", which the shared battery runs.
   let ids: string[]
@@ -148,6 +152,11 @@ async function main(): Promise<void> {
   const report = emitPath ? null : new Report()
   const emit: EmitRow[] | null = emitPath ? [] : null
   let ran = 0
+  // A facet can be split across CI jobs (core's databases and vector stores
+  // run in integ-database/integ-data), so a job names the services it
+  // knowingly does not provision. Anything skipping outside this list is a
+  // broken job, which is the whole point of --strict.
+  const allowed = parseAllowSkip(services, allowSkip)
   const envSkipped: string[] = []
   for (const id of ids) {
     const target = manifest.get(id)
@@ -163,7 +172,9 @@ async function main(): Promise<void> {
     const missing = missingEnv(services, target, 'typescript')
     if (missing.length) {
       process.stderr.write(`skip [${id}]: ${missing.join(', ')} not set\n`)
-      envSkipped.push(`${id} (${missing.join(', ')})`)
+      if (target.service === undefined || !allowed.has(target.service)) {
+        envSkipped.push(`${id} (${missing.join(', ')})`)
+      }
       continue
     }
     await runTarget(target, cases, root, report, emit)

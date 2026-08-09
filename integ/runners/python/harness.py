@@ -79,6 +79,27 @@ def validate_services(data: dict) -> dict:
     return services
 
 
+def parse_allow_skip(services: dict, value: str) -> set[str]:
+    """Service names a caller declares it knowingly does not provision.
+
+    Rejects a name that is not a real service so the list cannot rot into
+    a typo that quietly widens what --strict tolerates.
+
+    Args:
+        services (dict): the table from load_services.
+        value (str): comma-separated service names, possibly empty.
+
+    Returns:
+        set[str]: the declared service names.
+    """
+    names = {n.strip() for n in value.split(",") if n.strip()}
+    unknown = sorted(names - set(services))
+    if unknown:
+        raise KeyError(f"--allow-skip names unknown service(s): "
+                       f"{', '.join(unknown)}")
+    return names
+
+
 def missing_env(services: dict, target: dict, host: str) -> list[str]:
     """Env vars this host needs for this target and does not have.
 

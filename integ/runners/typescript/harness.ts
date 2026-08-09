@@ -186,6 +186,26 @@ export function loadServices(root: string): Map<string, ServiceEnv> {
   return new Map(Object.entries(data.services))
 }
 
+/**
+ * Service names a caller declares it knowingly does not provision.
+ *
+ * Rejects a name that is not a real service so the list cannot rot into a typo
+ * that quietly widens what --strict tolerates.
+ */
+export function parseAllowSkip(services: Map<string, ServiceEnv>, value: string): Set<string> {
+  const names = new Set(
+    value
+      .split(',')
+      .map((n) => n.trim())
+      .filter((n) => n !== ''),
+  )
+  const unknown = [...names].filter((n) => !services.has(n)).sort()
+  if (unknown.length) {
+    throw new Error(`--allow-skip names unknown service(s): ${unknown.join(', ')}`)
+  }
+  return names
+}
+
 /** Env vars this host needs for this target and does not have. */
 export function missingEnv(
   services: Map<string, ServiceEnv>,

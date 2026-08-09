@@ -12,7 +12,6 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import copy
 import json
 import os
 import subprocess
@@ -70,6 +69,7 @@ def with_manifest(mutate) -> dict:
 
 
 def selftest_services_table() -> None:
+
     def drop_entry() -> None:
         data = with_manifest(lambda d: d["services"].pop("trello"))
         harness.validate_services(data)
@@ -78,8 +78,8 @@ def selftest_services_table() -> None:
           *raises(drop_entry, "missing an entry"))
 
     def orphan_entry() -> None:
-        data = with_manifest(
-            lambda d: d["services"].update({"nosuchsvc": {
+        data = with_manifest(lambda d: d["services"].update(
+            {"nosuchsvc": {
                 "python": [],
                 "typescript": []
             }}))
@@ -157,11 +157,24 @@ def selftest_strict_exit() -> None:
     # The partial-skip case the facet guard cannot see: python self-hosts
     # linear, so the project facet still runs one target and ran != 0.
     code = run_main(["--facet", "project", "--strict"], blanked)
-    check("strict: a facet that loses only some targets exits non-zero",
-          code != 0, f"exit {code}")
+    check("strict: a facet that loses only some targets exits non-zero", code
+          != 0, f"exit {code}")
     code = run_main(["--facet", "project"], blanked)
-    check("permissive: that same partial facet still exits 0",
-          code == 0, f"exit {code}")
+    check("permissive: that same partial facet still exits 0", code == 0,
+          f"exit {code}")
+
+    # A facet split across CI jobs declares the services it does not
+    # provision; a declared skip is tolerated, a typo'd one is rejected so
+    # the list cannot rot into silently widening what --strict accepts.
+    code = run_main(
+        ["--target", "trello", "--strict", "--allow-skip", "trello"], blanked)
+    check("allow-skip: a declared skip is tolerated under --strict", code == 0,
+          f"exit {code}")
+    code = run_main(
+        ["--target", "trello", "--strict", "--allow-skip", "nosuchsvc"],
+        blanked)
+    check("allow-skip: an unknown service name is rejected", code != 0,
+          f"exit {code}")
 
 
 def run_typescript(args: list[str], env: dict) -> int:
@@ -169,12 +182,11 @@ def run_typescript(args: list[str], env: dict) -> int:
     for k, v in env.items():
         if v == "":
             merged.pop(k, None)
-    proc = subprocess.run(
-        [str(TSX), "runners/typescript/main.ts", *args],
-        capture_output=True,
-        text=True,
-        cwd=ROOT,
-        env=merged)
+    proc = subprocess.run([str(TSX), "runners/typescript/main.ts", *args],
+                          capture_output=True,
+                          text=True,
+                          cwd=ROOT,
+                          env=merged)
     return proc.returncode
 
 
