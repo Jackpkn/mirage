@@ -20,7 +20,7 @@ import type { CommandDispatch, CommandFnResult } from '../config.ts'
 import { compileSpec } from '../spec/compile.ts'
 import type { ZodObject, ZodRawShape } from 'zod'
 
-import { CommandSpec, type CommandSpecInit } from '../spec/types.ts'
+import { CommandSpec, type CommandSpecInit, type FlagValue } from '../spec/types.ts'
 
 /**
  * Which program's usage-error dialect a CLI speaks.
@@ -96,7 +96,7 @@ export interface CLIInvocation<ConfigT = unknown> {
   /** Text-typed operands of the leaf. */
   texts: readonly string[]
   /** Merged group and leaf flags keyed by kwarg name, read via FlagView. */
-  flags: Record<string, string | boolean | number | string[]>
+  flags: Record<string, FlagValue>
   /** Piped input, null when the line has none. */
   stdin: ByteSource | null
   /** The session's environment variables. */
@@ -302,7 +302,7 @@ function checkCollisions(
   }
 }
 
-export type WalkFlagBag = Record<string, string | boolean | number | string[]>
+export type WalkFlagBag = Record<string, FlagValue>
 
 export interface WalkResultInit {
   leaf?: CLISpec | null

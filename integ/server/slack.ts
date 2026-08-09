@@ -103,7 +103,7 @@ function loadFixture(): Fixture {
 function pushSchema(dbUrl: string): void {
   const prismaBin = createRequire(import.meta.url).resolve('prisma/build/index.js')
   execFileSync('node', [prismaBin, 'db', 'push', '--schema', SCHEMA, '--skip-generate'], {
-    env: { ...process.env, SLACK_DB_URL: dbUrl },
+    env: { ...process.env, INTEG_DB_URL: dbUrl },
     stdio: 'ignore',
   })
 }
@@ -680,7 +680,7 @@ async function handle(
 
 export async function startServer(port: number): Promise<http.Server> {
   const dbUrl = `file:${join(tmpdir(), `mirage-slack-${String(process.pid)}-${String(port)}.db`)}`
-  process.env.SLACK_DB_URL = dbUrl
+  process.env.INTEG_DB_URL = dbUrl
   pushSchema(dbUrl)
   const db = new PrismaClient()
   await seed(db, loadFixture())
