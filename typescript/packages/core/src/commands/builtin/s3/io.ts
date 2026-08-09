@@ -30,11 +30,12 @@ import { stream as s3Stream } from '../../../core/s3/stream.ts'
 import { truncate as s3Truncate } from '../../../core/s3/truncate.ts'
 import { unlink as s3Unlink } from '../../../core/s3/unlink.ts'
 import { write as s3Write } from '../../../core/s3/write.ts'
-import type { CommandIO } from '../generic_bind/index.ts'
+import { type CommandIO, rangeOf } from '../generic_bind/index.ts'
 
 export const S3_IO: CommandIO<S3Accessor> = {
   readdir: s3Readdir,
   readBytes: s3Read,
+  readRange: rangeOf(s3Read),
   readStream: s3Stream,
   stat: s3Stat,
   isMounted: () => true,

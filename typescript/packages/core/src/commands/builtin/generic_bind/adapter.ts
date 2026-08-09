@@ -153,6 +153,32 @@ export function resolveGlobOf<A extends Accessor = Accessor>(ops: CommandIO<A>):
   return makeResolveGlob(ops.readdir, ops.maxGlobMatches)
 }
 
+/**
+ * A `readRange` slot built from a backend read that already takes a byte
+ * window as its options argument.
+ *
+ * Without the slot the ops factory reads the whole object and slices, so
+ * `head -c 100` on a 2 GiB S3 key downloads 2 GiB. Python has pushed the
+ * window down on every one of these backends since the slot existed by
+ * pointing `read_range` at its own `read_bytes`; this is the same move,
+ * spelled for a read whose window arrives in an options object.
+ *
+ * Args:
+ *   read: the backend's whole-file read, whose fourth argument is an
+ *     `{offset?, size?}` window.
+ */
+export function rangeOf<A extends Accessor = Accessor>(
+  read: (
+    accessor: A,
+    path: PathSpec,
+    index: IndexCacheStore | undefined,
+    options: { offset?: number; size?: number },
+  ) => Promise<Uint8Array>,
+): NonNullable<CommandIO<A>['readRange']> {
+  return (accessor, path, index, offset, size) =>
+    read(accessor, path, index, size === null ? { offset } : { offset, size })
+}
+
 // Whether a path that failed with ENOENT is an implicit directory. Keyed
 // backends (RAM/Redis/S3) have no directory entries: stat/read of a prefix
 // that only exists through deeper keys raises ENOENT. The operand's own

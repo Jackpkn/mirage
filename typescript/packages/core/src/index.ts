@@ -237,6 +237,7 @@ export {
   metadataProvision,
   overlaidStat,
   pureProvision,
+  rangeOf,
   resolveGlobOf,
   withDefaultProvisions,
   writeMetadataProvision,
@@ -294,7 +295,13 @@ export {
 export { walkFind } from './core/generic/find.ts'
 export { statGeneric } from './commands/builtin/generic/stat.ts'
 export { diffGeneric } from './commands/builtin/generic/diff.ts'
-export { duGeneric, parseDepth, parseDuFlags, runDu } from './commands/builtin/generic/du.ts'
+export {
+  DEFAULT_MAX_DU_ENTRIES,
+  duGeneric,
+  parseDepth,
+  parseDuFlags,
+  runDu,
+} from './commands/builtin/generic/du.ts'
 export { treeGeneric } from './commands/builtin/generic/tree.ts'
 export { lsGeneric } from './commands/builtin/generic/ls.ts'
 export { fileGeneric } from './commands/builtin/generic/file.ts'
