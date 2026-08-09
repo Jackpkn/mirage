@@ -190,9 +190,21 @@ def run_typescript(args: list[str], env: dict) -> int:
     return proc.returncode
 
 
-def selftest_typescript_gates() -> None:
-    """The same two exits on the typescript host, so the gate is symmetric."""
+def selftest_typescript_gates(require: bool) -> None:
+    """The same two exits on the typescript host, so the gate is symmetric.
+
+    A silent skip here would be the very thing this file exists to catch —
+    a check that reports success having run nothing — so CI passes
+    --require-ts and a missing tsx is a failure rather than a skip.
+
+    Args:
+        require (bool): whether an absent tsx fails instead of skipping.
+    """
     if not TSX.is_file():
+        if require:
+            check("typescript gates ran", False,
+                  f"--require-ts given but {TSX} is missing")
+            return
         print("skip typescript gates: no tsx (run pnpm install from "
               "typescript/)")
         return
@@ -209,7 +221,7 @@ def main() -> None:
     selftest_services_table()
     selftest_case_validation()
     selftest_strict_exit()
-    selftest_typescript_gates()
+    selftest_typescript_gates("--require-ts" in sys.argv)
     print()
     if FAILURES:
         print(f"{len(FAILURES)} gate(s) failed", file=sys.stderr)

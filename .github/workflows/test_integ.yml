@@ -157,11 +157,6 @@ jobs:
           ./python/.venv/bin/python integ/metadata.py > /tmp/metadata.out
           diff integ/truth_metadata.txt /tmp/metadata.out
 
-      # Every "verified by integ" claim rests on the runner failing when it
-      # tests nothing, so assert the gates themselves before the battery.
-      - name: Assert the integ runner gates (strict exit, services, case ids)
-        run: ./python/.venv/bin/python integ/runners/tools/gate_selftest.py
-
       - name: Run lancedb integ (embedded, JSON harness)
         env:
           LANCEDB_ENABLED: "1"
@@ -366,6 +361,14 @@ jobs:
       - uses: ./.github/actions/integ-battery-setup
         with:
           build-packages: "false"
+      # Every "verified by integ" claim rests on the runner failing when it
+      # tests nothing, so assert the gates themselves before the battery.
+      # This job is where they run because it is the one with both hosts
+      # installed; --require-ts makes an absent tsx a failure rather than a
+      # silent half-run.
+      - name: Assert the integ runner gates (strict exit, services, case ids)
+        run: ./python/.venv/bin/python integ/runners/tools/gate_selftest.py --require-ts
+
       - name: Run declarative battery (python hosts)
         run: ./python/.venv/bin/python integ/runners/python/main.py --facet core --strict --allow-skip chroma,lancedb,nextcloud,notion,postgres,qdrant
 
@@ -578,6 +581,7 @@ jobs:
         run: >-
           ./python/.venv/bin/python integ/runners/python/main.py
           --target mongodb --target postgres --target chroma --target qdrant
+          --strict
 
       - name: Run database battery (typescript host)
         if: ${{ !cancelled() }}
@@ -585,6 +589,7 @@ jobs:
         run: >-
           pnpm exec tsx runners/typescript/main.ts
           --target mongodb --target postgres --target chroma --target qdrant
+          --strict
 
   integ-data:
     needs: changes
