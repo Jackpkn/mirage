@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { UsageError } from '../errors.ts'
-import { USAGE_EXIT, USAGE_HINT_PREFIX } from './constants'
+import { OLD_OPTION_EXIT, USAGE_EXIT, USAGE_HINT_PREFIX } from './constants'
 import { CommandName } from './types.ts'
 
 /** GNU usage-error exit code for a command. */
@@ -105,6 +105,27 @@ export function missingValueError(cmdName: string, token: string): [Uint8Array, 
     : `${cmdName}: option requires an argument -- '${token}'\n`
   const hint = `Try '${cmdName} --help' for more information.\n`
   return [new TextEncoder().encode(line + hint), usageExitCode(cmdName)]
+}
+
+/**
+ * GNU tar refusal for an old-style cluster letter with no argument.
+ *
+ * First line and exit pinned against GNU tar 1.35 (`tar xzf` with
+ * nothing after it, and `tar cfC a.tar`, which names C). tar's own
+ * wording, capital and full stop included, because it counts the
+ * cluster's argument needs before argp sees the line at all.
+ *
+ * The hint line is deliberately mirage's, not GNU's: GNU offers
+ * `Try 'tar --help' or 'tar --usage' for more information.` because argp
+ * gives every argp program a `--usage`, and mirage's tar serves only
+ * `--help`. Naming a flag that does not exist would be worse than the
+ * shorter hint, and every other refusal here words it this way, so tar's
+ * two refusals stay consistent with each other.
+ */
+export function oldOptionError(cmdName: string, letter: string): [Uint8Array, number] {
+  const line = `${cmdName}: Old option '${letter}' requires an argument.\n`
+  const hint = `Try '${cmdName} --help' for more information.\n`
+  return [new TextEncoder().encode(line + hint), OLD_OPTION_EXIT]
 }
 
 /**
