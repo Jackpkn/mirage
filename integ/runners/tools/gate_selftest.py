@@ -177,7 +177,20 @@ def selftest_strict_exit() -> None:
           f"exit {code}")
 
 
-def run_typescript(args: list[str], env: dict) -> int:
+def run_typescript(args: list[str], env: dict) -> tuple[int, str]:
+    """Run the typescript runner, keeping stderr for the failure message.
+
+    An unbuilt mirage package makes the runner die on import with an exit
+    code that looks exactly like a gate verdict, so the tail of stderr
+    rides along and says which of the two it was.
+
+    Args:
+        args (list[str]): runner arguments.
+        env (dict): environment overrides; an empty value unsets.
+
+    Returns:
+        tuple: exit code and the last line of stderr.
+    """
     merged = {**os.environ, **env}
     for k, v in env.items():
         if v == "":
@@ -187,7 +200,10 @@ def run_typescript(args: list[str], env: dict) -> int:
                           text=True,
                           cwd=ROOT,
                           env=merged)
-    return proc.returncode
+    lines = [ln for ln in proc.stderr.splitlines() if ln.strip()]
+    errors = [ln for ln in lines if "Error" in ln or "error" in ln]
+    return proc.returncode, (errors[0] if errors else
+                             (lines[-1] if lines else ""))
 
 
 def selftest_typescript_gates(require: bool) -> None:
@@ -208,13 +224,21 @@ def selftest_typescript_gates(require: bool) -> None:
         print("skip typescript gates: no tsx (run pnpm install from "
               "typescript/)")
         return
+    # Prove the runner starts before reading exit codes as verdicts: an
+    # unbuilt mirage package dies on import with a non-zero code, which
+    # would make the strict assertion below pass for the wrong reason. An
+    # unknown facet exits 2 without running any case, so it costs nothing.
+    code, err = run_typescript(["--facet", "__selftest_no_such_facet__"], {})
+    check("typescript runner starts (packages built)", code == 2,
+          f"exit {code}: {err}")
+
     blanked = {"TRELLO_ENDPOINT": ""}
-    code = run_typescript(["--target", "trello", "--strict"], blanked)
+    code, err = run_typescript(["--target", "trello", "--strict"], blanked)
     check("strict (ts): a skipped target exits non-zero", code != 0,
-          f"exit {code}")
-    code = run_typescript(["--target", "trello"], blanked)
+          f"exit {code}: {err}")
+    code, err = run_typescript(["--target", "trello"], blanked)
     check("permissive (ts): the same run still exits 0", code == 0,
-          f"exit {code}")
+          f"exit {code}: {err}")
 
 
 def main() -> None:

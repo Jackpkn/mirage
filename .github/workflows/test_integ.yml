@@ -361,14 +361,6 @@ jobs:
       - uses: ./.github/actions/integ-battery-setup
         with:
           build-packages: "false"
-      # Every "verified by integ" claim rests on the runner failing when it
-      # tests nothing, so assert the gates themselves before the battery.
-      # This job is where they run because it is the one with both hosts
-      # installed; --require-ts makes an absent tsx a failure rather than a
-      # silent half-run.
-      - name: Assert the integ runner gates (strict exit, services, case ids)
-        run: ./python/.venv/bin/python integ/runners/tools/gate_selftest.py --require-ts
-
       - name: Run declarative battery (python hosts)
         run: ./python/.venv/bin/python integ/runners/python/main.py --facet core --strict --allow-skip chroma,lancedb,nextcloud,notion,postgres,qdrant
 
@@ -414,6 +406,17 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/integ-battery-setup
+
+      # Every "verified by integ" claim rests on the runner failing when it
+      # tests nothing, so assert the gates themselves before the battery.
+      # This job hosts them because it is the only one with both halves: the
+      # setup action always installs the python venv, and this job is the
+      # one that builds the mirage packages the typescript runner imports
+      # (integ-shared-py passes build-packages: false). --require-ts turns
+      # an absent tsx into a failure rather than a silent half-run.
+      - name: Assert the integ runner gates (strict exit, services, case ids)
+        run: ./python/.venv/bin/python integ/runners/tools/gate_selftest.py --require-ts
+
       - name: Run declarative battery (typescript hosts)
         working-directory: integ
         run: pnpm exec tsx runners/typescript/main.ts --facet core --strict --allow-skip chroma,lancedb,nextcloud,notion,postgres,qdrant
