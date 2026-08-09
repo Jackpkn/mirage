@@ -160,7 +160,7 @@
       "mongodb": {
         "filetypes": [],
         "has_aggregate": false,
-        "has_provision": false,
+        "has_provision": true,
         "has_write": false
       },
       "nextcloud": {
@@ -184,7 +184,7 @@
       "postgres": {
         "filetypes": [],
         "has_aggregate": false,
-        "has_provision": false,
+        "has_provision": true,
         "has_write": false
       },
       "qdrant": {
