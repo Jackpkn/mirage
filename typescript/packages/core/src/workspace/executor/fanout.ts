@@ -12,6 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import { mountAllowed } from '../../context/session_context.ts'
 import { mountKey } from '../../utils/key_prefix.ts'
 import { type ByteSource, IOResult, materialize } from '../../io/types.ts'
 import type { Resource } from '../../resource/base.ts'
@@ -29,6 +30,7 @@ import {
   type FindExpr,
 } from '../../commands/builtin/findParse.ts'
 import type { FlagValue } from '../../commands/spec/types.ts'
+import type { ChildMounts } from '../../ops/types.ts'
 
 type Result = [ByteSource | null, IOResult, ExecutionNode]
 
@@ -38,6 +40,19 @@ function pathSegments(path: string): string[] {
   return path.split('/').filter((s) => s !== '')
 }
 
+/**
+ * Descendant mounts the current session may see.
+ *
+ * A fan-out rooted above a session boundary must not walk into an
+ * ungranted mount: enumerating it through the raw registry is exactly
+ * how `grep -r x /` leaked a walled-off mount's contents. The filter
+ * matches the door's structure merge, so the fan-out stays an
+ * unobservable optimization.
+ */
+function allowedDescendants(registry: MountRegistry, path: string): MountEntry[] {
+  return registry.descendantMounts(path).filter((m) => mountAllowed(m.prefix))
+}
+
 export function shouldFanOut(
   cmdName: string,
   paths: readonly PathSpec[],
@@ -45,6 +60,11 @@ export function shouldFanOut(
   registry: MountRegistry,
 ): boolean {
   if (paths.length === 0 || paths[0] === undefined) return false
+  // Gated on the raw registry, not the session view: with every
+  // descendant ungranted, single-mount dispatch would serve the parent
+  // backend's keys shadowed under a hidden mount's prefix, and only the
+  // fan-out's shadow filter drops those. Execution still runs the
+  // allowed descendants only.
   if (registry.descendantMounts(paths[0].virtual).length === 0) return false
   if (TRAVERSAL_CMDS.has(cmdName)) return true
   if (cmdName === 'grep') {
@@ -194,10 +214,14 @@ export async function fanOutTraversal(
   cmdStr: string,
   stdin: ByteSource | null,
   ensureOpen: ((resource: Resource) => Promise<void>) | undefined,
+  childMounts: ChildMounts | null = null,
 ): Promise<Result> {
   const targetPath = paths[0]?.virtual ?? cwd
-  const descendants = registry.descendantMounts(targetPath)
-  const descendantPrefixes = descendants.map((m) => rstripSlash(m.prefix))
+  const descendants = allowedDescendants(registry, targetPath)
+  // The shadow filter keeps the raw list on purpose: a mount the
+  // session cannot see still shadows the primary backend's keys under
+  // its prefix, the walk just never descends into it.
+  const descendantPrefixes = registry.descendantMounts(targetPath).map((m) => rstripSlash(m.prefix))
 
   const allStdout: Uint8Array[] = []
   let mergedIo = new IOResult()
@@ -244,9 +268,15 @@ export async function fanOutTraversal(
     if (ensureOpen !== undefined) {
       await ensureOpen(mount.resource)
     }
+    // The one fact threaded into the per-mount runs: a start point only
+    // the namespace serves (a nested mount's ancestor) has no backend
+    // listing, so without it the primary run reports the operand
+    // missing. Links and stat overlays are still dropped here, a known
+    // seam of the fan-out.
     const [stdout0, io] = await mount.executeCmd(cmdName, subPaths, subTexts, subFlags, {
       stdin,
       cwd,
+      ...(childMounts !== null ? { childMounts } : {}),
     })
     let stdout: ByteSource | null = stdout0
     if (mount !== primaryMount && io.exitCode === 127) {

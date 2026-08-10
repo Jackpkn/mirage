@@ -20,6 +20,7 @@ import { type EventDict, Observer } from '../observe/observer.ts'
 import type { OpRecord } from '../observe/record.ts'
 import { type OpKwargs, OpsRegistry } from '../ops/registry.ts'
 import { assertMountAllowed } from '../context/session_context.ts'
+import { isMissingPath } from '../utils/errors.ts'
 import type { Resource } from '../resource/base.ts'
 import { HISTORY_PREFIX, HistoryViewResource } from '../resource/history/history.ts'
 import { resourceStateRequiresOverride } from '../resource/secrets.ts'
@@ -261,6 +262,7 @@ export class Workspace {
       (path, stat) => mergeOverlayStat(this.namespace.metaFor(path), stat),
       this.registry.policies,
       (path) => this.registry.mountFor(path)?.prefix ?? '',
+      () => this.registry.mountPrefixes(),
     )
   }
 
@@ -382,9 +384,27 @@ export class Workspace {
               // skip the stat; unmarked entries (e.g. RAM) need one to
               // learn dir-ness.
               if (entry.endsWith('/')) return { path: entry, size: 0, isDir: true }
-              const stat = (await this.dispatch('stat', entry)) as FileStat
+              const isLink = this.namespace.isLink(entry)
+              let stat: FileStat
+              try {
+                stat = (await this.dispatch('stat', entry)) as FileStat
+              } catch (err) {
+                // A dangling link, or an entry that vanished between
+                // list and stat, must not fail the whole listing; the
+                // guest's own open reports the miss. Anything else
+                // (authorization, a timeout, a backend bug) propagates,
+                // or pyodide's syncMounts would replace a healthy
+                // snapshot with a silently degraded one.
+                if (!isMissingPath(err)) throw err
+                return { path: entry, size: 0, isDir: false, ...(isLink ? { isLink } : {}) }
+              }
               const isDir = stat.type === FileType.DIRECTORY
-              return { path: entry, size: isDir ? 0 : (stat.size ?? 0), isDir }
+              return {
+                path: entry,
+                size: isDir ? 0 : (stat.size ?? 0),
+                isDir,
+                ...(isLink ? { isLink } : {}),
+              }
             }),
           )
         }
