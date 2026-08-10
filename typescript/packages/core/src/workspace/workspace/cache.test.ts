@@ -46,14 +46,44 @@ describe('buildFileCache', () => {
 })
 
 describe('resolveFileCache', () => {
-  it('passes a built store through untouched', () => {
+  it('passes a built store through untouched, and disclaims it', () => {
     const store = new RAMFileCacheStore({ limit: 8 })
-    expect(resolveFileCache(store)).toBe(store)
+    expect(resolveFileCache(store)).toEqual({ cache: store, owned: false })
+  })
+
+  it('owns what it builds', () => {
+    expect(resolveFileCache(undefined).owned).toBe(true)
+    expect(resolveFileCache({ type: CacheType.RAM }).owned).toBe(true)
   })
 
   it('lets a workspace take the cache as config, the way index already does', () => {
     const ws = new Workspace({}, { cache: { type: CacheType.RAM, limit: 4096 } })
     expect(ws.cache).toBeInstanceOf(RAMFileCacheStore)
     expect(ws.cache.cacheLimit).toBe(4096)
+  })
+
+  it('closes the store it built, and not one it was handed', async () => {
+    // A `cache: {type: redis}` config leaves the workspace holding a
+    // client that nothing else would close.
+    const built = new RAMFileCacheStore({ limit: 4096 })
+    let builtClosed = 0
+    built.close = () => {
+      builtClosed++
+      return Promise.resolve()
+    }
+    registerFileCacheStore('probe-close' as CacheType, () => built)
+    const owning = new Workspace({}, { cache: { type: 'probe-close' as CacheType } })
+    await owning.close()
+    expect(builtClosed).toBe(1)
+
+    const supplied = new RAMFileCacheStore({ limit: 4096 })
+    let suppliedClosed = 0
+    supplied.close = () => {
+      suppliedClosed++
+      return Promise.resolve()
+    }
+    const borrowing = new Workspace({}, { cache: supplied })
+    await borrowing.close()
+    expect(suppliedClosed).toBe(0)
   })
 })

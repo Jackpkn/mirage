@@ -22,6 +22,7 @@ import type { WatchManager } from './watch.ts'
 export interface CloseDeps {
   watch: WatchManager
   cache: FileCache & Resource
+  ownsCache: boolean
   ownsStateStore: boolean
   stateStore: WorkspaceStateStore
   closers: (() => Promise<void>)[]
@@ -54,7 +55,16 @@ export async function closeWorkspace(deps: CloseDeps): Promise<void> {
   if (deps.ownsStateStore) {
     await deps.stateStore.close()
   }
-  await deps.cache.clear()
+  try {
+    await deps.cache.clear()
+  } finally {
+    // A `cache: {type: redis}` config leaves the workspace holding a
+    // client — and clear() connects to it — so the store the workspace
+    // built is the workspace's to release. One the caller built stays
+    // open here; its owner closes it. Mirrors the try/finally pairing
+    // in Python's `close_async`.
+    if (deps.ownsCache) await deps.cache.close()
+  }
   for (const fn of deps.closers.splice(0)) {
     try {
       await fn()

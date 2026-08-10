@@ -29,8 +29,8 @@ import {
   RedisWorkspaceStateStore,
   DiskWorkspaceStateStore,
   S3WorkspaceStateStore,
+  normalizeS3Config,
   snakeToCamel,
-  buildFileCache,
   buildRuntime,
   type RuntimeEntry,
   type CacheConfig,
@@ -293,9 +293,15 @@ function normalizeConfigKeys(raw: Record<string, unknown>): Record<string, unkno
   if (isPlainObject(out.store)) {
     const store = camelizeKeys(out.store)
     for (const group of ['namespace', 'observer', 'workspace']) {
-      if (isPlainObject(store[group])) {
-        store[group] = camelizeKeys(store[group])
-      }
+      const block = store[group]
+      if (!isPlainObject(block)) continue
+      // An s3 group IS an S3Config, whose snake_case spellings do not
+      // camelize into the TS field names (`aws_access_key_id` is
+      // `accessKeyId`, not `awsAccessKeyId`). Left alone here for the
+      // same reason `mounts.*.config` is: `normalizeS3Config` owns that
+      // translation, and camelizing first would hide the keys from it.
+      if (block.type === 's3') continue
+      store[group] = camelizeKeys(block)
     }
     out.store = store
   }
@@ -646,7 +652,7 @@ export interface WorkspaceArgs {
     consistency: ConsistencyPolicy
     sessionId?: string
     agentId?: string
-    cache?: FileCacheStore
+    cache?: FileCacheStore | CacheConfig
     index?: IndexConfig
     workspaceId?: string
     store?: WorkspaceStateStore
@@ -658,14 +664,16 @@ export interface WorkspaceArgs {
   kernelMounts: Record<string, [MountBackend, string | undefined]>
 }
 
-// The block IS the cache config once normalized, so the loader only
-// decides whether one was given; building it belongs to core, where
-// `WorkspaceOptions.cache` accepts the same shape.
+// The block IS the cache config once normalized, so it is handed to the
+// workspace as one rather than built here: `WorkspaceOptions.cache`
+// accepts the same shape, and a store the workspace builds is a store
+// the workspace closes. Building it here would leave a redis client with
+// no owner once the workspace shut down.
 function buildCache(
   block: RamCacheBlock | RedisCacheBlock | null | undefined,
-): FileCacheStore | undefined {
+): CacheConfig | undefined {
   if (block === null || block === undefined) return undefined
-  return buildFileCache(block as CacheConfig)
+  return block as CacheConfig
 }
 
 function buildIndex(
@@ -699,10 +707,13 @@ function buildStoreGroup(block: StoreGroupBlock): WorkspaceStateStore {
   if (block.type === 's3') {
     // The block IS the S3Config once the discriminator is dropped, so
     // new S3Config fields flow through without being re-declared here
-    // (the same reason Python's S3StoreBlock subclasses S3Config).
-    const s3: Record<string, unknown> = { keyPrefix: 'mirage/', ...block }
+    // (the same reason Python's S3StoreBlock subclasses S3Config). The
+    // keys are still the file's snake_case ones, so they go through the
+    // same translation the s3 mount uses — `key_prefix` and friends do
+    // not survive a plain camelize.
+    const s3: Record<string, unknown> = { key_prefix: 'mirage/', ...block }
     delete s3.type
-    return new S3WorkspaceStateStore(s3 as unknown as S3Config)
+    return new S3WorkspaceStateStore(normalizeS3Config(s3))
   }
   return new RAMWorkspaceStateStore()
 }

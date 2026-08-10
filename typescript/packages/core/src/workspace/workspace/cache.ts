@@ -67,6 +67,16 @@ export function buildFileCache(
   })
 }
 
+export interface ResolvedFileCache {
+  cache: FileCacheStore
+  /**
+   * Whether the workspace built this store, and so must close it. False
+   * for a store the caller built and still owns — the same split
+   * `ownsStateStore` draws.
+   */
+  owned: boolean
+}
+
 /**
  * Resolve `WorkspaceOptions.cache`, which is either a store already
  * built by the caller or the config to build one from. A built store
@@ -75,9 +85,9 @@ export function buildFileCache(
 export function resolveFileCache(
   option: FileCacheStore | CacheConfig | undefined,
   cacheLimit: string | number = '512MB',
-): FileCacheStore {
+): ResolvedFileCache {
   if (option !== undefined && typeof (option as FileCache).get === 'function') {
-    return option as FileCacheStore
+    return { cache: option as FileCacheStore, owned: false }
   }
-  return buildFileCache(option as CacheConfig | undefined, cacheLimit)
+  return { cache: buildFileCache(option as CacheConfig | undefined, cacheLimit), owned: true }
 }

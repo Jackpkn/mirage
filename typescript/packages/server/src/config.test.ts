@@ -13,6 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import {
+  buildFileCache,
   CLISpec,
   DiskNamespaceStore,
   DiskWorkspaceStateStore,
@@ -22,6 +23,7 @@ import {
   RedisNamespaceStore,
   RedisWorkspaceStateStore,
   ScriptSource,
+  type CacheConfig,
 } from '@struktoai/mirage-node'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -269,16 +271,47 @@ describe('configToWorkspaceArgs', () => {
     rmSync(dir, { recursive: true, force: true })
   })
 
-  it('takes an s3 group as the workspace override', async () => {
-    const cfg = loadWorkspaceConfig({
+  it('takes an s3 group as the workspace override, credentials intact', async () => {
+    // An s3 group IS an S3Config, whose snake_case keys do not camelize
+    // into the TS field names (`aws_access_key_id` is `accessKeyId`, not
+    // `awsAccessKeyId`), so a plain camelize would silently drop the
+    // credentials and endpoint and authenticate against the wrong thing.
+    const raw = {
       mounts: { '/': { resource: 'ram' } },
       store: {
         type: 'ram',
-        workspace: { type: 's3', bucket: 'b', region: 'us-east-1' },
+        workspace: {
+          type: 's3',
+          bucket: 'b',
+          region: 'us-east-1',
+          aws_access_key_id: 'AKIA',
+          aws_secret_access_key: 'secret',
+          endpoint_url: 'http://localhost:9000',
+          path_style: true,
+          timeout: 5,
+        },
       },
-    })
+    }
+    const cfg = loadWorkspaceConfig(raw)
+    const group = (cfg.store as unknown as { workspace: Record<string, unknown> }).workspace
+    expect(group.aws_access_key_id).toBe('AKIA')
     const args = await configToWorkspaceArgs(cfg)
     expect(args.options.store?.namespace('ws1')).toBeInstanceOf(RAMNamespaceStore)
+    const s3 = (
+      args.options.store as unknown as {
+        workspaceOverride: { config: Record<string, unknown> }
+      }
+    ).workspaceOverride
+    expect(s3.config).toMatchObject({
+      bucket: 'b',
+      region: 'us-east-1',
+      accessKeyId: 'AKIA',
+      secretAccessKey: 'secret',
+      endpoint: 'http://localhost:9000',
+      forcePathStyle: true,
+      timeoutMs: 5000,
+      keyPrefix: 'mirage/',
+    })
   })
 
   it('routes a per-group override to its own backend', async () => {
@@ -359,13 +392,20 @@ describe('configToWorkspaceArgs', () => {
     })
   })
 
-  it('builds a redis cache from snake_case key_prefix / max_drain_bytes', async () => {
+  it('hands a redis cache to the workspace as config, not as a store', async () => {
+    // The workspace builds it, so the workspace closes it; building it
+    // here would leave the redis client with no owner at shutdown.
     const cfg = loadWorkspaceConfig({
       mounts: { '/': { resource: 'ram' } },
       cache: { type: 'redis', key_prefix: 'c:', max_drain_bytes: 1024 },
     })
     const args = await configToWorkspaceArgs(cfg)
-    expect(args.options.cache).toBeInstanceOf(RedisFileCacheStore)
+    expect(args.options.cache).toEqual({
+      type: 'redis',
+      keyPrefix: 'c:',
+      maxDrainBytes: 1024,
+    })
+    expect(buildFileCache(args.options.cache as CacheConfig)).toBeInstanceOf(RedisFileCacheStore)
   })
 
   it('coerces consistency (default lazy, accepts always, rejects junk)', async () => {
