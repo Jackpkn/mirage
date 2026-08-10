@@ -14,6 +14,8 @@
 
 import {
   CLISpec,
+  DiskNamespaceStore,
+  DiskWorkspaceStateStore,
   RAMNamespaceStore,
   RAMWorkspaceStateStore,
   RedisFileCacheStore,
@@ -21,9 +23,10 @@ import {
   RedisWorkspaceStateStore,
   ScriptSource,
 } from '@struktoai/mirage-node'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import {
   interpolateEnv,
@@ -216,26 +219,19 @@ describe('configToWorkspaceArgs', () => {
     await expect(configToWorkspaceArgs(cfg)).rejects.toThrow(/reference a \.py\/\.js file/)
   })
 
-  it('builds a redis index config from an index block', async () => {
-    const cfg = loadWorkspaceConfig({
-      mounts: { '/': { resource: 'ram' } },
-      index: { type: 'redis', url: 'redis://localhost:6379/0', keyPrefix: 'x:' },
-    })
-    const args = await configToWorkspaceArgs(cfg)
-    expect(args.options.index).toEqual({
-      type: 'redis',
-      url: 'redis://localhost:6379/0',
-      keyPrefix: 'x:',
-    })
-  })
-
-  it('builds a redis file cache from a cache block', async () => {
-    const cfg = loadWorkspaceConfig({
-      mounts: { '/': { resource: 'ram' } },
-      cache: { type: 'redis', keyPrefix: 'c:' },
-    })
-    const args = await configToWorkspaceArgs(cfg)
-    expect(args.options.cache).toBeInstanceOf(RedisFileCacheStore)
+  // The camelCase spelling of a snake_case config key is a key Python
+  // rejects, so accepting it here would make the same YAML load in one
+  // language and fail in the other. See the snake_case twins below.
+  it('refuses the camelCase spelling of a config key', () => {
+    for (const block of [
+      { index: { type: 'redis', keyPrefix: 'x:' } },
+      { cache: { type: 'redis', keyPrefix: 'c:' } },
+      { cache: { type: 'ram', maxDrainBytes: 8 } },
+    ]) {
+      expect(() => loadWorkspaceConfig({ mounts: { '/': { resource: 'ram' } }, ...block })).toThrow(
+        /unknown (cache|index)/,
+      )
+    }
   })
 
   it('builds a redis state store from a store block (snake_case key_prefix)', async () => {
@@ -255,6 +251,32 @@ describe('configToWorkspaceArgs', () => {
     })
     const args = await configToWorkspaceArgs(cfg)
     expect(args.options.store).toBeInstanceOf(RAMWorkspaceStateStore)
+    expect(args.options.store?.namespace('ws1')).toBeInstanceOf(RAMNamespaceStore)
+  })
+
+  it('builds a disk state store from a store block', async () => {
+    // `store: {type: disk}` used to build a RAM store here while Python
+    // built a disk one, so state a user believed was persisted was not.
+    const dir = mkdtempSync(join(tmpdir(), 'mirage-store-'))
+    const cfg = loadWorkspaceConfig({
+      mounts: { '/': { resource: 'ram' } },
+      store: { type: 'disk', root: dir },
+    })
+    const args = await configToWorkspaceArgs(cfg)
+    expect(args.options.store).toBeInstanceOf(DiskWorkspaceStateStore)
+    expect(args.options.store?.namespace('ws1')).toBeInstanceOf(DiskNamespaceStore)
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('takes an s3 group as the workspace override', async () => {
+    const cfg = loadWorkspaceConfig({
+      mounts: { '/': { resource: 'ram' } },
+      store: {
+        type: 'ram',
+        workspace: { type: 's3', bucket: 'b', region: 'us-east-1' },
+      },
+    })
+    const args = await configToWorkspaceArgs(cfg)
     expect(args.options.store?.namespace('ws1')).toBeInstanceOf(RAMNamespaceStore)
   })
 
@@ -429,14 +451,16 @@ describe('configToWorkspaceArgs', () => {
     await expect(configToWorkspaceArgs(cfg)).rejects.toThrow(/reason/)
   })
 
-  it('a guard with an unknown key fails loud', async () => {
+  it('a guard with an unknown key fails loud', () => {
     // A typo like `path:` would otherwise widen the guard into an
-    // unconditional denial (mirrors Python's extra="forbid").
-    const cfg = loadWorkspaceConfig({
-      mounts: { '/data': { resource: 'ram' } },
-      guards: [{ reason: 'x', path: ['/data/prod/*'] }],
-    })
-    await expect(configToWorkspaceArgs(cfg)).rejects.toThrow(/unknown guard key/)
+    // unconditional denial (mirrors Python's extra="forbid"), and like
+    // Python it must fail at load, not when the args are built.
+    expect(() =>
+      loadWorkspaceConfig({
+        mounts: { '/data': { resource: 'ram' } },
+        guards: [{ reason: 'x', path: ['/data/prod/*'] }],
+      }),
+    ).toThrow(/unknown guard key/)
   })
 })
 
@@ -457,12 +481,13 @@ describe('clis section', () => {
     })
   })
 
-  it('refuses unknown keys in a clis entry', async () => {
-    const cfg = loadWorkspaceConfig({
-      mounts: { '/data': { resource: 'ram' } },
-      clis: { sl: { cli: 'slack', mode: 'write' } },
-    })
-    await expect(configToWorkspaceArgs(cfg)).rejects.toThrow(/unknown keys: mode/)
+  it('refuses unknown keys in a clis entry', () => {
+    expect(() =>
+      loadWorkspaceConfig({
+        mounts: { '/data': { resource: 'ram' } },
+        clis: { sl: { cli: 'slack', mode: 'write' } },
+      }),
+    ).toThrow(/unknown cli `sl` key `mode`/)
   })
 
   it('a script entry synthesizes a spec', async () => {
@@ -536,5 +561,28 @@ describe('clis section', () => {
       clis: { sl: { cli: 'slack', runtime: 'monty' } },
     })
     await expect(configToWorkspaceArgs(cfg)).rejects.toThrow(/it takes script/)
+  })
+})
+
+describe('shared rejection fixture', () => {
+  // integ/fixtures/config/rejected.json is the contract: the python suite
+  // (tests/config/test_loader.py) refuses the same configs, so a config
+  // that loads in one language and not the other fails a test until both
+  // loaders agree.
+  const FIXTURE = fileURLToPath(
+    new URL('../../../../integ/fixtures/config/rejected.json', import.meta.url),
+  )
+  const cases = (
+    JSON.parse(readFileSync(FIXTURE, 'utf8')) as {
+      cases: { name: string; config: Record<string, unknown> }[]
+    }
+  ).cases
+
+  it('has cases', () => {
+    expect(cases.length).toBeGreaterThan(0)
+  })
+
+  it.each(cases)('refuses $name', ({ config }) => {
+    expect(() => loadWorkspaceConfig(config)).toThrow()
   })
 })

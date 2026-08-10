@@ -136,6 +136,9 @@ describe('Workspace custom cache option', () => {
       }
       return Promise.resolve()
     }
+    evictPaths(paths: Iterable<string>): void {
+      for (const key of paths) this.store.delete(key)
+    }
     exists(key: string | PathSpec): Promise<boolean> {
       const k = typeof key === 'string' ? key : key.mountPath
       return Promise.resolve(this.store.has(k))

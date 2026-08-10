@@ -12,6 +12,7 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import json
 from pathlib import Path
 
 import pytest
@@ -629,3 +630,17 @@ def test_clis_block_refuses_unknown_keys():
                 }
             },
         })
+
+
+def test_shared_rejection_fixture_is_refused():
+    # integ/fixtures/config/rejected.json is the contract: the TypeScript
+    # suite (packages/server/src/config.test.ts) refuses the same configs,
+    # so a config that loads in one language and not the other fails a
+    # test until both loaders agree.
+    fixture = (Path(__file__).parents[3] / "integ" / "fixtures" / "config" /
+               "rejected.json")
+    cases = json.loads(fixture.read_text())["cases"]
+    assert cases, "the rejection fixture must not be empty"
+    for case in cases:
+        with pytest.raises(ValueError):
+            load_config(case["config"])

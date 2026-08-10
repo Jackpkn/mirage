@@ -492,7 +492,7 @@ class WorkspaceConfig(BaseModel):
         """Produce kwargs ready to splat into ``Workspace(**kwargs)``.
 
         Async because building a mount's resource can be: a backend
-        whose setup needs I/O does it in ``BaseResource.create``. Only
+        whose setup needs I/O does it in ``BaseResource.build``. Only
         the resources are awaited — ``Workspace(**kwargs)`` itself stays
         synchronous. Mirrors the TypeScript ``configToWorkspaceArgs``.
 

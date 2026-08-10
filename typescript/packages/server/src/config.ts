@@ -25,17 +25,21 @@ import {
   ScriptSource,
   MountMode,
   OnExceed,
-  RAMFileCacheStore,
   RAMWorkspaceStateStore,
-  RedisFileCacheStore,
   RedisWorkspaceStateStore,
+  DiskWorkspaceStateStore,
+  S3WorkspaceStateStore,
+  snakeToCamel,
+  buildFileCache,
   buildRuntime,
   type RuntimeEntry,
-  type FileCache,
+  type CacheConfig,
+  type FileCacheStore,
   type GuardSpec,
   type IndexConfig,
   type RedisIndexConfig,
   type Resource,
+  type S3Config,
   type WorkspaceStateStore,
 } from '@struktoai/mirage-node'
 
@@ -109,20 +113,6 @@ function coerceOnExceed(value: string): OnExceed {
   return value.toLowerCase() as OnExceed
 }
 
-function snakeToCamel(key: string): string {
-  let out = ''
-  let upper = false
-  for (const ch of key) {
-    if (ch === '_') {
-      upper = true
-      continue
-    }
-    out += upper ? ch.toUpperCase() : ch
-    upper = false
-  }
-  return out
-}
-
 function camelizeKeys(obj: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {}
   for (const [k, v] of Object.entries(obj)) out[snakeToCamel(k)] = v
@@ -131,6 +121,163 @@ function camelizeKeys(obj: Record<string, unknown>): Record<string, unknown> {
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
   return v !== null && typeof v === 'object' && !Array.isArray(v)
+}
+
+// Python sets extra="forbid" on every workspace-config block, so a typo
+// like `mount_point:` for `mountpoint:`, `consistancy:` or `limitt:` is
+// a hard ValueError there. These tables mirror those models field for
+// field so the same YAML is accepted (and rejected) by both languages.
+//
+// The spellings are Python's canonical snake_case ones on purpose: a
+// camelCase alias that TS would accept for free is a key Python rejects,
+// which is the same portability break pointing the other way. Blocks
+// that carry a backend's own credentials (`mounts.*.config`, an s3 store
+// group) are deliberately absent — those are validated by the backend's
+// config model, one layer down, exactly as in Python.
+const TOP_LEVEL_KEYS = [
+  'mounts',
+  'clis',
+  'runtimes',
+  'policy',
+  'guards',
+  'mode',
+  'consistency',
+  'default_session_id',
+  'default_agent_id',
+  'workspace_id',
+  'cache',
+  'index',
+  'store',
+] as const
+const MOUNT_KEYS = [
+  'resource',
+  'mode',
+  'config',
+  'command_limits',
+  'backend',
+  'mountpoint',
+] as const
+const CACHE_KEYS: Record<string, readonly string[]> = {
+  ram: ['type', 'limit', 'max_drain_bytes'],
+  redis: ['type', 'limit', 'max_drain_bytes', 'url', 'key_prefix'],
+}
+const INDEX_KEYS: Record<string, readonly string[]> = {
+  ram: ['type', 'ttl'],
+  redis: ['type', 'ttl', 'url', 'key_prefix'],
+}
+const STORE_KEYS = [
+  'type',
+  'url',
+  'key_prefix',
+  'root',
+  'namespace',
+  'observer',
+  'workspace',
+] as const
+const STORE_GROUP_KEYS: Record<string, readonly string[]> = {
+  ram: ['type'],
+  disk: ['type', 'root'],
+  redis: ['type', 'url', 'key_prefix'],
+}
+const CLI_KEYS = ['cli', 'script', 'runtime', 'config'] as const
+const GUARD_KEYS = ['reason', 'commands', 'paths'] as const
+
+function rejectUnknownKeys(
+  block: Record<string, unknown>,
+  allowed: readonly string[],
+  what: string,
+): void {
+  for (const key of Object.keys(block)) {
+    if (allowed.includes(key)) continue
+    throw new Error(`unknown ${what} key \`${key}\` (allowed: ${allowed.join(', ')})`)
+  }
+}
+
+/**
+ * The `type:` discriminator of a typed block. `fallback` is the type
+ * assumed when the key is absent; leave it out where Python models the
+ * block as a discriminated union, which makes `type` mandatory.
+ */
+function blockType(
+  block: Record<string, unknown>,
+  what: string,
+  known: readonly string[],
+  fallback?: string,
+): string {
+  const type = block.type ?? fallback
+  if (type === undefined) {
+    throw new Error(`config \`${what}\` needs a \`type\` (one of ${known.join(', ')})`)
+  }
+  if (typeof type !== 'string') {
+    throw new Error(`config \`${what}\` type must be a string (one of ${known.join(', ')})`)
+  }
+  if (!known.includes(type)) {
+    throw new Error(`unknown ${what} type \`${type}\` (expected one of ${known.join(', ')})`)
+  }
+  return type
+}
+
+function validateTypedBlock(
+  value: unknown,
+  table: Record<string, readonly string[]>,
+  what: string,
+  fallback?: string,
+): void {
+  if (value === undefined || value === null) return
+  if (!isPlainObject(value)) throw new Error(`config \`${what}\` must be a mapping`)
+  const type = blockType(value, what, Object.keys(table), fallback)
+  rejectUnknownKeys(value, table[type] ?? [], `${what} (${type})`)
+}
+
+function validateStoreBlock(value: unknown): void {
+  if (value === undefined || value === null) return
+  if (!isPlainObject(value)) throw new Error('config `store` must be a mapping')
+  // The top level picks the default backend for every plane; s3 hosts
+  // only the sessions+meta group, so it is a `workspace` override and
+  // never the default. Mirrors Python's StoreBlock.
+  blockType(value, 'store', ['ram', 'disk', 'redis'], 'ram')
+  rejectUnknownKeys(value, STORE_KEYS, 'store')
+  for (const group of ['namespace', 'observer', 'workspace'] as const) {
+    const block = value[group]
+    if (block === undefined || block === null) continue
+    if (!isPlainObject(block)) throw new Error(`config \`store.${group}\` must be a mapping`)
+    // An s3 group IS an S3Config plus the discriminator, so its keys
+    // belong to the s3 config model rather than to this table.
+    if (block.type === 's3') continue
+    validateTypedBlock(block, STORE_GROUP_KEYS, `store.${group}`, 'ram')
+  }
+}
+
+/**
+ * Reject any key no Python config model declares, before normalization
+ * folds snake_case into camelCase and the distinction is gone.
+ */
+function validateConfigKeys(raw: Record<string, unknown>): void {
+  rejectUnknownKeys(raw, TOP_LEVEL_KEYS, 'config')
+  if (isPlainObject(raw.mounts)) {
+    for (const [prefix, block] of Object.entries(raw.mounts)) {
+      if (!isPlainObject(block)) throw new Error(`mount \`${prefix}\` must be a mapping`)
+      rejectUnknownKeys(block, MOUNT_KEYS, `mount \`${prefix}\``)
+    }
+  }
+  if (isPlainObject(raw.clis)) {
+    for (const [name, block] of Object.entries(raw.clis)) {
+      if (!isPlainObject(block)) throw new Error(`cli \`${name}\` must be a mapping`)
+      rejectUnknownKeys(block, CLI_KEYS, `cli \`${name}\``)
+    }
+  }
+  if (raw.guards !== undefined && raw.guards !== null) {
+    if (!Array.isArray(raw.guards)) throw new Error('config `guards` must be a list')
+    for (const entry of raw.guards) {
+      if (!isPlainObject(entry)) throw new Error('each guard must be a mapping with a `reason`')
+      // A typo like `path:` would widen the guard into an
+      // unconditional denial rather than fail.
+      rejectUnknownKeys(entry, GUARD_KEYS, 'guard')
+    }
+  }
+  validateTypedBlock(raw.cache, CACHE_KEYS, 'cache')
+  validateTypedBlock(raw.index, INDEX_KEYS, 'index')
+  validateStoreBlock(raw.store)
 }
 
 // Workspace YAML uses Python's snake_case keys (default_session_id, the
@@ -307,13 +454,32 @@ interface RamStoreGroupBlock {
   type?: 'ram'
 }
 
+interface DiskStoreGroupBlock {
+  type: 'disk'
+  root?: string
+}
+
 interface RedisStoreGroupBlock {
   type: 'redis'
   url?: string
   keyPrefix?: string
 }
 
-type StoreGroupBlock = RamStoreGroupBlock | RedisStoreGroupBlock
+/**
+ * An S3 group IS an S3Config plus the discriminator, so its keys are
+ * the backend's, validated by the s3 config model rather than here.
+ * It hosts only the sessions+meta plane (conditional-PUT CAS), so it
+ * is valid as the `workspace` override and never as the default.
+ */
+interface S3StoreGroupBlock extends Partial<S3Config> {
+  type: 's3'
+}
+
+type StoreGroupBlock =
+  | RamStoreGroupBlock
+  | DiskStoreGroupBlock
+  | RedisStoreGroupBlock
+  | S3StoreGroupBlock
 
 /**
  * The workspace state store: one block, four planes. The top-level
@@ -324,9 +490,10 @@ type StoreGroupBlock = RamStoreGroupBlock | RedisStoreGroupBlock
  * design, so there is one `workspace` override, not two.
  */
 interface StoreBlock {
-  type?: 'ram' | 'redis'
+  type?: 'ram' | 'disk' | 'redis'
   url?: string
   keyPrefix?: string
+  root?: string
   namespace?: StoreGroupBlock | null
   observer?: StoreGroupBlock | null
   workspace?: StoreGroupBlock | null
@@ -381,8 +548,7 @@ export function loadWorkspaceConfig(
   const raw = { ...source }
   const useEnv = env ?? readProcessEnv()
   const interpolated = interpolateEnv(raw, useEnv)
-  const normalized = normalizeConfigKeys(interpolated)
-  const mounts = normalized.mounts
+  const mounts = interpolated.mounts
   if (
     mounts === undefined ||
     typeof mounts !== 'object' ||
@@ -391,7 +557,8 @@ export function loadWorkspaceConfig(
   ) {
     throw new Error('config requires a `mounts` mapping')
   }
-  return normalized as unknown as WorkspaceConfigRaw
+  validateConfigKeys(interpolated)
+  return normalizeConfigKeys(interpolated) as unknown as WorkspaceConfigRaw
 }
 
 /**
@@ -447,7 +614,7 @@ export interface WorkspaceArgs {
     consistency: ConsistencyPolicy
     sessionId?: string
     agentId?: string
-    cache?: FileCache & Resource
+    cache?: FileCacheStore
     index?: IndexConfig
     workspaceId?: string
     store?: WorkspaceStateStore
@@ -459,22 +626,14 @@ export interface WorkspaceArgs {
   kernelMounts: Record<string, [MountBackend, string | undefined]>
 }
 
+// The block IS the cache config once normalized, so the loader only
+// decides whether one was given; building it belongs to core, where
+// `WorkspaceOptions.cache` accepts the same shape.
 function buildCache(
   block: RamCacheBlock | RedisCacheBlock | null | undefined,
-): (FileCache & Resource) | undefined {
+): FileCacheStore | undefined {
   if (block === null || block === undefined) return undefined
-  if (block.type === 'redis') {
-    return new RedisFileCacheStore({
-      ...(block.limit !== undefined ? { cacheLimit: block.limit } : {}),
-      ...(block.maxDrainBytes !== undefined ? { maxDrainBytes: block.maxDrainBytes } : {}),
-      ...(block.url !== undefined ? { url: block.url } : {}),
-      ...(block.keyPrefix !== undefined ? { keyPrefix: block.keyPrefix } : {}),
-    })
-  }
-  return new RAMFileCacheStore({
-    ...(block.limit !== undefined ? { limit: block.limit } : {}),
-    ...(block.maxDrainBytes !== undefined ? { maxDrainBytes: block.maxDrainBytes } : {}),
-  })
+  return buildFileCache(block as CacheConfig)
 }
 
 function buildIndex(
@@ -500,6 +659,19 @@ function buildStoreGroup(block: StoreGroupBlock): WorkspaceStateStore {
       ...(block.keyPrefix !== undefined ? { keyPrefix: block.keyPrefix } : {}),
     })
   }
+  if (block.type === 'disk') {
+    return new DiskWorkspaceStateStore({
+      ...(block.root !== undefined ? { root: block.root } : {}),
+    })
+  }
+  if (block.type === 's3') {
+    // The block IS the S3Config once the discriminator is dropped, so
+    // new S3Config fields flow through without being re-declared here
+    // (the same reason Python's S3StoreBlock subclasses S3Config).
+    const s3: Record<string, unknown> = { keyPrefix: 'mirage/', ...block }
+    delete s3.type
+    return new S3WorkspaceStateStore(s3 as unknown as S3Config)
+  }
   return new RAMWorkspaceStateStore()
 }
 
@@ -514,6 +686,12 @@ function buildStateStore(block: StoreBlock | null | undefined): WorkspaceStateSt
     return new RedisWorkspaceStateStore({
       ...(block.url !== undefined ? { url: block.url } : {}),
       ...(block.keyPrefix !== undefined ? { keyPrefix: block.keyPrefix } : {}),
+      ...overrides,
+    })
+  }
+  if (block.type === 'disk') {
+    return new DiskWorkspaceStateStore({
+      ...(block.root !== undefined ? { root: block.root } : {}),
       ...overrides,
     })
   }

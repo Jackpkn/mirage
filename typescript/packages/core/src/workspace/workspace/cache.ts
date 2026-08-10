@@ -1,0 +1,83 @@
+// ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+// ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
+
+import { CacheType, type CacheConfig, type RedisCacheConfig } from '../../cache/file/config.ts'
+import type { FileCache } from '../../cache/file/mixin.ts'
+import { RAMFileCacheStore } from '../../cache/file/ram.ts'
+import type { Resource } from '../../resource/base.ts'
+
+export type FileCacheStore = FileCache & Resource
+export type FileCacheFactory = (config: RedisCacheConfig) => FileCacheStore
+
+const FACTORIES: Record<string, FileCacheFactory> = {}
+
+/**
+ * Register the store that backs a `type:` in {@link buildFileCache}.
+ *
+ * The redis store extends a node-only resource, and core cannot import
+ * node, so `@struktoai/mirage-node` registers it on import — the same
+ * seam `registerRuntime` uses for the runtimes it owns. Python needs no
+ * equivalent: there, redis is an optional extra of one package, so
+ * `build_file_cache` imports it directly behind a try/except.
+ */
+export function registerFileCacheStore(type: CacheType, factory: FileCacheFactory): void {
+  FACTORIES[type] = factory
+}
+
+/**
+ * Build the workspace's file cache from its config.
+ *
+ * Mirrors Python `build_file_cache` (`workspace/workspace/cache.py`),
+ * including its failure mode: asking for a store whose package has not
+ * been loaded names the package rather than silently degrading to RAM.
+ *
+ * @param cache the cache config; undefined keeps the RAM store sized by
+ *   `cacheLimit`.
+ * @param cacheLimit the size knob used only when no config is given.
+ */
+export function buildFileCache(
+  cache: CacheConfig | undefined,
+  cacheLimit: string | number = '512MB',
+): FileCacheStore {
+  const type = cache?.type ?? CacheType.RAM
+  if (type !== CacheType.RAM) {
+    const factory = FACTORIES[type]
+    if (factory === undefined) {
+      throw new Error(
+        `no '${type}' file cache is registered; import '@struktoai/mirage-node' ` +
+          `(which registers it) or pass a built FileCache as options.cache`,
+      )
+    }
+    return factory(cache as RedisCacheConfig)
+  }
+  return new RAMFileCacheStore({
+    limit: cache?.limit ?? cacheLimit,
+    maxDrainBytes: cache?.maxDrainBytes ?? null,
+  })
+}
+
+/**
+ * Resolve `WorkspaceOptions.cache`, which is either a store already
+ * built by the caller or the config to build one from. A built store
+ * carries the FileCache methods; a config is a plain data object.
+ */
+export function resolveFileCache(
+  option: FileCacheStore | CacheConfig | undefined,
+  cacheLimit: string | number = '512MB',
+): FileCacheStore {
+  if (option !== undefined && typeof (option as FileCache).get === 'function') {
+    return option as FileCacheStore
+  }
+  return buildFileCache(option as CacheConfig | undefined, cacheLimit)
+}

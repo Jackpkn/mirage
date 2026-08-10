@@ -12,6 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import type { CacheConfig } from '../../cache/file/config.ts'
 import type { FileCache } from '../../cache/file/mixin.ts'
 import type { IndexConfig } from '../../cache/index/config.ts'
 import type { CLISpec } from '../../commands/cli/types.ts'
@@ -60,7 +61,12 @@ export interface WorkspaceOptions {
   agentId?: string
   sessionId?: string
   cacheLimit?: string | number
-  cache?: FileCache & Resource
+  /**
+   * The workspace's byte cache: a built store, or — like `index` — the
+   * config describing one, coerced through `buildFileCache`. Mirrors
+   * Python's `cache: CacheConfig | None`.
+   */
+  cache?: (FileCache & Resource) | CacheConfig
   index?: IndexConfig
   observe?: ObserverStore
   namespaceStore?: NamespaceStore
