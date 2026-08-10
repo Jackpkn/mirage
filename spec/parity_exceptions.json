@@ -22,7 +22,7 @@
       "slots": "python range-reads; typescript has no core/sharepoint/read.ts to add a window to."
     },
     "ssh": {
-      "slots": "python range-reads over SFTP; typescript's read is whole-file because of the ssh2 256 KiB packet cap. append is wired in typescript and read by no builder on either side \u2014 tee is read-modify-write everywhere \u2014 so the slot is pending a decision to wire it or drop it."
+      "slots": "python range-reads over SFTP; typescript's read is whole-file because of the ssh2 256 KiB packet cap."
     }
   },
   "command_io_aliases": {

@@ -143,8 +143,10 @@ export interface CommandIO<A extends Accessor = Accessor> {
   find?: FindOp<A>
   du?: DuOps<A>
   maxDuEntries?: number
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  append?: (...args: any[]) => unknown
+  // Typed like `write`, now that the tee generic actually calls it. It stayed
+  // an `any` bag for as long as nothing read it, which is what let five
+  // backends wire a slot no builder could consume.
+  append?: (accessor: A, path: PathSpec, data: Uint8Array) => Promise<void>
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   setAttrs?: (...args: any[]) => unknown
 }
