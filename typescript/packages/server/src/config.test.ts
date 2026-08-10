@@ -29,6 +29,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import {
+  checkWorkspaceConfigFile,
   interpolateEnv,
   loadWorkspaceConfig,
   loadWorkspaceConfigFile,
@@ -561,6 +562,37 @@ describe('clis section', () => {
       clis: { sl: { cli: 'slack', runtime: 'monty' } },
     })
     await expect(configToWorkspaceArgs(cfg)).rejects.toThrow(/it takes script/)
+  })
+})
+
+describe('CLI to daemon round trip', () => {
+  it('the shape a CLI sends passes the daemon check unchanged', () => {
+    // `workspace create` checks the file client-side (env interpolation
+    // needs the user's shell) and POSTs the result; the daemon runs the
+    // same check on what arrives. Camelizing before sending would force
+    // the loader to accept its own output, and with it the camelCase
+    // spellings Python refuses.
+    const dir = mkdtempSync(join(tmpdir(), 'mirage-wire-'))
+    const file = join(dir, 'w.yaml')
+    writeFileSync(
+      file,
+      [
+        'mounts:',
+        '  /:',
+        '    resource: ram',
+        'default_session_id: mysess',
+        'cache:',
+        '  type: ram',
+        '  limit: 256MB',
+        '  max_drain_bytes: 1048576',
+        '',
+      ].join('\n'),
+    )
+    const wire = checkWorkspaceConfigFile(file)
+    expect(Object.keys(wire)).toContain('default_session_id')
+    const cfg = loadWorkspaceConfig(wire)
+    expect(cfg.defaultSessionId).toBe('mysess')
+    rmSync(dir, { recursive: true, force: true })
   })
 })
 

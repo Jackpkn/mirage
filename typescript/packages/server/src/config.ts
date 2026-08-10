@@ -541,10 +541,20 @@ function readProcessEnv(): Record<string, string> {
   return out
 }
 
-export function loadWorkspaceConfig(
+/**
+ * Interpolate `${VAR}` and check every key, leaving the spelling alone.
+ *
+ * This is the shape that travels: the CLI prepares a config here and
+ * POSTs it, and the daemon runs the same check on what arrives, so the
+ * wire carries Python's snake_case exactly as `model_dump()` does on
+ * that side. Camelizing before sending would make the loader have to
+ * accept its own output, which is how a camelCase spelling Python
+ * rejects would creep back in.
+ */
+export function checkWorkspaceConfig(
   source: Record<string, unknown>,
   env?: Record<string, string>,
-): WorkspaceConfigRaw {
+): Record<string, unknown> {
   const raw = { ...source }
   const useEnv = env ?? readProcessEnv()
   const interpolated = interpolateEnv(raw, useEnv)
@@ -558,7 +568,14 @@ export function loadWorkspaceConfig(
     throw new Error('config requires a `mounts` mapping')
   }
   validateConfigKeys(interpolated)
-  return normalizeConfigKeys(interpolated) as unknown as WorkspaceConfigRaw
+  return interpolated
+}
+
+export function loadWorkspaceConfig(
+  source: Record<string, unknown>,
+  env?: Record<string, string>,
+): WorkspaceConfigRaw {
+  return normalizeConfigKeys(checkWorkspaceConfig(source, env)) as unknown as WorkspaceConfigRaw
 }
 
 /**
@@ -568,18 +585,20 @@ export function loadWorkspaceConfig(
  * file" (the docker build-context model), never "wherever the server
  * happens to run". In-memory object configs are untouched.
  */
-function absolutizeScripts(raw: WorkspaceConfigRaw, base: string): void {
+function absolutizeScripts(raw: Record<string, unknown>, base: string): void {
+  // `policy`, `runtimes`, `clis` and `script` are spelled the same in
+  // both cases, so this runs before or after normalization alike.
   const policy = raw.policy
   if (typeof policy === 'string' && isScriptPath(policy) && !isAbsolute(policy.trim())) {
     raw.policy = join(base, policy.trim())
   }
   if (Array.isArray(raw.runtimes)) {
     for (const entry of raw.runtimes) {
-      if (typeof entry !== 'string') absolutizeScriptKey(entry, base)
+      if (typeof entry !== 'string') absolutizeScriptKey(entry as Record<string, unknown>, base)
     }
   }
   if (raw.clis !== undefined && raw.clis !== null) {
-    for (const block of Object.values(raw.clis)) {
+    for (const block of Object.values(raw.clis as Record<string, unknown>)) {
       absolutizeScriptKey(block as Record<string, unknown>, base)
     }
   }
@@ -593,18 +612,31 @@ function absolutizeScriptKey(entry: Record<string, unknown>, base: string): void
   }
 }
 
-export function loadWorkspaceConfigFile(
+/**
+ * Read a config file into the shape that travels: checked, env
+ * interpolated, script paths resolved against the file's directory —
+ * and still spelled the way the file spelled it. What a CLI sends to
+ * the daemon.
+ */
+export function checkWorkspaceConfigFile(
   path: string,
   env?: Record<string, string>,
-): WorkspaceConfigRaw {
+): Record<string, unknown> {
   const text = readFileSync(path, 'utf-8')
   const parsed: unknown = parseYaml(text)
   if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
     throw new Error(`config source must be a mapping`)
   }
-  const config = loadWorkspaceConfig(parsed as Record<string, unknown>, env)
+  const config = checkWorkspaceConfig(parsed as Record<string, unknown>, env)
   absolutizeScripts(config, dirname(resolve(path)))
   return config
+}
+
+export function loadWorkspaceConfigFile(
+  path: string,
+  env?: Record<string, string>,
+): WorkspaceConfigRaw {
+  return normalizeConfigKeys(checkWorkspaceConfigFile(path, env)) as unknown as WorkspaceConfigRaw
 }
 
 export interface WorkspaceArgs {
