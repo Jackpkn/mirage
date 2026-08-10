@@ -456,7 +456,6 @@ export { CacheType, type CacheConfig, type RedisCacheConfig } from './cache/file
 export {
   buildFileCache,
   registerFileCacheStore,
-  resolveFileCache,
   type FileCacheFactory,
   type FileCacheStore,
 } from './workspace/workspace/cache.ts'

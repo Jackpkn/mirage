@@ -16,7 +16,7 @@ import { describe, expect, it } from 'vitest'
 import { CacheType } from '../../cache/file/config.ts'
 import { RAMFileCacheStore } from '../../cache/file/ram.ts'
 import { Workspace } from '../workspace.ts'
-import { buildFileCache, registerFileCacheStore, resolveFileCache } from './cache.ts'
+import { buildFileCache, registerFileCacheStore } from './cache.ts'
 
 describe('buildFileCache', () => {
   it('defaults to RAM sized by cacheLimit', () => {
@@ -45,26 +45,18 @@ describe('buildFileCache', () => {
   })
 })
 
-describe('resolveFileCache', () => {
-  it('passes a built store through untouched, and disclaims it', () => {
-    const store = new RAMFileCacheStore({ limit: 8 })
-    expect(resolveFileCache(store)).toEqual({ cache: store, owned: false })
-  })
-
-  it('owns what it builds', () => {
-    expect(resolveFileCache(undefined).owned).toBe(true)
-    expect(resolveFileCache({ type: CacheType.RAM }).owned).toBe(true)
-  })
-
-  it('lets a workspace take the cache as config, the way index already does', () => {
+describe('the workspace cache', () => {
+  it('takes the cache as config, the way index already does', () => {
     const ws = new Workspace({}, { cache: { type: CacheType.RAM, limit: 4096 } })
     expect(ws.cache).toBeInstanceOf(RAMFileCacheStore)
     expect(ws.cache.cacheLimit).toBe(4096)
   })
 
-  it('closes the store it built, and not one it was handed', async () => {
+  it('closes the store it built', async () => {
     // A `cache: {type: redis}` config leaves the workspace holding a
-    // client that nothing else would close.
+    // client that nothing else would close. Config is the only form the
+    // option takes — as in Python — so every cache is workspace-built
+    // and every cache is workspace-closed.
     const built = new RAMFileCacheStore({ limit: 4096 })
     let builtClosed = 0
     built.close = () => {
@@ -72,18 +64,8 @@ describe('resolveFileCache', () => {
       return Promise.resolve()
     }
     registerFileCacheStore('probe-close' as CacheType, () => built)
-    const owning = new Workspace({}, { cache: { type: 'probe-close' as CacheType } })
-    await owning.close()
+    const ws = new Workspace({}, { cache: { type: 'probe-close' as CacheType } })
+    await ws.close()
     expect(builtClosed).toBe(1)
-
-    const supplied = new RAMFileCacheStore({ limit: 4096 })
-    let suppliedClosed = 0
-    supplied.close = () => {
-      suppliedClosed++
-      return Promise.resolve()
-    }
-    const borrowing = new Workspace({}, { cache: supplied })
-    await borrowing.close()
-    expect(suppliedClosed).toBe(0)
   })
 })

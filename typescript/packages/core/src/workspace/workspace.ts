@@ -31,7 +31,7 @@ import type { CLIInstall } from './cli/types.ts'
 import { resolveLimit } from '../policy/index.ts'
 import { JobTable } from '../shell/job_table.ts'
 import type { ShellParser } from '../shell/parse.ts'
-import { resolveFileCache } from './workspace/cache.ts'
+import { buildFileCache } from './workspace/cache.ts'
 import { DriftQueue, installDriftState } from './snapshot/drift.ts'
 import { snapshot as writeSnapshot } from './snapshot/api.ts'
 import { readFileBytes } from './snapshot/fs.ts'
@@ -105,7 +105,6 @@ export class Workspace {
   readonly jobTable = new JobTable()
   readonly agentId: string | null
   readonly cache: FileCache & Resource
-  private readonly ownsCache: boolean
   readonly namespace: Namespace
   private readonly dispatcher: Dispatcher
   readonly observer: Observer
@@ -193,9 +192,7 @@ export class Workspace {
     )
     this.observer = new Observer(stores.observe)
     this.registry.mount(HISTORY_PREFIX, new HistoryViewResource(this.observer), MountMode.READ)
-    const resolvedCache = resolveFileCache(options.cache, options.cacheLimit)
-    this.cache = resolvedCache.cache
-    this.ownsCache = resolvedCache.owned
+    this.cache = buildFileCache(options.cache, options.cacheLimit)
     this.registry.attachFileCache(this.cache)
     // Only an explicit agentId claims the workspace user; a bare launch
     // adopts whatever identity the namespace store holds.
@@ -947,7 +944,6 @@ export class Workspace {
     await closeWorkspace({
       watch: this.watchManager,
       cache: this.cache,
-      ownsCache: this.ownsCache,
       ownsStateStore: this.ownsStateStore,
       stateStore: this.stateStoreInternal,
       closers: this.closers,

@@ -13,7 +13,6 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import type { CacheConfig } from '../../cache/file/config.ts'
-import type { FileCache } from '../../cache/file/mixin.ts'
 import type { IndexConfig } from '../../cache/index/config.ts'
 import type { CLISpec } from '../../commands/cli/types.ts'
 import type { ByteSource } from '../../io/types.ts'
@@ -62,19 +61,28 @@ export interface WorkspaceOptions {
   sessionId?: string
   cacheLimit?: string | number
   /**
-   * The workspace's byte cache: the config describing one, coerced
-   * through `buildFileCache` exactly as `index` is — and the only form
-   * Python takes — or a store the caller built. A caller-built store
-   * stays the caller's to close; one built from config is closed with
-   * the workspace.
+   * The workspace's byte cache, described the way `index` is: the
+   * config to build one from. A store core cannot build reaches
+   * `buildFileCache` by registering a factory for its `type`
+   * (`registerFileCacheStore`), the seam node's redis store already
+   * uses — so the workspace always builds this cache, and always
+   * closes it.
    */
-  cache?: (FileCache & Resource) | CacheConfig
+  cache?: CacheConfig
   index?: IndexConfig
   observe?: ObserverStore
   namespaceStore?: NamespaceStore
   sessionStore?: SessionStore
   workspaceId?: string
   store?: WorkspaceStateStore
+  /**
+   * Whether a passed `store` is this workspace's to close. A provider
+   * may be shared with sibling workspaces, so a passed one is borrowed
+   * by default; a caller that built the store for this workspace alone
+   * (the config loader, the daemon's disk default) sets this so its
+   * client is released on close. Mirrors Python's `owns_store`.
+   */
+  ownsStore?: boolean
   python?: {
     autoLoadFromImports?: boolean
     bootstrapCode?: string

@@ -56,7 +56,7 @@ export function buildFileCache(
     if (factory === undefined) {
       throw new Error(
         `no '${type}' file cache is registered; import '@struktoai/mirage-node' ` +
-          `(which registers it) or pass a built FileCache as options.cache`,
+          `(which registers it) or call registerFileCacheStore('${type}', ...)`,
       )
     }
     return factory(cache as RedisCacheConfig)
@@ -65,29 +65,4 @@ export function buildFileCache(
     limit: cache?.limit ?? cacheLimit,
     maxDrainBytes: cache?.maxDrainBytes ?? null,
   })
-}
-
-export interface ResolvedFileCache {
-  cache: FileCacheStore
-  /**
-   * Whether the workspace built this store, and so must close it. False
-   * for a store the caller built and still owns — the same split
-   * `ownsStateStore` draws.
-   */
-  owned: boolean
-}
-
-/**
- * Resolve `WorkspaceOptions.cache`, which is either a store already
- * built by the caller or the config to build one from. A built store
- * carries the FileCache methods; a config is a plain data object.
- */
-export function resolveFileCache(
-  option: FileCacheStore | CacheConfig | undefined,
-  cacheLimit: string | number = '512MB',
-): ResolvedFileCache {
-  if (option !== undefined && typeof (option as FileCache).get === 'function') {
-    return { cache: option as FileCacheStore, owned: false }
-  }
-  return { cache: buildFileCache(option as CacheConfig | undefined, cacheLimit), owned: true }
 }

@@ -23,6 +23,7 @@ import {
   RedisNamespaceStore,
   RedisWorkspaceStateStore,
   ScriptSource,
+  Workspace,
 } from '@struktoai/mirage-node'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -244,6 +245,30 @@ describe('configToWorkspaceArgs', () => {
     const args = await configToWorkspaceArgs(cfg)
     expect(args.options.store).toBeInstanceOf(RedisWorkspaceStateStore)
     expect(args.options.store?.namespace('ws1')).toBeInstanceOf(RedisNamespaceStore)
+    // A store built here has no other owner, so the workspace must be
+    // told to close it — without this the redis client is never quit.
+    expect(args.options.ownsStore).toBe(true)
+  })
+
+  it('hands the workspace a store it will actually close', async () => {
+    // The store built here has no other owner, so a workspace that
+    // treats it as borrowed leaks it — for redis or s3 that is a client
+    // that is never quit, once per workspace the daemon creates.
+    const cfg = loadWorkspaceConfig({
+      mounts: { '/': { resource: 'ram' } },
+      store: { type: 'ram' },
+    })
+    const args = await configToWorkspaceArgs(cfg)
+    const store = args.options.store
+    if (store === undefined) throw new Error('the store block built no store')
+    let closed = 0
+    store.close = () => {
+      closed++
+      return Promise.resolve()
+    }
+    const ws = new Workspace({}, args.options)
+    await ws.close()
+    expect(closed).toBe(1)
   })
 
   it('builds a ram state store from a store block', async () => {

@@ -39,6 +39,7 @@ import {
   type RedisIndexConfig,
   type Resource,
   type S3Config,
+  type WorkspaceOptions,
   type WorkspaceStateStore,
 } from '@struktoai/mirage-node'
 
@@ -638,20 +639,14 @@ export function loadWorkspaceConfigFile(
 
 export interface WorkspaceArgs {
   resources: Record<string, [Resource, MountMode, Record<string, Limit>]>
-  options: {
-    mode: MountMode
-    consistency: ConsistencyPolicy
-    sessionId?: string
-    agentId?: string
-    cache?: CacheConfig
-    index?: IndexConfig
-    workspaceId?: string
-    store?: WorkspaceStateStore
-    runtimes?: RuntimeEntry[]
-    policy?: ScriptSource
-    guards?: GuardSpec[]
-    clis?: Record<string, [string | CLISpec, Record<string, unknown> | null]>
-  }
+  /**
+   * Exactly what `new Workspace` takes, minus the two the loader always
+   * resolves. Spelling the fields out here instead is what once dropped
+   * `clis` and `guards` on the way to the daemon: a config knob was
+   * parsed and validated, then discarded by a list nobody remembered to
+   * extend.
+   */
+  options: WorkspaceOptions & { mode: MountMode; consistency: ConsistencyPolicy }
   kernelMounts: Record<string, [MountBackend, string | undefined]>
 }
 
@@ -744,7 +739,11 @@ export async function configToWorkspaceArgs(cfg: WorkspaceConfigRaw): Promise<Wo
       ...(cfg.workspaceId !== undefined ? { workspaceId: cfg.workspaceId } : {}),
       ...(cfg.cache !== undefined && cfg.cache !== null ? { cache: cfg.cache } : {}),
       ...(index !== undefined ? { index } : {}),
-      ...(stateStore !== undefined ? { store: stateStore } : {}),
+      // Built here for this workspace alone, so it is the workspace's
+      // to close — a redis or s3 store has a client that nothing else
+      // would ever release. Mirrors the `owns_store` Python's loader
+      // sets beside the same store.
+      ...(stateStore !== undefined ? { store: stateStore, ownsStore: true } : {}),
       ...(cfg.runtimes !== undefined && cfg.runtimes !== null
         ? { runtimes: buildRuntimeEntries(cfg.runtimes) }
         : {}),
