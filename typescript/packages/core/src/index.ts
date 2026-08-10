@@ -733,6 +733,7 @@ export {
   type S3HttpAgents,
 } from './resource/s3/config.ts'
 export { remapCommandsResource, remapOpsResource } from './resource/s3/remap.ts'
+export { s3StorageId } from './resource/s3/storage_id.ts'
 export { S3_PROMPT } from './resource/s3/prompt.ts'
 export { SCOPE_ERROR as S3_SCOPE_ERROR } from './core/s3/constants.ts'
 export { copy } from './core/s3/copy.ts'

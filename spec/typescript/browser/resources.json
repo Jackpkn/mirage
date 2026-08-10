@@ -3,17 +3,17 @@
     "aliyun": {
       "caches_reads": true,
       "index_ttl": 600,
-      "sizes_always_known": false,
+      "sizes_always_known": true,
       "statfs": false,
-      "storage_id": false,
+      "storage_id": true,
       "supports_snapshot": true
     },
     "backblaze": {
       "caches_reads": true,
       "index_ttl": 600,
-      "sizes_always_known": false,
+      "sizes_always_known": true,
       "statfs": false,
-      "storage_id": false,
+      "storage_id": true,
       "supports_snapshot": true
     },
     "box": {
@@ -27,9 +27,9 @@
     "ceph": {
       "caches_reads": true,
       "index_ttl": 600,
-      "sizes_always_known": false,
+      "sizes_always_known": true,
       "statfs": false,
-      "storage_id": false,
+      "storage_id": true,
       "supports_snapshot": true
     },
     "chroma": {
@@ -51,9 +51,9 @@
     "digitalocean": {
       "caches_reads": true,
       "index_ttl": 600,
-      "sizes_always_known": false,
+      "sizes_always_known": true,
       "statfs": false,
-      "storage_id": false,
+      "storage_id": true,
       "supports_snapshot": true
     },
     "discord": {
@@ -76,9 +76,9 @@
     "gcs": {
       "caches_reads": true,
       "index_ttl": 600,
-      "sizes_always_known": false,
+      "sizes_always_known": true,
       "statfs": false,
-      "storage_id": false,
+      "storage_id": true,
       "supports_snapshot": true
     },
     "gdocs": {
@@ -165,9 +165,9 @@
     "minio": {
       "caches_reads": true,
       "index_ttl": 600,
-      "sizes_always_known": false,
+      "sizes_always_known": true,
       "statfs": false,
-      "storage_id": false,
+      "storage_id": true,
       "supports_snapshot": true
     },
     "mongodb": {
@@ -189,9 +189,9 @@
     "oci": {
       "caches_reads": true,
       "index_ttl": 600,
-      "sizes_always_known": false,
+      "sizes_always_known": true,
       "statfs": false,
-      "storage_id": false,
+      "storage_id": true,
       "supports_snapshot": true
     },
     "onedrive": {
@@ -229,17 +229,17 @@
     "qingstor": {
       "caches_reads": true,
       "index_ttl": 600,
-      "sizes_always_known": false,
+      "sizes_always_known": true,
       "statfs": false,
-      "storage_id": false,
+      "storage_id": true,
       "supports_snapshot": true
     },
     "r2": {
       "caches_reads": true,
       "index_ttl": 600,
-      "sizes_always_known": false,
+      "sizes_always_known": true,
       "statfs": false,
-      "storage_id": false,
+      "storage_id": true,
       "supports_snapshot": true
     },
     "ram": {
@@ -253,25 +253,25 @@
     "s3": {
       "caches_reads": true,
       "index_ttl": 600,
-      "sizes_always_known": false,
+      "sizes_always_known": true,
       "statfs": false,
-      "storage_id": false,
+      "storage_id": true,
       "supports_snapshot": true
     },
     "scaleway": {
       "caches_reads": true,
       "index_ttl": 600,
-      "sizes_always_known": false,
+      "sizes_always_known": true,
       "statfs": false,
-      "storage_id": false,
+      "storage_id": true,
       "supports_snapshot": true
     },
     "seaweedfs": {
       "caches_reads": true,
       "index_ttl": 600,
-      "sizes_always_known": false,
+      "sizes_always_known": true,
       "statfs": false,
-      "storage_id": false,
+      "storage_id": true,
       "supports_snapshot": true
     },
     "sharepoint": {
@@ -293,17 +293,17 @@
     "supabase": {
       "caches_reads": true,
       "index_ttl": 600,
-      "sizes_always_known": false,
+      "sizes_always_known": true,
       "statfs": false,
-      "storage_id": false,
+      "storage_id": true,
       "supports_snapshot": true
     },
     "tencent": {
       "caches_reads": true,
       "index_ttl": 600,
-      "sizes_always_known": false,
+      "sizes_always_known": true,
       "statfs": false,
-      "storage_id": false,
+      "storage_id": true,
       "supports_snapshot": true
     },
     "trello": {
@@ -317,9 +317,9 @@
     "wasabi": {
       "caches_reads": true,
       "index_ttl": 600,
-      "sizes_always_known": false,
+      "sizes_always_known": true,
       "statfs": false,
-      "storage_id": false,
+      "storage_id": true,
       "supports_snapshot": true
     }
   },

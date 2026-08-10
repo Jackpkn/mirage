@@ -73,5 +73,9 @@
     "python": {
       "history": "The /.bash_history view mount is created by the workspace itself and is never named in YAML or a snapshot, so it registers commands without a build_resource entry."
     }
+  },
+  "variant_resource_facts": {
+    "capabilities": {},
+    "command_io": {}
   }
 }

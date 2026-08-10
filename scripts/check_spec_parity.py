@@ -78,13 +78,18 @@ def merge_variants(loaded: dict[str, dict[str, Any]], key: str,
                    language_only: set[str]) -> dict[str, Any]:
     """One typescript view of ``key``, node's entry winning over browser's.
 
-    A backend registered in both runtimes must describe itself the same
-    way, and ``compare_variants`` already fails when the two disagree
-    about a command. Where only one runtime carries a real entry — the
-    browser registers ``lancedb`` and ``email`` solely to explain that it
-    cannot serve them, so their capabilities dump as null — the runtime
-    that can actually mount the backend is the one worth comparing
-    against python.
+    Where only one runtime carries a real entry — the browser registers
+    ``lancedb`` and ``email`` solely to explain that it cannot serve them,
+    so their capabilities dump as null — the runtime that can actually
+    mount the backend is the one worth comparing against python.
+
+    Preferring node is only safe because ``check_variant_facts`` has
+    already failed on any name the two runtimes describe differently.
+    Without it the preference silently hid a divergence rather than
+    resolving one: the fifteen browser S3-family resources declared
+    neither ``sizes_always_known`` nor ``storage_id`` while their node
+    twins declared both, and python matched node, so the whole
+    python-versus-typescript comparison passed.
 
     Args:
         loaded (dict[str, dict[str, Any]]): the three resource trees.
@@ -99,6 +104,46 @@ def merge_variants(loaded: dict[str, dict[str, Any]], key: str,
             if out.get(name) is None:
                 out[name] = entry
     return out
+
+
+def check_variant_facts(loaded: dict[str, dict[str, Any]], key: str,
+                        allowed: dict[str, dict[str, str]],
+                        used: set[str]) -> list[str]:
+    """Node against browser for one resource-fact table.
+
+    A backend both runtimes register is one backend, and it should not
+    behave differently depending on which package mounted it. Nothing
+    compared the two: ``compare_variants`` only sees the command specs,
+    and ``merge_variants`` resolves the tables by preferring node, which
+    turns a divergence into a silently discarded value.
+
+    A ``null`` entry is a runtime declining to serve the backend at all,
+    which is a membership fact ``check_resources`` already covers.
+
+    Args:
+        loaded (dict[str, dict[str, Any]]): the three resource trees.
+        key (str): the payload key to compare, e.g. ``"capabilities"``.
+        allowed (dict[str, dict[str, str]]): per-resource keys whose
+            divergence is documented, each mapped to its reason.
+        used (set[str]): collects the exemptions that fired.
+    """
+    node = loaded["node"].get(key, {})
+    browser = loaded["browser"].get(key, {})
+    failures: list[str] = []
+    for name in sorted(set(node) & set(browser)):
+        a, b = node[name], browser[name]
+        if a is None or b is None:
+            continue
+        exempt = allowed.get(name, {})
+        for field in sorted(set(a) | set(b)):
+            if a.get(field) == b.get(field):
+                continue
+            if field in exempt:
+                used.add(f"{key}:{name}:{field}")
+                continue
+            failures.append(f"{key}[{name}].{field}: typescript node="
+                            f"{a.get(field)!r} browser={b.get(field)!r}")
+    return failures
 
 
 def check_capabilities(loaded: dict[str, dict[str, Any]],
@@ -430,6 +475,8 @@ def main() -> int:
                                  str]] = exceptions["resource_capabilities"]
     io_exempt: dict[str, dict[str, str]] = exceptions["command_io"]
     io_aliases: dict[str, str] = exceptions["command_io_aliases"]["python"]
+    variant_exempt: dict[str, dict[str, dict[
+        str, str]]] = exceptions["variant_resource_facts"]
 
     py_specs = load_dir(PYTHON)
     ts_variants = [load_dir(p) for p in TYPESCRIPT]
@@ -455,6 +502,12 @@ def main() -> int:
     failures.extend(compare_variants(ts_variants))
     failures.extend(
         check_resources(trees, language_only, expansions, unconstructible))
+    # Before python is compared against the merged typescript view, since
+    # that merge prefers node and would otherwise discard the difference.
+    for table in ("capabilities", "command_io"):
+        failures.extend(
+            check_variant_facts(trees, table, variant_exempt.get(table, {}),
+                                used_facts))
     failures.extend(
         check_capabilities(trees, expansions, language_only, capability_exempt,
                            used_facts))
@@ -465,6 +518,12 @@ def main() -> int:
         f"{name}:{key}"
         for table in (capability_exempt, io_exempt)
         for name, keys in table.items()
+        for key in keys
+    }
+    declared |= {
+        f"{table}:{name}:{key}"
+        for table, entries in variant_exempt.items()
+        for name, keys in entries.items()
         for key in keys
     }
     stale_facts = sorted(declared - used_facts)
