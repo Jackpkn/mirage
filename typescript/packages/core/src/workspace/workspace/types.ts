@@ -62,9 +62,11 @@ export interface WorkspaceOptions {
   sessionId?: string
   cacheLimit?: string | number
   /**
-   * The workspace's byte cache: a built store, or — like `index` — the
-   * config describing one, coerced through `buildFileCache`. Mirrors
-   * Python's `cache: CacheConfig | None`.
+   * The workspace's byte cache: the config describing one, coerced
+   * through `buildFileCache` exactly as `index` is — and the only form
+   * Python takes — or a store the caller built. A caller-built store
+   * stays the caller's to close; one built from config is closed with
+   * the workspace.
    */
   cache?: (FileCache & Resource) | CacheConfig
   index?: IndexConfig

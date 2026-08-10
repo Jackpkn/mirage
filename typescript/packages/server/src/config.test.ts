@@ -23,7 +23,6 @@ import {
   RedisNamespaceStore,
   RedisWorkspaceStateStore,
   ScriptSource,
-  type CacheConfig,
 } from '@struktoai/mirage-node'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -405,7 +404,7 @@ describe('configToWorkspaceArgs', () => {
       keyPrefix: 'c:',
       maxDrainBytes: 1024,
     })
-    expect(buildFileCache(args.options.cache as CacheConfig)).toBeInstanceOf(RedisFileCacheStore)
+    expect(buildFileCache(args.options.cache)).toBeInstanceOf(RedisFileCacheStore)
   })
 
   it('coerces consistency (default lazy, accepts always, rejects junk)', async () => {
@@ -636,19 +635,23 @@ describe('CLI to daemon round trip', () => {
   })
 })
 
-describe('shared rejection fixture', () => {
-  // integ/fixtures/config/rejected.json is the contract: the python suite
-  // (tests/config/test_loader.py) refuses the same configs, so a config
-  // that loads in one language and not the other fails a test until both
-  // loaders agree.
-  const FIXTURE = fileURLToPath(
-    new URL('../../../../integ/fixtures/config/rejected.json', import.meta.url),
+// integ/fixtures/config/{rejected,accepted}.json are the contract: the
+// python suite (tests/config/test_loader.py) reads the same two files, so
+// a config that loads in one language and not the other fails a test
+// until both loaders agree.
+function fixtureCases(name: string): { name: string; config: Record<string, unknown> }[] {
+  const path = fileURLToPath(
+    new URL(`../../../../integ/fixtures/config/${name}.json`, import.meta.url),
   )
-  const cases = (
-    JSON.parse(readFileSync(FIXTURE, 'utf8')) as {
+  return (
+    JSON.parse(readFileSync(path, 'utf8')) as {
       cases: { name: string; config: Record<string, unknown> }[]
     }
   ).cases
+}
+
+describe('shared rejection fixture', () => {
+  const cases = fixtureCases('rejected')
 
   it('has cases', () => {
     expect(cases.length).toBeGreaterThan(0)
@@ -656,5 +659,21 @@ describe('shared rejection fixture', () => {
 
   it.each(cases)('refuses $name', ({ config }) => {
     expect(() => loadWorkspaceConfig(config)).toThrow()
+  })
+})
+
+describe('shared acceptance fixture', () => {
+  // The key tables are copied by hand from Python's models, so the drift
+  // this catches is a field added there and never mirrored here: every
+  // key of every block appears in the fixture, and an unmirrored one
+  // comes back as `unknown ... key`.
+  const cases = fixtureCases('accepted')
+
+  it('has cases', () => {
+    expect(cases.length).toBeGreaterThan(0)
+  })
+
+  it.each(cases)('accepts $name', ({ config }) => {
+    expect(() => loadWorkspaceConfig(config)).not.toThrow()
   })
 })

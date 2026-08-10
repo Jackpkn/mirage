@@ -632,15 +632,26 @@ def test_clis_block_refuses_unknown_keys():
         })
 
 
-def test_shared_rejection_fixture_is_refused():
-    # integ/fixtures/config/rejected.json is the contract: the TypeScript
-    # suite (packages/server/src/config.test.ts) refuses the same configs,
-    # so a config that loads in one language and not the other fails a
-    # test until both loaders agree.
+def _shared_fixture_cases(name: str) -> list[dict]:
+    # integ/fixtures/config/{rejected,accepted}.json are the contract: the
+    # TypeScript suite (packages/server/src/config.test.ts) reads the same
+    # two files, so a config that loads in one language and not the other
+    # fails a test until both loaders agree.
     fixture = (Path(__file__).parents[3] / "integ" / "fixtures" / "config" /
-               "rejected.json")
+               f"{name}.json")
     cases = json.loads(fixture.read_text())["cases"]
-    assert cases, "the rejection fixture must not be empty"
-    for case in cases:
+    assert cases, f"the {name} fixture must not be empty"
+    return cases
+
+
+def test_shared_rejection_fixture_is_refused():
+    for case in _shared_fixture_cases("rejected"):
         with pytest.raises(ValueError):
             load_config(case["config"])
+
+
+def test_shared_acceptance_fixture_is_accepted():
+    # Every key of every block, so a field added to a model here and
+    # never mirrored into the TypeScript key tables fails there.
+    for case in _shared_fixture_cases("accepted"):
+        load_config(case["config"])

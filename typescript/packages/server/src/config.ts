@@ -34,7 +34,6 @@ import {
   buildRuntime,
   type RuntimeEntry,
   type CacheConfig,
-  type FileCacheStore,
   type GuardSpec,
   type IndexConfig,
   type RedisIndexConfig,
@@ -165,22 +164,27 @@ const INDEX_KEYS: Record<string, readonly string[]> = {
   ram: ['type', 'ttl'],
   redis: ['type', 'ttl', 'url', 'key_prefix'],
 }
-const STORE_KEYS = [
-  'type',
-  'url',
-  'key_prefix',
-  'root',
-  'namespace',
-  'observer',
-  'workspace',
-] as const
+const STORE_GROUPS = ['namespace', 'observer', 'workspace'] as const
+const STORE_KEYS = ['type', 'url', 'key_prefix', 'root', ...STORE_GROUPS] as const
 const STORE_GROUP_KEYS: Record<string, readonly string[]> = {
   ram: ['type'],
   disk: ['type', 'root'],
   redis: ['type', 'url', 'key_prefix'],
 }
-const CLI_KEYS = ['cli', 'script', 'runtime', 'config'] as const
+const CLI_KEYS: readonly string[] = ['cli', 'script', 'runtime', 'config']
 const GUARD_KEYS = ['reason', 'commands', 'paths'] as const
+
+// A store group whose `type` names a backend IS that backend's config
+// plus the discriminator: its keys belong to the backend's model and its
+// spellings to the backend's own translation, exactly like a mount's
+// `config:` block. So such a group is neither key-checked nor camelized
+// here — a future backend-backed group joins this set, and both sites
+// follow without being found again.
+const BACKEND_CONFIG_TYPES: ReadonlySet<string> = new Set(['s3'])
+
+function isBackendConfigBlock(block: Record<string, unknown>): boolean {
+  return typeof block.type === 'string' && BACKEND_CONFIG_TYPES.has(block.type)
+}
 
 function rejectUnknownKeys(
   block: Record<string, unknown>,
@@ -237,13 +241,11 @@ function validateStoreBlock(value: unknown): void {
   // never the default. Mirrors Python's StoreBlock.
   blockType(value, 'store', ['ram', 'disk', 'redis'], 'ram')
   rejectUnknownKeys(value, STORE_KEYS, 'store')
-  for (const group of ['namespace', 'observer', 'workspace'] as const) {
+  for (const group of STORE_GROUPS) {
     const block = value[group]
     if (block === undefined || block === null) continue
     if (!isPlainObject(block)) throw new Error(`config \`store.${group}\` must be a mapping`)
-    // An s3 group IS an S3Config plus the discriminator, so its keys
-    // belong to the s3 config model rather than to this table.
-    if (block.type === 's3') continue
+    if (isBackendConfigBlock(block)) continue
     validateTypedBlock(block, STORE_GROUP_KEYS, `store.${group}`, 'ram')
   }
 }
@@ -292,15 +294,14 @@ function normalizeConfigKeys(raw: Record<string, unknown>): Record<string, unkno
   if (isPlainObject(out.index)) out.index = camelizeKeys(out.index)
   if (isPlainObject(out.store)) {
     const store = camelizeKeys(out.store)
-    for (const group of ['namespace', 'observer', 'workspace']) {
+    for (const group of STORE_GROUPS) {
       const block = store[group]
       if (!isPlainObject(block)) continue
-      // An s3 group IS an S3Config, whose snake_case spellings do not
-      // camelize into the TS field names (`aws_access_key_id` is
-      // `accessKeyId`, not `awsAccessKeyId`). Left alone here for the
-      // same reason `mounts.*.config` is: `normalizeS3Config` owns that
-      // translation, and camelizing first would hide the keys from it.
-      if (block.type === 's3') continue
+      // A backend's own spellings do not camelize into its TS field
+      // names (`aws_access_key_id` is `accessKeyId`, not
+      // `awsAccessKeyId`), and camelizing first would hide the keys from
+      // the translation that does know them.
+      if (isBackendConfigBlock(block)) continue
       store[group] = camelizeKeys(block)
     }
     out.store = store
@@ -430,20 +431,6 @@ export interface MountBlock {
   mountpoint?: string
 }
 
-interface RamCacheBlock {
-  type?: 'ram'
-  limit?: string | number
-  maxDrainBytes?: number | null
-}
-
-interface RedisCacheBlock {
-  type: 'redis'
-  limit?: string | number
-  maxDrainBytes?: number | null
-  url?: string
-  keyPrefix?: string
-}
-
 interface RamIndexBlock {
   type?: 'ram'
   ttl?: number
@@ -534,7 +521,13 @@ export interface WorkspaceConfigRaw {
   defaultSessionId?: string
   defaultAgentId?: string
   workspaceId?: string
-  cache?: RamCacheBlock | RedisCacheBlock | null
+  /**
+   * The normalized block IS a `CacheConfig` — so it is handed to the
+   * workspace as one rather than built here. A store the workspace
+   * builds is a store the workspace closes; building it here would
+   * leave a redis client with no owner once the workspace shut down.
+   */
+  cache?: CacheConfig | null
   index?: RamIndexBlock | RedisIndexBlock | null
   store?: StoreBlock | null
 }
@@ -592,20 +585,18 @@ export function loadWorkspaceConfig(
  * happens to run". In-memory object configs are untouched.
  */
 function absolutizeScripts(raw: Record<string, unknown>, base: string): void {
-  // `policy`, `runtimes`, `clis` and `script` are spelled the same in
-  // both cases, so this runs before or after normalization alike.
   const policy = raw.policy
   if (typeof policy === 'string' && isScriptPath(policy) && !isAbsolute(policy.trim())) {
     raw.policy = join(base, policy.trim())
   }
   if (Array.isArray(raw.runtimes)) {
     for (const entry of raw.runtimes) {
-      if (typeof entry !== 'string') absolutizeScriptKey(entry as Record<string, unknown>, base)
+      if (isPlainObject(entry)) absolutizeScriptKey(entry, base)
     }
   }
-  if (raw.clis !== undefined && raw.clis !== null) {
-    for (const block of Object.values(raw.clis as Record<string, unknown>)) {
-      absolutizeScriptKey(block as Record<string, unknown>, base)
+  if (isPlainObject(raw.clis)) {
+    for (const block of Object.values(raw.clis)) {
+      if (isPlainObject(block)) absolutizeScriptKey(block, base)
     }
   }
 }
@@ -652,7 +643,7 @@ export interface WorkspaceArgs {
     consistency: ConsistencyPolicy
     sessionId?: string
     agentId?: string
-    cache?: FileCacheStore | CacheConfig
+    cache?: CacheConfig
     index?: IndexConfig
     workspaceId?: string
     store?: WorkspaceStateStore
@@ -662,18 +653,6 @@ export interface WorkspaceArgs {
     clis?: Record<string, [string | CLISpec, Record<string, unknown> | null]>
   }
   kernelMounts: Record<string, [MountBackend, string | undefined]>
-}
-
-// The block IS the cache config once normalized, so it is handed to the
-// workspace as one rather than built here: `WorkspaceOptions.cache`
-// accepts the same shape, and a store the workspace builds is a store
-// the workspace closes. Building it here would leave a redis client with
-// no owner once the workspace shut down.
-function buildCache(
-  block: RamCacheBlock | RedisCacheBlock | null | undefined,
-): CacheConfig | undefined {
-  if (block === null || block === undefined) return undefined
-  return block as CacheConfig
 }
 
 function buildIndex(
@@ -753,7 +732,6 @@ export async function configToWorkspaceArgs(cfg: WorkspaceConfigRaw): Promise<Wo
     const backend = (block.backend ?? MountBackend.VFS) as MountBackend
     if (KERNEL_BACKENDS.includes(backend)) kernelMounts[prefix] = [backend, block.mountpoint]
   }
-  const cache = buildCache(cfg.cache)
   const index = buildIndex(cfg.index)
   const stateStore = buildStateStore(cfg.store)
   return {
@@ -764,7 +742,7 @@ export async function configToWorkspaceArgs(cfg: WorkspaceConfigRaw): Promise<Wo
       ...(cfg.defaultSessionId !== undefined ? { sessionId: cfg.defaultSessionId } : {}),
       ...(cfg.defaultAgentId !== undefined ? { agentId: cfg.defaultAgentId } : {}),
       ...(cfg.workspaceId !== undefined ? { workspaceId: cfg.workspaceId } : {}),
-      ...(cache !== undefined ? { cache } : {}),
+      ...(cfg.cache !== undefined && cfg.cache !== null ? { cache: cfg.cache } : {}),
       ...(index !== undefined ? { index } : {}),
       ...(stateStore !== undefined ? { store: stateStore } : {}),
       ...(cfg.runtimes !== undefined && cfg.runtimes !== null
@@ -786,14 +764,13 @@ function buildCliEntries(
   clis: Record<string, CLIBlock>,
 ): Record<string, [string | CLISpec, Record<string, unknown> | null]> {
   const out: Record<string, [string | CLISpec, Record<string, unknown> | null]> = {}
-  const known = new Set(['cli', 'script', 'runtime', 'config'])
   for (const [name, block] of Object.entries(clis as Record<string, unknown>)) {
     // The raw config arrives as unvalidated YAML: the CLIBlock type is
     // a claim, not a guarantee, so validate the shape here.
     if (!isPlainObject(block)) {
       throw new Error(`clis entry '${name}' must be a mapping`)
     }
-    const unknown = Object.keys(block).filter((k) => !known.has(k))
+    const unknown = Object.keys(block).filter((k) => !CLI_KEYS.includes(k))
     if (unknown.length > 0) {
       throw new Error(`clis entry '${name}': unknown keys: ${unknown.sort().join(', ')}`)
     }
