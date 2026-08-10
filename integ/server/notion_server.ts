@@ -255,9 +255,30 @@ function titleProp(title: string, column = 'title'): Json {
   }
 }
 
-function titleColumnOf(database: DatabaseRow | null): string {
-  if (database === null) return 'title'
-  const schema = asObject(JSON.parse(database.propertiesJson))
+function schemaOf(database: DatabaseRow | null): Json {
+  if (database === null) return {}
+  return asObject(JSON.parse(database.propertiesJson))
+}
+
+// Normalizing a write can add a select option to its column, and the option id
+// the answer carries is only usable if that lands, so the schema goes back to
+// the row whenever normalization changed it.
+async function persistSchema(
+  db: PrismaClient,
+  workspaceId: string,
+  owner: DatabaseRow | null,
+  schema: Json,
+  before: string,
+): Promise<void> {
+  const next = JSON.stringify(schema)
+  if (owner === null || next === before) return
+  await db.notionDatabase.update({
+    where: { workspaceId_id: { workspaceId, id: owner.id } },
+    data: { propertiesJson: next },
+  })
+}
+
+function titleColumnOf(schema: Json): string {
   for (const [name, spec] of Object.entries(schema)) {
     if (asObject(spec).type === 'title') return name
   }
@@ -326,21 +347,87 @@ function normalizeRichText(value: unknown): Json[] {
   return out
 }
 
-function normalizeProperties(properties: Json): Json {
+// The value key is the discriminator: {"select": {...}} says select on its
+// own, which is how a body that omits `type` still names its own shape. The
+// column is the fallback for a body that carries nothing readable.
+function propertyKind(prop: Json, columnType: string | undefined): string | undefined {
+  if (typeof prop.type === 'string') return prop.type
+  const keys = Object.keys(prop).filter((key) => key !== 'id' && key !== 'type')
+  return keys.length === 1 ? keys[0] : columnType
+}
+
+// A writer names a select option; Notion answers with the whole option off the
+// schema. A name the schema has never seen is minted rather than dropped,
+// which is what the real API does with a new select/multi_select value, and it
+// is added to the column's options right here, because the id in the answer is
+// only usable if a later write naming it alone resolves back to the same
+// option. Its id is the name, so the fake stays reproducible across runs.
+// Deliberate divergence: a status option is minted the same way, where the
+// real API refuses one it does not already have.
+function selectOption(column: Json, kind: string, value: Json): Json {
+  const name = typeof value.name === 'string' ? value.name : ''
+  const id = typeof value.id === 'string' ? value.id : ''
+  const config = asObject(column[kind])
+  const options = config.options
+  if (Array.isArray(options)) {
+    for (const one of options) {
+      const option = asObject(one)
+      if ((id !== '' && option.id === id) || (name !== '' && option.name === name)) {
+        return { id: option.id, name: option.name, color: option.color }
+      }
+    }
+  }
+  const minted: Json = { id: id !== '' ? id : name, name, color: 'default' }
+  if (Array.isArray(options)) options.push({ ...minted })
+  return minted
+}
+
+function normalizeValue(column: Json, kind: string, value: unknown): unknown {
+  if (kind === 'title' || kind === 'rich_text') return normalizeRichText(value)
+  if (kind === 'select' || kind === 'status') {
+    return value === null || value === undefined ? null : selectOption(column, kind, asObject(value))
+  }
+  if (kind === 'multi_select') {
+    if (!Array.isArray(value)) return []
+    return value.map((one) => selectOption(column, kind, asObject(one)))
+  }
+  // Notion answers a date with all three fields whatever the writer sent.
+  if (kind === 'date') {
+    if (value === null || value === undefined) return null
+    const date = asObject(value)
+    return { start: date.start ?? null, end: date.end ?? null, time_zone: date.time_zone ?? null }
+  }
+  return value ?? null
+}
+
+// Notion answers with the property value its schema decides, never the one the
+// writer sent: the column's id and type ride on every value, and a select
+// carries the whole option rather than the bare name a client may write. The
+// fake used to echo the request back, so a PATCH that left `type` out (the API
+// treats it as optional and the official SDK's own examples omit it) stored an
+// untyped object, which every reader renders blank because the type is what
+// says which key holds the value. Key order matches the fixture's, so a
+// written row and a seeded one look alike.
+function normalizeProperties(properties: Json, schema: Json): Json {
   const out: Json = {}
   for (const [key, value] of Object.entries(properties)) {
-    if (Array.isArray(value)) {
-      out[key] = { id: key, type: 'title', title: normalizeRichText(value) }
+    const column = asObject(schema[key])
+    const columnType = typeof column.type === 'string' ? column.type : undefined
+    // A bare array under the column name is a shorthand the fake accepts; it
+    // is only ever the title column or a rich text one.
+    const prop = Array.isArray(value)
+      ? { [columnType === 'rich_text' ? 'rich_text' : 'title']: value }
+      : asObject(value)
+    const kind = propertyKind(prop, columnType)
+    if (kind === undefined) {
+      out[key] = prop
       continue
     }
-    const prop = asObject(value)
-    const copy: Json = { ...prop }
-    if (Array.isArray(prop.title)) copy.title = normalizeRichText(prop.title)
-    if (Array.isArray(prop.rich_text)) copy.rich_text = normalizeRichText(prop.rich_text)
-    if (copy.type === undefined) {
-      if (Array.isArray(prop.title)) copy.type = 'title'
-      else if (Array.isArray(prop.rich_text)) copy.type = 'rich_text'
-    }
+    const copy: Json = {}
+    if (typeof column.id === 'string') copy.id = column.id
+    else if (kind === 'title') copy.id = 'title'
+    copy.type = kind
+    copy[kind] = normalizeValue(column, kind, prop[kind])
     out[key] = copy
   }
   return out
@@ -890,7 +977,6 @@ async function createPage(
   body: Json,
 ): Promise<Reply> {
   const parent = asObject(body.parent)
-  const properties = normalizeProperties(asObject(body.properties))
   let parentType = 'workspace'
   let parentId: string | null = null
   if (typeof parent.page_id === 'string') {
@@ -914,10 +1000,20 @@ async function createPage(
     const owner = await db.notionPage.findFirst({ where: { workspaceId, id: parentId } })
     if (owner === null) return notFound('page', parentId)
   }
+  // The owner is read once and serves three purposes: the parent check, the
+  // column schema a written property is normalized against, and the name of
+  // the title column a markdown-only create files its heading under.
+  let owner: DatabaseRow | null = null
   if (parentType === 'database_id' && parentId !== null) {
-    const owner = await db.notionDatabase.findFirst({ where: { workspaceId, id: parentId } })
+    owner = (await db.notionDatabase.findFirst({
+      where: { workspaceId, id: parentId },
+    })) as DatabaseRow | null
     if (owner === null) return notFound('database', parentId)
   }
+  const schema = schemaOf(owner)
+  const schemaBefore = JSON.stringify(schema)
+  const properties = normalizeProperties(asObject(body.properties), schema)
+  await persistSchema(db, workspaceId, owner, schema, schemaBefore)
   const id = mintId(workspaceId, 'a0000000')
   // `ntn pages create --content` sends Markdown rather than properties; the
   // first heading becomes the title, exactly as the official CLI documents.
@@ -932,13 +1028,7 @@ async function createPage(
     }
   }
   if (title !== '' && Object.keys(properties).length === 0) {
-    const owner =
-      parentType === 'database_id' && parentId !== null
-        ? ((await db.notionDatabase.findFirst({
-            where: { workspaceId, id: parentId },
-          })) as DatabaseRow | null)
-        : null
-    Object.assign(properties, titleProp(title, titleColumnOf(owner)))
+    Object.assign(properties, titleProp(title, titleColumnOf(schema)))
   }
   await db.notionPage.create({
     data: {
@@ -1079,7 +1169,16 @@ async function updatePage(
   if (typeof body.archived === 'boolean') data.archived = body.archived
   if (typeof body.in_trash === 'boolean') data.inTrash = body.in_trash
   if (body.properties !== undefined) {
-    const patch = normalizeProperties(asObject(body.properties))
+    const owner =
+      row.parentType === 'database_id' && row.parentId !== null
+        ? ((await db.notionDatabase.findFirst({
+            where: { workspaceId, id: row.parentId },
+          })) as DatabaseRow | null)
+        : null
+    const schema = schemaOf(owner)
+    const schemaBefore = JSON.stringify(schema)
+    const patch = normalizeProperties(asObject(body.properties), schema)
+    await persistSchema(db, workspaceId, owner, schema, schemaBefore)
     const merged = { ...(JSON.parse(row.propertiesJson) as Json), ...patch }
     data.propertiesJson = JSON.stringify(merged)
     data.titleText = titleOfProperties(merged)
@@ -1278,6 +1377,50 @@ async function createStore(label: string): Promise<{ db: PrismaClient; fx: Fixtu
   return { db, fx }
 }
 
+// The fake answers every request from one event loop, so two writes to the
+// same workspace interleave at any await: both read the schema (or a page's
+// properties, or the row count that becomes a position), both write it back,
+// and the later one silently drops the earlier one's change. A minted select
+// option lost that way is the worst of them, because the page that minted it
+// still stores the id the schema no longer has. Every mutating route is a
+// read-modify-write from end to end, so they queue per workspace at the door
+// rather than step by step: one rule, and the only place that cannot fall out
+// of step when a route is added. Reads over GET stay concurrent, and a POST
+// query waiting behind a pending write is what makes its answer a consistent
+// one.
+const writeQueue = new Map<string, Promise<unknown>>()
+
+function serialize<T>(key: string, run: () => Promise<T>): Promise<T> {
+  const prior = writeQueue.get(key) ?? Promise.resolve()
+  const next = prior.then(run)
+  writeQueue.set(
+    key,
+    next.catch(() => null),
+  )
+  return next
+}
+
+// /reset carries no bearer, so its workspace comes from the body; every other
+// route is scoped by the token, which is the workspace id.
+function workspaceKey(req: IncomingMessage, url: URL, body: Json): string {
+  if (url.pathname === '/reset') {
+    return typeof body.workspace === 'string' ? body.workspace : DEFAULT_TOKEN
+  }
+  return bearer(req)
+}
+
+function dispatch(
+  db: PrismaClient,
+  fx: Fixture,
+  method: string,
+  req: IncomingMessage,
+  url: URL,
+  body: Json,
+): Promise<Reply> {
+  if (method === 'GET' || method === 'HEAD') return handle(db, fx, method, req, url, body)
+  return serialize(workspaceKey(req, url, body), () => handle(db, fx, method, req, url, body))
+}
+
 function serve(db: PrismaClient, fx: Fixture): Server {
   return createServer((req, res) => {
     const host = req.headers.host ?? '127.0.0.1'
@@ -1297,7 +1440,7 @@ function serve(db: PrismaClient, fx: Fixture): Server {
           return
         }
       }
-      void handle(db, fx, req.method ?? 'GET', req, url, body)
+      void dispatch(db, fx, req.method ?? 'GET', req, url, body)
         .then((reply) => {
           res.writeHead(reply.status, { 'Content-Type': 'application/json' })
           res.end(JSON.stringify(reply.json))
