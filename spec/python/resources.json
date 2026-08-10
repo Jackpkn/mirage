@@ -426,6 +426,7 @@
         "copy",
         "create",
         "dir_copy",
+        "du",
         "exists",
         "is_mounted",
         "mkdir",
@@ -534,6 +535,7 @@
       "slots": [
         "copy",
         "create",
+        "du",
         "exists",
         "is_mounted",
         "mkdir",
