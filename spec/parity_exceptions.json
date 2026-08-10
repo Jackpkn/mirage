@@ -1,10 +1,10 @@
 {
   "command_io": {
     "box": {
-      "slots": "typescript pushes du and find down to the Box API while python takes the capped readdir walk (core/box/du/ is written but unwired); python range-reads while typescript's core read has no window. Both halves of T1-I."
+      "slots": "python range-reads; the typescript core read has no window argument."
     },
     "dropbox": {
-      "slots": "same as box: du/find are pushed down in typescript only, and the range read is python only."
+      "slots": "python range-reads; the typescript core read has no window argument."
     },
     "gdrive": {
       "slots": "python range-reads; the typescript core read has no window argument."
