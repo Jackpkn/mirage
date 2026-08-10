@@ -997,6 +997,7 @@
       "max_du_entries": 10000,
       "max_glob_matches": 5000,
       "slots": [
+        "append",
         "copy",
         "create",
         "du",
