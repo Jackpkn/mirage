@@ -10,6 +10,17 @@ def _spec(path: str) -> PathSpec:
     return PathSpec.from_str_path(path)
 
 
+class _SdkError(Exception):
+    """What a remote backend actually raises on a failed write.
+
+    ``core/s3/write.py`` forwards botocore's ``ClientError`` and
+    ``core/gridfs/write.py`` pymongo's ``PyMongoError`` straight out of
+    ``put_object`` / ``upload_from_stream``; neither is an ``OSError``.
+    The TypeScript sink rejects with a plain ``Error`` for the same
+    reason, so both suites drive the loop with a non-filesystem failure.
+    """
+
+
 def test_parse_flags_append_short_and_long():
     assert parse_flags({"append": True}) == TeeFlags(append=True)
 
@@ -70,6 +81,31 @@ async def test_write_error_passes_stdout_and_exits_one():
 
 
 @pytest.mark.asyncio
+async def test_an_sdk_write_failure_is_diagnosed_not_raised():
+    # Narrowing the catch to OSError let one unreachable operand abort the
+    # whole command on every remote backend, because none of their SDK
+    # error classes is an OSError.
+
+    async def _write(_p, _d):
+        raise _SdkError("An error occurred (AccessDenied)")
+
+    async def _read(_p):
+        if False:
+            yield b""
+
+    source, io = await tee([_spec("/a.txt"), _spec("/b.txt")], (),
+                           read_stream=_read,
+                           write_bytes=_write,
+                           stdin=b"hello",
+                           flags={})
+    assert await materialize(source) == b"hello"
+    assert io.exit_code == 1
+    assert await materialize(
+        io.stderr) == (b"tee: /a.txt: An error occurred (AccessDenied)\n"
+                       b"tee: /b.txt: An error occurred (AccessDenied)\n")
+
+
+@pytest.mark.asyncio
 async def test_unusable_destination_reports_the_gnu_strerror():
     # A recognized filesystem refusal carries only the path as its message,
     # so the strerror has to come from the shared table (GNU:
@@ -122,7 +158,7 @@ def _sink(fail: frozenset[str] = frozenset()):
 
     async def _write(p, d):
         if p.mount_path in fail:
-            raise OSError("disk full")
+            raise _SdkError("disk full")
         written[p.mount_path] = d
 
     return written, _write

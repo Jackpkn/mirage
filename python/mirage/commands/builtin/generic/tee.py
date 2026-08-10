@@ -28,7 +28,7 @@ def parse_flags(flags: Mapping[str, FlagValue]) -> TeeFlags:
                     stop_on_error=mode in ("exit", "exit-nopipe"))
 
 
-def error_line(path: PathSpec, exc: OSError) -> bytes:
+def error_line(path: PathSpec, exc: Exception) -> bytes:
     """GNU's diagnostic for one unwritable operand.
 
     A recognized filesystem refusal reads like GNU (operand as typed,
@@ -37,7 +37,7 @@ def error_line(path: PathSpec, exc: OSError) -> bytes:
 
     Args:
         path (PathSpec): the operand that could not be written.
-        exc (OSError): the refusal.
+        exc (Exception): the refusal.
     """
     if fs_strerror(exc) is not None:
         return fs_error_line("tee", path, exc).encode()
@@ -103,6 +103,16 @@ async def write_output(
     only ``--output-error=exit`` stops at the first failure. stdin always
     reaches stdout either way.
 
+    "Cannot be written" is any exception the backend raises, not just
+    ``OSError``. Most remote writes forward their SDK's own error class —
+    ``core/s3/write.py`` hands back botocore's ``ClientError``,
+    ``core/gridfs/write.py`` pymongo's ``PyMongoError`` — and none of
+    those is an ``OSError``, so narrowing the catch would let one
+    unreachable operand abort the whole command. ``error_line`` already
+    tells the two apart, and this is not swallowing: every caught error is
+    named on stderr and the command exits 1. ``Exception`` rather than
+    ``BaseException`` keeps cancellation propagating.
+
     Deliberate divergence: GNU opens every operand up front, so under
     ``exit`` an *open* failure aborts before any data is written. A mount
     has no open/write split — ``write_bytes`` is one call — so the
@@ -125,7 +135,7 @@ async def write_output(
         try:
             data = await write_one(path, raw, parsed, read_stream, write_bytes,
                                    append_bytes)
-        except OSError as exc:
+        except Exception as exc:
             errors.append(error_line(path, exc))
             if parsed.stop_on_error:
                 break
