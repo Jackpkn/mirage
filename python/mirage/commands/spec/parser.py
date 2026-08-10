@@ -12,10 +12,13 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+from collections.abc import Mapping
+
 from mirage.commands.spec.compile import (CompiledSpec, compile_spec,
                                           expand_long)
-from mirage.commands.spec.constants import (FLOAT_VALUE, INT_VALUE,
-                                            NUMERIC_SHORT, flag_kwarg_name)
+from mirage.commands.spec.constants import (ARG_PLACEHOLDER, FLOAT_VALUE,
+                                            INT_VALUE, NUMERIC_SHORT,
+                                            flag_kwarg_name)
 from mirage.commands.spec.oldstyle import expand_old_style
 from mirage.commands.spec.types import (CommandSpec, ParsedArgs,
                                         ParsedFlagValue, ValueType)
@@ -149,6 +152,7 @@ def parse_command(
     spec: CommandSpec,
     argv: list[str],
     cwd: str,
+    env: Mapping[str, str] | None = None,
 ) -> ParsedArgs:
     cs = compile_spec(spec)
 
@@ -404,6 +408,31 @@ def parse_command(
         raw_bases.append(base)
         i += 1
 
+    # Snapshot before defaults land, because "typed" and "present" stop
+    # being the same set one line below. A dialect that echoes the
+    # options a line carried (clap's missing-argument usage) needs the
+    # former, and dict order is the order they were scanned in.
+    typed_dests = list(flags)
+
+    # An option's declared variable lands exactly where a default does,
+    # so it gets the same coercion, the same choices test, the same PATH
+    # resolution and the same required credit. Filling it after the
+    # parse instead would leave an int unchecked and a path a bare
+    # string. It goes in ahead of the defaults because it outranks one,
+    # it yields to anything the line typed, and it lands below the
+    # snapshot because clap's usage line distinguishes an option the
+    # line carried from one the environment supplied.
+    for dest_name, variable in cs.env_by_dest.items():
+        if dest_name in flags:
+            continue
+        supplied = env.get(variable) if env else None
+        if not supplied:
+            continue
+        if dest_name in cs.multiple_dests:
+            flags[dest_name] = [supplied]
+        else:
+            flags[dest_name] = supplied
+
     # Declared defaults land as if typed, before choices/required checks
     # and before PATH/TEXT flag-value collection, so a PATH default
     # resolves and routes and a default always satisfies required. A
@@ -452,6 +481,21 @@ def parse_command(
     positional: tuple[ValueType, ...] = tuple(
         op.type for op in spec.positional
         if not any(cs.dest_of(name) in flags for name in op.provided_by))
+
+    # A required slot the line left empty. Counted against the surviving
+    # slots rather than the declared ones, so a flag standing in for a
+    # slot (provided_by) satisfies it the same way a word would.
+    supplying = [
+        op for op in spec.positional
+        if not any(cs.dest_of(name) in flags for name in op.provided_by)
+    ]
+    missing_required_operands = [
+        op.name or ARG_PLACEHOLDER for index, op in enumerate(supplying)
+        if op.required and len(raw_args) <= index
+    ]
+    if (spec.rest is not None and spec.rest.required
+            and len(raw_args) <= len(supplying)):
+        missing_required_operands.append(spec.rest.name or ARG_PLACEHOLDER)
 
     # A flag can turn the rest slot textual for this line only (jq's
     # --args makes every later operand a positional string rather than an
@@ -547,6 +591,8 @@ def parse_command(
         invalid_int_options=invalid_int_options,
         invalid_float_options=invalid_float_options,
         missing_required_options=missing_required_options,
+        missing_required_operands=missing_required_operands,
+        typed_dests=typed_dests,
         old_option_needs_value=old.needs_value if old is not None else None,
     )
 

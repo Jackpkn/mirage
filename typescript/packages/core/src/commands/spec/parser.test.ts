@@ -951,6 +951,46 @@ describe("parseCommand — tar's old option style", () => {
   })
 })
 
+describe('required operands and typed dests', () => {
+  it('reports a missing required operand rather than throwing', () => {
+    // The parser classifies and reports; the dialect that words the refusal is
+    // the caller's choice, which is why this is a list of names.
+    const spec = new CommandSpec({
+      positional: [new Operand({ type: 'str', name: 'PAGE_ID', required: true })],
+    })
+    expect(parseCommand(spec, [], '/').missingRequiredOperands).toEqual(['PAGE_ID'])
+    expect(parseCommand(spec, ['abc'], '/').missingRequiredOperands).toEqual([])
+  })
+
+  it('lets a flag that supplies a slot satisfy required', () => {
+    // providedBy is the declarative form of grep's `if (!pattern_given)`: the
+    // slot is skipped, so it cannot also be missing.
+    const spec = new CommandSpec({
+      options: [new Option({ long: '--expr', short: '-e', type: 'str' })],
+      positional: [
+        new Operand({ type: 'str', name: 'PATTERN', required: true, providedBy: ['-e'] }),
+      ],
+    })
+    expect(parseCommand(spec, [], '/').missingRequiredOperands).toEqual(['PATTERN'])
+    expect(parseCommand(spec, ['-e', 'x'], '/').missingRequiredOperands).toEqual([])
+  })
+
+  it('excludes defaults from typed dests and keeps scan order', () => {
+    const spec = new CommandSpec({
+      options: [
+        new Option({ long: '--limit', type: 'int', default: '25' }),
+        new Option({ long: '--sort', type: 'str' }),
+        new Option({ long: '--json', type: 'bool' }),
+      ],
+    })
+    // --limit is present in flags (the default landed) but was never typed,
+    // which is the whole distinction a clap usage line needs.
+    const parsed = parseCommand(spec, ['--json', '--sort', 'x'], '/')
+    expect(parsed.flags['--limit']).toBe('25')
+    expect(parsed.typedDests).toEqual(['--json', '--sort'])
+  })
+})
+
 describe('operandBase (tar -C)', () => {
   it('re-bases the operands typed after it, leaving -f on the cwd', () => {
     // GNU tar's -C is a chdir for the operands that follow it, so the
@@ -1002,5 +1042,72 @@ describe('operandBase (tar -C)', () => {
   it('records no bases for a spec that declares none', () => {
     const parsed = parseCommand(specOf('cat'), ['a.txt'], '/work')
     expect(parsed.wordBases).toEqual([null])
+  })
+})
+
+describe('options an environment variable supplies', () => {
+  const versioned = new CommandSpec({
+    options: [new Option({ long: '--version', type: 'str', env: 'X_VERSION' })],
+  })
+
+  it('fills an option the line omitted', () => {
+    expect(parseCommand(versioned, [], '/', { X_VERSION: '9' }).flags['--version']).toBe('9')
+  })
+
+  it('yields to what the line typed', () => {
+    const parsed = parseCommand(versioned, ['--version', 'typed'], '/', { X_VERSION: '9' })
+    expect(parsed.flags['--version']).toBe('typed')
+  })
+
+  it('outranks a declared default', () => {
+    const spec = new CommandSpec({
+      options: [
+        new Option({ long: '--version', type: 'str', default: 'fallback', env: 'X_VERSION' }),
+      ],
+    })
+    expect(parseCommand(spec, [], '/', { X_VERSION: '9' }).flags['--version']).toBe('9')
+    expect(parseCommand(spec, [], '/', {}).flags['--version']).toBe('fallback')
+  })
+
+  it('satisfies a required option before it is refused', () => {
+    const spec = new CommandSpec({
+      options: [new Option({ long: '--version', type: 'str', env: 'X_VERSION', required: true })],
+    })
+    expect(parseCommand(spec, [], '/', { X_VERSION: '9' }).missingRequiredOptions).toEqual([])
+    expect(parseCommand(spec, [], '/', {}).missingRequiredOptions).toEqual(['--version'])
+  })
+
+  it('is coerced and choice-checked like a typed value', () => {
+    // Filling after the parse left these unchecked: an int stayed a string
+    // nobody validated and a choice was never tested.
+    const ints = new CommandSpec({
+      options: [new Option({ long: '--count', type: 'int', env: 'X_COUNT' })],
+    })
+    expect(parseCommand(ints, [], '/', { X_COUNT: 'nope' }).invalidIntOptions).toEqual([
+      ['--count', 'nope'],
+    ])
+    expect(parseCommand(ints, [], '/', { X_COUNT: '4' }).invalidIntOptions).toEqual([])
+    const picks = new CommandSpec({
+      options: [new Option({ long: '--mode', type: 'str', choices: ['a', 'b'], env: 'X_MODE' })],
+    })
+    expect(parseCommand(picks, [], '/', { X_MODE: 'zzz' }).invalidValueOptions.length).toBe(1)
+    expect(parseCommand(picks, [], '/', { X_MODE: 'a' }).invalidValueOptions).toEqual([])
+  })
+
+  it('resolves a path value against the cwd like a typed one', () => {
+    const spec = new CommandSpec({
+      options: [new Option({ long: '--conf', type: 'path', env: 'X_CONF' })],
+    })
+    expect(parseCommand(spec, [], '/work', { X_CONF: 'rel.json' }).flags['--conf']).toBe(
+      '/work/rel.json',
+    )
+  })
+
+  it('does not count as typed', () => {
+    // clap's usage line echoes what the line carried; an env-supplied option
+    // is supplied but not typed.
+    const parsed = parseCommand(versioned, [], '/', { X_VERSION: '9' })
+    expect(parsed.flags['--version']).toBe('9')
+    expect(parsed.typedDests).toEqual([])
   })
 })

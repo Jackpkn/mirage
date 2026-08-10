@@ -14,7 +14,13 @@
 
 import { resolvePath } from '../../utils/path.ts'
 import { type CompiledSpec, compileSpec, expandLong } from './compile.ts'
-import { FLOAT_VALUE, flagKwargName, INT_VALUE, NUMERIC_SHORT } from './constants.ts'
+import {
+  ARG_PLACEHOLDER,
+  FLOAT_VALUE,
+  flagKwargName,
+  INT_VALUE,
+  NUMERIC_SHORT,
+} from './constants.ts'
 import { expandOldStyle } from './oldstyle.ts'
 import { type CommandSpec, type ValueType, ParsedArgs, type FlagValue } from './types.ts'
 
@@ -109,7 +115,12 @@ function matchMixedCluster(tok: string, cs: CompiledSpec): MixedCluster | null {
   return null
 }
 
-export function parseCommand(spec: CommandSpec, argv: string[], cwd: string): ParsedArgs {
+export function parseCommand(
+  spec: CommandSpec,
+  argv: string[],
+  cwd: string,
+  env?: Readonly<Record<string, string>>,
+): ParsedArgs {
   const cs = compileSpec(spec)
 
   // tar's old option style is expanded before anything else reads the
@@ -392,6 +403,26 @@ export function parseCommand(spec: CommandSpec, argv: string[], cwd: string): Pa
     i += 1
   }
 
+  // Snapshot before defaults land, because "typed" and "present" stop being
+  // the same set one line below. A dialect that echoes the options a line
+  // carried (clap's missing-argument usage) needs the former, and key order is
+  // the order they were scanned in.
+  const typedDests = Object.keys(flags)
+
+  // An option's declared variable lands exactly where a default does, so it
+  // gets the same coercion, the same choices test, the same PATH resolution
+  // and the same required credit. Filling it after the parse instead would
+  // leave an int unchecked and a path a bare string. It goes in ahead of the
+  // defaults because it outranks one, it yields to anything the line typed,
+  // and it lands below the snapshot because clap's usage line distinguishes
+  // an option the line carried from one the environment supplied.
+  for (const [destName, variable] of cs.envByDest) {
+    if (destName in flags) continue
+    const supplied = env?.[variable]
+    if (supplied === undefined || supplied === '') continue
+    flags[destName] = cs.multipleDests.has(destName) ? [supplied] : supplied
+  }
+
   // Declared defaults land as if typed, before choices/required checks
   // and before PATH/TEXT flag-value collection, so a PATH default
   // resolves and routes and a default always satisfies required. A
@@ -434,9 +465,20 @@ export function parseCommand(spec: CommandSpec, argv: string[], cwd: string): Pa
 
   const missingRequiredOptions = cs.requiredDests.filter((destName) => !(destName in flags))
 
-  const positional: ValueType[] = spec.positional
-    .filter((op) => !op.providedBy.some((name) => cs.destOf(name) in flags))
-    .map((op) => op.type)
+  const supplying = spec.positional.filter(
+    (op) => !op.providedBy.some((name) => cs.destOf(name) in flags),
+  )
+  const positional: ValueType[] = supplying.map((op) => op.type)
+
+  // A required slot the line left empty. Counted against the surviving slots
+  // rather than the declared ones, so a flag standing in for a slot
+  // (providedBy) satisfies it the same way a word would.
+  const missingRequiredOperands = supplying
+    .filter((op, index) => op.required && rawArgs.length <= index)
+    .map((op) => (op.name === '' ? ARG_PLACEHOLDER : op.name))
+  if (spec.rest !== null && spec.rest.required && rawArgs.length <= supplying.length) {
+    missingRequiredOperands.push(spec.rest.name === '' ? ARG_PLACEHOLDER : spec.rest.name)
+  }
 
   // A flag can turn the rest slot textual for this line only (jq's
   // --args makes every later operand a positional string rather than an
@@ -529,6 +571,8 @@ export function parseCommand(spec: CommandSpec, argv: string[], cwd: string): Pa
     invalidIntOptions,
     invalidFloatOptions,
     missingRequiredOptions,
+    missingRequiredOperands,
+    typedDests,
     oldOptionNeedsValue: old !== null ? old.needsValue : null,
     wordKinds,
     wordBases,

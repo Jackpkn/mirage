@@ -57,6 +57,11 @@ export function parseFlags(
   spec: CommandSpec | null,
   cmdName: string,
   cwd: string,
+  // The session environment, so an option declaring one gets its value
+  // from there. Filled inside the parse rather than after it, or an
+  // env-supplied int would go unchecked and an env-supplied path would
+  // stay a bare string.
+  env?: Readonly<Record<string, string>>,
 ): [
   PathSpec[],
   string[],
@@ -71,6 +76,8 @@ export function parseFlags(
   [string, string][],
   string[],
   string | null,
+  string[],
+  string[],
 ] {
   const argv: string[] = parts.map((item) => (item instanceof PathSpec ? item.virtual : item))
   const scopeMap = new Map<string, PathSpec>()
@@ -83,7 +90,7 @@ export function parseFlags(
   }
 
   if (spec !== null) {
-    const parsed = parseCommand(spec, argv, cwd)
+    const parsed = parseCommand(spec, argv, cwd, env)
     const flagKwargs = parseToKwargs(parsed)
 
     for (const [key, value] of Object.entries(flagKwargs)) {
@@ -119,6 +126,8 @@ export function parseFlags(
       parsed.invalidFloatOptions,
       parsed.missingRequiredOptions,
       parsed.oldOptionNeedsValue,
+      parsed.missingRequiredOperands,
+      parsed.typedDests,
     ]
   }
 
@@ -128,7 +137,7 @@ export function parseFlags(
     if (item instanceof PathSpec) paths.push(item)
     else texts.push(item)
   }
-  return [paths, texts, {}, [], [], [], [], [], [], [], [], [], null]
+  return [paths, texts, {}, [], [], [], [], [], [], [], [], [], null, [], []]
 }
 
 // GNU-shaped refusal for option errors the parser reported. find is
