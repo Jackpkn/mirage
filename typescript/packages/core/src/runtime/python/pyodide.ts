@@ -26,6 +26,7 @@ import type {
 } from '../types.ts'
 import { createPyodideInterrupter, type PyodideInterrupter } from './interrupt.ts'
 import { loadPyodideRuntime, type PyodideInterface } from './loader.ts'
+import { PrefixResolver, type MountResolver } from '../resolver.ts'
 import type { BridgeDispatchFn } from '../types.ts'
 import { RuntimeVFS } from '../vfs.ts'
 import { applyMutation, createJournal, type MutationJournal } from './vfs/journal.ts'
@@ -265,7 +266,7 @@ export class PyodideRuntime extends PythonRuntime implements Evaluator {
   private readonly bootstrapCode: string | null
   private workspaceBridge: BridgeDispatchFn | null = null
   private readonly denyPackages: ReadonlySet<string>
-  private listMounts: () => string[] = () => []
+  private resolver: MountResolver = new PrefixResolver(() => [])
   private readonly home: string | null
   private readonly sysPath: readonly string[]
   private readonly packages: readonly string[]
@@ -311,10 +312,10 @@ export class PyodideRuntime extends PythonRuntime implements Evaluator {
     }
   }
 
-  override attach(dispatch: BridgeDispatchFn, listMounts: () => string[]): void {
+  override attach(dispatch: BridgeDispatchFn, resolver: MountResolver): void {
     if (this.workspaceBridge === null) {
       this.workspaceBridge = dispatch
-      this.listMounts = listMounts
+      this.resolver = resolver
     }
   }
 
@@ -474,7 +475,7 @@ export class PyodideRuntime extends PythonRuntime implements Evaluator {
 
   private wireBridgeIfNeeded(): void {
     if (this.workspaceBridge === null || this.vfs !== null) return
-    this.vfs = new RuntimeVFS(this.workspaceBridge, this.listMounts)
+    this.vfs = new RuntimeVFS(this.workspaceBridge, this.resolver)
   }
 
   /**
