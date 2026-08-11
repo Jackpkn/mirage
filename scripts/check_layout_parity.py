@@ -50,8 +50,12 @@ class Findings:
     renamed: dict[str, list[str]] = field(default_factory=dict)
 
     def total(self) -> int:
-        return (len(self.python_only_dirs) + len(self.typescript_only_dirs) +
-                sum(len(v) for v in self.python_only.values()) +
+        # Directories are presentational and deliberately excluded: a one-sided
+        # directory contributes its modules to `python_only`/`typescript_only`,
+        # so counting the directory too would double-count it. Counting
+        # directories *instead* of their modules is what made the ratchet blind
+        # to new modules added under a directory already in the baseline.
+        return (sum(len(v) for v in self.python_only.values()) +
                 sum(len(v) for v in self.typescript_only.values()) +
                 sum(len(v) for v in self.renamed.values()))
 
@@ -151,10 +155,15 @@ def collect(py: dict[str, dict[str, str]],
         Findings: every divergence, grouped by kind.
     """
     found = Findings()
+    # A one-sided directory records its modules as well as itself. Recording
+    # only the directory would let it absorb any number of new modules without
+    # moving the count, which is drift the ratchet is supposed to refuse.
     for rel in sorted(set(py) - set(ts)):
         found.python_only_dirs[rel] = None
+        found.python_only[rel] = sorted(py[rel].values())
     for rel in sorted(set(ts) - set(py)):
         found.typescript_only_dirs[rel] = None
+        found.typescript_only[rel] = sorted(ts[rel].values())
     for rel in sorted(set(py) & set(ts)):
         py_dir, ts_dir = py[rel], ts[rel]
         renamed = [
@@ -199,11 +208,16 @@ def excuse(found: Findings,
     assert isinstance(directories, dict) and isinstance(modules, dict)
     stale: list[str] = []
     remaining = Findings()
+    # An excused directory excuses everything inside it. That is what the
+    # excuse claims -- there is no counterpart subtree to mirror -- so a new
+    # module under `agents/agno` or `core/opfs` is expected growth, not drift.
+    excused_dirs: dict[str, set[str]] = {"renamed": set()}
 
     for key, bucket in (("python_only", found.python_only_dirs),
                         ("typescript_only", found.typescript_only_dirs)):
         allowed = directories.get(key, {})
         assert isinstance(allowed, dict)
+        excused_dirs[key] = set(allowed)
         target = (remaining.python_only_dirs
                   if key == "python_only" else remaining.typescript_only_dirs)
         for rel in bucket:
@@ -217,6 +231,8 @@ def excuse(found: Findings,
         actual: dict[str, list[str]] = getattr(found, key)
         target_map: dict[str, list[str]] = getattr(remaining, key)
         for rel, names in actual.items():
+            if rel in excused_dirs[key]:
+                continue
             allowed_dir = modules.get(rel, {})
             assert isinstance(allowed_dir, dict)
             allowed_names = allowed_dir.get(key, {})
@@ -237,18 +253,25 @@ def excuse(found: Findings,
 
 
 def report(remaining: Findings, stale: list[str], baseline: int) -> None:
+    # A one-sided directory is listed once, with the modules it counts for.
+    # The per-module loops below skip it so it is not reported twice.
     for rel in remaining.python_only_dirs:
-        print(f"  python-only directory: mirage/{rel}")
+        names = remaining.python_only.get(rel, [])
+        print(f"  python-only directory: mirage/{rel} ({len(names)} modules)")
     for rel in remaining.typescript_only_dirs:
-        print(f"  typescript-only directory: */src/{rel}")
+        names = remaining.typescript_only.get(rel, [])
+        print(f"  typescript-only directory: */src/{rel} "
+              f"({len(names)} modules)")
     for rel, names in sorted(remaining.renamed.items()):
         for pair in names:
             py_name, ts_name = pair.split(":", 1)
             print(f"  {rel}: {py_name}.py is spelled {ts_name}.ts")
     for rel, names in sorted(remaining.python_only.items()):
-        print(f"  {rel}: python-only {names}")
+        if rel not in remaining.python_only_dirs:
+            print(f"  {rel}: python-only {names}")
     for rel, names in sorted(remaining.typescript_only.items()):
-        print(f"  {rel}: typescript-only {names}")
+        if rel not in remaining.typescript_only_dirs:
+            print(f"  {rel}: typescript-only {names}")
     if stale:
         print()
         for entry in stale:
