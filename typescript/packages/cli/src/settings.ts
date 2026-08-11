@@ -14,6 +14,7 @@
 
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
+import { compareCodePoints } from '@struktoai/mirage-core'
 import {
   ALLOWED_KEYS,
   DaemonConfigError,
@@ -27,7 +28,6 @@ import {
 } from '@struktoai/mirage-server'
 
 import { ENV_DAEMON_URL, ENV_TOKEN } from './env.ts'
-import { compareCodePoints } from '@struktoai/mirage-core'
 
 export const DEFAULT_DAEMON_URL = 'http://127.0.0.1:8765'
 

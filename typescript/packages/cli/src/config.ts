@@ -12,11 +12,11 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import { compareCodePoints } from '@struktoai/mirage-core'
 import { ALLOWED_KEYS, DaemonConfigError } from '@struktoai/mirage-server'
 import type { Command } from 'commander'
 import { emit, fail } from './output.ts'
 import { getConfig, listConfig, resolvedConfig, setConfig, unsetConfig } from './settings.ts'
-import { compareCodePoints } from '@struktoai/mirage-core'
 
 function mask(key: string, value: string): string {
   if (key === 'auth_token' && value !== '') return '***'

@@ -388,6 +388,9 @@ importers:
       '@struktoai/mirage-agents':
         specifier: workspace:*
         version: link:../agents
+      '@struktoai/mirage-core':
+        specifier: workspace:*
+        version: link:../core
       '@struktoai/mirage-node':
         specifier: workspace:*
         version: link:../node
@@ -10201,7 +10204,7 @@ snapshots:
 
   axios@1.18.1:
     dependencies:
-      follow-redirects: 1.16.0
+      follow-redirects: 1.16.0(debug@4.4.3)
       form-data: 4.0.6
       https-proxy-agent: 5.0.1
       proxy-from-env: 2.1.0
@@ -11094,8 +11097,6 @@ snapshots:
   flatbuffers@25.9.23: {}
 
   flatted@3.4.2: {}
-
-  follow-redirects@1.16.0: {}
 
   follow-redirects@1.16.0(debug@4.4.3):
     optionalDependencies:
