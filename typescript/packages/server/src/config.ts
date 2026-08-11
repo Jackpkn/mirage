@@ -130,10 +130,13 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
 //
 // The spellings are Python's canonical snake_case ones on purpose: a
 // camelCase alias that TS would accept for free is a key Python rejects,
-// which is the same portability break pointing the other way. Blocks
-// that carry a backend's own credentials (`mounts.*.config`, an s3 store
-// group) are deliberately absent — those are validated by the backend's
-// config model, one layer down, exactly as in Python.
+// which is the same portability break pointing the other way.
+//
+// `mounts.*.config` is the one block with no table, because Python types
+// it as a bare dict and validates it in the resource's own model. Do not
+// generalize that to every credential-carrying block: an s3 store group
+// has a strict Python model (`S3StoreBlock`, extra="forbid"), so it is
+// tabled here like the rest.
 const TOP_LEVEL_KEYS = [
   'mounts',
   'clis',
@@ -167,24 +170,50 @@ const INDEX_KEYS: Record<string, readonly string[]> = {
 }
 const STORE_GROUPS = ['namespace', 'observer', 'workspace'] as const
 const STORE_KEYS = ['type', 'url', 'key_prefix', 'root', ...STORE_GROUPS] as const
+// An s3 group IS `S3Config` plus the discriminator, so its keys are that
+// model's, spelled Python's way. Python declares it as
+// `S3StoreBlock(S3Config)` with extra="forbid" — a strict model, unlike
+// the untyped `mounts.*.config` — so a typo is a load error there and
+// must be one here.
 const STORE_GROUP_KEYS: Record<string, readonly string[]> = {
   ram: ['type'],
   disk: ['type', 'root'],
   redis: ['type', 'url', 'key_prefix'],
+  s3: [
+    'type',
+    'bucket',
+    'region',
+    'endpoint_url',
+    'aws_access_key_id',
+    'aws_secret_access_key',
+    'aws_session_token',
+    'aws_profile',
+    'path_style',
+    'timeout',
+    'proxy',
+    'key_prefix',
+  ],
 }
+// The s3 store hosts only the sessions+meta plane, so it is valid as the
+// `workspace` override and nowhere else — as the top-level default it is
+// already refused above. Its store raises when asked to build another
+// plane; both languages now refuse the config instead of the plane.
+const S3_HOSTED_GROUP = 'workspace'
+const PLAIN_STORE_GROUP_KEYS: Record<string, readonly string[]> = Object.fromEntries(
+  Object.entries(STORE_GROUP_KEYS).filter(([type]) => type !== 's3'),
+)
 const CLI_KEYS: readonly string[] = ['cli', 'script', 'runtime', 'config']
 const GUARD_KEYS = ['reason', 'commands', 'paths'] as const
 
-// A store group whose `type` names a backend IS that backend's config
-// plus the discriminator: its keys belong to the backend's model and its
-// spellings to the backend's own translation, exactly like a mount's
-// `config:` block. So such a group is neither key-checked nor camelized
-// here — a future backend-backed group joins this set, and both sites
-// follow without being found again.
-const BACKEND_CONFIG_TYPES: ReadonlySet<string> = new Set(['s3'])
+// A store group whose `type` names a backend carries that backend's own
+// spellings: `aws_access_key_id` is `accessKeyId`, not `awsAccessKeyId`,
+// so camelizing here would hide the key from the translation that does
+// know it. Its *keys* are still checked — the backend's model declares
+// them (see STORE_GROUP_KEYS above) — only the renaming is skipped.
+const BACKEND_SPELLED_TYPES: ReadonlySet<string> = new Set(['s3'])
 
-function isBackendConfigBlock(block: Record<string, unknown>): boolean {
-  return typeof block.type === 'string' && BACKEND_CONFIG_TYPES.has(block.type)
+function keepsBackendSpellings(block: Record<string, unknown>): boolean {
+  return typeof block.type === 'string' && BACKEND_SPELLED_TYPES.has(block.type)
 }
 
 function rejectUnknownKeys(
@@ -246,8 +275,15 @@ function validateStoreBlock(value: unknown): void {
     const block = value[group]
     if (block === undefined || block === null) continue
     if (!isPlainObject(block)) throw new Error(`config \`store.${group}\` must be a mapping`)
-    if (isBackendConfigBlock(block)) continue
-    validateTypedBlock(block, STORE_GROUP_KEYS, `store.${group}`, 'ram')
+    if (block.type === 's3' && group !== S3_HOSTED_GROUP) {
+      throw new Error(
+        `config \`store.${group}\` cannot be s3: the s3 store hosts only the ` +
+          `sessions+meta group; keep the ${group} plane on ram or redis and pass ` +
+          `the s3 store as the '${S3_HOSTED_GROUP}' group override`,
+      )
+    }
+    const table = group === S3_HOSTED_GROUP ? STORE_GROUP_KEYS : PLAIN_STORE_GROUP_KEYS
+    validateTypedBlock(block, table, `store.${group}`, 'ram')
   }
 }
 
@@ -298,11 +334,7 @@ function normalizeConfigKeys(raw: Record<string, unknown>): Record<string, unkno
     for (const group of STORE_GROUPS) {
       const block = store[group]
       if (!isPlainObject(block)) continue
-      // A backend's own spellings do not camelize into its TS field
-      // names (`aws_access_key_id` is `accessKeyId`, not
-      // `awsAccessKeyId`), and camelizing first would hide the keys from
-      // the translation that does know them.
-      if (isBackendConfigBlock(block)) continue
+      if (keepsBackendSpellings(block)) continue
       store[group] = camelizeKeys(block)
     }
     out.store = store

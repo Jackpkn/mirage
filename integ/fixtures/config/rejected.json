@@ -77,6 +77,30 @@
         "mounts": { "/d": { "resource": "ram" } },
         "guards": [{ "reason": "no", "path": ["/x"] }]
       }
+    },
+    {
+      "name": "store s3 group: a typo in a backend key is still a load error",
+      "config": {
+        "mounts": { "/d": { "resource": "ram" } },
+        "store": {
+          "type": "ram",
+          "workspace": { "type": "s3", "bucket": "b", "endpoint_urll": "http://x" }
+        }
+      }
+    },
+    {
+      "name": "store s3 group: hosts only sessions+meta, not the namespace plane",
+      "config": {
+        "mounts": { "/d": { "resource": "ram" } },
+        "store": { "type": "ram", "namespace": { "type": "s3", "bucket": "b" } }
+      }
+    },
+    {
+      "name": "store s3 group: hosts only sessions+meta, not the observer plane",
+      "config": {
+        "mounts": { "/d": { "resource": "ram" } },
+        "store": { "type": "ram", "observer": { "type": "s3", "bucket": "b" } }
+      }
     }
   ]
 }

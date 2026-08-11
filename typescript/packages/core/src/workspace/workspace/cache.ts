@@ -50,6 +50,17 @@ export function buildFileCache(
   cache: CacheConfig | undefined,
   cacheLimit: string | number = '512MB',
 ): FileCacheStore {
+  // Every CacheConfig field is optional, so a built store is
+  // structurally assignable to it and would slip through to the RAM
+  // branch below — silently replaced by a cache that never sees a read.
+  // Structural typing cannot refuse this; say so instead.
+  if (cache !== undefined && typeof (cache as Partial<FileCache>).get === 'function') {
+    throw new Error(
+      'options.cache takes the config to build a cache from, not a built store; ' +
+        'register a factory for its type with registerFileCacheStore(type, ...) ' +
+        'and name that type here',
+    )
+  }
   const type = cache?.type ?? CacheType.RAM
   if (type !== CacheType.RAM) {
     const factory = FACTORIES[type]
