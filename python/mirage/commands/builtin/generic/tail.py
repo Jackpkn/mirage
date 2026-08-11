@@ -14,7 +14,25 @@ async def tail(
     n: int | None = None,
     c: int | None = None,
     from_line: int | None = None,
+    from_byte: int | None = None,
 ) -> AsyncIterator[bytes]:
+    if from_byte is not None:
+        # GNU counts `-c +N` from byte N, 1-indexed, so +0 and +1 both mean
+        # the whole file.
+        skip = max(0, from_byte - 1)
+        skipped = 0
+        async for chunk in ensure_stream(src):
+            if skipped >= skip:
+                yield chunk
+                continue
+            remaining = skip - skipped
+            if len(chunk) <= remaining:
+                skipped += len(chunk)
+                continue
+            yield chunk[remaining:]
+            skipped = skip
+        return
+
     if from_line is not None:
         start = max(1, from_line)
         skip = start - 1
@@ -80,6 +98,7 @@ def tail_multi(
     n: int | None = None,
     c: int | None = None,
     from_line: int | None = None,
+    from_byte: int | None = None,
     show_headers: bool = False,
 ) -> AsyncIterator[bytes]:
     """Run tail over multiple already-resolved paths.
@@ -104,6 +123,7 @@ def tail_multi(
                        n=n,
                        c=c,
                        from_line=from_line,
+                       from_byte=from_byte,
                        show_headers=show_headers)
 
 
@@ -114,6 +134,7 @@ async def _tail_multi(
     n: int | None = None,
     c: int | None = None,
     from_line: int | None = None,
+    from_byte: int | None = None,
     show_headers: bool = False,
 ) -> AsyncIterator[bytes]:
     for i, p in enumerate(paths):
@@ -125,5 +146,9 @@ async def _tail_multi(
         source = read(p)
         if inspect.isawaitable(source):
             source = await source
-        async for chunk in tail(source, n=n, c=c, from_line=from_line):
+        async for chunk in tail(source,
+                                n=n,
+                                c=c,
+                                from_line=from_line,
+                                from_byte=from_byte):
             yield chunk

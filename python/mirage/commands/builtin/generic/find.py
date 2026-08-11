@@ -1,6 +1,5 @@
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from datetime import datetime, timezone
 
 from mirage.cache.index import IndexCacheStore
 from mirage.commands.builtin.find_eval import (FindArgs, FindEntry, PredNode,
@@ -15,7 +14,7 @@ from mirage.commands.builtin.utils.output import format_records
 from mirage.io.types import ByteSource, IOResult
 from mirage.ops.types import LinkView, StatPath
 from mirage.types import FileStat, FileType, FindType, PathSpec
-from mirage.utils.dates import iso_timestamp
+from mirage.utils.dates import iso_timestamp, matches_mtime
 from mirage.utils.key_prefix import mount_key, mount_prefix_of
 from mirage.utils.path import respell_raw
 
@@ -93,15 +92,12 @@ async def apply_mtime_filter(
             s = await stat(spec)
         except (FileNotFoundError, ValueError):
             continue
-        if s.modified is None:
-            continue
-        mod_ts = datetime.fromisoformat(
-            s.modified).replace(tzinfo=timezone.utc).timestamp()
-        if mtime_min is not None and mod_ts < mtime_min:
-            continue
-        if mtime_max is not None and mod_ts > mtime_max:
-            continue
-        filtered.append(r)
+        # `matches_mtime` is the same helper the rest of this file already
+        # uses. Parsing inline instead stamped UTC over an offset the
+        # backend actually reported, moving the entry by that offset, and
+        # let a malformed timestamp raise out of the walk.
+        if matches_mtime(s.modified, mtime_min, mtime_max):
+            filtered.append(r)
     return filtered
 
 

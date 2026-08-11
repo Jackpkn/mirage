@@ -1,7 +1,9 @@
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from mirage.commands.builtin.sed_helper import (_execute_program,
+from mirage.commands.builtin.sed_helper import (SED_NO_INPUT_EXIT,
+                                                SED_NO_INPUT_FILES,
+                                                _execute_program,
                                                 _parse_one_command,
                                                 _parse_program)
 from mirage.commands.builtin.utils.stream import _read_stdin_async
@@ -125,7 +127,8 @@ async def sed(
 
     raw = await _read_stdin_async(stdin)
     if raw is None:
-        raise ValueError("sed: usage: sed EXPRESSION path")
+        return None, IOResult(exit_code=SED_NO_INPUT_EXIT,
+                              stderr=f"{SED_NO_INPUT_FILES}\n".encode())
     text = raw.decode(errors="replace")
     result = _execute_program(text,
                               commands,

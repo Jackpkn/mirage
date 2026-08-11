@@ -20,7 +20,7 @@ from mirage.commands.builtin.generic.tail import tail_multi
 from mirage.commands.builtin.generic_bind.adapter import (Builder, CommandIO,
                                                           bound_op)
 from mirage.commands.builtin.generic_bind.builders.common import split_readable
-from mirage.commands.builtin.tail_helper import _parse_n, number_flag_error
+from mirage.commands.builtin.tail_helper import number_flag_error, parse_counts
 from mirage.commands.builtin.utils.stream import _resolve_source
 from mirage.io.types import ByteSource, IOResult
 from mirage.types import PathSpec
@@ -42,15 +42,7 @@ async def tail(
     num_err = number_flag_error("tail", n, c)
     if num_err is not None:
         return None, IOResult(exit_code=1, stderr=num_err.encode())
-    n_int: int | None = None
-    from_line: int | None = None
-    if n is not None:
-        lines, plus_mode = _parse_n(n)
-        if plus_mode:
-            from_line = lines
-        else:
-            n_int = lines
-    c_int = int(c) if c is not None else None
+    counts = parse_counts(n, c)
     if paths and ops.is_mounted(accessor):
         paths = await ops.resolve_glob(accessor, paths, index)
         show_headers = (v or len(paths) > 1) and not q
@@ -60,13 +52,17 @@ async def tail(
             return None, io
         return tail_multi(paths,
                           read=bound_op(ops.read_stream, accessor, index),
-                          n=n_int,
-                          c=c_int,
-                          from_line=from_line,
+                          n=counts.lines,
+                          c=counts.byte_count,
+                          from_line=counts.from_line,
+                          from_byte=counts.from_byte,
                           show_headers=show_headers), io
     source = _resolve_source(stdin, "tail: missing operand")
-    return generic_tail(source, n=n_int, c=c_int,
-                        from_line=from_line), IOResult()
+    return generic_tail(source,
+                        n=counts.lines,
+                        c=counts.byte_count,
+                        from_line=counts.from_line,
+                        from_byte=counts.from_byte), IOResult()
 
 
 BUILDER = Builder('tail', tail, None, False, header_aggregate, read=True)

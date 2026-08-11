@@ -394,7 +394,14 @@ export {
   sortLines,
   splitSortLines,
 } from './commands/builtin/sort_helper.ts'
-export { countNewlines, parseN, tailBytes } from './commands/builtin/tail_helper.ts'
+export {
+  countNewlines,
+  normalizeCounts,
+  parseCounts,
+  parseN,
+  tailBytes,
+  type TailCounts,
+} from './commands/builtin/tail_helper.ts'
 export { AsyncLineIterator } from './io/async_line_iterator.ts'
 export { readStdinAsync, resolveSource, wrapBytes } from './commands/builtin/utils/stream.ts'
 export { formatLsLong, humanSize } from './commands/builtin/utils/formatting.ts'

@@ -21,6 +21,7 @@ from mirage.commands.builtin.generic.sed import sed as generic_sed
 from mirage.commands.builtin.generic_bind.adapter import (Builder, CommandIO,
                                                           bound_op)
 from mirage.commands.builtin.generic_bind.provision import make_sed_provision
+from mirage.commands.builtin.sed_helper import SED_MISSING_SCRIPT
 from mirage.commands.spec.types import FlagValue
 from mirage.io.types import ByteSource, IOResult
 from mirage.types import PathSpec
@@ -108,7 +109,8 @@ async def sed(
         script_parts.append(texts[0])
     script = "\n".join(script_parts) if script_parts else None
     if script is None:
-        raise ValueError("sed: usage: sed EXPRESSION [path]")
+        return None, IOResult(exit_code=1,
+                              stderr=f"{SED_MISSING_SCRIPT}\n".encode())
     # The default stream-to-stdout path is read-only and works on every
     # backend; only in-place editing needs a write op (#382).
     if i and ops.write is None:

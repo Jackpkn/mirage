@@ -201,7 +201,11 @@ export async function linkResults(
     if (minSize !== null && size < minSize) continue
     if (maxSize !== null && size > maxSize) continue
     if (mtimeMin !== null || mtimeMax !== null) {
-      const ts = st.modified !== null ? Date.parse(st.modified) / 1000 : null
+      // `modifiedTs` is the helper the rest of this file uses. A bare
+      // Date.parse gives NaN for a date-only or malformed stamp, which the
+      // `=== null` guard below does not catch, so every comparison came out
+      // false and the entry was kept -- where Python drops it.
+      const ts = modifiedTs(st.modified)
       if (ts === null) continue
       if (mtimeMin !== null && ts < mtimeMin) continue
       if (mtimeMax !== null && ts > mtimeMax) continue

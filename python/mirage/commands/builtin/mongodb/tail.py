@@ -18,7 +18,7 @@ from mirage.commands.builtin.generic.tail import tail as generic_tail
 from mirage.commands.builtin.generic.tail import tail_multi
 from mirage.commands.builtin.generic_bind.adapter import bound_op
 from mirage.commands.builtin.mongodb.io import resolve_glob
-from mirage.commands.builtin.tail_helper import _parse_n
+from mirage.commands.builtin.tail_helper import parse_counts
 from mirage.commands.builtin.utils.stream import _resolve_source
 from mirage.commands.registry import command
 from mirage.commands.spec import SPECS
@@ -45,15 +45,7 @@ async def tail(
     index: IndexCacheStore,
     **_extra: FlagValue,
 ) -> tuple[ByteSource | None, IOResult]:
-    n_int: int | None = None
-    from_line: int | None = None
-    if n is not None:
-        lines, plus_mode = _parse_n(n)
-        if plus_mode:
-            from_line = lines
-        else:
-            n_int = lines
-    c_int = int(c) if c is not None else None
+    counts = parse_counts(n, c)
     if paths:
         paths = await resolve_glob(accessor, paths, index=index)
         if (follow and len(paths) == 1
@@ -61,8 +53,9 @@ async def tail(
             return watch_stream(accessor, paths[0], index), IOResult()
         # Collections fetch only the last N documents server-side (sort by
         # primary key descending + limit) instead of reading everything.
-        n_eff = n_int if n_int is not None else 10
-        if (len(paths) == 1 and c_int is None and from_line is None
+        n_eff = counts.lines if counts.lines is not None else 10
+        if (len(paths) == 1 and counts.byte_count is None
+                and counts.from_byte is None and counts.from_line is None
                 and n_eff > 0
                 and detect_scope(paths[0]).level == ScopeLevel.DOCUMENTS):
             data = await read_tail(accessor, paths[0], n_eff, index)
@@ -71,10 +64,14 @@ async def tail(
         show_headers = (v or len(paths) > 1) and not q
         return tail_multi(paths,
                           read=bound_op(mongodb_read, accessor, index),
-                          n=n_int,
-                          c=c_int,
-                          from_line=from_line,
+                          n=counts.lines,
+                          c=counts.byte_count,
+                          from_line=counts.from_line,
+                          from_byte=counts.from_byte,
                           show_headers=show_headers), IOResult()
     source = _resolve_source(stdin, "tail: missing operand")
-    return generic_tail(source, n=n_int, c=c_int,
-                        from_line=from_line), IOResult()
+    return generic_tail(source,
+                        n=counts.lines,
+                        c=counts.byte_count,
+                        from_line=counts.from_line,
+                        from_byte=counts.from_byte), IOResult()

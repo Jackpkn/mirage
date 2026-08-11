@@ -527,7 +527,13 @@ async function mirrorDirs(
 ): Promise<boolean> {
   if (strategy.mkdir === undefined) return true
   const mounts = [srcBase, ...(await strategy.find(src, { type: 'd' }))]
-  const unique = [...new Set(mounts)].sort((a, b) => a.length - b.length)
+  // Shortest first so a parent is created before its children, then by name:
+  // sorting on length alone leaves equal-length siblings in whatever order
+  // the Set happened to hold, which is insertion order here and hash order in
+  // Python. Same key on both sides, same output.
+  const unique = [...new Set(mounts)].sort(
+    (a, b) => a.length - b.length || (a < b ? -1 : a > b ? 1 : 0),
+  )
   for (const entryMount of unique) {
     const entryDst = mountedPath(target, dstBase + entryMount.slice(srcBase.length))
     if (lines !== undefined) {

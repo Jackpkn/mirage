@@ -20,7 +20,7 @@ from mirage.commands.builtin.generic.tail import tail as generic_tail
 from mirage.commands.builtin.generic.tail import tail_multi
 from mirage.commands.builtin.generic_bind.adapter import bound_op
 from mirage.commands.builtin.postgres.io import resolve_glob
-from mirage.commands.builtin.tail_helper import _parse_n
+from mirage.commands.builtin.tail_helper import parse_counts
 from mirage.commands.builtin.utils.paths import has_unresolved_glob
 from mirage.commands.builtin.utils.stream import _resolve_source
 from mirage.commands.registry import command
@@ -46,21 +46,14 @@ async def tail(
     index: IndexCacheStore,
     **_extra: FlagValue,
 ) -> tuple[ByteSource | None, IOResult]:
-    n_int: int | None = None
-    from_line: int | None = None
-    if n is not None:
-        lines, plus_mode = _parse_n(n)
-        if plus_mode:
-            from_line = lines
-        else:
-            n_int = lines
-    c_int = int(c) if c is not None else None
+    counts = parse_counts(n, c)
     if paths:
         scope = detect_scope(paths[0])
         if (len(paths) == 1 and not has_unresolved_glob(paths)
                 and isinstance(scope, PostgresEntityRowsScope)
-                and c_int is None and n_int is not None):
-            limit = min(n_int, accessor.config.default_row_limit)
+                and counts.byte_count is None and counts.from_byte is None
+                and counts.lines is not None):
+            limit = min(counts.lines, accessor.config.default_row_limit)
             pool = await accessor.pool()
             async with pool.acquire() as conn:
                 total = await _client.count_rows(conn, scope.schema,
@@ -72,23 +65,31 @@ async def tail(
                                                 limit=limit,
                                                 offset=offset)
             if not rows:
-                return generic_tail(b"", n=n_int, c=c_int,
-                                    from_line=from_line), IOResult()
+                return generic_tail(b"",
+                                    n=counts.lines,
+                                    c=counts.byte_count,
+                                    from_line=counts.from_line,
+                                    from_byte=counts.from_byte), IOResult()
             jsonl = "\n".join(
                 orjson.dumps(r, default=str).decode() for r in rows) + "\n"
             return generic_tail(jsonl.encode(),
-                                n=n_int,
-                                c=c_int,
-                                from_line=from_line), IOResult()
+                                n=counts.lines,
+                                c=counts.byte_count,
+                                from_line=counts.from_line,
+                                from_byte=counts.from_byte), IOResult()
 
         paths = await resolve_glob(accessor, paths, index=index)
         show_headers = (v or len(paths) > 1) and not q
         return tail_multi(paths,
                           read=bound_op(postgres_read, accessor, index),
-                          n=n_int,
-                          c=c_int,
-                          from_line=from_line,
+                          n=counts.lines,
+                          c=counts.byte_count,
+                          from_line=counts.from_line,
+                          from_byte=counts.from_byte,
                           show_headers=show_headers), IOResult()
     source = _resolve_source(stdin, "tail: missing operand")
-    return generic_tail(source, n=n_int, c=c_int,
-                        from_line=from_line), IOResult()
+    return generic_tail(source,
+                        n=counts.lines,
+                        c=counts.byte_count,
+                        from_line=counts.from_line,
+                        from_byte=counts.from_byte), IOResult()

@@ -16,11 +16,6 @@ from functools import partial
 
 from mirage.accessor.base import Accessor
 from mirage.cache.index import NULL_INDEX, IndexCacheStore
-from mirage.commands.builtin.generic.split import (parse_bytes_value,
-                                                   parse_chunks_value,
-                                                   parse_lines_value,
-                                                   parse_suffix_length,
-                                                   parse_suffix_start)
 from mirage.commands.builtin.generic.split import split as generic_split
 from mirage.commands.builtin.generic_bind.adapter import (Builder, CommandIO,
                                                           Operation, bound_op)
@@ -30,6 +25,10 @@ from mirage.commands.spec import SPECS
 from mirage.commands.spec.types import FlagValue, FlagView
 from mirage.io.types import ByteSource, IOResult
 from mirage.types import PathSpec
+
+from mirage.commands.builtin.generic.split import (  # isort: skip
+    parse_bytes_value, parse_chunks_value, parse_lines_value, parse_separator,
+    parse_suffix_length, parse_suffix_start)
 
 
 async def split(
@@ -81,7 +80,7 @@ async def split(
         hex_suffix=hex_value is not None,
         suffix_start=suffix_start,
         additional_suffix=fl.as_str("additional_suffix") or "",
-        separator=(fl.as_str("separator") or "\n").encode())
+        separator=parse_separator(fl.as_str("separator")))
 
 
 BUILDER = Builder('split',
