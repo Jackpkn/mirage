@@ -19,21 +19,24 @@ from mirage.cache.file import io as cache_io
 from mirage.cache.manager import CacheManager
 from mirage.commands.builtin.utils.limit import apply_op_limit
 from mirage.context import mount_allowed
-from mirage.io import IOResult
+from mirage.io import IOResult, OpReport
 from mirage.observe.record import OpRecord
 from mirage.ops.config import NO_FOLLOW_OPS, STAMP_WRITE_OPS
 from mirage.ops.namespace_view import (merge_readdir, namespace_listing,
                                        namespace_stat)
 from mirage.policy import post_ops_gate, pre_ops_gate
-from mirage.types import ConsistencyPolicy, FileStat, PathSpec
+from mirage.types import ConsistencyPolicy, FileStat, PathSpec, ResourceName
 from mirage.utils.key_prefix import mount_key
+from mirage.utils.ranges import slice_window
 from mirage.workspace.mount import MountEntry
 from mirage.workspace.mount.namespace import Namespace
 from mirage.workspace.mount.namespace.overlay import merge_overlay_stat
 from mirage.workspace.reconcile import Reconciler
 from mirage.workspace.session import assert_mount_allowed
+from mirage.workspace.snapshot.drift import DriftQueue
 
 _DISPATCH_READ_OPS = frozenset({"read", "read_bytes"})
+
 _DISPATCH_WRITE_OPS = frozenset({
     "write", "write_bytes", "append", "unlink", "create", "truncate", "mkdir",
     "rmdir", "rename"
@@ -44,6 +47,39 @@ _DISPATCH_WRITE_OPS = frozenset({
 _POLICY_WRITE_OPS = _DISPATCH_WRITE_OPS | frozenset({"setattr"})
 
 
+def _memory_answered(report: OpReport | None,
+                     moved: int | None = None) -> None:
+    """Stamp the caller's report: memory answered, no backend ran.
+
+    Fires at the moment a warm file-cache hit or a synthetic namespace
+    answer is in hand, before the post gate and any output cap, so
+    whatever those raise cannot erase the fact. The value is
+    ``ResourceName.RAM``, which is how a record says "this never
+    crossed the network": ``OpRecord.is_cache`` is defined as that
+    string, and every network/cache total derives from it.
+
+    Args:
+        report (OpReport | None): the caller's report, None when the
+            caller does not observe ops.
+        moved (int | None): bytes memory served, None when the result
+            is the measure.
+    """
+    if report is not None:
+        report.served(ResourceName.RAM.value, moved)
+
+
+def _window(kwargs: dict[str, Any]) -> tuple[int, int | None]:
+    """The byte window a read asked for, whole file when it asked none.
+
+    Args:
+        kwargs (dict[str, Any]): the op's keyword arguments.
+    """
+    offset = kwargs.get("offset")
+    size = kwargs.get("size")
+    return (offset if isinstance(offset, int) else 0,
+            size if isinstance(size, int) else None)
+
+
 class Dispatcher:
     """Route a single VFS op to its mount and keep the file cache + index
     consistent.
@@ -52,16 +88,21 @@ class Dispatcher:
     lookups for read-caching backends, post-write file-cache eviction,
     and parent index invalidation. Constructed with the namespace (for
     addressing), cache store, and consistency policy; holds no other
-    workspace state. Drift checking stays on Workspace (it reads/writes
-    snapshot-owned state), which guards its own dispatch wrapper before
-    delegating here.
+    workspace state. The snapshot drift queue rides along because this
+    is the one door: a strict restore's pending fingerprint checks must
+    run before ANY op can touch a mount, and FUSE and the ops facade
+    reach here without passing Workspace.dispatch.
     """
 
-    def __init__(self, namespace: Namespace, cache,
-                 consistency: ConsistencyPolicy) -> None:
+    def __init__(self,
+                 namespace: Namespace,
+                 cache,
+                 consistency: ConsistencyPolicy,
+                 drift: DriftQueue | None = None) -> None:
         self._namespace = namespace
         self._cache = cache
         self._reconciler = Reconciler(cache, namespace, consistency)
+        self._drift = drift
 
     @property
     def reconciler(self) -> Reconciler:
@@ -88,7 +129,8 @@ class Dispatcher:
         return None
 
     async def _gated_namespace(self, op: str, path: PathSpec,
-                               fallback: "list[str] | FileStat") -> Any:
+                               fallback: "list[str] | FileStat",
+                               report: OpReport | None) -> Any:
         """Gate a namespace-served answer exactly like a backend one.
 
         The answer has no owning prefix (the gates see ""), but
@@ -99,17 +141,35 @@ class Dispatcher:
             op (str): the dispatched op name.
             path (PathSpec): the op's path scope.
             fallback (list[str] | FileStat): the namespace's answer.
+            report (OpReport | None): the caller's report, stamped when
+                the answer is in hand.
         """
         policies = self._namespace.registry.policies
         write = op in _POLICY_WRITE_OPS
+        # A pre gate refuses before the answer exists, so it is not a
+        # completed op and stays before the stamp.
         await pre_ops_gate(policies, op, path, write, "")
+        _memory_answered(report)
         bound = await post_ops_gate(policies, op, path, write, "", fallback)
         if bound is not None:
             return await apply_op_limit(fallback, bound)
         return fallback
 
-    async def dispatch(self, op: str, path: PathSpec,
+    async def dispatch(self,
+                       op: str,
+                       path: PathSpec,
+                       *,
+                       report: OpReport | None = None,
                        **kwargs: Any) -> tuple[Any, IOResult]:
+        await self._namespace.ensure_loaded()
+        # Pending fingerprint checks from a strict snapshot restore run
+        # before the op can touch a mount, whichever surface called:
+        # FUSE and the ops facade come straight here, so a drain that
+        # lived any higher would let a first write clobber drifted
+        # state. drain() clears pending before it stats, so its own
+        # probes cannot recurse into it.
+        if self._drift is not None and self._drift.pending:
+            await self._drift.drain(self._namespace.registry.mount_for)
         if op not in NO_FOLLOW_OPS:
             followed = self._namespace.follow(path.virtual)
             if followed != path.virtual:
@@ -124,7 +184,8 @@ class Dispatcher:
             fallback = self._namespace_result(op, path.virtual)
             if fallback is None:
                 raise
-            return await self._gated_namespace(op, path, fallback), IOResult()
+            return (await self._gated_namespace(op, path, fallback,
+                                                report), IOResult())
         if not mount_allowed(mount.prefix):
             # The mount is real but ungranted, and the namespace may
             # still owe the session a directory here: a granted mount
@@ -135,8 +196,8 @@ class Dispatcher:
             # the canonical denial below.
             fallback = self._namespace_result(op, path.virtual)
             if fallback is not None:
-                return await self._gated_namespace(op, path,
-                                                   fallback), IOResult()
+                return (await self._gated_namespace(op, path, fallback,
+                                                    report), IOResult())
         assert_mount_allowed(mount.prefix)
         # Admission policies fire at the door, before the warm-cache
         # early return below: a cached read must be refused exactly
@@ -145,16 +206,35 @@ class Dispatcher:
         write = op in _POLICY_WRITE_OPS
         await pre_ops_gate(policies, op, path, write, mount.prefix)
         caches_reads = mount.resource.caches_reads
+        # The file cache is keyed on the path alone, and what a command
+        # put there is the rendered read. A raw read asks for a
+        # different value under the same key, so it must not be served
+        # from that cache; nothing populates it from here, so skipping
+        # the probe is the whole fix.
+        raw = "filetype" in kwargs and kwargs["filetype"] is None
 
-        if caches_reads and op in _DISPATCH_READ_OPS:
+        if caches_reads and not raw and op in _DISPATCH_READ_OPS:
             cached = await self._cache.get(path.virtual)
             if cached is not None and await self._reconciler.may_serve_cached(
                     mount, path.virtual):
+                # The cache holds the whole object, so a ranged read is
+                # answered by slicing it, never by handing back the
+                # whole file: the window is what the caller asked for
+                # instead of the file, and git reads pack indexes this
+                # way. slice_window is the same helper the ranged read
+                # op falls back to, so warm and cold agree.
+                offset, size = _window(kwargs)
+                served = slice_window(cached, offset, size)
+                # Nothing crossed the network, and neither a gate nor a
+                # hard cap leaves the caller able to tell: without the
+                # stamp a refused warm read is recorded against the
+                # backend and counted as traffic that never happened.
+                _memory_answered(report, len(served))
                 bound = await post_ops_gate(policies, op, path, write,
-                                            mount.prefix, cached)
+                                            mount.prefix, served)
                 if bound is not None:
-                    cached = await apply_op_limit(cached, bound)
-                return cached, IOResult(reads={path.virtual: cached})
+                    served = await apply_op_limit(served, bound)
+                return served, IOResult(reads={path.virtual: served})
 
         if op == "rename" and isinstance(kwargs.get("dst"), PathSpec):
             # Ops.rename addresses both endpoints against the source's
@@ -173,6 +253,16 @@ class Dispatcher:
             if result is None:
                 await self._reconciler.on_op_missing(op, path.virtual)
                 raise
+            _memory_answered(report)
+        else:
+            # The op ran, whatever invalidation, the post gate, or an
+            # output cap do next: stamped here so a failure in any of
+            # them cannot erase a transfer the backend already made.
+            if report is not None:
+                report.served(
+                    None,
+                    len(result) if isinstance(result,
+                                              (bytes, bytearray)) else None)
         if op == "readdir":
             result = merge_readdir(
                 result, [m.prefix for m in self._namespace.registry.mounts()],
@@ -188,6 +278,9 @@ class Dispatcher:
         bound = await post_ops_gate(policies, op, path, write, mount.prefix,
                                     result)
         if bound is not None:
+            # The transfer already happened, so the limit changes what
+            # the caller receives, not what the backend moved; the
+            # report above already carries the moved count.
             result = await apply_op_limit(result, bound)
         return result, IOResult()
 
@@ -239,30 +332,6 @@ class Dispatcher:
             await self._cache.clear()
         for mount in self._namespace.registry.mounts():
             await mount.resource.index.clear()
-
-    async def invalidate_after_write_by_path(self,
-                                             path: str,
-                                             observed: float | None = None
-                                             ) -> None:
-        """Drop file-cache + stale parent index after a write to `path`.
-
-        Single source of truth for post-write invalidation. Called from
-        both `Workspace.dispatch()` and `Ops._call(write=True)` so a
-        write through any code path sees the same invalidation rules:
-        file cache is dropped only for read-caching mounts, and the
-        parent directory index is dirtied for any mount that maintains
-        an index. No-op for paths that resolve to no known mount.
-
-        Args:
-            path (str): absolute mount path that was written.
-        """
-        try:
-            mount = self._namespace.mount_for(path)
-        except ValueError:
-            return
-        spec = PathSpec.from_str_path(
-            path, mount_key(path, mount.prefix.rstrip("/")))
-        await self.invalidate_after_write(mount, spec, observed=observed)
 
     async def invalidate_after_write(self,
                                      mount: MountEntry,

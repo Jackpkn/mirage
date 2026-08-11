@@ -26,6 +26,41 @@ export async function materialize(source: ByteSource | null | undefined): Promis
   return concat(chunks)
 }
 
+/**
+ * The op door's account of what actually ran, filled in place.
+ *
+ * A caller that observes ops passes one per dispatch and reads it back
+ * whatever happens next: the door stamps it the moment an op
+ * completes, before invalidation, the post gate, or an output cap run,
+ * so a failure in any of those cannot erase the fact that the backend
+ * already did the work. Riding the result loses that fact on every
+ * error, and riding the exception only covers exceptions the door
+ * itself defines; a report object covers a foreign error (a
+ * cache-store outage, an invalid policy return) the same way.
+ *
+ * `completed` says the op ran against its answering store; false until
+ * the door says otherwise, so a refusal at a pre gate or a backend
+ * failure leaves nothing to record. `source` names who answered when
+ * that was not the owning mount ('ram' for a warm file-cache hit and
+ * for a synthetic namespace answer; null means the owning mount).
+ * `bytes` is what the answering store moved when the delivered result
+ * no longer measures it; null means "the result is the measure".
+ *
+ * Mirrors Python's mirage.io.types.OpReport.
+ */
+export class OpReport {
+  completed = false
+  source: string | null = null
+  bytes: number | null = null
+
+  /** Stamp the report at the moment an op completes. */
+  served(source: string | null = null, moved: number | null = null): void {
+    this.completed = true
+    this.source = source
+    this.bytes = moved
+  }
+}
+
 export interface IOResultInit {
   stdout?: ByteSource | null
   stderr?: ByteSource | null

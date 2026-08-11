@@ -13,16 +13,15 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { describe, expect, it } from 'vitest'
+import { runWithSession } from '../context/session_context.ts'
+import { LimitExceededError } from '../commands/builtin/utils/limit.ts'
 import { OpsRegistry } from '../ops/registry.ts'
 import type { Policy } from '../policy/base.ts'
-import { PolicyDenied } from '../policy/errors.ts'
-import { Policies } from '../policy/policies.ts'
+import { PolicyDenied, PolicyError } from '../policy/errors.ts'
 import type { Action, OpsContext, OpsResultContext } from '../policy/types.ts'
-import { MountNotAllowedError } from '../context/session_context.ts'
 import { RAMResource } from '../resource/ram/ram.ts'
-import { FileType, Limit, MountMode } from '../types.ts'
-import { enoent, enotdir } from '../utils/errors.ts'
-import { WorkspaceFS } from './fs.ts'
+import { FileType, Limit, MountMode, OnExceed } from '../types.ts'
+import { enotdir } from '../utils/errors.ts'
 import { Workspace } from './workspace.ts'
 
 const DEC = new TextDecoder()
@@ -229,101 +228,388 @@ describe('WorkspaceFS policy door', () => {
   })
 })
 
-// The resolver-miss structure fallback (a directory that exists only
-// because a mount sits below it) answers with no owning mount, so the
-// gates fire with prefix '' — skipping them would make "no mount here"
-// a policy bypass.
-describe('WorkspaceFS structure fallback still clears admission', () => {
-  class SealInner implements Policy {
+// The facade is not a second pipeline: it hands every op to the
+// dispatcher, so what the shell sees and what ws.fs sees cannot drift,
+// and each gate fires exactly once per op.
+describe('WorkspaceFS is one door with the dispatcher', () => {
+  class CountPre implements Policy {
+    readonly seen: string[] = []
     preOps(ctx: OpsContext): Action | null {
-      if (ctx.path.virtual === '/data/inner') return { kind: 'deny', message: 'sealed\n' }
+      this.seen.push(`${ctx.op}:${ctx.prefix}`)
       return null
     }
   }
 
-  function mkStructureFS(policies: Policies): WorkspaceFS {
-    return new WorkspaceFS(
-      () => Promise.reject(enoent('/data/inner')),
-      new OpsRegistry(),
-      null,
-      null,
-      null,
-      policies,
-      () => '',
-      () => ['/data/inner/deep/'],
+  it('fires each admission gate exactly once per op', async () => {
+    const counter = new CountPre()
+    const resource = new RAMResource()
+    const ops = new OpsRegistry()
+    for (const op of resource.ops()) ops.register(op)
+    const ws = new Workspace(
+      { '/data': resource },
+      { mode: MountMode.WRITE, ops, policies: [counter] },
     )
-  }
-
-  it('a policy deny covers the synthetic readdir and stat', async () => {
-    const policies = new Policies()
-    policies.add(new SealInner())
-    const fs = mkStructureFS(policies)
-    await expect(fs.readdir('/data/inner')).rejects.toThrow(PolicyDenied)
-    await expect(fs.stat('/data/inner')).rejects.toThrow(PolicyDenied)
+    await ws.fs.writeFile('/data/a.txt', 'hello')
+    await ws.fs.readFile('/data/a.txt')
+    expect(counter.seen).toEqual(['write:/data/', 'read:/data/'])
   })
 
-  it('the synthetic answer serves when no policy objects', async () => {
-    const fs = mkStructureFS(new Policies())
-    expect(await fs.readdir('/data/inner')).toEqual(['/data/inner/deep'])
+  class DenyInner implements Policy {
+    postOps(ctx: OpsResultContext): Action | null {
+      if (ctx.path.virtual === '/m/inner') return { kind: 'deny', message: 'no\n' }
+      return null
+    }
+  }
+
+  it('serves the namespace structure a nested mount implies', async () => {
+    // '/data/inner' is served by no backend: it exists only because a
+    // mount sits below it. The dispatcher answers it, so the facade
+    // does too.
+    const outer = new RAMResource()
+    const inner = new RAMResource()
+    const ops = new OpsRegistry()
+    ops.registerResource(outer)
+    ops.registerResource(inner)
+    const ws = new Workspace({}, { mode: MountMode.WRITE, ops })
+    ws.addMount('/data/inner/deep', inner, MountMode.WRITE)
+    ws.addMount('/other', outer, MountMode.WRITE)
+    expect(await ws.fs.readdir('/data/inner')).toEqual(['/data/inner/deep'])
+    expect((await ws.fs.stat('/data/inner')).type).toBe(FileType.DIRECTORY)
+  })
+
+  it('does not attribute a namespace answer to the lexical owner', async () => {
+    // '/m/inner' is served by no backend: the parent mount is
+    // ungranted for this session and the answer exists only because a
+    // granted mount sits below it. Attributing it to the lexical owner
+    // invents a network op against that backend for every such lookup.
+    // Mirrors Python's tests/ops/test_ops.py.
+    const outer = new RAMResource()
+    const inner = new RAMResource()
+    const ops = new OpsRegistry()
+    for (const op of outer.ops()) ops.register({ ...op, resource: 's3' })
+    ops.registerResource(inner)
+    Object.assign(outer, { kind: 's3' })
+    const ws = new Workspace({}, { mode: MountMode.WRITE, ops })
+    ws.addMount('/m', outer, MountMode.WRITE)
+    ws.addMount('/m/inner/deep', inner, MountMode.WRITE)
+    const session = ws.createSession('agent', { mounts: { '/m/inner/deep': MountMode.EXEC } })
+    await runWithSession(session, async () => {
+      ws.records.length = 0
+      expect(await ws.fs.readdir('/m/inner')).toEqual(['/m/inner/deep'])
+      expect(ws.records.map((r) => [r.source, r.isCache])).toEqual([['ram', true]])
+      expect(ws.networkRecords).toEqual([])
+    })
+  })
+
+  it('does not attribute a denied namespace answer to the lexical owner', async () => {
+    // Refusing the synthetic answer does not make the parent backend
+    // have served it: a deny suppresses a result nothing was contacted
+    // to produce. Mirrors Python's tests/ops/test_ops.py.
+    const outer = new RAMResource()
+    const inner = new RAMResource()
+    const ops = new OpsRegistry()
+    for (const op of outer.ops()) ops.register({ ...op, resource: 's3' })
+    ops.registerResource(inner)
+    Object.assign(outer, { kind: 's3' })
+    const ws = new Workspace({}, { mode: MountMode.WRITE, ops, policies: [new DenyInner()] })
+    ws.addMount('/m', outer, MountMode.WRITE)
+    ws.addMount('/m/inner/deep', inner, MountMode.WRITE)
+    const session = ws.createSession('agent', { mounts: { '/m/inner/deep': MountMode.EXEC } })
+    await runWithSession(session, async () => {
+      ws.records.length = 0
+      await expect(ws.fs.readdir('/m/inner')).rejects.toThrow(PolicyDenied)
+      expect(ws.records.map((r) => [r.source, r.isCache])).toEqual([['ram', true]])
+      expect(ws.networkRecords).toEqual([])
+    })
+  })
+
+  it('renders a registered filetype, and raw asks for the stored bytes', async () => {
+    // The door stamps the path's extension so a filetype-scoped op wins;
+    // `raw` passes an explicit null filetype to stop that, which is the
+    // read the FUSE read-modify-write path needs.
+    const resource = new RAMResource()
+    const ops = new OpsRegistry()
+    ops.registerResource(resource)
+    ops.register({
+      name: 'read',
+      resource: resource.kind,
+      filetype: '.gdoc.json',
+      write: false,
+      fn: () => Promise.resolve(new TextEncoder().encode('rendered')),
+    })
+    const ws = new Workspace({ '/m': resource }, { mode: MountMode.WRITE, ops })
+    await ws.fs.writeFile('/m/doc.gdoc.json', 'stored')
+    expect(await ws.fs.readFileText('/m/doc.gdoc.json')).toBe('rendered')
+    expect(DEC.decode(await ws.fs.readFile('/m/doc.gdoc.json', { raw: true }))).toBe('stored')
+  })
+
+  it('does not serve a raw read from the file cache', async () => {
+    // A rendering command's read lands in the file cache keyed on the
+    // path alone (that is what `applyIo` does with an IOResult), so the
+    // rendering sits under the very key a raw read asks for. Seeding
+    // the cache directly is the same state one command earlier reaches.
+    // Mirrors Python's tests/ops/test_raw_read.py.
+    const resource = new RAMResource()
+    Object.assign(resource, { cachesReads: true })
+    const ops = new OpsRegistry()
+    ops.registerResource(resource)
+    const ws = new Workspace({ '/m': resource }, { mode: MountMode.WRITE, ops })
+    await ws.fs.writeFile('/m/doc.gdoc.json', 'stored')
+    await ws.cache.set('/m/doc.gdoc.json', new TextEncoder().encode('rendered'))
+    expect(await ws.fs.readFileText('/m/doc.gdoc.json')).toBe('rendered')
+    expect(DEC.decode(await ws.fs.readFile('/m/doc.gdoc.json', { raw: true }))).toBe('stored')
+  })
+
+  it('refuses a write to a read-only mount at the door', async () => {
+    const resource = new RAMResource()
+    const ops = new OpsRegistry()
+    for (const op of resource.ops()) ops.register(op)
+    const ws = new Workspace({ '/ro': resource }, { mode: MountMode.READ, ops })
+    await expect(ws.fs.writeFile('/ro/a.txt', 'x')).rejects.toThrow('read-only')
   })
 })
 
-describe('WorkspaceFS structure below an ungranted mount', () => {
-  function mkUngrantedFS(prefixes: string[]): WorkspaceFS {
-    return new WorkspaceFS(
-      () => Promise.reject(new MountNotAllowedError('agent', '/data')),
-      new OpsRegistry(),
-      null,
-      null,
-      null,
-      new Policies(),
-      () => '',
-      () => prefixes,
-    )
+describe('WorkspaceFS accounting survives the delegation', () => {
+  class DenyBigReads implements Policy {
+    postOps(ctx: OpsResultContext): Action | null {
+      if (ctx.op === 'read') return { kind: 'deny', message: 'too big\n' }
+      return null
+    }
   }
 
-  it('serves the granted structure instead of the denial', async () => {
-    // The resolver rejects because the owning mount is ungranted, but a
-    // granted mount below the path already put its name in a listing,
-    // so walking down to the grant must answer.
-    const fs = mkUngrantedFS(['/data/inner/deep/'])
-    expect(await fs.readdir('/data/inner')).toEqual(['/data/inner/deep'])
-    const st = await fs.stat('/data/inner')
-    expect(st.type).toBe(FileType.DIRECTORY)
-  })
-
-  it('a path the structure does not owe keeps the canonical denial', async () => {
-    const fs = mkUngrantedFS([])
-    await expect(fs.readdir('/data/inner')).rejects.toThrow(MountNotAllowedError)
-    await expect(fs.stat('/data/inner')).rejects.toThrow(MountNotAllowedError)
-  })
-
-  it("gates the fallback with the synthetic '' prefix, not the ungranted mount's", async () => {
-    // prefixOf still resolves the real ungranted '/data/' here, but the
-    // namespace's own answer has no owning mount: the gates must see ''
-    // exactly as the dispatcher and both Python doors report it, or a
-    // mount-scoped policy diverges between ws.readdir and ws.dispatch.
-    const seen: string[] = []
-    class RecordPrefix implements Policy {
-      preOps(ctx: OpsContext): Action | null {
-        seen.push(ctx.prefix)
-        return null
-      }
+  class CapReadsTo3 implements Policy {
+    postOps(ctx: OpsResultContext): Action | null {
+      if (ctx.op === 'read') return new Limit({ maxBytes: 3 })
+      return null
     }
-    const policies = new Policies()
-    policies.add(new RecordPrefix())
-    const fs = new WorkspaceFS(
-      () => Promise.reject(new MountNotAllowedError('agent', '/data')),
-      new OpsRegistry(),
-      null,
-      null,
-      null,
-      policies,
-      () => '/data/',
-      () => ['/data/inner/deep/'],
+  }
+
+  class HardCapReadsTo3 implements Policy {
+    postOps(ctx: OpsResultContext): Action | null {
+      if (ctx.op === 'read') return new Limit({ maxBytes: 3, onExceed: OnExceed.ERROR })
+      return null
+    }
+  }
+
+  class SealReads implements Policy {
+    preOps(ctx: OpsContext): Action | null {
+      if (ctx.op === 'read') return { kind: 'deny', message: 'sealed\n' }
+      return null
+    }
+  }
+
+  class BrokenPostOps implements Policy {
+    postOps(ctx: OpsResultContext): Action | null {
+      if (ctx.write && ctx.path.virtual === '/m/a.txt') return 42 as unknown as Action
+      return null
+    }
+  }
+
+  function mkWs(policy: Policy): Workspace {
+    const resource = new RAMResource()
+    const ops = new OpsRegistry()
+    for (const op of resource.ops()) ops.register(op)
+    return new Workspace({ '/data': resource }, { mode: MountMode.WRITE, ops, policies: [policy] })
+  }
+
+  it('records a post-denied read: the backend already ran', async () => {
+    const ws = mkWs(new DenyBigReads())
+    await ws.fs.writeFile('/data/a.txt', 'hello')
+    await expect(ws.fs.readFile('/data/a.txt')).rejects.toThrow(PolicyDenied)
+    expect(ws.records.map((r) => r.op)).toEqual(['write', 'read'])
+  })
+
+  it('records a capped read against what the backend moved', async () => {
+    // A postOps Limit truncates what the caller receives; the transfer
+    // already happened, so recording the capped length would
+    // under-report networkBytes by whatever the cap removed.
+    const ws = mkWs(new CapReadsTo3())
+    await ws.fs.writeFile('/data/a.txt', '0123456789')
+    expect(DEC.decode(await ws.fs.readFile('/data/a.txt'))).toBe('012')
+    expect(ws.records.find((r) => r.op === 'read')?.bytes).toBe(10)
+  })
+
+  it('records a hard-capped read: the backend still moved the bytes', async () => {
+    // An ERROR-mode cap refuses the caller the bytes, but the backend
+    // already moved them; dropping the record loses the whole transfer
+    // rather than just truncating it. Mirrors Python's test_policies.py.
+    const resource = new RAMResource()
+    Object.assign(resource, { kind: 's3' })
+    const ops = new OpsRegistry()
+    for (const op of resource.ops()) ops.register({ ...op, resource: 's3' })
+    const ws = new Workspace(
+      { '/m': resource },
+      { mode: MountMode.WRITE, ops, policies: [new HardCapReadsTo3()] },
     )
-    expect(await fs.readdir('/data/inner')).toEqual(['/data/inner/deep'])
-    await fs.stat('/data/inner')
-    expect(seen).toEqual(['', ''])
+    await ws.fs.writeFile('/m/a.txt', '0123456789')
+    ws.records.length = 0
+    await expect(ws.fs.readFile('/m/a.txt')).rejects.toThrow(LimitExceededError)
+    const read = ws.records.find((r) => r.op === 'read')
+    expect([read?.source, read?.bytes]).toEqual(['s3', 10])
+    expect(ws.networkBytes).toBe(10)
+  })
+
+  it('records a committed write when bookkeeping after it fails', async () => {
+    // The backend applied the write, then a step after it (here an
+    // invalid postOps return, but any foreign bookkeeping error looks
+    // the same) blew up. The error must propagate AND the transfer
+    // must stay on the books: the door stamped the report at
+    // completion, so the record does not depend on what kind of
+    // exception followed. Mirrors Python's test_policies.py.
+    const resource = new RAMResource()
+    Object.assign(resource, { kind: 's3' })
+    const ops = new OpsRegistry()
+    for (const op of resource.ops()) ops.register({ ...op, resource: 's3' })
+    const ws = new Workspace(
+      { '/m': resource },
+      { mode: MountMode.WRITE, ops, policies: [new BrokenPostOps()] },
+    )
+    ws.records.length = 0
+    await expect(ws.fs.writeFile('/m/a.txt', '123456')).rejects.toThrow(PolicyError)
+    expect(DEC.decode(await ws.fs.readFile('/m/a.txt'))).toBe('123456')
+    const write = ws.records.find((r) => r.op === 'write')
+    expect([write?.source, write?.bytes]).toEqual(['s3', 6])
+    expect(ws.networkBytes).toBeGreaterThanOrEqual(6)
+  })
+
+  it('does not count a hard-capped warm read as network traffic', async () => {
+    // Same refusal, but the cache produced the bytes, so the transfer
+    // it stands for never happened.
+    const resource = new RAMResource()
+    Object.assign(resource, { cachesReads: true, kind: 's3' })
+    const ops = new OpsRegistry()
+    ops.registerResource(resource)
+    const ws = new Workspace(
+      { '/m': resource },
+      { mode: MountMode.WRITE, ops, policies: [new HardCapReadsTo3()] },
+    )
+    await ws.cache.set('/m/a.txt', new TextEncoder().encode('0123456789'))
+    ws.records.length = 0
+    await expect(ws.fs.readFile('/m/a.txt')).rejects.toThrow(LimitExceededError)
+    const read = ws.records.find((r) => r.op === 'read')
+    expect(read?.source).toBe('ram')
+    expect(read?.isCache).toBe(true)
+    expect(ws.networkBytes).toBe(0)
+  })
+
+  it('does not count a denied warm read as network traffic', async () => {
+    // The deny suppresses a result the cache produced, so nothing
+    // crossed the network; recording it against the backend would count
+    // traffic that never happened.
+    const resource = new RAMResource()
+    Object.assign(resource, { cachesReads: true, kind: 's3' })
+    const ops = new OpsRegistry()
+    ops.registerResource(resource)
+    const ws = new Workspace(
+      { '/m': resource },
+      { mode: MountMode.WRITE, ops, policies: [new DenyBigReads()] },
+    )
+    await ws.cache.set('/m/a.txt', new TextEncoder().encode('0123456789'))
+    ws.records.length = 0
+    await expect(ws.fs.readFile('/m/a.txt')).rejects.toThrow(PolicyDenied)
+    const read = ws.records.find((r) => r.op === 'read')
+    expect(read?.source).toBe('ram')
+    expect(read?.isCache).toBe(true)
+    expect(ws.networkBytes).toBe(0)
+  })
+
+  it('records the bytes a post-denied read moved', async () => {
+    // The suppressed result is the only place a read's byte count
+    // lived, so without carrying it on the exception the record says
+    // zero and networkBytes under-reports traffic that happened.
+    const ws = mkWs(new DenyBigReads())
+    await ws.fs.writeFile('/data/a.txt', 'hello')
+    await expect(ws.fs.readFile('/data/a.txt')).rejects.toThrow(PolicyDenied)
+    const read = ws.records.find((r) => r.op === 'read')
+    expect(read?.bytes).toBe(5)
+  })
+
+  it('records nothing for a pre-denied read: the backend never ran', async () => {
+    const ws = mkWs(new SealReads())
+    await ws.fs.writeFile('/data/a.txt', 'hello')
+    await expect(ws.fs.readFile('/data/a.txt')).rejects.toThrow(PolicyDenied)
+    expect(ws.records.map((r) => r.op)).toEqual(['write'])
+  })
+})
+
+describe('a warm cache still answers a ranged read with the window', () => {
+  // The cache holds the whole object; a ranged read asked for a window
+  // instead of the file, so serving the file back is wrong. git reads
+  // pack indexes this way (4 bytes at a known offset) and reaches the
+  // dispatcher directly, which is where the window has to be applied.
+  // Mirrors Python's tests/ops/test_raw_read.py.
+  function mkCaching(): Workspace {
+    const resource = new RAMResource()
+    Object.assign(resource, { cachesReads: true })
+    const ops = new OpsRegistry()
+    ops.registerResource(resource)
+    return new Workspace({ '/m': resource }, { mode: MountMode.WRITE, ops })
+  }
+
+  async function readAt(ws: Workspace, offset: number, size: number | null): Promise<string> {
+    const kwargs = size === null ? { offset } : { offset, size }
+    const body = await ws.dispatch('read', '/m/f.bin', [], kwargs)
+    return DEC.decode(body as Uint8Array)
+  }
+
+  it('slices the cached bytes instead of returning the whole file', async () => {
+    const ws = mkCaching()
+    await ws.fs.writeFile('/m/f.bin', '0123456789')
+    const cold = await readAt(ws, 2, 3)
+    await ws.cache.set('/m/f.bin', new TextEncoder().encode('0123456789'))
+    expect(await readAt(ws, 2, 3)).toBe(cold)
+    expect(await readAt(ws, 2, 3)).toBe('234')
+    expect(await readAt(ws, 7, null)).toBe('789')
+    expect(await readAt(ws, 2, 0)).toBe('')
+    expect(await readAt(ws, 99, 3)).toBe('')
+  })
+
+  it('still serves the whole file when no window was asked for', async () => {
+    const ws = mkCaching()
+    await ws.fs.writeFile('/m/f.bin', '0123456789')
+    await ws.cache.set('/m/f.bin', new TextEncoder().encode('CACHED-VAL'))
+    expect(await ws.fs.readFileText('/m/f.bin')).toBe('CACHED-VAL')
+  })
+})
+
+describe('WorkspaceFS rename is bounded by the mount', () => {
+  function mkTwoMounts(): Workspace {
+    const a = new RAMResource()
+    const b = new RAMResource()
+    const ops = new OpsRegistry()
+    ops.registerResource(a)
+    ops.registerResource(b)
+    const ws = new Workspace({}, { mode: MountMode.WRITE, ops })
+    ws.addMount('/a', a, MountMode.WRITE)
+    ws.addMount('/b', b, MountMode.WRITE)
+    return ws
+  }
+
+  it('renames within one mount', async () => {
+    const ws = mkTwoMounts()
+    await ws.fs.writeFile('/a/x.txt', 'bytes')
+    await ws.fs.rename('/a/x.txt', '/a/y.txt')
+    expect(await ws.fs.readFileText('/a/y.txt')).toBe('bytes')
+    expect(await ws.fs.exists('/a/x.txt')).toBe(false)
+  })
+
+  it('refuses a cross-mount rename with EXDEV, leaving the source intact', async () => {
+    // EXDEV is what tells a caller (the kernel behind a FUSE mount, and
+    // mv behind that) to fall back to copy+unlink instead of addressing
+    // the destination against the source's backend.
+    const ws = mkTwoMounts()
+    await ws.fs.writeFile('/a/x.txt', 'bytes')
+    await expect(ws.fs.rename('/a/x.txt', '/b/y.txt')).rejects.toMatchObject({ code: 'EXDEV' })
+    expect(await ws.fs.readFileText('/a/x.txt')).toBe('bytes')
+    expect(await ws.fs.exists('/b/y.txt')).toBe(false)
+  })
+
+  it('refuses a rename to a path no mount serves', async () => {
+    const ws = mkTwoMounts()
+    await ws.fs.writeFile('/a/x.txt', 'bytes')
+    await expect(ws.fs.rename('/a/x.txt', '/nowhere/y.txt')).rejects.toMatchObject({
+      code: 'EXDEV',
+    })
+    expect(await ws.fs.readFileText('/a/x.txt')).toBe('bytes')
   })
 })

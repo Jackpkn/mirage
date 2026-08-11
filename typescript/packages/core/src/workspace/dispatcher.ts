@@ -17,7 +17,7 @@ import { applyIo } from '../cache/file/io.ts'
 import type { FileCache } from '../cache/file/mixin.ts'
 import { applyOpLimit, runWithTimeout } from '../commands/builtin/utils/limit.ts'
 import { getExtension } from '../commands/resolve.ts'
-import { IOResult } from '../io/types.ts'
+import { IOResult, type OpReport } from '../io/types.ts'
 import { eaccesReadOnly } from '../utils/errors.ts'
 import { Policies, postOpsGate, preOpsGate } from '../policy/index.ts'
 import { mountKey } from '../utils/key_prefix.ts'
@@ -30,15 +30,25 @@ import { NO_FOLLOW_OPS, STAMP_WRITE_OPS } from '../ops/config.ts'
 import { mergeReaddir, namespaceListing, namespaceStat } from '../ops/namespace_view.ts'
 import { isMissingPath } from '../utils/errors.ts'
 import { cachesReads, type Resource } from '../resource/base.ts'
-import { ConsistencyPolicy, FileStat, MountMode, PathSpec } from '../types.ts'
+import { ConsistencyPolicy, FileStat, MountMode, PathSpec, ResourceName } from '../types.ts'
 import type { DispatchFn } from './executor/cross_mount.ts'
+import type { DriftQueue } from './snapshot/drift.ts'
 import type { Namespace } from './mount/namespace/namespace.ts'
 import { mergeOverlayStat } from './mount/namespace/overlay.ts'
 import { Reconciler } from './reconcile.ts'
+import { sliceWindow } from '../utils/ranges.ts'
 import { effectiveMountMode, MountNotAllowedError } from '../context/session_context.ts'
 
 const NOOP_ACCESSOR_INSTANCE = new NOOPAccessor()
 const DISPATCH_READ_OPS = new Set(['read', 'read_bytes'])
+
+/** The byte window a read asked for, whole file when it asked none. */
+function readWindow(kwargs: OpKwargs | undefined): [number, number | null] {
+  return [
+    typeof kwargs?.offset === 'number' ? kwargs.offset : 0,
+    typeof kwargs?.size === 'number' ? kwargs.size : null,
+  ]
+}
 const DISPATCH_WRITE_OPS = new Set([
   'write',
   'write_bytes',
@@ -57,11 +67,30 @@ const POLICY_WRITE_OPS = new Set([...DISPATCH_WRITE_OPS, 'setattr'])
 
 export type ResolveFn = (path: string) => Promise<[Resource, PathSpec, MountMode]>
 
+/**
+ * Stamp the caller's report: memory answered, no backend ran.
+ *
+ * Fires at the moment a warm file-cache hit or a synthetic namespace
+ * answer is in hand, before the post gate and any output cap, so
+ * whatever those throw cannot erase the fact. The value is
+ * `ResourceName.RAM`, which is how a record says "this never crossed
+ * the network": `OpRecord.isCache` is defined as that string, and
+ * every network/cache total derives from it.
+ */
+function memoryAnswered(report: OpReport | undefined, moved: number | null = null): void {
+  report?.served(ResourceName.RAM, moved)
+}
+
 export class Dispatcher {
   private readonly namespace: Namespace
   private readonly cache: FileCache & Resource
   private readonly opsRegistry: OpsRegistry
   private readonly policies: Policies
+  // The snapshot drift queue rides along because this is the one door:
+  // a strict restore's pending fingerprint checks must run before ANY
+  // op can touch a mount, and FUSE and the fs facade reach here
+  // without passing Workspace.dispatch.
+  private readonly drift: DriftQueue | null
   readonly reconciler: Reconciler
 
   constructor(
@@ -70,11 +99,13 @@ export class Dispatcher {
     opsRegistry: OpsRegistry,
     consistency: ConsistencyPolicy = ConsistencyPolicy.LAZY,
     policies?: Policies,
+    drift?: DriftQueue,
   ) {
     this.namespace = namespace
     this.cache = cache
     this.opsRegistry = opsRegistry
     this.policies = policies ?? new Policies()
+    this.drift = drift ?? null
     this.reconciler = new Reconciler(cache, namespace, opsRegistry, consistency)
   }
 
@@ -96,7 +127,20 @@ export class Dispatcher {
     return null
   }
 
-  dispatch: DispatchFn = async (opName, path, args, kwargs) => {
+  dispatch: DispatchFn = async (opName, path, args, kwargs, report) => {
+    await this.namespace.ensureLoaded()
+    // Pending fingerprint checks from a strict snapshot restore run
+    // before the op can touch a mount, whichever surface called: FUSE
+    // and the fs facade come straight here, so a drain that lived any
+    // higher would let a first write clobber drifted state. drain()
+    // clears pending before it stats, so its own probes cannot recurse
+    // into it.
+    if (this.drift?.pending === true) {
+      await this.drift.drain(this.namespace, async (p) => {
+        const [stat] = await this.dispatch('stat', PathSpec.fromStrPath(p))
+        return stat
+      })
+    }
     let p = path
     if (!NO_FOLLOW_OPS.has(opName)) {
       const followed = this.namespace.follow(path.virtual)
@@ -121,6 +165,12 @@ export class Dispatcher {
       if (fallback === null) throw err
       const fallbackWrite = POLICY_WRITE_OPS.has(opName)
       await preOpsGate(this.policies, opName, p, fallbackWrite, '')
+      // A synthetic namespace answer (a directory that exists only
+      // because a mount or a link sits below it) contacts nothing, so
+      // attributing it to the mount that lexically owns the path would
+      // invent a network op against that backend. Stamped before the
+      // gate and the cap, so whatever they throw cannot erase it.
+      memoryAnswered(report)
       const fallbackBound = await postOpsGate(this.policies, opName, p, fallbackWrite, '', fallback)
       const gated = fallbackBound !== null ? await applyOpLimit(fallback, fallbackBound) : fallback
       return [gated, new IOResult()]
@@ -131,17 +181,37 @@ export class Dispatcher {
     // Admission policies fire at the door, before the warm-cache early
     // return below: a cached read must be refused exactly like a cold
     // one, or the cache becomes a policy bypass. This dispatcher is the
-    // one door in TypeScript: shell internals, programmatic access, and
-    // FUSE all route through Workspace.dispatch.
+    // one door in TypeScript: shell internals, programmatic access, the
+    // fs facade, and FUSE all end up here.
     const opWrite = POLICY_WRITE_OPS.has(opName)
     await preOpsGate(this.policies, opName, p, opWrite, mountPrefix)
     const caches = cachesReads(resource)
-    if (caches && mount !== null && DISPATCH_READ_OPS.has(opName)) {
+    // The file cache is keyed on the path alone, and what a command put
+    // there is the rendered read. A raw read asks for a different value
+    // under the same key, so it must not be served from that cache;
+    // nothing populates it from here, so skipping the probe is the
+    // whole fix. Mirrors Python's Dispatcher.dispatch.
+    const raw = kwargs?.filetype === null
+    if (caches && !raw && mount !== null && DISPATCH_READ_OPS.has(opName)) {
       const cached = await this.cache.get(p.virtual)
       if (cached !== null && (await this.reconciler.mayServeCached(mount, p.virtual))) {
-        const warmBound = await postOpsGate(this.policies, opName, p, opWrite, mountPrefix, cached)
-        const served =
-          warmBound !== null ? ((await applyOpLimit(cached, warmBound)) as Uint8Array) : cached
+        // The cache holds the whole object, so a ranged read is answered
+        // by slicing it, never by handing back the whole file: the
+        // window is what the caller asked for instead of the file, and
+        // git reads pack indexes this way. sliceWindow is the same
+        // helper the ranged read op falls back to, so warm and cold
+        // agree. Mirrors Python's Dispatcher.dispatch.
+        const [offset, size] = readWindow(kwargs)
+        const window = sliceWindow(cached, offset, size)
+        // Nothing crossed the network, and neither a gate nor a hard
+        // cap leaves the caller able to tell: without the stamp a
+        // refused warm read is recorded against the backend and counted
+        // as traffic that never happened.
+        memoryAnswered(report, window.byteLength)
+        const warmBound = await postOpsGate(this.policies, opName, p, opWrite, mountPrefix, window)
+        const served = (
+          warmBound !== null ? await applyOpLimit(window, warmBound) : window
+        ) as Uint8Array
         return [served, new IOResult({ reads: { [p.virtual]: served } })]
       }
     }
@@ -217,6 +287,13 @@ export class Dispatcher {
         throw err
       }
       result = fallback
+      memoryAnswered(report)
+    }
+    // The op ran, whatever invalidation, the post gate, or an output
+    // cap do next: stamped here so a failure in any of them cannot
+    // erase a transfer the backend already made.
+    if (!report?.completed) {
+      report?.served(null, result instanceof Uint8Array ? result.byteLength : null)
     }
     if (opName === 'readdir' && Array.isArray(result)) {
       result = mergeReaddir(result, this.namespace.mountPrefixes(), this.namespace, p.virtual)
@@ -233,6 +310,9 @@ export class Dispatcher {
     }
     const bound = await postOpsGate(this.policies, opName, p, opWrite, mountPrefix, result)
     if (bound !== null) {
+      // The transfer already happened, so the limit changes what the
+      // caller receives, not what the backend moved; the report above
+      // already carries the moved count.
       result = await applyOpLimit(result, bound)
     }
     return [result, new IOResult()]
