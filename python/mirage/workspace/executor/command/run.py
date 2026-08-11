@@ -31,7 +31,8 @@ from mirage.runtime.types import DispatchFn
 from mirage.types import FileStat, PathSpec, ResourceName
 from mirage.utils.errors import format_fs_error
 from mirage.workspace.executor.builtins.links import (link_target_stat,
-                                                      path_exists, path_stat)
+                                                      path_exists,
+                                                      path_readdir, path_stat)
 from mirage.workspace.executor.find_action_dispatch import _apply_find_actions
 from mirage.workspace.mount import (MountCommandUnsupported, MountEntry,
                                     MountRegistry)
@@ -332,7 +333,7 @@ async def run_on_mount(
     if cmd_name == "find":
         flag_kwargs = scalar_find_flags(flag_kwargs)
 
-    # Three facts the backend cannot supply, offered to every command and
+    # The facts the backend cannot supply, offered to every command and
     # delivered only to the handlers that name them as a parameter.
     # ls/stat render stat rows from the backend's own stat, which never
     # sees namespace attr overlays (chmod/chown/touch on overlay backends)
@@ -348,6 +349,8 @@ async def run_on_mount(
     links = link_view(namespace, dispatch)
     stat_path = (functools.partial(path_stat, dispatch)
                  if dispatch is not None else None)
+    readdir_path = (functools.partial(path_readdir, dispatch)
+                    if dispatch is not None else None)
     child_mounts = functools.partial(registry_child_mounts, registry,
                                      namespace)
 
@@ -373,6 +376,7 @@ async def run_on_mount(
             stat_overlay=stat_overlay,
             links=links,
             stat_path=stat_path,
+            readdir_path=readdir_path,
             child_mounts=child_mounts,
             mounts=mount_view(registry),
         )

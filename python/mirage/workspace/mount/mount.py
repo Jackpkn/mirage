@@ -31,8 +31,8 @@ from mirage.observe.context import (push_mount_prefix, push_revisions,
                                     reset_revisions, with_mount_prefix,
                                     with_revisions)
 from mirage.ops.registry import RegisteredOp
-from mirage.ops.types import (ChildMounts, LinkView, MountView, StatOverlay,
-                              StatPath)
+from mirage.ops.types import (ChildMounts, LinkView, MountView, ReaddirPath,
+                              StatOverlay, StatPath)
 from mirage.policy import resolve_limit
 from mirage.resource.base import BaseResource
 from mirage.runtime.base import Runtime
@@ -447,6 +447,7 @@ class MountEntry:
         stat_overlay: StatOverlay | None = None,
         links: LinkView | None = None,
         stat_path: StatPath | None = None,
+        readdir_path: ReaddirPath | None = None,
         child_mounts: ChildMounts | None = None,
         mounts: MountView | None = None,
     ) -> tuple[ByteSource | None, IOResult]:
@@ -468,13 +469,16 @@ class MountEntry:
             links (LinkView | None): the namespace's symlink facts.
             stat_path (StatPath | None): dispatcher-backed stat of one
                 path, for a traversal command's start point.
+            readdir_path (ReaddirPath | None): dispatcher-backed readdir
+                of one path, for a walker that has to read past a mount
+                boundary (tree).
             child_mounts (ChildMounts | None): child names the
                 namespace owes a directory (mounts and links), for
                 listing commands.
             mounts (MountView | None): where the mount boundaries are,
                 for a walker whose output cannot be fanned out and
                 concatenated (tar, zip).
-                All five reach only the handlers that name them as a
+                All six reach only the handlers that name them as a
                 parameter, so no list of command names is kept here.
         """
         extension = get_extension(paths[0].virtual) if paths else None
@@ -542,6 +546,7 @@ class MountEntry:
             "stat_overlay": stat_overlay,
             "links": links,
             "stat_path": stat_path,
+            "readdir_path": readdir_path,
             "child_mounts": child_mounts,
             "mounts": mounts,
         }
