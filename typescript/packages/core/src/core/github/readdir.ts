@@ -21,6 +21,7 @@ import { fetchDirTree } from './_client.ts'
 import { IndexEntry } from '../../cache/index/config.ts'
 import { stripSlash } from '../../utils/slash.ts'
 import { enoent } from '../../utils/errors.ts'
+import { compareCodePoints } from '../../utils/sort.ts'
 
 function stripPrefix(path: PathSpec): string {
   const prefix = mountPrefixOf(path.virtual, path.resourcePath)
@@ -90,7 +91,7 @@ async function fallbackReaddir(
       }),
     ])
   }
-  childKeys.sort()
+  childKeys.sort(compareCodePoints)
   await index.setDir(key, childEntries)
   return childKeys.map((k) => (prefix !== '' ? prefix + k : k))
 }

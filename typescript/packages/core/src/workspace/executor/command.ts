@@ -64,6 +64,7 @@ import {
 } from './command/routing.ts'
 import { runOnMount, type RunOnMountCtx } from './command/run.ts'
 import type { Result } from './command/types.ts'
+import { compareCodePoints } from '../../utils/sort.ts'
 
 export { ReturnSignal } from './control.ts'
 
@@ -320,7 +321,7 @@ export async function handleCommand(
       if (m !== null) mountPrefixes.add(m.prefix)
     }
     if (mountPrefixes.size > 1) {
-      const prefixesStr = [...mountPrefixes].sort().join(', ')
+      const prefixesStr = [...mountPrefixes].sort(compareCodePoints).join(', ')
       const err = new TextEncoder().encode(
         `${cmdName}: paths span multiple mounts (${prefixesStr}), cross-mount not supported\n`,
       )

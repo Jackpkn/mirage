@@ -14,6 +14,7 @@
 
 import { ARG_PLACEHOLDER } from './constants.ts'
 import { type CommandSpec, type Operand, type Option, UsageStyle } from './types.ts'
+import { compareCodePoints } from '../../utils/sort.ts'
 
 /**
  * The bare name of an option's value, declared or derived.
@@ -118,7 +119,9 @@ export function renderHelp(
     // clap prints subcommands in the order the program declares them, which is
     // a deliberate ordering by an author rather than an alphabet, so re-sorting
     // would lose information.
-    const subRows = clap ? subcommands : [...subcommands].sort((a, b) => (a[0] < b[0] ? -1 : 1))
+    const subRows = clap
+      ? subcommands
+      : [...subcommands].sort((a, b) => compareCodePoints(a[0], b[0]))
     for (const [sub, desc] of subRows) {
       const first = desc.split('\n')[0] ?? ''
       lines.push(first === '' ? `  ${sub}` : `  ${sub.padEnd(width, ' ')}  ${first}`)

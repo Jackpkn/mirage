@@ -16,6 +16,7 @@ import { ALLOWED_KEYS, DaemonConfigError } from '@struktoai/mirage-server'
 import type { Command } from 'commander'
 import { emit, fail } from './output.ts'
 import { getConfig, listConfig, resolvedConfig, setConfig, unsetConfig } from './settings.ts'
+import { compareCodePoints } from '@struktoai/mirage-core'
 
 function mask(key: string, value: string): string {
   if (key === 'auth_token' && value !== '') return '***'
@@ -65,7 +66,7 @@ function listFile(): void {
   }
   const unknown = Object.keys(table)
     .filter((k) => !ALLOWED_KEYS.has(k))
-    .sort()
+    .sort(compareCodePoints)
   if (unknown.length > 0) {
     process.stderr.write(
       'warning: unknown [daemon] keys (daemon will refuse to ' + `start): ${unknown.join(', ')}\n`,

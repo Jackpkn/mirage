@@ -26,6 +26,7 @@ import { type Limit, ConsistencyPolicy, MountMode, PathSpec } from '../../types.
 import { CLIRegistry } from '../cli/registry.ts'
 import { MountEntry } from './mount.ts'
 import { ownerPrefix, rstripSlash, stripSlash } from '../../utils/slash.ts'
+import { compareCodePoints } from '../../utils/sort.ts'
 
 // The one thing the registry needs from a reconciler. Depending on this local
 // interface (not the concrete Reconciler) keeps the dependency pointing down:
@@ -254,7 +255,7 @@ export class MountRegistry {
       if (!m.prefix.startsWith(norm)) continue
       out.push(m)
     }
-    return out.sort((a, b) => (a.prefix < b.prefix ? -1 : a.prefix > b.prefix ? 1 : 0))
+    return out.sort((a, b) => compareCodePoints(a.prefix, b.prefix))
   }
 
   mountPrefixes(): string[] {

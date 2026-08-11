@@ -22,6 +22,7 @@ import {
   rstripSlash,
   type Session,
   type Workspace,
+  compareCodePoints,
 } from '@struktoai/mirage-core'
 import { errnoError } from './errors.ts'
 import { isMacosMetadata } from './platform/macos.ts'
@@ -300,7 +301,7 @@ export class MountCore {
       const part = rstripSlash(e).split('/').pop() ?? ''
       if (part !== '' && !isMacosMetadata(part)) names.add(part)
     }
-    return ['.', '..', ...[...names].sort()]
+    return ['.', '..', ...[...names].sort(compareCodePoints)]
   }
 
   async read(path: string, fd: number, pos: number, len: number): Promise<Uint8Array> {

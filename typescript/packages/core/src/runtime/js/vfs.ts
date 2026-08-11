@@ -14,6 +14,7 @@
 
 import { NO_WRITE, type RuntimeVFS, type VFSStat } from '../vfs.ts'
 import type { QuickJSAsyncContext, QuickJSHandle } from 'quickjs-emscripten'
+import { compareCodePoints } from '../../utils/sort.ts'
 
 const ENC = new TextEncoder()
 const DEC = new TextDecoder('utf-8', { fatal: false })
@@ -218,7 +219,7 @@ export function installMirageFs(ctx: QuickJSAsyncContext, vfs: RuntimeVFS | null
           const rel = entry.path.replace(/\/$/, '').slice(prefix.length)
           if (rel.length > 0 && !rel.includes('/')) names.push(rel)
         }
-        names.sort()
+        names.sort(compareCodePoints)
       } catch (err) {
         errno = wasiErrno(err)
       }

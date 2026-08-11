@@ -16,6 +16,7 @@ import { mountAllowed } from '../context/session_context.ts'
 import { normDir, ownerPrefix, rstripSlash } from '../utils/slash.ts'
 import { FileStat, FileType } from '../types.ts'
 import type { NamespaceLinks } from './config.ts'
+import { compareCodePoints } from '../utils/sort.ts'
 
 /**
  * Immediate child segments of mounts strictly under `parent`.
@@ -36,7 +37,7 @@ function childMountNames(prefixes: readonly string[], parent: string): string[] 
     if (name === '' || !mountAllowed(p)) continue
     out.add(name)
   }
-  return [...out].sort()
+  return [...out].sort(compareCodePoints)
 }
 
 /**
@@ -78,7 +79,7 @@ function linkNames(
     const name = link.slice(norm.length).split('/', 1)[0] ?? ''
     if (name !== '' && linkAllowed(prefixes, link)) out.add(name)
   }
-  return [...out].sort()
+  return [...out].sort(compareCodePoints)
 }
 
 /**
@@ -96,7 +97,7 @@ export function namespaceNames(
 ): string[] {
   return [
     ...new Set([...childMountNames(prefixes, parent), ...linkNames(prefixes, links, parent)]),
-  ].sort()
+  ].sort(compareCodePoints)
 }
 
 /**

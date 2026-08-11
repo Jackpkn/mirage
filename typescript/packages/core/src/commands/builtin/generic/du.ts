@@ -24,6 +24,7 @@ import { lstripSlash, rstripSlash, stripSlash } from '../../../utils/slash.ts'
 import { formatRecords } from '../utils/output.ts'
 import { humanSize } from '../utils/formatting.ts'
 import type { LinkView, MountView } from '../../../ops/types.ts'
+import { compareCodePoints } from '../../../utils/sort.ts'
 
 export type DuEntries = [entries: [string, number][], total: number]
 export type ComputeSize = (p: PathSpec) => Promise<number>
@@ -299,7 +300,7 @@ export function rollup(
     if (group === undefined) kids.set(parent, [node])
     else group.push(node)
   }
-  for (const group of kids.values()) group.sort()
+  for (const group of kids.values()) group.sort(compareCodePoints)
 
   const order: [string, number][] = []
   const stack: [string, boolean][] = [[rootKey, false]]

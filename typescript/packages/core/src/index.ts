@@ -1291,6 +1291,7 @@ export {
   snakeToCamel,
   type ValueTransform,
 } from './utils/normalize.ts'
+export { compareCodePoints, sortedByCodePoints } from './utils/sort.ts'
 export type { PgDriver, PgQueryResult } from './core/postgres/_driver.ts'
 export { PostgresAccessor } from './accessor/postgres.ts'
 export {

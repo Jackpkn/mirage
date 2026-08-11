@@ -35,6 +35,7 @@ import {
   type PredNode,
 } from '../findEval.ts'
 import type { LinkView } from '../../../ops/types.ts'
+import { compareCodePoints } from '../../../utils/sort.ts'
 
 const ENC = new TextEncoder()
 
@@ -509,7 +510,7 @@ export async function findGeneric(
         fl.asBool('L'),
       ),
     )
-    withLinks.sort()
+    withLinks.sort(compareCodePoints)
     matches.push(...respellRaw(withLinks, root.virtual, root.rawPath))
   }
   // Start points print in operand order (GNU); each root's rows were
