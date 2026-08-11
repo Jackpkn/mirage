@@ -40,6 +40,7 @@ import {
   GDocsResource,
   GDriveResource,
   GmailResource,
+  GCalResource,
   GCSResource,
   GitHubResource,
   GitHubCIResource,
@@ -1111,6 +1112,41 @@ async function seedGwsApps(base: string, entries: GwsAppEntry[]): Promise<void> 
   }
 }
 
+interface CalendarEntry {
+  summary: string
+  // A timed event carries dateTime with a mandatory offset; an all-day one
+  // carries a floating date and no zone at all.
+  start: { date?: string; dateTime?: string }
+  end: { date?: string; dateTime?: string }
+}
+
+interface SeedCalendar {
+  id: string
+  summary: string
+  timeZone?: string
+  accessRole?: string
+  hidden?: boolean
+  events?: CalendarEntry[]
+}
+
+interface SeedForm {
+  title: string
+  documentTitle?: string
+  description?: string
+  items?: Record<string, unknown>[]
+  responses?: Record<string, unknown>[]
+}
+
+interface CalendarFixture {
+  events: CalendarEntry[]
+  calendars?: SeedCalendar[]
+}
+
+function gwsManifest<T>(name: string | undefined): T | undefined {
+  if (name === undefined) return undefined
+  return JSON.parse(readFileSync(join(integRoot(), 'fixtures', `${name}.json`), 'utf8')) as T
+}
+
 interface MailEntry {
   from: string
   to: string
@@ -1178,16 +1214,32 @@ async function seedGwsMail(base: string, entries: MailEntry[]): Promise<void> {
   }
 }
 
+// Events are API objects, so they seed through events.insert and take the
+// ids the server mints; the manifest pins the times, which is what the day
+// directories are derived from.
+async function seedGwsCalendar(base: string, entries: CalendarEntry[]): Promise<void> {
+  for (const entry of entries) {
+    await gwsJson(`${base}/calendar/v3/calendars/primary/events`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(entry),
+    })
+  }
+}
+
 function gwsNativeResource(
   resource: string,
   base: string,
-): GDocsResource | GSheetsResource | GSlidesResource | GmailResource {
+): GDocsResource | GSheetsResource | GSlidesResource | GmailResource | GCalResource {
   // apiBase points the backend at the fake server through the same
   // config field a real embedder uses; nothing is monkey-patched.
   const config = { clientId: 'integ', clientSecret: 'integ', refreshToken: 'integ', apiBase: base }
   if (resource === 'gdocs') return new GDocsResource(config)
   if (resource === 'gsheets') return new GSheetsResource(config)
   if (resource === 'gmail') return new GmailResource(config)
+  // today is pinned so the rolling window is the same on both hosts and
+  // lands on the seeded events.
+  if (resource === 'gcal') return new GCalResource({ ...config, today: '2026-02-11' })
   return new GSlidesResource(config)
 }
 
@@ -1196,11 +1248,20 @@ async function openGws(target: Target): Promise<Open> {
   while (base.endsWith('/')) base = base.slice(0, -1)
   if (base === '') throw new Error('gdrive target requires GWS_URL')
   // Native mounts (gdocs/gsheets/gslides) render the modified date into
-  // filenames, so those targets pin the server clock.
+  // filenames, so those targets pin the server clock. Secondary calendars
+  // and seeded form responses ride the same call rather than being
+  // inserted: a calendar's accessRole and a form response are both states
+  // no API call can produce.
+  const calendar = gwsManifest<CalendarFixture>(target.calendar)
+  const forms = gwsManifest<SeedForm[]>(target.forms)
+  const reset: Record<string, unknown> = {}
+  if (target.epoch !== undefined) reset.epoch = target.epoch
+  if (calendar?.calendars !== undefined) reset.calendars = calendar.calendars
+  if (forms !== undefined) reset.forms = forms
   await gwsJson(`${base}/reset`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(target.epoch !== undefined ? { epoch: target.epoch } : {}),
+    body: JSON.stringify(reset),
   })
   const mounts: Record<
     string,
@@ -1241,14 +1302,11 @@ async function openGws(target: Target): Promise<Open> {
     })
     folderIds[m.path] = parent
   }
-  if (target.apps !== undefined) {
-    const manifest = join(integRoot(), 'fixtures', `${target.apps}.json`)
-    await seedGwsApps(base, JSON.parse(readFileSync(manifest, 'utf8')) as GwsAppEntry[])
-  }
-  if (target.mail !== undefined) {
-    const manifest = join(integRoot(), 'fixtures', `${target.mail}.json`)
-    await seedGwsMail(base, JSON.parse(readFileSync(manifest, 'utf8')) as MailEntry[])
-  }
+  const apps = gwsManifest<GwsAppEntry[]>(target.apps)
+  if (apps !== undefined) await seedGwsApps(base, apps)
+  const mail = gwsManifest<MailEntry[]>(target.mail)
+  if (mail !== undefined) await seedGwsMail(base, mail)
+  if (calendar !== undefined) await seedGwsCalendar(base, calendar.events)
   const ws = new Workspace(mounts, { mode: MountMode.WRITE })
   if (target.clis?.includes('gws') === true) {
     // A target may scope the gws install to one mount's folder, the
@@ -1558,6 +1616,7 @@ export const ADAPTERS: Record<string, (target: Target) => Promise<Open>> = {
   nextcloud: openNextcloud,
   gridfs: openGridfs,
   ssh: openSsh,
+  gcal: openGws,
   gdrive: openGws,
   gdocs: openGws,
   gsheets: openGws,

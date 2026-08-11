@@ -60,6 +60,8 @@ export interface Target {
   epoch?: string
   apps?: string
   mail?: string
+  calendar?: string
+  forms?: string
   dataset?: string
   agentId?: string
   facet?: string
