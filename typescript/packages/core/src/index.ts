@@ -1292,6 +1292,8 @@ export {
   type ValueTransform,
 } from './utils/normalize.ts'
 export { compareCodePoints, sortedByCodePoints } from './utils/sort.ts'
+export { advanceColumn, charWidth, isSpace, TAB_WIDTH } from './utils/width.ts'
+export { WHITESPACE, WIDE, ZERO_WIDTH } from './utils/generated/width_data.ts'
 export type { PgDriver, PgQueryResult } from './core/postgres/_driver.ts'
 export { PostgresAccessor } from './accessor/postgres.ts'
 export {
