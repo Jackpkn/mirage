@@ -35,7 +35,7 @@ from mirage.workspace.expand.argv import Argv, expand_argv
 from mirage.workspace.expand.classify import classify_bare_path
 from mirage.workspace.route import (NO_FOLLOW_COMMANDS, UNSUPPORTED_BUILTINS,
                                     dereferences, reports_link)
-from mirage.workspace.session.shell_dirs import home_dir
+from mirage.workspace.session.shell_dirs import home_dir, logical_cwd
 from mirage.workspace.types import ExecutionNode
 
 from mirage.shell.helpers import (  # isort: skip
@@ -65,15 +65,20 @@ def _loop_levels(args: list[str]) -> int:
     return 1
 
 
-def _split_cd_options(args: _CdArgs) -> tuple[_CdArgs, str | None, bool]:
-    """Split leading ``cd`` option flags from the directory operand.
+def _split_mode_options(
+        args: _CdArgs,
+        letters: str = "LPe@") -> tuple[_CdArgs, str | None, bool]:
+    """Split leading ``-L``/``-P`` option flags from the operands.
 
-    Accepts the GNU ``cd`` options ``-L -P -e -@`` (and clusters such as
-    ``-LP``) plus a ``--`` end-of-options marker; a bare ``-`` is the
-    OLDPWD operand, not an option.
+    Shared by ``cd`` (which also takes ``-e -@``) and ``pwd``, so the
+    last-wins rule -- ``pwd -L -P`` is physical, ``pwd -P -L`` logical --
+    has one implementation. Accepts clusters such as ``-LP`` plus a
+    ``--`` end-of-options marker; a bare ``-`` is an operand (``cd``'s
+    OLDPWD shorthand), not an option.
 
     Args:
-        args: The classified arguments after the ``cd`` command name.
+        args: The classified arguments after the command name.
+        letters: The accepted option characters.
 
     Returns:
         ``(operands, bad, physical)`` where ``operands`` are the non-option
@@ -91,7 +96,7 @@ def _split_cd_options(args: _CdArgs) -> tuple[_CdArgs, str | None, bool]:
                 parsing = False
                 continue
             if s != "-" and len(s) >= 2 and s.startswith("-"):
-                bad = next((c for c in s[1:] if c not in "LPe@"), None)
+                bad = next((c for c in s[1:] if c not in letters), None)
                 if bad is None:
                     for c in s[1:]:
                         if c == "P":
@@ -312,11 +317,21 @@ async def _run_argv(
 
     # ── shell builtins ──────────────────────────
     if name == SB.PWD:
-        out = (session.cwd + "\n").encode()
+        _, bad_opt, physical = _split_mode_options(operands, "LP")
+        if bad_opt is not None:
+            err = (f"pwd: -{bad_opt}: invalid option\n"
+                   f"pwd: usage: pwd [-LP]\n").encode()
+            return None, IOResult(exit_code=2,
+                                  stderr=err), ExecutionNode(command="pwd",
+                                                             exit_code=2,
+                                                             stderr=err)
+        # GNU ignores operands entirely: `pwd extra` still prints the cwd.
+        cwd = session.cwd if physical else logical_cwd(session)
+        out = (cwd + "\n").encode()
         return out, IOResult(), ExecutionNode(command="pwd", exit_code=0)
 
     if name == SB.CD:
-        cd_operands, bad_opt, physical = _split_cd_options(operands)
+        cd_operands, bad_opt, physical = _split_mode_options(operands)
         if bad_opt is not None:
             err = (f"cd: -{bad_opt}: invalid option\n"
                    f"cd: usage: cd [-L|[-P [-e]] [-@]] [dir]\n").encode()

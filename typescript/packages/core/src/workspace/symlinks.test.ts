@@ -121,12 +121,85 @@ describe('symlinks (namespace-backed)', () => {
     await ws.close()
   })
 
-  it('cd follows a directory symlink', async () => {
+  // GNU bash 5.2: `cd /data/slink && pwd` prints the link, not the
+  // target. The logical name is what the shell reports and what the next
+  // `cd ..` acts on; `pwd -P` is how you ask for the target.
+  it('cd through a symlink keeps the name it was given', async () => {
     const ws = buildWorkspace()
     await ws.execute('mkdir -p /data/real')
     await ws.execute('ln -s /data/real /data/slink')
-    const r = await ws.execute('cd /data/slink && pwd')
-    expect(dec(r.stdout)).toBe('/data/real\n')
+    expect(dec((await ws.execute('cd /data/slink && pwd')).stdout)).toBe('/data/slink\n')
+    expect(dec((await ws.execute('cd /data/slink && pwd -P')).stdout)).toBe('/data/real\n')
+    await ws.close()
+  })
+
+  // Every row pinned in GNU bash 5.2 (debian:stable-slim) against the
+  // same fixture: /data/deep/real/sub, /data/lk -> /data/deep/real. The
+  // shell keeps two names for the cwd -- the logical one you typed and
+  // the physical one it resolves to -- and each row says which one a
+  // given surface reports. Mirrors LOGICAL_CWD_ROWS in the Python
+  // tests/workspace/test_symlinks.py.
+  const logicalCwdRows: [string, string][] = [
+    ['cd /data/lk && pwd', '/data/lk\n'],
+    ['cd /data/lk && pwd -L', '/data/lk\n'],
+    ['cd /data/lk && pwd -P', '/data/deep/real\n'],
+    ['cd /data/lk && echo "$PWD"', '/data/lk\n'],
+    // Last flag wins, exactly as `cd -L -P` does.
+    ['cd /data/lk && pwd -L -P', '/data/deep/real\n'],
+    ['cd /data/lk && pwd -P -L', '/data/lk\n'],
+    // A relative operand joins the logical name under -L, the physical
+    // one under -P. This is the row where the two disagree about which
+    // directory you end up in, not just how it is spelled.
+    ['cd /data/lk && cd .. && pwd', '/data\n'],
+    ['cd /data/lk && cd -P .. && pwd', '/data/deep\n'],
+    ['cd /data/lk && cd sub && pwd', '/data/lk/sub\n'],
+    ['cd /data/lk && cd -P sub && pwd', '/data/deep/real/sub\n'],
+    // -P collapses the pair, so it re-spells the cwd without moving.
+    ['cd /data/lk && cd -P . && pwd', '/data/deep/real\n'],
+    ['cd -P /data/lk && pwd', '/data/deep/real\n'],
+    // $OLDPWD stores the logical name, so `cd -` returns to that spelling.
+    ['cd /data/lk && cd /data && echo "$OLDPWD"', '/data/lk\n'],
+    ['cd /data/lk && cd /data && cd -', '/data/lk\n'],
+    // Everything that is not a shell builtin stays physical, the way a
+    // real child process does: bash's own `ls ..` lists /data/deep here.
+    ['cd /data/lk && ls ..', 'real\n'],
+  ]
+
+  it.each(logicalCwdRows)('logical vs physical cwd: %s', async (command, expected) => {
+    const ws = buildWorkspace()
+    await ws.execute('mkdir -p /data/deep/real/sub')
+    await ws.execute('ln -s /data/deep/real /data/lk')
+    const r = await ws.execute(command)
+    expect(dec(r.stderr)).toBe('')
+    expect(dec(r.stdout)).toBe(expected)
+    await ws.close()
+  })
+
+  it('pwd rejects an unknown option', async () => {
+    const ws = buildWorkspace()
+    const r = await ws.execute('pwd -x')
+    expect(r.exitCode).toBe(2)
+    expect(dec(r.stderr)).toBe('pwd: -x: invalid option\npwd: usage: pwd [-LP]\n')
+    await ws.close()
+  })
+
+  it('pwd ignores operands', async () => {
+    const ws = buildWorkspace()
+    const r = await ws.execute('cd /data && pwd extra')
+    expect(r.exitCode).toBe(0)
+    expect(dec(r.stdout)).toBe('/data\n')
+    await ws.close()
+  })
+
+  // bash never re-checks the logical name: removing the link it was
+  // spelled through leaves `pwd` printing it, and only `pwd -P` tells you
+  // where you actually are.
+  it('the logical cwd is not revalidated', async () => {
+    const ws = buildWorkspace()
+    await ws.execute('mkdir -p /data/deep/real')
+    await ws.execute('ln -s /data/deep/real /data/lk')
+    const r = await ws.execute('cd /data/lk && rm /data/lk && pwd && pwd -P')
+    expect(dec(r.stdout)).toBe('/data/lk\n/data/deep/real\n')
     await ws.close()
   })
 

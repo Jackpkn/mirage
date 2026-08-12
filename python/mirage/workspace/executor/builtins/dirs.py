@@ -23,7 +23,7 @@ from mirage.utils.path import (MAX_SYMLINK_HOPS, CycleError, resolve_path,
                                resolve_symlinks)
 from mirage.workspace.executor.builtins.scope import _scope_path, _to_scope
 from mirage.workspace.session import Session
-from mirage.workspace.session.shell_dirs import change_dir
+from mirage.workspace.session.shell_dirs import change_dir, logical_cwd
 from mirage.workspace.types import ExecutionNode
 
 
@@ -121,6 +121,7 @@ def _cd_candidates(
     raw: str,
     cdpath_target: str | None,
     session: Session,
+    cwd: str,
 ) -> list[tuple[str, bool]]:
     """Build the ordered list of directories ``cd`` should try.
 
@@ -128,13 +129,14 @@ def _cd_candidates(
         raw: The resolved operand path string.
         cdpath_target: The as-typed operand when a ``$CDPATH`` search
             applies, else ``None``.
-        session: The shell session (provides cwd and env).
+        session: The shell session (provides env).
+        cwd: The directory a relative operand joins to -- the logical cwd
+            under ``-L``, the physical one under ``-P``.
 
     Returns:
         ``(resolved_path, announce)`` pairs in trial order; ``announce``
         marks a non-empty ``$CDPATH`` hit whose absolute path GNU prints.
     """
-    cwd = session.cwd
     fallback = _join(raw, cwd)
     cdpath = session.env.get("CDPATH")
     if (not cdpath or not cdpath_target
@@ -160,9 +162,19 @@ async def handle_cd(
 ) -> tuple[ByteSource | None, IOResult, ExecutionNode]:
     raw = _scope_path(path)
     table = links or {}
-    candidates = _cd_candidates(_typed_path(path), cdpath_target, session)
+    # `-L` joins a relative operand to the name the shell is *spelling*,
+    # `-P` to the one it resolves to: from a logical /data/lk whose target
+    # is /data/deep/real, bash sends `cd -L ..` to /data and `cd -P ..` to
+    # /data/deep.
+    base = session.cwd if physical else logical_cwd(session)
+    candidates = _cd_candidates(_typed_path(path), cdpath_target, session,
+                                base)
     error: str | None = None
     for candidate, announce in candidates:
+        # The logical name is the candidate with `..` simplified textually
+        # and links left alone; the physical one follows them. `-P`
+        # collapses the pair, which is why `cd -P .` re-spells the cwd.
+        logical = _norm(candidate)
         if table:
             try:
                 resolved = _resolve_target(candidate, table, physical)
@@ -170,9 +182,12 @@ async def handle_cd(
                 error = f"cd: {raw}: Too many levels of symbolic links\n"
                 continue
         else:
-            resolved = _norm(candidate)
+            resolved = logical
+        if physical:
+            logical = resolved
         if resolved == "/":
-            return _cd_success(session, "/", raw, print_path or announce)
+            return _cd_success(session, "/", logical, raw, print_path
+                               or announce)
         scope = _to_scope(resolved)
         s = None
         not_found = False
@@ -185,14 +200,15 @@ async def handle_cd(
             continue
         if s is None or not_found:
             if is_mount_root(resolved):
-                return _cd_success(session, resolved, raw, print_path
+                return _cd_success(session, resolved, logical, raw, print_path
                                    or announce)
             error = f"cd: {raw}: No such file or directory\n"
             continue
         if s.type != FileType.DIRECTORY:
             error = f"cd: {raw}: Not a directory\n"
             continue
-        return _cd_success(session, resolved, raw, print_path or announce)
+        return _cd_success(session, resolved, logical, raw, print_path
+                           or announce)
     err = (error or f"cd: {raw}: No such file or directory\n").encode()
     return None, IOResult(exit_code=1,
                           stderr=err), ExecutionNode(command=f"cd {raw}",
@@ -203,9 +219,12 @@ async def handle_cd(
 def _cd_success(
     session: Session,
     resolved: str,
+    logical: str,
     raw: str,
     print_path: bool,
 ) -> tuple[ByteSource | None, IOResult, ExecutionNode]:
-    change_dir(session, resolved)
-    out = (resolved + "\n").encode() if print_path else None
+    change_dir(session, resolved, logical)
+    # A `$CDPATH` hit and `cd -` both announce the logical spelling: bash
+    # prints /opt/c/lnk, not the /opt/c/t it resolves to.
+    out = (logical + "\n").encode() if print_path else None
     return out, IOResult(), ExecutionNode(command=f"cd {raw}", exit_code=0)

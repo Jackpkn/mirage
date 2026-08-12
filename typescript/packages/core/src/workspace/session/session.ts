@@ -29,6 +29,7 @@ import type { MountMode } from '../../types.ts'
  */
 export interface ChildShellState {
   cwd: string
+  logicalCwd: string | undefined
   sourceDepth: number
   env: Record<string, string>
   functions: Record<string, unknown>
@@ -84,6 +85,7 @@ export function ownRecord<T>(record?: Record<string, T>): Record<string, T> {
 export interface SessionInit {
   sessionId: string
   cwd?: string
+  logicalCwd?: string | undefined
   env?: Record<string, string>
   createdAt?: number
   functions?: Record<string, unknown>
@@ -111,6 +113,12 @@ export interface SessionInit {
 export class Session {
   sessionId: string
   cwd: string
+  // The spelling `cd` arrived at: `..` simplified textually, symlinks
+  // left alone. bash reports it as $PWD and `pwd -L`, and applies the
+  // next `cd`'s `..` to it. Undefined whenever it would equal `cwd`,
+  // which is every session that has not walked through a symlink. `cwd`
+  // stays physical because it is what every operand resolves against.
+  logicalCwd: string | undefined
   env: Record<string, string>
   createdAt: number
   functions: Record<string, unknown>
@@ -166,6 +174,7 @@ export class Session {
     this.sessionId = init.sessionId
     this.errexitImmune = false
     this.cwd = init.cwd ?? '/'
+    this.logicalCwd = init.logicalCwd
     this.env = ownRecord(init.env)
     this.createdAt = init.createdAt ?? Date.now() / 1000
     this.functions = ownRecord(init.functions)
@@ -193,6 +202,7 @@ export class Session {
     const forked = new Session({
       sessionId: overrides.sessionId ?? this.sessionId,
       cwd: overrides.cwd ?? this.cwd,
+      logicalCwd: overrides.logicalCwd ?? this.logicalCwd,
       env: overrides.env ?? { ...this.env },
       createdAt: overrides.createdAt ?? this.createdAt,
       functions: overrides.functions ?? { ...this.functions },
@@ -237,6 +247,7 @@ export class Session {
     for (const [name, value] of Object.entries(this.arrays)) arrays[name] = [...value]
     return {
       cwd: this.cwd,
+      logicalCwd: this.logicalCwd,
       sourceDepth: this.sourceDepth,
       env: ownRecord(this.env),
       functions: ownRecord(this.functions),
@@ -254,6 +265,7 @@ export class Session {
   /** Put back a snapshot, ending a child shell. */
   restore(state: ChildShellState): void {
     this.cwd = state.cwd
+    this.logicalCwd = state.logicalCwd
     this.sourceDepth = state.sourceDepth
     this.env = state.env
     this.functions = state.functions

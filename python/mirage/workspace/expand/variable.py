@@ -29,7 +29,7 @@ from mirage.shell.types import NodeType as NT
 from mirage.utils.fnmatch import fnmatch
 from mirage.utils.glob_walk import escape_glob
 from mirage.workspace.session import Session
-from mirage.workspace.session.shell_dirs import home_dir
+from mirage.workspace.session.shell_dirs import home_dir, logical_cwd
 
 ExpandChild = Callable[[tree_sitter.Node], Awaitable[str]]
 
@@ -132,7 +132,7 @@ def _lookup_var(var: str,
     if arrays and var in arrays:
         return array_get(arrays[var], 0)
     if var == "PWD":
-        return session.cwd
+        return logical_cwd(session)
     if var == "HOME":
         return home_dir(session) or ""
     if var not in env:

@@ -26,7 +26,7 @@ import type { CallStack } from '../../shell/call_stack.ts'
 import { ArithError, ExitSignal } from '../../shell/errors.ts'
 import { NodeType as NT, type TSNodeLike } from '../../shell/types.ts'
 import type { Session } from '../session/session.ts'
-import { homeDir } from '../session/shell_dirs.ts'
+import { homeDir, logicalCwd } from '../session/shell_dirs.ts'
 import { decodeAnsiC } from '../../shell/escapes.ts'
 import { fnmatch } from '../../utils/fnmatch.ts'
 import { escapeGlob } from '../../utils/glob_walk.ts'
@@ -165,7 +165,7 @@ export function lookupVar(
   if (fromArray !== undefined) {
     return arrayGet(fromArray, 0)
   }
-  if (name === 'PWD') return session.cwd
+  if (name === 'PWD') return logicalCwd(session)
   if (name === 'HOME') return homeDir(session) ?? ''
   if (!(name in env)) {
     if (nounset) throw unbound(name)

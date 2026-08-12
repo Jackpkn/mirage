@@ -31,6 +31,7 @@ from mirage.types import MountMode
 INHERITED_FIELDS: tuple[str, ...] = (
     "session_id",
     "cwd",
+    "logical_cwd",
     "env",
     "created_at",
     "functions",
@@ -70,6 +71,7 @@ TRANSIENT_FIELDS: tuple[str, ...] = (
 # reports back.
 CHILD_SHELL_FIELDS: tuple[str, ...] = (
     "cwd",
+    "logical_cwd",
     "source_depth",
     "env",
     "functions",
@@ -103,6 +105,12 @@ def copy_state(value: Any) -> Any:
 class Session:
     session_id: str
     cwd: str = "/"
+    # The spelling `cd` arrived at: `..` simplified textually, symlinks
+    # left alone. bash reports it as `$PWD` and `pwd -L`, and applies the
+    # next `cd`'s `..` to it. None whenever it would equal `cwd`, which is
+    # every session that has not walked through a symlink. `cwd` stays
+    # physical because it is what every operand resolves against.
+    logical_cwd: str | None = None
     env: dict[str, str] = field(default_factory=dict)
     created_at: float = field(default_factory=time.time)
     functions: dict[str, FunctionBody] = field(default_factory=dict)
