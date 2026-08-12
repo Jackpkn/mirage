@@ -13,20 +13,20 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import re
+from functools import partial
+
 import pytest
+
 from mirage.commands.builtin import grep_helper
 from mirage.commands.builtin.constants import PatternType
 from mirage.commands.builtin.grep_helper import (NEVER_MATCH, classify_pattern,
                                                  compile_pattern,
                                                  extract_required_literal,
-                                                 merge_pattern_list,
-                                                 search_query)
-from mirage.types import FileStat, FileType
-from functools import partial
-from mirage.commands.builtin.grep_helper import (compile_pattern,
                                                  get_extension,
                                                  grep_files_only, grep_lines,
-                                                 grep_recursive)
+                                                 grep_recursive,
+                                                 merge_pattern_list,
+                                                 search_query)
 from mirage.commands.builtin.utils.wrap import (call_read_bytes, call_readdir,
                                                 call_stat, to_pathspec)
 from mirage.core.ram.mkdir import mkdir
@@ -34,6 +34,7 @@ from mirage.core.ram.read import read
 from mirage.core.ram.readdir import readdir
 from mirage.core.ram.stat import stat
 from mirage.core.ram.write import write_bytes as _async_write_bytes
+from mirage.types import FileStat, FileType
 
 
 def test_single_pattern_keeps_regex_semantics():

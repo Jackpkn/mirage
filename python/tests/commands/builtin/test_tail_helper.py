@@ -1,7 +1,4 @@
-
-
-from mirage.commands.builtin.tail_helper import parse_counts
-from mirage.commands.builtin.tail_helper import number_flag_error
+from mirage.commands.builtin.tail_helper import number_flag_error, parse_counts
 
 
 def test_bare_count_counts_back_from_the_end():

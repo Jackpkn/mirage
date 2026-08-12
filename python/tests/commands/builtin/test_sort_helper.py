@@ -1,12 +1,10 @@
-
-
 import pytest
+
+from mirage.commands.builtin.generic.sort import sort
 from mirage.commands.builtin.sort_helper import (KeyMods, SortKeyError,
                                                  _compute_fields, _extract,
                                                  build_config, parse_keydef,
                                                  sort_lines)
-from mirage.commands.builtin.generic.sort import sort
-
 
 _G = KeyMods()
 
@@ -201,7 +199,7 @@ class TestSortUnique:
     @pytest.mark.asyncio
     async def test_unique(self):
         result = await _run_sort(b"banana\napple\nbanana\napple\ncherry",
-                                  unique=True)
+                                 unique=True)
         assert result == ["apple", "banana", "cherry"]
 
 
@@ -218,8 +216,8 @@ class TestSortKeyField:
     @pytest.mark.asyncio
     async def test_key_field_numeric(self):
         result = await _run_sort(b"a 10\nb 2\nc 30",
-                                  key_defs=["2"],
-                                  numeric=True)
+                                 key_defs=["2"],
+                                 numeric=True)
         assert result == ["b 2", "a 10", "c 30"]
 
 
@@ -228,9 +226,9 @@ class TestSortFieldSep:
     @pytest.mark.asyncio
     async def test_field_sep_with_key(self):
         result = await _run_sort(b"a:10\nb:2\nc:30",
-                                  field_separator=":",
-                                  key_defs=["2"],
-                                  numeric=True)
+                                 field_separator=":",
+                                 key_defs=["2"],
+                                 numeric=True)
         assert result == ["b:2", "a:10", "c:30"]
 
 
@@ -239,13 +237,13 @@ class TestSortGeneralNumeric:
     @pytest.mark.asyncio
     async def test_infinity_and_hex_parse_like_float(self):
         result = await _run_sort(b"inf\n5\n-3\nnan\nabc",
-                                  flags={"general_numeric_sort": True})
+                                 flags={"general_numeric_sort": True})
         assert result == ["abc", "nan", "-3", "5", "inf"]
 
     @pytest.mark.asyncio
     async def test_hex_is_not_numeric(self):
         result = await _run_sort(b"0x10\n5",
-                                  flags={"general_numeric_sort": True})
+                                 flags={"general_numeric_sort": True})
         assert result == ["0x10", "5"]
 
 
@@ -259,8 +257,8 @@ class TestSortMixed:
     @pytest.mark.asyncio
     async def test_unique_ignore_case(self):
         result = await _run_sort(b"Apple\napple\nBanana\nbanana",
-                                  unique=True,
-                                  fold_case=True)
+                                 unique=True,
+                                 fold_case=True)
         assert len(result) == 2
         assert result[0].lower() == "apple"
         assert result[1].lower() == "banana"
