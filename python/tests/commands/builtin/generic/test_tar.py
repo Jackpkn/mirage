@@ -5,7 +5,7 @@ from dataclasses import replace
 import pytest
 
 from mirage.commands.builtin.generic.tar import (excluded, member_name, pruned,
-                                                 tar)
+                                                 strip_prefix, tar)
 from mirage.ops.types import LinkView, MountView
 from mirage.types import LINK_TARGET_KEY, FileStat, FileType, PathSpec
 from mirage.utils.key_prefix import mount_key
@@ -166,6 +166,36 @@ def test_member_name_strips_the_leading_slash_and_marks_directories():
     assert member_name("/data/d", "dir") == "data/d/"
     assert member_name("d/", "dir") == "d/"
     assert member_name("link", "link") == "link"
+
+
+# Every row is GNU tar 1.35 on debian:stable-slim: `tar -cf` for the
+# notice, `tar -tf` for the stored name.
+STRIP_PREFIX_ROWS = [
+    ("/data/sub/../file", "file", "/data/sub/../"),
+    ("../file", "file", "../"),
+    ("x/../y/f3", "y/f3", "x/../"),
+    ("../../file", "file", "../../"),
+    ("/data/../data/file", "data/file", "/data/../"),
+    # No `..`, so the leading slash is the only thing tar refuses.
+    ("/data/file", "data/file", "/"),
+    # A `.` climbs nowhere, so GNU stores it and says nothing.
+    ("./file", "./file", ""),
+    ("d/a.txt", "d/a.txt", ""),
+    # Nothing survives the traversal; `member_name` supplies the name.
+    ("..", "", ".."),
+    ("sub/..", "", "sub/.."),
+]
+
+
+@pytest.mark.parametrize("spelled,name,prefix", STRIP_PREFIX_ROWS)
+def test_strip_prefix_drops_through_the_last_dotdot(spelled: str, name: str,
+                                                    prefix: str):
+    assert strip_prefix(spelled) == (name, prefix)
+
+
+def test_member_name_calls_an_all_traversal_directory_dot_slash():
+    assert member_name("..", "dir") == "./"
+    assert member_name("sub/..", "dir") == "./"
 
 
 @pytest.mark.asyncio

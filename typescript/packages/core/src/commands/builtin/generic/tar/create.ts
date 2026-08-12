@@ -34,7 +34,6 @@ const USAGE_HINT = "Try 'tar --help' for more information."
 const EMPTY_ARCHIVE = 'tar: Cowardly refusing to create an empty archive'
 const FATAL_TRAILER = 'tar: Error is not recoverable: exiting now'
 const ERROR_TRAILER = 'tar: Exiting with failure status due to previous errors'
-const LEADING_SLASH = "tar: Removing leading `/' from member names"
 const SELF_DUMP = 'archive cannot contain itself; not dumped'
 // The exit GNU gives an operand it could not read, and a -C it could not
 // enter. Both are fatal for the whole run, not per-operand.
@@ -98,13 +97,47 @@ function pruned(names: readonly string[], pattern: string | null): string[] {
   return kept
 }
 
-// The name tar records for a path spelled as the operand was typed. A
-// leading slash is stripped (tar refuses to store absolute names, and
-// says so once per run), and a directory carries the trailing slash that
-// tells an extractor it holds no content.
+// Split a spelled path into the name tar stores and what it drops. tar
+// stores no name that could climb out of the directory it is extracted
+// into, so it removes everything through the *last* `..` segment:
+// `x/../y/f3` is stored as `y/f3` and `/data/sub/../file` as `file`. Only
+// when the path has no `..` does the leading slash become the thing
+// removed. A `.` segment escapes nothing and survives, so `./file` is
+// stored verbatim. Info-ZIP makes the opposite choice and keeps `..` in
+// the member name, which is why zip_cmd does not share this. Returns the
+// name and the prefix removed to get it ('' when nothing was), and each
+// distinct prefix earns one notice naming it.
+export function stripPrefix(spelled: string): [string, string] {
+  const segments = spelled.split('/')
+  let last = -1
+  for (let i = 0; i < segments.length; i++) {
+    if (segments[i] === '..') last = i
+  }
+  if (last >= 0) {
+    const rest = segments.slice(last + 1).join('/')
+    const prefix = segments.slice(0, last + 1).join('/')
+    return [rest, rest !== '' ? `${prefix}/` : prefix]
+  }
+  if (spelled.startsWith('/')) return [lstripSlash(spelled), '/']
+  return [spelled, '']
+}
+
+// GNU's notice for a prefix it refused to store.
+function removingLeading(prefix: string): string {
+  return `tar: Removing leading \`${prefix}' from member names`
+}
+
+// The name tar records for a path spelled as the operand was typed. The
+// traversal prefix is dropped (see stripPrefix) and a directory carries
+// the trailing slash that tells an extractor it holds no content. An
+// operand that is all traversal — `tar -cf a.tar ..` — leaves nothing to
+// name, and GNU stores that directory as `./`.
 function memberName(spelled: string, kind: MemberKind): string {
-  const name = lstripSlash(spelled)
-  if (kind === 'dir' && name !== '' && !name.endsWith('/')) return `${name}/`
+  const [name] = stripPrefix(spelled)
+  if (kind === 'dir') {
+    if (name === '') return './'
+    if (!name.endsWith('/')) return `${name}/`
+  }
   return name
 }
 
@@ -136,7 +169,7 @@ export async function planCreate(
   }
   const members: Member[] = []
   const notices: string[] = []
-  let absoluteSeen = false
+  const dropped: string[] = []
   let exitCode = 0
   for (const path of paths) {
     const raw = path.rawPath
@@ -163,13 +196,15 @@ export async function planCreate(
       const shown = memberName(respellOne(crossing, base, raw), 'dir')
       notices.push(`tar: ${shown}: ${OTHER_FILESYSTEM}`)
     }
-    // Every descendant is spelled under the operand's own base, so the
-    // operand alone decides whether this run stored an absolute name and
-    // owes GNU's one-per-run warning.
-    absoluteSeen = absoluteSeen || raw.startsWith('/')
-    const named = scan.entries.map(
-      (entry) => [memberName(respellOne(entry.namePath, base, raw), entry.kind), entry] as const,
-    )
+    // Each name is stripped on its own, so one operand can owe two
+    // notices: `tar -cf a.tar ..` drops `..` from the directory and `../`
+    // from everything under it.
+    const named = scan.entries.map((entry) => {
+      const spelled = respellOne(entry.namePath, base, raw)
+      const prefix = stripPrefix(spelled)[1]
+      if (prefix !== '' && !dropped.includes(prefix)) dropped.push(prefix)
+      return [memberName(spelled, entry.kind), entry] as const
+    })
     const keep = new Set(
       pruned(
         named.map(([name]) => name),
@@ -186,7 +221,9 @@ export async function planCreate(
       members.push({ name, kind: entry.kind, path: read, target: entry.target ?? '' })
     }
   }
-  if (absoluteSeen) notices.unshift(LEADING_SLASH)
+  // GNU names each prefix it removed, once, in the order the names it was
+  // stripping from came up.
+  notices.unshift(...dropped.map(removingLeading))
   // GNU closes a run that failed an operand with one trailer, after
   // everything it did manage to name.
   if (exitCode !== 0) notices.push(ERROR_TRAILER)
