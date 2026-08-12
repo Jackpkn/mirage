@@ -46,7 +46,7 @@ import type { PolicyFn } from '../runtime/policy/index.ts'
 import type { TSNodeLike } from '../shell/types.ts'
 import type { ExecuteFn } from './expand/node.ts'
 import type { ProvisionResult } from '../provision/types.ts'
-import { WorkspaceFS } from './fs.ts'
+import { Ops } from '../ops/ops.ts'
 import type { MountEntry } from './mount/mount.ts'
 import { MountRegistry } from './mount/registry.ts'
 import type { VFSEntry } from '../runtime/vfs.ts'
@@ -102,8 +102,7 @@ export class Workspace {
   readonly namespace: Namespace
   private readonly dispatcher: Dispatcher
   readonly observer: Observer
-  readonly records: OpRecord[] = []
-  readonly fs: WorkspaceFS
+  readonly fs: Ops
   private closed = false
   private readonly closers: (() => Promise<void>)[] = []
   private readonly watchManager: WatchManager
@@ -250,11 +249,10 @@ export class Workspace {
     // The facade delegates every op to the dispatcher, so FUSE and
     // programmatic ws.fs walk the same pipeline as a shell command and
     // the policy gates fire exactly once, at that door. It keeps the
-    // record, which is its own.
-    this.fs = new WorkspaceFS(
+    // ledger, which is its own; the sink is only the observer's copy.
+    this.fs = new Ops(
       this.dispatcher.dispatch,
       async (rec) => {
-        this.records.push(rec)
         await this.observer.logOp(rec, this.agentId ?? '', this.sessionManager.defaultId)
       },
       this.namespace,
@@ -327,7 +325,7 @@ export class Workspace {
   }
 
   // The sandboxed runtimes' sole data path (quickjs, pyodide, monty).
-  // Routes through `dispatch`, not the raw WorkspaceFS, so sandbox I/O
+  // Routes through `dispatch`, not the raw Ops facade, so sandbox I/O
   // takes the same path as shell commands — cache read-through on
   // reads, post-write invalidation, and mount-mode enforcement narrowed
   // by the current session all come from the Dispatcher. Reads are raw
@@ -335,23 +333,23 @@ export class Workspace {
   private buildWorkspaceBridge(): BridgeDispatchFn {
     return async (op, path, bytes, dst) => {
       switch (op) {
-        case 'READ':
+        case 'read':
           return (await this.dispatch('read', path)) as Uint8Array
-        case 'WRITE': {
-          if (bytes === undefined) throw new Error('WRITE op requires bytes')
+        case 'write': {
+          if (bytes === undefined) throw new Error('write op requires bytes')
           const buf =
             bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes as ArrayLike<number>)
           await this.dispatch('write', path, [buf])
           return undefined
         }
-        case 'APPEND': {
-          if (bytes === undefined) throw new Error('APPEND op requires bytes')
+        case 'append': {
+          if (bytes === undefined) throw new Error('append op requires bytes')
           const buf =
             bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes as ArrayLike<number>)
           await this.dispatch('append', path, [buf])
           return undefined
         }
-        case 'STAT': {
+        case 'stat': {
           const st = (await this.dispatch('stat', path)) as FileStat
           // One translator: bare Date.parse read an offset-less stamp
           // as LOCAL time here while the fuse fold read it as UTC.
@@ -363,21 +361,27 @@ export class Workspace {
             mtimeMs: mtimeMs(st) ?? 0,
           }
         }
-        case 'UNLINK':
+        case 'create':
+          await this.dispatch('create', path)
+          return undefined
+        case 'truncate':
+          await this.dispatch('truncate', path, [0])
+          return undefined
+        case 'unlink':
           await this.dispatch('unlink', path)
           return undefined
-        case 'MKDIR':
+        case 'mkdir':
           await this.dispatch('mkdir', path)
           return undefined
-        case 'RMDIR':
+        case 'rmdir':
           await this.dispatch('rmdir', path)
           return undefined
-        case 'RENAME': {
-          if (dst === undefined) throw new Error('RENAME op requires dst')
+        case 'rename': {
+          if (dst === undefined) throw new Error('rename op requires dst')
           await this.dispatch('rename', path, [PathSpec.fromStrPath(dst)])
           return undefined
         }
-        case 'LIST': {
+        case 'readdir': {
           const entries = ((await this.dispatch('readdir', path)) as string[] | null) ?? []
           return await Promise.all(
             entries.map(async (entry): Promise<VFSEntry> => {
@@ -629,28 +633,32 @@ export class Workspace {
     this.cache.maxDrainBytes = value
   }
 
+  /**
+   * The op ledger. It lives on the `Ops` facade (python parity); these
+   * are thin delegates so the public workspace API keeps reading.
+   */
+  get records(): OpRecord[] {
+    return this.fs.records
+  }
+
   /** Records that hit a remote resource (not cache). */
   get networkRecords(): OpRecord[] {
-    return this.records.filter((r) => !r.isCache)
+    return this.fs.networkRecords
   }
 
   /** Total bytes transferred over the network. */
   get networkBytes(): number {
-    let total = 0
-    for (const r of this.records) if (!r.isCache) total += r.bytes
-    return total
+    return this.fs.networkBytes
   }
 
   /** Records served from in-memory cache. */
   get cacheRecords(): OpRecord[] {
-    return this.records.filter((r) => r.isCache)
+    return this.fs.cacheRecords
   }
 
   /** Total bytes served from cache. */
   get cacheBytes(): number {
-    let total = 0
-    for (const r of this.records) if (r.isCache) total += r.bytes
-    return total
+    return this.fs.cacheBytes
   }
 
   get filePrompt(): string {
