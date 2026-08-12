@@ -27,24 +27,24 @@ IGNORED = {"__pycache__", ".pytest_cache"}
 # look untested.
 UNMIRRORED_DIRS = {
     "commands/builtin/jq":
-        "the embedded jq engine spans generic/jq.py and its builder; the "
-        "suite is grouped per feature, not per module",
+    "the embedded jq engine spans generic/jq.py and its builder; the "
+    "suite is grouped per feature, not per module",
     "commands/custom":
-        "exercises the public command-registration API, not a package",
+    "exercises the public command-registration API, not a package",
     "commands/native":
-        "the native-binary harness: each case runs a real coreutils binary "
-        "and diffs mirage against it",
+    "the native-binary harness: each case runs a real coreutils binary "
+    "and diffs mirage against it",
     "config":
-        "loader tests plus the bad-config YAML shared with the TypeScript tree",
+    "loader tests plus the bad-config YAML shared with the TypeScript tree",
     "config/fixtures":
-        "the YAML files themselves",
+    "the YAML files themselves",
     "conformance":
-        "runs the cross-language cases under the top-level conformance/ tree",
+    "runs the cross-language cases under the top-level conformance/ tree",
     "e2e":
-        "end-to-end suites that span the package, so no one source dir owns "
-        "them",
+    "end-to-end suites that span the package, so no one source dir owns "
+    "them",
     "fixtures":
-        "shared test doubles imported by suites elsewhere",
+    "shared test doubles imported by suites elsewhere",
 }
 
 # A ratchet, not a target. It counts source modules with no `test_<name>.py`
@@ -53,7 +53,15 @@ UNMIRRORED_DIRS = {
 # cover a family in one file. Moving it in either direction is a deliberate
 # act: adding a module with no test raises it, and closing a gap has to be
 # locked in by lowering it.
-MIRROR_BASELINE = 211
+#
+# Known blind spot, and the reason this number is a floor rather than a
+# measure of coverage: the match is by basename, so seven unrelated
+# `test_history.py` files make every `history.py` in the tree look
+# mirrored. Reading it strictly -- a test beside its own source twin --
+# would count 816 today. What the ratchet buys is narrower than it looks:
+# a module whose name appears nowhere in the suite cannot be added
+# silently.
+MIRROR_BASELINE = 207
 
 
 def _test_dirs() -> list[pathlib.Path]:
@@ -112,7 +120,9 @@ def test_no_stale_directory_exemption():
 def test_module_mirror_coverage_holds_the_baseline():
     """Ratchet the number of source modules that no test file is named for."""
     named = {p.name for p in TESTS.rglob("test_*.py")}
-    unmirrored = [m for m in _source_modules() if f"test_{m.stem}.py" not in named]
+    unmirrored = [
+        m for m in _source_modules() if f"test_{m.stem}.py" not in named
+    ]
     count = len(unmirrored)
     if count > MIRROR_BASELINE:
         added = "\n".join(f"  mirage/{m}" for m in unmirrored[:20])
