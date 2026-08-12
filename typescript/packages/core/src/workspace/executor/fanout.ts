@@ -33,6 +33,7 @@ import type { FlagValue } from '../../commands/spec/types.ts'
 import type { RunSingle } from '../../commands/builtin/generic/crossmount/types.ts'
 import type { ChildMounts, LinkView, MountView, StatPath } from '../../ops/types.ts'
 import { mergeDuBlocks } from '../../commands/builtin/generic/crossmount/fanout/du.ts'
+import { compareCodePoints } from '../../utils/sort.ts'
 
 type Result = [ByteSource | null, IOResult, ExecutionNode]
 
@@ -489,7 +490,7 @@ export async function fanOutTraversal(
           .flatMap((d) => new TextDecoder().decode(d).split('\n'))
           .filter((line) => line !== ''),
       ),
-    ].sort()
+    ].sort(compareCodePoints)
     combined = new TextEncoder().encode(lines.join('\n') + '\n')
   } else if (allStdout.length > 0) {
     const parts = allStdout.map((d) => {

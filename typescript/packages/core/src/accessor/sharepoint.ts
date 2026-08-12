@@ -26,6 +26,7 @@ import { DriveLoc } from '../core/msgraph/drive.ts'
 import { redactConfigWithSchema } from '../resource/secrets.ts'
 import { normalizeFields } from '../utils/normalize.ts'
 import { stripSlash } from '../utils/slash.ts'
+import { compareCodePoints } from '../utils/sort.ts'
 
 export interface SharePointConfig extends MsGraphConfig {
   siteFilter?: string
@@ -183,7 +184,7 @@ export class SharePointAccessor extends Accessor {
       this.siteCache.set(display, id)
       if (name !== '') this.siteCache.set(name, id)
     }
-    return entries.sort((left, right) => (left[0] < right[0] ? -1 : left[0] > right[0] ? 1 : 0))
+    return entries.sort((left, right) => compareCodePoints(left[0], right[0]))
   }
 
   async listSites(): Promise<string[]> {
@@ -197,7 +198,7 @@ export class SharePointAccessor extends Accessor {
       entries.push([drive.name, drive.id])
       this.driveCache.set(`${siteId}\0${drive.name}`, drive.id)
     }
-    return entries.sort((left, right) => (left[0] < right[0] ? -1 : left[0] > right[0] ? 1 : 0))
+    return entries.sort((left, right) => compareCodePoints(left[0], right[0]))
   }
 
   async listDrives(siteId: string): Promise<string[]> {

@@ -32,6 +32,7 @@ import {
   propertyCell,
   usageError,
 } from '../util.ts'
+import { compareCodePoints } from '../../../../../utils/sort.ts'
 
 const ENC = new TextEncoder()
 const DEC = new TextDecoder()
@@ -153,7 +154,7 @@ export async function query(inv: CLIInvocation): Promise<CommandFnResult> {
   for (const row of rows) {
     for (const name of Object.keys(asObject(asObject(row).properties))) named.add(name)
   }
-  const columns = [...named].sort()
+  const columns = [...named].sort(compareCodePoints)
   let out = ''
   for (const row of rows) {
     const record = asObject(row)

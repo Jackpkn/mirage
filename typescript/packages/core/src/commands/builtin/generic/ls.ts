@@ -24,6 +24,7 @@ import { gnuStrerror, isWalkError } from '../../../utils/errors.ts'
 import { rstripSlash } from '../../../utils/slash.ts'
 import { CycleError, respellOne } from '../../../utils/path.ts'
 import { formatRecords } from '../utils/output.ts'
+import { compareCodePoints } from '../../../utils/sort.ts'
 
 type Readdir = (p: PathSpec) => Promise<string[]>
 type Stat = (p: PathSpec) => Promise<FileStat>
@@ -139,7 +140,7 @@ function compareStats(a: FileStat, b: FileStat, sortBy: SortBy): number {
     if (av < bv) return 1
     if (av > bv) return -1
   }
-  return a.name < b.name ? -1 : a.name > b.name ? 1 : 0
+  return compareCodePoints(a.name, b.name)
 }
 
 function sortStats(stats: readonly FileStat[], sortBy: SortBy, reverse: boolean): FileStat[] {

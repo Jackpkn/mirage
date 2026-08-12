@@ -30,6 +30,7 @@ import { ExecutionNode } from '../../types.ts'
 import { ReturnSignal } from '../control.ts'
 import { PRINTF_TARGET_RE } from './text.ts'
 import type { ExecuteStringFn, Result } from './scope.ts'
+import { compareCodePoints } from '../../../utils/sort.ts'
 
 const EXPORT_USAGE = 'export: usage: export [-fn] [name[=value] ...] or export -p\n'
 const READONLY_USAGE = 'readonly: usage: readonly [-aAf] [name[=value] ...] or readonly -p\n'
@@ -118,7 +119,7 @@ function exportLines(session: Session, flags: Set<string>): string[] {
   // functions, so that form lists nothing, as bash does with none exported.
   if (flags.has('f')) return []
   return Object.keys(session.env)
-    .sort()
+    .sort(compareCodePoints)
     .map((name) => `declare -x ${name}=${bashDeclareQuote(session.env[name] ?? '')}`)
 }
 
@@ -129,7 +130,7 @@ function readonlyLines(session: Session, flags: Set<string>): string[] {
   if (flags.has('f') || flags.has('A')) return []
   const arraysOnly = flags.has('a')
   const lines: string[] = []
-  for (const name of [...session.readonlyVars].sort()) {
+  for (const name of [...session.readonlyVars].sort(compareCodePoints)) {
     const arr = session.arrays[name]
     if (arr !== undefined) {
       const parts: string[] = []
@@ -378,7 +379,7 @@ export function handlePrintenv(name: string | null, session: Session): Result {
     return [out, new IOResult(), new ExecutionNode({ command: 'printenv', exitCode: 0 })]
   }
   const lines = Object.entries(session.env).map(([k, v]) => `${k}=${v}`)
-  lines.sort()
+  lines.sort(compareCodePoints)
   const out = new TextEncoder().encode(`${lines.join('\n')}\n`)
   return [out, new IOResult(), new ExecutionNode({ command: 'printenv', exitCode: 0 })]
 }
@@ -615,7 +616,7 @@ export function handleSet(
 ): Result {
   if (args.length === 0) {
     const lines = Object.entries(session.env).map(([k, v]) => `${k}=${v}`)
-    lines.sort()
+    lines.sort(compareCodePoints)
     const out = new TextEncoder().encode(`${lines.join('\n')}\n`)
     return [out, new IOResult(), new ExecutionNode({ command: 'set', exitCode: 0 })]
   }

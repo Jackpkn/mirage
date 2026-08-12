@@ -24,6 +24,7 @@ import type { CommandFnResult, CommandOpts } from '../../config.ts'
 import type { MountView } from '../../../ops/types.ts'
 import { fnmatch } from '../../../utils/fnmatch.ts'
 import { formatRecords } from '../utils/output.ts'
+import { compareCodePoints } from '../../../utils/sort.ts'
 
 interface TreeOpts {
   showHidden: boolean
@@ -84,7 +85,7 @@ async function walkTree(
   }
   const nested = childMounts(treeOpts.mounts, path.virtual)
   if (nested.length > 0) entries = [...new Set([...entries, ...nested])]
-  entries.sort()
+  entries.sort(compareCodePoints)
   const filtered: { spec: PathSpec; name: string; isDir: boolean; crossing: boolean }[] = []
   for (const entry of entries) {
     const childPath = rstripSlash(entry)

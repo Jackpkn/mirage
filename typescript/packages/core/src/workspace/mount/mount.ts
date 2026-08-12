@@ -50,6 +50,7 @@ import type { Runtime } from '../../runtime/base.ts'
 import { eaccesReadOnly, enotsup } from '../../utils/errors.ts'
 import { rstripSlash } from '../../utils/slash.ts'
 import { effectiveMountMode } from '../../context/session_context.ts'
+import { compareCodePoints } from '../../utils/sort.ts'
 
 type CmdKey = string
 type OpKey = string
@@ -335,7 +336,7 @@ export class MountEntry {
     }
     for (const [name, g] of cmdGroups) {
       if (g.toRegister.length === 0) {
-        const list = [...g.attempted].sort()
+        const list = [...g.attempted].sort(compareCodePoints)
         throw new Error(
           `command '${name}' is for resource(s) [${list.map((r) => `'${r}'`).join(', ')}], not '${kind}'`,
         )
@@ -343,7 +344,7 @@ export class MountEntry {
     }
     for (const [name, g] of opGroups) {
       if (g.toRegister.length === 0) {
-        const list = [...g.attempted].sort()
+        const list = [...g.attempted].sort(compareCodePoints)
         throw new Error(
           `op '${name}' is for resource(s) [${list.map((r) => `'${r}'`).join(', ')}], not '${kind}'`,
         )
@@ -630,7 +631,7 @@ function wrapMountStreams(
 
 function sortFiletypeMap(m: Map<string, (string | null)[]>): Record<string, (string | null)[]> {
   const out: Record<string, (string | null)[]> = {}
-  for (const k of [...m.keys()].sort()) {
+  for (const k of [...m.keys()].sort(compareCodePoints)) {
     const list = m.get(k) ?? []
     list.sort((a, b) => {
       const aKey = a === null ? 0 : 1
@@ -638,7 +639,7 @@ function sortFiletypeMap(m: Map<string, (string | null)[]>): Record<string, (str
       if (aKey !== bKey) return aKey - bKey
       const as = a ?? ''
       const bs = b ?? ''
-      return as < bs ? -1 : as > bs ? 1 : 0
+      return compareCodePoints(as, bs)
     })
     out[k] = list
   }
