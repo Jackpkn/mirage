@@ -28,6 +28,7 @@ from mirage.context import reset_current_session, set_current_session
 from mirage.fuse.errors import NO_XATTR
 from mirage.fuse.platform.macos import is_macos_metadata
 from mirage.ops import Ops
+from mirage.runtime.handles import FileTable, merge_writes
 from mirage.types import FileStat, FileType
 from mirage.workspace.session.session import Session
 
@@ -36,12 +37,14 @@ from mirage.workspace.session.session import Session
 # an unknown size. Mirrors the TS PREFETCH_TTL_MS.
 PREFETCH_TTL = 30.0
 
+WriteBuf = list[tuple[int, bytes]]
+
 
 @dataclass(slots=True)
 class Handle:
     path: str
     data: bytes | None = None
-    write_buf: list[tuple[int, bytes]] = field(default_factory=list)
+    write_buf: WriteBuf = field(default_factory=list)
 
 
 class MountCore:
@@ -73,13 +76,12 @@ class MountCore:
         self._session = session
         self._now = time.time_ns()
         self._root = root_prefix.rstrip("/")
-        self._handles: dict[int, Handle] = {}
+        self._handles: FileTable[Handle] = FileTable()
         # Prefetched content for size-unknown files: path -> (data, expiry).
         self._prefetch: dict[str, tuple[bytes, float]] = {}
         # In-memory extended attributes, keyed by path. Backends have no
         # POSIX xattrs, so these are advisory, not persisted (see setxattr).
         self._xattrs: dict[str, dict[str, bytes]] = {}
-        self._next_fh = 1
         # Windows has no getuid/getgid; the values are irrelevant there
         # because the mount passes uid=-1,gid=-1 and WinFsp presents files
         # as owned by the mounting user (see mount.py). Mirrors fs.ts.
@@ -95,8 +97,17 @@ class MountCore:
         return self._ops
 
     @property
-    def handles(self) -> dict[int, Handle]:
+    def handles(self) -> FileTable[Handle]:
         return self._handles
+
+    def _ctx(self, fh: int | None) -> Handle | None:
+        """The open handle under `fh`, or None for a path-based op.
+
+        Args:
+            fh (int | None): handle id; the adapter passes None when the
+                kernel op arrived without one.
+        """
+        return self._handles.get(fh) if fh is not None else None
 
     def _run(self, coro: Coroutine[Any, Any, Any]) -> Any:
         if self._session is not None:
@@ -383,7 +394,7 @@ class MountCore:
         Returns:
             bytes: the requested slice, possibly short at EOF.
         """
-        ctx = self._handles.get(fh) if fh is not None else None
+        ctx = self._ctx(fh)
         if ctx is not None and ctx.data is not None:
             return ctx.data[offset:offset + size]
         data = self.cached_data(path)
@@ -392,6 +403,26 @@ class MountCore:
         if ctx is not None:
             ctx.data = data
         return data[offset:offset + size]
+
+    def _apply_writes(self, path: str, writes: WriteBuf) -> None:
+        """Merge buffered writes over the raw base and persist the result.
+
+        The base is read raw so a flush never stores a rendered view
+        back into the mount.
+
+        Args:
+            path (str): mount path being written.
+            writes (WriteBuf): (offset, payload) pairs in arrival order.
+        """
+        existing = b""
+        try:
+            existing = self._run(self._ops.read(self.resolve(path), raw=True))
+        except FileNotFoundError:
+            # missing file: start from empty; the write creates it
+            pass
+        merged = merge_writes(existing, writes)
+        self._run(self._ops.write(self.resolve(path), merged))
+        self._prefetch.pop(path, None)
 
     def write(self, path: str, data: bytes, offset: int,
               fh: int | None) -> int:
@@ -406,21 +437,11 @@ class MountCore:
         Returns:
             int: number of bytes accepted.
         """
-        ctx = self._handles.get(fh) if fh is not None else None
+        ctx = self._ctx(fh)
         if ctx is not None:
             ctx.write_buf.append((offset, data))
             return len(data)
-        existing = b""
-        try:
-            existing = self._run(self._ops.read(self.resolve(path), raw=True))
-        except FileNotFoundError:
-            # missing file: start from empty and let the write create it
-            pass
-        if offset > len(existing):
-            existing = existing + b"\0" * (offset - len(existing))
-        new_data = existing[:offset] + data + existing[offset + len(data):]
-        self._run(self._ops.write(self.resolve(path), new_data))
-        self._prefetch.pop(path, None)
+        self._apply_writes(path, [(offset, data)])
         return len(data)
 
     def create(self, path: str) -> int:
@@ -434,7 +455,7 @@ class MountCore:
         """
         self._run(self._ops.create(self.resolve(path)))
         self._prefetch.pop(path, None)
-        return self._track(Handle(path=path))
+        return self._handles.add(Handle(path=path))
 
     def mkdir(self, path: str) -> None:
         self._run(self._ops.mkdir(self.resolve(path)))
@@ -563,24 +584,11 @@ class MountCore:
             path (str): mount path being flushed.
             fh (int | None): the handle whose buffer to drain.
         """
-        ctx = self._handles.get(fh) if fh is not None else None
+        ctx = self._ctx(fh)
         if ctx is None or not ctx.write_buf:
             return
-        existing = b""
-        try:
-            existing = self._run(self._ops.read(self.resolve(path), raw=True))
-        except FileNotFoundError:
-            # missing file: start from empty; the write creates it
-            pass
-        merged = bytearray(existing)
-        for off, chunk in ctx.write_buf:
-            end = off + len(chunk)
-            if end > len(merged):
-                merged.extend(b"\0" * (end - len(merged)))
-            merged[off:off + len(chunk)] = chunk
-        self._run(self._ops.write(self.resolve(path), bytes(merged)))
+        self._apply_writes(path, ctx.write_buf)
         ctx.write_buf = []
-        self._prefetch.pop(path, None)
 
     def open(self, path: str) -> int:
         """Open a path, hydrating it when its size is unknown.
@@ -601,7 +609,7 @@ class MountCore:
             # now: getattr(fh) and read() then serve real bytes, and the TTL
             # cache keeps release-then-stat bursts from refetching.
             ctx.data = self.prefetch_read(path)
-        return self._track(ctx)
+        return self._handles.add(ctx)
 
     def release(self, fh: int) -> None:
         ctx = self._handles.get(fh)
@@ -611,17 +619,11 @@ class MountCore:
             # still hold buffered writes here. Dropping them would silently
             # lose data written through an fskit mount.
             self.flush(ctx.path, fh)
-        self._handles.pop(fh, None)
+        self._handles.pop(fh)
 
     def truncate(self, path: str, length: int) -> None:
         self._run(self._ops.truncate(self.resolve(path), length))
         self._prefetch.pop(path, None)
-
-    def _track(self, ctx: Handle) -> int:
-        fh = self._next_fh
-        self._next_fh += 1
-        self._handles[fh] = ctx
-        return fh
 
     def _forget(self, path: str) -> None:
         self._xattrs.pop(path, None)
