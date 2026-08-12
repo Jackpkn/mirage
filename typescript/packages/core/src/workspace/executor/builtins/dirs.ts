@@ -19,7 +19,7 @@ import { FileType } from '../../../types.ts'
 import { CycleError, MAX_SYMLINK_HOPS, resolveSymlinks } from '../../../utils/path.ts'
 import { posixNormpath } from '../../../utils/path.ts'
 import type { Session } from '../../session/session.ts'
-import { changeDir } from '../../session/shell_dirs.ts'
+import { changeDir, logicalCwd } from '../../session/shell_dirs.ts'
 import { ExecutionNode } from '../../types.ts'
 import type { DispatchFn } from '../cross_mount.ts'
 import { toScope, scopePath } from './scope.ts'
@@ -66,12 +66,14 @@ function cdpathSearchable(target: string): boolean {
   return target !== '.' && target !== '..'
 }
 
+// `cwd` is the directory a relative operand joins to: the logical cwd
+// under -L, the physical one under -P.
 function cdCandidates(
   raw: string,
   cdpathTarget: string | null,
   session: Session,
+  cwd: string,
 ): [string, boolean][] {
-  const cwd = session.cwd
   const fallback = joinPath(raw, cwd)
   const cdpath = session.env.CDPATH
   if (!cdpath || !cdpathTarget || !cdpathSearchable(cdpathTarget)) {
@@ -98,10 +100,20 @@ export async function handleCd(
 ): Promise<Result> {
   const raw = scopePath(path)
   const table = links ?? new Map<string, string>()
-  const candidates = cdCandidates(typedPath(path), cdpathTarget, session)
+  // -L joins a relative operand to the name the shell is *spelling*, -P
+  // to the one it resolves to: from a logical /data/lk whose target is
+  // /data/deep/real, bash sends `cd -L ..` to /data and `cd -P ..` to
+  // /data/deep.
+  const base = physical ? session.cwd : logicalCwd(session)
+  const candidates = cdCandidates(typedPath(path), cdpathTarget, session, base)
   let error: string | null = null
   for (const [candidate, announce] of candidates) {
-    let resolved = posixNormpath(candidate)
+    // The logical name is the candidate with `..` simplified textually
+    // and links left alone; the physical one follows them. -P collapses
+    // the pair, which is why `cd -P .` re-spells the cwd.
+    const spelled = posixNormpath(candidate)
+    let logical = spelled
+    let resolved = logical
     if (table.size > 0) {
       try {
         resolved = resolveTarget(candidate, table, physical)
@@ -113,7 +125,10 @@ export async function handleCd(
         throw exc
       }
     }
-    if (resolved === '/') return cdSuccess(session, '/', raw, printPath || announce)
+    if (physical) logical = resolved
+    if (resolved === '/') {
+      return cdSuccess(session, '/', logical, spelled, raw, printPath || announce)
+    }
     const scope = toScope(resolved)
     let stat: { type?: string } | null = null
     let notFound = false
@@ -132,7 +147,7 @@ export async function handleCd(
     }
     if (stat === null || notFound) {
       if (isMountRoot(resolved)) {
-        return cdSuccess(session, resolved, raw, printPath || announce)
+        return cdSuccess(session, resolved, logical, spelled, raw, printPath || announce)
       }
       error = `cd: ${raw}: No such file or directory\n`
       continue
@@ -141,7 +156,7 @@ export async function handleCd(
       error = `cd: ${raw}: Not a directory\n`
       continue
     }
-    return cdSuccess(session, resolved, raw, printPath || announce)
+    return cdSuccess(session, resolved, logical, spelled, raw, printPath || announce)
   }
   const err = new TextEncoder().encode(error ?? `cd: ${raw}: No such file or directory\n`)
   return [
@@ -151,8 +166,22 @@ export async function handleCd(
   ]
 }
 
-function cdSuccess(session: Session, resolved: string, raw: string, printPath: boolean): Result {
-  changeDir(session, resolved)
-  const out = printPath ? new TextEncoder().encode(`${resolved}\n`) : null
+// Land the session on `resolved` and print what GNU prints. `logical` is
+// the name to remember as the cwd's spelling — `resolved` under -P, which
+// collapses the pair. `spelled` is the path as selected, `..` simplified
+// but links intact: what GNU announces, and NOT the same as `logical`
+// under -P, since `cd -P -` prints /tmp/lk and then lands on
+// /tmp/deep/real, and a -P $CDPATH hit prints /opt/c/lnk while landing on
+// /opt/c/t.
+function cdSuccess(
+  session: Session,
+  resolved: string,
+  logical: string,
+  spelled: string,
+  raw: string,
+  printPath: boolean,
+): Result {
+  changeDir(session, resolved, logical)
+  const out = printPath ? new TextEncoder().encode(`${spelled}\n`) : null
   return [out, new IOResult(), new ExecutionNode({ command: `cd ${raw}`, exitCode: 0 })]
 }
