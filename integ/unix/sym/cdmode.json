@@ -27,7 +27,7 @@
         "gdrive-folder",
         "box"
       ],
-      "command": "mkdir -p /data/lkd/real && ln -s /data/lkd/real /data/lkp",
+      "command": "mkdir -p /data/lkd/real && echo x > /data/lkd/real/f.txt && ln -s /data/lkd/real /data/lkp",
       "expect": {
         "exit": 0,
         "stdout": "",
