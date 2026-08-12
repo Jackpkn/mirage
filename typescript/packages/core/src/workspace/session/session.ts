@@ -188,6 +188,11 @@ export class Session {
     this.generation = init.generation ?? 0
     this.pipelineTimeoutSeconds = init.pipelineTimeoutSeconds ?? null
     this.lastBgJobId = init.lastBgJobId ?? null
+    // bash exports $PWD from startup, so a session that has never run
+    // `cd` still has one. Seeding here rather than at lookup time is what
+    // makes it an ordinary variable: assignable, unsettable, and listed
+    // by `env`.
+    if (!('PWD' in this.env)) this.env.PWD = this.cwd
   }
 
   /**
@@ -207,12 +212,16 @@ export class Session {
    * this, since the value being chosen is `undefined`.
    */
   fork(overrides: Partial<SessionInit> = {}): Session {
-    const movedByCaller = overrides.cwd !== undefined && !('logicalCwd' in overrides)
+    const movedTo = 'logicalCwd' in overrides ? undefined : overrides.cwd
+    const env = overrides.env ?? { ...this.env }
+    // $PWD names where the session is, so it follows the move even when
+    // the caller also supplied an env to layer on.
+    if (movedTo !== undefined) env.PWD = movedTo
     const forked = new Session({
       sessionId: overrides.sessionId ?? this.sessionId,
       cwd: overrides.cwd ?? this.cwd,
-      logicalCwd: movedByCaller ? undefined : (overrides.logicalCwd ?? this.logicalCwd),
-      env: overrides.env ?? { ...this.env },
+      logicalCwd: movedTo !== undefined ? undefined : (overrides.logicalCwd ?? this.logicalCwd),
+      env,
       createdAt: overrides.createdAt ?? this.createdAt,
       functions: overrides.functions ?? { ...this.functions },
       lastExitCode: overrides.lastExitCode ?? this.lastExitCode,

@@ -34,8 +34,13 @@ def logical_cwd(session: Session) -> str:
 
     bash keeps two names for the working directory: the physical one the
     kernel resolves to, and the logical one you typed to get there. Only
-    ``pwd``/``pwd -L``, ``$PWD`` and ``cd``'s own ``..`` read the logical
-    name; everything that resolves an operand uses ``session.cwd``.
+    ``pwd``/``pwd -L`` and ``cd``'s own ``..`` read the logical name;
+    everything that resolves an operand uses ``session.cwd``.
+
+    This is the shell's own record, deliberately not ``$PWD``: that is an
+    ordinary variable the user can assign, and bash does not read it back
+    when deciding where ``cd ..`` goes. Clobbering ``$PWD`` and running
+    ``cd ..`` from /data/lk still lands on /data.
 
     Args:
         session: The shell session.
@@ -54,7 +59,8 @@ def set_cwd(session: Session, cwd: str) -> None:
     snapshot restore, the session-store handoff, and the ``workspace.cwd``
     setter. No typed spelling exists behind such a move, so the logical
     name is dropped rather than left describing wherever the session used
-    to be, and ``$OLDPWD`` is untouched because no ``cd`` ran.
+    to be, and ``$OLDPWD`` is untouched because no ``cd`` ran. ``$PWD``
+    does follow, since it names where the session is.
 
     Args:
         session: The shell session to mutate.
@@ -62,6 +68,7 @@ def set_cwd(session: Session, cwd: str) -> None:
     """
     session.cwd = cwd
     session.logical_cwd = None
+    session.env["PWD"] = cwd
 
 
 def change_dir(session: Session,
@@ -69,9 +76,13 @@ def change_dir(session: Session,
                logical: str | None = None) -> None:
     """Move the session to ``new_cwd`` and record the previous cwd.
 
-    Sets ``$OLDPWD`` to the *logical* cwd before switching, which is what
-    bash stores and therefore what ``cd -`` returns to. ``$PWD`` is
-    resolved dynamically at lookup time, so it is not stored here.
+    ``$OLDPWD`` is a straight copy of ``$PWD`` as it stands right now --
+    not of the shell's own record. The two agree unless the user assigned
+    to ``$PWD``, and bash carries the assignment through: after
+    ``PWD=/clobber; cd /data`` a following ``cd -`` tries /clobber and
+    fails, and after ``unset PWD; cd /data`` ``$OLDPWD`` is empty.
+    ``$PWD`` is then re-stated from the shell's record, so ``cd`` always
+    repairs whatever was done to it.
 
     bash never re-validates the logical name: deleting the symlink it was
     spelled through leaves ``pwd`` still printing it. Nothing here checks
@@ -83,6 +94,7 @@ def change_dir(session: Session,
         logical: The spelling to report when it differs from ``new_cwd``.
             None keeps the pair collapsed, which is what ``-P`` wants.
     """
-    session.env["OLDPWD"] = logical_cwd(session)
+    session.env["OLDPWD"] = session.env.get("PWD", "")
     session.cwd = new_cwd
     session.logical_cwd = logical if logical and logical != new_cwd else None
+    session.env["PWD"] = logical_cwd(session)

@@ -193,6 +193,13 @@ class Session:
         """
         return SHELL_ARGV0 if self.script_name is None else self.script_name
 
+    def __post_init__(self) -> None:
+        # bash exports `$PWD` from startup, so a session that has never
+        # run `cd` still has one. Seeding here rather than at lookup time
+        # is what makes it an ordinary variable: assignable, unsettable,
+        # and listed by `env`.
+        self.env.setdefault("PWD", self.cwd)
+
     def fork(self, **overrides: Any) -> "Session":
         """Return a copy of this session with overrides applied.
 
@@ -219,6 +226,9 @@ class Session:
         defaults.update(overrides)
         if "cwd" in overrides and "logical_cwd" not in overrides:
             defaults["logical_cwd"] = None
+            # `$PWD` names where the session is, so it follows the move
+            # even when the caller also supplied an env to layer on.
+            defaults["env"] = {**defaults["env"], "PWD": overrides["cwd"]}
         return Session(**defaults)
 
     def snapshot(self) -> dict[str, Any]:

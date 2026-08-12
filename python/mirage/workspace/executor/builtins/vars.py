@@ -727,8 +727,10 @@ async def handle_set(
             # has yet to wire, as `physical` once was -- reads as success.
             if option not in SET_OPTION_NAMES:
                 err = f"set: {option}: invalid option name\n".encode()
-                return None, IOResult(exit_code=2, stderr=err), ExecutionNode(
-                    command="set", exit_code=2, stderr=err)
+                return None, IOResult(exit_code=2,
+                                      stderr=err), ExecutionNode(command="set",
+                                                                 exit_code=2,
+                                                                 stderr=err)
             session.shell_options[option] = enable
         # A letter naming no option is ignored rather than refused: bash
         # has options mirage does not implement (`-a`, `-B`, `-H`), and

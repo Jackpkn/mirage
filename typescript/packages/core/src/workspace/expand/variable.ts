@@ -26,7 +26,7 @@ import type { CallStack } from '../../shell/call_stack.ts'
 import { ArithError, ExitSignal } from '../../shell/errors.ts'
 import { NodeType as NT, type TSNodeLike } from '../../shell/types.ts'
 import type { Session } from '../session/session.ts'
-import { homeDir, logicalCwd } from '../session/shell_dirs.ts'
+import { homeDir } from '../session/shell_dirs.ts'
 import { decodeAnsiC } from '../../shell/escapes.ts'
 import { fnmatch } from '../../utils/fnmatch.ts'
 import { escapeGlob } from '../../utils/glob_walk.ts'
@@ -165,7 +165,10 @@ export function lookupVar(
   if (fromArray !== undefined) {
     return arrayGet(fromArray, 0)
   }
-  if (name === 'PWD') return logicalCwd(session)
+  // $PWD is deliberately absent here: `cd` writes it into the env like any
+  // exported variable, so it can be assigned, unset and printed by `env`,
+  // exactly as bash allows. Resolving it here instead would make `PWD=/x`
+  // and `unset PWD` silently do nothing.
   if (name === 'HOME') return homeDir(session) ?? ''
   if (!(name in env)) {
     if (nounset) throw unbound(name)

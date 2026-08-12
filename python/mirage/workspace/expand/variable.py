@@ -29,7 +29,7 @@ from mirage.shell.types import NodeType as NT
 from mirage.utils.fnmatch import fnmatch
 from mirage.utils.glob_walk import escape_glob
 from mirage.workspace.session import Session
-from mirage.workspace.session.shell_dirs import home_dir, logical_cwd
+from mirage.workspace.session.shell_dirs import home_dir
 
 ExpandChild = Callable[[tree_sitter.Node], Awaitable[str]]
 
@@ -131,8 +131,10 @@ def _lookup_var(var: str,
     arrays = getattr(session, "arrays", None)
     if arrays and var in arrays:
         return array_get(arrays[var], 0)
-    if var == "PWD":
-        return logical_cwd(session)
+    # `$PWD` is deliberately absent here: `cd` writes it into the env like
+    # any exported variable, so it can be assigned, unset and printed by
+    # `env`, exactly as bash allows. Resolving it here instead would make
+    # `PWD=/x` and `unset PWD` silently do nothing.
     if var == "HOME":
         return home_dir(session) or ""
     if var not in env:
