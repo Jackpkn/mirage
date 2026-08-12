@@ -34,6 +34,46 @@ def _norm(path: str) -> str:
     return resolved
 
 
+def _join(path: str, cwd: str) -> str:
+    """Join an operand to ``cwd`` **without** simplifying ``..``.
+
+    `resolve_path` normalizes, which is what ``-L`` wants but destroys the
+    only input ``-P`` has to work from: bash resolves a link before
+    applying the ``..`` that follows it, so `/link/..` is the link's
+    parent under ``-L`` and the *target's* parent under ``-P``. Collapsing
+    the ``..`` first makes the two modes identical. `_resolve_target`
+    normalizes for both modes, so nothing downstream sees the raw form.
+
+    Args:
+        path (str): The operand, absolute or relative.
+        cwd (str): The directory a relative operand is typed under.
+
+    Returns:
+        str: The absolute path, ``..`` and ``.`` segments intact.
+    """
+    if path.startswith("/"):
+        return path
+    return cwd.rstrip("/") + "/" + path
+
+
+def _typed_path(val: str | PathSpec) -> str:
+    """The operand as typed, which is what ``-P`` has to resolve.
+
+    A relative operand arrives as a PathSpec whose ``virtual`` was already
+    normalized against cwd (`expand/classify/relative.py`), so it has lost
+    its ``..`` before ``cd`` is reached. ``raw_path`` keeps the spelling.
+
+    Args:
+        val (str | PathSpec): The operand handed to ``cd``.
+
+    Returns:
+        str: The typed spelling, or the resolved path when there is none.
+    """
+    if isinstance(val, PathSpec):
+        return val.raw_path or val.virtual
+    return val
+
+
 def _resolve_target(combined: str, links: dict[str, str],
                     physical: bool) -> str:
     """Resolve a combined ``cd`` path, following symlinks per mode.
@@ -95,7 +135,7 @@ def _cd_candidates(
         marks a non-empty ``$CDPATH`` hit whose absolute path GNU prints.
     """
     cwd = session.cwd
-    fallback = resolve_path(raw, cwd)
+    fallback = _join(raw, cwd)
     cdpath = session.env.get("CDPATH")
     if (not cdpath or not cdpath_target
             or not _cdpath_searchable(cdpath_target)):
@@ -103,7 +143,7 @@ def _cd_candidates(
     out: list[tuple[str, bool]] = []
     for entry in cdpath.split(":"):
         base = resolve_path(entry, cwd) if entry else cwd
-        out.append((resolve_path(cdpath_target, base), entry != ""))
+        out.append((_join(cdpath_target, base), entry != ""))
     out.append((fallback, False))
     return out
 
@@ -120,15 +160,17 @@ async def handle_cd(
 ) -> tuple[ByteSource | None, IOResult, ExecutionNode]:
     raw = _scope_path(path)
     table = links or {}
-    candidates = _cd_candidates(raw, cdpath_target, session)
+    candidates = _cd_candidates(_typed_path(path), cdpath_target, session)
     error: str | None = None
-    for resolved, announce in candidates:
+    for candidate, announce in candidates:
         if table:
             try:
-                resolved = _resolve_target(resolved, table, physical)
+                resolved = _resolve_target(candidate, table, physical)
             except CycleError:
                 error = f"cd: {raw}: Too many levels of symbolic links\n"
                 continue
+        else:
+            resolved = _norm(candidate)
         if resolved == "/":
             return _cd_success(session, "/", raw, print_path or announce)
         scope = _to_scope(resolved)

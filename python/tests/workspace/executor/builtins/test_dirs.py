@@ -14,7 +14,7 @@
 
 import pytest
 
-from mirage.types import FileStat, FileType
+from mirage.types import FileStat, FileType, PathSpec
 from mirage.workspace.executor.builtins.dirs import handle_cd
 from mirage.workspace.session import Session
 
@@ -188,6 +188,85 @@ async def test_cd_follows_a_chain_of_symlinks_to_the_final_target():
                                })
     assert io.exit_code == 0
     assert sess.cwd == "/real"
+
+
+# GNU bash 5.2 (debian:stable-slim), with /link -> /deep/real:
+#   cd -L /link/..      PWD=/            cd -P /link/..      PWD=/deep
+#   cd -L /link/sub/..  PWD=/link        cd -P /link/sub/..  PWD=/deep/real
+# -L simplifies `..` textually against the path as typed; -P resolves the
+# link first, so `..` lands in the target's parent. mirage reports the
+# physical name in both modes, so the -L rows above land in the same
+# directory bash does while spelling it /deep/real.
+@pytest.mark.asyncio
+async def test_cd_logical_mode_simplifies_dotdot_before_following_links():
+    dispatch, _ = dispatcher(dirs={"/deep"})
+    sess = session()
+    _, io, _ = await handle_cd(dispatch,
+                               no_mount_root,
+                               "/link/..",
+                               sess,
+                               links={"/link": "/deep/real"})
+    assert io.exit_code == 0
+    assert sess.cwd == "/"
+
+
+@pytest.mark.asyncio
+async def test_cd_physical_mode_applies_dotdot_to_the_link_target():
+    dispatch, _ = dispatcher(dirs={"/deep"})
+    sess = session()
+    _, io, _ = await handle_cd(dispatch,
+                               no_mount_root,
+                               "/link/..",
+                               sess,
+                               links={"/link": "/deep/real"},
+                               physical=True)
+    assert io.exit_code == 0
+    assert sess.cwd == "/deep"
+
+
+@pytest.mark.asyncio
+async def test_cd_physical_mode_resolves_a_link_in_the_middle_of_the_path():
+    dispatch, _ = dispatcher(dirs={"/deep/real"})
+    sess = session()
+    _, io, _ = await handle_cd(dispatch,
+                               no_mount_root,
+                               "/link/sub/..",
+                               sess,
+                               links={"/link": "/deep/real"},
+                               physical=True)
+    assert io.exit_code == 0
+    assert sess.cwd == "/deep/real"
+
+
+@pytest.mark.asyncio
+async def test_cd_physical_mode_reads_dotdot_off_a_relative_operands_spelling(
+):
+    # A relative operand reaches cd as a PathSpec whose `virtual` was
+    # already normalized against cwd, so -P has to read `raw_path`.
+    dispatch, _ = dispatcher(dirs={"/deep/real"})
+    sess = session(cwd="/link/sub")
+    operand = PathSpec(virtual="/link",
+                       directory="/link/",
+                       resource_path="",
+                       raw_path="..")
+    _, io, _ = await handle_cd(dispatch,
+                               no_mount_root,
+                               operand,
+                               sess,
+                               links={"/link": "/deep/real"},
+                               physical=True)
+    assert io.exit_code == 0
+    assert sess.cwd == "/deep/real"
+
+
+@pytest.mark.asyncio
+async def test_cd_normalizes_dotdot_when_the_workspace_has_no_symlinks():
+    dispatch, seen = dispatcher(dirs={"/data"})
+    sess = session(cwd="/data/sub")
+    _, io, _ = await handle_cd(dispatch, no_mount_root, "..", sess)
+    assert io.exit_code == 0
+    assert seen == ["/data"]
+    assert sess.cwd == "/data"
 
 
 @pytest.mark.asyncio
