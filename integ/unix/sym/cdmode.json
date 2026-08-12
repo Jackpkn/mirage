@@ -27,7 +27,7 @@
         "gdrive-folder",
         "box"
       ],
-      "command": "mkdir -p /data/lkd/real && echo x > /data/lkd/real/f.txt && ln -s /data/lkd/real /data/lkp",
+      "command": "ln -s /data/disptree/d /data/lkp",
       "expect": {
         "exit": 0,
         "stdout": "",
@@ -98,7 +98,7 @@
       "command": "(cd -P /data/lkp/.. && pwd)",
       "expect": {
         "exit": 0,
-        "stdout": "/data/lkd\n",
+        "stdout": "/data/disptree\n",
         "stderr": ""
       }
     },
@@ -163,7 +163,7 @@
         "gdrive-folder",
         "box"
       ],
-      "command": "rm /data/lkp && rm -r /data/lkd",
+      "command": "rm /data/lkp",
       "expect": {
         "exit": 0,
         "stdout": "",
