@@ -128,6 +128,25 @@ describe('Session.fork', () => {
     expect(original.env).toEqual({ FOO: 'bar' })
   })
 
+  // A caller-supplied cwd has no typed spelling behind it, so carrying the
+  // source's logical name over would make the fork's pwd describe a
+  // directory it is not in — the bug an `execute({cwd})` call hit.
+  it('drops the logical cwd when the caller overrides cwd', () => {
+    const original = new Session({
+      sessionId: 'orig',
+      cwd: '/data/deep/real',
+      logicalCwd: '/data/lk',
+    })
+    expect(original.fork({ cwd: '/ram' }).logicalCwd).toBeUndefined()
+    expect(original.fork({}).logicalCwd).toBe('/data/lk')
+  })
+
+  it('keeps an explicitly supplied logical cwd alongside a cwd override', () => {
+    const original = new Session({ sessionId: 'orig', cwd: '/a' })
+    const forked = original.fork({ cwd: '/data/deep/real', logicalCwd: '/data/lk' })
+    expect(forked.logicalCwd).toBe('/data/lk')
+  })
+
   it('deep-copies mutable containers so mutations on the fork do not leak', () => {
     const original = new Session({
       sessionId: 'orig',

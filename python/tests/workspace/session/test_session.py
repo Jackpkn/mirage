@@ -185,6 +185,23 @@ def test_fork_overrides_apply_without_mutating_original():
     assert original.env == {"FOO": "bar"}
 
 
+def test_fork_drops_the_logical_cwd_when_the_caller_overrides_cwd():
+    # A caller-supplied cwd has no typed spelling behind it, so carrying
+    # the source's logical name over would make the fork's `pwd` describe
+    # a directory it is not in -- the bug an `execute(cwd=...)` call hit.
+    original = Session(session_id="orig",
+                       cwd="/data/deep/real",
+                       logical_cwd="/data/lk")
+    assert original.fork(cwd="/ram").logical_cwd is None
+    assert original.fork().logical_cwd == "/data/lk"
+
+
+def test_fork_keeps_an_explicit_logical_cwd_beside_a_cwd_override():
+    original = Session(session_id="orig", cwd="/a")
+    forked = original.fork(cwd="/data/deep/real", logical_cwd="/data/lk")
+    assert forked.logical_cwd == "/data/lk"
+
+
 def test_fork_deep_copies_mutable_containers():
     original = Session(session_id="orig",
                        env={"FOO": "bar"},

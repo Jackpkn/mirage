@@ -201,6 +201,14 @@ class Session:
         INHERITED_FIELDS rather than a literal written out here, so a
         field added to the dataclass is propagated by construction.
 
+        A caller that moves the fork with ``cwd`` supplies a physical
+        path with no typed spelling behind it, so the source's logical
+        name is dropped rather than left describing where the fork is
+        not -- the same reasoning as `shell_dirs.set_cwd`. Deciding it
+        here rather than at each call site is what keeps
+        ``execute(cwd=...)`` from reporting the persistent session's old
+        directory from ``pwd``.
+
         Args:
             **overrides: Field-name kwargs to override on the copy.
         """
@@ -209,6 +217,8 @@ class Session:
             for name in INHERITED_FIELDS
         }
         defaults.update(overrides)
+        if "cwd" in overrides and "logical_cwd" not in overrides:
+            defaults["logical_cwd"] = None
         return Session(**defaults)
 
     def snapshot(self) -> dict[str, Any]:

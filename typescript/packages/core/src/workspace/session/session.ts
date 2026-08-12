@@ -197,12 +197,21 @@ export class Session {
    * the source. Every field — including capability fields like
    * `mountModes` — is propagated, so callers cannot accidentally
    * forget one when adding new fields.
+   *
+   * A caller that moves the fork with `cwd` supplies a physical path
+   * with no typed spelling behind it, so the source's logical name is
+   * dropped rather than left describing where the fork is not — the same
+   * reasoning as `shell_dirs.setCwd`. Deciding it here rather than at
+   * each call site is what keeps `execute({cwd})` from reporting the
+   * persistent session's old directory from `pwd`. `??` cannot express
+   * this, since the value being chosen is `undefined`.
    */
   fork(overrides: Partial<SessionInit> = {}): Session {
+    const movedByCaller = overrides.cwd !== undefined && !('logicalCwd' in overrides)
     const forked = new Session({
       sessionId: overrides.sessionId ?? this.sessionId,
       cwd: overrides.cwd ?? this.cwd,
-      logicalCwd: overrides.logicalCwd ?? this.logicalCwd,
+      logicalCwd: movedByCaller ? undefined : (overrides.logicalCwd ?? this.logicalCwd),
       env: overrides.env ?? { ...this.env },
       createdAt: overrides.createdAt ?? this.createdAt,
       functions: overrides.functions ?? { ...this.functions },

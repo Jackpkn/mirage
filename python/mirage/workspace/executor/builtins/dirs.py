@@ -174,7 +174,8 @@ async def handle_cd(
         # The logical name is the candidate with `..` simplified textually
         # and links left alone; the physical one follows them. `-P`
         # collapses the pair, which is why `cd -P .` re-spells the cwd.
-        logical = _norm(candidate)
+        spelled = _norm(candidate)
+        logical = spelled
         if table:
             try:
                 resolved = _resolve_target(candidate, table, physical)
@@ -186,7 +187,7 @@ async def handle_cd(
         if physical:
             logical = resolved
         if resolved == "/":
-            return _cd_success(session, "/", logical, raw, print_path
+            return _cd_success(session, "/", logical, spelled, raw, print_path
                                or announce)
         scope = _to_scope(resolved)
         s = None
@@ -200,14 +201,14 @@ async def handle_cd(
             continue
         if s is None or not_found:
             if is_mount_root(resolved):
-                return _cd_success(session, resolved, logical, raw, print_path
-                                   or announce)
+                return _cd_success(session, resolved, logical, spelled, raw,
+                                   print_path or announce)
             error = f"cd: {raw}: No such file or directory\n"
             continue
         if s.type != FileType.DIRECTORY:
             error = f"cd: {raw}: Not a directory\n"
             continue
-        return _cd_success(session, resolved, logical, raw, print_path
+        return _cd_success(session, resolved, logical, spelled, raw, print_path
                            or announce)
     err = (error or f"cd: {raw}: No such file or directory\n").encode()
     return None, IOResult(exit_code=1,
@@ -220,11 +221,25 @@ def _cd_success(
     session: Session,
     resolved: str,
     logical: str,
+    spelled: str,
     raw: str,
     print_path: bool,
 ) -> tuple[ByteSource | None, IOResult, ExecutionNode]:
+    """Land the session on ``resolved`` and print what GNU prints.
+
+    Args:
+        session (Session): the session to move.
+        resolved (str): the physical directory to land on.
+        logical (str): the name to remember as the cwd's spelling --
+            ``resolved`` under ``-P``, which collapses the pair.
+        spelled (str): the path as selected, ``..`` simplified but links
+            intact. What GNU announces, and NOT the same as ``logical``
+            under ``-P``: ``cd -P -`` prints /tmp/lk and then lands on
+            /tmp/deep/real, and a ``-P`` ``$CDPATH`` hit prints
+            /opt/c/lnk while landing on /opt/c/t.
+        raw (str): the operand as typed, for the history node.
+        print_path (bool): whether GNU announces this move at all.
+    """
     change_dir(session, resolved, logical)
-    # A `$CDPATH` hit and `cd -` both announce the logical spelling: bash
-    # prints /opt/c/lnk, not the /opt/c/t it resolves to.
-    out = (logical + "\n").encode() if print_path else None
+    out = (spelled + "\n").encode() if print_path else None
     return out, IOResult(), ExecutionNode(command=f"cd {raw}", exit_code=0)

@@ -140,6 +140,21 @@ LOGICAL_CWD_ROWS = [
     # Everything that is not a shell builtin stays physical, the way a
     # real child process does: bash's own `ls ..` lists /data/deep here.
     ("cd /data/lk && ls ..", "real\n"),
+    # `-P` announces the path as selected and lands on the target: the
+    # printed name and the resulting cwd deliberately disagree.
+    ("cd /data/lk && cd /data && cd -P -", "/data/lk\n"),
+    ("cd /data/lk && cd /data && cd -P - && pwd",
+     "/data/lk\n/data/deep/real\n"),
+    # `set -P` is the session-wide `-P`, and GNU applies it to `cd` and
+    # `pwd` alike. With no logical name ever recorded, `pwd -L` has
+    # nothing else to report.
+    ("set -P; cd /data/lk; pwd", "/data/deep/real\n"),
+    ("set -P; cd /data/lk; pwd -L", "/data/deep/real\n"),
+    ('set -P; cd /data/lk; echo "$PWD"', "/data/deep/real\n"),
+    ("set -o physical; cd /data/lk; pwd", "/data/deep/real\n"),
+    ("set -P; set +P; cd /data/lk; pwd", "/data/lk\n"),
+    # A relative operand follows the session mode too.
+    ("set -P; cd /data/lk; cd ..; pwd", "/data/deep\n"),
 ]
 
 
@@ -182,6 +197,38 @@ async def test_logical_cwd_is_not_revalidated():
     r = await ws.execute("cd /data/lk && rm /data/lk && pwd && pwd -P")
     assert r.exit_code == 0, r.stderr.decode()
     assert r.stdout.decode() == "/data/lk\n/data/deep/real\n"
+
+
+@pytest.mark.asyncio
+async def test_cdpath_hit_announces_the_spelling_not_the_target():
+    # GNU prints the name it selected through $CDPATH even under -P,
+    # where the directory it lands on is the link's target.
+    ws = _ws()
+    await ws.execute("mkdir -p /data/c/t")
+    await ws.execute("ln -s /data/c/t /data/c/lnk")
+    r = await ws.execute("export CDPATH=/data/c; cd -P lnk; pwd")
+    assert r.exit_code == 0, r.stderr.decode()
+    assert r.stdout.decode() == "/data/c/lnk\n/data/c/t\n"
+
+
+@pytest.mark.asyncio
+async def test_set_o_rejects_a_name_bash_does_not_have():
+    ws = _ws()
+    r = await ws.execute("set -o bogusname")
+    assert r.exit_code == 2
+    assert r.stderr.decode() == "set: bogusname: invalid option name\n"
+
+
+@pytest.mark.asyncio
+async def test_set_o_keeps_what_it_applied_before_the_bad_name():
+    # GNU applies left to right and stops at the bad name, so an option
+    # named before it stays on and one named after it never lands.
+    ws = _ws()
+    r = await ws.execute("set -o pipefail -o bogus -o noclobber")
+    assert r.exit_code == 2
+    session = ws.get_session(ws.default_session_id)
+    assert session.shell_options.get("pipefail") is True
+    assert "noclobber" not in session.shell_options
 
 
 @pytest.mark.asyncio

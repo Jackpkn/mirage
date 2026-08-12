@@ -163,6 +163,20 @@ describe('symlinks (namespace-backed)', () => {
     // Everything that is not a shell builtin stays physical, the way a
     // real child process does: bash's own `ls ..` lists /data/deep here.
     ['cd /data/lk && ls ..', 'real\n'],
+    // -P announces the path as selected and lands on the target: the
+    // printed name and the resulting cwd deliberately disagree.
+    ['cd /data/lk && cd /data && cd -P -', '/data/lk\n'],
+    ['cd /data/lk && cd /data && cd -P - && pwd', '/data/lk\n/data/deep/real\n'],
+    // `set -P` is the session-wide -P, and GNU applies it to `cd` and
+    // `pwd` alike. With no logical name ever recorded, `pwd -L` has
+    // nothing else to report.
+    ['set -P; cd /data/lk; pwd', '/data/deep/real\n'],
+    ['set -P; cd /data/lk; pwd -L', '/data/deep/real\n'],
+    ['set -P; cd /data/lk; echo "$PWD"', '/data/deep/real\n'],
+    ['set -o physical; cd /data/lk; pwd', '/data/deep/real\n'],
+    ['set -P; set +P; cd /data/lk; pwd', '/data/lk\n'],
+    // A relative operand follows the session mode too.
+    ['set -P; cd /data/lk; cd ..; pwd', '/data/deep\n'],
   ]
 
   it.each(logicalCwdRows)('logical vs physical cwd: %s', async (command, expected) => {
@@ -172,6 +186,37 @@ describe('symlinks (namespace-backed)', () => {
     const r = await ws.execute(command)
     expect(dec(r.stderr)).toBe('')
     expect(dec(r.stdout)).toBe(expected)
+    await ws.close()
+  })
+
+  // GNU prints the name it selected through $CDPATH even under -P, where
+  // the directory it lands on is the link's target.
+  it('a $CDPATH hit announces the spelling, not the target', async () => {
+    const ws = buildWorkspace()
+    await ws.execute('mkdir -p /data/c/t')
+    await ws.execute('ln -s /data/c/t /data/c/lnk')
+    const r = await ws.execute('export CDPATH=/data/c; cd -P lnk; pwd')
+    expect(dec(r.stdout)).toBe('/data/c/lnk\n/data/c/t\n')
+    await ws.close()
+  })
+
+  it('set -o rejects a name bash does not have', async () => {
+    const ws = buildWorkspace()
+    const r = await ws.execute('set -o bogusname')
+    expect(r.exitCode).toBe(2)
+    expect(dec(r.stderr)).toBe('set: bogusname: invalid option name\n')
+    await ws.close()
+  })
+
+  // GNU applies left to right and stops at the bad name, so an option
+  // named before it stays on and one named after it never lands.
+  it('set -o keeps what it applied before the bad name', async () => {
+    const ws = buildWorkspace()
+    const r = await ws.execute('set -o pipefail -o bogus -o noclobber')
+    expect(r.exitCode).toBe(2)
+    const session = ws.getSession(ws.defaultSessionId)
+    expect(session.shellOptions.pipefail).toBe(true)
+    expect(session.shellOptions.noclobber).toBeUndefined()
     await ws.close()
   })
 

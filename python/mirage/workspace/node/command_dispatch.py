@@ -67,7 +67,8 @@ def _loop_levels(args: list[str]) -> int:
 
 def _split_mode_options(
         args: _CdArgs,
-        letters: str = "LPe@") -> tuple[_CdArgs, str | None, bool]:
+        letters: str = "LPe@",
+        default: bool = False) -> tuple[_CdArgs, str | None, bool]:
     """Split leading ``-L``/``-P`` option flags from the operands.
 
     Shared by ``cd`` (which also takes ``-e -@``) and ``pwd``, so the
@@ -79,6 +80,8 @@ def _split_mode_options(
     Args:
         args: The classified arguments after the command name.
         letters: The accepted option characters.
+        default: The mode to assume when the line names neither, which
+            is what ``set -P`` changes for the whole session.
 
     Returns:
         ``(operands, bad, physical)`` where ``operands`` are the non-option
@@ -88,7 +91,7 @@ def _split_mode_options(
     """
     operands: _CdArgs = []
     parsing = True
-    physical = False
+    physical = default
     for arg in args:
         s = arg.virtual if isinstance(arg, PathSpec) else str(arg)
         if parsing:
@@ -316,8 +319,13 @@ async def _run_argv(
                                                          stderr=err)
 
     # ── shell builtins ──────────────────────────
+    # `set -P` (`set -o physical`) is the session-wide version of the
+    # per-command flag, and GNU applies it to both `cd` and `pwd`.
+    shell_physical = bool(session.shell_options.get("physical"))
+
     if name == SB.PWD:
-        _, bad_opt, physical = _split_mode_options(operands, "LP")
+        _, bad_opt, physical = _split_mode_options(operands, "LP",
+                                                   shell_physical)
         if bad_opt is not None:
             err = (f"pwd: -{bad_opt}: invalid option\n"
                    f"pwd: usage: pwd [-LP]\n").encode()
@@ -331,7 +339,8 @@ async def _run_argv(
         return out, IOResult(), ExecutionNode(command="pwd", exit_code=0)
 
     if name == SB.CD:
-        cd_operands, bad_opt, physical = _split_mode_options(operands)
+        cd_operands, bad_opt, physical = _split_mode_options(
+            operands, default=shell_physical)
         if bad_opt is not None:
             err = (f"cd: -{bad_opt}: invalid option\n"
                    f"cd: usage: cd [-L|[-P [-e]] [-@]] [dir]\n").encode()

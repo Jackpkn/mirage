@@ -116,6 +116,9 @@ function loopLevels(args: readonly string[]): number {
 function splitModeOptions(
   args: (string | PathSpec)[],
   letters = 'LPe@',
+  // The mode to assume when the line names neither, which is what
+  // `set -P` changes for the whole session.
+  fallback = false,
 ): {
   operands: (string | PathSpec)[]
   bad: string | null
@@ -123,7 +126,7 @@ function splitModeOptions(
 } {
   const operands: (string | PathSpec)[] = []
   let parsing = true
-  let physical = false
+  let physical = fallback
   for (const arg of args) {
     const s = arg instanceof PathSpec ? arg.virtual : arg
     if (parsing) {
@@ -459,8 +462,12 @@ async function runArgv(
   }
 
   // Shell builtins
+  // `set -P` (`set -o physical`) is the session-wide version of the
+  // per-command flag, and GNU applies it to both `cd` and `pwd`.
+  const shellPhysical = session.shellOptions.physical === true
+
   if (name === SB.PWD) {
-    const { bad: pwdBad, physical: pwdPhysical } = splitModeOptions(operands, 'LP')
+    const { bad: pwdBad, physical: pwdPhysical } = splitModeOptions(operands, 'LP', shellPhysical)
     if (pwdBad !== null) {
       const err = new TextEncoder().encode(
         `pwd: -${pwdBad}: invalid option\npwd: usage: pwd [-LP]\n`,
@@ -478,7 +485,11 @@ async function runArgv(
   }
 
   if (name === SB.CD) {
-    const { operands: cdOperands, bad, physical } = splitModeOptions(operands)
+    const {
+      operands: cdOperands,
+      bad,
+      physical,
+    } = splitModeOptions(operands, 'LPe@', shellPhysical)
     const links = namespace.symlinkTargets()
     if (bad !== null) {
       const err = new TextEncoder().encode(
