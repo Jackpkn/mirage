@@ -441,6 +441,74 @@
         "stdout": "",
         "stderr": ""
       }
+    },
+    {
+      "id": "sym_cdpath_hit_announces_the_spelling",
+      "seq": 960087,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "mkdir -p /data/cdp/t && ln -s /data/cdp/t /data/cdp/lnk && (export CDPATH=/data/cdp; cd -P lnk; pwd)",
+      "expect": {
+        "exit": 0,
+        "stdout": "/data/cdp/lnk\n/data/cdp/t\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "sym_set_o_keeps_what_it_applied_before_the_bad_name",
+      "seq": 960088,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "(set -o pipefail -o bogus; false | true; echo \"pipeline=$?\") 2>/dev/null",
+      "expect": {
+        "exit": 0,
+        "stdout": "pipeline=1\n",
+        "stderr": ""
+      }
     }
   ]
 }
