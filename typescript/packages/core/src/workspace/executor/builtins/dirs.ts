@@ -39,6 +39,26 @@ function resolveTarget(combined: string, links: Map<string, string>, physical: b
   throw new CycleError(p)
 }
 
+// Join an operand to `cwd` WITHOUT simplifying `..`. resolvePath normalizes,
+// which is what -L wants but destroys the only input -P has: bash resolves a
+// link before applying the `..` after it, so `/link/..` is the link's parent
+// under -L and the target's parent under -P. Collapsing the `..` first makes
+// the two modes identical. resolveTarget normalizes for both modes, so
+// nothing downstream sees the raw form.
+function joinPath(path: string, cwd: string): string {
+  if (path.startsWith('/')) return path
+  return `${cwd.replace(/\/+$/, '')}/${path}`
+}
+
+// The operand as typed, which is what -P has to resolve. A relative operand
+// arrives as a PathSpec whose `virtual` was already normalized against cwd
+// (expand/classify/relative.ts), losing its `..` before cd is reached;
+// `rawPath` keeps the spelling.
+function typedPath(val: string | PathSpec): string {
+  if (typeof val === 'string') return val
+  return val.rawPath || val.virtual
+}
+
 function cdpathSearchable(target: string): boolean {
   if (target.startsWith('/') || target.startsWith('./') || target.startsWith('../')) {
     return false
@@ -52,7 +72,7 @@ function cdCandidates(
   session: Session,
 ): [string, boolean][] {
   const cwd = session.cwd
-  const fallback = resolvePath(raw, cwd)
+  const fallback = joinPath(raw, cwd)
   const cdpath = session.env.CDPATH
   if (!cdpath || !cdpathTarget || !cdpathSearchable(cdpathTarget)) {
     return [[fallback, false]]
@@ -60,7 +80,7 @@ function cdCandidates(
   const out: [string, boolean][] = []
   for (const entry of cdpath.split(':')) {
     const base = entry ? resolvePath(entry, cwd) : cwd
-    out.push([resolvePath(cdpathTarget, base), entry !== ''])
+    out.push([joinPath(cdpathTarget, base), entry !== ''])
   }
   out.push([fallback, false])
   return out
@@ -78,13 +98,13 @@ export async function handleCd(
 ): Promise<Result> {
   const raw = scopePath(path)
   const table = links ?? new Map<string, string>()
-  const candidates = cdCandidates(raw, cdpathTarget, session)
+  const candidates = cdCandidates(typedPath(path), cdpathTarget, session)
   let error: string | null = null
   for (const [candidate, announce] of candidates) {
-    let resolved = candidate
+    let resolved = posixNormpath(candidate)
     if (table.size > 0) {
       try {
-        resolved = resolveTarget(resolved, table, physical)
+        resolved = resolveTarget(candidate, table, physical)
       } catch (exc) {
         if (exc instanceof CycleError) {
           error = `cd: ${raw}: Too many levels of symbolic links\n`
