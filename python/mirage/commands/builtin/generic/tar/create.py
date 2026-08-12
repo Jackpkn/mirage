@@ -124,6 +124,24 @@ def removing_leading(prefix: str) -> str:
     return f"tar: Removing leading `{prefix}' from member names"
 
 
+def _announce_prefix(prefix: str, dropped: list[str],
+                     notices: list[str]) -> None:
+    """Announce a removed prefix the first time this run drops it.
+
+    Emitted in place rather than collected and prepended, because GNU
+    interleaves these with the per-operand errors in operand order.
+
+    Args:
+        prefix (str): the prefix `strip_prefix` removed, or "" for none.
+        dropped (list[str]): prefixes already announced; appended to.
+        notices (list[str]): the run's diagnostics; appended to in order.
+    """
+    if not prefix or prefix in dropped:
+        return
+    dropped.append(prefix)
+    notices.append(removing_leading(prefix))
+
+
 def member_name(spelled: str, kind: MemberKind) -> str:
     """The name tar records for a path spelled as the operand was typed.
 
@@ -209,6 +227,21 @@ async def plan_create(
                                   mounts=mounts,
                                   dereference=dereference,
                                   recurse=True)
+        # GNU announces the prefix it refuses to store before it reports
+        # what it could not read, and keeps both in operand order -- a
+        # later operand's notice must not jump ahead of an earlier
+        # operand's error. The operand's own spelling carries the prefix
+        # even when nothing under it can be archived, which is why
+        # `tar -cf a.tar sub/../missing` still announces `sub/../`.
+        _announce_prefix(strip_prefix(raw)[1], dropped, notices)
+        # Each name is then stripped on its own, so one operand can owe
+        # two notices: `tar -cf a.tar ..` drops `..` from the directory
+        # and `../` from everything under it.
+        named: list[tuple[str, Entry]] = []
+        for entry in scan.entries:
+            spelled = respell_one(entry.name_path, base, raw)
+            _announce_prefix(strip_prefix(spelled)[1], dropped, notices)
+            named.append((member_name(spelled, entry.kind), entry))
         for problem in scan.problems:
             shown = respell_one(problem.path, base, raw)
             if not problem.fatal:
@@ -221,16 +254,6 @@ async def plan_create(
         for crossing in scan.crossings:
             shown = member_name(respell_one(crossing, base, raw), "dir")
             notices.append(f"tar: {shown}: {OTHER_FILESYSTEM}")
-        # Each name is stripped on its own, so one operand can owe two
-        # notices: `tar -cf a.tar ..` drops `..` from the directory and
-        # `../` from everything under it.
-        named: list[tuple[str, Entry]] = []
-        for entry in scan.entries:
-            spelled = respell_one(entry.name_path, base, raw)
-            prefix = strip_prefix(spelled)[1]
-            if prefix and prefix not in dropped:
-                dropped.append(prefix)
-            named.append((member_name(spelled, entry.kind), entry))
         keep = set(pruned([name for name, _ in named], exclude))
         for name, entry in named:
             if name not in keep:
@@ -244,7 +267,6 @@ async def plan_create(
                        kind=entry.kind,
                        path=entry.read,
                        target=entry.target))
-    notices[:0] = [removing_leading(prefix) for prefix in dropped]
     if exit_code:
         # GNU closes a run that failed an operand with one trailer, after
         # everything it did manage to name.

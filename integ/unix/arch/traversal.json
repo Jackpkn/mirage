@@ -95,6 +95,38 @@
         "stdout": "./\ndeep/\ndeep/g.txt\n",
         "stderr": "tar: Removing leading `..' from member names\ntar: Removing leading `../' from member names\n"
       }
+    },
+    {
+      "id": "arch_tar_announces_a_prefix_it_cannot_archive",
+      "seq": 960091,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs"
+      ],
+      "command": "mkdir -p /data/tmiss2/sub && (cd /data/tmiss2 && tar -c -f /data/tmiss2.tar sub/../missing)",
+      "expect": {
+        "exit": 2,
+        "stdout": "",
+        "stderr": "tar: Removing leading `sub/../' from member names\ntar: sub/../missing: Cannot stat: No such file or directory\ntar: Exiting with failure status due to previous errors\n"
+      }
+    },
+    {
+      "id": "arch_tar_keeps_notices_in_operand_order",
+      "seq": 960092,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs"
+      ],
+      "command": "mkdir -p /data/tord/sub && echo o | tee /data/tord/file.txt > /dev/null && (cd /data/tord/sub && tar -c -f /data/tord.tar missing ../file.txt)",
+      "expect": {
+        "exit": 2,
+        "stdout": "",
+        "stderr": "tar: missing: Cannot stat: No such file or directory\ntar: Removing leading `../' from member names\ntar: Exiting with failure status due to previous errors\n"
+      }
     }
   ]
 }

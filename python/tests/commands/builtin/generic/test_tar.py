@@ -260,6 +260,51 @@ async def test_create_reports_a_missing_operand_and_exits_two():
 
 
 @pytest.mark.asyncio
+async def test_create_announces_a_prefix_it_could_not_archive():
+    # GNU names the prefix before it reports the operand it could not
+    # read, even though nothing under that operand is stored.
+    tree = _Tree({"/d/a.txt": b"x"}, dirs=("/d", "/d/sub"))
+    _, io_res = await _create(tree, [_raw("/d/missing", "sub/../missing")],
+                              c=True,
+                              f=_spec("/out.tar"))
+    assert io_res.exit_code == 2
+    assert io_res.stderr.decode().splitlines()[:2] == [
+        "tar: Removing leading `sub/../' from member names",
+        "tar: sub/../missing: Cannot stat: No such file or directory",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_create_keeps_notices_in_operand_order():
+    # A later operand's prefix notice must not jump ahead of an earlier
+    # operand's error: GNU emits diagnostics as it walks the operands.
+    tree = _Tree({"/base/file": b"x"}, dirs=("/base", "/base/sub"))
+    _, io_res = await _create(
+        tree, [_raw("/base/nope", "nope"),
+               _raw("/base/file", "../file")],
+        c=True,
+        f=_spec("/out.tar"))
+    assert io_res.stderr.decode().splitlines()[:2] == [
+        "tar: nope: Cannot stat: No such file or directory",
+        "tar: Removing leading `../' from member names",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_create_announces_before_a_later_operand_fails():
+    tree = _Tree({"/base/file": b"x"}, dirs=("/base", "/base/sub"))
+    _, io_res = await _create(
+        tree, [_raw("/base/file", "../file"),
+               _raw("/base/nope", "nope")],
+        c=True,
+        f=_spec("/out.tar"))
+    assert io_res.stderr.decode().splitlines()[:2] == [
+        "tar: Removing leading `../' from member names",
+        "tar: nope: Cannot stat: No such file or directory",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_create_refuses_an_empty_archive():
     tree = _Tree({})
     out, io_res = await _create(tree, [], c=True, f=_spec("/out.tar"))

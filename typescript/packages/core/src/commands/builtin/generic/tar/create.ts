@@ -127,6 +127,15 @@ function removingLeading(prefix: string): string {
   return `tar: Removing leading \`${prefix}' from member names`
 }
 
+// Announce a removed prefix the first time this run drops it. Emitted in
+// place rather than collected and prepended, because GNU interleaves
+// these with the per-operand errors in operand order.
+function announcePrefix(prefix: string, dropped: string[], notices: string[]): void {
+  if (prefix === '' || dropped.includes(prefix)) return
+  dropped.push(prefix)
+  notices.push(removingLeading(prefix))
+}
+
 // The name tar records for a path spelled as the operand was typed. The
 // traversal prefix is dropped (see stripPrefix) and a directory carries
 // the trailing slash that tells an extractor it holds no content. An
@@ -182,6 +191,21 @@ export async function planCreate(
       dereference: deps.dereference,
       recurse: true,
     })
+    // GNU announces the prefix it refuses to store before it reports what
+    // it could not read, and keeps both in operand order — a later
+    // operand's notice must not jump ahead of an earlier operand's error.
+    // The operand's own spelling carries the prefix even when nothing
+    // under it can be archived, which is why `tar -cf a.tar sub/../missing`
+    // still announces `sub/../`.
+    announcePrefix(stripPrefix(raw)[1], dropped, notices)
+    // Each name is then stripped on its own, so one operand can owe two
+    // notices: `tar -cf a.tar ..` drops `..` from the directory and `../`
+    // from everything under it.
+    const named = scan.entries.map((entry) => {
+      const spelled = respellOne(entry.namePath, base, raw)
+      announcePrefix(stripPrefix(spelled)[1], dropped, notices)
+      return [memberName(spelled, entry.kind), entry] as const
+    })
     for (const problem of scan.problems) {
       const shown = respellOne(problem.path, base, raw)
       if (problem.fatal !== true) {
@@ -196,15 +220,6 @@ export async function planCreate(
       const shown = memberName(respellOne(crossing, base, raw), 'dir')
       notices.push(`tar: ${shown}: ${OTHER_FILESYSTEM}`)
     }
-    // Each name is stripped on its own, so one operand can owe two
-    // notices: `tar -cf a.tar ..` drops `..` from the directory and `../`
-    // from everything under it.
-    const named = scan.entries.map((entry) => {
-      const spelled = respellOne(entry.namePath, base, raw)
-      const prefix = stripPrefix(spelled)[1]
-      if (prefix !== '' && !dropped.includes(prefix)) dropped.push(prefix)
-      return [memberName(spelled, entry.kind), entry] as const
-    })
     const keep = new Set(
       pruned(
         named.map(([name]) => name),
@@ -221,9 +236,6 @@ export async function planCreate(
       members.push({ name, kind: entry.kind, path: read, target: entry.target ?? '' })
     }
   }
-  // GNU names each prefix it removed, once, in the order the names it was
-  // stripping from came up.
-  notices.unshift(...dropped.map(removingLeading))
   // GNU closes a run that failed an operand with one trailer, after
   // everything it did manage to name.
   if (exitCode !== 0) notices.push(ERROR_TRAILER)
