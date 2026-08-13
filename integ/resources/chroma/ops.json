@@ -636,6 +636,19 @@
         "stdout": "/knowledge/CHANGELOG.md\n/knowledge/guides/auth.md\n/knowledge/guides/quickstart.md\n/knowledge/policies/archived.md\n/knowledge/policies/privacy.md\n/knowledge/policies/refunds.md\n",
         "stderr": ""
       }
+    },
+    {
+      "id": "chroma_find_bang_composes_with_empty",
+      "seq": 630056,
+      "targets": [
+        "chroma"
+      ],
+      "command": "find /knowledge/ -name '*.md' ! -empty",
+      "expect": {
+        "exit": 0,
+        "stdout": "/knowledge/CHANGELOG.md\n/knowledge/guides/auth.md\n/knowledge/guides/quickstart.md\n/knowledge/policies/archived.md\n/knowledge/policies/privacy.md\n/knowledge/policies/refunds.md\n",
+        "stderr": ""
+      }
     }
   ]
 }

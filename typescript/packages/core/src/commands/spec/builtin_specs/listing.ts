@@ -79,7 +79,12 @@ export const SPECS: Record<string, CommandSpec> = {
       new Option({ short: '-not' }),
     ],
     rest: new Operand({ type: 'path' }),
-    ignoreTokens: ['(', ')'],
+    // `!` is GNU's negation, spelled without a leading dash, so the rest
+    // slot's PATH kind would read it as a start point. It joins the parens
+    // here rather than becoming an Option: an option is matched by
+    // spelling and `-not` already covers that half, while these three are
+    // grammar the expression parser consumes.
+    ignoreTokens: ['(', ')', '!'],
   }),
   ls: new CommandSpec({
     options: [
