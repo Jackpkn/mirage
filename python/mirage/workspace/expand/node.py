@@ -182,6 +182,38 @@ async def expand_arith(
     return " ".join(parts)
 
 
+async def expand_concat_children(
+    ts_node: tree_sitter.Node,
+    session: Session,
+    execute_fn: Callable[..., Any],
+    call_stack: CallStack | None,
+) -> list[tuple[tree_sitter.Node, str]]:
+    """Expand a concatenation's children, keeping each child's node.
+
+    One walk serves two readers: expand_node joins the texts into the
+    word, expand_words reads the node types to decide which children
+    may contribute live glob characters. A $"..." in a concatenation
+    arrives as an anonymous `$` token followed by the string node; the
+    `$` is the translation marker, not text, and is dropped here. A
+    bare trailing `$` (a$) has no string after it and stays literal.
+
+    Args:
+        ts_node (tree_sitter.Node): the concatenation node.
+        session (Session): shell session state.
+        execute_fn (Callable): evaluator for command substitutions.
+        call_stack (CallStack | None): shell call stack.
+    """
+    pairs: list[tuple[tree_sitter.Node, str]] = []
+    children = ts_node.children
+    for position, child in enumerate(children):
+        if (child.type == "$" and position + 1 < len(children)
+                and children[position + 1].type == NT.STRING):
+            continue
+        pairs.append((child, await expand_node(child, session, execute_fn,
+                                               call_stack)))
+    return pairs
+
+
 async def expand_node(
     ts_node: tree_sitter.Node,
     session: Session,
@@ -279,19 +311,9 @@ async def expand_node(
         return prefix + str(value)
 
     if ntype == NT.CONCATENATION:
-        parts = []
-        children = ts_node.children
-        for position, child in enumerate(children):
-            # A $"..." in a concatenation arrives as an anonymous `$`
-            # token followed by the string node; the `$` is the
-            # translation marker, not text. A bare trailing `$` (a$)
-            # has no string after it and stays literal.
-            if (child.type == "$" and position + 1 < len(children)
-                    and children[position + 1].type == NT.STRING):
-                continue
-            parts.append(await expand_node(child, session, execute_fn,
-                                           call_stack))
-        return "".join(parts)
+        pairs = await expand_concat_children(ts_node, session, execute_fn,
+                                             call_stack)
+        return "".join(text for _, text in pairs)
 
     if ntype == NT.STRING:
         # The newline bytes of a multi-line string belong to no child

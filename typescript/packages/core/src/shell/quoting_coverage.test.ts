@@ -16,7 +16,7 @@ import { describe, expect, it } from 'vitest'
 import { OpsRegistry } from '../ops/registry.ts'
 import { RAMResource } from '../resource/ram/ram.ts'
 import { MountMode } from '../types.ts'
-import { getTestParser, stdoutStr } from '../workspace/fixtures/workspace_fixture.ts'
+import { getTestParser, stderrStr, stdoutStr } from '../workspace/fixtures/workspace_fixture.ts'
 import { Workspace } from '../workspace/workspace.ts'
 
 // Direct port of tests/shell/test_quoting_coverage.py.
@@ -619,6 +619,92 @@ describe('an empty splat element is still a word', () => {
     const ws = await makeQuotingWs()
     const r = await run(ws, line)
     expect(r.out).toBe(expected)
+    await ws.close()
+  })
+})
+
+// ── quoted globs stay literal ──────────────────────────────
+
+async function makeGlobbableWs(): Promise<Workspace> {
+  const parser = await getTestParser()
+  const ram = new RAMResource()
+  ram.store.files.set('/a.txt', ENC.encode('hello\n'))
+  ram.store.files.set('/b.txt', ENC.encode('world\n'))
+
+  const registry = new OpsRegistry()
+  registry.registerResource(ram)
+
+  const ws = new Workspace(
+    { '/data': ram },
+    { mode: MountMode.WRITE, ops: registry, shellParser: parser },
+  )
+  ws.getSession(ws.defaultSessionId).cwd = '/'
+  return ws
+}
+
+describe('quoted globs stay literal', () => {
+  it.each([
+    ["chmod 644 '/data/*.txt'"],
+    ['chmod 644 "/data/*.txt"'],
+    ['chmod 644 /data/\\*.txt'],
+    ['p=\'/data/*.txt\'; chmod 644 "$p"'],
+  ])('%s addresses the literal name', async (line) => {
+    const ws = await makeGlobbableWs()
+    const io = await ws.execute(line)
+    expect(io.exitCode).toBe(1)
+    expect(stderrStr(io)).toBe("chmod: cannot access '/data/*.txt': No such file or directory\n")
+    await ws.close()
+  })
+
+  it('touch creates the literal name', async () => {
+    const ws = await makeGlobbableWs()
+    const io = await ws.execute("touch '/data/*.txt' && ls /data")
+    expect(io.exitCode).toBe(0)
+    expect(stdoutStr(io)).toBe('*.txt\na.txt\nb.txt\n')
+    await ws.close()
+  })
+
+  it('rm removes only the literal name', async () => {
+    const ws = await makeGlobbableWs()
+    await ws.execute("touch '/data/*.txt'")
+    const io = await ws.execute("rm '/data/*.txt' && ls /data")
+    expect(io.exitCode).toBe(0)
+    expect(stdoutStr(io)).toBe('a.txt\nb.txt\n')
+    await ws.close()
+  })
+
+  it('for loop iterates once literally', async () => {
+    const ws = await makeGlobbableWs()
+    const r = await run(ws, 'for f in \'/data/*.txt\'; do echo "$f"; done')
+    expect(r.out).toBe('/data/*.txt\n')
+    await ws.close()
+  })
+
+  it('unquoted suffix still globs', async () => {
+    const ws = await makeGlobbableWs()
+    const r = await run(ws, 'echo "/data/"*.txt')
+    expect(r.out).toBe('/data/a.txt /data/b.txt\n')
+    await ws.close()
+  })
+
+  it('quoted star in a concatenation stays literal', async () => {
+    const ws = await makeGlobbableWs()
+    const r = await run(ws, "echo '/data/*'.txt")
+    expect(r.out).toBe('/data/*.txt\n')
+    await ws.close()
+  })
+
+  it('unquoted variable value still globs', async () => {
+    const ws = await makeGlobbableWs()
+    const r = await run(ws, "p='/data/*.txt'; echo $p")
+    expect(r.out).toBe('/data/a.txt /data/b.txt\n')
+    await ws.close()
+  })
+
+  it('quoted brace alternative stays literal', async () => {
+    const ws = await makeGlobbableWs()
+    const r = await run(ws, "echo {'/data/*.txt',ok}")
+    expect(r.out).toBe('/data/*.txt ok\n')
     await ws.close()
   })
 })

@@ -21,7 +21,7 @@ import { classifyParts } from './classify/index.ts'
 import type { NamespaceLinks } from '../../ops/config.ts'
 import { resolveGlobs } from './globs.ts'
 import { type ExecuteFn } from './node.ts'
-import { expandParts } from './parts.ts'
+import { expandWords } from './parts.ts'
 import { type ValueType } from '../../commands/spec/types.ts'
 import { specForCommand, specWordBases, specWordKinds } from './spec_hints.ts'
 import type { TSNodeLike } from '../../shell/types.ts'
@@ -81,7 +81,9 @@ export async function expandArgv(
   registry: MountRegistry,
   namespace: NamespaceLinks | null = null,
 ): Promise<Argv> {
-  const expanded = await expandParts(parts, session, executeFn, callStack)
+  const wordsMeta = await expandWords(parts, session, executeFn, callStack)
+  const expanded = wordsMeta.map((w) => w.text)
+  const globbable = wordsMeta.map((w) => w.globbable)
   if (expanded.length === 0) return new Argv('', [], [])
   // A command name may span several leading words (git-style, e.g.
   // `gws docs documents get`); the registry says how many.
@@ -97,9 +99,17 @@ export async function expandArgv(
   // applies again. A CLI cannot reach here at all, since registerCli
   // refuses a shell builtin's name.
   const shadowed = Object.hasOwn(session.functions, name)
-  const lineWords = shadowed
-    ? [...expanded]
-    : [...expanded.slice(0, consumed), ...endOptionsAfterProgram(name, expanded.slice(consumed))]
+  const line = expanded.slice(consumed)
+  const tail = shadowed ? line : endOptionsAfterProgram(name, line)
+  if (tail.length > line.length) {
+    // One `--` was inserted; give it a flag slot so the words after it
+    // keep their own. The first index where the lists disagree is the
+    // insertion (ambiguity only arises between equal `--` words, where
+    // either slot reads the same).
+    const at = tail.findIndex((w, i) => i >= line.length || w !== line[i])
+    globbable.splice(consumed + at, 0, false)
+  }
+  const lineWords = [...expanded.slice(0, consumed), ...tail]
 
   const policy = wordPolicy(route(name, session, registry))
   let wordKinds: (ValueType | null)[] | null = null
@@ -117,23 +127,24 @@ export async function expandArgv(
   }
 
   let classified = classifyParts(lineWords, registry, session.cwd, wordKinds, wordBases)
-  // set -f: glob words become literal paths for every consumer,
-  // including backend pushdown, so `cat *.txt` looks up a file
-  // literally named `*.txt` like bash with noglob.
-  if (session.shellOptions.noglob === true) {
-    classified = classified.map((item) =>
-      item instanceof PathSpec && item.pattern !== null
-        ? new PathSpec({
-            virtual: item.virtual,
-            directory: item.directory,
-            pattern: null,
-            resolved: item.resolved,
-            resourcePath: item.resourcePath,
-            rawPath: item.rawPath,
-          })
-        : item,
-    )
-  }
+  // A glob word becomes a literal path for every consumer, including
+  // backend pushdown, when bash would not expand it: under set -f
+  // (noglob), or when its glob characters were all quoted — `cat
+  // '*.txt'` looks up a file literally named `*.txt`, and so does
+  // `cat *.txt` with noglob on.
+  const noglob = session.shellOptions.noglob === true
+  classified = classified.map((item, i) =>
+    item instanceof PathSpec && item.pattern !== null && (noglob || globbable[i] !== true)
+      ? new PathSpec({
+          virtual: item.virtual,
+          directory: item.directory,
+          pattern: null,
+          resolved: item.resolved,
+          resourcePath: item.resourcePath,
+          rawPath: item.rawPath,
+        })
+      : item,
+  )
   // A glob word is resolved by whoever consumes it, exactly once:
   // WordPolicy.SHELL words get matches here; mount commands keep
   // patterns for backend pushdown; unknown names fail without

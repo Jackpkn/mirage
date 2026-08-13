@@ -18,7 +18,14 @@ import { runWithSession } from '../context/session_context.ts'
 import { PathSpec } from '../types.ts'
 import { Session } from '../workspace/session/session.ts'
 import { enoent } from './errors.ts'
-import { expandPattern, hasGlob, isWordShaped, resolveGlobWith, spellMatch } from './glob_walk.ts'
+import {
+  expandPattern,
+  hasGlob,
+  hasUnescapedGlob,
+  isWordShaped,
+  resolveGlobWith,
+  spellMatch,
+} from './glob_walk.ts'
 import { rstripSlash, stripSlash } from './slash.ts'
 
 const TREE: Record<string, string[]> = {
@@ -64,6 +71,24 @@ describe('hasGlob', () => {
     expect(hasGlob('x?')).toBe(true)
     expect(hasGlob('[ab]')).toBe(true)
     expect(hasGlob('page.md')).toBe(false)
+  })
+})
+
+describe('hasUnescapedGlob', () => {
+  it('honors backslash quoting', () => {
+    expect(hasUnescapedGlob('Demo_*')).toBe(true)
+    expect(hasUnescapedGlob('x?')).toBe(true)
+    expect(hasUnescapedGlob('[ab]')).toBe(true)
+    expect(hasUnescapedGlob('page.md')).toBe(false)
+    expect(hasUnescapedGlob('\\*.txt')).toBe(false)
+    expect(hasUnescapedGlob('a\\?b')).toBe(false)
+    expect(hasUnescapedGlob('\\[ab]')).toBe(false)
+    expect(hasUnescapedGlob('a\\*b*c')).toBe(true)
+    // An escaped backslash does not quote what follows it.
+    expect(hasUnescapedGlob('\\\\*')).toBe(true)
+    expect(hasUnescapedGlob('\\\\\\*')).toBe(false)
+    // A trailing backslash quotes nothing.
+    expect(hasUnescapedGlob('a\\')).toBe(false)
   })
 })
 

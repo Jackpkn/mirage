@@ -41,6 +41,29 @@ def has_glob(segment: str) -> bool:
     return any(ch in segment for ch in GLOB_CHARS)
 
 
+def has_unescaped_glob(text: str) -> bool:
+    """Whether raw shell text carries a glob character no backslash quotes.
+
+    Reads the text the way bash reads an unquoted word: ``\\*`` is a
+    quoted star (pathname expansion never fires on it), a bare ``*`` is
+    live. Used on tree-sitter word text, before escapes are stripped.
+
+    Args:
+        text (str): a word's raw source text, escapes intact.
+    """
+    i = 0
+    n = len(text)
+    while i < n:
+        ch = text[i]
+        if ch == "\\":
+            i += 2
+            continue
+        if ch in GLOB_CHARS:
+            return True
+        i += 1
+    return False
+
+
 def escape_glob(text: str) -> str:
     """Encode text so the glob matcher reads every character literally.
 

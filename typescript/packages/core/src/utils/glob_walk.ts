@@ -29,6 +29,27 @@ export function hasGlob(segment: string): boolean {
 }
 
 /**
+ * Whether raw shell text carries a glob character no backslash quotes.
+ *
+ * Reads the text the way bash reads an unquoted word: `\*` is a quoted
+ * star (pathname expansion never fires on it), a bare `*` is live. Used
+ * on tree-sitter word text, before escapes are stripped.
+ */
+export function hasUnescapedGlob(text: string): boolean {
+  let i = 0
+  while (i < text.length) {
+    const ch = text[i]
+    if (ch === '\\') {
+      i += 2
+      continue
+    }
+    if (ch !== undefined && GLOB_CHARS.includes(ch)) return true
+    i += 1
+  }
+  return false
+}
+
+/**
  * Encode text so the glob matcher reads every character literally.
  *
  * fnmatch has no escape character, so each special is wrapped in its own

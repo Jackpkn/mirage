@@ -647,3 +647,82 @@ def test_control_char_survives_command_substitution():
     ws = _ws_with_paths()
     io = _exec(ws, r"""echo "$(printf '/data/x\ty')" """)
     assert _stdout(io) == b"/data/x\ty\n"
+
+
+# ── quoted globs stay literal ──────────────────────────────
+
+
+def _ws_with_globbables():
+    ram = RAMResource()
+    ram._store.files["/a.txt"] = b"hello\n"
+    ram._store.files["/b.txt"] = b"world\n"
+    ws = Workspace(resources={"/data/": (ram, MountMode.WRITE)}, )
+    ws.get_session(ws.default_session_id).cwd = "/"
+    return ws
+
+
+def _stderr(io) -> bytes:
+    if io.stderr is None:
+        return b""
+    if isinstance(io.stderr, bytes):
+        return io.stderr
+    return b""
+
+
+@pytest.mark.parametrize("line", [
+    "chmod 644 '/data/*.txt'",
+    'chmod 644 "/data/*.txt"',
+    "chmod 644 /data/\\*.txt",
+    "p='/data/*.txt'; chmod 644 \"$p\"",
+])
+def test_quoted_glob_operand_is_the_literal_name(line):
+    ws = _ws_with_globbables()
+    io = _exec(ws, line)
+    assert io.exit_code == 1
+    assert _stderr(io) == (b"chmod: cannot access '/data/*.txt': "
+                           b"No such file or directory\n")
+
+
+def test_quoted_glob_touch_creates_the_literal_name():
+    ws = _ws_with_globbables()
+    io = _exec(ws, "touch '/data/*.txt' && ls /data")
+    assert io.exit_code == 0
+    assert _stdout(io) == b"*.txt\na.txt\nb.txt\n"
+
+
+def test_quoted_glob_rm_removes_only_the_literal_name():
+    ws = _ws_with_globbables()
+    _exec(ws, "touch '/data/*.txt'")
+    io = _exec(ws, "rm '/data/*.txt' && ls /data")
+    assert io.exit_code == 0
+    assert _stdout(io) == b"a.txt\nb.txt\n"
+
+
+def test_quoted_glob_for_loop_iterates_once_literally():
+    ws = _ws_with_globbables()
+    io = _exec(ws, "for f in '/data/*.txt'; do echo \"$f\"; done")
+    assert _stdout(io) == b"/data/*.txt\n"
+
+
+def test_unquoted_suffix_still_globs():
+    ws = _ws_with_globbables()
+    io = _exec(ws, 'echo "/data/"*.txt')
+    assert _stdout(io) == b"/data/a.txt /data/b.txt\n"
+
+
+def test_quoted_star_in_concatenation_stays_literal():
+    ws = _ws_with_globbables()
+    io = _exec(ws, "echo '/data/*'.txt")
+    assert _stdout(io) == b"/data/*.txt\n"
+
+
+def test_unquoted_variable_value_still_globs():
+    ws = _ws_with_globbables()
+    io = _exec(ws, "p='/data/*.txt'; echo $p")
+    assert _stdout(io) == b"/data/a.txt /data/b.txt\n"
+
+
+def test_quoted_brace_alternative_stays_literal():
+    ws = _ws_with_globbables()
+    io = _exec(ws, "echo {'/data/*.txt',ok}")
+    assert _stdout(io) == b"/data/*.txt ok\n"

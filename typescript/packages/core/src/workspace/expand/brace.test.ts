@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { describe, expect, it } from 'vitest'
-import { expandTemplate, makeInert, substitute } from './brace.ts'
+import { expandTemplate, makeInert, substitute, templateGlobbable } from './brace.ts'
 
 const EXPAND_CASES: [string, string[]][] = [
   ['{a,b,c}', ['a', 'b', 'c']],
@@ -96,5 +96,22 @@ describe('substitute', () => {
 
   it('is identity without atoms', () => {
     expect(substitute('plain', ['unused'])).toBe('plain')
+  })
+})
+
+describe('templateGlobbable', () => {
+  it('reads literal text', () => {
+    expect(templateGlobbable('a*b', new Set())).toBe(true)
+    expect(templateGlobbable('[ab].txt', new Set())).toBe(true)
+    expect(templateGlobbable('plain.txt', new Set())).toBe(false)
+    expect(templateGlobbable('a\\*b', new Set())).toBe(false)
+  })
+
+  it('counts only live atoms', () => {
+    const word = `pre${makeInert(0)}${makeInert(1)}.txt`
+    expect(templateGlobbable(word, new Set([0]))).toBe(true)
+    expect(templateGlobbable(word, new Set([1]))).toBe(true)
+    expect(templateGlobbable(word, new Set())).toBe(false)
+    expect(templateGlobbable(word, new Set([2]))).toBe(false)
   })
 })

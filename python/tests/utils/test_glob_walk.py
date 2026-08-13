@@ -20,9 +20,9 @@ from mirage.accessor.base import NOOPAccessor
 from mirage.context import reset_current_session, set_current_session
 from mirage.types import HiddenPaths, PathSpec
 from mirage.utils.glob_walk import (DEFAULT_MAX_GLOB_MATCHES, expand_pattern,
-                                    has_glob, is_word_shaped,
-                                    make_resolve_glob, resolve_glob_with,
-                                    spell_match)
+                                    has_glob, has_unescaped_glob,
+                                    is_word_shaped, make_resolve_glob,
+                                    resolve_glob_with, spell_match)
 from mirage.workspace.session.session import Session
 
 TREE = {
@@ -74,6 +74,22 @@ def test_has_glob():
     assert has_glob("x?")
     assert has_glob("[ab]")
     assert not has_glob("page.md")
+
+
+def test_has_unescaped_glob():
+    assert has_unescaped_glob("Demo_*")
+    assert has_unescaped_glob("x?")
+    assert has_unescaped_glob("[ab]")
+    assert not has_unescaped_glob("page.md")
+    assert not has_unescaped_glob("\\*.txt")
+    assert not has_unescaped_glob("a\\?b")
+    assert not has_unescaped_glob("\\[ab]")
+    assert has_unescaped_glob("a\\*b*c")
+    # An escaped backslash does not quote what follows it.
+    assert has_unescaped_glob("\\\\*")
+    assert not has_unescaped_glob("\\\\\\*")
+    # A trailing backslash quotes nothing.
+    assert not has_unescaped_glob("a\\")
 
 
 @pytest.mark.asyncio

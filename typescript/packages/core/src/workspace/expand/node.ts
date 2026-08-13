@@ -203,6 +203,35 @@ export async function expandArith(
   return parts.join(' ')
 }
 
+/**
+ * Expand a concatenation's children, keeping each child's node.
+ *
+ * One walk serves two readers: expandNode joins the texts into the word,
+ * expandWords reads the node types to decide which children may
+ * contribute live glob characters. A $"..." in a concatenation arrives
+ * as an anonymous `$` token followed by the string node; the `$` is the
+ * translation marker, not text, and is dropped here. A bare trailing `$`
+ * (a$) has no string after it and stays literal.
+ */
+export async function expandConcatChildren(
+  tsNode: TSNodeLike,
+  session: Session,
+  executeFn: ExecuteFn,
+  callStack: CallStack | null,
+): Promise<[TSNodeLike, string][]> {
+  const pairs: [TSNodeLike, string][] = []
+  const children = tsNode.children
+  for (let position = 0; position < children.length; position += 1) {
+    const child = children[position]
+    if (child === undefined) continue
+    if (child.type === '$' && children[position + 1]?.type === NT.STRING) {
+      continue
+    }
+    pairs.push([child, await expandNode(child, session, executeFn, callStack)])
+  }
+  return pairs
+}
+
 export async function expandNode(
   tsNode: TSNodeLike,
   session: Session,
@@ -309,21 +338,8 @@ export async function expandNode(
   }
 
   if (ntype === NT.CONCATENATION) {
-    const parts: string[] = []
-    const children = tsNode.children
-    for (let position = 0; position < children.length; position += 1) {
-      const child = children[position]
-      if (child === undefined) continue
-      // A $"..." in a concatenation arrives as an anonymous `$` token
-      // followed by the string node; the `$` is the translation
-      // marker, not text. A bare trailing `$` (a$) has no string after
-      // it and stays literal.
-      if (child.type === '$' && children[position + 1]?.type === NT.STRING) {
-        continue
-      }
-      parts.push(await expandNode(child, session, executeFn, callStack))
-    }
-    return parts.join('')
+    const pairs = await expandConcatChildren(tsNode, session, executeFn, callStack)
+    return pairs.map(([, text]) => text).join('')
   }
 
   if (ntype === NT.STRING) {

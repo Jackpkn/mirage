@@ -35,6 +35,15 @@ SPLIT_TYPES = frozenset({
     NT.EXPANSION,
 })
 
+# Word nodes whose entire expansion is quoted text: glob characters in
+# them are literal, so pathname expansion never fires on their account.
+QUOTED_WORD_TYPES = frozenset({
+    NT.STRING,
+    NT.RAW_STRING,
+    NT.ANSI_C_STRING,
+    NT.TRANSLATED_STRING,
+})
+
 # Node types that may carry a brace-expandable word.
 BRACE_WORD_TYPES = frozenset({
     NT.CONCATENATION,
