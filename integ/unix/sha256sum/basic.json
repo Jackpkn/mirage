@@ -176,8 +176,6 @@
         "gridfs",
         "s3-prefix",
         "gridfs-prefix",
-        "hf",
-        "hf-prefix",
         "dropbox",
         "dropbox-root",
         "onedrive",
