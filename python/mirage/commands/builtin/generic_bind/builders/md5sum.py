@@ -38,9 +38,9 @@ async def md5sum(
 ) -> tuple[ByteSource | None, IOResult]:
     resolved = await resolve_or_empty(ops, accessor, paths, index)
     return await md5sum_generic(resolved, list(texts),
-                       CommandOpts(stdin=stdin, flags=flags, cwd=cwd),
-                       dir_aware_stat(ops, accessor, index),
-                       bound_op(ops.read_stream, accessor, index))
+                                CommandOpts(stdin=stdin, flags=flags, cwd=cwd),
+                                dir_aware_stat(ops, accessor, index),
+                                bound_op(ops.read_stream, accessor, index))
 
 
 BUILDER = Builder('md5sum', md5sum, None, False, None, read=True)

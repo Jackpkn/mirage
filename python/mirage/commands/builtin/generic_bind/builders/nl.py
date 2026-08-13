@@ -37,9 +37,9 @@ async def nl(
 ) -> tuple[ByteSource | None, IOResult]:
     resolved = await resolve_or_empty(ops, accessor, paths, index)
     return await nl_generic(resolved, list(texts),
-                       CommandOpts(stdin=stdin, flags=flags),
-                       dir_aware_stat(ops, accessor, index),
-                       bound_op(ops.read_stream, accessor, index))
+                            CommandOpts(stdin=stdin, flags=flags),
+                            dir_aware_stat(ops, accessor, index),
+                            bound_op(ops.read_stream, accessor, index))
 
 
 BUILDER = Builder('nl', nl, None, False, None, read=True)

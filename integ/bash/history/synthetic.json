@@ -25,6 +25,19 @@
         "stdout": "/.bash_history\n",
         "stderr": ""
       }
+    },
+    {
+      "id": "history_head_reports_and_continues",
+      "seq": 310049,
+      "targets": [
+        "ram-history"
+      ],
+      "command": "head -c 1 /.bash_history /nope",
+      "expect": {
+        "exit": 1,
+        "stdout": "==> /.bash_history <==\n#",
+        "stderr": "head: /nope: No such file or directory\n"
+      }
     }
   ]
 }

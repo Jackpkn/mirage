@@ -16,10 +16,10 @@ from mirage.accessor.base import Accessor
 from mirage.cache.index import NULL_INDEX, IndexCacheStore
 from mirage.commands.builtin.generic_bind.adapter import (Builder, CommandIO,
                                                           Operation)
-from mirage.commands.spec import SPECS
-from mirage.commands.spec.types import FlagValue, FlagView
 from mirage.commands.builtin.utils.output import format_optional_records
 from mirage.commands.errors import UsageError
+from mirage.commands.spec import SPECS
+from mirage.commands.spec.types import FlagValue, FlagView
 from mirage.io.types import ByteSource, IOResult
 from mirage.types import FileType, PathSpec
 

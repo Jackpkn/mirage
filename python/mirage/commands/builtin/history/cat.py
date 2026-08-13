@@ -42,7 +42,8 @@ async def cat(
     **flags: FlagValue,
 ) -> tuple[ByteSource | None, IOResult]:
     resolved = await resolve_or_empty(IO, accessor, paths, index)
-    return await cat_generic(resolved, list(texts),
+    return await cat_generic(resolved,
+                             list(texts),
                              CommandOpts(stdin=stdin, flags=flags),
                              dir_aware_stat(IO, accessor, index),
                              bound_op(IO.read_stream, accessor, index),

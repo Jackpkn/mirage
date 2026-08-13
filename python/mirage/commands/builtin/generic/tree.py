@@ -1,9 +1,13 @@
 import posixpath
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import dataclass
 from functools import partial
 
 from mirage.cache.index import NULL_INDEX, IndexCacheStore
 from mirage.commands.builtin.utils.output import format_records
+from mirage.commands.config import CommandOpts
+from mirage.commands.spec import SPECS
+from mirage.commands.spec.types import FlagValue, FlagView
 from mirage.context import mount_allowed
 from mirage.io.types import IOResult
 from mirage.ops.types import MountView, ReaddirPath, StatPath
@@ -11,11 +15,6 @@ from mirage.types import FileStat, FileType, PathSpec
 from mirage.utils.errors import WALK_ERRORS
 from mirage.utils.fnmatch import fnmatch
 from mirage.utils.key_prefix import rekey
-from collections.abc import Mapping
-from dataclasses import dataclass
-from mirage.commands.config import CommandOpts
-from mirage.commands.spec import SPECS
-from mirage.commands.spec.types import FlagValue, FlagView
 
 # GNU tree's ASCII (C-locale) drawing set, matching `tree` in the battery's
 # docker oracle; the vertical/indent continuations are 4 columns wide.
@@ -328,8 +327,16 @@ def parse_flags(flags: Mapping[str, FlagValue]) -> TreeFlags:
     )
 
 
-async def tree_generic(paths, texts, opts: CommandOpts, readdir, stat, *,
-                       index, stat_path=None, readdir_path=None, mounts=None):
+async def tree_generic(paths,
+                       texts,
+                       opts: CommandOpts,
+                       readdir,
+                       stat,
+                       *,
+                       index,
+                       stat_path=None,
+                       readdir_path=None,
+                       mounts=None):
     parsed = parse_flags(opts.flags)
     return await tree(paths[0],
                       readdir=readdir,

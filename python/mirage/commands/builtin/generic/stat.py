@@ -1,17 +1,16 @@
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 
 from mirage.commands.builtin.utils.formatting import _ls_mode_string
 from mirage.commands.builtin.utils.output import format_records
+from mirage.commands.config import CommandOpts
+from mirage.commands.spec import SPECS
+from mirage.commands.spec.types import FlagValue, FlagView
 from mirage.core.timeutil import iso_to_epoch
 from mirage.io.types import ByteSource, IOResult
 from mirage.ops.types import LinkView
 from mirage.types import FileStat, FileType, PathSpec
 from mirage.utils.errors import FS_ERRORS, fs_error_line
-from collections.abc import Mapping
-from mirage.commands.config import CommandOpts
-from mirage.commands.spec import SPECS
-from mirage.commands.spec.types import FlagValue, FlagView
 
 _STR_DIRECTIVES = frozenset("nNF")
 

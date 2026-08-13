@@ -1,16 +1,15 @@
 import fnmatch
 import io
 import zipfile
-from collections.abc import Awaitable, Callable
-
-from mirage.io.types import ByteSource, IOResult
-from mirage.types import PathSpec
-from mirage.utils.key_prefix import mount_prefix_of
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
+
 from mirage.commands.config import CommandOpts
 from mirage.commands.spec import SPECS
 from mirage.commands.spec.types import FlagValue, FlagView
+from mirage.io.types import ByteSource, IOResult
+from mirage.types import PathSpec
+from mirage.utils.key_prefix import mount_prefix_of
 
 # Info-ZIP's wording and spacing, verbatim (two spaces after the colon).
 CAUTION_PREFIX = "caution: filename not matched:  "

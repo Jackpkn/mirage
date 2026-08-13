@@ -1,17 +1,15 @@
 import re
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import dataclass
 
 from mirage.commands.builtin.utils.lines import split_lines
 from mirage.commands.builtin.utils.stream import _read_stdin_async
-from mirage.commands.spec.types import CommandName
+from mirage.commands.config import CommandOpts
+from mirage.commands.spec import SPECS
+from mirage.commands.spec.types import CommandName, FlagValue, FlagView
 from mirage.commands.spec.usage import extra_operand_error
 from mirage.io.types import ByteSource, IOResult
 from mirage.types import PathSpec
-from collections.abc import Mapping
-from dataclasses import dataclass
-from mirage.commands.config import CommandOpts
-from mirage.commands.spec import SPECS
-from mirage.commands.spec.types import FlagValue, FlagView
 
 
 def _strip_path(path: str, strip_count: int) -> str:

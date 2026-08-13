@@ -37,9 +37,9 @@ async def unexpand(
 ) -> tuple[ByteSource | None, IOResult]:
     resolved = await resolve_or_empty(ops, accessor, paths, index)
     return await unexpand_generic(resolved, list(texts),
-                       CommandOpts(stdin=stdin, flags=flags),
-                       dir_aware_stat(ops, accessor, index),
-                       bound_op(ops.read_bytes, accessor, index))
+                                  CommandOpts(stdin=stdin, flags=flags),
+                                  dir_aware_stat(ops, accessor, index),
+                                  bound_op(ops.read_bytes, accessor, index))
 
 
 BUILDER = Builder('unexpand', unexpand, None, False, None, read=True)

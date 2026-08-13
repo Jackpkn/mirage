@@ -19,10 +19,10 @@ from mirage.cache.index import NULL_INDEX, IndexCacheStore
 from mirage.commands.builtin.generic.cp import walk
 from mirage.commands.builtin.generic_bind.adapter import (Builder, CommandIO,
                                                           Operation)
-from mirage.commands.spec import SPECS
-from mirage.commands.spec.types import FlagValue, FlagView
 from mirage.commands.builtin.utils.output import format_optional_records
 from mirage.commands.builtin.utils.verbose import removal_lines
+from mirage.commands.spec import SPECS
+from mirage.commands.spec.types import FlagValue, FlagView
 from mirage.io.types import ByteSource, IOResult
 from mirage.types import FileType, PathSpec
 

@@ -241,7 +241,7 @@ async def _stat_refusing_dirs(ops: CommandIO, accessor: Accessor,
                               index: IndexCacheStore,
                               path: PathSpec) -> FileStat:
     try:
-        st = await ops.stat(accessor, path, index)
+        st: FileStat = await ops.stat(accessor, path, index)
     except FileNotFoundError:
         if await _is_implicit_dir(ops, accessor, path, index):
             raise eisdir(path) from None

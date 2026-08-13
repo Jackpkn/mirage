@@ -1,23 +1,20 @@
-from collections.abc import Awaitable, Callable
+import posixpath
+from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import dataclass
 from typing import Any
 
-from mirage.commands.builtin.sed_helper import (SED_NO_INPUT_EXIT,
-                                                SED_NO_INPUT_FILES,
-                                                _execute_program,
-                                                _parse_one_command,
-                                                _parse_program)
 from mirage.commands.builtin.utils.stream import _read_stdin_async
-from mirage.io.types import ByteSource, IOResult
-from mirage.types import PathSpec
-from mirage.utils.errors import FS_ERRORS, fs_error_line
-import posixpath
-from collections.abc import Mapping
-from dataclasses import dataclass
-from mirage.commands.builtin.sed_helper import SED_MISSING_SCRIPT
 from mirage.commands.config import CommandOpts
 from mirage.commands.spec import SPECS
 from mirage.commands.spec.types import FlagValue, FlagView
+from mirage.io.types import ByteSource, IOResult
+from mirage.types import PathSpec
+from mirage.utils.errors import FS_ERRORS, fs_error_line
 from mirage.utils.key_prefix import mount_key, mount_prefix_of
+
+from mirage.commands.builtin.sed_helper import (  # isort: skip
+    SED_MISSING_SCRIPT, SED_NO_INPUT_EXIT, SED_NO_INPUT_FILES,
+    _execute_program, _parse_one_command, _parse_program)
 
 
 def _is_simple_sub(commands: list[dict[str, Any]], suppress: bool) -> bool:

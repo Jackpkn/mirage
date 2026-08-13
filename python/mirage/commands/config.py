@@ -70,6 +70,7 @@ class CommandOpts:
     cwd: PathSpec | str = "/"
     mount_prefix: str = ""
 
+
 HELP_OPTION = Option(
     long="--help",
     type="bool",

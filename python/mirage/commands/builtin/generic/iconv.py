@@ -1,13 +1,12 @@
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import dataclass
 
 from mirage.commands.builtin.utils.stream import _read_stdin_async
-from mirage.io.types import ByteSource, IOResult
-from mirage.types import PathSpec
-from collections.abc import Mapping
-from dataclasses import dataclass
 from mirage.commands.config import CommandOpts
 from mirage.commands.spec import SPECS
 from mirage.commands.spec.types import FlagValue, FlagView
+from mirage.io.types import ByteSource, IOResult
+from mirage.types import PathSpec
 
 
 async def iconv(

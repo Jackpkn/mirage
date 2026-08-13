@@ -6,8 +6,7 @@ from typing import Any, Callable
 
 from mirage.cache.read_through import cache_aware_read
 from mirage.commands.builtin.tail_helper import number_flag_error
-from mirage.commands.builtin.utils.operands import (operands_io,
-                                                    split_readable)
+from mirage.commands.builtin.utils.operands import operands_io, split_readable
 from mirage.commands.builtin.utils.stream import _resolve_source
 from mirage.commands.config import CommandOpts
 from mirage.commands.spec import SPECS

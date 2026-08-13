@@ -1,22 +1,21 @@
 import io
 import posixpath
 import zipfile
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 
 from mirage.commands.builtin.generic.archive.types import MemberKind
 from mirage.commands.builtin.generic.archive.walk import (OTHER_FILESYSTEM,
                                                           StatFn, WalkFn,
                                                           scan_operand)
+from mirage.commands.config import CommandOpts
+from mirage.commands.spec import SPECS
+from mirage.commands.spec.types import FlagValue, FlagView
 from mirage.io.types import ByteSource, IOResult
 from mirage.ops.types import LinkView, MountView
 from mirage.types import PathSpec
 from mirage.utils.fnmatch import fnmatch
 from mirage.utils.path import respell_one
-from collections.abc import Mapping
-from mirage.commands.config import CommandOpts
-from mirage.commands.spec import SPECS
-from mirage.commands.spec.types import FlagValue, FlagView
 
 # Info-ZIP 3.0's wording, pinned on debian:stable-slim. A warning is
 # indented with a tab and -q silences it; the "Nothing to do!" error is
@@ -286,8 +285,15 @@ def parse_flags(flags: Mapping[str, FlagValue]) -> ZipFlags:
     )
 
 
-async def zip_generic(paths, texts, opts: CommandOpts, read_bytes,
-                      write_bytes, stat, walk, links=None, mounts=None):
+async def zip_generic(paths,
+                      texts,
+                      opts: CommandOpts,
+                      read_bytes,
+                      write_bytes,
+                      stat,
+                      walk,
+                      links=None,
+                      mounts=None):
     parsed = parse_flags(opts.flags)
     return await zip_cmd(paths,
                          read_bytes=read_bytes,

@@ -1,22 +1,20 @@
 import difflib
 import re
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 
 from mirage.commands.builtin.diff_helper import _ed_script, _normal_diff
 from mirage.commands.builtin.utils.lines import split_lines_keepends
+from mirage.commands.config import CommandOpts
 from mirage.commands.errors import UsageError
-from mirage.commands.spec.types import CommandName
+from mirage.commands.spec import SPECS
+from mirage.commands.spec.types import CommandName, FlagValue, FlagView
 from mirage.commands.spec.usage import extra_operand_error
 from mirage.io.types import ByteSource, IOResult
 from mirage.types import FileStat, FileType, PathSpec
 from mirage.utils.errors import FS_ERRORS, format_fs_error
 from mirage.utils.key_prefix import rekey
 from mirage.utils.path import gnu_basename
-from collections.abc import Mapping
-from mirage.commands.config import CommandOpts
-from mirage.commands.spec import SPECS
-from mirage.commands.spec.types import FlagValue, FlagView
 
 
 @dataclass(frozen=True, slots=True)
@@ -189,8 +187,14 @@ def parse_flags(flags: Mapping[str, FlagValue]) -> DiffFlags:
     )
 
 
-async def diff_generic(paths, texts, opts: CommandOpts, read_bytes,
-                       readdir_fn, stat_fn):
+async def diff_generic(
+    paths: list[PathSpec],
+    texts: list[str],
+    opts: CommandOpts,
+    read_bytes: Callable[..., Awaitable[bytes]],
+    readdir_fn: Callable[..., Awaitable[list[str]]],
+    stat_fn: Callable[..., Awaitable[FileStat]],
+) -> tuple[ByteSource | None, IOResult]:
     parsed = parse_flags(opts.flags)
     return await diff(paths,
                       read_bytes=read_bytes,

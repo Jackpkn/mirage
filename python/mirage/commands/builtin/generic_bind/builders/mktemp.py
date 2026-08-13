@@ -32,12 +32,10 @@ async def mktemp(
     stdin: bytes | None = None,
     **flags: FlagValue,
 ) -> tuple[ByteSource | None, IOResult]:
-    return await mktemp_generic(paths, list(texts),
-                                CommandOpts(stdin=stdin, flags=flags),
-                                partial(ops.require(Operation.MKDIR),
-                                        accessor),
-                                partial(ops.require(Operation.WRITE),
-                                        accessor))
+    return await mktemp_generic(
+        paths, list(texts), CommandOpts(stdin=stdin, flags=flags),
+        partial(ops.require(Operation.MKDIR), accessor),
+        partial(ops.require(Operation.WRITE), accessor))
 
 
 BUILDER = Builder('mktemp',

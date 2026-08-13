@@ -37,9 +37,9 @@ async def rev(
 ) -> tuple[ByteSource | None, IOResult]:
     resolved = await resolve_or_empty(ops, accessor, paths, index)
     return await rev_generic(resolved, list(texts),
-                       CommandOpts(stdin=stdin, flags=flags),
-                       dir_aware_stat(ops, accessor, index),
-                       bound_op(ops.read_bytes, accessor, index))
+                             CommandOpts(stdin=stdin, flags=flags),
+                             dir_aware_stat(ops, accessor, index),
+                             bound_op(ops.read_bytes, accessor, index))
 
 
 BUILDER = Builder('rev', rev, None, False, None, read=True)

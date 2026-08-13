@@ -37,10 +37,10 @@ async def sha384sum(
     **flags: FlagValue,
 ) -> tuple[ByteSource | None, IOResult]:
     resolved = await resolve_or_empty(ops, accessor, paths, index)
-    return await sha384sum_generic(resolved, list(texts),
-                       CommandOpts(stdin=stdin, flags=flags, cwd=cwd),
-                       dir_aware_stat(ops, accessor, index),
-                       bound_op(ops.read_stream, accessor, index))
+    return await sha384sum_generic(
+        resolved, list(texts), CommandOpts(stdin=stdin, flags=flags, cwd=cwd),
+        dir_aware_stat(ops, accessor, index),
+        bound_op(ops.read_stream, accessor, index))
 
 
 BUILDER = Builder('sha384sum', sha384sum, None, False, None, read=True)

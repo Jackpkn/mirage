@@ -2,7 +2,9 @@ import pytest
 
 from mirage.commands.builtin.dify.cat import make_cat
 from mirage.commands.builtin.generic_bind import CommandIO, with_read_cache
-from mirage.core.dify import read, stat as dify_stat, tree
+from mirage.core.dify import read
+from mirage.core.dify import stat as dify_stat
+from mirage.core.dify import tree
 from mirage.core.dify.read import read_bytes as _read_bytes
 from mirage.core.dify.read import read_stream as _read_stream
 from mirage.core.dify.readdir import readdir as _readdir

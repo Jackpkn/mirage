@@ -17,8 +17,7 @@ import pytest
 from mirage.commands.builtin.utils.operands import (materialized_read,
                                                     merge_split_errors,
                                                     normalized_read,
-                                                    operands_io,
-                                                    read_operands,
+                                                    operands_io, read_operands,
                                                     split_readable)
 from mirage.io.types import IOResult
 from mirage.types import FileStat, FileType, PathSpec

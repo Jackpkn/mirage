@@ -1,18 +1,16 @@
 import binascii
 import re
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Mapping
+from dataclasses import dataclass
 
 from mirage.commands.builtin.utils.lines import split_lines
 from mirage.commands.builtin.utils.stream import _resolve_source
-from mirage.commands.spec.types import CommandName
+from mirage.commands.config import CommandOpts
+from mirage.commands.spec import SPECS
+from mirage.commands.spec.types import CommandName, FlagValue, FlagView
 from mirage.commands.spec.usage import extra_operand_error
 from mirage.io.types import ByteSource, IOResult
 from mirage.types import PathSpec
-from collections.abc import Mapping
-from dataclasses import dataclass
-from mirage.commands.config import CommandOpts
-from mirage.commands.spec import SPECS
-from mirage.commands.spec.types import FlagValue, FlagView
 
 
 async def _xxd_dump_stream(source: AsyncIterator[bytes], cols: int, group: int,
@@ -164,9 +162,11 @@ class XxdFlags:
 
 
 def _count(value: FlagValue | None, default: int) -> int:
-    if value and value is not True:
-        return int(value)
-    return default
+    if isinstance(value, bool) or not isinstance(value, (str, int)):
+        return default
+    if not value:
+        return default
+    return int(value)
 
 
 def parse_flags(flags: Mapping[str, FlagValue]) -> XxdFlags:

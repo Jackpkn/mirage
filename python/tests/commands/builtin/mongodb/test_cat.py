@@ -19,12 +19,11 @@ import pytest
 from bson import ObjectId
 
 from mirage.accessor.mongodb import MongoDBAccessor
-from mirage.commands.builtin.generic_bind import CommandIO
-from mirage.types import FileStat
 from mirage.cache.index import NULL_INDEX
+from mirage.commands.builtin.generic_bind import CommandIO
 from mirage.commands.builtin.mongodb.cat import cat
 from mirage.resource.mongodb.config import MongoDBConfig
-from mirage.types import PathSpec
+from mirage.types import FileStat, PathSpec
 
 
 @pytest.fixture
@@ -75,8 +74,8 @@ async def test_cat_streams_all_docs_as_extended_json(accessor):
 
     with patch("mirage.core.mongodb.stream.iter_documents", new=_fake), patch(
             "mirage.commands.builtin.mongodb.cat.IO", new=_fake_io()), patch(
-            "mirage.commands.builtin.mongodb.cat.resolve_or_empty",
-            new=AsyncMock(return_value=[_path()])):
+                "mirage.commands.builtin.mongodb.cat.resolve_or_empty",
+                new=AsyncMock(return_value=[_path()])):
         source, _ = await cat(accessor, [_path()], index=NULL_INDEX)
         data = await _drain(source)
     lines = [line for line in data.decode().split("\n") if line]
@@ -97,8 +96,8 @@ async def test_cat_n_prepends_line_numbers(accessor):
 
     with patch("mirage.core.mongodb.stream.iter_documents", new=_fake), patch(
             "mirage.commands.builtin.mongodb.cat.IO", new=_fake_io()), patch(
-            "mirage.commands.builtin.mongodb.cat.resolve_or_empty",
-            new=AsyncMock(return_value=[_path()])):
+                "mirage.commands.builtin.mongodb.cat.resolve_or_empty",
+                new=AsyncMock(return_value=[_path()])):
         source, _ = await cat(accessor, [_path()],
                               index=NULL_INDEX,
                               number=True)

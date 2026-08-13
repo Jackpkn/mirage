@@ -1,6 +1,7 @@
 import io
 import tarfile
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import dataclass
 
 from mirage.commands.builtin.generic.archive.walk import (DirProbe, StatFn,
                                                           WalkFn)
@@ -10,14 +11,12 @@ from mirage.commands.builtin.generic.tar.create import plan_create
 from mirage.commands.builtin.generic.tar.types import (CompressionSuffix,
                                                        CreateResult, Member,
                                                        ReadMode, WriteMode)
-from mirage.io.types import ByteSource, IOResult
-from mirage.ops.types import LinkView, MountView
-from mirage.types import PathSpec
-from collections.abc import Mapping
-from dataclasses import dataclass
 from mirage.commands.config import CommandOpts
 from mirage.commands.spec import SPECS
 from mirage.commands.spec.types import FlagValue, FlagView
+from mirage.io.types import ByteSource, IOResult
+from mirage.ops.types import LinkView, MountView
+from mirage.types import PathSpec
 
 
 def _compression_suffix(z: bool, j: bool, J: bool) -> CompressionSuffix:
@@ -247,8 +246,16 @@ def parse_flags(flags: Mapping[str, FlagValue]) -> TarFlags:
     )
 
 
-async def tar_generic(paths, texts, opts: CommandOpts, read_bytes,
-                      write_bytes, mkdir_fn, stat, walk, is_dir, links=None,
+async def tar_generic(paths,
+                      texts,
+                      opts: CommandOpts,
+                      read_bytes,
+                      write_bytes,
+                      mkdir_fn,
+                      stat,
+                      walk,
+                      is_dir,
+                      links=None,
                       mounts=None):
     parsed = parse_flags(opts.flags)
     return await tar(paths,

@@ -1,17 +1,15 @@
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import dataclass
 
 from mirage.commands.builtin.utils.output import format_records
+from mirage.commands.config import CommandOpts
 from mirage.commands.errors import UsageError
-from mirage.commands.spec.types import CommandName
+from mirage.commands.spec import SPECS
+from mirage.commands.spec.types import CommandName, FlagValue, FlagView
 from mirage.commands.spec.usage import extra_operand_error
 from mirage.io.types import ByteSource, IOResult
 from mirage.types import PathSpec
 from mirage.utils.errors import FS_ERRORS, format_fs_error
-from collections.abc import Mapping
-from dataclasses import dataclass
-from mirage.commands.config import CommandOpts
-from mirage.commands.spec import SPECS
-from mirage.commands.spec.types import FlagValue, FlagView
 
 
 async def cmp_cmd(

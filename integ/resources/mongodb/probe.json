@@ -107,6 +107,32 @@
         "stdout": "net=0 write=0 cache=0 ops=1 hits=0 precision=unknown\n",
         "stderr": ""
       }
+    },
+    {
+      "id": "mdb_cat_reports_and_continues",
+      "seq": 620098,
+      "targets": [
+        "mongodb"
+      ],
+      "command": "cat /mongodb/__nf_missing__.txt /mongodb/mirage_integ/database.json",
+      "expect": {
+        "exit": 1,
+        "stdout": "{\"database\": \"mirage_integ\", \"collections\": [{\"name\": \"authors\", \"document_count\": 3}, {\"name\": \"books\", \"document_count\": 5}, {\"name\": \"system.views\", \"document_count\": 1}], \"views\": [{\"name\": \"recent_books\"}]}\n",
+        "stderr": "cat: /mongodb/__nf_missing__.txt: No such file or directory\n"
+      }
+    },
+    {
+      "id": "mdb_wc_reports_and_continues",
+      "seq": 620099,
+      "targets": [
+        "mongodb"
+      ],
+      "command": "wc -l /mongodb/mirage_integ/collections/books/documents.jsonl /mongodb/__nf_missing__.txt",
+      "expect": {
+        "exit": 1,
+        "stdout": "5 /mongodb/mirage_integ/collections/books/documents.jsonl\n5 total\n",
+        "stderr": "wc: /mongodb/__nf_missing__.txt: No such file or directory\n"
+      }
     }
   ]
 }

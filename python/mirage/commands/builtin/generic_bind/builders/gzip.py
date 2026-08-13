@@ -35,11 +35,11 @@ async def gzip(
     **flags: FlagValue,
 ) -> tuple[ByteSource | None, IOResult]:
     resolved = await ops.resolve_glob(accessor, paths, index) if paths else []
-    return await gzip_generic(
-        resolved, list(texts), CommandOpts(stdin=stdin, flags=flags),
-        bound_op(ops.read_bytes, accessor, index),
-        partial(ops.require(Operation.WRITE), accessor),
-        partial(ops.require(Operation.UNLINK), accessor))
+    return await gzip_generic(resolved, list(texts),
+                              CommandOpts(stdin=stdin, flags=flags),
+                              bound_op(ops.read_bytes, accessor, index),
+                              partial(ops.require(Operation.WRITE), accessor),
+                              partial(ops.require(Operation.UNLINK), accessor))
 
 
 BUILDER = Builder('gzip',

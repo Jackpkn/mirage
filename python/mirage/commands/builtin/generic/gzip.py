@@ -1,16 +1,14 @@
 import zlib
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
+from dataclasses import dataclass
 
 from mirage.commands.builtin.utils.stream import _resolve_source
-from mirage.commands.spec.constants import flag_kwarg_name
-from mirage.commands.spec.types import FlagView
-from mirage.io.types import ByteSource, IOResult
-from mirage.types import PathSpec
-from collections.abc import Mapping
-from dataclasses import dataclass
 from mirage.commands.config import CommandOpts
 from mirage.commands.spec import SPECS
+from mirage.commands.spec.constants import flag_kwarg_name
 from mirage.commands.spec.types import FlagValue, FlagView
+from mirage.io.types import ByteSource, IOResult
+from mirage.types import PathSpec
 
 
 def extract_level(fl: FlagView) -> int:
@@ -143,4 +141,5 @@ async def gzip_generic(paths, texts, opts: CommandOpts, read_bytes,
                       keep=parsed.keep,
                       force=parsed.force,
                       to_stdout=parsed.to_stdout,
-                      level=parsed.level)
+                      level=(parsed.level if parsed.level is not None else
+                             zlib.Z_DEFAULT_COMPRESSION))

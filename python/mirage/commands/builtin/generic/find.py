@@ -10,10 +10,10 @@ from mirage.commands.builtin.find_eval import (FindArgs, FindEntry, PredNode,
 from mirage.commands.builtin.find_helper import (_parse_depth, _parse_mtime,
                                                  _parse_size)
 from mirage.commands.builtin.find_parse import parse_find_expression
+from mirage.commands.builtin.utils.output import format_records
 from mirage.commands.config import CommandOpts
 from mirage.commands.spec import SPECS
 from mirage.commands.spec.types import FlagValue, FlagView
-from mirage.commands.builtin.utils.output import format_records
 from mirage.io.types import ByteSource, IOResult
 from mirage.ops.types import LinkView, StatPath
 from mirage.types import FileStat, FileType, FindType, PathSpec

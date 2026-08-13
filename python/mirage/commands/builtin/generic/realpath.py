@@ -1,14 +1,14 @@
 import posixpath
-
-from mirage.commands.builtin.utils.wrap import to_pathspec
-from mirage.io.types import ByteSource, IOResult
-from mirage.types import PathSpec, StatFn
-from mirage.utils.key_prefix import mount_prefix_of
 from collections.abc import Mapping
 from dataclasses import dataclass
+
+from mirage.commands.builtin.utils.wrap import to_pathspec
 from mirage.commands.config import CommandOpts
 from mirage.commands.spec import SPECS
 from mirage.commands.spec.types import FlagValue, FlagView
+from mirage.io.types import ByteSource, IOResult
+from mirage.types import PathSpec, StatFn
+from mirage.utils.key_prefix import mount_prefix_of
 
 
 async def _exists(stat_fn: StatFn, path: PathSpec) -> bool:

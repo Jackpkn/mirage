@@ -1,16 +1,14 @@
 import base64 as b64lib
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Mapping
+from dataclasses import dataclass
 
 from mirage.commands.builtin.utils.stream import _resolve_source
-from mirage.commands.spec.types import CommandName
+from mirage.commands.config import CommandOpts
+from mirage.commands.spec import SPECS
+from mirage.commands.spec.types import CommandName, FlagValue, FlagView
 from mirage.commands.spec.usage import extra_operand_error
 from mirage.io.types import ByteSource, IOResult
 from mirage.types import PathSpec
-from collections.abc import Mapping
-from dataclasses import dataclass
-from mirage.commands.config import CommandOpts
-from mirage.commands.spec import SPECS
-from mirage.commands.spec.types import FlagValue, FlagView
 
 
 async def _base64_encode_stream(source: AsyncIterator[bytes],

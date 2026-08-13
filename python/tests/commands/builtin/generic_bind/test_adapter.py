@@ -15,8 +15,7 @@
 import pytest
 
 from mirage.accessor.base import NOOPAccessor
-from mirage.commands.builtin.generic_bind.adapter import (CommandIO,
-                                                          Operation,
+from mirage.commands.builtin.generic_bind.adapter import (CommandIO, Operation,
                                                           dir_aware_stat,
                                                           dir_aware_stream)
 from mirage.types import FileStat, FileType, PathSpec

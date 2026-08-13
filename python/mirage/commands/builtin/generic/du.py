@@ -9,7 +9,7 @@ from mirage.commands.builtin.utils.output import format_records
 from mirage.commands.config import CommandOpts
 from mirage.commands.errors import UsageError
 from mirage.commands.spec import SPECS
-from mirage.commands.spec.types import FlagValue, FlagView
+from mirage.commands.spec.types import FlagView
 from mirage.io.types import IOResult
 from mirage.ops.types import LinkView, MountView
 from mirage.types import FileStat, PathSpec

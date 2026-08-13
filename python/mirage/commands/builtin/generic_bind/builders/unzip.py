@@ -37,11 +37,11 @@ async def unzip(
     if not ops.is_mounted(accessor) or not paths:
         raise ValueError("unzip: missing operand")
     resolved = await ops.resolve_glob(accessor, paths, index)
-    return await unzip_generic(
-        resolved, list(texts), CommandOpts(stdin=stdin, flags=flags),
-        bound_op(ops.read_bytes, accessor, index),
-        partial(ops.require(Operation.WRITE), accessor),
-        partial(ops.require(Operation.MKDIR), accessor))
+    return await unzip_generic(resolved, list(texts),
+                               CommandOpts(stdin=stdin, flags=flags),
+                               bound_op(ops.read_bytes, accessor, index),
+                               partial(ops.require(Operation.WRITE), accessor),
+                               partial(ops.require(Operation.MKDIR), accessor))
 
 
 BUILDER = Builder('unzip',

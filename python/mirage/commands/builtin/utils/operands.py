@@ -132,33 +132,6 @@ def operands_io(err: bytes, cache: list[str] | None = None) -> IOResult:
                     cache=cache if cache is not None else [])
 
 
-def default_paths(paths: list[PathSpec],
-                  cwd: PathSpec | str) -> list[PathSpec]:
-    """Default a command's path operands the way the shell would.
-
-    Explicit operands pass through; otherwise the session cwd becomes
-    the single operand. A PathSpec cwd keeps its mount-relative key, a
-    plain string is treated as root-mounted. Mirrors ``defaultPaths`` in
-    operands.ts.
-
-    Args:
-        paths (list[PathSpec]): The operands as given, possibly empty.
-        cwd (PathSpec | str): The session's working directory.
-    """
-    if paths:
-        return paths
-    if isinstance(cwd, PathSpec):
-        virtual, key = cwd.virtual, cwd.resource_path
-    else:
-        virtual, key = (cwd or "/"), (cwd or "/").strip("/")
-    return [
-        PathSpec(virtual=virtual,
-                 directory=virtual,
-                 resolved=False,
-                 resource_path=key)
-    ]
-
-
 async def merge_split_errors(
     result: tuple[ByteSource | None, IOResult],
     err: bytes,

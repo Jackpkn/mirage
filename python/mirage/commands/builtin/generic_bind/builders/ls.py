@@ -19,7 +19,6 @@ from mirage.cache.index import NULL_INDEX, IndexCacheStore
 from mirage.commands.builtin.generic.ls import ls_generic
 from mirage.commands.builtin.generic_bind.adapter import (Builder, CommandIO,
                                                           overlaid_stat)
-from mirage.commands.builtin.utils.operands import default_paths
 from mirage.commands.config import CommandOpts
 from mirage.commands.spec.types import FlagValue
 from mirage.io.types import ByteSource, IOResult
@@ -42,8 +41,17 @@ async def ls(
 ) -> tuple[ByteSource | None, IOResult]:
     if not ops.is_mounted(accessor):
         raise ValueError("ls: no resource")
-    resolved = await ops.resolve_glob(accessor, default_paths(paths, cwd),
-                                      index)
+    if not paths:
+        cwd_virtual = cwd.virtual if isinstance(cwd, PathSpec) else cwd
+        cwd_rp = (cwd.resource_path
+                  if isinstance(cwd, PathSpec) else cwd.strip("/"))
+        paths = [
+            PathSpec(virtual=cwd_virtual,
+                     directory=cwd_virtual,
+                     resolved=False,
+                     resource_path=cwd_rp)
+        ]
+    resolved = await ops.resolve_glob(accessor, paths, index)
     stat_fn = partial(ops.stat, accessor)
     if stat_overlay is not None:
         stat_fn = partial(overlaid_stat, stat_fn, stat_overlay)

@@ -31,7 +31,8 @@ def make_cat(ops: CommandIO):
         **flags: FlagValue,
     ) -> tuple[ByteSource | None, IOResult]:
         resolved = await resolve_or_empty(ops, accessor, paths, index)
-        return await cat_generic(resolved, list(texts),
+        return await cat_generic(resolved,
+                                 list(texts),
                                  CommandOpts(stdin=stdin, flags=flags),
                                  dir_aware_stat(ops, accessor, index),
                                  bound_op(ops.read_stream, accessor, index),

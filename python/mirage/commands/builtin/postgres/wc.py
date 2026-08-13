@@ -48,9 +48,8 @@ async def wc(
     # Line counts on tables/views come from a server-side COUNT(*) instead
     # of reading every row. -l only (default prints words and bytes too,
     # which needs the content).
-    count_only = parsed.lines and not (parsed.words or parsed.bytes_
-                                       or parsed.chars
-                                       or parsed.max_line_length)
+    count_only = parsed.lines and not (parsed.words or parsed.bytes_ or
+                                       parsed.chars or parsed.max_line_length)
     scopes = [detect_scope(p) for p in resolved]
     row_scopes = [
         scope for scope in scopes if isinstance(scope, PostgresEntityRowsScope)

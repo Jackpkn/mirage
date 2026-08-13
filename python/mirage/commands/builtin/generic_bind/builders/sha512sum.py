@@ -37,10 +37,10 @@ async def sha512sum(
     **flags: FlagValue,
 ) -> tuple[ByteSource | None, IOResult]:
     resolved = await resolve_or_empty(ops, accessor, paths, index)
-    return await sha512sum_generic(resolved, list(texts),
-                       CommandOpts(stdin=stdin, flags=flags, cwd=cwd),
-                       dir_aware_stat(ops, accessor, index),
-                       bound_op(ops.read_stream, accessor, index))
+    return await sha512sum_generic(
+        resolved, list(texts), CommandOpts(stdin=stdin, flags=flags, cwd=cwd),
+        dir_aware_stat(ops, accessor, index),
+        bound_op(ops.read_stream, accessor, index))
 
 
 BUILDER = Builder('sha512sum', sha512sum, None, False, None, read=True)

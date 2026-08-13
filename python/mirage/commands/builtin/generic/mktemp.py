@@ -1,17 +1,15 @@
 import random
 import string
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import dataclass
 
-from mirage.commands.spec.types import CommandName
+from mirage.commands.config import CommandOpts
+from mirage.commands.spec import SPECS
+from mirage.commands.spec.types import CommandName, FlagValue, FlagView
 from mirage.commands.spec.usage import extra_operand_error
 from mirage.io.types import ByteSource, IOResult
 from mirage.types import PathSpec
 from mirage.utils.key_prefix import rekey
-from collections.abc import Mapping
-from dataclasses import dataclass
-from mirage.commands.config import CommandOpts
-from mirage.commands.spec import SPECS
-from mirage.commands.spec.types import FlagValue, FlagView
 
 _ALPHABET = string.ascii_letters + string.digits
 
@@ -112,8 +110,13 @@ def parse_flags(flags: Mapping[str, FlagValue]) -> MktempFlags:
     )
 
 
-async def mktemp_generic(paths, texts, opts: CommandOpts, mkdir_fn,
-                         write_bytes_fn):
+async def mktemp_generic(
+    paths: list[PathSpec],
+    texts: list[str],
+    opts: CommandOpts,
+    mkdir_fn: Callable[..., Awaitable[None]],
+    write_bytes_fn: Callable[..., Awaitable[None]],
+) -> tuple[ByteSource | None, IOResult]:
     parsed = parse_flags(opts.flags)
     return await mktemp(*texts,
                         mkdir_fn=mkdir_fn,

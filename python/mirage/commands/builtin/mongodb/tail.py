@@ -14,8 +14,9 @@
 
 from mirage.accessor.mongodb import MongoDBAccessor
 from mirage.cache.index import IndexCacheStore
+from mirage.commands.builtin.generic.tail import parse_flags
 from mirage.commands.builtin.generic.tail import tail as generic_tail
-from mirage.commands.builtin.generic.tail import parse_flags, tail_generic
+from mirage.commands.builtin.generic.tail import tail_generic
 from mirage.commands.builtin.generic_bind.adapter import bound_op
 from mirage.commands.builtin.generic_bind.builders.common import \
     resolve_or_empty
