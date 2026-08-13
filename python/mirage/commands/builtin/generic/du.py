@@ -622,7 +622,8 @@ async def du_generic(
         c=fl.as_bool("c"),
         max_depth=fl.as_str("max_depth"),
         truncated=truncated,
-        links=None if fl.as_bool("L") else opts.links,
-        mounts=opts.mounts,
+        links=(None if fl.as_bool("L") else
+               opts.ns.links if opts.ns is not None else None),
+        mounts=opts.ns.mounts if opts.ns is not None else None,
     )
     return out.stdout, IOResult(stderr=out.stderr, exit_code=out.exit_code)
