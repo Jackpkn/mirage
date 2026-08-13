@@ -13,7 +13,7 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import inspect
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
 from functools import partial
 
@@ -152,13 +152,24 @@ async def merge_split_errors(
     return out, io
 
 
-async def _read_normalized(read: PolymorphicReadFn,
-                           path: PathSpec) -> AsyncIterator[bytes]:
+async def _awaited_stream(
+        source: "Awaitable[bytes | AsyncIterator[bytes]]"
+) -> AsyncIterator[bytes]:
+    async for chunk in ensure_stream(await source):
+        yield chunk
+
+
+def _call_normalized(read: PolymorphicReadFn,
+                     path: PathSpec) -> AsyncIterator[bytes]:
+    # The reader is invoked NOW, not when the returned stream is first
+    # drained: a cache-aware factory reader captures the active cache
+    # manager at call time, inside the command's cache-manager scope,
+    # which is gone by drain time. Only the rare awaitable-of-bytes
+    # reader keeps a deferred step, and it carries no such scope.
     source = read(path)
     if inspect.isawaitable(source):
-        source = await source
-    async for chunk in ensure_stream(source):
-        yield chunk
+        return _awaited_stream(source)
+    return ensure_stream(source)
 
 
 def normalized_read(
@@ -172,7 +183,7 @@ def normalized_read(
     Args:
         read (PolymorphicReadFn): Bound reader called as ``read(path)``.
     """
-    return partial(_read_normalized, read)
+    return partial(_call_normalized, read)
 
 
 async def _read_materialized(read: PolymorphicReadFn, path: PathSpec) -> bytes:
