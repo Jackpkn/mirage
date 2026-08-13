@@ -1,14 +1,57 @@
 import re
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
+from dataclasses import dataclass
 from typing import Protocol
 
 from mirage.commands.builtin.utils.lines import split_lines
+from mirage.commands.builtin.utils.operands import (materialized_read,
+                                                    merge_split_errors,
+                                                    normalized_read,
+                                                    split_readable)
 from mirage.commands.builtin.utils.stream import _resolve_source
+from mirage.commands.config import CommandOpts
+from mirage.commands.spec import SPECS
+from mirage.commands.spec.types import FlagValue, FlagView
 from mirage.io.types import ByteSource, IOResult
-from mirage.types import PathSpec
+from mirage.types import PathSpec, PolymorphicReadFn, StatFn
 from mirage.utils.errors import WALK_ERRORS, fs_strerror
 from mirage.utils.key_prefix import mount_key, mount_prefix_of
 from mirage.utils.path import resolve_path
+
+
+@dataclass(frozen=True, slots=True)
+class ChecksumFlags:
+    check: bool = False
+    binary: bool = False
+    tag: bool = False
+    zero: bool = False
+    strict: bool = False
+    ignore_missing: bool = False
+    status: bool = False
+    quiet: bool = False
+    warn: bool = False
+
+
+def parse_flags(flags: Mapping[str, FlagValue], name: str) -> ChecksumFlags:
+    """Parse the shared ``*sum`` flag set against one command's spec.
+
+    Args:
+        flags (Mapping[str, FlagValue]): The raw flag bag.
+        name (str): The invoked command (md5sum, sha256sum, ...), whose
+            spec validates the names; all five declare the same set.
+    """
+    fl = FlagView(flags, spec=SPECS[name])
+    return ChecksumFlags(
+        check=fl.as_bool("check"),
+        binary=fl.as_bool("binary"),
+        tag=fl.as_bool("tag"),
+        zero=fl.as_bool("zero"),
+        strict=fl.as_bool("strict"),
+        ignore_missing=fl.as_bool("ignore_missing"),
+        status=fl.as_bool("status"),
+        quiet=fl.as_bool("quiet"),
+        warn=fl.as_bool("warn"),
+    )
 
 
 class Digest(Protocol):
@@ -232,4 +275,64 @@ async def hashsum(
                         zero), IOResult()
 
 
-__all__ = ["Digest", "DigestFactory", "hashsum"]
+async def hashsum_generic(
+    paths: list[PathSpec],
+    texts: list[str],
+    opts: CommandOpts,
+    stat: StatFn,
+    stream: PolymorphicReadFn,
+    *,
+    factory: DigestFactory,
+    algorithm: str,
+    name: str,
+) -> tuple[ByteSource | None, IOResult]:
+    """Run a GNU ``*sum`` over resolved operands; mirrors checksumGeneric.
+
+    The wiring resolves globs and binds one backend reader; everything
+    else lives here: flag parsing, the per-operand report-and-continue
+    split, the ``--check`` verification pass (which resolves recorded
+    names against ``opts.cwd``), and the stdin fallback.
+
+    Args:
+        paths (list[PathSpec]): Glob-resolved operands, empty for stdin.
+        texts (list[str]): Non-path words, unused by checksums.
+        opts (CommandOpts): Flags, stdin and cwd from the dispatcher.
+        stat (StatFn): Bound stat called as ``stat(path)``.
+        stream (PolymorphicReadFn): Bound reader called as
+            ``stream(path)``.
+        factory (DigestFactory): Digest constructor, e.g. hashlib.md5.
+        algorithm (str): Digest name for rendered lines, e.g. ``"md5"``.
+        name (str): The invoked command name, for its spec and stderr.
+    """
+    parsed = parse_flags(opts.flags, name)
+    if parsed.check and paths:
+        return await hashsum(paths,
+                             factory=factory,
+                             algorithm=algorithm,
+                             read_bytes=materialized_read(stream),
+                             read_stream=normalized_read(stream),
+                             stdin=opts.stdin,
+                             check=True,
+                             strict=parsed.strict,
+                             ignore_missing=parsed.ignore_missing,
+                             status=parsed.status,
+                             quiet=parsed.quiet,
+                             warn=parsed.warn,
+                             cwd=opts.cwd)
+    readable, err = await split_readable(paths, stat, name)
+    if err and not readable:
+        return None, IOResult(exit_code=1, stderr=err)
+    return await merge_split_errors(
+        await hashsum(readable,
+                      factory=factory,
+                      algorithm=algorithm,
+                      read_bytes=materialized_read(stream),
+                      read_stream=normalized_read(stream),
+                      stdin=opts.stdin,
+                      binary=parsed.binary,
+                      tag=parsed.tag,
+                      zero=parsed.zero,
+                      cwd=opts.cwd), err)
+
+
+__all__ = ["Digest", "DigestFactory", "hashsum", "hashsum_generic"]

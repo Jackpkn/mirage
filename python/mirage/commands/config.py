@@ -13,16 +13,59 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import functools
-from dataclasses import dataclass, replace
+from collections.abc import Mapping
+from dataclasses import dataclass, field, replace
 from typing import Any, Callable
 
 from mirage.commands.spec import CommandSpec
 from mirage.commands.spec.help import render_help
-from mirage.commands.spec.types import Option
+from mirage.commands.spec.types import FlagValue, Option
 from mirage.io.stream import yield_bytes
-from mirage.io.types import IOResult
-from mirage.types import Limit
+from mirage.io.types import ByteSource, IOResult
+from mirage.types import Limit, PathSpec
 from mirage.version import __version__
+
+
+def cwd_str(cwd: PathSpec | str) -> str:
+    """Normalize the dispatcher's cwd into the string CommandOpts carries.
+
+    The dispatcher may inject the session cwd as a PathSpec or a plain
+    string depending on the call path; the generics only ever resolve
+    against the virtual directory name.
+
+    Args:
+        cwd (PathSpec | str): The injected working directory.
+    """
+    if isinstance(cwd, PathSpec):
+        return cwd.virtual
+    return cwd or "/"
+
+
+@dataclass(frozen=True, slots=True)
+class CommandOpts:
+    """Options bag the wiring hands a generic command.
+
+    Mirrors the TypeScript ``CommandOpts`` (commands/config.ts): the
+    dispatcher context a generic interprets itself, as one typed value.
+    Builders and bespoke backend wrappers construct it from their own
+    keyword arguments and pass it alongside the bound backend ops; the
+    generic owns everything inside it (flag parsing via a spec-bound
+    FlagView, the stdin fallback), the wiring owns everything outside it
+    (glob resolution, op binding, push-downs).
+
+    Args:
+        stdin (ByteSource | None): Piped standard input, if any.
+        flags (Mapping[str, FlagValue]): The parsed command-line flag
+            bag, forwarded wholesale.
+        cwd (str): The session's working directory.
+        mount_prefix (str): The owning mount's prefix, for commands that
+            render mount-relative names.
+    """
+
+    stdin: ByteSource | None = None
+    flags: Mapping[str, FlagValue] = field(default_factory=dict)
+    cwd: str = "/"
+    mount_prefix: str = ""
 
 HELP_OPTION = Option(
     long="--help",
