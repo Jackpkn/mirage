@@ -8,6 +8,11 @@ from mirage.commands.spec.types import CommandName
 from mirage.commands.spec.usage import extra_operand_error
 from mirage.io.types import ByteSource, IOResult
 from mirage.types import PathSpec
+from collections.abc import Mapping
+from dataclasses import dataclass
+from mirage.commands.config import CommandOpts
+from mirage.commands.spec import SPECS
+from mirage.commands.spec.types import FlagValue, FlagView
 
 
 async def _xxd_dump_stream(source: AsyncIterator[bytes], cols: int, group: int,
@@ -145,3 +150,47 @@ async def xxd(
 
 
 __all__ = ["xxd"]
+
+
+@dataclass(frozen=True, slots=True)
+class XxdFlags:
+    reverse: bool = False
+    plain: bool = False
+    uppercase: bool = False
+    cols: int = 16
+    group: int = 2
+    skip: int = 0
+    limit: int = 0
+
+
+def _count(value: FlagValue | None, default: int) -> int:
+    if value and value is not True:
+        return int(value)
+    return default
+
+
+def parse_flags(flags: Mapping[str, FlagValue]) -> XxdFlags:
+    fl = FlagView(flags, spec=SPECS["xxd"])
+    return XxdFlags(
+        reverse=fl.as_bool("r"),
+        plain=fl.as_bool("p"),
+        uppercase=fl.as_bool("u"),
+        cols=_count(fl.raw("c"), 16),
+        group=_count(fl.raw("g"), 2),
+        skip=_count(fl.raw("s"), 0),
+        limit=_count(fl.raw("args_l"), 0),
+    )
+
+
+async def xxd_generic(paths, texts, opts: CommandOpts, read_stream):
+    parsed = parse_flags(opts.flags)
+    return await xxd(paths,
+                     read_stream=read_stream,
+                     stdin=opts.stdin,
+                     reverse=parsed.reverse,
+                     plain=parsed.plain,
+                     uppercase=parsed.uppercase,
+                     cols=parsed.cols,
+                     group=parsed.group,
+                     skip=parsed.skip,
+                     limit=parsed.limit)

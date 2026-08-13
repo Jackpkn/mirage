@@ -7,6 +7,11 @@ from mirage.commands.spec.usage import extra_operand_error
 from mirage.io.types import ByteSource, IOResult
 from mirage.types import PathSpec
 from mirage.utils.key_prefix import rekey
+from collections.abc import Mapping
+from dataclasses import dataclass
+from mirage.commands.config import CommandOpts
+from mirage.commands.spec import SPECS
+from mirage.commands.spec.types import FlagValue, FlagView
 
 _ALPHABET = string.ascii_letters + string.digits
 
@@ -74,3 +79,48 @@ async def mktemp(
 
 
 __all__ = ["mktemp"]
+
+
+@dataclass(frozen=True, slots=True)
+class MktempFlags:
+    directory: bool = False
+    tmpdir: "str | PathSpec | None" = None
+    template_mode: bool = False
+    dry_run: bool = False
+    suffix: str = ""
+    quiet: bool = False
+
+
+def parse_flags(flags: Mapping[str, FlagValue]) -> MktempFlags:
+    fl = FlagView(flags, spec=SPECS["mktemp"])
+    tmpdir_flag = fl.raw("tmpdir")
+    tmpdir: str | PathSpec | None
+    if isinstance(tmpdir_flag, (str, PathSpec)):
+        tmpdir = tmpdir_flag
+    elif tmpdir_flag is True:
+        tmpdir = "/tmp"
+    else:
+        p_flag = fl.raw("p")
+        tmpdir = p_flag if isinstance(p_flag, (str, PathSpec)) else None
+    return MktempFlags(
+        directory=fl.as_bool("directory"),
+        tmpdir=tmpdir,
+        template_mode=fl.as_bool("t"),
+        dry_run=fl.as_bool("dry_run"),
+        suffix=fl.as_str("suffix") or "",
+        quiet=fl.as_bool("quiet"),
+    )
+
+
+async def mktemp_generic(paths, texts, opts: CommandOpts, mkdir_fn,
+                         write_bytes_fn):
+    parsed = parse_flags(opts.flags)
+    return await mktemp(*texts,
+                        mkdir_fn=mkdir_fn,
+                        write_bytes_fn=write_bytes_fn,
+                        d=parsed.directory,
+                        p=parsed.tmpdir,
+                        t=parsed.template_mode,
+                        dry_run=parsed.dry_run,
+                        suffix=parsed.suffix,
+                        quiet=parsed.quiet)

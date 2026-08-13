@@ -8,6 +8,10 @@ from mirage.io.types import ByteSource, IOResult
 from mirage.ops.types import LinkView
 from mirage.types import FileStat, FileType, PathSpec
 from mirage.utils.errors import FS_ERRORS, fs_error_line
+from collections.abc import Mapping
+from mirage.commands.config import CommandOpts
+from mirage.commands.spec import SPECS
+from mirage.commands.spec.types import FlagValue, FlagView
 
 _STR_DIRECTIVES = frozenset("nNF")
 
@@ -304,3 +308,29 @@ async def stat(
 
 
 __all__ = ["stat"]
+
+
+@dataclass(frozen=True, slots=True)
+class StatFlags:
+    format: str | None = None
+    file_system: str | None = None
+    deref: bool = False
+
+
+def parse_flags(flags: Mapping[str, FlagValue]) -> StatFlags:
+    fl = FlagView(flags, spec=SPECS["stat"])
+    return StatFlags(
+        format=fl.as_str("c"),
+        file_system=fl.as_str("f"),
+        deref=fl.as_bool("L"),
+    )
+
+
+async def stat_generic(paths, texts, opts: CommandOpts, stat_fn, links=None):
+    parsed = parse_flags(opts.flags)
+    return await stat(paths,
+                      stat_fn=stat_fn,
+                      c=parsed.format,
+                      f=parsed.file_system,
+                      L=parsed.deref,
+                      links=links)

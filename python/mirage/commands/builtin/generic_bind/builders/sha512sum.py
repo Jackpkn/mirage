@@ -20,7 +20,7 @@ from mirage.commands.builtin.generic_bind.adapter import (Builder, CommandIO,
                                                           dir_aware_stat)
 from mirage.commands.builtin.generic_bind.builders.common import \
     resolve_or_empty
-from mirage.commands.config import CommandOpts, cwd_str
+from mirage.commands.config import CommandOpts
 from mirage.commands.spec.types import FlagValue
 from mirage.io.types import ByteSource, IOResult
 from mirage.types import PathSpec
@@ -38,7 +38,7 @@ async def sha512sum(
 ) -> tuple[ByteSource | None, IOResult]:
     resolved = await resolve_or_empty(ops, accessor, paths, index)
     return await sha512sum_generic(resolved, list(texts),
-                       CommandOpts(stdin=stdin, flags=flags, cwd=cwd_str(cwd)),
+                       CommandOpts(stdin=stdin, flags=flags, cwd=cwd),
                        dir_aware_stat(ops, accessor, index),
                        bound_op(ops.read_stream, accessor, index))
 

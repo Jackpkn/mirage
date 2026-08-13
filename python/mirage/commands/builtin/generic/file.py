@@ -8,6 +8,11 @@ from mirage.io.types import ByteSource, IOResult
 from mirage.ops.types import LinkView
 from mirage.types import LINK_TARGET_KEY, FileStat, FileType, PathSpec
 from mirage.utils.path import CycleError
+from collections.abc import Mapping
+from dataclasses import dataclass
+from mirage.commands.config import CommandOpts
+from mirage.commands.spec import SPECS
+from mirage.commands.spec.types import FlagValue, FlagView
 
 _logger = logging.getLogger(__name__)
 
@@ -90,3 +95,25 @@ async def file_cmd(
 
 
 __all__ = ["file_cmd"]
+
+
+@dataclass(frozen=True, slots=True)
+class FileFlags:
+    brief: bool = False
+    mime: bool = False
+
+
+def parse_flags(flags: Mapping[str, FlagValue]) -> FileFlags:
+    fl = FlagView(flags, spec=SPECS["file"])
+    return FileFlags(brief=fl.as_bool("b"), mime=fl.as_bool("i"))
+
+
+async def file_generic(paths, texts, opts: CommandOpts, read_bytes, stat_fn,
+                       links=None):
+    parsed = parse_flags(opts.flags)
+    return await file_cmd(paths,
+                          read_bytes=read_bytes,
+                          stat_fn=stat_fn,
+                          b=parsed.brief,
+                          i=parsed.mime,
+                          links=links)

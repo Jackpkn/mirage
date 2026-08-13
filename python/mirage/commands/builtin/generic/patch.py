@@ -7,6 +7,11 @@ from mirage.commands.spec.types import CommandName
 from mirage.commands.spec.usage import extra_operand_error
 from mirage.io.types import ByteSource, IOResult
 from mirage.types import PathSpec
+from collections.abc import Mapping
+from dataclasses import dataclass
+from mirage.commands.config import CommandOpts
+from mirage.commands.spec import SPECS
+from mirage.commands.spec.types import FlagValue, FlagView
 
 
 def _strip_path(path: str, strip_count: int) -> str:
@@ -162,3 +167,36 @@ async def patch(
 
 
 __all__ = ["patch"]
+
+
+@dataclass(frozen=True, slots=True)
+class PatchFlags:
+    strip: str | None = None
+    reverse: bool = False
+    input_path: PathSpec | None = None
+    forward: bool = False
+
+
+def parse_flags(flags: Mapping[str, FlagValue]) -> PatchFlags:
+    fl = FlagView(flags, spec=SPECS["patch"])
+    input_flag = fl.raw("i")
+    return PatchFlags(
+        strip=fl.as_str("p"),
+        reverse=fl.as_bool("R"),
+        input_path=input_flag if isinstance(input_flag, PathSpec) else None,
+        forward=fl.as_bool("N"),
+    )
+
+
+async def patch_generic(paths, texts, opts: CommandOpts, read_bytes,
+                        write_bytes, has_resource):
+    parsed = parse_flags(opts.flags)
+    return await patch(paths,
+                       read_bytes=read_bytes,
+                       write_bytes=write_bytes,
+                       has_resource=has_resource,
+                       stdin=opts.stdin,
+                       p=parsed.strip,
+                       R=parsed.reverse,
+                       i=parsed.input_path,
+                       N=parsed.forward)

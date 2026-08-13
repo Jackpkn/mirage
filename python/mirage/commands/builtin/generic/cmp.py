@@ -7,6 +7,11 @@ from mirage.commands.spec.usage import extra_operand_error
 from mirage.io.types import ByteSource, IOResult
 from mirage.types import PathSpec
 from mirage.utils.errors import FS_ERRORS, format_fs_error
+from collections.abc import Mapping
+from dataclasses import dataclass
+from mirage.commands.config import CommandOpts
+from mirage.commands.spec import SPECS
+from mirage.commands.spec.types import FlagValue, FlagView
 
 
 async def cmp_cmd(
@@ -64,3 +69,36 @@ async def cmp_cmd(
 
 
 __all__ = ["cmp_cmd"]
+
+
+@dataclass(frozen=True, slots=True)
+class CmpFlags:
+    silent: bool = False
+    verbose: bool = False
+    limit: int | None = None
+    print_bytes: bool = False
+    skip: int | None = None
+
+
+def parse_flags(flags: Mapping[str, FlagValue]) -> CmpFlags:
+    fl = FlagView(flags, spec=SPECS["cmp"])
+    n_raw = fl.as_str("n")
+    i_raw = fl.as_str("i")
+    return CmpFlags(
+        silent=fl.as_bool("s"),
+        verbose=fl.as_bool("args_l"),
+        limit=int(n_raw) if n_raw is not None else None,
+        print_bytes=fl.as_bool("b"),
+        skip=int(i_raw) if i_raw is not None else None,
+    )
+
+
+async def cmp_generic(paths, texts, opts: CommandOpts, read_bytes):
+    parsed = parse_flags(opts.flags)
+    return await cmp_cmd(paths,
+                         read_bytes=read_bytes,
+                         silent=parsed.silent,
+                         verbose=parsed.verbose,
+                         limit=parsed.limit,
+                         print_bytes=parsed.print_bytes,
+                         skip=parsed.skip)

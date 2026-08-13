@@ -6,6 +6,11 @@ from mirage.commands.spec.types import CommandName
 from mirage.commands.spec.usage import extra_operand_error
 from mirage.io.types import ByteSource, IOResult
 from mirage.types import PathSpec
+from collections.abc import Mapping
+from dataclasses import dataclass
+from mirage.commands.config import CommandOpts
+from mirage.commands.spec import SPECS
+from mirage.commands.spec.types import FlagValue, FlagView
 
 
 async def _base64_encode_stream(source: AsyncIterator[bytes],
@@ -61,3 +66,30 @@ async def base64_cmd(
 
 
 __all__ = ["base64_cmd"]
+
+
+@dataclass(frozen=True, slots=True)
+class Base64Flags:
+    decode: bool = False
+    wrap: int | None = None
+    ignore_garbage: bool = False
+
+
+def parse_flags(flags: Mapping[str, FlagValue]) -> Base64Flags:
+    fl = FlagView(flags, spec=SPECS["base64"])
+    wrap_value = fl.as_str("wrap")
+    return Base64Flags(
+        decode=fl.as_bool("D") or fl.as_bool("decode"),
+        wrap=int(wrap_value) if wrap_value is not None else None,
+        ignore_garbage=fl.as_bool("ignore_garbage"),
+    )
+
+
+async def base64_generic(paths, texts, opts: CommandOpts, read_stream):
+    parsed = parse_flags(opts.flags)
+    return await base64_cmd(paths,
+                            read_stream=read_stream,
+                            stdin=opts.stdin,
+                            decode=parsed.decode,
+                            wrap=parsed.wrap,
+                            ignore_garbage=parsed.ignore_garbage)

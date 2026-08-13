@@ -27,11 +27,12 @@ from mirage.version import __version__
 
 
 def cwd_str(cwd: PathSpec | str) -> str:
-    """Normalize the dispatcher's cwd into the string CommandOpts carries.
+    """The virtual directory name of a dispatcher-injected cwd.
 
-    The dispatcher may inject the session cwd as a PathSpec or a plain
-    string depending on the call path; the generics only ever resolve
-    against the virtual directory name.
+    The dispatcher may inject the session cwd as a PathSpec (carrying
+    the mount-relative key) or a plain string; generics that only
+    resolve names use this, generics that default their operands keep
+    the PathSpec (``default_paths``).
 
     Args:
         cwd (PathSpec | str): The injected working directory.
@@ -57,14 +58,16 @@ class CommandOpts:
         stdin (ByteSource | None): Piped standard input, if any.
         flags (Mapping[str, FlagValue]): The parsed command-line flag
             bag, forwarded wholesale.
-        cwd (str): The session's working directory.
+        cwd (PathSpec | str): The session's working directory, as the
+            dispatcher injected it — a PathSpec keeps the mount-relative
+            key for operand defaulting, a plain string is root-mounted.
         mount_prefix (str): The owning mount's prefix, for commands that
             render mount-relative names.
     """
 
     stdin: ByteSource | None = None
     flags: Mapping[str, FlagValue] = field(default_factory=dict)
-    cwd: str = "/"
+    cwd: PathSpec | str = "/"
     mount_prefix: str = ""
 
 HELP_OPTION = Option(

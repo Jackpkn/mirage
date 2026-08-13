@@ -6,6 +6,11 @@ from mirage.commands.spec.constants import flag_kwarg_name
 from mirage.commands.spec.types import FlagView
 from mirage.io.types import ByteSource, IOResult
 from mirage.types import PathSpec
+from collections.abc import Mapping
+from dataclasses import dataclass
+from mirage.commands.config import CommandOpts
+from mirage.commands.spec import SPECS
+from mirage.commands.spec.types import FlagValue, FlagView
 
 
 def extract_level(fl: FlagView) -> int:
@@ -104,3 +109,38 @@ async def gzip(
 
 
 __all__ = ["gzip", "extract_level"]
+
+
+@dataclass(frozen=True, slots=True)
+class GzipFlags:
+    decompress: bool = False
+    keep: bool = False
+    force: bool = False
+    to_stdout: bool = False
+    level: int | None = None
+
+
+def parse_flags(flags: Mapping[str, FlagValue]) -> GzipFlags:
+    fl = FlagView(flags, spec=SPECS["gzip"])
+    return GzipFlags(
+        decompress=fl.as_bool("d"),
+        keep=fl.as_bool("k"),
+        force=fl.as_bool("f"),
+        to_stdout=fl.as_bool("c"),
+        level=extract_level(fl),
+    )
+
+
+async def gzip_generic(paths, texts, opts: CommandOpts, read_bytes,
+                       write_bytes, unlink):
+    parsed = parse_flags(opts.flags)
+    return await gzip(paths,
+                      read_bytes=read_bytes,
+                      write_bytes=write_bytes,
+                      unlink=unlink,
+                      stdin=opts.stdin,
+                      decompress=parsed.decompress,
+                      keep=parsed.keep,
+                      force=parsed.force,
+                      to_stdout=parsed.to_stdout,
+                      level=parsed.level)

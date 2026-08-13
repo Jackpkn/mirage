@@ -11,6 +11,11 @@ from mirage.types import FileStat, FileType, PathSpec
 from mirage.utils.errors import WALK_ERRORS
 from mirage.utils.fnmatch import fnmatch
 from mirage.utils.key_prefix import rekey
+from collections.abc import Mapping
+from dataclasses import dataclass
+from mirage.commands.config import CommandOpts
+from mirage.commands.spec import SPECS
+from mirage.commands.spec.types import FlagValue, FlagView
 
 # GNU tree's ASCII (C-locale) drawing set, matching `tree` in the battery's
 # docker oracle; the vertical/indent continuations are 4 columns wide.
@@ -300,3 +305,41 @@ async def tree(
 
 
 __all__ = ["tree"]
+
+
+@dataclass(frozen=True, slots=True)
+class TreeFlags:
+    max_depth: int | None = None
+    show_hidden: bool = False
+    ignore_pattern: str | None = None
+    dirs_only: bool = False
+    match_pattern: str | None = None
+
+
+def parse_flags(flags: Mapping[str, FlagValue]) -> TreeFlags:
+    fl = FlagView(flags, spec=SPECS["tree"])
+    depth_raw = fl.as_str("L")
+    return TreeFlags(
+        max_depth=int(depth_raw) if depth_raw is not None else None,
+        show_hidden=fl.as_bool("a"),
+        ignore_pattern=fl.as_str("args_I"),
+        dirs_only=fl.as_bool("d"),
+        match_pattern=fl.as_str("P"),
+    )
+
+
+async def tree_generic(paths, texts, opts: CommandOpts, readdir, stat, *,
+                       index, stat_path=None, readdir_path=None, mounts=None):
+    parsed = parse_flags(opts.flags)
+    return await tree(paths[0],
+                      readdir=readdir,
+                      stat=stat,
+                      max_depth=parsed.max_depth,
+                      show_hidden=parsed.show_hidden,
+                      ignore_pattern=parsed.ignore_pattern,
+                      dirs_only=parsed.dirs_only,
+                      match_pattern=parsed.match_pattern,
+                      index=index,
+                      stat_path=stat_path,
+                      readdir_path=readdir_path,
+                      mounts=mounts)

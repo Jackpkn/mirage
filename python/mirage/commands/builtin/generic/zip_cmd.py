@@ -13,6 +13,10 @@ from mirage.ops.types import LinkView, MountView
 from mirage.types import PathSpec
 from mirage.utils.fnmatch import fnmatch
 from mirage.utils.path import respell_one
+from collections.abc import Mapping
+from mirage.commands.config import CommandOpts
+from mirage.commands.spec import SPECS
+from mirage.commands.spec.types import FlagValue, FlagView
 
 # Info-ZIP 3.0's wording, pinned on debian:stable-slim. A warning is
 # indented with a tab and -q silences it; the "Nothing to do!" error is
@@ -260,3 +264,40 @@ async def zip_cmd(
 
 
 __all__ = ["plan_zip", "zip_cmd"]
+
+
+@dataclass(frozen=True, slots=True)
+class ZipFlags:
+    recursive: bool = False
+    junk_paths: bool = False
+    quiet: bool = False
+    store_links: bool = False
+    exclude: tuple[str, ...] = ()
+
+
+def parse_flags(flags: Mapping[str, FlagValue]) -> ZipFlags:
+    fl = FlagView(flags, spec=SPECS["zip"])
+    return ZipFlags(
+        recursive=fl.as_bool("r"),
+        junk_paths=fl.as_bool("j"),
+        quiet=fl.as_bool("q"),
+        store_links=fl.as_bool("y"),
+        exclude=tuple(fl.as_list("x")),
+    )
+
+
+async def zip_generic(paths, texts, opts: CommandOpts, read_bytes,
+                      write_bytes, stat, walk, links=None, mounts=None):
+    parsed = parse_flags(opts.flags)
+    return await zip_cmd(paths,
+                         read_bytes=read_bytes,
+                         write_bytes=write_bytes,
+                         stat=stat,
+                         walk=walk,
+                         r=parsed.recursive,
+                         j=parsed.junk_paths,
+                         q=parsed.quiet,
+                         y=parsed.store_links,
+                         x=list(parsed.exclude) or None,
+                         links=links,
+                         mounts=mounts)
