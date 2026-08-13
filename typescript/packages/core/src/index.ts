@@ -533,7 +533,13 @@ export { Runtime, type RuntimeEntry } from './runtime/base.ts'
 export { LanguageRuntime } from './runtime/language.ts'
 export { PythonRuntime } from './runtime/python/base.ts'
 export { JsRuntime } from './runtime/js/base.ts'
-export { bindCommands, DEFAULT_ENTRIES, runtimeBindingsFor, VFSRuntime } from './runtime/table.ts'
+export {
+  bindCommands,
+  DEFAULT_ENTRIES,
+  DEFAULT_PYTHON,
+  runtimeBindingsFor,
+  VFSRuntime,
+} from './runtime/table.ts'
 export {
   coerceRuntimeConfig,
   HOME_CONFIG_KEYS,
