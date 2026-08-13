@@ -15,7 +15,7 @@
 import pytest
 
 from mirage.workspace.expand.brace import (expand_template, make_inert,
-                                           substitute, template_globbable)
+                                           substitute)
 
 EXPAND_CASES = [
     ("{a,b,c}", ["a", "b", "c"]),
@@ -98,18 +98,3 @@ def test_substitute_replaces_atoms_in_order():
 
 def test_substitute_without_atoms_is_identity():
     assert substitute("plain", ["unused"]) == "plain"
-
-
-def test_template_globbable_reads_literal_text():
-    assert template_globbable("a*b", set())
-    assert template_globbable("[ab].txt", set())
-    assert not template_globbable("plain.txt", set())
-    assert not template_globbable("a\\*b", set())
-
-
-def test_template_globbable_counts_only_live_atoms():
-    word = "pre" + make_inert(0) + make_inert(1) + ".txt"
-    assert template_globbable(word, {0})
-    assert template_globbable(word, {1})
-    assert not template_globbable(word, set())
-    assert not template_globbable(word, {2})

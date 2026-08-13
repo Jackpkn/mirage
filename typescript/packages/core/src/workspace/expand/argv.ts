@@ -14,6 +14,7 @@
 
 import type { CallStack } from '../../shell/call_stack.ts'
 import { PathSpec, wordText } from '../../types.ts'
+import { literalWord, markGlobs, unmarkGlobs } from '../../utils/glob_walk.ts'
 import type { MountRegistry } from '../mount/registry.ts'
 import { WordPolicy, endOptionsAfterProgram, route, wordPolicy } from '../route/index.ts'
 import type { Session } from '../session/session.ts'
@@ -81,14 +82,15 @@ export async function expandArgv(
   registry: MountRegistry,
   namespace: NamespaceLinks | null = null,
 ): Promise<Argv> {
-  const wordsMeta = await expandWords(parts, session, executeFn, callStack)
-  const expanded = wordsMeta.map((w) => w.text)
-  const globbable = wordsMeta.map((w) => w.globbable)
+  let expanded = await expandWords(parts, session, executeFn, callStack)
   if (expanded.length === 0) return new Argv('', [], [])
+  // `set -f` turns pathname expansion off, which is the same word for
+  // word as every glob character having been quoted.
+  if (session.shellOptions.noglob === true) expanded = expanded.map((w) => markGlobs(w))
   // A command name may span several leading words (git-style, e.g.
   // `gws docs documents get`); the registry says how many.
   const consumed = registry.matchCommandPrefix(expanded)
-  const name = expanded.slice(0, consumed).join(' ')
+  const name = unmarkGlobs(expanded.slice(0, consumed).join(' '))
   // Before anything reads the line: an option carrying a program hands
   // the words after it to that program, and POSIX's own `--` is how that
   // handoff is spelled. Only when the interpreter is what runs, though:
@@ -101,14 +103,6 @@ export async function expandArgv(
   const shadowed = Object.hasOwn(session.functions, name)
   const line = expanded.slice(consumed)
   const tail = shadowed ? line : endOptionsAfterProgram(name, line)
-  if (tail.length > line.length) {
-    // One `--` was inserted; give it a flag slot so the words after it
-    // keep their own. The first index where the lists disagree is the
-    // insertion (ambiguity only arises between equal `--` words, where
-    // either slot reads the same).
-    const at = tail.findIndex((w, i) => i >= line.length || w !== line[i])
-    globbable.splice(consumed + at, 0, false)
-  }
   const lineWords = [...expanded.slice(0, consumed), ...tail]
 
   const policy = wordPolicy(route(name, session, registry))
@@ -126,25 +120,7 @@ export async function expandArgv(
     }
   }
 
-  let classified = classifyParts(lineWords, registry, session.cwd, wordKinds, wordBases)
-  // A glob word becomes a literal path for every consumer, including
-  // backend pushdown, when bash would not expand it: under set -f
-  // (noglob), or when its glob characters were all quoted — `cat
-  // '*.txt'` looks up a file literally named `*.txt`, and so does
-  // `cat *.txt` with noglob on.
-  const noglob = session.shellOptions.noglob === true
-  classified = classified.map((item, i) =>
-    item instanceof PathSpec && item.pattern !== null && (noglob || globbable[i] !== true)
-      ? new PathSpec({
-          virtual: item.virtual,
-          directory: item.directory,
-          pattern: null,
-          resolved: item.resolved,
-          resourcePath: item.resourcePath,
-          rawPath: item.rawPath,
-        })
-      : item,
-  )
+  const classified = classifyParts(lineWords, registry, session.cwd, wordKinds, wordBases)
   // A glob word is resolved by whoever consumes it, exactly once:
   // WordPolicy.SHELL words get matches here; mount commands keep
   // patterns for backend pushdown; unknown names fail without
@@ -152,10 +128,16 @@ export async function expandArgv(
   const words =
     policy === WordPolicy.SHELL
       ? await resolveGlobs(classified, registry, false, namespace)
-      : classified
+      : // A pattern still owes its backend a resolution, so it travels
+        // marked and the marks come off there; every other word is done
+        // with its quoting and reads literally from here on.
+        classified.map((item) =>
+          item instanceof PathSpec && item.pattern !== null ? item : literalWord(item),
+        )
   // The text view renders words as typed (rawPath): bash hands
   // programs their words unchanged, so `echo sub/file.txt` prints the
-  // relative form, not the resolved absolute path.
-  const textView = words.map(wordText)
+  // relative form, not the resolved absolute path. Quote removal is part
+  // of "as typed": a word never reaches a command marked.
+  const textView = words.map((w) => unmarkGlobs(wordText(w)))
   return new Argv(name, textView.slice(consumed), words.slice(consumed))
 }

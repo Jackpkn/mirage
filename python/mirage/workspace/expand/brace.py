@@ -12,7 +12,6 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from mirage.utils.glob_walk import GLOB_CHARS
 from mirage.workspace.expand.constants import (CHAR_SEQ, INERT_CLOSE,
                                                INERT_OPEN, NUM_SEQ)
 
@@ -53,38 +52,6 @@ def substitute(word: str, values: list[str]) -> str:
         out.append(values[int(word[j + 1:k])])
         i = k + 1
     return "".join(out)
-
-
-def template_globbable(word: str, live_atoms: set[int]) -> bool:
-    """Whether a template word carries a live (unquoted) glob character.
-
-    The literal template text is scanned the way bash reads an unquoted
-    word (a backslash quotes the next character); an inert atom
-    contributes only when its index is in live_atoms — the values that
-    expanded from unquoted nodes and hold glob characters, since a
-    quoted node's value is literal however it reads.
-
-    Args:
-        word (str): one word from expand_template, atoms intact.
-        live_atoms (set[int]): indices of glob-bearing unquoted values.
-    """
-    i = 0
-    n = len(word)
-    while i < n:
-        ch = word[i]
-        if ch == "\\":
-            i += 2
-            continue
-        if ch == INERT_OPEN:
-            k = word.index(INERT_CLOSE, i)
-            if int(word[i + 1:k]) in live_atoms:
-                return True
-            i = k + 1
-            continue
-        if ch in GLOB_CHARS:
-            return True
-        i += 1
-    return False
 
 
 def _is_padded(text: str) -> bool:

@@ -12,9 +12,7 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import dataclasses
 from collections.abc import Callable
-from dataclasses import dataclass
 from functools import partial
 from typing import Any
 
@@ -24,61 +22,20 @@ from mirage.shell.call_stack import CallStack
 from mirage.shell.helpers import get_text
 from mirage.shell.types import NodeType as NT
 from mirage.types import PathSpec
-from mirage.utils.glob_walk import has_glob, has_unescaped_glob
+from mirage.utils.glob_walk import mark_escaped_globs, mark_globs, unmark_globs
 from mirage.utils.path import expand_tilde
 from mirage.workspace.expand.brace import (expand_template, make_inert,
-                                           substitute, template_globbable)
+                                           substitute)
 from mirage.workspace.expand.classify import classify_word
 from mirage.workspace.expand.constants import (BRACE_LITERAL_TYPES,
-                                               BRACE_WORD_TYPES,
-                                               QUOTED_WORD_TYPES, SPLIT_TYPES)
+                                               BRACE_WORD_TYPES, SPLIT_TYPES)
 from mirage.workspace.expand.node import (_folded_whitespace,
-                                          _unescape_unquoted,
-                                          expand_concat_children, expand_node)
+                                          _unescape_unquoted, expand_node,
+                                          expand_node_marked)
 from mirage.workspace.expand.variable import expand_array_at, is_multiword_at
 from mirage.workspace.mount import MountRegistry
 from mirage.workspace.session import Session
 from mirage.workspace.session.shell_dirs import home_dir
-
-
-@dataclass(frozen=True, slots=True)
-class ExpandedWord:
-    """One expanded word plus whether pathname expansion may fire on it.
-
-    Bash applies pathname expansion only to glob characters that were
-    typed unquoted: `'/data/*.txt'`, `"/data/*.txt"` and `/data/\\*.txt`
-    are all the literal name, while `/data/*.txt` and the value of an
-    unquoted `$p` are patterns. Expansion is where quoting is still
-    visible, so the flag is computed here and carried to
-    classification, which otherwise sees only the bare text.
-
-    Args:
-        text (str): the expanded word.
-        globbable (bool): whether the word carries a glob character
-            from an unquoted region.
-    """
-
-    text: str
-    globbable: bool
-
-
-def _node_globbable(node: tree_sitter.Node, text: str) -> bool:
-    """Whether one word node may contribute live glob characters.
-
-    A quoted node never does; a plain word is read from its raw source
-    text so a backslash-quoted glob stays dead; anything else is an
-    unquoted expansion, whose produced characters are live the way bash
-    treats them.
-
-    Args:
-        node (tree_sitter.Node): the word node (or concatenation child).
-        text (str): the node's expanded text.
-    """
-    if node.type in QUOTED_WORD_TYPES:
-        return False
-    if node.type == NT.WORD:
-        return has_unescaped_glob(get_text(node))
-    return has_glob(text)
 
 
 def _string_has_array_at(node: tree_sitter.Node) -> bool:
@@ -134,7 +91,9 @@ async def _expand_string_with_array(
         # the element count can. An empty expansion beside it does not
         # rescue the word either: with no parameters, "$u$@" is nothing.
         return []
-    return fragments
+    # Every fragment came from inside the quotes, so its glob characters
+    # are literal.
+    return [mark_globs(f) for f in fragments]
 
 
 async def _expand_brace_word(
@@ -142,7 +101,7 @@ async def _expand_brace_word(
     session: Session,
     execute_fn: Callable[..., Any],
     call_stack: CallStack | None,
-) -> list[ExpandedWord] | None:
+) -> list[str] | None:
     """Brace-expand a concatenation or brace_expression into words.
 
     Literal word tokens form the brace template; every other child
@@ -153,10 +112,10 @@ async def _expand_brace_word(
     `$va $vb` before parameter expansion; here the prefix keeps its
     own expansion (`prea preb`), which is the useful reading.
 
-    Each produced word reports whether it may glob: template text is
-    scanned before its escapes are stripped, and an atom counts only
-    when its child was an unquoted expansion holding glob characters,
-    so `{'*',x}` stays literal while `{$p,x}` keeps the value live.
+    Quoting rides along per character: an atom keeps whatever marks its
+    own expansion produced, and the template's escapes are marked
+    before quote removal drops them, so `{'*',x}` stays literal while
+    `{$p,x}` keeps the value live.
 
     Args:
         node (tree_sitter.Node): concatenation or brace_expression.
@@ -166,25 +125,21 @@ async def _expand_brace_word(
     """
     pieces: list[str] = []
     values: list[str] = []
-    live_atoms: set[int] = set()
     for child in node.children:
         if not child.is_named or child.type in BRACE_LITERAL_TYPES:
             pieces.append(get_text(child))
         else:
-            value = await expand_node(child, session, execute_fn, call_stack)
-            if _node_globbable(child, value):
-                live_atoms.add(len(values))
-            values.append(value)
+            values.append(await expand_node_marked(child, session, execute_fn,
+                                                   call_stack))
             pieces.append(make_inert(len(values) - 1))
     words = expand_template("".join(pieces))
     if words is None:
         return None
     home = home_dir(session)
     return [
-        ExpandedWord(
-            text=substitute(expand_tilde(_unescape_unquoted(w), home), values),
-            globbable=template_globbable(w, live_atoms),
-        ) for w in words
+        substitute(
+            expand_tilde(_unescape_unquoted(mark_escaped_globs(w)), home),
+            values) for w in words
     ]
 
 
@@ -193,63 +148,56 @@ async def expand_words(
     session: Session,
     execute_fn: Callable[..., Any],
     call_stack: CallStack | None = None,
-) -> list[ExpandedWord]:
-    """Expand tree-sitter child nodes to words that know their quoting.
+) -> list[str]:
+    """Expand tree-sitter child nodes to words that still know their quoting.
 
-    The texts are exactly expand_parts'; each word additionally reports
-    whether pathname expansion may fire on it (see ExpandedWord). An
-    unquoted expansion's words are live the way bash treats them; a
-    quoted word never is; a concatenation is live when any child is, so
-    `"/data/"*.txt` globs while `'/data/*'.txt` stays literal.
+    The words are exactly expand_parts', except that a glob character
+    quoting made literal travels under its own mark, so
+    `"/data/"*.txt` still globs while `'/data/*'.txt` does not and
+    `'/data/*'?.txt` globs on the `?` alone. Only pathname expansion
+    reads these; everything else takes the unmarked ``expand_parts``.
+
+    Args:
+        parts (list[Any]): the word nodes to expand.
+        session (Session): shell session state.
+        execute_fn (Callable): evaluator for command substitutions.
+        call_stack (CallStack | None): shell call stack.
     """
-    result: list[ExpandedWord] = []
+    result: list[str] = []
     for p in parts:
         if p.type == NT.STRING and _string_has_array_at(p):
             words = await _expand_string_with_array(p, session, execute_fn,
                                                     call_stack)
-            result.extend(ExpandedWord(w, globbable=False) for w in words)
+            result.extend(words)
             continue
         if p.type in BRACE_WORD_TYPES:
             brace_words = await _expand_brace_word(p, session, execute_fn,
                                                    call_stack)
             if brace_words is not None:
                 # Empty unquoted words vanish, like bash: {,x} -> x.
-                result.extend(w for w in brace_words if w.text)
+                result.extend(w for w in brace_words if w)
                 continue
-        if p.type == NT.CONCATENATION:
-            pairs = await expand_concat_children(p, session, execute_fn,
-                                                 call_stack)
-            text = "".join(t for _, t in pairs)
-            if text:
-                result.append(
-                    ExpandedWord(text,
-                                 globbable=any(
-                                     _node_globbable(child, t)
-                                     for child, t in pairs)))
-            continue
-        expanded = await expand_node(p, session, execute_fn, call_stack)
+        expanded = await expand_node_marked(p, session, execute_fn, call_stack)
         if p.type == NT.COMMAND_SUBSTITUTION:
             for word in expanded.split():
                 if word:
-                    result.append(ExpandedWord(word, globbable=has_glob(word)))
+                    result.append(word)
             continue
         elif p.type in SPLIT_TYPES:
             for word in expanded.split():
                 if word:
-                    result.append(ExpandedWord(word, globbable=has_glob(word)))
+                    result.append(word)
         elif p.type == NT.STRING:
             # A quoted word stays a word even when it expands to "" (echo
             # "" or "$EMPTY"). The splats that yield zero words instead
             # ("$@", "${a[@]}") never reach here; they took the branch
             # above.
-            result.append(ExpandedWord(expanded, globbable=False))
+            result.append(expanded)
         elif p.type in (NT.RAW_STRING, NT.ANSI_C_STRING, NT.TRANSLATED_STRING):
-            result.append(ExpandedWord(expanded, globbable=False))
+            result.append(expanded)
         else:
             if expanded:
-                result.append(
-                    ExpandedWord(expanded,
-                                 globbable=_node_globbable(p, expanded)))
+                result.append(expanded)
     return result
 
 
@@ -261,7 +209,7 @@ async def expand_parts(
 ) -> list[str]:
     """Expand a list of tree-sitter child nodes to strings."""
     words = await expand_words(parts, session, execute_fn, call_stack)
-    return [w.text for w in words]
+    return [unmark_globs(w) for w in words]
 
 
 async def expand_and_classify(
@@ -274,17 +222,11 @@ async def expand_and_classify(
 ) -> list[str | PathSpec]:
     """Expand words, classify as PathSpec or text.
 
-    Used by for/select where concrete values are needed
-    before iteration. A word whose glob characters were all quoted
-    keeps its literal spelling: `for f in '/data/*.txt'` iterates once
-    over the name as typed, like bash.
+    Used by for/select where concrete values are needed before
+    iteration. Words keep their glob marks, because the loop list is
+    glob-resolved next (``resolve_globs``, which is where the marks come
+    off): `for f in '/data/*.txt'` iterates once over the name as typed,
+    like bash, while `for f in '/data/*'?.txt` still globs on the `?`.
     """
     expanded = await expand_words(words, session, execute_fn, call_stack)
-    result: list[str | PathSpec] = []
-    for w in expanded:
-        item = classify_word(w.text, registry, cwd)
-        if (isinstance(item, PathSpec) and item.pattern is not None
-                and not w.globbable):
-            item = dataclasses.replace(item, pattern=None)
-        result.append(item)
-    return result
+    return [classify_word(w, registry, cwd) for w in expanded]

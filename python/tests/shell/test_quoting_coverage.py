@@ -726,3 +726,61 @@ def test_quoted_brace_alternative_stays_literal():
     ws = _ws_with_globbables()
     io = _exec(ws, "echo {'/data/*.txt',ok}")
     assert _stdout(io) == b"/data/*.txt ok\n"
+
+
+# ── quoting is per character, not per word ─────────────────
+#
+# Every expectation below is GNU bash 5.2.37's, pinned in docker
+# debian:stable-slim against the same file set.
+
+
+def _ws_with_metachar_names():
+    ram = RAMResource()
+    for name in ("*a.txt", "xa.txt", "a.txt", "?b.txt", "[c].txt"):
+        ram._store.files["/" + name] = b"x\n"
+    ws = Workspace(resources={"/data/": (ram, MountMode.WRITE)}, )
+    ws.get_session(ws.default_session_id).cwd = "/data"
+    return ws
+
+
+@pytest.mark.parametrize(
+    "line,out",
+    [
+        # A quoted star is a literal star in a pattern the `?` still drives.
+        ("echo '*'?.txt", b"*a.txt\n"),
+        ('echo "*"?.txt', b"*a.txt\n"),
+        ("echo \\*?.txt", b"*a.txt\n"),
+        # Same metacharacter, one occurrence quoted and one not.
+        ("echo '*'*.txt", b"*a.txt\n"),
+        ("echo '?'*.txt", b"?b.txt\n"),
+        # Quote every metacharacter and the word never globs at all.
+        ("echo '*?'.txt", b"*?.txt\n"),
+        ("echo a'*'.txt", b"a*.txt\n"),
+        # A quoted `[` cannot open a class, and `]` alone is not special.
+        ("echo '['c].txt", b"[c].txt\n"),
+        # The quotes decide, never the value.
+        ("p='*'; echo \"$p\"?.txt", b"*a.txt\n"),
+        ("p='*'; echo $p?.txt", b"*a.txt ?b.txt [c].txt a.txt xa.txt\n"),
+        # A bracket class the user typed is not an escape: it still globs.
+        ("echo [*]?.txt", b"*a.txt\n"),
+        ("echo '[*]'?.txt", b"[*]?.txt\n"),
+    ])
+def test_metacharacters_are_quoted_one_at_a_time(line, out):
+    assert _stdout(_exec(_ws_with_metachar_names(), line)) == out
+
+
+def test_no_match_falls_back_to_the_word_after_quote_removal():
+    ws = _ws_with_metachar_names()
+    io = _exec(ws, "echo '*'?.zzz")
+    assert _stdout(io) == b"*?.zzz\n"
+    assert io.exit_code == 0
+
+
+def test_partly_quoted_glob_removes_only_what_bash_removes():
+    # The regression this pins: reading the word as a whole would let the
+    # quoted `*` match too, and rm would take xa.txt with it.
+    ws = _ws_with_metachar_names()
+    io = _exec(ws, "rm '/data/*'?.txt")
+    assert io.exit_code == 0
+    assert _stdout(_exec(ws, "ls -1 /data")) == (b"?b.txt\n[c].txt\n"
+                                                 b"a.txt\nxa.txt\n")

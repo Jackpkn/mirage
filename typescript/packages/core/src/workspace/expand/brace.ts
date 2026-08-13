@@ -12,7 +12,6 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { GLOB_CHARS } from '../../utils/glob_walk.ts'
 import { CHAR_SEQ, INERT_CLOSE, INERT_OPEN, NUM_SEQ } from './constants.ts'
 
 // Encode an already-expanded chunk as an opaque template atom. Inert
@@ -41,35 +40,6 @@ export function substitute(word: string, values: string[]): string {
     i = k + 1
   }
   return out.join('')
-}
-
-/**
- * Whether a template word carries a live (unquoted) glob character.
- *
- * The literal template text is scanned the way bash reads an unquoted
- * word (a backslash quotes the next character); an inert atom
- * contributes only when its index is in liveAtoms — the values that
- * expanded from unquoted nodes and hold glob characters, since a quoted
- * node's value is literal however it reads.
- */
-export function templateGlobbable(word: string, liveAtoms: ReadonlySet<number>): boolean {
-  let i = 0
-  while (i < word.length) {
-    const ch = word[i]
-    if (ch === '\\') {
-      i += 2
-      continue
-    }
-    if (ch === INERT_OPEN) {
-      const k = word.indexOf(INERT_CLOSE, i)
-      if (liveAtoms.has(Number(word.slice(i + 1, k)))) return true
-      i = k + 1
-      continue
-    }
-    if (ch !== undefined && GLOB_CHARS.includes(ch)) return true
-    i += 1
-  }
-  return false
 }
 
 function isPadded(text: string): boolean {

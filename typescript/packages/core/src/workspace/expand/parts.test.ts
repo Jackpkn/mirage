@@ -15,6 +15,7 @@
 import { describe, expect, it } from 'vitest'
 import { IOResult } from '../../io/types.ts'
 import { getParts } from '../../shell/helpers.ts'
+import { globPattern, unmarkGlobs } from '../../utils/glob_walk.ts'
 import { getTestParser } from '../fixtures/workspace_fixture.ts'
 import { Session } from '../session/session.ts'
 import { expandParts, expandWords } from './parts.ts'
@@ -31,86 +32,95 @@ async function words(cmd: string, env: Record<string, string> = {}, stdout = '')
   return { parts, session, executeFn, out: await expandWords(parts, session, executeFn) }
 }
 
-describe('expandWords globbability', () => {
+// One word's literal spelling and the pattern a matcher would see.
+async function read(cmd: string, env: Record<string, string> = {}): Promise<[string, string]> {
+  const { out } = await words(cmd, env)
+  const w = out[1] ?? ''
+  return [unmarkGlobs(w), globPattern(w)]
+}
+
+// `pattern` is what fnmatch is handed: a live metacharacter stays bare,
+// one that quoting made literal arrives as its own character class.
+describe('expandWords quoting', () => {
   it.each([
-    ['c /data/*.txt', '/data/*.txt', true],
-    ["c '/data/*.txt'", '/data/*.txt', false],
-    ['c "/data/*.txt"', '/data/*.txt', false],
-    ['c /data/\\*.txt', '/data/*.txt', false],
-    ["c '/data/?.txt'", '/data/?.txt', false],
-    ["c '/data/[a].txt'", '/data/[a].txt', false],
-    ["c $'/data/*.txt'", '/data/*.txt', false],
-    ['c /data/a.txt', '/data/a.txt', false],
-  ] as [string, string, boolean][])('%s', async (cmd, text, globbable) => {
-    const { out } = await words(cmd)
-    expect(out[1]?.text).toBe(text)
-    expect(out[1]?.globbable).toBe(globbable)
+    ['c /data/*.txt', '/data/*.txt', '/data/*.txt'],
+    ["c '/data/*.txt'", '/data/*.txt', '/data/[*].txt'],
+    ['c "/data/*.txt"', '/data/*.txt', '/data/[*].txt'],
+    ['c /data/\\*.txt', '/data/*.txt', '/data/[*].txt'],
+    ["c '/data/?.txt'", '/data/?.txt', '/data/[?].txt'],
+    ["c '/data/[a].txt'", '/data/[a].txt', '/data/[[]a].txt'],
+    ["c $'/data/*.txt'", '/data/*.txt', '/data/[*].txt'],
+    ['c /data/a.txt', '/data/a.txt', '/data/a.txt'],
+  ] as [string, string, string][])('%s', async (cmd, literal, pattern) => {
+    expect(await read(cmd)).toEqual([literal, pattern])
   })
 
+  // The heart of it: quoting is per character, so one word can carry both
+  // a live metacharacter and a quoted one (GNU bash 5.2.37, pinned).
   it.each([
-    ['c "/data/"*.txt', '/data/*.txt', true],
-    ["c '/data/*'.txt", '/data/*.txt', false],
-    ["c '/data/'x\\*.txt", '/data/x*.txt', false],
-    ['c "/data/*"?.txt', '/data/*?.txt', true],
-  ] as [string, string, boolean][])(
-    'concatenation is live when any child is: %s',
-    async (cmd, text, globbable) => {
-      const { out } = await words(cmd)
-      expect(out[1]?.text).toBe(text)
-      expect(out[1]?.globbable).toBe(globbable)
-    },
-  )
-
-  it('unquoted expansion value is live', async () => {
-    const { out } = await words('c $p', { p: '/data/*.txt' })
-    expect(out[1]).toEqual({ text: '/data/*.txt', globbable: true })
+    ['c "/data/"*.txt', '/data/*.txt', '/data/*.txt'],
+    ["c '/data/*'.txt", '/data/*.txt', '/data/[*].txt'],
+    ["c '/data/'x\\*.txt", '/data/x*.txt', '/data/x[*].txt'],
+    ['c "/data/*"?.txt', '/data/*?.txt', '/data/[*]?.txt'],
+    ["c '/data/*'?.txt", '/data/*?.txt', '/data/[*]?.txt'],
+    ["c '/data/*'*.txt", '/data/**.txt', '/data/[*]*.txt'],
+    ["c /data/*'?'.txt", '/data/*?.txt', '/data/*[?].txt'],
+  ] as [string, string, string][])('%s', async (cmd, literal, pattern) => {
+    expect(await read(cmd)).toEqual([literal, pattern])
   })
 
-  it('quoted expansion value is literal', async () => {
-    const { out } = await words('c "$p"', { p: '/data/*.txt' })
-    expect(out[1]).toEqual({ text: '/data/*.txt', globbable: false })
+  it('keeps an unquoted expansion value live', async () => {
+    expect(await read('c $p', { p: '/data/*.txt' })).toEqual(['/data/*.txt', '/data/*.txt'])
   })
 
-  it('expansion without glob chars is not live', async () => {
-    const { out } = await words('c $p', { p: '/data/a.txt' })
-    expect(out[1]?.globbable).toBe(false)
+  it('makes a quoted expansion value literal', async () => {
+    expect(await read('c "$p"', { p: '/data/*.txt' })).toEqual(['/data/*.txt', '/data/[*].txt'])
   })
 
-  it('command substitution words are live', async () => {
+  it('mixes a quoted expansion with a live metacharacter', async () => {
+    // bash: `"$p"?.txt` with p='*' globs on the `?` alone.
+    expect(await read('c "$p"?.txt', { p: '*' })).toEqual(['*?.txt', '[*]?.txt'])
+  })
+
+  it('keeps command substitution words live', async () => {
     const { out } = await words('c $(inner)', {}, '*.txt plain')
-    expect(out.slice(1)).toEqual([
-      { text: '*.txt', globbable: true },
-      { text: 'plain', globbable: false },
-    ])
+    expect(out.slice(1).map((w) => globPattern(w))).toEqual(['*.txt', 'plain'])
   })
 
-  it('brace quoted alternative stays literal', async () => {
+  it('keeps a quoted brace alternative literal', async () => {
     const { out } = await words("c {'*',x}")
-    expect(out.slice(1)).toEqual([
-      { text: '*', globbable: false },
-      { text: 'x', globbable: false },
+    expect(out.slice(1).map((w) => [unmarkGlobs(w), globPattern(w)])).toEqual([
+      ['*', '[*]'],
+      ['x', 'x'],
     ])
   })
 
-  it('brace literal template glob is live', async () => {
+  it('keeps a brace template glob live', async () => {
     const { out } = await words('c {a,b}*')
-    expect(out.slice(1)).toEqual([
-      { text: 'a*', globbable: true },
-      { text: 'b*', globbable: true },
+    expect(out.slice(1).map((w) => globPattern(w))).toEqual(['a*', 'b*'])
+  })
+
+  it('keeps an escaped brace template glob literal', async () => {
+    const { out } = await words('c {a,b}.\\*')
+    expect(out.slice(1).map((w) => [unmarkGlobs(w), globPattern(w)])).toEqual([
+      ['a.*', 'a.[*]'],
+      ['b.*', 'b.[*]'],
     ])
   })
 
-  it('brace unquoted expansion atom is live', async () => {
+  it('keeps an unquoted brace atom live', async () => {
     const { out } = await words('c {$p,x}', { p: '*.txt' })
-    expect(out.slice(1)).toEqual([
-      { text: '*.txt', globbable: true },
-      { text: 'x', globbable: false },
-    ])
+    expect(out.slice(1).map((w) => globPattern(w))).toEqual(['*.txt', 'x'])
   })
+})
 
-  it('expandParts returns the same texts', async () => {
-    const { parts, session, executeFn, out } = await words('c \'/data/*.txt\' "/data/"*.txt {a,b}*')
+describe('expandParts', () => {
+  it('is the unmarked view of expandWords', async () => {
+    const cmd = "c '/data/*.txt' \"/data/\"*.txt {a,b}* '/data/*'?.txt"
+    const { parts, session, executeFn, out } = await words(cmd)
     const texts = await expandParts(parts, session, executeFn)
-    expect(texts).toEqual(out.map((w) => w.text))
+    expect(texts).toEqual(out.map((w) => unmarkGlobs(w)))
+    // No mark ever reaches a caller of expandParts.
+    expect(texts.every((t) => t === unmarkGlobs(t))).toBe(true)
   })
 })

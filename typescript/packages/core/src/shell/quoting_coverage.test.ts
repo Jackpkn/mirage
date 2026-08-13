@@ -708,3 +708,69 @@ describe('quoted globs stay literal', () => {
     await ws.close()
   })
 })
+
+// ── quoting is per character, not per word ─────────────────
+//
+// Every expectation below is GNU bash 5.2.37's, pinned in docker
+// debian:stable-slim against the same file set.
+
+async function makeMetacharWs(): Promise<Workspace> {
+  const parser = await getTestParser()
+  const ram = new RAMResource()
+  for (const name of ['*a.txt', 'xa.txt', 'a.txt', '?b.txt', '[c].txt']) {
+    ram.store.files.set(`/${name}`, ENC.encode('x\n'))
+  }
+  const registry = new OpsRegistry()
+  registry.registerResource(ram)
+  const ws = new Workspace(
+    { '/data': ram },
+    { mode: MountMode.WRITE, ops: registry, shellParser: parser },
+  )
+  ws.getSession(ws.defaultSessionId).cwd = '/data'
+  return ws
+}
+
+describe('metacharacters are quoted one at a time', () => {
+  it.each([
+    // A quoted star is a literal star in a pattern the `?` still drives.
+    ["echo '*'?.txt", '*a.txt\n'],
+    ['echo "*"?.txt', '*a.txt\n'],
+    ['echo \\*?.txt', '*a.txt\n'],
+    // Same metacharacter, one occurrence quoted and one not.
+    ["echo '*'*.txt", '*a.txt\n'],
+    ["echo '?'*.txt", '?b.txt\n'],
+    // Quote every metacharacter and the word never globs at all.
+    ["echo '*?'.txt", '*?.txt\n'],
+    ["echo a'*'.txt", 'a*.txt\n'],
+    // A quoted `[` cannot open a class, and `]` alone is not special.
+    ["echo '['c].txt", '[c].txt\n'],
+    // The quotes decide, never the value.
+    ['p=\'*\'; echo "$p"?.txt', '*a.txt\n'],
+    ["p='*'; echo $p?.txt", '*a.txt ?b.txt [c].txt a.txt xa.txt\n'],
+    // A bracket class the user typed is not an escape: it still globs.
+    ['echo [*]?.txt', '*a.txt\n'],
+    ["echo '[*]'?.txt", '[*]?.txt\n'],
+  ])('%s', async (line, out) => {
+    const ws = await makeMetacharWs()
+    expect(stdoutStr(await ws.execute(line))).toBe(out)
+    await ws.close()
+  })
+
+  it('falls back to the word after quote removal when nothing matches', async () => {
+    const ws = await makeMetacharWs()
+    const io = await ws.execute("echo '*'?.zzz")
+    expect(stdoutStr(io)).toBe('*?.zzz\n')
+    expect(io.exitCode).toBe(0)
+    await ws.close()
+  })
+
+  it('removes only what bash removes', async () => {
+    // The regression this pins: reading the word as a whole would let the
+    // quoted `*` match too, and rm would take xa.txt with it.
+    const ws = await makeMetacharWs()
+    const io = await ws.execute("rm '/data/*'?.txt")
+    expect(io.exitCode).toBe(0)
+    expect(stdoutStr(await ws.execute('ls -1 /data'))).toBe('?b.txt\n[c].txt\na.txt\nxa.txt\n')
+    await ws.close()
+  })
+})

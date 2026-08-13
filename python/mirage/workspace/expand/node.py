@@ -26,6 +26,7 @@ from mirage.shell.escapes import decode_ansi_c
 from mirage.shell.helpers import get_text
 from mirage.shell.parse import parse
 from mirage.shell.types import NodeType as NT
+from mirage.utils.glob_walk import mark_escaped_globs, mark_globs, unmark_globs
 from mirage.utils.path import expand_tilde
 from mirage.workspace.expand.constants import ARITH_DELIMITERS, ARITH_OPERATORS
 from mirage.workspace.expand.variable import (_lookup_var, expand_braces,
@@ -182,49 +183,47 @@ async def expand_arith(
     return " ".join(parts)
 
 
-async def expand_concat_children(
-    ts_node: tree_sitter.Node,
-    session: Session,
-    execute_fn: Callable[..., Any],
-    call_stack: CallStack | None,
-) -> list[tuple[tree_sitter.Node, str]]:
-    """Expand a concatenation's children, keeping each child's node.
-
-    One walk serves two readers: expand_node joins the texts into the
-    word, expand_words reads the node types to decide which children
-    may contribute live glob characters. A $"..." in a concatenation
-    arrives as an anonymous `$` token followed by the string node; the
-    `$` is the translation marker, not text, and is dropped here. A
-    bare trailing `$` (a$) has no string after it and stays literal.
-
-    Args:
-        ts_node (tree_sitter.Node): the concatenation node.
-        session (Session): shell session state.
-        execute_fn (Callable): evaluator for command substitutions.
-        call_stack (CallStack | None): shell call stack.
-    """
-    pairs: list[tuple[tree_sitter.Node, str]] = []
-    children = ts_node.children
-    for position, child in enumerate(children):
-        if (child.type == "$" and position + 1 < len(children)
-                and children[position + 1].type == NT.STRING):
-            continue
-        pairs.append((child, await expand_node(child, session, execute_fn,
-                                               call_stack)))
-    return pairs
-
-
 async def expand_node(
     ts_node: tree_sitter.Node,
     session: Session,
     execute_fn: Callable[..., Any],
     call_stack: CallStack | None = None,
 ) -> str:
-    """Expand a tree-sitter node to a string."""
+    """Expand a tree-sitter node to the string it stands for.
+
+    Args:
+        ts_node (tree_sitter.Node): the node to expand.
+        session (Session): shell session state.
+        execute_fn (Callable): evaluator for command substitutions.
+        call_stack (CallStack | None): shell call stack.
+    """
+    return unmark_globs(await expand_node_marked(ts_node, session, execute_fn,
+                                                 call_stack))
+
+
+async def expand_node_marked(
+    ts_node: tree_sitter.Node,
+    session: Session,
+    execute_fn: Callable[..., Any],
+    call_stack: CallStack | None = None,
+) -> str:
+    """Expand a node, marking the glob characters quoting made literal.
+
+    Same string as :func:`expand_node`, except that a glob character
+    quoting neutralized travels under its own mark.
+    Only pathname expansion cares, so this is what ``expand_words``
+    reads while every other caller takes the unmarked wrapper above.
+
+    Args:
+        ts_node (tree_sitter.Node): the node to expand.
+        session (Session): shell session state.
+        execute_fn (Callable): evaluator for command substitutions.
+        call_stack (CallStack | None): shell call stack.
+    """
     ntype = ts_node.type
 
     if ntype == NT.WORD:
-        word = _unescape_unquoted(get_text(ts_node))
+        word = _unescape_unquoted(mark_escaped_globs(get_text(ts_node)))
         return expand_tilde(word, home_dir(session))
 
     if ntype == NT.NUMBER:
@@ -311,9 +310,22 @@ async def expand_node(
         return prefix + str(value)
 
     if ntype == NT.CONCATENATION:
-        pairs = await expand_concat_children(ts_node, session, execute_fn,
-                                             call_stack)
-        return "".join(text for _, text in pairs)
+        # Each piece carries its own quoting, which is the whole reason
+        # marks are per character: `'*'?.txt` joins a marked star to a
+        # live question mark and still globs, on the `?` alone.
+        parts = []
+        children = ts_node.children
+        for position, child in enumerate(children):
+            # A $"..." in a concatenation arrives as an anonymous `$`
+            # token followed by the string node; the `$` is the
+            # translation marker, not text. A bare trailing `$` (a$)
+            # has no string after it and stays literal.
+            if (child.type == "$" and position + 1 < len(children)
+                    and children[position + 1].type == NT.STRING):
+                continue
+            parts.append(await expand_node_marked(child, session, execute_fn,
+                                                  call_stack))
+        return "".join(parts)
 
     if ntype == NT.STRING:
         # The newline bytes of a multi-line string belong to no child
@@ -330,7 +342,10 @@ async def expand_node(
                 continue
             parts.append(await expand_node(child, session, execute_fn,
                                            call_stack))
-        return "".join(parts)
+        # Everything the quotes enclose is literal, the text and any
+        # value expanded inside it alike: "$p"?.txt globs on the `?`
+        # while $p?.txt globs on whatever `p` holds too.
+        return mark_globs("".join(parts))
 
     if ntype == NT.STRING_CONTENT:
         # Bash double-quote escapes: \$, \`, \", \\, \<newline>.
@@ -346,11 +361,11 @@ async def expand_node(
 
     if ntype == NT.RAW_STRING:
         raw = get_text(ts_node)
-        return raw[1:-1]
+        return mark_globs(raw[1:-1])
 
     if ntype == NT.ANSI_C_STRING:
         raw = get_text(ts_node)
-        return decode_ansi_c(raw[2:-1])
+        return mark_globs(decode_ansi_c(raw[2:-1]))
 
     if ntype == NT.TRANSLATED_STRING:
         # $"..." asks for a locale translation; no message catalog is
@@ -358,8 +373,8 @@ async def expand_node(
         # keeps plain double-quote semantics.
         for child in ts_node.named_children:
             if child.type == NT.STRING:
-                return await expand_node(child, session, execute_fn,
-                                         call_stack)
+                return await expand_node_marked(child, session, execute_fn,
+                                                call_stack)
         return ""
 
     if ntype == NT.VARIABLE_ASSIGNMENT:

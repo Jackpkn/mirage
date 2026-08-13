@@ -30,15 +30,6 @@ export const CHAR_SEQ = /^([A-Za-z])\.\.([A-Za-z])(?:\.\.(-?\d+))?$/
 // Unquoted expansions whose result splits into words on whitespace.
 export const SPLIT_TYPES: ReadonlySet<string> = new Set([NT.SIMPLE_EXPANSION, NT.EXPANSION])
 
-// Word nodes whose entire expansion is quoted text: glob characters in
-// them are literal, so pathname expansion never fires on their account.
-export const QUOTED_WORD_TYPES: ReadonlySet<string> = new Set([
-  NT.STRING,
-  NT.RAW_STRING,
-  NT.ANSI_C_STRING,
-  NT.TRANSLATED_STRING,
-])
-
 // Node types that may carry a brace-expandable word.
 export const BRACE_WORD_TYPES: ReadonlySet<string> = new Set([
   NT.CONCATENATION,

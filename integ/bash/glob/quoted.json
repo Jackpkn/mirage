@@ -352,6 +352,165 @@
         "stdout": "/data/zq*zq.txt\n",
         "stderr": ""
       }
+    },
+    {
+      "id": "glob_quoted_star_beside_live_question",
+      "seq": 940011,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "echo '/data/sorted_*'?.txt",
+      "expect": {
+        "exit": 0,
+        "stdout": "/data/sorted_*?.txt\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "glob_quoted_question_beside_live_star",
+      "seq": 940012,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "echo '/data/sorted_?'*.txt",
+      "expect": {
+        "exit": 0,
+        "stdout": "/data/sorted_?*.txt\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "glob_quoted_bracket_opens_nothing",
+      "seq": 940013,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "echo '['c].txt",
+      "expect": {
+        "exit": 0,
+        "stdout": "[c].txt\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "glob_typed_bracket_class_still_globs",
+      "seq": 940014,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "echo /data/sorted_[ab].txt",
+      "expect": {
+        "exit": 0,
+        "stdout": "/data/sorted_a.txt /data/sorted_b.txt\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "glob_quoted_star_rm_spares_the_live_match",
+      "seq": 940015,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "ssh"
+      ],
+      "command": "touch '/data/zq*a.txt' /data/zqxa.txt && rm '/data/zq*'?.txt && ls -1 /data/zqxa.txt && rm /data/zqxa.txt",
+      "expect": {
+        "exit": 0,
+        "stdout": "/data/zqxa.txt\n",
+        "stderr": ""
+      }
     }
   ]
 }
