@@ -30,13 +30,16 @@ from mirage.shell.call_stack import CallStack
 from mirage.shell.errors import ExitSignal
 from mirage.shell.options import parse_option_word
 from mirage.shell.types import SET_OPTION_NAMES
+from mirage.utils.hidden import var_hidden
 from mirage.workspace.executor.builtins.text import _PRINTF_TARGET_RE
 from mirage.workspace.executor.control import ReturnSignal
 from mirage.workspace.expand.variable import _array_index
 from mirage.workspace.mount.namespace import Namespace
 from mirage.workspace.session import Session
 from mirage.workspace.session.errors import ReadonlyVariableError
-from mirage.workspace.session.state import env_snapshot, session_view
+from mirage.workspace.session.state import (env_get, env_is_readonly,
+                                            env_snapshot, session_view,
+                                            visible_arrays, visible_env)
 from mirage.workspace.types import ExecutionNode
 
 
@@ -261,10 +264,10 @@ def _export_lines(session: Session, flags: set[str]) -> list[str]:
     """
     if "f" in flags:
         return []
+    env = visible_env(session)
     lines: list[str] = []
-    for name in sorted(session.env):
-        lines.append(
-            f"declare -x {name}={_bash_declare_quote(session.env[name])}")
+    for name in sorted(env):
+        lines.append(f"declare -x {name}={_bash_declare_quote(env[name])}")
     return lines
 
 
@@ -286,8 +289,12 @@ def _readonly_lines(session: Session, flags: set[str]) -> list[str]:
     if "f" in flags or "A" in flags:
         return []
     arrays_only = "a" in flags
+    env = visible_env(session)
     lines: list[str] = []
-    for name in sorted(session.readonly_vars):
+    # env_is_readonly answers False for a hidden name, so a hidden
+    # readonly never prints even its bare `declare -r NAME` row.
+    for name in sorted(n for n in session.readonly_vars
+                       if env_is_readonly(session, n)):
         arr = session.arrays.get(name)
         if arr is not None:
             parts = [
@@ -298,9 +305,8 @@ def _readonly_lines(session: Session, flags: set[str]) -> list[str]:
             continue
         if arrays_only:
             continue
-        if name in session.env:
-            lines.append(
-                f"declare -r {name}={_bash_declare_quote(session.env[name])}")
+        if name in env:
+            lines.append(f"declare -r {name}={_bash_declare_quote(env[name])}")
         else:
             lines.append(f"declare -r {name}")
     return lines
@@ -352,11 +358,15 @@ async def handle_export(
                 await view.set(key, val)
             except PolicyDenied as exc:
                 return _refusal("export", exc)
-        elif assign not in session.env and assign not in session.arrays:
+        elif (env_get(session, assign) is None
+              and assign not in visible_arrays(session)):
             # `export NAME` with no value writes an empty entry, which
             # is still a session write; an existing name (scalar or
             # array) is only re-marked for export, so nothing is
-            # written — a scalar write here would erase an array.
+            # written — a scalar write here would erase an array. The
+            # membership reads are visible ones: a hidden name counts
+            # as unset, so the write is attempted and the door refuses
+            # it like the valued form.
             if view.is_readonly(assign):
                 return _readonly_refusal("export", assign)
             try:
@@ -416,14 +426,21 @@ async def handle_readonly(
 
 
 def _unset_variable(session: Session, name: str) -> None:
-    """Remove a whole scalar or array variable.
+    """Clear what the env door does not own after a whole-variable unset.
+
+    The scalar half is the view's (``unset`` popped it, or quietly kept
+    it for a hidden name — a direct pop here would undo that refusal);
+    this clears the array storage and the getopts residue. The array
+    pop keeps a hidden name too: the embedder can seed
+    ``session.arrays`` before narrowing, so a hidden array exists and
+    is as much the host's to keep as the scalar the view protected.
 
     Args:
         session (Session): shell session state.
         name (str): a bare variable name (no subscript).
     """
-    session.env.pop(name, None)
-    session.arrays.pop(name, None)
+    if not var_hidden(session.hidden_vars, name):
+        session.arrays.pop(name, None)
     if name == "OPTIND":
         session._getopts_optind = None
 
@@ -461,15 +478,18 @@ async def _unset_element(session: Session, view: SessionView, base: str,
     Raises:
         PolicyDenied: a pre_session policy refused the write.
     """
-    arr = session.arrays.get(base)
+    arr = visible_arrays(session).get(base)
     if arr is None:
-        if base not in session.env:
+        # Visible reads on purpose: a hidden base answers the unset
+        # branch's silent no-op instead of a denial that would leak
+        # the name's existence.
+        if env_get(session, base) is None:
             return "ok"
-        if _array_index(subscript, session.env) != 0:
+        if _array_index(subscript, visible_env(session)) != 0:
             return "notarray"
         await view.unset(base)
         return "ok"
-    idx = _array_index(subscript, session.env)
+    idx = _array_index(subscript, visible_env(session))
     if idx < 0:
         idx += array_extent(arr)
         if idx < 0:
@@ -578,13 +598,13 @@ async def handle_printenv(
     session: Session,
 ) -> tuple[ByteSource | None, IOResult, ExecutionNode]:
     if name:
-        val = session.env.get(name)
+        val = visible_env(session).get(name)
         if val is None:
             return None, IOResult(exit_code=1), ExecutionNode(
                 command="printenv", exit_code=1)
         out = f"{val}\n".encode()
     else:
-        lines = [f"{k}={v}" for k, v in session.env.items()]
+        lines = [f"{k}={v}" for k, v in visible_env(session).items()]
         out = ("\n".join(sorted(lines)) + "\n").encode()
     return out, IOResult(), ExecutionNode(command="printenv", exit_code=0)
 
@@ -771,7 +791,7 @@ async def handle_read(
                                                           exit_code=1)
 
     line = line_bytes.decode(errors="replace").rstrip("\n")
-    ifs = session.env.get("IFS", " \t\n")
+    ifs = visible_env(session).get("IFS", " \t\n")
     if ifs == " \t\n":
         # GNU trims IFS whitespace from both ends before splitting.
         line = line.strip(" \t\n")
@@ -859,9 +879,12 @@ async def handle_local(
         else:
             if local_vars is not None and assign not in local_vars:
                 local_vars[assign] = session.env.get(assign)
-            if assign not in session.env and assign not in session.arrays:
+            if (env_get(session, assign) is None
+                    and assign not in visible_arrays(session)):
                 # A bare declaration of an existing array re-scopes it;
-                # a scalar write here would erase it.
+                # a scalar write here would erase it. Visible reads: a
+                # hidden name counts as unset, so the write is
+                # attempted and the door refuses it.
                 if view.is_readonly(assign):
                     return _readonly_refusal("local", assign)
                 try:
@@ -917,7 +940,7 @@ async def handle_set(
     call_stack: CallStack | None = None,
 ) -> tuple[ByteSource | None, IOResult, ExecutionNode]:
     if not args:
-        lines = [f"{k}={v}" for k, v in session.env.items()]
+        lines = [f"{k}={v}" for k, v in visible_env(session).items()]
         out = ("\n".join(sorted(lines)) + "\n").encode()
         return out, IOResult(), ExecutionNode(command="set", exit_code=0)
     i = 0

@@ -32,10 +32,11 @@ import {
   type ShellArray,
 } from '../../../shell/array.ts'
 import { arrayIndex } from '../../expand/variable.ts'
+import { varHidden } from '../../../utils/hidden.ts'
 import { ReadonlyVariableError } from '../../session/errors.ts'
 import { ownRecord, sessionEntry } from '../../session/session.ts'
 import type { Session } from '../../session/session.ts'
-import { envSnapshot, sessionView } from '../../session/state.ts'
+import { envGet, envSnapshot, sessionView, visibleArrays, visibleEnv } from '../../session/state.ts'
 import type { SessionView } from '../../../ops/types.ts'
 import { ExecutionNode } from '../../types.ts'
 import { ReturnSignal } from '../control.ts'
@@ -215,9 +216,10 @@ function exportLines(session: Session, flags: Set<string>): string[] {
   // -f selects shell functions; mirage tracks no export attribute on
   // functions, so that form lists nothing, as bash does with none exported.
   if (flags.has('f')) return []
-  return Object.keys(session.env)
+  const env = visibleEnv(session)
+  return Object.keys(env)
     .sort(compareCodePoints)
-    .map((name) => `declare -x ${name}=${bashDeclareQuote(session.env[name] ?? '')}`)
+    .map((name) => `declare -x ${name}=${bashDeclareQuote(env[name] ?? '')}`)
 }
 
 function readonlyLines(session: Session, flags: Set<string>): string[] {
@@ -226,8 +228,12 @@ function readonlyLines(session: Session, flags: Set<string>): string[] {
   // for, so those forms list nothing.
   if (flags.has('f') || flags.has('A')) return []
   const arraysOnly = flags.has('a')
+  const env = visibleEnv(session)
   const lines: string[] = []
-  for (const name of [...session.readonlyVars].sort(compareCodePoints)) {
+  // A hidden readonly never prints even its bare `declare -r NAME` row.
+  for (const name of [...session.readonlyVars]
+    .filter((name) => !varHidden(session.hiddenVars, name))
+    .sort(compareCodePoints)) {
     const arr = session.arrays[name]
     if (arr !== undefined) {
       const parts: string[] = []
@@ -241,8 +247,8 @@ function readonlyLines(session: Session, flags: Set<string>): string[] {
       continue
     }
     if (arraysOnly) continue
-    if (name in session.env) {
-      lines.push(`declare -r ${name}=${bashDeclareQuote(session.env[name] ?? '')}`)
+    if (name in env) {
+      lines.push(`declare -r ${name}=${bashDeclareQuote(env[name] ?? '')}`)
     } else {
       lines.push(`declare -r ${name}`)
     }
@@ -294,11 +300,13 @@ export async function handleExport(
         if (err instanceof PolicyDenied) return doorRefusal('export', err)
         throw err
       }
-    } else if (!(assign in session.env) && !(assign in session.arrays)) {
+    } else if (envGet(session, assign) === null && !(assign in visibleArrays(session))) {
       // `export NAME` with no value writes an empty entry, which is
       // still a session write; an existing name (scalar or array) is
       // only re-marked for export, so nothing is written — a scalar
-      // write here would erase an array.
+      // write here would erase an array. The membership reads are
+      // visible ones: a hidden name counts as unset, so the write is
+      // attempted and the door refuses it like the valued form.
       if (view.isReadonly(assign)) return readonlyRefusal('export', assign)
       try {
         await view.set(assign, '')
@@ -363,12 +371,21 @@ export async function handleReadonly(
   return [null, new IOResult(), new ExecutionNode({ command: 'readonly', exitCode: 0 })]
 }
 
-/** Remove a whole scalar or array variable (no subscript). */
+/**
+ * Clear what the env door does not own after a whole-variable unset.
+ *
+ * The scalar half is the view's (`unset` deleted it, or quietly kept
+ * it for a hidden name — a direct delete here would undo that
+ * refusal); this clears the array storage and the getopts residue.
+ * The array delete keeps a hidden name too: the embedder can seed
+ * `session.arrays` before narrowing, so a hidden array exists and is
+ * as much the host's to keep as the scalar the view protected.
+ */
 function unsetVariable(session: Session, name: string): void {
-  // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
-  delete session.env[name]
-  // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
-  delete session.arrays[name]
+  if (!varHidden(session.hiddenVars, name)) {
+    // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
+    delete session.arrays[name]
+  }
   if (name === 'OPTIND') session.getoptsOptind = null
 }
 
@@ -396,14 +413,17 @@ async function unsetElement(
   base: string,
   subscript: string,
 ): Promise<'ok' | 'notarray' | 'subscript'> {
-  const arr = sessionEntry(session.arrays, base)
+  const arr = sessionEntry(visibleArrays(session), base)
   if (arr === undefined) {
-    if (sessionEntry(session.env, base) === undefined) return 'ok'
-    if (arrayIndex(subscript, session.env) !== 0) return 'notarray'
+    // Visible reads on purpose: a hidden base answers the unset
+    // branch's silent no-op instead of a denial that would leak the
+    // name's existence.
+    if (envGet(session, base) === null) return 'ok'
+    if (arrayIndex(subscript, visibleEnv(session)) !== 0) return 'notarray'
     await view.unset(base)
     return 'ok'
   }
-  let idx = arrayIndex(subscript, session.env)
+  let idx = arrayIndex(subscript, visibleEnv(session))
   if (idx < 0) {
     idx += arrayExtent(arr)
     if (idx < 0) return 'subscript'
@@ -521,7 +541,7 @@ export async function handleUnset(
 
 export function handlePrintenv(name: string | null, session: Session): Result {
   if (name !== null) {
-    const val = session.env[name]
+    const val = visibleEnv(session)[name]
     if (val === undefined) {
       return [
         null,
@@ -532,7 +552,7 @@ export function handlePrintenv(name: string | null, session: Session): Result {
     const out = new TextEncoder().encode(`${val}\n`)
     return [out, new IOResult(), new ExecutionNode({ command: 'printenv', exitCode: 0 })]
   }
-  const lines = Object.entries(session.env).map(([k, v]) => `${k}=${v}`)
+  const lines = Object.entries(visibleEnv(session)).map(([k, v]) => `${k}=${v}`)
   lines.sort(compareCodePoints)
   const out = new TextEncoder().encode(`${lines.join('\n')}\n`)
   return [out, new IOResult(), new ExecutionNode({ command: 'printenv', exitCode: 0 })]
@@ -740,9 +760,11 @@ export async function handleLocal(
       if (locals !== null && !locals.has(assign)) {
         locals.set(assign, assign in session.env ? (session.env[assign] ?? null) : null)
       }
-      if (!(assign in session.env) && !(assign in session.arrays)) {
+      if (envGet(session, assign) === null && !(assign in visibleArrays(session))) {
         // A bare declaration of an existing array re-scopes it; a
-        // scalar write here would erase it.
+        // scalar write here would erase it. Visible reads: a hidden
+        // name counts as unset, so the write is attempted and the
+        // door refuses it.
         if (view.isReadonly(assign)) return readonlyRefusal('local', assign)
         try {
           await view.set(assign, '')
@@ -802,7 +824,7 @@ export function handleSet(
   _callStack: CallStack | null = null,
 ): Result {
   if (args.length === 0) {
-    const lines = Object.entries(session.env).map(([k, v]) => `${k}=${v}`)
+    const lines = Object.entries(visibleEnv(session)).map(([k, v]) => `${k}=${v}`)
     lines.sort(compareCodePoints)
     const out = new TextEncoder().encode(`${lines.join('\n')}\n`)
     return [out, new IOResult(), new ExecutionNode({ command: 'set', exitCode: 0 })]
@@ -1122,7 +1144,7 @@ export async function handleRead(
   let lineEnd = decodedLine.length
   while (lineEnd > 0 && decodedLine.charCodeAt(lineEnd - 1) === 10) lineEnd--
   const line = decodedLine.slice(0, lineEnd)
-  const ifs = session.env.IFS ?? ' \t\n'
+  const ifs = visibleEnv(session).IFS ?? ' \t\n'
   let parts: string[]
   if (ifs === ' \t\n') {
     // GNU trims IFS whitespace from both ends before splitting; the

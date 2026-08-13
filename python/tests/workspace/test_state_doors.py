@@ -24,9 +24,10 @@ from mirage.io.types import IOResult
 from mirage.policy import Action, Deny, OpsContext, Policy
 from mirage.policy.types import SessionContext
 from mirage.resource.ram import RAMResource
-from mirage.types import MountMode, PathSpec
+from mirage.types import HiddenPaths, HiddenVars, MountMode, PathSpec
 from mirage.workspace import Workspace
-from mirage.workspace.session import reset_current_session, set_current_session
+from mirage.workspace.session import (env_snapshot, reset_current_session,
+                                      set_current_session)
 
 
 class DenyOp(Policy):
@@ -648,3 +649,585 @@ def test_for_loop_variable_fires_the_gate():
     assert "SECRET_I" not in ws.env
     assert allowed.exit_code == 0
     assert allowed_out.count("ok") == 2
+
+
+def _hidden_vars_ws() -> Workspace:
+    ws = _two_mounts()
+    sess = ws.create_session("agent", mounts={"/a": "write"})
+    sess.env["SLACK_TOKEN"] = "xoxb-real"
+    sess.env["PUBLIC"] = "ok"
+    sess.hidden_vars = HiddenVars(names=("SLACK_TOKEN", ))
+    return ws
+
+
+def test_expansion_reads_a_hidden_var_as_unset():
+    ws = _hidden_vars_ws()
+
+    async def run():
+        io = await ws.execute('echo "[$SLACK_TOKEN][$PUBLIC]"',
+                              session_id="agent")
+        return io, await io.stdout_str()
+
+    io, out = asyncio.run(run())
+    assert io.exit_code == 0
+    assert out == "[][ok]\n"
+
+
+def test_assign_default_writes_raw_env_under_hidden_vars():
+    ws = _hidden_vars_ws()
+
+    async def run():
+        io = await ws.execute('echo "${NEWVAR:=seeded}" && echo "$NEWVAR"',
+                              session_id="agent")
+        return io, await io.stdout_str()
+
+    io, out = asyncio.run(run())
+    assert io.exit_code == 0
+    assert out == "seeded\nseeded\n"
+    assert ws.get_session("agent").env["NEWVAR"] == "seeded"
+
+
+def test_assign_default_of_a_hidden_var_is_refused():
+    # ${SLACK_TOKEN:=fake} observes the hidden name as unset, so
+    # without a gate the write-back would overwrite the real value
+    # the host's wiring still reads; the door refuses like any denied
+    # assignment.
+    ws = _hidden_vars_ws()
+
+    async def run():
+        return await ws.execute('echo "${SLACK_TOKEN:=fake}"',
+                                session_id="agent")
+
+    io = asyncio.run(run())
+    assert io.exit_code != 0
+    assert ws.get_session("agent").env["SLACK_TOKEN"] == "xoxb-real"
+
+
+def test_arith_assign_of_a_hidden_var_is_refused():
+    # $((X=5)) and ((X=5)) write the raw env on purpose, but a hidden
+    # name is not theirs to clobber; both spellings refuse.
+    ws = _hidden_vars_ws()
+
+    async def run():
+        expansion = await ws.execute('echo "$((SLACK_TOKEN=5))"',
+                                     session_id="agent")
+        command = await ws.execute("((SLACK_TOKEN=7))", session_id="agent")
+        return expansion, command
+
+    expansion, command = asyncio.run(run())
+    assert expansion.exit_code != 0
+    assert command.exit_code != 0
+    assert ws.get_session("agent").env["SLACK_TOKEN"] == "xoxb-real"
+
+
+def test_printf_v_of_a_hidden_var_is_refused():
+    ws = _hidden_vars_ws()
+
+    async def run():
+        return await ws.execute("printf -v SLACK_TOKEN fake",
+                                session_id="agent")
+
+    io = asyncio.run(run())
+    assert io.exit_code != 0
+    assert ws.get_session("agent").env["SLACK_TOKEN"] == "xoxb-real"
+
+
+def test_env_builtin_omits_hidden_vars():
+    ws = _hidden_vars_ws()
+
+    async def run():
+        io = await ws.execute("env", session_id="agent")
+        return await io.stdout_str()
+
+    out = asyncio.run(run())
+    assert "SLACK_TOKEN" not in out
+    assert "PUBLIC=ok" in out
+
+
+def test_set_listing_omits_hidden_vars():
+    ws = _hidden_vars_ws()
+
+    async def run():
+        io = await ws.execute("set", session_id="agent")
+        return await io.stdout_str()
+
+    out = asyncio.run(run())
+    assert "SLACK_TOKEN" not in out
+    assert "PUBLIC=ok" in out
+
+
+def test_export_p_omits_hidden_vars():
+    ws = _hidden_vars_ws()
+
+    async def run():
+        io = await ws.execute("export -p", session_id="agent")
+        return await io.stdout_str()
+
+    out = asyncio.run(run())
+    assert "SLACK_TOKEN" not in out
+
+
+def test_exporting_a_hidden_var_is_refused_and_preserves_it():
+    # A landed write would clobber the real value the host's wiring
+    # still reads; a swallowed one would gaslight the agent. The door
+    # refuses loudly, and the line dies like any denied assignment.
+    ws = _hidden_vars_ws()
+
+    async def run():
+        return await ws.execute("export SLACK_TOKEN=fake", session_id="agent")
+
+    io = asyncio.run(run())
+    assert io.exit_code != 0
+    assert ws.get_session("agent").env["SLACK_TOKEN"] == "xoxb-real"
+
+
+def test_plain_assignment_of_a_hidden_var_is_refused():
+    ws = _hidden_vars_ws()
+
+    async def run():
+        return await ws.execute("SLACK_TOKEN=fake", session_id="agent")
+
+    io = asyncio.run(run())
+    assert io.exit_code != 0
+    assert ws.get_session("agent").env["SLACK_TOKEN"] == "xoxb-real"
+
+
+def test_unset_of_a_hidden_var_is_quiet_and_preserves_it():
+    ws = _hidden_vars_ws()
+
+    async def run():
+        return await ws.execute("unset SLACK_TOKEN", session_id="agent")
+
+    io = asyncio.run(run())
+    assert io.exit_code == 0
+    assert ws.get_session("agent").env["SLACK_TOKEN"] == "xoxb-real"
+
+
+def _hidden_array_ws() -> Workspace:
+    ws = _two_mounts()
+    sess = ws.create_session("agent", mounts={"/a": "write"})
+    sess.arrays["SLACK_TOKEN"] = ["xoxb-real", "xoxb-two"]
+    sess.env["PUBLIC"] = "ok"
+    sess.hidden_vars = HiddenVars(names=("SLACK_TOKEN", ))
+    return ws
+
+
+def test_expansion_reads_a_hidden_array_as_unset():
+    # The embedder can seed session.arrays before narrowing, so a
+    # hidden name can hold an array; every expansion spelling must
+    # read it the way the scalar case does: as unset.
+    ws = _hidden_array_ws()
+
+    async def run():
+        io = await ws.execute(
+            'echo "[$SLACK_TOKEN][${SLACK_TOKEN[0]}]'
+            '[${SLACK_TOKEN[@]}][${#SLACK_TOKEN[@]}]"',
+            session_id="agent")
+        splat = await ws.execute(
+            'for el in "${SLACK_TOKEN[@]}"; do echo "el=$el"; done; echo end',
+            session_id="agent")
+        return io, await io.stdout_str(), splat, await splat.stdout_str()
+
+    io, out, splat, splat_out = asyncio.run(run())
+    assert io.exit_code == 0
+    assert out == "[][][][0]\n"
+    assert splat.exit_code == 0
+    assert splat_out == "end\n"
+
+
+def test_prefix_assignment_of_a_hidden_var_is_refused():
+    # SLACK_TOKEN=fake cmd writes the raw env before dispatch, and a
+    # function-call prefix deliberately never restores, so without a
+    # gate a narrowed session permanently clobbers the host value.
+    ws = _hidden_vars_ws()
+
+    async def run():
+        await ws.execute("f() { echo ran; }", session_id="agent")
+        fn = await ws.execute("SLACK_TOKEN=fake f", session_id="agent")
+        cmd = await ws.execute("SLACK_TOKEN=fake echo hi", session_id="agent")
+        bare = await ws.execute("SLACK_TOKEN=fake OTHER=x", session_id="agent")
+        return fn, cmd, bare
+
+    fn, cmd, bare = asyncio.run(run())
+    assert fn.exit_code != 0
+    assert cmd.exit_code != 0
+    assert bare.exit_code != 0
+    sess = ws.get_session("agent")
+    assert sess.env["SLACK_TOKEN"] == "xoxb-real"
+    assert "OTHER" not in sess.env
+
+
+def test_bare_declare_a_of_a_hidden_var_is_refused():
+    # `declare -a NAME` at top level migrates an existing scalar into
+    # element 0 with raw writes, which would move the hidden value
+    # into array storage; the door refuses instead.
+    ws = _hidden_vars_ws()
+
+    async def run():
+        return await ws.execute("declare -a SLACK_TOKEN", session_id="agent")
+
+    io = asyncio.run(run())
+    assert io.exit_code != 0
+    sess = ws.get_session("agent")
+    assert sess.env["SLACK_TOKEN"] == "xoxb-real"
+    assert "SLACK_TOKEN" not in sess.arrays
+
+
+def test_unset_of_a_hidden_array_is_a_quiet_noop():
+    # `unset name` and `unset name[i]` on a hidden array answer as
+    # they would for an unset name: exit 0, nothing said, nothing
+    # written, in either spelling.
+    ws = _hidden_array_ws()
+
+    async def run():
+        element = await ws.execute('unset "SLACK_TOKEN[1]"',
+                                   session_id="agent")
+        whole = await ws.execute("unset SLACK_TOKEN", session_id="agent")
+        return element, whole
+
+    element, whole = asyncio.run(run())
+    assert element.exit_code == 0
+    assert whole.exit_code == 0
+    sess = ws.get_session("agent")
+    assert sess.arrays["SLACK_TOKEN"] == ["xoxb-real", "xoxb-two"]
+
+
+def test_bare_export_of_a_hidden_var_is_refused():
+    # `export NAME` on a name that reads as unset writes an empty
+    # entry, so on a hidden name it refuses like the valued form;
+    # deciding from raw membership would quietly re-mark the hidden
+    # name instead.
+    ws = _hidden_vars_ws()
+
+    async def run():
+        return await ws.execute("export SLACK_TOKEN", session_id="agent")
+
+    io = asyncio.run(run())
+    assert io.exit_code != 0
+    assert ws.get_session("agent").env["SLACK_TOKEN"] == "xoxb-real"
+
+
+def test_subscript_arithmetic_resolves_against_the_visible_env():
+    # An assignment subscript evaluates as arithmetic, so a hidden
+    # numeric read there would steer a visible array's write index
+    # and leak by placement; hidden reads as unset, which is 0.
+    ws = _two_mounts()
+    sess = ws.create_session("agent", mounts={"/a": "write"})
+    sess.env["SECRET_IDX"] = "1"
+    sess.hidden_vars = HiddenVars(names=("SECRET_IDX", ))
+
+    async def run():
+        await ws.execute("b=(x y)", session_id="agent")
+        return await ws.execute("b[SECRET_IDX]=z", session_id="agent")
+
+    io = asyncio.run(run())
+    assert io.exit_code == 0
+    assert ws.get_session("agent").arrays["b"] == ["z", "y"]
+
+
+def test_hidden_home_reads_as_unset_everywhere():
+    # HOME has its own resolution channel (home_dir feeds $HOME, tilde
+    # expansion and bare `cd`), so hiding it must land there too, not
+    # only on the generic env lookup.
+    ws = _two_mounts()
+    sess = ws.create_session("agent", mounts={"/a": "write"})
+    sess.env["HOME"] = "/a/homedir"
+    sess.hidden_vars = HiddenVars(names=("HOME", ))
+
+    async def run():
+        home = await ws.execute('echo "[$HOME]"', session_id="agent")
+        tilde = await ws.execute("echo ~", session_id="agent")
+        cd = await ws.execute("cd", session_id="agent")
+        return await home.stdout_str(), await tilde.stdout_str(), cd
+
+    home_out, tilde_out, cd = asyncio.run(run())
+    assert home_out == "[]\n"
+    assert tilde_out == "~\n"
+    assert cd.exit_code == 1
+
+
+def test_guest_env_omits_hidden_vars():
+    # The guest copy-out is env_snapshot too, so a hidden var never
+    # reaches RunArgs.env however the runtime assembles its environ.
+    ws = _hidden_vars_ws()
+    sess = ws.get_session("agent")
+    snap = env_snapshot(sess)
+    assert "SLACK_TOKEN" not in snap
+    assert snap["PUBLIC"] == "ok"
+
+
+def _hidden_paths_ws() -> Workspace:
+    a = RAMResource()
+    a._store.files["/x.txt"] = b"public\n"
+    a._store.files["/secrets/token.txt"] = b"s3cr3t\n"
+    a._store.files["/note.key"] = b"kkk\n"
+    a._store.dirs.add("/secrets")
+    ws = Workspace({"/a": (a, MountMode.WRITE)}, mode=MountMode.WRITE)
+    sess = ws.create_session("agent")
+    sess.hidden_paths = HiddenPaths(paths=("/a/secrets", ),
+                                    patterns=("*.key", ))
+    return ws
+
+
+def test_ops_read_of_a_hidden_path_is_enoent():
+    ws = _hidden_paths_ws()
+    sess = ws.get_session("agent")
+
+    async def run():
+        token = set_current_session(sess)
+        try:
+            with pytest.raises(FileNotFoundError):
+                await ws.ops.read("/a/secrets/token.txt")
+            with pytest.raises(FileNotFoundError):
+                await ws.ops.stat("/a/secrets")
+            with pytest.raises(FileNotFoundError):
+                await ws.ops.read("/a/note.key")
+        finally:
+            reset_current_session(token)
+
+    asyncio.run(run())
+
+
+def test_ops_readdir_drops_hidden_names():
+    ws = _hidden_paths_ws()
+    sess = ws.get_session("agent")
+
+    async def run():
+        token = set_current_session(sess)
+        try:
+            return await ws.ops.readdir("/a")
+        finally:
+            reset_current_session(token)
+
+    names = [e.rstrip("/").rsplit("/", 1)[-1] for e in asyncio.run(run())]
+    assert "x.txt" in names
+    assert "secrets" not in names
+    assert "note.key" not in names
+
+
+def test_ops_exists_says_a_hidden_path_does_not():
+    ws = _hidden_paths_ws()
+    sess = ws.get_session("agent")
+
+    async def run():
+        token = set_current_session(sess)
+        try:
+            return await ws.ops.exists("/a/secrets/token.txt")
+        finally:
+            reset_current_session(token)
+
+    assert asyncio.run(run()) is False
+
+
+def test_ops_create_into_hidden_space_is_eacces():
+    # ENOENT on a create would be nonsense (the caller is naming the
+    # path), so a write into hidden space refuses as permission denied,
+    # and never lands.
+    ws = _hidden_paths_ws()
+    sess = ws.get_session("agent")
+
+    async def run():
+        token = set_current_session(sess)
+        try:
+            with pytest.raises(PermissionError):
+                await ws.ops.write("/a/secrets/new.txt", b"x")
+            with pytest.raises(PermissionError):
+                await ws.ops.mkdir("/a/secrets/sub")
+        finally:
+            reset_current_session(token)
+
+    asyncio.run(run())
+    files = next(m for m in ws.namespace.registry.mounts()
+                 if m.prefix.rstrip("/") == "/a").resource._store.files
+    assert "/secrets/new.txt" not in files
+
+
+def test_unscoped_session_sees_everything():
+    ws = _hidden_paths_ws()
+
+    async def run():
+        listing = await ws.ops.readdir("/a")
+        body = await ws.ops.read("/a/secrets/token.txt")
+        return listing, body
+
+    listing, body = asyncio.run(run())
+    names = [e.rstrip("/").rsplit("/", 1)[-1] for e in listing]
+    assert "secrets" in names
+    assert body == b"s3cr3t\n"
+
+
+def test_fuse_hides_hidden_paths():
+    # FUSE rides the same door, so a scoped kernel mount agrees with a
+    # scoped shell about what exists.
+    ws = _hidden_paths_ws()
+    sess = ws.get_session("agent")
+    core = MountCore(ws.ops, session=sess)
+    with pytest.raises(FileNotFoundError):
+        core.getattr("/a/secrets/token.txt")
+    names = core.readdir("/a")
+    assert "secrets" not in names
+    assert "note.key" not in names
+
+
+def test_shell_cat_of_a_hidden_path_is_no_such_file():
+    ws = _hidden_paths_ws()
+
+    async def run():
+        io = await ws.execute("cat /a/secrets/token.txt", session_id="agent")
+        out = await io.stdout_str() if io.stdout else ""
+        return io, out
+
+    io, out = asyncio.run(run())
+    assert io.exit_code != 0
+    assert "s3cr3t" not in out
+    assert b"No such file" in (io.stderr or b"")
+
+
+def test_shell_cat_of_a_pattern_hidden_file_is_no_such_file():
+    ws = _hidden_paths_ws()
+
+    async def run():
+        io = await ws.execute("cat /a/note.key", session_id="agent")
+        out = await io.stdout_str() if io.stdout else ""
+        return io, out
+
+    io, out = asyncio.run(run())
+    assert io.exit_code != 0
+    assert "kkk" not in out
+
+
+def test_shell_ls_drops_hidden_names():
+    ws = _hidden_paths_ws()
+
+    async def run():
+        io = await ws.execute("ls /a", session_id="agent")
+        return await io.stdout_str()
+
+    out = asyncio.run(run())
+    assert "x.txt" in out
+    assert "secrets" not in out
+    assert "note.key" not in out
+
+
+def test_shell_ls_of_a_hidden_dir_is_no_such_file():
+    ws = _hidden_paths_ws()
+
+    async def run():
+        io = await ws.execute("ls /a/secrets", session_id="agent")
+        out = await io.stdout_str() if io.stdout else ""
+        return io, out
+
+    io, out = asyncio.run(run())
+    assert io.exit_code != 0
+    assert "token" not in out
+
+
+def test_shell_find_never_reports_hidden_rows():
+    ws = _hidden_paths_ws()
+
+    async def run():
+        io = await ws.execute("find /a", session_id="agent")
+        return await io.stdout_str()
+
+    out = asyncio.run(run())
+    assert "/a/x.txt" in out
+    assert "secrets" not in out
+    assert ".key" not in out
+
+
+def test_shell_glob_never_matches_a_hidden_name():
+    # A glob that matched a hidden name would hand the wrapper a path
+    # the operand check never saw.
+    ws = _hidden_paths_ws()
+
+    async def run():
+        io = await ws.execute("cat /a/*.key", session_id="agent")
+        out = await io.stdout_str() if io.stdout else ""
+        return io, out
+
+    io, out = asyncio.run(run())
+    assert io.exit_code != 0
+    assert "kkk" not in out
+
+
+def test_find_predicates_evaluate_on_the_visible_tree():
+    # RAM ships a native find op, which classifies on the raw tree: a
+    # visible directory whose only child is hidden would read as
+    # nonempty there, so -empty would omit it and reveal that an
+    # unseen child exists. Under hidden paths the generic must walk
+    # through the guarded readdir instead.
+    ws = _hidden_paths_ws()
+    resource = next(m for m in ws.namespace.registry.mounts()
+                    if m.prefix.rstrip("/") == "/a").resource
+    resource._store.files["/vault/only.key"] = b"kkk\n"
+    resource._store.dirs.add("/vault")
+
+    async def run():
+        io = await ws.execute("find /a -empty", session_id="agent")
+        return await io.stdout_str()
+
+    out = asyncio.run(run())
+    assert "/a/vault" in out
+    assert "only.key" not in out
+
+
+def test_shell_redirect_into_hidden_space_fails_and_writes_nothing():
+    ws = _hidden_paths_ws()
+
+    async def run():
+        return await ws.execute("echo hi > /a/secrets/new.txt",
+                                session_id="agent")
+
+    io = asyncio.run(run())
+    assert io.exit_code != 0
+    files = next(m for m in ws.namespace.registry.mounts()
+                 if m.prefix.rstrip("/") == "/a").resource._store.files
+    assert "/secrets/new.txt" not in files
+
+
+def test_shell_du_never_counts_hidden_leaves():
+    ws = _hidden_paths_ws()
+
+    async def run():
+        io = await ws.execute("du -a /a", session_id="agent")
+        return await io.stdout_str()
+
+    out = asyncio.run(run())
+    assert "x.txt" in out
+    assert "secrets" not in out
+    assert ".key" not in out
+
+
+def test_shell_tree_never_prints_hidden_names():
+    ws = _hidden_paths_ws()
+
+    async def run():
+        io = await ws.execute("tree /a", session_id="agent")
+        return await io.stdout_str()
+
+    out = asyncio.run(run())
+    assert "x.txt" in out
+    assert "secrets" not in out
+    assert "note.key" not in out
+
+
+def test_a_whole_mount_hidden_by_prefix_disappears():
+    # Subtractive mount hiding: one exact path entry at the mount root
+    # hides the name from the root fan-out and every path under it,
+    # while mount_modes still lists the grant.
+    ws = _two_mounts()
+    sess = ws.create_session("agent", mounts={"/a": "write", "/b": "write"})
+    sess.hidden_paths = HiddenPaths(paths=("/b", ))
+
+    async def run():
+        root = await ws.execute("ls /", session_id="agent")
+        fan = await ws.execute("find / -name '*.txt'", session_id="agent")
+        denied = await ws.execute("cat /b/y.txt", session_id="agent")
+        return (await root.stdout_str(), await fan.stdout_str(), denied)
+
+    root_out, fan_out, denied = asyncio.run(run())
+    assert "a" in root_out
+    assert "b" not in root_out.split()
+    assert "/a/x.txt" in fan_out
+    assert "y.txt" not in fan_out
+    assert denied.exit_code != 0

@@ -12,6 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import { pathAllowed } from '../context/session_context.ts'
 import type { ChildMounts } from '../ops/types.ts'
 import { PathSpec } from '../types.ts'
 import { fnmatch } from './fnmatch.ts'
@@ -88,7 +89,15 @@ export async function resolveGlobWith<A, I>(
       continue
     }
     if (p.pattern !== null && p.pattern !== '') {
-      const matched = await expandPattern(readdir, accessor, p, index, children)
+      // The hidden filter sits here, in the one loop every backend's
+      // resolveGlob runs through, because per-backend glob modules bind
+      // raw readdirs that never pass the command-door guard. It runs
+      // before the empty-match test so an all-hidden match set reads as
+      // no matches and falls back to the literal word, exactly what bash
+      // prints when nothing matched.
+      const matched = (await expandPattern(readdir, accessor, p, index, children)).filter((m) =>
+        pathAllowed(m.virtual),
+      )
       if (matched.length === 0 && isWordShaped(p)) {
         result.push(
           new PathSpec({

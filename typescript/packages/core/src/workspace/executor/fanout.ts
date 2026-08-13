@@ -12,7 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { mountAllowed } from '../../context/session_context.ts'
+import { mountAllowed, pathAllowed } from '../../context/session_context.ts'
 import { mountKey } from '../../utils/key_prefix.ts'
 import { type ByteSource, IOResult, materialize } from '../../io/types.ts'
 import type { Resource } from '../../resource/base.ts'
@@ -22,7 +22,7 @@ import { MountCommandUnsupported, type MountRegistry } from '../mount/registry.t
 import { ExecutionNode } from '../types.ts'
 import { applyFindActions } from './find_action_dispatch.ts'
 import { respellOne } from '../../utils/path.ts'
-import { rstripSlash } from '../../utils/slash.ts'
+import { rstripSlash, stripSlash } from '../../utils/slash.ts'
 import { keep } from '../../commands/builtin/findEval.ts'
 import {
   FindParseError,
@@ -85,7 +85,9 @@ async function mountDirs(
  * unobservable optimization.
  */
 function allowedDescendants(registry: MountRegistry, path: string): MountEntry[] {
-  return registry.descendantMounts(path).filter((m) => mountAllowed(m.prefix))
+  return registry
+    .descendantMounts(path)
+    .filter((m) => mountAllowed(m.prefix) && pathAllowed('/' + stripSlash(m.prefix)))
 }
 
 export function shouldFanOut(
