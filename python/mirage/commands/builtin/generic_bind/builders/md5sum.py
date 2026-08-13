@@ -16,8 +16,8 @@ from mirage.accessor.base import Accessor
 from mirage.cache.index import NULL_INDEX, IndexCacheStore
 from mirage.commands.builtin.generic.md5sum import md5sum_generic
 from mirage.commands.builtin.generic_bind.adapter import (Builder, CommandIO,
-                                                          bound_op,
-                                                          dir_aware_stat)
+                                                          dir_aware_stat,
+                                                          dir_aware_stream)
 from mirage.commands.builtin.generic_bind.builders.common import \
     resolve_or_empty
 from mirage.commands.config import CommandOpts
@@ -40,7 +40,7 @@ async def md5sum(
     return await md5sum_generic(resolved, list(texts),
                                 CommandOpts(stdin=stdin, flags=flags, cwd=cwd),
                                 dir_aware_stat(ops, accessor, index),
-                                bound_op(ops.read_stream, accessor, index))
+                                dir_aware_stream(ops, accessor, index))
 
 
 BUILDER = Builder('md5sum', md5sum, None, False, None, read=True)

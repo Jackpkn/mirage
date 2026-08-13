@@ -145,6 +145,26 @@ def _count_noun(count: int, singular: str, plural: str) -> str:
     return singular if count == 1 else f"{count} {plural}"
 
 
+def _check_list_error(algorithm: str, path: PathSpec,
+                      exc: BaseException) -> bytes:
+    """GNU stderr line for a checksum-list operand that cannot be read.
+
+    GNU verifies every ``--check`` operand in turn and keeps going when
+    one cannot be read; a directory operand reports the literal ``read
+    error`` (its ``fopen`` succeeds and the read fails), everything else
+    reports the strerror (pinned on coreutils 9.7).
+
+    Args:
+        algorithm (str): digest name, e.g. ``"sha256"``.
+        path (PathSpec): the list operand as resolved.
+        exc (BaseException): the failure raised by the list read.
+    """
+    label = path.raw_path or path.virtual
+    detail = ("read error" if isinstance(exc, IsADirectoryError) else
+              (fs_strerror(exc) or str(exc)))
+    return f"{algorithm}sum: {label}: {detail}\n".encode()
+
+
 async def _hash_check(
     path: PathSpec,
     read_bytes: Callable[..., Awaitable[bytes]],
@@ -261,12 +281,29 @@ async def hashsum(
 ) -> tuple[ByteSource | None, IOResult]:
     if check and paths:
         cwd_dir = cwd.virtual if isinstance(cwd, PathSpec) else (cwd or "/")
-        out, stderr, exit_code = await _hash_check(paths[0], read_bytes,
-                                                   read_stream, factory,
-                                                   algorithm, cwd_dir, strict,
-                                                   ignore_missing, status,
-                                                   quiet, warn)
-        return out, IOResult(exit_code=exit_code, stderr=stderr)
+        outs: list[bytes] = []
+        errs: list[bytes] = []
+        exit_code = 0
+        # Every operand is its own checksum list: GNU verifies each in
+        # turn and keeps going when one cannot be read (coreutils 9.7).
+        for p in paths:
+            try:
+                out, stderr, code = await _hash_check(p, read_bytes,
+                                                      read_stream, factory,
+                                                      algorithm, cwd_dir,
+                                                      strict, ignore_missing,
+                                                      status, quiet, warn)
+            except WALK_ERRORS as exc:
+                errs.append(_check_list_error(algorithm, p, exc))
+                exit_code = 1
+                continue
+            outs.append(out)
+            if stderr is not None:
+                errs.append(stderr)
+            if code:
+                exit_code = 1
+        return b"".join(outs), IOResult(exit_code=exit_code,
+                                        stderr=b"".join(errs) or None)
     if paths:
         return _hash_multi(paths, read_stream, factory, algorithm, binary, tag,
                            zero), IOResult(cache=[p.mount_path for p in paths])
