@@ -1508,6 +1508,13 @@ export {
   type NoMountError,
   readdirError,
 } from './utils/errors.ts'
+export {
+  needsShellQuote,
+  quotesOperands,
+  SHELL_QUOTED_COMMANDS,
+  shellQuote,
+  shellQuoteAlways,
+} from './utils/quote.ts'
 
 export {
   DatabricksVolumeAccessor,
