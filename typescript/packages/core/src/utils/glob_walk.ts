@@ -188,6 +188,14 @@ function isMissingDir(err: unknown): boolean {
 // unmatched glob word stays the literal (bash nullglob off: the command
 // then errors on it like GNU), and matches cap at `cap` when given.
 // Per-backend glob modules bind their own readdir.
+//
+// The spec shape is how a caller chooses between the two answers, and the
+// choice matters because the literal is not distinguishable from a match by
+// looking at it: a file may be named exactly like the word that globbed for
+// it. A word-shaped spec asks for bash's own answer, literal included. A
+// directory-shaped spec (`PathSpec.dir`) asks for matches alone, so an empty
+// list means nothing matched -- what a caller merging these matches with
+// another source needs, since only it can tell whether the union is empty.
 export async function resolveGlobWith<A, I>(
   readdir: (accessor: A, path: PathSpec, index?: I) => Promise<string[]>,
   accessor: A,
@@ -212,6 +220,8 @@ export async function resolveGlobWith<A, I>(
       const matched = (await expandPattern(readdir, accessor, p, index, children)).filter((m) =>
         pathAllowed(m.virtual),
       )
+      // Dir-shaped specs keep the empty result, which is what a caller
+      // that has to merge these matches with another source asks for.
       if (matched.length === 0 && isWordShaped(p)) {
         // The literal is the word after quote removal, so the marks come
         // off here.

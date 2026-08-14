@@ -347,6 +347,15 @@ async def resolve_glob_with(
     command then errors on it like GNU), and matches cap at ``cap`` when
     given. Per-backend glob modules bind their own readdir.
 
+    The spec shape is how a caller chooses between the two answers, and
+    the choice matters because the literal is not distinguishable from a
+    match by looking at it: a file may be named exactly like the word
+    that globbed for it. A word-shaped spec asks for bash's own answer,
+    literal included. A directory-shaped spec (``PathSpec.dir``) asks for
+    matches alone, so an empty list means nothing matched -- what a
+    caller merging these matches with another source needs, since only it
+    can tell whether the union is empty.
+
     Args:
         readdir (Callable): backend readdir ``(accessor, path, index)``
             returning absolute virtual paths.
@@ -379,7 +388,8 @@ async def resolve_glob_with(
                 # (cat '*.nope' -> No such file or directory, exit 1).
                 # The literal is the word after quote removal, so the
                 # marks come off here. Dir-shaped specs (PathSpec.dir)
-                # are internal expansions and keep the empty result.
+                # keep the empty result, which is what a caller that has
+                # to merge these matches with another source asks for.
                 result.append(
                     _unmark_spec(
                         dataclasses.replace(p, pattern=None, resolved=True)))

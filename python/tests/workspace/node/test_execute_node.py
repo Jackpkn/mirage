@@ -43,15 +43,11 @@ def _mock_dispatch():
     return d
 
 
-async def _echo_resolve_glob(scopes, prefix=""):
-    # Return resource-relative paths, matching real resolve_glob behavior
-    results = []
-    for s in scopes:
-        path = s.virtual
-        if prefix and path.startswith(prefix):
-            path = path[len(prefix):] or "/"
-        results.append(path)
-    return results
+async def _no_match_resolve_glob(scopes, prefix=""):
+    # A backend holding nothing the patterns match: a resolved spec passes
+    # through, a pattern spec resolves to no matches and the expander
+    # reinstates the literal word (bash with nullglob off).
+    return [s for s in scopes if not s.pattern]
 
 
 def _mock_registry():
@@ -60,7 +56,7 @@ def _mock_registry():
     mount.mode = MountMode.EXEC
     mount.execute_cmd = AsyncMock(return_value=(b"ok\n", IOResult()))
     mount.resource = MagicMock()
-    mount.resource.resolve_glob = _echo_resolve_glob
+    mount.resource.resolve_glob = _no_match_resolve_glob
     mount.spec_for = MagicMock(return_value=None)
 
     reg = MagicMock()

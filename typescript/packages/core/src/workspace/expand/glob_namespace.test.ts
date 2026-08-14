@@ -93,6 +93,39 @@ describe('glob expansion sees namespace state', () => {
     expect((await out(ws, 'echo /base/f*')).trim()).toBe('/base/f1')
   })
 
+  // GNU bash 5.2 (debian:stable-slim), `*a.txt` beside `xa.txt`:
+  //   echo /data/*a.txt -> /data/*a.txt /data/xa.txt
+  // The live `*` matches the literal `*` in the first name.
+  it('keeps a match spelled like the glob word', async () => {
+    const ws = await makeWs()
+    await ws.execute("touch '/base/*a.txt'", { sessionId: 's' })
+    await ws.execute('touch /base/xa.txt', { sessionId: 's' })
+    expect((await out(ws, 'echo /base/*a.txt')).split(/\s+/).filter(Boolean)).toEqual([
+      '/base/*a.txt',
+      '/base/xa.txt',
+    ])
+  })
+
+  // A quoted glob character in the parent is part of a real name. The
+  // backend is asked with the directory-shaped spec, and a match is a real
+  // path it listed, so the two are compared in unmarked space; the marked
+  // spelling names no directory and would answer every word under
+  // `'/base/*d'/` with the literal. GNU bash 5.2 (debian:stable-slim):
+  //   echo '/data/*d'/*.txt -> /data/*d/one.txt /data/*d/two.txt
+  it('lists a directory whose name holds a quoted glob character', async () => {
+    const ws = await makeWs()
+    await ws.execute("mkdir '/base/*d'", { sessionId: 's' })
+    await ws.execute("touch '/base/*d/one.txt'", { sessionId: 's' })
+    await ws.execute("touch '/base/*d/two.txt'", { sessionId: 's' })
+    expect((await out(ws, "echo '/base/*d'/*.txt")).split(/\s+/).filter(Boolean)).toEqual([
+      '/base/*d/one.txt',
+      '/base/*d/two.txt',
+    ])
+    expect((await out(ws, "echo '/base/*d'/o*.txt")).trim()).toBe('/base/*d/one.txt')
+    // Nothing under it still falls back to the literal word.
+    expect((await out(ws, "echo '/base/*d'/*.none")).trim()).toBe('/base/*d/*.none')
+  })
+
   it('keeps an unmatched glob literal', async () => {
     const ws = await makeWs()
     expect((await out(ws, 'echo /base/zzz*')).trim()).toBe('/base/zzz*')
