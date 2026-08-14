@@ -188,7 +188,15 @@ export async function executeCommand(
     const valNodes = p.namedChildren.filter((c) => c.type !== NT.VARIABLE_NAME)
     const firstVal = valNodes[0]
     const v =
-      firstVal !== undefined ? await expandNode(firstVal, session, executeFn, callStack) : rawVal
+      firstVal !== undefined
+        ? await expandNode(
+            firstVal,
+            session,
+            executeFn,
+            callStack,
+            sessionView(session, registry.policies),
+          )
+        : rawVal
     prefixAssignments.push([key, v])
   }
 
@@ -295,7 +303,13 @@ async function runCommandBody(
     for (const child of node.namedChildren) {
       if (child.type === NT.HERESTRING_REDIRECT) {
         for (const sc of child.namedChildren) {
-          const content = await expandNode(sc, session, executeFn, callStack)
+          const content = await expandNode(
+            sc,
+            session,
+            executeFn,
+            callStack,
+            sessionView(session, registry.policies),
+          )
           stdin = encodeText(`${content}\n`)
           break
         }
@@ -343,7 +357,15 @@ async function runCommandBody(
     stdin = merged
   }
 
-  const argv = await expandArgv(cleanParts, session, executeFn, callStack, registry, namespace)
+  const argv = await expandArgv(
+    cleanParts,
+    session,
+    executeFn,
+    callStack,
+    registry,
+    namespace,
+    sessionView(session, registry.policies),
+  )
 
   // Limits resolve against the expanded name, so `$CMD`-style
   // invocations get their real command's policy.
@@ -676,7 +698,9 @@ async function runArgv(
   if (name === SB.ECHO) {
     return handleEcho(args)
   }
-  if (name === SB.PRINTF) return handlePrintf(args, session)
+  if (name === SB.PRINTF) {
+    return handlePrintf(args, session, sessionView(session, registry.policies))
+  }
   if (name === SB.SLEEP) return handleSleep(args, signal)
   if (name === SB.READ) {
     return handleRead(args, session, stdin, sessionView(session, registry.policies))

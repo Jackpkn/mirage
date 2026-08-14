@@ -12,6 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import type { SessionView } from '../../ops/types.ts'
 import type { CallStack } from '../../shell/call_stack.ts'
 import { PathSpec, wordText } from '../../types.ts'
 import { literalWord, markGlobs, unmarkGlobs } from '../../utils/glob_walk.ts'
@@ -81,8 +82,9 @@ export async function expandArgv(
   callStack: CallStack | null,
   registry: MountRegistry,
   namespace: NamespaceLinks | null = null,
+  view?: SessionView,
 ): Promise<Argv> {
-  let expanded = await expandWords(parts, session, executeFn, callStack)
+  let expanded = await expandWords(parts, session, executeFn, callStack, view)
   if (expanded.length === 0) return new Argv('', [], [])
   // `set -f` turns pathname expansion off, which is the same word for
   // word as every glob character having been quoted.

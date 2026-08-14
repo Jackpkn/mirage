@@ -12,6 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import type { SessionView } from '../../ops/types.ts'
 import type { CallStack } from '../../shell/call_stack.ts'
 import { NodeType as NT } from '../../shell/types.ts'
 import type { PathSpec } from '../../types.ts'
@@ -51,6 +52,7 @@ async function expandBraceWord(
   session: Session,
   executeFn: ExecuteFn,
   callStack: CallStack | null,
+  view?: SessionView,
 ): Promise<string[] | null> {
   const pieces: string[] = []
   const values: string[] = []
@@ -58,7 +60,7 @@ async function expandBraceWord(
     if (child.isNamed !== true || BRACE_LITERAL_TYPES.has(child.type)) {
       pieces.push(child.text)
     } else {
-      values.push(await expandNodeMarked(child, session, executeFn, callStack))
+      values.push(await expandNodeMarked(child, session, executeFn, callStack, view))
       pieces.push(makeInert(values.length - 1))
     }
   }
@@ -82,8 +84,9 @@ async function expandStringWithArray(
   session: Session,
   executeFn: ExecuteFn,
   callStack: CallStack | null,
+  view?: SessionView,
 ): Promise<string[]> {
-  const expandChild = (n: TSNodeLike) => expandNode(n, session, executeFn, callStack)
+  const expandChild = (n: TSNodeLike) => expandNode(n, session, executeFn, callStack, view)
   const fragments: string[] = ['']
   let splatYielded = false
   for (const child of node.children) {
@@ -107,7 +110,7 @@ async function expandStringWithArray(
       }
       continue
     }
-    const text = await expandNode(child, session, executeFn, callStack)
+    const text = await expandNode(child, session, executeFn, callStack, view)
     const last = fragments.length - 1
     fragments[last] = (fragments[last] ?? '') + text
   }
@@ -136,15 +139,17 @@ export async function expandWords(
   session: Session,
   executeFn: ExecuteFn,
   callStack: CallStack | null = null,
+  view?: SessionView,
 ): Promise<string[]> {
   const result: string[] = []
   for (const p of parts) {
     if (p.type === NT.STRING && stringHasArrayAt(p)) {
-      result.push(...(await expandStringWithArray(p, session, executeFn, callStack)))
+      const words = await expandStringWithArray(p, session, executeFn, callStack, view)
+      result.push(...words)
       continue
     }
     if (BRACE_WORD_TYPES.has(p.type)) {
-      const braceWords = await expandBraceWord(p, session, executeFn, callStack)
+      const braceWords = await expandBraceWord(p, session, executeFn, callStack, view)
       if (braceWords !== null) {
         // Empty unquoted words vanish, like bash: {,x} -> x.
         for (const w of braceWords) {
@@ -153,7 +158,7 @@ export async function expandWords(
         continue
       }
     }
-    const expanded = await expandNodeMarked(p, session, executeFn, callStack)
+    const expanded = await expandNodeMarked(p, session, executeFn, callStack, view)
     if (p.type === NT.COMMAND_SUBSTITUTION) {
       for (const word of expanded.split(/\s+/)) {
         if (word !== '') result.push(word)
@@ -199,11 +204,12 @@ export async function expandAndClassify(
   registry: MountRegistry,
   cwd: string,
   callStack: CallStack | null = null,
+  view?: SessionView,
 ): Promise<(string | PathSpec)[]> {
   // Words keep their glob marks, because the loop list is glob-resolved
   // next (`resolveGlobs`, which is where the marks come off): `for f in
   // '/data/*.txt'` iterates once over the name as typed, like bash,
   // while `for f in '/data/*'?.txt` still globs on the `?`.
-  const expanded = await expandWords(words, session, executeFn, callStack)
+  const expanded = await expandWords(words, session, executeFn, callStack, view)
   return expanded.map((w) => classifyWord(w, registry, cwd))
 }
