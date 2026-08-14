@@ -160,6 +160,46 @@ describe('findSyntaxError', () => {
   })
 })
 
+describe('(( reparse: subshell that immediately opens a subshell', () => {
+  it('parses as nested subshells rather than an arithmetic command', () => {
+    const root = parser.parse('((echo a); echo b)')
+    expect(root.hasError).toBe(false)
+    expect(root.namedChildren[0]?.type).toBe('subshell')
+  })
+
+  it('handles the backgrounded form', () => {
+    expect(parser.parse('((echo s1; echo s2) & wait)').hasError).toBe(false)
+  })
+
+  it('leaves a genuine arithmetic command untouched', () => {
+    expect(parser.parse('i=1; ((i++)); echo $i').hasError).toBe(false)
+  })
+
+  // Each opener is judged on its own span, not on the error region:
+  // tree-sitter's ERROR swallows the valid `((i++))` next to the bad
+  // opener, so scope alone would split both and silently turn the
+  // arithmetic into a subshell running `i++`.
+  it('handles a line mixing arithmetic and a nested subshell', () => {
+    expect(parser.parse('i=1; ((i++)); ((echo x); echo $i)').hasError).toBe(false)
+  })
+
+  it('is not confused by a paren inside quotes', () => {
+    expect(parser.parse('((echo ")"); echo b)').hasError).toBe(false)
+  })
+
+  it('handles two nested subshells on one line', () => {
+    expect(parser.parse('((echo a); echo b); ((echo c); echo d)').hasError).toBe(false)
+  })
+
+  it('multibyte text before the opener does not shift offsets', () => {
+    expect(parser.parse('echo é; ((echo a); echo b)').hasError).toBe(false)
+  })
+
+  it('still reports an unrelated syntax error', () => {
+    expect(parser.parse('if then').hasError).toBe(true)
+  })
+})
+
 describe('stripLineContinuation', () => {
   it.each([
     // An odd-length trailing run ends in a live continuation.

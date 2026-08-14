@@ -18,6 +18,96 @@ import tree_sitter_bash
 BASH_LANGUAGE = tree_sitter.Language(tree_sitter_bash.language())
 TS_PARSER = tree_sitter.Parser(BASH_LANGUAGE)
 
+ARITH_OPEN_TOKEN = "(("
+_QUOTES = (b"'", b'"')
+
+
+def _balanced_end(data: bytes, start: int) -> int | None:
+    """Index just past the ``)`` closing the ``(`` at ``start``.
+
+    Parens inside quotes and backslash escapes do not count, so a
+    command substitution or a literal ``")"`` cannot throw off the
+    depth. Scanned as bytes because tree-sitter reports byte offsets;
+    the delimiters are all ASCII, so multibyte characters pass through
+    without matching anything.
+
+    Args:
+        data (bytes): encoded shell source.
+        start (int): byte offset of the opening paren.
+
+    Returns:
+        int | None: end offset, or None when the parens never balance.
+    """
+    depth = 0
+    index = start
+    quote: bytes | None = None
+    while index < len(data):
+        char = data[index:index + 1]
+        if quote is not None:
+            if char == b"\\" and quote == b'"':
+                index += 2
+                continue
+            if char == quote:
+                quote = None
+            index += 1
+            continue
+        if char in _QUOTES:
+            quote = char
+        elif char == b"\\":
+            index += 2
+            continue
+        elif char == b"(":
+            depth += 1
+        elif char == b")":
+            depth -= 1
+            if depth == 0:
+                return index + 1
+        index += 1
+    return None
+
+
+def _is_arithmetic(data: bytes, start: int) -> bool:
+    """Whether the construct at ``start`` is a real arithmetic command.
+
+    Decided by parsing the balanced span on its own: ``((i++))`` stands
+    alone cleanly, while ``((echo x); echo $i)`` does not. Judging each
+    opener separately is what keeps a valid ``((i++))`` safe when it
+    shares a line with a broken one, since tree-sitter's error region
+    covers both.
+
+    Args:
+        data (bytes): encoded shell source.
+        start (int): byte offset of the opener's first paren.
+    """
+    end = _balanced_end(data, start)
+    if end is None:
+        # Unbalanced: no span to judge, so assume arithmetic and leave
+        # the construct alone rather than risk rewriting it.
+        return True
+    return not TS_PARSER.parse(data[start:end]).root_node.has_error
+
+
+def _failed_arith_openers(root: tree_sitter.Node) -> list[int]:
+    """Byte offsets of ``((`` tokens the parser could not make sense of.
+
+    Only openers inside an ERROR subtree are reported. A genuine
+    ``((i++))`` parses as an arithmetic command and never lands in one,
+    so it cannot be picked up here.
+
+    Args:
+        root (tree_sitter.Node): root of a tree that has an error.
+    """
+    offsets: list[int] = []
+    stack: list[tuple[tree_sitter.Node, bool]] = [(root, False)]
+    while stack:
+        node, in_error = stack.pop()
+        errored = in_error or node.type == "ERROR"
+        if errored and node.type == ARITH_OPEN_TOKEN:
+            offsets.append(node.start_byte)
+        for child in node.children:
+            stack.append((child, errored))
+    return offsets
+
 
 def strip_line_continuation(command: str) -> str:
     """Drop a trailing backslash that continues the line, as bash does.
@@ -94,10 +184,43 @@ def find_unterminated_backtick(command: str) -> str | None:
 def parse(command: str) -> tree_sitter.Node:
     """Parse a shell command string into a tree-sitter AST.
 
-    Returns the root tree-sitter node.
+    A leading ``((`` is lexed as the arithmetic opener and the lexer
+    cannot back out, so a subshell that immediately opens another
+    subshell (``((echo a); echo b)``) fails to parse. Bash resolves the
+    same ambiguity by trying the arithmetic command and reparsing as
+    nested subshells when that fails; this does the same, splitting only
+    the openers that already sit inside an error and keeping the retry
+    only if it parses cleanly. Commands that parse today are untouched,
+    so no working command's byte offsets move.
+
+    Args:
+        command (str): shell source to parse.
+
+    Returns:
+        tree_sitter.Node: root node, or the original errored root when no
+        reparse helps.
     """
-    tree = TS_PARSER.parse(strip_line_continuation(command).encode())
-    return tree.root_node
+    data = strip_line_continuation(command).encode()
+    root = TS_PARSER.parse(data).root_node
+    if not root.has_error:
+        return root
+    # Sitting inside an ERROR is not evidence that an opener is broken:
+    # tree-sitter's error region swallows neighbouring tokens, so a valid
+    # `((i++))` next to a bad opener reports as errored too. Splitting it
+    # would silently turn arithmetic into a subshell running `i++`, which
+    # is a wrong parse rather than a rejected one. Each opener is judged
+    # on its own span instead, in byte space throughout, because the
+    # offsets tree-sitter reports are byte offsets.
+    offsets = [
+        offset for offset in set(_failed_arith_openers(root))
+        if not _is_arithmetic(data, offset)
+    ]
+    if not offsets:
+        return root
+    for offset in sorted(offsets, reverse=True):
+        data = data[:offset + 1] + b" " + data[offset + 1:]
+    retried = TS_PARSER.parse(data).root_node
+    return root if retried.has_error else retried
 
 
 _BASH_KEYWORDS = frozenset({

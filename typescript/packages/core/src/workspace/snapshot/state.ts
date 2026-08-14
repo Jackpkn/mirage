@@ -42,6 +42,14 @@ import {
   resourceStateRequiresOverride,
 } from '../../resource/secrets.ts'
 import { Job, JobStatus } from '../../shell/job_table.ts'
+import {
+  Channel,
+  type ConsoleChunk,
+  JobConsole,
+  KILLED_OUTCOME,
+  RAMConsoleStore,
+  exitOutcome,
+} from '../../shell/console/index.ts'
 import { ConsistencyPolicy, MountMode } from '../../types.ts'
 import { VERSION } from '../../version.ts'
 import type { NodeMeta } from '../mount/namespace/namespace.ts'
@@ -100,21 +108,28 @@ export async function toStateDict(ws: Workspace): Promise<WorkspaceStateDict> {
   const sessions: SessionSnapshot[] = ws.sessionManager
     .list()
     .map((s) => s.toJSON() as unknown as SessionSnapshot)
-  const jobs: JobSnapshot[] = ws.jobTable
-    .listJobs()
-    .filter((j) => j.status !== JobStatus.RUNNING)
-    .map((j) => ({
-      id: j.id,
-      command: j.command,
-      cwd: j.cwd,
-      status: j.status,
-      stdout: j.stdout,
-      stderr: j.stderr,
-      exit_code: j.exitCode,
-      created_at: j.createdAt,
-      agent: j.agent,
-      session_id: j.sessionId,
-    }))
+  // Output is stored per channel rather than chunk by chunk: the manifest
+  // externalizes byte fields into tar entries, so keeping chunks would
+  // write one entry per write a job ever made. The cost is that a restored
+  // job's stdout and stderr no longer interleave, which only affects jobs
+  // that have already ended.
+  const jobs: JobSnapshot[] = await Promise.all(
+    ws.jobTable
+      .listJobs()
+      .filter((j) => j.status !== JobStatus.RUNNING)
+      .map(async (j) => ({
+        id: j.id,
+        command: j.command,
+        cwd: j.cwd,
+        status: j.status,
+        stdout: await j.console.snapshot(Channel.STDOUT),
+        stderr: await j.console.snapshot(Channel.STDERR),
+        exit_code: j.exitCode,
+        created_at: j.createdAt,
+        agent: j.agent,
+        session_id: j.sessionId,
+      })),
+  )
   const clisState: CLISnapshot[] = [...ws.registry.clis.items()].map(([name, install]) => {
     const entry: CLISnapshot = {
       name,
@@ -362,6 +377,28 @@ async function restoreHistory(ws: Workspace, state: WorkspaceStateDict): Promise
   await ws.observer.loadEvents((state.history as EventDict[] | undefined) ?? [])
 }
 
+/** Rebuild a finished job's console from its serialized output. */
+function restoredConsole(j: JobSnapshot): JobConsole {
+  const chunks: ConsoleChunk[] = []
+  for (const [channel, data] of [
+    [Channel.STDOUT, j.stdout],
+    [Channel.STDERR, j.stderr],
+  ] as const) {
+    if (data.byteLength > 0) {
+      chunks.push({ seq: chunks.length, ts: j.created_at, channel, data })
+    }
+  }
+  const outcome =
+    (j.status as JobStatus) === JobStatus.KILLED ? KILLED_OUTCOME : exitOutcome(j.exit_code)
+  chunks.push({
+    seq: chunks.length,
+    ts: j.created_at,
+    channel: Channel.CONTROL,
+    data: new TextEncoder().encode(outcome),
+  })
+  return new JobConsole(new RAMConsoleStore(null, chunks), true)
+}
+
 function restoreJobs(ws: Workspace, state: WorkspaceStateDict): void {
   for (const j of state.jobs) {
     ws.jobTable.loadJob(
@@ -373,9 +410,8 @@ function restoreJobs(ws: Workspace, state: WorkspaceStateDict): void {
         sessionId: j.session_id,
         createdAt: j.created_at,
         status: j.status as JobStatus,
-        stdout: j.stdout,
-        stderr: j.stderr,
         exitCode: j.exit_code,
+        console: restoredConsole(j),
       }),
     )
   }

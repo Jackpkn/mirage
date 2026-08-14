@@ -264,6 +264,50 @@ def test_negated_command():
     assert node.type == NT.NEGATED_COMMAND
 
 
+# ── `((` reparse: subshell that immediately opens a subshell ────────
+
+
+def test_double_open_paren_parses_as_nested_subshells():
+    """``((`` lexes as the arithmetic opener; bash reparses, so do we."""
+    node = parse("((echo a); echo b)").named_children[0]
+    assert node.type == NT.SUBSHELL
+
+
+def test_double_open_paren_backgrounded():
+    assert not parse("((echo s1; echo s2) & wait)").has_error
+
+
+def test_genuine_arithmetic_command_is_untouched():
+    assert not parse("i=1; ((i++)); echo $i").has_error
+
+
+def test_line_mixing_arithmetic_and_nested_subshell():
+    """Each opener is judged on its own span, not on the error region.
+
+    tree-sitter's ERROR swallows the valid ``((i++))`` next to the bad
+    opener, so scope alone would split both and silently turn the
+    arithmetic into a subshell running ``i++``.
+    """
+    assert not parse("i=1; ((i++)); ((echo x); echo $i)").has_error
+
+
+def test_paren_inside_quotes_does_not_confuse_the_scan():
+    assert not parse('((echo ")"); echo b)').has_error
+
+
+def test_two_nested_subshells_on_one_line():
+    assert not parse("((echo a); echo b); ((echo c); echo d)").has_error
+
+
+def test_multibyte_text_before_the_opener_does_not_shift_offsets():
+    """tree-sitter reports byte offsets; ``é`` is two bytes in UTF-8."""
+    assert not parse("echo é; ((echo a); echo b)").has_error
+
+
+def test_unrelated_syntax_error_still_reports():
+    assert parse("if then").has_error
+
+
 @pytest.mark.parametrize(
     "command,expected",
     [

@@ -26,7 +26,7 @@ import { IOResult } from '../io/types.ts'
 import { secretStr } from '../resource/secrets.ts'
 import { OpsRegistry } from '../ops/registry.ts'
 import { RAMResource } from '../resource/ram/ram.ts'
-import { type JobTaskResult } from '../shell/job_table.ts'
+import { type JobResult } from '../shell/job_table.ts'
 import { createShellParser, type ShellParser } from '../shell/parse.ts'
 import { MountMode } from '../types.ts'
 import { VERSION } from '../version.ts'
@@ -252,7 +252,7 @@ describe('Workspace.fromState — sessions and finished jobs', () => {
     worker.env = { ROLE: 'bg' }
     ws.jobTable.submit({
       command: 'sleep 0',
-      task: Promise.resolve([null, new IOResult(), new ExecutionNode()] as JobTaskResult),
+      run: () => Promise.resolve([new IOResult(), new ExecutionNode()] as JobResult),
       abort: new AbortController(),
       cwd: '/data',
       sessionId: 'worker',

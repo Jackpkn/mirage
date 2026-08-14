@@ -39,7 +39,7 @@ export async function executeProgram(
   session: Session,
   stdin: ByteSource | null,
   callStack: CallStack | null,
-  jobTable: JobTable | null,
+  jobTable: JobTable,
   agentId: string,
 ): Promise<Result> {
   const children = node.children
@@ -157,7 +157,6 @@ export async function executeProgram(
         }
         stdout = null
       }
-      ioResult.syncExitCode()
       if (drainErr !== null) {
         const existing = await materialize(ioResult.stderr)
         const added = new TextEncoder().encode(`${drainErr}\n`)

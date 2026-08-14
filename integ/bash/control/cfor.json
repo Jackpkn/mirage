@@ -333,11 +333,11 @@
         "gdrive-folder",
         "box"
       ],
-      "command": "readonly i=5; for ((;i<10;i++)); do echo hi; done; echo c=$?; echo i=$i",
+      "command": "readonly zcfi=5; for ((;zcfi<10;zcfi++)); do echo hi; done; echo c=$?; echo zcfi=$zcfi",
       "expect": {
         "exit": 0,
-        "stdout": "hi\nc=1\ni=5\n",
-        "stderr": "bash: i: readonly variable\n"
+        "stdout": "hi\nc=1\nzcfi=5\n",
+        "stderr": "bash: zcfi: readonly variable\n"
       }
     }
   ]

@@ -527,7 +527,24 @@ export { S3WorkspaceStateStore } from './workspace/store/s3.ts'
 export { runWithSession } from './context/session_context.ts'
 export type { SessionProfile } from './workspace/session/profile.ts'
 export { CallFrame, type CallFrameInit, CallStack } from './shell/call_stack.ts'
-export { Job, JobStatus, JobTable, type JobTaskResult } from './shell/job_table.ts'
+export {
+  Job,
+  JobStatus,
+  JobTable,
+  KILLED_EXIT_CODE,
+  type JobResult,
+  type JobRunner,
+} from './shell/job_table.ts'
+export {
+  Channel,
+  type ConsoleChunk,
+  type ConsoleStore,
+  JobConsole,
+  KILLED_OUTCOME,
+  RAMConsoleStore,
+  type ReadResult,
+  exitOutcome,
+} from './shell/console/index.ts'
 export {
   type ExecuteNodeFn,
   handleBackground,

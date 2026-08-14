@@ -27,6 +27,7 @@ from mirage.shell.array import (ShellArray, array_append, array_extent,
                                 array_get, array_set, make_array)
 from mirage.shell.barrier import BarrierPolicy, apply_barrier
 from mirage.shell.call_stack import CallStack
+from mirage.shell.console import Channel, JobConsole
 from mirage.shell.errors import ArithError, ExitSignal, ReadonlyError
 from mirage.shell.job_table import JobTable
 from mirage.shell.node_kind import NodeKind, node_kind
@@ -40,6 +41,7 @@ from mirage.workspace.executor.control import (handle_case, handle_cfor,
                                                handle_for, handle_if,
                                                handle_select, handle_until,
                                                handle_while)
+from mirage.workspace.executor.jobs import pump
 from mirage.workspace.executor.pipes import (handle_connection, handle_pipe,
                                              handle_subshell)
 from mirage.workspace.executor.redirect import handle_redirect
@@ -146,6 +148,22 @@ async def _eval_cfor_expr(
         else:
             await view.set(name, updated)
     return int(value)
+
+
+STREAMING_KINDS = frozenset({
+    NodeKind.PROGRAM,
+    NodeKind.COMPOUND,
+    NodeKind.LIST,
+    NodeKind.SUBSHELL,
+    NodeKind.IF,
+    NodeKind.FOR,
+    NodeKind.CFOR,
+    NodeKind.SELECT,
+    NodeKind.WHILE,
+    NodeKind.UNTIL,
+    NodeKind.CASE,
+    NodeKind.NEGATED,
+})
 
 
 async def _expand_array_items(
@@ -293,6 +311,7 @@ async def execute_node(
     call_stack: CallStack | None = None,
     cancel: asyncio.Event | None = None,
     routing_decision: PolicyDecision | None = None,
+    sink: JobConsole | None = None,
 ) -> tuple[Any, IOResult, ExecutionNode]:
     """Walk tree-sitter AST and dispatch each node.
 
@@ -308,6 +327,11 @@ async def execute_node(
         stdin (Any): input stream.
         call_stack (CallStack): shell call stack.
         cancel (asyncio.Event | None): event used to abort mid-flight.
+        sink (JobConsole | None): console to write this node's output to
+            as it is produced. When set, the node emits and returns no
+            stdout; when None it returns stdout as a value, which is
+            what capture sites (command substitution, pipe stages,
+            redirects) rely on.
     """
     # The session plane's door, bound once for the line: every
     # expansion-time write (`${X:=d}`, `$((X=5))`) lands through it,
@@ -330,12 +354,29 @@ async def execute_node(
 
     kind = node_kind(node)
 
+    # A sink turns this walk from "return your output" into "write your
+    # output". Sequencing constructs pass it to their children so each
+    # statement lands as it finishes; everything else runs unchanged and
+    # has its result drained here. Only the kinds below inherit a sink,
+    # so capture sites keep receiving their output as a value.
+    if sink is not None and kind not in STREAMING_KINDS:
+        stdout, io, exec_node = await recurse(node, session, stdin, cs)
+        await pump(sink, Channel.STDOUT, stdout)
+        stderr = await io.materialize_stderr()
+        if stderr:
+            await sink.emit(Channel.STDERR, stderr)
+            # Cleared so the job's tail does not emit it a second time.
+            io.stderr = None
+        return None, io, exec_node
+
+    stream = partial(recurse, sink=sink) if sink is not None else recurse
+
     if kind == NodeKind.COMMENT:
         return None, IOResult(), ExecutionNode(command="", exit_code=0)
 
     # ── program (root / semicolons) ─────────────
     if kind == NodeKind.PROGRAM:
-        return await execute_program(recurse, node, session, stdin, cs,
+        return await execute_program(stream, node, session, stdin, cs,
                                      job_table, agent_id)
 
     # ── command ─────────────────────────────────
@@ -387,8 +428,8 @@ async def execute_node(
     # ── list (&&, ||) ───────────────────────────
     if kind == NodeKind.LIST:
         left, op, right = get_list_parts(node)
-        return await handle_connection(recurse, left, op, right, session,
-                                       stdin, cs)
+        return await handle_connection(stream, left, op, right, session, stdin,
+                                       cs)
 
     # ── redirected statement ────────────────────
     if kind == NodeKind.REDIRECT:
@@ -445,7 +486,8 @@ async def execute_node(
                               execute_fn,
                               agent_id,
                               cancel=cancel,
-                              routing_decision=routing_decision)
+                              routing_decision=routing_decision,
+                              sink=sink)
         return await handle_subshell(sub_recurse, list(node.children), session,
                                      stdin, cs, sub_table, agent_id)
 
@@ -501,7 +543,7 @@ async def execute_node(
         for child in node.named_children:
             if child.type == NT.COMMENT:
                 continue
-            stdout, io, last_exec = await recurse(child, session, stdin, cs)
+            stdout, io, last_exec = await stream(child, session, stdin, cs)
             stdout = await finish_statement(stdout, io, session)
             if stdout is not None:
                 all_stdout.append(stdout)
@@ -519,8 +561,7 @@ async def execute_node(
     # ── if ──────────────────────────────────────
     if kind == NodeKind.IF:
         branches, else_body = get_if_branches(node)
-        return await handle_if(recurse, branches, else_body, session, stdin,
-                               cs)
+        return await handle_if(stream, branches, else_body, session, stdin, cs)
 
     # ── C-style for (for ((init;cond;update))) ──
     if kind == NodeKind.CFOR:
@@ -530,7 +571,7 @@ async def execute_node(
                             execute_fn=execute_fn,
                             call_stack=cs,
                             view=view)
-        return await handle_cfor(recurse, exprs, body, eval_expr, session,
+        return await handle_cfor(stream, exprs, body, eval_expr, session,
                                  stdin, cs)
 
     # ── for / select ────────────────────────────
@@ -551,7 +592,7 @@ async def execute_node(
             noglob=bool(session.shell_options.get("noglob")),
             links=namespace)
         if kind == NodeKind.SELECT:
-            return await handle_select(recurse,
+            return await handle_select(stream,
                                        var,
                                        classified,
                                        body,
@@ -559,7 +600,7 @@ async def execute_node(
                                        stdin,
                                        cs,
                                        policies=namespace.registry.policies)
-        return await handle_for(recurse,
+        return await handle_for(stream,
                                 var,
                                 classified,
                                 body,
@@ -572,9 +613,9 @@ async def execute_node(
     if kind in (NodeKind.WHILE, NodeKind.UNTIL):
         condition, body = get_while_parts(node)
         if kind == NodeKind.UNTIL:
-            return await handle_until(recurse, condition, body, session, stdin,
+            return await handle_until(stream, condition, body, session, stdin,
                                       cs)
-        return await handle_while(recurse, condition, body, session, stdin, cs)
+        return await handle_while(stream, condition, body, session, stdin, cs)
 
     # ── case ────────────────────────────────────
     if kind == NodeKind.CASE:
@@ -587,7 +628,7 @@ async def execute_node(
                 for p in pattern_nodes
             ]
             case_items.append((patterns, body, terminator))
-        return await handle_case(recurse, word, case_items, session, stdin, cs)
+        return await handle_case(stream, word, case_items, session, stdin, cs)
 
     # ── function definition ─────────────────────
     if kind == NodeKind.FUNCTION_DEF:
@@ -746,7 +787,7 @@ async def execute_node(
     # ── negated command ─────────────────────────
     if kind == NodeKind.NEGATED:
         inner = get_negated_command(node)
-        stdout, io, exec_node = await recurse(inner, session, stdin, cs)
+        stdout, io, exec_node = await stream(inner, session, stdin, cs)
         # Lazy exit codes (exit_on_empty in grep) must be final before
         # inverting, or `! grep miss f` negates the provisional 0.
         stdout = await apply_barrier(stdout, io, BarrierPolicy.VALUE)

@@ -19,6 +19,7 @@ from typing import Any, cast
 
 from mirage.ops.open import make_open
 from mirage.ops.os_patch import make_os_module
+from mirage.shell.job_table import cancel_job
 
 
 def patch_process(ws) -> None:
@@ -57,7 +58,11 @@ def close_sync_parts(ws) -> None:
     ws._closed = True
     ws._kernel_mounts.close()
     for job in ws.job_table.running_jobs():
-        ws.job_table.kill(job.id)
+        # Last resort only: with no loop to await on, a job can be asked
+        # to stop but not settled, so it keeps its RUNNING status and its
+        # console never ends. ``close_async`` settles first, so anything
+        # still running here arrived by a path that had no loop at all.
+        cancel_job(job)
     for task in ws._cache._drain_tasks.values():
         task.cancel()
     ws._cache._drain_tasks.clear()
@@ -66,10 +71,19 @@ def close_sync_parts(ws) -> None:
 async def close_async(ws) -> None:
     """Release everything the workspace owns, exactly once.
 
-    Order matters: the watch runtime and line runtimes go first (they
-    read mounts), then resources not shared with a sibling workspace,
-    then the state store if this workspace built it, then the sync
-    parts, and finally the cache once its drains have settled.
+    Order matters: the watch runtime goes first (it reads mounts), then
+    background jobs, then the line runtimes, then resources not shared
+    with a sibling workspace, then the state store if this workspace
+    built it, then the sync parts, and finally the cache once its drains
+    have settled.
+
+    Jobs are settled here rather than merely cancelled. ``kill_all``
+    records the outcome and finishes each console, which is what releases
+    a reader parked on ``wait_finished``; a bare cancel leaves the job
+    RUNNING with no ending chunk and that reader waits forever. It never
+    joins the runner, so this cannot block shutdown on a job mid-write,
+    and it happens before any resource closes so a job cannot keep
+    touching one that is already gone.
 
     Args:
         ws: the workspace being closed.
@@ -78,6 +92,7 @@ async def close_async(ws) -> None:
         if ws._async_closed:
             return
         await ws._watch.detach()
+        await ws.job_table.kill_all()
         drain_tasks = list(ws._cache._drain_tasks.values())
         for line_runtime in ws._runtimes.entries:
             await line_runtime.close()
