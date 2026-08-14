@@ -12,68 +12,9 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import type { GSheetsAccessor } from '../../../accessor/gsheets.ts'
-import { resolveGlobOf } from '../generic_bind/index.ts'
-import { GSHEETS_IO } from './io.ts'
 import { unlink } from '../../../core/gsheets/unlink.ts'
-import { IOResult, type ByteSource } from '../../../io/types.ts'
-import { ResourceName, type PathSpec } from '../../../types.ts'
-import { command, type CommandFnResult, type CommandOpts } from '../../config.ts'
-import { specOf } from '../../spec/builtins.ts'
-import { fsStrerror, isFsError } from '../../../utils/errors.ts'
-import { formatRecords } from '../utils/output.ts'
-import { FlagView } from '../../spec/types.ts'
+import { ResourceName } from '../../../types.ts'
+import { makeRm } from '../generic/rm_command.ts'
+import { GSHEETS_IO } from './io.ts'
 
-const resolveGlob = resolveGlobOf(GSHEETS_IO)
-
-const ENC = new TextEncoder()
-
-async function rmCommand(
-  accessor: GSheetsAccessor,
-  paths: PathSpec[],
-  _texts: string[],
-  opts: CommandOpts,
-): Promise<CommandFnResult> {
-  if (paths.length === 0) {
-    return [null, new IOResult({ exitCode: 1, stderr: ENC.encode('rm: missing operand\n') })]
-  }
-  const resolved = await resolveGlob(accessor, paths, opts.index ?? undefined)
-  const fl = new FlagView(opts.flags, specOf('rm'))
-  const force = fl.asBool('f')
-  const verbose = fl.asBool('v')
-  const verboseParts: string[] = []
-  const errors: string[] = []
-  const writes: Record<string, Uint8Array> = {}
-  for (const p of resolved) {
-    try {
-      await unlink(accessor, p, opts.index ?? undefined)
-    } catch (err) {
-      const code = (err as { code?: string }).code
-      if (force && code === 'ENOENT') continue
-      if (!isFsError(err)) throw err
-      // GNU rm reports the operand and keeps removing the rest.
-      errors.push(`rm: cannot remove '${p.virtual}': ${String(fsStrerror(err))}`)
-      continue
-    }
-    writes[p.mountPath] = new Uint8Array()
-    if (verbose) verboseParts.push(`removed '${p.virtual}'`)
-  }
-  const output: ByteSource | null = verbose ? formatRecords(verboseParts) : null
-  const stderr = errors.length > 0 ? ENC.encode(errors.join('\n') + '\n') : undefined
-  return [
-    output,
-    new IOResult({
-      writes,
-      exitCode: errors.length > 0 ? 1 : 0,
-      ...(stderr !== undefined ? { stderr } : {}),
-    }),
-  ]
-}
-
-export const GSHEETS_RM = command({
-  name: 'rm',
-  resource: ResourceName.GSHEETS,
-  spec: specOf('rm'),
-  fn: rmCommand,
-  write: true,
-})
+export const GSHEETS_RM = makeRm(ResourceName.GSHEETS, GSHEETS_IO, unlink)

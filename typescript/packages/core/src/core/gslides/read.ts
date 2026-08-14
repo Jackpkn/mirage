@@ -15,19 +15,14 @@
 import { mountKey, mountPrefixOf } from '../../utils/key_prefix.ts'
 import type { GSlidesAccessor } from '../../accessor/gslides.ts'
 import type { IndexCacheStore } from '../../cache/index/store.ts'
+import { entryOrWarm } from '../../cache/index/warm.ts'
 import { PathSpec } from '../../types.ts'
 import { slidesBase, type TokenManager, googleGet } from '../google/_client.ts'
 import { readdir } from './readdir.ts'
 import { rstripSlash } from '../../utils/slash.ts'
-import { enoent } from '../../utils/errors.ts'
+import { eisdir, enoent } from '../../utils/errors.ts'
 
 const ENC = new TextEncoder()
-
-function eisdir(p: string): Error {
-  const e = new Error(`EISDIR: ${p}`) as Error & { code: string }
-  e.code = 'EISDIR'
-  return e
-}
 
 export async function readPresentation(
   tm: TokenManager,
@@ -47,22 +42,17 @@ export async function read(
   const key = path.resourcePath
   if (index === undefined) throw enoent(path.virtual)
   const virtualKey = prefix !== '' ? `${prefix}/${key}` : `/${key}`
-  let result = await index.get(virtualKey)
-  if (result.entry === undefined || result.entry === null) {
-    const parentKey = rstripSlash(virtualKey).replace(/\/[^/]+$/, '') || '/'
-    if (parentKey !== virtualKey) {
-      const parentPath = PathSpec.fromStrPath(parentKey, mountKey(parentKey, prefix))
-      try {
-        await readdir(accessor, parentPath, index)
-        result = await index.get(virtualKey)
-      } catch {
-        // parent refresh failed; fall through to ENOENT
-      }
-    }
-    if (result.entry === undefined || result.entry === null) throw enoent(path.virtual)
-  }
-  if (result.entry.resourceType === 'gslides/directory') throw eisdir(path.virtual)
-  return readPresentation(accessor.tokenManager, result.entry.id)
+  const parentKey = rstripSlash(virtualKey).replace(/\/[^/]+$/, '') || '/'
+  const entry = await entryOrWarm(
+    index,
+    virtualKey,
+    parentKey !== virtualKey
+      ? () => readdir(accessor, PathSpec.fromStrPath(parentKey, mountKey(parentKey, prefix)), index)
+      : null,
+  )
+  if (entry === null) throw enoent(path.virtual)
+  if (entry.resourceType === 'gslides/directory') throw eisdir(path.virtual)
+  return readPresentation(accessor.tokenManager, entry.id)
 }
 
 export async function* stream(

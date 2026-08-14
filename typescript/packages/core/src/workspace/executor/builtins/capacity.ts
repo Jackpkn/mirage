@@ -13,7 +13,6 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { humanSize } from '../../../commands/builtin/utils/formatting.ts'
-import { IOResult } from '../../../io/types.ts'
 import { CapacityState, FileStat, PathSpec } from '../../../types.ts'
 import type { CapacityResult } from '../../../types.ts'
 import { isMissingPath } from '../../../utils/errors.ts'
@@ -23,9 +22,7 @@ import type { DispatchFn } from '../../../runtime/types.ts'
 import type { MountEntry } from '../../mount/mount.ts'
 import type { MountRegistry } from '../../mount/registry.ts'
 import type { Session } from '../../session/session.ts'
-import { ExecutionNode } from '../../types.ts'
-import { splitValueFlags } from './metadata.ts'
-import type { Result } from './scope.ts'
+import { fail, ok, operandText, splitValueFlags, type Result } from './shared.ts'
 import { compareCodePoints } from '../../../utils/sort.ts'
 
 const SI_UNITS = ['B', 'K', 'M', 'G', 'T']
@@ -36,22 +33,7 @@ const BLOCK_SUFFIX: Record<string, number> = {
   T: 1024 ** 4,
 }
 
-function errorResult(message: string, exitCode: number): Result {
-  const err = new TextEncoder().encode(message)
-  return [
-    null,
-    new IOResult({ exitCode, stderr: err }),
-    new ExecutionNode({ command: 'df', exitCode, stderr: err }),
-  ]
-}
-
-function textResult(out: string): Result {
-  return [
-    new TextEncoder().encode(out),
-    new IOResult(),
-    new ExecutionNode({ command: 'df', exitCode: 0 }),
-  ]
-}
+const ENC = new TextEncoder()
 
 // Parse a -B/--block-size argument into [bytes, header-label]; a plain byte
 // count or a 1024-based suffix (K/M/G/T), labelled after the raw argument.
@@ -83,7 +65,8 @@ function lastFormat(args: (string | PathSpec)[]): string | null {
   let i = 0
   while (i < args.length) {
     const arg = args[i]
-    const s = typeof arg === 'string' ? arg : ''
+    if (arg === undefined) break
+    const s = operandText(arg)
     if (s === '--' || !(s.length >= 2 && s.startsWith('-') && s[1] !== '-')) break
     const body = s.slice(1)
     for (let j = 0; j < body.length; j++) {
@@ -257,14 +240,14 @@ export async function handleDf(
   args: (string | PathSpec)[],
 ): Promise<Result> {
   const { flags, values, operands, bad } = splitValueFlags(args, 'hHkiaTP', 'B')
-  if (bad !== null) return errorResult(`df: invalid option -- '${bad}'\n`, 2)
+  if (bad !== null) return fail('df', `df: invalid option -- '${bad}'\n`, 2)
 
   const posix = flags.has('P')
   const bArg = values.get('B')
   let bParsed: [number, string] | null = null
   if (bArg !== undefined) {
     bParsed = parseBlock(bArg)
-    if (bParsed === null) return errorResult(`df: invalid -B argument '${bArg}'\n`, 1)
+    if (bParsed === null) return fail('df', `df: invalid -B argument '${bArg}'\n`, 1)
   }
 
   // GNU resolves the mutually overriding size flags last-wins, so -h/-H
@@ -284,7 +267,7 @@ export async function handleDf(
 
   const mounts = await targetMounts(registry, dispatch, session, operands)
   if (!Array.isArray(mounts)) {
-    return errorResult(`df: ${mounts.missing}: No such file or directory\n`, 1)
+    return fail('df', `df: ${mounts.missing}: No such file or directory\n`, 1)
   }
 
   let numHeaders: string[]
@@ -317,5 +300,5 @@ export async function handleDf(
     data.push(cells)
   }
 
-  return textResult(renderTable(header, data, showType))
+  return ok('df', ENC.encode(renderTable(header, data, showType)))
 }

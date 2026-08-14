@@ -1,0 +1,60 @@
+# ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
+
+import logging
+from collections.abc import Awaitable, Callable
+from typing import Any
+
+from mirage.cache.index.config import IndexEntry
+from mirage.cache.index.store import IndexCacheStore
+
+logger = logging.getLogger(__name__)
+
+
+async def entry_or_warm(
+    index: IndexCacheStore,
+    virtual_key: str,
+    warm: Callable[[], Awaitable[Any]] | None,
+) -> IndexEntry | None:
+    """Resolve an index entry, listing the parent directory when cold.
+
+    Id-addressed backends (Drive, Box, Dropbox, Gmail) can only turn a path
+    into an id through the index, so a cold lookup has to warm it from the
+    parent's listing and retry. Every such backend had grown its own copy of
+    that block; this is the one place that decides what a failed listing means.
+
+    A parent that is simply absent is not an error here -- the caller reports
+    ENOENT against the operand, which is the path GNU names (``rm nodir/f``
+    says "cannot remove 'nodir/f'", not "nodir"). Every other failure
+    propagates: an expired token or a dropped connection reported as "no such
+    file" both misdiagnoses the fault and hides that it is worth retrying.
+
+    Args:
+        index (IndexCacheStore): the index to read, and to warm through
+            ``warm``.
+        virtual_key (str): the index key being resolved.
+        warm (Callable | None): lists the parent directory, populating the
+            index; ``None`` when the key has no distinct parent to list.
+    """
+    hit = await index.get(virtual_key)
+    if hit.entry is not None:
+        return hit.entry
+    if warm is None:
+        return None
+    try:
+        await warm()
+    except FileNotFoundError as exc:
+        logger.debug("index warm failed for %s: %s", virtual_key, exc)
+    warmed = await index.get(virtual_key)
+    return warmed.entry

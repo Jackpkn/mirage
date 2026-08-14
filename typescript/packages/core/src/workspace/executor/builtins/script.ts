@@ -25,7 +25,8 @@ import { ExecutionNode } from '../../types.ts'
 import type { DispatchFn } from '../../../runtime/types.ts'
 import { resolvePathStat } from './links.ts'
 import { toScope, scopePath } from './scope.ts'
-import type { Result, ExecuteStringFn } from './scope.ts'
+import type { ExecuteStringFn } from './scope.ts'
+import type { Result } from './shared.ts'
 
 export async function handleEval(
   executeFn: ExecuteStringFn,

@@ -106,6 +106,11 @@ SPECS: dict[str, CommandSpec] = {
         options=_PYTHON_OPTIONS,
         rest=Operand(type="str", remainder=True),
     ),
+    # js and node take the remainder for the same reason python does: the
+    # first operand is a program, so the words after it are that program's
+    # argv, not the interpreter's flags. `node - -e x` runs the piped
+    # program and hands it `-e x`; `node s.js -m` hands s.js its own -m.
+    # Pinned against node 22.8.0.
     'js':
     CommandSpec(
         description="Run JavaScript on a sandboxed quickjs engine.",
@@ -119,7 +124,7 @@ SPECS: dict[str, CommandSpec] = {
                                 "import/export/await); .mjs files "
                                 "select this automatically.")),
         ),
-        rest=Operand(type="str"),
+        rest=Operand(type="str", remainder=True),
     ),
     'node':
     CommandSpec(
@@ -134,7 +139,7 @@ SPECS: dict[str, CommandSpec] = {
                                 "import/export/await); .mjs files "
                                 "select this automatically.")),
         ),
-        rest=Operand(type="str"),
+        rest=Operand(type="str", remainder=True),
     ),
     'mktemp':
     CommandSpec(

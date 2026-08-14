@@ -12,12 +12,13 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import logging
 import posixpath
 import time
+from functools import partial
 
 from mirage.accessor.gdrive import GDriveAccessor
 from mirage.cache.index import NULL_INDEX, IndexCacheStore
+from mirage.cache.index.warm import entry_or_warm
 from mirage.core.gdocs.read import read_doc
 from mirage.core.gdrive import DIRECTORY_RESOURCE_TYPES
 from mirage.core.gdrive.readdir import readdir
@@ -32,8 +33,6 @@ from mirage.types import PathSpec
 from mirage.utils.errors import enoent
 from mirage.utils.key_prefix import mount_key, mount_prefix_of
 from mirage.utils.ranges import range_header, slice_window
-
-logger = logging.getLogger(__name__)
 
 
 async def read_bytes(
@@ -110,34 +109,23 @@ async def read(
     prefix = mount_prefix_of(path.virtual, path.resource_path)
     key = path.resource_path
     virtual_key = prefix + "/" + key if prefix else "/" + key
-    result = await index.get(virtual_key)
-    if result.entry is None:
-        # cold index: list the parent directory to populate the entry,
-        # then retry
-        parent_key = posixpath.dirname(virtual_key) or "/"
-        if parent_key != virtual_key:
-            parent_path = PathSpec.from_str_path(parent_key,
-                                                 mount_key(parent_key, prefix))
-            try:
-                await readdir(accessor, parent_path, index)
-                result = await index.get(virtual_key)
-            except FileNotFoundError as exc:
-                logger.debug("read populate failed for %s: %s", virtual_key,
-                             exc)
-        if result.entry is None:
-            raise enoent(virtual)
-    if result.entry.resource_type in DIRECTORY_RESOURCE_TYPES:
+    parent_key = posixpath.dirname(virtual_key) or "/"
+    parent_path = PathSpec.from_str_path(parent_key,
+                                         mount_key(parent_key, prefix))
+    warm = (partial(readdir, accessor, parent_path, index)
+            if parent_key != virtual_key else None)
+    entry = await entry_or_warm(index, virtual_key, warm)
+    if entry is None:
+        raise enoent(virtual)
+    if entry.resource_type in DIRECTORY_RESOURCE_TYPES:
         raise IsADirectoryError(virtual)
-    if result.entry.resource_type == "gdrive/gdoc":
-        rendered = await read_doc(accessor.token_manager, result.entry.id)
-    elif result.entry.resource_type == "gdrive/gsheet":
-        rendered = await read_spreadsheet(accessor.token_manager,
-                                          result.entry.id)
-    elif result.entry.resource_type == "gdrive/gslide":
-        rendered = await read_presentation(accessor.token_manager,
-                                           result.entry.id)
+    if entry.resource_type == "gdrive/gdoc":
+        rendered = await read_doc(accessor.token_manager, entry.id)
+    elif entry.resource_type == "gdrive/gsheet":
+        rendered = await read_spreadsheet(accessor.token_manager, entry.id)
+    elif entry.resource_type == "gdrive/gslide":
+        rendered = await read_presentation(accessor.token_manager, entry.id)
     else:
-        return await read_file_versioned(accessor.token_manager,
-                                         result.entry.id, virtual, key, offset,
-                                         size)
+        return await read_file_versioned(accessor.token_manager, entry.id,
+                                         virtual, key, offset, size)
     return slice_window(rendered, offset, size)

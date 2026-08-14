@@ -21,6 +21,7 @@ import { LanguageRuntime } from '../../../runtime/language.ts'
 import { specOf } from '../../spec/builtins.ts'
 import { resolveScript } from '../utils/operands.ts'
 import { FlagView } from '../../spec/types.ts'
+import { STDIN_OPERAND } from './interpreter.ts'
 
 const ENC = new TextEncoder()
 const DEC = new TextDecoder('utf-8', { fatal: false })
@@ -72,6 +73,12 @@ async function jsCommand(
   } else if (paths.length > 0) {
     scriptPath = paths[0] ?? null
     argStrs = [...paths.slice(1).map((p) => p.virtual), ...texts]
+  } else if (texts[0] === STDIN_OPERAND) {
+    // The explicit stdin spelling, the same operand python3 honors: it is
+    // an operand, not a flag, so the words after it are the program's argv
+    // exactly as a script's would be. Leaving scriptPath null routes the
+    // source to the stdin read below, which is what `node -` does.
+    argStrs = texts.slice(1)
   } else if (texts.length > 0) {
     scriptPath = resolveScript(texts[0] ?? '', opts.cwd)
     argStrs = texts.slice(1)

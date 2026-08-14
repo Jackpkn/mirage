@@ -155,7 +155,10 @@ async def test_read_shared_drive_raises_is_a_directory(accessor, index):
             "mirage.core.gdrive.read.download_file",
             new_callable=AsyncMock,
     ) as mock_download:
-        with pytest.raises(IsADirectoryError):
+        # The message is the bare operand, which is what the shell renders
+        # ("cat: /Team Drive: Is a directory"). The TS twin asserts the same
+        # string through the stamped virtualPath.
+        with pytest.raises(IsADirectoryError) as excinfo:
             await read(
                 accessor,
                 PathSpec(resource_path="Team Drive",
@@ -163,6 +166,7 @@ async def test_read_shared_drive_raises_is_a_directory(accessor, index):
                          directory="/Team Drive"),
                 index,
             )
+        assert str(excinfo.value) == "/Team Drive"
     mock_download.assert_not_awaited()
 
 

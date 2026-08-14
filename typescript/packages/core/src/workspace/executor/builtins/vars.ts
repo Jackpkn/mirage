@@ -41,7 +41,8 @@ import type { SessionView } from '../../../ops/types.ts'
 import { ExecutionNode } from '../../types.ts'
 import { ReturnSignal } from '../control.ts'
 import { PRINTF_TARGET_RE } from './text.ts'
-import type { ExecuteStringFn, Result } from './scope.ts'
+import type { ExecuteStringFn } from './scope.ts'
+import type { Result } from './shared.ts'
 import { compareCodePoints } from '../../../utils/sort.ts'
 
 /**

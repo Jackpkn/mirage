@@ -12,16 +12,13 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { CommandTimeoutError } from '../../../commands/builtin/utils/limit.ts'
-import { mountKey, mountPrefixOf } from '../../../utils/key_prefix.ts'
-import type { ByteSource } from '../../../io/types.ts'
-import { IOResult, materialize } from '../../../io/types.ts'
-import { PathSpec } from '../../../types.ts'
-import type { DispatchFn } from '../../../runtime/types.ts'
-import { ExecutionNode } from '../../types.ts'
-import { runOutput } from '../../../commands/builtin/general/interpreter.ts'
+import type { ByteSource, IOResult } from '../../../io/types.ts'
 import type { LanguageRuntime } from '../../../runtime/language.ts'
 import { QuickJsUnavailableError } from '../../../runtime/js/types.ts'
+import type { DispatchFn } from '../../../runtime/types.ts'
+import type { PathSpec } from '../../../types.ts'
+import type { ExecutionNode } from '../../types.ts'
+import { makeInterpreterHandler } from '../interpreter.ts'
 
 type Result = [ByteSource | null, IOResult, ExecutionNode]
 
@@ -29,21 +26,11 @@ export interface HandleJsDeps {
   runtime: LanguageRuntime
 }
 
-function readAllBytes(data: unknown): Promise<Uint8Array> {
-  if (data instanceof Uint8Array) return Promise.resolve(data)
-  if (data === null || data === undefined) return Promise.resolve(new Uint8Array())
-  return materialize(data as ByteSource)
-}
-
-function toPathSpec(p: PathSpec): PathSpec {
-  return new PathSpec({
-    virtual: p.virtual,
-    directory: p.directory,
-    pattern: p.pattern,
-    resolved: p.resolved,
-    resourcePath: mountKey(p.virtual, mountPrefixOf(p.virtual, p.resourcePath)),
-  })
-}
+const runJs = makeInterpreterHandler({
+  label: 'js',
+  payloadFlag: '-e',
+  isUnavailable: (err: unknown) => err instanceof QuickJsUnavailableError,
+})
 
 export async function handleJs(
   dispatch: DispatchFn,
@@ -59,73 +46,20 @@ export async function handleJs(
   },
   deps: HandleJsDeps,
 ): Promise<Result> {
-  let code = opts.code
-  let module = opts.module
-  const cmdStr = pathScope !== null ? `js ${pathScope.virtual}` : 'js -e'
-
-  if (code === null) {
-    if (pathScope === null) {
-      const err = new TextEncoder().encode('js: no input\n')
-      return [
-        null,
-        new IOResult({ exitCode: 1, stderr: err }),
-        new ExecutionNode({ command: cmdStr, exitCode: 1 }),
-      ]
-    }
-    if (pathScope.virtual.endsWith('.mjs')) module = true
-    try {
-      const [data] = await dispatch('read', toPathSpec(pathScope))
-      const bytes = await readAllBytes(data)
-      code = new TextDecoder('utf-8', { fatal: false }).decode(bytes)
-    } catch {
-      const err = new TextEncoder().encode(`js: ${pathScope.virtual}: No such file\n`)
-      return [
-        null,
-        new IOResult({ exitCode: 1, stderr: err }),
-        new ExecutionNode({ command: cmdStr, exitCode: 1 }),
-      ]
-    }
-  }
-
-  let stdinBytes: Uint8Array | null = null
-  if (opts.stdin !== null) {
-    stdinBytes = await materialize(opts.stdin)
-  }
-
-  try {
-    const result = await deps.runtime.run({
-      code,
-      args,
+  // A .mjs script is a module whatever the flag said (Python's js.py).
+  const module = opts.module || (pathScope?.virtual.endsWith('.mjs') ?? false)
+  return runJs(
+    dispatch,
+    pathScope,
+    args,
+    {
+      stdin: opts.stdin,
       env: opts.env,
-      stdin: stdinBytes,
+      code: opts.code,
       flags: { module },
       ...(opts.signal !== undefined ? { signal: opts.signal } : {}),
       ...(opts.timeoutSeconds !== undefined ? { timeoutSeconds: opts.timeoutSeconds } : {}),
-    })
-    const [stdout, io] = runOutput(result)
-    return [stdout, io, new ExecutionNode({ command: cmdStr, exitCode: result.exitCode })]
-  } catch (err) {
-    // An in-VM limit interrupt is a timeout, not an interpreter
-    // failure: let it reach the workspace's 124 handler.
-    if (err instanceof CommandTimeoutError) throw err
-    if (err instanceof QuickJsUnavailableError) {
-      return [
-        null,
-        new IOResult({
-          exitCode: 127,
-          stderr: new TextEncoder().encode(`js: ${err.message}\n`),
-        }),
-        new ExecutionNode({ command: cmdStr, exitCode: 127 }),
-      ]
-    }
-    const msg = err instanceof Error ? err.message : String(err)
-    return [
-      null,
-      new IOResult({
-        exitCode: 1,
-        stderr: new TextEncoder().encode(`js: ${msg}\n`),
-      }),
-      new ExecutionNode({ command: cmdStr, exitCode: 1 }),
-    ]
-  }
+    },
+    deps,
+  )
 }

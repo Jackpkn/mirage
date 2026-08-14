@@ -29,6 +29,7 @@
     }
   ],
   "rest": {
+    "remainder": true,
     "type": "str"
   }
 }

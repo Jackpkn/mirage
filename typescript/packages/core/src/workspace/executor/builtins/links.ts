@@ -13,8 +13,6 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { SPECS, parseCommand } from '../../../commands/spec/index.ts'
-import { resolvePath } from '../../../utils/path.ts'
-import { IOResult } from '../../../io/types.ts'
 import { FileStat, FileType, PathSpec, wordText } from '../../../types.ts'
 import { CycleError, gnuBasename, gnuDirname, norm } from '../../../utils/path.ts'
 import { rstripSlash } from '../../../utils/slash.ts'
@@ -24,18 +22,12 @@ import type { StatOverlay } from '../../../ops/types.ts'
 import type { DispatchFn } from '../../../runtime/types.ts'
 import type { Namespace } from '../../mount/namespace/namespace.ts'
 import type { Session } from '../../session/session.ts'
-import { ExecutionNode } from '../../types.ts'
-import type { Result } from './scope.ts'
+import { absPath, fail, ok, result, splitFlags, type Result } from './shared.ts'
 
 // Commands whose path operands name the link itself (lstat semantics):
 // rm/mv mutate the link entry, ln/readlink inspect it, rmdir must not
 // descend through it. Everything else follows links before dispatch,
 // mirroring open(2).
-
-function abs(arg: string | PathSpec, cwd: string): string {
-  if (arg instanceof PathSpec) return arg.virtual
-  return resolvePath(arg, cwd)
-}
 
 // Path of `target` relative to directory `startDir` (both absolute posix),
 // the transform behind `ln -r` (GNU --relative).
@@ -48,45 +40,8 @@ function posixRelative(target: string, startDir: string): string {
   return parts.length > 0 ? parts.join('/') : '.'
 }
 
-function allKnown(chars: string, known: string): boolean {
-  for (const c of chars) if (!known.includes(c)) return false
-  return true
-}
-
-function splitFlags(
-  args: (string | PathSpec)[],
-  known: string,
-): [Set<string>, (string | PathSpec)[]] {
-  const flags = new Set<string>()
-  const operands: (string | PathSpec)[] = []
-  let parsing = true
-  for (const arg of args) {
-    const s = arg instanceof PathSpec ? arg.virtual : arg
-    if (parsing && s === '--') {
-      parsing = false
-      continue
-    }
-    if (parsing && s !== '-' && s.length >= 2 && s.startsWith('-') && allKnown(s.slice(1), known)) {
-      for (const c of s.slice(1)) flags.add(c)
-      continue
-    }
-    parsing = false
-    operands.push(arg)
-  }
-  return [flags, operands]
-}
-
 export function linkFlags(args: (string | PathSpec)[], known: string): Set<string> {
   return splitFlags(args, known)[0]
-}
-
-function errorResult(command: string, message: string): Result {
-  const err = new TextEncoder().encode(message)
-  return [
-    null,
-    new IOResult({ exitCode: 1, stderr: err }),
-    new ExecutionNode({ command, exitCode: 1, stderr: err }),
-  ]
 }
 
 // ln -s TARGET LINK: create a namespace symbolic link. Flags: -f overwrite
@@ -104,16 +59,16 @@ export async function handleLn(
   const targetArg = operands[0]
   const linkArg = operands[1]
   if (targetArg === undefined || linkArg === undefined) {
-    return errorResult('ln', 'ln: missing file operand\n')
+    return fail('ln', 'ln: missing file operand\n')
   }
   // GNU: with more than two operands the last must be a directory;
   // namespace links never name directories, so this is always an error
   // (an expanded multi-match glob source lands here).
   if (operands.length > 2) {
     const last = operands[operands.length - 1]
-    return errorResult('ln', `ln: target '${wordText(last ?? '')}': Not a directory\n`)
+    return fail('ln', `ln: target '${wordText(last ?? '')}': Not a directory\n`)
   }
-  const linkAbs = abs(linkArg, session.cwd)
+  const linkAbs = absPath(linkArg, session.cwd)
   let targetTyped = wordText(targetArg)
   if (flags.has('r')) {
     // --relative: rewrite the target relative to the link's own directory
@@ -122,7 +77,7 @@ export async function handleLn(
     // directory resolves to its real path (the link survives the alias
     // being moved/removed); fall back to lexical on a loop.
     let linkDir = gnuDirname(linkAbs)
-    let targetAbs = abs(targetArg, session.cwd)
+    let targetAbs = absPath(targetArg, session.cwd)
     try {
       targetAbs = namespace.follow(targetAbs)
       linkDir = namespace.follow(linkDir)
@@ -133,10 +88,7 @@ export async function handleLn(
   }
   const exists = namespace.isLink(linkAbs) && !flags.has('f')
   if (namespace.isMountRoot(linkAbs) || exists) {
-    return errorResult(
-      'ln',
-      `ln: failed to create symbolic link '${wordText(linkArg)}': File exists\n`,
-    )
+    return fail('ln', `ln: failed to create symbolic link '${wordText(linkArg)}': File exists\n`)
   }
   // The write itself is a dispatch op, so session grants and admission
   // policies fire at the door; a refusal renders in ln's own words.
@@ -144,7 +96,7 @@ export async function handleLn(
     await dispatch('symlink', PathSpec.fromStrPath(linkAbs), [], { target: targetTyped })
   } catch (err) {
     if (err instanceof PolicyDenied || err instanceof MountNotAllowedError) {
-      return errorResult(
+      return fail(
         'ln',
         `ln: failed to create symbolic link '${wordText(linkArg)}': Permission denied\n`,
       )
@@ -155,7 +107,7 @@ export async function handleLn(
   if (flags.has('v')) {
     out = new TextEncoder().encode(`'${wordText(linkArg)}' -> '${targetTyped}'\n`)
   }
-  return [out, new IOResult(), new ExecutionNode({ command: 'ln', exitCode: 0 })]
+  return ok('ln', out)
 }
 
 // Resolve every component of a path but the last one. POSIX resolves a
@@ -305,13 +257,13 @@ async function slashedLinkRefusal(
   const followed = namespace.follow(src.virtual)
   const target = await statOrNull(dispatch, PathSpec.fromStrPath(followed))
   if (target === null) {
-    return errorResult('mv', `mv: cannot stat '${src.rawPath}': No such file or directory\n`)
+    return fail('mv', `mv: cannot stat '${src.rawPath}': No such file or directory\n`)
   }
   if (target.type !== FileType.DIRECTORY) {
-    return errorResult('mv', `mv: cannot stat '${src.rawPath}': Not a directory\n`)
+    return fail('mv', `mv: cannot stat '${src.rawPath}': Not a directory\n`)
   }
   if (dstStat !== null && dstStat.type !== FileType.DIRECTORY) {
-    return errorResult(
+    return fail(
       'mv',
       `mv: cannot overwrite non-directory '${dst.rawPath}' with directory '${src.rawPath}'\n`,
     )
@@ -320,7 +272,7 @@ async function slashedLinkRefusal(
   if (dstStat !== null) {
     landing = rstripSlash(landing) + '/' + gnuBasename(src.virtual)
   }
-  return errorResult('mv', `mv: cannot move '${src.rawPath}' to '${landing}': Not a directory\n`)
+  return fail('mv', `mv: cannot move '${src.rawPath}' to '${landing}': Not a directory\n`)
 }
 
 export interface PreparedMv {
@@ -368,7 +320,7 @@ export async function prepareMv(
     }
     await namespace.unlink(targetDst)
     await namespace.rename(src.virtual, targetDst)
-    const early: Result = [null, new IOResult(), new ExecutionNode({ command: 'mv', exitCode: 0 })]
+    const early: Result = ok('mv')
     return { items, postUnlink: null, postRename: null, early }
   }
 
@@ -523,13 +475,13 @@ export async function handleReadlink(
 ): Promise<Result> {
   const [flags, operands] = splitFlags(args, 'fenm')
   if (operands.length === 0) {
-    return errorResult('readlink', 'readlink: missing operand\n')
+    return fail('readlink', 'readlink: missing operand\n')
   }
   const canonical = flags.has('f') || flags.has('e') || flags.has('m')
   const lines: string[] = []
   let exitCode = 0
   for (const op of operands) {
-    const absOp = abs(op, session.cwd)
+    const absOp = absPath(op, session.cwd)
     if (canonical) {
       // -f/-e/-m canonicalize: resolve every symlink (including a trailing
       // one) and normalize the path, GNU realpath-style. A link operand
@@ -579,13 +531,7 @@ export async function handleReadlink(
     }
     lines.push(target)
   }
-  if (lines.length === 0) {
-    return [null, new IOResult({ exitCode }), new ExecutionNode({ command: 'readlink', exitCode })]
-  }
+  if (lines.length === 0) return result('readlink', { exitCode })
   const text = flags.has('n') ? lines.join('') : lines.map((l) => l + '\n').join('')
-  return [
-    new TextEncoder().encode(text),
-    new IOResult({ exitCode }),
-    new ExecutionNode({ command: 'readlink', exitCode }),
-  ]
+  return result('readlink', { out: new TextEncoder().encode(text), exitCode })
 }

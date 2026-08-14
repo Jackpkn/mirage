@@ -17,7 +17,8 @@ import { IOResult, materialize } from '../../../io/types.ts'
 import { shellJoin } from '../../../shell/join.ts'
 import type { Session } from '../../session/session.ts'
 import { ExecutionNode } from '../../types.ts'
-import type { Result, ExecuteStringFn } from './scope.ts'
+import type { ExecuteStringFn } from './scope.ts'
+import type { Result } from './shared.ts'
 
 const DURATION = /^(\d+(?:\.\d*)?|\.\d+)([smhd]?)$/
 

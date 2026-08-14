@@ -102,6 +102,21 @@ describe('gdrive read auto-bootstrap', () => {
     await expect(read(accessor, path, index)).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
+  // Mirrors test_read_propagates_parent_refresh_failure: only an absent
+  // parent may collapse into the operand's ENOENT.
+  it('propagates a failed parent listing instead of reporting ENOENT', async () => {
+    vi.mocked(drive.listFiles).mockRejectedValue(new Error('drive unavailable'))
+    vi.mocked(drive.downloadFile).mockRejectedValue(new Error('should not call downloadFile'))
+    const accessor = makeAccessor()
+    const index = new RAMIndexCacheStore()
+    const path = new PathSpec({
+      resourcePath: 'missing.txt',
+      virtual: '/missing.txt',
+      directory: '/missing.txt',
+    })
+    await expect(read(accessor, path, index)).rejects.toThrow(/drive unavailable/)
+  })
+
   it('throws EISDIR when reading a shared drive root', async () => {
     vi.mocked(drive.downloadFile).mockRejectedValue(new Error('should not call downloadFile'))
     const accessor = makeAccessor()
@@ -121,7 +136,13 @@ describe('gdrive read auto-bootstrap', () => {
       virtual: '/Team Drive',
       directory: '/Team Drive',
     })
-    await expect(read(accessor, path, index)).rejects.toThrow(/EISDIR/)
+    // The stamped code is the signal, not the message: the message is the
+    // bare operand, which is what the shell renders (`cat: /Team Drive: Is a
+    // directory`) and what Python's IsADirectoryError(virtual) carries.
+    await expect(read(accessor, path, index)).rejects.toMatchObject({
+      code: 'EISDIR',
+      virtualPath: '/Team Drive',
+    })
     expect(vi.mocked(drive.downloadFile)).not.toHaveBeenCalled()
   })
 })

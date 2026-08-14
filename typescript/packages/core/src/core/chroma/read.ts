@@ -13,6 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import type { ChromaAccessor } from '../../accessor/chroma.ts'
+import { eisdir } from '../../utils/errors.ts'
 import type { IndexCacheStore } from '../../cache/index/store.ts'
 import { PathSpec } from '../../types.ts'
 import { iterPageChunks, metadataString, pageChunks } from './_client.ts'
@@ -20,12 +21,6 @@ import { renderPage } from './render.ts'
 import { resolvePath, type ResolvedChromaPath } from './path.ts'
 
 const ENC = new TextEncoder()
-
-function eisdir(p: string): Error {
-  const err = new Error(`EISDIR: ${p}`) as Error & { code?: string }
-  err.code = 'EISDIR'
-  return err
-}
 
 function fileSlug(resolved: ResolvedChromaPath, virtual: string): string {
   if (resolved.isDir) throw eisdir(virtual)

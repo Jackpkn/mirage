@@ -15,17 +15,12 @@
 import { mountKey, mountPrefixOf } from '../../utils/key_prefix.ts'
 import type { GmailAccessor } from '../../accessor/gmail.ts'
 import type { IndexCacheStore } from '../../cache/index/store.ts'
+import { entryOrWarm } from '../../cache/index/warm.ts'
 import { PathSpec } from '../../types.ts'
 import { getAttachment, getMessageRaw, messageJsonBytes } from './messages.ts'
 import { readdir } from './readdir.ts'
 import { gnuDirname } from '../../utils/path.ts'
-import { enoent } from '../../utils/errors.ts'
-
-function eisdir(p: string): Error {
-  const e = new Error(`EISDIR: ${p}`) as Error & { code: string }
-  e.code = 'EISDIR'
-  return e
-}
+import { eisdir, enoent } from '../../utils/errors.ts'
 
 export async function read(
   accessor: GmailAccessor,
@@ -36,32 +31,26 @@ export async function read(
   const key = path.resourcePath
   if (index === undefined) throw enoent(path.virtual)
   const virtualKey = prefix !== '' ? `${prefix}/${key}` : `/${key}`
-  let result = await index.get(virtualKey)
-  if (result.entry === undefined || result.entry === null) {
-    const parentKey = gnuDirname(virtualKey)
-    if (parentKey !== virtualKey) {
-      const parentPath = PathSpec.fromStrPath(parentKey, mountKey(parentKey, prefix))
-      try {
-        await readdir(accessor, parentPath, index)
-        result = await index.get(virtualKey)
-      } catch {
-        // parent refresh failed; fall through to ENOENT
-      }
-    }
-    if (result.entry === undefined || result.entry === null) throw enoent(path.virtual)
-  }
-  const rt = result.entry.resourceType
+  const parentKey = gnuDirname(virtualKey)
+  const entry = await entryOrWarm(
+    index,
+    virtualKey,
+    parentKey !== virtualKey
+      ? () => readdir(accessor, PathSpec.fromStrPath(parentKey, mountKey(parentKey, prefix)), index)
+      : null,
+  )
+  if (entry === null) throw enoent(path.virtual)
+  const rt = entry.resourceType
   if (rt === 'gmail/label' || rt === 'gmail/date' || rt === 'gmail/attachment_dir') {
     throw eisdir(path.virtual)
   }
   if (rt === 'gmail/attachment') {
-    const parentKey = gnuDirname(virtualKey)
     const parentResult = await index.get(parentKey)
     if (parentResult.entry === undefined || parentResult.entry === null) {
       throw enoent(path.virtual)
     }
-    return getAttachment(accessor.tokenManager, parentResult.entry.id, result.entry.id)
+    return getAttachment(accessor.tokenManager, parentResult.entry.id, entry.id)
   }
-  const raw = await getMessageRaw(accessor.tokenManager, result.entry.id)
+  const raw = await getMessageRaw(accessor.tokenManager, entry.id)
   return messageJsonBytes(raw)
 }

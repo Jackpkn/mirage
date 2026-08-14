@@ -12,12 +12,13 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import logging
 import posixpath
 from collections.abc import AsyncIterator
+from functools import partial
 
 from mirage.accessor.dropbox import DropboxAccessor
 from mirage.cache.index import NULL_INDEX, IndexCacheStore, IndexEntry
+from mirage.cache.index.warm import entry_or_warm
 from mirage.core.dropbox._client import (DropboxApiError, dropbox_download,
                                          dropbox_download_stream)
 from mirage.core.dropbox.readdir import readdir
@@ -25,8 +26,6 @@ from mirage.types import PathSpec
 from mirage.utils.errors import enoent
 from mirage.utils.key_prefix import mount_key, mount_prefix_of
 from mirage.utils.ranges import range_header
-
-logger = logging.getLogger(__name__)
 
 
 def dropbox_path_from_virtual(root: str, virtual_key: str, prefix: str) -> str:
@@ -51,25 +50,19 @@ async def _resolve_entry(
         raise IsADirectoryError(path.virtual)
     virtual_key = prefix + "/" + key if prefix else "/" + key
 
-    result = await index.get(virtual_key)
-    if result.entry is None:
-        parent_key = posixpath.dirname(virtual_key) or "/"
-        if parent_key != virtual_key:
-            parent_path = PathSpec.from_str_path(parent_key,
-                                                 mount_key(parent_key, prefix))
-            try:
-                await readdir(accessor, parent_path, index)
-                result = await index.get(virtual_key)
-            except (FileNotFoundError, DropboxApiError) as exc:
-                # Parent listing failed (missing dir surfaces as a 409
-                # from the API): fall through to enoent like the TS read.
-                logger.debug("read populate failed for %s: %s", virtual_key,
-                             exc)
-        if result.entry is None:
-            raise enoent(path.virtual)
-    if result.entry.resource_type == "dropbox/folder":
+    parent_key = posixpath.dirname(virtual_key) or "/"
+    parent_path = PathSpec.from_str_path(parent_key,
+                                         mount_key(parent_key, prefix))
+    # readdir already turns the API's 409 for a missing path into ENOENT,
+    # so the only thing swallowed here is a genuinely absent parent.
+    warm = (partial(readdir, accessor, parent_path, index)
+            if parent_key != virtual_key else None)
+    entry = await entry_or_warm(index, virtual_key, warm)
+    if entry is None:
+        raise enoent(path.virtual)
+    if entry.resource_type == "dropbox/folder":
         raise IsADirectoryError(path.virtual)
-    return result.entry, virtual_key, prefix
+    return entry, virtual_key, prefix
 
 
 async def read(

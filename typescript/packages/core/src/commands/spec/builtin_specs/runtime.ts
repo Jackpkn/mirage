@@ -187,6 +187,11 @@ export const SPECS: Record<string, CommandSpec> = {
     ],
     rest: new Operand({ type: 'str' }),
   }),
+  // js and node take the remainder for the same reason python does: the
+  // first operand is a program, so the words after it are that program's
+  // argv, not the interpreter's flags. `node - -e x` runs the piped
+  // program and hands it `-e x`; `node s.js -m` hands s.js its own -m.
+  // Pinned against node 22.8.0.
   js: new CommandSpec({
     description: 'Run JavaScript on a sandboxed quickjs engine.',
     options: [
@@ -202,7 +207,7 @@ export const SPECS: Record<string, CommandSpec> = {
           'Run as an ES module (top-level import/export/await); .mjs files select this automatically.',
       }),
     ],
-    rest: new Operand({ type: 'str' }),
+    rest: new Operand({ type: 'str', remainder: true }),
   }),
   mktemp: new CommandSpec({
     options: [
@@ -216,6 +221,7 @@ export const SPECS: Record<string, CommandSpec> = {
     ],
     positional: [new Operand({ type: 'str' })],
   }),
+  // An alias of js, remainder included; see the note there.
   node: new CommandSpec({
     description: 'Run JavaScript on a sandboxed quickjs engine.',
     options: [
@@ -231,7 +237,7 @@ export const SPECS: Record<string, CommandSpec> = {
           'Run as an ES module (top-level import/export/await); .mjs files select this automatically.',
       }),
     ],
-    rest: new Operand({ type: 'str' }),
+    rest: new Operand({ type: 'str', remainder: true }),
   }),
   python: new CommandSpec({
     description: "Run Python on the workspace's bound runtime.",

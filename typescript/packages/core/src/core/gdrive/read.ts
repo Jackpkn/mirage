@@ -15,6 +15,7 @@
 import { mountKey, mountPrefixOf } from '../../utils/key_prefix.ts'
 import type { GDriveAccessor } from '../../accessor/gdrive.ts'
 import type { IndexCacheStore } from '../../cache/index/store.ts'
+import { entryOrWarm } from '../../cache/index/warm.ts'
 import { PathSpec } from '../../types.ts'
 import { record, recordingActive, revisionFor } from '../../observe/context.ts'
 import { readDoc } from '../gdocs/read.ts'
@@ -25,13 +26,7 @@ import { readPresentation } from '../gslides/read.ts'
 import type { TokenManager } from '../google/_client.ts'
 import { DIRECTORY_RESOURCE_TYPES, readdir } from './readdir.ts'
 import { rstripSlash } from '../../utils/slash.ts'
-import { enoent } from '../../utils/errors.ts'
-
-function eisdir(p: string): Error {
-  const e = new Error(`EISDIR: ${p}`) as Error & { code: string }
-  e.code = 'EISDIR'
-  return e
-}
+import { eisdir, enoent } from '../../utils/errors.ts'
 
 export async function readBytes(tm: TokenManager, fileId: string): Promise<Uint8Array> {
   return downloadFile(tm, fileId)
@@ -73,27 +68,21 @@ export async function read(
   const key = path.resourcePath
   if (index === undefined) throw enoent(path.virtual)
   const virtualKey = prefix !== '' ? `${prefix}/${key}` : `/${key}`
-  let result = await index.get(virtualKey)
-  if (result.entry === undefined || result.entry === null) {
-    // cold index: list the parent directory to populate the entry, then retry
-    const parentKey = rstripSlash(virtualKey).replace(/\/[^/]+$/, '') || '/'
-    if (parentKey !== virtualKey) {
-      const parentPath = PathSpec.fromStrPath(parentKey, mountKey(parentKey, prefix))
-      try {
-        await readdir(accessor, parentPath, index)
-        result = await index.get(virtualKey)
-      } catch {
-        // parent refresh failed; fall through to ENOENT
-      }
-    }
-    if (result.entry === undefined || result.entry === null) throw enoent(path.virtual)
-  }
-  const rt = result.entry.resourceType
+  const parentKey = rstripSlash(virtualKey).replace(/\/[^/]+$/, '') || '/'
+  const entry = await entryOrWarm(
+    index,
+    virtualKey,
+    parentKey !== virtualKey
+      ? () => readdir(accessor, PathSpec.fromStrPath(parentKey, mountKey(parentKey, prefix)), index)
+      : null,
+  )
+  if (entry === null) throw enoent(path.virtual)
+  const rt = entry.resourceType
   if (DIRECTORY_RESOURCE_TYPES.has(rt)) throw eisdir(path.virtual)
-  if (rt === 'gdrive/gdoc') return readDoc(accessor.tokenManager, result.entry.id)
-  if (rt === 'gdrive/gsheet') return readSpreadsheet(accessor.tokenManager, result.entry.id)
-  if (rt === 'gdrive/gslide') return readPresentation(accessor.tokenManager, result.entry.id)
-  return readFileVersioned(accessor.tokenManager, result.entry.id, path.virtual, key)
+  if (rt === 'gdrive/gdoc') return readDoc(accessor.tokenManager, entry.id)
+  if (rt === 'gdrive/gsheet') return readSpreadsheet(accessor.tokenManager, entry.id)
+  if (rt === 'gdrive/gslide') return readPresentation(accessor.tokenManager, entry.id)
+  return readFileVersioned(accessor.tokenManager, entry.id, path.virtual, key)
 }
 
 export async function* stream(

@@ -20,13 +20,7 @@ import type { PathSpec } from '../../types.ts'
 import { refillIndex } from './tree.ts'
 import { fetchBlob } from './_client.ts'
 import { stripSlash } from '../../utils/slash.ts'
-import { enoent } from '../../utils/errors.ts'
-
-function eisdir(path: string): Error {
-  const e = new Error(`EISDIR: ${path}`) as Error & { code: string }
-  e.code = 'EISDIR'
-  return e
-}
+import { eisdir, enoent } from '../../utils/errors.ts'
 
 function stripPrefix(path: PathSpec): string {
   const prefix = mountPrefixOf(path.virtual, path.resourcePath)

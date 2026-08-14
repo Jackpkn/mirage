@@ -12,19 +12,18 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import logging
 import posixpath
+from functools import partial
 
 from mirage.accessor.gmail import GmailAccessor
 from mirage.cache.index import NULL_INDEX, IndexCacheStore
+from mirage.cache.index.warm import entry_or_warm
 from mirage.core.gmail.messages import (get_attachment, get_message_raw,
                                         message_json_bytes)
 from mirage.core.gmail.readdir import readdir
 from mirage.types import PathSpec
 from mirage.utils.errors import enoent
 from mirage.utils.key_prefix import mount_key, mount_prefix_of
-
-logger = logging.getLogger(__name__)
 
 
 async def read(
@@ -36,31 +35,24 @@ async def read(
     prefix = mount_prefix_of(path.virtual, path.resource_path)
     key = path.resource_path
     virtual_key = prefix + "/" + key if prefix else "/" + key
-    result = await index.get(virtual_key)
-    if result.entry is None:
-        parent_key = posixpath.dirname(virtual_key) or "/"
-        if parent_key != virtual_key:
-            parent_path = PathSpec.from_str_path(parent_key,
-                                                 mount_key(parent_key, prefix))
-            try:
-                await readdir(accessor, parent_path, index)
-                result = await index.get(virtual_key)
-            except FileNotFoundError as exc:
-                logger.debug("read populate failed for %s: %s", virtual_key,
-                             exc)
-        if result.entry is None:
-            raise enoent(virtual)
-    if result.entry.resource_type in ("gmail/label", "gmail/date",
-                                      "gmail/attachment_dir"):
+    parent_key = posixpath.dirname(virtual_key) or "/"
+    parent_path = PathSpec.from_str_path(parent_key,
+                                         mount_key(parent_key, prefix))
+    warm = (partial(readdir, accessor, parent_path, index)
+            if parent_key != virtual_key else None)
+    entry = await entry_or_warm(index, virtual_key, warm)
+    if entry is None:
+        raise enoent(virtual)
+    if entry.resource_type in ("gmail/label", "gmail/date",
+                               "gmail/attachment_dir"):
         raise IsADirectoryError(virtual)
-    if result.entry.resource_type == "gmail/attachment":
-        att_dir_key = posixpath.dirname(virtual_key)
-        att_dir_result = await index.get(att_dir_key)
+    if entry.resource_type == "gmail/attachment":
+        att_dir_result = await index.get(parent_key)
         if att_dir_result.entry is None:
             raise enoent(virtual)
         message_id = att_dir_result.entry.id
-        attachment_id = result.entry.id
+        attachment_id = entry.id
         return await get_attachment(accessor.token_manager, message_id,
                                     attachment_id)
-    raw = await get_message_raw(accessor.token_manager, result.entry.id)
+    raw = await get_message_raw(accessor.token_manager, entry.id)
     return message_json_bytes(raw)

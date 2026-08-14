@@ -140,8 +140,16 @@ class QuickJsRuntime(JsRuntime, EvaluatorMixin):
         # A named program takes scriptArgs[0], the slot qjs fills with a
         # script's path when it runs a file; unnamed -e leaves the args
         # alone, so the js command keeps its spelling.
+        #
+        # `--` is load-bearing: unlike CPython's -c, qjs's -e does NOT end
+        # its option parsing, so a program argument that spells a qjs
+        # switch is read as one. Without it, `node - -e prog` runs prog
+        # instead of the piped program (a second -e wins) and `node - -m`
+        # silently flips module mode. qjs consumes the `--` itself and
+        # starts scriptArgs after it, and the -e branch still wins over
+        # any filename (quickjs-ng v0.15.1 qjs.c).
         named = [args.prog] if args.prog else []
-        argv += ["-e", args.code, *named, *args.args]
+        argv += ["-e", args.code, "--", *named, *args.args]
         core = (RuntimeVFS(self._dispatch, asyncio.get_running_loop(),
                            self._resolver)
                 if self._dispatch is not None else None)

@@ -1137,4 +1137,28 @@ describe('parseCommand — remainder (argparse nargs=REMAINDER)', () => {
     expect(p.flags['-u']).not.toBe(true)
     expect(p.texts()).toEqual(['-u', 'x'])
   })
+
+  // `node - -e x` and `python3 - -c x` both run the piped program and hand
+  // it the rest as argv (node 22.8.0, CPython 3.12). Pinning all four
+  // together is what keeps js from drifting off python again.
+  for (const cmd of ['js', 'node', 'python', 'python3']) {
+    it(`${cmd} stops parsing flags at the stdin operand`, () => {
+      const p = parseCommand(specOf(cmd), ['-', '-e', 'PROG'], '/')
+      expect(p.flags).toEqual({})
+      expect(p.texts()).toEqual(['-', '-e', 'PROG'])
+    })
+
+    it(`${cmd} hands a script its own flags`, () => {
+      const p = parseCommand(specOf(cmd), ['s.js', '-m', '--module'], '/')
+      expect(p.flags).toEqual({})
+      expect(p.texts()).toEqual(['s.js', '-m', '--module'])
+    })
+  }
+
+  it('js flags before the first operand are still the interpreter’s', () => {
+    const p = parseCommand(specOf('js'), ['-m', '-e', 'CODE', 'a'], '/')
+    expect(p.flags['--module']).toBe(true)
+    expect(p.flags['-e']).toBe('CODE')
+    expect(p.texts()).toEqual(['a'])
+  })
 })

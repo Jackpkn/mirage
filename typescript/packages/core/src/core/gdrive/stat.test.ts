@@ -12,13 +12,27 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+import type * as ReaddirModule from './readdir.ts'
+import type * as ResolveModule from './resolve.ts'
+
+vi.mock('./readdir.ts', async () => {
+  const actual = await vi.importActual<typeof ReaddirModule>('./readdir.ts')
+  return { ...actual, readdir: vi.fn(actual.readdir) }
+})
+
+vi.mock('./resolve.ts', async () => {
+  const actual = await vi.importActual<typeof ResolveModule>('./resolve.ts')
+  return { ...actual, resolveKey: vi.fn(actual.resolveKey) }
+})
 
 import { GDriveAccessor } from '../../accessor/gdrive.ts'
 import { IndexEntry } from '../../cache/index/config.ts'
 import { RAMIndexCacheStore } from '../../cache/index/ram.ts'
 import { FileType, PathSpec } from '../../types.ts'
 import type { TokenManager } from '../google/_client.ts'
+import * as readdirModule from './readdir.ts'
+import * as resolveModule from './resolve.ts'
 import { stat } from './stat.ts'
 
 const STUB_TOKEN_MANAGER = {
@@ -54,5 +68,28 @@ describe('gdrive stat shared drives', () => {
     )
     expect(result.type).toBe(FileType.DIRECTORY)
     expect(result.extra.file_id).toBe('drive1')
+  })
+})
+
+// Mirrors test_stat_propagates_parent_refresh_failure: a listing that fails
+// for any reason other than an absent parent must not read back as ENOENT,
+// nor be retried as a single-file API probe.
+describe('gdrive stat parent refresh', () => {
+  it('propagates a failed parent listing instead of probing the API', async () => {
+    vi.mocked(readdirModule.readdir).mockRejectedValueOnce(new Error('drive unavailable'))
+    vi.mocked(resolveModule.resolveKey).mockRejectedValueOnce(
+      new Error('should not reach statFromApi'),
+    )
+    await expect(
+      stat(
+        makeAccessor(),
+        new PathSpec({
+          resourcePath: 'missing.txt',
+          virtual: '/missing.txt',
+          directory: '/missing.txt',
+        }),
+        new RAMIndexCacheStore(),
+      ),
+    ).rejects.toThrow(/drive unavailable/)
   })
 })

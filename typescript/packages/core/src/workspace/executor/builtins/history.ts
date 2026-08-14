@@ -17,7 +17,7 @@ import { HISTORY_PREFIX } from '../../../resource/history/history.ts'
 import type { MountRegistry } from '../../mount/registry.ts'
 import type { Session } from '../../session/session.ts'
 import { ExecutionNode } from '../../types.ts'
-import type { Result } from './scope.ts'
+import type { Result } from './shared.ts'
 import type { FlagValue } from '../../../commands/spec/types.ts'
 
 const ENC = new TextEncoder()

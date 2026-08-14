@@ -14,11 +14,7 @@
 
 import { stripSlash } from '../../../utils/slash.ts'
 import type { ByteSource, IOResult as IOResultType } from '../../../io/types.ts'
-import type { IOResult } from '../../../io/types.ts'
 import { PathSpec } from '../../../types.ts'
-import type { ExecutionNode } from '../../types.ts'
-
-export type Result = [ByteSource | null, IOResult, ExecutionNode]
 
 export type ExecuteStringFn = (
   script: string,

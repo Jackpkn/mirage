@@ -12,6 +12,8 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import pytest
+
 from mirage.commands.spec import SPECS
 from mirage.commands.spec.parser import parse_command
 from mirage.commands.spec.types import CommandSpec, Operand, Option
@@ -785,3 +787,27 @@ def test_remainder_consumes_the_marker_that_hands_off_the_line():
     assert parsed.flags["-c"] == "print(1)"
     assert parsed.flags.get("-u") is not True
     assert parsed.texts() == ["-u", "x"]
+
+
+@pytest.mark.parametrize("cmd", ["js", "node", "python", "python3"])
+def test_every_interpreter_stops_parsing_flags_at_the_stdin_operand(cmd):
+    # `node - -e x` and `python3 - -c x` both run the piped program and
+    # hand it the rest as argv (node 22.8.0, CPython 3.12). Pinning all
+    # four together is what keeps js from drifting off python again.
+    parsed = parse_command(SPECS[cmd], ["-", "-e", "PROG"], "/")
+    assert parsed.flags == {}
+    assert parsed.texts() == ["-", "-e", "PROG"]
+
+
+@pytest.mark.parametrize("cmd", ["js", "node", "python", "python3"])
+def test_every_interpreter_hands_a_script_its_own_flags(cmd):
+    parsed = parse_command(SPECS[cmd], ["s.js", "-m", "--module"], "/")
+    assert parsed.flags == {}
+    assert parsed.texts() == ["s.js", "-m", "--module"]
+
+
+def test_js_flags_before_the_first_operand_are_still_the_interpreters():
+    parsed = parse_command(SPECS["js"], ["-m", "-e", "CODE", "a"], "/")
+    assert parsed.flags["--module"] is True
+    assert parsed.flags["-e"] == "CODE"
+    assert parsed.texts() == ["a"]

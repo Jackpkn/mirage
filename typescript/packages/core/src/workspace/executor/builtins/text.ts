@@ -23,7 +23,7 @@ import type { Session } from '../../session/session.ts'
 import type { SessionView } from '../../../ops/types.ts'
 import { ensureVarVisible, visibleEnv } from '../../session/state.ts'
 import { ExecutionNode } from '../../types.ts'
-import type { Result } from './scope.ts'
+import type { Result } from './shared.ts'
 
 // A subscript must be non-empty: bash rejects `a[]` as an invalid
 // identifier, while `a[ ]` is a valid arithmetic 0.

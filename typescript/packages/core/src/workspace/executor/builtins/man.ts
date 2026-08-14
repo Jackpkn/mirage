@@ -24,7 +24,7 @@ import { DEV_PREFIX } from '../../mount/registry.ts'
 import type { MountRegistry } from '../../mount/registry.ts'
 import type { Session } from '../../session/session.ts'
 import { ExecutionNode } from '../../types.ts'
-import type { Result } from './scope.ts'
+import type { Result } from './shared.ts'
 import { compareCodePoints } from '../../../utils/sort.ts'
 
 /** A description, or man's placeholder when the spec carries none. */

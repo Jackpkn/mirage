@@ -13,18 +13,17 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import json
-import logging
 import posixpath
+from functools import partial
 
 from mirage.accessor.gslides import GSlidesAccessor
 from mirage.cache.index import NULL_INDEX, IndexCacheStore
+from mirage.cache.index.warm import entry_or_warm
 from mirage.core.gslides._client import TokenManager, google_get, slides_base
 from mirage.core.gslides.readdir import readdir
 from mirage.types import PathSpec
 from mirage.utils.errors import enoent
 from mirage.utils.key_prefix import mount_key, mount_prefix_of
-
-logger = logging.getLogger(__name__)
 
 
 async def read_presentation(token_manager: TokenManager,
@@ -43,20 +42,14 @@ async def read(
     prefix = mount_prefix_of(path.virtual, path.resource_path)
     key = path.resource_path
     virtual_key = prefix + "/" + key if prefix else "/" + key
-    result = await index.get(virtual_key)
-    if result.entry is None:
-        parent_key = posixpath.dirname(virtual_key) or "/"
-        if parent_key != virtual_key:
-            parent_path = PathSpec.from_str_path(parent_key,
-                                                 mount_key(parent_key, prefix))
-            try:
-                await readdir(accessor, parent_path, index)
-                result = await index.get(virtual_key)
-            except FileNotFoundError as exc:
-                logger.debug("read populate failed for %s: %s", virtual_key,
-                             exc)
-        if result.entry is None:
-            raise enoent(virtual)
-    if result.entry.resource_type in ("gslides/directory", ):
+    parent_key = posixpath.dirname(virtual_key) or "/"
+    parent_path = PathSpec.from_str_path(parent_key,
+                                         mount_key(parent_key, prefix))
+    warm = (partial(readdir, accessor, parent_path, index)
+            if parent_key != virtual_key else None)
+    entry = await entry_or_warm(index, virtual_key, warm)
+    if entry is None:
+        raise enoent(virtual)
+    if entry.resource_type in ("gslides/directory", ):
         raise IsADirectoryError(virtual)
-    return await read_presentation(accessor.token_manager, result.entry.id)
+    return await read_presentation(accessor.token_manager, entry.id)

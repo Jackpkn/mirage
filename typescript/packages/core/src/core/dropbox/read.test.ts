@@ -109,6 +109,9 @@ describe('dropbox read', () => {
         new PathSpec({ resourcePath: 'docs', virtual: '/docs', directory: '/docs' }),
         index,
       ),
-    ).rejects.toThrow(/EISDIR/)
+      // The stamped code is the signal, not the message: the message is the
+      // bare operand, which is what the shell renders and what Python's
+      // IsADirectoryError(virtual) carries.
+    ).rejects.toMatchObject({ code: 'EISDIR', virtualPath: '/docs' })
   })
 })

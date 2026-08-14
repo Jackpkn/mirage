@@ -82,4 +82,20 @@ describe('gdocs read auto-bootstrap', () => {
     })
     await expect(read(accessor, path, index)).rejects.toMatchObject({ code: 'ENOENT' })
   })
+
+  // The Drive-item read family (gdocs/gsheets/gslides) shares this shape:
+  // only an absent parent may collapse into the operand's ENOENT.
+  it('propagates a failed parent listing instead of reporting ENOENT', async () => {
+    vi.mocked(drive.listAllFiles).mockRejectedValue(new Error('google unavailable'))
+    vi.mocked(client.googleGet).mockRejectedValue(new Error('should not call googleGet'))
+
+    const accessor = makeAccessor()
+    const index = new RAMIndexCacheStore()
+    const path = new PathSpec({
+      virtual: '/gdocs/owned/Missing__xyz.gdoc.json',
+      directory: '/gdocs/owned/Missing__xyz.gdoc.json',
+      resourcePath: mountKey('/gdocs/owned/Missing__xyz.gdoc.json', '/gdocs'),
+    })
+    await expect(read(accessor, path, index)).rejects.toThrow(/google unavailable/)
+  })
 })

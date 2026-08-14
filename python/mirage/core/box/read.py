@@ -12,20 +12,19 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import logging
 import posixpath
 from collections.abc import AsyncIterator
+from functools import partial
 
 from mirage.accessor.box import BoxAccessor
 from mirage.cache.index import NULL_INDEX, IndexCacheStore, IndexEntry
+from mirage.cache.index.warm import entry_or_warm
 from mirage.core.box.api import download_file, download_file_stream
 from mirage.core.box.readdir import readdir
 from mirage.types import PathSpec
 from mirage.utils.errors import enoent
 from mirage.utils.key_prefix import mount_key, mount_prefix_of
 from mirage.utils.ranges import range_header
-
-logger = logging.getLogger(__name__)
 
 
 async def _resolve_entry(
@@ -39,25 +38,17 @@ async def _resolve_entry(
     if not key:
         raise IsADirectoryError(virtual)
     virtual_key = prefix + "/" + key if prefix else "/" + key
-    result = await index.get(virtual_key)
-    if result.entry is None:
-        # cold index: list the parent directory to populate the entry,
-        # then retry
-        parent_key = posixpath.dirname(virtual_key) or "/"
-        if parent_key != virtual_key:
-            parent_path = PathSpec.from_str_path(parent_key,
-                                                 mount_key(parent_key, prefix))
-            try:
-                await readdir(accessor, parent_path, index)
-                result = await index.get(virtual_key)
-            except FileNotFoundError as exc:
-                logger.debug("read populate failed for %s: %s", virtual_key,
-                             exc)
-        if result.entry is None:
-            raise enoent(virtual)
-    if result.entry.resource_type == "box/folder":
+    parent_key = posixpath.dirname(virtual_key) or "/"
+    parent_path = PathSpec.from_str_path(parent_key,
+                                         mount_key(parent_key, prefix))
+    warm = (partial(readdir, accessor, parent_path, index)
+            if parent_key != virtual_key else None)
+    entry = await entry_or_warm(index, virtual_key, warm)
+    if entry is None:
+        raise enoent(virtual)
+    if entry.resource_type == "box/folder":
         raise IsADirectoryError(virtual)
-    return result.entry
+    return entry
 
 
 async def read(

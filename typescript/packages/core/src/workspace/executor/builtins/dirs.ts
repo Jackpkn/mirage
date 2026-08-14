@@ -23,7 +23,7 @@ import { changeDir, logicalCwd } from '../../session/shell_dirs.ts'
 import { ExecutionNode } from '../../types.ts'
 import type { DispatchFn } from '../../../runtime/types.ts'
 import { toScope, scopePath } from './scope.ts'
-import type { Result } from './scope.ts'
+import type { Result } from './shared.ts'
 
 // Resolve a combined `cd` target following symlinks per mode. Logical (-L,
 // default) simplifies `..` textually first, then follows links; physical (-P)

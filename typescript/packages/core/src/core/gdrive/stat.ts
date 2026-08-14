@@ -15,6 +15,7 @@
 import { mountKey, mountPrefixOf } from '../../utils/key_prefix.ts'
 import type { GDriveAccessor } from '../../accessor/gdrive.ts'
 import type { IndexCacheStore } from '../../cache/index/store.ts'
+import { entryOrWarm } from '../../cache/index/warm.ts'
 import { FileStat, FileType, PathSpec } from '../../types.ts'
 import { DIRECTORY_RESOURCE_TYPES, readdir as coreReaddir } from './readdir.ts'
 import { enoent } from '../../utils/errors.ts'
@@ -77,47 +78,41 @@ export async function stat(
 
   if (index === undefined) return statFromApi(accessor, key, path.virtual)
   const virtualKey = prefix !== '' ? `${prefix}/${key}` : `/${key}`
-  let result = await index.get(virtualKey)
-  if (result.entry === undefined || result.entry === null) {
-    const parentVirtual = virtualKey.includes('/')
-      ? virtualKey.slice(0, virtualKey.lastIndexOf('/')) || '/'
-      : '/'
-    try {
-      await coreReaddir(
-        accessor,
-        new PathSpec({
-          virtual: parentVirtual,
-          directory: parentVirtual,
-          resolved: false,
-          resourcePath: mountKey(parentVirtual, prefix),
-        }),
-        index,
-      )
-    } catch {
-      // parent listing failed — fall through
-    }
-    result = await index.get(virtualKey)
-    if (result.entry === undefined || result.entry === null) {
-      return statFromApi(accessor, key, path.virtual)
-    }
-  }
-  if (DIRECTORY_RESOURCE_TYPES.has(result.entry.resourceType)) {
+  const parentVirtual = virtualKey.includes('/')
+    ? virtualKey.slice(0, virtualKey.lastIndexOf('/')) || '/'
+    : '/'
+  // A parent that cannot be listed at all leaves the API probe as the
+  // authority; entryOrWarm decides which failures get that far.
+  const entry = await entryOrWarm(index, virtualKey, () =>
+    coreReaddir(
+      accessor,
+      new PathSpec({
+        virtual: parentVirtual,
+        directory: parentVirtual,
+        resolved: false,
+        resourcePath: mountKey(parentVirtual, prefix),
+      }),
+      index,
+    ),
+  )
+  if (entry === null) return statFromApi(accessor, key, path.virtual)
+  if (DIRECTORY_RESOURCE_TYPES.has(entry.resourceType)) {
     return new FileStat({
-      name: result.entry.vfsName !== '' ? result.entry.vfsName : result.entry.name,
+      name: entry.vfsName !== '' ? entry.vfsName : entry.name,
       type: FileType.DIRECTORY,
-      modified: result.entry.remoteTime,
-      extra: { file_id: result.entry.id },
+      modified: entry.remoteTime,
+      extra: { file_id: entry.id },
     })
   }
   return new FileStat({
-    name: result.entry.vfsName !== '' ? result.entry.vfsName : result.entry.name,
-    size: result.entry.size,
-    type: guessType(result.entry.vfsName),
-    modified: result.entry.remoteTime,
-    fingerprint: result.entry.remoteTime !== '' ? result.entry.remoteTime : null,
+    name: entry.vfsName !== '' ? entry.vfsName : entry.name,
+    size: entry.size,
+    type: guessType(entry.vfsName),
+    modified: entry.remoteTime,
+    fingerprint: entry.remoteTime !== '' ? entry.remoteTime : null,
     extra: {
-      file_id: result.entry.id,
-      resource_type: result.entry.resourceType,
+      file_id: entry.id,
+      resource_type: entry.resourceType,
     },
   })
 }

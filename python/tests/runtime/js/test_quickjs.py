@@ -49,6 +49,57 @@ def test_dir_without_wasm_raises_hint(tmp_path):
         QuickJsRuntime(config={"home": str(tmp_path)})
 
 
+class _ArgvSpy:
+
+    def __init__(self) -> None:
+        self.argv: list[str] = []
+
+    async def run(self, *, argv, stdin, env, fs):
+        self.argv = list(argv)
+        return b"", b"", 0
+
+
+def _spied_runtime() -> QuickJsRuntime:
+    # __init__ demands a real qjs-wasi.wasm on disk and argv assembly is
+    # the only thing under test, so the engine is stubbed out. These run
+    # everywhere; the @live tests below need the build.
+    rt = object.__new__(QuickJsRuntime)
+    rt._dispatch = None
+    rt._resolver = None
+    rt._runtime = _ArgvSpy()
+    return rt
+
+
+@pytest.mark.asyncio
+async def test_program_args_ride_behind_the_end_of_options_marker():
+    # Unlike CPython's -c, qjs's -e does not end option parsing, so a
+    # program argument spelling a qjs switch gets read as one: without
+    # the `--`, `node - -e prog` ran prog (the second -e wins) and
+    # `node - -m` silently flipped module mode. The TS host sets
+    # scriptArgs as a global and never had the hole.
+    rt = _spied_runtime()
+    await rt.run(RunArgs(code="CODE", args=["-e", "PROG", "-m"]))
+    assert rt._runtime.argv == [
+        "qjs", "--std", "-e", "CODE", "--", "-e", "PROG", "-m"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_named_program_still_takes_the_first_arg_slot():
+    rt = _spied_runtime()
+    await rt.run(RunArgs(code="CODE", prog="tool", args=["-m"]))
+    assert rt._runtime.argv == [
+        "qjs", "--std", "-e", "CODE", "--", "tool", "-m"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_module_mode_is_still_the_interpreters_own_switch():
+    rt = _spied_runtime()
+    await rt.run(RunArgs(code="CODE", flags={"module": True}))
+    assert rt._runtime.argv == ["qjs", "--std", "-m", "-e", "CODE", "--"]
+
+
 @live
 def test_quickjs_runs_modern_js():
     rt = QuickJsRuntime()

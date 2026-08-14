@@ -12,59 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { mountKey, mountPrefixOf } from '../../utils/key_prefix.ts'
-import { invalidateAfterUnlink } from '../../cache/context.ts'
-import type { GSheetsAccessor } from '../../accessor/gsheets.ts'
-import type { IndexCacheStore } from '../../cache/index/store.ts'
-import { PathSpec } from '../../types.ts'
-import { deleteFile } from '../google/drive.ts'
-import { readdir as coreReaddir } from './readdir.ts'
-import { enoent } from '../../utils/errors.ts'
+import { makeUnlink } from '../google/tree_ops.ts'
+import { readdir } from './readdir.ts'
 
-const VIRTUAL_DIRS = new Set(['', 'owned', 'shared'])
-
-function eisdir(p: string): Error & { code: string } {
-  const e = new Error(`EISDIR: ${p}`) as Error & { code: string }
-  e.code = 'EISDIR'
-  return e
-}
-
-export async function unlink(
-  accessor: GSheetsAccessor,
-  path: PathSpec,
-  index?: IndexCacheStore,
-): Promise<void> {
-  const prefix = mountPrefixOf(path.virtual, path.resourcePath)
-  const key = path.resourcePath
-  if (VIRTUAL_DIRS.has(key)) throw eisdir(path.virtual)
-  if (index === undefined) throw enoent(path.virtual)
-  const virtualKey = prefix !== '' ? `${prefix}/${key}` : `/${key}`
-  let result = await index.get(virtualKey)
-  if (result.entry === undefined || result.entry === null) {
-    const parentVirtual = virtualKey.includes('/')
-      ? virtualKey.slice(0, virtualKey.lastIndexOf('/')) || '/'
-      : '/'
-    try {
-      await coreReaddir(
-        accessor,
-        new PathSpec({
-          virtual: parentVirtual,
-          directory: parentVirtual,
-          resolved: false,
-          resourcePath: mountKey(parentVirtual, prefix),
-        }),
-        index,
-      )
-    } catch {
-      // parent listing failed — fall through to not-found
-    }
-    result = await index.get(virtualKey)
-  }
-  if (result.entry === undefined || result.entry === null) throw enoent(path.virtual)
-  await deleteFile(accessor.tokenManager, result.entry.id)
-  const parentDir = virtualKey.includes('/')
-    ? virtualKey.slice(0, virtualKey.lastIndexOf('/')) || '/'
-    : '/'
-  await index.invalidateDir(parentDir)
-  await invalidateAfterUnlink(virtualKey)
-}
+export const unlink = makeUnlink(readdir)

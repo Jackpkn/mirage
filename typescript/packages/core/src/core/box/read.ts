@@ -15,17 +15,12 @@
 import { mountKey, mountPrefixOf } from '../../utils/key_prefix.ts'
 import type { BoxAccessor } from '../../accessor/box.ts'
 import type { IndexCacheStore } from '../../cache/index/store.ts'
+import { entryOrWarm } from '../../cache/index/warm.ts'
 import { PathSpec } from '../../types.ts'
 import { downloadFile, downloadFileStream } from './api.ts'
 import { readdir } from './readdir.ts'
 import { rstripSlash, stripSlash } from '../../utils/slash.ts'
-import { enoent } from '../../utils/errors.ts'
-
-function eisdir(p: string): Error {
-  const e = new Error(`EISDIR: ${p}`) as Error & { code: string }
-  e.code = 'EISDIR'
-  return e
-}
+import { eisdir, enoent } from '../../utils/errors.ts'
 
 export async function read(
   accessor: BoxAccessor,
@@ -40,22 +35,17 @@ export async function read(
   if (index === undefined) throw enoent(path.virtual)
   const virtualKey = prefix !== '' ? `${prefix}/${key}` : `/${key}`
 
-  let result = await index.get(virtualKey)
-  if (result.entry === undefined || result.entry === null) {
-    const parentKey = rstripSlash(virtualKey).replace(/\/[^/]+$/, '') || '/'
-    if (parentKey !== virtualKey) {
-      const parentPath = PathSpec.fromStrPath(parentKey, mountKey(parentKey, prefix))
-      try {
-        await readdir(accessor, parentPath, index)
-        result = await index.get(virtualKey)
-      } catch {
-        // parent refresh failed; fall through to ENOENT
-      }
-    }
-    if (result.entry === undefined || result.entry === null) throw enoent(path.virtual)
-  }
-  if (result.entry.resourceType === 'box/folder') throw eisdir(path.virtual)
-  return downloadFile(accessor.tokenManager, result.entry.id)
+  const parentKey = rstripSlash(virtualKey).replace(/\/[^/]+$/, '') || '/'
+  const entry = await entryOrWarm(
+    index,
+    virtualKey,
+    parentKey !== virtualKey
+      ? () => readdir(accessor, PathSpec.fromStrPath(parentKey, mountKey(parentKey, prefix)), index)
+      : null,
+  )
+  if (entry === null) throw enoent(path.virtual)
+  if (entry.resourceType === 'box/folder') throw eisdir(path.virtual)
+  return downloadFile(accessor.tokenManager, entry.id)
 }
 
 export async function* stream(
@@ -71,22 +61,17 @@ export async function* stream(
   if (index === undefined) throw enoent(path.virtual)
   const virtualKey = prefix !== '' ? `${prefix}/${key}` : `/${key}`
 
-  let result = await index.get(virtualKey)
-  if (result.entry === undefined || result.entry === null) {
-    const parentKey = rstripSlash(virtualKey).replace(/\/[^/]+$/, '') || '/'
-    if (parentKey !== virtualKey) {
-      const parentPath = PathSpec.fromStrPath(parentKey, mountKey(parentKey, prefix))
-      try {
-        await readdir(accessor, parentPath, index)
-        result = await index.get(virtualKey)
-      } catch {
-        // parent refresh failed; fall through to ENOENT
-      }
-    }
-    if (result.entry === undefined || result.entry === null) throw enoent(path.virtual)
-  }
-  if (result.entry.resourceType === 'box/folder') throw eisdir(path.virtual)
-  for await (const chunk of downloadFileStream(accessor.tokenManager, result.entry.id)) {
+  const parentKey = rstripSlash(virtualKey).replace(/\/[^/]+$/, '') || '/'
+  const entry = await entryOrWarm(
+    index,
+    virtualKey,
+    parentKey !== virtualKey
+      ? () => readdir(accessor, PathSpec.fromStrPath(parentKey, mountKey(parentKey, prefix)), index)
+      : null,
+  )
+  if (entry === null) throw enoent(path.virtual)
+  if (entry.resourceType === 'box/folder') throw eisdir(path.virtual)
+  for await (const chunk of downloadFileStream(accessor.tokenManager, entry.id)) {
     yield chunk
   }
 }

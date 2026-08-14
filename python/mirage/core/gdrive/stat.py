@@ -12,10 +12,11 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import logging
+from functools import partial
 
 from mirage.accessor.gdrive import GDriveAccessor
 from mirage.cache.index import NULL_INDEX, IndexCacheStore
+from mirage.cache.index.warm import entry_or_warm
 from mirage.core.gdrive import DIRECTORY_RESOURCE_TYPES
 from mirage.core.gdrive.readdir import readdir as _readdir
 from mirage.core.gdrive.resolve import resolve_key
@@ -24,8 +25,6 @@ from mirage.types import FileStat, FileType, PathSpec
 from mirage.utils.errors import enoent
 from mirage.utils.filetype import guess_type
 from mirage.utils.key_prefix import mount_key, mount_prefix_of
-
-logger = logging.getLogger(__name__)
 
 _MIME_TO_RT = {
     "application/vnd.google-apps.document": "gdrive/gdoc",
@@ -84,37 +83,35 @@ async def stat(
     if not key:
         return FileStat(name="/", type=FileType.DIRECTORY)
     virtual_key = prefix + "/" + key if prefix else "/" + key
-    result = await index.get(virtual_key)
-    if result.entry is None:
-        parent_virtual = virtual_key.rsplit("/", 1)[0] or "/"
-        try:
-            await _readdir(
-                accessor,
-                PathSpec(virtual=parent_virtual,
-                         directory=parent_virtual,
-                         resource_path=mount_key(parent_virtual, prefix)),
-                index=index,
-            )
-        except FileNotFoundError as exc:
-            logger.debug("stat populate failed for %s: %s", virtual, exc)
-        result = await index.get(virtual_key)
-        if result.entry is None:
-            return await stat_from_api(accessor, key, virtual)
-    if result.entry.resource_type in DIRECTORY_RESOURCE_TYPES:
+    parent_virtual = virtual_key.rsplit("/", 1)[0] or "/"
+    # A parent that cannot be listed at all leaves the API probe as the
+    # authority; entry_or_warm decides which failures get that far.
+    warm = partial(
+        _readdir,
+        accessor,
+        PathSpec(virtual=parent_virtual,
+                 directory=parent_virtual,
+                 resource_path=mount_key(parent_virtual, prefix)),
+        index=index,
+    )
+    entry = await entry_or_warm(index, virtual_key, warm)
+    if entry is None:
+        return await stat_from_api(accessor, key, virtual)
+    if entry.resource_type in DIRECTORY_RESOURCE_TYPES:
         return FileStat(
-            name=result.entry.vfs_name,
+            name=entry.vfs_name,
             type=FileType.DIRECTORY,
-            modified=result.entry.remote_time,
-            extra={"file_id": result.entry.id},
+            modified=entry.remote_time,
+            extra={"file_id": entry.id},
         )
     return FileStat(
-        name=result.entry.vfs_name or result.entry.name,
-        size=result.entry.size,
-        type=guess_type(result.entry.vfs_name),
-        modified=result.entry.remote_time,
-        fingerprint=result.entry.remote_time or None,
+        name=entry.vfs_name or entry.name,
+        size=entry.size,
+        type=guess_type(entry.vfs_name),
+        modified=entry.remote_time,
+        fingerprint=entry.remote_time or None,
         extra={
-            "file_id": result.entry.id,
-            "resource_type": result.entry.resource_type,
+            "file_id": entry.id,
+            "resource_type": entry.resource_type,
         },
     )

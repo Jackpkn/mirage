@@ -158,3 +158,27 @@ async def test_read_missing_file_raises_after_recursion(accessor, index):
         )
         with pytest.raises(FileNotFoundError):
             await read(accessor, path, index)
+
+
+@pytest.mark.asyncio
+async def test_read_propagates_parent_refresh_failure(accessor, index):
+    with (
+            patch(
+                "mirage.core.gdocs.readdir.list_all_files",
+                new_callable=AsyncMock,
+                side_effect=RuntimeError("google unavailable"),
+            ),
+            patch(
+                "mirage.core.gdocs.read.read_doc",
+                new_callable=AsyncMock,
+                side_effect=AssertionError("should not call read_doc"),
+            ),
+    ):
+        path = PathSpec(
+            resource_path=mount_key("/gdocs/owned/Missing__xyz.gdoc.json",
+                                    "/gdocs"),
+            virtual="/gdocs/owned/Missing__xyz.gdoc.json",
+            directory="/gdocs/owned/Missing__xyz.gdoc.json",
+        )
+        with pytest.raises(RuntimeError, match="google unavailable"):
+            await read(accessor, path, index)

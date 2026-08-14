@@ -19,26 +19,10 @@ import { FileType, PathSpec } from '../../../types.ts'
 import { fsStrerror, isEnoent, isFsError, isMissingOp } from '../../../utils/errors.ts'
 import { DEFAULT_DIR_MODE, DEFAULT_FILE_MODE, parseChmod } from '../../../utils/mode.ts'
 import { CycleError, resolvePath } from '../../../utils/path.ts'
-import { rstripSlash } from '../../../utils/slash.ts'
-import { mountKey } from '../../../utils/key_prefix.ts'
 import type { DispatchFn } from '../../../runtime/types.ts'
 import type { Namespace } from '../../mount/namespace/namespace.ts'
 import type { Session } from '../../session/session.ts'
-import { ExecutionNode } from '../../types.ts'
-import type { Result } from './scope.ts'
-
-function errorResult(cmd: string, message: string, exitCode = 1): Result {
-  const err = new TextEncoder().encode(message)
-  return [
-    null,
-    new IOResult({ exitCode, stderr: err }),
-    new ExecutionNode({ command: cmd, exitCode, stderr: err }),
-  ]
-}
-
-function okResult(cmd: string): Result {
-  return [null, new IOResult(), new ExecutionNode({ command: cmd, exitCode: 0 })]
-}
+import { expandOperands, fail, finish, splitValueFlags, type Result } from './shared.ts'
 
 // Parse a chown OWNER[:GROUP] argument. Numeric ids become numbers; names
 // are kept as strings (mirage has no user database; ownership is stored,
@@ -124,101 +108,6 @@ function nowIso(): string {
   return isoNoMs(new Date())
 }
 
-export interface SplitValueFlags {
-  flags: Set<string>
-  values: Map<string, string>
-  operands: (string | PathSpec)[]
-  bad: string | null
-}
-
-// Split leading flags where some take a value (`-t STAMP`).
-export function splitValueFlags(
-  args: readonly (string | PathSpec)[],
-  boolean: string,
-  valued: string,
-): SplitValueFlags {
-  const flags = new Set<string>()
-  const values = new Map<string, string>()
-  const operands: (string | PathSpec)[] = []
-  let parsing = true
-  let i = 0
-  while (i < args.length) {
-    const arg = args[i]
-    if (arg === undefined) break
-    const s = arg instanceof PathSpec ? arg.virtual : arg
-    if (parsing && s === '--') {
-      parsing = false
-      i += 1
-      continue
-    }
-    if (parsing && s !== '-' && s.length >= 2 && s.startsWith('-') && !s.startsWith('--')) {
-      const body = s.slice(1)
-      for (let j = 0; j < body.length; j++) {
-        const c = body.charAt(j)
-        if (boolean.includes(c)) {
-          flags.add(c)
-          continue
-        }
-        // A valued flag consumes the rest of the token (-tSTAMP) or the next
-        // argument (-t STAMP); those trailing chars are its value, not flags,
-        // so validation must stop here rather than pre-scanning the token.
-        if (!valued.includes(c)) {
-          return { flags, values, operands, bad: c }
-        }
-        const rest = body.slice(j + 1)
-        if (rest.length > 0) {
-          values.set(c, rest)
-        } else if (i + 1 < args.length) {
-          i += 1
-          const nxt = args[i]
-          if (nxt !== undefined) {
-            values.set(c, nxt instanceof PathSpec ? nxt.rawPath : nxt)
-          }
-        }
-        break
-      }
-      i += 1
-      continue
-    }
-    parsing = false
-    operands.push(arg)
-    i += 1
-  }
-  return { flags, values, operands, bad: null }
-}
-
-// Coerce operands to PathSpec and expand glob patterns per mount. A
-// pattern spec only exists for a mounted word (classification gates
-// it), so the lookup propagates on a miss; a backend with no glob
-// keeps the literal spec.
-async function expandOperands(
-  namespace: Namespace,
-  operands: readonly (string | PathSpec)[],
-): Promise<PathSpec[]> {
-  const out: PathSpec[] = []
-  for (const item of operands) {
-    const spec = item instanceof PathSpec ? item : PathSpec.fromStrPath(item)
-    if (spec.pattern !== null) {
-      const mount = namespace.mountFor(spec.virtual)
-      if (mount.resource.glob !== undefined) {
-        const prefix = rstripSlash(mount.prefix)
-        const withPrefix = new PathSpec({
-          virtual: spec.virtual,
-          directory: spec.directory,
-          pattern: spec.pattern,
-          resolved: spec.resolved,
-          resourcePath: mountKey(spec.virtual, prefix),
-        })
-        const expanded = await mount.resource.glob([withPrefix], prefix)
-        for (const p of expanded) if (p instanceof PathSpec) out.push(p)
-        continue
-      }
-    }
-    out.push(spec)
-  }
-  return out
-}
-
 // Render the mirage read-only refusal for a metadata write. The path
 // was already routed to a mount, so the lookup cannot miss.
 function readOnlyError(cmd: string, namespace: Namespace, path: PathSpec): string {
@@ -265,15 +154,6 @@ async function setattrLink(
   fields: SetAttrFields,
 ): Promise<void> {
   await dispatch('setattr', path, [], { ...(fields as Record<string, unknown>), nofollow: true })
-}
-
-function joinedError(cmd: string, errors: string[], exitCode: number): Result {
-  const err = new TextEncoder().encode(errors.join(''))
-  return [
-    null,
-    new IOResult({ exitCode, stderr: err }),
-    new ExecutionNode({ command: cmd, exitCode, stderr: err }),
-  ]
 }
 
 // A subtree as [path, stat] pairs, parents before children. Each entry's
@@ -336,17 +216,16 @@ export async function handleChmod(
   args: readonly (string | PathSpec)[],
 ): Promise<Result> {
   const { flags, operands, bad } = splitValueFlags(args, 'Rvf', '')
-  if (bad !== null) return errorResult('chmod', `chmod: invalid option -- '${bad}'\n`, 2)
-  if (operands.length < 2) return errorResult('chmod', 'chmod: missing operand\n', 2)
+  if (bad !== null) return fail('chmod', `chmod: invalid option -- '${bad}'\n`, 2)
+  if (operands.length < 2) return fail('chmod', 'chmod: missing operand\n', 2)
   const first = operands[0]
-  if (first === undefined) return errorResult('chmod', 'chmod: missing operand\n', 2)
+  if (first === undefined) return fail('chmod', 'chmod: missing operand\n', 2)
   const modeText = first instanceof PathSpec ? first.virtual : first
   if (parseChmod(modeText, 0) === null) {
-    return errorResult('chmod', `chmod: invalid mode: '${modeText}'\n`, 1)
+    return fail('chmod', `chmod: invalid mode: '${modeText}'\n`, 1)
   }
 
   const recursive = flags.has('R')
-  let exitCode = 0
   const errors: string[] = []
   for (const target of await expandOperands(namespace, operands.slice(1))) {
     let virtual: string
@@ -355,7 +234,6 @@ export async function handleChmod(
     } catch (err) {
       if (err instanceof CycleError) {
         errors.push(`chmod: cannot access '${target.rawPath}': Too many levels of symbolic links\n`)
-        exitCode = 1
         continue
       }
       throw err
@@ -368,7 +246,6 @@ export async function handleChmod(
     } catch (err) {
       if (isEnoent(err)) {
         errors.push(`chmod: cannot access '${target.rawPath}': No such file or directory\n`)
-        exitCode = 1
         continue
       }
       throw err
@@ -384,19 +261,17 @@ export async function handleChmod(
         (pathStat.type === FileType.DIRECTORY ? DEFAULT_DIR_MODE : DEFAULT_FILE_MODE)
       const newMode = parseChmod(modeText, current)
       if (newMode === null) {
-        return errorResult('chmod', `chmod: invalid mode: '${modeText}'\n`, 1)
+        return fail('chmod', `chmod: invalid mode: '${modeText}'\n`, 1)
       }
       try {
         await setattrVia(dispatch, path, { mode: newMode })
       } catch (err) {
         if (!isReadOnlyError(err)) throw err
         errors.push(readOnlyError('chmod', namespace, path))
-        exitCode = 1
       }
     }
   }
-  if (errors.length > 0) return joinedError('chmod', errors, exitCode)
-  return okResult('chmod')
+  return finish('chmod', errors)
 }
 
 // chown OWNER[:GROUP] FILE...: set ownership via setattr. Ownership is
@@ -408,19 +283,18 @@ export async function handleChown(
   args: readonly (string | PathSpec)[],
 ): Promise<Result> {
   const { flags, operands, bad } = splitValueFlags(args, 'Rvfh', '')
-  if (bad !== null) return errorResult('chown', `chown: invalid option -- '${bad}'\n`, 2)
-  if (operands.length < 2) return errorResult('chown', 'chown: missing operand\n', 2)
+  if (bad !== null) return fail('chown', `chown: invalid option -- '${bad}'\n`, 2)
+  if (operands.length < 2) return fail('chown', 'chown: missing operand\n', 2)
   const first = operands[0]
-  if (first === undefined) return errorResult('chown', 'chown: missing operand\n', 2)
+  if (first === undefined) return fail('chown', 'chown: missing operand\n', 2)
   const ownerText = first instanceof PathSpec ? first.virtual : first
   const [uid, gid] = parseOwner(ownerText)
   if (uid === null && gid === null) {
-    return errorResult('chown', `chown: invalid spec: '${ownerText}'\n`, 1)
+    return fail('chown', `chown: invalid spec: '${ownerText}'\n`, 1)
   }
 
   const recursive = flags.has('R')
   const noDeref = recursive || flags.has('h')
-  let exitCode = 0
   const errors: string[] = []
   for (const target of await expandOperands(namespace, operands.slice(1))) {
     if (noDeref && namespace.isLink(target.virtual)) {
@@ -436,7 +310,6 @@ export async function handleChown(
     } catch (err) {
       if (err instanceof CycleError) {
         errors.push(`chown: cannot access '${target.rawPath}': Too many levels of symbolic links\n`)
-        exitCode = 1
         continue
       }
       throw err
@@ -449,7 +322,6 @@ export async function handleChown(
     } catch (err) {
       if (isEnoent(err)) {
         errors.push(`chown: cannot access '${target.rawPath}': No such file or directory\n`)
-        exitCode = 1
         continue
       }
       throw err
@@ -466,7 +338,6 @@ export async function handleChown(
       } catch (err) {
         if (!isReadOnlyError(err)) throw err
         errors.push(readOnlyError('chown', namespace, path))
-        exitCode = 1
       }
     }
     for (const link of links) {
@@ -476,8 +347,7 @@ export async function handleChown(
       })
     }
   }
-  if (errors.length > 0) return joinedError('chown', errors, exitCode)
-  return okResult('chown')
+  return finish('chown', errors)
 }
 
 // chgrp GROUP FILE...: set group ownership via setattr. The group half of
@@ -490,19 +360,18 @@ export async function handleChgrp(
   args: readonly (string | PathSpec)[],
 ): Promise<Result> {
   const { flags, operands, bad } = splitValueFlags(args, 'Rvfh', '')
-  if (bad !== null) return errorResult('chgrp', `chgrp: invalid option -- '${bad}'\n`, 2)
-  if (operands.length < 2) return errorResult('chgrp', 'chgrp: missing operand\n', 2)
+  if (bad !== null) return fail('chgrp', `chgrp: invalid option -- '${bad}'\n`, 2)
+  if (operands.length < 2) return fail('chgrp', 'chgrp: missing operand\n', 2)
   const first = operands[0]
-  if (first === undefined) return errorResult('chgrp', 'chgrp: missing operand\n', 2)
+  if (first === undefined) return fail('chgrp', 'chgrp: missing operand\n', 2)
   const groupText = first instanceof PathSpec ? first.virtual : first
   const gid = parseGroup(groupText)
   if (gid === null) {
-    return errorResult('chgrp', `chgrp: invalid group: '${groupText}'\n`, 1)
+    return fail('chgrp', `chgrp: invalid group: '${groupText}'\n`, 1)
   }
 
   const recursive = flags.has('R')
   const noDeref = recursive || flags.has('h')
-  let exitCode = 0
   const errors: string[] = []
   for (const target of await expandOperands(namespace, operands.slice(1))) {
     if (noDeref && namespace.isLink(target.virtual)) {
@@ -515,7 +384,6 @@ export async function handleChgrp(
     } catch (err) {
       if (err instanceof CycleError) {
         errors.push(`chgrp: cannot access '${target.rawPath}': Too many levels of symbolic links\n`)
-        exitCode = 1
         continue
       }
       throw err
@@ -528,7 +396,6 @@ export async function handleChgrp(
     } catch (err) {
       if (isEnoent(err)) {
         errors.push(`chgrp: cannot access '${target.rawPath}': No such file or directory\n`)
-        exitCode = 1
         continue
       }
       throw err
@@ -542,15 +409,13 @@ export async function handleChgrp(
       } catch (err) {
         if (!isReadOnlyError(err)) throw err
         errors.push(readOnlyError('chgrp', namespace, path))
-        exitCode = 1
       }
     }
     for (const link of links) {
       await setattrLink(dispatch, PathSpec.fromStrPath(link), { gid })
     }
   }
-  if (errors.length > 0) return joinedError('chgrp', errors, exitCode)
-  return okResult('chgrp')
+  return finish('chgrp', errors)
 }
 
 // touch: set access/modification times, creating missing files. GNU flags:
@@ -564,15 +429,15 @@ export async function handleTouch(
   args: readonly (string | PathSpec)[],
 ): Promise<Result> {
   const { flags, values, operands, bad } = splitValueFlags(args, 'acmh', 'tdr')
-  if (bad !== null) return errorResult('touch', `touch: invalid option -- '${bad}'\n`, 2)
-  if (operands.length === 0) return errorResult('touch', 'touch: missing file operand\n', 1)
+  if (bad !== null) return fail('touch', `touch: invalid option -- '${bad}'\n`, 2)
+  if (operands.length === 0) return fail('touch', 'touch: missing file operand\n', 1)
 
   let stamp: string | null
   try {
     stamp = parseTouchStamp(values.get('t') ?? null, values.get('d') ?? null)
   } catch (err) {
     const text = err instanceof Error ? err.message : String(err)
-    return errorResult('touch', `touch: invalid date format '${text}'\n`, 1)
+    return fail('touch', `touch: invalid date format '${text}'\n`, 1)
   }
   const refText = values.get('r')
   if (stamp === null && refText !== undefined) {
@@ -582,7 +447,7 @@ export async function handleTouch(
       stamp = (refStat as FileStat).modified
     } catch (err) {
       if (isEnoent(err)) {
-        return errorResult(
+        return fail(
           'touch',
           `touch: failed to get attributes of '${refText}': No such file or directory\n`,
         )
@@ -595,13 +460,11 @@ export async function handleTouch(
   const setAtime = flags.has('a') || !flags.has('m')
   const setMtime = flags.has('m') || !flags.has('a')
 
-  let exitCode = 0
   const errors: string[] = []
   const writes: Record<string, Uint8Array> = {}
   for (const target of await expandOperands(namespace, operands)) {
     if (namespace.isMountRoot(target.virtual)) {
       errors.push(`touch: cannot touch '${target.rawPath}': Is a directory\n`)
-      exitCode = 1
       continue
     }
     if (flags.has('h') && namespace.isLink(target.virtual)) {
@@ -614,7 +477,6 @@ export async function handleTouch(
     } catch (err) {
       if (err instanceof CycleError) {
         errors.push(`touch: cannot touch '${target.rawPath}': Too many levels of symbolic links\n`)
-        exitCode = 1
         continue
       }
       throw err
@@ -631,12 +493,10 @@ export async function handleTouch(
       } catch (err) {
         if (!isFsError(err)) throw err
         errors.push(`touch: setting times of '${target.rawPath}': ${String(fsStrerror(err))}\n`)
-        exitCode = 1
         continue
       }
       if (slashed.type !== FileType.DIRECTORY) {
         errors.push(`touch: setting times of '${target.rawPath}': Not a directory\n`)
-        exitCode = 1
         continue
       }
     }
@@ -653,7 +513,6 @@ export async function handleTouch(
           // impossible, which GNU reports as EROFS.
           if (!isMissingOp(werr, 'write')) throw werr
           errors.push(`touch: cannot touch '${target.rawPath}': Read-only file system\n`)
-          exitCode = 1
           continue
         }
         writes[resolved.virtual] = new Uint8Array(0)
@@ -665,7 +524,6 @@ export async function handleTouch(
     } catch (err) {
       if (isReadOnlyError(err)) {
         errors.push(readOnlyError('touch', namespace, resolved))
-        exitCode = 1
         continue
       }
       // A destination whose parent chain is not all directories is one
@@ -676,15 +534,7 @@ export async function handleTouch(
       // with ENOTDIR).
       if (!isFsError(err)) throw err
       errors.push(`touch: cannot touch '${target.rawPath}': ${String(fsStrerror(err))}\n`)
-      exitCode = 1
     }
   }
-  const io = new IOResult({ exitCode, writes })
-  const node = new ExecutionNode({ command: 'touch', exitCode })
-  if (errors.length > 0) {
-    const err = new TextEncoder().encode(errors.join(''))
-    io.stderr = err
-    node.stderr = err
-  }
-  return [null, io, node]
+  return finish('touch', errors, new IOResult({ writes }))
 }
