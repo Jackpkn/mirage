@@ -65,10 +65,14 @@ def glob_to_like(pattern: str) -> str:
     return "".join(translated)
 
 
-def name_condition(name: Name) -> XmlElement:
+def name_operation(name: Name) -> Comparison:
     has_wildcard = "*" in name.pattern or "?" in name.pattern
-    operation = (Comparison.LIKE
-                 if has_wildcard or name.icase else Comparison.EQUAL)
+    return (Comparison.LIKE
+            if has_wildcard or name.icase else Comparison.EQUAL)
+
+
+def name_condition(name: Name) -> XmlElement:
+    operation = name_operation(name)
     value = (glob_to_like(name.pattern)
              if operation == Comparison.LIKE else name.pattern)
     return comparison(operation, constants.DISPLAY_NAME, value)
@@ -78,9 +82,19 @@ def compile_predicate(node: PredNode) -> CompiledPredicate | None:
     if isinstance(node, TrueNode):
         return CompiledPredicate(None)
     if isinstance(node, Name):
-        if "[" in node.pattern:
+        # A class has no LIKE spelling, and a backslash escapes the next
+        # character out of the glob (`-name 'a\b'` matches `ab`), so the
+        # literal the server would compare is not the name being matched.
+        if "[" in node.pattern or "\\" in node.pattern:
             return None
-        return CompiledPredicate(name_condition(node), negatable=True)
+        # LIKE is a deliberate superset (case-insensitive, and a literal
+        # `%`/`_` in the pattern stays a wildcard) that the client-side
+        # keep() re-filters. Negation has nothing to re-filter with:
+        # NOT(superset) withholds rows the true predicate keeps and no
+        # client pass can add them back, so only the exact comparison is
+        # safe to negate.
+        exact = name_operation(node) == Comparison.EQUAL
+        return CompiledPredicate(name_condition(node), negatable=exact)
     if isinstance(node, Type):
         if node.kind == FindType.DIRECTORY:
             return CompiledPredicate(is_collection(), negatable=True)

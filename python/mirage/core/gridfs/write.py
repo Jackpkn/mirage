@@ -15,7 +15,7 @@
 import time
 
 from mirage.accessor.gridfs import GridFSAccessor
-from mirage.cache.context import invalidate_after_write
+from mirage.cache.context import invalidate_after_write, invalidate_ancestors
 from mirage.core.gridfs._client import _key, bucket
 from mirage.observe.context import record
 from mirage.types import PathSpec
@@ -32,3 +32,6 @@ async def write_bytes(accessor: GridFSAccessor, path_spec: PathSpec,
     await bucket(accessor).upload_from_stream(key, data)
     record("write", path, "gridfs", len(data), start_ms)
     await invalidate_after_write(path_spec)
+    # An upload materializes every missing level of the key at once, so the
+    # listings above the immediate parent gained entries too.
+    await invalidate_ancestors(path_spec)

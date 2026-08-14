@@ -98,6 +98,25 @@ class CacheManager:
         await self._index.invalidate_dir(virtual + "/")
         await self._invalidate_parent(virtual)
 
+    async def invalidate_ancestors(self, path: PathSpec) -> None:
+        """Evict the listing of every directory above ``path``'s parent.
+
+        ``invalidate_after_write`` refreshes the immediate parent only. A
+        keyed store materializes every missing level of a key in a single
+        put, so the listings further up gained entries too and would keep
+        serving the pre-write view until the index TTL expires. A backend
+        with real directories cannot gain a level that way, so there this
+        is a handful of spare evictions.
+
+        Args:
+            path (PathSpec): Resource-relative path that was mutated.
+        """
+        parent = self._virtual(path).rsplit("/", 1)[0]
+        while parent and parent != self._prefix:
+            parent = parent.rsplit("/", 1)[0]
+            await self._index.invalidate_dir(parent or "/")
+            await self._index.invalidate_dir(parent + "/")
+
     async def drop_prefix(self) -> None:
         """Drop every cached body under this mount, path unspecified.
 

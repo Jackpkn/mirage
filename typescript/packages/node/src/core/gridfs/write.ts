@@ -12,7 +12,13 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { ResourceName, invalidateAfterWrite, record, type PathSpec } from '@struktoai/mirage-core'
+import {
+  ResourceName,
+  invalidateAfterWrite,
+  invalidateAncestors,
+  record,
+  type PathSpec,
+} from '@struktoai/mirage-core'
 import type { GridFSAccessor } from '../../accessor/gridfs.ts'
 import { bucket, gridfsKey, rawPathOf } from './_client.ts'
 
@@ -45,4 +51,7 @@ export async function write(
   await uploadBytes(accessor, key, data)
   record('write', path.virtual, ResourceName.GRIDFS, data.byteLength, startMs)
   await invalidateAfterWrite(path)
+  // An upload materializes every missing level of the key at once, so the
+  // listings above the immediate parent gained entries too.
+  await invalidateAncestors(path)
 }

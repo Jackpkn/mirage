@@ -120,9 +120,9 @@ def test_query_accepts_fully_representable_boolean_tree():
 @pytest.mark.parametrize(
     "tree",
     [
-        Not(Or([Name("*.txt"), Name("*.csv")])),
-        Not(And([Name("*.txt"), Type("d")])),
-        Not(Not(Name("*.txt"))),
+        Not(Or([Name("notes.txt"), Name("rows.csv")])),
+        Not(And([Name("notes.txt"), Type("d")])),
+        Not(Not(Name("notes.txt"))),
         Not(Type("f")),
     ],
 )
@@ -134,12 +134,31 @@ def test_query_rejects_negated_compound(tree):
     "tree",
     [
         Not(Name("*.txt")),
-        Not(Type("d")),
+        Not(Name("a?.txt")),
+        Not(Name("notes.txt", icase=True)),
         Not(Or([Name("*.txt")])),
+        Not(And([Name("*.txt")])),
+    ],
+)
+def test_query_rejects_negated_inexact_name(tree):
+    assert not supports_query(FilesSearchQuery(tree=tree))
+
+
+@pytest.mark.parametrize(
+    "tree",
+    [
+        Not(Name("notes.txt")),
+        Not(Type("d")),
+        Not(Or([Name("notes.txt")])),
     ],
 )
 def test_query_accepts_negated_comparison(tree):
     assert supports_query(FilesSearchQuery(tree=tree))
+
+
+@pytest.mark.parametrize("pattern", ["[ab].txt", "a\\b"])
+def test_query_rejects_unrepresentable_name_pattern(pattern):
+    assert not supports_query(FilesSearchQuery(tree=Name(pattern)))
 
 
 def test_positive_size_query_excludes_directories():

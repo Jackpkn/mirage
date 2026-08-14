@@ -12,9 +12,13 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import asyncio
 import re
 
-from mirage.core.gridfs.find import build_query, glob_regex
+from mirage.accessor.gridfs import GridFSAccessor, GridFSConfig
+from mirage.core.gridfs._client import prefix_query
+from mirage.core.gridfs.find import build_query, find, glob_regex
+from mirage.types import PathSpec
 
 
 def _matches(query_regex: dict, value: str) -> bool:
@@ -90,3 +94,80 @@ def test_build_query_no_pushdown_keeps_prefix_only():
 def test_build_query_unpushable_glob_falls_back_to_prefix():
     query = build_query("data/", "[ab].csv", None, None, None, None, True)
     assert query == {"filename": {"$regex": "^" + re.escape("data/")}}
+
+
+async def _docs_gen(docs):
+    for doc in docs:
+        yield doc
+
+
+class _FakeIterLatest:
+
+    def __init__(self, docs):
+        self.docs = docs
+        self.queries = []
+
+    def __call__(self, accessor, query):
+        self.queries.append(query)
+        return _docs_gen(self.docs)
+
+
+def _run_find(monkeypatch, docs, **kwargs):
+    fake = _FakeIterLatest([{
+        "filename": filename,
+        "length": length
+    } for filename, length in docs])
+    monkeypatch.setitem(find.__globals__, "iter_latest", fake)
+    accessor = GridFSAccessor(
+        GridFSConfig(uri="mongodb://localhost:27017", database="db"))
+    spec = PathSpec(virtual="/mnt/data",
+                    directory="/mnt/",
+                    resource_path="data")
+    out = asyncio.run(find(accessor, spec, **kwargs))
+    return out, fake.queries
+
+
+def test_find_synthesizes_implicit_dirs_without_narrowing(monkeypatch):
+    out, queries = _run_find(monkeypatch, [("data/a/b.txt", 3)], type="d")
+    assert out == ["/data", "/data/a"]
+    assert queries == [prefix_query("data/")]
+
+
+def test_find_name_without_type_scans_prefix_only(monkeypatch):
+    out, queries = _run_find(monkeypatch, [("data/logs/x.txt", 1)],
+                             name="logs")
+    assert out == ["/data/logs"]
+    assert queries == [prefix_query("data/")]
+
+
+def test_find_type_f_keeps_pushdown(monkeypatch):
+    out, queries = _run_find(monkeypatch, [("data/a/b.txt", 3)],
+                             type="f",
+                             name="*.txt")
+    assert out == ["/data/a/b.txt"]
+    assert "$and" in queries[0]
+
+
+def test_find_unordered_marker_and_file_no_duplicates(monkeypatch):
+    out, _ = _run_find(monkeypatch, [("data/a/x.txt", 1), ("data/a/", 0)],
+                       type="d")
+    assert out == ["/data", "/data/a"]
+
+
+def test_find_file_shadowed_by_implicit_dir_emits_once(monkeypatch):
+    docs = [("data/a", 1), ("data/a/b.txt", 2)]
+    assert _run_find(monkeypatch,
+                     docs)[0] == ["/data", "/data/a", "/data/a/b.txt"]
+    assert _run_find(monkeypatch, docs, type="d")[0] == ["/data", "/data/a"]
+    assert _run_find(monkeypatch, docs,
+                     type="f")[0] == ["/data/a", "/data/a/b.txt"]
+
+
+def test_find_empty_matches_marker_only_start(monkeypatch):
+    out, _ = _run_find(monkeypatch, [("data/", 0)], empty=True)
+    assert out == ["/data"]
+
+
+def test_find_empty_rejects_populated_start(monkeypatch):
+    out, _ = _run_find(monkeypatch, [("data/x.txt", 3)], empty=True)
+    assert out == []

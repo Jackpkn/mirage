@@ -103,10 +103,54 @@ import { startPythonServer } from './server_process.ts'
 export interface Open {
   ws: ExecWorkspace
   cleanup: () => Promise<void>
+  // A second workspace over the same backing store, which consistency
+  // scenarios mutate through. Adapters that can build their mounts more than
+  // once expose it; the rest leave it undefined and the runner reports their
+  // consistency cases as skipped instead of silently dropping them.
+  shadow?: () => ExecWorkspace
 }
 
 export interface OpenConsistency extends Open {
   mutate: (path: string, content: Uint8Array) => Promise<void>
+}
+
+export interface OpenOptions {
+  consistency?: ConsistencyPolicy
+}
+
+type MountMap = ConstructorParameters<typeof Workspace>[0]
+
+interface OpenedWorkspaces {
+  ws: ExecWorkspace
+  shadow: () => ExecWorkspace
+  closeAll: () => Promise<void>
+}
+
+/**
+ * The workspace an adapter hands back, plus the shadow factory.
+ *
+ * `build` must return fresh resources on every call: two workspaces sharing
+ * resource instances share their caches, and a consistency scenario mutating
+ * through one would invalidate the other's — which is exactly the thing the
+ * scenario is there to observe.
+ */
+function openWorkspaces(build: () => MountMap, options?: OpenOptions): OpenedWorkspaces {
+  const opened: Workspace[] = []
+  const make = (consistency?: ConsistencyPolicy): ExecWorkspace => {
+    const ws = new Workspace(build(), {
+      mode: MountMode.WRITE,
+      ...(consistency !== undefined ? { consistency } : {}),
+    })
+    opened.push(ws)
+    return ws as unknown as ExecWorkspace
+  }
+  return {
+    ws: make(options?.consistency),
+    shadow: () => make(),
+    closeAll: async (): Promise<void> => {
+      for (const ws of opened) await ws.close()
+    },
+  }
 }
 
 const REDIS_URL = process.env.REDIS_URL ?? 'redis://localhost:6379/0'
@@ -201,22 +245,25 @@ async function openOpfs(target: Target): Promise<Open> {
   return { ws: ws as unknown as ExecWorkspace, cleanup }
 }
 
-async function openGridfs(target: Target): Promise<Open> {
+async function openGridfs(target: Target, options?: OpenOptions): Promise<Open> {
   const id = runId()
   const uri = MONGODB_URI
   const database = `mirage_integ_${id}`
-  const mounts: Record<string, GridFSResource> = {}
-  for (const m of target.mounts) {
-    mounts[m.path] = new GridFSResource({
-      uri,
-      database,
-      bucket: String(m.bucket),
-      keyPrefix: m.prefix,
-    })
+  const build = (): MountMap => {
+    const mounts: Record<string, GridFSResource> = {}
+    for (const m of target.mounts) {
+      mounts[m.path] = new GridFSResource({
+        uri,
+        database,
+        bucket: String(m.bucket),
+        keyPrefix: m.prefix,
+      })
+    }
+    return mounts
   }
-  const ws = new Workspace(mounts, { mode: MountMode.WRITE })
+  const opened = openWorkspaces(build, options)
   const cleanup = async (): Promise<void> => {
-    await ws.close()
+    await opened.closeAll()
     const { MongoClient } = await import('mongodb')
     const client = new MongoClient(uri)
     try {
@@ -225,7 +272,7 @@ async function openGridfs(target: Target): Promise<Open> {
       await client.close()
     }
   }
-  return { ws: ws as unknown as ExecWorkspace, cleanup }
+  return { ws: opened.ws, shadow: opened.shadow, cleanup }
 }
 
 async function openDatabricksVolume(target: Target): Promise<Open> {
@@ -289,7 +336,7 @@ function objectStorageResource(name: string, bucket: string, keyPrefix: string |
   throw new Error(`unknown object storage resource: ${name}`)
 }
 
-async function openS3(target: Target): Promise<Open> {
+async function openS3(target: Target, options?: OpenOptions): Promise<Open> {
   if (!S3_ENDPOINT) throw new Error('s3 target requires S3_ENDPOINT')
   const id = runId()
   const client = new S3Client({
@@ -307,14 +354,20 @@ async function openS3(target: Target): Promise<Open> {
     }
     return name
   }
-  const mounts: Record<string, S3Resource> = {}
-  for (const m of target.mounts) {
-    const bucket = await bucketFor(m)
-    mounts[m.path] = objectStorageResource(m.resource, bucket, m.prefix)
+  // Bucket names resolve once (creating them on the way); building the mounts
+  // is then pure, so a shadow workspace can be built over the same buckets.
+  const resolved: [string, Mount][] = []
+  for (const m of target.mounts) resolved.push([await bucketFor(m), m])
+  const build = (): MountMap => {
+    const mounts: Record<string, S3Resource> = {}
+    for (const [bucket, m] of resolved) {
+      mounts[m.path] = objectStorageResource(m.resource, bucket, m.prefix)
+    }
+    return mounts
   }
-  const ws = new Workspace(mounts, { mode: MountMode.WRITE })
+  const opened = openWorkspaces(build, options)
   const cleanup = async (): Promise<void> => {
-    await ws.close()
+    await opened.closeAll()
     for (const bucket of buckets) {
       let token: string | undefined
       do {
@@ -330,7 +383,7 @@ async function openS3(target: Target): Promise<Open> {
     }
     client.destroy()
   }
-  return { ws: ws as unknown as ExecWorkspace, cleanup }
+  return { ws: opened.ws, shadow: opened.shadow, cleanup }
 }
 
 function nextcloudMountUrl(root: string | undefined): string {
@@ -447,23 +500,26 @@ async function openEmail(target: Target): Promise<Open> {
   return { ws: ws as unknown as ExecWorkspace, cleanup: () => ws.close() }
 }
 
-async function openHf(target: Target): Promise<Open> {
+async function openHf(target: Target, options?: OpenOptions): Promise<Open> {
   const endpoint = process.env.HF_ENDPOINT
   if (!endpoint) throw new Error('hf target requires HF_ENDPOINT')
   const id = runId()
-  const mounts: Record<string, HfBucketsResource> = {}
-  for (const m of target.mounts) {
-    // Buckets auto-create on first touch in the fake hub, so a per-run
-    // bucket name is enough isolation.
-    mounts[m.path] = new HfBucketsResource({
-      bucket: `integ/${id}-${String(m.bucket)}`,
-      token: 'integ-token',
-      endpoint,
-      keyPrefix: m.prefix,
-    })
+  const build = (): MountMap => {
+    const mounts: Record<string, HfBucketsResource> = {}
+    for (const m of target.mounts) {
+      // Buckets auto-create on first touch in the fake hub, so a per-run
+      // bucket name is enough isolation.
+      mounts[m.path] = new HfBucketsResource({
+        bucket: `integ/${id}-${String(m.bucket)}`,
+        token: 'integ-token',
+        endpoint,
+        keyPrefix: m.prefix,
+      })
+    }
+    return mounts
   }
-  const ws = new Workspace(mounts, { mode: MountMode.WRITE })
-  return { ws: ws as unknown as ExecWorkspace, cleanup: () => ws.close() }
+  const opened = openWorkspaces(build, options)
+  return { ws: opened.ws, shadow: opened.shadow, cleanup: opened.closeAll }
 }
 
 const BOX_AUTH = { Authorization: 'Bearer integ-box-token' }
@@ -566,124 +622,87 @@ async function openBox(target: Target): Promise<Open> {
   return { ws: ws as unknown as ExecWorkspace, cleanup: () => ws.close() }
 }
 
-async function openDropbox(target: Target): Promise<Open> {
+async function openDropbox(target: Target, options?: OpenOptions): Promise<Open> {
   // Mounts sharing a `bucket` share one fake account (the -root target
   // mounts three rootPath subfolders of a single account, mirroring
   // s3-prefix's shared bucket); distinct buckets get isolated accounts.
   const accounts = new Map<string, FakeDropbox>()
-  const mounts: Record<string, DropboxResource> = {}
   for (const m of target.mounts) {
     const account = String(m.bucket ?? m.path)
-    let fake = accounts.get(account)
-    if (fake === undefined) {
-      fake = await startFakeDropbox()
-      accounts.set(account, fake)
-    }
-    mounts[m.path] = new DropboxResource({
-      clientId: 'integ-client',
-      clientSecret: 'integ-secret',
-      refreshToken: 'integ-refresh',
-      // The fake supports full-text search_v2, so exercise grep/rg
-      // narrowing in the battery.
-      contentSearch: true,
-      endpoint: fake.endpoint,
-      ...(m.root !== undefined ? { rootPath: m.root } : {}),
-    })
+    if (!accounts.has(account)) accounts.set(account, await startFakeDropbox())
   }
-  const ws = new Workspace(mounts, { mode: MountMode.WRITE })
+  const build = (): MountMap => {
+    const mounts: Record<string, DropboxResource> = {}
+    for (const m of target.mounts) {
+      const fake = accounts.get(String(m.bucket ?? m.path))
+      if (fake === undefined) throw new Error(`dropbox account missing for ${m.path}`)
+      mounts[m.path] = new DropboxResource({
+        clientId: 'integ-client',
+        clientSecret: 'integ-secret',
+        refreshToken: 'integ-refresh',
+        // The fake supports full-text search_v2, so exercise grep/rg
+        // narrowing in the battery.
+        contentSearch: true,
+        endpoint: fake.endpoint,
+        ...(m.root !== undefined ? { rootPath: m.root } : {}),
+      })
+    }
+    return mounts
+  }
+  const opened = openWorkspaces(build, options)
   const cleanup = async (): Promise<void> => {
-    await ws.close()
+    await opened.closeAll()
     for (const fake of accounts.values()) fake.close()
   }
-  return { ws: ws as unknown as ExecWorkspace, cleanup }
+  return { ws: opened.ws, shadow: opened.shadow, cleanup }
 }
 
-async function openOneDrive(target: Target): Promise<Open> {
+async function openOneDrive(target: Target, options?: OpenOptions): Promise<Open> {
   const server = await startPythonServer('onedrive_server.py', {
     MIRAGE_GRAPH_DRIVES: 'data,xm2,res,shared',
   })
-  const mounts: Record<string, OneDriveResource> = {}
-  for (const mount of target.mounts) {
-    mounts[mount.path] = new OneDriveResource({
-      accessToken: 'integ-token',
-      graphBaseUrl: server.endpoint,
-      ...(mount.prefix !== undefined ? { keyPrefix: mount.prefix } : {}),
-    })
-  }
-  const ws = new Workspace(mounts, { mode: MountMode.WRITE })
-  const cleanup = async (): Promise<void> => {
-    await ws.close()
-    await server.close()
-  }
-  return { ws: ws as unknown as ExecWorkspace, cleanup }
-}
-
-async function openSharePoint(target: Target): Promise<Open> {
-  const server = await startPythonServer('onedrive_server.py', {
-    MIRAGE_GRAPH_DRIVES: 'data,xm2,res,shared',
-  })
-  const mounts: Record<string, SharePointResource> = {}
-  for (const mount of target.mounts) {
-    mounts[mount.path] = new SharePointResource({
-      accessToken: 'integ-token',
-      graphBaseUrl: server.endpoint,
-      site: 'Main',
-      drive: mount.drive,
-      ...(mount.prefix !== undefined ? { keyPrefix: mount.prefix } : {}),
-    })
-  }
-  const ws = new Workspace(mounts, { mode: MountMode.WRITE })
-  const cleanup = async (): Promise<void> => {
-    await ws.close()
-    await server.close()
-  }
-  return { ws: ws as unknown as ExecWorkspace, cleanup }
-}
-
-async function openGraphConsistency(
-  target: Target,
-  consistency: ConsistencyPolicy,
-): Promise<OpenConsistency> {
-  const server = await startPythonServer('onedrive_server.py', {
-    MIRAGE_GRAPH_DRIVES: 'data,xm2,res,shared',
-  })
-  const readMounts: Record<string, OneDriveResource | SharePointResource> = {}
-  const shadowMounts: Record<string, OneDriveResource | SharePointResource> = {}
-  for (const mount of target.mounts) {
-    if (mount.resource === 'onedrive') {
-      const config = {
+  const build = (): MountMap => {
+    const mounts: Record<string, OneDriveResource> = {}
+    for (const mount of target.mounts) {
+      mounts[mount.path] = new OneDriveResource({
         accessToken: 'integ-token',
         graphBaseUrl: server.endpoint,
         ...(mount.prefix !== undefined ? { keyPrefix: mount.prefix } : {}),
-      }
-      readMounts[mount.path] = new OneDriveResource(config)
-      shadowMounts[mount.path] = new OneDriveResource(config)
-    } else {
-      const config = {
+      })
+    }
+    return mounts
+  }
+  const opened = openWorkspaces(build, options)
+  const cleanup = async (): Promise<void> => {
+    await opened.closeAll()
+    await server.close()
+  }
+  return { ws: opened.ws, shadow: opened.shadow, cleanup }
+}
+
+async function openSharePoint(target: Target, options?: OpenOptions): Promise<Open> {
+  const server = await startPythonServer('onedrive_server.py', {
+    MIRAGE_GRAPH_DRIVES: 'data,xm2,res,shared',
+  })
+  const build = (): MountMap => {
+    const mounts: Record<string, SharePointResource> = {}
+    for (const mount of target.mounts) {
+      mounts[mount.path] = new SharePointResource({
         accessToken: 'integ-token',
         graphBaseUrl: server.endpoint,
         site: 'Main',
         drive: mount.drive,
         ...(mount.prefix !== undefined ? { keyPrefix: mount.prefix } : {}),
-      }
-      readMounts[mount.path] = new SharePointResource(config)
-      shadowMounts[mount.path] = new SharePointResource(config)
+      })
     }
+    return mounts
   }
-  const ws = new Workspace(readMounts, { mode: MountMode.WRITE, consistency })
-  const shadow = new Workspace(shadowMounts, { mode: MountMode.WRITE })
-  const mutate = async (path: string, content: Uint8Array): Promise<void> => {
-    const result = await shadow.execute(`tee ${path} > /dev/null`, { stdin: content })
-    if (result.exitCode !== 0) {
-      throw new Error(new TextDecoder().decode(result.stderr))
-    }
-  }
+  const opened = openWorkspaces(build, options)
   const cleanup = async (): Promise<void> => {
-    await ws.close()
-    await shadow.close()
+    await opened.closeAll()
     await server.close()
   }
-  return { ws: ws as unknown as ExecWorkspace, mutate, cleanup }
+  return { ws: opened.ws, shadow: opened.shadow, cleanup }
 }
 
 async function openNotion(target: Target): Promise<Open> {
@@ -1008,7 +1027,7 @@ async function adminExec(ws: Workspace, command: string): Promise<void> {
   }
 }
 
-async function openSsh(target: Target): Promise<Open> {
+async function openSsh(target: Target, options?: OpenOptions): Promise<Open> {
   const host = process.env.SSH_HOST
   if (!host) throw new Error('ssh target requires SSH_HOST')
   const port = Number(process.env.SSH_PORT ?? '22')
@@ -1031,22 +1050,25 @@ async function openSsh(target: Target): Promise<Open> {
       })
     })
   }
-  const mounts: Record<string, SSHResource> = {}
-  for (const m of target.mounts) {
-    mounts[m.path] = new SSHResource({
-      host,
-      port,
-      username: 'integ',
-      root: `/${base}/${String(m.root)}`,
-    })
+  const build = (): MountMap => {
+    const mounts: Record<string, SSHResource> = {}
+    for (const m of target.mounts) {
+      mounts[m.path] = new SSHResource({
+        host,
+        port,
+        username: 'integ',
+        root: `/${base}/${String(m.root)}`,
+      })
+    }
+    return mounts
   }
-  const ws = new Workspace(mounts, { mode: MountMode.WRITE })
+  const opened = openWorkspaces(build, options)
   const cleanup = async (): Promise<void> => {
-    await ws.close()
+    await opened.closeAll()
     await adminExec(admin, `rm -rf /admin/${base}`)
     await admin.close()
   }
-  return { ws: ws as unknown as ExecWorkspace, cleanup }
+  return { ws: opened.ws, shadow: opened.shadow, cleanup }
 }
 
 const GDRIVE_FOLDER_MIME = 'application/vnd.google-apps.folder'
@@ -1638,7 +1660,10 @@ async function openArgError(target: Target): Promise<Open> {
   return { ws: ws as unknown as ExecWorkspace, cleanup: () => ws.close() }
 }
 
-export const ADAPTERS: Record<string, (target: Target) => Promise<Open>> = {
+export const ADAPTERS: Record<
+  string,
+  (target: Target, options?: OpenOptions) => Promise<Open>
+> = {
   ram: openRam,
   disk: openDisk,
   redis: openRedis,
@@ -1680,10 +1705,32 @@ export const ADAPTERS: Record<string, (target: Target) => Promise<Open>> = {
   http_fixture: openHttp,
 }
 
-export const CONSISTENCY_ADAPTERS: Record<
-  string,
-  (target: Target, consistency: ConsistencyPolicy) => Promise<OpenConsistency>
-> = {
-  onedrive: openGraphConsistency,
-  sharepoint: openGraphConsistency,
+/**
+ * Open a target for a consistency scenario: a workspace under the requested
+ * policy plus a shadow workspace the scenario mutates through, out of band
+ * from the first one's caches.
+ *
+ * Returns null when the target's adapter cannot build its mounts twice, which
+ * the runner reports as a skip -- a scenario that quietly never ran is worse
+ * than one that says it did not.
+ */
+export async function openConsistency(
+  target: Target,
+  consistency: ConsistencyPolicy,
+): Promise<OpenConsistency | null> {
+  const adapter = ADAPTERS[target.mounts[0].resource]
+  if (adapter === undefined) return null
+  const opened = await adapter(target, { consistency })
+  if (opened.shadow === undefined) {
+    await opened.cleanup()
+    return null
+  }
+  const shadow = opened.shadow()
+  const mutate = async (path: string, content: Uint8Array): Promise<void> => {
+    const result = await shadow.execute(`tee ${path} > /dev/null`, { stdin: content })
+    if (result.exitCode !== 0) {
+      throw new Error(new TextDecoder().decode(result.stderr))
+    }
+  }
+  return { ws: opened.ws, mutate, cleanup: opened.cleanup }
 }

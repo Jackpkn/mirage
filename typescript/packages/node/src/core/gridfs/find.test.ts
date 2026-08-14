@@ -12,8 +12,21 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { describe, expect, it } from 'vitest'
-import { buildQuery, globRegex } from './find.ts'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import type * as ClientModule from './_client.ts'
+
+vi.mock('./_client.ts', async () => {
+  const actual = await vi.importActual<typeof ClientModule>('./_client.ts')
+  return { ...actual, iterLatest: vi.fn() }
+})
+
+import type { FindOptions } from '@struktoai/mirage-core'
+import { PathSpec } from '@struktoai/mirage-core'
+import { GridFSAccessor } from '../../accessor/gridfs.ts'
+import type { GridFSConfig } from '../../resource/gridfs/config.ts'
+import type { GridFSFileDoc } from './_client.ts'
+import * as clientMod from './_client.ts'
+import { buildQuery, find, globRegex } from './find.ts'
 
 function matches(cond: Record<string, unknown>, value: string): boolean {
   const regex = cond as { $regex: string; $options?: string }
@@ -92,5 +105,87 @@ describe('buildQuery', () => {
     expect(buildQuery('data/', { name: '[ab].csv' }, true)).toEqual({
       filename: { $regex: '^data/' },
     })
+  })
+})
+
+async function* docsGen(docs: GridFSFileDoc[]) {
+  for (const doc of docs) {
+    yield await Promise.resolve(doc)
+  }
+}
+
+function runFind(
+  docs: [string, number][],
+  options: FindOptions = {},
+): { out: Promise<string[]>; queries: Record<string, unknown>[] } {
+  const queries: Record<string, unknown>[] = []
+  vi.mocked(clientMod.iterLatest).mockImplementation((_accessor, query) => {
+    queries.push(query)
+    return docsGen(docs.map(([filename, length]) => ({ filename, length }) as GridFSFileDoc))
+  })
+  const accessor = new GridFSAccessor({
+    uri: 'mongodb://localhost:27017',
+    database: 'db',
+  } as GridFSConfig)
+  const spec = new PathSpec({
+    resourcePath: 'data',
+    virtual: '/mnt/data',
+    directory: '/mnt/',
+  })
+  return { out: find(accessor, spec, options), queries }
+}
+
+describe('gridfs core find', () => {
+  beforeEach(() => {
+    vi.mocked(clientMod.iterLatest).mockReset()
+  })
+
+  it('synthesizes implicit dirs without narrowing the query', async () => {
+    const { out, queries } = runFind([['data/a/b.txt', 3]], { type: 'd' })
+    await expect(out).resolves.toEqual(['/data', '/data/a'])
+    expect(queries).toEqual([{ filename: { $regex: '^data/' } }])
+  })
+
+  it('-name without -type f scans the prefix only', async () => {
+    const { out, queries } = runFind([['data/logs/x.txt', 1]], { name: 'logs' })
+    await expect(out).resolves.toEqual(['/data/logs'])
+    expect(queries).toEqual([{ filename: { $regex: '^data/' } }])
+  })
+
+  it('-type f keeps the pushdown', async () => {
+    const { out, queries } = runFind([['data/a/b.txt', 3]], { type: 'f', name: '*.txt' })
+    await expect(out).resolves.toEqual(['/data/a/b.txt'])
+    expect(queries[0]).toHaveProperty('$and')
+  })
+
+  it('unordered marker and file emit no duplicates', async () => {
+    const { out } = runFind(
+      [
+        ['data/a/x.txt', 1],
+        ['data/a/', 0],
+      ],
+      { type: 'd' },
+    )
+    await expect(out).resolves.toEqual(['/data', '/data/a'])
+  })
+
+  it('emits a file shadowed by an implicit dir once', async () => {
+    const docs: [string, number][] = [
+      ['data/a', 1],
+      ['data/a/b.txt', 2],
+    ]
+    await expect(runFind(docs).out).resolves.toEqual(['/data', '/data/a', '/data/a/b.txt'])
+    await expect(runFind(docs, { type: 'd' }).out).resolves.toEqual(['/data', '/data/a'])
+    await expect(runFind(docs, { type: 'f' }).out).resolves.toEqual(['/data/a', '/data/a/b.txt'])
+  })
+
+  it('-empty matches a marker-only start dir', async () => {
+    const { out } = runFind([['data/', 0]], { empty: true })
+    await expect(out).resolves.toEqual(['/data'])
+  })
+
+  it('-empty rejects a populated start dir', async () => {
+    const { out } = runFind([['data/x.txt', 3]], { empty: true })
+    await expect(out).resolves.toEqual([])
   })
 })

@@ -213,6 +213,78 @@
         "not",
         "name"
       ]
+    },
+    {
+      "id": "find_bang_name_keeps_glob_literals",
+      "seq": 962200,
+      "targets": [
+        "box",
+        "disk",
+        "dropbox",
+        "dropbox-root",
+        "gdrive",
+        "gdrive-folder",
+        "gridfs",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "nextcloud",
+        "onedrive",
+        "opfs",
+        "ram",
+        "redis",
+        "s3",
+        "s3-prefix",
+        "sharepoint",
+        "ssh"
+      ],
+      "command": "mkdir -p /data2/bangglob && printf 'a\\n' > /data2/bangglob/a_b.txt && printf 'b\\n' > /data2/bangglob/axb.txt && find /data2/bangglob ! -name \"*_b.txt\"",
+      "expect": {
+        "exit": 0,
+        "stdout": "/data2/bangglob\n/data2/bangglob/axb.txt\n",
+        "stderr": ""
+      },
+      "flags": [
+        "not",
+        "name"
+      ],
+      "note": "An underscore is literal in a glob and a single-character wildcard in SQL LIKE, so a backend that pushes -name down as LIKE matches a superset. Positive matching survives that (the client-side filter narrows it again), but a negation cannot: NOT(superset) withholds rows the client can never add back, so axb.txt has to stay."
+    },
+    {
+      "id": "find_bang_exact_name_is_case_sensitive",
+      "seq": 962201,
+      "targets": [
+        "box",
+        "disk",
+        "dropbox",
+        "dropbox-root",
+        "gdrive",
+        "gdrive-folder",
+        "gridfs",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "nextcloud",
+        "onedrive",
+        "opfs",
+        "ram",
+        "redis",
+        "s3",
+        "s3-prefix",
+        "sharepoint",
+        "ssh"
+      ],
+      "command": "mkdir -p /data2/bangexact && printf 'a\\n' > /data2/bangexact/alpha.txt && find /data2/bangexact ! -name \"ALPHA.TXT\"",
+      "expect": {
+        "exit": 0,
+        "stdout": "/data2/bangexact\n/data2/bangexact/alpha.txt\n",
+        "stderr": ""
+      },
+      "flags": [
+        "not",
+        "name"
+      ],
+      "note": "Same rule for the wildcard-free spelling, which backends compile to an equality comparison rather than a LIKE."
     }
   ]
 }

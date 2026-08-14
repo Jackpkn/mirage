@@ -71,9 +71,13 @@ export function globToLike(pattern: string): string {
   return translated
 }
 
-function nameCondition(node: Extract<PredNode, { op: 'name' }>): string {
+function nameOperation(node: Extract<PredNode, { op: 'name' }>): ComparisonOperator {
   const wildcard = node.pattern.includes('*') || node.pattern.includes('?')
-  const operation = wildcard || node.icase ? Comparison.LIKE : Comparison.EQUAL
+  return wildcard || node.icase ? Comparison.LIKE : Comparison.EQUAL
+}
+
+function nameCondition(node: Extract<PredNode, { op: 'name' }>): string {
+  const operation = nameOperation(node)
   const value = operation === Comparison.LIKE ? globToLike(node.pattern) : node.pattern
   return comparison(operation, DISPLAY_NAME, value)
 }
@@ -82,8 +86,21 @@ function compilePredicate(node: PredNode): CompiledPredicate | null {
   switch (node.op) {
     case 'true':
       return { condition: null, negatable: false }
-    case 'name':
-      return node.pattern.includes('[') ? null : { condition: nameCondition(node), negatable: true }
+    case 'name': {
+      // A class has no LIKE spelling, and a backslash escapes the next
+      // character out of the glob (`-name 'a\b'` matches `ab`), so the literal
+      // the server would compare is not the name being matched.
+      if (node.pattern.includes('[') || node.pattern.includes('\\')) return null
+      // LIKE is a deliberate superset (case-insensitive, and a literal `%`/`_`
+      // in the pattern stays a wildcard) that the client-side keep()
+      // re-filters. Negation has nothing to re-filter with: NOT(superset)
+      // withholds rows the true predicate keeps and no client pass can add
+      // them back, so only the exact comparison is safe to negate.
+      return {
+        condition: nameCondition(node),
+        negatable: nameOperation(node) === Comparison.EQUAL,
+      }
+    }
     case 'type':
       if (node.kind === 'd') return { condition: isCollection(), negatable: true }
       if (node.kind === 'f') return { condition: negate(isCollection()), negatable: false }

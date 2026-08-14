@@ -15,6 +15,7 @@
 import { NOOPAccessor } from '../../accessor/base.ts'
 import { applyIo } from '../../cache/file/io.ts'
 import type { FileCache } from '../../cache/file/mixin.ts'
+import { CacheManager } from '../../cache/manager.ts'
 import { applyOpLimit, runWithTimeout } from '../../commands/builtin/utils/limit.ts'
 import { getExtension } from '../../commands/resolve.ts'
 import { IOResult, type OpReport } from '../../io/types.ts'
@@ -534,6 +535,10 @@ export class Dispatcher {
       const parent = slash <= 0 ? '/' : path.slice(0, slash)
       await idx.invalidateDir(parent)
       await idx.invalidateDir(parent + '/')
+      const manager =
+        mount.cacheManager ??
+        new CacheManager(this.cache, idx, mount.prefix, cachesReads(mount.resource))
+      await manager.invalidateAncestors(path)
     }
   }
 

@@ -12,7 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { invalidateAfterWrite } from '../../cache/context.ts'
+import { invalidateAfterWrite, invalidateAncestors } from '../../cache/context.ts'
 import { ResourceName, type PathSpec } from '../../types.ts'
 import type { S3Accessor } from '../../accessor/s3.ts'
 import { record } from '../../observe/context.ts'
@@ -33,4 +33,7 @@ export async function write(accessor: S3Accessor, path: PathSpec, data: Uint8Arr
   })
   record('write', path.virtual, ResourceName.S3, data.byteLength, start)
   await invalidateAfterWrite(path)
+  // A put materializes every missing level of the key at once, so the
+  // listings above the immediate parent gained entries too.
+  await invalidateAncestors(path)
 }

@@ -206,3 +206,42 @@ def test_drop_prefix_reaches_every_key_on_a_root_mount():
     assert prefix == ""
     assert a is False
     assert b is False
+
+
+async def _ancestors_case() -> tuple[bool, bool, bool]:
+    cache, index = _stores()
+    for directory in ("/data", "/data/a", "/data/a/b"):
+        await index.set_dir(directory, [])
+    manager = CacheManager(cache, index, "/data/", True)
+    await manager.invalidate_ancestors(PathSpec.from_str_path("/a/b/c.txt"))
+    return (
+        (await index.list_dir("/data")).entries is not None,
+        (await index.list_dir("/data/a")).entries is not None,
+        (await index.list_dir("/data/a/b")).entries is not None,
+    )
+
+
+def test_invalidate_ancestors_walks_up_to_the_mount_root():
+    """One put materializes every missing level of the key, so every
+    listing above the written file gained an entry."""
+    root, a, ab = _run(_ancestors_case())
+    assert root is False
+    assert a is False
+    # The immediate parent is invalidate_after_write's job, not this one.
+    assert ab is True
+
+
+async def _ancestors_root_mount_case() -> tuple[bool, bool]:
+    cache, index = _stores()
+    for directory in ("/", "/a"):
+        await index.set_dir(directory, [])
+    manager = CacheManager(cache, index, "/", True)
+    await manager.invalidate_ancestors(PathSpec.from_str_path("/a/b/c.txt"))
+    return ((await index.list_dir("/")).entries
+            is not None, (await index.list_dir("/a")).entries is not None)
+
+
+def test_invalidate_ancestors_reaches_the_root_listing():
+    root, a = _run(_ancestors_root_mount_case())
+    assert root is False
+    assert a is False

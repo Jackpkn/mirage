@@ -14,7 +14,7 @@
 
 import { writeFileSync } from 'node:fs'
 import { ConsistencyPolicy } from '@struktoai/mirage-node'
-import { ADAPTERS, CONSISTENCY_ADAPTERS } from './adapters.ts'
+import { ADAPTERS, openConsistency } from './adapters.ts'
 import type { Case, Target } from './harness.ts'
 import {
   Report,
@@ -141,15 +141,21 @@ async function runTarget(
   } finally {
     await cleanup()
   }
-  const consistencyAdapter = CONSISTENCY_ADAPTERS[target.mounts[0].resource]
-  if (consistencyAdapter === undefined) return
-  for (const c of cases) {
-    if (!c.targets.includes(target.id) || c.consistency === undefined || c.scenario === undefined) {
-      continue
-    }
+  const scenarios = cases.filter(
+    (c) => c.targets.includes(target.id) && c.consistency !== undefined && c.scenario !== undefined,
+  )
+  for (const c of scenarios) {
     const policy =
       c.consistency === 'always' ? ConsistencyPolicy.ALWAYS : ConsistencyPolicy.LAZY
-    const opened = await consistencyAdapter(target, policy)
+    const opened = await openConsistency(target, policy)
+    if (opened === null) {
+      // Loud on purpose: an adapter that cannot build a shadow workspace used
+      // to drop every scenario case for its target without a word.
+      process.stderr.write(
+        `skip [${target.id}] ${c.id}: ${target.mounts[0].resource} adapter has no shadow workspace\n`,
+      )
+      continue
+    }
     try {
       // Same rule as the ordinary path: a target's declared environment reaches
       // every workspace a case can run against, or a consistency scenario would

@@ -15,7 +15,7 @@
 import time
 
 from mirage.accessor.s3 import S3Accessor
-from mirage.cache.context import invalidate_after_write
+from mirage.cache.context import invalidate_after_write, invalidate_ancestors
 from mirage.core.s3._client import _client_kwargs, _key, async_session
 from mirage.observe.context import record
 from mirage.types import PathSpec
@@ -32,3 +32,6 @@ async def write_bytes(accessor: S3Accessor, path_spec: PathSpec,
         await client.put_object(Bucket=config.bucket, Key=key, Body=data)
     record("write", path, "s3", len(data), start_ms)
     await invalidate_after_write(path_spec)
+    # A put materializes every missing level of the key at once, so the
+    # listings above the immediate parent gained entries too.
+    await invalidate_ancestors(path_spec)

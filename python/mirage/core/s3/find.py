@@ -64,7 +64,11 @@ async def find(
     path = path_spec.mount_path
     config = accessor.config
     pfx = _prefix(path, config)
+    stripped = path.strip("/")
+    base = "/" + stripped if stripped else "/"
+    base_depth = 0 if base == "/" else base.count("/")
     results: list[str] = []
+    seen_dirs: set[str] = set()
     tree = tree if tree is not None else build_tree(name=name,
                                                     iname=iname,
                                                     path_pattern=path_pattern,
@@ -86,43 +90,59 @@ async def find(
                 saw_descendant = True
                 is_dir = key.endswith("/")
                 norm_key = key[:-1] if is_dir else key
-                relative = norm_key[len(pfx):]
-                depth = relative.count("/") + 1
-                if maxdepth is not None and depth > maxdepth:
-                    continue
-                entry_name = norm_key.rsplit("/", 1)[-1]
                 full_path = "/" + _strip_prefix(norm_key, config)
                 size = obj.get("Size", 0)
-                is_empty = (None if not empty else
-                            (size == 0 if not is_dir else False))
-                entry = FindEntry(key=full_path,
-                                  name=entry_name,
-                                  kind="d" if is_dir else "f",
-                                  depth=depth,
-                                  is_empty=is_empty)
-                if not keep(entry, tree, mindepth):
-                    continue
-                if min_size is not None or max_size is not None:
-                    # Directories count as size 0 for -size (deliberate GNU
-                    # divergence).
-                    effective = 0 if is_dir else size
-                    if min_size is not None and effective < min_size:
+                if is_dir:
+                    if full_path in seen_dirs:
                         continue
-                    if max_size is not None and effective > max_size:
+                    seen_dirs.add(full_path)
+                entries: list[tuple[str, str]] = [(full_path,
+                                                   "d" if is_dir else "f")]
+                # Implicit directories exist only as key prefixes; synthesize
+                # the parent chain so find agrees with readdir on
+                # externally-populated buckets.
+                parent = full_path.rsplit("/", 1)[0] or "/"
+                while parent != base and parent != "/":
+                    if parent not in seen_dirs:
+                        seen_dirs.add(parent)
+                        entries.append((parent, "d"))
+                    parent = parent.rsplit("/", 1)[0] or "/"
+                for ep, kind in entries:
+                    entry_name = ep.rsplit("/", 1)[-1]
+                    depth = ep.count("/") - base_depth
+                    if maxdepth is not None and depth > maxdepth:
                         continue
-                results.append(full_path)
-    stripped = path.strip("/")
+                    is_empty = (None if not empty else
+                                (size == 0 if kind == "f" else False))
+                    entry = FindEntry(key=ep,
+                                      name=entry_name,
+                                      kind=kind,
+                                      depth=depth,
+                                      is_empty=is_empty)
+                    if not keep(entry, tree, mindepth):
+                        continue
+                    if min_size is not None or max_size is not None:
+                        # Directories count as size 0 for -size (deliberate
+                        # GNU divergence).
+                        effective = 0 if kind == "d" else size
+                        if min_size is not None and effective < min_size:
+                            continue
+                        if max_size is not None and effective > max_size:
+                            continue
+                    results.append(ep)
     if saw_descendant or dir_marker_seen:
-        root_key = "/" + stripped if stripped else "/"
         emit_start_path(results,
-                        root_key,
+                        base,
                         start_name,
                         kind="d",
-                        is_empty=False if empty else None,
+                        is_empty=(not saw_descendant) if empty else None,
                         exists=True,
                         tree=tree,
                         maxdepth=maxdepth,
                         mindepth=mindepth,
                         min_size=min_size,
                         max_size=max_size)
-    return sorted(results)
+    # A file key and a synthesized directory can name the same path (`data/a`
+    # alongside `data/a/b.txt`), which these stores allow and a filesystem
+    # does not; find prints such a path once.
+    return sorted(set(results))

@@ -1,0 +1,73 @@
+{
+  "cases": [
+    {
+      "id": "find_implicit_dirs",
+      "seq": 962000,
+      "targets": [
+        "s3",
+        "s3-prefix",
+        "gridfs",
+        "gridfs-prefix"
+      ],
+      "consistency": "always",
+      "scenario": [
+        {
+          "mutate": {
+            "path": "/data/imp/deep/leaf.txt",
+            "content": "x\n"
+          }
+        },
+        {
+          "command": "find /data/imp -type d"
+        },
+        {
+          "command": "find /data/imp"
+        }
+      ],
+      "expect": {
+        "exit": 0,
+        "stdout": "/data/imp\n/data/imp/deep\n/data/imp\n/data/imp/deep\n/data/imp/deep/leaf.txt\n",
+        "stderr": ""
+      },
+      "flags": [
+        "type"
+      ],
+      "note": "Keys written out-of-band carry no directory markers; find must synthesize the implicit parent chain so it agrees with readdir on externally-populated buckets."
+    },
+    {
+      "id": "find_implicit_dir_name",
+      "seq": 962001,
+      "targets": [
+        "s3",
+        "s3-prefix",
+        "gridfs",
+        "gridfs-prefix"
+      ],
+      "consistency": "always",
+      "scenario": [
+        {
+          "mutate": {
+            "path": "/data/imp2/logs/x.txt",
+            "content": "x\n"
+          }
+        },
+        {
+          "command": "find /data/imp2 -name logs"
+        },
+        {
+          "command": "find /data/imp2 -type f -name '*.txt'"
+        }
+      ],
+      "expect": {
+        "exit": 0,
+        "stdout": "/data/imp2/logs\n/data/imp2/logs/x.txt\n",
+        "stderr": ""
+      },
+      "flags": [
+        "name",
+        "type"
+      ],
+      "note": "-name without -type f must match an implicit directory (gridfs may not push the glob server-side then); -type f keeps the pushdown."
+    }
+  ]
+}

@@ -81,6 +81,28 @@ describe('CacheManager', () => {
     expect(await cache.exists('/data/a.txt')).toBe(false)
   })
 
+  it('invalidateAncestors walks up to the mount root', async () => {
+    // One put materializes every missing level of the key, so every listing
+    // above the written file gained an entry.
+    const index = new RAMIndexCacheStore({ ttl: 600 })
+    for (const dir of ['/data', '/data/a', '/data/a/b']) await index.setDir(dir, [])
+    const manager = new CacheManager(null, index, '/data/', true)
+    await manager.invalidateAncestors(PathSpec.fromStrPath('/a/b/c.txt'))
+    expect((await index.listDir('/data')).entries ?? null).toBeNull()
+    expect((await index.listDir('/data/a')).entries ?? null).toBeNull()
+    // The immediate parent is invalidateAfterWrite's job, not this one.
+    expect((await index.listDir('/data/a/b')).entries ?? null).not.toBeNull()
+  })
+
+  it('invalidateAncestors reaches the root listing', async () => {
+    const index = new RAMIndexCacheStore({ ttl: 600 })
+    for (const dir of ['/', '/a']) await index.setDir(dir, [])
+    const manager = new CacheManager(null, index, '/', true)
+    await manager.invalidateAncestors(PathSpec.fromStrPath('/a/b/c.txt'))
+    expect((await index.listDir('/')).entries ?? null).toBeNull()
+    expect((await index.listDir('/a')).entries ?? null).toBeNull()
+  })
+
   it("drops this mount's bodies without touching a neighbour", async () => {
     const [cache, index] = await seeded()
     await cache.set('/other/keep.txt', new TextEncoder().encode('safe'))

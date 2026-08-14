@@ -50,6 +50,24 @@ describe('attrsToFileStat', () => {
     expect(stat.modified).toBeNull()
   })
 
+  it('fingerprints a file by its mtime so ALWAYS can revalidate', () => {
+    const stat = attrsToFileStat('foo.txt', { mode: 0o100644, mtime: 0 })
+    expect(stat.fingerprint).toBe(stat.modified)
+    expect(attrsToFileStat('foo.txt', { mode: 0o100644, mtime: 1 }).fingerprint).not.toBe(
+      stat.fingerprint,
+    )
+  })
+
+  it('fingerprints a directory by its mtime too', () => {
+    const stat = attrsToFileStat('mydir', { mode: 0o040755, mtime: 0 })
+    expect(stat.fingerprint).toBe(stat.modified)
+  })
+
+  it('returns null fingerprint when mtime is omitted', () => {
+    expect(attrsToFileStat('foo.txt', { mode: 0o100644 }).fingerprint).toBeNull()
+    expect(attrsToFileStat('mydir', { mode: 0o040755 }).fingerprint).toBeNull()
+  })
+
   it('carries the name through unchanged', () => {
     const stat = attrsToFileStat('weird-name.parquet', { mode: 0o100644, size: 100 })
     expect(stat.name).toBe('weird-name.parquet')

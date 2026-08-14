@@ -95,6 +95,26 @@ export class CacheManager {
   }
 
   /**
+   * Evict the listing of every directory above `path`'s parent.
+   *
+   * `invalidateAfterWrite` refreshes the immediate parent only. A keyed store
+   * materializes every missing level of a key in a single put, so the listings
+   * further up gained entries too and would keep serving the pre-write view
+   * until the index TTL expires. A backend with real directories cannot gain a
+   * level that way, so there this is a handful of spare evictions.
+   */
+  async invalidateAncestors(path: string | PathSpec): Promise<void> {
+    if (this.index === null) return
+    const virtual = this.virtual(path)
+    let parent = virtual.slice(0, Math.max(virtual.lastIndexOf('/'), 0))
+    while (parent !== '' && parent !== this.prefix) {
+      parent = parent.slice(0, Math.max(parent.lastIndexOf('/'), 0))
+      await this.index.invalidateDir(parent === '' ? '/' : parent)
+      await this.index.invalidateDir(parent + '/')
+    }
+  }
+
+  /**
    * Drop every cached body under this mount, path unspecified.
    *
    * For a mutation that names no path: an account CLI writes to its service by

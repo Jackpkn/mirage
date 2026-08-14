@@ -106,15 +106,23 @@ export async function find(
   const raw = rawPathOf(path)
   const startName = startBasename(path.virtual)
   const pfx = gridfsPrefix(raw, accessor.config)
+  const rootKey = rstripSlash('/' + stripKeyPrefix(pfx, accessor.config)) || '/'
+  const baseDepth = rootKey === '/' ? 0 : (rootKey.match(/\//g) ?? []).length
   const results: string[] = []
+  const seenDirs = new Set<string>()
   const seen = { descendant: false, marker: false }
   const empty = options.empty === true
+  // Narrowing beyond the prefix is only sound when directories cannot
+  // appear in the output (-type f): implicit directories are synthesized
+  // client-side from file paths, so any server-side file exclusion would
+  // also drop the evidence for a matching parent directory.
   const pushdown =
     options.tree === undefined &&
     options.nameExclude === undefined &&
     options.orNames === undefined &&
     options.pathPattern === undefined &&
-    !empty
+    !empty &&
+    options.type === 'f'
   const tree =
     options.tree ??
     buildTree({
@@ -135,33 +143,43 @@ export async function find(
       continue
     }
     seen.descendant = true
-    const relative = key.slice(pfx.length)
-    const depth = (relative.match(/\//g) ?? []).length + 1
-    if (options.maxDepth !== null && options.maxDepth !== undefined && depth > options.maxDepth) {
-      continue
-    }
     const isDir = key.endsWith('/')
-    const normKey = isDir ? key.slice(0, -1) : key
-    const entryName = normKey.split('/').pop() ?? ''
     const fullPath = rstripSlash('/' + stripKeyPrefix(key, accessor.config)) || '/'
     const size = doc.length
-    const isEmpty = !empty ? null : isDir ? false : size === 0
-    if (
-      !keep(
-        { key: fullPath, name: entryName, kind: isDir ? 'd' : 'f', depth, isEmpty },
-        tree,
-        options.minDepth,
-      )
-    ) {
-      continue
+    if (isDir) {
+      if (seenDirs.has(fullPath)) continue
+      seenDirs.add(fullPath)
     }
-    if (options.minSize != null || options.maxSize != null) {
-      // Directories count as size 0 for -size (deliberate GNU divergence).
-      const effective = isDir ? 0 : size
-      if (options.minSize != null && effective < options.minSize) continue
-      if (options.maxSize != null && effective > options.maxSize) continue
+    const entries: [string, 'f' | 'd'][] = [[fullPath, isDir ? 'd' : 'f']]
+    // Implicit directories exist only as filename prefixes; synthesize the
+    // parent chain so find agrees with readdir on externally-populated
+    // buckets.
+    let parent = fullPath.slice(0, fullPath.lastIndexOf('/')) || '/'
+    while (parent !== rootKey && parent !== '/') {
+      if (!seenDirs.has(parent)) {
+        seenDirs.add(parent)
+        entries.push([parent, 'd'])
+      }
+      parent = parent.slice(0, parent.lastIndexOf('/')) || '/'
     }
-    results.push(fullPath)
+    for (const [ep, kind] of entries) {
+      const entryName = ep.split('/').pop() ?? ''
+      const depth = (ep.match(/\//g) ?? []).length - baseDepth
+      if (options.maxDepth !== null && options.maxDepth !== undefined && depth > options.maxDepth) {
+        continue
+      }
+      const isEmpty = !empty ? null : kind === 'd' ? false : size === 0
+      if (!keep({ key: ep, name: entryName, kind, depth, isEmpty }, tree, options.minDepth)) {
+        continue
+      }
+      if (options.minSize != null || options.maxSize != null) {
+        // Directories count as size 0 for -size (deliberate GNU divergence).
+        const effective = kind === 'd' ? 0 : size
+        if (options.minSize != null && effective < options.minSize) continue
+        if (options.maxSize != null && effective > options.maxSize) continue
+      }
+      results.push(ep)
+    }
   }
   if (narrowed && !seen.descendant && !seen.marker) {
     // The narrowed query may have excluded every doc under a prefix that
@@ -173,11 +191,10 @@ export async function find(
     )
     seen.descendant = probe !== null
   }
-  const rootKey = rstripSlash('/' + stripKeyPrefix(pfx, accessor.config)) || '/'
   if (seen.descendant || seen.marker) {
     emitStartPath(results, rootKey, startName, {
       kind: 'd',
-      isEmpty: empty ? false : null,
+      isEmpty: empty ? !seen.descendant : null,
       exists: true,
       tree,
       maxDepth: options.maxDepth,
@@ -186,5 +203,8 @@ export async function find(
       maxSize: options.maxSize,
     })
   }
-  return results.sort(compareCodePoints)
+  // A file key and a synthesized directory can name the same path (`data/a`
+  // alongside `data/a/b.txt`), which these stores allow and a filesystem does
+  // not; find prints such a path once.
+  return [...new Set(results)].sort(compareCodePoints)
 }

@@ -540,3 +540,4 @@ class Dispatcher:
             manager = CacheManager(self._cache, mount.resource.index,
                                    mount.prefix, mount.resource.caches_reads)
         await manager.invalidate_after_write(path)
+        await manager.invalidate_ancestors(path)

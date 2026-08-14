@@ -7,7 +7,8 @@ import { globToLike, requestBody } from './search/query.ts'
 import { relativePath, searchTarget } from './search/target.ts'
 
 const NAME_TXT: PredNode = { op: 'name', pattern: '*.txt', icase: false }
-const NAME_CSV: PredNode = { op: 'name', pattern: '*.csv', icase: false }
+const NAME_NOTES: PredNode = { op: 'name', pattern: 'notes.txt', icase: false }
+const NAME_ROWS: PredNode = { op: 'name', pattern: 'rows.csv', icase: false }
 const DIRECTORY: PredNode = { op: 'type', kind: 'd' }
 
 function multistatus(paths: { href: string; directory?: boolean }[]): string {
@@ -93,20 +94,36 @@ describe('Nextcloud Files Search query', () => {
   })
 
   it.each<[string, PredNode]>([
-    ['not of an or', { op: 'not', kid: { op: 'or', kids: [NAME_TXT, NAME_CSV] } }],
-    ['not of an and', { op: 'not', kid: { op: 'and', kids: [NAME_TXT, DIRECTORY] } }],
-    ['not of a not', { op: 'not', kid: { op: 'not', kid: NAME_TXT } }],
+    ['not of an or', { op: 'not', kid: { op: 'or', kids: [NAME_NOTES, NAME_ROWS] } }],
+    ['not of an and', { op: 'not', kid: { op: 'and', kids: [NAME_NOTES, DIRECTORY] } }],
+    ['not of a not', { op: 'not', kid: { op: 'not', kid: NAME_NOTES } }],
     ['not of -type f', { op: 'not', kid: { op: 'type', kind: 'f' } }],
   ])('refuses to push down a negated compound: %s', (_label, tree) => {
     expect(supportsQuery({ tree })).toBe(false)
   })
 
   it.each<[string, PredNode]>([
-    ['not of a name', { op: 'not', kid: NAME_TXT }],
-    ['not of -type d', { op: 'not', kid: DIRECTORY }],
+    ['not of a star glob', { op: 'not', kid: NAME_TXT }],
+    ['not of a question glob', { op: 'not', kid: { op: 'name', pattern: 'a?.txt', icase: false } }],
+    ['not of an -iname', { op: 'not', kid: { op: 'name', pattern: 'notes.txt', icase: true } }],
     ['not of a one-armed group', { op: 'not', kid: { op: 'or', kids: [NAME_TXT] } }],
+  ])('refuses to push down a negated inexact name: %s', (_label, tree) => {
+    expect(supportsQuery({ tree })).toBe(false)
+  })
+
+  it.each<[string, PredNode]>([
+    ['not of an exact name', { op: 'not', kid: NAME_NOTES }],
+    ['not of -type d', { op: 'not', kid: DIRECTORY }],
+    ['not of a one-armed group', { op: 'not', kid: { op: 'or', kids: [NAME_NOTES] } }],
   ])('pushes down a negated comparison: %s', (_label, tree) => {
     expect(supportsQuery({ tree })).toBe(true)
+  })
+
+  it.each<[string, string]>([
+    ['a character class', '[ab].txt'],
+    ['a backslash escape', 'a\\b'],
+  ])('refuses to push down %s', (_label, pattern) => {
+    expect(supportsQuery({ tree: { op: 'name', pattern, icase: false } })).toBe(false)
   })
 
   it('broadens SQL wildcard and backslash literals safely', () => {

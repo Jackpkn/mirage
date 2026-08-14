@@ -37,11 +37,16 @@ export function attrsToFileStat(name: string, attrs: SshAttrs): FileStat {
   // server-side uid/gid stay in extra only.
   const mode = attrs.mode !== undefined ? attrs.mode & 0o7777 : null
   const atime = attrs.atime !== undefined ? new Date(attrs.atime * 1000).toISOString() : null
+  // The remote mtime is the only cheap change token SFTP offers, so it is
+  // also the fingerprint: without one, the ALWAYS consistency policy has
+  // nothing to compare and keeps serving a cached copy that the server has
+  // already replaced. Mirrors the python stat.
   if (isDirectoryAttrs(attrs)) {
     return new FileStat({
       name,
       size: null,
       modified,
+      fingerprint: modified,
       type: FileType.DIRECTORY,
       mode,
       atime,
@@ -52,7 +57,7 @@ export function attrsToFileStat(name: string, attrs: SshAttrs): FileStat {
     name,
     size: attrs.size ?? null,
     modified,
-    fingerprint: null,
+    fingerprint: modified,
     type: guessType(name),
     mode,
     atime,
