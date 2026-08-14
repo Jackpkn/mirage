@@ -22,6 +22,7 @@ import {
 import { DEFAULT_DIR_MODE, parseChmod } from '../../../../utils/mode.ts'
 import { specOf } from '../../../spec/builtins.ts'
 import { FlagView } from '../../../spec/types.ts'
+import { mkdirLinkRefusal } from '../../utils/slash_links.ts'
 import { type Builder, resolveGlobOf } from '../adapter.ts'
 
 export const MKDIR_BUILDER: Builder = {
@@ -60,7 +61,13 @@ export const MKDIR_BUILDER: Builder = {
     const resolved = await resolveGlobOf(ops)(accessor, paths, idx)
     const lines: string[] = []
     const errors: string[] = []
+    const links = opts.ns?.links ?? null
     for (const p of resolved) {
+      const collision = await mkdirLinkRefusal(p, links, { parents })
+      if (collision.taken) {
+        if (collision.message !== null) errors.push(collision.message)
+        continue
+      }
       try {
         await mkdir(accessor, p, parents)
       } catch (err) {

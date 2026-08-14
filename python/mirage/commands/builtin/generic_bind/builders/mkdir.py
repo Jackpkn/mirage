@@ -15,6 +15,7 @@
 from mirage.accessor.base import Accessor
 from mirage.commands.builtin.generic_bind.adapter import (Builder, CommandIO,
                                                           Operation)
+from mirage.commands.builtin.utils.slash_links import mkdir_link_refusal
 from mirage.commands.config import CommandOpts
 from mirage.commands.spec import SPECS
 from mirage.commands.spec.types import FlagView
@@ -48,7 +49,13 @@ async def mkdir(ops: CommandIO, accessor: Accessor, paths: list[PathSpec],
     paths = await ops.resolve_glob(accessor, paths, opts.index)
     lines: list[str] = []
     errors: list[str] = []
+    links = opts.ns.links if opts.ns is not None else None
     for path in paths:
+        taken, refusal = await mkdir_link_refusal(path, links, parents=parents)
+        if taken:
+            if refusal is not None:
+                errors.append(refusal)
+            continue
         try:
             await mkdir_fn(accessor, path, parents=parents)
         except FS_ERRORS as exc:
