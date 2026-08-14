@@ -12,6 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import { randomBytes } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { parse as parseYaml } from 'yaml'
@@ -26,6 +27,7 @@ import {
   MountMode,
   OnExceed,
   RAMWorkspaceStateStore,
+  RedisConsoleStore,
   RedisWorkspaceStateStore,
   DiskWorkspaceStateStore,
   S3WorkspaceStateStore,
@@ -42,7 +44,7 @@ import {
   type WorkspaceOptions,
   type WorkspaceStateStore,
 } from '@struktoai/mirage-node'
-import { compareCodePoints } from '@struktoai/mirage-core'
+import { compareCodePoints, JobConsole, type ConsoleFactory } from '@struktoai/mirage-core'
 
 const VALID_MODES = new Set<string>([MountMode.READ, MountMode.WRITE, MountMode.EXEC])
 
@@ -152,6 +154,7 @@ const TOP_LEVEL_KEYS = [
   'cache',
   'index',
   'store',
+  'console',
 ] as const
 const MOUNT_KEYS = [
   'resource',
@@ -168,6 +171,10 @@ const CACHE_KEYS: Record<string, readonly string[]> = {
 const INDEX_KEYS: Record<string, readonly string[]> = {
   ram: ['type', 'ttl'],
   redis: ['type', 'ttl', 'url', 'key_prefix'],
+}
+const CONSOLE_KEYS: Record<string, readonly string[]> = {
+  ram: ['type'],
+  redis: ['type', 'url', 'key_prefix', 'ttl_seconds'],
 }
 const STORE_GROUPS = ['namespace', 'observer', 'workspace'] as const
 const STORE_KEYS = ['type', 'url', 'key_prefix', 'root', ...STORE_GROUPS] as const
@@ -264,6 +271,27 @@ function validateTypedBlock(
   rejectUnknownKeys(value, table[type] ?? [], `${what} (${type})`)
 }
 
+// Key names alone are not enough here: Python's Pydantic model rejects
+// `url: 123` at load, so the TS loader must refuse the same file at the
+// same boundary instead of deferring it to Redis client creation.
+function validateConsoleValues(value: unknown): void {
+  if (!isPlainObject(value)) return
+  if (value.url !== undefined && typeof value.url !== 'string') {
+    throw new Error('config `console.url` must be a string')
+  }
+  if (value.key_prefix !== undefined && typeof value.key_prefix !== 'string') {
+    throw new Error('config `console.key_prefix` must be a string')
+  }
+  const ttl = value.ttl_seconds
+  if (
+    ttl !== undefined &&
+    ttl !== null &&
+    !(typeof ttl === 'number' && Number.isFinite(ttl) && ttl > 0)
+  ) {
+    throw new Error('config `console.ttl_seconds` must be a positive number or null')
+  }
+}
+
 function validateStoreBlock(value: unknown): void {
   if (value === undefined || value === null) return
   if (!isPlainObject(value)) throw new Error('config `store` must be a mapping')
@@ -317,6 +345,8 @@ function validateConfigKeys(raw: Record<string, unknown>): void {
   }
   validateTypedBlock(raw.cache, CACHE_KEYS, 'cache')
   validateTypedBlock(raw.index, INDEX_KEYS, 'index')
+  validateTypedBlock(raw.console, CONSOLE_KEYS, 'console')
+  validateConsoleValues(raw.console)
   validateStoreBlock(raw.store)
 }
 
@@ -330,6 +360,7 @@ function normalizeConfigKeys(raw: Record<string, unknown>): Record<string, unkno
   const out = camelizeKeys(raw)
   if (isPlainObject(out.cache)) out.cache = camelizeKeys(out.cache)
   if (isPlainObject(out.index)) out.index = camelizeKeys(out.index)
+  if (isPlainObject(out.console)) out.console = camelizeKeys(out.console)
   if (isPlainObject(out.store)) {
     const store = camelizeKeys(out.store)
     for (const group of STORE_GROUPS) {
@@ -477,6 +508,18 @@ interface RedisIndexBlock {
   keyPrefix?: string
 }
 
+interface RamConsoleBlock {
+  type?: 'ram'
+}
+
+interface RedisConsoleBlock {
+  type: 'redis'
+  url?: string
+  keyPrefix?: string
+  /** Keys expire this long after the last append; null keeps them. */
+  ttlSeconds?: number | null
+}
+
 interface RamStoreGroupBlock {
   type?: 'ram'
 }
@@ -564,6 +607,13 @@ export interface WorkspaceConfigRaw {
   cache?: CacheConfig | null
   index?: RamIndexBlock | RedisIndexBlock | null
   store?: StoreBlock | null
+  /**
+   * Where background-job consoles live. The redis form keys one stream
+   * per job, so a reader in another process can follow a running job;
+   * ram (the default) keeps consoles in memory. Mirrors Python's
+   * ConsoleBlock.
+   */
+  console?: RamConsoleBlock | RedisConsoleBlock | null
 }
 
 function readProcessEnv(): Record<string, string> {
@@ -725,6 +775,33 @@ function buildStoreGroup(block: StoreGroupBlock): WorkspaceStateStore {
   return new RAMWorkspaceStateStore()
 }
 
+// Build one job's console on its own Redis stream. The key carries a
+// fresh nonce beside the job id, because job ids restart at 1 when the
+// table empties and a reused stream would replay the previous job's
+// chunks. The minted prefix is published as the store's keyPrefix
+// (reachable as job.console.store), so an embedder can hand a reader
+// in another process the console's address. Keys expire ttl_seconds
+// after the last append (default one day) so finished jobs cannot
+// accumulate in Redis forever. The workspace closes what this builds
+// at teardown (JobTable.closeConsoles). Mirrors Python's
+// _redis_console.
+function buildConsoleFactory(
+  block: RamConsoleBlock | RedisConsoleBlock | null | undefined,
+): ConsoleFactory | undefined {
+  if (block?.type !== 'redis') return undefined
+  const url = block.url ?? 'redis://localhost:6379/0'
+  const keyPrefix = block.keyPrefix ?? 'mirage:console:'
+  const ttlSeconds = block.ttlSeconds === undefined ? 86400 : block.ttlSeconds
+  return (jobId: number) =>
+    new JobConsole(
+      new RedisConsoleStore({
+        url,
+        keyPrefix: `${keyPrefix}${randomBytes(6).toString('hex')}:${jobId.toString()}:`,
+        ...(ttlSeconds !== null ? { ttlSeconds } : {}),
+      }),
+    )
+}
+
 function buildStateStore(block: StoreBlock | null | undefined): WorkspaceStateStore | undefined {
   if (block === null || block === undefined) return undefined
   const overrides = {
@@ -762,6 +839,7 @@ export async function configToWorkspaceArgs(cfg: WorkspaceConfigRaw): Promise<Wo
   }
   const index = buildIndex(cfg.index)
   const stateStore = buildStateStore(cfg.store)
+  const consoleFactory = buildConsoleFactory(cfg.console)
   return {
     resources,
     options: {
@@ -777,6 +855,7 @@ export async function configToWorkspaceArgs(cfg: WorkspaceConfigRaw): Promise<Wo
       // would ever release. Mirrors the `owns_store` Python's loader
       // sets beside the same store.
       ...(stateStore !== undefined ? { store: stateStore, ownsStore: true } : {}),
+      ...(consoleFactory !== undefined ? { consoleFactory } : {}),
       ...(cfg.runtimes !== undefined && cfg.runtimes !== null
         ? { runtimes: buildRuntimeEntries(cfg.runtimes) }
         : {}),
