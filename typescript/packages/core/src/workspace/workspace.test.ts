@@ -189,7 +189,7 @@ describe('Workspace.unmount', () => {
     expect(ws.mounts().some((m) => m.prefix === '/a/')).toBe(false)
     // With /a gone the path no longer routes to a's resource; it falls through
     // to the empty root anchor (prefix '/'), not back to /a.
-    expect(ws.registry.mountFor('/a/x')?.prefix).toBe('/')
+    expect(ws.registry.mountFor('/a/x').prefix).toBe('/')
     await ws.close()
   })
 

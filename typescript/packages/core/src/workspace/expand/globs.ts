@@ -29,10 +29,6 @@ export interface ResourceWithGlob extends Resource {
   glob(paths: readonly PathSpec[], prefix?: string): Promise<PathSpec[]>
 }
 
-function hasGlob(r: Resource): r is ResourceWithGlob {
-  return 'glob' in r && typeof (r as { glob?: unknown }).glob === 'function'
-}
-
 // Virtual paths a directory owes the namespace, matching a segment.
 // Child mounts and symlinks are namespace state no backend can see, so a
 // glob that stops at one backend misses both: a nested mount's keys live
@@ -55,7 +51,7 @@ function namespaceChildren(
 
 // The mount owning a path, falling back to the word's own.
 function mountOf(registry: MountRegistry, virtual: string, fallback: MountEntry): MountEntry {
-  return registry.mountFor(virtual) ?? fallback
+  return registry.tryMountFor(virtual) ?? fallback
 }
 
 // The directory a backend must list to answer a glob's parent. bash
@@ -150,7 +146,7 @@ async function levelMatches(
   const owner = mountOf(registry, real, mount)
   const prefix = rstripSlash(owner.prefix)
   const out: string[] = []
-  if (hasGlob(owner.resource)) {
+  if (owner.resource.glob !== undefined) {
     const spec = new PathSpec({
       virtual: real,
       directory: real,
@@ -244,7 +240,9 @@ export async function resolveGlobs(
   const result: (string | PathSpec)[] = []
   for (const item of classified) {
     if (item instanceof PathSpec && item.pattern !== null) {
-      const mount = registry.mountFor(item.virtual)
+      // A pattern word no mount owns stays the literal word like a
+      // zero-match glob.
+      const mount = registry.tryMountFor(item.virtual)
       if (mount === null) {
         result.push(item)
         continue
@@ -259,7 +257,7 @@ export async function resolveGlobs(
       const linked = !midPath && listingDir(links, item.directory) !== item.directory
       const extra =
         midPath || linked ? [] : namespaceChildren(registry, links, item.directory, item.pattern)
-      if (!linked && !hasGlob(mount.resource) && extra.length === 0) {
+      if (!linked && mount.resource.glob === undefined && extra.length === 0) {
         result.push(item)
         continue
       }
@@ -273,7 +271,9 @@ export async function resolveGlobs(
       })
       try {
         const own =
-          !linked && hasGlob(mount.resource) ? await mount.resource.glob([withPrefix], prefix) : []
+          !linked && mount.resource.glob !== undefined
+            ? await mount.resource.glob([withPrefix], prefix)
+            : []
         let resolved: PathSpec[]
         if (midPath) {
           resolved = await walkSegments(withPrefix, mount, registry, links)

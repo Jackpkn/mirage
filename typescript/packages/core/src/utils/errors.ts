@@ -125,6 +125,14 @@ export function noMount(path: string): NoMountError {
   return err
 }
 
+// The registry's miss and nothing else: catch sites that cope with an
+// unmounted path test this instead of swallowing every error, mirroring
+// Python's `except NoMountError`.
+export function isNoMount(err: unknown): boolean {
+  if (err === null || typeof err !== 'object') return false
+  return (err as { noMount?: unknown }).noMount === true
+}
+
 // True when the error means the path is simply not there: a stamped ENOENT,
 // or a path outside every mount. This is the whole swallow set for the
 // exists-family probes, mirroring Python's `(FileNotFoundError, ValueError)`.

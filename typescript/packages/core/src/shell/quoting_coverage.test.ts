@@ -232,7 +232,6 @@ describe('shell quoting coverage (port of tests/shell/test_quoting_coverage.py)'
     it('grep pattern with escaped embedded quote', async () => {
       const ws = await makeQuotingWs()
       const mount2 = ws.mount('/data/')
-      if (mount2 === null) throw new Error('/data/ mount missing')
       const ws2Ram = mount2.resource as RAMResource
       ws2Ram.store.files.set('/quote.txt', ENC.encode('she said "hi"\n'))
       const r = await run(ws, 'grep "she said \\"hi\\"" /data/quote.txt')

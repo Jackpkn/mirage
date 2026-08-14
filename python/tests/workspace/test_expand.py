@@ -60,7 +60,7 @@ def _mock_registry(prefixes=None):
     reg = MagicMock()
     reg.clis = CLIRegistry()
 
-    def _mount_for(path):
+    def _try_mount_for(path):
         if prefixes is None:
             root = MagicMock()
             root.prefix = "/"
@@ -72,9 +72,9 @@ def _mock_registry(prefixes=None):
                 m = MagicMock()
                 m.prefix = p
                 return m
-        raise ValueError(f"no mount matches: {path}")
+        return None
 
-    reg.mount_for = MagicMock(side_effect=_mount_for)
+    reg.try_mount_for = MagicMock(side_effect=_try_mount_for)
     return reg
 
 

@@ -30,6 +30,7 @@ from mirage.ops.namespace_view import (merge_readdir, namespace_listing,
                                        namespace_stat)
 from mirage.policy import post_ops_gate, pre_ops_gate
 from mirage.types import ConsistencyPolicy, FileStat, PathSpec, ResourceName
+from mirage.utils.errors import no_mount
 from mirage.utils.key_prefix import mount_key
 from mirage.utils.path import owner_prefix
 from mirage.utils.ranges import slice_window
@@ -201,7 +202,7 @@ class Dispatcher:
         # state. drain() clears pending before it stats, so its own
         # probes cannot recurse into it.
         if self._drift is not None and self._drift.pending:
-            await self._drift.drain(self._namespace.registry.mount_for)
+            await self._drift.drain(self._namespace.registry.try_mount_for)
         # Hidden paths answer before anything else can: the typed path
         # is checked so a link inside hidden space cannot be followed
         # out of it, the followed path is re-checked so a visible link
@@ -225,9 +226,8 @@ class Dispatcher:
                 path = PathSpec.from_str_path(followed)
                 if not path_allowed(path.virtual):
                     raise _hidden_refusal(op, path.virtual)
-        try:
-            mount = self._namespace.mount_for(path.virtual)
-        except ValueError:
+        mount = self._namespace.try_mount_for(path.virtual)
+        if mount is None:
             # No mount serves the path, but the namespace may still know
             # a directory there (a deeper mount, a link). No mount means
             # no cache to keep straight. The merged names are
@@ -243,7 +243,7 @@ class Dispatcher:
                 return applied, IOResult()
             fallback = self._namespace_result(op, path.virtual)
             if fallback is None:
-                raise
+                raise no_mount(path.virtual)
             return (await self._gated_namespace(op, path, fallback,
                                                 report), IOResult())
         if not mount_allowed(mount.prefix):
@@ -496,9 +496,8 @@ class Dispatcher:
                                 records=records)
 
     def is_cacheable_path(self, path: str) -> bool:
-        try:
-            mount = self._namespace.mount_for(path)
-        except ValueError:
+        mount = self._namespace.try_mount_for(path)
+        if mount is None:
             return False
         return mount.resource.caches_reads
 

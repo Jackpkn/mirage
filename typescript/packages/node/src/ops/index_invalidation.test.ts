@@ -92,7 +92,7 @@ describe('the fs facade evicts the index like the shell does', () => {
     // reason: nothing was ever cached, so nothing needed evicting.
     const { ws, cleanup } = diskWorkspace()
     try {
-      const index = ws.registry.mountFor('/d')?.resource.index
+      const index = ws.registry.mountFor('/d').resource.index
       expect(index).toBeDefined()
       await ws.fs.readdir('/d')
       expect((await index?.listDir('/d'))?.entries).toEqual(['/d/seed'])

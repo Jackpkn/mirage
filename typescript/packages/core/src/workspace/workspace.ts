@@ -239,7 +239,7 @@ export class Workspace {
       ...normalized.commandLimits,
       ...(options.commandLimits ?? {}),
     })) {
-      const mount = this.registry.mountForPrefix(prefix)
+      const mount = this.registry.tryMountForPrefix(prefix)
       if (mount === null) {
         throw new Error(`commandLimits references unknown mount prefix: ${prefix}`)
       }
@@ -258,7 +258,7 @@ export class Workspace {
       },
       this.namespace,
       (path) => {
-        const mount = this.registry.mountFor(path)
+        const mount = this.registry.tryMountFor(path)
         return mount === null ? null : { prefix: mount.prefix, kind: mount.resource.kind }
       },
     )
@@ -571,7 +571,7 @@ export class Workspace {
     return this.registry.allMounts()
   }
 
-  mount(prefix: string): MountEntry | null {
+  mount(prefix: string): MountEntry {
     return this.registry.mountFor(prefix)
   }
 
@@ -739,8 +739,9 @@ export class Workspace {
     }
     const result = this.registry.resolve(path)
     const [resource] = result
+    // resolve() above already threw for a path outside every mount.
     const mount = this.registry.mountFor(path)
-    if (mount !== null) assertMountAllowed(mount.prefix)
+    assertMountAllowed(mount.prefix)
     await this.ensureOpen(resource)
     return result
   }

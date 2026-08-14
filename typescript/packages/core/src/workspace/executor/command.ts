@@ -287,7 +287,8 @@ export async function handleCommand(
     // operand mounts, regardless of which sub-run merged last.
     const mounts: MountEntry[] = []
     for (const s of pathScopes) {
-      const m = registry.mountFor(s.virtual)
+      // a scope outside any mount contributes nothing here
+      const m = registry.tryMountFor(s.virtual)
       if (m !== null) mounts.push(m)
     }
     csIo.producer = {
@@ -304,7 +305,8 @@ export async function handleCommand(
   if (routingScopes.length >= 2) {
     const mountPrefixes = new Set<string>()
     for (const s of routingScopes) {
-      const m = registry.mountFor(s.virtual)
+      // a scope outside any mount contributes nothing here
+      const m = registry.tryMountFor(s.virtual)
       if (m !== null) mountPrefixes.add(m.prefix)
     }
     if (mountPrefixes.size > 1) {

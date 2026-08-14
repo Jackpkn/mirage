@@ -20,15 +20,16 @@ import type { MountRegistry } from '../mount/registry.ts'
 
 // Find the spec that classifies a mount command's words. The cwd
 // mount's spec wins; the shared BUILTIN_SPECS table fills in when that
-// mount does not register the command. Every absolute path has a mount
-// (the workspace roots an implicit RAM mount), so mountFor only
-// returns null on a broken registry; the shared table still applies.
+// mount does not register the command. Every session cwd sits under a
+// mount (the workspace roots an implicit RAM mount), so mountFor never
+// fails here; if it ever does, the registry is broken and the error
+// should propagate (mirrors the Python docstring).
 export function specForCommand(
   name: string,
   registry: MountRegistry,
   cwd: string,
 ): CommandSpec | null {
-  const spec = registry.mountFor(cwd)?.specFor(name) ?? null
+  const spec = registry.mountFor(cwd).specFor(name)
   if (spec !== null) return spec
   return BUILTIN_SPECS[name] ?? null
 }

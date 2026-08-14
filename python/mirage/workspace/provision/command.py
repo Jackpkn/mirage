@@ -60,11 +60,11 @@ def _mount_groups(registry: MountRegistry,
             # (find -name, ls *.txt) must not fabricate a mount group.
             unresolved.append(p)
             continue
-        try:
-            prefix = registry.mount_for(p.virtual).prefix
-        except ValueError:
+        mount = registry.try_mount_for(p.virtual)
+        if mount is None:
             unresolved.append(p)
             continue
+        prefix = mount.prefix
         idx = seen.get(prefix)
         if idx is None:
             seen[prefix] = len(groups)
@@ -133,9 +133,8 @@ async def handle_command_provision(
             break
     mount_path = first_scope.virtual if first_scope else session.cwd
 
-    try:
-        mount = registry.mount_for(mount_path)
-    except ValueError:
+    mount = registry.try_mount_for(mount_path)
+    if mount is None:
         # Pathless commands (seq, date, ...) still need a mount to
         # resolve their registration; any mount carries the general
         # commands, so fall back to the first one.

@@ -241,7 +241,7 @@ describe('session-state writes go through the view', () => {
         return [new Uint8Array(), new IOResult()]
       },
     })
-    ws.registry.mountForPrefix('/a')?.register(rc)
+    ws.registry.mountForPrefix('/a').register(rc)
     const io = await ws.execute('envpoke /a/x.txt')
     expect(io.exitCode).toBe(0)
     expect('INJECTED' in ws.env).toBe(false)
@@ -260,7 +260,7 @@ describe('session-state writes go through the view', () => {
         return [ENC.encode(value), new IOResult()]
       },
     })
-    ws.registry.mountForPrefix('/a')?.register(rc)
+    ws.registry.mountForPrefix('/a').register(rc)
     await ws.execute('export MARKER=yes')
     const io = await ws.execute('envread /a/x.txt')
     expect(stdoutStr(io).trim()).toBe('yes')
@@ -758,8 +758,7 @@ describe('hidden paths across the tiers', () => {
     const io = await ws.execute('echo hi > /a/secrets/new.txt', { sessionId: 'agent' })
     expect(io.exitCode).not.toBe(0)
     const a = ws.namespace.mountFor('/a/x.txt')
-    expect(a).not.toBeNull()
-    const resource = a?.resource as RAMResource
+    const resource = a.resource as RAMResource
     expect(resource.store.files.has('/secrets/new.txt')).toBe(false)
   })
 

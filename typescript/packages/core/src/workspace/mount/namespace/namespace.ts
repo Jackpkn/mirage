@@ -408,8 +408,12 @@ export class Namespace {
     return this.resolveFn(path)
   }
 
-  mountFor(path: string): MountEntry | null {
+  mountFor(path: string): MountEntry {
     return this.registry.mountFor(path)
+  }
+
+  tryMountFor(path: string): MountEntry | null {
+    return this.registry.tryMountFor(path)
   }
 
   mountPrefixes(): string[] {

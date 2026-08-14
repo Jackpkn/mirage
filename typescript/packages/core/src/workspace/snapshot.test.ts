@@ -189,7 +189,6 @@ describe('Workspace.snapshot / load — filenames with spaces and unicode', () =
   it('roundtrips RAM filenames containing spaces and unicode chars', async () => {
     const src = buildWorkspace()
     const srcMount = src.mount('/data/')
-    if (srcMount === null) throw new Error('/data/ mount missing')
     const srcRam = srcMount.resource as RAMResource
     const ENC = new TextEncoder()
     srcRam.store.files.set('/my file.txt', ENC.encode('with spaces'))
@@ -205,7 +204,6 @@ describe('Workspace.snapshot / load — filenames with spaces and unicode', () =
       shellParser: parser,
     })
     const dstMount = loaded.mount('/data/')
-    if (dstMount === null) throw new Error('/data/ mount missing')
     const dstRam = dstMount.resource as RAMResource
     const DEC = new TextDecoder()
     expect(DEC.decode(dstRam.store.files.get('/my file.txt'))).toBe('with spaces')

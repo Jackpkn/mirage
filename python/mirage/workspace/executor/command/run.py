@@ -188,10 +188,8 @@ def mount_root_of(registry: MountRegistry, virtual: str) -> str:
         registry (MountRegistry): registry holding the mount table.
         virtual (str): absolute virtual path.
     """
-    try:
-        return registry.mount_for(virtual).prefix
-    except ValueError:
-        return "/"
+    mount = registry.try_mount_for(virtual)
+    return mount.prefix if mount is not None else "/"
 
 
 def mount_view(registry: MountRegistry) -> MountView:
@@ -356,8 +354,9 @@ async def run_on_mount(
         try:
             assert_mount_allowed(mount.prefix)
             for ps in paths:
-                target = registry.mount_for(ps.virtual)
-                assert_mount_allowed(target.prefix)
+                target = registry.try_mount_for(ps.virtual)
+                if target is not None:
+                    assert_mount_allowed(target.prefix)
         except PermissionError as exc:
             return None, IOResult(exit_code=1, stderr=f"{exc}\n".encode())
 

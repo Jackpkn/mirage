@@ -279,7 +279,10 @@ export function buildMountArgs(
 export async function applyStateDict(ws: Workspace, state: WorkspaceStateDict): Promise<void> {
   for (const m of state.mounts) {
     if (resourceStateRequiresOverride(m.resource_state)) continue
-    const mount = ws.registry.mountFor(m.prefix)
+    // Exact-prefix lookup, mirroring Python: a snapshot prefix the new
+    // workspace does not mount is skipped, never resolved to an
+    // ancestor mount (which would load state into the wrong resource).
+    const mount = ws.registry.tryMountForPrefix(m.prefix)
     if (mount === null) continue
     const resource = mount.resource as unknown as {
       loadState: (state: ResourceState) => void | Promise<void>

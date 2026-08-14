@@ -47,9 +47,8 @@ def classify_word(word: str, registry: MountRegistry,
     word_has_glob = has_glob(word)
 
     if word.startswith("/"):
-        try:
-            mount = registry.mount_for(word)
-        except ValueError:
+        mount = registry.try_mount_for(word)
+        if mount is None:
             return word
         is_dir = word.endswith("/")
         path = posixpath.normpath(word)

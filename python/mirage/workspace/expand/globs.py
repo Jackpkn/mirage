@@ -109,10 +109,8 @@ def _mount_of(registry: MountRegistry, virtual: str,
         virtual (str): the virtual path to place.
         fallback (MountEntry): mount to use for a path outside the table.
     """
-    try:
-        return registry.mount_for(virtual)
-    except ValueError:
-        return fallback
+    mount = registry.try_mount_for(virtual)
+    return mount if mount is not None else fallback
 
 
 def _listing_dir(links: NamespaceLinks | None, directory: str) -> str:
@@ -311,14 +309,19 @@ async def resolve_globs(
     for item in classified:
         if isinstance(item, PathSpec) and item.pattern:
             pattern = item.pattern
+            # A pattern word no mount owns cannot match anything, so it
+            # stays the literal word like a zero-match glob.
+            mount = registry.try_mount_for(item.virtual)
+            if mount is None:
+                result.append(item)
+                continue
+            prefix = mount.prefix.rstrip("/")
+            # Stamp the backend key so readdir addresses the correct
+            # resource-relative path.
+            item = dataclasses.replace(item,
+                                       resource_path=mount_key(
+                                           item.virtual, prefix))
             try:
-                mount = registry.mount_for(item.virtual)
-                prefix = mount.prefix.rstrip("/")
-                # Stamp the backend key so readdir addresses the correct
-                # resource-relative path.
-                item = dataclasses.replace(item,
-                                           resource_path=mount_key(
-                                               item.virtual, prefix))
                 if has_glob(item.directory):
                     resolved = await _walk_segments(item, mount, prefix,
                                                     registry, links)

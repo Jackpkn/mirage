@@ -234,8 +234,10 @@ export class Dispatcher {
       return [gated, new IOResult()]
     }
     const [resource, scope, mode] = resolved
+    // resolve() above already threw for a path outside every mount, so
+    // this lookup cannot miss.
     const mount = this.namespace.mountFor(p.virtual)
-    const mountPrefix = mount?.prefix ?? '/'
+    const mountPrefix = mount.prefix
     // Admission policies fire at the door, before the warm-cache early
     // return below: a cached read must be refused exactly like a cold
     // one, or the cache becomes a policy bypass. This dispatcher is the
@@ -250,7 +252,7 @@ export class Dispatcher {
     // nothing populates it from here, so skipping the probe is the
     // whole fix. Mirrors Python's Dispatcher.dispatch.
     const raw = kwargs?.filetype === null
-    if (caches && !raw && mount !== null && DISPATCH_READ_OPS.has(opName)) {
+    if (caches && !raw && DISPATCH_READ_OPS.has(opName)) {
       const cached = await this.cache.get(p.virtual)
       if (cached !== null && (await this.reconciler.mayServeCached(mount, p.virtual))) {
         // The cache holds the whole object, so a ranged read is answered
@@ -311,7 +313,7 @@ export class Dispatcher {
     // mount, and the timeout window covers only the backend op — cache
     // probes and post-write invalidation stay outside the budget —
     // mirroring Python's Mount.execute_op.
-    const opOverride = mount?.commandLimits.get(opName) ?? null
+    const opOverride = mount.commandLimits.get(opName) ?? null
     const opTimeout = opOverride !== null ? opOverride.timeoutSeconds : null
     let result
     // Backends name their records against the mount-relative key, so the
@@ -319,25 +321,23 @@ export class Dispatcher {
     // mount it belongs to. Mirrors Python's Ops._call.
     try {
       result = await runWithMountPrefix(rstripSlash(mountPrefix), () =>
-        runWithRevisions(
-          mount !== null && mount.revisions.size > 0 ? mount.revisions : null,
-          async () =>
-            runWithTimeout(
-              Promise.resolve(
-                opName === 'setattr'
-                  ? this.applySetattr(resource, scope, p, fullKwargs)
-                  : this.opsRegistry.call(
-                      opName,
-                      resource.kind,
-                      resource.accessor ?? NOOP_ACCESSOR_INSTANCE,
-                      scope,
-                      fullArgs,
-                      fullKwargs,
-                    ),
-              ),
-              opTimeout,
-              opName,
+        runWithRevisions(mount.revisions.size > 0 ? mount.revisions : null, async () =>
+          runWithTimeout(
+            Promise.resolve(
+              opName === 'setattr'
+                ? this.applySetattr(resource, scope, p, fullKwargs)
+                : this.opsRegistry.call(
+                    opName,
+                    resource.kind,
+                    resource.accessor ?? NOOP_ACCESSOR_INSTANCE,
+                    scope,
+                    fullArgs,
+                    fullKwargs,
+                  ),
             ),
+            opTimeout,
+            opName,
+          ),
         ),
       )
     } catch (err) {
@@ -510,7 +510,7 @@ export class Dispatcher {
     // invalidate the written directory itself instead of its parent
     // (Python normalizes the same way via PathSpec.mount_path).
     const path = rstripSlash(rawPath) || '/'
-    const mount = this.namespace.mountFor(path)
+    const mount = this.namespace.tryMountFor(path)
     if (mount === null) return
     await this.namespace.clearTimes(path, observed)
     if (cachesReads(mount.resource)) {
@@ -529,7 +529,7 @@ export class Dispatcher {
   // Python's is_cacheable_path gate; without it every backend's reads
   // land in the cache and provision reports phantom cache hits.
   isCacheablePath = (path: string): boolean => {
-    const mount = this.namespace.mountFor(path)
+    const mount = this.namespace.tryMountFor(path)
     if (mount === null) return false
     return cachesReads(mount.resource)
   }

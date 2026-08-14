@@ -51,14 +51,16 @@ export interface FingerprintEntry {
 }
 
 interface RegistryLike {
-  mountFor(path: string): MountEntry | null
+  tryMountFor(path: string): MountEntry | null
   allMounts(): readonly MountEntry[]
 }
 
 // The drain needs only path-to-mount resolution, so the door can pass
-// its namespace (which answers mountFor) without holding the registry.
+// its namespace (which answers tryMountFor) without holding the
+// registry. The try variant: a snapshot path the live workspace no
+// longer mounts is skipped, never an error.
 export interface MountLookup {
-  mountFor(path: string): MountEntry | null
+  tryMountFor(path: string): MountEntry | null
 }
 
 /**
@@ -141,7 +143,7 @@ export function installDriftState(
     return
   }
   for (const e of entries) {
-    const mount = registry.mountFor(e.path)
+    const mount = registry.tryMountFor(e.path)
     if (mount === null) continue
     if (e.revision !== undefined && e.revision !== null) {
       mount.revisions.set(e.path, e.revision)
@@ -185,7 +187,7 @@ export function captureFingerprints(
     if (rec.op !== 'read' || seen.has(rec.path)) continue
     if (rec.fingerprint === null && rec.revision === null) continue
     seen.add(rec.path)
-    const mount = registry.mountFor(rec.path)
+    const mount = registry.tryMountFor(rec.path)
     if (mount === null) continue
     if (mount.resource.supportsSnapshot !== true) continue
     const entry: FingerprintEntry = { path: rec.path, mount_prefix: mount.prefix }
@@ -227,7 +229,7 @@ export async function checkDrift(
   path: string,
   recorded: string,
 ): Promise<void> {
-  const mount = registry.mountFor(path)
+  const mount = registry.tryMountFor(path)
   if (mount === null) return
   if (mount.resource.supportsSnapshot !== true) return
   let stat: FileStat

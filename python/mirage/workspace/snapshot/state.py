@@ -288,9 +288,8 @@ async def apply_state_dict(ws, state: dict[str, Any]) -> None:
     # is written into the new root, redis content into the new URL, etc.
     # Cred-only resources (S3 et al.) define load_state as no-op.
     for m in state[StateKey.MOUNTS]:
-        try:
-            mount = ws._registry.mount_for_prefix(m[MountKey.PREFIX])
-        except ValueError:
+        mount = ws._registry.try_mount_for_prefix(m[MountKey.PREFIX])
+        if mount is None:
             continue
         mount.resource.load_state(m[MountKey.RESOURCE_STATE])
 

@@ -135,7 +135,7 @@ function renderManIndex(session: Session, registry: MountRegistry): string {
     if (m.prefix === DEV_PREFIX) continue
     if (!byKind.has(m.resource.kind)) byKind.set(m.resource.kind, m)
   }
-  const cwdMount = registry.mountFor(session.cwd)
+  const cwdMount = registry.tryMountFor(session.cwd)
   const cwdKind =
     cwdMount !== null && cwdMount.prefix !== DEV_PREFIX ? cwdMount.resource.kind : null
 

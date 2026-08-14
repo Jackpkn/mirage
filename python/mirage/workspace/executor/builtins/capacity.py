@@ -229,10 +229,9 @@ async def _target_mounts(registry: MountRegistry, dispatch: DispatchFn,
                     seen.add(m.prefix)
                     out.append(m)
             continue
-        try:
-            mount = registry.mount_for(virtual)
-        except (KeyError, ValueError, FileNotFoundError):
-            raise FileNotFoundError(label) from None
+        mount = registry.try_mount_for(virtual)
+        if mount is None:
+            raise FileNotFoundError(label)
         # GNU df maps each FILE to its filesystem and errors on a missing
         # one. The mount root is the filesystem itself (always present); a
         # deeper path must exist, so stat it before accepting the mount.

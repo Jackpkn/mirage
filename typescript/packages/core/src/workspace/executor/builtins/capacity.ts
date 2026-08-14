@@ -203,7 +203,7 @@ async function targetMounts(
       }
       continue
     }
-    const mount = registry.mountFor(virtual)
+    const mount = registry.tryMountFor(virtual)
     if (mount === null) {
       return { missing: label }
     }

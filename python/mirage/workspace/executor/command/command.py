@@ -251,11 +251,10 @@ async def handle_command(
         # merged last.
         mounts = []
         for s in path_scopes:
-            try:
-                mounts.append(registry.mount_for(s.virtual))
-            except ValueError:
-                # a scope outside any mount contributes nothing here
-                pass
+            m = registry.try_mount_for(s.virtual)
+            # a scope outside any mount contributes nothing here
+            if m is not None:
+                mounts.append(m)
         io.producer = Producer(command=cmd_name,
                                prefixes=tuple(m.prefix for m in mounts))
         stdout = maybe_with_timeout(stdout, resolve_limit(cmd_name, mounts),
@@ -267,11 +266,10 @@ async def handle_command(
     if len(routing_scopes) >= 2:
         mount_prefixes = set()
         for s in routing_scopes:
-            try:
-                mount_prefixes.add(registry.mount_for(s.virtual).prefix)
-            except ValueError:
-                # a scope outside any mount contributes nothing here
-                pass
+            m = registry.try_mount_for(s.virtual)
+            # a scope outside any mount contributes nothing here
+            if m is not None:
+                mount_prefixes.add(m.prefix)
         if len(mount_prefixes) > 1:
             prefixes_str = ", ".join(sorted(mount_prefixes))
             span_err = (f"{cmd_name}: paths span multiple mounts "
@@ -299,8 +297,9 @@ async def handle_command(
     try:
         assert_mount_allowed(mount.prefix)
         for ps in routing_scopes:
-            target = registry.mount_for(ps.virtual)
-            assert_mount_allowed(target.prefix)
+            target = registry.try_mount_for(ps.virtual)
+            if target is not None:
+                assert_mount_allowed(target.prefix)
     except PermissionError as exc:
         err = f"{cmd_name}: {exc}\n".encode()
         return None, IOResult(exit_code=1,

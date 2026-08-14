@@ -36,9 +36,7 @@ class FakeRegistry:
     def __init__(self, mount=None):
         self.mount = mount
 
-    def mount_for(self, prefix):
-        if self.mount is None:
-            raise ValueError(f"no mount matches path: {prefix!r}")
+    def try_mount_for(self, prefix):
         return self.mount
 
 

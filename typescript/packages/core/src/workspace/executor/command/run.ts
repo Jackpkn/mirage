@@ -132,7 +132,7 @@ function namespaceStatOverlay(namespace: Namespace, virtual: string, stat: FileS
  * under no mount answers "/" so the walk still terminates.
  */
 export function mountRootOf(registry: MountRegistry, virtual: string): string {
-  return registry.mountFor(virtual)?.prefix ?? '/'
+  return registry.tryMountFor(virtual)?.prefix ?? '/'
 }
 
 /**
@@ -222,7 +222,7 @@ export async function runOnMount(
     try {
       assertMountAllowed(mount.prefix)
       for (const ps of paths) {
-        const target = registry.mountFor(ps.virtual)
+        const target = registry.tryMountFor(ps.virtual)
         if (target !== null) assertMountAllowed(target.prefix)
       }
     } catch (err) {
@@ -247,7 +247,7 @@ export async function runOnMount(
   // A spec can bucket a path-shaped operand as TEXT (python3's script), so
   // when the spec-split paths are empty fall back to the classified scope
   // hint before cwd, mirroring the Python executor.
-  const realMount = registry.mountFor(paths[0]?.virtual ?? hint?.virtual ?? session.cwd)
+  const realMount = registry.tryMountFor(paths[0]?.virtual ?? hint?.virtual ?? session.cwd)
   const limitOverride = realMount?.commandLimits.get(cmdName) ?? null
 
   // The name plane's facts, bundled as one view: the attr overlay so

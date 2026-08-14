@@ -71,9 +71,8 @@ async def _apply_find_actions(
         ]
         ordered = sorted(deletable, key=lambda p: p.count("/"), reverse=True)
         for path in ordered:
-            try:
-                mount = registry.mount_for(path)
-            except ValueError:
+            mount = registry.try_mount_for(path)
+            if mount is None:
                 msg = f"find: cannot delete '{path}': no mount\n"
                 errors.append(msg.encode())
                 continue
@@ -104,9 +103,8 @@ async def _apply_find_actions(
     elif has_ls:
         output_matches = []
         for path in matches:
-            try:
-                mount = registry.mount_for(path)
-            except ValueError:
+            mount = registry.try_mount_for(path)
+            if mount is None:
                 errors.append(f"find: cannot ls '{path}': no mount\n".encode())
                 continue
             ps = PathSpec(

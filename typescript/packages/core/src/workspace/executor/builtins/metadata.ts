@@ -187,15 +187,10 @@ export function splitValueFlags(
   return { flags, values, operands, bad: null }
 }
 
-interface ResourceWithGlob {
-  glob(paths: readonly PathSpec[], prefix?: string): Promise<PathSpec[]>
-}
-
-function hasGlob(r: object): r is ResourceWithGlob {
-  return 'glob' in r && typeof (r as { glob?: unknown }).glob === 'function'
-}
-
-// Coerce operands to PathSpec and expand glob patterns per mount.
+// Coerce operands to PathSpec and expand glob patterns per mount. A
+// pattern spec only exists for a mounted word (classification gates
+// it), so the lookup propagates on a miss; a backend with no glob
+// keeps the literal spec.
 async function expandOperands(
   namespace: Namespace,
   operands: readonly (string | PathSpec)[],
@@ -205,7 +200,7 @@ async function expandOperands(
     const spec = item instanceof PathSpec ? item : PathSpec.fromStrPath(item)
     if (spec.pattern !== null) {
       const mount = namespace.mountFor(spec.virtual)
-      if (mount !== null && hasGlob(mount.resource)) {
+      if (mount.resource.glob !== undefined) {
         const prefix = rstripSlash(mount.prefix)
         const withPrefix = new PathSpec({
           virtual: spec.virtual,
@@ -224,9 +219,10 @@ async function expandOperands(
   return out
 }
 
-// Render the mirage read-only refusal for a metadata write.
+// Render the mirage read-only refusal for a metadata write. The path
+// was already routed to a mount, so the lookup cannot miss.
 function readOnlyError(cmd: string, namespace: Namespace, path: PathSpec): string {
-  const prefix = namespace.mountFor(path.virtual)?.prefix ?? '/'
+  const prefix = namespace.mountFor(path.virtual).prefix
   return `${cmd}: read-only mount at ${prefix}\n`
 }
 

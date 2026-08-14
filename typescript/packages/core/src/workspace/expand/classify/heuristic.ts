@@ -36,7 +36,7 @@ export function classifyWord(
   const wordHasGlob = hasGlob(word)
 
   if (word.startsWith('/')) {
-    const mount = registry.mountFor(word)
+    const mount = registry.tryMountFor(word)
     if (mount === null) return word
     let isDir = word.endsWith('/')
     const path = posixNormpath(word)

@@ -79,12 +79,7 @@ def _mk_registry(mounts, cwd_mount=None):
     reg.clis = CLIRegistry()
     reg.mounts = MagicMock(return_value=mounts)
 
-    def _mount_for(path):
-        if cwd_mount is not None:
-            return cwd_mount
-        raise ValueError(f"no mount: {path}")
-
-    reg.mount_for = MagicMock(side_effect=_mount_for)
+    reg.try_mount_for = MagicMock(return_value=cwd_mount)
     return reg
 
 

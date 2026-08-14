@@ -40,7 +40,7 @@ def _mock_registry(resolve_result=None):
 
     reg = MagicMock()
     reg.clis = CLIRegistry()
-    reg.mount_for = MagicMock(return_value=mount)
+    reg.try_mount_for = MagicMock(return_value=mount)
     reg.mounts = MagicMock(return_value=[mount])
     return reg
 
@@ -172,7 +172,7 @@ def test_mixed_text_and_pathspec():
 
 def test_resolve_error_returns_original_pathspec():
     reg = _mock_registry()
-    reg.mount_for = MagicMock(side_effect=ValueError("no mount"))
+    reg.try_mount_for = MagicMock(return_value=None)
     glob_ps = PathSpec(
         resource_path="unknown/*.txt",
         virtual="/unknown/*.txt",
