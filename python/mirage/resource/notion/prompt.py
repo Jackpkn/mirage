@@ -22,22 +22,31 @@ PROMPT = """\
   databases/
     <database-title>__<database-id>/
       database.json
-      <row-page-title>__<page-id>/
-        page.json
+      <data-source-title>__<data-source-id>/
+        data_source.json
+        <row-page-title>__<page-id>/
+          page.json
   Hierarchical page tree plus shared databases. cat page.json shows
   metadata, the page body rendered as markdown, and raw blocks (nested
-  blocks under "children"). cat database.json shows the database metadata
-  and its typed property schema (not the rows); ls the database dir to
-  list row pages.
+  blocks under "children"). A database is a container plus one or more
+  data sources: database.json holds the container's identity and its
+  data_sources stubs, while data_source.json holds the typed property
+  schema (not the rows). ls a data source dir to list its row pages.
 
   Titles are sanitized; don't construct paths, ls the parent dir.
-  Use the <page-id>/<database-id> from a path segment as the --page,
-  --block, or --datasource value in ntn CLI commands (ntn --help)."""
+  ntn takes ids as positional operands, not flags: ntn pages get
+  <page-id>, ntn datasources query <data-source-id>, ntn datasources
+  resolve <database-id>."""
 
 WRITE_PROMPT = """\
   Writes go through the ntn CLI if installed:
-    ntn pages create --json \
-'{"parent":{"page_id":"..."},\
-"properties":{"title":[{"text":{"content":"Title"}}]}}'
-    ntn blocks append --block <block-id> --json '{"children":[...]}'
-  See ntn --help for every verb (pages, blocks, comments, search)."""
+    ntn pages create --parent data-source:<data-source-id> \
+--content '# Title'
+    ntn pages edit <page-id> --content '## Notes'
+    ntn pages trash <page-id> --yes
+  --parent takes page:<id>, database:<id> or data-source:<id>, and
+  --content also reads stdin. Blocks, comments and search have no typed
+  verb; reach them through ntn api:
+    ntn api v1/blocks/<block-id>/children -X PATCH \
+-d '{"children":[...]}'
+  See ntn --help: api, auth, datasources, pages, whoami."""

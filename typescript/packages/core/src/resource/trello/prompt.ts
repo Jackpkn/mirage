@@ -19,6 +19,10 @@ export const TRELLO_PROMPT = `{prefix}
       boards/
         <board-name>__<board-id>/
           board.json
+          members/
+            <full-name>__<member-id>.json
+          labels/
+            <label-name>__<label-id>.json
           lists/
             <list-name>__<list-id>/
               list.json
