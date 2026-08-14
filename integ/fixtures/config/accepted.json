@@ -92,6 +92,20 @@
       }
     },
     {
+      "name": "clis entry: the cli form takes a file reference",
+      "config": {
+        "mounts": { "/d": { "resource": "ram" } },
+        "clis": { "tally": { "cli": "./cli/tally.py:TALLY", "config": { "unit": "kg" } } }
+      }
+    },
+    {
+      "name": "clis entry: the cli form takes a module reference",
+      "config": {
+        "mounts": { "/d": { "resource": "ram" } },
+        "clis": { "jira": { "cli": "my_clis:JIRA" } }
+      }
+    },
+    {
       "name": "console block: ram form",
       "config": {
         "mounts": { "/d": { "resource": "ram" } },
