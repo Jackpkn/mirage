@@ -24,6 +24,7 @@ import uuid  # noqa: E402
 from mirage import MountMode, Workspace  # noqa: E402
 from mirage.accessor.s3 import S3Config  # noqa: E402
 from mirage.resource.ram import RAMResource  # noqa: E402
+from mirage.workspace.session.state import seed_var  # noqa: E402
 from mirage.workspace.session.store import SessionStore  # noqa: E402
 from mirage.workspace.store.redis import RedisWorkspaceStateStore  # noqa: E402
 from mirage.workspace.store.s3 import S3WorkspaceStateStore  # noqa: E402
@@ -89,7 +90,7 @@ async def write(prefix: str) -> None:
     check("py write: symlink", result.exit_code == 0)
     ws.create_session("narrow", mounts={"/data": "read"})
     shared = ws.create_session("shared")
-    shared.env["ORIGIN"] = "py"
+    seed_var(shared, "ORIGIN", "py")
     await ws.flush_sessions()
     check("py write: shared session at generation 1", shared.generation == 1,
           f"got {shared.generation}")
@@ -141,7 +142,7 @@ async def read(prefix: str) -> None:
     check("py read: shared session hydrated",
           shared.env.get("ORIGIN") == "ts" and base >= 1,
           f"got env={shared.env!r} generation={base}")
-    shared.env["REPLY"] = "py"
+    seed_var(shared, "REPLY", "py")
     await ws.flush_sessions()
     sess_store = store.sessions(WORKSPACE_ID)
     entries = await sess_store.load()
@@ -156,7 +157,7 @@ async def read(prefix: str) -> None:
     ahead = dict(entries["shared"])
     ahead["generation"] = base + 5
     await sess_store.set("shared", ahead)
-    shared.env["AGAIN"] = "py"
+    seed_var(shared, "AGAIN", "py")
     await ws.flush_sessions()
     entries = await sess_store.load()
     check(

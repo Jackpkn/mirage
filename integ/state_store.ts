@@ -13,6 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { MountMode, RAMResource, type SessionStore } from '@struktoai/mirage-core'
+import { seedVar } from '@struktoai/mirage-core/workspace/session/state'
 import { RedisWorkspaceStateStore, S3WorkspaceStateStore, Workspace } from '@struktoai/mirage-node'
 
 const REDIS_URL = process.env.REDIS_URL ?? 'redis://localhost:6379/0'
@@ -74,7 +75,7 @@ async function write(prefix: string): Promise<void> {
   check('ts write: symlink', link.exitCode === 0)
   ws.createSession('narrow', { mounts: { '/data': 'read' } })
   const shared = ws.createSession('shared')
-  shared.env.ORIGIN = 'ts'
+  seedVar(shared, 'ORIGIN', 'ts')
   await ws.flushSessions()
   check(
     'ts write: shared session at generation 1',
@@ -139,7 +140,7 @@ async function read(prefix: string): Promise<void> {
     shared.env.ORIGIN === 'py' && base >= 1,
     `got env=${JSON.stringify(shared.env)} generation=${String(base)}`,
   )
-  shared.env.REPLY = 'ts'
+  seedVar(shared, 'REPLY', 'ts')
   await ws.flushSessions()
   const sessStore = store.sessions(WORKSPACE_ID)
   const bumped = (await sessStore.load()).get('shared')
@@ -155,7 +156,7 @@ async function read(prefix: string): Promise<void> {
   // A third writer advances the record behind our back; the next flush
   // must adopt its generation and land serialized on top.
   await sessStore.set('shared', { ...(bumped ?? {}), generation: base + 5 })
-  shared.env.AGAIN = 'ts'
+  seedVar(shared, 'AGAIN', 'ts')
   await ws.flushSessions()
   const final = (await sessStore.load()).get('shared')
   const finalEnv = (final?.env ?? {}) as Record<string, string>

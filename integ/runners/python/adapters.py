@@ -2293,7 +2293,11 @@ async def open_target(
     # (ntn's --notion-version off NOTION_API_VERSION) behaves differently
     # with and without it, so the conformance runner passes the same map
     # to the real binary and the comparison stays like for like.
-    ws.env.update(target.get("env", {}))
+    # Through the setter, not into the mapping: `ws.env` is a read-only
+    # projection of the variable records, and a target's declared
+    # environment is exported by definition -- a CLI reads it as a
+    # process environment, which carries exported names only.
+    ws.env = {**ws.env, **target.get("env", {})}
     return ws, functools.partial(teardown_target, [ws], cleanups, service)
 
 
@@ -2316,8 +2320,8 @@ async def open_consistency(
     # Same rule as open_target: a target's declared environment reaches
     # every workspace a case can run against, or a consistency scenario
     # would silently run under a different one.
-    read_ws.env.update(target.get("env", {}))
-    shadow_ws.env.update(target.get("env", {}))
+    read_ws.env = {**read_ws.env, **target.get("env", {})}
+    shadow_ws.env = {**shadow_ws.env, **target.get("env", {})}
     return (
         read_ws,
         functools.partial(mutate_write, shadow_ws),

@@ -1,8 +1,8 @@
 {
   "cases": [
     {
-      "id": "opt_set_dashdash_positionals",
-      "seq": 502218,
+      "id": "opt_noclobber_refuses_overwrite",
+      "seq": 502800,
       "targets": [
         "ram",
         "disk",
@@ -27,16 +27,50 @@
         "gdrive-folder",
         "box"
       ],
-      "command": "set -- pa pb pc; echo $2 $#; set --",
+      "command": "echo a > /data/zqs1.txt; (set -C; echo b > /data/zqs1.txt); echo rc=$?; cat /data/zqs1.txt",
       "expect": {
         "exit": 0,
-        "stdout": "pb 3\n",
+        "stdout": "rc=1\na\n",
+        "stderr": "/data/zqs1.txt: cannot overwrite existing file\n"
+      }
+    },
+    {
+      "id": "opt_noclobber_pipe_override_writes",
+      "seq": 502801,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "echo a > /data/zqs2.txt; (set -C; echo b >| /data/zqs2.txt); echo rc=$?; cat /data/zqs2.txt",
+      "expect": {
+        "exit": 0,
+        "stdout": "rc=0\nb\n",
         "stderr": ""
       }
     },
     {
-      "id": "opt_set_combined_flags_ok",
-      "seq": 502219,
+      "id": "opt_noclobber_append_allowed",
+      "seq": 502802,
       "targets": [
         "ram",
         "disk",
@@ -61,16 +95,16 @@
         "gdrive-folder",
         "box"
       ],
-      "command": "(set -eu; echo ok)",
+      "command": "echo a > /data/zqs3.txt; (set -C; echo b >> /data/zqs3.txt); echo rc=$?; cat /data/zqs3.txt",
       "expect": {
         "exit": 0,
-        "stdout": "ok\n",
+        "stdout": "rc=0\na\nb\n",
         "stderr": ""
       }
     },
     {
-      "id": "opt_set_bare_lists_vars",
-      "seq": 502751,
+      "id": "opt_noclobber_new_target_allowed",
+      "seq": 502803,
       "targets": [
         "ram",
         "disk",
@@ -95,16 +129,16 @@
         "gdrive-folder",
         "box"
       ],
-      "command": "zqv7=1; set | grep -c '^zqv7='",
+      "command": "(set -C; echo n > /data/zqs4.txt); echo rc=$?; cat /data/zqs4.txt",
       "expect": {
         "exit": 0,
-        "stdout": "1\n",
+        "stdout": "rc=0\nn\n",
         "stderr": ""
       }
     },
     {
-      "id": "opt_set_o_lists_option_state",
-      "seq": 502816,
+      "id": "opt_noclobber_long_name_same_option",
+      "seq": 502804,
       "targets": [
         "ram",
         "disk",
@@ -129,16 +163,16 @@
         "gdrive-folder",
         "box"
       ],
-      "command": "set -o | grep noclobber",
+      "command": "echo a > /data/zqs5.txt; (set -o noclobber; echo b > /data/zqs5.txt); echo rc=$?",
       "expect": {
         "exit": 0,
-        "stdout": "noclobber      \toff\n",
-        "stderr": ""
+        "stdout": "rc=1\n",
+        "stderr": "/data/zqs5.txt: cannot overwrite existing file\n"
       }
     },
     {
-      "id": "opt_set_plus_o_is_re_readable",
-      "seq": 502817,
+      "id": "opt_noclobber_directory_wording",
+      "seq": 502805,
       "targets": [
         "ram",
         "disk",
@@ -163,10 +197,44 @@
         "gdrive-folder",
         "box"
       ],
-      "command": "set +o | grep -c '^set [-+]o noclobber$'",
+      "command": "mkdir -p /data/zqsd; (set -C; echo b > /data/zqsd); echo rc=$?",
       "expect": {
         "exit": 0,
-        "stdout": "1\n",
+        "stdout": "rc=1\n",
+        "stderr": "/data/zqsd: Is a directory\n"
+      }
+    },
+    {
+      "id": "opt_noclobber_off_by_default",
+      "seq": 502806,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "echo a > /data/zqs6.txt; echo b > /data/zqs6.txt; echo rc=$?; cat /data/zqs6.txt",
+      "expect": {
+        "exit": 0,
+        "stdout": "rc=0\nb\n",
         "stderr": ""
       }
     }
