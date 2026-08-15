@@ -12,7 +12,8 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { type CommandIO, rangeOf } from '@struktoai/mirage-core'
+import { rangeOf } from '@struktoai/mirage-core/commands/builtin/generic_bind/index'
+import type { CommandIO } from '@struktoai/mirage-core/commands/builtin/generic_bind/index'
 import type { HfAccessor } from '../../../accessor/hf.ts'
 import { SCOPE_ERROR } from '../../../core/hf/constants.ts'
 import { create as hfCreate } from '../../../core/hf/create.ts'

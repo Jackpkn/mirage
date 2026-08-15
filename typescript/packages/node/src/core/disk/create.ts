@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import type { DiskAccessor } from '../../accessor/disk.ts'
-import type { PathSpec } from '@struktoai/mirage-core'
+import type { PathSpec } from '@struktoai/mirage-core/types'
 import { writeBytes } from './write.ts'
 
 export function create(accessor: DiskAccessor, path: PathSpec): Promise<void> {

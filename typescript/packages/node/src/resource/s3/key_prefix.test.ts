@@ -1,4 +1,6 @@
-import { PathSpec, normalizeKeyPrefix, stripSlash } from '@struktoai/mirage-core'
+import { normalizeKeyPrefix } from '@struktoai/mirage-core/resource/s3/config'
+import { PathSpec } from '@struktoai/mirage-core/types'
+import { stripSlash } from '@struktoai/mirage-core/utils/slash'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { S3Resource } from './s3.ts'
 import { installS3Mock, S3MockStore, type S3Mock } from './mock.ts'

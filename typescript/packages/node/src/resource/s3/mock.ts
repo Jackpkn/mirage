@@ -24,7 +24,8 @@ import {
   CopyObjectCommand,
 } from '@aws-sdk/client-s3'
 import { createHash } from 'node:crypto'
-import { compareCodePoints, lstripSlash } from '@struktoai/mirage-core'
+import { lstripSlash } from '@struktoai/mirage-core/utils/slash'
+import { compareCodePoints } from '@struktoai/mirage-core/utils/sort'
 
 const LAST_MODIFIED = new Date('2026-03-31T00:00:00Z')
 

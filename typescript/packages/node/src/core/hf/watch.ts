@@ -12,7 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { ListingDeltaHook, type DeltaHook } from '@struktoai/mirage-core'
+import { type DeltaHook, ListingDeltaHook } from '@struktoai/mirage-core/watch/index'
 import type { HfAccessor } from '../../accessor/hf.ts'
 import { OpendalWalk } from '../opendal/watch.ts'
 

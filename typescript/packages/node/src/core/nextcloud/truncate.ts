@@ -1,4 +1,7 @@
-import { ResourceName, invalidateAfterWrite, record, type PathSpec } from '@struktoai/mirage-core'
+import { invalidateAfterWrite } from '@struktoai/mirage-core/cache/context'
+import { record } from '@struktoai/mirage-core/observe/context'
+import { ResourceName } from '@struktoai/mirage-core/types'
+import type { PathSpec } from '@struktoai/mirage-core/types'
 import type { NextcloudAccessor } from '../../accessor/nextcloud.ts'
 import { isNotFound, nextcloudKey } from './util.ts'
 

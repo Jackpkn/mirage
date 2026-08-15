@@ -15,6 +15,8 @@
 export {
   normalizeGoogleConfig as normalizeGSlidesConfig,
   redactGoogleConfig as redactGSlidesConfig,
-  type GoogleConfig as GSlidesConfig,
-  type GoogleConfigRedacted as GSlidesConfigRedacted,
-} from '@struktoai/mirage-core'
+} from '@struktoai/mirage-core/core/google/config'
+export type {
+  GoogleConfig as GSlidesConfig,
+  GoogleConfigRedacted as GSlidesConfigRedacted,
+} from '@struktoai/mirage-core/core/google/config'

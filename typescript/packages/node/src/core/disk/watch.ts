@@ -12,14 +12,13 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import { type PathSpec, type WalkEntry } from '@struktoai/mirage-core/types'
+import { mountPrefixOf } from '@struktoai/mirage-core/utils/key_prefix'
 import {
-  ListingDeltaHook,
-  mountPrefixOf,
-  statFingerprint,
   type DeltaHook,
-  type PathSpec,
-  type WalkEntry,
-} from '@struktoai/mirage-core'
+  ListingDeltaHook,
+  statFingerprint,
+} from '@struktoai/mirage-core/watch/index'
 import { lstat, readdir } from 'node:fs/promises'
 import path from 'node:path'
 import type { DiskAccessor } from '../../accessor/disk.ts'

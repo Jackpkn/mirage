@@ -12,7 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { FileChangeKind, PathSpec, type WalkEntry } from '@struktoai/mirage-core'
+import { FileChangeKind, PathSpec, type WalkEntry } from '@struktoai/mirage-core/types'
 import { chmod, mkdtemp, mkdir, rm, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'

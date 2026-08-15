@@ -12,7 +12,9 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { newWorkspaceId, WorkspaceRunner, type Workspace } from '@struktoai/mirage-node'
+import { newWorkspaceId } from '@struktoai/mirage-core/utils/ids'
+import { WorkspaceRunner } from '@struktoai/mirage-core/workspace/runner'
+import type { Workspace } from '@struktoai/mirage-node'
 
 export class WorkspaceEntry {
   readonly id: string

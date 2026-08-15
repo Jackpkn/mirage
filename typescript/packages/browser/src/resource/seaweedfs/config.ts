@@ -12,13 +12,8 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import {
-  redactConfigWithSchema,
-  type ConfigOf,
-  type RedactedConfig,
-  secretSchema,
-  z,
-} from '@struktoai/mirage-core'
+import { redactConfigWithSchema, secretSchema, z } from '@struktoai/mirage-core/resource/secrets'
+import type { ConfigOf, RedactedConfig } from '@struktoai/mirage-core/resource/secrets'
 import type { S3BrowserPresignedUrlProvider, S3Config } from '../s3/config.ts'
 
 const SeaweedFSConfigSchema = z.object({

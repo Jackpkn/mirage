@@ -1,4 +1,4 @@
-import { type FileStat, type PathSpec } from '@struktoai/mirage-core'
+import type { FileStat, PathSpec } from '@struktoai/mirage-core/types'
 import type { NextcloudAccessor } from '../../../accessor/nextcloud.ts'
 import { stat } from '../stat.ts'
 

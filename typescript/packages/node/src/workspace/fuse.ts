@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { rmdirSync } from 'node:fs'
-import type { Workspace } from '@struktoai/mirage-core'
+import type { Workspace } from '@struktoai/mirage-core/workspace/workspace'
 import { forceUnmount, mount, type FuseHandle, type MountOptions } from '../fuse/mount.ts'
 
 const SIGNALS = ['SIGINT', 'SIGTERM', 'SIGHUP'] as const

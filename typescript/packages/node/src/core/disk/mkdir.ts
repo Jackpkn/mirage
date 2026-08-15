@@ -14,12 +14,9 @@
 
 import type { DiskAccessor } from '../../accessor/disk.ts'
 import { mkdir as fsMkdir } from 'node:fs/promises'
-import {
-  type PathSpec,
-  invalidateAfterWrite,
-  invalidateAncestors,
-  norm,
-} from '@struktoai/mirage-core'
+import { invalidateAfterWrite, invalidateAncestors } from '@struktoai/mirage-core/cache/context'
+import type { PathSpec } from '@struktoai/mirage-core/types'
+import { norm } from '@struktoai/mirage-core/utils/path'
 import { mkdirComponentError } from './dest.ts'
 import { diskError } from './errors.ts'
 import { resolveSafe } from './utils.ts'

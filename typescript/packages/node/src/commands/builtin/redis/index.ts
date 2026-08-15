@@ -12,7 +12,9 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { type RegisteredCommand, ResourceName, makeGenericCommands } from '@struktoai/mirage-core'
+import { makeGenericCommands } from '@struktoai/mirage-core/commands/builtin/generic_bind/index'
+import type { RegisteredCommand } from '@struktoai/mirage-core/commands/config'
+import { ResourceName } from '@struktoai/mirage-core/types'
 import type { RedisAccessor } from '../../../accessor/redis.ts'
 import { REDIS_IO } from './io.ts'
 

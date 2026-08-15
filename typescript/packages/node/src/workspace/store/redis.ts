@@ -13,14 +13,14 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import type { RedisClientType } from 'redis'
-import {
-  WorkspaceStateStore,
-  type NamespaceStore,
-  type ObserverStore,
-  type SessionStore,
-  type WorkspaceFields,
-  type WorkspaceStateStoreOverrides,
-} from '@struktoai/mirage-core'
+import type { ObserverStore } from '@struktoai/mirage-core/observe/store'
+import type { NamespaceStore } from '@struktoai/mirage-core/workspace/mount/namespace/store'
+import type { SessionStore } from '@struktoai/mirage-core/workspace/session/store'
+import { WorkspaceStateStore } from '@struktoai/mirage-core/workspace/store/base'
+import type {
+  WorkspaceFields,
+  WorkspaceStateStoreOverrides,
+} from '@struktoai/mirage-core/workspace/store/base'
 import { RedisObserverStore } from '../../observe/redis_store.ts'
 import { loadOptionalPeer } from '../../optional_peer.ts'
 import { RedisNamespaceStore } from '../namespace/redis.ts'

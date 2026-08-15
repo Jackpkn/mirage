@@ -13,10 +13,10 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import type { DiskAccessor } from '../../../accessor/disk.ts'
-import type { PathSpec } from '@struktoai/mirage-core'
+import type { PathSpec } from '@struktoai/mirage-core/types'
+import { compareCodePoints } from '@struktoai/mirage-core/utils/sort'
 import { norm, resolveSafe } from '../utils.ts'
 import { walkAll } from './walk.ts'
-import { compareCodePoints } from '@struktoai/mirage-core'
 
 export async function entries(
   accessor: DiskAccessor,

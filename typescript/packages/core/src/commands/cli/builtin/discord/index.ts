@@ -13,7 +13,6 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { DiscordConfigSchema } from '../../../../core/discord/config.ts'
-import { registerCliSpec } from '../../specs.ts'
 import { CLISpec } from '../../types.ts'
 import { Option } from '../../../spec/types.ts'
 import { deleteVerb } from './delete.ts'
@@ -159,5 +158,3 @@ export const DISCORD = new CLISpec({
     }),
   ],
 })
-
-registerCliSpec(DISCORD)

@@ -12,28 +12,25 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import {
-  BaseResource,
-  DROPBOX_COMMANDS,
-  DROPBOX_PROMPT,
-  DROPBOX_OPS,
-  DropboxAccessor,
-  DropboxTokenManager,
-  PathSpec,
-  ResourceName,
-  dropboxRead,
-  dropboxReaddir,
-  makeResolveGlob,
-  dropboxStat,
-  mountKey,
-  mountPrefixOf,
-  type FileStat,
-  type RegisteredCommand,
-  type RegisteredOp,
-  type Resource,
-} from '@struktoai/mirage-core'
+import { DropboxAccessor } from '@struktoai/mirage-core/accessor/dropbox'
+import { DROPBOX_COMMANDS } from '@struktoai/mirage-core/commands/builtin/dropbox/index'
+import { makeResolveGlob } from '@struktoai/mirage-core/commands/builtin/generic_bind/index'
+import type { RegisteredCommand } from '@struktoai/mirage-core/commands/config'
+import { DropboxTokenManager } from '@struktoai/mirage-core/core/dropbox/_client'
+import { read as dropboxRead } from '@struktoai/mirage-core/core/dropbox/read'
+import { readdir as dropboxReaddir } from '@struktoai/mirage-core/core/dropbox/readdir'
+import { stat as dropboxStat } from '@struktoai/mirage-core/core/dropbox/stat'
+import { DROPBOX_OPS } from '@struktoai/mirage-core/ops/dropbox/index'
+import type { RegisteredOp } from '@struktoai/mirage-core/ops/registry'
+import { BaseResource } from '@struktoai/mirage-core/resource/base'
+import type { Resource } from '@struktoai/mirage-core/resource/base'
+import { DROPBOX_PROMPT } from '@struktoai/mirage-core/resource/dropbox/prompt'
+import { PathSpec, ResourceName } from '@struktoai/mirage-core/types'
+import type { FileStat } from '@struktoai/mirage-core/types'
+import { mountKey, mountPrefixOf } from '@struktoai/mirage-core/utils/key_prefix'
 import { redactDropboxConfig, type DropboxConfig, type DropboxConfigRedacted } from './config.ts'
-import { dropboxBuildDeltaHook as buildDeltaHook, type DeltaHook } from '@struktoai/mirage-core'
+import { buildDeltaHook } from '@struktoai/mirage-core/core/dropbox/watch'
+import { type DeltaHook } from '@struktoai/mirage-core/watch/index'
 
 const dropboxResolveGlob = makeResolveGlob(dropboxReaddir)
 

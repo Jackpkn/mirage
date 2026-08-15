@@ -12,9 +12,11 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { invalidateAfterUnlink, record, stripSlash, type PathSpec } from '@struktoai/mirage-core'
+import { invalidateAfterUnlink, invalidateAncestors } from '@struktoai/mirage-core/cache/context'
+import { record } from '@struktoai/mirage-core/observe/context'
+import type { PathSpec } from '@struktoai/mirage-core/types'
+import { stripSlash } from '@struktoai/mirage-core/utils/slash'
 import type { HfAccessor } from '../../accessor/hf.ts'
-import { invalidateAncestors } from '@struktoai/mirage-core'
 import { rawPathOf } from './util.ts'
 
 export async function rmR(accessor: HfAccessor, path: PathSpec): Promise<void> {

@@ -12,16 +12,11 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import {
-  type ConfigOf,
-  normalizeFields,
-  redactConfigWithSchema,
-  S3ConfigSchema as S3CoreConfigSchema,
-  type S3Config as S3CoreConfig,
-  type RedactedConfig,
-  secretStr,
-  z,
-} from '@struktoai/mirage-core'
+import { S3ConfigSchema as S3CoreConfigSchema } from '@struktoai/mirage-core/resource/s3/config'
+import type { S3Config as S3CoreConfig } from '@struktoai/mirage-core/resource/s3/config'
+import { redactConfigWithSchema, secretStr, z } from '@struktoai/mirage-core/resource/secrets'
+import type { ConfigOf, RedactedConfig } from '@struktoai/mirage-core/resource/secrets'
+import { normalizeFields } from '@struktoai/mirage-core/utils/normalize'
 
 export interface S3Config extends S3CoreConfig {
   profile?: string

@@ -14,7 +14,7 @@
 
 import type { DiskAccessor } from '../../accessor/disk.ts'
 import { access } from 'node:fs/promises'
-import type { PathSpec } from '@struktoai/mirage-core'
+import type { PathSpec } from '@struktoai/mirage-core/types'
 import { resolveSafe } from './utils.ts'
 
 export async function exists(accessor: DiskAccessor, path: PathSpec): Promise<boolean> {

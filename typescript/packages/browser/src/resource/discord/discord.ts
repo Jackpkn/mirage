@@ -12,27 +12,26 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { mountKey, mountPrefixOf } from '@struktoai/mirage-core'
+import { DiscordAccessor } from '@struktoai/mirage-core/accessor/discord'
+import { RAMIndexCacheStore } from '@struktoai/mirage-core/cache/index/ram'
+import type { IndexCacheStore } from '@struktoai/mirage-core/cache/index/store'
+import { DISCORD_COMMANDS } from '@struktoai/mirage-core/commands/builtin/discord/index'
+import { makeResolveGlob } from '@struktoai/mirage-core/commands/builtin/generic_bind/index'
+import type { RegisteredCommand } from '@struktoai/mirage-core/commands/config'
+import { BrowserDiscordTransport } from '@struktoai/mirage-core/core/discord/_client_browser'
+import { read as discordRead } from '@struktoai/mirage-core/core/discord/read'
+import { readdir as discordReaddir } from '@struktoai/mirage-core/core/discord/readdir'
+import { stat as discordStat } from '@struktoai/mirage-core/core/discord/stat'
+import { DISCORD_OPS } from '@struktoai/mirage-core/ops/discord/index'
+import type { RegisteredOp } from '@struktoai/mirage-core/ops/registry'
+import type { Resource } from '@struktoai/mirage-core/resource/base'
 import {
-  BrowserDiscordTransport,
-  DISCORD_COMMANDS,
   DISCORD_PROMPT,
-  DISCORD_OPS,
   DISCORD_WRITE_PROMPT,
-  DiscordAccessor,
-  type FileStat,
-  type IndexCacheStore,
-  PathSpec,
-  RAMIndexCacheStore,
-  type RegisteredCommand,
-  type RegisteredOp,
-  type Resource,
-  ResourceName,
-  discordRead,
-  discordReaddir,
-  discordStat,
-  makeResolveGlob,
-} from '@struktoai/mirage-core'
+} from '@struktoai/mirage-core/resource/discord/prompt'
+import { PathSpec, ResourceName } from '@struktoai/mirage-core/types'
+import type { FileStat } from '@struktoai/mirage-core/types'
+import { mountKey, mountPrefixOf } from '@struktoai/mirage-core/utils/key_prefix'
 import { redactDiscordConfig, type DiscordConfig, type DiscordConfigRedacted } from './config.ts'
 
 const resolveDiscordGlob = makeResolveGlob(discordReaddir)

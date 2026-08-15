@@ -12,9 +12,9 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { mountKey } from '@struktoai/mirage-core'
+import { PathSpec } from '@struktoai/mirage-core/types'
+import { mountKey } from '@struktoai/mirage-core/utils/key_prefix'
 import { describe, expect, it } from 'vitest'
-import { PathSpec } from '@struktoai/mirage-core'
 import { isDirectoryAttrs, isFileAttrs, isNoSuchFile, joinRoot, stripPrefix } from './utils.ts'
 
 describe('stripPrefix', () => {

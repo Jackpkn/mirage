@@ -17,10 +17,19 @@ import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import * as Browser from '@struktoai/mirage-browser'
-import * as Core from '@struktoai/mirage-core'
 import * as Node from '@struktoai/mirage-node'
 
-import type { CommandSpec, Operand, Option, RegisteredCommand } from '@struktoai/mirage-core'
+import {
+  CommandSpec as SpecClass,
+  Operand as OperandClass,
+  Option as OptionClass,
+  SPECS,
+} from '@struktoai/mirage-core/commands/spec/index'
+import { DEFAULT_MAX_DU_ENTRIES } from '@struktoai/mirage-core/commands/builtin/generic/du'
+import { DEFAULT_MAX_GLOB_MATCHES } from '@struktoai/mirage-core/utils/glob_walk'
+
+import type { CommandSpec, Operand, Option } from '@struktoai/mirage-core/commands/spec/index'
+import type { RegisteredCommand } from '@struktoai/mirage-core/commands/config'
 
 import {
   type Capabilities,
@@ -30,8 +39,6 @@ import {
   commandIoFacts,
   registryClasses,
 } from './resource_facts.ts'
-
-const { CommandSpec: SpecClass, Operand: OperandClass, Option: OptionClass } = Core
 
 const __dirname = resolve(fileURLToPath(import.meta.url), '..')
 const SPEC_ROOT = resolve(__dirname, '..', '..', 'spec', 'typescript')
@@ -50,9 +57,9 @@ const UNEXPORTED_COMMAND_GROUPS: ReadonlySet<string> = new Set([
 
 type ModuleBag = Record<string, unknown>
 
-function declaredCommandGroups(pkg: string): string[] {
+function commandGroupDirs(pkg: string): { dir: string; groups: string[] }[] {
   const root = resolve(PACKAGES, pkg, 'src', 'commands', 'builtin')
-  const names: string[] = []
+  const out: { dir: string; groups: string[] }[] = []
   for (const entry of readdirSync(root, { withFileTypes: true })) {
     if (!entry.isDirectory()) continue
     let source: string
@@ -65,17 +72,37 @@ function declaredCommandGroups(pkg: string): string[] {
       if ((err as NodeJS.ErrnoException).code === 'ENOENT') continue
       throw err
     }
-    for (const m of source.matchAll(/^export const ([A-Z0-9_]+_COMMANDS)\b/gm)) {
-      names.push(m[1] as string)
-    }
+    const groups = [...source.matchAll(/^export const ([A-Z0-9_]+_COMMANDS)\b/gm)].map(
+      (m) => m[1] as string,
+    )
+    if (groups.length > 0) out.push({ dir: entry.name, groups })
   }
-  return names
+  return out
 }
 
-// The registry below can only see command groups the package index re-exports.
-// A backend that defines its commands but forgets the re-export silently drops
-// out of the spec dump (and out of the cross-language parity check with it),
-// so fail loudly instead of emitting a quietly incomplete spec.
+function declaredCommandGroups(pkg: string): string[] {
+  return commandGroupDirs(pkg).flatMap((d) => d.groups)
+}
+
+// core ships as a module tree, so its groups are read from the modules that
+// declare them rather than from whatever the package index happens to name.
+// Nothing can go missing here: the directory scan is the source of truth.
+async function coreCommandGroups(): Promise<ModuleBag> {
+  const bag: ModuleBag = {}
+  for (const { dir } of commandGroupDirs('core')) {
+    const mod = (await import(`@struktoai/mirage-core/commands/builtin/${dir}/index`)) as ModuleBag
+    for (const [key, value] of Object.entries(mod)) {
+      if (key.endsWith('_COMMANDS')) bag[key] = value
+    }
+  }
+  return bag
+}
+
+// node and browser are still bundled behind a single entry, so their registry
+// can only see command groups the package index re-exports. A backend that
+// defines its commands but forgets the re-export silently drops out of the
+// spec dump (and out of the cross-language parity check with it), so fail
+// loudly instead of emitting a quietly incomplete spec.
 function assertGroupsReachable(pkgs: readonly string[], modules: ModuleBag[]): void {
   const reachable = new Set(modules.flatMap((m) => Object.keys(m)))
   const missing: string[] = []
@@ -307,13 +334,16 @@ function emitVariant(
   modules: ModuleBag[],
   knownResources: string[],
 ): void {
-  assertGroupsReachable(pkgs, modules)
+  // core is in `pkgs` because its source is scanned for capabilities and
+  // CommandIO facts, but only the runtime package is asserted reachable:
+  // core's groups came from the directory scan, which cannot miss one.
+  assertGroupsReachable([pkgs[pkgs.length - 1] as string], modules)
   const registry = collectRegistrations(modules)
   const outDir = resolve(SPEC_ROOT, name, 'general')
   mkdirSync(outDir, { recursive: true })
-  const cmdNames = Object.keys(Core.SPECS).sort()
+  const cmdNames = Object.keys(SPECS).sort()
   for (const cmd of cmdNames) {
-    const spec = Core.SPECS[cmd]
+    const spec = SPECS[cmd]
     const rcs = registry[cmd] ?? []
     const payload = serializeSpec(spec, rcs)
     writeFileSync(resolve(outDir, `${cmd}.json`), sortedStringify(payload) + '\n')
@@ -325,25 +355,21 @@ function emitVariant(
     registry,
     capabilitiesFor(pkgs, pkgs[pkgs.length - 1] as string),
     commandIoFacts(PACKAGES, pkgs, {
-      maxGlobMatches: Core.DEFAULT_MAX_GLOB_MATCHES,
-      maxDuEntries: Core.DEFAULT_MAX_DU_ENTRIES,
+      maxGlobMatches: DEFAULT_MAX_GLOB_MATCHES,
+      maxDuEntries: DEFAULT_MAX_DU_ENTRIES,
     }),
   )
 }
 
-function main(): void {
-  emitVariant(
-    'node',
-    ['core', 'node'],
-    [Core as unknown as ModuleBag, Node as unknown as ModuleBag],
-    Node.knownResources(),
-  )
+async function main(): Promise<void> {
+  const core = await coreCommandGroups()
+  emitVariant('node', ['core', 'node'], [core, Node as unknown as ModuleBag], Node.knownResources())
   emitVariant(
     'browser',
     ['core', 'browser'],
-    [Core as unknown as ModuleBag, Browser as unknown as ModuleBag],
+    [core, Browser as unknown as ModuleBag],
     Browser.knownResources(),
   )
 }
 
-main()
+await main()

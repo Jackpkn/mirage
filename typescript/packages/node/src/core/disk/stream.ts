@@ -14,7 +14,10 @@
 
 import type { DiskAccessor } from '../../accessor/disk.ts'
 import { createReadStream } from 'node:fs'
-import { enoent, type PathSpec, recordStream, ResourceName } from '@struktoai/mirage-core'
+import { recordStream } from '@struktoai/mirage-core/observe/context'
+import { ResourceName } from '@struktoai/mirage-core/types'
+import type { PathSpec } from '@struktoai/mirage-core/types'
+import { enoent } from '@struktoai/mirage-core/utils/errors'
 import { resolveSafe } from './utils.ts'
 
 export async function* stream(accessor: DiskAccessor, path: PathSpec): AsyncIterable<Uint8Array> {

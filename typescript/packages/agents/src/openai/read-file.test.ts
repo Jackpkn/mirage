@@ -1,5 +1,8 @@
 import { RunContext } from '@openai/agents'
-import { MountMode, OpsRegistry, RAMResource, Workspace } from '@struktoai/mirage-node'
+import { OpsRegistry } from '@struktoai/mirage-core/ops/registry'
+import { RAMResource } from '@struktoai/mirage-core/resource/ram/ram'
+import { MountMode } from '@struktoai/mirage-core/types'
+import { Workspace } from '@struktoai/mirage-node'
 import { describe, expect, it } from 'vitest'
 import { mirageReadFileTool, type MirageReadFileOutput } from './read-file.ts'
 

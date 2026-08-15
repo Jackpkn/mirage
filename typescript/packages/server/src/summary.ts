@@ -12,12 +12,10 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import {
-  HISTORY_PREFIX,
-  normMountPrefix,
-  type Resource,
-  type Workspace,
-} from '@struktoai/mirage-core'
+import type { Resource } from '@struktoai/mirage-core/resource/base'
+import { HISTORY_PREFIX } from '@struktoai/mirage-core/resource/history/history'
+import { normMountPrefix } from '@struktoai/mirage-core/workspace/snapshot/utils'
+import type { Workspace } from '@struktoai/mirage-core/workspace/workspace'
 import type { WorkspaceEntry } from './registry.ts'
 import type {
   MountSummary,

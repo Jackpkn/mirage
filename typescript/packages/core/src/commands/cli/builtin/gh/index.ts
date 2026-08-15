@@ -15,7 +15,6 @@
 import { GhConfigSchema } from '../../../../core/github/config.ts'
 import { ResourceName } from '../../../../types.ts'
 import { Operand, Option } from '../../../spec/types.ts'
-import { registerCliSpec } from '../../specs.ts'
 import { CLISpec } from '../../types.ts'
 import { api } from './api.ts'
 import { fork, rename, view } from './repo.ts'
@@ -108,5 +107,3 @@ export const GH = new CLISpec({
     }),
   ],
 })
-
-registerCliSpec(GH)

@@ -12,15 +12,14 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import { type PathSpec, type WalkEntry } from '@struktoai/mirage-core/types'
+import { mountPrefixOf } from '@struktoai/mirage-core/utils/key_prefix'
+import { stripSlash } from '@struktoai/mirage-core/utils/slash'
 import {
-  ListingDeltaHook,
-  mountPrefixOf,
-  statFingerprint,
-  stripSlash,
   type DeltaHook,
-  type PathSpec,
-  type WalkEntry,
-} from '@struktoai/mirage-core'
+  ListingDeltaHook,
+  statFingerprint,
+} from '@struktoai/mirage-core/watch/index'
 import type { FileEntryWithStats, SFTPWrapper } from 'ssh2'
 import type { SSHAccessor } from '../../accessor/ssh.ts'
 import { isNoSuchFile, joinRoot } from './utils.ts'

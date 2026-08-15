@@ -12,7 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import type { SandboxConfig } from '@struktoai/mirage-core'
+import type { SandboxConfig } from '@struktoai/mirage-core/runtime/sandbox/config'
 
 /** How to reach the user's live E2B sandbox. */
 export interface E2BConfig extends SandboxConfig {

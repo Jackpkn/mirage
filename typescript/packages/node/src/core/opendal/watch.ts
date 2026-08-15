@@ -12,13 +12,10 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import {
-  mountPrefixOf,
-  statFingerprint,
-  stripSlash,
-  type PathSpec,
-  type WalkEntry,
-} from '@struktoai/mirage-core'
+import { type PathSpec, type WalkEntry } from '@struktoai/mirage-core/types'
+import { mountPrefixOf } from '@struktoai/mirage-core/utils/key_prefix'
+import { stripSlash } from '@struktoai/mirage-core/utils/slash'
+import { statFingerprint } from '@struktoai/mirage-core/watch/index'
 import type { Metadata, Operator } from 'opendal'
 import { isNotFound } from '../nextcloud/util.ts'
 import type { OperatorAccessor } from './types.ts'

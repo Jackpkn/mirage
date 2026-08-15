@@ -57,7 +57,8 @@ vi.mock('./folders.ts', async () => {
   return { ...actual, listFolders: vi.fn(() => Promise.resolve(['INBOX'])) }
 })
 
-import { PathSpec, RAMIndexCacheStore } from '@struktoai/mirage-core'
+import { RAMIndexCacheStore } from '@struktoai/mirage-core/cache/index/ram'
+import { PathSpec } from '@struktoai/mirage-core/types'
 import type { EmailAccessor } from '../../accessor/email.ts'
 import { dateBucket, readdir } from './readdir.ts'
 import { messageJsonBytes } from './render.ts'

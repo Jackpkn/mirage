@@ -12,8 +12,10 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { mountKey } from '@struktoai/mirage-core'
-import { PathSpec, ResourceName, SLACK_COMMANDS, SLACK_OPS } from '@struktoai/mirage-core'
+import { SLACK_COMMANDS } from '@struktoai/mirage-core/commands/builtin/slack/index'
+import { SLACK_OPS } from '@struktoai/mirage-core/ops/slack/index'
+import { PathSpec, ResourceName } from '@struktoai/mirage-core/types'
+import { mountKey } from '@struktoai/mirage-core/utils/key_prefix'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { buildResource } from '../registry.ts'
 import { redactSlackConfig } from './config.ts'

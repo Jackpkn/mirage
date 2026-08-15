@@ -15,7 +15,7 @@
 import { readVersion, resolveRef, versionDiff } from './api.ts'
 import { toState, type AnyDict } from './stateTree.ts'
 import type { VersionStore } from './store.ts'
-import { compareCodePoints } from '@struktoai/mirage-core'
+import { compareCodePoints } from '@struktoai/mirage-core/utils/sort'
 
 interface DictDelta {
   added: AnyDict

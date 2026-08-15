@@ -12,13 +12,11 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import {
-  LookupStatus,
-  PathSpec,
-  RAMIndexCacheStore,
-  makeResolveGlob,
-  mountKey,
-} from '@struktoai/mirage-core'
+import { LookupStatus } from '@struktoai/mirage-core/cache/index/config'
+import { RAMIndexCacheStore } from '@struktoai/mirage-core/cache/index/ram'
+import { makeResolveGlob } from '@struktoai/mirage-core/commands/builtin/generic_bind/index'
+import { PathSpec } from '@struktoai/mirage-core/types'
+import { mountKey } from '@struktoai/mirage-core/utils/key_prefix'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { RedisAccessor } from '../../accessor/redis.ts'
 import { RedisStore } from '../../resource/redis/store.ts'

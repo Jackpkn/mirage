@@ -1,5 +1,6 @@
 import type { Operator } from 'opendal'
-import { Accessor, ResourceName } from '@struktoai/mirage-core'
+import { Accessor } from '@struktoai/mirage-core/accessor/index'
+import { ResourceName } from '@struktoai/mirage-core/types'
 import { loadOptionalPeer } from '../optional_peer.ts'
 import type { NextcloudConfig } from '../resource/nextcloud/config.ts'
 

@@ -14,7 +14,8 @@
 
 import { constants as osConstants } from 'node:os'
 
-import { classify, type FsCondition } from '@struktoai/mirage-core'
+import { classify } from '@struktoai/mirage-core/errors/index'
+import type { FsCondition } from '@struktoai/mirage-core/errors/index'
 
 // Positive POSIX errno values. FUSE callbacks want them negated; other
 // kernel interfaces (FSKit) want them positive, so the classification is

@@ -12,7 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import type { CommandIO } from '@struktoai/mirage-core'
+import type { CommandIO } from '@struktoai/mirage-core/commands/builtin/generic_bind/index'
 import type { OPFSAccessor } from '../../../accessor/opfs.ts'
 import { appendBytes as opfsAppend } from '../../../core/opfs/append.ts'
 import { SCOPE_ERROR } from '../../../core/opfs/constants.ts'

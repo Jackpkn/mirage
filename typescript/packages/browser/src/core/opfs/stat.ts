@@ -12,7 +12,9 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { FileStat, FileType, guessType, type PathSpec } from '@struktoai/mirage-core'
+import { FileStat, FileType } from '@struktoai/mirage-core/types'
+import type { PathSpec } from '@struktoai/mirage-core/types'
+import { guessType } from '@struktoai/mirage-core/utils/filetype'
 import type { OPFSAccessor } from '../../accessor/opfs.ts'
 import {
   destError,

@@ -12,28 +12,24 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { mountKey, mountPrefixOf } from '@struktoai/mirage-core'
-import {
-  type FileStat,
-  type IndexCacheStore,
-  MCPNotionTransport,
-  type MCPNotionTransportOptions,
-  NOTION_COMMANDS,
-  NOTION_PROMPT,
-  NOTION_OPS,
-  NOTION_WRITE_PROMPT,
-  NotionAccessor,
-  notionRead,
-  notionReaddir,
-  notionStat,
-  PathSpec,
-  RAMIndexCacheStore,
-  type RegisteredCommand,
-  type RegisteredOp,
-  type Resource,
-  ResourceName,
-  makeResolveGlob,
-} from '@struktoai/mirage-core'
+import { NotionAccessor } from '@struktoai/mirage-core/accessor/notion'
+import { RAMIndexCacheStore } from '@struktoai/mirage-core/cache/index/ram'
+import type { IndexCacheStore } from '@struktoai/mirage-core/cache/index/store'
+import { makeResolveGlob } from '@struktoai/mirage-core/commands/builtin/generic_bind/index'
+import { NOTION_COMMANDS } from '@struktoai/mirage-core/commands/builtin/notion/index'
+import type { RegisteredCommand } from '@struktoai/mirage-core/commands/config'
+import { MCPNotionTransport } from '@struktoai/mirage-core/core/notion/_client'
+import type { MCPNotionTransportOptions } from '@struktoai/mirage-core/core/notion/_client'
+import { read as notionRead } from '@struktoai/mirage-core/core/notion/read'
+import { readdir as notionReaddir } from '@struktoai/mirage-core/core/notion/readdir'
+import { stat as notionStat } from '@struktoai/mirage-core/core/notion/stat'
+import { NOTION_OPS } from '@struktoai/mirage-core/ops/notion/index'
+import type { RegisteredOp } from '@struktoai/mirage-core/ops/registry'
+import type { Resource } from '@struktoai/mirage-core/resource/base'
+import { NOTION_PROMPT, NOTION_WRITE_PROMPT } from '@struktoai/mirage-core/resource/notion/prompt'
+import { PathSpec, ResourceName } from '@struktoai/mirage-core/types'
+import type { FileStat } from '@struktoai/mirage-core/types'
+import { mountKey, mountPrefixOf } from '@struktoai/mirage-core/utils/key_prefix'
 import { redactNotionConfig, type NotionConfig, type NotionConfigRedacted } from './config.ts'
 
 const resolveNotionGlob = makeResolveGlob<NotionAccessor>(notionReaddir)

@@ -12,19 +12,14 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import {
-  BaseResource,
-  PathSpec,
-  makeResolveGlob,
-  mountKey,
-  mountPrefixOf,
-  type FileStat,
-  type FindOptions,
-  type RegisteredCommand,
-  type RegisteredOp,
-  type Resource,
-  type ResourceStateBase,
-} from '@struktoai/mirage-core'
+import { makeResolveGlob } from '@struktoai/mirage-core/commands/builtin/generic_bind/index'
+import type { RegisteredCommand } from '@struktoai/mirage-core/commands/config'
+import type { RegisteredOp } from '@struktoai/mirage-core/ops/registry'
+import { BaseResource } from '@struktoai/mirage-core/resource/base'
+import type { FindOptions, Resource, ResourceStateBase } from '@struktoai/mirage-core/resource/base'
+import { PathSpec } from '@struktoai/mirage-core/types'
+import type { FileStat } from '@struktoai/mirage-core/types'
+import { mountKey, mountPrefixOf } from '@struktoai/mirage-core/utils/key_prefix'
 import type { HfAccessor } from '../../accessor/hf.ts'
 import { HF_COMMANDS } from '../../commands/builtin/hf/index.ts'
 import { SCOPE_ERROR } from '../../core/hf/constants.ts'
@@ -40,7 +35,7 @@ import { rangeRead as rangeReadCore, stream as streamCore } from '../../core/hf/
 import { unlink as unlinkCore } from '../../core/hf/unlink.ts'
 import { write as writeCore } from '../../core/hf/write.ts'
 import { HF_OPS } from '../../ops/hf/index.ts'
-import type { DeltaHook } from '@struktoai/mirage-core'
+import { type DeltaHook } from '@struktoai/mirage-core/watch/index'
 import { buildDeltaHook } from '../../core/hf/watch.ts'
 
 const globCore = makeResolveGlob(readdirCore, SCOPE_ERROR)

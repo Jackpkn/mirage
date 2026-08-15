@@ -12,15 +12,13 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import type { IndexCacheStore, PathSpec } from '@struktoai/mirage-core'
-import {
-  enoent,
-  IndexEntry,
-  PathSpec as PathSpecCtor,
-  mountKey,
-  mountPrefixOf,
-  compareCodePoints,
-} from '@struktoai/mirage-core'
+import { IndexEntry } from '@struktoai/mirage-core/cache/index/config'
+import type { IndexCacheStore } from '@struktoai/mirage-core/cache/index/store'
+import { PathSpec as PathSpecCtor } from '@struktoai/mirage-core/types'
+import type { PathSpec } from '@struktoai/mirage-core/types'
+import { enoent } from '@struktoai/mirage-core/utils/errors'
+import { mountKey, mountPrefixOf } from '@struktoai/mirage-core/utils/key_prefix'
+import { compareCodePoints } from '@struktoai/mirage-core/utils/sort'
 import type { EmailAccessor } from '../../accessor/email.ts'
 import { fetchHeaders, listMessageUids, type FetchedMessage } from './_client.ts'
 import { listFolders } from './folders.ts'

@@ -1,4 +1,5 @@
-import { type CommandIO, rangeOf } from '@struktoai/mirage-core'
+import { rangeOf } from '@struktoai/mirage-core/commands/builtin/generic_bind/index'
+import type { CommandIO } from '@struktoai/mirage-core/commands/builtin/generic_bind/index'
 import type { NextcloudAccessor } from '../../../accessor/nextcloud.ts'
 import { SCOPE_ERROR } from '../../../core/nextcloud/constants.ts'
 import { copy } from '../../../core/nextcloud/copy.ts'

@@ -12,20 +12,15 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import {
-  BaseResource,
-  PathSpec,
-  ResourceName,
-  makeResolveGlob,
-  mountKey,
-  mountPrefixOf,
-  normalizeKeyPrefix,
-  type FileStat,
-  type FindOptions,
-  type RegisteredCommand,
-  type RegisteredOp,
-  type Resource,
-} from '@struktoai/mirage-core'
+import { makeResolveGlob } from '@struktoai/mirage-core/commands/builtin/generic_bind/index'
+import type { RegisteredCommand } from '@struktoai/mirage-core/commands/config'
+import type { RegisteredOp } from '@struktoai/mirage-core/ops/registry'
+import { BaseResource } from '@struktoai/mirage-core/resource/base'
+import type { FindOptions, Resource } from '@struktoai/mirage-core/resource/base'
+import { normalizeKeyPrefix } from '@struktoai/mirage-core/resource/s3/config'
+import { PathSpec, ResourceName } from '@struktoai/mirage-core/types'
+import type { FileStat } from '@struktoai/mirage-core/types'
+import { mountKey, mountPrefixOf } from '@struktoai/mirage-core/utils/key_prefix'
 import { GridFSAccessor } from '../../accessor/gridfs.ts'
 import { GRIDFS_COMMANDS } from '../../commands/builtin/gridfs/index.ts'
 import { SCOPE_ERROR } from '../../core/gridfs/constants.ts'
@@ -48,7 +43,7 @@ import { write as writeCore } from '../../core/gridfs/write.ts'
 import { GRIDFS_OPS } from '../../ops/gridfs/index.ts'
 import { redactConfig, type GridFSConfig, type GridFSConfigRedacted } from './config.ts'
 import { GRIDFS_PROMPT } from './prompt.ts'
-import type { DeltaHook } from '@struktoai/mirage-core'
+import { type DeltaHook } from '@struktoai/mirage-core/watch/index'
 import { buildDeltaHook } from '../../core/gridfs/watch.ts'
 
 const globCore = makeResolveGlob(readdirCore, SCOPE_ERROR)

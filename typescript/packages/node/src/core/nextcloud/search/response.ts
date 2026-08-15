@@ -1,6 +1,6 @@
 import { XMLParser } from 'fast-xml-parser'
 import { SyntaxValidator } from 'fast-xml-validator'
-import { rstripSlash } from '@struktoai/mirage-core'
+import { rstripSlash } from '@struktoai/mirage-core/utils/slash'
 import { CONTENT_LENGTH, DISPLAY_NAME, LAST_MODIFIED, RESOURCE_TYPE, SIZE } from './constants.ts'
 import { relativePath } from './target.ts'
 import type { Property, SearchEntry, SearchTarget, XmlRecord } from './types.ts'

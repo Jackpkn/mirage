@@ -14,7 +14,7 @@
 
 import { describe, expect, it } from 'vitest'
 import { SSH_COMMANDS } from './index.ts'
-import { ResourceName } from '@struktoai/mirage-core'
+import { ResourceName } from '@struktoai/mirage-core/types'
 
 describe('SSH_COMMANDS', () => {
   it('has all in-scope commands', () => {

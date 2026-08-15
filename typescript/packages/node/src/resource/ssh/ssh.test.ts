@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { beforeEach, describe, expect, it } from 'vitest'
-import { ResourceName } from '@struktoai/mirage-core'
+import { ResourceName } from '@struktoai/mirage-core/types'
 import type { SSHAccessor } from '../../accessor/ssh.ts'
 import { SSH_COMMANDS } from '../../commands/builtin/ssh/index.ts'
 import { type FakeSftp, makeFakeAccessor } from '../../core/ssh/_test_utils.ts'
