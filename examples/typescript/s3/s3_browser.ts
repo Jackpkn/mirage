@@ -36,6 +36,7 @@ import {
   ListObjectsV2Command,
   PutObjectCommand,
   S3Client,
+  type ListObjectsV2CommandInput,
 } from '@aws-sdk/client-s3'
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 import {
@@ -96,7 +97,7 @@ async function mockBackendSign(
         expiresIn: ttl,
       })
     case 'LIST': {
-      const listInput: Record<string, unknown> = { Bucket: BUCKET }
+      const listInput: ListObjectsV2CommandInput = { Bucket: BUCKET }
       if (options.listPrefix !== undefined && options.listPrefix !== '') {
         listInput.Prefix = options.listPrefix
       }

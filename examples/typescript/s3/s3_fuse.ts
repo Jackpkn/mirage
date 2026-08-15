@@ -23,6 +23,7 @@
 // Loads credentials from .env.development at the repo root.
 import {
   Mount,
+  MountBackend,
   MountMode,
   S3Resource,
   Workspace,

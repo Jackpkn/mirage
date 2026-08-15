@@ -19,6 +19,7 @@ import { fileURLToPath } from "node:url";
 import dotenv from "dotenv";
 import {
   Mount,
+  MountBackend,
   MountMode,
   SSHResource,
   type SSHConfig,

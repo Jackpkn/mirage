@@ -16,6 +16,7 @@ import { readdir, stat } from "node:fs/promises";
 import { createInterface } from "node:readline/promises";
 import {
   Mount,
+  MountBackend,
   MountMode,
   RedisResource,
   Workspace,

@@ -19,10 +19,10 @@ import {
   Workspace,
   MountMode,
   type FileStat,
-  type HfDatasetsConfig,
+  type HfRepoConfig,
 } from '@struktoai/mirage-node'
 
-function configFromEnv(): HfDatasetsConfig {
+function configFromEnv(): HfRepoConfig {
   return {
     repoId: process.env.HF_DATASET_REPO ?? 'AlienKevin/SWE-ZERO-12M-trajectories',
     ...(process.env.HF_TOKEN !== undefined ? { token: process.env.HF_TOKEN } : {}),

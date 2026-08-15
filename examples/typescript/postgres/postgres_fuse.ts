@@ -16,6 +16,7 @@ import { readdir, stat } from "node:fs/promises";
 import dotenv from "dotenv";
 import {
   Mount,
+  MountBackend,
   MountMode,
   PostgresResource,
   Workspace,
@@ -23,11 +24,16 @@ import {
 
 dotenv.config({ path: ".env.development" });
 
-const dsn = process.env.POSTGRES_DSN;
-if (dsn === undefined) {
-  console.error("POSTGRES_DSN missing in .env.development");
-  process.exit(1);
+function requireDsn(): string {
+  const value = process.env.POSTGRES_DSN;
+  if (value === undefined) {
+    console.error("POSTGRES_DSN missing in .env.development");
+    process.exit(1);
+  }
+  return value;
 }
+
+const dsn = requireDsn();
 
 const DEC = new TextDecoder();
 
