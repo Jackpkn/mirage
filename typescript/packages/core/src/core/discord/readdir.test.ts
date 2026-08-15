@@ -339,6 +339,48 @@ describe('readdir /<guild>/channels/<ch>/<date>', () => {
     )
     expect(lookup.entry?.size).toBe(historyJsonlBytes(messages).byteLength)
   })
+
+  it('skips tombstoned attachments in the files listing', async () => {
+    // Tombstoned and access-restricted attachments carry an id but no
+    // download URL and no byte size; listing them would surface phantom
+    // files that ENOENT on read.
+    const idx = new RAMIndexCacheStore()
+    await idx.setDir('/mnt/discord/My Server__G1/channels', [
+      [
+        'general__C1',
+        new IndexEntry({
+          id: 'C1',
+          name: 'general',
+          resourceType: 'discord/channel',
+          vfsName: 'general__C1',
+          remoteTime: '175928847299117056',
+        }),
+      ],
+    ])
+    const messages = [
+      {
+        id: '1',
+        content: 'files',
+        attachments: [
+          { id: 'A1', filename: 'kept.txt', url: 'https://cdn.example/kept.txt', size: 5 },
+          { id: 'A2', filename: 'tombstoned.txt' },
+          { id: 'A3', filename: 'sizeless.txt', url: 'https://cdn.example/sizeless.txt' },
+          { id: 'A4', filename: 'urlless.txt', size: 9 },
+        ],
+      },
+    ]
+    const t = new FakeDiscordTransport((_m, endpoint) =>
+      endpoint === '/channels/C1/messages' ? messages : null,
+    )
+    const out = await readdir(
+      new DiscordAccessor(t),
+      spec('/mnt/discord/My Server__G1/channels/general__C1/2016-04-30/files', '/mnt/discord'),
+      idx,
+    )
+    expect(out).toEqual([
+      '/mnt/discord/My Server__G1/channels/general__C1/2016-04-30/files/kept__A1.txt',
+    ])
+  })
 })
 
 describe('readdir /<guild>/channels/<ch>', () => {

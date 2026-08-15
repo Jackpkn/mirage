@@ -12,198 +12,196 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import asyncio
-from unittest.mock import AsyncMock
-
-import pytest
-
-from mirage.cache.index import IndexEntry
-from mirage.cache.index.ram import RAMIndexCacheStore
 from mirage.core.discord.scope import coalesce_scopes, detect_scope
 from mirage.types import PathSpec
 from mirage.utils.key_prefix import mount_key
 
 
-def _run(coro):
-    return asyncio.run(coro)
-
-
-def _gs(path: str,
-        prefix: str = "",
-        pattern: str | None = None,
-        resolved: bool = True) -> PathSpec:
+def _gs(path: str, prefix: str = "", pattern: str | None = None) -> PathSpec:
     return PathSpec(
         resource_path=mount_key(path, prefix),
         virtual=path,
-        directory=path.rsplit("/", 1)[0] + "/" if "/" in path else "/",
+        directory=path.rsplit("/", 1)[0] + "/" if pattern else path,
         pattern=pattern,
-        resolved=resolved,
+        resolved=pattern is None,
     )
-
-
-@pytest.fixture
-def index():
-    idx = RAMIndexCacheStore(ttl=600)
-    _run(
-        idx.put(
-            "/discord/TestGuild",
-            IndexEntry(id="G1",
-                       name="TestGuild",
-                       resource_type="discord/guild")))
-    _run(
-        idx.put(
-            "/discord/TestGuild/channels/general",
-            IndexEntry(id="C1",
-                       name="general",
-                       resource_type="discord/channel")))
-    return idx
 
 
 # ── root ──────────────────────────────────────
 
 
 def test_root_empty():
-    scope = _run(
-        detect_scope(PathSpec.from_str_path("/"), RAMIndexCacheStore()))
+    scope = detect_scope(PathSpec.from_str_path("/"))
     assert scope.level == "root"
+    assert scope.use_native is True
+    assert scope.resource_path == "/"
 
 
 def test_root_prefix():
-    scope = _run(
-        detect_scope(_gs("/discord/", prefix="/discord"),
-                     RAMIndexCacheStore()))
+    scope = detect_scope(_gs("/discord/", prefix="/discord"))
     assert scope.level == "root"
 
 
 # ── guild ─────────────────────────────────────
 
 
-def test_guild(index):
-    scope = _run(
-        detect_scope(_gs("/discord/TestGuild", prefix="/discord"), index))
+def test_guild():
+    scope = detect_scope(_gs("/discord/myserver__G1", prefix="/discord"))
     assert scope.level == "guild"
+    assert scope.use_native is True
+    assert scope.guild_name == "myserver"
     assert scope.guild_id == "G1"
 
 
-def test_guild_channels(index):
-    scope = _run(
-        detect_scope(_gs("/discord/TestGuild/channels", prefix="/discord"),
-                     index))
+def test_guild_channels():
+    scope = detect_scope(
+        _gs("/discord/myserver__G1/channels", prefix="/discord"))
     assert scope.level == "guild"
+    assert scope.use_native is True
+    assert scope.container == "channels"
     assert scope.guild_id == "G1"
 
 
-def test_guild_members(index):
-    scope = _run(
-        detect_scope(_gs("/discord/TestGuild/members", prefix="/discord"),
-                     index))
+def test_guild_members_not_native():
+    scope = detect_scope(
+        _gs("/discord/myserver__G1/members", prefix="/discord"))
     assert scope.level == "guild"
+    assert scope.use_native is False
+    assert scope.container == "members"
     assert scope.guild_id == "G1"
+
+
+def test_guild_bare_name_has_no_id():
+    scope = detect_scope(_gs("/discord/myserver", prefix="/discord"))
+    assert scope.level == "guild"
+    assert scope.guild_name == "myserver"
+    assert scope.guild_id is None
 
 
 # ── channel ───────────────────────────────────
 
 
-def test_channel(index):
-    scope = _run(
-        detect_scope(
-            _gs("/discord/TestGuild/channels/general", prefix="/discord"),
-            index))
+def test_channel():
+    scope = detect_scope(
+        _gs("/discord/myserver__G1/channels/general__C1", prefix="/discord"))
     assert scope.level == "channel"
+    assert scope.use_native is True
+    assert scope.guild_name == "myserver"
     assert scope.guild_id == "G1"
+    assert scope.channel_name == "general"
     assert scope.channel_id == "C1"
+    assert scope.container == "channels"
+
+
+def test_channel_bare_name_has_no_id():
+    scope = detect_scope(
+        _gs("/discord/myserver__G1/channels/general", prefix="/discord"))
+    assert scope.level == "channel"
+    assert scope.channel_name == "general"
+    assert scope.channel_id is None
+
+
+# ── member ────────────────────────────────────
+
+
+def test_member_json():
+    scope = detect_scope(
+        _gs("/discord/myserver__G1/members/alice__U1.json", prefix="/discord"))
+    assert scope.level == "member"
+    assert scope.use_native is False
+    assert scope.container == "members"
+    assert scope.guild_id == "G1"
+    assert scope.member_name == "alice"
+    assert scope.member_id == "U1"
+    assert scope.channel_id is None
 
 
 # ── date / messages / files ────────────────────
 
 
-def test_date_dir(index):
-    scope = _run(
-        detect_scope(
-            _gs("/discord/TestGuild/channels/general/2024-04-10",
-                prefix="/discord"), index))
+def test_date_dir():
+    scope = detect_scope(
+        _gs("/discord/myserver__G1/channels/general__C1/2026-04-10",
+            prefix="/discord"))
     assert scope.level == "date"
+    assert scope.use_native is True
     assert scope.guild_id == "G1"
     assert scope.channel_id == "C1"
-    assert scope.date_str == "2024-04-10"
+    assert scope.date_str == "2026-04-10"
 
 
-def test_messages_file(index):
-    scope = _run(
-        detect_scope(
-            _gs("/discord/TestGuild/channels/general/2024-04-10/chat.jsonl",
-                prefix="/discord"), index))
+def test_messages_file():
+    scope = detect_scope(
+        _gs("/discord/myserver__G1/channels/general__C1/2026-04-10/chat.jsonl",
+            prefix="/discord"))
     assert scope.level == "messages"
+    assert scope.use_native is False
     assert scope.guild_id == "G1"
     assert scope.channel_id == "C1"
-    assert scope.date_str == "2024-04-10"
+    assert scope.date_str == "2026-04-10"
 
 
-def test_files_dir(index):
-    scope = _run(
-        detect_scope(
-            _gs("/discord/TestGuild/channels/general/2024-04-10/files",
-                prefix="/discord"), index))
+def test_files_dir():
+    scope = detect_scope(
+        _gs("/discord/myserver__G1/channels/general__C1/2026-04-10/files",
+            prefix="/discord"))
     assert scope.level == "files"
-    assert scope.guild_id == "G1"
-    assert scope.channel_id == "C1"
-    assert scope.date_str == "2024-04-10"
+    assert scope.use_native is True
+    assert scope.date_str == "2026-04-10"
 
 
-def test_file_blob(index):
-    scope = _run(
-        detect_scope(
-            _gs(
-                "/discord/TestGuild/channels/general/2024-04-10/files/"
-                "img__A1.png",
-                prefix="/discord"), index))
+def test_file_blob():
+    scope = detect_scope(
+        _gs(
+            "/discord/myserver__G1/channels/general__C1/2026-04-10/files/"
+            "img__A1.png",
+            prefix="/discord"))
     assert scope.level == "file_blob"
+    assert scope.use_native is False
     assert scope.channel_id == "C1"
-    assert scope.date_str == "2024-04-10"
+    assert scope.date_str == "2026-04-10"
 
 
-# ── PathSpec ─────────────────────────────────
+def test_deep_unknown_path_falls_back():
+    scope = detect_scope(_gs("/discord/a/b/c/d/e/f/g", prefix="/discord"))
+    assert scope.level == "guild"
+    assert scope.use_native is False
 
 
-def test_glob_jsonl_in_channel(index):
-    gs = PathSpec(
-        resource_path=mount_key("/discord/TestGuild/channels/general/*.jsonl",
-                                "/discord"),
-        virtual="/discord/TestGuild/channels/general/*.jsonl",
-        directory="/discord/TestGuild/channels/general/",
-        pattern="*.jsonl",
-        resolved=False,
-    )
-    scope = _run(detect_scope(gs, index))
+# ── glob patterns ─────────────────────────────
+
+
+def test_glob_jsonl_in_channel():
+    scope = detect_scope(
+        _gs("/discord/myserver__G1/channels/general__C1/*.jsonl",
+            prefix="/discord",
+            pattern="*.jsonl"))
     assert scope.level == "channel"
+    assert scope.use_native is True
     assert scope.guild_id == "G1"
     assert scope.channel_id == "C1"
 
 
-def test_glob_specific_date(index):
-    gs = PathSpec(
-        resource_path=mount_key(
-            "/discord/TestGuild/channels/general/2024-04-*.jsonl", "/discord"),
-        virtual="/discord/TestGuild/channels/general/2024-04-*.jsonl",
-        directory="/discord/TestGuild/channels/general/",
-        pattern="2024-04-*.jsonl",
-        resolved=False,
-    )
-    scope = _run(detect_scope(gs, index))
-    assert scope.level == "channel"
+def test_glob_jsonl_in_date_dir():
+    scope = detect_scope(
+        _gs("/discord/myserver__G1/channels/general__C1/2026-04-10/*.jsonl",
+            prefix="/discord",
+            pattern="*.jsonl"))
+    assert scope.level == "messages"
+    assert scope.use_native is True
+    assert scope.date_str == "2026-04-10"
     assert scope.channel_id == "C1"
 
 
 def test_glob_non_jsonl():
-    gs = PathSpec(
-        resource_path="discord/TestGuild/members/*.json",
-        virtual="/discord/TestGuild/members/*.json",
-        directory="/discord/TestGuild/members/",
-        pattern="*.json",
-        resolved=False,
-    )
-    scope = _run(detect_scope(gs, RAMIndexCacheStore()))
+    scope = detect_scope(
+        _gs("/discord/myserver__G1/members/*.json",
+            prefix="/discord",
+            pattern="*.json"))
     assert scope.level != "channel"
+
+
+# ── coalesce ──────────────────────────────────
 
 
 def _spec(path: str, prefix: str = "/discord") -> PathSpec:
@@ -212,46 +210,55 @@ def _spec(path: str, prefix: str = "/discord") -> PathSpec:
                     directory=path)
 
 
-@pytest.fixture
-def fake_index():
-    idx = AsyncMock()
-
-    async def _get(virtual_key):
-        result = AsyncMock()
-        if virtual_key.endswith("/myguild/channels/general"):
-            result.entry = type("E", (), {"id": "ch_456"})
-        elif virtual_key.endswith("/myguild"):
-            result.entry = type("E", (), {"id": "g_123"})
-        else:
-            result.entry = None
-        return result
-
-    idx.get.side_effect = _get
-    return idx
-
-
-@pytest.mark.asyncio
-async def test_coalesce_concrete_jsonl_paths_same_channel(fake_index):
+def test_coalesce_concrete_jsonl_paths_same_channel():
     paths = [
-        _spec(f"/discord/myguild/channels/general/2026-01-{d:02d}/chat.jsonl")
-        for d in range(1, 8)
+        _spec(f"/discord/myserver__G1/channels/general__C1/"
+              f"2026-01-{d:02d}/chat.jsonl") for d in range(1, 8)
     ]
-    scope = await coalesce_scopes(paths, fake_index)
+    scope = coalesce_scopes(paths)
     assert scope is not None
     assert scope.level == "channel"
-    assert scope.guild_id == "g_123"
-    assert scope.channel_id == "ch_456"
+    assert scope.use_native is True
+    assert scope.guild_id == "G1"
+    assert scope.channel_id == "C1"
 
 
-@pytest.mark.asyncio
-async def test_coalesce_returns_none_for_mixed_channels(fake_index):
+def test_coalesce_returns_none_for_mixed_channels():
     paths = [
-        _spec("/discord/myguild/channels/general/2026-01-01/chat.jsonl"),
-        _spec("/discord/myguild/channels/random/2026-01-01/chat.jsonl"),
+        _spec("/discord/myserver__G1/channels/general__C1/"
+              "2026-01-01/chat.jsonl"),
+        _spec("/discord/myserver__G1/channels/random__C2/"
+              "2026-01-01/chat.jsonl"),
     ]
-    assert await coalesce_scopes(paths, fake_index) is None
+    assert coalesce_scopes(paths) is None
 
 
-@pytest.mark.asyncio
-async def test_coalesce_empty_list_returns_none(fake_index):
-    assert await coalesce_scopes([], fake_index) is None
+def test_coalesce_returns_none_without_ids():
+    paths = [
+        _spec("/discord/myserver/channels/general/2026-01-01/chat.jsonl"),
+    ]
+    assert coalesce_scopes(paths) is None
+
+
+def test_coalesce_empty_list_returns_none():
+    assert coalesce_scopes([]) is None
+
+
+def test_coalesce_returns_none_for_file_blobs():
+    # Guild search answers questions about message content; an attachment
+    # operand must scan its bytes, not widen to a channel message search.
+    paths = [
+        _spec("/discord/myserver__G1/channels/general__C1/2026-01-01/files/"
+              "img__A1.png"),
+    ]
+    assert coalesce_scopes(paths) is None
+
+
+def test_coalesce_returns_none_for_mixed_levels():
+    paths = [
+        _spec("/discord/myserver__G1/channels/general__C1/"
+              "2026-01-01/chat.jsonl"),
+        _spec("/discord/myserver__G1/channels/general__C1/2026-01-01/files/"
+              "img__A1.png"),
+    ]
+    assert coalesce_scopes(paths) is None

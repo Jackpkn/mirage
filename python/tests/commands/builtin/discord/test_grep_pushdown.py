@@ -20,6 +20,7 @@ from mirage.commands.builtin.discord.grep import grep
 from mirage.commands.builtin.discord.rg import rg
 from mirage.commands.config import CommandOpts
 from mirage.commands.errors import UsageError
+from mirage.io.types import materialize
 from mirage.types import FileStat, FileType, PathSpec
 from mirage.utils.key_prefix import mount_key
 
@@ -27,8 +28,8 @@ from mirage.utils.key_prefix import mount_key
 def _concrete_paths(n: int = 7):
     paths = []
     for d in range(1, n + 1):
-        original = (
-            f"/discord/myguild/channels/general/2026-01-{d:02d}/chat.jsonl")
+        original = (f"/discord/myguild__g_123/channels/general__ch_456/"
+                    f"2026-01-{d:02d}/chat.jsonl")
         paths.append(
             PathSpec(
                 resource_path=mount_key(original, "/discord"),
@@ -36,23 +37,6 @@ def _concrete_paths(n: int = 7):
                 directory=original,
             ))
     return paths
-
-
-def _fake_index(channel_id: str = "ch_456", guild_id: str = "g_123"):
-    idx = AsyncMock()
-
-    async def _get(virtual_key):
-        result = AsyncMock()
-        if virtual_key.endswith("/myguild/channels/general"):
-            result.entry = type("E", (), {"id": channel_id})
-        elif virtual_key.endswith("/myguild"):
-            result.entry = type("E", (), {"id": guild_id})
-        else:
-            result.entry = None
-        return result
-
-    idx.get.side_effect = _get
-    return idx
 
 
 @pytest.mark.asyncio
@@ -76,15 +60,66 @@ async def test_discord_grep_with_many_concrete_paths_uses_native_search():
             "mirage.commands.builtin.discord.grep.list_channels",
             new=AsyncMock(return_value=fake_channels),
     ):
-        out, io = await grep(
-            accessor, _concrete_paths(7), ['hello'],
-            CommandOpts(index=_fake_index(), flags={'w': True}))
+        out, io = await grep(accessor, _concrete_paths(7), ['hello'],
+                             CommandOpts(flags={'w': True}))
     assert fake_search.await_count == 1
     assert io.exit_code == 0
     assert b"hello" in out
     assert out.endswith(b"\n")
-    assert (b"/discord/myguild/channels/general__ch_456/"
+    assert (b"/discord/myguild__g_123/channels/general__ch_456/"
             b"2026-01-15/chat.jsonl:") in out
+
+
+@pytest.mark.asyncio
+async def test_discord_grep_resolves_ids_without_index():
+    """The ids ride in the ``name__id`` dirnames, so a cold cache must not
+    degrade the push-down or emit a spurious fallback warning."""
+    accessor = AsyncMock()
+    accessor.config = AsyncMock()
+    path = "/discord/myguild__g_123/channels/general__ch_456"
+    paths = [
+        PathSpec(resource_path=mount_key(path, "/discord"),
+                 virtual=path,
+                 directory=path)
+    ]
+    with patch(
+            "mirage.commands.builtin.discord.grep.search_guild",
+            new=AsyncMock(return_value=[]),
+    ) as fake_search, patch(
+            "mirage.commands.builtin.discord.grep.list_channels",
+            new=AsyncMock(return_value=[]),
+    ):
+        out, io = await grep(accessor, paths, ['hello'],
+                             CommandOpts(flags={'w': True}))
+    assert fake_search.await_count == 1
+    assert fake_search.await_args.args[1] == "g_123"
+    assert fake_search.await_args.kwargs["channel_id"] == "ch_456"
+    assert io.stderr in (None, b"")
+
+
+@pytest.mark.asyncio
+async def test_discord_grep_bare_names_skip_native_search():
+    """Without ``__id`` in the dirnames there is nothing to search with —
+    fall through to the scan instead of guessing."""
+    accessor = AsyncMock()
+    accessor.config = AsyncMock()
+    path = "/discord/myguild/channels/general"
+    paths = [
+        PathSpec(resource_path=mount_key(path, "/discord"),
+                 virtual=path,
+                 directory=path)
+    ]
+    with patch(
+            "mirage.commands.builtin.discord.grep.search_guild",
+            new=AsyncMock(return_value=[]),
+    ) as fake_search, patch(
+            "mirage.commands.builtin.discord.grep.resolve_glob",
+            new=AsyncMock(return_value=[]),
+    ):
+        with pytest.raises(UsageError):
+            await grep(accessor, paths, ['hello'],
+                       CommandOpts(flags={'w': True}))
+    fake_search.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -93,9 +128,11 @@ async def test_discord_grep_falls_back_when_native_raises():
     accessor.config = AsyncMock()
     paths = [
         PathSpec(resource_path=mount_key(
-            "/discord/myguild/channels/general/*.jsonl", "/discord"),
-                 virtual="/discord/myguild/channels/general/*.jsonl",
-                 directory="/discord/myguild/channels/general/",
+            "/discord/myguild__g_123/channels/general__ch_456/*.jsonl",
+            "/discord"),
+                 virtual="/discord/myguild__g_123/channels/general__ch_456"
+                 "/*.jsonl",
+                 directory="/discord/myguild__g_123/channels/general__ch_456/",
                  pattern="*.jsonl"),
     ]
     with patch(
@@ -112,9 +149,8 @@ async def test_discord_grep_falls_back_when_native_raises():
             new=AsyncMock(return_value=FileStat(name="2026-04-10.jsonl",
                                                 type=FileType.TEXT)),
     ):
-        out, io = await grep(
-            accessor, paths, ['hello'],
-            CommandOpts(index=_fake_index(), flags={'w': True}))
+        out, io = await grep(accessor, paths, ['hello'],
+                             CommandOpts(flags={'w': True}))
     assert fake_resolve.await_count == 1
     assert io.exit_code in (0, 1)
 
@@ -134,9 +170,8 @@ async def test_discord_grep_native_empty_does_not_trigger_fallback():
             "mirage.commands.builtin.discord.grep.discord_read",
             new=AsyncMock(return_value=b""),
     ) as fake_read:
-        out, io = await grep(
-            accessor, _concrete_paths(7), ['missing'],
-            CommandOpts(index=_fake_index(), flags={'w': True}))
+        out, io = await grep(accessor, _concrete_paths(7), ['missing'],
+                             CommandOpts(flags={'w': True}))
     assert fake_search.await_count == 1
     assert fake_read.await_count == 0
     assert io.exit_code == 1
@@ -155,9 +190,11 @@ async def test_discord_grep_multi_pattern_skips_native_search():
     accessor.config = AsyncMock()
     paths = [
         PathSpec(resource_path=mount_key(
-            "/discord/myguild/channels/general/*.jsonl", "/discord"),
-                 virtual="/discord/myguild/channels/general/*.jsonl",
-                 directory="/discord/myguild/channels/general/",
+            "/discord/myguild__g_123/channels/general__ch_456/*.jsonl",
+            "/discord"),
+                 virtual="/discord/myguild__g_123/channels/general__ch_456"
+                 "/*.jsonl",
+                 directory="/discord/myguild__g_123/channels/general__ch_456/",
                  pattern="*.jsonl"),
     ]
     with patch(
@@ -174,13 +211,11 @@ async def test_discord_grep_multi_pattern_skips_native_search():
             new=AsyncMock(return_value=FileStat(name="2026-04-10.jsonl",
                                                 type=FileType.TEXT)),
     ):
-        _, io = await grep(
-            accessor, paths, [],
-            CommandOpts(index=_fake_index(),
-                        flags={
-                            'e': ['ada', 'ben'],
-                            'w': True
-                        }))
+        _, io = await grep(accessor, paths, [],
+                           CommandOpts(flags={
+                               'e': ['ada', 'ben'],
+                               'w': True
+                           }))
     assert fake_search.await_count == 0
     assert fake_resolve.await_count == 1
 
@@ -207,12 +242,12 @@ async def test_discord_rg_with_many_concrete_paths_uses_native_search():
             new=AsyncMock(return_value=fake_channels),
     ):
         out, io = await rg(accessor, _concrete_paths(7), ['hello'],
-                           CommandOpts(index=_fake_index(), flags={'w': True}))
+                           CommandOpts(flags={'w': True}))
     assert fake_search.await_count == 1
     assert io.exit_code == 0
     assert b"hello" in out
     assert out.endswith(b"\n")
-    assert (b"/discord/myguild/channels/general__ch_456/"
+    assert (b"/discord/myguild__g_123/channels/general__ch_456/"
             b"2026-01-15/chat.jsonl:") in out
 
 
@@ -228,9 +263,11 @@ async def test_discord_rg_multi_pattern_skips_native_search():
     accessor.config = AsyncMock()
     paths = [
         PathSpec(resource_path=mount_key(
-            "/discord/myguild/channels/general/*.jsonl", "/discord"),
-                 virtual="/discord/myguild/channels/general/*.jsonl",
-                 directory="/discord/myguild/channels/general/",
+            "/discord/myguild__g_123/channels/general__ch_456/*.jsonl",
+            "/discord"),
+                 virtual="/discord/myguild__g_123/channels/general__ch_456"
+                 "/*.jsonl",
+                 directory="/discord/myguild__g_123/channels/general__ch_456/",
                  pattern="*.jsonl"),
     ]
     with patch(
@@ -247,13 +284,11 @@ async def test_discord_rg_multi_pattern_skips_native_search():
             new=AsyncMock(return_value=FileStat(name="2026-04-10.jsonl",
                                                 type=FileType.TEXT)),
     ):
-        _, io = await rg(
-            accessor, paths, [],
-            CommandOpts(index=_fake_index(),
-                        flags={
-                            'e': ['ada', 'ben'],
-                            'w': True
-                        }))
+        _, io = await rg(accessor, paths, [],
+                         CommandOpts(flags={
+                             'e': ['ada', 'ben'],
+                             'w': True
+                         }))
     assert fake_search.await_count == 0
     assert fake_resolve.await_count == 1
 
@@ -272,6 +307,40 @@ async def test_discord_grep_without_word_flag_skips_native_search():
             new=AsyncMock(return_value=[]),
     ):
         with pytest.raises(UsageError):
-            await grep(accessor, _concrete_paths(7), ['hello'],
-                       CommandOpts(index=_fake_index()))
+            await grep(accessor, _concrete_paths(7), ['hello'], CommandOpts())
     fake_search.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_discord_grep_file_blob_skips_native_search():
+    """An attachment operand must scan its bytes; widening it to a
+    channel-wide message search would return hits that say nothing about
+    the requested file."""
+    accessor = AsyncMock()
+    accessor.config = AsyncMock()
+    path = ("/discord/myguild__g_123/channels/general__ch_456/2026-01-01/"
+            "files/img__A1.png")
+    paths = [
+        PathSpec(resource_path=mount_key(path, "/discord"),
+                 virtual=path,
+                 directory=path)
+    ]
+    with patch(
+            "mirage.commands.builtin.discord.grep.search_guild",
+            new=AsyncMock(return_value=[]),
+    ) as fake_search, patch(
+            "mirage.commands.builtin.discord.grep.resolve_glob",
+            new=AsyncMock(return_value=paths),
+    ), patch(
+            "mirage.commands.builtin.discord.grep.discord_read",
+            new=AsyncMock(return_value=b"quarter,amount\n"),
+    ), patch(
+            "mirage.commands.builtin.discord.grep._stat",
+            new=AsyncMock(
+                return_value=FileStat(name="img__A1.png", type=FileType.TEXT)),
+    ):
+        out, io = await grep(accessor, paths, ['quarter'],
+                             CommandOpts(flags={'w': True}))
+    fake_search.assert_not_awaited()
+    assert io.exit_code == 0
+    assert b"quarter,amount" in await materialize(out)

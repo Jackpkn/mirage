@@ -300,3 +300,74 @@ async def test_readdir_leaf_raises_enotdir(accessor, index):
             accessor,
             PathSpec(resource_path=key, virtual="/" + key,
                      directory="/" + key), index)
+
+
+@pytest.mark.asyncio
+async def test_readdir_files_skips_tombstoned_attachments(accessor, index):
+    # Tombstoned and access-restricted attachments carry an id but no
+    # download URL and no byte size; listing them would surface phantom
+    # files that ENOENT on read.
+    await index.put(
+        "/My Server",
+        IndexEntry(
+            id="G001",
+            name="My Server",
+            resource_type="discord/guild",
+            vfs_name="My Server",
+        ),
+    )
+    await index.put(
+        "/My Server/channels/general",
+        IndexEntry(
+            id="C001",
+            name="general",
+            resource_type="discord/channel",
+            vfs_name="general",
+        ),
+    )
+    messages = [{
+        "id":
+        "1",
+        "content":
+        "files",
+        "author": {
+            "username": "alice"
+        },
+        "attachments": [
+            {
+                "id": "A1",
+                "filename": "kept.txt",
+                "url": "https://cdn.example/kept.txt",
+                "size": 5,
+            },
+            {
+                "id": "A2",
+                "filename": "tombstoned.txt",
+            },
+            {
+                "id": "A3",
+                "filename": "sizeless.txt",
+                "url": "https://cdn.example/sizeless.txt",
+            },
+            {
+                "id": "A4",
+                "filename": "urlless.txt",
+                "size": 9,
+            },
+        ],
+    }]
+    with patch(
+            "mirage.core.discord.readdir.list_messages_for_day",
+            new_callable=AsyncMock,
+            return_value=messages,
+    ):
+        names = await readdir(
+            accessor,
+            PathSpec(
+                resource_path="My Server/channels/general/2024-01-15/files",
+                virtual="/My Server/channels/general/2024-01-15/files",
+                directory="/My Server/channels/general/2024-01-15/files"),
+            index)
+    assert names == [
+        "/My Server/channels/general/2024-01-15/files/kept__A1.txt"
+    ]

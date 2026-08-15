@@ -1,5 +1,7 @@
 from typing import Any
 
+from mirage.core.discord.entry import snowflake_to_iso
+
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -35,11 +37,18 @@ def format_grep_results(
     names = channel_names or {}
     lines: list[str] = []
     for msg in messages:
-        ts = msg.get("timestamp", "")[:10]
+        ts = (msg.get("timestamp") or "")[:10]
+        if not ts:
+            # A hit without a timestamp still has a snowflake id, which
+            # encodes the creation day readdir buckets it under.
+            iso = snowflake_to_iso(str(msg.get("id") or ""))
+            ts = iso[:10] if iso else ""
         ch_id = msg.get("channel_id", "")
         ch_name = names.get(ch_id, ch_id)
         author = msg.get("author", {}).get("username", "?")
         content = msg.get("content", "").replace("\n", " ")
-        lines.append(f"{prefix}/{guild_dirname}/channels/{ch_name}/"
-                     f"{ts}/chat.jsonl:[{author}] {content}")
+        path = (f"{prefix}/{guild_dirname}/channels/{ch_name}/"
+                f"{ts}/chat.jsonl"
+                if ts else f"{prefix}/{guild_dirname}/channels/{ch_name}")
+        lines.append(f"{path}:[{author}] {content}")
     return lines

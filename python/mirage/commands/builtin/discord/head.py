@@ -12,7 +12,6 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import json
 from dataclasses import replace
 
 from mirage.accessor.discord import DiscordAccessor
@@ -29,6 +28,7 @@ from mirage.commands.spec import SPECS
 from mirage.core.discord._client import discord_get
 from mirage.core.discord.history import date_to_snowflake
 from mirage.core.discord.read import read as discord_read
+from mirage.core.discord.render import history_jsonl_bytes
 from mirage.core.discord.scope import detect_scope
 from mirage.io.types import ByteSource, IOResult
 from mirage.provision.types import ProvisionResult
@@ -56,13 +56,18 @@ async def head(accessor: DiscordAccessor, paths: list[PathSpec],
         return None, IOResult(exit_code=1, stderr=str(exc).encode())
     lines = parsed.lines if parsed.lines is not None else 10
     if paths:
-        scope = await detect_scope(paths[0], opts.index)
+        scope = detect_scope(paths[0])
 
-        # Smart head: fetch only first N messages for a single date.
-        if (len(paths) == 1 and scope.level == "file" and scope.channel_id
+        # Smart head: fetch only first N messages for a single date. Only
+        # counts one API page can honor (Discord caps limit at 100) take
+        # the shortcut; zero, negative (all-but-last-N) and larger counts,
+        # -v headers, byte counts and -z all keep the generic path.
+        if (len(paths) == 1 and scope.level == "messages" and scope.channel_id
                 and scope.date_str and parsed.bytes_ is None
-                and not parsed.zero_terminated):
+                and not parsed.zero_terminated and not parsed.verbose
+                and 0 < lines <= 100):
             after = date_to_snowflake(scope.date_str)
+            before_int = int(date_to_snowflake(scope.date_str, end=True))
             msgs = await discord_get(
                 accessor.config,
                 f"/channels/{scope.channel_id}/messages",
@@ -72,11 +77,13 @@ async def head(accessor: DiscordAccessor, paths: list[PathSpec],
                 },
             )
             assert isinstance(msgs, list)
+            # With `after`, a short day spills into the next one: the API
+            # keeps returning messages past midnight until `limit` is met,
+            # so bound to the same end-of-day snowflake the readdir walk
+            # uses or head would print lines chat.jsonl does not contain.
+            msgs = [m for m in msgs if int(m["id"]) <= before_int]
             msgs.sort(key=lambda m: int(m["id"]))
-            jsonl = "\n".join(
-                json.dumps(m, ensure_ascii=False, separators=(",", ":"))
-                for m in msgs) + "\n"
-            return generic_head(jsonl.encode(), n=lines), IOResult()
+            return generic_head(history_jsonl_bytes(msgs), n=lines), IOResult()
     resolved = await resolve_or_empty(IO, accessor, paths, opts.index)
     return await head_generic(resolved, list(texts), opts,
                               bound_op(IO.stat, accessor, opts.index),

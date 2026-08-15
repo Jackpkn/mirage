@@ -84,3 +84,35 @@ def test_format_grep_results_replaces_newlines():
     assert lines == [
         "/discord/G__G1/channels/C/2024-01-02/chat.jsonl:[u] line1 line2"
     ]
+
+
+def test_format_grep_results_derives_date_from_snowflake():
+    # A hit without a timestamp still has a snowflake id, which encodes the
+    # creation day readdir buckets it under. 1510934682009600000 is
+    # 2026-06-01 09:15 UTC.
+    msgs = [{
+        "id": "1510934682009600000",
+        "channel_id": "C1",
+        "author": {
+            "username": "alice"
+        },
+        "content": "hello",
+    }]
+    lines = format_grep_results(msgs, "/discord", "G__G1", channel_names={})
+    assert lines == [
+        "/discord/G__G1/channels/C1/2026-06-01/chat.jsonl:[alice] hello"
+    ]
+
+
+def test_format_grep_results_dateless_hit_points_at_channel_dir():
+    # No timestamp and no parseable snowflake: point at the channel dir
+    # instead of minting a `//chat.jsonl` path that cannot exist.
+    msgs = [{
+        "channel_id": "C1",
+        "author": {
+            "username": "alice"
+        },
+        "content": "hello",
+    }]
+    lines = format_grep_results(msgs, "/discord", "G__G1", channel_names={})
+    assert lines == ["/discord/G__G1/channels/C1:[alice] hello"]

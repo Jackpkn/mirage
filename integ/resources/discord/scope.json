@@ -1,0 +1,95 @@
+{
+  "cases": [
+    {
+      "id": "dc_grep_w_channel_native",
+      "seq": 690200,
+      "targets": [
+        "discord"
+      ],
+      "command": "grep -w green '/discord/Mirage HQ__100000000000000001/channels/general__200000000000000001'",
+      "expect": {
+        "exit": 0,
+        "stdout": "/discord/Mirage HQ__100000000000000001/channels/general__200000000000000001/2026-06-01/chat.jsonl:[alice] deploy is green\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "dc_grep_w_day_file_native",
+      "seq": 690201,
+      "targets": [
+        "discord"
+      ],
+      "command": "grep -w standup '/discord/Mirage HQ__100000000000000001/channels/general__200000000000000001/2026-06-02/chat.jsonl'",
+      "expect": {
+        "exit": 0,
+        "stdout": "/discord/Mirage HQ__100000000000000001/channels/general__200000000000000001/2026-06-02/chat.jsonl:[bob] second day standup\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "dc_head_day_boundary",
+      "seq": 690202,
+      "targets": [
+        "discord"
+      ],
+      "command": "head -n 5 '/discord/Mirage HQ__100000000000000001/channels/releases__200000000000000002/2026-06-01/chat.jsonl' | jq -r .content",
+      "expect": {
+        "exit": 0,
+        "stdout": "v1.2.0 released\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "dc_head_second_day_file",
+      "seq": 690203,
+      "targets": [
+        "discord"
+      ],
+      "command": "head -n 1 '/discord/Mirage HQ__100000000000000001/channels/releases__200000000000000002/2026-06-02/chat.jsonl' | jq -r .content",
+      "expect": {
+        "exit": 0,
+        "stdout": "v1.2.1 hotfix released\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "dc_grep_w_attachment_scans_bytes",
+      "seq": 690204,
+      "targets": [
+        "discord"
+      ],
+      "command": "grep -w quarter '/discord/Mirage HQ__100000000000000001/channels/general__200000000000000001/2026-06-01/files/budget__500000000000000001.csv'",
+      "expect": {
+        "exit": 0,
+        "stdout": "quarter,amount\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "dc_head_v_prints_header",
+      "seq": 690205,
+      "targets": [
+        "discord"
+      ],
+      "command": "head -v -n 1 '/discord/Mirage HQ__100000000000000001/channels/releases__200000000000000002/2026-06-01/chat.jsonl' | head -n 1",
+      "expect": {
+        "exit": 0,
+        "stdout": "==> /discord/Mirage HQ__100000000000000001/channels/releases__200000000000000002/2026-06-01/chat.jsonl <==\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "dc_head_empty_day",
+      "seq": 690206,
+      "targets": [
+        "discord"
+      ],
+      "command": "head -n 3 '/discord/Mirage HQ__100000000000000001/channels/releases__200000000000000002/2026-05-20/chat.jsonl'",
+      "expect": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    }
+  ]
+}

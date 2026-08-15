@@ -115,6 +115,15 @@ class FakeDiscord:
         author = self._user(author_id)
         attachments = []
         for att in raw.get("attachments", []):
+            if att.get("tombstoned"):
+                # Deleted / access-restricted attachments come back with an
+                # id but no download URL and no size; clients must not list
+                # them as files.
+                attachments.append({
+                    "id": att["id"],
+                    "filename": att["filename"],
+                })
+                continue
             body = att.get("body", "").encode()
             self.attachments[att["id"]] = body
             attachments.append({

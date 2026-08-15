@@ -30,28 +30,14 @@ def _path(path: str) -> PathSpec:
                     directory=path)
 
 
-def _fake_index():
-    idx = AsyncMock()
-
-    async def _get(virtual_key):
-        result = AsyncMock()
-        if virtual_key.endswith("/myguild/channels/general"):
-            result.entry = type("E", (), {"id": "C1", "remote_time": ""})
-        elif virtual_key.endswith("/myguild"):
-            result.entry = type("E", (), {"id": "G1"})
-        else:
-            result.entry = None
-        return result
-
-    idx.get.side_effect = _get
-    return idx
-
-
 @pytest.mark.asyncio
 async def test_grep_emits_token_hint_on_forbidden():
     accessor = AsyncMock()
     accessor.config = AsyncMock()
-    paths = [_path("/discord/myguild/channels/general/2026-01-01/chat.jsonl")]
+    paths = [
+        _path("/discord/myguild__G1/channels/general__C1/"
+              "2026-01-01/chat.jsonl")
+    ]
     with patch(
             "mirage.commands.builtin.discord.grep.search_guild",
             new=AsyncMock(side_effect=RuntimeError("403 Forbidden")),
@@ -62,12 +48,11 @@ async def test_grep_emits_token_hint_on_forbidden():
             "mirage.commands.builtin.discord.grep.discord_read",
             new=AsyncMock(return_value=b""),
     ):
-        _out, io = await grep(
-            accessor, paths, ['hi'],
-            CommandOpts(index=_fake_index(), flags={
-                'w': True,
-                'args_l': True
-            }))
+        _out, io = await grep(accessor, paths, ['hi'],
+                              CommandOpts(flags={
+                                  'w': True,
+                                  'args_l': True
+                              }))
     stderr = (io.stderr or b"").decode()
     assert "push-down failed" in stderr
     assert "READ_MESSAGE_HISTORY" in stderr
@@ -77,7 +62,10 @@ async def test_grep_emits_token_hint_on_forbidden():
 async def test_rg_emits_warning_on_rate_limit():
     accessor = AsyncMock()
     accessor.config = AsyncMock()
-    paths = [_path("/discord/myguild/channels/general/2026-01-01/chat.jsonl")]
+    paths = [
+        _path("/discord/myguild__G1/channels/general__C1/"
+              "2026-01-01/chat.jsonl")
+    ]
     with patch(
             "mirage.commands.builtin.discord.rg.search_guild",
             new=AsyncMock(side_effect=RuntimeError("rate limited 429")),
@@ -88,9 +76,8 @@ async def test_rg_emits_warning_on_rate_limit():
             "mirage.commands.builtin.discord.rg.generic_rg",
             new=AsyncMock(return_value=(b"", IOResult(exit_code=1))),
     ):
-        _out, io = await rg(
-            accessor, paths, ['hi'],
-            CommandOpts(index=_fake_index(), flags={'w': True}))
+        _out, io = await rg(accessor, paths, ['hi'],
+                            CommandOpts(flags={'w': True}))
     stderr = (io.stderr or b"").decode()
     assert "push-down failed" in stderr
     # 429 doesn't trigger the perm hint; should still warn

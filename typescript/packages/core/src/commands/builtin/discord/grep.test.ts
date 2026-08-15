@@ -122,7 +122,7 @@ describe('discord grep', () => {
         }),
       ],
       ['hello'],
-      { w: true },
+      {},
       { index: idx, transport },
     )
     const lines = out.stdout.split('\n').filter((l) => l !== '')
@@ -130,5 +130,80 @@ describe('discord grep', () => {
     for (const l of lines) {
       expect(l).toContain('hello')
     }
+  })
+
+  it('coalesces concrete chat.jsonl paths into one channel-wide native search', async () => {
+    const transport = new FakeDiscordTransport((_method, endpoint) => {
+      if (endpoint === '/guilds/G1/messages/search') {
+        return {
+          total_results: 1,
+          messages: [
+            [
+              {
+                id: '175928847299117056',
+                content: 'hello world',
+                channel_id: 'C1',
+                timestamp: '2016-04-30T12:00:00.000+00:00',
+                author: { username: 'alice' },
+              },
+            ],
+          ],
+        }
+      }
+      return null
+    })
+    const mk = (date: string): PathSpec =>
+      new PathSpec({
+        virtual: `/mnt/discord/My Server__G1/channels/general__C1/${date}/chat.jsonl`,
+        directory: `/mnt/discord/My Server__G1/channels/general__C1/${date}/chat.jsonl`,
+        resolved: true,
+        resourcePath: mountKey(
+          `/mnt/discord/My Server__G1/channels/general__C1/${date}/chat.jsonl`,
+          '/mnt/discord',
+        ),
+      })
+    const out = await runGrep(
+      [mk('2016-04-29'), mk('2016-04-30')],
+      ['hello'],
+      { w: true },
+      { transport },
+    )
+    expect(transport.calls[0]?.endpoint).toBe('/guilds/G1/messages/search')
+    expect(transport.calls[0]?.params?.channel_id).toBe('C1')
+    const lines = out.stdout.split('\n').filter((l) => l !== '')
+    expect(lines).toHaveLength(1)
+    expect(lines[0]).toContain(
+      '/mnt/discord/My Server__G1/channels/general__C1/2016-04-30/chat.jsonl:',
+    )
+  })
+
+  it('scans attachment blobs instead of widening to a message search', async () => {
+    // The blob does not exist, so the scan fails per-operand — the pin is
+    // that the search endpoint is never consulted for a file_blob path.
+    const idx = new RAMIndexCacheStore()
+    await seedGuild(idx, '/mnt/discord', 'My Server__G1', 'G1')
+    await seedChannel(idx, '/mnt/discord', 'My Server__G1', 'general__C1', 'C1', {
+      dates: ['2016-04-30'],
+    })
+    const transport = new FakeDiscordTransport((_method, endpoint) =>
+      endpoint === '/channels/C1/messages' ? [] : null,
+    )
+    const blob = '/mnt/discord/My Server__G1/channels/general__C1/2016-04-30/files/data__A1.csv'
+    const out = await runGrep(
+      [
+        new PathSpec({
+          virtual: blob,
+          directory: blob,
+          resolved: false,
+          resourcePath: mountKey(blob, '/mnt/discord'),
+        }),
+      ],
+      ['quarter'],
+      { w: true },
+      { index: idx, transport },
+    )
+    const searches = transport.calls.filter((c) => c.endpoint.includes('/messages/search'))
+    expect(searches).toHaveLength(0)
+    expect(out.exitCode).not.toBe(0)
   })
 })

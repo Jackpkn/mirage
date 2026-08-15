@@ -86,6 +86,11 @@
                 "filename": "budget.csv",
                 "content_type": "text/csv",
                 "body": "quarter,amount\nQ1,100\nQ2,250\n"
+              },
+              {
+                "id": "500000000000000002",
+                "filename": "ghost.png",
+                "tombstoned": true
               }
             ]
           },
@@ -102,6 +107,12 @@
             "author": "900000000000000001",
             "content": "v1.2.0 released",
             "timestamp": "2026-06-01T12:00:00.000000+00:00"
+          },
+          {
+            "id": "1511285744391782400",
+            "author": "900000000000000001",
+            "content": "v1.2.1 hotfix released",
+            "timestamp": "2026-06-02T09:00:00.000000+00:00"
           }
         ]
       }

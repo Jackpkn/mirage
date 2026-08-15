@@ -21,7 +21,7 @@ import { DISCORD_IO } from './io.ts'
 import { read as discordRead } from '../../../core/discord/read.ts'
 import { readdir as discordReaddir } from '../../../core/discord/readdir.ts'
 import { stat as discordStat } from '../../../core/discord/stat.ts'
-import { detectScope } from '../../../core/discord/scope.ts'
+import { coalesceScopes, detectScope } from '../../../core/discord/scope.ts'
 import { listChannels } from '../../../core/discord/channels.ts'
 import { formatGrepResults, searchGuild } from '../../../core/discord/search.ts'
 import { IOResult } from '../../../io/types.ts'
@@ -64,7 +64,8 @@ async function rgCommand(
   if (paths.length > 0 && !pattern.includes('\n')) {
     const firstPath = paths[0]
     if (firstPath !== undefined) {
-      const scope = detectScope(firstPath)
+      let scope = detectScope(firstPath)
+      if (scope.level === 'messages') scope = coalesceScopes(paths) ?? scope
       // Discord search matches whole words while grep matches substrings,
       // and the native path returns search results verbatim as the output, so
       // a bare literal would under-report. Only -w makes the two agree.

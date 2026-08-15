@@ -247,7 +247,12 @@ async def _fetch_day(
     file_entries: list[tuple[str, IndexEntry]] = []
     for msg in messages:
         for att in msg.get("attachments") or []:
-            if not att.get("id"):
+            # Tombstoned (deleted) and access-restricted attachment payloads
+            # carry an id but no download URL and no byte size; read()
+            # ENOENTs on them, so listing them would surface phantom files
+            # with unknown sizes. Mirrors the slack guard.
+            if (not att.get("id") or not att.get("url")
+                    or att.get("size") is None):
                 continue
             blob_name = file_blob_name(att)
             file_entries.append((blob_name,

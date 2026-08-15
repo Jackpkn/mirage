@@ -52,25 +52,17 @@ async def rg(accessor: DiscordAccessor, paths: list[PathSpec],
 
     pushdown_warnings: list[str] = []
     if paths and "\n" not in pattern_str:
-        scope = await detect_scope(paths[0], opts.index)
-        if scope.level in ("messages", "file_blob", "date"):
-            coalesced = await coalesce_scopes(paths, opts.index)
-            if coalesced is not None:
-                scope = coalesced
-
-        if scope.level == "root":
-            return b"", IOResult(exit_code=1,
-                                 stderr=b"rg: root-level search "
-                                 b"not yet supported\n")
+        scope = detect_scope(paths[0])
+        if scope.level == "messages":
+            scope = coalesce_scopes(paths) or scope
 
         # Provider search matches whole words while grep matches
         # substrings, and the native path returns search results verbatim
         # as the output, so a bare literal would under-report. Only -w
         # makes the two agree; otherwise fall through to the scan.
-        if scope.level in ("channel", "guild") and fl.as_bool("w"):
+        if (scope.use_native and scope.guild_id is not None
+                and fl.as_bool("w")):
             try:
-                if scope.guild_id is None:
-                    raise RuntimeError("cannot resolve guild ID")
                 msgs = await search_guild(
                     accessor.config,
                     scope.guild_id,

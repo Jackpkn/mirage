@@ -179,4 +179,42 @@ describe('formatGrepResults', () => {
       '/discord/My Server__G1/channels/eng__C3/2026-04-25/chat.jsonl:[carol] msg',
     ])
   })
+
+  it('derives the date from the snowflake when the timestamp is missing', () => {
+    // A hit without a timestamp still has a snowflake id, which encodes the
+    // creation day readdir buckets it under. 175928847299117056 is
+    // 2016-04-30 UTC.
+    const lines = formatGrepResults(
+      [
+        {
+          id: '175928847299117056',
+          channel_id: 'C1',
+          author: { username: 'alice' },
+          content: 'hello',
+        },
+      ],
+      scope,
+      '/discord',
+      new Map([['C1', 'general']]),
+    )
+    expect(lines).toEqual([
+      '/discord/My Server__G1/channels/general__C1/2016-04-30/chat.jsonl:[alice] hello',
+    ])
+  })
+
+  it('points a fully dateless hit at the channel dir instead of //chat.jsonl', () => {
+    const lines = formatGrepResults(
+      [
+        {
+          channel_id: 'C1',
+          author: { username: 'alice' },
+          content: 'hello',
+        },
+      ],
+      scope,
+      '/discord',
+      new Map([['C1', 'general']]),
+    )
+    expect(lines).toEqual(['/discord/My Server__G1/channels/general__C1:[alice] hello'])
+  })
 })

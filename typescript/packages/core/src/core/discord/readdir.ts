@@ -290,16 +290,20 @@ async function fetchDay(
       size?: number
     }[]
     for (const att of atts) {
-      if (!att.id) continue
+      // Tombstoned (deleted) and access-restricted attachment payloads
+      // carry an id but no download URL and no byte size; read() ENOENTs
+      // on them, so listing them would surface phantom files with unknown
+      // sizes. Mirrors the slack guard.
+      if (!att.id || !att.url || att.size === undefined) continue
       const blobName = fileBlobName(att)
       const entry = new IndexEntry({
         id: att.id,
         name: att.filename ?? '',
         resourceType: DiscordResourceType.FILE,
         vfsName: blobName,
-        ...(att.size !== undefined ? { size: att.size } : {}),
+        size: att.size,
         extra: {
-          url: att.url ?? '',
+          url: att.url,
           proxy_url: att.proxy_url ?? '',
           content_type: att.content_type ?? '',
           message_id: msg.id,

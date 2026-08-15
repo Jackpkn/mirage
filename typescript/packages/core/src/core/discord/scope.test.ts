@@ -15,7 +15,7 @@
 import { stripSlash } from '../../utils/slash.ts'
 import { mountKey } from '../../utils/key_prefix.ts'
 import { describe, expect, it } from 'vitest'
-import { detectScope } from './scope.ts'
+import { coalesceScopes, detectScope } from './scope.ts'
 import { PathSpec } from '../../types.ts'
 
 describe('detectScope', () => {
@@ -216,5 +216,56 @@ describe('detectScope', () => {
     expect(s.level).toBe('guild')
     expect(s.guildName).toBe('myserver')
     expect(s.guildId).toBeUndefined()
+  })
+})
+
+describe('coalesceScopes', () => {
+  const spec = (path: string): PathSpec =>
+    new PathSpec({
+      resourcePath: mountKey(path, '/discord'),
+      virtual: path,
+      directory: path,
+    })
+
+  it('coalesces concrete chat.jsonl paths of one channel into a channel scope', () => {
+    const paths = ['2026-01-01', '2026-01-02', '2026-01-03'].map((d) =>
+      spec(`/discord/myserver__G1/channels/general__C1/${d}/chat.jsonl`),
+    )
+    const s = coalesceScopes(paths)
+    expect(s).not.toBeNull()
+    expect(s?.level).toBe('channel')
+    expect(s?.useNative).toBe(true)
+    expect(s?.guildId).toBe('G1')
+    expect(s?.channelId).toBe('C1')
+  })
+
+  it('returns null for paths spanning channels', () => {
+    const paths = [
+      spec('/discord/myserver__G1/channels/general__C1/2026-01-01/chat.jsonl'),
+      spec('/discord/myserver__G1/channels/random__C2/2026-01-01/chat.jsonl'),
+    ]
+    expect(coalesceScopes(paths)).toBeNull()
+  })
+
+  it('returns null when the dirnames carry no ids', () => {
+    const paths = [spec('/discord/myserver/channels/general/2026-01-01/chat.jsonl')]
+    expect(coalesceScopes(paths)).toBeNull()
+  })
+
+  it('returns null for attachment blobs — message search cannot answer them', () => {
+    const paths = [spec('/discord/myserver__G1/channels/general__C1/2026-01-01/files/img__A1.png')]
+    expect(coalesceScopes(paths)).toBeNull()
+  })
+
+  it('returns null when message files are mixed with blobs', () => {
+    const paths = [
+      spec('/discord/myserver__G1/channels/general__C1/2026-01-01/chat.jsonl'),
+      spec('/discord/myserver__G1/channels/general__C1/2026-01-01/files/img__A1.png'),
+    ]
+    expect(coalesceScopes(paths)).toBeNull()
+  })
+
+  it('returns null for an empty list', () => {
+    expect(coalesceScopes([])).toBeNull()
   })
 })
