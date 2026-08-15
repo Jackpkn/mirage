@@ -4,6 +4,8 @@ import {
   ResourceName,
   type IndexCacheStore,
   type PathSpec,
+  isShortRangeRefusal,
+  sliceWindow,
 } from '@struktoai/mirage-core'
 import type { NextcloudAccessor } from '../../accessor/nextcloud.ts'
 import { isNotFound, nextcloudKey } from './util.ts'
@@ -30,10 +32,22 @@ export async function read(
   }
   const startMs = performance.now()
   try {
-    const data =
-      readOptions.offset !== undefined || readOptions.size !== undefined
+    const windowed = readOptions.offset !== undefined || readOptions.size !== undefined
+    // OpenDAL's node binding refuses to return fewer bytes than the range
+    // asked for, where a POSIX read comes back short, so a window that runs
+    // past EOF has to be read unbounded and trimmed here. Python's binding
+    // reads through a file object and is short naturally.
+    let data: Buffer
+    try {
+      data = windowed
         ? await op.read(nextcloudKey(path), readOptions)
         : await op.read(nextcloudKey(path))
+    } catch (rangeError) {
+      if (!windowed || !isShortRangeRefusal(rangeError)) throw rangeError
+      const from = Number(readOptions.offset ?? 0n)
+      const whole = await op.read(nextcloudKey(path), { offset: BigInt(from) })
+      data = Buffer.from(sliceWindow(new Uint8Array(whole), 0, options.size ?? null))
+    }
     const bytes = new Uint8Array(data)
     record('read', path.virtual, ResourceName.NEXTCLOUD, bytes.byteLength, startMs)
     return bytes

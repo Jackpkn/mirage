@@ -152,3 +152,24 @@ describe('windowIfUnranged', () => {
     expect(text(windowIfUnranged(bytes('abc'), 200, 500, 10))).toBe('')
   })
 })
+
+describe('isUnsatisfiableRange on a WebDAV 416', () => {
+  // OpenDAL puts the whole response in the message, so the status is only
+  // readable inside the string and the exception name has no spaces for the
+  // spaced spelling to match.
+  it('recognises the SabreDAV shape nextcloud answers with', () => {
+    expect(
+      isUnsatisfiableRange(
+        new Error(
+          `Unexpected (permanent) at read, context: { uri: http://h/x, response: Parts { status: 416 } } <d:error><s:exception>Sabre\\DAV\\Exception\\RequestedRangeNotSatisfiable</s:exception><s:message>The start offset (99) exceeded the size of the entity (3)</s:message></d:error>`,
+        ),
+      ),
+    ).toBe(true)
+  })
+
+  it('still refuses an unrelated permanent error', () => {
+    expect(isUnsatisfiableRange(new Error('Unexpected (permanent) at read, status: 500'))).toBe(
+      false,
+    )
+  })
+})

@@ -144,4 +144,11 @@ def is_unsatisfiable_range(exc: BaseException) -> bool:
     text = str(exc).lower()
     if "range not satisfiable" in text:
         return True
+    # OpenDAL reports the store's whole response as message text rather
+    # than fields, so a WebDAV 416 arrives as SabreDAV's exception name
+    # and wording with the status only readable inside the string.
+    if "requestedrangenotsatisfiable" in text:
+        return True
+    if "exceeded the size of the entity" in text:
+        return True
     return "seek" in text and "beyond the end" in text

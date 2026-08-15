@@ -436,6 +436,7 @@ export {
   type CompressionCodec,
 } from './utils/compress.ts'
 export { decodeBase64, encodeBase64 } from './utils/base64.ts'
+export { isShortRangeRefusal, sliceWindow } from './utils/ranges.ts'
 export { md5, md5Hex, sha256, sha256Hex } from './utils/hash.ts'
 export {
   evalJsonlStream,

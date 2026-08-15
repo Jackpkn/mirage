@@ -150,3 +150,18 @@ def test_a_200_to_eof_is_sliced_from_the_offset():
 
 def test_a_200_past_eof_is_empty():
     assert window_if_unranged(b"abc", 200, 500, 10) == b""
+
+
+SABRE_416 = (
+    "Unexpected (permanent) at read, context: { uri: http://h/x, "
+    "response: Parts { status: 416 } } <d:error><s:exception>"
+    "Sabre\\DAV\\Exception\\RequestedRangeNotSatisfiable</s:exception>"
+    "<s:message>The start offset (99) exceeded the size of the entity "
+    "(3)</s:message></d:error>")
+
+
+def test_the_sabre_webdav_416_shape_is_unsatisfiable():
+    """OpenDAL puts the whole WebDAV response in the message, so the
+    status is only readable inside the string and the exception name has
+    no spaces for the spaced spelling to match."""
+    assert is_unsatisfiable_range(RuntimeError(SABRE_416))
