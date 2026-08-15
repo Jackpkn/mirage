@@ -20,6 +20,7 @@ import dotenv from "dotenv";
 import {
   LinearResource,
   Mount,
+  MountBackend,
   MountMode,
   Workspace,
   type LinearConfig,

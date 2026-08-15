@@ -30,6 +30,7 @@ import {
   ListObjectsV2Command,
   PutObjectCommand,
   S3Client,
+  type ListObjectsV2CommandInput,
 } from '@aws-sdk/client-s3'
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 
@@ -165,7 +166,7 @@ async function signOne(signer: BackendSigner, req: SignRequest): Promise<string>
         expiresIn: ttl,
       })
     case 'LIST': {
-      const input: Record<string, unknown> = { Bucket: bucket }
+      const input: ListObjectsV2CommandInput = { Bucket: bucket }
       if (req.opts?.listPrefix !== undefined && req.opts.listPrefix !== '') {
         input.Prefix = req.opts.listPrefix
       }

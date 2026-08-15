@@ -15,7 +15,7 @@
 import { mkdtempSync, rmSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { PathSpec, ProvisionResult } from '@struktoai/mirage-core'
+import { PathSpec, ProvisionResult, type CommandOpts } from '@struktoai/mirage-core'
 import {
   fileReadProvision,
   headTailProvision,
@@ -30,6 +30,11 @@ const resource = new RedisResource({ url: REDIS_URL })
 
 function print(bytes: Uint8Array): void {
   process.stdout.write(new TextDecoder().decode(bytes) + '\n')
+}
+
+// Mirrors Python's `CommandOpts(command="cat")`, whose other fields default.
+function provisionOpts(command: string): CommandOpts {
+  return { stdin: null, flags: {}, filetypeFns: null, cwd: '/', command }
 }
 
 async function runLabeled(ws: Workspace, label: string, cmd: string): Promise<void> {
@@ -143,16 +148,16 @@ async function main(): Promise<void> {
     PathSpec.fromStrPath('/data/user.json', 'user.json'),
   ]
 
-  const readCost = await fileReadProvision(resource.accessor, paths, { command: 'cat' })
+  const readCost = await fileReadProvision(resource.accessor, paths, [], provisionOpts('cat'))
   console.log(`  fileReadProvision(resource.accessor, [hello.txt, user.json]):`)
   console.log(`    networkRead    = ${readCost.networkRead} bytes (${String(readCost.readOps)} reads)`)
   console.log(`    precision      = ${readCost.precision}`)
 
-  const headCost = await headTailProvision(resource.accessor, paths, { command: 'head -n 1' })
+  const headCost = await headTailProvision(resource.accessor, paths, [], provisionOpts('head -n 1'))
   console.log(`  headTailProvision(...) — Redis fetches full value regardless of -n:`)
   console.log(`    networkRead    = ${headCost.networkRead} bytes`)
 
-  const metaCost = metadataProvision(resource.accessor, paths, { command: 'stat' })
+  const metaCost = metadataProvision(resource.accessor, paths, [], provisionOpts('stat'))
   console.log(`  metadataProvision(...) — stat/ls/find cost zero network bytes:`)
   console.log(`    networkRead    = ${metaCost.networkRead} bytes`)
   console.log(`    readOps        = ${String(metaCost.readOps)}`)

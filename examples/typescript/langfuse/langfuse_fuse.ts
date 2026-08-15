@@ -20,6 +20,7 @@ import dotenv from "dotenv";
 import {
   LangfuseResource,
   Mount,
+  MountBackend,
   MountMode,
   Workspace,
   type LangfuseConfig,
