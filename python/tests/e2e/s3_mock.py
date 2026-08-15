@@ -138,6 +138,8 @@ class MultiBucketS3Client:
         # NOT the MD5 of the content.
         self.etag_suffix = etag_suffix
         self.calls: Counter[str] = Counter()
+        # Keys DeleteObjects refuses, reported under "Errors" in a 200.
+        self.undeletable: set[str] = set()
 
     def _etag(self, data: bytes) -> str:
         return hashlib.md5(data).hexdigest() + self.etag_suffix
@@ -227,10 +229,25 @@ class MultiBucketS3Client:
         if src_key in src_objects:
             self._objects(Bucket)[Key] = src_objects[src_key]
 
-    async def delete_objects(self, Bucket: str, Delete: dict) -> None:
+    async def delete_objects(self, Bucket: str, Delete: dict) -> dict:
+        # Real DeleteObjects answers 200 with per-key results, and reports a
+        # key it refused under "Errors" rather than raising. `undeletable`
+        # is how a test asks for that half.
         objects = self._objects(Bucket)
+        deleted: list[dict] = []
+        errors: list[dict] = []
         for obj in Delete.get("Objects", []):
-            objects.pop(obj["Key"], None)
+            key = obj["Key"]
+            if key in self.undeletable:
+                errors.append({
+                    "Key": key,
+                    "Code": "AccessDenied",
+                    "Message": "Access Denied",
+                })
+                continue
+            objects.pop(key, None)
+            deleted.append({"Key": key})
+        return {"Deleted": deleted, "Errors": errors}
 
     async def list_objects_v2(self,
                               Bucket: str,

@@ -17,7 +17,8 @@ import time
 from mirage.accessor.dropbox import DropboxAccessor
 from mirage.cache.context import invalidate_after_unlink, invalidate_ancestors
 from mirage.core.dropbox._client import DropboxApiError
-from mirage.core.dropbox.api import delete_path, get_metadata, move_path
+from mirage.core.dropbox.api import (delete_path, get_metadata, list_folder,
+                                     move_path)
 from mirage.core.dropbox.paths import dropbox_path_of
 from mirage.observe.context import record
 from mirage.types import PathSpec
@@ -26,10 +27,12 @@ from mirage.utils.errors import enoent
 
 async def rename(accessor: DropboxAccessor, src: PathSpec,
                  dst: PathSpec) -> None:
-    """move_v2 rejects an existing destination; GNU mv silently replaces
-    a destination FILE, so a file conflict deletes the target and
-    retries. Folder conflicts propagate (the generic mv resolves
-    into-dir moves before calling this).
+    """move_v2 rejects an existing destination, but rename(2) replaces
+    one: a file outright, and a directory when it is empty. So a
+    conflict deletes the target and retries, except for a folder that
+    still lists a child, where the original error propagates and the
+    generic mv reports GNU's "Directory not empty" (mirrors msgraph's
+    rename_replace).
 
     Args:
         accessor (DropboxAccessor): Dropbox accessor.
@@ -48,7 +51,11 @@ async def rename(accessor: DropboxAccessor, src: PathSpec,
             raise
         existing = await get_metadata(accessor.token_manager, to_path)
         if existing.get(".tag") == "folder":
-            raise
+            children = await list_folder(accessor.token_manager,
+                                         to_path,
+                                         limit=1)
+            if children:
+                raise
         await delete_path(accessor.token_manager, to_path)
         await move_path(accessor.token_manager, from_path, to_path)
     record("rename", src.virtual, "dropbox", 0, start_ms)

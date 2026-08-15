@@ -16,7 +16,43 @@ import { type PathSpec, invalidateAfterUnlink } from '@struktoai/mirage-core'
 import type { RedisAccessor } from '../../accessor/redis.ts'
 import { norm, nowIso } from './utils.ts'
 import { checkDestParents } from './dest.ts'
-import { enoent, rstripSlash } from '@struktoai/mirage-core'
+import { compareCodePoints, enoent, rstripSlash } from '@struktoai/mirage-core'
+
+// Re-key every descendant of a renamed directory. A synthetic-directory
+// store keeps subdirectories as members of their own set, so moving only
+// the files leaves those behind. The phantom tree the orphans imply makes
+// the old name reappear in its parent's listing and then stat as missing
+// -- the same shape checkDestParents refuses on the way in.
+async function moveSubtree(store: RedisAccessor['store'], s: string, d: string): Promise<void> {
+  const prefix = rstripSlash(s) + '/'
+  const dPrefix = rstripSlash(d) + '/'
+  for (const key of [...(await store.listDirs())].sort(compareCodePoints)) {
+    if (!key.startsWith(prefix)) continue
+    const newKey = dPrefix + key.slice(prefix.length)
+    const mod = await store.getModified(key)
+    const attrs = await store.getAttrs(key)
+    await store.removeDir(key)
+    await store.delModified(key)
+    await store.delAttrs(key)
+    await store.addDir(newKey)
+    if (mod !== null) await store.setModified(newKey, mod)
+    if (Object.keys(attrs).length > 0) await store.setAttrs(newKey, attrs)
+  }
+  for (const key of await store.listFiles()) {
+    if (!key.startsWith(prefix)) continue
+    const newKey = dPrefix + key.slice(prefix.length)
+    const data = await store.getFile(key)
+    if (data === null) continue
+    const mod = await store.getModified(key)
+    const attrs = await store.getAttrs(key)
+    await store.delFile(key)
+    await store.delModified(key)
+    await store.delAttrs(key)
+    await store.setFile(newKey, data)
+    if (mod !== null) await store.setModified(newKey, mod)
+    if (Object.keys(attrs).length > 0) await store.setAttrs(newKey, attrs)
+  }
+}
 
 export async function rename(accessor: RedisAccessor, src: PathSpec, dst: PathSpec): Promise<void> {
   const s = norm(src.mountPath)
@@ -48,21 +84,7 @@ export async function rename(accessor: RedisAccessor, src: PathSpec, dst: PathSp
     await store.addDir(d)
     await store.setModified(d, mod ?? now)
     if (Object.keys(attrs).length > 0) await store.setAttrs(d, attrs)
-    const prefix = rstripSlash(s) + '/'
-    const dPrefix = rstripSlash(d) + '/'
-    const files = await store.listFiles()
-    for (const key of files) {
-      if (key.startsWith(prefix)) {
-        const newKey = dPrefix + key.slice(prefix.length)
-        const data = await store.getFile(key)
-        if (data === null) continue
-        const subAttrs = await store.getAttrs(key)
-        await store.delFile(key)
-        await store.delAttrs(key)
-        await store.setFile(newKey, data)
-        if (Object.keys(subAttrs).length > 0) await store.setAttrs(newKey, subAttrs)
-      }
-    }
+    await moveSubtree(store, s, d)
     await invalidateAfterUnlink(s)
     await invalidateAfterUnlink(d)
     return

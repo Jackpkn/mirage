@@ -16,8 +16,41 @@ from mirage.accessor.ram import RAMAccessor
 from mirage.cache.context import invalidate_after_unlink
 from mirage.core.ram.dest import check_dest_parents
 from mirage.core.timeutil import now_iso
+from mirage.resource.ram.store import RAMStore
 from mirage.types import PathSpec
 from mirage.utils.path import norm
+
+
+def _move_subtree(store: RAMStore, s: str, d: str) -> None:
+    """Re-key every descendant of a renamed directory.
+
+    A synthetic-directory store keeps subdirectories as entries of their
+    own, so moving only the files leaves those behind. The phantom tree
+    the orphans imply makes the old name reappear in its parent's listing
+    and then stat as missing -- the same shape ``check_dest_parents``
+    refuses on the way in.
+
+    Args:
+        store (RAMStore): the backing store.
+        s (str): normalized source key.
+        d (str): normalized destination key.
+    """
+    prefix = s.rstrip("/") + "/"
+    new_prefix = d.rstrip("/") + "/"
+    for key in list(store.dirs):
+        if key.startswith(prefix):
+            store.dirs.discard(key)
+            store.dirs.add(new_prefix + key[len(prefix):])
+    for key in list(store.files):
+        if key.startswith(prefix):
+            store.files[new_prefix + key[len(prefix):]] = store.files.pop(key)
+    for key in list(store.modified):
+        if key.startswith(prefix):
+            store.modified[new_prefix +
+                           key[len(prefix):]] = store.modified.pop(key)
+    for key in list(store.attrs):
+        if key.startswith(prefix):
+            store.attrs[new_prefix + key[len(prefix):]] = store.attrs.pop(key)
 
 
 async def rename(accessor: RAMAccessor, src_spec: PathSpec,
@@ -39,13 +72,7 @@ async def rename(accessor: RAMAccessor, src_spec: PathSpec,
         store.modified[d] = store.modified.pop(s, now)
         if s in store.attrs:
             store.attrs[d] = store.attrs.pop(s)
-        prefix = s.rstrip("/") + "/"
-        for key in list(store.files):
-            if key.startswith(prefix):
-                new_key = d.rstrip("/") + "/" + key[len(prefix):]
-                store.files[new_key] = store.files.pop(key)
-                if key in store.attrs:
-                    store.attrs[new_key] = store.attrs.pop(key)
+        _move_subtree(store, s, d)
     else:
         raise FileNotFoundError(s)
     await invalidate_after_unlink(dst_spec)

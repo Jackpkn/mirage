@@ -25,6 +25,7 @@ import harness  # noqa: E402
 ROOT = harness.integ_root()
 MAIN = ROOT / "runners" / "python" / "main.py"
 TSX = ROOT / "node_modules" / ".bin" / "tsx"
+CASE_TARGETS = ROOT / "runners" / "tools" / "check_case_targets.py"
 FAILURES: list[str] = []
 
 
@@ -177,6 +178,58 @@ def selftest_strict_exit() -> None:
           f"exit {code}")
 
 
+def run_case_targets(root: Path) -> int:
+    """Run the case-target gate under --strict against a scratch tree.
+
+    Args:
+        root (Path): repo root the gate should read.
+
+    Returns:
+        int: the gate's exit code.
+    """
+    result = subprocess.run(
+        [sys.executable, str(CASE_TARGETS), "--strict"],
+        cwd=root,
+        capture_output=True,
+        text=True,
+    )
+    return result.returncode
+
+
+def selftest_case_targets() -> None:
+    """A dropped target must move the count, in both directions.
+
+    This gate exists because a backend that cannot pass a case is normally
+    just deleted from that case's ``targets``, so the check that matters is
+    that the committed tree is *on* its baseline and that either edge --
+    one more omission, or one fewer -- is a failure rather than a quieter
+    number nobody reads.
+    """
+    check("case targets: the committed tree sits on its baseline",
+          run_case_targets(ROOT.parent) == 0)
+
+    exceptions = ROOT / "target_exceptions.json"
+    original = exceptions.read_text()
+    loaded = json.loads(original)
+    baseline = loaded["baseline"]
+    try:
+        loaded["baseline"] = baseline + 1
+        exceptions.write_text(json.dumps(loaded, indent=2) + "\n")
+        check("case targets: a baseline above the real count fails",
+              run_case_targets(ROOT.parent) != 0)
+        loaded["baseline"] = baseline - 1
+        exceptions.write_text(json.dumps(loaded, indent=2) + "\n")
+        check("case targets: a baseline below the real count fails",
+              run_case_targets(ROOT.parent) != 0)
+        loaded["baseline"] = baseline
+        loaded["files"] = {"integ/unix/mv/empty_dir.json": "no longer a gap"}
+        exceptions.write_text(json.dumps(loaded, indent=2) + "\n")
+        check("case targets: a stale exception fails",
+              run_case_targets(ROOT.parent) != 0)
+    finally:
+        exceptions.write_text(original)
+
+
 def run_typescript(args: list[str], env: dict) -> tuple[int, str]:
     """Run the typescript runner, keeping stderr for the failure message.
 
@@ -245,6 +298,7 @@ def main() -> None:
     selftest_services_table()
     selftest_case_validation()
     selftest_strict_exit()
+    selftest_case_targets()
     selftest_typescript_gates("--require-ts" in sys.argv)
     print()
     if FAILURES:

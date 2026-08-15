@@ -80,6 +80,13 @@ jobs:
       - name: Layout parity
         run: ./python/.venv/bin/python scripts/check_layout_parity.py --strict
 
+      # Same ratchet, applied to battery coverage: a backend that cannot pass
+      # a case is normally just deleted from its `targets`, which turns a
+      # divergence into an omission nobody can see. This fails when a case
+      # file drops a target its siblings still exercise.
+      - name: Case target coverage
+        run: ./python/.venv/bin/python integ/runners/tools/check_case_targets.py --strict
+
       # The docs build parses frontmatter as YAML and stops on the first page
       # it cannot read, so an unquoted description holding ": " fails the
       # deploy with no local signal at all.

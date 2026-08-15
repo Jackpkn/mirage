@@ -1,8 +1,8 @@
 {
   "cases": [
     {
-      "id": "mv_empty_dir_prep",
-      "seq": 613200,
+      "id": "mv_dir_rename_prep",
+      "seq": 613210,
       "targets": [
         "ram",
         "disk",
@@ -25,7 +25,7 @@
         "gdrive-folder",
         "box"
       ],
-      "command": "mkdir -p /data/mvcache/src /data/mvcache/dst/src",
+      "command": "mkdir -p /data/mvdirn/d/sub && echo top > /data/mvdirn/d/f.txt && echo deep > /data/mvdirn/d/sub/g.txt",
       "expect": {
         "exit": 0,
         "stdout": "",
@@ -33,8 +33,8 @@
       }
     },
     {
-      "id": "mv_empty_dir_seed",
-      "seq": 613201,
+      "id": "mv_dir_rename_moves",
+      "seq": 613211,
       "targets": [
         "ram",
         "disk",
@@ -57,7 +57,7 @@
         "gdrive-folder",
         "box"
       ],
-      "command": "echo payload > /data/mvcache/src/f.txt",
+      "command": "mv /data/mvdirn/d /data/mvdirn/e",
       "expect": {
         "exit": 0,
         "stdout": "",
@@ -65,8 +65,8 @@
       }
     },
     {
-      "id": "mv_empty_dir_warm",
-      "seq": 613202,
+      "id": "mv_dir_rename_subtree_followed",
+      "seq": 613212,
       "targets": [
         "ram",
         "disk",
@@ -89,16 +89,48 @@
         "gdrive-folder",
         "box"
       ],
-      "command": "ls /data/mvcache/dst/src",
+      "command": "cat /data/mvdirn/e/f.txt /data/mvdirn/e/sub/g.txt",
       "expect": {
         "exit": 0,
+        "stdout": "top\ndeep\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "mv_dir_rename_source_gone",
+      "seq": 613213,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "cat /data/mvdirn/d/f.txt",
+      "expect": {
+        "exit": 1,
         "stdout": "",
-        "stderr": ""
+        "stderr": "cat: /data/mvdirn/d/f.txt: No such file or directory\n"
       }
     },
     {
-      "id": "mv_empty_dir_replace",
-      "seq": 613203,
+      "id": "mv_dir_rename_missing_source",
+      "seq": 613214,
       "targets": [
         "ram",
         "disk",
@@ -121,107 +153,11 @@
         "gdrive-folder",
         "box"
       ],
-      "command": "mv /data/mvcache/src /data/mvcache/dst",
+      "command": "mv /data/mvdirn/nosuch /data/mvdirn/other",
       "expect": {
-        "exit": 0,
+        "exit": 1,
         "stdout": "",
-        "stderr": ""
-      }
-    },
-    {
-      "id": "mv_empty_dir_fresh_listing",
-      "seq": 613204,
-      "targets": [
-        "ram",
-        "disk",
-        "redis",
-        "opfs",
-        "s3",
-        "databricks",
-        "gridfs",
-        "s3-prefix",
-        "databricks-prefix",
-        "gridfs-prefix",
-        "dropbox",
-        "dropbox-root",
-        "onedrive",
-        "sharepoint",
-        "sharepoint-prefix",
-        "ssh",
-        "nextcloud",
-        "gdrive",
-        "gdrive-folder",
-        "box"
-      ],
-      "command": "ls /data/mvcache/dst/src",
-      "expect": {
-        "exit": 0,
-        "stdout": "f.txt\n",
-        "stderr": ""
-      }
-    },
-    {
-      "id": "mv_empty_dir_content",
-      "seq": 613205,
-      "targets": [
-        "ram",
-        "disk",
-        "redis",
-        "opfs",
-        "s3",
-        "databricks",
-        "gridfs",
-        "s3-prefix",
-        "databricks-prefix",
-        "gridfs-prefix",
-        "dropbox",
-        "dropbox-root",
-        "onedrive",
-        "sharepoint",
-        "sharepoint-prefix",
-        "ssh",
-        "nextcloud",
-        "gdrive",
-        "gdrive-folder",
-        "box"
-      ],
-      "command": "cat /data/mvcache/dst/src/f.txt",
-      "expect": {
-        "exit": 0,
-        "stdout": "payload\n",
-        "stderr": ""
-      }
-    },
-    {
-      "id": "mv_empty_dir_src_gone",
-      "seq": 613206,
-      "targets": [
-        "ram",
-        "disk",
-        "redis",
-        "opfs",
-        "s3",
-        "databricks",
-        "gridfs",
-        "s3-prefix",
-        "databricks-prefix",
-        "gridfs-prefix",
-        "dropbox",
-        "dropbox-root",
-        "onedrive",
-        "sharepoint",
-        "sharepoint-prefix",
-        "ssh",
-        "nextcloud",
-        "gdrive",
-        "gdrive-folder",
-        "box"
-      ],
-      "command": "ls /data/mvcache",
-      "expect": {
-        "exit": 0,
-        "stdout": "dst\n",
-        "stderr": ""
+        "stderr": "mv: cannot stat '/data/mvdirn/nosuch': No such file or directory\n"
       }
     }
   ]

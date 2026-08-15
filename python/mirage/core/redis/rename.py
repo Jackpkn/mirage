@@ -16,8 +16,54 @@ from mirage.accessor.redis import RedisAccessor
 from mirage.cache.context import invalidate_after_unlink
 from mirage.core.redis.dest import check_dest_parents
 from mirage.core.timeutil import now_iso
+from mirage.resource.redis.store import RedisStore
 from mirage.types import PathSpec
 from mirage.utils.path import norm
+
+
+async def _move_subtree(store: RedisStore, s: str, d: str) -> None:
+    """Re-key every descendant of a renamed directory.
+
+    A synthetic-directory store keeps subdirectories as members of their
+    own set, so moving only the files leaves those behind. The phantom
+    tree the orphans imply makes the old name reappear in its parent's
+    listing and then stat as missing -- the same shape
+    ``check_dest_parents`` refuses on the way in.
+
+    Args:
+        store (RedisStore): the backing store.
+        s (str): normalized source key.
+        d (str): normalized destination key.
+    """
+    prefix = s.rstrip("/") + "/"
+    new_prefix = d.rstrip("/") + "/"
+    for key in sorted(await store.list_dirs()):
+        if key.startswith(prefix):
+            new_key = new_prefix + key[len(prefix):]
+            mod = await store.get_modified(key)
+            attrs = await store.get_attrs(key)
+            await store.remove_dir(key)
+            await store.del_modified(key)
+            await store.del_attrs(key)
+            await store.add_dir(new_key)
+            if mod:
+                await store.set_modified(new_key, mod)
+            if attrs:
+                await store.set_attrs(new_key, attrs)
+    for key in await store.list_files():
+        if key.startswith(prefix):
+            new_key = new_prefix + key[len(prefix):]
+            data = await store.get_file(key) or b""
+            mod = await store.get_modified(key)
+            attrs = await store.get_attrs(key)
+            await store.del_file(key)
+            await store.del_modified(key)
+            await store.del_attrs(key)
+            await store.set_file(new_key, data)
+            if mod:
+                await store.set_modified(new_key, mod)
+            if attrs:
+                await store.set_attrs(new_key, attrs)
 
 
 async def rename(
@@ -52,18 +98,7 @@ async def rename(
         await store.set_modified(d, mod or now)
         if attrs:
             await store.set_attrs(d, attrs)
-        prefix = s.rstrip("/") + "/"
-        all_files = await store.list_files()
-        for key in all_files:
-            if key.startswith(prefix):
-                new_key = d.rstrip("/") + "/" + key[len(prefix):]
-                data = await store.get_file(key) or b""
-                sub_attrs = await store.get_attrs(key)
-                await store.del_file(key)
-                await store.del_attrs(key)
-                await store.set_file(new_key, data)
-                if sub_attrs:
-                    await store.set_attrs(new_key, sub_attrs)
+        await _move_subtree(store, s, d)
     else:
         raise FileNotFoundError(s)
     await invalidate_after_unlink(dst_spec)
