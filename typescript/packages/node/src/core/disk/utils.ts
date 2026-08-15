@@ -15,7 +15,7 @@
 import path from 'node:path'
 import { lstripSlash } from '@struktoai/mirage-core/utils/slash'
 
-export { norm, parent, gnuBasename as basename } from '@struktoai/mirage-core'
+export { gnuBasename as basename, norm, parent } from '@struktoai/mirage-core/utils/path'
 
 export function resolveSafe(root: string, virtual: string): string {
   const relative = lstripSlash(virtual)

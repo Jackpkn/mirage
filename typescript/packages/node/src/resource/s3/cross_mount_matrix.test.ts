@@ -78,7 +78,7 @@ async function populate(
     mock.store.set(state.s3Bucket, name, content)
     return
   }
-  const { PathSpec } = await import('@struktoai/mirage-core')
+  const { PathSpec } = await import('@struktoai/mirage-core/types')
   const fullPath = `/${name}`
   const r = state.resource as RAMResource | DiskResource
   const parts = name.split('/').filter(Boolean)

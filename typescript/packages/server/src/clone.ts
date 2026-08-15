@@ -17,7 +17,8 @@ import { toStateDict } from '@struktoai/mirage-core/workspace/snapshot/state'
 import type { WorkspaceStateDict } from '@struktoai/mirage-core/workspace/snapshot/types'
 import { normMountPrefix } from '@struktoai/mirage-core/workspace/snapshot/utils'
 import type { Workspace as CoreWorkspace } from '@struktoai/mirage-core/workspace/workspace'
-import { buildResource, Workspace, type Resource } from '@struktoai/mirage-node'
+import type { Resource } from '@struktoai/mirage-core/resource/base'
+import { Workspace, buildResource } from '@struktoai/mirage-node'
 
 interface OverrideMountBlock {
   resource: string

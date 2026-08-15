@@ -152,7 +152,7 @@ describe('browser resource registry', () => {
   })
 
   it('builds a NotionResource via buildResource', async () => {
-    const { MemoryOAuthClientProvider } = await import('@struktoai/mirage-core')
+    const { MemoryOAuthClientProvider } = await import('@struktoai/mirage-core/core/notion/_oauth')
     const clientMetadata: OAuthClientMetadata = {
       redirect_uris: ['http://example.com/cb'],
     } as OAuthClientMetadata
@@ -171,7 +171,7 @@ describe('browser resource registry', () => {
 
   it('supports registering a custom factory', async () => {
     register('mock-fs', async () => {
-      const { RAMResource } = await import('@struktoai/mirage-core')
+      const { RAMResource } = await import('@struktoai/mirage-core/resource/ram/ram')
       return new RAMResource()
     })
     expect(knownResources()).toContain('mock-fs')

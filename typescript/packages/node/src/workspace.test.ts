@@ -47,7 +47,7 @@ describe('@struktoai/mirage-node Workspace', () => {
         mode: MountMode.WRITE,
         shellParserFactory: async () => {
           calls += 1
-          const { createShellParser } = await import('@struktoai/mirage-core')
+          const { createShellParser } = await import('@struktoai/mirage-core/shell/parse')
           const { readFileSync } = await import('node:fs')
           const { createRequire } = await import('node:module')
           const requireCjs = createRequire(import.meta.url)

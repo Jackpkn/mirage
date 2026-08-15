@@ -13,7 +13,9 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { describe, expect, it } from 'vitest'
-import { MountMode, RAMResource, Workspace } from '@struktoai/mirage-node'
+import { RAMResource } from '@struktoai/mirage-core/resource/ram/ram'
+import { MountMode } from '@struktoai/mirage-core/types'
+import { Workspace } from '@struktoai/mirage-node'
 import { cloneWorkspaceWithOverride } from './clone.ts'
 
 describe('cloneWorkspaceWithOverride', () => {

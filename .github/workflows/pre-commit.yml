@@ -87,6 +87,12 @@ jobs:
       - name: Case target coverage
         run: ./python/.venv/bin/python integ/runners/tools/check_case_targets.py --strict
 
+      # knip cannot police core's barrel: its project root is typescript/, so
+      # the barrel's real consumers (examples, docs, integ) sit outside its
+      # graph, and core's `./*` exports map makes every module an entry.
+      - name: Core barrel surface
+        run: ./python/.venv/bin/python scripts/check_barrel_surface.py
+
       # The docs build parses frontmatter as YAML and stops on the first page
       # it cannot read, so an unquoted description holding ": " fails the
       # deploy with no local signal at all.

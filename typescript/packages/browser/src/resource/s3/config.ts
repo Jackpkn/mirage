@@ -12,11 +12,11 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-export {
-  redactS3Config as redactConfig,
-  type S3BrowserOperation,
-  type S3BrowserPresignedUrlProvider,
-  type S3BrowserSignOptions,
-  type S3Config,
-  type S3ConfigRedacted,
-} from '@struktoai/mirage-core'
+export { redactConfig } from '@struktoai/mirage-core/resource/s3/config'
+export type {
+  S3BrowserOperation,
+  S3BrowserPresignedUrlProvider,
+  S3BrowserSignOptions,
+  S3Config,
+  S3ConfigRedacted,
+} from '@struktoai/mirage-core/resource/s3/config'
