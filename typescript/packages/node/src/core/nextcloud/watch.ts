@@ -12,62 +12,14 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import {
-  ListingDeltaHook,
-  mountPrefixOf,
-  statFingerprint,
-  stripSlash,
-  type DeltaHook,
-  type PathSpec,
-  type WalkEntry,
-} from '@struktoai/mirage-core'
+import { ListingDeltaHook, type DeltaHook } from '@struktoai/mirage-core'
 import type { NextcloudAccessor } from '../../accessor/nextcloud.ts'
-import { isNotFound } from './util.ts'
+import { OpendalWalk } from '../opendal/watch.ts'
 
-export class NextcloudWalk {
-  private readonly accessor: NextcloudAccessor
+export const NextcloudWalk = OpendalWalk
 
-  constructor(accessor: NextcloudAccessor) {
-    this.accessor = accessor
-  }
-
-  async *walk(root: PathSpec): AsyncGenerator<WalkEntry> {
-    const prefix = mountPrefixOf(root.virtual, root.resourcePath)
-    const base = stripSlash(root.resourcePath)
-    const listPath = base !== '' ? `${base}/` : '/'
-    const operator = await this.accessor.operator()
-    let entries
-    try {
-      entries = await operator.list(listPath, { recursive: true })
-    } catch (error) {
-      if (isNotFound(error)) return
-      throw error
-    }
-    for (const entry of entries) {
-      const relative = entry.path()
-      if (relative === '' || relative === listPath) continue
-      const metadata = entry.metadata()
-      const isDir = relative.endsWith('/') || metadata.isDirectory()
-      const resourcePath = stripSlash(relative)
-      const virtual = prefix !== '' ? `${prefix}/${resourcePath}` : `/${resourcePath}`
-      if (isDir) {
-        yield { virtual, isDir: true, fingerprint: null }
-        continue
-      }
-      const modified = metadata.lastModified
-      const size = metadata.contentLength === null ? null : Number(metadata.contentLength)
-      yield {
-        virtual,
-        isDir: false,
-        fingerprint: statFingerprint(metadata.etag, modified, size),
-        size,
-        modified,
-      }
-    }
-  }
-}
-
+// One recursive PROPFIND per pull, fingerprinted on the WebDAV ETag.
 export function buildDeltaHook(accessor: NextcloudAccessor): DeltaHook {
-  const walk = new NextcloudWalk(accessor)
+  const walk = new OpendalWalk(accessor)
   return new ListingDeltaHook(walk.walk.bind(walk))
 }

@@ -54,6 +54,7 @@ import {
 import { HttpProxyAgent } from 'http-proxy-agent'
 import { HttpsProxyAgent } from 'https-proxy-agent'
 import { redactConfig, type S3Config, type S3ConfigRedacted } from './config.ts'
+import { s3BuildDeltaHook as buildDeltaHook, type DeltaHook } from '@struktoai/mirage-core'
 
 const globCore = makeResolveGlob(readdirCore, S3_SCOPE_ERROR)
 
@@ -224,6 +225,10 @@ export class S3Resource extends BaseResource implements Resource {
         )
       : paths
     return globCore(this.accessor, effective, this.index)
+  }
+
+  deltaHook(): DeltaHook {
+    return buildDeltaHook(this.accessor)
   }
 
   getState(): Promise<S3ResourceState> {

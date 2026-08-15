@@ -14,26 +14,18 @@
 
 import pytest
 
-from mirage.cache.index import IndexCacheStore, IndexEntry
+from mirage.accessor.github import GitHubAccessor
 from mirage.commands.builtin.github.du import _du_size
 from mirage.commands.builtin.github.grep import grep
 from mirage.commands.builtin.github.narrow import narrow_scope
 from mirage.commands.builtin.github.rg import rg
 from mirage.commands.config import CommandOpts
+from mirage.core.github.tree_entry import TreeEntry
 from mirage.io.stream import materialize
 from mirage.types import PathSpec
 from tests.fixtures.github_mock import MOCK_BLOBS
 
 _NGLOBALS = narrow_scope.__globals__
-
-
-class EntryOnlyIndex(IndexCacheStore):
-
-    async def entries(self) -> dict[str, IndexEntry]:
-        return {
-            "/src/main.py":
-            IndexEntry(id="main", name="main.py", resource_type="file", size=7)
-        }
 
 
 @pytest.fixture
@@ -63,8 +55,23 @@ def _subdir() -> PathSpec:
 
 
 @pytest.mark.asyncio
-async def test_du_uses_store_interface_not_ram_implementation():
-    assert await _du_size(EntryOnlyIndex(), _subdir()) == 7
+async def test_du_sizes_from_the_git_tree():
+    # du reads the tree, not the index: the tree is keyed repo-relative,
+    # which is the space this comparison is in, and it stays right
+    # however the mount keys its index.
+    accessor = GitHubAccessor(None,
+                              "acme",
+                              "proj",
+                              "main",
+                              "main",
+                              tree={
+                                  "src/main.py":
+                                  TreeEntry(path="src/main.py",
+                                            type="blob",
+                                            sha="main",
+                                            size=7)
+                              })
+    assert await _du_size(accessor, _subdir()) == 7
 
 
 @pytest.mark.asyncio

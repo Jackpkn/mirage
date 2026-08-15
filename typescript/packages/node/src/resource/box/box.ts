@@ -33,6 +33,7 @@ import {
   type Resource,
 } from '@struktoai/mirage-core'
 import { redactBoxConfig, type BoxConfig, type BoxConfigRedacted } from './config.ts'
+import { boxBuildDeltaHook as buildDeltaHook, type DeltaHook } from '@struktoai/mirage-core'
 
 const boxResolveGlob = makeResolveGlob(boxReaddir)
 
@@ -107,6 +108,10 @@ export class BoxResource extends BaseResource implements Resource {
           )
         : paths
     return boxResolveGlob(this.accessor, effective, this.index)
+  }
+
+  deltaHook(): DeltaHook {
+    return buildDeltaHook(this.accessor)
   }
 
   getState(): Promise<BoxResourceState> {

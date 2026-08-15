@@ -41,15 +41,23 @@ def _stat_from_item(item: dict[str, Any]) -> FileStat:
             extra={"box_id": item["id"]},
         )
     remote_time = item.get("modified_at") or ""
+    # Box returns the content sha1 in the same listing, so prefer it:
+    # it is content-addressed, where modified_at cannot tell two writes
+    # in the same second apart and does not move at all on a re-upload
+    # of identical bytes.
+    sha1 = item.get("sha1") or None
     return FileStat(
         name=vfs_name,
         size=item.get("size"),
         type=guess_type(vfs_name),
         modified=remote_time,
-        fingerprint=remote_time or None,
+        fingerprint=sha1 or remote_time or None,
         extra={
             "box_id": item["id"],
             "resource_type": rt,
+            **({
+                "sha1": sha1
+            } if sha1 else {}),
         },
     )
 
@@ -106,14 +114,18 @@ async def stat(
             modified=result.entry.remote_time,
             extra={"box_id": result.entry.id},
         )
+    sha1 = result.entry.extra.get("sha1")
     return FileStat(
         name=result.entry.vfs_name or result.entry.name,
         size=result.entry.size,
         type=guess_type(result.entry.vfs_name),
         modified=result.entry.remote_time,
-        fingerprint=result.entry.remote_time or None,
+        fingerprint=sha1 or result.entry.remote_time or None,
         extra={
             "box_id": result.entry.id,
             "resource_type": result.entry.resource_type,
+            **({
+                "sha1": sha1
+            } if sha1 else {}),
         },
     )

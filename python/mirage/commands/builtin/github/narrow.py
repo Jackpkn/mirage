@@ -67,7 +67,7 @@ async def narrow_scope(
             search actually narrowed the set.
     """
     key = scope_relative_key(paths[0])
-    file_count = count_scope_files(await index.entries(), key)
+    file_count = count_scope_files(accessor.tree, key)
     query = search_query(pattern,
                          fixed_string) if pattern is not None else None
     literal = (pattern is not None

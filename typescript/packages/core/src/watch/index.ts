@@ -21,7 +21,7 @@ export type {
   WatchRuntime,
 } from './base.ts'
 export { ListingDeltaHook, specFor } from './delta.ts'
-export { QueueClosed, QueueOverflowError } from './errors.ts'
+export { IncompleteWalkError, QueueClosed, QueueOverflowError } from './errors.ts'
 export { statFingerprint } from './fingerprint.ts'
 export {
   type QueueFactory,
@@ -30,3 +30,4 @@ export {
   type WatchQueue,
 } from './queue/index.ts'
 export { Watcher } from './watcher.ts'
+export { entryOf, ReaddirWalk, type WalkReaddirFn, synthDirs, type WalkStatFn } from './walk.ts'

@@ -33,6 +33,7 @@ import {
   type Resource,
 } from '@struktoai/mirage-core'
 import { redactGDriveConfig, type GDriveConfig, type GDriveConfigRedacted } from './config.ts'
+import { gdriveBuildDeltaHook as buildDeltaHook, type DeltaHook } from '@struktoai/mirage-core'
 
 const gdriveResolveGlob = makeResolveGlob(gdriveReaddir)
 
@@ -97,6 +98,10 @@ export class GDriveResource extends BaseResource implements Resource {
           )
         : paths
     return gdriveResolveGlob(this.accessor, effective, this.index)
+  }
+
+  deltaHook(): DeltaHook {
+    return buildDeltaHook(this.accessor)
   }
 
   getState(): Promise<GDriveResourceState> {

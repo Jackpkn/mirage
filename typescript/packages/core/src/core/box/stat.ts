@@ -34,14 +34,19 @@ function statFromItem(item: BoxItem): FileStat {
     })
   }
   const size = typeof item.size === 'number' ? item.size : null
+  // Box returns the content sha1 in the same listing, so prefer it: it
+  // is content-addressed, where modified_at cannot tell two writes in
+  // the same second apart and does not move at all on a re-upload of
+  // identical bytes.
+  const sha1 = typeof item.sha1 === 'string' && item.sha1 !== '' ? item.sha1 : null
+  const modified = item.modified_at ?? ''
   return new FileStat({
     name: vfsName,
     size,
     type: guessType(vfsName),
-    modified: item.modified_at ?? '',
-    fingerprint:
-      item.modified_at !== undefined && item.modified_at !== '' ? item.modified_at : null,
-    extra: { box_id: item.id, resource_type: rt },
+    modified,
+    fingerprint: sha1 ?? (modified !== '' ? modified : null),
+    extra: { box_id: item.id, resource_type: rt, ...(sha1 === null ? {} : { sha1 }) },
   })
 }
 
@@ -109,15 +114,18 @@ export async function stat(
       extra: { box_id: result.entry.id },
     })
   }
+  const cachedSha1 = result.entry.extra.sha1
+  const sha1 = typeof cachedSha1 === 'string' && cachedSha1 !== '' ? cachedSha1 : null
   return new FileStat({
     name: result.entry.vfsName !== '' ? result.entry.vfsName : result.entry.name,
     size: result.entry.size,
     type: guessType(result.entry.vfsName),
     modified: result.entry.remoteTime,
-    fingerprint: result.entry.remoteTime !== '' ? result.entry.remoteTime : null,
+    fingerprint: sha1 ?? (result.entry.remoteTime !== '' ? result.entry.remoteTime : null),
     extra: {
       box_id: result.entry.id,
       resource_type: result.entry.resourceType,
+      ...(sha1 === null ? {} : { sha1 }),
     },
   })
 }

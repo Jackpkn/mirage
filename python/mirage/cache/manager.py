@@ -36,8 +36,9 @@ class CacheManager:
         """Args:
             file_cache (FileCacheMixin | None): Workspace file cache
                 store; entries are keyed by mount-absolute path.
-            index (IndexCacheStore): The mount resource's index
-                cache; listings are keyed by mount-absolute path.
+            index (IndexCacheStore): The mount resource's index cache;
+                listings are keyed by mount-absolute path, which every
+                backend agrees on.
             prefix (str): Mount prefix (e.g. "/data/").
             caches_reads (bool): Whether the resource caches reads; the
                 file cache only holds paths for read-caching backends.
@@ -46,6 +47,19 @@ class CacheManager:
         self._index = index
         self._prefix = prefix.rstrip("/")
         self._caches_reads = caches_reads
+
+    async def _evict_dir(self, virtual: str) -> None:
+        """Drop one directory's cached listing.
+
+        Both spellings of the directory go, because a backend may have
+        keyed it with or without its trailing slash and an eviction that
+        hits no key is silent.
+
+        Args:
+            virtual (str): Mount-absolute path of the directory.
+        """
+        await self._index.invalidate_dir(virtual)
+        await self._index.invalidate_dir(virtual + "/")
 
     def _virtual(self, path: PathSpec) -> str:
         mount_path = path.mount_path
@@ -94,8 +108,7 @@ class CacheManager:
         virtual = self._virtual(path)
         if self._caches_reads and self._file_cache is not None:
             await self._file_cache.remove(virtual)
-        await self._index.invalidate_dir(virtual)
-        await self._index.invalidate_dir(virtual + "/")
+        await self._evict_dir(virtual)
         await self._invalidate_parent(virtual)
 
     async def invalidate_ancestors(self, path: PathSpec) -> None:
@@ -114,8 +127,7 @@ class CacheManager:
         parent = self._virtual(path).rsplit("/", 1)[0]
         while parent and parent != self._prefix:
             parent = parent.rsplit("/", 1)[0]
-            await self._index.invalidate_dir(parent or "/")
-            await self._index.invalidate_dir(parent + "/")
+            await self._evict_dir(parent or "/")
 
     async def drop_prefix(self) -> None:
         """Drop every cached body under this mount, path unspecified.
@@ -135,6 +147,4 @@ class CacheManager:
         await self._file_cache.evict_prefix(self._prefix + "/")
 
     async def _invalidate_parent(self, virtual: str) -> None:
-        parent = virtual.rsplit("/", 1)[0] or "/"
-        await self._index.invalidate_dir(parent)
-        await self._index.invalidate_dir(parent + "/")
+        await self._evict_dir(virtual.rsplit("/", 1)[0] or "/")

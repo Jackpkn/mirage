@@ -131,5 +131,9 @@ def mock_github_api(monkeypatch):
                         _fetch_default_branch)
     monkeypatch.setattr("mirage.resource.github.github.fetch_tree",
                         _fetch_tree)
+    # refill_index reads the name in its own module, and an empty index is
+    # a refill trigger now, so leaving this one real let a test reach the
+    # live API.
+    monkeypatch.setattr("mirage.core.github.tree.fetch_tree", _fetch_tree)
     monkeypatch.setattr("mirage.core.github.read.read_bytes", _read_bytes)
     monkeypatch.setattr("mirage.core.github.search.search_code", _search_code)

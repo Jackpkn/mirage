@@ -18,7 +18,7 @@ import type { IndexCacheStore } from '../../cache/index/store.ts'
 import { FileStat, FileType, PathSpec } from '../../types.ts'
 import { getExtension } from '../../commands/resolve.ts'
 import { readdir as coreReaddir } from './readdir.ts'
-import { stripSlash } from '../../utils/slash.ts'
+import { rstripSlash, stripSlash } from '../../utils/slash.ts'
 import { enoent } from '../../utils/errors.ts'
 
 function stripPrefix(path: PathSpec): string {
@@ -28,11 +28,6 @@ function stripPrefix(path: PathSpec): string {
     p = p.slice(prefix.length) || '/'
   }
   return p
-}
-
-function indexKey(p: string): string {
-  const trimmed = stripSlash(p)
-  return trimmed === '' ? '/' : `/${trimmed}`
 }
 
 function guessFileType(name: string): FileType {
@@ -54,7 +49,7 @@ export async function stat(
     return new FileStat({ name: '/', type: FileType.DIRECTORY })
   }
   if (index === undefined) throw enoent(path)
-  const ikey = indexKey(p)
+  const ikey = `${rstripSlash(prefix)}/${trimmed}`
   let result = await index.get(ikey)
   if (result.entry === undefined || result.entry === null) {
     const parentIdx = ikey.includes('/') ? ikey.slice(0, ikey.lastIndexOf('/')) || '/' : '/'

@@ -13,6 +13,8 @@ import { ResourceName, type FileStat, type PathSpec } from '../../types.ts'
 import type { RegisteredCommand } from '../../commands/config.ts'
 import { BaseResource, type Resource } from '../base.ts'
 import { ONEDRIVE_PROMPT } from './prompt.ts'
+import type { DeltaHook } from '../../watch/base.ts'
+import { buildDeltaHook } from '../../core/onedrive/watch.ts'
 
 const resolveGlob = makeResolveGlob(readdir)
 
@@ -61,6 +63,10 @@ export class OneDriveResource extends BaseResource implements Resource {
 
   stat(path: PathSpec): Promise<FileStat> {
     return stat(this.accessor, path, this.index)
+  }
+
+  deltaHook(): DeltaHook {
+    return buildDeltaHook(this.accessor)
   }
 
   getState(): Record<string, unknown> {

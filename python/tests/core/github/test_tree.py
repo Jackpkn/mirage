@@ -17,8 +17,12 @@ from unittest.mock import patch
 
 import pytest
 
+from mirage.accessor.github import GitHubAccessor
+from mirage.cache.index import NULL_INDEX
+from mirage.cache.index.ram import RAMIndexCacheStore
 from mirage.core.github.config import GitHubConfig
-from mirage.core.github.tree import fetch_dir_tree, fetch_tree
+from mirage.core.github.tree import (ensure_live_index, fetch_dir_tree,
+                                     fetch_tree, index_rows)
 from mirage.core.github.tree_entry import TreeEntry
 
 
@@ -133,3 +137,117 @@ async def test_fetch_tree_passes_params(mock_get, config):
         repo="proj",
         ref="v1",
     )
+
+
+def _tree_payload() -> dict:
+    return {
+        "truncated":
+        False,
+        "tree": [
+            {
+                "path": "data",
+                "type": "tree",
+                "sha": "t1",
+                "size": None
+            },
+            {
+                "path": "data/keep.txt",
+                "type": "blob",
+                "sha": "b1",
+                "size": 4
+            },
+        ],
+    }
+
+
+def _accessor(config):
+    tree = {
+        "data":
+        TreeEntry(path="data", type="tree", sha="t1", size=None),
+        "data/keep.txt":
+        TreeEntry(path="data/keep.txt", type="blob", sha="b1", size=4),
+    }
+    return GitHubAccessor(config, "acme", "proj", "main", "main", tree=tree)
+
+
+@pytest.mark.asyncio
+@patch("mirage.core.github.tree.github_get")
+async def test_ensure_live_index_refetches_the_build_tree(mock_get, config):
+    # The build tree is only true at build time: a mount's first read can
+    # come long after it, so reusing it would key an index built from a
+    # repository several external writes ago.
+    mock_get.return_value = _tree_payload()
+    index = RAMIndexCacheStore(ttl=600)
+    accessor = _accessor(config)
+    assert await ensure_live_index(accessor, index, "/gh") is True
+    mock_get.assert_awaited_once()
+    assert (await index.list_dir("/gh/data")).entries == ["/gh/data/keep.txt"]
+
+
+@pytest.mark.asyncio
+@patch("mirage.core.github.tree.github_get")
+async def test_ensure_live_index_refetches_a_dropped_listing(mock_get, config):
+    mock_get.return_value = _tree_payload()
+    index = RAMIndexCacheStore(ttl=600)
+    accessor = _accessor(config)
+    await ensure_live_index(accessor, index, "/gh")
+    # What invalidation does: drop the row rather than expire it, which
+    # is why the readers' EXPIRED probe never fires.
+    await index.invalidate_dir("/gh")
+    await index.invalidate_dir("/gh/data")
+    assert await ensure_live_index(accessor, index, "/gh") is True
+    assert mock_get.await_count == 2
+    assert (await index.list_dir("/gh/data")).entries == ["/gh/data/keep.txt"]
+
+
+@pytest.mark.asyncio
+@patch("mirage.core.github.tree.github_get")
+async def test_ensure_live_index_leaves_a_live_index_alone(mock_get, config):
+    mock_get.return_value = _tree_payload()
+    index = RAMIndexCacheStore(ttl=600)
+    accessor = _accessor(config)
+    await ensure_live_index(accessor, index, "/gh")
+    mock_get.reset_mock()
+    assert await ensure_live_index(accessor, index, "/gh") is False
+    mock_get.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@patch("mirage.core.github.tree.github_get")
+async def test_ensure_live_index_skips_a_truncated_tree(mock_get, config):
+    index = RAMIndexCacheStore(ttl=600)
+    accessor = _accessor(config)
+    accessor.truncated = True
+    assert await ensure_live_index(accessor, index, "/gh") is False
+    mock_get.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_ensure_live_index_skips_the_null_index(config):
+    assert await ensure_live_index(_accessor(config), NULL_INDEX, "") is False
+
+
+def test_index_rows_key_by_mount_absolute_path():
+    # Every other backend keys its index this way, which is what lets the
+    # shared CacheManager spell an eviction without knowing the backend.
+    tree = {
+        "data":
+        TreeEntry(path="data", type="tree", sha="t1", size=None),
+        "data/keep.txt":
+        TreeEntry(path="data/keep.txt", type="blob", sha="b1", size=4),
+    }
+    entries, children = index_rows(tree, "/gh")
+    assert sorted(entries) == ["/gh/data", "/gh/data/keep.txt"]
+    assert sorted(children) == ["/gh", "/gh/data"]
+
+
+def test_index_rows_root_mount_keeps_bare_paths():
+    entries, children = index_rows(
+        {"a.txt": TreeEntry(path="a.txt", type="blob", sha="b", size=1)}, "")
+    assert sorted(entries) == ["/a.txt"]
+    assert sorted(children) == ["/"]
+
+
+def test_index_rows_gives_an_empty_repo_a_root_row():
+    _entries, children = index_rows({}, "/gh")
+    assert children == {"/gh": []}

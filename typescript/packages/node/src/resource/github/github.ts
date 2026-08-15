@@ -24,7 +24,6 @@ import {
   fetchGitHubRepoInfo,
   fetchGitHubTree,
   githubBuildTreeMap,
-  githubPopulateIndex,
   githubRead,
   githubReaddir,
   makeResolveGlob,
@@ -38,6 +37,7 @@ import {
   type Resource,
 } from '@struktoai/mirage-core'
 import { redactGitHubConfig, type GitHubConfig, type GitHubConfigRedacted } from './config.ts'
+import { githubBuildDeltaHook as buildDeltaHook, type DeltaHook } from '@struktoai/mirage-core'
 
 const githubResolveGlob = makeResolveGlob(githubReaddir)
 
@@ -86,8 +86,9 @@ export class GitHubResource extends BaseResource implements Resource {
       truncated,
       tree: treeMap,
     })
+    // Not seeded here: the index is keyed by mount prefix, which only a
+    // PathSpec knows, so the first read seeds it from the accessor's tree.
     const index = new RAMIndexCacheStore({ ttl: 86_400 })
-    await githubPopulateIndex(index, tree)
     return new GitHubResource(config, accessor, index)
   }
 
@@ -131,6 +132,10 @@ export class GitHubResource extends BaseResource implements Resource {
           )
         : paths
     return githubResolveGlob(this.accessor, effective, this.index)
+  }
+
+  deltaHook(): DeltaHook {
+    return buildDeltaHook(this.accessor)
   }
 
   getState(): Promise<GitHubResourceState> {

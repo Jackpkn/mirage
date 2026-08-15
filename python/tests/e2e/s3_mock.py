@@ -37,6 +37,7 @@ _CORE_MODULES = [
     "mirage.core.s3.mkdir",
     "mirage.core.s3.create",
     "mirage.core.s3.truncate",
+    "mirage.core.s3.watch",
 ]
 
 
@@ -59,6 +60,24 @@ def _mock_s3_error(code: str) -> Exception:
     return exc
 
 
+def _content_entry(key: str, data: bytes) -> dict[str, object]:
+    """One Contents row, shaped like the real list_objects_v2.
+
+    Real S3 carries an ETag on every listed object, which is what the
+    watch walk fingerprints on, so the mock has to carry one too.
+
+    Args:
+        key (str): Object key.
+        data (bytes): Object content.
+    """
+    return {
+        "Key": key,
+        "Size": len(data),
+        "LastModified": LAST_MODIFIED,
+        "ETag": f'"{hashlib.md5(data).hexdigest()}"',
+    }
+
+
 def _paginate_directory(objects, prefix):
     common_prefixes: set[str] = set()
     contents: list[dict[str, object]] = []
@@ -67,21 +86,13 @@ def _paginate_directory(objects, prefix):
             continue
         relative = key[len(prefix):]
         if not relative:
-            contents.append({
-                "Key": key,
-                "Size": len(data),
-                "LastModified": LAST_MODIFIED
-            })
+            contents.append(_content_entry(key, data))
             continue
         if "/" in relative:
             child = relative.split("/", 1)[0]
             common_prefixes.add(prefix + child + "/")
             continue
-        contents.append({
-            "Key": key,
-            "Size": len(data),
-            "LastModified": LAST_MODIFIED
-        })
+        contents.append(_content_entry(key, data))
     return {
         "CommonPrefixes": [{
             "Prefix": v
@@ -92,11 +103,10 @@ def _paginate_directory(objects, prefix):
 
 def _paginate_flat(objects, prefix):
     return {
-        "Contents": [{
-            "Key": k,
-            "Size": len(v),
-            "LastModified": LAST_MODIFIED
-        } for k, v in sorted(objects.items()) if k.startswith(prefix)]
+        "Contents": [
+            _content_entry(k, v) for k, v in sorted(objects.items())
+            if k.startswith(prefix)
+        ]
     }
 
 

@@ -17,9 +17,9 @@ import { mountPrefixOf } from '../../utils/key_prefix.ts'
 import type { GitHubAccessor } from '../../accessor/github.ts'
 import type { IndexCacheStore } from '../../cache/index/store.ts'
 import type { PathSpec } from '../../types.ts'
-import { refillIndex } from './tree.ts'
+import { ensureLiveIndex, refillIndex } from './tree.ts'
 import { fetchBlob } from './_client.ts'
-import { stripSlash } from '../../utils/slash.ts'
+import { rstripSlash, stripSlash } from '../../utils/slash.ts'
 import { eisdir, enoent } from '../../utils/errors.ts'
 
 function stripPrefix(path: PathSpec): string {
@@ -29,11 +29,6 @@ function stripPrefix(path: PathSpec): string {
     p = p.slice(prefix.length) || '/'
   }
   return p
-}
-
-function indexKey(p: string): string {
-  const trimmed = stripSlash(p)
-  return trimmed === '' ? '/' : `/${trimmed}`
 }
 
 function parentKey(key: string): string {
@@ -46,9 +41,12 @@ export async function read(
   path: PathSpec,
   index?: IndexCacheStore,
 ): Promise<Uint8Array> {
+  const prefix = mountPrefixOf(path.virtual, path.resourcePath)
   const p = stripPrefix(path)
   if (index === undefined) throw enoent(path)
-  const key = indexKey(p)
+  const rel = stripSlash(p)
+  const key =
+    rel === '' ? (prefix === '' ? '/' : rstripSlash(prefix)) : `${rstripSlash(prefix)}/${rel}`
   // Freshness is tracked per directory, never per entry, so a blob's row
   // is exactly as fresh as its parent's listing and `get` can never report
   // staleness of its own. The parent is therefore the probe: after a write
@@ -56,9 +54,10 @@ export async function read(
   // sha, and reading it back served the old bytes. A miss is not a probe
   // either -- against a live index it is a real absence, and refetching the
   // whole tree on every ENOENT costs a recursive-tree call per miss.
+  await ensureLiveIndex(accessor, index, prefix)
   if (!accessor.truncated) {
     const parent = await index.listDir(parentKey(key))
-    if (parent.status === LookupStatus.EXPIRED) await refillIndex(accessor, index)
+    if (parent.status === LookupStatus.EXPIRED) await refillIndex(accessor, index, prefix)
   }
   const result = await index.get(key)
   if (result.entry === undefined || result.entry === null) throw enoent(path)

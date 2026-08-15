@@ -16,12 +16,14 @@ from typing import Any
 
 from mirage.accessor.gdrive import GDriveAccessor
 from mirage.core.gdrive.readdir import readdir
+from mirage.core.gdrive.watch import build_delta_hook
 from mirage.core.google._client import TokenManager
 from mirage.resource.base import BaseResource
 from mirage.resource.gdrive.config import GoogleDriveConfig
 from mirage.resource.gdrive.prompt import PROMPT
 from mirage.types import ResourceName
 from mirage.utils.glob_walk import make_resolve_glob
+from mirage.watch.base import DeltaHook
 
 _resolve_glob = make_resolve_glob(readdir)
 
@@ -50,6 +52,9 @@ class GoogleDriveResource(BaseResource):
             self.register(fn)
         for op in GDRIVE_VFS_OPS:
             self.register_op(op)
+
+    def delta_hook(self) -> DeltaHook:
+        return build_delta_hook(self.accessor)
 
     async def resolve_glob(self, paths, prefix: str = ""):
         return await _resolve_glob(self.accessor, paths, index=self._index)

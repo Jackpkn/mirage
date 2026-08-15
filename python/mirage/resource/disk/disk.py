@@ -33,6 +33,7 @@ from mirage.core.disk.stat import stat as disk_stat
 from mirage.core.disk.stream import read_stream
 from mirage.core.disk.truncate import truncate
 from mirage.core.disk.unlink import unlink
+from mirage.core.disk.watch import build_delta_hook
 from mirage.core.disk.write import write_bytes
 from mirage.ops.disk import OPS as DISK_OPS
 from mirage.resource.base import BaseResource
@@ -40,6 +41,7 @@ from mirage.resource.disk.prompt import PROMPT
 from mirage.types import CapacityResult, CapacityState, PathSpec, ResourceName
 from mirage.utils.glob_walk import make_resolve_glob
 from mirage.utils.key_prefix import mount_key
+from mirage.watch.base import DeltaHook
 
 _resolve_glob = make_resolve_glob(readdir, SCOPE_ERROR)
 
@@ -90,6 +92,9 @@ class DiskResource(BaseResource):
         # The resolved root is the storage: two DiskResources built on the
         # same directory are one store, however they were spelled.
         return f"{self.name}:{self.root}"
+
+    def delta_hook(self) -> DeltaHook:
+        return build_delta_hook(self.accessor)
 
     async def resolve_glob(self, paths, prefix: str = ""):
         if prefix:

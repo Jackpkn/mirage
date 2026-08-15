@@ -18,9 +18,9 @@ import { LookupStatus } from '../../cache/index/config.ts'
 import type { IndexCacheStore } from '../../cache/index/store.ts'
 import type { PathSpec } from '../../types.ts'
 import { fetchDirTree } from './_client.ts'
-import { refillIndex } from './tree.ts'
+import { ensureLiveIndex, refillIndex } from './tree.ts'
 import { IndexEntry } from '../../cache/index/config.ts'
-import { stripSlash } from '../../utils/slash.ts'
+import { rstripSlash, stripSlash } from '../../utils/slash.ts'
 import { enoent } from '../../utils/errors.ts'
 import { compareCodePoints } from '../../utils/sort.ts'
 
@@ -33,11 +33,6 @@ function stripPrefix(path: PathSpec): string {
   return p
 }
 
-function normalizeKey(p: string): string {
-  const trimmed = stripSlash(p)
-  return trimmed === '' ? '/' : `/${trimmed}`
-}
-
 export async function readdir(
   accessor: GitHubAccessor,
   path: PathSpec,
@@ -47,9 +42,11 @@ export async function readdir(
     throw enoent(path.virtual)
   }
   const prefix = mountPrefixOf(path.virtual, path.resourcePath)
-  const stripped = stripPrefix(path)
-  const key = normalizeKey(stripped)
+  const rel = stripSlash(stripPrefix(path))
+  const key =
+    rel === '' ? (prefix === '' ? '/' : rstripSlash(prefix)) : `${rstripSlash(prefix)}/${rel}`
 
+  await ensureLiveIndex(accessor, index, prefix)
   let listing = await index.listDir(key)
   // The index is the whole listing here, not a cache in front of one, so an
   // *expired* answer means the tree aged out, not that the path is gone.
@@ -57,12 +54,10 @@ export async function readdir(
   // absence and must not cost a tree fetch: refilling on any miss spends a
   // recursive-tree call on every ENOENT.
   if (listing.status === LookupStatus.EXPIRED && !accessor.truncated) {
-    if (await refillIndex(accessor, index)) listing = await index.listDir(key)
+    if (await refillIndex(accessor, index, prefix)) listing = await index.listDir(key)
   }
   if (listing.entries !== undefined && listing.entries !== null) {
-    return prefix !== '' && listing.entries.length > 0 && !listing.entries[0]?.startsWith(prefix)
-      ? listing.entries.map((e) => prefix + e)
-      : listing.entries
+    return listing.entries
   }
   if (listing.status === LookupStatus.NOT_FOUND) {
     if (accessor.truncated) {
@@ -79,7 +74,7 @@ async function fallbackReaddir(
   index: IndexCacheStore,
   prefix: string,
 ): Promise<string[]> {
-  const parentSha = await resolveDirSha(accessor, key, index)
+  const parentSha = await resolveDirSha(accessor, key, index, prefix)
   if (parentSha === null) throw enoent(`${prefix}/${key}`)
   const entries = await fetchDirTree(accessor.transport, accessor.owner, accessor.repo, parentSha)
   const childKeys: string[] = []
@@ -102,23 +97,26 @@ async function fallbackReaddir(
   }
   childKeys.sort(compareCodePoints)
   await index.setDir(key, childEntries)
-  return childKeys.map((k) => (prefix !== '' ? prefix + k : k))
+  return childKeys
 }
 
 async function resolveDirSha(
   accessor: GitHubAccessor,
   key: string,
   index: IndexCacheStore,
+  prefix: string,
 ): Promise<string | null> {
   const result = await index.get(key)
   if (result.entry !== undefined && result.entry !== null) {
     return result.entry.id
   }
-  const parts = stripSlash(key)
+  const stem = rstripSlash(prefix)
+  const rest = stem !== '' && key.startsWith(stem) ? key.slice(stem.length) : key
+  const parts = stripSlash(rest)
     .split('/')
     .filter((p) => p !== '')
   let currentSha = accessor.ref
-  let currentPath = ''
+  let currentPath = stem
   for (const part of parts) {
     const entries = await fetchDirTree(
       accessor.transport,

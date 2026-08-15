@@ -48,6 +48,8 @@ import { write as writeCore } from '../../core/gridfs/write.ts'
 import { GRIDFS_OPS } from '../../ops/gridfs/index.ts'
 import { redactConfig, type GridFSConfig, type GridFSConfigRedacted } from './config.ts'
 import { GRIDFS_PROMPT } from './prompt.ts'
+import type { DeltaHook } from '@struktoai/mirage-core'
+import { buildDeltaHook } from '../../core/gridfs/watch.ts'
 
 const globCore = makeResolveGlob(readdirCore, SCOPE_ERROR)
 
@@ -209,6 +211,10 @@ export class GridFSResource extends BaseResource implements Resource {
         )
       : paths
     return globCore(this.accessor, effective, this.index)
+  }
+
+  deltaHook(): DeltaHook {
+    return buildDeltaHook(this.accessor)
   }
 
   getState(): Promise<GridFSResourceState> {

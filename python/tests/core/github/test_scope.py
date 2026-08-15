@@ -24,20 +24,21 @@ from mirage.utils.key_prefix import mount_key
 
 @pytest.fixture
 def entries():
+    """A git tree, keyed repo-relative with no leading slash."""
 
     def _f():
-        return SimpleNamespace(resource_type="file")
+        return SimpleNamespace(type="blob")
 
     def _d():
-        return SimpleNamespace(resource_type="folder")
+        return SimpleNamespace(type="tree")
 
     return {
-        "/README.md": _f(),
-        "/src": _d(),
-        "/src/main.py": _f(),
-        "/src/utils.py": _f(),
-        "/src/models": _d(),
-        "/src/models/user.py": _f(),
+        "README.md": _f(),
+        "src": _d(),
+        "src/main.py": _f(),
+        "src/utils.py": _f(),
+        "src/models": _d(),
+        "src/models/user.py": _f(),
     }
 
 

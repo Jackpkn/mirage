@@ -42,9 +42,14 @@ function accessorFor(probe: { trees: number }): GitHubAccessor {
   })
 }
 
+const TREE_MAP = {
+  src: { path: 'src', type: 'tree', sha: 'aaa', size: null },
+  'src/main.py': { path: 'src/main.py', type: 'blob', sha: 'bbb', size: 120 },
+}
+
 async function seeded(): Promise<RAMIndexCacheStore> {
   const index = new RAMIndexCacheStore()
-  await populateIndex(index, TREE)
+  await populateIndex(index, TREE_MAP, '')
   return index
 }
 

@@ -35,12 +35,14 @@ from mirage.core.ssh.stat import stat as ssh_stat
 from mirage.core.ssh.stream import range_read, read_stream
 from mirage.core.ssh.truncate import truncate
 from mirage.core.ssh.unlink import unlink
+from mirage.core.ssh.watch import build_delta_hook
 from mirage.core.ssh.write import write_bytes
 from mirage.ops.ssh import OPS as SSH_OPS
 from mirage.resource.base import BaseResource
 from mirage.resource.ssh.prompt import PROMPT
 from mirage.types import ResourceName
 from mirage.utils.glob_walk import make_resolve_glob
+from mirage.watch.base import DeltaHook
 
 _resolve_glob = make_resolve_glob(readdir, SCOPE_ERROR)
 
@@ -89,6 +91,9 @@ class SSHResource(BaseResource):
             self.register(fn)
         for ro in SSH_OPS:
             self.register_op(ro)
+
+    def delta_hook(self) -> DeltaHook:
+        return build_delta_hook(self.accessor)
 
     async def resolve_glob(self, paths, prefix: str = ""):
         return await _resolve_glob(self.accessor, paths, self._index)

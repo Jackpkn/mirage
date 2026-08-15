@@ -12,6 +12,7 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import hashlib
 import json
 import re
 import time
@@ -48,6 +49,7 @@ class FakeDropbox:
         self.folders: set[str] = set()
         self.files: dict[str, tuple[bytes, str]] = {}
         self.search_cursors: dict[str, tuple[list, int, int]] = {}
+        self.list_cursors: dict[str, list[dict]] = {}
         self.endpoint = ""
 
     def _add_ancestors(self, path: str) -> None:
@@ -60,6 +62,12 @@ class FakeDropbox:
     def _entry_for(self, path: str) -> dict | None:
         stored = self.files.get(path)
         if stored is not None:
+            # Real Dropbox derives content_hash from a SHA-256 over
+            # 4 MiB block digests; the fake hashes the whole content
+            # instead, which is opaque to a client that only ever
+            # compares it for equality, and keeps the property that
+            # matters: identical bytes hash identically.
+            digest = hashlib.sha256(stored[0]).hexdigest()
             return {
                 ".tag": "file",
                 "id": f"id:{path}",
@@ -68,6 +76,8 @@ class FakeDropbox:
                 "path_display": path,
                 "size": len(stored[0]),
                 "server_modified": stored[1],
+                "rev": digest[:16],
+                "content_hash": digest,
             }
         if path in self.folders:
             return {
@@ -79,17 +89,30 @@ class FakeDropbox:
             }
         return None
 
-    def _list_children(self, path: str) -> list[dict] | None:
+    def _list_children(self,
+                       path: str,
+                       recursive: bool = False) -> list[dict] | None:
         if path and path not in self.folders:
             return None
+        prefix = f"{path}/"
+
+        def under(candidate: str) -> bool:
+            if recursive:
+                return candidate.startswith(prefix)
+            return candidate.rsplit("/", 1)[0] == path
+
         out: list[dict] = []
         for folder in self.folders:
-            if folder.rsplit("/", 1)[0] == path:
+            if under(folder):
                 out.append(self._entry_for(folder))
         for file in self.files:
-            if file.rsplit("/", 1)[0] == path:
+            if under(file):
                 out.append(self._entry_for(file))
-        return sorted(out, key=lambda e: e["name"])
+        # A recursive listing is ordered parent-before-child, which is
+        # what real Dropbox guarantees and what a consumer building a
+        # tree from the stream relies on.
+        key = "path_display" if recursive else "name"
+        return sorted(out, key=lambda e: e[key])
 
     def _remove(self, path: str) -> bool:
         # Removes a file, or a folder plus its subtree (delete_v2).
@@ -131,17 +154,46 @@ class FakeDropbox:
             "expires_in": 14400,
         })
 
+    def _list_page(self, entries: list[dict], limit: int) -> dict:
+        """Cut one page off a listing and park the rest under a cursor.
+
+        Real list_folder always returns a cursor and pages on ``limit``,
+        so the fake does too: a client that ignores ``has_more`` sees a
+        short listing, which is the bug the pagination loop exists to
+        avoid.
+
+        Args:
+            entries (list[dict]): full listing to page.
+            limit (int): maximum entries per page.
+        """
+        head, tail = entries[:limit], entries[limit:]
+        token = f"cursor-{len(self.list_cursors)}"
+        self.list_cursors[token] = tail
+        return {
+            "entries": head,
+            "cursor": token,
+            "has_more": bool(tail),
+        }
+
     async def handle_list_folder(self, request: web.Request) -> web.Response:
         body = await request.json()
-        entries = self._list_children(body.get("path") or "")
+        entries = self._list_children(body.get("path") or "",
+                                      recursive=bool(body.get("recursive")))
         if entries is None:
             return web.json_response({"error_summary": "path/not_found/..."},
                                      status=409)
-        return web.json_response({
-            "entries": entries,
-            "cursor": "cursor-0",
-            "has_more": False,
-        })
+        return web.json_response(
+            self._list_page(entries, int(body.get("limit") or 2000)))
+
+    async def handle_list_folder_continue(
+            self, request: web.Request) -> web.Response:
+        body = await request.json()
+        token = body.get("cursor") or ""
+        rest = self.list_cursors.pop(token, None)
+        if rest is None:
+            return web.json_response({"error_summary": "reset/..."},
+                                     status=409)
+        return web.json_response(self._list_page(rest, 2000))
 
     async def handle_get_metadata(self, request: web.Request) -> web.Response:
         body = await request.json()
@@ -311,6 +363,8 @@ async def start_fake_dropbox() -> tuple[FakeDropbox, web.AppRunner]:
     app = web.Application(client_max_size=8 * 1024 * 1024)
     app.router.add_post("/oauth2/token", fake.handle_token)
     app.router.add_post("/2/files/list_folder", fake.handle_list_folder)
+    app.router.add_post("/2/files/list_folder/continue",
+                        fake.handle_list_folder_continue)
     app.router.add_post("/2/files/get_metadata", fake.handle_get_metadata)
     app.router.add_post("/2/files/download", fake.handle_download)
     app.router.add_post("/2/files/upload", fake.handle_upload)

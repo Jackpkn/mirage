@@ -34,6 +34,7 @@ from mirage.core.s3.stat import stat as s3_stat
 from mirage.core.s3.stream import range_read, read_stream
 from mirage.core.s3.truncate import truncate
 from mirage.core.s3.unlink import unlink
+from mirage.core.s3.watch import build_delta_hook
 from mirage.core.s3.write import write_bytes
 from mirage.ops.s3 import OPS as S3_OPS
 from mirage.resource.base import BaseResource
@@ -41,6 +42,7 @@ from mirage.resource.s3.prompt import PROMPT
 from mirage.types import PathSpec, ResourceName
 from mirage.utils.glob_walk import make_resolve_glob
 from mirage.utils.key_prefix import mount_key
+from mirage.watch.base import DeltaHook
 
 _resolve_glob = make_resolve_glob(readdir, SCOPE_ERROR)
 
@@ -96,6 +98,9 @@ class S3Resource(BaseResource):
         prefix = (cfg.key_prefix or "").strip("/")
         base = f"{self.name}:{cfg.endpoint_url or 'aws'}:{cfg.bucket}"
         return f"{base}/{prefix}" if prefix else base
+
+    def delta_hook(self) -> DeltaHook:
+        return build_delta_hook(self.accessor)
 
     async def resolve_glob(self, paths, prefix: str = ""):
         if prefix:

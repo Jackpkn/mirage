@@ -48,6 +48,8 @@ import { writeBytes as writeCore } from '../../core/ssh/write.ts'
 import { SSH_OPS } from '../../ops/ssh/index.ts'
 import { type SSHConfig, type SSHConfigRedacted, redactSshConfig } from './config.ts'
 import { SSH_PROMPT } from './prompt.ts'
+import type { DeltaHook } from '@struktoai/mirage-core'
+import { buildDeltaHook } from '../../core/ssh/watch.ts'
 
 const globCore = makeResolveGlob(readdirCore, SCOPE_ERROR)
 
@@ -173,6 +175,10 @@ export class SSHResource extends BaseResource implements Resource {
 
   find(p: PathSpec, options: FindOptions = {}): Promise<string[]> {
     return findCore(this.accessor, p, options as SshFindOptions)
+  }
+
+  deltaHook(): DeltaHook {
+    return buildDeltaHook(this.accessor)
   }
 
   glob(paths: readonly PathSpec[], prefix = ''): Promise<PathSpec[]> {

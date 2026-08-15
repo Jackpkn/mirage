@@ -39,6 +39,8 @@ import { rangeRead as rangeReadCore, stream as streamCore } from '../../core/hf/
 import { unlink as unlinkCore } from '../../core/hf/unlink.ts'
 import { write as writeCore } from '../../core/hf/write.ts'
 import { HF_OPS } from '../../ops/hf/index.ts'
+import type { DeltaHook } from '@struktoai/mirage-core'
+import { buildDeltaHook } from '../../core/hf/watch.ts'
 
 const globCore = makeResolveGlob(readdirCore, SCOPE_ERROR)
 
@@ -118,6 +120,10 @@ export abstract class HfResource extends BaseResource implements Resource {
 
   find(p: PathSpec, options: FindOptions = {}): Promise<string[]> {
     return findCore(this.accessor, p, options)
+  }
+
+  deltaHook(): DeltaHook {
+    return buildDeltaHook(this.accessor)
   }
 
   glob(paths: readonly PathSpec[], prefix = ''): Promise<PathSpec[]> {

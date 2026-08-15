@@ -33,6 +33,7 @@ import {
   type Resource,
 } from '@struktoai/mirage-core'
 import { redactDropboxConfig, type DropboxConfig, type DropboxConfigRedacted } from './config.ts'
+import { dropboxBuildDeltaHook as buildDeltaHook, type DeltaHook } from '@struktoai/mirage-core'
 
 const dropboxResolveGlob = makeResolveGlob(dropboxReaddir)
 
@@ -103,6 +104,10 @@ export class DropboxResource extends BaseResource implements Resource {
           )
         : paths
     return dropboxResolveGlob(this.accessor, effective, this.index)
+  }
+
+  deltaHook(): DeltaHook {
+    return buildDeltaHook(this.accessor)
   }
 
   getState(): Promise<DropboxResourceState> {

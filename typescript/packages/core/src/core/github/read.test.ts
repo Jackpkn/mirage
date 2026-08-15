@@ -63,10 +63,14 @@ function accessorFor(sha: string, probe: Probe): GitHubAccessor {
 
 async function seeded(sha: string): Promise<RAMIndexCacheStore> {
   const index = new RAMIndexCacheStore()
-  await populateIndex(index, [
-    { path: 'src', type: 'tree' as const, sha: 'aaa' },
-    { path: 'src/main.py', type: 'blob' as const, sha, size: 4 },
-  ])
+  await populateIndex(
+    index,
+    {
+      src: { path: 'src', type: 'tree', sha: 'aaa', size: null },
+      'src/main.py': { path: 'src/main.py', type: 'blob', sha, size: 4 },
+    },
+    '',
+  )
   return index
 }
 

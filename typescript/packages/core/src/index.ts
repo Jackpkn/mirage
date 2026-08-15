@@ -61,15 +61,21 @@ export {
 } from './types.ts'
 export {
   type DeltaHook,
+  entryOf,
+  IncompleteWalkError,
   ListingDeltaHook,
   type QueueFactory,
   QueueClosed,
   QueueOverflowError,
   RAMWatchQueue,
   type RAMWatchQueueOptions,
+  ReaddirWalk,
   specFor,
   statFingerprint,
   type SupportsChanges,
+  synthDirs,
+  type WalkReaddirFn,
+  type WalkStatFn,
   type WatchMount,
   type WatchOptions,
   type WatchQueue,
@@ -815,6 +821,7 @@ export { stream, rangeRead } from './core/s3/stream.ts'
 export { truncate } from './core/s3/truncate.ts'
 export { unlink } from './core/s3/unlink.ts'
 export { write } from './core/s3/write.ts'
+export { buildDeltaHook as s3BuildDeltaHook, S3Walk } from './core/s3/watch.ts'
 export { S3_OPS } from './ops/s3/index.ts'
 export {
   HttpSlackTransport,
@@ -994,6 +1001,7 @@ export {
   populateIndex as githubPopulateIndex,
 } from './core/github/tree.ts'
 export { stat as githubStat } from './core/github/stat.ts'
+export { buildDeltaHook as githubBuildDeltaHook, GitHubWalk } from './core/github/watch.ts'
 export {
   type TreeEntry as GitHubTreeEntry,
   makeTreeEntry as githubMakeTreeEntry,
@@ -1168,6 +1176,7 @@ export {
 } from './core/gdrive/read.ts'
 export { readdir as gdriveReaddir } from './core/gdrive/readdir.ts'
 export { stat as gdriveStat } from './core/gdrive/stat.ts'
+export { buildDeltaHook as gdriveBuildDeltaHook } from './core/gdrive/watch.ts'
 export { GDRIVE_PROMPT } from './resource/gdrive/prompt.ts'
 export {
   DEFAULT_GRAPH_API,
@@ -1275,6 +1284,7 @@ export { read as dropboxRead, stream as dropboxStream } from './core/dropbox/rea
 export { readdir as dropboxReaddir } from './core/dropbox/readdir.ts'
 export { stat as dropboxStat } from './core/dropbox/stat.ts'
 export { narrowPaths as dropboxNarrowPaths } from './core/dropbox/search.ts'
+export { buildDeltaHook as dropboxBuildDeltaHook, DropboxWalk } from './core/dropbox/watch.ts'
 export { DROPBOX_PROMPT } from './resource/dropbox/prompt.ts'
 export {
   BOX_API_BASE,
@@ -1302,6 +1312,7 @@ export { BOX_OPS } from './ops/box/index.ts'
 export { read as boxRead, stream as boxStream } from './core/box/read.ts'
 export { readdir as boxReaddir } from './core/box/readdir.ts'
 export { stat as boxStat } from './core/box/stat.ts'
+export { buildDeltaHook as boxBuildDeltaHook } from './core/box/watch.ts'
 export { BOX_PROMPT } from './resource/box/prompt.ts'
 export { GmailAccessor } from './accessor/gmail.ts'
 export { GMAIL_COMMANDS } from './commands/builtin/gmail/index.ts'

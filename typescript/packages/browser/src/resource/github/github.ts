@@ -30,7 +30,6 @@ import {
   type Resource,
   ResourceName,
   githubBuildTreeMap,
-  githubPopulateIndex,
   githubRead,
   githubReaddir,
   makeResolveGlob,
@@ -86,8 +85,9 @@ export class GitHubResource implements Resource {
       truncated,
       tree: treeMap,
     })
+    // Not seeded here: the index is keyed by mount prefix, which only a
+    // PathSpec knows, so the first read seeds it from the accessor's tree.
     const index = new RAMIndexCacheStore({ ttl: 86_400 })
-    await githubPopulateIndex(index, tree)
     return new GitHubResource(config, accessor, index)
   }
 

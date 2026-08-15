@@ -13,7 +13,6 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 from mirage.accessor.github import GitHubAccessor
-from mirage.cache.index import NULL_INDEX, IndexCacheStore
 from mirage.commands.builtin.find_eval import (FindEntry, PredNode, build_tree,
                                                emit_start_path, keep,
                                                start_basename, tree_has_empty)
@@ -38,8 +37,6 @@ async def find(
     path_pattern: str | None = None,
     empty: bool = False,
     tree: PredNode | None = None,
-    *,
-    index: IndexCacheStore = NULL_INDEX,
 ) -> list[str]:
     base = path.mount_path.strip("/")
     base_depth = 0 if base == "" else base.count("/") + 1
@@ -54,30 +51,33 @@ async def find(
                                                     empty=empty)
     start_kind = "d" if base == "" else None
     start_size = 0
-    start_remote_time = ""
     has_child = False
-    entries = await index.entries()
+    # The git tree, not the index: it is keyed repo-relative, which is
+    # the space this walk compares in, and it stays right however the
+    # mount keys its index. Mirrors TypeScript's find.
+    entries = accessor.tree
     non_empty_dirs: set[str] = set()
     if tree_has_empty(tree):
         # Every intermediate folder is itself an entry, so marking direct
         # parents is enough to classify all non-empty directories.
+        # Tree keys carry no leading slash, so a top-level entry has no
+        # parent segment at all; rsplit would hand back the entry itself
+        # and mark every top-level directory non-empty.
         non_empty_dirs = {
-            entry_path.rsplit("/", 1)[0] or "/"
+            entry_path.rsplit("/", 1)[0] if "/" in entry_path else ""
             for entry_path in entries
         }
-    for entry_path in sorted(entries):
-        p = entry_path.lstrip("/")
+    for p in sorted(entries):
         if p == base:
-            meta = entries[entry_path]
-            start_kind = "d" if meta.resource_type == "folder" else "f"
+            meta = entries[p]
+            start_kind = "d" if meta.type == "tree" else "f"
             start_size = meta.size or 0
-            start_remote_time = meta.remote_time
             continue
         if base and not p.startswith(base + "/"):
             continue
         has_child = True
-        entry_meta = entries[entry_path]
-        is_dir = entry_meta.resource_type == "folder"
+        entry_meta = entries[p]
+        is_dir = entry_meta.type == "tree"
         full_path = "/" + p
         depth = p.count("/") + 1 - base_depth
         if maxdepth is not None and depth > maxdepth:
@@ -86,8 +86,7 @@ async def find(
         size = 0 if is_dir else (entry_meta.size or 0)
         is_empty = None
         if tree_has_empty(tree):
-            is_empty = (entry_path.rstrip("/") not in non_empty_dirs
-                        if is_dir else size == 0)
+            is_empty = (p not in non_empty_dirs if is_dir else size == 0)
         entry = FindEntry(key=full_path,
                           name=p.rsplit("/", 1)[-1],
                           kind="d" if is_dir else "f",
@@ -99,11 +98,14 @@ async def find(
             continue
         if max_size is not None and size > max_size:
             continue
-        if not matches_mtime(entry_meta.remote_time, mtime_min, mtime_max):
+        # A git tree carries no timestamp, so every entry's mtime is
+        # unknown, which -mtime excludes. That is what the index answered
+        # too: nothing here ever set IndexEntry.remote_time.
+        if not matches_mtime("", mtime_min, mtime_max):
             continue
         results.append(full_path)
     if ((start_kind is not None or has_child)
-            and matches_mtime(start_remote_time, mtime_min, mtime_max)):
+            and matches_mtime("", mtime_min, mtime_max)):
         root_kind = start_kind or "d"
         emit_start_path(
             results,
