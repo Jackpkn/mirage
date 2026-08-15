@@ -16,12 +16,12 @@ import {
   buildTree,
   emitStartPath,
   keep,
-  rstripSlash,
   startBasename,
-  type FindOptions,
-  type PathSpec,
-  compareCodePoints,
-} from '@struktoai/mirage-core'
+} from '@struktoai/mirage-core/commands/builtin/findEval'
+import type { FindOptions } from '@struktoai/mirage-core/resource/base'
+import type { PathSpec } from '@struktoai/mirage-core/types'
+import { rstripSlash } from '@struktoai/mirage-core/utils/slash'
+import { compareCodePoints } from '@struktoai/mirage-core/utils/sort'
 import type { GridFSAccessor } from '../../accessor/gridfs.ts'
 import {
   escapeRegex,

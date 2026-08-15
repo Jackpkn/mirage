@@ -14,7 +14,7 @@
 
 import type { RedisClientType } from 'redis'
 import { loadOptionalPeer } from '../../optional_peer.ts'
-import { compareCodePoints } from '@struktoai/mirage-core'
+import { compareCodePoints } from '@struktoai/mirage-core/utils/sort'
 
 export interface RedisStoreOptions {
   url?: string

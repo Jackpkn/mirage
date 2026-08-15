@@ -13,7 +13,6 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { Operand, Option } from '../../../spec/types.ts'
-import { registerCliSpec } from '../../specs.ts'
 import { CLISpec } from '../../types.ts'
 import { UsageStyle } from '../../../spec/types.ts'
 import { add } from './add.ts'
@@ -237,5 +236,3 @@ export const GIT = new CLISpec({
     }),
   ],
 })
-
-registerCliSpec(GIT)

@@ -12,7 +12,8 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { rstripSlash, type ExecuteResult, type Workspace } from '@struktoai/mirage-core'
+import { rstripSlash } from '@struktoai/mirage-core/utils/slash'
+import type { ExecuteResult, Workspace } from '@struktoai/mirage-core/workspace/workspace'
 import type {
   BashOperations,
   EditOperations,

@@ -12,13 +12,8 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import {
-  redactConfigWithSchema,
-  type ConfigOf,
-  type RedactedConfig,
-  secretStr,
-  z,
-} from '@struktoai/mirage-core'
+import { redactConfigWithSchema, secretStr, z } from '@struktoai/mirage-core/resource/secrets'
+import type { ConfigOf, RedactedConfig } from '@struktoai/mirage-core/resource/secrets'
 
 const LinearConfigSchema = z.object({
   apiKey: secretStr(),

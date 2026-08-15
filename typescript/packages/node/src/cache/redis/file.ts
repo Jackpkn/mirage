@@ -12,16 +12,12 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import {
-  CacheType,
-  type FileCache,
-  defaultFingerprint,
-  globEscape,
-  parseLimit,
-  type PathSpec,
-  registerFileCacheStore,
-  validateMaxDrainBytes,
-} from '@struktoai/mirage-core'
+import { CacheType } from '@struktoai/mirage-core/cache/file/config'
+import { validateMaxDrainBytes } from '@struktoai/mirage-core/cache/file/mixin'
+import type { FileCache } from '@struktoai/mirage-core/cache/file/mixin'
+import { defaultFingerprint, globEscape, parseLimit } from '@struktoai/mirage-core/cache/file/utils'
+import type { PathSpec } from '@struktoai/mirage-core/types'
+import { registerFileCacheStore } from '@struktoai/mirage-core/workspace/workspace/cache'
 import type { RedisClientType } from 'redis'
 import { RedisResource, type RedisResourceOptions } from '../../resource/redis/redis.ts'
 

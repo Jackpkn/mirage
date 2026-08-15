@@ -12,27 +12,22 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import {
-  BaseResource,
-  GDOCS_COMMANDS,
-  GDOCS_PROMPT,
-  GDOCS_OPS,
-  GDOCS_WRITE_PROMPT,
-  GDocsAccessor,
-  PathSpec,
-  ResourceName,
-  TokenManager,
-  gdocsRead,
-  gdocsReaddir,
-  makeResolveGlob,
-  gdocsStat,
-  mountKey,
-  mountPrefixOf,
-  type FileStat,
-  type RegisteredCommand,
-  type RegisteredOp,
-  type Resource,
-} from '@struktoai/mirage-core'
+import { GDocsAccessor } from '@struktoai/mirage-core/accessor/gdocs'
+import { GDOCS_COMMANDS } from '@struktoai/mirage-core/commands/builtin/gdocs/index'
+import { makeResolveGlob } from '@struktoai/mirage-core/commands/builtin/generic_bind/index'
+import type { RegisteredCommand } from '@struktoai/mirage-core/commands/config'
+import { read as gdocsRead } from '@struktoai/mirage-core/core/gdocs/read'
+import { readdir as gdocsReaddir } from '@struktoai/mirage-core/core/gdocs/readdir'
+import { stat as gdocsStat } from '@struktoai/mirage-core/core/gdocs/stat'
+import { TokenManager } from '@struktoai/mirage-core/core/google/_client'
+import { GDOCS_OPS } from '@struktoai/mirage-core/ops/gdocs/index'
+import type { RegisteredOp } from '@struktoai/mirage-core/ops/registry'
+import { BaseResource } from '@struktoai/mirage-core/resource/base'
+import type { Resource } from '@struktoai/mirage-core/resource/base'
+import { GDOCS_PROMPT, GDOCS_WRITE_PROMPT } from '@struktoai/mirage-core/resource/gdocs/prompt'
+import { PathSpec, ResourceName } from '@struktoai/mirage-core/types'
+import type { FileStat } from '@struktoai/mirage-core/types'
+import { mountKey, mountPrefixOf } from '@struktoai/mirage-core/utils/key_prefix'
 import { redactGDocsConfig, type GDocsConfig, type GDocsConfigRedacted } from './config.ts'
 
 const gdocsResolveGlob = makeResolveGlob(gdocsReaddir)

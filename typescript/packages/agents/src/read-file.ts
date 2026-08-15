@@ -1,4 +1,7 @@
-import { detectFileType, FileType, type FileStat, type Workspace } from '@struktoai/mirage-core'
+import { detectFileType } from '@struktoai/mirage-core/commands/builtin/file_helper'
+import { FileType } from '@struktoai/mirage-core/types'
+import type { FileStat } from '@struktoai/mirage-core/types'
+import type { Workspace } from '@struktoai/mirage-core/workspace/workspace'
 import {
   MIME_FOR_EXTENSION,
   MIME_FOR_FILE_TYPE,

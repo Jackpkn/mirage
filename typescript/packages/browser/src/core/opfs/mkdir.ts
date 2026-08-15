@@ -12,16 +12,11 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import {
-  type PathSpec,
-  ancestors,
-  eexist,
-  enotdir,
-  invalidateAfterWrite,
-  invalidateAncestors,
-  mountedPath,
-  norm,
-} from '@struktoai/mirage-core'
+import { invalidateAfterWrite, invalidateAncestors } from '@struktoai/mirage-core/cache/context'
+import type { PathSpec } from '@struktoai/mirage-core/types'
+import { eexist, enotdir } from '@struktoai/mirage-core/utils/errors'
+import { mountedPath } from '@struktoai/mirage-core/utils/key_prefix'
+import { ancestors, norm } from '@struktoai/mirage-core/utils/path'
 import type { OPFSAccessor } from '../../accessor/opfs.ts'
 import {
   destError,

@@ -12,7 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { ConsistencyPolicy, MountMode } from '@struktoai/mirage-core'
+import { ConsistencyPolicy, MountMode } from '@struktoai/mirage-core/types'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Workspace } from '../../workspace.ts'
 import type { S3Config } from './config.ts'

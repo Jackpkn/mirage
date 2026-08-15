@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { describe, expect, it } from 'vitest'
-import { ResourceName } from '@struktoai/mirage-core'
+import { ResourceName } from '@struktoai/mirage-core/types'
 import { SSH_OPS } from './index.ts'
 
 describe('SSH_OPS', () => {

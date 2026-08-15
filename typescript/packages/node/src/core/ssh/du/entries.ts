@@ -12,10 +12,11 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import type { PathSpec } from '@struktoai/mirage-core'
+import type { PathSpec } from '@struktoai/mirage-core/types'
+import { norm } from '@struktoai/mirage-core/utils/path'
+import { compareCodePoints } from '@struktoai/mirage-core/utils/sort'
 import type { SSHAccessor } from '../../../accessor/ssh.ts'
 import { stripPrefix } from '../utils.ts'
-import { compareCodePoints, norm } from '@struktoai/mirage-core'
 import { walkAll } from './walk.ts'
 
 export async function entries(

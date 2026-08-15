@@ -14,9 +14,11 @@
 
 import { Service } from '@deepseek-ai/cordis'
 import type { Context } from '@deepseek-ai/cordis'
-import type { MountSpec, Runtime, RuntimeEntry } from '@struktoai/mirage-core'
-import { buildRuntime, parseMountMode } from '@struktoai/mirage-core'
-import { buildResource, Workspace } from '@struktoai/mirage-node'
+import type { Runtime, RuntimeEntry } from '@struktoai/mirage-core/runtime/base'
+import { buildRuntime } from '@struktoai/mirage-core/runtime/table'
+import { parseMountMode } from '@struktoai/mirage-core/types'
+import type { MountSpec } from '@struktoai/mirage-core/workspace/workspace'
+import { Workspace, buildResource } from '@struktoai/mirage-node'
 import type { Mount, NodeWorkspaceOptions } from '@struktoai/mirage-node'
 
 declare module '@deepseek-ai/cordis' {

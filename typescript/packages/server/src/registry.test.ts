@@ -13,8 +13,10 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { describe, expect, it, vi } from 'vitest'
-import { RAMResource, Workspace, MountMode } from '@struktoai/mirage-node'
-import { newWorkspaceId } from '@struktoai/mirage-node'
+import { RAMResource } from '@struktoai/mirage-core/resource/ram/ram'
+import { MountMode } from '@struktoai/mirage-core/types'
+import { Workspace } from '@struktoai/mirage-node'
+import { newWorkspaceId } from '@struktoai/mirage-core/utils/ids'
 import { WorkspaceRegistry } from './registry.ts'
 
 describe('newWorkspaceId', () => {

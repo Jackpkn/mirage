@@ -12,7 +12,10 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { ResourceName, enoent, recordStream, type PathSpec } from '@struktoai/mirage-core'
+import { recordStream } from '@struktoai/mirage-core/observe/context'
+import { ResourceName } from '@struktoai/mirage-core/types'
+import type { PathSpec } from '@struktoai/mirage-core/types'
+import { enoent } from '@struktoai/mirage-core/utils/errors'
 import type { GridFSAccessor } from '../../accessor/gridfs.ts'
 import { bucket, gridfsKey, rawPathOf } from './_client.ts'
 import { isNoFileError, read, resolveFileId } from './read.ts'

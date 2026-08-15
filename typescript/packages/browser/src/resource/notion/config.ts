@@ -13,13 +13,8 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import type { OAuthClientProvider } from '@modelcontextprotocol/sdk/client/auth.js'
-import {
-  redactConfigWithSchema,
-  type ConfigOf,
-  type RedactedConfig,
-  secretSchema,
-  z,
-} from '@struktoai/mirage-core'
+import { redactConfigWithSchema, secretSchema, z } from '@struktoai/mirage-core/resource/secrets'
+import type { ConfigOf, RedactedConfig } from '@struktoai/mirage-core/resource/secrets'
 
 const NotionConfigSchema = z.object({
   authProvider: secretSchema(

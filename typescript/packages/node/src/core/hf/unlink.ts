@@ -12,13 +12,15 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { invalidateAfterUnlink } from '@struktoai/mirage-core'
-import { FileType, type IndexCacheStore, type PathSpec, record } from '@struktoai/mirage-core'
+import { invalidateAfterUnlink, invalidateAncestors } from '@struktoai/mirage-core/cache/context'
+import type { IndexCacheStore } from '@struktoai/mirage-core/cache/index/store'
+import { record } from '@struktoai/mirage-core/observe/context'
+import { FileType } from '@struktoai/mirage-core/types'
+import type { PathSpec } from '@struktoai/mirage-core/types'
+import { enoent } from '@struktoai/mirage-core/utils/errors'
 import type { HfAccessor } from '../../accessor/hf.ts'
-import { invalidateAncestors } from '@struktoai/mirage-core'
 import { stat } from './stat.ts'
 import { hfKey, isNotFound, rawPathOf } from './util.ts'
-import { enoent } from '@struktoai/mirage-core'
 
 export async function unlink(
   accessor: HfAccessor,

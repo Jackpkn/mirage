@@ -13,13 +13,13 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import type {
-  EntityKind,
   MongoCollectionSpec,
   MongoDriver,
   MongoFindOptions,
   MongoIndexAccess,
   MongoIterOptions,
-} from '@struktoai/mirage-core'
+} from '@struktoai/mirage-core/core/mongodb/_driver'
+import type { EntityKind } from '@struktoai/mirage-core/core/mongodb/types'
 
 export interface HttpMongoDriverOptions {
   endpoint: string

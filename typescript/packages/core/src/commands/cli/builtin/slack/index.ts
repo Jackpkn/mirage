@@ -13,7 +13,6 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { SlackConfigSchema } from '../../../../core/slack/config.ts'
-import { registerCliSpec } from '../../specs.ts'
 import { CLISpec } from '../../types.ts'
 import { Option } from '../../../spec/types.ts'
 import { emojiList } from './emoji_list.ts'
@@ -147,5 +146,3 @@ export const SLACK = new CLISpec({
     }),
   ],
 })
-
-registerCliSpec(SLACK)

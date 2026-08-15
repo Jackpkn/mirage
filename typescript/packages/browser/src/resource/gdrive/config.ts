@@ -15,6 +15,8 @@
 export {
   normalizeGoogleConfig as normalizeGDriveConfig,
   redactGoogleConfig as redactGDriveConfig,
-  type GoogleConfig as GDriveConfig,
-  type GoogleConfigRedacted as GDriveConfigRedacted,
-} from '@struktoai/mirage-core'
+} from '@struktoai/mirage-core/core/google/config'
+export type {
+  GoogleConfig as GDriveConfig,
+  GoogleConfigRedacted as GDriveConfigRedacted,
+} from '@struktoai/mirage-core/core/google/config'

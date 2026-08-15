@@ -12,15 +12,13 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import {
-  normalizeFields,
-  type ChromaConfig,
-  type DifyConfig,
-  type LanceDBConfig,
-  type QdrantConfig,
-  type Resource,
-  compareCodePoints,
-} from '@struktoai/mirage-core'
+import type { Resource } from '@struktoai/mirage-core/resource/base'
+import type { ChromaConfig } from '@struktoai/mirage-core/resource/chroma/config'
+import type { DifyConfig } from '@struktoai/mirage-core/resource/dify/config'
+import type { LanceDBConfig } from '@struktoai/mirage-core/resource/lancedb/config'
+import type { QdrantConfig } from '@struktoai/mirage-core/resource/qdrant/config'
+import { normalizeFields } from '@struktoai/mirage-core/utils/normalize'
+import { compareCodePoints } from '@struktoai/mirage-core/utils/sort'
 
 /**
  * Construct a resource by registry name. Mirrors Python's
@@ -39,7 +37,7 @@ export type ResourceFactory = (config: Record<string, unknown>) => Promise<Resou
 
 const REGISTRY: Record<string, ResourceFactory> = {
   ram: async (_config) => {
-    const { RAMResource } = await import('@struktoai/mirage-core')
+    const { RAMResource } = await import('@struktoai/mirage-core/resource/ram/ram')
     return new RAMResource()
   },
   disk: async (config) => {
@@ -104,7 +102,8 @@ const REGISTRY: Record<string, ResourceFactory> = {
   },
   databricks_volume: async (config) => {
     const { DatabricksVolumeResource } = await import('./databricks_volume/databricks_volume.ts')
-    const { normalizeDatabricksVolumeConfig } = await import('@struktoai/mirage-core')
+    const { normalizeDatabricksVolumeConfig } =
+      await import('@struktoai/mirage-core/resource/databricks_volume/config')
     return DatabricksVolumeResource.create(normalizeDatabricksVolumeConfig(config))
   },
   minio: async (config) => {
@@ -159,24 +158,26 @@ const REGISTRY: Record<string, ResourceFactory> = {
   },
   postgres: async (config) => {
     const { PostgresResource } = await import('./postgres/postgres.ts')
-    const { normalizePostgresConfig } = await import('@struktoai/mirage-core')
+    const { normalizePostgresConfig } =
+      await import('@struktoai/mirage-core/resource/postgres/config')
     return new PostgresResource(normalizePostgresConfig(config))
   },
   mongodb: async (config) => {
     const { MongoDBResource } = await import('./mongodb/mongodb.ts')
-    const { normalizeMongoDBConfig } = await import('@struktoai/mirage-core')
+    const { normalizeMongoDBConfig } =
+      await import('@struktoai/mirage-core/resource/mongodb/config')
     return new MongoDBResource(normalizeMongoDBConfig(config))
   },
   chroma: async (config) => {
-    const { ChromaResource } = await import('@struktoai/mirage-core')
+    const { ChromaResource } = await import('@struktoai/mirage-core/resource/chroma/chroma')
     return new ChromaResource(normalizeFields(config) as unknown as ChromaConfig)
   },
   dify: async (config) => {
-    const { DifyResource } = await import('@struktoai/mirage-core')
+    const { DifyResource } = await import('@struktoai/mirage-core/resource/dify/dify')
     return new DifyResource(normalizeFields(config) as unknown as DifyConfig)
   },
   qdrant: async (config) => {
-    const { QdrantResource } = await import('@struktoai/mirage-core')
+    const { QdrantResource } = await import('@struktoai/mirage-core/resource/qdrant/qdrant')
     return new QdrantResource(normalizeFields(config) as unknown as QdrantConfig)
   },
   lancedb: async (config) => {
@@ -185,7 +186,7 @@ const REGISTRY: Record<string, ResourceFactory> = {
   },
   slack: async (config) => {
     const { SlackResource } = await import('./slack/slack.ts')
-    const { normalizeSlackConfig } = await import('@struktoai/mirage-core')
+    const { normalizeSlackConfig } = await import('@struktoai/mirage-core/core/slack/config')
     return new SlackResource(normalizeSlackConfig(config))
   },
   ssh: async (config) => {
@@ -200,7 +201,7 @@ const REGISTRY: Record<string, ResourceFactory> = {
   },
   discord: async (config) => {
     const { DiscordResource } = await import('./discord/discord.ts')
-    const { normalizeDiscordConfig } = await import('@struktoai/mirage-core')
+    const { normalizeDiscordConfig } = await import('@struktoai/mirage-core/core/discord/config')
     return new DiscordResource(normalizeDiscordConfig(config))
   },
   trello: async (config) => {
@@ -210,12 +211,12 @@ const REGISTRY: Record<string, ResourceFactory> = {
   },
   linear: async (config) => {
     const { LinearResource } = await import('./linear/linear.ts')
-    const { normalizeLinearConfig } = await import('@struktoai/mirage-core')
+    const { normalizeLinearConfig } = await import('@struktoai/mirage-core/core/linear/config')
     return new LinearResource(normalizeLinearConfig(config))
   },
   notion: async (config) => {
     const { NotionResource } = await import('./notion/notion.ts')
-    const { normalizeNotionConfig } = await import('@struktoai/mirage-core')
+    const { normalizeNotionConfig } = await import('@struktoai/mirage-core/core/notion/config')
     return new NotionResource(normalizeNotionConfig(config))
   },
   langfuse: async (config) => {
@@ -264,15 +265,19 @@ const REGISTRY: Record<string, ResourceFactory> = {
     return new GDriveResource(normalizeGDriveConfig(config))
   },
   onedrive: async (config) => {
-    const { OneDriveResource, normalizeOneDriveConfig } = await import('@struktoai/mirage-core')
+    const { normalizeOneDriveConfig } = await import('@struktoai/mirage-core/accessor/onedrive')
+    const { OneDriveResource } = await import('@struktoai/mirage-core/resource/onedrive/onedrive')
     return new OneDriveResource(normalizeOneDriveConfig(config))
   },
   sharepoint: async (config) => {
-    const { SharePointResource, normalizeSharePointConfig } = await import('@struktoai/mirage-core')
+    const { normalizeSharePointConfig } = await import('@struktoai/mirage-core/accessor/sharepoint')
+    const { SharePointResource } =
+      await import('@struktoai/mirage-core/resource/sharepoint/sharepoint')
     return new SharePointResource(normalizeSharePointConfig(config))
   },
   mem0: async (config) => {
-    const { Mem0Resource, normalizeMem0Config } = await import('@struktoai/mirage-core')
+    const { normalizeMem0Config } = await import('@struktoai/mirage-core/resource/mem0/config')
+    const { Mem0Resource } = await import('@struktoai/mirage-core/resource/mem0/mem0')
     return new Mem0Resource(normalizeMem0Config(config))
   },
   dropbox: async (config) => {

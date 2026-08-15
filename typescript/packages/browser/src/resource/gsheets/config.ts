@@ -15,6 +15,8 @@
 export {
   normalizeGoogleConfig as normalizeGSheetsConfig,
   redactGoogleConfig as redactGSheetsConfig,
-  type GoogleConfig as GSheetsConfig,
-  type GoogleConfigRedacted as GSheetsConfigRedacted,
-} from '@struktoai/mirage-core'
+} from '@struktoai/mirage-core/core/google/config'
+export type {
+  GoogleConfig as GSheetsConfig,
+  GoogleConfigRedacted as GSheetsConfigRedacted,
+} from '@struktoai/mirage-core/core/google/config'

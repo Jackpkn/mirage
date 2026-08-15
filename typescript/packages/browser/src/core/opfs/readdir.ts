@@ -12,9 +12,10 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { compareCodePoints, mountPrefixOf } from '@struktoai/mirage-core'
-import type { PathSpec } from '@struktoai/mirage-core'
-import { enoent, enotdir } from '@struktoai/mirage-core'
+import type { PathSpec } from '@struktoai/mirage-core/types'
+import { enoent, enotdir } from '@struktoai/mirage-core/utils/errors'
+import { mountPrefixOf } from '@struktoai/mirage-core/utils/key_prefix'
+import { compareCodePoints } from '@struktoai/mirage-core/utils/sort'
 import type { OPFSAccessor } from '../../accessor/opfs.ts'
 import { isNotFound, isTypeMismatch, iterEntries, norm, resolveDirHandle } from './utils.ts'
 

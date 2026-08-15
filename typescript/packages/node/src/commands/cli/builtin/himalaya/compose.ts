@@ -12,7 +12,9 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { FlagView, type CLIInvocation, type CommandFnResult } from '@struktoai/mirage-core'
+import type { CLIInvocation } from '@struktoai/mirage-core/commands/cli/types'
+import type { CommandFnResult } from '@struktoai/mirage-core/commands/config'
+import { FlagView } from '@struktoai/mirage-core/commands/spec/index'
 import type { EmailConfig } from '../../../../core/email/config.ts'
 import { route } from './util.ts'
 

@@ -14,17 +14,13 @@
 
 import type { DiskAccessor } from '../../accessor/disk.ts'
 import { readdir as fsReaddir } from 'node:fs/promises'
-import {
-  IndexEntry,
-  ResourceType,
-  enoent,
-  enotdir,
-  mountPrefixOf,
-  rstripSlash,
-  type IndexCacheStore,
-  type PathSpec,
-  compareCodePoints,
-} from '@struktoai/mirage-core'
+import { IndexEntry, ResourceType } from '@struktoai/mirage-core/cache/index/config'
+import type { IndexCacheStore } from '@struktoai/mirage-core/cache/index/store'
+import type { PathSpec } from '@struktoai/mirage-core/types'
+import { enoent, enotdir } from '@struktoai/mirage-core/utils/errors'
+import { mountPrefixOf } from '@struktoai/mirage-core/utils/key_prefix'
+import { rstripSlash } from '@struktoai/mirage-core/utils/slash'
+import { compareCodePoints } from '@struktoai/mirage-core/utils/sort'
 import { norm, resolveSafe } from './utils.ts'
 
 export async function readdir(

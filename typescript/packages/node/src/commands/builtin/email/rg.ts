@@ -12,26 +12,23 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import type { IndexCacheStore } from '@struktoai/mirage-core/cache/index/store'
+import { rgGeneric } from '@struktoai/mirage-core/commands/builtin/generic/rg'
+import { resolveGlobOf } from '@struktoai/mirage-core/commands/builtin/generic_bind/index'
 import {
-  FlagView,
-  IOResult,
-  ResourceName,
-  command,
   compilePattern,
   grepLines,
-  mountPrefixOf,
   patternArg,
-  resolveGlobOf,
-  rgGeneric,
-  specOf,
-  type ByteSource,
-  type CommandFnResult,
-  type CommandOpts,
-  type FileStat,
-  type GrepLinesOptions,
-  type IndexCacheStore,
-  type PathSpec,
-} from '@struktoai/mirage-core'
+} from '@struktoai/mirage-core/commands/builtin/grep_helper'
+import type { GrepLinesOptions } from '@struktoai/mirage-core/commands/builtin/grep_helper'
+import { command } from '@struktoai/mirage-core/commands/config'
+import type { CommandFnResult, CommandOpts } from '@struktoai/mirage-core/commands/config'
+import { FlagView, specOf } from '@struktoai/mirage-core/commands/spec/index'
+import { IOResult } from '@struktoai/mirage-core/io/types'
+import type { ByteSource } from '@struktoai/mirage-core/io/types'
+import { ResourceName } from '@struktoai/mirage-core/types'
+import type { FileStat, PathSpec } from '@struktoai/mirage-core/types'
+import { mountPrefixOf } from '@struktoai/mirage-core/utils/key_prefix'
 import type { EmailAccessor } from '../../../accessor/email.ts'
 import { read as emailRead } from '../../../core/email/read.ts'
 import { readdir as emailReaddir } from '../../../core/email/readdir.ts'

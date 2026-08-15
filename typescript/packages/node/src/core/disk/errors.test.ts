@@ -12,7 +12,8 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { PathSpec, type FsError } from '@struktoai/mirage-core'
+import { PathSpec } from '@struktoai/mirage-core/types'
+import type { FsError } from '@struktoai/mirage-core/utils/errors'
 import { describe, expect, it } from 'vitest'
 import { diskError } from './errors.ts'
 

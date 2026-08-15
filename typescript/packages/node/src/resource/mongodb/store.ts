@@ -12,16 +12,16 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import {
-  loadOptionalPeer,
-  type EntityKind,
-  type MongoCollectionSpec,
-  type MongoDriver,
-  type MongoFindOptions,
-  type MongoIndexAccess,
-  type MongoIterOptions,
-  compareCodePoints,
-} from '@struktoai/mirage-core'
+import type {
+  MongoCollectionSpec,
+  MongoDriver,
+  MongoFindOptions,
+  MongoIndexAccess,
+  MongoIterOptions,
+} from '@struktoai/mirage-core/core/mongodb/_driver'
+import type { EntityKind } from '@struktoai/mirage-core/core/mongodb/types'
+import { loadOptionalPeer } from '@struktoai/mirage-core/utils/optional_peer'
+import { compareCodePoints } from '@struktoai/mirage-core/utils/sort'
 import { VERSION } from '../../version.ts'
 
 const DRIVER_INFO = { name: 'Mirage', version: VERSION }

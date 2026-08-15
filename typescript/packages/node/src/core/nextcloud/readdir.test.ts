@@ -1,4 +1,5 @@
-import { PathSpec, RAMIndexCacheStore } from '@struktoai/mirage-core'
+import { RAMIndexCacheStore } from '@struktoai/mirage-core/cache/index/ram'
+import { PathSpec } from '@struktoai/mirage-core/types'
 import { describe, expect, it } from 'vitest'
 import { NextcloudAccessor } from '../../accessor/nextcloud.ts'
 import { FakeNextcloudOperator, installFakeOperator } from './mock.ts'

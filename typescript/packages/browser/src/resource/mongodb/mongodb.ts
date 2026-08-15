@@ -12,31 +12,32 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { mountKey, mountPrefixOf } from '@struktoai/mirage-core'
+import { MongoDBAccessor } from '@struktoai/mirage-core/accessor/mongodb'
+import { RAMIndexCacheStore } from '@struktoai/mirage-core/cache/index/ram'
+import type { IndexCacheStore } from '@struktoai/mirage-core/cache/index/store'
+import { makeResolveGlob } from '@struktoai/mirage-core/commands/builtin/generic_bind/index'
+import { MONGODB_COMMANDS } from '@struktoai/mirage-core/commands/builtin/mongodb/index'
+import type { RegisteredCommand } from '@struktoai/mirage-core/commands/config'
+import type { MongoDriver } from '@struktoai/mirage-core/core/mongodb/_driver'
+import { read as mongoRead } from '@struktoai/mirage-core/core/mongodb/read'
+import { readdir as mongoReaddir } from '@struktoai/mirage-core/core/mongodb/readdir'
+import { stat as mongoStat } from '@struktoai/mirage-core/core/mongodb/stat'
+import { MONGODB_OPS } from '@struktoai/mirage-core/ops/mongodb/index'
+import type { RegisteredOp } from '@struktoai/mirage-core/ops/registry'
+import type { Resource } from '@struktoai/mirage-core/resource/base'
 import {
-  type FileStat,
-  type IndexCacheStore,
-  MONGODB_COMMANDS,
-  MONGODB_OPS,
-  MONGODB_PROMPT,
-  MongoDBAccessor,
-  type MongoDBConfig,
-  type MongoDBConfigResolved,
-  type MongoDriver,
-  mongoRead,
-  mongoReaddir,
-  mongoStat,
-  PathSpec,
-  RAMIndexCacheStore,
-  type RegisteredCommand,
-  type RegisteredOp,
-  type Resource,
   redactMongoDBConfig,
-  type MongoDBConfigRedacted,
   resolveMongoDBConfig,
-  makeResolveGlob,
-  ResourceName,
-} from '@struktoai/mirage-core'
+} from '@struktoai/mirage-core/resource/mongodb/config'
+import type {
+  MongoDBConfig,
+  MongoDBConfigRedacted,
+  MongoDBConfigResolved,
+} from '@struktoai/mirage-core/resource/mongodb/config'
+import { MONGODB_PROMPT } from '@struktoai/mirage-core/resource/mongodb/prompt'
+import { PathSpec, ResourceName } from '@struktoai/mirage-core/types'
+import type { FileStat } from '@struktoai/mirage-core/types'
+import { mountKey, mountPrefixOf } from '@struktoai/mirage-core/utils/key_prefix'
 import { HttpMongoDriver } from './http_driver.ts'
 
 const resolveMongoGlob = makeResolveGlob(mongoReaddir)

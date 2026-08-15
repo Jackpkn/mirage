@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { describe, expect, it } from 'vitest'
-import { Channel } from '@struktoai/mirage-core'
+import { Channel } from '@struktoai/mirage-core/shell/console/index'
 import { SpillSink, ensureDirPath, type DirMaker, type SpillTarget } from './spill.ts'
 
 const ENC = new TextEncoder()

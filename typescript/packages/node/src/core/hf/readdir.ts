@@ -12,20 +12,16 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import {
-  IndexEntry,
-  ResourceType,
-  mountPrefixOf,
-  rstripSlash,
-  stripSlash,
-  type IndexCacheStore,
-  type PathSpec,
-  compareCodePoints,
-} from '@struktoai/mirage-core'
+import { IndexEntry, ResourceType } from '@struktoai/mirage-core/cache/index/config'
+import type { IndexCacheStore } from '@struktoai/mirage-core/cache/index/store'
+import type { PathSpec } from '@struktoai/mirage-core/types'
+import { listingError } from '@struktoai/mirage-core/utils/errors'
+import { mountPrefixOf } from '@struktoai/mirage-core/utils/key_prefix'
+import { rstripSlash, stripSlash } from '@struktoai/mirage-core/utils/slash'
+import { compareCodePoints } from '@struktoai/mirage-core/utils/sort'
 import type { HfAccessor } from '../../accessor/hf.ts'
 import { SCOPE_ERROR } from './constants.ts'
 import { isNotFound } from './util.ts'
-import { listingError } from '@struktoai/mirage-core'
 
 async function isFile(accessor: HfAccessor, key: string): Promise<boolean> {
   const op = await accessor.operator()

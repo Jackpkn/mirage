@@ -15,7 +15,7 @@
 import { mkdir, open, readFile, readdir, rename, stat, unlink, writeFile } from 'node:fs/promises'
 import type { FileHandle } from 'node:fs/promises'
 import path from 'node:path'
-import { generationOf } from '@struktoai/mirage-core'
+import { generationOf } from '@struktoai/mirage-core/workspace/record/types'
 
 // A .lock older than this is presumed abandoned by a crashed writer and
 // reclaimed (loudly). Live CAS critical sections are milliseconds.

@@ -15,7 +15,7 @@
 import { chmodSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { CapacityState, FileType, ResourceName } from '@struktoai/mirage-core'
+import { CapacityState, FileType, ResourceName } from '@struktoai/mirage-core/types'
 import { spec, tmpRoot } from '../../test-utils.ts'
 import { DiskResource } from './disk.ts'
 

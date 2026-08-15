@@ -12,15 +12,11 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import {
-  loadOptionalPeer,
-  registerRuntime,
-  RemoteSandbox,
-  type RuntimeOptions,
-  type RunResult,
-  stdinPath,
-  stdinRedirect,
-} from '@struktoai/mirage-core'
+import { RemoteSandbox } from '@struktoai/mirage-core/runtime/sandbox/base'
+import { stdinPath, stdinRedirect } from '@struktoai/mirage-core/runtime/sandbox/constants'
+import { registerRuntime } from '@struktoai/mirage-core/runtime/table'
+import type { RunResult, RuntimeOptions } from '@struktoai/mirage-core/runtime/types'
+import { loadOptionalPeer } from '@struktoai/mirage-core/utils/optional_peer'
 import { DAYTONA_CONFIG_KEYS, type DaytonaConfig } from './config.ts'
 import type { Daytona, Sandbox } from '@daytonaio/sdk'
 import type * as daytonaSdk from '@daytonaio/sdk'

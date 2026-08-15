@@ -12,13 +12,11 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import {
-  createShellParser,
-  type Resource,
-  type ShellParser,
-  Workspace as CoreWorkspace,
-  type WorkspaceOptions,
-} from '@struktoai/mirage-core'
+import type { Resource } from '@struktoai/mirage-core/resource/base'
+import { createShellParser } from '@struktoai/mirage-core/shell/parse'
+import type { ShellParser } from '@struktoai/mirage-core/shell/parse'
+import { Workspace as CoreWorkspace } from '@struktoai/mirage-core/workspace/workspace'
+import type { WorkspaceOptions } from '@struktoai/mirage-core/workspace/workspace'
 import { ENGINE_WASM_BASE64, GRAMMAR_WASM_BASE64 } from './generated/wasm.ts'
 
 let cachedParser: Promise<ShellParser> | null = null

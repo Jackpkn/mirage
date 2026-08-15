@@ -12,31 +12,31 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import { GitHubAccessor } from '@struktoai/mirage-core/accessor/github'
+import { RAMIndexCacheStore } from '@struktoai/mirage-core/cache/index/ram'
+import type { IndexCacheStore } from '@struktoai/mirage-core/cache/index/store'
+import { makeResolveGlob } from '@struktoai/mirage-core/commands/builtin/generic_bind/index'
+import { GITHUB_COMMANDS } from '@struktoai/mirage-core/commands/builtin/github/index'
+import type { RegisteredCommand } from '@struktoai/mirage-core/commands/config'
 import {
-  BaseResource,
-  GITHUB_COMMANDS,
-  GITHUB_OPS,
-  GitHubAccessor,
   HttpGitHubTransport,
-  PathSpec,
-  RAMIndexCacheStore,
-  ResourceName,
-  fetchGitHubRepoInfo,
-  fetchGitHubTree,
-  githubBuildTreeMap,
-  githubPopulateIndex,
-  githubRead,
-  githubReaddir,
-  makeResolveGlob,
-  githubStat,
-  mountKey,
-  mountPrefixOf,
-  type FileStat,
-  type IndexCacheStore,
-  type RegisteredCommand,
-  type RegisteredOp,
-  type Resource,
-} from '@struktoai/mirage-core'
+  fetchRepoInfo as fetchGitHubRepoInfo,
+  fetchTree as fetchGitHubTree,
+} from '@struktoai/mirage-core/core/github/_client'
+import { read as githubRead } from '@struktoai/mirage-core/core/github/read'
+import { readdir as githubReaddir } from '@struktoai/mirage-core/core/github/readdir'
+import { stat as githubStat } from '@struktoai/mirage-core/core/github/stat'
+import {
+  buildTreeMap as githubBuildTreeMap,
+  populateIndex as githubPopulateIndex,
+} from '@struktoai/mirage-core/core/github/tree'
+import { GITHUB_OPS } from '@struktoai/mirage-core/ops/github/index'
+import type { RegisteredOp } from '@struktoai/mirage-core/ops/registry'
+import { BaseResource } from '@struktoai/mirage-core/resource/base'
+import type { Resource } from '@struktoai/mirage-core/resource/base'
+import { PathSpec, ResourceName } from '@struktoai/mirage-core/types'
+import type { FileStat } from '@struktoai/mirage-core/types'
+import { mountKey, mountPrefixOf } from '@struktoai/mirage-core/utils/key_prefix'
 import { redactGitHubConfig, type GitHubConfig, type GitHubConfigRedacted } from './config.ts'
 
 const githubResolveGlob = makeResolveGlob(githubReaddir)

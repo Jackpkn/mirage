@@ -12,4 +12,4 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-export { loadOptionalPeer } from '@struktoai/mirage-core'
+export { loadOptionalPeer } from '@struktoai/mirage-core/utils/optional_peer'

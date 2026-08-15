@@ -12,7 +12,10 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { type OpRecord, type Ops, runWithSession, type Session } from '@struktoai/mirage-core'
+import { runWithSession } from '@struktoai/mirage-core/context/session_context'
+import type { OpRecord } from '@struktoai/mirage-core/observe/record'
+import type { Ops } from '@struktoai/mirage-core/ops/ops'
+import type { Session } from '@struktoai/mirage-core/workspace/session/session'
 import { type FuseAttr, MountCore } from './core.ts'
 import { classifyError } from './errors.ts'
 

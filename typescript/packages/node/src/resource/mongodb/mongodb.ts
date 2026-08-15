@@ -12,31 +12,31 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import { MongoDBAccessor } from '@struktoai/mirage-core/accessor/mongodb'
+import { makeResolveGlob } from '@struktoai/mirage-core/commands/builtin/generic_bind/index'
+import { MONGODB_COMMANDS } from '@struktoai/mirage-core/commands/builtin/mongodb/index'
+import type { RegisteredCommand } from '@struktoai/mirage-core/commands/config'
+import { read as mongoRead } from '@struktoai/mirage-core/core/mongodb/read'
+import { readdir as mongoReaddir } from '@struktoai/mirage-core/core/mongodb/readdir'
+import { detectScope as detectMongoScope } from '@struktoai/mirage-core/core/mongodb/scope'
+import { stat as mongoStat } from '@struktoai/mirage-core/core/mongodb/stat'
+import { MONGODB_OPS } from '@struktoai/mirage-core/ops/mongodb/index'
+import type { RegisteredOp } from '@struktoai/mirage-core/ops/registry'
+import { BaseResource } from '@struktoai/mirage-core/resource/base'
+import type { Resource } from '@struktoai/mirage-core/resource/base'
 import {
-  BaseResource,
-  MONGODB_COMMANDS,
-  MONGODB_OPS,
-  MONGODB_PROMPT,
-  MongoDBAccessor,
-  PathSpec,
-  ResourceName,
-  detectMongoScope,
-  mongoRead,
-  mongoReaddir,
-  mongoStat,
-  mountKey,
-  mountPrefixOf,
   redactMongoDBConfig,
-  type MongoDBConfigRedacted,
   resolveMongoDBConfig,
-  makeResolveGlob,
-  type FileStat,
-  type MongoDBConfig,
-  type MongoDBConfigResolved,
-  type RegisteredCommand,
-  type RegisteredOp,
-  type Resource,
-} from '@struktoai/mirage-core'
+} from '@struktoai/mirage-core/resource/mongodb/config'
+import type {
+  MongoDBConfig,
+  MongoDBConfigRedacted,
+  MongoDBConfigResolved,
+} from '@struktoai/mirage-core/resource/mongodb/config'
+import { MONGODB_PROMPT } from '@struktoai/mirage-core/resource/mongodb/prompt'
+import { PathSpec, ResourceName } from '@struktoai/mirage-core/types'
+import type { FileStat } from '@struktoai/mirage-core/types'
+import { mountKey, mountPrefixOf } from '@struktoai/mirage-core/utils/key_prefix'
 import { MongoDBStore } from './store.ts'
 
 const resolveMongoGlob = makeResolveGlob(mongoReaddir)

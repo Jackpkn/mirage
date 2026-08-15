@@ -1,16 +1,10 @@
-import {
-  enotdir,
-  enoent,
-  IndexEntry,
-  mountPrefixOf,
-  ResourceType,
-  rstripSlash,
-  stripSlash,
-  type IndexCacheStore,
-  type PathSpec,
-  compareCodePoints,
-  listingError,
-} from '@struktoai/mirage-core'
+import { IndexEntry, ResourceType } from '@struktoai/mirage-core/cache/index/config'
+import type { IndexCacheStore } from '@struktoai/mirage-core/cache/index/store'
+import type { PathSpec } from '@struktoai/mirage-core/types'
+import { enoent, enotdir, listingError } from '@struktoai/mirage-core/utils/errors'
+import { mountPrefixOf } from '@struktoai/mirage-core/utils/key_prefix'
+import { rstripSlash, stripSlash } from '@struktoai/mirage-core/utils/slash'
+import { compareCodePoints } from '@struktoai/mirage-core/utils/sort'
 import type { NextcloudAccessor } from '../../accessor/nextcloud.ts'
 import { SCOPE_ERROR } from './constants.ts'
 import { isNotFound } from './util.ts'

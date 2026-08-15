@@ -12,17 +12,14 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import type { PathSpec } from '@struktoai/mirage-core'
-import {
-  ResourceName,
-  command,
-  findGeneric,
-  resolveGlobOf,
-  specOf,
-  walkFind,
-  type CommandFnResult,
-  type CommandOpts,
-} from '@struktoai/mirage-core'
+import { findGeneric } from '@struktoai/mirage-core/commands/builtin/generic/find'
+import { resolveGlobOf } from '@struktoai/mirage-core/commands/builtin/generic_bind/index'
+import { command } from '@struktoai/mirage-core/commands/config'
+import type { CommandFnResult, CommandOpts } from '@struktoai/mirage-core/commands/config'
+import { specOf } from '@struktoai/mirage-core/commands/spec/index'
+import { walkFind } from '@struktoai/mirage-core/core/generic/find'
+import { ResourceName } from '@struktoai/mirage-core/types'
+import type { PathSpec } from '@struktoai/mirage-core/types'
 import type { EmailAccessor } from '../../../accessor/email.ts'
 import { readdir as emailReaddir } from '../../../core/email/readdir.ts'
 import { stat as emailStat } from '../../../core/email/stat.ts'

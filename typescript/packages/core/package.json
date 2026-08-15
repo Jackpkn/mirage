@@ -31,19 +31,27 @@
     "access": "public"
   },
   "type": "module",
+  "engines": {
+    "node": ">=20.10.0"
+  },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
-    }
+    },
+    "./*": {
+      "types": "./dist/*.d.ts",
+      "import": "./dist/*.js"
+    },
+    "./package.json": "./package.json"
   },
   "files": [
     "dist"
   ],
   "scripts": {
-    "build": "tsup",
+    "build": "node scripts/clean.mjs && tsc -p tsconfig.build.json",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
@@ -54,7 +62,6 @@
     "pyodide": "^0.29.3",
     "quickjs-emscripten": "^0.31.0",
     "tree-sitter-bash": "^0.25.1",
-    "tsup": "^8.5.0",
     "typescript": "^6.0.0",
     "vitest": "^3.2.6"
   },

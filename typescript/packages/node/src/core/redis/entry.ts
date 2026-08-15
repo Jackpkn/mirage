@@ -12,7 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { IndexEntry } from '@struktoai/mirage-core'
+import { IndexEntry } from '@struktoai/mirage-core/cache/index/config'
 
 const RedisResourceType = Object.freeze({
   FILE: 'file',

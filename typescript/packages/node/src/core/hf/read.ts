@@ -12,10 +12,12 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { type IndexCacheStore, type PathSpec, record } from '@struktoai/mirage-core'
+import type { IndexCacheStore } from '@struktoai/mirage-core/cache/index/store'
+import { record } from '@struktoai/mirage-core/observe/context'
+import type { PathSpec } from '@struktoai/mirage-core/types'
+import { enoent } from '@struktoai/mirage-core/utils/errors'
 import type { HfAccessor } from '../../accessor/hf.ts'
 import { hfKey, isNotFound, rawPathOf } from './util.ts'
-import { enoent } from '@struktoai/mirage-core'
 
 export interface HfReadOptions {
   offset?: number

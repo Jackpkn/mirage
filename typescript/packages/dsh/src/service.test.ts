@@ -14,8 +14,9 @@
 
 import { describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
-import { MountMode, RAMResource } from '@struktoai/mirage-core'
-import { LocalRuntime, registerResourceFactory, Workspace } from '@struktoai/mirage-node'
+import { RAMResource } from '@struktoai/mirage-core/resource/ram/ram'
+import { MountMode } from '@struktoai/mirage-core/types'
+import { LocalRuntime, Workspace, registerResourceFactory } from '@struktoai/mirage-node'
 import { MirageService } from './service.ts'
 
 describe('MirageService', () => {

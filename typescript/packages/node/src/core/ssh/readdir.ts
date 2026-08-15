@@ -13,10 +13,13 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import type { FileEntryWithStats, Stats } from 'ssh2'
-import type { PathSpec } from '@struktoai/mirage-core'
+import type { PathSpec } from '@struktoai/mirage-core/types'
+import { listingError } from '@struktoai/mirage-core/utils/errors'
+import { mountPrefixOf } from '@struktoai/mirage-core/utils/key_prefix'
+import { stripSlash } from '@struktoai/mirage-core/utils/slash'
+import { compareCodePoints } from '@struktoai/mirage-core/utils/sort'
 import type { SSHAccessor } from '../../accessor/ssh.ts'
 import { isDirectoryAttrs, isNoSuchFile, joinRoot, stripPrefix } from './utils.ts'
-import { compareCodePoints, listingError, mountPrefixOf, stripSlash } from '@struktoai/mirage-core'
 
 async function attrsOrNull(accessor: SSHAccessor, key: string): Promise<Stats | null> {
   const sftp = await accessor.sftp()

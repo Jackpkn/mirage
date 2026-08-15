@@ -12,13 +12,10 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import {
-  remapCommandsResource,
-  remapOpsResource,
-  ResourceName,
-  type RegisteredCommand,
-  type RegisteredOp,
-} from '@struktoai/mirage-core'
+import type { RegisteredCommand } from '@struktoai/mirage-core/commands/config'
+import type { RegisteredOp } from '@struktoai/mirage-core/ops/registry'
+import { remapCommandsResource, remapOpsResource } from '@struktoai/mirage-core/resource/s3/remap'
+import { ResourceName } from '@struktoai/mirage-core/types'
 import { S3Resource } from '../s3/s3.ts'
 import {
   redactSupabaseConfig,

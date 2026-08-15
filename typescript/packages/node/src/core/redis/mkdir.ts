@@ -12,11 +12,12 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { type PathSpec, invalidateAfterWrite, invalidateAncestors } from '@struktoai/mirage-core'
+import { invalidateAfterWrite, invalidateAncestors } from '@struktoai/mirage-core/cache/context'
+import type { PathSpec } from '@struktoai/mirage-core/types'
+import { stripSlash } from '@struktoai/mirage-core/utils/slash'
 import type { RedisAccessor } from '../../accessor/redis.ts'
 import { checkDestParents, checkMkdirTarget } from './dest.ts'
 import { norm, nowIso } from './utils.ts'
-import { stripSlash } from '@struktoai/mirage-core'
 
 export async function mkdir(
   accessor: RedisAccessor,

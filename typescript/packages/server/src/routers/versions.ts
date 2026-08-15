@@ -14,7 +14,7 @@
 
 import type { FastifyInstance } from 'fastify'
 import { Errors } from 'isomorphic-git'
-import { toStateDict } from '@struktoai/mirage-core'
+import { toStateDict } from '@struktoai/mirage-core/workspace/snapshot/state'
 import { Workspace } from '@struktoai/mirage-node'
 import { cloneWorkspaceWithOverride } from '../clone.ts'
 import type { WorkspaceRegistry } from '../registry.ts'

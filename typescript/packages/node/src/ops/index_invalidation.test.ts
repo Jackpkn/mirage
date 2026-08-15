@@ -15,7 +15,7 @@
 import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { MountMode } from '@struktoai/mirage-core'
+import { MountMode } from '@struktoai/mirage-core/types'
 import { DiskResource } from '../resource/disk/disk.ts'
 import { tmpRoot } from '../test-utils.ts'
 import { Workspace } from '../workspace.ts'

@@ -12,27 +12,26 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { mountKey, mountPrefixOf } from '@struktoai/mirage-core'
+import { GSheetsAccessor } from '@struktoai/mirage-core/accessor/gsheets'
+import { RAMIndexCacheStore } from '@struktoai/mirage-core/cache/index/ram'
+import type { IndexCacheStore } from '@struktoai/mirage-core/cache/index/store'
+import { makeResolveGlob } from '@struktoai/mirage-core/commands/builtin/generic_bind/index'
+import { GSHEETS_COMMANDS } from '@struktoai/mirage-core/commands/builtin/gsheets/index'
+import type { RegisteredCommand } from '@struktoai/mirage-core/commands/config'
+import { TokenManager } from '@struktoai/mirage-core/core/google/_client'
+import { read as gsheetsRead } from '@struktoai/mirage-core/core/gsheets/read'
+import { readdir as gsheetsReaddir } from '@struktoai/mirage-core/core/gsheets/readdir'
+import { stat as gsheetsStat } from '@struktoai/mirage-core/core/gsheets/stat'
+import { GSHEETS_OPS } from '@struktoai/mirage-core/ops/gsheets/index'
+import type { RegisteredOp } from '@struktoai/mirage-core/ops/registry'
+import type { Resource } from '@struktoai/mirage-core/resource/base'
 import {
-  type FileStat,
-  GSHEETS_COMMANDS,
   GSHEETS_PROMPT,
-  GSHEETS_OPS,
   GSHEETS_WRITE_PROMPT,
-  GSheetsAccessor,
-  type IndexCacheStore,
-  PathSpec,
-  RAMIndexCacheStore,
-  type RegisteredCommand,
-  type RegisteredOp,
-  type Resource,
-  ResourceName,
-  TokenManager,
-  gsheetsRead,
-  gsheetsReaddir,
-  makeResolveGlob,
-  gsheetsStat,
-} from '@struktoai/mirage-core'
+} from '@struktoai/mirage-core/resource/gsheets/prompt'
+import { PathSpec, ResourceName } from '@struktoai/mirage-core/types'
+import type { FileStat } from '@struktoai/mirage-core/types'
+import { mountKey, mountPrefixOf } from '@struktoai/mirage-core/utils/key_prefix'
 import { redactGSheetsConfig, type GSheetsConfig, type GSheetsConfigRedacted } from './config.ts'
 
 const gsheetsResolveGlob = makeResolveGlob(gsheetsReaddir)
