@@ -16,11 +16,12 @@ import logging
 
 from mirage.accessor.gdrive import GDriveAccessor
 from mirage.cache.index import NULL_INDEX, IndexCacheStore, IndexEntry
+from mirage.core.gdrive import DIRECTORY_RESOURCE_TYPES
 from mirage.core.gdrive.resolve import root_context
 from mirage.core.google.drive import (MIME_TO_EXT, list_files,
                                       list_shared_drives)
 from mirage.types import PathSpec
-from mirage.utils.errors import enoent
+from mirage.utils.errors import enoent, enotdir
 from mirage.utils.key_prefix import mount_key, mount_prefix_of
 
 logger = logging.getLogger(__name__)
@@ -68,6 +69,14 @@ async def readdir(
                 result = await index.get(virtual_key)
             if result.entry is None:
                 raise enoent(virtual)
+        if result.entry.resource_type not in DIRECTORY_RESOURCE_TYPES:
+            # Listing a file's id answers with an empty child set rather
+            # than an error, so without this the recursion above reported
+            # `ls /data/a.txt/x` as ENOENT where opendir(2) says ENOTDIR.
+            # The index walk that resolved the path IS the ancestor walk
+            # `readdir_error` performs, already done and already paid for,
+            # so the errno falls out of it with no extra request.
+            raise enotdir(virtual)
         folder_id = result.entry.id
         drive_id = result.entry.extra.get("drive_id")
 

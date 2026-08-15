@@ -15,13 +15,33 @@
 import { IndexEntry, ResourceType } from '@struktoai/mirage-core/cache/index/config'
 import type { IndexCacheStore } from '@struktoai/mirage-core/cache/index/store'
 import type { PathSpec } from '@struktoai/mirage-core/types'
-import { enoent } from '@struktoai/mirage-core/utils/errors'
+import { listingError } from '@struktoai/mirage-core/utils/errors'
 import { mountPrefixOf } from '@struktoai/mirage-core/utils/key_prefix'
 import { rstripSlash, stripSlash } from '@struktoai/mirage-core/utils/slash'
 import { compareCodePoints } from '@struktoai/mirage-core/utils/sort'
 import type { HfAccessor } from '../../accessor/hf.ts'
 import { SCOPE_ERROR } from './constants.ts'
 import { isNotFound } from './util.ts'
+
+async function isFile(accessor: HfAccessor, key: string): Promise<boolean> {
+  const op = await accessor.operator()
+  try {
+    return !(await op.stat(stripSlash(key))).isDirectory()
+  } catch (err) {
+    if (isNotFound(err)) return false
+    throw err
+  }
+}
+
+async function isDir(accessor: HfAccessor, key: string): Promise<boolean> {
+  const op = await accessor.operator()
+  try {
+    return (await op.stat(`${stripSlash(key)}/`)).isDirectory()
+  } catch (err) {
+    if (isNotFound(err)) return false
+    throw err
+  }
+}
 
 export async function readdir(
   accessor: HfAccessor,
@@ -53,8 +73,32 @@ export async function readdir(
   try {
     entries = await op.list(listPath)
   } catch (err) {
-    if (isNotFound(err)) throw enoent(path)
+    if (isNotFound(err)) {
+      throw await listingError(
+        path,
+        target,
+        (key) => isFile(accessor, key),
+        (key) => isDir(accessor, key),
+      )
+    }
     throw err
+  }
+  if (entries.length === 0 && strippedTarget !== '') {
+    // An empty listing is ambiguous here in a way it is not on s3: hf can
+    // store no directory marker at all (see mkdir), so "no keys under this
+    // prefix" covers both a path the repo does not have and a directory
+    // whose last file was just removed. Only the ENOTDIR half of the walk
+    // is provable, and it is the half GNU disagrees with us about:
+    // `ls /hf/a.txt/x` must not render an empty directory when `a.txt` is a
+    // stored key. ENOENT is dropped rather than guessed, so an emptied
+    // directory still lists as empty.
+    const error = await listingError(
+      path,
+      target,
+      (key) => isFile(accessor, key),
+      (key) => isDir(accessor, key),
+    )
+    if (error.code === 'ENOTDIR') throw error
   }
   for (const entry of entries) {
     const relative = entry.path()

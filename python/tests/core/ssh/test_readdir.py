@@ -115,6 +115,18 @@ def index():
 
 
 @pytest.mark.asyncio
+async def test_readdir_under_a_file_is_enotdir(index):
+    # SFTP 3 answers `/a.txt/x` with NO_SUCH_FILE exactly as it does a name
+    # that is simply absent, so only the ancestor walk can tell GNU's "Not a
+    # directory" from "No such file or directory".
+    accessor = _accessor({"/a.txt": b"hello"}, {"/"})
+    with pytest.raises(NotADirectoryError):
+        await readdir(accessor, PathSpec.from_str_path("/a.txt/x"), index)
+    with pytest.raises(FileNotFoundError):
+        await readdir(accessor, PathSpec.from_str_path("/nope/deeper"), index)
+
+
+@pytest.mark.asyncio
 async def test_readdir_stores_sftp_attrs_in_index(index):
     accessor = _accessor(
         {

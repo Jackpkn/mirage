@@ -112,7 +112,19 @@
         "s3-prefix",
         "gridfs-prefix",
         "nextcloud",
-        "box"
+        "databricks",
+        "databricks-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "hf",
+        "hf-prefix",
+        "box",
+        "gdrive",
+        "gdrive-folder"
       ],
       "command": "ls /data/a.txt/x",
       "expect": {

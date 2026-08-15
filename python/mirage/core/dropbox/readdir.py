@@ -12,14 +12,15 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+from functools import partial
 from typing import Any
 
 from mirage.accessor.dropbox import DropboxAccessor
 from mirage.cache.index import NULL_INDEX, IndexCacheStore, IndexEntry
 from mirage.core.dropbox._client import DropboxApiError
-from mirage.core.dropbox.api import list_folder
+from mirage.core.dropbox.api import get_metadata, list_folder
 from mirage.types import PathSpec
-from mirage.utils.errors import enoent
+from mirage.utils.errors import listing_error
 from mirage.utils.key_prefix import mount_prefix_of
 
 
@@ -33,6 +34,27 @@ def dropbox_path_from_key(root: str, key: str) -> str:
     if not key:
         return root
     return f"{root}/{key}"
+
+
+async def _metadata_or_none(accessor: DropboxAccessor,
+                            key: str) -> dict[str, Any] | None:
+    path = dropbox_path_from_key(accessor.root_path, key.strip("/"))
+    try:
+        return await get_metadata(accessor.token_manager, path)
+    except DropboxApiError as exc:
+        if exc.status == 409:
+            return None
+        raise
+
+
+async def _is_file(accessor: DropboxAccessor, key: str) -> bool:
+    entry = await _metadata_or_none(accessor, key)
+    return entry is not None and entry.get(".tag") != "folder"
+
+
+async def _is_dir(accessor: DropboxAccessor, key: str) -> bool:
+    entry = await _metadata_or_none(accessor, key)
+    return entry is not None and entry.get(".tag") == "folder"
 
 
 async def readdir(
@@ -53,11 +75,16 @@ async def readdir(
     try:
         files = await list_folder(accessor.token_manager, dropbox_path)
     except DropboxApiError as exc:
-        # list_folder 409s on missing paths and on file operands
-        # (path/not_found, path/not_folder); both map to ENOENT so ls
-        # falls back to its stat-the-operand path like other backends.
+        # list_folder 409s on a missing path and on a file operand alike
+        # (path/not_found, path/not_folder), and the subtag cannot tell
+        # ENOENT from ENOTDIR either: a path under a file is not_found,
+        # where opendir(2) reports Not a directory. So walk the ancestors
+        # and let the walk pick the errno, at one request per component
+        # on this failure path only.
         if exc.status == 409:
-            raise enoent(path_spec.virtual) from exc
+            raise await listing_error(path_spec.virtual, path,
+                                      partial(_is_file, accessor),
+                                      partial(_is_dir, accessor)) from exc
         raise
 
     entries: list[tuple[str, IndexEntry, bool]] = []

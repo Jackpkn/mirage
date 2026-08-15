@@ -17,9 +17,10 @@ import type { DropboxAccessor } from '../../accessor/dropbox.ts'
 import { IndexEntry } from '../../cache/index/config.ts'
 import type { IndexCacheStore } from '../../cache/index/store.ts'
 import type { PathSpec } from '../../types.ts'
-import { enoent } from '../../utils/errors.ts'
+import { listingError } from '../../utils/errors.ts'
 import { DropboxApiError } from './_client.ts'
-import { listFolder, type DropboxEntry } from './api.ts'
+import { getMetadata, listFolder, type DropboxEntry } from './api.ts'
+import { stripSlash } from '../../utils/slash.ts'
 
 function resourceTypeFor(entry: DropboxEntry): string {
   if (entry['.tag'] === 'folder') return 'dropbox/folder'
@@ -29,6 +30,31 @@ function resourceTypeFor(entry: DropboxEntry): string {
 function dropboxPathFromKey(root: string, key: string): string {
   if (key === '') return root
   return `${root}/${key}`
+}
+
+async function metadataOrNull(
+  accessor: DropboxAccessor,
+  key: string,
+): Promise<DropboxEntry | null> {
+  try {
+    return await getMetadata(
+      accessor.tokenManager,
+      dropboxPathFromKey(accessor.rootPath, stripSlash(key)),
+    )
+  } catch (err) {
+    if (err instanceof DropboxApiError && err.status === 409) return null
+    throw err
+  }
+}
+
+async function isFile(accessor: DropboxAccessor, key: string): Promise<boolean> {
+  const entry = await metadataOrNull(accessor, key)
+  return entry !== null && entry['.tag'] !== 'folder'
+}
+
+async function isDir(accessor: DropboxAccessor, key: string): Promise<boolean> {
+  const entry = await metadataOrNull(accessor, key)
+  return entry !== null && entry['.tag'] === 'folder'
 }
 
 export async function readdir(
@@ -50,11 +76,19 @@ export async function readdir(
   try {
     files = await listFolder(accessor.tokenManager, dropboxPath)
   } catch (err) {
-    // list_folder 409s on missing paths and on file operands
-    // (path/not_found, path/not_folder); both map to ENOENT so ls falls
-    // back to its stat-the-operand path like other backends.
+    // list_folder 409s on a missing path and on a file operand alike
+    // (path/not_found, path/not_folder), and the subtag cannot tell ENOENT
+    // from ENOTDIR either: a path under a file is not_found, where
+    // opendir(2) reports Not a directory. So walk the ancestors and let the
+    // walk pick the errno, at one request per component on this failure
+    // path only.
     if (err instanceof DropboxApiError && err.status === 409) {
-      throw enoent(path.virtual)
+      throw await listingError(
+        path.virtual,
+        key,
+        (p) => isFile(accessor, p),
+        (p) => isDir(accessor, p),
+      )
     }
     throw err
   }

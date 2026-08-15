@@ -12,13 +12,10 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from functools import partial
-
 from mirage.accessor.onedrive import OneDriveAccessor
 from mirage.cache.index import NULL_INDEX, IndexCacheStore
 from mirage.core.msgraph.drive_ops import readdir_items
 from mirage.core.onedrive._client import drive_loc
-from mirage.core.onedrive.stat import stat
 from mirage.types import PathSpec
 from mirage.utils.key_prefix import mount_prefix_of
 
@@ -26,7 +23,6 @@ from mirage.utils.key_prefix import mount_prefix_of
 async def readdir(accessor: OneDriveAccessor,
                   path: PathSpec,
                   index: IndexCacheStore = NULL_INDEX) -> list[str]:
-    original = path
     prefix = mount_prefix_of(path.virtual, path.resource_path) or ""
     raw = path.directory if path.pattern else path.virtual
     if prefix and raw.startswith(prefix):
@@ -41,5 +37,4 @@ async def readdir(accessor: OneDriveAccessor,
         return listing.entries
     return await readdir_items(accessor.config,
                                drive_loc(accessor.config, stripped), index,
-                               prefix, stripped, virtual_key,
-                               partial(stat, accessor, original, index))
+                               prefix, stripped, virtual_key)

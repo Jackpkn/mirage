@@ -23,7 +23,7 @@ from mirage.core.gridfs._client import (_key, _prefix, _strip_prefix,
 from mirage.core.gridfs.constants import SCOPE_ERROR
 from mirage.core.timeutil import to_iso_z
 from mirage.types import PathSpec
-from mirage.utils.errors import enotdir, readdir_error
+from mirage.utils.errors import listing_error
 from mirage.utils.key_prefix import mount_prefix_of
 
 logger = logging.getLogger(__name__)
@@ -40,26 +40,6 @@ async def _is_dir(accessor: GridFSAccessor, key: str) -> bool:
         _prefix(key, accessor.config)),
                                               projection={"_id": 1})
     return doc is not None
-
-
-async def _listing_error(accessor: GridFSAccessor, path_spec: PathSpec,
-                         path: str) -> OSError:
-    """The errno for a path the bucket holds no file doc at or under.
-
-    Args:
-        accessor (GridFSAccessor): GridFS accessor.
-        path_spec (PathSpec): The operand; ``virtual`` is the reported
-            spelling.
-        path (str): Mount-local path that was listed.
-    """
-    is_file = partial(_is_file, accessor)
-    if await is_file(path):
-        # A file doc, not a prefix: opendir(2) reports ENOTDIR, and the
-        # ancestor walk cannot change that answer, because every ancestor
-        # of a stored filename is a prefix by construction.
-        return enotdir(path_spec)
-    return await readdir_error(path_spec, path, is_file,
-                               partial(_is_dir, accessor))
 
 
 async def readdir(accessor: GridFSAccessor,
@@ -114,7 +94,8 @@ async def readdir(accessor: GridFSAccessor,
         # rendered an empty directory and exited 0 where every real
         # filesystem reports ENOENT. The mount root is exempt: it exists
         # because it is mounted.
-        raise await _listing_error(accessor, path_spec, path)
+        raise await listing_error(path_spec, path, partial(_is_file, accessor),
+                                  partial(_is_dir, accessor))
     names = sorted(names)
     if len(names) > SCOPE_ERROR:
         logger.warning(

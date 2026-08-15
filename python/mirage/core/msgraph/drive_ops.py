@@ -16,6 +16,7 @@ import posixpath
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, replace
+from functools import partial
 from typing import Any
 from urllib.parse import quote
 
@@ -35,7 +36,7 @@ from mirage.core.msgraph.config import MsGraphConfig
 from mirage.observe.context import (active_recorder, record, record_stream,
                                     revision_for)
 from mirage.types import FileStat, FileType, PathSpec
-from mirage.utils.errors import enoent
+from mirage.utils.errors import enoent, listing_error
 from mirage.utils.filetype import guess_type
 from mirage.utils.ranges import range_header
 
@@ -71,6 +72,13 @@ class DriveLoc:
 
     def item(self, action: str = "") -> str:
         return self.url(self.path, action)
+
+    def item_at(self, path: str, action: str = "") -> str:
+        # Any item on the same drive, addressed the way this loc addresses
+        # its own. The ancestor probes need it: a DriveLoc's `path` is
+        # already spelled the way its url callable expects, so an ancestor
+        # of that path is too.
+        return self.url(path, action)
 
     def child(self, name: str) -> "DriveLoc":
         path = f"{self.path}/{name}" if self.path else name
@@ -537,19 +545,48 @@ async def drive_root_empty(config: MsGraphConfig, loc: DriveLoc) -> bool:
     return not await graph_list(config, loc.item("/children"))
 
 
-async def readdir_items(
-        config: MsGraphConfig, loc: DriveLoc, index: IndexCacheStore,
-        prefix: str, stripped: str, virtual_key: str,
-        stat_fn: Callable[[], Awaitable[FileStat]]) -> list[str]:
+async def _item_or_none(config: MsGraphConfig, loc: DriveLoc,
+                        path: str) -> dict[str, Any] | None:
+    """One drive item addressed off ``loc``, or None when Graph has none.
+
+    Args:
+        config (MsGraphConfig): Graph config.
+        loc (DriveLoc): any loc on the drive being probed.
+        path (str): drive path of the item to fetch.
+    """
+    try:
+        return await graph_get(config, loc.item_at(path.strip("/")))
+    except GraphError as exc:
+        if exc.status == 404:
+            return None
+        raise
+
+
+async def _is_file(config: MsGraphConfig, loc: DriveLoc, path: str) -> bool:
+    item = await _item_or_none(config, loc, path)
+    return item is not None and "folder" not in item
+
+
+async def _is_dir(config: MsGraphConfig, loc: DriveLoc, path: str) -> bool:
+    item = await _item_or_none(config, loc, path)
+    return item is not None and "folder" in item
+
+
+async def readdir_items(config: MsGraphConfig, loc: DriveLoc,
+                        index: IndexCacheStore, prefix: str, stripped: str,
+                        virtual_key: str) -> list[str]:
     try:
         children = await graph_list(config, loc.item("/children"))
     except GraphError as exc:
         if exc.status != 404:
             raise
-        info = await stat_fn()
-        if info.type != FileType.DIRECTORY:
-            raise NotADirectoryError(virtual_key) from exc
-        raise enoent(virtual_key) from exc
+        # Graph 404s a children listing for a missing item and for one
+        # under a file alike, so the errno comes from walking the
+        # ancestors: one item request per component, on this failure
+        # path only.
+        raise await listing_error(virtual_key, loc.path,
+                                  partial(_is_file, config, loc),
+                                  partial(_is_dir, config, loc)) from exc
     base = "/" + stripped if stripped else ""
     names: list[str] = []
     index_entries: list[tuple[str, IndexEntry]] = []

@@ -83,6 +83,52 @@ async def test_readdir_of_file_raises_not_a_directory():
 
 
 @pytest.mark.asyncio
+async def test_readdir_under_a_file_is_not_a_directory():
+    # Graph 404s the children of `/a.txt/x` exactly as it does those of a
+    # name that is simply absent, so only the ancestor walk can tell GNU's
+    # "Not a directory" from "No such file or directory".
+    index = RAMIndexCacheStore()
+    missing = {"error": {"code": "itemNotFound", "message": "x"}}
+    with aioresponses() as m:
+        m.get(_BASE + "/root:/a.txt/x:/children", status=404, payload=missing)
+        # The walk asks each component as a directory and then as a file, so
+        # every probe URL answers more than once.
+        m.get(_BASE + "/root:/a.txt/x",
+              status=404,
+              payload=missing,
+              repeat=True)
+        m.get(_BASE + "/root:/a.txt",
+              payload={
+                  "id": "1",
+                  "name": "a.txt",
+                  "size": 3,
+                  "file": {}
+              },
+              repeat=True)
+        with pytest.raises(NotADirectoryError):
+            await readdir(_accessor(), PathSpec.from_str_path("/a.txt/x"),
+                          index)
+
+
+@pytest.mark.asyncio
+async def test_readdir_of_a_missing_path_is_not_found():
+    index = RAMIndexCacheStore()
+    missing = {"error": {"code": "itemNotFound", "message": "x"}}
+    with aioresponses() as m:
+        m.get(_BASE + "/root:/nope/deeper:/children",
+              status=404,
+              payload=missing)
+        m.get(_BASE + "/root:/nope/deeper",
+              status=404,
+              payload=missing,
+              repeat=True)
+        m.get(_BASE + "/root:/nope", status=404, payload=missing, repeat=True)
+        with pytest.raises(FileNotFoundError):
+            await readdir(_accessor(), PathSpec.from_str_path("/nope/deeper"),
+                          index)
+
+
+@pytest.mark.asyncio
 async def test_readdir_paginates_nextlink():
     index = RAMIndexCacheStore()
     page2 = _BASE + "/root/children?$skiptoken=x"

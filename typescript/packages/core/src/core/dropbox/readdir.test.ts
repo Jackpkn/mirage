@@ -18,13 +18,13 @@ import type * as ApiModule from './api.ts'
 
 vi.mock('./api.ts', async () => {
   const actual = await vi.importActual<typeof ApiModule>('./api.ts')
-  return { ...actual, listFolder: vi.fn() }
+  return { ...actual, listFolder: vi.fn(), getMetadata: vi.fn() }
 })
 
 import { DropboxAccessor } from '../../accessor/dropbox.ts'
 import { RAMIndexCacheStore } from '../../cache/index/ram.ts'
 import { PathSpec } from '../../types.ts'
-import type { DropboxTokenManager } from './_client.ts'
+import { DropboxApiError, type DropboxTokenManager } from './_client.ts'
 import * as api from './api.ts'
 import { readdir } from './readdir.ts'
 
@@ -149,6 +149,40 @@ describe('dropbox readdir', () => {
       index,
     )
     expect(out).toEqual(['/dropbox/a.txt'])
+  })
+
+  it('reports ENOTDIR for an operand under a file', async () => {
+    // list_folder answers path/not_found for `/a.txt/x` exactly as it does
+    // for a name that is simply absent, so only the ancestor walk can tell
+    // GNU's "Not a directory" from "No such file or directory".
+    vi.mocked(api.listFolder).mockRejectedValue(new DropboxApiError('path/not_found', 409))
+    vi.mocked(api.getMetadata).mockImplementation((_tm, path: string) => {
+      if (path === '/a.txt') return Promise.resolve({ '.tag': 'file', name: 'a.txt' })
+      return Promise.reject(new DropboxApiError('path/not_found', 409))
+    })
+    await expect(
+      readdir(
+        makeAccessor(),
+        new PathSpec({ resourcePath: 'a.txt/x', virtual: '/a.txt/x', directory: '/a.txt/x' }),
+        new RAMIndexCacheStore(),
+      ),
+    ).rejects.toMatchObject({ code: 'ENOTDIR' })
+  })
+
+  it('reports ENOENT for a path no component of which exists', async () => {
+    vi.mocked(api.listFolder).mockRejectedValue(new DropboxApiError('path/not_found', 409))
+    vi.mocked(api.getMetadata).mockRejectedValue(new DropboxApiError('path/not_found', 409))
+    await expect(
+      readdir(
+        makeAccessor(),
+        new PathSpec({
+          resourcePath: 'nope/deeper',
+          virtual: '/nope/deeper',
+          directory: '/nope/deeper',
+        }),
+        new RAMIndexCacheStore(),
+      ),
+    ).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
   it('indexes 0-byte files with size 0', async () => {

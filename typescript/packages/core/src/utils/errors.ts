@@ -15,7 +15,7 @@
 import { gnuPhrase } from '../errors/posix.ts'
 import { dropTrailingSegments, respellOne } from './path.ts'
 import { quotesOperands, shellQuote } from './quote.ts'
-import { rstripSlash } from './slash.ts'
+import { rstripSlash, stripSlash } from './slash.ts'
 
 export interface FsError extends Error {
   code: string
@@ -100,6 +100,10 @@ export function exdev(path: string | { virtual: string }): FsError {
 // `a/x`, `ls /a/never` must report ENOENT, not ENOTDIR. On a store where the
 // two are mutually exclusive the order is immaterial, so ram/redis/disk are
 // unaffected.
+// Every component is walked, the listed path included, because the walk is the
+// only thing that can see a gap above it. A backend whose store cannot hold
+// such a gap should call listingError instead, which settles the common case in
+// one probe.
 // Mirrors Python's readdir_error.
 export async function readdirError(
   path: string | { virtual: string; rawPath?: string },
@@ -115,6 +119,27 @@ export async function readdirError(
     return enoent(path)
   }
   return enoent(path)
+}
+
+// readdirError for a store that cannot hold an orphan. An object store's key
+// implies every prefix of it, and a hierarchy the backend addresses by path
+// implies every folder above it, so on those backends a path that exists proves
+// its ancestors are directories and the answer for one that is not a directory
+// is ENOTDIR outright. Probing it first is what keeps a readdir on a plain file
+// to one round trip where each probe is an API request rather than a map lookup.
+// That premise is exactly what a flat store breaks: ram and redis rename without
+// creating the destination's ancestors, so they can hold `/missing/a.txt` with
+// `/missing` absent, where resolution stops and the answer is ENOENT. Those call
+// readdirError directly.
+// Mirrors Python's listing_error.
+export async function listingError(
+  path: string | { virtual: string; rawPath?: string },
+  key: string,
+  isFile: (p: string) => boolean | Promise<boolean>,
+  isDir: (p: string) => boolean | Promise<boolean>,
+): Promise<FsError> {
+  if (stripSlash(key) !== '' && (await isFile(key))) return enotdir(path)
+  return readdirError(path, key, isFile, isDir)
 }
 
 // The registry's refusal for a path that falls outside every mount. Mirrors

@@ -200,4 +200,48 @@ describe('OneDrive filesystem operations', () => {
       code: 'ENOTDIR',
     })
   })
+
+  it('reports ENOTDIR for an operand under a file', async () => {
+    // Graph 404s the children of `/a.txt/x` exactly as it does those of a
+    // name that is simply absent, so only the ancestor walk can tell GNU's
+    // "Not a directory" from "No such file or directory".
+    const missing = new Response(JSON.stringify({ error: { code: 'itemNotFound' } }), {
+      status: 404,
+    })
+    const fetchMock = vi.fn().mockImplementation((url: unknown) => {
+      const href = String(url)
+      if (href.endsWith('/root:/a.txt')) {
+        return Promise.resolve(
+          new Response(JSON.stringify({ id: 'item', name: 'a.txt', size: 3, file: {} }), {
+            status: 200,
+          }),
+        )
+      }
+      return Promise.resolve(missing.clone())
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const accessor = new OneDriveAccessor({ accessToken: 'token' })
+    const path = PathSpec.fromStrPath('/od/a.txt/x', 'a.txt/x')
+
+    await expect(readdir(accessor, path, new RAMIndexCacheStore())).rejects.toMatchObject({
+      code: 'ENOTDIR',
+    })
+  })
+
+  it('reports ENOENT for a path no component of which exists', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockImplementation(() =>
+        Promise.resolve(
+          new Response(JSON.stringify({ error: { code: 'itemNotFound' } }), { status: 404 }),
+        ),
+      )
+    vi.stubGlobal('fetch', fetchMock)
+    const accessor = new OneDriveAccessor({ accessToken: 'token' })
+    const path = PathSpec.fromStrPath('/od/nope/deeper', 'nope/deeper')
+
+    await expect(readdir(accessor, path, new RAMIndexCacheStore())).rejects.toMatchObject({
+      code: 'ENOENT',
+    })
+  })
 })
