@@ -22,7 +22,7 @@ import { listMembers } from './members.ts'
 import { readdir as discordReaddir } from './readdir.ts'
 import { memberJsonBytes } from './render.ts'
 import { stripSlash } from '../../utils/slash.ts'
-import { rangeHeader, sliceWindow } from '../../utils/ranges.ts'
+import { sliceWindow } from '../../utils/ranges.ts'
 
 function fileNotFound(key: string): Error {
   const e = new Error(`ENOENT: ${key}`) as Error & { code: string }
@@ -104,7 +104,7 @@ export async function read(
           ? extra.proxy_url
           : ''
     if (url === '') throw fileNotFound(key)
-    return await downloadFile(url, rangeHeader(offset, size))
+    return await downloadFile(url, offset, size)
   }
 
   // <guild>/members/<user>.json

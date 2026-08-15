@@ -55,6 +55,33 @@ def slice_window(data: bytes, offset: int, size: int | None) -> bytes:
     return data[offset:None if size is None else offset + size]
 
 
+PARTIAL_CONTENT = 206
+
+
+def window_if_unranged(data: bytes, status: int, offset: int,
+                       size: int | None) -> bytes:
+    """The window, whether or not the server honored the Range header.
+
+    Sending a Range is a request, not an instruction: RFC 9110 lets a
+    server ignore it and answer 200 with the whole representation, and
+    a CDN in front of one may do that even when the origin would not.
+    Trusting the header alone therefore hands back the entire file for
+    what the caller asked to be a window, which over FUSE is a read
+    that returns far more bytes than it was given room for. Only a 206
+    is proof the bytes are already the window, so anything else is
+    sliced here.
+
+    Args:
+        data (bytes): the body the server returned.
+        status (int): the response status.
+        offset (int): first byte the caller asked for.
+        size (int | None): how many bytes, or None for the rest.
+    """
+    if status == PARTIAL_CONTENT:
+        return data
+    return slice_window(data, offset, size)
+
+
 def _status_of(exc: BaseException) -> int | None:
     """The HTTP status an exception carries, across the client libraries.
 

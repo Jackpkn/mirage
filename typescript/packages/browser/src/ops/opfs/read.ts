@@ -12,15 +12,37 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import type { PathSpec, RegisteredOp } from '@struktoai/mirage-core'
+import type { OpKwargs, PathSpec, RegisteredOp } from '@struktoai/mirage-core'
 import { ResourceName } from '@struktoai/mirage-core'
 import type { OPFSAccessor } from '../../accessor/opfs.ts'
 import { read as coreRead } from '../../core/opfs/read.ts'
 
+// A backend that registers its own read op does not go through
+// makeGenericOps, so neither the native-range dispatch nor the
+// read-and-slice fallback reaches it: the window has to be read off
+// kwargs here or it is silently dropped and the whole file comes back.
+// OPFS slices natively (`File` is a `Blob`), so it is forwarded rather
+// than applied after the read.
 export const readOp: RegisteredOp = {
   name: 'read',
   resource: ResourceName.OPFS,
   filetype: null,
   write: false,
-  fn: (accessor: OPFSAccessor, path: PathSpec) => coreRead(accessor, path),
+  fn: async (
+    accessor: OPFSAccessor,
+    path: PathSpec,
+    _args: readonly unknown[],
+    kwargs: OpKwargs,
+  ) => {
+    const offset = typeof kwargs.offset === 'number' ? kwargs.offset : 0
+    const size = typeof kwargs.size === 'number' ? kwargs.size : null
+    if (size === 0) return new Uint8Array(0)
+    if (offset === 0 && size === null) return await coreRead(accessor, path)
+    return await coreRead(
+      accessor,
+      path,
+      kwargs.index,
+      size === null ? { offset } : { offset, size },
+    )
+  },
 }

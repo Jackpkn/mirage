@@ -370,7 +370,50 @@ function bearer(req: http.IncomingMessage): string {
   return auth.startsWith('Bearer ') ? auth.slice(7) : ''
 }
 
-type Reply = { status: number; json?: unknown; buffer?: Buffer; contentType?: string }
+type Reply = {
+  status: number
+  json?: unknown
+  buffer?: Buffer
+  contentType?: string
+  headers?: Record<string, string>
+}
+
+// Slack serves files from a CDN that honors Range. A fake that answered 200
+// with the whole body would let a client that never applies the window pass
+// anyway, so the window is served here and the status says so.
+function rangeOf(req: http.IncomingMessage): { start: number; end: number } | null {
+  const header = req.headers.range
+  if (header === undefined || !header.startsWith('bytes=')) return null
+  const [startText, endText] = header.slice('bytes='.length).split('-')
+  const start = startText === '' ? 0 : Number.parseInt(startText, 10)
+  const end = endText === undefined || endText === '' ? null : Number.parseInt(endText, 10) + 1
+  return { start, end: end ?? Number.MAX_SAFE_INTEGER }
+}
+
+function rangedBody(
+  body: Buffer,
+  window: { start: number; end: number } | null,
+  contentType: string,
+): Reply {
+  if (window === null) return { status: 200, buffer: body, contentType }
+  if (window.start >= body.length) {
+    return {
+      status: 416,
+      buffer: Buffer.alloc(0),
+      contentType,
+      headers: { 'Content-Range': `bytes */${String(body.length)}` },
+    }
+  }
+  const end = Math.min(window.end, body.length)
+  return {
+    status: 206,
+    buffer: body.subarray(window.start, end),
+    contentType,
+    headers: {
+      'Content-Range': `bytes ${String(window.start)}-${String(end - 1)}/${String(body.length)}`,
+    },
+  }
+}
 
 const CUSTOM_EMOJI: Record<string, string> = {
   shipit: 'https://emoji.example/shipit.png',
@@ -526,11 +569,11 @@ async function handle(
     const id = path.slice('/files/download/'.length)
     const file = (await db.slackFile.findUnique({ where: { id } })) as FileRow | null
     if (file === null) return { status: 404, json: { error: 'not_found' } }
-    if (file.contentPath !== null && file.contentPath !== '') {
-      const bytes = readFileSync(join(FIXTURE_DIR, file.contentPath))
-      return { status: 200, buffer: bytes, contentType: file.mimetype }
-    }
-    return { status: 200, buffer: Buffer.from(file.content, 'utf8'), contentType: file.mimetype }
+    const body =
+      file.contentPath !== null && file.contentPath !== ''
+        ? readFileSync(join(FIXTURE_DIR, file.contentPath))
+        : Buffer.from(file.content, 'utf8')
+    return rangedBody(body, rangeOf(req), file.mimetype)
   }
 
   if (path === '/api/conversations.list') {
@@ -734,7 +777,10 @@ export async function startServer(port: number): Promise<http.Server> {
       void handle(db, req, url, host, body)
         .then((reply) => {
           if (reply.buffer !== undefined) {
-            res.writeHead(reply.status, { 'Content-Type': reply.contentType ?? 'application/octet-stream' })
+            res.writeHead(reply.status, {
+              'Content-Type': reply.contentType ?? 'application/octet-stream',
+              ...(reply.headers ?? {}),
+            })
             res.end(reply.buffer)
             return
           }

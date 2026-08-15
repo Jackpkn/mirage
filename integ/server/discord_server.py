@@ -243,6 +243,22 @@ def clamp(raw: str | None, default: int, maximum: int) -> int:
     return max(1, min(value, maximum))
 
 
+def _parse_range(header: str | None, size: int) -> tuple[int, int] | None:
+    """The byte window an HTTP ``Range`` header asks for, clamped to `size`.
+
+    Args:
+        header (str | None): the request's ``Range`` value.
+        size (int): length of the stored content.
+    """
+    if not header or not header.startswith("bytes="):
+        return None
+    spec = header[len("bytes="):]
+    start_s, _, end_s = spec.partition("-")
+    start = int(start_s) if start_s else 0
+    end = int(end_s) + 1 if end_s else size
+    return start, min(end, size)
+
+
 class DiscordServer:
 
     def __init__(self, state: FakeDiscord) -> None:
@@ -457,8 +473,25 @@ class DiscordServer:
         body = self.state.attachments.get(request.match_info["attachment_id"])
         if body is None:
             return web.Response(status=404)
-        # The CDN serves attachments without the Authorization header.
-        return web.Response(body=body, content_type="application/octet-stream")
+        # The CDN serves attachments without the Authorization header, and it
+        # honors Range: a fake that answered 200 with the whole body would let
+        # a client that never applies the window pass anyway.
+        rng = _parse_range(request.headers.get("Range"), len(body))
+        if rng is None:
+            return web.Response(body=body,
+                                content_type="application/octet-stream")
+        start, end = rng
+        if start >= len(body):
+            return web.Response(
+                body=b"",
+                status=416,
+                headers={"Content-Range": f"bytes */{len(body)}"},
+                content_type="application/octet-stream")
+        return web.Response(
+            body=body[start:end],
+            status=206,
+            headers={"Content-Range": f"bytes {start}-{end - 1}/{len(body)}"},
+            content_type="application/octet-stream")
 
 
 def build_app(server: DiscordServer) -> web.Application:

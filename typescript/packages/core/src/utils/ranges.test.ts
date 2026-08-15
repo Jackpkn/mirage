@@ -14,7 +14,7 @@
 
 import { describe, expect, it } from 'vitest'
 
-import { isUnsatisfiableRange, rangeHeader, sliceWindow } from './ranges.js'
+import { isUnsatisfiableRange, rangeHeader, sliceWindow, windowIfUnranged } from './ranges.js'
 
 const ENC = new TextEncoder()
 const DEC = new TextDecoder()
@@ -126,5 +126,29 @@ describe('isUnsatisfiableRange', () => {
     expect(isUnsatisfiableRange({ status: 500 })).toBe(false)
     expect(isUnsatisfiableRange(null)).toBe(false)
     expect(isUnsatisfiableRange(undefined)).toBe(false)
+  })
+})
+
+const bytes = (s: string): Uint8Array => new TextEncoder().encode(s)
+const text = (b: Uint8Array): string => new TextDecoder().decode(b)
+
+describe('windowIfUnranged', () => {
+  it('trusts a 206 as already the window', () => {
+    expect(text(windowIfUnranged(bytes('234'), 206, 2, 3))).toBe('234')
+  })
+
+  // RFC 9110 lets a server answer the whole representation to a Range
+  // request, and a CDN in front of one may. Without this the caller gets the
+  // entire file for what it asked to be a window.
+  it('slices a 200 because the server ignored the range', () => {
+    expect(text(windowIfUnranged(bytes('0123456789'), 200, 2, 3))).toBe('234')
+  })
+
+  it('slices a 200 to EOF from the offset', () => {
+    expect(text(windowIfUnranged(bytes('0123456789'), 200, 7, null))).toBe('789')
+  })
+
+  it('answers empty for a 200 whose offset is past EOF', () => {
+    expect(text(windowIfUnranged(bytes('abc'), 200, 500, 10))).toBe('')
   })
 })

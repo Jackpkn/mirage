@@ -15,7 +15,7 @@
 import pytest
 
 from mirage.utils.ranges import (is_unsatisfiable_range, range_header,
-                                 slice_window)
+                                 slice_window, window_if_unranged)
 
 DATA = b"0123456789"
 
@@ -131,3 +131,22 @@ def test_the_opendal_seek_shape_is_unsatisfiable():
 
 def test_an_ordinary_seek_error_is_not_unsatisfiable():
     assert not is_unsatisfiable_range(OSError("invalid seek: bad whence"))
+
+
+def test_a_206_is_trusted_as_already_the_window():
+    assert window_if_unranged(b"234", 206, 2, 3) == b"234"
+
+
+def test_a_200_is_sliced_because_the_server_ignored_the_range():
+    """RFC 9110 lets a server answer the whole representation to a Range
+    request, and a CDN in front of one may. Without this the caller gets
+    the entire file for what it asked to be a window."""
+    assert window_if_unranged(b"0123456789", 200, 2, 3) == b"234"
+
+
+def test_a_200_to_eof_is_sliced_from_the_offset():
+    assert window_if_unranged(b"0123456789", 200, 7, None) == b"789"
+
+
+def test_a_200_past_eof_is_empty():
+    assert window_if_unranged(b"abc", 200, 500, 10) == b""

@@ -13,6 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { pathSafeName } from '../../utils/sanitize.ts'
+import { rangeHeader, windowIfUnranged } from '../../utils/ranges.ts'
 
 export interface DiscordAttachment {
   id: string
@@ -36,12 +37,21 @@ export function fileBlobName(att: DiscordAttachment): string {
   return `${pathSafeName(rawName)}__${aid}`
 }
 
-export async function downloadFile(url: string, rangeHeader?: string | null): Promise<Uint8Array> {
+// Takes the window rather than a prepared header so the answer can be checked
+// against it: a CDN is free to ignore Range and reply 200 with the whole file,
+// which windowIfUnranged then trims.
+export async function downloadFile(
+  url: string,
+  offset = 0,
+  size: number | null = null,
+): Promise<Uint8Array> {
   const headers: Record<string, string> = {}
-  if (rangeHeader != null && rangeHeader !== '') headers.Range = rangeHeader
+  const window = rangeHeader(offset, size)
+  if (window !== null) headers.Range = window
   const resp = await globalThis.fetch(url, { method: 'GET', headers })
   if (!resp.ok) {
     throw new Error(`discord download_file failed: ${String(resp.status)} ${resp.statusText}`)
   }
-  return new Uint8Array(await resp.arrayBuffer())
+  const data = new Uint8Array(await resp.arrayBuffer())
+  return windowIfUnranged(data, resp.status, offset, size)
 }

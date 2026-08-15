@@ -16,6 +16,7 @@ from typing import Any
 
 import aiohttp
 
+from mirage.utils.ranges import range_header, window_if_unranged
 from mirage.utils.sanitize import path_safe_name
 
 
@@ -37,24 +38,31 @@ def file_blob_name(att: dict[str, Any]) -> str:
     return f"{path_safe_name(raw_name)}__{aid}"
 
 
-async def download_file(url: str, range_header: str | None = None) -> bytes:
-    """Download a Discord-hosted file blob.
+async def download_file(url: str,
+                        offset: int = 0,
+                        size: int | None = None) -> bytes:
+    """Download a Discord-hosted file blob, optionally only a byte range.
 
     Discord CDN URLs (``cdn.discordapp.com`` for ``url``,
     ``media.discordapp.net`` for ``proxy_url``) are served without
-    authentication so no token is needed.
+    authentication so no token is needed. Takes the window rather than a
+    prepared header so the answer can be checked against it: a CDN is
+    free to ignore Range and reply 200 with the whole file, which
+    ``window_if_unranged`` then trims.
 
     Args:
         url (str): Discord attachment URL (typically ``url`` from the
             attachment object).
-        range_header (str | None): an HTTP ``Range`` value, or None for
-            the whole file.
+        offset (int): first byte to read.
+        size (int | None): how many bytes, or None for the rest.
 
     Returns:
         bytes: raw file content.
     """
-    headers = {"Range": range_header} if range_header else None
+    window = range_header(offset, size)
+    headers = {"Range": window} if window else None
     async with aiohttp.ClientSession() as session:
         async with session.get(url, headers=headers) as resp:
             resp.raise_for_status()
-            return await resp.read()
+            data = await resp.read()
+            return window_if_unranged(data, resp.status, offset, size)

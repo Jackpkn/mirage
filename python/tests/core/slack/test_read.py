@@ -178,6 +178,7 @@ async def test_download_file_uses_bot_token():
     seen: list[dict] = []
 
     class _Resp:
+        status = 200
 
         async def __aenter__(self):
             return self
@@ -262,8 +263,8 @@ async def test_read_file_blob_pushes_the_window_down(accessor, index):
         )
     assert data == b"1.4 f"
     mock_dl.assert_called_once_with(accessor.config,
-                                    "https://files.slack.com/x/report.pdf",
-                                    "bytes=5-9")
+                                    "https://files.slack.com/x/report.pdf", 5,
+                                    5)
 
 
 @pytest.mark.asyncio

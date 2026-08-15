@@ -22,7 +22,7 @@ from mirage.core.discord.render import member_json_bytes
 from mirage.types import PathSpec
 from mirage.utils.errors import enoent
 from mirage.utils.key_prefix import mount_key, mount_prefix_of
-from mirage.utils.ranges import range_header, slice_window
+from mirage.utils.ranges import slice_window
 
 
 async def _ensure_channel(
@@ -94,7 +94,7 @@ async def read(
                                      or {}).get("proxy_url") or ""
         if not url:
             raise enoent(virtual)
-        return await download_file(url, range_header(offset, size))
+        return await download_file(url, offset, size)
 
     # <guild>/members/<user>.json
     if len(parts) == 3 and parts[1] == "members":

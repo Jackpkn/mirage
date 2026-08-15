@@ -20,7 +20,7 @@ from mirage.core.slack.users import get_user_profile, user_json_bytes
 from mirage.types import PathSpec
 from mirage.utils.errors import enoent
 from mirage.utils.key_prefix import mount_prefix_of
-from mirage.utils.ranges import range_header, slice_window
+from mirage.utils.ranges import slice_window
 
 
 async def read(
@@ -75,8 +75,8 @@ async def read(
         url = lookup.entry.extra.get("url_private_download")
         if not url:
             raise enoent(virtual)
-        return await slack_files.download_file(accessor.config, url,
-                                               range_header(offset, size))
+        return await slack_files.download_file(accessor.config, url, offset,
+                                               size)
 
     if len(parts) == 2 and parts[0] == "users":
         virtual_key = prefix + "/" + key

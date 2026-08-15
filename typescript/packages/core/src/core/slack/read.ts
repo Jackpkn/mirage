@@ -20,7 +20,7 @@ import type { PathSpec } from '../../types.ts'
 import { getHistoryJsonl } from './history.ts'
 import { getUserProfile, userJsonBytes } from './users.ts'
 import { stripSlash } from '../../utils/slash.ts'
-import { rangeHeader, sliceWindow } from '../../utils/ranges.ts'
+import { sliceWindow } from '../../utils/ranges.ts'
 
 /**
  * Read a Slack path, optionally only a byte range of it.
@@ -79,7 +79,7 @@ export async function read(
     if (accessor.transport.downloadFile === undefined) {
       throw new Error('slack: transport does not support file download')
     }
-    return await accessor.transport.downloadFile(url, rangeHeader(offset, size))
+    return await accessor.transport.downloadFile(url, offset, size)
   }
 
   if (parts.length === 2 && part0 === 'users') {
