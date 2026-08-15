@@ -156,6 +156,26 @@ async def test_agrep(backend):
 
 
 @pytest.mark.asyncio
+async def test_agrep_max_count_truncates(backend):
+    await backend.awrite("/search.txt", "hit\nhit\nhit")
+    result = await backend.agrep("hit", path="/", max_count=2)
+
+    assert result.matches is not None
+    assert len(result.matches) == 2
+    assert result.truncated is True
+
+
+@pytest.mark.asyncio
+async def test_agrep_max_count_exactly_is_complete(backend):
+    await backend.awrite("/search.txt", "hit\nhit")
+    result = await backend.agrep("hit", path="/", max_count=2)
+
+    assert result.matches is not None
+    assert len(result.matches) == 2
+    assert result.truncated is False
+
+
+@pytest.mark.asyncio
 async def test_aglob(backend):
     await backend.awrite("/data/a.txt", "a")
     await backend.awrite("/data/b.py", "b")
