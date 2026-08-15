@@ -54,17 +54,6 @@ async def test_readdir_under_a_file_is_enotdir(make_acc):
 
 
 @pytest.mark.asyncio
-async def test_readdir_keeps_listing_a_directory_holding_no_keys(make_acc):
-    # hf can store no directory marker, so an emptied directory and a path
-    # the repo never had are the same empty listing. ENOENT is not guessed
-    # from that: `mkdir d; touch d/a; rm d/a; ls d` must still exit 0.
-    acc = make_acc({"data/a.txt": b"a"})
-    empty = RAMIndexCacheStore(ttl=60)
-    assert await readdir(acc, PathSpec.from_str_path("/never"), empty) == []
-    assert await readdir(acc, PathSpec.from_str_path("/"), empty) == ["/data"]
-
-
-@pytest.mark.asyncio
 async def test_readdir_populates_index_cache(make_acc):
     acc = make_acc({"f.txt": b"hello"})
     cache = RAMIndexCacheStore(ttl=60)
@@ -84,6 +73,59 @@ async def _null_meta_iter(entries, null_key: str):
 
 async def _stripped_list(inner, null_key: str, path, **kw):
     return _null_meta_iter(await inner(path, **kw), null_key)
+
+
+@pytest.mark.asyncio
+async def test_readdir_root_of_an_empty_bucket_does_not_raise(make_acc):
+    acc = make_acc({})
+    assert await readdir(acc, PathSpec.from_str_path("/"),
+                         RAMIndexCacheStore(ttl=60)) == []
+
+
+@pytest.mark.asyncio
+async def test_readdir_missing_path_is_enoent(make_acc):
+    acc = make_acc({"data/a.txt": b"a"})
+    with pytest.raises(FileNotFoundError):
+        await readdir(acc, PathSpec.from_str_path("/never_here"),
+                      RAMIndexCacheStore(ttl=60))
+
+
+@pytest.mark.asyncio
+async def test_readdir_missing_nested_path_is_enoent(make_acc):
+    acc = make_acc({"data/a.txt": b"a"})
+    with pytest.raises(FileNotFoundError):
+        await readdir(acc, PathSpec.from_str_path("/data/nodir/deep"),
+                      RAMIndexCacheStore(ttl=60))
+
+
+@pytest.mark.asyncio
+async def test_readdir_on_a_file_is_enotdir(make_acc):
+    acc = make_acc({"data/a.txt": b"a"})
+    with pytest.raises(NotADirectoryError):
+        await readdir(acc, PathSpec.from_str_path("/data/a.txt"),
+                      RAMIndexCacheStore(ttl=60))
+
+
+@pytest.mark.asyncio
+async def test_readdir_below_a_file_is_enotdir(make_acc):
+    acc = make_acc({"data/a.txt": b"a"})
+    with pytest.raises(NotADirectoryError):
+        await readdir(acc, PathSpec.from_str_path("/data/a.txt/x"),
+                      RAMIndexCacheStore(ttl=60))
+
+
+@pytest.mark.asyncio
+async def test_readdir_directory_exists_only_while_it_holds_a_key(make_acc):
+    # The hf service refuses a directory marker client-side, so unlike s3
+    # there is no empty-directory trace to keep: removing the last key
+    # removes the directory, which is what stat has always reported.
+    acc = make_acc({"data/a.txt": b"a"})
+    assert await readdir(acc, PathSpec.from_str_path("/data"),
+                         RAMIndexCacheStore(ttl=60)) == ["/data/a.txt"]
+    await acc.operator().delete("data/a.txt")
+    with pytest.raises(FileNotFoundError):
+        await readdir(acc, PathSpec.from_str_path("/data"),
+                      RAMIndexCacheStore(ttl=60))
 
 
 @pytest.mark.asyncio

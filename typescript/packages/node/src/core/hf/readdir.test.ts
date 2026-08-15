@@ -61,6 +61,20 @@ describe('hf readdir', () => {
     })
   })
 
+  it('raises ENOENT for a missing nested directory', async () => {
+    const accessor = accessorWith(FILES)
+    await expect(readdir(accessor, PathSpec.fromStrPath('/onnx/nodir/deep'))).rejects.toMatchObject(
+      { code: 'ENOENT' },
+    )
+  })
+
+  it('raises ENOTDIR for a file listed as a directory', async () => {
+    const accessor = accessorWith(FILES)
+    await expect(readdir(accessor, PathSpec.fromStrPath('/config.json'))).rejects.toMatchObject({
+      code: 'ENOTDIR',
+    })
+  })
+
   it('raises ENOTDIR for an operand under a file', async () => {
     // A repo holds no directory objects, so the tree API can answer a path
     // it does not have with an empty listing rather than an error; without
@@ -68,6 +82,25 @@ describe('hf readdir', () => {
     const accessor = accessorWith(FILES)
     await expect(readdir(accessor, PathSpec.fromStrPath('/config.json/x'))).rejects.toMatchObject({
       code: 'ENOTDIR',
+    })
+  })
+
+  it('does not raise for the root of an empty repo', async () => {
+    const accessor = accessorWith({})
+    expect(await readdir(accessor, PathSpec.fromStrPath('/'))).toEqual([])
+  })
+
+  it('keeps a directory only while it holds a key', async () => {
+    // The hf service refuses a directory marker client-side, so unlike s3
+    // there is no empty-directory trace to keep: removing the last key
+    // removes the directory, which is what stat has always reported.
+    const accessor = new HfModelsAccessor({ repoId: 'ns/model' })
+    const fake = fakeHfOperator(FILES)
+    installFakeOperator(accessor, fake)
+    expect(await readdir(accessor, PathSpec.fromStrPath('/onnx'))).toEqual(['/onnx/model.onnx'])
+    await fake.delete('onnx/model.onnx')
+    await expect(readdir(accessor, PathSpec.fromStrPath('/onnx'))).rejects.toMatchObject({
+      code: 'ENOENT',
     })
   })
 

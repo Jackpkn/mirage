@@ -23,7 +23,9 @@
         "nextcloud",
         "gdrive",
         "gdrive-folder",
-        "box"
+        "box",
+        "hf",
+        "hf-prefix"
       ],
       "command": "ls /data/never_here.txt",
       "expect": {
@@ -55,7 +57,9 @@
         "nextcloud",
         "gdrive",
         "gdrive-folder",
-        "box"
+        "box",
+        "hf",
+        "hf-prefix"
       ],
       "command": "ls /data/nodir_here/deep",
       "expect": {
@@ -87,7 +91,9 @@
         "nextcloud",
         "gdrive",
         "gdrive-folder",
-        "box"
+        "box",
+        "hf",
+        "hf-prefix"
       ],
       "command": "ls -l /data/never_here.txt",
       "expect": {
@@ -156,7 +162,9 @@
         "nextcloud",
         "gdrive",
         "gdrive-folder",
-        "box"
+        "box",
+        "hf",
+        "hf-prefix"
       ],
       "command": "ls /data/*.nomatch",
       "expect": {
@@ -188,7 +196,9 @@
         "nextcloud",
         "gdrive",
         "gdrive-folder",
-        "box"
+        "box",
+        "hf",
+        "hf-prefix"
       ],
       "command": "mkdir -p /data/lsmiss/d && touch /data/lsmiss/d/f.txt && ls /data/lsmiss/d /data/lsmiss/never.txt",
       "expect": {
@@ -220,7 +230,9 @@
         "nextcloud",
         "gdrive",
         "gdrive-folder",
-        "box"
+        "box",
+        "hf",
+        "hf-prefix"
       ],
       "command": "rm -r /data/lsmiss && ls /data/lsmiss",
       "expect": {

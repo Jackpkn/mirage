@@ -63,8 +63,10 @@ async def readdir(accessor: HfBucketsAccessor,
     names: list[str] = []
     dir_keys: set[str] = set()
     sizes: dict[str, int | None] = {}
+    saw_entry = False
     try:
         async for entry in await op.list(list_path):
+            saw_entry = True
             relative = entry.path
             if not relative or relative == list_path:
                 continue
@@ -79,19 +81,26 @@ async def readdir(accessor: HfBucketsAccessor,
     except NotFound as exc:
         raise await listing_error(path, target, partial(_is_file, accessor),
                                   partial(_is_dir, accessor)) from exc
-    if not names and target.strip("/"):
-        # An empty listing is ambiguous here in a way it is not on s3: hf
-        # can store no directory marker at all (see mkdir), so "no keys
-        # under this prefix" covers both a path the repo does not have and
-        # a directory whose last file was just removed. Only the ENOTDIR
-        # half of the walk is provable, and it is the half GNU disagrees
-        # with us about: `ls /hf/a.txt/x` must not render an empty
-        # directory when `a.txt` is a stored key. ENOENT is dropped rather
-        # than guessed, so an emptied directory still lists as empty.
-        error = await listing_error(path, target, partial(_is_file, accessor),
-                                    partial(_is_dir, accessor))
-        if isinstance(error, NotADirectoryError):
-            raise error
+    if not saw_entry and target.strip("/"):
+        # Nothing stands for the directory itself here: the tree API lists
+        # children only, and the hf service refuses a directory marker
+        # client-side (create_dir=false), so a bucket directory exists
+        # exactly while it holds a key. The Hub answers a missing subpath
+        # with 200 and [], which the lister reports as an empty result
+        # rather than raising, so the NotFound arm above never fired and
+        # `ls /hf/never` rendered an empty directory and exited 0.
+        #
+        # Both halves are raised, ENOENT included. hf cannot tell an
+        # emptied directory from one the repo never had, and `stat`
+        # already resolves that ambiguity toward absence (it lists the
+        # prefix and raises ENOENT when nothing is under it), so keeping
+        # the empty listing here is what made `ls` and `stat` disagree
+        # about the same path. The flag is set before the self-entry skip,
+        # so a lister that ever reports the directory itself still counts
+        # as proof. The mount root is exempt: it exists because it is
+        # mounted.
+        raise await listing_error(path, target, partial(_is_file, accessor),
+                                  partial(_is_dir, accessor))
     # The Hub tree API carries a size for every file (for LFS files it is
     # the object size, not the pointer's); when the lister omits the
     # metadata, one stat per affected file fills the gap so the index
