@@ -42,15 +42,22 @@ export interface FindOptions {
 }
 
 /**
- * What every resource's snapshot state carries: a `type` naming the class
- * to reconstruct, and the config it was built from. A config holding a
- * credential redacts it, and that redaction is what makes `Workspace.load`
- * demand a fresh override for the mount instead of silently substituting
- * an empty one.
+ * The two keys the snapshot machinery reads out of a resource's state.
  *
- * The payload union adding each backend's own keys stays with the snapshot
- * format (`workspace/snapshot/types.ts`); the contract needs only this.
- * Mirrors Python `BaseResource.get_state`.
+ * `type` is the registry name, and it is what rebuilds the resource:
+ * Python's `_resource_class_for` looks it up in the registry first and
+ * only falls back to the mount's `resource_class` import path when it
+ * misses. `config` is what `resourceStateRequiresOverride` scans for the
+ * `<REDACTED>` marker, which is what makes load demand a fresh config
+ * instead of silently substituting an empty mount.
+ *
+ * This lived as a private interface in `workspace/snapshot/types.ts`,
+ * where `ResourceState` still widens it with each backend's own keys; it
+ * moved here so the `Resource` contract and the snapshot format name one
+ * shape rather than two identical ones. Python needs no such type —
+ * `get_state` is annotated `dict[str, Any]` — but a TS interface is not
+ * assignable to `Record<string, unknown>` (no implicit index signature),
+ * so the literal twin would reject every named `XResourceState`.
  */
 export interface ResourceStateBase {
   type: string
