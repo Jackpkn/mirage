@@ -136,6 +136,13 @@ async def readdir_error(path: str | PathSpec, key: str,
     directory nor a file, the way the kernel stops resolving there: a store
     can hold a key whose parent is not a directory, and looking past that
     gap would report ENOTDIR for a path the kernel never reaches.
+
+    A component is tested as a directory *first*, because a keyed store can
+    hold both an object ``a`` and a prefix ``a/`` and traversal only ever
+    reaches an intermediate component through the directory: with an object
+    ``a`` and a key ``a/x``, ``ls /a/never`` must report ENOENT, not ENOTDIR.
+    On a store where the two are mutually exclusive the order is immaterial,
+    so ram, redis and disk are unaffected.
     Mirrors TS ``readdirError``.
 
     Args:
@@ -150,10 +157,11 @@ async def readdir_error(path: str | PathSpec, key: str,
     segments = [s for s in key.split("/") if s]
     for i in range(1, len(segments) + 1):
         component = "/" + "/".join(segments[:i])
+        if await is_dir(component):
+            continue
         if await is_file(component):
             return enotdir(path)
-        if not await is_dir(component):
-            return enoent(path)
+        return enoent(path)
     return enoent(path)
 
 

@@ -17,9 +17,59 @@ import { IndexEntry, ResourceType } from '../../cache/index/config.ts'
 import type { IndexCacheStore } from '../../cache/index/store.ts'
 import type { PathSpec } from '../../types.ts'
 import type { S3Accessor } from '../../accessor/s3.ts'
-import { createS3Client, loadS3Module, s3Prefix } from './_client.ts'
+import type { S3Config } from '../../resource/s3/config.ts'
+import {
+  createS3Client,
+  isNotFoundError,
+  loadS3Module,
+  s3Key,
+  s3Prefix,
+  type S3Module,
+} from './_client.ts'
 import { rstripSlash } from '../../utils/slash.ts'
 import { compareCodePoints } from '../../utils/sort.ts'
+import { enotdir, readdirError } from '../../utils/errors.ts'
+
+type Send = (cmd: unknown) => Promise<Record<string, unknown>>
+
+async function isFile(send: Send, mod: S3Module, config: S3Config, key: string): Promise<boolean> {
+  try {
+    await send(new mod.HeadObjectCommand({ Bucket: config.bucket, Key: s3Key(key, config) }))
+  } catch (err) {
+    if (isNotFoundError(err)) return false
+    throw err
+  }
+  return true
+}
+
+async function isDir(send: Send, mod: S3Module, config: S3Config, key: string): Promise<boolean> {
+  const resp = (await send(
+    new mod.ListObjectsV2Command({
+      Bucket: config.bucket,
+      Prefix: s3Prefix(key, config),
+      Delimiter: '/',
+      MaxKeys: 1,
+    }),
+  )) as { CommonPrefixes?: unknown[]; Contents?: unknown[] }
+  return (resp.CommonPrefixes ?? []).length > 0 || (resp.Contents ?? []).length > 0
+}
+
+// The errno for a path the bucket holds no key at or under. Mirrors
+// Python's mirage/core/s3/readdir.py `_listing_error`.
+async function listingError(
+  send: Send,
+  mod: S3Module,
+  config: S3Config,
+  path: PathSpec,
+  key: string,
+): Promise<Error> {
+  const file = (p: string): Promise<boolean> => isFile(send, mod, config, p)
+  // An object, not a prefix: opendir(2) reports ENOTDIR, and the ancestor
+  // walk cannot change that answer, because every ancestor of a stored key
+  // is a prefix by construction.
+  if (await file(key)) return enotdir(path)
+  return readdirError(path, key, file, (p) => isDir(send, mod, config, p))
+}
 
 export async function readdir(
   accessor: S3Accessor,
@@ -47,13 +97,10 @@ export async function readdir(
   }
 
   const { config } = accessor
-  const { ListObjectsV2Command } = await loadS3Module(config)
+  const mod = await loadS3Module(config)
+  const { ListObjectsV2Command } = mod
   const client = await createS3Client(config)
-  const send = (
-    client as unknown as {
-      send: (cmd: unknown) => Promise<Record<string, unknown>>
-    }
-  ).send.bind(client)
+  const send = (client as unknown as { send: Send }).send.bind(client)
 
   const entries = new Set<string>()
   const dirKeys = new Set<string>()
@@ -63,6 +110,7 @@ export async function readdir(
   >()
   const s3Pfx = s3Prefix(rawPath, config)
   let continuationToken: string | undefined
+  let sawKey = false
   try {
     do {
       const input: Record<string, unknown> = {
@@ -76,6 +124,9 @@ export async function readdir(
         Contents?: { Key?: string; Size?: number; ETag?: string; LastModified?: Date | string }[]
         IsTruncated?: boolean
         NextContinuationToken?: string
+      }
+      if ((resp.CommonPrefixes ?? []).length > 0 || (resp.Contents ?? []).length > 0) {
+        sawKey = true
       }
       for (const cp of resp.CommonPrefixes ?? []) {
         const p = cp.Prefix
@@ -101,6 +152,15 @@ export async function readdir(
       }
       continuationToken = resp.IsTruncated === true ? resp.NextContinuationToken : undefined
     } while (continuationToken !== undefined)
+    if (!sawKey && rstripSlash(rawPath) !== '') {
+      // An empty directory is a zero-byte marker object keyed at the prefix
+      // itself, so a prefix holding no key at all -- not even that marker --
+      // is a path the bucket does not have. Without this, `ls /s3/never`
+      // rendered an empty directory and exited 0 where every real filesystem
+      // reports ENOENT. The mount root is exempt: it exists because it is
+      // mounted.
+      throw await listingError(send, mod, config, path, rawPath)
+    }
   } finally {
     ;(client as unknown as { destroy?: () => void }).destroy?.()
   }

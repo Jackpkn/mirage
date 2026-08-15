@@ -94,6 +94,12 @@ export function exdev(path: string | { virtual: string }): FsError {
 // that is neither, the way the kernel stops resolving there: a store can hold
 // a key whose parent is not a directory, and looking past that gap would
 // report ENOTDIR for a path the kernel never reaches.
+// A component is tested as a directory FIRST, because a keyed store can hold
+// both an object `a` and a prefix `a/` and traversal only ever reaches an
+// intermediate component through the directory: with an object `a` and a key
+// `a/x`, `ls /a/never` must report ENOENT, not ENOTDIR. On a store where the
+// two are mutually exclusive the order is immaterial, so ram/redis/disk are
+// unaffected.
 // Mirrors Python's readdir_error.
 export async function readdirError(
   path: string | { virtual: string; rawPath?: string },
@@ -104,8 +110,9 @@ export async function readdirError(
   const segments = key.split('/').filter((s) => s !== '')
   for (let i = 1; i <= segments.length; i++) {
     const component = `/${segments.slice(0, i).join('/')}`
+    if (await isDir(component)) continue
     if (await isFile(component)) return enotdir(path)
-    if (!(await isDir(component))) return enoent(path)
+    return enoent(path)
   }
   return enoent(path)
 }

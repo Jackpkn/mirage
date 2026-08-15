@@ -157,6 +157,35 @@ async def test_readdir_error_stops_at_the_first_missing_component():
         assert isinstance(exc, FileNotFoundError), key
 
 
+async def _both_is_file(key: str) -> bool:
+    return key in ("/data/a", "/data/a/x")
+
+
+async def _both_is_dir(key: str) -> bool:
+    return key in ("/data", "/data/a")
+
+
+@pytest.mark.asyncio
+async def test_readdir_error_prefers_a_coexisting_directory():
+    """A keyed store can hold an object ``a`` and a prefix ``a/`` at once,
+    and a child path only ever reaches ``a`` through the directory. So the
+    directory wins: ``/data/a/never`` is ENOENT because ``never`` is absent,
+    not ENOTDIR because ``a`` is also an object.
+    """
+    for key in ("/data/a/never", "/data/a/never/deeper"):
+        exc = await readdir_error(key, key, _both_is_file, _both_is_dir)
+        assert isinstance(exc, FileNotFoundError), key
+
+
+@pytest.mark.asyncio
+async def test_readdir_error_object_only_component_is_still_enotdir():
+    # The mirror of the case above: with no coexisting prefix, traversal
+    # really does hit a non-directory.
+    exc = await readdir_error("/data/a.txt/never", "/data/a.txt/never",
+                              _is_file, _is_dir)
+    assert isinstance(exc, NotADirectoryError)
+
+
 @pytest.mark.asyncio
 async def test_readdir_error_reports_the_virtual_path():
     spec = PathSpec.from_str_path("/data/nope")

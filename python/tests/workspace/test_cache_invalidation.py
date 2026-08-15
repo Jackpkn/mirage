@@ -92,8 +92,13 @@ def test_ls_sees_file_created_after_listing(s3_endpoint):
 
 
 async def _rm_then_stat(ws: Workspace) -> tuple[int, str, str]:
+    # mkdir writes the "arch/" marker object, so the directory outlives its
+    # last file. A directory that was only ever implicit has no marker and
+    # is gone once its keys are, which is what the test below pins.
     setup = await _exec(
-        ws, "echo gone | tee /data/arch/c.txt > /dev/null"
+        ws, "mkdir -p /data/arch"
+        " && echo gone | tee /data/arch/c.txt > /dev/null"
+        " && echo stays | tee /data/arch/d.txt > /dev/null"
         " && ls /data/arch")
     assert setup[0] == 0, setup
     rm = await _exec(ws, "rm /data/arch/c.txt")
@@ -106,3 +111,24 @@ def test_ls_does_not_show_removed_file(s3_endpoint):
     code, out, err = asyncio.run(_rm_then_stat(ws))
     assert code == 0, f"exit {code}, stderr: {err!r}"
     assert "c.txt" not in out
+    assert "d.txt" in out
+
+
+async def _rm_last_key_then_ls(ws: Workspace) -> tuple[int, str, str]:
+    setup = await _exec(
+        ws, "echo gone | tee /data/imp/e.txt > /dev/null && ls /data/imp")
+    assert setup[0] == 0, setup
+    rm = await _exec(ws, "rm /data/imp/e.txt")
+    assert rm[0] == 0, rm
+    return await _exec(ws, "ls /data/imp")
+
+
+def test_ls_reports_enoent_for_an_emptied_implicit_directory(s3_endpoint):
+    # "/data/imp" was never mkdir'd, so the bucket holds no marker for it
+    # and removing its last key removes the directory too. stat has always
+    # said ENOENT here; ls used to render an empty directory and exit 0.
+    ws = _s3_workspace(s3_endpoint, "bucket-rm-implicit")
+    code, out, err = asyncio.run(_rm_last_key_then_ls(ws))
+    assert code == 2, f"exit {code}, stdout: {out!r}"
+    assert err == ("ls: cannot access '/data/imp': "
+                   "No such file or directory\n")

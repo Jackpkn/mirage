@@ -13,18 +13,53 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import logging
+from functools import partial
 
 from mirage.accessor.gridfs import GridFSAccessor
 from mirage.cache.index import (NULL_INDEX, IndexCacheStore, IndexEntry,
                                 ResourceType)
-from mirage.core.gridfs._client import (_prefix, _strip_prefix, iter_latest,
-                                        prefix_query)
+from mirage.core.gridfs._client import (_key, _prefix, _strip_prefix,
+                                        files_coll, iter_latest, prefix_query)
 from mirage.core.gridfs.constants import SCOPE_ERROR
 from mirage.core.timeutil import to_iso_z
 from mirage.types import PathSpec
+from mirage.utils.errors import enotdir, readdir_error
 from mirage.utils.key_prefix import mount_prefix_of
 
 logger = logging.getLogger(__name__)
+
+
+async def _is_file(accessor: GridFSAccessor, key: str) -> bool:
+    doc = await files_coll(accessor).find_one(
+        {"filename": _key(key, accessor.config)}, projection={"_id": 1})
+    return doc is not None
+
+
+async def _is_dir(accessor: GridFSAccessor, key: str) -> bool:
+    doc = await files_coll(accessor).find_one(prefix_query(
+        _prefix(key, accessor.config)),
+                                              projection={"_id": 1})
+    return doc is not None
+
+
+async def _listing_error(accessor: GridFSAccessor, path_spec: PathSpec,
+                         path: str) -> OSError:
+    """The errno for a path the bucket holds no file doc at or under.
+
+    Args:
+        accessor (GridFSAccessor): GridFS accessor.
+        path_spec (PathSpec): The operand; ``virtual`` is the reported
+            spelling.
+        path (str): Mount-local path that was listed.
+    """
+    is_file = partial(_is_file, accessor)
+    if await is_file(path):
+        # A file doc, not a prefix: opendir(2) reports ENOTDIR, and the
+        # ancestor walk cannot change that answer, because every ancestor
+        # of a stored filename is a prefix by construction.
+        return enotdir(path_spec)
+    return await readdir_error(path_spec, path, is_file,
+                               partial(_is_dir, accessor))
 
 
 async def readdir(accessor: GridFSAccessor,
@@ -50,7 +85,9 @@ async def readdir(accessor: GridFSAccessor,
     dir_keys: set[str] = set()
     sizes: dict[str, int | None] = {}
     times: dict[str, str] = {}
+    saw_doc = False
     async for doc in iter_latest(accessor, prefix_query(pfx)):
+        saw_doc = True
         fname = doc["filename"]
         if fname == pfx:
             continue
@@ -70,6 +107,14 @@ async def readdir(accessor: GridFSAccessor,
             if key not in dir_keys:
                 names.append(key)
                 dir_keys.add(key)
+    if not saw_doc and path.strip("/"):
+        # An empty directory is a zero-length "key/" marker doc, so a
+        # prefix matching no doc at all -- not even that marker -- is a
+        # path the bucket does not have. Without this, `ls /gridfs/never`
+        # rendered an empty directory and exited 0 where every real
+        # filesystem reports ENOENT. The mount root is exempt: it exists
+        # because it is mounted.
+        raise await _listing_error(accessor, path_spec, path)
     names = sorted(names)
     if len(names) > SCOPE_ERROR:
         logger.warning(

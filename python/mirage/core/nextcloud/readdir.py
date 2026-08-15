@@ -1,16 +1,50 @@
 import logging
+from functools import partial
 
 from opendal.exceptions import NotFound
+from opendal.types import EntryMode
 
 from mirage.accessor.nextcloud import NextcloudAccessor
 from mirage.cache.index import (NULL_INDEX, IndexCacheStore, IndexEntry,
                                 ResourceType)
 from mirage.core.nextcloud.constants import SCOPE_ERROR
 from mirage.types import PathSpec
-from mirage.utils.errors import enoent, enotdir
+from mirage.utils.errors import enoent, enotdir, readdir_error
 from mirage.utils.key_prefix import mount_prefix_of
 
 logger = logging.getLogger(__name__)
+
+
+async def _is_file(accessor: NextcloudAccessor, key: str) -> bool:
+    try:
+        md = await accessor.operator().stat(key.strip("/"))
+    except NotFound:
+        return False
+    return md.mode != EntryMode.Dir
+
+
+async def _is_dir(accessor: NextcloudAccessor, key: str) -> bool:
+    try:
+        md = await accessor.operator().stat(key.strip("/") + "/")
+    except NotFound:
+        return False
+    return md.mode == EntryMode.Dir
+
+
+async def _listing_error(accessor: NextcloudAccessor, path: PathSpec,
+                         target: str) -> OSError:
+    """The errno for a path PROPFIND reported nothing at all for.
+
+    Args:
+        accessor (NextcloudAccessor): Nextcloud accessor.
+        path (PathSpec): The operand; ``virtual`` is the reported spelling.
+        target (str): Mount-local path that was listed.
+    """
+    is_file = partial(_is_file, accessor)
+    if await is_file(target):
+        return enotdir(path)
+    return await readdir_error(path, target, is_file,
+                               partial(_is_dir, accessor))
 
 
 async def readdir(accessor: NextcloudAccessor,
@@ -33,8 +67,10 @@ async def readdir(accessor: NextcloudAccessor,
     dir_keys: set[str] = set()
     sizes: dict[str, int | None] = {}
     times: dict[str, str] = {}
+    saw_entry = False
     try:
         async for entry in await op.list(list_path):
+            saw_entry = True
             relative = entry.path
             if not relative or relative == list_path:
                 continue
@@ -50,6 +86,14 @@ async def readdir(accessor: NextcloudAccessor,
                 sizes[base] = meta.content_length if meta else None
     except NotFound as exc:
         raise enoent(path) from exc
+    if not saw_entry and target.strip("/"):
+        # PROPFIND on a collection lists the collection itself, so an empty
+        # directory still yields one entry and only a path the server does
+        # not have yields none. The lister reports that as an empty result
+        # rather than raising, so without this `ls /nextcloud/never`
+        # rendered an empty directory and exited 0. The mount root is
+        # exempt: it exists because it is mounted.
+        raise await _listing_error(accessor, path, target)
     # PROPFIND normally carries getcontentlength for every file; when the
     # lister omits the metadata, one stat per affected file fills the gap
     # so the index never caches an unknown size.
