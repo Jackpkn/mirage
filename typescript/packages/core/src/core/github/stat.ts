@@ -52,8 +52,12 @@ export async function stat(
   const ikey = `${rstripSlash(prefix)}/${trimmed}`
   let result = await index.get(ikey)
   if (result.entry === undefined || result.entry === null) {
-    const parentIdx = ikey.includes('/') ? ikey.slice(0, ikey.lastIndexOf('/')) || '/' : '/'
-    const parentPath = prefix !== '' ? prefix + parentIdx : parentIdx
+    // `ikey` is already mount-absolute, so its parent is too: prepending
+    // the prefix again asks for `/repo/repo`, whose listing never populates
+    // the entry this is here to find. stat then reports ENOENT for a file
+    // that exists, and the read family's implicit-directory probe finds it
+    // in the parent listing and answers EISDIR instead.
+    const parentPath = ikey.includes('/') ? ikey.slice(0, ikey.lastIndexOf('/')) || '/' : '/'
     try {
       await coreReaddir(
         accessor,
