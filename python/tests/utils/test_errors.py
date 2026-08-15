@@ -187,6 +187,38 @@ async def test_readdir_error_object_only_component_is_still_enotdir():
 
 
 @pytest.mark.asyncio
+async def test_readdir_error_settles_a_file_operand_without_walking():
+    """A path that exists implies every ancestor of it is a directory, so
+    the walk cannot reach any answer but ENOTDIR. Probing the listed path
+    first is what keeps `readdir` on a plain file to one round trip on an
+    API-backed mount, where each probe is a request.
+    """
+    probed: list[str] = []
+
+    async def counting_is_file(key: str) -> bool:
+        probed.append(key)
+        return key == "/data/deep/a.txt"
+
+    async def unreachable_is_dir(key: str) -> bool:
+        raise AssertionError(f"the walk should not have started: {key}")
+
+    exc = await readdir_error("/data/deep/a.txt", "/data/deep/a.txt",
+                              counting_is_file, unreachable_is_dir)
+    assert isinstance(exc, NotADirectoryError)
+    assert probed == ["/data/deep/a.txt"]
+
+
+@pytest.mark.asyncio
+async def test_readdir_error_asks_the_mount_root_nothing():
+
+    async def unreachable(key: str) -> bool:
+        raise AssertionError(f"the root needs no probe: {key}")
+
+    exc = await readdir_error("/", "/", unreachable, unreachable)
+    assert isinstance(exc, FileNotFoundError)
+
+
+@pytest.mark.asyncio
 async def test_readdir_error_reports_the_virtual_path():
     spec = PathSpec.from_str_path("/data/nope")
     exc = await readdir_error(spec, "/data/nope", _is_file, _is_dir)

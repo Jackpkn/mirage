@@ -59,6 +59,16 @@ describe('hf readdir', () => {
     })
   })
 
+  it('raises ENOTDIR for an operand under a file', async () => {
+    // A repo holds no directory objects, so the tree API can answer a path
+    // it does not have with an empty listing rather than an error; without
+    // a check `ls /hf/config.json/x` rendered an empty directory, exit 0.
+    const accessor = accessorWith(FILES)
+    await expect(readdir(accessor, PathSpec.fromStrPath('/config.json/x'))).rejects.toMatchObject({
+      code: 'ENOTDIR',
+    })
+  })
+
   it('backfills a lister-omitted size with one stat', async () => {
     const accessor = accessorWith(FILES)
     const fake = fakeHfOperator(FILES)

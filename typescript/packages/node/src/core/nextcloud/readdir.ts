@@ -35,18 +35,6 @@ async function isDir(accessor: NextcloudAccessor, key: string): Promise<boolean>
   }
 }
 
-// The errno for a path PROPFIND reported nothing at all for. Mirrors
-// Python's mirage/core/nextcloud/readdir.py `listingError`.
-async function listingError(
-  accessor: NextcloudAccessor,
-  path: PathSpec,
-  target: string,
-): Promise<Error> {
-  const file = (p: string): Promise<boolean> => isFile(accessor, p)
-  if (await file(target)) return enotdir(path)
-  return readdirError(path, target, file, (p) => isDir(accessor, p))
-}
-
 export async function readdir(
   accessor: NextcloudAccessor,
   path: PathSpec,
@@ -80,7 +68,12 @@ export async function readdir(
     // than raising, so without this `ls /nextcloud/never` rendered an empty
     // directory and exited 0. The mount root is exempt: it exists because
     // it is mounted.
-    throw await listingError(accessor, path, target)
+    throw await readdirError(
+      path,
+      target,
+      (p) => isFile(accessor, p),
+      (p) => isDir(accessor, p),
+    )
   }
   const names: string[] = []
   const directories = new Set<string>()

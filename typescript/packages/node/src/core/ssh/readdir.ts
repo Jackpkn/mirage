@@ -12,11 +12,40 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import type { FileEntryWithStats } from 'ssh2'
+import type { FileEntryWithStats, Stats } from 'ssh2'
 import type { PathSpec } from '@struktoai/mirage-core'
 import type { SSHAccessor } from '../../accessor/ssh.ts'
-import { isNoSuchFile, joinRoot, stripPrefix } from './utils.ts'
-import { compareCodePoints, enoent, mountPrefixOf, stripSlash } from '@struktoai/mirage-core'
+import { isDirectoryAttrs, isNoSuchFile, joinRoot, stripPrefix } from './utils.ts'
+import { compareCodePoints, mountPrefixOf, readdirError, stripSlash } from '@struktoai/mirage-core'
+
+async function attrsOrNull(accessor: SSHAccessor, key: string): Promise<Stats | null> {
+  const sftp = await accessor.sftp()
+  const remote = joinRoot(accessor.config.root ?? '/', key)
+  return await new Promise<Stats | null>((resolveFn, rejectFn) => {
+    sftp.stat(remote, (err, stats) => {
+      if (err !== undefined) {
+        // SFTP 3 has one code for every unresolvable name, so a component
+        // under a file arrives as NO_SUCH_FILE just like one that is simply
+        // absent. Both mean "this name does not resolve", which is what a
+        // probe asks.
+        if (isNoSuchFile(err)) resolveFn(null)
+        else rejectFn(err)
+        return
+      }
+      resolveFn(stats)
+    })
+  })
+}
+
+async function isFile(accessor: SSHAccessor, key: string): Promise<boolean> {
+  const attrs = await attrsOrNull(accessor, key)
+  return attrs !== null && !isDirectoryAttrs(attrs)
+}
+
+async function isDir(accessor: SSHAccessor, key: string): Promise<boolean> {
+  const attrs = await attrsOrNull(accessor, key)
+  return attrs !== null && isDirectoryAttrs(attrs)
+}
 
 export async function readdir(accessor: SSHAccessor, p: PathSpec): Promise<string[]> {
   const sftp = await accessor.sftp()
@@ -25,16 +54,24 @@ export async function readdir(accessor: SSHAccessor, p: PathSpec): Promise<strin
       ? p.directory.slice(mountPrefixOf(p.virtual, p.resourcePath).length) || '/'
       : stripPrefix(p)
   const remote = joinRoot(accessor.config.root ?? '/', virtual)
-  const list = await new Promise<FileEntryWithStats[]>((resolveFn, rejectFn) => {
+  const list = await new Promise<FileEntryWithStats[] | null>((resolveFn, rejectFn) => {
     sftp.readdir(remote, (err, entries) => {
       if (err !== undefined) {
-        if (isNoSuchFile(err)) rejectFn(enoent(p))
+        if (isNoSuchFile(err)) resolveFn(null)
         else rejectFn(err)
         return
       }
       resolveFn(entries)
     })
   })
+  if (list === null) {
+    throw await readdirError(
+      p,
+      virtual,
+      (key) => isFile(accessor, key),
+      (key) => isDir(accessor, key),
+    )
+  }
   const base = `/${stripSlash(virtual)}`
   const dirPrefix = base === '/' ? '/' : `${base}/`
   const mountPrefix = mountPrefixOf(p.virtual, p.resourcePath)

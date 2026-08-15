@@ -100,6 +100,11 @@ export function exdev(path: string | { virtual: string }): FsError {
 // `a/x`, `ls /a/never` must report ENOENT, not ENOTDIR. On a store where the
 // two are mutually exclusive the order is immaterial, so ram/redis/disk are
 // unaffected.
+// The listed path itself is probed before the walk starts, because a path that
+// exists implies every ancestor of it is a directory, so the walk cannot reach
+// any other answer than ENOTDIR. That shortcut is what keeps a readdir on a
+// plain file to one round trip on an API-backed mount, where each probe is a
+// request rather than a map lookup.
 // Mirrors Python's readdir_error.
 export async function readdirError(
   path: string | { virtual: string; rawPath?: string },
@@ -108,7 +113,8 @@ export async function readdirError(
   isDir: (p: string) => boolean | Promise<boolean>,
 ): Promise<FsError> {
   const segments = key.split('/').filter((s) => s !== '')
-  for (let i = 1; i <= segments.length; i++) {
+  if (segments.length > 0 && (await isFile(`/${segments.join('/')}`))) return enotdir(path)
+  for (let i = 1; i < segments.length; i++) {
     const component = `/${segments.slice(0, i).join('/')}`
     if (await isDir(component)) continue
     if (await isFile(component)) return enotdir(path)

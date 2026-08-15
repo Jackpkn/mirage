@@ -20,7 +20,6 @@ import {
   type IndexCacheStore,
   type PathSpec,
   compareCodePoints,
-  enotdir,
   readdirError,
 } from '@struktoai/mirage-core'
 import type { GridFSAccessor } from '../../accessor/gridfs.ts'
@@ -49,17 +48,6 @@ async function isDir(accessor: GridFSAccessor, key: string): Promise<boolean> {
     projection: { _id: 1 },
   })
   return doc !== null
-}
-
-// The errno for a path the bucket holds no file doc at or under. Mirrors
-// Python's mirage/core/gridfs/readdir.py `_listing_error`.
-async function listingError(accessor: GridFSAccessor, path: PathSpec, key: string): Promise<Error> {
-  const file = (p: string): Promise<boolean> => isFile(accessor, p)
-  // A file doc, not a prefix: opendir(2) reports ENOTDIR, and the ancestor
-  // walk cannot change that answer, because every ancestor of a stored
-  // filename is a prefix by construction.
-  if (await file(key)) return enotdir(path)
-  return readdirError(path, key, file, (p) => isDir(accessor, p))
 }
 
 export async function readdir(
@@ -120,7 +108,12 @@ export async function readdir(
     // does not have. Without this, `ls /gridfs/never` rendered an empty
     // directory and exited 0 where every real filesystem reports ENOENT.
     // The mount root is exempt: it exists because it is mounted.
-    throw await listingError(accessor, path, rawPath)
+    throw await readdirError(
+      path,
+      rawPath,
+      (p) => isFile(accessor, p),
+      (p) => isDir(accessor, p),
+    )
   }
   names.sort(compareCodePoints)
   if (names.length > SCOPE_ERROR) {

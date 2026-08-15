@@ -13,6 +13,7 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import logging
+from functools import partial
 
 import asyncssh
 
@@ -22,10 +23,35 @@ from mirage.core.ssh._client import _abs
 from mirage.core.ssh.constants import SCOPE_ERROR
 from mirage.core.timeutil import epoch_to_iso
 from mirage.types import PathSpec
-from mirage.utils.errors import enoent
+from mirage.utils.errors import readdir_error
 from mirage.utils.key_prefix import mount_prefix_of
 
 logger = logging.getLogger(__name__)
+# SFTP 3 has one code for every unresolvable name, so a component under a
+# file arrives as SFTPNoSuchFile just like a component that is simply
+# absent; later protocol versions split SFTPNotADirectory out. Both mean
+# "this name does not resolve", which is what a probe asks.
+UNRESOLVED = (asyncssh.SFTPNoSuchFile, asyncssh.SFTPNoSuchPath,
+              asyncssh.SFTPNotADirectory)
+
+
+async def _attrs_or_none(accessor: SSHAccessor,
+                         key: str) -> asyncssh.SFTPAttrs | None:
+    sftp = await accessor.sftp()
+    try:
+        return await sftp.stat(_abs(accessor.config, key))
+    except UNRESOLVED:
+        return None
+
+
+async def _is_file(accessor: SSHAccessor, key: str) -> bool:
+    attrs = await _attrs_or_none(accessor, key)
+    return attrs is not None and attrs.type != asyncssh.FILEXFER_TYPE_DIRECTORY
+
+
+async def _is_dir(accessor: SSHAccessor, key: str) -> bool:
+    attrs = await _attrs_or_none(accessor, key)
+    return attrs is not None and attrs.type == asyncssh.FILEXFER_TYPE_DIRECTORY
 
 
 async def readdir(accessor: SSHAccessor,
@@ -89,5 +115,6 @@ async def readdir(accessor: SSHAccessor,
                             if attrs.mtime is not None else "")))
         await index.set_dir(virtual_key, index_entries)
         return virtual_entries
-    except asyncssh.SFTPNoSuchFile:
-        raise enoent(virtual)
+    except UNRESOLVED:
+        raise await readdir_error(virtual, path, partial(_is_file, accessor),
+                                  partial(_is_dir, accessor))

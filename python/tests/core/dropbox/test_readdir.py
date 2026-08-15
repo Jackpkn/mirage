@@ -121,14 +121,68 @@ async def test_readdir_honors_mount_prefix(index):
     assert out == ["/dropbox/a.txt"]
 
 
+def _metadata(entries: dict[str, str]):
+
+    async def fake(_tm, path: str):
+        tag = entries.get(path)
+        if tag is None:
+            raise DropboxApiError("path/not_found", 409)
+        return {".tag": tag, "name": path.rsplit("/", 1)[-1]}
+
+    return fake
+
+
 @pytest.mark.asyncio
 async def test_readdir_maps_409_to_enoent(index):
     with patch("mirage.core.dropbox.readdir.list_folder",
                new_callable=AsyncMock,
                side_effect=DropboxApiError("not found", 409)):
-        with pytest.raises(FileNotFoundError):
-            await readdir(
-                make_accessor(),
-                PathSpec(resource_path="missing",
-                         virtual="/missing",
-                         directory="/missing"), index)
+        with patch("mirage.core.dropbox.readdir.get_metadata",
+                   new=_metadata({})):
+            with pytest.raises(FileNotFoundError):
+                await readdir(
+                    make_accessor(),
+                    PathSpec(resource_path="missing",
+                             virtual="/missing",
+                             directory="/missing"), index)
+
+
+@pytest.mark.asyncio
+async def test_readdir_under_a_file_is_enotdir(index):
+    # list_folder answers path/not_found for `/a.txt/x` exactly as it does
+    # for a name that is simply absent, so only the ancestor walk can tell
+    # GNU's "Not a directory" from "No such file or directory".
+    with patch("mirage.core.dropbox.readdir.list_folder",
+               new_callable=AsyncMock,
+               side_effect=DropboxApiError("path/not_found", 409)):
+        with patch("mirage.core.dropbox.readdir.get_metadata",
+                   new=_metadata({"/a.txt": "file"})):
+            with pytest.raises(NotADirectoryError):
+                await readdir(
+                    make_accessor(),
+                    PathSpec(resource_path="a.txt/x",
+                             virtual="/a.txt/x",
+                             directory="/a.txt/x"), index)
+
+
+@pytest.mark.asyncio
+async def test_readdir_on_a_file_is_enotdir_without_walking(index):
+    # The operand is itself a file, so the shortcut in readdir_error settles
+    # it: one metadata call, none for the ancestors above it.
+    seen: list[str] = []
+
+    async def fake(_tm, path: str):
+        seen.append(path)
+        return {".tag": "file", "name": "a.txt"}
+
+    with patch("mirage.core.dropbox.readdir.list_folder",
+               new_callable=AsyncMock,
+               side_effect=DropboxApiError("path/not_folder", 409)):
+        with patch("mirage.core.dropbox.readdir.get_metadata", new=fake):
+            with pytest.raises(NotADirectoryError):
+                await readdir(
+                    make_accessor(),
+                    PathSpec(resource_path="docs/a.txt",
+                             virtual="/docs/a.txt",
+                             directory="/docs/a.txt"), index)
+    assert seen == ["/docs/a.txt"]

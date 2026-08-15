@@ -14,6 +14,8 @@
 
 import asyncio
 import logging
+from collections.abc import Callable
+from functools import partial
 from typing import Any
 
 from mirage.accessor.databricks_volume import DatabricksVolumeAccessor
@@ -21,8 +23,9 @@ from mirage.cache.index import NULL_INDEX, IndexCacheStore, IndexEntry
 from mirage.core.databricks_volume.errors import is_not_found
 from mirage.core.databricks_volume.path import backend_path, virtual_path
 from mirage.core.databricks_volume.stat import modified_to_iso
+from mirage.resource.databricks_volume.config import DatabricksVolumeConfig
 from mirage.types import PathSpec
-from mirage.utils.errors import enoent
+from mirage.utils.errors import readdir_error
 from mirage.utils.key_prefix import mount_prefix_of
 
 logger = logging.getLogger(__name__)
@@ -34,6 +37,26 @@ def _list_directory_sync(
     remote_path: str,
 ) -> list[Any]:
     return list(accessor.files.list_directory_contents(remote_path))
+
+
+async def _exists(config: DatabricksVolumeConfig, probe: Callable[[str], Any],
+                  key: str) -> bool:
+    try:
+        await asyncio.to_thread(probe, backend_path(config, key))
+    except Exception as exc:
+        if is_not_found(exc):
+            return False
+        raise
+    return True
+
+
+async def _is_file(accessor: DatabricksVolumeAccessor, key: str) -> bool:
+    return await _exists(accessor.config, accessor.files.get_metadata, key)
+
+
+async def _is_dir(accessor: DatabricksVolumeAccessor, key: str) -> bool:
+    return await _exists(accessor.config,
+                         accessor.files.get_directory_metadata, key)
 
 
 async def readdir(
@@ -54,8 +77,13 @@ async def readdir(
             remote_path,
         )
     except Exception as exc:
+        # The Files API answers 404 for a missing path and for a path under
+        # a file alike, so the errno comes from walking the ancestors: one
+        # metadata request per component, on this failure path only.
         if is_not_found(exc):
-            raise enoent(list_path) from exc
+            raise await readdir_error(list_path, list_path.mount_path,
+                                      partial(_is_file, accessor),
+                                      partial(_is_dir, accessor)) from exc
         raise
     pairs = sorted(
         (virtual_path(accessor.config, entry.path,

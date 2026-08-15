@@ -31,22 +31,6 @@ async def _is_dir(accessor: NextcloudAccessor, key: str) -> bool:
     return md.mode == EntryMode.Dir
 
 
-async def _listing_error(accessor: NextcloudAccessor, path: PathSpec,
-                         target: str) -> OSError:
-    """The errno for a path PROPFIND reported nothing at all for.
-
-    Args:
-        accessor (NextcloudAccessor): Nextcloud accessor.
-        path (PathSpec): The operand; ``virtual`` is the reported spelling.
-        target (str): Mount-local path that was listed.
-    """
-    is_file = partial(_is_file, accessor)
-    if await is_file(target):
-        return enotdir(path)
-    return await readdir_error(path, target, is_file,
-                               partial(_is_dir, accessor))
-
-
 async def readdir(accessor: NextcloudAccessor,
                   path: PathSpec,
                   index: IndexCacheStore = NULL_INDEX) -> list[str]:
@@ -93,7 +77,8 @@ async def readdir(accessor: NextcloudAccessor,
         # rather than raising, so without this `ls /nextcloud/never`
         # rendered an empty directory and exited 0. The mount root is
         # exempt: it exists because it is mounted.
-        raise await _listing_error(accessor, path, target)
+        raise await readdir_error(path, target, partial(_is_file, accessor),
+                                  partial(_is_dir, accessor))
     # PROPFIND normally carries getcontentlength for every file; when the
     # lister omits the metadata, one stat per affected file fills the gap
     # so the index never caches an unknown size.

@@ -102,6 +102,33 @@ describe('readdir parent recursion', () => {
       ),
     ).rejects.toMatchObject({ code: 'ENOENT' })
   })
+
+  it('reports ENOTDIR for an operand under a file', async () => {
+    // Listing a file's own id answers with an empty child set rather than an
+    // error, so the recursion has to refuse at the file itself or `/a.txt/x`
+    // comes back ENOENT where opendir(2) says ENOTDIR.
+    vi.mocked(drive.listFiles).mockImplementation((_tm, opts) => {
+      if (opts?.folderId === 'root') {
+        return Promise.resolve([
+          {
+            id: 'f1',
+            name: 'a.txt',
+            mimeType: 'text/plain',
+            modifiedTime: '2026-04-01T00:00:00.000Z',
+          },
+        ])
+      }
+      throw new Error(`should not list folderId=${String(opts?.folderId)}`)
+    })
+
+    await expect(
+      readdir(
+        makeAccessor(),
+        new PathSpec({ resourcePath: 'a.txt/x', virtual: '/a.txt/x', directory: '/a.txt/x' }),
+        new RAMIndexCacheStore(),
+      ),
+    ).rejects.toMatchObject({ code: 'ENOTDIR' })
+  })
 })
 
 describe('readdir shared drives', () => {

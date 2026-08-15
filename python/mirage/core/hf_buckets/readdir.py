@@ -13,17 +13,35 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import logging
+from functools import partial
 
 from opendal.exceptions import NotFound
+from opendal.types import EntryMode
 
 from mirage.accessor.hf_buckets import HfBucketsAccessor
 from mirage.cache.index import NULL_INDEX, IndexCacheStore, IndexEntry
 from mirage.core.hf_buckets.constants import SCOPE_ERROR
 from mirage.types import PathSpec
-from mirage.utils.errors import enoent
+from mirage.utils.errors import readdir_error
 from mirage.utils.key_prefix import mount_prefix_of
 
 logger = logging.getLogger(__name__)
+
+
+async def _is_file(accessor: HfBucketsAccessor, key: str) -> bool:
+    try:
+        md = await accessor.operator().stat(key.strip("/"))
+    except NotFound:
+        return False
+    return md.mode != EntryMode.Dir
+
+
+async def _is_dir(accessor: HfBucketsAccessor, key: str) -> bool:
+    try:
+        md = await accessor.operator().stat(key.strip("/") + "/")
+    except NotFound:
+        return False
+    return md.mode == EntryMode.Dir
 
 
 async def readdir(accessor: HfBucketsAccessor,
@@ -59,7 +77,21 @@ async def readdir(accessor: HfBucketsAccessor,
                 meta = entry.metadata
                 sizes[base] = meta.content_length if meta else None
     except NotFound as exc:
-        raise enoent(path) from exc
+        raise await readdir_error(path, target, partial(_is_file, accessor),
+                                  partial(_is_dir, accessor)) from exc
+    if not names and target.strip("/"):
+        # An empty listing is ambiguous here in a way it is not on s3: hf
+        # can store no directory marker at all (see mkdir), so "no keys
+        # under this prefix" covers both a path the repo does not have and
+        # a directory whose last file was just removed. Only the ENOTDIR
+        # half of the walk is provable, and it is the half GNU disagrees
+        # with us about: `ls /hf/a.txt/x` must not render an empty
+        # directory when `a.txt` is a stored key. ENOENT is dropped rather
+        # than guessed, so an emptied directory still lists as empty.
+        error = await readdir_error(path, target, partial(_is_file, accessor),
+                                    partial(_is_dir, accessor))
+        if isinstance(error, NotADirectoryError):
+            raise error
     # The Hub tree API carries a size for every file (for LFS files it is
     # the object size, not the pointer's); when the lister omits the
     # metadata, one stat per affected file fills the gap so the index

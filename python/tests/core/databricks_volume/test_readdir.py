@@ -105,6 +105,35 @@ async def test_readdir_missing_directory_raises(accessor, index):
 
 
 @pytest.mark.asyncio
+async def test_readdir_under_a_file_is_enotdir(accessor, files, index,
+                                               remote_root):
+    # The Files API 404s `/a.txt/x` exactly as it does a name that is
+    # simply absent, so only the ancestor walk can tell GNU's "Not a
+    # directory" from "No such file or directory".
+    files.directory_metadata.add(remote_root)
+    files.metadata[f"{remote_root}/a.txt"] = file_metadata(3)
+    path = PathSpec.from_str_path("/volume/a.txt/x",
+                                  mount_key("/volume/a.txt/x", "/volume"))
+    with pytest.raises(NotADirectoryError):
+        await readdir(accessor, path, index)
+
+
+@pytest.mark.asyncio
+async def test_readdir_on_a_file_is_enotdir_without_walking(
+        accessor, files, index, remote_root):
+    # The operand is itself a file, so the shortcut in readdir_error settles
+    # it: one metadata call, none for the ancestors above it.
+    files.directory_metadata.add(f"{remote_root}/docs")
+    files.metadata[f"{remote_root}/docs/a.txt"] = file_metadata(3)
+    path = PathSpec.from_str_path("/volume/docs/a.txt",
+                                  mount_key("/volume/docs/a.txt", "/volume"))
+    with pytest.raises(NotADirectoryError):
+        await readdir(accessor, path, index)
+    assert files.get_metadata_calls == [f"{remote_root}/docs/a.txt"]
+    assert files.get_directory_metadata_calls == []
+
+
+@pytest.mark.asyncio
 async def test_readdir_runs_blocking_list_off_event_loop(
     accessor,
     files,

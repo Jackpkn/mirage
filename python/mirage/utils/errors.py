@@ -143,6 +143,12 @@ async def readdir_error(path: str | PathSpec, key: str,
     ``a`` and a key ``a/x``, ``ls /a/never`` must report ENOENT, not ENOTDIR.
     On a store where the two are mutually exclusive the order is immaterial,
     so ram, redis and disk are unaffected.
+
+    The listed path itself is probed before the walk starts, because a path
+    that exists implies every ancestor of it is a directory, so the walk
+    cannot reach any other answer than ENOTDIR. That shortcut is what keeps
+    a ``readdir`` on a plain file to one round trip on an API-backed mount,
+    where each probe is a request rather than a dict lookup.
     Mirrors TS ``readdirError``.
 
     Args:
@@ -155,7 +161,9 @@ async def readdir_error(path: str | PathSpec, key: str,
             mount-local path exists as a directory.
     """
     segments = [s for s in key.split("/") if s]
-    for i in range(1, len(segments) + 1):
+    if segments and await is_file("/" + "/".join(segments)):
+        return enotdir(path)
+    for i in range(1, len(segments)):
         component = "/" + "/".join(segments[:i])
         if await is_dir(component):
             continue

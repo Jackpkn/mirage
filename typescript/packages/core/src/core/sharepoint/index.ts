@@ -176,7 +176,6 @@ export async function readdir(
     target.resourcePath,
     key,
     target,
-    () => stat(accessor, target, index),
   )
 }
 

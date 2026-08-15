@@ -45,6 +45,22 @@ describe('core/ssh/readdir', () => {
     await expect(readdir(accessor, spec('/missing'))).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
+  it('throws ENOTDIR for an operand under a file', async () => {
+    // SFTP 3 answers `/a.txt/x` with NO_SUCH_FILE exactly as it does a name
+    // that is simply absent, so only the ancestor walk can tell GNU's "Not a
+    // directory" from "No such file or directory".
+    const accessor = makeFakeAccessor({
+      files: new Map([['/a.txt', { data: new Uint8Array() }]]),
+      dirs: new Map([['/', {}]]),
+    })
+    await expect(readdir(accessor, spec('/a.txt/x'))).rejects.toMatchObject({
+      code: 'ENOTDIR',
+    })
+    await expect(readdir(accessor, spec('/nope/deeper'))).rejects.toMatchObject({
+      code: 'ENOENT',
+    })
+  })
+
   it('preserves the mount prefix in returned paths', async () => {
     const accessor = makeFakeAccessor({
       files: new Map([['/data/a.txt', { data: new Uint8Array() }]]),

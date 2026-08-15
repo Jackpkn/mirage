@@ -186,6 +186,37 @@ describe('readdirError', () => {
     expect(err.code).toBe('ENOTDIR')
   })
 
+  it('settles a file operand without walking its ancestors', async () => {
+    // A path that exists implies every ancestor of it is a directory, so the
+    // walk cannot reach any answer but ENOTDIR. Probing the listed path first
+    // is what keeps readdir on a plain file to one round trip on an
+    // API-backed mount, where each probe is a request.
+    const probed: string[] = []
+    const countingIsFile = (key: string): boolean => {
+      probed.push(key)
+      return key === '/data/deep/a.txt'
+    }
+    const unreachableIsDir = (key: string): boolean => {
+      throw new Error(`the walk should not have started: ${key}`)
+    }
+    const err = await readdirError(
+      '/data/deep/a.txt',
+      '/data/deep/a.txt',
+      countingIsFile,
+      unreachableIsDir,
+    )
+    expect(err.code).toBe('ENOTDIR')
+    expect(probed).toEqual(['/data/deep/a.txt'])
+  })
+
+  it('asks the mount root nothing', async () => {
+    const unreachable = (key: string): boolean => {
+      throw new Error(`the root needs no probe: ${key}`)
+    }
+    const err = await readdirError('/', '/', unreachable, unreachable)
+    expect(err.code).toBe('ENOENT')
+  })
+
   it('accepts an async probe and stamps the operand spelling', async () => {
     const err = await readdirError(
       { virtual: '/data/nope', rawPath: 'nope' },

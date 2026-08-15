@@ -28,7 +28,7 @@ import {
 } from './_client.ts'
 import { rstripSlash } from '../../utils/slash.ts'
 import { compareCodePoints } from '../../utils/sort.ts'
-import { enotdir, readdirError } from '../../utils/errors.ts'
+import { readdirError } from '../../utils/errors.ts'
 
 type Send = (cmd: unknown) => Promise<Record<string, unknown>>
 
@@ -52,23 +52,6 @@ async function isDir(send: Send, mod: S3Module, config: S3Config, key: string): 
     }),
   )) as { CommonPrefixes?: unknown[]; Contents?: unknown[] }
   return (resp.CommonPrefixes ?? []).length > 0 || (resp.Contents ?? []).length > 0
-}
-
-// The errno for a path the bucket holds no key at or under. Mirrors
-// Python's mirage/core/s3/readdir.py `_listing_error`.
-async function listingError(
-  send: Send,
-  mod: S3Module,
-  config: S3Config,
-  path: PathSpec,
-  key: string,
-): Promise<Error> {
-  const file = (p: string): Promise<boolean> => isFile(send, mod, config, p)
-  // An object, not a prefix: opendir(2) reports ENOTDIR, and the ancestor
-  // walk cannot change that answer, because every ancestor of a stored key
-  // is a prefix by construction.
-  if (await file(key)) return enotdir(path)
-  return readdirError(path, key, file, (p) => isDir(send, mod, config, p))
 }
 
 export async function readdir(
@@ -159,7 +142,12 @@ export async function readdir(
       // rendered an empty directory and exited 0 where every real filesystem
       // reports ENOENT. The mount root is exempt: it exists because it is
       // mounted.
-      throw await listingError(send, mod, config, path, rawPath)
+      throw await readdirError(
+        path,
+        rawPath,
+        (p) => isFile(send, mod, config, p),
+        (p) => isDir(send, mod, config, p),
+      )
     }
   } finally {
     ;(client as unknown as { destroy?: () => void }).destroy?.()
