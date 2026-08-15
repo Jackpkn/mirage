@@ -12,6 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import { seedVar } from '../workspace/session/state.ts'
 import { afterEach, describe, expect, it } from 'vitest'
 import { RegisteredCommand } from '../commands/config.ts'
 import { CommandSpec, Operand } from '../commands/spec/types.ts'
@@ -343,7 +344,7 @@ describe('the remaining session writers clear the same gate', () => {
     // write.
     const ws = await makeWs([new DenySecretEnv()])
     const sess = ws.sessionManager.get(ws.sessionManager.defaultId)
-    sess.arrays.SECRET_E = ['a']
+    seedVar(sess, 'SECRET_E', ['a'])
     const io = await ws.execute('SECRET_E+=x')
     expect(io.exitCode).not.toBe(0)
     expect(sess.arrays.SECRET_E).toEqual(['a'])
@@ -440,7 +441,7 @@ describe('the remaining session writers clear the same gate', () => {
     // `unset 'SECRET[0]'` on a scalar is the whole unset in element
     // clothing; the element branch used to skip the view entirely.
     const ws = await makeWs([new DenySecretEnv()])
-    ws.env.SECRET_U = 'v'
+    seedVar(ws.getSession(ws.defaultSessionId), 'SECRET_U', 'v')
     const io = await ws.execute("unset 'SECRET_U[0]'")
     expect(io.exitCode).not.toBe(0)
     expect(stderrStr(io)).toContain('refused by policy')
@@ -450,7 +451,7 @@ describe('the remaining session writers clear the same gate', () => {
   it('a subscripted unset of an array element fires the gate', async () => {
     const ws = await makeWs([new DenySecretEnv()])
     const sess = ws.sessionManager.get(ws.sessionManager.defaultId)
-    sess.arrays.SECRET_W = ['a', 'b']
+    seedVar(sess, 'SECRET_W', ['a', 'b'])
     const io = await ws.execute("unset 'SECRET_W[1]'")
     expect(io.exitCode).not.toBe(0)
     expect(sess.arrays.SECRET_W).toEqual(['a', 'b'])
@@ -473,8 +474,8 @@ describe('the remaining session writers clear the same gate', () => {
 async function makeHiddenVarsWs(): Promise<Workspace> {
   const ws = await makeWs()
   const sess = ws.createSession('agent', { mounts: { '/a': MountMode.WRITE } })
-  sess.env.SLACK_TOKEN = 'xoxb-real'
-  sess.env.PUBLIC = 'ok'
+  seedVar(sess, 'SLACK_TOKEN', 'xoxb-real')
+  seedVar(sess, 'PUBLIC', 'ok')
   sess.hiddenVars = { names: ['SLACK_TOKEN'] }
   return ws
 }
@@ -556,7 +557,7 @@ describe('hidden vars across the shell tier', () => {
     // only on the generic env lookup.
     const ws = await makeHiddenVarsWs()
     const sess = ws.getSession('agent')
-    sess.env.HOME = '/a/homedir'
+    seedVar(sess, 'HOME', '/a/homedir')
     sess.hiddenVars = { names: ['SLACK_TOKEN', 'HOME'] }
     const home = await ws.execute('echo "[$HOME]"', { sessionId: 'agent' })
     expect(stdoutStr(home)).toBe('[]\n')
@@ -643,7 +644,7 @@ describe('hidden vars across the shell tier', () => {
     // and leak by placement; hidden reads as unset, which is 0.
     const ws = await makeWs()
     const sess = ws.createSession('agent', { mounts: { '/a': MountMode.WRITE } })
-    sess.env.SECRET_IDX = '1'
+    seedVar(sess, 'SECRET_IDX', '1')
     sess.hiddenVars = { names: ['SECRET_IDX'] }
     await ws.execute('b=(x y)', { sessionId: 'agent' })
     const io = await ws.execute('b[SECRET_IDX]=z', { sessionId: 'agent' })
@@ -655,8 +656,8 @@ describe('hidden vars across the shell tier', () => {
 async function makeHiddenArrayWs(): Promise<Workspace> {
   const ws = await makeWs()
   const sess = ws.createSession('agent', { mounts: { '/a': MountMode.WRITE } })
-  sess.arrays.SLACK_TOKEN = ['xoxb-real', 'xoxb-two']
-  sess.env.PUBLIC = 'ok'
+  seedVar(sess, 'SLACK_TOKEN', ['xoxb-real', 'xoxb-two'])
+  seedVar(sess, 'PUBLIC', 'ok')
   sess.hiddenVars = { names: ['SLACK_TOKEN'] }
   return ws
 }

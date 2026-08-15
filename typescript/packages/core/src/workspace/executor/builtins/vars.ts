@@ -35,6 +35,9 @@ import { arrayIndex } from '../../expand/variable.ts'
 import { varHidden } from '../../../utils/hidden.ts'
 import { ReadonlyVariableError } from '../../session/errors.ts'
 import { ownRecord, sessionEntry } from '../../session/session.ts'
+import type { ShellVar } from '../../../shell/variable.ts'
+import { makeVar, VarAttr } from '../../../shell/variable.ts'
+import { setAttr } from '../../session/state.ts'
 import type { Session } from '../../session/session.ts'
 import { envGet, envSnapshot, sessionView, visibleArrays, visibleEnv } from '../../session/state.ts'
 import type { SessionView } from '../../../ops/types.ts'
@@ -126,7 +129,7 @@ async function storeStagedArrays(
       if (err instanceof PolicyDenied) return doorRefusal(cmd, err)
       throw err
     }
-    if (mark) session.readonlyVars.add(name)
+    if (mark) setAttr(session, name, VarAttr.Readonly)
   }
   return null
 }
@@ -364,9 +367,9 @@ export async function handleReadonly(
         if (err instanceof PolicyDenied) return doorRefusal('readonly', err)
         throw err
       }
-      session.readonlyVars.add(key)
+      setAttr(session, key, VarAttr.Readonly)
     } else {
-      session.readonlyVars.add(assign)
+      setAttr(session, assign, VarAttr.Readonly)
     }
   }
   return [null, new IOResult(), new ExecutionNode({ command: 'readonly', exitCode: 0 })]
@@ -385,7 +388,7 @@ export async function handleReadonly(
 function unsetVariable(session: Session, name: string): void {
   if (!varHidden(session.hiddenVars, name)) {
     // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
-    delete session.arrays[name]
+    delete session.vars[name]
   }
   if (name === 'OPTIND') session.getoptsOptind = null
 }
@@ -679,13 +682,22 @@ export async function handleEnv(
     return [out, new IOResult(), new ExecutionNode({ command: 'env', exitCode: 0 })]
   }
 
-  const saved = session.env
-  session.env = base
+  // `env NAME=v cmd` runs the command with a replaced environment. Only
+  // the scalars are replaced: arrays were never part of the env the old
+  // two-container store swapped, and bash does not put one in a child's
+  // environment either.
+  const saved = session.vars
+  const swapped = ownRecord<ShellVar>()
+  for (const [name, v] of Object.entries(saved)) {
+    if (typeof v.value !== 'string') swapped[name] = v
+  }
+  for (const [name, value] of Object.entries(base)) swapped[name] = makeVar(value)
+  session.vars = swapped
   try {
     const io = await executeFn(shellJoin(command), { sessionId: session.sessionId, stdin })
     return [io.stdout, io, new ExecutionNode({ command: 'env', exitCode: io.exitCode })]
   } finally {
-    session.env = saved
+    session.vars = saved
   }
 }
 
@@ -715,12 +727,9 @@ export function handleWhoami(namespace: Namespace): Result {
  * the caller should shadow rather than reuse whatever is already there.
  */
 export function noteLocalArray(session: Session, name: string): boolean {
-  const localArrays = session.localArrays
-  if (localArrays === null) return false
-  if (!localArrays.has(name)) {
-    const existing = sessionEntry(session.arrays, name)
-    localArrays.set(name, existing === undefined ? null : [...existing])
-  }
+  const locals = session.localVars
+  if (locals === null) return false
+  if (!locals.has(name)) locals.set(name, sessionEntry(session.vars, name) ?? null)
   return true
 }
 
@@ -739,7 +748,7 @@ export async function handleLocal(
       view,
       arrays,
       false,
-      session.localArrays === null,
+      session.localVars === null,
     )
     if (refused !== null) return refused
   }
@@ -749,7 +758,7 @@ export async function handleLocal(
       const key = assign.slice(0, eq)
       if (view.isReadonly(key)) return readonlyRefusal('local', key)
       if (locals !== null && !locals.has(key)) {
-        locals.set(key, key in session.env ? (session.env[key] ?? null) : null)
+        locals.set(key, sessionEntry(session.vars, key) ?? null)
       }
       try {
         await view.set(key, assign.slice(eq + 1))
@@ -759,7 +768,7 @@ export async function handleLocal(
       }
     } else {
       if (locals !== null && !locals.has(assign)) {
-        locals.set(assign, assign in session.env ? (session.env[assign] ?? null) : null)
+        locals.set(assign, sessionEntry(session.vars, assign) ?? null)
       }
       if (envGet(session, assign) === null && !(assign in visibleArrays(session))) {
         // A bare declaration of an existing array re-scopes it; a

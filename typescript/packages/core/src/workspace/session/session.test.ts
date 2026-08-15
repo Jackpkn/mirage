@@ -12,6 +12,9 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import { makeVar, VarAttr } from '../../shell/variable.ts'
+import { seedVar } from './state.ts'
+import { varsFromEnv } from './session.ts'
 import { describe, expect, it } from 'vitest'
 import { Session } from './session.ts'
 import { MountMode } from '../../types.ts'
@@ -30,13 +33,13 @@ describe('Session', () => {
   it('cwd and env are mutable', () => {
     const s = new Session({ sessionId: 'x' })
     s.cwd = '/data'
-    s.env = { FOO: 'bar' }
+    seedVar(s, 'FOO', 'bar')
     expect(s.cwd).toBe('/data')
     expect(s.env.FOO).toBe('bar')
   })
 
   it('toJSON includes only the serializable fields, snake_case like Python', () => {
-    const s = new Session({ sessionId: 'x', cwd: '/a', env: { K: 'V' } })
+    const s = new Session({ sessionId: 'x', cwd: '/a', vars: varsFromEnv({ K: 'V' }) })
     const json = s.toJSON()
     expect(json).toEqual({
       session_id: 'x',
@@ -50,7 +53,7 @@ describe('Session', () => {
   })
 
   it('fromJSON round-trips', () => {
-    const original = new Session({ sessionId: 'x', cwd: '/a', env: { K: 'V' } })
+    const original = new Session({ sessionId: 'x', cwd: '/a', vars: varsFromEnv({ K: 'V' }) })
     const restored = Session.fromJSON(
       original.toJSON() as {
         session_id: string
@@ -93,15 +96,17 @@ describe('Session.fork', () => {
     const original = new Session({
       sessionId: 'orig',
       cwd: '/disk',
-      env: { FOO: 'bar' },
       mountModes: new Map([
         ['/s3', MountMode.READ],
         ['/dev', MountMode.EXEC],
         ['/', MountMode.EXEC],
       ]),
       shellOptions: { errexit: true },
-      readonlyVars: new Set(['HOME']),
-      arrays: { ARGV: ['a', 'b'] },
+      vars: {
+        FOO: makeVar('bar'),
+        HOME: makeVar(null, new Set([VarAttr.Readonly])),
+        ARGV: makeVar(['a', 'b']),
+      },
       positionalArgs: ['x'],
       lastExitCode: 7,
     })
@@ -121,9 +126,9 @@ describe('Session.fork', () => {
     const original = new Session({
       sessionId: 'orig',
       cwd: '/disk',
-      env: { FOO: 'bar' },
+      vars: varsFromEnv({ FOO: 'bar' }),
     })
-    const forked = original.fork({ cwd: '/ram', env: { BAZ: 'qux' } })
+    const forked = original.fork({ cwd: '/ram', vars: varsFromEnv({ BAZ: 'qux' }) })
     expect(forked.cwd).toBe('/ram')
     // $PWD follows the caller-supplied cwd rather than staying stale.
     expect(forked.env).toEqual({ BAZ: 'qux', PWD: '/ram' })
@@ -153,11 +158,10 @@ describe('Session.fork', () => {
   it('deep-copies mutable containers so mutations on the fork do not leak', () => {
     const original = new Session({
       sessionId: 'orig',
-      env: { FOO: 'bar' },
-      arrays: { A: ['1'] },
+      vars: { FOO: makeVar('bar'), A: makeVar(['1']) },
     })
     const forked = original.fork({})
-    forked.env.NEW = 'leaked?'
+    seedVar(forked, 'NEW', 'leaked?')
     forked.arrays.A?.push('2')
     expect('NEW' in original.env).toBe(false)
     expect(original.arrays.A).toEqual(['1'])
@@ -167,7 +171,7 @@ describe('Session.fork', () => {
 describe('ownRecord', () => {
   it('session records treat prototype-colliding names as ordinary keys', () => {
     const session = new Session({ sessionId: 's' })
-    session.env.__proto__ = '5'
+    seedVar(session, '__proto__', '5')
     expect(session.env.__proto__).toBe('5')
     expect(Object.getPrototypeOf(session.env)).toBe(null)
     // A helper defeats TS resolving `.toString` to the Object method.
@@ -178,11 +182,11 @@ describe('ownRecord', () => {
 
   it('fork keeps the null prototype and copies prototype-named entries', () => {
     const session = new Session({ sessionId: 's' })
-    session.env.__proto__ = '5'
+    seedVar(session, '__proto__', '5')
     const forked = session.fork()
     expect(forked.env.__proto__).toBe('5')
     expect(Object.getPrototypeOf(forked.env)).toBe(null)
-    forked.env.__proto__ = '6'
+    seedVar(forked, '__proto__', '6')
     expect(session.env.__proto__).toBe('5')
   })
 })

@@ -12,6 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import { seedVar } from '../session/state.ts'
 import { AsyncLineIterator } from '../../io/async_line_iterator.ts'
 import { asyncChain } from '../../io/stream.ts'
 import type { ByteSource } from '../../io/types.ts'
@@ -226,10 +227,10 @@ export async function handleFor(
     }
   } finally {
     if (hadKey && savedValue !== undefined) {
-      session.env[variable] = savedValue
+      seedVar(session, variable, savedValue)
     } else {
       // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
-      delete session.env[variable]
+      delete session.vars[variable]
     }
     session.stdinBuffer = prevBuffer
   }
@@ -572,10 +573,10 @@ export async function handleSelect(
     }
   } finally {
     if (hadKey && savedValue !== undefined) {
-      session.env[variable] = savedValue
+      seedVar(session, variable, savedValue)
     } else {
       // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
-      delete session.env[variable]
+      delete session.vars[variable]
     }
     session.stdinBuffer = prevBuffer
   }

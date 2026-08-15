@@ -12,6 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import { varsFromEnv } from '../session/session.ts'
 import { HISTORY_PREFIX } from '../../resource/history/history.ts'
 import type { Session } from '../session/session.ts'
 
@@ -36,7 +37,7 @@ export function forkForCall(
   if (cwd === undefined && env === undefined) return session
   return session.fork({
     ...(cwd !== undefined ? { cwd } : {}),
-    ...(env !== undefined ? { env: { ...session.env, ...env } } : {}),
+    ...(env !== undefined ? { vars: { ...session.vars, ...varsFromEnv(env) } } : {}),
   })
 }
 

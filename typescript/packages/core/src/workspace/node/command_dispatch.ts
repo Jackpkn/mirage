@@ -12,6 +12,9 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import type { ShellVar } from '../../shell/variable.ts'
+import { sessionEntry, setSessionEntry } from '../session/session.ts'
+import { seedVar } from '../session/state.ts'
 import type { Runtime } from '../../runtime/base.ts'
 import type { PolicyDecision } from '../../runtime/policy/index.ts'
 import { mergeSignals } from '../abort.ts'
@@ -228,16 +231,16 @@ export async function executeCommand(
   }
 
   if (prefixAssignments.length > 0 && name === '') {
-    for (const [k, v] of prefixAssignments) session.env[k] = v
+    for (const [k, v] of prefixAssignments) seedVar(session, k, v)
     const cmdLabel = prefixAssignments.map(([k, v]) => `${k}=${v}`).join(' ')
     return [null, new IOResult(), new ExecutionNode({ command: cmdLabel, exitCode: 0 })]
   }
 
   const isFunctionCall = name !== '' && session.functions[name] !== undefined
-  const savedEnvOverrides: Record<string, string | null> = {}
+  const savedEnvOverrides = new Map<string, ShellVar | null>()
   for (const [k, v] of prefixAssignments) {
-    if (!isFunctionCall) savedEnvOverrides[k] = k in session.env ? (session.env[k] ?? null) : null
-    session.env[k] = v
+    if (!isFunctionCall) savedEnvOverrides.set(k, sessionEntry(session.vars, k) ?? null)
+    seedVar(session, k, v)
   }
 
   try {
@@ -260,12 +263,12 @@ export async function executeCommand(
       signal,
     )
   } finally {
-    for (const [k, prev] of Object.entries(savedEnvOverrides)) {
+    for (const [k, prev] of savedEnvOverrides) {
       if (prev === null) {
         // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
-        delete session.env[k]
+        delete session.vars[k]
       } else {
-        session.env[k] = prev
+        setSessionEntry(session.vars, k, prev)
       }
     }
   }

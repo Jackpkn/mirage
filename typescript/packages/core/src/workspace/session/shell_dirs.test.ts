@@ -12,6 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import { varsFromEnv } from '../../workspace/session/session.ts'
 import { describe, expect, it } from 'vitest'
 import { Session } from './session.ts'
 import { changeDir, homeDir, logicalCwd, setCwd } from './shell_dirs.ts'
@@ -22,11 +23,13 @@ describe('shell_dirs', () => {
   })
 
   it('homeDir reads $HOME', () => {
-    expect(homeDir(new Session({ sessionId: 's', env: { HOME: '/data' } }))).toBe('/data')
+    expect(homeDir(new Session({ sessionId: 's', vars: varsFromEnv({ HOME: '/data' }) }))).toBe(
+      '/data',
+    )
   })
 
   it('homeDir is null for empty $HOME', () => {
-    expect(homeDir(new Session({ sessionId: 's', env: { HOME: '' } }))).toBeNull()
+    expect(homeDir(new Session({ sessionId: 's', vars: varsFromEnv({ HOME: '' }) }))).toBeNull()
   })
 
   it('changeDir sets cwd and $OLDPWD', () => {

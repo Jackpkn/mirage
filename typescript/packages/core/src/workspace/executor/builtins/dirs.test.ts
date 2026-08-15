@@ -12,6 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import { varsFromEnv } from '../../../workspace/session/session.ts'
 import { describe, expect, it } from 'vitest'
 import { PathSpec } from '../../../types.ts'
 import { FileType } from '../../../types.ts'
@@ -39,7 +40,7 @@ function dispatcher(dirs: string[] = [], files: string[] = []) {
 const noMountRoot = () => false
 
 function session(cwd = '/', env: Record<string, string> = {}): Session {
-  return new Session({ sessionId: 'test', cwd, env })
+  return new Session({ sessionId: 'test', cwd, vars: varsFromEnv(env) })
 }
 
 function decode(b: Uint8Array | null): string {

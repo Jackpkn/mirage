@@ -77,15 +77,6 @@ class ShellVar:
     attrs: frozenset[VarAttr] = field(default_factory=frozenset)
 
 
-def is_set(var: ShellVar) -> bool:
-    """Whether the variable holds a value at all.
-
-    Args:
-        var (ShellVar): the variable.
-    """
-    return var.value is not None
-
-
 def var_kind(var: ShellVar) -> VarKind:
     """What kind of variable this is, read off its value.
 
@@ -100,16 +91,6 @@ def var_kind(var: ShellVar) -> VarKind:
     if isinstance(var.value, list):
         return VarKind.INDEXED
     return VarKind.SCALAR
-
-
-def has_attr(var: ShellVar, attr: VarAttr) -> bool:
-    """Whether the attribute is set on the variable.
-
-    Args:
-        var (ShellVar): the variable.
-        attr (VarAttr): the attribute to test.
-    """
-    return attr in var.attrs
 
 
 def with_value(var: ShellVar, value: ShellValue | None) -> ShellVar:
@@ -155,16 +136,3 @@ def attr_letters(var: ShellVar) -> str:
     elif kind == VarKind.ASSOC:
         lead = "A"
     return lead + "".join(a.value for a in VarAttr if a in var.attrs)
-
-
-def scalar_value(var: ShellVar) -> str:
-    """The variable's value as a scalar, empty for a non-scalar.
-
-    `$name` on an indexed array reads element 0 rather than this, so a
-    caller wanting bash's `$arr` semantics goes through the array
-    primitive; this is the plain-scalar read.
-
-    Args:
-        var (ShellVar): the variable.
-    """
-    return var.value if isinstance(var.value, str) else ""

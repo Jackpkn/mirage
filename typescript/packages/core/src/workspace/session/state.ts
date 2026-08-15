@@ -17,7 +17,9 @@ import { PolicyDenied, preSessionGate, type Policies } from '../../policy/index.
 import { arrayValues, type ShellArray } from '../../shell/array.ts'
 import { varHidden } from '../../utils/hidden.ts'
 import { ReadonlyVariableError } from './errors.ts'
-import { ownRecord, sessionEntry } from './session.ts'
+import { ownRecord, sessionEntry, setSessionEntry } from './session.ts'
+import type { ShellValue } from '../../shell/variable.ts'
+import { makeVar, VarAttr, withAttr, withValue } from '../../shell/variable.ts'
 import type { Session } from './session.ts'
 
 /**
@@ -30,10 +32,11 @@ import type { Session } from './session.ts'
  * remembers. The copy keeps the null prototype session records carry.
  */
 export function envSnapshot(session: Session): Record<string, string> {
-  if (session.hiddenVars == null) return ownRecord(session.env)
   const out = ownRecord<string>()
-  for (const [name, value] of Object.entries(session.env)) {
-    if (!varHidden(session.hiddenVars, name)) out[name] = value
+  for (const [name, v] of Object.entries(session.vars)) {
+    if (typeof v.value === 'string' && !varHidden(session.hiddenVars, name)) {
+      out[name] = v.value
+    }
   }
   return out
 }
@@ -43,7 +46,8 @@ export function envSnapshot(session: Session): Record<string, string> {
  * the hidden check. */
 export function envGet(session: Session, name: string): string | null {
   if (varHidden(session.hiddenVars, name)) return null
-  return sessionEntry(session.env, name) ?? null
+  const v = sessionEntry(session.vars, name)
+  return v !== undefined && typeof v.value === 'string' ? v.value : null
 }
 
 /**
@@ -55,7 +59,8 @@ export function envGet(session: Session, name: string): string | null {
  */
 function envIsReadonly(session: Session, name: string): boolean {
   if (varHidden(session.hiddenVars, name)) return false
-  return session.readonlyVars.has(name)
+  const v = sessionEntry(session.vars, name)
+  return v?.attrs.has(VarAttr.Readonly) ?? false
 }
 
 /**
@@ -68,7 +73,6 @@ function envIsReadonly(session: Session, name: string): boolean {
  * consume, and env sizes make the copy cost noise.
  */
 export function visibleEnv(session: Session): Record<string, string> {
-  if (session.hiddenVars == null) return session.env
   return envSnapshot(session)
 }
 
@@ -80,10 +84,11 @@ export function visibleEnv(session: Session): Record<string, string> {
  * array and array reads need the same filter env reads get.
  */
 export function visibleArrays(session: Session): Record<string, ShellArray> {
-  if (session.hiddenVars == null) return session.arrays
   const out = ownRecord<ShellArray>()
-  for (const [name, value] of Object.entries(session.arrays)) {
-    if (!varHidden(session.hiddenVars, name)) out[name] = value
+  for (const [name, v] of Object.entries(session.vars)) {
+    if (Array.isArray(v.value) && !varHidden(session.hiddenVars, name)) {
+      out[name] = v.value
+    }
   }
   return out
 }
@@ -130,7 +135,7 @@ async function setVar(
   value: string | ShellArray,
 ): Promise<void> {
   ensureVarVisible(session, name)
-  if (session.readonlyVars.has(name)) {
+  if (envIsReadonly(session, name)) {
     throw new ReadonlyVariableError(name)
   }
   const rendered = typeof value === 'string' ? value : arrayValues(value).join(' ')
@@ -141,15 +146,17 @@ async function setVar(
     value: rendered,
     sessionId: session.sessionId,
   })
-  if (typeof value === 'string') {
-    session.env[name] = value
-    // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
-    delete session.arrays[name]
-  } else {
-    session.arrays[name] = value
-    // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
-    delete session.env[name]
-  }
+  // Attributes belong to the name, not to the value, so a plain
+  // assignment keeps them: `declare -i n; n=3` stays an integer. The old
+  // two-container store had to remember to evict the name from whichever
+  // container it was not landing in; one record cannot disagree with
+  // itself that way.
+  const existing = sessionEntry(session.vars, name)
+  setSessionEntry(
+    session.vars,
+    name,
+    existing === undefined ? makeVar(value) : withValue(existing, value),
+  )
 }
 
 /**
@@ -162,7 +169,7 @@ async function setVar(
  */
 async function unsetVar(session: Session, policies: Policies | null, name: string): Promise<void> {
   if (varHidden(session.hiddenVars, name)) return
-  if (session.readonlyVars.has(name)) {
+  if (envIsReadonly(session, name)) {
     throw new ReadonlyVariableError(name)
   }
   await preSessionGate(policies, {
@@ -172,8 +179,9 @@ async function unsetVar(session: Session, policies: Policies | null, name: strin
     value: null,
     sessionId: session.sessionId,
   })
+
   // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
-  delete session.env[name]
+  delete session.vars[name]
 }
 
 /**
@@ -184,6 +192,38 @@ async function unsetVar(session: Session, policies: Policies | null, name: strin
  * picking a different door. The view is the whole capability: it
  * carries no handle back to the raw session.
  */
+/**
+ * Write a variable without consulting the gate.
+ *
+ * For seeding a session before it is handed out -- the embedder
+ * populating an environment, a test arranging state. `visibleArrays`
+ * already names this case ("the embedder can seed session.arrays before
+ * narrowing"). Anything reached from a command line goes through
+ * `SessionView.set` instead, which is the whole point of the store being
+ * read-only from outside.
+ */
+export function seedVar(session: Session, name: string, value: ShellValue): void {
+  const existing = sessionEntry(session.vars, name)
+  setSessionEntry(
+    session.vars,
+    name,
+    existing === undefined ? makeVar(value) : withValue(existing, value),
+  )
+}
+
+/**
+ * Turn one attribute on or off, creating the name if needed.
+ *
+ * bash's `readonly NAME` / `export NAME` on a name that does not exist
+ * yet marks it anyway, and the name stays *unset*: GNU prints
+ * `declare -r ONLY` with no value and `${ONLY-d}` still expands to `d`.
+ * So the record is created with no value, not with an empty string.
+ */
+export function setAttr(session: Session, name: string, attr: VarAttr, on = true): void {
+  const existing = sessionEntry(session.vars, name) ?? makeVar()
+  setSessionEntry(session.vars, name, withAttr(existing, attr, on))
+}
+
 export function sessionView(session: Session, policies: Policies | null = null): SessionView {
   return {
     get: (name) => envGet(session, name),

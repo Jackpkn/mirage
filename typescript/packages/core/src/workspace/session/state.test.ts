@@ -12,6 +12,9 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import { varsFromEnv } from '../../workspace/session/session.ts'
+import { setAttr } from '../../workspace/session/state.ts'
+import { VarAttr } from '../../shell/variable.ts'
 import { describe, expect, it } from 'vitest'
 import type { SessionView } from '../../ops/types.ts'
 import { PolicyDenied } from '../../policy/errors.ts'
@@ -31,7 +34,7 @@ class DenySecrets {
 }
 
 function makeView(policies: Policies | null = null): [SessionView, Session] {
-  const session = new Session({ sessionId: 's', cwd: '/', env: { A: '1' } })
+  const session = new Session({ sessionId: 's', cwd: '/', vars: varsFromEnv({ A: '1' }) })
   return [sessionView(session, policies), session]
 }
 
@@ -105,7 +108,7 @@ describe('sessionView', () => {
     // The view owns the refusal so every writer states it the same way;
     // builtins catch the typed error and render their own bash wording.
     const [view, session] = makeView()
-    session.readonlyVars.add('A')
+    setAttr(session, 'A', VarAttr.Readonly)
     expect(view.isReadonly('A')).toBe(true)
     await expect(view.set('A', '2')).rejects.toBeInstanceOf(ReadonlyVariableError)
     await expect(view.unset('A')).rejects.toBeInstanceOf(ReadonlyVariableError)
@@ -124,7 +127,7 @@ describe('sessionView', () => {
   })
 
   it('envSnapshot is a copy', () => {
-    const session = new Session({ sessionId: 's', cwd: '/', env: { A: '1' } })
+    const session = new Session({ sessionId: 's', cwd: '/', vars: varsFromEnv({ A: '1' }) })
     const snap = envSnapshot(session)
     expect(snap).toEqual({ ...session.env })
     expect(snap).not.toBe(session.env)
@@ -142,7 +145,7 @@ function makeHiddenView(): [SessionView, Session] {
   const session = new Session({
     sessionId: 's',
     cwd: '/',
-    env: { PUBLIC: '1', SLACK_TOKEN: 'xoxb', AWS_SECRET_KEY: 'k' },
+    vars: varsFromEnv({ PUBLIC: '1', SLACK_TOKEN: 'xoxb', AWS_SECRET_KEY: 'k' }),
     hiddenVars: { names: ['SLACK_TOKEN'], patterns: ['AWS_*'] },
   })
   return [sessionView(session), session]
@@ -190,13 +193,13 @@ describe('hidden vars in the session door', () => {
     // isReadonly answers about the session's visible world; saying
     // "readonly" about a name that reads as unset would leak it.
     const [view, session] = makeHiddenView()
-    session.readonlyVars.add('SLACK_TOKEN')
+    setAttr(session, 'SLACK_TOKEN', VarAttr.Readonly)
     expect(view.isReadonly('SLACK_TOKEN')).toBe(false)
   })
 
-  it('visibleEnv is the raw record when nothing is hidden', () => {
-    const session = new Session({ sessionId: 's', cwd: '/', env: { A: '1' } })
-    expect(visibleEnv(session)).toBe(session.env)
+  it('visibleEnv matches the scalars when nothing is hidden', () => {
+    const session = new Session({ sessionId: 's', cwd: '/', vars: varsFromEnv({ A: '1' }) })
+    expect(visibleEnv(session)).toEqual({ ...session.env })
   })
 
   it('visibleEnv filters hidden names', () => {

@@ -12,6 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import { seedVar } from './state.ts'
 import { describe, expect, it } from 'vitest'
 import { MountMode } from '../../types.ts'
 import { SessionManager } from './manager.ts'
@@ -195,7 +196,7 @@ describe('SessionManager dirty flush + CAS', () => {
     expect(store.casCalls).toBe(1)
     await m.flush()
     expect(store.casCalls).toBe(1)
-    m.get('default').env.K = 'v'
+    seedVar(m.get('default'), 'K', 'v')
     await m.flush()
     expect(store.casCalls).toBe(2)
   })
@@ -248,7 +249,7 @@ describe('SessionManager dirty flush + CAS', () => {
     const before = store.casCalls
     await m.flush()
     expect(store.casCalls).toBe(before + 1)
-    m.get('s2').env.K = 'v'
+    seedVar(m.get('s2'), 'K', 'v')
     await m.flush()
     expect((await store.load()).get('s2')?.generation).toBe(4)
   })

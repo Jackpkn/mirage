@@ -12,6 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import { seedVar } from '../session/state.ts'
 import type { Runtime } from '../../runtime/base.ts'
 import type { PolicyDecision } from '../../runtime/policy/index.ts'
 import { asyncChain } from '../../io/stream.ts'
@@ -193,7 +194,7 @@ async function evalCforExpr(
   // Through the door, so a preSession rule governs an arithmetic assignment
   // exactly as it governs `X=1`.
   for (const [name, updated] of Object.entries(updates)) {
-    if (view === undefined) session.env[name] = updated
+    if (view === undefined) seedVar(session, name, updated)
     else await view.set(name, updated)
   }
   return Number(value)
@@ -813,13 +814,11 @@ export async function executeNode(
         if (noteLocalArray(session, bare)) {
           // Inside a function this shadows whatever the caller had with a
           // fresh empty array.
-          session.arrays[bare] = []
+          seedVar(session, bare, [])
         } else if (!Object.hasOwn(session.arrays, bare)) {
           // At top level an existing scalar becomes element 0.
           const scalar = session.env[bare]
-          // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
-          delete session.env[bare]
-          session.arrays[bare] = scalar === undefined ? [] : [scalar]
+          seedVar(session, bare, scalar === undefined ? [] : [scalar])
         }
       }
     }

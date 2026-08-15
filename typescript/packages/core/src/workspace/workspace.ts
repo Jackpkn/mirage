@@ -12,6 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import { seedVar } from './session/state.ts'
 import type { FileCache } from '../cache/file/mixin.ts'
 import { RAMResource } from '../resource/ram/ram.ts'
 import { IOResult } from '../io/types.ts'
@@ -511,7 +512,9 @@ export class Workspace {
     if (profile !== null) {
       session.hiddenPaths = profile.hiddenPaths ?? null
       session.hiddenVars = profile.hiddenVars ?? null
-      if (profile.env != null) Object.assign(session.env, profile.env)
+      if (profile.env != null) {
+        for (const [name, value] of Object.entries(profile.env)) seedVar(session, name, value)
+      }
     }
     return session
   }

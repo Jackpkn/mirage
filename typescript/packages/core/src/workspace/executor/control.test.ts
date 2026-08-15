@@ -12,6 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import { varsFromEnv } from '../../workspace/session/session.ts'
 import { describe, expect, it } from 'vitest'
 import { IOResult, materialize } from '../../io/types.ts'
 import type { TSNodeLike } from '../../shell/types.ts'
@@ -137,7 +138,7 @@ describe('handleFor', () => {
   })
 
   it('restores previous value of the loop variable', async () => {
-    const s = new Session({ sessionId: 'test', env: { X: 'saved' } })
+    const s = new Session({ sessionId: 'test', vars: varsFromEnv({ X: 'saved' }) })
     const execute: ExecuteNodeFn = () =>
       Promise.resolve([null, new IOResult(), new ExecutionNode()])
     await handleFor(execute, 'X', ['a'], [node('body')], s)
