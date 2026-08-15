@@ -60,11 +60,21 @@ export class DropboxWalk {
       if (error instanceof DropboxApiError && error.status === 409) return
       throw error
     }
+    // Dropbox paths are case-insensitive: `path_display` carries the
+    // server's casing while `rootPath` carries the user's, so a configured
+    // `/team` whose displayed path is `/Team` matched nothing and every
+    // event landed outside the watch scope. The comparison folds case; the
+    // slice keeps the server's casing for everything below the root, and is
+    // safe because `path_lower` is `path_display` lowercased, same length.
     const base = accessor.rootPath
+    const folded = base.toLowerCase()
     for (const entry of found) {
       const display = entry.path_display ?? entry.path_lower
       if (display === undefined || display === '') continue
-      const trimmed = base !== '' && display.startsWith(base) ? display.slice(base.length) : display
+      const trimmed =
+        base !== '' && display.toLowerCase().startsWith(folded)
+          ? display.slice(base.length)
+          : display
       const relative = stripSlash(trimmed)
       if (relative === '') continue
       const virtual = prefix !== '' ? `${prefix}/${relative}` : `/${relative}`

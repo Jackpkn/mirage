@@ -68,13 +68,21 @@ class DropboxWalk:
             if exc.status == 409:
                 return
             raise
+        # Dropbox paths are case-insensitive: `path_display` carries the
+        # server's casing while `root_path` carries the user's, so a
+        # configured `/team` whose displayed path is `/Team` matched
+        # nothing and every event landed outside the watch scope. The
+        # comparison folds case; the slice keeps the server's casing for
+        # everything below the root, and is safe because `path_lower` is
+        # `path_display` lowercased, same length.
         base = accessor.root_path
+        folded = base.lower()
         for entry in found:
             display = entry.get("path_display") or entry.get("path_lower")
             if not display:
                 continue
-            relative = display[len(base):] if base and display.startswith(
-                base) else display
+            relative = display[len(base):] if base and display.lower(
+            ).startswith(folded) else display
             relative = relative.strip("/")
             if not relative:
                 continue

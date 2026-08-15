@@ -20,6 +20,7 @@ import type { DeltaHook } from '../../watch/base.ts'
 import { ListingDeltaHook } from '../../watch/delta.ts'
 import { IncompleteWalkError } from '../../watch/errors.ts'
 import { fetchTree } from './_client.ts'
+import { buildTreeMap } from './tree.ts'
 
 /**
  * One recursive git tree fetch feeding the generic listing differ.
@@ -56,6 +57,12 @@ export class GitHubWalk {
           'cannot diff a partial tree',
       )
     }
+    // A complete tree for the ref is exactly what the accessor holds, and
+    // find/du/grep's scope counter read it directly. Discarding it here
+    // left them answering from the tree the mount was built with until an
+    // unrelated read happened to refill the index, so a pull that reported
+    // a CREATE was followed by a find that could not see the file.
+    accessor.tree = buildTreeMap(tree)
     const stem = stripSlash(rstripSlash(root.resourcePath))
     const base = stem !== '' ? `${stem}/` : ''
     for (const item of tree) {

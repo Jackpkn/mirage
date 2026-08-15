@@ -29,9 +29,16 @@ async function* descend(root: string, full: string): AsyncGenerator<WalkEntry> {
   let listing
   try {
     listing = await readdir(full, { withFileTypes: true })
-  } catch {
-    // Removed between the parent listing and this one; the next pull
-    // reports the DELETE from the snapshot diff.
+  } catch (error) {
+    // Absence is the one error a walk may swallow: the directory went
+    // away between the parent listing and this one, and the next pull
+    // reports the DELETE from the snapshot diff. Anything else (EACCES,
+    // EIO) means the subtree is unreadable, not empty, and returning
+    // here would diff a partial listing into a DELETE for every child
+    // plus a CREATE for each when access came back. Aborting the pull
+    // keeps the prior checkpoint, which is what IncompleteWalkError
+    // exists to protect.
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
     return
   }
   for (const entry of listing) {
@@ -46,7 +53,10 @@ async function* descend(root: string, full: string): AsyncGenerator<WalkEntry> {
     let info
     try {
       info = await lstat(child)
-    } catch {
+    } catch (error) {
+      // Same rule one entry down: a vanished file is a DELETE the next
+      // pull reports, an unreadable one is not.
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
       continue
     }
     const modified = info.mtime.toISOString()

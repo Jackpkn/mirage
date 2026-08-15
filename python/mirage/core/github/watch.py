@@ -64,6 +64,13 @@ class GitHubWalk:
             raise IncompleteWalkError(
                 f"github tree for {accessor.owner}/{accessor.repo}"
                 f"@{accessor.ref} was truncated; cannot diff a partial tree")
+        # A complete tree for the ref is exactly what the accessor holds,
+        # and find/du/grep's scope counter read it directly. Discarding it
+        # here left them answering from the tree the mount was built with
+        # until an unrelated read happened to refill the index, so a pull
+        # that reported a CREATE was followed by a find that could not see
+        # the file.
+        accessor.tree = tree
         stem = root.mount_path.strip("/")
         base = (stem + "/") if stem else ""
         for entry in tree.values():

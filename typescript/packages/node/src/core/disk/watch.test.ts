@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { FileChangeKind, PathSpec, type WalkEntry } from '@struktoai/mirage-core'
-import { mkdtemp, mkdir, rm, utimes, writeFile } from 'node:fs/promises'
+import { chmod, mkdtemp, mkdir, rm, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -125,5 +125,30 @@ describe('disk delta hook', () => {
     const second = await hook.pull(at, first.checkpoint)
     expect(second.changes[0]?.path.virtual).toBe('/d/data/a.txt')
     expect(second.changes[0]?.path.resourcePath).toBe('data/a.txt')
+  })
+})
+
+describe('unreadable directories', () => {
+  it('aborts the walk rather than reporting the subtree empty', async () => {
+    // An unreadable subtree is not an empty one. Swallowing the error
+    // diffs into a DELETE for every child, then a CREATE for each once
+    // access returns, so the walk fails and the checkpoint stands.
+    await touch('data/a.txt', 'alpha', 1_700_000_000)
+    const locked = path.join(root, 'data', 'locked')
+    await mkdir(locked)
+    await writeFile(path.join(locked, 'inner.txt'), 'inner')
+    await chmod(locked, 0o000)
+    try {
+      await expect(
+        collect(new DiskWalk(new DiskAccessor(root)), spec('/d/data', 'data')),
+      ).rejects.toThrow()
+    } finally {
+      await chmod(locked, 0o755)
+    }
+  })
+
+  it('reports nothing for a root that is simply gone', async () => {
+    const entries = await collect(new DiskWalk(new DiskAccessor(root)), spec('/d/gone', 'gone'))
+    expect(entries).toEqual([])
   })
 })

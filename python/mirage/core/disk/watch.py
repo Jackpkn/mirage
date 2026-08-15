@@ -33,6 +33,21 @@ def _resolve(root: Path, path: str) -> Path:
     return resolved
 
 
+def _reraise(error: OSError) -> None:
+    """Fail the walk on a directory it could not read.
+
+    ``os.walk`` swallows every listing error by default, which for a
+    snapshot differ means an unreadable subtree is indistinguishable
+    from an empty one: it diffs into a DELETE for every child, then a
+    CREATE for each when access comes back. Absence is the one error
+    that is genuinely a DELETE, and the caller drops it.
+
+    Args:
+        error (OSError): The failure ``os.walk`` was about to discard.
+    """
+    raise error
+
+
 def _walk_sync(root: Path,
                path: str) -> list[tuple[str, bool, str | None, int | None]]:
     """Collect (mount-relative path, is_dir, mtime, size) under a path.
@@ -47,7 +62,7 @@ def _walk_sync(root: Path,
     """
     start = _resolve(root, path)
     out: list[tuple[str, bool, str | None, int | None]] = []
-    for dirpath, dirnames, filenames in os.walk(start):
+    for dirpath, dirnames, filenames in os.walk(start, onerror=_reraise):
         current = Path(dirpath)
         for name in dirnames:
             relative = (current / name).relative_to(root).as_posix()
@@ -57,9 +72,10 @@ def _walk_sync(root: Path,
             relative = full.relative_to(root).as_posix()
             try:
                 info = full.lstat()
-            except OSError:
-                # Removed between the listing and the stat; the next
-                # pull reports the DELETE from the snapshot diff.
+            except FileNotFoundError:
+                # Same rule one entry down: a file that vanished between
+                # the listing and the stat is a DELETE the next pull
+                # reports, an unreadable one is not.
                 continue
             out.append(("/" + relative, False, epoch_to_iso(info.st_mtime),
                         info.st_size))

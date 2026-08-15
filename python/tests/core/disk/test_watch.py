@@ -2,6 +2,8 @@ import asyncio
 import os
 from pathlib import Path
 
+import pytest
+
 from mirage.accessor.disk import DiskAccessor
 from mirage.core.disk.watch import DiskWalk, build_delta_hook
 from mirage.types import FileChangeKind, PathSpec
@@ -106,3 +108,27 @@ def test_changed_path_carries_the_mount_framing(tmp_path):
     changed = second.changes[0].path
     assert changed.virtual == "/d/data/a.txt"
     assert changed.resource_path == "data/a.txt"
+
+
+def test_missing_root_reports_nothing(tmp_path):
+    entries = asyncio.run(
+        _collect(DiskWalk(_accessor(tmp_path)), _root("/d/gone", "gone")))
+    assert entries == []
+
+
+def test_unreadable_directory_aborts_rather_than_reporting_empty(tmp_path):
+    # An unreadable subtree is not an empty one. Swallowing the error
+    # diffs into a DELETE for every child, then a CREATE for each once
+    # access returns, so the walk fails and the checkpoint stands.
+    _touch(tmp_path, "data/a.txt", b"alpha", 1_700_000_000)
+    locked = tmp_path / "data" / "locked"
+    locked.mkdir()
+    (locked / "inner.txt").write_bytes(b"inner")
+    locked.chmod(0o000)
+    try:
+        with pytest.raises(PermissionError):
+            asyncio.run(
+                _collect(DiskWalk(_accessor(tmp_path)),
+                         _root("/d/data", "data")))
+    finally:
+        locked.chmod(0o755)
