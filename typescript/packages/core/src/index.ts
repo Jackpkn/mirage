@@ -1539,6 +1539,7 @@ export {
   type MissingOpError,
   noMount,
   type NoMountError,
+  listingError,
   readdirError,
 } from './utils/errors.ts'
 export {

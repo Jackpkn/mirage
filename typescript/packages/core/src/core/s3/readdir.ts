@@ -28,7 +28,7 @@ import {
 } from './_client.ts'
 import { rstripSlash } from '../../utils/slash.ts'
 import { compareCodePoints } from '../../utils/sort.ts'
-import { readdirError } from '../../utils/errors.ts'
+import { listingError } from '../../utils/errors.ts'
 
 type Send = (cmd: unknown) => Promise<Record<string, unknown>>
 
@@ -142,7 +142,7 @@ export async function readdir(
       // rendered an empty directory and exited 0 where every real filesystem
       // reports ENOENT. The mount root is exempt: it exists because it is
       // mounted.
-      throw await readdirError(
+      throw await listingError(
         path,
         rawPath,
         (p) => isFile(send, mod, config, p),

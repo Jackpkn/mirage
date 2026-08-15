@@ -25,7 +25,7 @@ from mirage.core.databricks_volume.path import backend_path, virtual_path
 from mirage.core.databricks_volume.stat import modified_to_iso
 from mirage.resource.databricks_volume.config import DatabricksVolumeConfig
 from mirage.types import PathSpec
-from mirage.utils.errors import readdir_error
+from mirage.utils.errors import listing_error
 from mirage.utils.key_prefix import mount_prefix_of
 
 logger = logging.getLogger(__name__)
@@ -81,7 +81,7 @@ async def readdir(
         # a file alike, so the errno comes from walking the ancestors: one
         # metadata request per component, on this failure path only.
         if is_not_found(exc):
-            raise await readdir_error(list_path, list_path.mount_path,
+            raise await listing_error(list_path, list_path.mount_path,
                                       partial(_is_file, accessor),
                                       partial(_is_dir, accessor)) from exc
         raise

@@ -9,7 +9,7 @@ import {
   type IndexCacheStore,
   type PathSpec,
   compareCodePoints,
-  readdirError,
+  listingError,
 } from '@struktoai/mirage-core'
 import type { NextcloudAccessor } from '../../accessor/nextcloud.ts'
 import { SCOPE_ERROR } from './constants.ts'
@@ -68,7 +68,7 @@ export async function readdir(
     // than raising, so without this `ls /nextcloud/never` rendered an empty
     // directory and exited 0. The mount root is exempt: it exists because
     // it is mounted.
-    throw await readdirError(
+    throw await listingError(
       path,
       target,
       (p) => isFile(accessor, p),

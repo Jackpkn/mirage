@@ -21,7 +21,8 @@ from mirage.types import PathSpec
 from mirage.utils.errors import (NoMountError, OperationNotSupportedError,
                                  eacces, eloop, enoent, enotdir, enotempty,
                                  enotsup, error_path, exdev, format_fs_error,
-                                 fs_strerror, no_mount, readdir_error)
+                                 fs_strerror, listing_error, no_mount,
+                                 readdir_error)
 
 
 def test_fs_strerror_known_types():
@@ -187,11 +188,26 @@ async def test_readdir_error_object_only_component_is_still_enotdir():
 
 
 @pytest.mark.asyncio
-async def test_readdir_error_settles_a_file_operand_without_walking():
-    """A path that exists implies every ancestor of it is a directory, so
-    the walk cannot reach any answer but ENOTDIR. Probing the listed path
-    first is what keeps `readdir` on a plain file to one round trip on an
-    API-backed mount, where each probe is a request.
+async def test_readdir_error_orphan_exact_file_is_enoent():
+    """The generic walk must not shortcut on the listed path itself.
+
+    A flat store can hold `/data/missing/a.txt` with `/data/missing`
+    absent, and resolution stops at the gap: `readdir` of the orphan
+    itself is ENOENT, not ENOTDIR, exactly as it already is one level
+    below. `listing_error` is where the shortcut lives, for the stores
+    that cannot hold the gap.
+    """
+    exc = await readdir_error("/data/missing/a.txt", "/data/missing/a.txt",
+                              _orphan_is_file, _orphan_is_dir)
+    assert isinstance(exc, FileNotFoundError)
+
+
+@pytest.mark.asyncio
+async def test_listing_error_settles_a_file_operand_without_walking():
+    """A store that cannot hold an orphan proves ENOTDIR in one probe.
+
+    That is what keeps a `readdir` on a plain file to one round trip on
+    an API-backed mount, where each probe is a request.
     """
     probed: list[str] = []
 
@@ -202,19 +218,27 @@ async def test_readdir_error_settles_a_file_operand_without_walking():
     async def unreachable_is_dir(key: str) -> bool:
         raise AssertionError(f"the walk should not have started: {key}")
 
-    exc = await readdir_error("/data/deep/a.txt", "/data/deep/a.txt",
+    exc = await listing_error("/data/deep/a.txt", "/data/deep/a.txt",
                               counting_is_file, unreachable_is_dir)
     assert isinstance(exc, NotADirectoryError)
     assert probed == ["/data/deep/a.txt"]
 
 
 @pytest.mark.asyncio
-async def test_readdir_error_asks_the_mount_root_nothing():
+async def test_listing_error_falls_back_to_the_walk():
+    for key, expected in (("/data/a.txt/never", NotADirectoryError),
+                          ("/data/nope/deeper", FileNotFoundError)):
+        exc = await listing_error(key, key, _is_file, _is_dir)
+        assert isinstance(exc, expected), key
+
+
+@pytest.mark.asyncio
+async def test_listing_error_asks_the_mount_root_nothing():
 
     async def unreachable(key: str) -> bool:
         raise AssertionError(f"the root needs no probe: {key}")
 
-    exc = await readdir_error("/", "/", unreachable, unreachable)
+    exc = await listing_error("/", "/", unreachable, unreachable)
     assert isinstance(exc, FileNotFoundError)
 
 

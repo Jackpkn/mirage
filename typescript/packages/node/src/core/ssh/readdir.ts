@@ -16,7 +16,7 @@ import type { FileEntryWithStats, Stats } from 'ssh2'
 import type { PathSpec } from '@struktoai/mirage-core'
 import type { SSHAccessor } from '../../accessor/ssh.ts'
 import { isDirectoryAttrs, isNoSuchFile, joinRoot, stripPrefix } from './utils.ts'
-import { compareCodePoints, mountPrefixOf, readdirError, stripSlash } from '@struktoai/mirage-core'
+import { compareCodePoints, listingError, mountPrefixOf, stripSlash } from '@struktoai/mirage-core'
 
 async function attrsOrNull(accessor: SSHAccessor, key: string): Promise<Stats | null> {
   const sftp = await accessor.sftp()
@@ -65,7 +65,7 @@ export async function readdir(accessor: SSHAccessor, p: PathSpec): Promise<strin
     })
   })
   if (list === null) {
-    throw await readdirError(
+    throw await listingError(
       p,
       virtual,
       (key) => isFile(accessor, key),

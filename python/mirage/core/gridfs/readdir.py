@@ -23,7 +23,7 @@ from mirage.core.gridfs._client import (_key, _prefix, _strip_prefix,
 from mirage.core.gridfs.constants import SCOPE_ERROR
 from mirage.core.timeutil import to_iso_z
 from mirage.types import PathSpec
-from mirage.utils.errors import readdir_error
+from mirage.utils.errors import listing_error
 from mirage.utils.key_prefix import mount_prefix_of
 
 logger = logging.getLogger(__name__)
@@ -94,7 +94,7 @@ async def readdir(accessor: GridFSAccessor,
         # rendered an empty directory and exited 0 where every real
         # filesystem reports ENOENT. The mount root is exempt: it exists
         # because it is mounted.
-        raise await readdir_error(path_spec, path, partial(_is_file, accessor),
+        raise await listing_error(path_spec, path, partial(_is_file, accessor),
                                   partial(_is_dir, accessor))
     names = sorted(names)
     if len(names) > SCOPE_ERROR:

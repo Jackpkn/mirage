@@ -20,7 +20,7 @@ from mirage.cache.index import NULL_INDEX, IndexCacheStore, IndexEntry
 from mirage.core.dropbox._client import DropboxApiError
 from mirage.core.dropbox.api import get_metadata, list_folder
 from mirage.types import PathSpec
-from mirage.utils.errors import readdir_error
+from mirage.utils.errors import listing_error
 from mirage.utils.key_prefix import mount_prefix_of
 
 
@@ -82,7 +82,7 @@ async def readdir(
         # and let the walk pick the errno, at one request per component
         # on this failure path only.
         if exc.status == 409:
-            raise await readdir_error(path_spec.virtual, path,
+            raise await listing_error(path_spec.virtual, path,
                                       partial(_is_file, accessor),
                                       partial(_is_dir, accessor)) from exc
         raise

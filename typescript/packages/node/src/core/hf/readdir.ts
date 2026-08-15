@@ -25,7 +25,7 @@ import {
 import type { HfAccessor } from '../../accessor/hf.ts'
 import { SCOPE_ERROR } from './constants.ts'
 import { isNotFound } from './util.ts'
-import { readdirError } from '@struktoai/mirage-core'
+import { listingError } from '@struktoai/mirage-core'
 
 async function isFile(accessor: HfAccessor, key: string): Promise<boolean> {
   const op = await accessor.operator()
@@ -78,7 +78,7 @@ export async function readdir(
     entries = await op.list(listPath)
   } catch (err) {
     if (isNotFound(err)) {
-      throw await readdirError(
+      throw await listingError(
         path,
         target,
         (key) => isFile(accessor, key),
@@ -96,7 +96,7 @@ export async function readdir(
     // `ls /hf/a.txt/x` must not render an empty directory when `a.txt` is a
     // stored key. ENOENT is dropped rather than guessed, so an emptied
     // directory still lists as empty.
-    const error = await readdirError(
+    const error = await listingError(
       path,
       target,
       (key) => isFile(accessor, key),

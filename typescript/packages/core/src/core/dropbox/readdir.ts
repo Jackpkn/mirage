@@ -17,7 +17,7 @@ import type { DropboxAccessor } from '../../accessor/dropbox.ts'
 import { IndexEntry } from '../../cache/index/config.ts'
 import type { IndexCacheStore } from '../../cache/index/store.ts'
 import type { PathSpec } from '../../types.ts'
-import { readdirError } from '../../utils/errors.ts'
+import { listingError } from '../../utils/errors.ts'
 import { DropboxApiError } from './_client.ts'
 import { getMetadata, listFolder, type DropboxEntry } from './api.ts'
 import { stripSlash } from '../../utils/slash.ts'
@@ -83,7 +83,7 @@ export async function readdir(
     // walk pick the errno, at one request per component on this failure
     // path only.
     if (err instanceof DropboxApiError && err.status === 409) {
-      throw await readdirError(
+      throw await listingError(
         path.virtual,
         key,
         (p) => isFile(accessor, p),

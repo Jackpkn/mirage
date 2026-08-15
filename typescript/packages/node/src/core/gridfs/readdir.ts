@@ -20,7 +20,7 @@ import {
   type IndexCacheStore,
   type PathSpec,
   compareCodePoints,
-  readdirError,
+  listingError,
 } from '@struktoai/mirage-core'
 import type { GridFSAccessor } from '../../accessor/gridfs.ts'
 import {
@@ -108,7 +108,7 @@ export async function readdir(
     // does not have. Without this, `ls /gridfs/never` rendered an empty
     // directory and exited 0 where every real filesystem reports ENOENT.
     // The mount root is exempt: it exists because it is mounted.
-    throw await readdirError(
+    throw await listingError(
       path,
       rawPath,
       (p) => isFile(accessor, p),

@@ -24,6 +24,7 @@ import {
   isFsError,
   isMissingPath,
   noMount,
+  listingError,
   readdirError,
 } from './errors.ts'
 
@@ -186,34 +187,19 @@ describe('readdirError', () => {
     expect(err.code).toBe('ENOTDIR')
   })
 
-  it('settles a file operand without walking its ancestors', async () => {
-    // A path that exists implies every ancestor of it is a directory, so the
-    // walk cannot reach any answer but ENOTDIR. Probing the listed path first
-    // is what keeps readdir on a plain file to one round trip on an
-    // API-backed mount, where each probe is a request.
-    const probed: string[] = []
-    const countingIsFile = (key: string): boolean => {
-      probed.push(key)
-      return key === '/data/deep/a.txt'
-    }
-    const unreachableIsDir = (key: string): boolean => {
-      throw new Error(`the walk should not have started: ${key}`)
-    }
+  it('reports ENOENT for an orphan exact file rather than shortcutting', async () => {
+    // A flat store can hold `/data/missing/a.txt` with `/data/missing` absent,
+    // and resolution stops at the gap: readdir of the orphan itself is ENOENT,
+    // not ENOTDIR, exactly as it already is one level below. listingError is
+    // where the shortcut lives, for the stores that cannot hold the gap.
+    const orphanFile = (key: string): boolean => key === '/data/missing/a.txt'
+    const orphanDir = (key: string): boolean => key === '/data'
     const err = await readdirError(
-      '/data/deep/a.txt',
-      '/data/deep/a.txt',
-      countingIsFile,
-      unreachableIsDir,
+      '/data/missing/a.txt',
+      '/data/missing/a.txt',
+      orphanFile,
+      orphanDir,
     )
-    expect(err.code).toBe('ENOTDIR')
-    expect(probed).toEqual(['/data/deep/a.txt'])
-  })
-
-  it('asks the mount root nothing', async () => {
-    const unreachable = (key: string): boolean => {
-      throw new Error(`the root needs no probe: ${key}`)
-    }
-    const err = await readdirError('/', '/', unreachable, unreachable)
     expect(err.code).toBe('ENOENT')
   })
 
@@ -226,5 +212,49 @@ describe('readdirError', () => {
     )
     expect(err.code).toBe('ENOENT')
     expect(err.virtualPath).toBe('nope')
+  })
+})
+
+describe('listingError', () => {
+  const isFile = (key: string): boolean => key === '/data/a.txt'
+  const isDir = (key: string): boolean => key === '/data' || key === '/data/sub'
+
+  it('settles a file operand in one probe, without walking its ancestors', async () => {
+    // A store that cannot hold an orphan proves ENOTDIR outright. That is what
+    // keeps a readdir on a plain file to one round trip on an API-backed mount,
+    // where each probe is a request.
+    const probed: string[] = []
+    const countingIsFile = (key: string): boolean => {
+      probed.push(key)
+      return key === '/data/deep/a.txt'
+    }
+    const unreachableIsDir = (key: string): boolean => {
+      throw new Error(`the walk should not have started: ${key}`)
+    }
+    const err = await listingError(
+      '/data/deep/a.txt',
+      '/data/deep/a.txt',
+      countingIsFile,
+      unreachableIsDir,
+    )
+    expect(err.code).toBe('ENOTDIR')
+    expect(probed).toEqual(['/data/deep/a.txt'])
+  })
+
+  it('falls back to the walk for anything the first probe does not settle', async () => {
+    expect((await listingError('/data/a.txt/never', '/data/a.txt/never', isFile, isDir)).code).toBe(
+      'ENOTDIR',
+    )
+    expect((await listingError('/data/nope/deeper', '/data/nope/deeper', isFile, isDir)).code).toBe(
+      'ENOENT',
+    )
+  })
+
+  it('asks the mount root nothing', async () => {
+    const unreachable = (key: string): boolean => {
+      throw new Error(`the root needs no probe: ${key}`)
+    }
+    const err = await listingError('/', '/', unreachable, unreachable)
+    expect(err.code).toBe('ENOENT')
   })
 })

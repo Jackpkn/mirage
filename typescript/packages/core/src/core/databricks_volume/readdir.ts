@@ -22,7 +22,7 @@ import { dbxFetch, type DbxEndpoint } from './_client.ts'
 import { isNotFound } from './errors.ts'
 import { backendPath, virtualPath } from './path.ts'
 import { compareCodePoints } from '../../utils/sort.ts'
-import { readdirError } from '../../utils/errors.ts'
+import { listingError } from '../../utils/errors.ts'
 
 export interface DbxDirectoryEntry {
   path: string
@@ -87,7 +87,7 @@ export async function readdir(
     // file alike, so the errno comes from walking the ancestors: one
     // metadata request per component, on this failure path only.
     if (isNotFound(exc)) {
-      throw await readdirError(
+      throw await listingError(
         listPath.virtual,
         listPath.mountPath,
         (p) => head(accessor, 'files', p),

@@ -9,7 +9,7 @@ from mirage.cache.index import (NULL_INDEX, IndexCacheStore, IndexEntry,
                                 ResourceType)
 from mirage.core.nextcloud.constants import SCOPE_ERROR
 from mirage.types import PathSpec
-from mirage.utils.errors import enoent, enotdir, readdir_error
+from mirage.utils.errors import enoent, enotdir, listing_error
 from mirage.utils.key_prefix import mount_prefix_of
 
 logger = logging.getLogger(__name__)
@@ -77,7 +77,7 @@ async def readdir(accessor: NextcloudAccessor,
         # rather than raising, so without this `ls /nextcloud/never`
         # rendered an empty directory and exited 0. The mount root is
         # exempt: it exists because it is mounted.
-        raise await readdir_error(path, target, partial(_is_file, accessor),
+        raise await listing_error(path, target, partial(_is_file, accessor),
                                   partial(_is_dir, accessor))
     # PROPFIND normally carries getcontentlength for every file; when the
     # lister omits the metadata, one stat per affected file fills the gap

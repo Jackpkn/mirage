@@ -36,7 +36,7 @@ from mirage.core.msgraph.config import MsGraphConfig
 from mirage.observe.context import (active_recorder, record, record_stream,
                                     revision_for)
 from mirage.types import FileStat, FileType, PathSpec
-from mirage.utils.errors import enoent, readdir_error
+from mirage.utils.errors import enoent, listing_error
 from mirage.utils.filetype import guess_type
 from mirage.utils.ranges import range_header
 
@@ -584,7 +584,7 @@ async def readdir_items(config: MsGraphConfig, loc: DriveLoc,
         # under a file alike, so the errno comes from walking the
         # ancestors: one item request per component, on this failure
         # path only.
-        raise await readdir_error(virtual_key, loc.path,
+        raise await listing_error(virtual_key, loc.path,
                                   partial(_is_file, config, loc),
                                   partial(_is_dir, config, loc)) from exc
     base = "/" + stripped if stripped else ""

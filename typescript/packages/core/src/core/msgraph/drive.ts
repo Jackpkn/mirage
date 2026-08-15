@@ -19,7 +19,7 @@ import { buildTree, emitStartPath, keep, type PredNode } from '../../commands/bu
 import { record, recordingActive, recordStream, revisionFor } from '../../observe/context.ts'
 import type { FindOptions } from '../../resource/base.ts'
 import { FileStat, FileType, PathSpec } from '../../types.ts'
-import { enoent, readdirError } from '../../utils/errors.ts'
+import { enoent, listingError } from '../../utils/errors.ts'
 import { guessType } from '../../utils/filetype.ts'
 import { rstripSlash, stripSlash } from '../../utils/slash.ts'
 import type { MsGraphConfigResolved } from './config.ts'
@@ -569,7 +569,7 @@ export async function readdirItems(
     // Graph 404s a children listing for a missing item and for one under a
     // file alike, so the errno comes from walking the ancestors: one item
     // request per component, on this failure path only.
-    throw await readdirError(
+    throw await listingError(
       path,
       loc.path,
       (p) => isFile(config, loc, p),
