@@ -188,6 +188,12 @@ export function isUnsatisfiableRange(err: unknown): boolean {
   // spaced spelling above can see it.
   if (/RequestedRangeNotSatisfiable/i.test(message)) return true
   if (/exceeded the size of the entity/i.test(message)) return true
+  // Asked for a window past the end, huggingface echoes a Content-Range whose
+  // end precedes its start (`bytes 99-2/3` for a 3-byte file) and OpenDAL
+  // refuses to parse it rather than reporting a status. Both halves are
+  // matched so a genuinely malformed header from anywhere else still raises.
+  if (/content range is invalid/i.test(message) && /end is less than start/i.test(message))
+    return true
   // A reader that seeks rather than sending a header (OpenDAL's file object,
   // which hf and nextcloud both open) raises from the seek itself instead of
   // surfacing a status. Same condition, so it is matched here rather than

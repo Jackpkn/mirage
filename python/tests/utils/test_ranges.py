@@ -189,3 +189,16 @@ def test_window_of_leaves_a_whole_file_read_alone():
     """A reader with no window passes None, and the offset a slice would
     otherwise apply is not zero by accident but absent."""
     assert window_of(b"0123456789", 200, None) == b"0123456789"
+
+
+HF_INVALID_CONTENT_RANGE = (
+    "Unexpected (permanent) at read, context: { value: bytes 99-2/3, "
+    "called: BytesContentRange::from_str, service: hf, path: "
+    "range_past.txt, range: 99-103 } => header content range is invalid: "
+    "end is less than start")
+
+
+def test_the_huggingface_backwards_content_range_is_unsatisfiable():
+    """Past the end huggingface echoes a range whose end precedes its
+    start and OpenDAL refuses to parse it, so no status ever surfaces."""
+    assert is_unsatisfiable_range(RuntimeError(HF_INVALID_CONTENT_RANGE))

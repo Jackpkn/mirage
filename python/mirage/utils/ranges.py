@@ -193,4 +193,10 @@ def is_unsatisfiable_range(exc: BaseException) -> bool:
         return True
     if "exceeded the size of the entity" in text:
         return True
+    # Asked for a window past the end, huggingface echoes a Content-Range
+    # whose end precedes its start (``bytes 99-2/3`` for a 3-byte file)
+    # and OpenDAL refuses to parse it rather than reporting a status.
+    if ("content range is invalid" in text
+            and "end is less than start" in text):
+        return True
     return "seek" in text and "beyond the end" in text

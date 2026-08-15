@@ -207,3 +207,20 @@ describe('windowOf', () => {
     expect(DEC.decode(windowOf(DATA, 200, undefined))).toBe('0123456789')
   })
 })
+
+const HF_INVALID_CONTENT_RANGE =
+  'Unexpected (permanent) at read, context: { value: bytes 99-2/3, ' +
+  'called: BytesContentRange::from_str, service: hf, path: range_past.txt, ' +
+  'range: 99-103 } => header content range is invalid: end is less than start'
+
+describe('isUnsatisfiableRange on huggingface', () => {
+  // Past the end huggingface echoes a range whose end precedes its start and
+  // OpenDAL refuses to parse it, so no status ever surfaces.
+  it('reads a backwards content range as past the end', () => {
+    expect(isUnsatisfiableRange(new Error(HF_INVALID_CONTENT_RANGE))).toBe(true)
+  })
+
+  it('still raises on a malformed header with no such wording', () => {
+    expect(isUnsatisfiableRange(new Error('header content range is invalid: junk'))).toBe(false)
+  })
+})

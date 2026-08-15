@@ -38,19 +38,12 @@ def _read_response_bytes(response) -> bytes:
     return bytes(contents)
 
 
-def _content_range(response) -> str | None:
-    if isinstance(response, dict):
-        value = response.get("content-range")
-        return value if isinstance(value, str) else None
-    return None
-
-
 def _download_bytes_sync(
     accessor: DatabricksVolumeAccessor,
     remote_path: str,
     window: str | None,
-) -> tuple[bytes, bool]:
-    """Download a file, and whether the answer is already the window.
+) -> bytes:
+    """Download a file, optionally only a byte range of it.
 
     Args:
         accessor (DatabricksVolumeAccessor): Databricks accessor.
@@ -59,7 +52,7 @@ def _download_bytes_sync(
             of it.
     """
     if window is None:
-        return _read_response_bytes(accessor.files.download(remote_path)), True
+        return _read_response_bytes(accessor.files.download(remote_path))
     headers = {
         "Accept": "application/octet-stream",
         "Range": window,
@@ -81,7 +74,7 @@ def _download_bytes_sync(
         ],
         raw=True,
     )
-    return _read_response_bytes(response), _content_range(response) is not None
+    return _read_response_bytes(response)
 
 
 async def read_bytes(
@@ -98,7 +91,7 @@ async def read_bytes(
         record("read", virtual, "databricks_volume", 0, start_ms)
         return b""
     try:
-        data, ranged = await asyncio.to_thread(
+        data = await asyncio.to_thread(
             _download_bytes_sync,
             accessor,
             remote_path,
@@ -108,11 +101,15 @@ async def read_bytes(
         if is_not_found(exc):
             raise enoent(path) from exc
         raise
-    # A Range is a request, not an instruction: a gateway may answer 200
-    # with the whole object. Only a Content-Range proves the bytes are
-    # already the window, and the SDK surfaces the header rather than the
-    # status, so it stands in for the 206 the other backends check.
-    if not ranged:
+    # A Range is a request, not an instruction: a gateway may answer with
+    # the whole object. The other HTTP backends tell the two apart by the
+    # 206, but the SDK hands back a dict of the headers it was asked for
+    # and no status, and the Files API answers a honored range with no
+    # Content-Range either, so neither proof is available here. A body
+    # longer than the window is one, though, and it is the only case that
+    # matters: it is the read that returns more bytes than the caller
+    # gave room for. A short answer is what EOF looks like and is kept.
+    if size is not None and len(data) > size:
         data = slice_window(data, offset, size)
     record("read", virtual, "databricks_volume", len(data), start_ms)
     return data
