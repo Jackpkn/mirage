@@ -22,7 +22,7 @@ import {
   type PathSpec,
 } from '@struktoai/mirage-core'
 import type { GridFSAccessor } from '../../accessor/gridfs.ts'
-import { bucket, gridfsKey, latestFile, loadGridFSModule, rawPathOf } from './_client.ts'
+import { bucket, fileById, gridfsKey, latestFile, loadGridFSModule, rawPathOf } from './_client.ts'
 
 export interface GridFSReadOptions {
   offset?: number
@@ -45,6 +45,23 @@ export async function resolveFileId(
   return doc._id
 }
 
+// The window the driver will accept for a file of `length` bytes, or null
+// when it is empty. The node driver validates a window against the stored
+// length and refuses every POSIX-shaped answer: a start past the end, an end
+// past the end, and even an omitted end, which it defaults to 0 and then
+// reads as ending before the start. A POSIX read does none of that, it just
+// comes back short, so the window is clamped to the file here. Python needs
+// no equivalent: its driver reads through a file object that seeks and stops
+// at EOF like any file.
+function clampWindow(
+  length: number,
+  options: GridFSReadOptions,
+): { start: number; end: number } | null {
+  const start = Math.min(options.offset ?? 0, length)
+  const end = options.size === undefined ? length : Math.min(start + options.size, length)
+  return start >= end ? null : { start, end }
+}
+
 export async function downloadBytes(
   accessor: GridFSAccessor,
   path: PathSpec,
@@ -52,17 +69,16 @@ export async function downloadBytes(
   options: GridFSReadOptions = {},
 ): Promise<Uint8Array> {
   const b = await bucket(accessor)
-  const streamOptions: { start?: number; end?: number } = {}
-  if (options.offset !== undefined && options.offset !== 0) {
-    streamOptions.start = options.offset
+  const windowed = (options.offset ?? 0) !== 0 || options.size !== undefined
+  let streamOptions: { start: number; end: number } | undefined
+  if (windowed) {
+    const doc = await fileById(accessor, fileId)
+    if (doc === null) throw enoent(path)
+    const window = clampWindow(doc.length, options)
+    if (window === null) return new Uint8Array(0)
+    streamOptions = window
   }
-  if (options.size !== undefined) {
-    streamOptions.end = (options.offset ?? 0) + options.size
-  }
-  const readable = b.openDownloadStream(
-    fileId,
-    Object.keys(streamOptions).length > 0 ? streamOptions : undefined,
-  )
+  const readable = b.openDownloadStream(fileId, streamOptions)
   const chunks: Uint8Array[] = []
   let total = 0
   try {
