@@ -390,6 +390,7 @@
       "slots": [
         "is_mounted",
         "read_bytes",
+        "read_range",
         "read_stream",
         "readdir",
         "stat"
@@ -715,6 +716,7 @@
         "is_mounted",
         "mkdir",
         "read_bytes",
+        "read_range",
         "read_stream",
         "readdir",
         "rename",
