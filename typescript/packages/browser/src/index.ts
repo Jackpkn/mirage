@@ -13,7 +13,6 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 export * from '@struktoai/mirage-core'
-export { MountMode } from '@struktoai/mirage-core'
 export { Workspace } from './workspace.ts'
 export {
   OPFSResource,
@@ -234,14 +233,6 @@ export {
   type GSlidesConfigRedacted,
 } from './resource/gslides/config.ts'
 export { GDriveResource, type GDriveResourceState } from './resource/gdrive/gdrive.ts'
-export {
-  Mem0Resource,
-  OneDriveResource,
-  SharePointResource,
-  type Mem0Config,
-  type OneDriveConfig,
-  type SharePointConfig,
-} from '@struktoai/mirage-core'
 export {
   normalizeGDriveConfig,
   redactGDriveConfig,

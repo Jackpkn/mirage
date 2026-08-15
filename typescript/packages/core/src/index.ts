@@ -185,9 +185,14 @@ export {
   SPECS,
   UsageStyle,
 } from './commands/spec/index.ts'
-export { type ByteSource, IOResult, type IOResultInit, materialize } from './io/types.ts'
+export {
+  type ByteSource,
+  IOResult,
+  type IOResultInit,
+  materialize,
+  OpReport,
+} from './io/types.ts'
 export { CachableAsyncIterator } from './io/cachable_iterator.ts'
-export { OpReport } from './io/types.ts'
 export {
   asyncChain,
   closeQuietly,
@@ -251,7 +256,6 @@ export {
   withDefaultProvisions,
   writeMetadataProvision,
 } from './commands/builtin/generic_bind/index.ts'
-export { numberLines } from './commands/builtin/generic/cat.ts'
 export { CUT_OPEN_END, cutBytes, cutStream, parseCutRanges } from './commands/builtin/cut_helper.ts'
 export { cutGeneric } from './commands/builtin/generic/cut.ts'
 export { tacGeneric } from './commands/builtin/generic/tac.ts'
@@ -331,13 +335,12 @@ export {
 } from './commands/builtin/generic/cp.ts'
 export { mvFlags, mvGeneric, parseMvFlags, type MvFlags } from './commands/builtin/generic/mv.ts'
 export { awkGeneric } from './commands/builtin/generic/awk.ts'
-export { catGeneric } from './commands/builtin/generic/cat.ts'
-export { headGeneric } from './commands/builtin/generic/head.ts'
+export { catGeneric, numberLines } from './commands/builtin/generic/cat.ts'
+export { headGeneric, headStream } from './commands/builtin/generic/head.ts'
 export { tailGeneric } from './commands/builtin/generic/tail.ts'
 export { wcGeneric } from './commands/builtin/generic/wc.ts'
 export { readlinkGeneric } from './commands/builtin/generic/readlink.ts'
 export { fmtGeneric } from './commands/builtin/generic/fmt.ts'
-export { headStream } from './commands/builtin/generic/head.ts'
 export { basenameFn } from './commands/builtin/generic/basename.ts'
 export { dirnameFn } from './commands/builtin/generic/dirname.ts'
 export {
@@ -370,8 +373,10 @@ export {
 export {
   compilePattern,
   escapeRegex,
+  grepFilesOnly,
   type GrepLinesOptions,
   grepLines,
+  grepRecursive,
   type GrepStreamOptions,
   grepStream,
   patternArg,
@@ -424,7 +429,6 @@ export {
   formatRecords,
 } from './commands/builtin/utils/output.ts'
 export { removalLines } from './commands/builtin/utils/verbose.ts'
-export { grepFilesOnly, grepRecursive } from './commands/builtin/grep_helper.ts'
 export { interpretEscapes } from './commands/builtin/utils/escapes.ts'
 export {
   deflateRaw,
@@ -459,17 +463,23 @@ export {
 export { awkStream } from './commands/builtin/generic/awk_helper.ts'
 export {
   executeProgram,
-  executeProgram as sedExecuteProgram,
   parseOneCommand,
-  parseOneCommand as sedParseOneCommand,
   parseProgram,
-  parseProgram as sedParseProgram,
   translateReplacement,
   type SedCommand,
 } from './commands/builtin/sed_helper.ts'
 export { readTar, type TarEntry, writeTar } from './commands/builtin/tar_helper.ts'
 export { Precision, ProvisionResult, type ProvisionResultInit } from './provision/types.ts'
-export { IndexEntry, type IndexEntryInit, ResourceType } from './cache/index/config.ts'
+export {
+  type IndexConfig,
+  IndexEntry,
+  type IndexEntryInit,
+  type ListResult,
+  LookupStatus,
+  type LookupResult,
+  type RedisIndexConfig,
+  ResourceType,
+} from './cache/index/config.ts'
 export { drainBudget, type FileCache, validateMaxDrainBytes } from './cache/file/mixin.ts'
 export { CacheEntry, type CacheEntryInit } from './cache/file/entry.ts'
 export { CacheType, type CacheConfig, type RedisCacheConfig } from './cache/file/config.ts'
@@ -482,13 +492,6 @@ export {
 export { defaultFingerprint, globEscape, parseLimit } from './cache/file/utils.ts'
 export { RAMFileCacheStore } from './cache/file/ram.ts'
 export { applyIo, readFingerprint } from './cache/file/io.ts'
-export {
-  LookupStatus,
-  type IndexConfig,
-  type ListResult,
-  type LookupResult,
-  type RedisIndexConfig,
-} from './cache/index/config.ts'
 export { IndexCacheStore } from './cache/index/store.ts'
 export { RAMIndexCacheStore } from './cache/index/ram.ts'
 export { CacheManager } from './cache/manager.ts'
@@ -567,9 +570,13 @@ export { PythonRuntime } from './runtime/python/base.ts'
 export { JsRuntime } from './runtime/js/base.ts'
 export {
   bindCommands,
+  buildRuntime,
+  candidates,
   DEFAULT_ENTRIES,
   DEFAULT_PYTHON,
+  registerRuntime,
   runtimeBindingsFor,
+  RUNTIMES,
   VFSRuntime,
 } from './runtime/table.ts'
 export {
@@ -646,7 +653,6 @@ export {
   type OpsResultContext,
   type Policy,
 } from './policy/index.ts'
-export { buildRuntime, candidates, registerRuntime, RUNTIMES } from './runtime/table.ts'
 // The concrete runtime classes stay unexported on purpose: buildRuntime
 // is the one construction door, and a config block reaches it as a plain
 // object. Exporting the config TYPE is what makes that object checkable,
