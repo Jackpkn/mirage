@@ -100,14 +100,14 @@ export class GSheetsResource extends BaseResource implements Resource {
     return gsheetsResolveGlob(this.accessor, effective, this.index)
   }
 
-  getState(): Promise<GSheetsResourceState> {
+  override getState(): Promise<GSheetsResourceState> {
     return Promise.resolve({
       type: this.kind,
       config: redactGSheetsConfig(this.config),
     })
   }
 
-  loadState(_state: GSheetsResourceState): Promise<void> {
+  override loadState(_state: GSheetsResourceState): Promise<void> {
     return Promise.resolve()
   }
 }

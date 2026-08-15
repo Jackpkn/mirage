@@ -12,11 +12,18 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import os
+from functools import partial
+
 import pytest
 
 from mirage.accessor.disk import DiskAccessor
 from mirage.core.disk.du import entries
 from mirage.types import PathSpec
+
+
+def _backslashed_relpath(real_relpath, path, start):
+    return real_relpath(path, start).replace("/", "\\")
 
 
 @pytest.mark.asyncio
@@ -31,3 +38,18 @@ async def test_entries_returns_pairs(tmp_path):
     assert "/a.txt" in paths
     assert "/sub/b.txt" in paths
     assert total == 5
+
+
+@pytest.mark.asyncio
+async def test_entries_normalizes_native_separator(tmp_path, monkeypatch):
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "sub" / "b.txt").write_bytes(b"bb")
+    # Simulate Windows: os.path.relpath joins with the native separator.
+    monkeypatch.setattr(os.path, "relpath",
+                        partial(_backslashed_relpath, os.path.relpath))
+    monkeypatch.setattr(os, "sep", "\\")
+    accessor = DiskAccessor(tmp_path)
+    found, total = await entries(
+        accessor, PathSpec(resource_path="", virtual="/", directory="/"))
+    assert [p for p, _ in found] == ["/sub/b.txt"]
+    assert total == 2

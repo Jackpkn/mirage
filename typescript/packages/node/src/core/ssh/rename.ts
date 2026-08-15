@@ -12,7 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { invalidateAfterUnlink, invalidateAfterWrite } from '@struktoai/mirage-core'
+import { invalidateAfterUnlink } from '@struktoai/mirage-core'
 import type { PathSpec } from '@struktoai/mirage-core'
 import { enoent } from '@struktoai/mirage-core'
 import type { SSHAccessor } from '../../accessor/ssh.ts'
@@ -41,6 +41,8 @@ export async function rename(accessor: SSHAccessor, src: PathSpec, dst: PathSpec
       sftp.rename(remoteSrc, remoteDst, done)
     }
   })
-  await invalidateAfterWrite(dst)
+  // The unlink flavor on dst: a rename destroys the destination's previous
+  // identity, so a replaced empty directory loses its cached listing too.
+  await invalidateAfterUnlink(dst)
   await invalidateAfterUnlink(src)
 }

@@ -18,6 +18,11 @@ import { buildDeltaHook } from '../../core/sharepoint/watch.ts'
 
 const resolveGlob = makeResolveGlob(readdir)
 
+export interface SharePointResourceState {
+  type: string
+  config: SharePointConfigRedacted
+}
+
 export class SharePointResource extends BaseResource implements Resource {
   readonly kind: string = ResourceName.SHAREPOINT
   readonly cachesReads: boolean = true
@@ -69,12 +74,12 @@ export class SharePointResource extends BaseResource implements Resource {
     return buildDeltaHook(this.accessor)
   }
 
-  getState(): Record<string, unknown> {
+  override getState(): SharePointResourceState {
     const config: SharePointConfigRedacted = redactSharePointConfig(this.config)
     return { type: this.kind, config }
   }
 
-  loadState(_state: Record<string, unknown>): Promise<void> {
+  override loadState(_state: SharePointResourceState): Promise<void> {
     return Promise.resolve()
   }
 }

@@ -17,8 +17,7 @@ import os
 import posixpath
 
 from mirage.accessor.gdrive import GDriveAccessor
-from mirage.cache.context import (invalidate_after_unlink,
-                                  invalidate_after_write)
+from mirage.cache.context import invalidate_after_unlink
 from mirage.core.gdrive.resolve import (drive_target_name, eacces_on_denied,
                                         resolve_key, resolve_parent)
 from mirage.core.google.drive import delete_file, list_files, patch_file
@@ -56,5 +55,5 @@ async def rename(accessor: GDriveAccessor, src: PathSpec,
                      src_node.id, {"name": name},
                      add_parents=add_parents,
                      remove_parents=remove_parents)
-    await invalidate_after_write(dst)
+    await invalidate_after_unlink(dst)
     await invalidate_after_unlink(src)

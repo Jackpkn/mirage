@@ -104,14 +104,14 @@ export class GDriveResource extends BaseResource implements Resource {
     return buildDeltaHook(this.accessor)
   }
 
-  getState(): Promise<GDriveResourceState> {
+  override getState(): Promise<GDriveResourceState> {
     return Promise.resolve({
       type: this.kind,
       config: redactGDriveConfig(this.config),
     })
   }
 
-  loadState(_state: GDriveResourceState): Promise<void> {
+  override loadState(_state: GDriveResourceState): Promise<void> {
     return Promise.resolve()
   }
 }

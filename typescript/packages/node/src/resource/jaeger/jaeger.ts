@@ -118,14 +118,14 @@ export class JaegerResource extends BaseResource implements Resource {
     return resolveJaegerGlob(this.accessor, effective, this.index)
   }
 
-  getState(): Promise<JaegerResourceState> {
+  override getState(): Promise<JaegerResourceState> {
     return Promise.resolve({
       type: this.kind,
       config: redactJaegerConfig(this.config),
     })
   }
 
-  loadState(_state: JaegerResourceState): Promise<void> {
+  override loadState(_state: JaegerResourceState): Promise<void> {
     return Promise.resolve()
   }
 }

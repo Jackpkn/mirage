@@ -138,7 +138,7 @@ export class GitHubResource extends BaseResource implements Resource {
     return buildDeltaHook(this.accessor)
   }
 
-  getState(): Promise<GitHubResourceState> {
+  override getState(): Promise<GitHubResourceState> {
     return Promise.resolve({
       type: this.kind,
       config: redactGitHubConfig(this.config),
@@ -147,7 +147,7 @@ export class GitHubResource extends BaseResource implements Resource {
     })
   }
 
-  loadState(_state: GitHubResourceState): Promise<void> {
+  override loadState(_state: GitHubResourceState): Promise<void> {
     return Promise.resolve()
   }
 }

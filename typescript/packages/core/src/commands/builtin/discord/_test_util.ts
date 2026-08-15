@@ -61,6 +61,10 @@ export function makeFakeResource(transport: DiscordTransport): DiscordResourceLi
     accessor,
     open: () => Promise.resolve(),
     close: () => Promise.resolve(),
+    getState: () => ({ type: 'discord' }),
+    loadState: () => {
+      // Nothing to take back.
+    },
   }
   return resource as DiscordResourceLike
 }

@@ -199,14 +199,14 @@ export class SSHResource extends BaseResource implements Resource {
   }
 
   // eslint-disable-next-line @typescript-eslint/require-await
-  async getState(): Promise<SSHResourceState> {
+  override async getState(): Promise<SSHResourceState> {
     return {
       type: this.kind,
       config: redactSshConfig(this.config),
     }
   }
 
-  loadState(_state: SSHResourceState): Promise<void> {
+  override loadState(_state: SSHResourceState): Promise<void> {
     return Promise.resolve()
   }
 }

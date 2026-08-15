@@ -79,17 +79,17 @@ export async function toStateDict(ws: Workspace): Promise<WorkspaceStateDict> {
   for (let i = 0; i < mounts.length; i++) {
     const m = mounts[i]
     if (m === undefined) continue
-    const resource = m.resource as unknown as {
-      kind: string
-      getState: () => ResourceState | Promise<ResourceState>
-    }
-    const state = await Promise.resolve(resource.getState())
+    // The resource is no longer cast into a shape that promises getState:
+    // the contract carries it, so a resource missing one fails to compile
+    // rather than throwing here at save time. What remains narrows the
+    // returned state to the snapshot format's union.
+    const state = (await Promise.resolve(m.resource.getState())) as ResourceState
     mountSnapshots.push({
       index: i,
       prefix: m.prefix,
       mode: m.mode,
       consistency: ConsistencyPolicy.LAZY,
-      resource_class: resource.kind,
+      resource_class: m.resource.kind,
       resource_state: state,
     })
   }
@@ -299,10 +299,8 @@ export async function applyStateDict(ws: Workspace, state: WorkspaceStateDict): 
     // ancestor mount (which would load state into the wrong resource).
     const mount = ws.registry.tryMountForPrefix(m.prefix)
     if (mount === null) continue
-    const resource = mount.resource as unknown as {
-      loadState: (state: ResourceState) => void | Promise<void>
-    }
-    await Promise.resolve(resource.loadState(m.resource_state as RAMResourceState))
+    // No cast, for the same reason as toStateDict above.
+    await Promise.resolve(mount.resource.loadState(m.resource_state as RAMResourceState))
   }
   await restoreSessions(ws, state)
   // current_agent_id is not restored separately: TS models a single

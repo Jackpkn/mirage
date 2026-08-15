@@ -13,6 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { normalizeFields } from '../../utils/normalize.ts'
+import { REDACTED_SECRET, type RedactedConfig } from '../secrets.ts'
 
 export interface MongoDBConfig {
   uri: string
@@ -45,4 +46,14 @@ export function resolveMongoDBConfig(config: MongoDBConfig): MongoDBConfigResolv
     maxDocLimit: config.maxDocLimit ?? 5000,
     elideFields: config.elideFields ?? {},
   }
+}
+
+// `uri` is the credential. Masking it is what makes
+// `resourceStateRequiresOverride` demand a fresh one at load instead of
+// quietly rebuilding the mount as an empty RAMResource. Mirrors the
+// field Python annotates secret on this config.
+export type MongoDBConfigRedacted = RedactedConfig<MongoDBConfigResolved, 'uri'>
+
+export function redactMongoDBConfig(config: MongoDBConfigResolved): MongoDBConfigRedacted {
+  return { ...config, uri: REDACTED_SECRET }
 }

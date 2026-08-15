@@ -104,14 +104,14 @@ export class GmailResource extends BaseResource implements Resource {
     return gmailResolveGlob(this.accessor, effective, this.index)
   }
 
-  getState(): Promise<GmailResourceState> {
+  override getState(): Promise<GmailResourceState> {
     return Promise.resolve({
       type: this.kind,
       config: redactGmailConfig(this.config),
     })
   }
 
-  loadState(_state: GmailResourceState): Promise<void> {
+  override loadState(_state: GmailResourceState): Promise<void> {
     return Promise.resolve()
   }
 }

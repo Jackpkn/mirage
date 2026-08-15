@@ -23,13 +23,25 @@ import { DIFY_OPS } from '../../ops/dify/index.ts'
 import type { RegisteredOp } from '../../ops/registry.ts'
 import { ResourceName, type FileStat, type PathSpec } from '../../types.ts'
 import { BaseResource, type Resource } from '../base.ts'
-import { resolveDifyConfig, type DifyConfig, type DifyConfigResolved } from './config.ts'
+import {
+  type DifyConfigRedacted,
+  redactDifyConfig,
+  resolveDifyConfig,
+  type DifyConfig,
+  type DifyConfigResolved,
+} from './config.ts'
 import { DIFY_PROMPT } from './prompt.ts'
 
 const resolveGlob = makeResolveGlob(difyReaddir)
 
 export interface DifyResourceOptions {
   config: DifyConfig
+}
+
+export interface DifyResourceState {
+  type: string
+  config: DifyConfigRedacted
+  needs_override: true
 }
 
 export class DifyResource extends BaseResource implements Resource {
@@ -45,6 +57,25 @@ export class DifyResource extends BaseResource implements Resource {
     const config = 'config' in options ? options.config : options
     this.config = resolveDifyConfig(config)
     this.accessor = new DifyAccessor(this.config)
+  }
+
+  override getState(): DifyResourceState {
+    return {
+      type: this.kind,
+      config: redactDifyConfig(this.config),
+      // TypeScript cannot rebuild a config-backed mount from state:
+      // `buildMountArgs` substitutes a RAMResource for anything it was
+      // not handed. Saying so out loud turns a silently empty mount
+      // into a refusal to load. Python rebuilds via its registry, so it
+      // writes this on only four resources and reads it nowhere.
+      needs_override: true,
+    }
+  }
+
+  // Nothing to take back: the bytes live in the remote store, so a
+  // restored mount reaches them through its config alone.
+  override loadState(_state: DifyResourceState): Promise<void> {
+    return Promise.resolve()
   }
 
   open(): Promise<void> {

@@ -109,14 +109,14 @@ export class EmailResource extends BaseResource implements Resource {
     return resolveGlob(this.accessor, effective, this.index)
   }
 
-  getState(): Promise<EmailResourceState> {
+  override getState(): Promise<EmailResourceState> {
     return Promise.resolve({
       type: this.kind,
       config: redactEmailConfig(this.config),
     })
   }
 
-  loadState(_state: EmailResourceState): Promise<void> {
+  override loadState(_state: EmailResourceState): Promise<void> {
     return Promise.resolve()
   }
 }

@@ -234,7 +234,7 @@ export class RedisResource extends BaseResource implements Resource {
     return globCore(this.accessor, effective, this.index)
   }
 
-  async getState(): Promise<RedisResourceState> {
+  override async getState(): Promise<RedisResourceState> {
     const files: Record<string, Uint8Array> = {}
     for (const key of await this.store.listFiles()) {
       const data = await this.store.getFile(key)
@@ -271,7 +271,7 @@ export class RedisResource extends BaseResource implements Resource {
     }
   }
 
-  async loadState(state: RedisResourceState): Promise<void> {
+  override async loadState(state: RedisResourceState): Promise<void> {
     const c = await this.store.client()
     const pipe = c.multi()
     const dirKey = `${this.keyPrefix}dir`

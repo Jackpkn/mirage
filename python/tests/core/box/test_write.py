@@ -188,8 +188,6 @@ async def test_rename_moves_file(root_accessor):
     with patch("mirage.core.box.resolve.list_folder_items", new=_fake_list), \
          patch("mirage.core.box.rename.update_file",
                new_callable=AsyncMock) as uf, \
-         patch("mirage.core.box.rename.invalidate_after_write",
-               new_callable=AsyncMock), \
          patch("mirage.core.box.rename.invalidate_after_unlink",
                new_callable=AsyncMock):
         await rename(root_accessor, _spec("/data/a.txt"), _spec("/data/b.txt"))

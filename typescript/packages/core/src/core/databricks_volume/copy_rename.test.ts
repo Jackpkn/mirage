@@ -14,6 +14,7 @@
 
 import { mountKey } from '../../utils/key_prefix.ts'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { runWithCacheManager } from '../../cache/context.ts'
 import { copy } from './copy.ts'
 import { rename } from './rename.ts'
 import { resolveGlobOf } from '../../commands/builtin/generic_bind/index.ts'
@@ -30,6 +31,25 @@ import {
 } from './_test_util.ts'
 
 const resolveGlob = resolveGlobOf(DATABRICKS_VOLUME_IO)
+
+class FakeManager {
+  writes: string[] = []
+  unlinks: string[] = []
+
+  invalidateAfterWrite(path: string | PathSpec): Promise<void> {
+    this.writes.push(typeof path === 'string' ? path : path.mountPath)
+    return Promise.resolve()
+  }
+
+  invalidateAfterUnlink(path: string | PathSpec): Promise<void> {
+    this.unlinks.push(typeof path === 'string' ? path : path.mountPath)
+    return Promise.resolve()
+  }
+
+  cachedBytes(_path: PathSpec): Promise<Uint8Array | null> {
+    return Promise.resolve(null)
+  }
+}
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -101,6 +121,27 @@ describe('copy', () => {
       true,
     )
     expect(puts.some((c) => c.url.includes('dir2/a.txt'))).toBe(true)
+  })
+
+  it('invalidates the destination tree after a recursive copy', async () => {
+    const { fetch } = routedFetch((call) => {
+      if (call.method === 'HEAD' && call.url.includes('/fs/files/')) return notFoundResponse()
+      if (call.method === 'HEAD') return new Response(null, { status: 200 })
+      if (call.method === 'GET' && call.url.includes('/fs/directories/')) {
+        return jsonResponse({ contents: [{ path: `${TEST_ROOT}/dir/a.txt` }] })
+      }
+      if (call.method === 'GET') return new Response('data', { status: 200 })
+      return new Response(null, { status: 200 })
+    })
+    vi.stubGlobal('fetch', fetch)
+    const manager = new FakeManager()
+    await runWithCacheManager(manager, async () => {
+      await copy(makeAccessor(), spec('/volume/dir'), spec('/volume/deep/dst'), undefined, true)
+    })
+    // The destination's own listing must go (a merge target can pre-exist)
+    // along with every ancestor listing create_directory materialized.
+    expect(manager.unlinks).toEqual(['/deep/dst'])
+    expect(manager.writes).toEqual(['/deep'])
   })
 
   it('refuses copying a directory into its own subtree before any write', async () => {

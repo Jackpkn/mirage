@@ -217,14 +217,14 @@ export class GridFSResource extends BaseResource implements Resource {
     return buildDeltaHook(this.accessor)
   }
 
-  getState(): Promise<GridFSResourceState> {
+  override getState(): Promise<GridFSResourceState> {
     return Promise.resolve({
       type: this.kind,
       config: redactConfig(this.config),
     })
   }
 
-  loadState(_state: GridFSResourceState): Promise<void> {
+  override loadState(_state: GridFSResourceState): Promise<void> {
     return Promise.resolve()
   }
 }

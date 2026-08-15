@@ -12,6 +12,15 @@ function accessorWith(fake: FakeNextcloudOperator): NextcloudAccessor {
   return accessor
 }
 
+async function codeOf(promise: Promise<unknown>): Promise<string> {
+  try {
+    await promise
+  } catch (err) {
+    return (err as { code?: string }).code ?? 'no-code'
+  }
+  return 'no-throw'
+}
+
 describe('nextcloud readdir', () => {
   it('indexes listing sizes, 0-byte files included', async () => {
     const accessor = accessorWith(new FakeNextcloudOperator({ 'a.txt': 'hello', 'empty.txt': '' }))
@@ -46,5 +55,31 @@ describe('nextcloud readdir', () => {
     const index = new RAMIndexCacheStore()
     await readdir(accessor, PathSpec.fromStrPath('/'), index)
     expect((await index.get('/a.txt')).entry?.size).toBe(5)
+  })
+
+  it('reports ENOENT for a missing path', async () => {
+    const accessor = accessorWith(new FakeNextcloudOperator({ 'data/a.txt': 'a' }))
+    await expect(codeOf(readdir(accessor, PathSpec.fromStrPath('/never.txt')))).resolves.toBe(
+      'ENOENT',
+    )
+  })
+
+  it('reports ENOENT for a missing nested path', async () => {
+    const accessor = accessorWith(new FakeNextcloudOperator({ 'data/a.txt': 'a' }))
+    await expect(codeOf(readdir(accessor, PathSpec.fromStrPath('/nodir/deep')))).resolves.toBe(
+      'ENOENT',
+    )
+  })
+
+  it('reports ENOTDIR below a file', async () => {
+    const accessor = accessorWith(new FakeNextcloudOperator({ 'data/a.txt': 'a' }))
+    await expect(codeOf(readdir(accessor, PathSpec.fromStrPath('/data/a.txt/x')))).resolves.toBe(
+      'ENOTDIR',
+    )
+  })
+
+  it('does not raise on the mount root of an empty server', async () => {
+    const accessor = accessorWith(new FakeNextcloudOperator({}))
+    await expect(readdir(accessor, PathSpec.fromStrPath('/'))).resolves.toEqual([])
   })
 })

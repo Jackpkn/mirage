@@ -9,10 +9,43 @@ import {
   type IndexCacheStore,
   type PathSpec,
   compareCodePoints,
+  readdirError,
 } from '@struktoai/mirage-core'
 import type { NextcloudAccessor } from '../../accessor/nextcloud.ts'
 import { SCOPE_ERROR } from './constants.ts'
 import { isNotFound } from './util.ts'
+
+async function isFile(accessor: NextcloudAccessor, key: string): Promise<boolean> {
+  const op = await accessor.operator()
+  try {
+    return !(await op.stat(stripSlash(key))).isDirectory()
+  } catch (error) {
+    if (isNotFound(error)) return false
+    throw error
+  }
+}
+
+async function isDir(accessor: NextcloudAccessor, key: string): Promise<boolean> {
+  const op = await accessor.operator()
+  try {
+    return (await op.stat(`${stripSlash(key)}/`)).isDirectory()
+  } catch (error) {
+    if (isNotFound(error)) return false
+    throw error
+  }
+}
+
+// The errno for a path PROPFIND reported nothing at all for. Mirrors
+// Python's mirage/core/nextcloud/readdir.py `listingError`.
+async function listingError(
+  accessor: NextcloudAccessor,
+  path: PathSpec,
+  target: string,
+): Promise<Error> {
+  const file = (p: string): Promise<boolean> => isFile(accessor, p)
+  if (await file(target)) return enotdir(path)
+  return readdirError(path, target, file, (p) => isDir(accessor, p))
+}
 
 export async function readdir(
   accessor: NextcloudAccessor,
@@ -39,6 +72,15 @@ export async function readdir(
   } catch (error) {
     if (isNotFound(error)) throw enoent(path)
     throw error
+  }
+  if (entries.length === 0 && stripped !== '') {
+    // PROPFIND on a collection lists the collection itself, so an empty
+    // directory still yields one entry and only a path the server does not
+    // have yields none. The lister reports that as an empty result rather
+    // than raising, so without this `ls /nextcloud/never` rendered an empty
+    // directory and exited 0. The mount root is exempt: it exists because
+    // it is mounted.
+    throw await listingError(accessor, path, target)
   }
   const names: string[] = []
   const directories = new Set<string>()

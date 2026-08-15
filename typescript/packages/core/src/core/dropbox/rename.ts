@@ -13,19 +13,20 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import type { DropboxAccessor } from '../../accessor/dropbox.ts'
-import { invalidateAfterUnlink, invalidateAfterWrite } from '../../cache/context.ts'
+import { invalidateAfterUnlink } from '../../cache/context.ts'
 import { record } from '../../observe/context.ts'
 import type { PathSpec } from '../../types.ts'
 import { enoent } from '../../utils/errors.ts'
 import { DropboxApiError } from './_client.ts'
-import { deletePath, getMetadata, movePath } from './api.ts'
+import { deletePath, getMetadata, listFolder, movePath } from './api.ts'
 import { invalidateAncestors } from '../../cache/context.ts'
 import { dropboxPathOf } from './paths.ts'
 
-// move_v2 rejects an existing destination; GNU mv silently replaces a
-// destination FILE, so a file conflict deletes the target and retries.
-// Folder conflicts propagate (the generic mv resolves into-dir moves
-// before calling this).
+// move_v2 rejects an existing destination, but rename(2) replaces one:
+// a file outright, and a directory when it is empty. So a conflict
+// deletes the target and retries, except for a folder that still lists a
+// child, where the original error propagates and the generic mv reports
+// GNU's "Directory not empty" (mirrors msgraph's renameReplace).
 export async function rename(
   accessor: DropboxAccessor,
   src: PathSpec,
@@ -41,13 +42,16 @@ export async function rename(
     if (err.summary.startsWith('from_lookup/not_found')) throw enoent(src.virtual)
     if (!err.summary.startsWith('to/conflict')) throw err
     const existing = await getMetadata(accessor.tokenManager, to)
-    if (existing['.tag'] === 'folder') throw err
+    if (existing['.tag'] === 'folder') {
+      const children = await listFolder(accessor.tokenManager, to, { limit: 1 })
+      if (children.length > 0) throw err
+    }
     await deletePath(accessor.tokenManager, to)
     await movePath(accessor.tokenManager, from, to)
   }
   record('rename', src.virtual, 'dropbox', 0, startMs)
   await invalidateAfterUnlink(src)
   await invalidateAncestors(src)
-  await invalidateAfterWrite(dst)
+  await invalidateAfterUnlink(dst)
   await invalidateAncestors(dst)
 }

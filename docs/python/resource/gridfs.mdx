@@ -1,7 +1,7 @@
 ---
 title: GridFS
 description: Mount a MongoDB GridFS bucket as a Mirage filesystem with revisions, server-side find, and shell commands.
-icon: database
+icon: /images/mongodb-logo.svg
 ---
 The GridFS resource mounts a MongoDB GridFS bucket at some prefix such as
 `/gridfs/`. Files are stored inside MongoDB itself: metadata in the
@@ -141,10 +141,6 @@ processing (`awk`, `sed`, `sort`, `cut`, `diff`, ...), file operations
 (`cp`, `mv`, `rm`, `mkdir`, `touch`, `tee`, `split`, ...), compression, and
 encoding. Range reads (`head -c`, `tail -c`) seek chunk-wise, so large
 files are never downloaded whole.
-
-Columnar data files (`.parquet`, `.feather`, `.orc`, `.hdf5`) render as
-tabular text for `cat`, `head`, `tail`, `wc`, `stat`, `cut`, `grep`, `ls`,
-and `file`.
 
 ## Scoping a resource to a key prefix
 

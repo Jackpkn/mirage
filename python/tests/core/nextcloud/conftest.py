@@ -166,6 +166,15 @@ class FakeAsyncOperator:
         if key in self.files:
             # WebDAV PROPFIND on a file returns the file itself.
             entries.append(_FakeEntry(path=key, metadata=self.metas[key]))
+        elif pfx == "" or pfx in self.dirs or any(
+                f.startswith(pfx) for f in self.files):
+            # PROPFIND on a collection lists the collection itself, so an
+            # empty directory yields one entry where a missing path yields
+            # none. Probed against Nextcloud 30: op.list("emptydir/")
+            # answers ["emptydir/"] and op.list("never/") answers [].
+            entries.append(
+                _FakeEntry(path=pfx,
+                           metadata=_FakeMetadata(mode=EntryMode.Dir)))
         for f in self.files:
             if not f.startswith(pfx):
                 continue

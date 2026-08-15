@@ -110,14 +110,14 @@ export class SlackResource extends BaseResource implements Resource {
     return resolveSlackGlob(this.accessor, effective, this.index)
   }
 
-  getState(): Promise<SlackResourceState> {
+  override getState(): Promise<SlackResourceState> {
     return Promise.resolve({
       type: this.kind,
       config: redactSlackConfig(this.config),
     })
   }
 
-  loadState(_state: SlackResourceState): Promise<void> {
+  override loadState(_state: SlackResourceState): Promise<void> {
     return Promise.resolve()
   }
 }

@@ -12,6 +12,7 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import re
 from datetime import datetime, timezone
 from unittest.mock import patch
 
@@ -91,3 +92,105 @@ async def test_readdir_populates_index(accessor):
     assert lookup.entry.size == 3
     folder = await index.get("/sub")
     assert folder.entry is not None
+
+
+class _FakeColl:
+
+    def __init__(self, names: list[str]) -> None:
+        self._names = names
+
+    async def find_one(self, query, projection=None):
+        del projection
+        selector = query.get("filename")
+        if isinstance(selector, str):
+            match = selector in self._names
+        else:
+            pattern = re.compile(selector["$regex"])
+            match = any(pattern.match(n) for n in self._names)
+        return {"_id": ObjectId()} if match else None
+
+
+def _fake_prefix_iter(names: list[str]):
+
+    async def iter_latest(accessor, query):
+        pattern = re.compile(query["filename"]["$regex"]) if query else None
+        for name in names:
+            if pattern is None or pattern.match(name):
+                yield _doc(name)
+
+    return iter_latest
+
+
+def _bucket(names: list[str]):
+    return patch.multiple(
+        "mirage.core.gridfs.readdir",
+        iter_latest=_fake_prefix_iter(names),
+        files_coll=lambda accessor: _FakeColl(names),
+    )
+
+
+_NAMES = ["a.txt", "dir/f.txt", "dir/sub/g.txt", "empty/"]
+
+
+@pytest.mark.asyncio
+async def test_readdir_marker_only_directory_is_empty_not_missing(accessor):
+    # The zero-length "empty/" marker doc is the only trace an empty
+    # directory leaves, and it must read as an empty listing, not ENOENT.
+    with _bucket(_NAMES):
+        assert await readdir(accessor, _path("/empty")) == []
+
+
+@pytest.mark.asyncio
+async def test_readdir_root_of_an_empty_bucket_does_not_raise(accessor):
+    with _bucket([]):
+        assert await readdir(accessor, _path("/")) == []
+
+
+@pytest.mark.asyncio
+async def test_readdir_missing_path_is_enoent(accessor):
+    with _bucket(_NAMES), pytest.raises(FileNotFoundError):
+        await readdir(accessor, _path("/never.txt"))
+
+
+@pytest.mark.asyncio
+async def test_readdir_missing_nested_path_is_enoent(accessor):
+    with _bucket(_NAMES), pytest.raises(FileNotFoundError):
+        await readdir(accessor, _path("/nodir/deep"))
+
+
+@pytest.mark.asyncio
+async def test_readdir_on_a_file_doc_is_enotdir(accessor):
+    with _bucket(_NAMES), pytest.raises(NotADirectoryError):
+        await readdir(accessor, _path("/a.txt"))
+
+
+@pytest.mark.asyncio
+async def test_readdir_below_a_file_doc_is_enotdir(accessor):
+    with _bucket(_NAMES), pytest.raises(NotADirectoryError):
+        await readdir(accessor, _path("/a.txt/x"))
+
+
+@pytest.mark.asyncio
+async def test_readdir_missing_path_under_a_key_prefix_is_enoent():
+    prefixed = GridFSAccessor(
+        config=GridFSConfig(uri="mongodb://localhost:27017",
+                            database="db",
+                            bucket="data",
+                            key_prefix="team"))
+    with _bucket(["team/dir/f.txt"]), pytest.raises(FileNotFoundError):
+        await readdir(prefixed, _path("/never.txt"))
+
+
+@pytest.mark.asyncio
+async def test_readdir_missing_child_of_a_coexisting_doc_and_prefix(accessor):
+    # GridFS allows a file "a" and deeper files under "a/" at once, and a
+    # child path reaches "a" only through the prefix, so a missing child is
+    # ENOENT rather than ENOTDIR.
+    with _bucket(["a", "a/x.txt"]), pytest.raises(FileNotFoundError):
+        await readdir(accessor, _path("/a/never"))
+
+
+@pytest.mark.asyncio
+async def test_readdir_coexisting_prefix_still_lists_its_children(accessor):
+    with _bucket(["a", "a/x.txt"]):
+        assert await readdir(accessor, _path("/a")) == ["/a/x.txt"]

@@ -64,9 +64,16 @@ export class FakeNextcloudOperator {
 
   list(path: string, options?: { recursive?: boolean }): Promise<FakeEntry[]> {
     const prefix = path === '/' ? '' : path
-    if (prefix !== '' && !this.hasDirectory(prefix)) return Promise.reject(notFound('list', path))
+    // A missing path lists empty rather than raising, and PROPFIND on a
+    // collection lists the collection itself, so an empty directory yields
+    // one entry. Probed against Nextcloud 30: op.list("emptydir/") answers
+    // ["emptydir/"] and op.list("never/") answers [].
+    if (prefix !== '' && !this.hasDirectory(prefix)) return Promise.resolve([])
     const recursive = options?.recursive === true
     const entries = new Map<string, FakeEntry>()
+    if (prefix !== '') {
+      entries.set(prefix, { path: () => prefix, metadata: () => DIRECTORY_METADATA })
+    }
     for (const [key, data] of this.files) {
       if (!key.startsWith(prefix)) continue
       const rest = key.slice(prefix.length)

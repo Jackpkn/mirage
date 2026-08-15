@@ -168,6 +168,24 @@ describe('readdirError', () => {
     }
   })
 
+  it('prefers a coexisting directory over the object of the same name', async () => {
+    // A keyed store can hold an object `a` and a prefix `a/` at once, and a
+    // child path only ever reaches `a` through the directory. So the
+    // directory wins: /data/a/never is ENOENT because `never` is absent, not
+    // ENOTDIR because `a` is also an object.
+    const bothFile = (key: string): boolean => key === '/data/a' || key === '/data/a/x'
+    const bothDir = (key: string): boolean => key === '/data' || key === '/data/a'
+    for (const key of ['/data/a/never', '/data/a/never/deeper']) {
+      const err = await readdirError(key, key, bothFile, bothDir)
+      expect(err.code, key).toBe('ENOENT')
+    }
+  })
+
+  it('still reports ENOTDIR when no directory coexists', async () => {
+    const err = await readdirError('/data/a.txt/never', '/data/a.txt/never', isFile, isDir)
+    expect(err.code).toBe('ENOTDIR')
+  })
+
   it('accepts an async probe and stamps the operand spelling', async () => {
     const err = await readdirError(
       { virtual: '/data/nope', rawPath: 'nope' },

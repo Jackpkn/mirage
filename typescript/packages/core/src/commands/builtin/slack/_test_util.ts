@@ -46,6 +46,10 @@ export function makeFakeResource(transport: SlackTransport): SlackResourceLike {
     accessor,
     open: () => Promise.resolve(),
     close: () => Promise.resolve(),
+    getState: () => ({ type: 'slack' }),
+    loadState: () => {
+      // Nothing to take back.
+    },
   }
   return resource as SlackResourceLike
 }

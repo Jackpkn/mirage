@@ -14,19 +14,19 @@
 
 import { describe, expect, it, vi } from 'vitest'
 import { IOResult, materialize } from '../../io/types.ts'
-import type { Resource } from '../../resource/base.ts'
+import { BaseResource, type Resource } from '../../resource/base.ts'
 import { FileStat, FileType, MountMode, PathSpec } from '../../types.ts'
 import { enoent } from '../../utils/errors.ts'
 import { MountRegistry } from '../mount/registry.ts'
 import { handleCrossMount, isCrossMount } from './cross_mount.ts'
 import type { RunSingle } from '../../commands/builtin/generic/crossmount/index.ts'
 
-class Stub implements Resource {
+class Stub extends BaseResource implements Resource {
   readonly kind = 'stub'
   open(): Promise<void> {
     return Promise.resolve()
   }
-  close(): Promise<void> {
+  override close(): Promise<void> {
     return Promise.resolve()
   }
 }

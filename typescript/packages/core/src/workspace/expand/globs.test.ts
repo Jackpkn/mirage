@@ -13,17 +13,17 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { describe, expect, it } from 'vitest'
-import type { Resource } from '../../resource/base.ts'
+import { BaseResource, type Resource } from '../../resource/base.ts'
 import { MountMode, PathSpec } from '../../types.ts'
 import { MountRegistry } from '../mount/registry.ts'
 import { resolveGlobs, type ResourceWithGlob } from './globs.ts'
 
-class PlainResource implements Resource {
+class PlainResource extends BaseResource implements Resource {
   readonly kind = 'plain'
   open(): Promise<void> {
     return Promise.resolve()
   }
-  close(): Promise<void> {
+  override close(): Promise<void> {
     return Promise.resolve()
   }
 }
@@ -31,12 +31,12 @@ class PlainResource implements Resource {
 // A resource that implements nullglob-off on its own: a no-match ask comes
 // back as the spec it was handed. `glob` is a public hook, so the shape
 // resolveGlobs sends is not a contract it can rely on.
-class EchoGlobResource implements ResourceWithGlob {
+class EchoGlobResource extends BaseResource implements ResourceWithGlob {
   readonly kind = 'echo'
   open(): Promise<void> {
     return Promise.resolve()
   }
-  close(): Promise<void> {
+  override close(): Promise<void> {
     return Promise.resolve()
   }
   glob(paths: readonly PathSpec[]): Promise<PathSpec[]> {
@@ -44,13 +44,15 @@ class EchoGlobResource implements ResourceWithGlob {
   }
 }
 
-class GlobResource implements ResourceWithGlob {
+class GlobResource extends BaseResource implements ResourceWithGlob {
   readonly kind = 'glob'
-  constructor(private readonly results: PathSpec[]) {}
+  constructor(private readonly results: PathSpec[]) {
+    super()
+  }
   open(): Promise<void> {
     return Promise.resolve()
   }
-  close(): Promise<void> {
+  override close(): Promise<void> {
     return Promise.resolve()
   }
   glob(): Promise<PathSpec[]> {

@@ -13,8 +13,7 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 from mirage.accessor.onedrive import OneDriveAccessor
-from mirage.cache.context import (invalidate_after_unlink,
-                                  invalidate_after_write)
+from mirage.cache.context import invalidate_after_unlink
 from mirage.core.msgraph.drive_ops import rename_replace
 from mirage.core.onedrive._client import drive_loc, split_path
 from mirage.types import PathSpec
@@ -27,5 +26,5 @@ async def rename(accessor: OneDriveAccessor, src: PathSpec,
     config = accessor.config
     await rename_replace(config, drive_loc(config, src_s),
                          drive_loc(config, dst_s))
-    await invalidate_after_write(dst)
+    await invalidate_after_unlink(dst)
     await invalidate_after_unlink(src)

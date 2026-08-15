@@ -13,8 +13,7 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 from mirage.accessor.box import BoxAccessor
-from mirage.cache.context import (invalidate_after_unlink,
-                                  invalidate_after_write)
+from mirage.cache.context import invalidate_after_unlink
 from mirage.core.box.api import (delete_file, delete_folder, update_file,
                                  update_folder)
 from mirage.core.box.resolve import path_parts, resolve_item, resolve_parent_id
@@ -48,5 +47,5 @@ async def rename(accessor: BoxAccessor, src: PathSpec, dst: PathSpec) -> None:
                             parent_id=dst_parent)
     else:
         await update_file(tm, item["id"], name=new_name, parent_id=dst_parent)
-    await invalidate_after_write(dst)
+    await invalidate_after_unlink(dst)
     await invalidate_after_unlink(src)

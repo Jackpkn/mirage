@@ -23,6 +23,7 @@ import {
   type RegisteredCommand,
   type RegisteredOp,
   type Resource,
+  type ResourceStateBase,
 } from '@struktoai/mirage-core'
 import type { HfAccessor } from '../../accessor/hf.ts'
 import { HF_COMMANDS } from '../../commands/builtin/hf/index.ts'
@@ -45,9 +46,14 @@ import { buildDeltaHook } from '../../core/hf/watch.ts'
 const globCore = makeResolveGlob(readdirCore, SCOPE_ERROR)
 
 export abstract class HfResource extends BaseResource implements Resource {
-  abstract readonly kind: string
   abstract readonly prompt: string
   abstract readonly accessor: HfAccessor
+  // Narrowed back to abstract, so BaseResource's bare `{type}` cannot reach
+  // a Hub resource: all four carry a config and so owe their own redaction,
+  // and inheriting the default would drop it and read back as an empty
+  // mount. Python has no shared Hub base — its four resources each spell
+  // `get_state` — so this only pins the habit down.
+  abstract override getState(): Promise<ResourceStateBase>
   readonly cachesReads: boolean = true
   // The Hub tree API reports each file's exact byte size (the LFS
   // object size for LFS files); readdir backfills any lister-omitted
@@ -143,7 +149,7 @@ export abstract class HfResource extends BaseResource implements Resource {
     return globCore(this.accessor, effective, this.index)
   }
 
-  loadState(_state: unknown): Promise<void> {
+  override loadState(_state: unknown): Promise<void> {
     return Promise.resolve()
   }
 }

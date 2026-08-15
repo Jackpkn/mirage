@@ -18,13 +18,49 @@ import { norm, nowIso } from './utils.ts'
 import { rstripSlash } from '../../utils/slash.ts'
 import { enoent } from '../../utils/errors.ts'
 import { checkDestParents } from './dest.ts'
-import { invalidateAfterUnlink, invalidateAfterWrite } from '../../cache/context.ts'
+import { invalidateAfterUnlink } from '../../cache/context.ts'
 
 function moveAttrs(accessor: RAMAccessor, src: string, dst: string): void {
   const attrs = accessor.store.attrs.get(src)
   if (attrs !== undefined) {
     accessor.store.attrs.delete(src)
     accessor.store.attrs.set(dst, attrs)
+  }
+}
+
+// Re-key every descendant of a renamed directory. A synthetic-directory
+// store keeps subdirectories as entries of their own, so moving only the
+// files leaves those behind. The phantom tree the orphans imply makes the
+// old name reappear in its parent's listing and then stat as missing --
+// the same shape checkDestParents refuses on the way in.
+function moveSubtree(accessor: RAMAccessor, s: string, d: string): void {
+  const srcPrefix = `${rstripSlash(s)}/`
+  const dstPrefix = `${rstripSlash(d)}/`
+  const { store } = accessor
+  for (const key of [...store.dirs]) {
+    if (!key.startsWith(srcPrefix)) continue
+    store.dirs.delete(key)
+    store.dirs.add(dstPrefix + key.slice(srcPrefix.length))
+  }
+  for (const key of [...store.files.keys()]) {
+    if (!key.startsWith(srcPrefix)) continue
+    const data = store.files.get(key)
+    if (data !== undefined) {
+      store.files.set(dstPrefix + key.slice(srcPrefix.length), data)
+      store.files.delete(key)
+    }
+  }
+  for (const key of [...store.modified.keys()]) {
+    if (!key.startsWith(srcPrefix)) continue
+    const mod = store.modified.get(key)
+    if (mod !== undefined) {
+      store.modified.set(dstPrefix + key.slice(srcPrefix.length), mod)
+      store.modified.delete(key)
+    }
+  }
+  for (const key of [...store.attrs.keys()]) {
+    if (!key.startsWith(srcPrefix)) continue
+    moveAttrs(accessor, key, dstPrefix + key.slice(srcPrefix.length))
   }
 }
 
@@ -41,7 +77,7 @@ export async function rename(accessor: RAMAccessor, src: PathSpec, dst: PathSpec
     accessor.store.modified.delete(s)
     moveAttrs(accessor, s, d)
     await invalidateAfterUnlink(src)
-    await invalidateAfterWrite(dst)
+    await invalidateAfterUnlink(dst)
     return Promise.resolve()
   }
   if (accessor.store.dirs.has(s)) {
@@ -50,21 +86,9 @@ export async function rename(accessor: RAMAccessor, src: PathSpec, dst: PathSpec
     accessor.store.modified.set(d, accessor.store.modified.get(s) ?? now)
     accessor.store.modified.delete(s)
     moveAttrs(accessor, s, d)
-    const srcPrefix = `${rstripSlash(s)}/`
-    const dstPrefix = `${rstripSlash(d)}/`
-    for (const key of [...accessor.store.files.keys()]) {
-      if (key.startsWith(srcPrefix)) {
-        const newKey = dstPrefix + key.slice(srcPrefix.length)
-        const data = accessor.store.files.get(key)
-        if (data !== undefined) {
-          accessor.store.files.set(newKey, data)
-          accessor.store.files.delete(key)
-        }
-        moveAttrs(accessor, key, dstPrefix + key.slice(srcPrefix.length))
-      }
-    }
+    moveSubtree(accessor, s, d)
     await invalidateAfterUnlink(src)
-    await invalidateAfterWrite(dst)
+    await invalidateAfterUnlink(dst)
     return Promise.resolve()
   }
   throw enoent(src)

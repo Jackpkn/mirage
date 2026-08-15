@@ -22,6 +22,18 @@ from mirage.resource.secrets import reveal_secret
 from mirage.utils import key_prefix as kp
 
 
+def is_not_found(exc: Exception) -> bool:
+    """Whether an S3 error means the key is absent.
+
+    Args:
+        exc (Exception): Error raised by a botocore call.
+    """
+    if hasattr(exc, "response"):
+        code = exc.response.get("Error", {}).get("Code")
+        return code in ("404", "NoSuchKey")
+    return False
+
+
 def _key(path: str, config: S3Config) -> str:
     return kp.apply(config.key_prefix or "", path)
 

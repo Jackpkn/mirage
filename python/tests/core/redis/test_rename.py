@@ -63,6 +63,29 @@ async def test_rename_dir_moves_children(accessor):
 
 
 @pytest.mark.asyncio
+async def test_rename_dir_moves_nested_subdirectories(accessor):
+    """The subtree, not just the files under it.
+
+    A synthetic-directory store records each subdirectory as a member of
+    its own set; leaving them behind implied a phantom source tree, so the
+    old name kept appearing in its parent's listing and then stat as
+    missing. The one-level fixture above cannot see this, which is how it
+    survived.
+    """
+    store = accessor.store
+    await store.add_dir("/dir/sub")
+    await store.set_file("/dir/sub/deep", b"z")
+    await store.set_modified("/dir/sub/deep", "T0")
+    await rename(accessor, spec("/dir"), spec("/d/moved"))
+    assert not await store.has_dir("/dir/sub")
+    assert await store.has_dir("/d/moved/sub")
+    assert await store.get_file("/d/moved/sub/deep") == b"z"
+    assert not await store.has_file("/dir/sub/deep")
+    # mtimes travel with the subtree; GNU mv preserves them.
+    assert await store.get_modified("/d/moved/sub/deep") == "T0"
+
+
+@pytest.mark.asyncio
 async def test_rename_missing_source(accessor):
     with pytest.raises(FileNotFoundError):
         await rename(accessor, spec("/nope"), spec("/d/x"))

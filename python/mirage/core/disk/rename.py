@@ -17,8 +17,7 @@ from pathlib import Path
 import aiofiles.os
 
 from mirage.accessor.disk import DiskAccessor
-from mirage.cache.context import (invalidate_after_unlink,
-                                  invalidate_after_write)
+from mirage.cache.context import invalidate_after_unlink
 from mirage.types import PathSpec
 
 
@@ -35,5 +34,7 @@ async def rename(accessor: DiskAccessor, src_spec: PathSpec,
     dst = dst_spec.mount_path
     root = accessor.root
     await invalidate_after_unlink(src_spec)
-    await invalidate_after_write(dst_spec)
+    # The unlink flavor on dst: a rename destroys the destination's previous
+    # identity, so a replaced empty directory loses its cached listing too.
+    await invalidate_after_unlink(dst_spec)
     await aiofiles.os.rename(_resolve(root, src), _resolve(root, dst))

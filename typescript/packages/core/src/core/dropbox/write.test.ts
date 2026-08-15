@@ -173,6 +173,30 @@ describe('dropbox rename', () => {
     expect(api.movePath).toHaveBeenCalledTimes(2)
   })
 
+  it('replaces an empty dir destination like rename(2)', async () => {
+    vi.mocked(api.movePath)
+      .mockRejectedValueOnce(new DropboxApiError('conflict', 409, 'to/conflict/folder/...'))
+      .mockResolvedValueOnce(undefined)
+    vi.mocked(api.getMetadata).mockResolvedValue(folderEntry('/dst'))
+    vi.mocked(api.listFolder).mockResolvedValue([])
+    await rename(makeAccessor(), spec('/src'), spec('/dst'))
+    expect(api.deletePath).toHaveBeenCalledWith(STUB_TM, '/dst')
+    expect(api.movePath).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps the error for a non-empty dir destination', async () => {
+    vi.mocked(api.movePath).mockRejectedValue(
+      new DropboxApiError('conflict', 409, 'to/conflict/folder/...'),
+    )
+    vi.mocked(api.getMetadata).mockResolvedValue(folderEntry('/dst'))
+    vi.mocked(api.listFolder).mockResolvedValue([fileEntry('/dst/keep.txt')])
+    await expect(rename(makeAccessor(), spec('/src'), spec('/dst'))).rejects.toBeInstanceOf(
+      DropboxApiError,
+    )
+    expect(api.deletePath).not.toHaveBeenCalled()
+    expect(api.movePath).toHaveBeenCalledTimes(1)
+  })
+
   it('maps a missing source to ENOENT', async () => {
     vi.mocked(api.movePath).mockRejectedValue(
       new DropboxApiError('nf', 409, 'from_lookup/not_found/...'),

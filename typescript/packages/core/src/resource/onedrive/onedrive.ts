@@ -18,6 +18,11 @@ import { buildDeltaHook } from '../../core/onedrive/watch.ts'
 
 const resolveGlob = makeResolveGlob(readdir)
 
+export interface OneDriveResourceState {
+  type: string
+  config: OneDriveConfigRedacted
+}
+
 export class OneDriveResource extends BaseResource implements Resource {
   readonly kind: string = ResourceName.ONEDRIVE
   readonly cachesReads: boolean = true
@@ -69,12 +74,12 @@ export class OneDriveResource extends BaseResource implements Resource {
     return buildDeltaHook(this.accessor)
   }
 
-  getState(): Record<string, unknown> {
+  override getState(): OneDriveResourceState {
     const config: OneDriveConfigRedacted = redactOneDriveConfig(this.config)
     return { type: this.kind, config }
   }
 
-  loadState(_state: Record<string, unknown>): Promise<void> {
+  override loadState(_state: OneDriveResourceState): Promise<void> {
     return Promise.resolve()
   }
 }
