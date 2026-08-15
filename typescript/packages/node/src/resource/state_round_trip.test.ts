@@ -215,6 +215,11 @@ describe('every registered resource answers the state contract', () => {
       secret: 'MONGOSECRET',
     },
     { name: 'lancedb', config: { uri: 'db://x', api_key: 'LANCESECRET' }, secret: 'LANCESECRET' },
+    // No credential at all: a local on-disk LanceDB and a keyless Qdrant.
+    // Masking the absent key would plant a marker for a snapshot that never
+    // held one, which is what Python's redactor avoids by skipping None.
+    { name: 'lancedb', config: { uri: 'db://x' }, secret: null },
+    { name: 'qdrant', config: { collection: 'c' }, secret: null },
     {
       name: 'qdrant',
       config: { collection: 'c', api_key: 'QDRANTSECRET' },
@@ -231,7 +236,8 @@ describe('every registered resource answers the state contract', () => {
   ]
 
   for (const { name, config, secret } of CASES) {
-    it(`${name}: getState/loadState exist, and the credential is masked`, async () => {
+    const what = secret === null ? 'no credential' : 'the credential is masked'
+    it(`${name} (${what}): getState/loadState exist, and load demands a resource`, async () => {
       const resource = await buildResource(name, config)
       const state = (await Promise.resolve(resource.getState())) as {
         type: string
@@ -243,14 +249,22 @@ describe('every registered resource answers the state contract', () => {
       const blob = JSON.stringify(state)
       if (secret !== null) {
         // The credential must not survive into the snapshot, and the marker
-        // it leaves behind is what makes load demand a fresh one.
+        // it leaves behind is one of the two things that make load demand a
+        // fresh one.
         expect(blob.includes(secret)).toBe(false)
         expect(blob.includes('<REDACTED>')).toBe(true)
-        expect(resourceStateRequiresOverride(state)).toBe(true)
       } else {
-        // chroma has no credential, so it legitimately needs no override.
-        expect(resourceStateRequiresOverride(state)).toBe(false)
+        // Nothing to mask, so nothing is masked. An absent secret must stay
+        // absent rather than become `<REDACTED>` — Python's redactor skips
+        // None, and a planted marker would claim a credential was dropped.
+        expect(blob.includes('<REDACTED>')).toBe(false)
+        if ('apiKey' in (state.config ?? {})) expect(state.config?.apiKey).toBeNull()
       }
+      // Either way the mount needs a live resource, because TypeScript
+      // rebuilds none of these from state: without this, `buildMountArgs`
+      // hands back an empty RAMResource and a live database mount loads as
+      // an empty directory.
+      expect(resourceStateRequiresOverride(state)).toBe(true)
 
       await Promise.resolve(resource.loadState(state))
       await resource.close()

@@ -41,6 +41,7 @@ export interface ChromaResourceOptions {
 export interface ChromaResourceState {
   type: string
   config: ChromaConfigRedacted
+  needs_override: true
 }
 
 export class ChromaResource extends BaseResource implements Resource {
@@ -63,7 +64,16 @@ export class ChromaResource extends BaseResource implements Resource {
   }
 
   override getState(): ChromaResourceState {
-    return { type: this.kind, config: redactChromaConfig(this.config) }
+    return {
+      type: this.kind,
+      config: redactChromaConfig(this.config),
+      // TypeScript cannot rebuild a config-backed mount from state:
+      // `buildMountArgs` substitutes a RAMResource for anything it was
+      // not handed. Saying so out loud turns a silently empty mount
+      // into a refusal to load. Python rebuilds via its registry, so it
+      // writes this on only four resources and reads it nowhere.
+      needs_override: true,
+    }
   }
 
   // Nothing to take back: the bytes live in the remote store, so a

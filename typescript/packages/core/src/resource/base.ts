@@ -62,6 +62,10 @@ export interface FindOptions {
 export interface ResourceStateBase {
   type: string
   config?: unknown
+  // Set by a backend whose mount cannot be rebuilt from this state alone,
+  // so `Workspace.load` refuses instead of substituting an empty
+  // RAMResource. See `resourceStateRequiresOverride`.
+  needs_override?: boolean
 }
 
 export interface Resource {

@@ -317,18 +317,24 @@ DB_STATE_CASES = [
      "MONGOSECRET"),
     ("lancedb", dict(uri="db://x", api_key="LANCESECRET"), "LANCESECRET"),
     ("qdrant", dict(collection="c", api_key="QDRANTSECRET"), "QDRANTSECRET"),
+    # No credential at all. `_walk_config_dump` skips a None secret, so the
+    # field stays null rather than becoming "<REDACTED>" — a planted marker
+    # would claim a credential had been dropped from a snapshot that never
+    # held one. The TypeScript redactors mirror this.
+    ("lancedb", dict(uri="db://x"), None),
+    ("qdrant", dict(collection="c"), None),
     ("dify", dict(api_key="DIFYSECRET", base_url="http://x",
                   dataset_id="d"), "DIFYSECRET"),
-    # chroma reaches its server with no credential at all, so it is the one
-    # backend here that legitimately needs no override on load.
+    # chroma reaches its server with no credential at all.
     ("chroma", dict(collection_name="c"), None),
 ]
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("name,config,secret",
-                         DB_STATE_CASES,
-                         ids=[c[0] for c in DB_STATE_CASES])
+@pytest.mark.parametrize(
+    "name,config,secret",
+    DB_STATE_CASES,
+    ids=[f"{c[0]}-{'secret' if c[2] else 'nocreds'}" for c in DB_STATE_CASES])
 async def test_registry_resource_state_masks_credential(name, config, secret):
     from mirage.resource.registry import build_resource
     from mirage.resource.secrets import has_redacted_secret
@@ -347,6 +353,11 @@ async def test_registry_resource_state_masks_credential(name, config, secret):
         assert has_redacted_secret(state["config"])
     else:
         assert not has_redacted_secret(state["config"])
+        # An absent secret stays absent. `_walk_config_dump` skips None, so
+        # the field is null rather than "<REDACTED>", and load does not
+        # demand a fresh config for a snapshot that never held a credential.
+        if "api_key" in state["config"]:
+            assert state["config"]["api_key"] is None
 
     p.load_state(state)
     await p.close()

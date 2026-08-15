@@ -41,6 +41,7 @@ export interface QdrantResourceOptions {
 export interface QdrantResourceState {
   type: string
   config: QdrantConfigRedacted
+  needs_override: true
 }
 
 export class QdrantResource extends BaseResource implements Resource {
@@ -62,7 +63,16 @@ export class QdrantResource extends BaseResource implements Resource {
   }
 
   override getState(): QdrantResourceState {
-    return { type: this.kind, config: redactQdrantConfig(this.config) }
+    return {
+      type: this.kind,
+      config: redactQdrantConfig(this.config),
+      // TypeScript cannot rebuild a config-backed mount from state:
+      // `buildMountArgs` substitutes a RAMResource for anything it was
+      // not handed. Saying so out loud turns a silently empty mount
+      // into a refusal to load. Python rebuilds via its registry, so it
+      // writes this on only four resources and reads it nowhere.
+      needs_override: true,
+    }
   }
 
   // Nothing to take back: the bytes live in the remote store, so a
