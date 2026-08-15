@@ -25,10 +25,7 @@ import { drainBudget, type FileCache } from './mixin.ts'
  * entry lets ALWAYS-mode `isFresh` compare like with like; the
  * MD5-of-content default only matches simple-PUT S3 objects.
  */
-export function readFingerprint(
-  records: readonly OpRecord[] | undefined,
-  path: string,
-): string | null {
+function readFingerprint(records: readonly OpRecord[] | undefined, path: string): string | null {
   if (records === undefined) return null
   for (let i = records.length - 1; i >= 0; i--) {
     const rec = records[i]

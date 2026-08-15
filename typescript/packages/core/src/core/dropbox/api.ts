@@ -15,7 +15,7 @@
 import { dropboxRpc } from './_client.ts'
 import type { DropboxTokenManager } from './_client.ts'
 
-export type DropboxEntryTag = 'file' | 'folder' | 'deleted'
+type DropboxEntryTag = 'file' | 'folder' | 'deleted'
 
 export interface DropboxEntry {
   '.tag': DropboxEntryTag

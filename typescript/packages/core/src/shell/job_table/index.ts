@@ -12,6 +12,5 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-export { KILLED_EXIT_CODE } from './constants.ts'
 export { JobTable } from './table.ts'
 export { type ConsoleFactory, Job, type JobResult, type JobRunner, JobStatus } from './types.ts'

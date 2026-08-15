@@ -12,5 +12,4 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-export type { QueueFactory, WatchQueue } from './base.ts'
-export { RAMWatchQueue, type RAMWatchQueueOptions } from './ram.ts'
+export { RAMWatchQueue } from './ram.ts'

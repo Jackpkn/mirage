@@ -38,7 +38,7 @@ export const NEVER_MATCH = '(?!)'
 
 const DEC = new TextDecoder()
 
-export function escapeRegex(s: string): string {
+function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 

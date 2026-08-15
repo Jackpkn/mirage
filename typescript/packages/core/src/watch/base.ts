@@ -36,10 +36,6 @@ export interface DeltaHook {
   pull(root: PathSpec, checkpoint: string | null): Promise<Delta>
 }
 
-export interface SupportsChanges {
-  deltaHook(): DeltaHook
-}
-
 export interface WatchOptions {
   queue?: WatchQueue
 }

@@ -23,8 +23,6 @@ export interface ShellParser {
   parse(command: string): Node
 }
 
-export type { Node as ShellNode } from 'web-tree-sitter'
-
 const ARITH_OPEN_TOKEN = '(('
 const QUOTES = new Set(["'", '"'])
 

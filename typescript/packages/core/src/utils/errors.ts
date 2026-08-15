@@ -224,21 +224,6 @@ export function eaccesReadOnly(
   return err
 }
 
-// A missing-parent write refusal, keeping the backend's human message (tests
-// and logs read 'parent directory does not exist') while stamping ENOENT +
-// operand so fs chokepoints render 'No such file or directory'. Mirrors
-// Python, which raises FileNotFoundError with the same prose — an untyped
-// Error here leaked the prose to the user as if it were the path.
-export function enoentWithMessage(
-  message: string,
-  path: string | { virtual: string; rawPath?: string },
-): FsError {
-  const err = new Error(message) as FsError
-  err.code = 'ENOENT'
-  err.virtualPath = virtualOf(path)
-  return err
-}
-
 // The phrases live once, in the posix table. The DOMAIN here stays
 // deliberately narrower than the vocabulary: these are the per-operand
 // codes a read-family command skips-and-reports, and widening it (say

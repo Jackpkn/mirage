@@ -46,7 +46,7 @@ function driveTargetError(named: readonly string[]): string {
   )
 }
 
-export const OneDriveConfigSchema = z
+const OneDriveConfigSchema = z
   .object({
     ...MSGRAPH_CONFIG_SHAPE,
     driveId: z.string().optional(),
@@ -92,7 +92,7 @@ function optionalText(value: string | undefined): string | null {
   return normalized === undefined || normalized === '' ? null : normalized
 }
 
-export function resolveOneDriveConfig(config: OneDriveConfig): OneDriveConfigResolved {
+function resolveOneDriveConfig(config: OneDriveConfig): OneDriveConfigResolved {
   const graph = resolveMsGraphConfig(config)
   const resolved = {
     ...graph,

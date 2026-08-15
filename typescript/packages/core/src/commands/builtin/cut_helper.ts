@@ -17,7 +17,7 @@ import { materialize } from '../../io/types.ts'
 const ENC = new TextEncoder()
 const DEC = new TextDecoder('utf-8', { fatal: false })
 
-export const CUT_OPEN_END = Number.MAX_SAFE_INTEGER
+const CUT_OPEN_END = Number.MAX_SAFE_INTEGER
 
 export interface CutOptions {
   ranges: [number, number][]
@@ -151,7 +151,7 @@ function splitWhitespaceFields(text: string, trimmed: boolean): WhitespaceFields
   return { fields, hasDelimiter, sourceEmpty }
 }
 
-export function cutBytes(rec: Uint8Array, options: CutOptions): Uint8Array {
+function cutBytes(rec: Uint8Array, options: CutOptions): Uint8Array {
   const positions = selectPositions(options.ranges, rec.byteLength, options.complement)
   const outputDelimiter =
     options.outputDelimiter === null ? null : ENC.encode(options.outputDelimiter)

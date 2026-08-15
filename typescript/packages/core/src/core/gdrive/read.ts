@@ -29,10 +29,6 @@ import { rstripSlash } from '../../utils/slash.ts'
 import { eisdir, enoent } from '../../utils/errors.ts'
 import { sliceWindow, windowFor } from '../../utils/ranges.ts'
 
-export async function readBytes(tm: TokenManager, fileId: string): Promise<Uint8Array> {
-  return downloadFile(tm, fileId)
-}
-
 // Download a binary file honouring snapshot revision pins. A pinned path
 // reads that revision's content; an actively recorded read captures
 // (fingerprint, revision) so snapshots can pin it later, mirroring the

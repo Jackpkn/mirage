@@ -52,9 +52,7 @@ export const MIME_TO_EXT: Readonly<Record<string, string>> = Object.freeze({
   'application/vnd.google-apps.presentation': GoogleFileSuffix.GSLIDE,
 })
 
-export const WORKSPACE_MIMES: ReadonlySet<string> = new Set(Object.keys(MIME_TO_EXT))
-
-export interface DriveOwner {
+interface DriveOwner {
   me?: boolean
   displayName?: string
   emailAddress?: string

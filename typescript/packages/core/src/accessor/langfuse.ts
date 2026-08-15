@@ -13,7 +13,6 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { Accessor } from './base.ts'
-import type { Resource } from '../resource/base.ts'
 import type { LangfuseTransport } from '../core/langfuse/_client.ts'
 
 export interface LangfuseAccessorConfig {
@@ -29,8 +28,4 @@ export class LangfuseAccessor extends Accessor {
   ) {
     super()
   }
-}
-
-export interface LangfuseResourceLike extends Resource {
-  readonly accessor: LangfuseAccessor
 }

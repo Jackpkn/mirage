@@ -12,7 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-export const DISCORD_API = 'https://discord.com/api/v10'
+const DISCORD_API = 'https://discord.com/api/v10'
 const MAX_RETRIES = 3
 
 export type DiscordMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'

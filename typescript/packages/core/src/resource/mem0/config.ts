@@ -8,7 +8,7 @@ import {
   secretStr,
 } from '../secrets.ts'
 
-export type Mem0ScopeKind = 'user' | 'agent' | 'run'
+type Mem0ScopeKind = 'user' | 'agent' | 'run'
 
 export interface Mem0ConfigResolved {
   apiKey: string
@@ -22,7 +22,7 @@ export interface Mem0ConfigResolved {
   scopeFilter: Record<string, string>
 }
 
-export const Mem0ConfigSchema = z.object({
+const Mem0ConfigSchema = z.object({
   apiKey: secretStr(),
   host: z.string().optional(),
   userId: z.string().optional(),

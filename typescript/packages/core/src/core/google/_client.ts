@@ -20,11 +20,11 @@ export const DRIVE_API_BASE = 'https://www.googleapis.com/drive/v3'
 export const DOCS_API_BASE = 'https://docs.googleapis.com/v1'
 export const SLIDES_API_BASE = 'https://slides.googleapis.com/v1'
 export const SHEETS_API_BASE = 'https://sheets.googleapis.com/v4'
-export const GMAIL_API_BASE = 'https://gmail.googleapis.com/gmail/v1'
+const GMAIL_API_BASE = 'https://gmail.googleapis.com/gmail/v1'
 export const DRIVE_UPLOAD_BASE = 'https://www.googleapis.com/upload/drive/v3'
 export const CALENDAR_API_BASE = 'https://www.googleapis.com/calendar/v3'
 export const FORMS_API_BASE = 'https://forms.googleapis.com/v1'
-export const TOKEN_BUFFER_SECONDS = 300
+const TOKEN_BUFFER_SECONDS = 300
 
 export function tokenUrl(config: GoogleConfig): string {
   return config.apiBase !== undefined ? `${config.apiBase}/token` : TOKEN_URL
@@ -177,20 +177,6 @@ export async function googlePost(tm: TokenManager, url: string, json: unknown): 
   if (!r.ok) {
     const text = await r.text().catch(() => '')
     throw new GoogleApiError(`Google POST ${url} → ${String(r.status)} ${text}`, r.status)
-  }
-  return r.json()
-}
-
-export async function googlePut(tm: TokenManager, url: string, json: unknown): Promise<unknown> {
-  const headers = await googleHeaders(tm)
-  const r = await fetch(url, {
-    method: 'PUT',
-    headers: { ...headers, 'Content-Type': 'application/json' },
-    body: JSON.stringify(json),
-  })
-  if (!r.ok) {
-    const text = await r.text().catch(() => '')
-    throw new GoogleApiError(`Google PUT ${url} → ${String(r.status)} ${text}`, r.status)
   }
   return r.json()
 }

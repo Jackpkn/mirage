@@ -13,15 +13,10 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { Accessor } from './base.ts'
-import type { Resource } from '../resource/base.ts'
 import type { TrelloTransport } from '../core/trello/_client.ts'
 
 export class TrelloAccessor extends Accessor {
   constructor(public readonly transport: TrelloTransport) {
     super()
   }
-}
-
-export interface TrelloResourceLike extends Resource {
-  readonly accessor: TrelloAccessor
 }

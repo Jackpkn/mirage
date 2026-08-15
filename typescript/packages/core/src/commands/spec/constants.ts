@@ -17,7 +17,7 @@
 // every operand name: the brackets are the renderer's.
 export const ARG_PLACEHOLDER = 'ARG'
 
-export const AMBIGUOUS_NAMES: Readonly<Record<string, string>> = Object.freeze({
+const AMBIGUOUS_NAMES: Readonly<Record<string, string>> = Object.freeze({
   l: 'args_l',
   O: 'args_O',
   I: 'args_I',

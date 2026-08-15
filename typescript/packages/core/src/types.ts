@@ -529,15 +529,6 @@ export type ReadStreamFn<Args extends unknown[] = [path: PathSpec]> = (
   ...args: Args
 ) => AsyncIterable<Uint8Array>
 
-export type PolymorphicReadResult =
-  | Uint8Array
-  | AsyncIterable<Uint8Array>
-  | Promise<Uint8Array | AsyncIterable<Uint8Array>>
-
-export type PolymorphicReadFn<Args extends unknown[] = [path: PathSpec]> = (
-  ...args: Args
-) => PolymorphicReadResult
-
 export type CopyFn<Args extends unknown[] = [src: PathSpec, target: PathSpec]> = (
   ...args: Args
 ) => Promise<void>

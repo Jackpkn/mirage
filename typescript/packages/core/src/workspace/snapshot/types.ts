@@ -43,25 +43,6 @@ interface CacheSnapshot {
   entries: CacheEntrySnapshot[]
 }
 
-interface ExecutionNodeSnapshot {
-  command: string | null
-  op: string | null
-  stderr: Uint8Array
-  exit_code: number
-  children: ExecutionNodeSnapshot[]
-}
-
-export interface ExecutionRecordSnapshot {
-  agent: string
-  command: string
-  stdout: Uint8Array
-  stdin: Uint8Array | null
-  exit_code: number
-  tree: ExecutionNodeSnapshot
-  timestamp: number
-  session_id: string
-}
-
 export interface SessionSnapshot {
   session_id: string
   cwd: string

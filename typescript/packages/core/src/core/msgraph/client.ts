@@ -15,8 +15,8 @@
 import type { MsGraphConfigResolved } from './config.ts'
 import { rangeHeader, windowOf, type ByteWindow } from '../../utils/ranges.ts'
 
-export const RETRY_STATUSES: ReadonlySet<number> = new Set([429, 503, 504])
-export const MAX_BACKOFF = 30
+const RETRY_STATUSES: ReadonlySet<number> = new Set([429, 503, 504])
+const MAX_BACKOFF = 30
 
 export class GraphError extends Error {
   readonly status: number
@@ -47,7 +47,7 @@ async function tokenOf(config: MsGraphConfigResolved): Promise<string> {
   return typeof config.accessToken === 'function' ? await config.accessToken() : config.accessToken
 }
 
-export async function graphHeaders(config: MsGraphConfigResolved): Promise<Record<string, string>> {
+async function graphHeaders(config: MsGraphConfigResolved): Promise<Record<string, string>> {
   return {
     Authorization: `Bearer ${await tokenOf(config)}`,
     'Content-Type': 'application/json',

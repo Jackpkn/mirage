@@ -14,7 +14,7 @@
 
 import { toHex } from './hex.ts'
 
-export async function sha256(bytes: Uint8Array): Promise<Uint8Array> {
+async function sha256(bytes: Uint8Array): Promise<Uint8Array> {
   const digest = await crypto.subtle.digest('SHA-256', bytes as BufferSource)
   return new Uint8Array(digest)
 }
@@ -61,7 +61,7 @@ function rotl(x: number, n: number): number {
   return ((x << n) | (x >>> (32 - n))) >>> 0
 }
 
-export function md5(bytes: Uint8Array): Uint8Array {
+function md5(bytes: Uint8Array): Uint8Array {
   const len = bytes.byteLength
   const bitLen = len * 8
   const padLen = (len % 64 < 56 ? 56 : 120) - (len % 64)

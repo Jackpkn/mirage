@@ -59,7 +59,7 @@ export interface GmailAttachmentInfo {
   size: number
 }
 
-export interface GmailAddress {
+interface GmailAddress {
   name: string
   email: string
 }
@@ -147,7 +147,7 @@ export function extractHeader(headers: GmailHeader[] | undefined, name: string):
   return ''
 }
 
-export function parseAddress(raw: string): GmailAddress {
+function parseAddress(raw: string): GmailAddress {
   if (raw.includes('<') && raw.includes('>')) {
     const lt = raw.indexOf('<')
     const gt = raw.indexOf('>')
@@ -158,7 +158,7 @@ export function parseAddress(raw: string): GmailAddress {
   return { name: '', email: raw.trim() }
 }
 
-export function parseAddressList(raw: string): GmailAddress[] {
+function parseAddressList(raw: string): GmailAddress[] {
   if (raw === '') return []
   return raw.split(',').map((a) => parseAddress(a.trim()))
 }

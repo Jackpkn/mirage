@@ -25,7 +25,7 @@ import type { FindOptions } from '../../resource/base.ts'
 import { FileStat, FileType, type PathSpec } from '../../types.ts'
 import { enoent } from '../../utils/errors.ts'
 import { mountPrefixOf } from '../../utils/key_prefix.ts'
-import { GraphError, graphDelete, graphGet, graphList } from '../msgraph/client.ts'
+import { GraphError, graphDelete, graphGet } from '../msgraph/client.ts'
 import {
   asNumber,
   copyTree,
@@ -303,11 +303,4 @@ export async function find(
     async () => (await stat(accessor, path)).type === FileType.DIRECTORY,
     options,
   )
-}
-
-export async function listVersions(
-  accessor: OneDriveAccessor,
-  path: PathSpec,
-): Promise<Record<string, unknown>[]> {
-  return graphList(accessor.config, accessor.loc(path.resourcePath).item('/versions'))
 }

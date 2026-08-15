@@ -18,7 +18,7 @@ import { PathSpec } from '../../types.ts'
 import { lstripSlash, stripSlash } from '../../utils/slash.ts'
 import { type GitHubCodeSearchResult, searchCode } from './_client.ts'
 
-export async function search(
+async function search(
   accessor: GitHubAccessor,
   query: string,
   pathFilter?: string,

@@ -207,7 +207,7 @@ export class DenyResult {
  * ride (attachments on RouteResult, kubernetes-admission style).
  * Mirrors the python PolicyResult base class.
  */
-export type PolicyResult = RouteResult | DenyResult
+type PolicyResult = RouteResult | DenyResult
 
 /**
  * What the global policy may answer: a PolicyResult arm, a runtime
@@ -217,7 +217,7 @@ export type PolicyResult = RouteResult | DenyResult
  * reason}` refuses it. New powers grow as arm fields and wire keys,
  * never as new return types. Mirrors the python PolicyVerdict.
  */
-export type PolicyVerdict = PolicyResult | string | null | { runtime?: string; deny?: string }
+type PolicyVerdict = PolicyResult | string | null | { runtime?: string; deny?: string }
 
 /**
  * The global policy, answering "who takes this line?". In code: a
