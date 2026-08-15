@@ -78,8 +78,8 @@ def _find_sync(
 
     for dirpath, dirnames, filenames in os.walk(p):
         dp = Path(dirpath)
-        rel = dp.relative_to(root)
-        current = "/" + str(rel) if str(rel) != "." else "/"
+        rel = dp.relative_to(root).as_posix()
+        current = "/" + rel if rel != "." else "/"
 
         current_depth = current.count("/") - base_depth
 

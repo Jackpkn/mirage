@@ -70,7 +70,8 @@ def entries_sync(root: Path, path: str) -> tuple[list[tuple[str, int]], int]:
                 file_size = os.path.getsize(full)
             except OSError:
                 continue
-            found.append(("/" + os.path.relpath(full, root), file_size))
+            rel = os.path.relpath(full, root).replace(os.sep, "/")
+            found.append(("/" + rel, file_size))
             total += file_size
     found.sort()
     return found, total

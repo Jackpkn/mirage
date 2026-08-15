@@ -35,6 +35,7 @@ vi.mock('../../cache/context.ts', () => {
 })
 
 import { BoxAccessor } from '../../accessor/box.ts'
+import { invalidateAfterUnlink, invalidateAfterWrite } from '../../cache/context.ts'
 import { PathSpec } from '../../types.ts'
 import type { BoxTokenManager } from './_client.ts'
 import * as api from './api.ts'
@@ -119,6 +120,17 @@ describe('box write ops', () => {
       name: 'b.txt',
       parentId: '100',
     })
+  })
+
+  it('rename evicts both identities so a replaced empty dir loses its listing', async () => {
+    vi.mocked(invalidateAfterWrite).mockClear()
+    vi.mocked(invalidateAfterUnlink).mockClear()
+    await rename(makeAccessor(), spec('/data/a.txt'), spec('/data/b.txt'))
+    const evicted = vi
+      .mocked(invalidateAfterUnlink)
+      .mock.calls.map(([path]) => (typeof path === 'string' ? path : path.virtual))
+    expect(evicted).toEqual(['/data/b.txt', '/data/a.txt'])
+    expect(vi.mocked(invalidateAfterWrite)).not.toHaveBeenCalled()
   })
 
   it('copy copies a file into the dst parent', async () => {

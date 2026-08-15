@@ -13,8 +13,7 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 from mirage.accessor.databricks_volume import DatabricksVolumeAccessor
-from mirage.cache.context import (invalidate_after_unlink,
-                                  invalidate_after_write)
+from mirage.cache.context import invalidate_after_unlink
 from mirage.cache.index import NULL_INDEX, IndexCacheStore
 from mirage.core.databricks_volume.copy import copy
 from mirage.core.databricks_volume.path import backend_path
@@ -53,5 +52,5 @@ async def rename(
     else:
         await copy(accessor, src, dst, index)
         await unlink(accessor, src, index)
-    await invalidate_after_write(dst)
+    await invalidate_after_unlink(dst)
     await invalidate_after_unlink(src)

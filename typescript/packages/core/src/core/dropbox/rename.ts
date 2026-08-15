@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import type { DropboxAccessor } from '../../accessor/dropbox.ts'
-import { invalidateAfterUnlink, invalidateAfterWrite } from '../../cache/context.ts'
+import { invalidateAfterUnlink } from '../../cache/context.ts'
 import { record } from '../../observe/context.ts'
 import type { PathSpec } from '../../types.ts'
 import { enoent } from '../../utils/errors.ts'
@@ -48,6 +48,6 @@ export async function rename(
   record('rename', src.virtual, 'dropbox', 0, startMs)
   await invalidateAfterUnlink(src)
   await invalidateAncestors(src)
-  await invalidateAfterWrite(dst)
+  await invalidateAfterUnlink(dst)
   await invalidateAncestors(dst)
 }

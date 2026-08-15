@@ -13,8 +13,7 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 from mirage.accessor.gridfs import GridFSAccessor
-from mirage.cache.context import (invalidate_after_unlink,
-                                  invalidate_after_write)
+from mirage.cache.context import invalidate_after_unlink
 from mirage.core.gridfs._client import (_key, delete_all, files_coll,
                                         latest_file)
 from mirage.types import PathSpec
@@ -37,5 +36,5 @@ async def rename(accessor: GridFSAccessor, src_spec: PathSpec,
                                            {"$set": {
                                                "filename": dst_key
                                            }})
-    await invalidate_after_write(dst_spec)
+    await invalidate_after_unlink(dst_spec)
     await invalidate_after_unlink(src_spec)
