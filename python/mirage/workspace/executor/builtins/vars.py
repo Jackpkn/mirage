@@ -30,6 +30,7 @@ from mirage.shell.call_stack import CallStack
 from mirage.shell.errors import ExitSignal
 from mirage.shell.options import parse_option_word
 from mirage.shell.types import SET_OPTION_DEFAULTS, SET_OPTION_NAMES
+from mirage.shell.variable import VarAttr
 from mirage.utils.hidden import var_hidden
 from mirage.workspace.executor.builtins.text import _PRINTF_TARGET_RE
 from mirage.workspace.executor.control import ReturnSignal
@@ -37,9 +38,11 @@ from mirage.workspace.expand.variable import _array_index
 from mirage.workspace.mount.namespace import Namespace
 from mirage.workspace.session import Session
 from mirage.workspace.session.errors import ReadonlyVariableError
+from mirage.workspace.session.session import vars_from_env
 from mirage.workspace.session.state import (env_get, env_is_readonly,
                                             env_snapshot, session_view,
-                                            visible_arrays, visible_env)
+                                            set_attr, visible_arrays,
+                                            visible_env)
 from mirage.workspace.types import ExecutionNode
 
 
@@ -145,7 +148,7 @@ async def _store_staged_arrays(
         except PolicyDenied as exc:
             return _refusal(cmd, exc)
         if mark:
-            session.readonly_vars.add(name)
+            set_attr(session, name, VarAttr.READONLY)
     return None
 
 
@@ -419,9 +422,9 @@ async def handle_readonly(
                 await view.set(key, val)
             except PolicyDenied as exc:
                 return _refusal("readonly", exc)
-            session.readonly_vars.add(key)
+            set_attr(session, key, VarAttr.READONLY)
         else:
-            session.readonly_vars.add(assign)
+            set_attr(session, assign, VarAttr.READONLY)
     return None, IOResult(), ExecutionNode(command="readonly", exit_code=0)
 
 
@@ -440,7 +443,7 @@ def _unset_variable(session: Session, name: str) -> None:
         name (str): a bare variable name (no subscript).
     """
     if not var_hidden(session.hidden_vars, name):
-        session.arrays.pop(name, None)
+        session.vars.pop(name, None)
     if name == "OPTIND":
         session._getopts_optind = None
 
@@ -707,14 +710,21 @@ async def handle_env(
         out = "".join(f"{k}={v}{sep}" for k, v in base.items()).encode()
         return out, IOResult(), ExecutionNode(command="env", exit_code=0)
 
-    saved = session.env
-    session.env = base
+    # `env NAME=v cmd` runs the command with a replaced environment.
+    # Only the scalars are replaced: arrays were never part of the env
+    # the old two-container store swapped, and bash does not put one in
+    # a child's environment either.
+    saved = session.vars
+    session.vars = {
+        name: var
+        for name, var in saved.items() if not isinstance(var.value, str)
+    } | vars_from_env(base)
     try:
         io = await execute_fn(shlex.join(command),
                               session_id=session.session_id,
                               stdin=stdin)
     finally:
-        session.env = saved
+        session.vars = saved
     return io.stdout, io, ExecutionNode(command="env", exit_code=io.exit_code)
 
 
@@ -839,12 +849,11 @@ def note_local_array(session: Session, name: str) -> bool:
         bool: True when a function scope is active, so the caller should
             shadow rather than reuse whatever is already there.
     """
-    local_arrays = session._local_arrays
-    if local_arrays is None:
+    local_vars = session._local_vars
+    if local_vars is None:
         return False
-    if name not in local_arrays:
-        existing = session.arrays.get(name)
-        local_arrays[name] = None if existing is None else list(existing)
+    if name not in local_vars:
+        local_vars[name] = session.vars.get(name)
     return True
 
 
@@ -861,8 +870,7 @@ async def handle_local(
                                              session,
                                              view,
                                              arrays,
-                                             fatal=session._local_arrays
-                                             is None)
+                                             fatal=session._local_vars is None)
         if refused is not None:
             return refused
     for assign in assignments:
@@ -871,14 +879,14 @@ async def handle_local(
             if view.is_readonly(key):
                 return _readonly_refusal("local", key)
             if local_vars is not None and key not in local_vars:
-                local_vars[key] = session.env.get(key)
+                local_vars[key] = session.vars.get(key)
             try:
                 await view.set(key, val)
             except PolicyDenied as exc:
                 return _refusal("local", exc)
         else:
             if local_vars is not None and assign not in local_vars:
-                local_vars[assign] = session.env.get(assign)
+                local_vars[assign] = session.vars.get(assign)
             if (env_get(session, assign) is None
                     and assign not in visible_arrays(session)):
                 # A bare declaration of an existing array re-scopes it;

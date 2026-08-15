@@ -20,6 +20,7 @@ from mirage.resource.ram import RAMResource
 from mirage.types import HiddenPaths, HiddenVars, MountMode
 from mirage.workspace import Workspace
 from mirage.workspace.session import RAMSessionStore, SessionManager
+from mirage.workspace.session.state import seed_var
 
 
 def _run(coro):
@@ -112,7 +113,7 @@ def test_manager_sessions_isolated():
     mgr = SessionManager("default")
     s1 = mgr.create("s1")
     s2 = mgr.create("s2")
-    s1.env["X"] = "from-s1"
+    seed_var(s1, "X", "from-s1")
     s1.cwd = "/s1"
     assert "X" not in s2.env
     assert s2.cwd == "/"
@@ -274,7 +275,7 @@ def test_flush_skips_clean_sessions():
     assert store.cas_calls == 1
     _run(mgr.flush())
     assert store.cas_calls == 1
-    mgr.get("default").env["K"] = "v"
+    seed_var(mgr.get("default"), "K", "v")
     _run(mgr.flush())
     assert store.cas_calls == 2
 
@@ -341,7 +342,7 @@ def test_hydrated_sessions_start_clean():
     # Only the locally created default session is dirty; the hydrated
     # one is clean until mutated.
     assert store.cas_calls == before + 1
-    mgr.get("s2").env["K"] = "v"
+    seed_var(mgr.get("s2"), "K", "v")
     _run(mgr.flush())
     entries = _run(store.load())
     assert entries["s2"]["generation"] == 4

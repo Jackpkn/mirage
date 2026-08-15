@@ -20,6 +20,8 @@ from mirage.ops.types import SessionView
 from mirage.policy import Policies, PolicyDenied, pre_session_gate
 from mirage.policy.types import SessionContext
 from mirage.shell.array import ShellArray, array_values
+from mirage.shell.variable import (ShellValue, ShellVar, VarAttr, with_attr,
+                                   with_value)
 from mirage.utils.hidden import var_hidden
 from mirage.workspace.session.errors import ReadonlyVariableError
 from mirage.workspace.session.session import Session
@@ -37,12 +39,10 @@ def env_snapshot(session: Session) -> dict[str, str]:
     Args:
         session (Session): the session whose env to copy.
     """
-    if session.hidden_vars is None:
-        return dict(session.env)
     return {
-        name: value
-        for name, value in session.env.items()
-        if not var_hidden(session.hidden_vars, name)
+        name: var.value
+        for name, var in session.vars.items() if isinstance(var.value, str)
+        and not var_hidden(session.hidden_vars, name)
     }
 
 
@@ -58,7 +58,9 @@ def env_get(session: Session, name: str) -> str | None:
     """
     if var_hidden(session.hidden_vars, name):
         return None
-    return session.env.get(name)
+    var = session.vars.get(name)
+    return var.value if var is not None and isinstance(var.value,
+                                                       str) else None
 
 
 def env_is_readonly(session: Session, name: str) -> bool:
@@ -74,7 +76,8 @@ def env_is_readonly(session: Session, name: str) -> bool:
     """
     if var_hidden(session.hidden_vars, name):
         return False
-    return name in session.readonly_vars
+    var = session.vars.get(name)
+    return var is not None and VarAttr.READONLY in var.attrs
 
 
 class _VisibleEnv(Mapping[str, str]):
@@ -93,18 +96,19 @@ class _VisibleEnv(Mapping[str, str]):
     def __getitem__(self, name: str) -> str:
         if var_hidden(self._session.hidden_vars, name):
             raise KeyError(name)
-        return self._session.env[name]
+        var = self._session.vars[name]
+        if not isinstance(var.value, str):
+            raise KeyError(name)
+        return var.value
 
     def __iter__(self) -> Iterator[str]:
         hidden = self._session.hidden_vars
-        for name in self._session.env:
-            if not var_hidden(hidden, name):
+        for name, var in self._session.vars.items():
+            if isinstance(var.value, str) and not var_hidden(hidden, name):
                 yield name
 
     def __len__(self) -> int:
-        hidden = self._session.hidden_vars
-        return sum(1 for name in self._session.env
-                   if not var_hidden(hidden, name))
+        return sum(1 for _ in self)
 
 
 def visible_env(session: Session) -> Mapping[str, str]:
@@ -117,8 +121,6 @@ def visible_env(session: Session) -> Mapping[str, str]:
     Args:
         session (Session): the session holding the environment.
     """
-    if session.hidden_vars is None:
-        return session.env
     return _VisibleEnv(session)
 
 
@@ -138,18 +140,19 @@ class _VisibleArrays(Mapping[str, ShellArray]):
     def __getitem__(self, name: str) -> ShellArray:
         if var_hidden(self._session.hidden_vars, name):
             raise KeyError(name)
-        return self._session.arrays[name]
+        var = self._session.vars[name]
+        if not isinstance(var.value, list):
+            raise KeyError(name)
+        return var.value
 
     def __iter__(self) -> Iterator[str]:
         hidden = self._session.hidden_vars
-        for name in self._session.arrays:
-            if not var_hidden(hidden, name):
+        for name, var in self._session.vars.items():
+            if isinstance(var.value, list) and not var_hidden(hidden, name):
                 yield name
 
     def __len__(self) -> int:
-        hidden = self._session.hidden_vars
-        return sum(1 for name in self._session.arrays
-                   if not var_hidden(hidden, name))
+        return sum(1 for _ in self)
 
 
 def visible_arrays(session: Session) -> Mapping[str, ShellArray]:
@@ -158,8 +161,6 @@ def visible_arrays(session: Session) -> Mapping[str, ShellArray]:
     Args:
         session (Session): the session holding the arrays.
     """
-    if session.hidden_vars is None:
-        return session.arrays
     return _VisibleArrays(session)
 
 
@@ -222,12 +223,14 @@ async def set_var(session: Session, policies: Policies | None, name: str,
                        key=name,
                        value=rendered,
                        session_id=session.session_id))
-    if isinstance(value, str):
-        session.env[name] = value
-        session.arrays.pop(name, None)
-    else:
-        session.arrays[name] = value
-        session.env.pop(name, None)
+    existing = session.vars.get(name)
+    # Attributes belong to the name, not to the value, so a plain
+    # assignment keeps them: `declare -i n; n=3` stays an integer. The
+    # old two-container store had to remember to evict the name from
+    # whichever container it was not landing in; one record cannot
+    # disagree with itself that way.
+    session.vars[name] = (ShellVar(value) if existing is None else with_value(
+        existing, value))
 
 
 async def unset_var(session: Session, policies: Policies | None,
@@ -258,7 +261,49 @@ async def unset_var(session: Session, policies: Policies | None,
                        key=name,
                        value=None,
                        session_id=session.session_id))
-    session.env.pop(name, None)
+    session.vars.pop(name, None)
+
+
+def seed_var(session: Session, name: str, value: ShellValue) -> None:
+    """Write a variable without consulting the gate.
+
+    For seeding a session before it is handed out -- the embedder
+    populating an environment, a test arranging state. `visible_arrays`
+    already names this case ("the embedder can seed session.arrays
+    before narrowing"). Anything reached from a command line goes
+    through `SessionView.set` instead, which is the whole point of the
+    store being read-only from outside.
+
+    Args:
+        session (Session): the session being seeded.
+        name (str): variable name.
+        value (ShellValue): the value to store.
+    """
+    existing = session.vars.get(name)
+    session.vars[name] = (ShellVar(value) if existing is None else with_value(
+        existing, value))
+
+
+def set_attr(session: Session,
+             name: str,
+             attr: VarAttr,
+             on: bool = True) -> None:
+    """Turn one attribute on or off, creating the name if needed.
+
+    bash's `readonly NAME` / `export NAME` on a name that does not exist
+    yet marks it anyway, and the name stays *unset*: GNU prints
+    `declare -r ONLY` with no value and `${ONLY-d}` still expands to
+    `d`. So the record is created with no value, not with an empty
+    string.
+
+    Args:
+        session (Session): the session being written.
+        name (str): variable name.
+        attr (VarAttr): the attribute to change.
+        on (bool): set it, or clear it.
+    """
+    existing = session.vars.get(name, ShellVar())
+    session.vars[name] = with_attr(existing, attr, on)
 
 
 def session_view(session: Session,

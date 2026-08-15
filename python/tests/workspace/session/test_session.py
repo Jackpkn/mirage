@@ -14,11 +14,13 @@
 
 import dataclasses
 
+from mirage.shell.variable import ShellVar, VarAttr
 from mirage.types import MountMode
 from mirage.workspace.session import Session
 from mirage.workspace.session.session import (CHILD_SHELL_FIELDS,
                                               INHERITED_FIELDS,
-                                              TRANSIENT_FIELDS)
+                                              TRANSIENT_FIELDS, vars_from_env)
+from mirage.workspace.session.state import seed_var
 
 
 def test_session_defaults():
@@ -39,16 +41,16 @@ def test_session_custom_cwd():
 
 
 def test_session_env():
-    s = Session(session_id="s1", env={"A": "1", "B": "2"})
+    s = Session(session_id="s1", vars=vars_from_env({"A": "1", "B": "2"}))
     assert s.env["A"] == "1"
     assert s.env["B"] == "2"
 
 
 def test_session_env_mutation():
     s = Session(session_id="s1")
-    s.env["X"] = "hello"
+    seed_var(s, "X", "hello")
     assert s.env["X"] == "hello"
-    del s.env["X"]
+    del s.vars["X"]
     assert "X" not in s.env
 
 
@@ -73,7 +75,7 @@ def test_session_stdin_buffer():
 
 
 def test_session_to_dict():
-    s = Session(session_id="s1", cwd="/data", env={"K": "V"})
+    s = Session(session_id="s1", cwd="/data", vars=vars_from_env({"K": "V"}))
     d = s.to_dict()
     assert d["session_id"] == "s1"
     assert d["cwd"] == "/data"
@@ -98,7 +100,9 @@ def test_session_from_dict():
 
 
 def test_session_roundtrip():
-    original = Session(session_id="rt", cwd="/x", env={"K": "V"})
+    original = Session(session_id="rt",
+                       cwd="/x",
+                       vars=vars_from_env({"K": "V"}))
     restored = Session.from_dict(original.to_dict())
     assert restored.session_id == original.session_id
     assert restored.cwd == original.cwd
@@ -108,7 +112,7 @@ def test_session_roundtrip():
 def test_session_independent_envs():
     s1 = Session(session_id="a")
     s2 = Session(session_id="b")
-    s1.env["X"] = "1"
+    seed_var(s1, "X", "1")
     assert "X" not in s2.env
 
 
@@ -127,12 +131,14 @@ def test_fork_copies_every_field_including_mount_modes():
     original = Session(
         session_id="orig",
         cwd="/disk",
-        env={"FOO": "bar"},
         functions={"f": object()},
         last_exit_code=7,
         shell_options={"errexit": True},
-        readonly_vars={"HOME"},
-        arrays={"ARGV": ["a", "b"]},
+        vars={
+            "FOO": ShellVar("bar"),
+            "HOME": ShellVar(None, frozenset({VarAttr.READONLY})),
+            "ARGV": ShellVar(["a", "b"]),
+        },
         mount_modes={
             "/s3": MountMode.READ,
             "/dev": MountMode.EXEC,
@@ -179,8 +185,10 @@ def test_to_dict_omits_grants_when_unrestricted():
 
 
 def test_fork_overrides_apply_without_mutating_original():
-    original = Session(session_id="orig", cwd="/disk", env={"FOO": "bar"})
-    forked = original.fork(cwd="/ram", env={"BAZ": "qux"})
+    original = Session(session_id="orig",
+                       cwd="/disk",
+                       vars=vars_from_env({"FOO": "bar"}))
+    forked = original.fork(cwd="/ram", vars=vars_from_env({"BAZ": "qux"}))
     assert forked.cwd == "/ram"
     # `$PWD` follows the caller-supplied cwd rather than staying stale.
     assert forked.env == {"BAZ": "qux", "PWD": "/ram"}
@@ -207,10 +215,12 @@ def test_fork_keeps_an_explicit_logical_cwd_beside_a_cwd_override():
 
 def test_fork_deep_copies_mutable_containers():
     original = Session(session_id="orig",
-                       env={"FOO": "bar"},
-                       arrays={"A": ["1"]})
+                       vars={
+                           "FOO": ShellVar("bar"),
+                           "A": ShellVar(["1"]),
+                       })
     forked = original.fork()
-    forked.env["NEW"] = "leaked?"
+    seed_var(forked, "NEW", "leaked?")
     forked.arrays["A"].append("2")
     assert "NEW" not in original.env
     assert original.arrays["A"] == ["1"]
@@ -233,10 +243,12 @@ def test_fork_carries_every_inherited_field():
 
 
 def test_snapshot_and_restore_undo_a_child_shell():
-    session = Session(session_id="s", cwd="/data", env={"A": "1"})
+    session = Session(session_id="s",
+                      cwd="/data",
+                      vars=vars_from_env({"A": "1"}))
     saved = session.snapshot()
     session.cwd = "/other"
-    session.env["A"] = "2"
+    seed_var(session, "A", "2")
     session.functions["f"] = []
     session.script_name = "run.sh"
     session.restore(saved)

@@ -12,7 +12,7 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from mirage.workspace.session.session import Session
+from mirage.workspace.session.session import Session, vars_from_env
 from mirage.workspace.session.shell_dirs import (change_dir, home_dir,
                                                  logical_cwd, set_cwd)
 
@@ -23,12 +23,12 @@ def test_home_dir_unset_is_none():
 
 
 def test_home_dir_from_env():
-    session = Session(session_id="s", env={"HOME": "/data"})
+    session = Session(session_id="s", vars=vars_from_env({"HOME": "/data"}))
     assert home_dir(session) == "/data"
 
 
 def test_home_dir_empty_env_is_none():
-    session = Session(session_id="s", env={"HOME": ""})
+    session = Session(session_id="s", vars=vars_from_env({"HOME": ""}))
     assert home_dir(session) is None
 
 

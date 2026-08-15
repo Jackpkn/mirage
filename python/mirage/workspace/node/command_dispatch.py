@@ -24,6 +24,7 @@ from mirage.runtime.policy import PolicyDecision
 from mirage.shell.bytes import encode_text
 from mirage.shell.types import NodeType as NT
 from mirage.shell.types import ShellBuiltin as SB
+from mirage.shell.variable import ShellVar
 from mirage.shell.xtrace import trace_command
 from mirage.types import PathSpec, Producer, word_text
 from mirage.utils.glob_walk import glob_pattern
@@ -39,7 +40,8 @@ from mirage.workspace.expand.globs import expand_boundary_globs
 from mirage.workspace.route import (SLASH_KEEPS_LAST, UNSUPPORTED_BUILTINS,
                                     follows_last_component)
 from mirage.workspace.session.shell_dirs import home_dir, logical_cwd
-from mirage.workspace.session.state import ensure_var_visible, session_view
+from mirage.workspace.session.state import (ensure_var_visible, seed_var,
+                                            session_view)
 from mirage.workspace.types import ExecutionNode
 
 from mirage.shell.helpers import (  # isort: skip
@@ -176,17 +178,17 @@ async def execute_command(
 
     if prefix_assignments and not name:
         for k, v in prefix_assignments:
-            session.env[k] = v
+            seed_var(session, k, v)
         return None, IOResult(), ExecutionNode(command=" ".join(
             f"{k}={v}" for k, v in prefix_assignments),
                                                exit_code=0)
 
     is_function_call = name in session.functions
-    saved_env_overrides: dict[str, str | None] = {}
+    saved_env_overrides: dict[str, ShellVar | None] = {}
     for k, v in prefix_assignments:
         if not is_function_call:
-            saved_env_overrides[k] = session.env.get(k)
-        session.env[k] = v
+            saved_env_overrides[k] = session.vars.get(k)
+        seed_var(session, k, v)
 
     try:
         return await _dispatch_command_body(recurse, dispatch, registry,
@@ -197,9 +199,9 @@ async def execute_command(
     finally:
         for k, prev in saved_env_overrides.items():
             if prev is None:
-                session.env.pop(k, None)
+                session.vars.pop(k, None)
             else:
-                session.env[k] = prev
+                session.vars[k] = prev
 
 
 async def _dispatch_command_body(

@@ -21,6 +21,7 @@ from mirage.workspace.executor.builtins.condition.constants import (
     FILE_PAIR_BINARY, INT_COMPARATORS, UNARY_OPS)
 from mirage.workspace.executor.builtins.condition.operators import apply_unary
 from mirage.workspace.session import visible_env
+from mirage.workspace.session.state import seed_var
 
 from mirage.workspace.executor.builtins.condition.types import (  # isort: skip
     CondAnd, CondBinary, CondContext, CondError, CondNode, CondNot, CondOr,
@@ -74,8 +75,8 @@ async def _eval_cond_binary(ctx: CondContext, node: CondBinary) -> bool:
         if match is None:
             return False
         groups = [g if g is not None else "" for g in match.groups()]
-        ctx.session.arrays["BASH_REMATCH"] = make_array(
-            [match.group(0), *groups])
+        seed_var(ctx.session, "BASH_REMATCH",
+                 make_array([match.group(0), *groups]))
         return True
     if node.op == "<":
         return node.left < node.right

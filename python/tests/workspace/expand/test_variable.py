@@ -14,11 +14,13 @@
 
 import pytest
 
+from mirage.shell.variable import ShellVar
 from mirage.workspace.expand.variable import (_arith_int, _case_mod,
                                               _glob_replace, _glob_strip,
                                               _lookup_var, _pattern_text,
                                               _slice_array)
 from mirage.workspace.session import Session
+from mirage.workspace.session.session import vars_from_env
 
 
 @pytest.mark.parametrize("value,pattern,replacement,all_,anchor,expected", [
@@ -59,7 +61,11 @@ def test_glob_strip_class_negation():
 
 
 def test_pattern_text_splices_refs_live():
-    session = Session(session_id="t", env={"ext": ".txt", "pat": "l"})
+    session = Session(session_id="t",
+                      vars=vars_from_env({
+                          "ext": ".txt",
+                          "pat": "l"
+                      }))
     assert _pattern_text("$ext", session, None) == ".txt"
     assert _pattern_text("*${ext}", session, None) == "*.txt"
     assert _pattern_text("a$pat*b", session, None) == "al*b"
@@ -71,14 +77,14 @@ def test_pattern_text_binds_backslash_escapes():
     # bash 5.2: ${v#a\*} strips a literal a*, so the escaped
     # character is spelled as a one-character class for the
     # escape-less fnmatch; a trailing lone backslash stays itself.
-    session = Session(session_id="t", env={})
+    session = Session(session_id="t", vars=vars_from_env({}))
     assert _pattern_text("a\\*b", session, None) == "a[*]b"
     assert _pattern_text("\\\\", session, None) == "\\"
     assert _pattern_text("a\\", session, None) == "a\\"
 
 
 def test_lookup_var_array_first_element():
-    session = Session(session_id="t", arrays={"a": ["one", "two"]})
+    session = Session(session_id="t", vars={"a": ShellVar(["one", "two"])})
     assert _lookup_var("a", session, None) == "one"
 
 

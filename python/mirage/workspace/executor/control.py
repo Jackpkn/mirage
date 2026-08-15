@@ -30,7 +30,7 @@ from mirage.types import PathSpec, word_text
 from mirage.utils.fnmatch import fnmatch
 from mirage.workspace.executor.statement import finish_statement
 from mirage.workspace.session import Session
-from mirage.workspace.session.state import session_view
+from mirage.workspace.session.state import seed_var, session_view
 from mirage.workspace.types import ExecutionNode
 
 # Safety cap on while/until iterations. Independent of stdin size:
@@ -224,9 +224,9 @@ async def handle_for(
     finally:
         session._stdin_buffer = prev_buffer
         if saved is not None:
-            session.env[variable] = saved
+            seed_var(session, variable, saved)
         else:
-            session.env.pop(variable, None)
+            session.vars.pop(variable, None)
     return _collect_loop_result(all_stdout, merged_io, "for")
 
 
@@ -571,7 +571,7 @@ async def handle_select(
     finally:
         session._stdin_buffer = prev_buffer
         if saved is not None:
-            session.env[variable] = saved
+            seed_var(session, variable, saved)
         else:
-            session.env.pop(variable, None)
+            session.vars.pop(variable, None)
     return _collect_loop_result(all_stdout, merged_io, "select")

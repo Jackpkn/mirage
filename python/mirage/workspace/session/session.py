@@ -13,7 +13,9 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import Any
 
 from mirage.io.async_line_iterator import AsyncLineIterator
@@ -21,6 +23,7 @@ from mirage.io.types import ByteSource
 from mirage.shell.array import ShellArray
 from mirage.shell.constants import SHELL_ARGV0
 from mirage.shell.types import FunctionBody
+from mirage.shell.variable import ShellVar, VarAttr, with_value
 from mirage.types import HiddenPaths, HiddenVars, MountMode
 
 # What a fork of this session carries over. Written down once because
@@ -32,13 +35,11 @@ INHERITED_FIELDS: tuple[str, ...] = (
     "session_id",
     "cwd",
     "logical_cwd",
-    "env",
+    "vars",
     "created_at",
     "functions",
     "last_exit_code",
     "shell_options",
-    "readonly_vars",
-    "arrays",
     "mount_modes",
     "hidden_paths",
     "hidden_vars",
@@ -60,7 +61,6 @@ TRANSIENT_FIELDS: tuple[str, ...] = (
     "_stdin_buffer",
     "_stdin_source",
     "_local_vars",
-    "_local_arrays",
     "_cmdsub_seq",
     "_cmdsub_status",
 )
@@ -75,11 +75,9 @@ CHILD_SHELL_FIELDS: tuple[str, ...] = (
     "cwd",
     "logical_cwd",
     "source_depth",
-    "env",
+    "vars",
     "functions",
     "shell_options",
-    "readonly_vars",
-    "arrays",
     "positional_args",
     "script_name",
     "last_bg_job_id",
@@ -94,6 +92,10 @@ def copy_state(value: Any) -> Any:
     Args:
         value (Any): the field value.
     """
+    if isinstance(value, ShellVar):
+        # The record is frozen, but an indexed or associative value is
+        # a live container, so the copy has to reach inside it.
+        return with_value(value, copy_state(value.value))
     if isinstance(value, dict):
         return {k: copy_state(v) for k, v in value.items()}
     if isinstance(value, set):
@@ -101,6 +103,20 @@ def copy_state(value: Any) -> Any:
     if isinstance(value, list):
         return list(value)
     return value
+
+
+def vars_from_env(env: Mapping[str, str]) -> dict[str, ShellVar]:
+    """Variable records for a plain name/value map.
+
+    The one conversion from the shape an embedder speaks (a process
+    environment) to the shape the session stores. Attributes start
+    empty: a seeded name is an ordinary shell variable until something
+    marks it.
+
+    Args:
+        env (Mapping[str, str]): the name/value pairs to seed.
+    """
+    return {name: ShellVar(value) for name, value in env.items()}
 
 
 @dataclass
@@ -113,13 +129,16 @@ class Session:
     # every session that has not walked through a symlink. `cwd` stays
     # physical because it is what every operand resolves against.
     logical_cwd: str | None = None
-    env: dict[str, str] = field(default_factory=dict)
+    # One record per variable: value plus attributes. This is the whole
+    # variable store -- `env`, `arrays` and `readonly_vars` are read-only
+    # projections of it, so a name cannot be a scalar in one container
+    # and an array in another, and an attribute cannot drift from the
+    # value it describes.
+    vars: dict[str, ShellVar] = field(default_factory=dict)
     created_at: float = field(default_factory=time.time)
     functions: dict[str, FunctionBody] = field(default_factory=dict)
     last_exit_code: int = 0
     shell_options: dict[str, bool] = field(default_factory=dict)
-    readonly_vars: set[str] = field(default_factory=set)
-    arrays: dict[str, ShellArray] = field(default_factory=dict)
     mount_modes: dict[str, MountMode] | None = None
     # Per-session visibility narrowing, siblings of mount_modes: None
     # means unrestricted, the doors enforce (data door for paths, the
@@ -143,11 +162,12 @@ class Session:
     source_depth: int = field(default=0, repr=False)
     _stdin_buffer: AsyncLineIterator | None = field(default=None, repr=False)
     _stdin_source: ByteSource | None = field(default=None, repr=False)
-    _local_vars: dict[str, str | None] | None = field(default=None, repr=False)
-    # Arrays shadowed by `local -a` / `declare -a` in the running
-    # function; None means the caller had no array of that name.
-    _local_arrays: (dict[str, ShellArray | None]
-                    | None) = field(default=None, repr=False)
+    # Variables shadowed by `local` / `declare` in the running function;
+    # a None value means the caller had no variable of that name. One
+    # stack, not one per container: a local shadows the whole record, so
+    # its value and its attributes are saved and restored together.
+    _local_vars: (dict[str, ShellVar | None]
+                  | None) = field(default=None, repr=False)
     # Hidden `getopts` state: the 1-based char offset within the current
     # word being scanned, plus the OPTIND value that offset belongs to.
     # A caller resetting OPTIND (e.g. to 1) makes the seen value stale,
@@ -167,7 +187,7 @@ class Session:
         data = {
             "session_id": self.session_id,
             "cwd": self.cwd,
-            "env": self.env,
+            "env": dict(self.env),
             "created_at": self.created_at,
             "generation": self.generation,
         }
@@ -190,6 +210,9 @@ class Session:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Session":
+        if "env" in data:
+            data = dict(data)
+            data["vars"] = vars_from_env(data.pop("env"))
         modes = data.get("mount_modes")
         paths = data.get("hidden_paths")
         vars_ = data.get("hidden_vars")
@@ -221,12 +244,46 @@ class Session:
         """
         return SHELL_ARGV0 if self.script_name is None else self.script_name
 
+    @property
+    def env(self) -> Mapping[str, str]:
+        """The scalar variables, by name.
+
+        A mappingproxy, so an assignment into it raises instead of
+        landing in a throwaway dict -- silent loss is the exact failure
+        this store exists to remove.
+
+        A read-only projection of `vars`, not a container: a writer goes
+        through `SessionView.set` (or `seed_var` when seeding a session
+        before it is narrowed), so a `pre_session` policy sees every
+        write. `state.py` has always documented that rule; making the
+        mapping read-only is what stops it being walked around by
+        assigning into storage.
+        """
+        return MappingProxyType({
+            name: var.value
+            for name, var in self.vars.items() if isinstance(var.value, str)
+        })
+
+    @property
+    def arrays(self) -> Mapping[str, ShellArray]:
+        """The indexed arrays, by name. Read-only, like `env`."""
+        return MappingProxyType({
+            name: var.value
+            for name, var in self.vars.items() if isinstance(var.value, list)
+        })
+
+    @property
+    def readonly_vars(self) -> frozenset[str]:
+        """The names `readonly` has marked. Read-only, like `env`."""
+        return frozenset(name for name, var in self.vars.items()
+                         if VarAttr.READONLY in var.attrs)
+
     def __post_init__(self) -> None:
         # bash exports `$PWD` from startup, so a session that has never
         # run `cd` still has one. Seeding here rather than at lookup time
         # is what makes it an ordinary variable: assignable, unsettable,
         # and listed by `env`.
-        self.env.setdefault("PWD", self.cwd)
+        self.vars.setdefault("PWD", ShellVar(self.cwd))
 
     def fork(self, **overrides: Any) -> "Session":
         """Return a copy of this session with overrides applied.
@@ -256,7 +313,9 @@ class Session:
             defaults["logical_cwd"] = None
             # `$PWD` names where the session is, so it follows the move
             # even when the caller also supplied an env to layer on.
-            defaults["env"] = {**defaults["env"], "PWD": overrides["cwd"]}
+            defaults["vars"] = {
+                **defaults["vars"], "PWD": ShellVar(overrides["cwd"])
+            }
         return Session(**defaults)
 
     def snapshot(self) -> dict[str, Any]:

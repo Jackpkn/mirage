@@ -16,6 +16,7 @@ from typing import Any
 
 from mirage.resource.history import HISTORY_PREFIX
 from mirage.workspace.session import Session
+from mirage.workspace.session.session import vars_from_env
 
 
 def command_name(command: str) -> str:
@@ -52,7 +53,7 @@ def fork_for_call(session: Session, cwd: str | None,
     if cwd is not None:
         overrides["cwd"] = cwd
     if env is not None:
-        overrides["env"] = {**session.env, **env}
+        overrides["vars"] = {**session.vars, **vars_from_env(env)}
     return session.fork(**overrides)
 
 

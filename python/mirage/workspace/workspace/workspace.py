@@ -49,6 +49,7 @@ from mirage.workspace.mount.namespace import Namespace
 from mirage.workspace.mount.namespace.store import NamespaceStore
 from mirage.workspace.session import (Session, SessionManager, SessionProfile,
                                       SessionStore)
+from mirage.workspace.session.state import seed_var
 from mirage.workspace.snapshot import (DriftQueue, apply_state_dict,
                                        build_mount_args, install_fingerprints,
                                        read_tar)
@@ -346,7 +347,7 @@ class Workspace:
         self._session_mgr.cwd = value
 
     @property
-    def env(self) -> dict[str, str]:
+    def env(self) -> Mapping[str, str]:
         return self._session_mgr.env
 
     @env.setter
@@ -644,7 +645,8 @@ class Workspace:
             session.hidden_paths = profile.hidden_paths
             session.hidden_vars = profile.hidden_vars
             if profile.env:
-                session.env.update(profile.env)
+                for name, value in profile.env.items():
+                    seed_var(session, name, value)
         return session
 
     def get_session(self, session_id: str) -> Session:

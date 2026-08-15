@@ -18,6 +18,7 @@ from mirage.resource.ram import RAMResource
 from mirage.types import HiddenPaths, HiddenVars, MountMode
 from mirage.workspace import Workspace
 from mirage.workspace.session import SessionProfile
+from mirage.workspace.session.state import seed_var
 
 
 def _ws() -> Workspace:
@@ -58,7 +59,7 @@ def test_one_profile_serves_many_sessions():
     s1 = ws.create_session("agent1", profile=ANALYST)
     s2 = ws.create_session("agent2", profile=ANALYST)
     assert s1.hidden_paths is s2.hidden_paths
-    s1.env["ROLE"] = "changed"
+    seed_var(s1, "ROLE", "changed")
     assert s2.env["ROLE"] == "analyst"
 
 

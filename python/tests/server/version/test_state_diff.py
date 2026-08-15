@@ -21,6 +21,7 @@ from mirage.server.version.api import commit
 from mirage.server.version.backend import LocalBackend
 from mirage.server.version.state_diff import state_diff
 from mirage.server.version.store import VersionStore
+from mirage.workspace.session.state import seed_var
 
 
 def _ws() -> Workspace:
@@ -35,13 +36,13 @@ async def test_state_diff_covers_every_category(tmp_path):
 
     await ws.execute("echo one > /m/a.txt")
     session = ws.create_session("narrow", mounts={"/m": "read"})
-    session.env["API_KEY"] = "@aws:prod-key"
+    seed_var(session, "API_KEY", "@aws:prod-key")
     await ws.flush_sessions()
     v1 = await commit(store, ws, "main", "v1")
 
     await ws.execute("echo two > /m/a.txt")
     await ws.execute("ln -s /m/a.txt /m/l.txt")
-    session.env["API_KEY"] = "@aws:other-key"
+    seed_var(session, "API_KEY", "@aws:other-key")
     session.mount_modes = {**session.mount_modes, "/m": MountMode.WRITE}
     await ws.flush_sessions()
     v2 = await commit(store, ws, "main", "v2")

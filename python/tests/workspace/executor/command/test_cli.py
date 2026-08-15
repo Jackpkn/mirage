@@ -34,6 +34,7 @@ from mirage.workspace.cli.types import CLIInstall
 from mirage.workspace.executor.command.cli import handle_cli
 from mirage.workspace.executor.command.flags import option_error, parse_flags
 from mirage.workspace.session import Session
+from mirage.workspace.session.state import seed_var
 
 
 class TokenConfig(BaseModel):
@@ -72,7 +73,7 @@ async def test_leaf_runs_with_config_group_flags_and_texts():
     install = make_install()
     parts = ["prog", "-vv", "message", "send", "-t", "#eng", "hello", "world"]
     session = Session("t")
-    session.env["EDITOR"] = "vi"
+    seed_var(session, "EDITOR", "vi")
     stdout, io, node = await handle_cli(install, parts, session)
     assert io.exit_code == 0
     assert await materialize(stdout) == b"sent[tok]\n"
@@ -295,7 +296,7 @@ async def test_script_env_carries_mirage_config_json():
     py = FakePyRuntime()
     install = script_install(config={"api_key": "k1"})
     session = Session("t")
-    session.env["EDITOR"] = "vi"
+    seed_var(session, "EDITOR", "vi")
     _, io, _ = await handle_cli(install, ["pager"], session, entries=[py])
     assert io.exit_code == 0
     run = py.seen.pop()

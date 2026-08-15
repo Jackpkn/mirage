@@ -20,6 +20,7 @@ from mirage.server.version.api import commit
 from mirage.server.version.backend import LocalBackend
 from mirage.server.version.restore import restore
 from mirage.server.version.store import VersionStore
+from mirage.workspace.session.state import seed_var
 
 
 async def _cat(ws: Workspace, path: str) -> str:
@@ -81,12 +82,12 @@ async def test_restore_files_category_keeps_live_sessions(tmp_path):
     ws = _ws()
     store = await VersionStore.open(LocalBackend(str(tmp_path)), "ws")
     session = ws.create_session("narrow", mounts={"/m": "read"})
-    session.env["API_KEY"] = "@aws:prod-key"
+    seed_var(session, "API_KEY", "@aws:prod-key")
     await ws.execute("echo one > /m/a.txt")
     await ws.flush_sessions()
     v1 = await commit(store, ws, "main", "v1")
     await ws.execute("echo two > /m/a.txt")
-    session.env["API_KEY"] = "@aws:new-key"
+    seed_var(session, "API_KEY", "@aws:new-key")
     await ws.flush_sessions()
 
     report = await restore(store, ws, v1, categories=["files"])
@@ -101,12 +102,12 @@ async def test_restore_sessions_category_keeps_live_files(tmp_path):
     ws = _ws()
     store = await VersionStore.open(LocalBackend(str(tmp_path)), "ws")
     session = ws.create_session("narrow", mounts={"/m": "read"})
-    session.env["API_KEY"] = "@aws:prod-key"
+    seed_var(session, "API_KEY", "@aws:prod-key")
     await ws.execute("echo one > /m/a.txt")
     await ws.flush_sessions()
     v1 = await commit(store, ws, "main", "v1")
     await ws.execute("echo two > /m/a.txt")
-    session.env["API_KEY"] = "@aws:new-key"
+    seed_var(session, "API_KEY", "@aws:new-key")
     await ws.flush_sessions()
 
     await restore(store, ws, v1, categories=["sessions"])

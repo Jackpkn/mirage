@@ -34,6 +34,7 @@ from mirage.utils.glob_walk import escape_glob
 from mirage.workspace.session import (Session, ensure_var_visible,
                                       visible_arrays, visible_env)
 from mirage.workspace.session.shell_dirs import home_dir
+from mirage.workspace.session.state import seed_var
 
 ExpandChild = Callable[[tree_sitter.Node], Awaitable[str]]
 
@@ -139,10 +140,7 @@ async def expansion_write(session: Session, view: SessionView | None,
     stored: str | ShellArray = (value if held is None else array_with(
         held, 0, value))
     if view is None:
-        if isinstance(stored, str):
-            session.env[name] = stored
-        else:
-            session.arrays[name] = stored
+        seed_var(session, name, stored)
         return
     try:
         await view.set(name, stored)

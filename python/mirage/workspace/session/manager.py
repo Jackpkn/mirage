@@ -14,11 +14,12 @@
 
 import asyncio
 import copy
+from collections.abc import Mapping
 
 from mirage.types import MountMode
 from mirage.workspace.record.types import CAS_MAX_RETRIES, generation_of
 from mirage.workspace.session.ram import RAMSessionStore
-from mirage.workspace.session.session import Session
+from mirage.workspace.session.session import Session, vars_from_env
 from mirage.workspace.session.shell_dirs import set_cwd
 from mirage.workspace.session.store import SessionFields, SessionStore
 
@@ -68,12 +69,13 @@ class SessionManager:
         set_cwd(self._sessions[self._default_id], value)
 
     @property
-    def env(self) -> dict[str, str]:
+    def env(self) -> Mapping[str, str]:
         return self._sessions[self._default_id].env
 
     @env.setter
     def env(self, value: dict[str, str]) -> None:
-        self._sessions[self._default_id].env = value
+        session = self._sessions[self._default_id]
+        session.vars = vars_from_env(value)
 
     def adopt_default(self, session_id: str) -> None:
         """Re-key the default session to an externally decided id.
@@ -120,7 +122,7 @@ class SessionManager:
                     stored = Session.from_dict(fields)
                     default = self._sessions[self._default_id]
                     set_cwd(default, stored.cwd)
-                    default.env = stored.env
+                    default.vars = stored.vars
                     default.created_at = stored.created_at
                     default.mount_modes = stored.mount_modes
                     # The hidden shapes are durable restrictions, not

@@ -28,6 +28,7 @@ from mirage.types import HiddenPaths, HiddenVars, MountMode, PathSpec
 from mirage.workspace import Workspace
 from mirage.workspace.session import (env_snapshot, reset_current_session,
                                       set_current_session)
+from mirage.workspace.session.state import seed_var
 
 
 class DenyOp(Policy):
@@ -440,7 +441,7 @@ def test_scalar_append_onto_an_existing_array_fires_the_gate():
     # write.
     ws = _two_mounts(policies=[DenySecretEnv()])
     sess = ws._session_mgr.get(ws._session_mgr.default_id)
-    sess.arrays["SECRET_E"] = ["a"]
+    seed_var(sess, "SECRET_E", ["a"])
 
     async def run():
         return await ws.execute("SECRET_E+=x")
@@ -606,7 +607,7 @@ def test_subscripted_unset_of_a_scalar_fires_the_gate():
     # `unset 'SECRET[0]'` on a scalar is the whole unset in element
     # clothing; the element branch used to skip the view entirely.
     ws = _two_mounts(policies=[DenySecretEnv()])
-    ws.env["SECRET_U"] = "v"
+    seed_var(ws.get_session(ws.default_session_id), "SECRET_U", "v")
 
     async def run():
         return await ws.execute("unset 'SECRET_U[0]'")
@@ -620,7 +621,7 @@ def test_subscripted_unset_of_a_scalar_fires_the_gate():
 def test_subscripted_unset_of_an_array_element_fires_the_gate():
     ws = _two_mounts(policies=[DenySecretEnv()])
     sess = ws._session_mgr.get(ws._session_mgr.default_id)
-    sess.arrays["SECRET_W"] = ["a", "b"]
+    seed_var(sess, "SECRET_W", ["a", "b"])
 
     async def run():
         return await ws.execute("unset 'SECRET_W[1]'")
@@ -654,8 +655,8 @@ def test_for_loop_variable_fires_the_gate():
 def _hidden_vars_ws() -> Workspace:
     ws = _two_mounts()
     sess = ws.create_session("agent", mounts={"/a": "write"})
-    sess.env["SLACK_TOKEN"] = "xoxb-real"
-    sess.env["PUBLIC"] = "ok"
+    seed_var(sess, "SLACK_TOKEN", "xoxb-real")
+    seed_var(sess, "PUBLIC", "ok")
     sess.hidden_vars = HiddenVars(names=("SLACK_TOKEN", ))
     return ws
 
@@ -806,8 +807,8 @@ def test_unset_of_a_hidden_var_is_quiet_and_preserves_it():
 def _hidden_array_ws() -> Workspace:
     ws = _two_mounts()
     sess = ws.create_session("agent", mounts={"/a": "write"})
-    sess.arrays["SLACK_TOKEN"] = ["xoxb-real", "xoxb-two"]
-    sess.env["PUBLIC"] = "ok"
+    seed_var(sess, "SLACK_TOKEN", ["xoxb-real", "xoxb-two"])
+    seed_var(sess, "PUBLIC", "ok")
     sess.hidden_vars = HiddenVars(names=("SLACK_TOKEN", ))
     return ws
 
@@ -913,7 +914,7 @@ def test_subscript_arithmetic_resolves_against_the_visible_env():
     # and leak by placement; hidden reads as unset, which is 0.
     ws = _two_mounts()
     sess = ws.create_session("agent", mounts={"/a": "write"})
-    sess.env["SECRET_IDX"] = "1"
+    seed_var(sess, "SECRET_IDX", "1")
     sess.hidden_vars = HiddenVars(names=("SECRET_IDX", ))
 
     async def run():
@@ -931,7 +932,7 @@ def test_hidden_home_reads_as_unset_everywhere():
     # only on the generic env lookup.
     ws = _two_mounts()
     sess = ws.create_session("agent", mounts={"/a": "write"})
-    sess.env["HOME"] = "/a/homedir"
+    seed_var(sess, "HOME", "/a/homedir")
     sess.hidden_vars = HiddenVars(names=("HOME", ))
 
     async def run():

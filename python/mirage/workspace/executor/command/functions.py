@@ -17,9 +17,9 @@ from typing import Any
 from mirage.io import IOResult
 from mirage.io.stream import async_chain
 from mirage.io.types import ByteSource
-from mirage.shell.array import ShellArray
 from mirage.shell.call_stack import CallStack
 from mirage.shell.types import ERREXIT_EXEMPT_TYPES
+from mirage.shell.variable import ShellVar
 from mirage.types import PathSpec, word_text
 from mirage.workspace.executor.command.types import ExecuteNodeFn
 from mirage.workspace.executor.control import ReturnSignal
@@ -58,10 +58,10 @@ async def run_shell_function(
     # Positional args carry the word as typed ($1 stays sub/a.txt).
     text_args = [word_text(p) for p in parts[1:]]
     cs.push(text_args, function_name=cmd_name)
-    saved_locals: dict[str, str | None] = {}
-    saved_arrays: dict[str, ShellArray | None] = {}
+    # One stack: a local shadows the whole record, so the caller's
+    # value and attributes are saved and put back together.
+    saved_locals: dict[str, ShellVar | None] = {}
     session._local_vars = saved_locals
-    session._local_arrays = saved_arrays
     try:
         all_stdout: list[Any] = []
         merged_io = IOResult()
@@ -92,15 +92,9 @@ async def run_shell_function(
         return combined, merged_io, last_exec
     finally:
         cs.pop()
-        for key, old_val in saved_locals.items():
-            if old_val is None:
-                session.env.pop(key, None)
+        for key, old in saved_locals.items():
+            if old is None:
+                session.vars.pop(key, None)
             else:
-                session.env[key] = old_val
-        for key, old_arr in saved_arrays.items():
-            if old_arr is None:
-                session.arrays.pop(key, None)
-            else:
-                session.arrays[key] = old_arr
+                session.vars[key] = old
         session._local_vars = None
-        session._local_arrays = None

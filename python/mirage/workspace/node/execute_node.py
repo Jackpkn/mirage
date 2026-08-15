@@ -60,8 +60,8 @@ from mirage.workspace.node.program import execute_program
 from mirage.workspace.node.test_expr import (expand_double_bracket,
                                              expand_test_expr)
 from mirage.workspace.session import Session
-from mirage.workspace.session.state import (ensure_var_visible, session_view,
-                                            visible_env)
+from mirage.workspace.session.state import (ensure_var_visible, seed_var,
+                                            session_view, visible_env)
 from mirage.workspace.types import ExecutionNode
 
 from mirage.shell.helpers import (  # isort: skip
@@ -144,7 +144,7 @@ async def _eval_cfor_expr(
     # assignment exactly as it governs `X=1`.
     for name, updated in updates.items():
         if view is None:
-            session.env[name] = updated
+            seed_var(session, name, updated)
         else:
             await view.set(name, updated)
     return int(value)
@@ -713,11 +713,11 @@ async def execute_node(
                 if note_local_array(session, bare):
                     # Inside a function this shadows whatever the caller
                     # had with a fresh empty array.
-                    session.arrays[bare] = []
+                    seed_var(session, bare, [])
                 elif bare not in session.arrays:
                     # At top level an existing scalar becomes element 0.
-                    scalar = session.env.pop(bare, None)
-                    session.arrays[bare] = [] if scalar is None else [scalar]
+                    scalar = session.env.get(bare)
+                    seed_var(session, bare, [] if scalar is None else [scalar])
         # Array literals travel as data: the handler stores them through
         # the session door and owns both refusal voices, so the executor
         # only expands and stages.

@@ -24,6 +24,7 @@ from mirage.workspace.executor.control import (BreakSignal, ContinueSignal,
                                                handle_for, handle_if,
                                                handle_until, handle_while)
 from mirage.workspace.session import Session
+from mirage.workspace.session.session import vars_from_env
 from mirage.workspace.types import ExecutionNode
 
 
@@ -142,7 +143,7 @@ async def test_for_skips_to_the_next_iteration_on_continue():
 
 @pytest.mark.asyncio
 async def test_for_restores_a_shadowed_loop_variable():
-    sess = session(env={"X": "saved"})
+    sess = session(vars=vars_from_env({"X": "saved"}))
 
     async def execute(*_args):
         return result()

@@ -25,10 +25,11 @@ from mirage.workspace.expand import (classify_parts, classify_word,
                                      expand_and_classify, expand_node,
                                      expand_parts)
 from mirage.workspace.session import Session
+from mirage.workspace.session.session import vars_from_env
 
 
 def _session(env=None, cwd="/"):
-    return Session(session_id="test", cwd=cwd, env=env or {})
+    return Session(session_id="test", cwd=cwd, vars=vars_from_env(env or {}))
 
 
 def _execute_fn():

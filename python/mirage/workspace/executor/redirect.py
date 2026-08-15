@@ -305,9 +305,7 @@ async def _open_refusal(dispatch, session: Session, r: Redirect,
         return None
     if getattr(stat, "type", None) == FileType.DIRECTORY:
         return f"{scope.raw_path}: Is a directory\n".encode()
-    if noclobber:
-        return f"{scope.raw_path}: cannot overwrite existing file\n".encode()
-    return None
+    return f"{scope.raw_path}: cannot overwrite existing file\n".encode()
 
 
 async def _read_existing(dispatch, scope) -> bytes:
