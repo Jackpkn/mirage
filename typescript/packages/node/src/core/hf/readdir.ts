@@ -25,7 +25,35 @@ import {
 import type { HfAccessor } from '../../accessor/hf.ts'
 import { SCOPE_ERROR } from './constants.ts'
 import { isNotFound } from './util.ts'
-import { enoent } from '@struktoai/mirage-core'
+import { enoent, enotdir, readdirError } from '@struktoai/mirage-core'
+
+async function isFile(accessor: HfAccessor, key: string): Promise<boolean> {
+  const op = await accessor.operator()
+  try {
+    return !(await op.stat(stripSlash(key))).isDirectory()
+  } catch (error) {
+    if (isNotFound(error)) return false
+    throw error
+  }
+}
+
+async function isDir(accessor: HfAccessor, key: string): Promise<boolean> {
+  const op = await accessor.operator()
+  try {
+    return (await op.stat(`${stripSlash(key)}/`)).isDirectory()
+  } catch (error) {
+    if (isNotFound(error)) return false
+    throw error
+  }
+}
+
+// The errno for a path the tree API listed nothing at all under. Mirrors
+// Python's mirage/core/hf_buckets/readdir.py `_listing_error`.
+async function listingError(accessor: HfAccessor, path: PathSpec, target: string): Promise<Error> {
+  const file = (p: string): Promise<boolean> => isFile(accessor, p)
+  if (await file(target)) return enotdir(path)
+  return readdirError(path, target, file, (p) => isDir(accessor, p))
+}
 
 export async function readdir(
   accessor: HfAccessor,
@@ -59,6 +87,17 @@ export async function readdir(
   } catch (err) {
     if (isNotFound(err)) throw enoent(path)
     throw err
+  }
+  if (entries.length === 0 && strippedTarget !== '') {
+    // Nothing stands for the directory itself here: the tree API lists
+    // children only, and the hf service refuses a directory marker
+    // client-side (create_dir=false), so a bucket directory exists exactly
+    // while it holds a key and any entry at all proves it. The Hub answers
+    // a missing subpath with 200 and [], which the lister reports as an
+    // empty result rather than raising, so the NotFound arm above never
+    // fired and `ls /hf/never` rendered an empty directory and exited 0.
+    // The mount root is exempt: it exists because it is mounted.
+    throw await listingError(accessor, path, target)
   }
   for (const entry of entries) {
     const relative = entry.path()

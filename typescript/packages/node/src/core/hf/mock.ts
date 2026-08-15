@@ -108,7 +108,12 @@ export function fakeHfOperator(initial: Record<string, string | Buffer> = {}): F
     },
     list: (path, options) => {
       const pfx = path === '/' ? '' : path
-      if (pfx !== '' && !hasDir(pfx)) return Promise.reject(notFound('list', path))
+      // The Hub answers a missing subpath with 200 and an empty array, and
+      // the tree API lists children only -- nothing stands for the
+      // directory itself. Probed against the fake hub through opendal
+      // 0.47.1: list('never/') and list('a.txt/') both resolve to [] where
+      // this fake used to reject, which would have made the readdir tests
+      // below pass without ever reaching the empty-listing branch.
       const recursive = options?.recursive === true
       const seen = new Map<string, FakeEntry>()
       for (const [key, data] of files.entries()) {
