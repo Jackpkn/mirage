@@ -103,14 +103,14 @@ export class GCalResource extends BaseResource implements Resource {
     return gcalResolveGlob(this.accessor, effective, this.index)
   }
 
-  getState(): Promise<GCalResourceState> {
+  override getState(): Promise<GCalResourceState> {
     return Promise.resolve({
       type: this.kind,
       config: redactGCalConfig(this.config),
     })
   }
 
-  loadState(_state: GCalResourceState): Promise<void> {
+  override loadState(_state: GCalResourceState): Promise<void> {
     return Promise.resolve()
   }
 }

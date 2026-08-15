@@ -41,6 +41,22 @@ export interface FindOptions {
   mtimeMax?: number | null
 }
 
+/**
+ * What every resource's snapshot state carries: a `type` naming the class
+ * to reconstruct, and the config it was built from. A config holding a
+ * credential redacts it, and that redaction is what makes `Workspace.load`
+ * demand a fresh override for the mount instead of silently substituting
+ * an empty one.
+ *
+ * The payload union adding each backend's own keys stays with the snapshot
+ * format (`workspace/snapshot/types.ts`); the contract needs only this.
+ * Mirrors Python `BaseResource.get_state`.
+ */
+export interface ResourceStateBase {
+  type: string
+  config?: unknown
+}
+
 export interface Resource {
   readonly kind: string
   readonly prompt?: string
@@ -86,6 +102,12 @@ export interface Resource {
   setIndex?(config?: IndexConfig): void
   open(): Promise<void>
   close(): Promise<void>
+  // Non-optional on purpose: `toStateDict` calls both on every mount, so an
+  // absent one is a `Workspace.save()` crash rather than a missing feature.
+  // BaseResource supplies the bare `{type}` default, as Python's does; a
+  // resource holding config overrides it to carry that config too.
+  getState(): ResourceStateBase | Promise<ResourceStateBase>
+  loadState(state: ResourceStateBase): void | Promise<void>
   ops?(): readonly RegisteredOp[]
   commands?(): readonly RegisteredCommand[]
 
@@ -131,6 +153,10 @@ export function sizesAlwaysKnown(resource: Resource): boolean {
 }
 
 export abstract class BaseResource {
+  // Named here rather than only on the Resource interface so the state
+  // defaults below can spell themselves, mirroring Python's
+  // `BaseResource.name`.
+  abstract readonly kind: string
   readonly indexTtl: number = 600
   protected _index?: IndexCacheStore
   // JS has no object-identity primitive, so the default storageId hands
@@ -185,6 +211,26 @@ export abstract class BaseResource {
   // truthfully — a real filesystem, or a provider quota — override this.
   statfs(): Promise<CapacityResult> {
     return Promise.resolve({ state: CapacityState.UNKNOWN })
+  }
+
+  /**
+   * The snapshot state of a resource that holds nothing of its own: the
+   * class name, so `Workspace.load` can rebuild it. Storage-backed
+   * resources override this to carry their bytes, config-backed ones to
+   * carry their (redacted) config. Mirrors Python
+   * `BaseResource.get_state`.
+   */
+  getState(): ResourceStateBase | Promise<ResourceStateBase> {
+    return { type: this.kind }
+  }
+
+  /**
+   * Take back what {@link BaseResource.getState} put out. A no-op by
+   * default, because the bare `{type}` carries nothing to restore.
+   * Mirrors Python `BaseResource.load_state`.
+   */
+  loadState(_state: ResourceStateBase): void | Promise<void> {
+    // Nothing to take back.
   }
 
   /**

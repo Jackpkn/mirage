@@ -100,14 +100,14 @@ export class GDocsResource extends BaseResource implements Resource {
     return gdocsResolveGlob(this.accessor, effective, this.index)
   }
 
-  getState(): Promise<GDocsResourceState> {
+  override getState(): Promise<GDocsResourceState> {
     return Promise.resolve({
       type: this.kind,
       config: redactGDocsConfig(this.config),
     })
   }
 
-  loadState(_state: GDocsResourceState): Promise<void> {
+  override loadState(_state: GDocsResourceState): Promise<void> {
     return Promise.resolve()
   }
 }

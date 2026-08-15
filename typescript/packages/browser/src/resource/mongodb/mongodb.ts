@@ -31,6 +31,8 @@ import {
   type RegisteredCommand,
   type RegisteredOp,
   type Resource,
+  redactMongoDBConfig,
+  type MongoDBConfigRedacted,
   resolveMongoDBConfig,
   makeResolveGlob,
   ResourceName,
@@ -44,6 +46,11 @@ export interface MongoDBResourceOptions {
   prefix?: string
   driver?: MongoDriver
   endpoint?: string
+}
+
+export interface MongoDBResourceState {
+  type: string
+  config: MongoDBConfigRedacted
 }
 
 export class MongoDBResource implements Resource {
@@ -66,6 +73,16 @@ export class MongoDBResource implements Resource {
     this.accessor = new MongoDBAccessor(this.driver, this.config)
     this.index = new RAMIndexCacheStore({ ttl: this.indexTtl })
     this.prompt = MONGODB_PROMPT.replace('{prefix}', prefix ?? '')
+  }
+
+  getState(): MongoDBResourceState {
+    return { type: this.kind, config: redactMongoDBConfig(this.config) }
+  }
+
+  // The rows live in the database, so a restored mount reaches them
+  // through its config alone — there is nothing to take back.
+  loadState(_state: MongoDBResourceState): Promise<void> {
+    return Promise.resolve()
   }
 
   open(): Promise<void> {

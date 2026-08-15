@@ -23,13 +23,24 @@ import { DIFY_OPS } from '../../ops/dify/index.ts'
 import type { RegisteredOp } from '../../ops/registry.ts'
 import { ResourceName, type FileStat, type PathSpec } from '../../types.ts'
 import { BaseResource, type Resource } from '../base.ts'
-import { resolveDifyConfig, type DifyConfig, type DifyConfigResolved } from './config.ts'
+import {
+  type DifyConfigRedacted,
+  redactDifyConfig,
+  resolveDifyConfig,
+  type DifyConfig,
+  type DifyConfigResolved,
+} from './config.ts'
 import { DIFY_PROMPT } from './prompt.ts'
 
 const resolveGlob = makeResolveGlob(difyReaddir)
 
 export interface DifyResourceOptions {
   config: DifyConfig
+}
+
+export interface DifyResourceState {
+  type: string
+  config: DifyConfigRedacted
 }
 
 export class DifyResource extends BaseResource implements Resource {
@@ -45,6 +56,16 @@ export class DifyResource extends BaseResource implements Resource {
     const config = 'config' in options ? options.config : options
     this.config = resolveDifyConfig(config)
     this.accessor = new DifyAccessor(this.config)
+  }
+
+  override getState(): DifyResourceState {
+    return { type: this.kind, config: redactDifyConfig(this.config) }
+  }
+
+  // Nothing to take back: the bytes live in the remote store, so a
+  // restored mount reaches them through its config alone.
+  override loadState(_state: DifyResourceState): Promise<void> {
+    return Promise.resolve()
   }
 
   open(): Promise<void> {

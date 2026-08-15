@@ -14,6 +14,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { OpsRegistry } from '../../../ops/registry.ts'
+import { BaseResource } from '../../../resource/base.ts'
 import { RAMResource } from '../../../resource/ram/ram.ts'
 import { MountMode } from '../../../types.ts'
 import { getTestParser } from '../../../workspace/fixtures/workspace_fixture.ts'
@@ -36,12 +37,12 @@ function mockFetch(): void {
   ) as typeof fetch
 }
 
-class StubResource {
+class StubResource extends BaseResource {
   readonly kind = 'stub'
   open(): Promise<void> {
     return Promise.resolve()
   }
-  close(): Promise<void> {
+  override close(): Promise<void> {
     return Promise.resolve()
   }
 }

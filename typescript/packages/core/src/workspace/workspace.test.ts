@@ -17,12 +17,12 @@ import type { CacheConfig } from '../cache/file/config.ts'
 import type { FileCache } from '../cache/file/mixin.ts'
 import { OpsRegistry } from '../ops/registry.ts'
 import { MountMode, ResourceName, type PathSpec } from '../types.ts'
-import type { Resource } from '../resource/base.ts'
+import { BaseResource, type Resource } from '../resource/base.ts'
 import { RAMResource } from '../resource/ram/ram.ts'
 import { getTestParser } from './fixtures/workspace_fixture.ts'
 import { Workspace } from './workspace.ts'
 
-class MockResource implements Resource {
+class MockResource extends BaseResource implements Resource {
   readonly kind = 'mock'
   opens = 0
   closes = 0
@@ -30,7 +30,7 @@ class MockResource implements Resource {
     this.opens++
     return Promise.resolve()
   }
-  close(): Promise<void> {
+  override close(): Promise<void> {
     this.closes++
     return Promise.resolve()
   }
@@ -100,7 +100,7 @@ describe('Workspace lifecycle', () => {
 })
 
 describe('Workspace custom cache option', () => {
-  class StubCache implements Resource, FileCache {
+  class StubCache extends BaseResource implements Resource, FileCache {
     readonly kind = ResourceName.RAM
     readonly store = new Map<string, Uint8Array>()
     getCalls = 0
@@ -109,7 +109,7 @@ describe('Workspace custom cache option', () => {
     open(): Promise<void> {
       return Promise.resolve()
     }
-    close(): Promise<void> {
+    override close(): Promise<void> {
       return Promise.resolve()
     }
     readonly cacheSize = 0

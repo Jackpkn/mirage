@@ -107,14 +107,14 @@ export class DiscordResource extends BaseResource implements Resource {
     return resolveDiscordGlob(this.accessor, effective, this.index)
   }
 
-  getState(): Promise<DiscordResourceState> {
+  override getState(): Promise<DiscordResourceState> {
     return Promise.resolve({
       type: this.kind,
       config: redactDiscordConfig(this.config),
     })
   }
 
-  loadState(_state: DiscordResourceState): Promise<void> {
+  override loadState(_state: DiscordResourceState): Promise<void> {
     return Promise.resolve()
   }
 }

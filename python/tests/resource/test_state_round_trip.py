@@ -300,3 +300,53 @@ def test_ssh_no_redaction_no_override():
     # Plain config preserved
     assert state["config"]["host"] == "example.com"
     assert state["config"]["username"] == "me"
+
+
+# ── database-backed resources, built through the registry ──────────────
+
+# The matrix above names classes directly; this one goes through
+# build_resource, the path a mount actually takes, so a backend that is
+# registry-mountable but carries no state is caught. `secret` is stated
+# outright rather than sniffed: postgres and mongodb bury the password
+# inside a DSN, so no string-shape heuristic finds it. Twin of the
+# TypeScript sweep in packages/node/src/resource/state_round_trip.test.ts.
+DB_STATE_CASES = [
+    ("postgres", dict(dsn="postgresql://u:PGSECRET@localhost:5432/db"),
+     "PGSECRET"),
+    ("mongodb", dict(uri="mongodb://u:MONGOSECRET@localhost:27017/db"),
+     "MONGOSECRET"),
+    ("lancedb", dict(uri="db://x", api_key="LANCESECRET"), "LANCESECRET"),
+    ("qdrant", dict(collection="c", api_key="QDRANTSECRET"), "QDRANTSECRET"),
+    ("dify", dict(api_key="DIFYSECRET", base_url="http://x",
+                  dataset_id="d"), "DIFYSECRET"),
+    # chroma reaches its server with no credential at all, so it is the one
+    # backend here that legitimately needs no override on load.
+    ("chroma", dict(collection_name="c"), None),
+]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("name,config,secret",
+                         DB_STATE_CASES,
+                         ids=[c[0] for c in DB_STATE_CASES])
+async def test_registry_resource_state_masks_credential(name, config, secret):
+    from mirage.resource.registry import build_resource
+    from mirage.resource.secrets import has_redacted_secret
+
+    p = await build_resource(name, config)
+    state = p.get_state()
+    assert state["type"] == name
+    assert state["config"] is not None
+
+    blob = repr(state)
+    if secret is not None:
+        # The credential must not survive into the snapshot, and the marker
+        # it leaves behind is what makes load demand a fresh one.
+        assert secret not in blob, f"{name}: leaked {secret!r} in state"
+        assert "<REDACTED>" in blob
+        assert has_redacted_secret(state["config"])
+    else:
+        assert not has_redacted_secret(state["config"])
+
+    p.load_state(state)
+    await p.close()

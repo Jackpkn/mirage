@@ -99,6 +99,7 @@ export {
   BaseResource,
   type FindOptions,
   type Resource,
+  type ResourceStateBase,
   sizesAlwaysKnown,
   throwUnsupported,
 } from './resource/base.ts'
@@ -1354,6 +1355,8 @@ export { WHITESPACE, WIDE, ZERO_WIDTH } from './utils/generated/width_data.ts'
 export type { PgDriver, PgQueryResult } from './core/postgres/_driver.ts'
 export { PostgresAccessor } from './accessor/postgres.ts'
 export {
+  redactPostgresConfig,
+  type PostgresConfigRedacted,
   normalizePostgresConfig,
   resolvePostgresConfig,
   type PostgresConfig,
@@ -1395,6 +1398,8 @@ export {
 } from './core/mongodb/types.ts'
 export { MongoDBAccessor } from './accessor/mongodb.ts'
 export {
+  redactMongoDBConfig,
+  type MongoDBConfigRedacted,
   normalizeMongoDBConfig,
   resolveMongoDBConfig,
   type MongoDBConfig,
@@ -1410,6 +1415,8 @@ export { detectScope as detectMongoScope, type MongoDBScope } from './core/mongo
 export type { LanceDriver, LanceRow } from './core/lancedb/_driver.ts'
 export { LanceDBAccessor } from './accessor/lancedb.ts'
 export {
+  redactLanceDBConfig,
+  type LanceDBConfigRedacted,
   resolveLanceDBConfig,
   type LanceDBConfig,
   type LanceDBConfigResolved,
@@ -1428,6 +1435,8 @@ export {
 } from './core/lancedb/scope.ts'
 export { ChromaAccessor } from './accessor/chroma.ts'
 export {
+  redactChromaConfig,
+  type ChromaConfigRedacted,
   resolveChromaConfig,
   type ChromaConfig,
   type ChromaConfigResolved,
@@ -1442,6 +1451,8 @@ export { stat as chromaStat } from './core/chroma/stat.ts'
 export { searchSegments as chromaSearch } from './core/chroma/search.ts'
 export { DifyAccessor } from './accessor/dify.ts'
 export {
+  redactDifyConfig,
+  type DifyConfigRedacted,
   resolveDifyConfig,
   type DifyConfig,
   type DifyConfigResolved,
@@ -1457,6 +1468,8 @@ export { searchSegments as difySearch } from './core/dify/search.ts'
 export type { QdrantPoint, QdrantRow } from './core/qdrant/_client.ts'
 export { QdrantAccessor } from './accessor/qdrant.ts'
 export {
+  redactQdrantConfig,
+  type QdrantConfigRedacted,
   resolveQdrantConfig,
   type QdrantConfig,
   type QdrantConfigResolved,

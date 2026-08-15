@@ -105,14 +105,14 @@ export class GitHubCIResource extends BaseResource implements Resource {
     return githubCiResolveGlob(this.accessor, effective, this.index)
   }
 
-  getState(): Promise<GitHubCIResourceState> {
+  override getState(): Promise<GitHubCIResourceState> {
     return Promise.resolve({
       type: this.kind,
       config: redactGitHubCIConfig(this.config),
     })
   }
 
-  loadState(_state: GitHubCIResourceState): Promise<void> {
+  override loadState(_state: GitHubCIResourceState): Promise<void> {
     return Promise.resolve()
   }
 }

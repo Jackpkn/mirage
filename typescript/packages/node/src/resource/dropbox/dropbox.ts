@@ -105,14 +105,14 @@ export class DropboxResource extends BaseResource implements Resource {
     return dropboxResolveGlob(this.accessor, effective, this.index)
   }
 
-  getState(): Promise<DropboxResourceState> {
+  override getState(): Promise<DropboxResourceState> {
     return Promise.resolve({
       type: this.kind,
       config: redactDropboxConfig(this.config),
     })
   }
 
-  loadState(_state: DropboxResourceState): Promise<void> {
+  override loadState(_state: DropboxResourceState): Promise<void> {
     return Promise.resolve()
   }
 }

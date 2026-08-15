@@ -116,14 +116,14 @@ export class LangfuseResource extends BaseResource implements Resource {
     return resolveLangfuseGlob(this.accessor, effective, this.index)
   }
 
-  getState(): Promise<LangfuseResourceState> {
+  override getState(): Promise<LangfuseResourceState> {
     return Promise.resolve({
       type: this.kind,
       config: redactLangfuseConfig(this.config),
     })
   }
 
-  loadState(_state: LangfuseResourceState): Promise<void> {
+  override loadState(_state: LangfuseResourceState): Promise<void> {
     return Promise.resolve()
   }
 }

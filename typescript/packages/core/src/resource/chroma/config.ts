@@ -48,3 +48,11 @@ export function resolveChromaConfig(config: ChromaConfig): ChromaConfigResolved 
     chunkIndexField: normalizeNonEmpty(config.chunkIndexField ?? 'chunk_index', 'chunkIndexField'),
   }
 }
+
+// No credential in this config, so the snapshot carries it whole and
+// `Workspace.load` needs no override for the mount.
+export type ChromaConfigRedacted = ChromaConfigResolved
+
+export function redactChromaConfig(config: ChromaConfigResolved): ChromaConfigRedacted {
+  return { ...config }
+}

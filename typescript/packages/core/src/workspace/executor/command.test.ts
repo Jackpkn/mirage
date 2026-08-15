@@ -17,7 +17,7 @@ import { command } from '../../commands/config.ts'
 import { CommandSpec, Operand, Option } from '../../commands/spec/types.ts'
 import { IOResult } from '../../io/types.ts'
 import { JobTable } from '../../shell/job_table/index.ts'
-import type { Resource } from '../../resource/base.ts'
+import { BaseResource, type Resource } from '../../resource/base.ts'
 import { MountMode, PathSpec } from '../../types.ts'
 import { MountRegistry } from '../mount/registry.ts'
 import { Session } from '../session/session.ts'
@@ -25,12 +25,14 @@ import type { ExecuteNodeFn } from './jobs.ts'
 import type { DispatchFn } from './cross_mount.ts'
 import { handleCommand } from './command.ts'
 
-class StubResource implements Resource {
-  constructor(readonly kind: string) {}
+class StubResource extends BaseResource implements Resource {
+  constructor(readonly kind: string) {
+    super()
+  }
   open(): Promise<void> {
     return Promise.resolve()
   }
-  close(): Promise<void> {
+  override close(): Promise<void> {
     return Promise.resolve()
   }
 }

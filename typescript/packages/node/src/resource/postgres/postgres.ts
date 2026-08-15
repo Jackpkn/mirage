@@ -25,6 +25,8 @@ import {
   postgresRead,
   postgresReaddir,
   postgresStat,
+  redactPostgresConfig,
+  type PostgresConfigRedacted,
   resolvePostgresConfig,
   makeResolveGlob,
   type FileStat,
@@ -41,6 +43,11 @@ const resolvePostgresGlob = makeResolveGlob(postgresReaddir)
 export interface PostgresResourceOptions {
   config: PostgresConfig
   prefix?: string
+}
+
+export interface PostgresResourceState {
+  type: string
+  config: PostgresConfigRedacted
 }
 
 export class PostgresResource extends BaseResource implements Resource {
@@ -60,6 +67,16 @@ export class PostgresResource extends BaseResource implements Resource {
     this.store = new PostgresStore(this.config)
     this.accessor = new PostgresAccessor(this.store, this.config)
     this.prompt = POSTGRES_PROMPT.replace('{prefix}', prefix ?? '')
+  }
+
+  override getState(): PostgresResourceState {
+    return { type: this.kind, config: redactPostgresConfig(this.config) }
+  }
+
+  // The rows live in the database, so a restored mount reaches them
+  // through its config alone — there is nothing to take back.
+  override loadState(_state: PostgresResourceState): Promise<void> {
+    return Promise.resolve()
   }
 
   open(): Promise<void> {

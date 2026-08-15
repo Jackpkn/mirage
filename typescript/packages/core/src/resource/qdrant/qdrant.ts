@@ -23,13 +23,24 @@ import { QDRANT_OPS } from '../../ops/qdrant/index.ts'
 import type { RegisteredOp } from '../../ops/registry.ts'
 import { ResourceName, type FileStat, type PathSpec } from '../../types.ts'
 import { BaseResource, type Resource } from '../base.ts'
-import { resolveQdrantConfig, type QdrantConfig, type QdrantConfigResolved } from './config.ts'
+import {
+  type QdrantConfigRedacted,
+  redactQdrantConfig,
+  resolveQdrantConfig,
+  type QdrantConfig,
+  type QdrantConfigResolved,
+} from './config.ts'
 import { QDRANT_PROMPT } from './prompt.ts'
 
 const resolveGlob = makeResolveGlob(qdrantReaddir)
 
 export interface QdrantResourceOptions {
   config: QdrantConfig
+}
+
+export interface QdrantResourceState {
+  type: string
+  config: QdrantConfigRedacted
 }
 
 export class QdrantResource extends BaseResource implements Resource {
@@ -48,6 +59,16 @@ export class QdrantResource extends BaseResource implements Resource {
     const config = 'config' in options ? options.config : options
     this.config = resolveQdrantConfig(config)
     this.accessor = new QdrantAccessor(this.config)
+  }
+
+  override getState(): QdrantResourceState {
+    return { type: this.kind, config: redactQdrantConfig(this.config) }
+  }
+
+  // Nothing to take back: the bytes live in the remote store, so a
+  // restored mount reaches them through its config alone.
+  override loadState(_state: QdrantResourceState): Promise<void> {
+    return Promise.resolve()
   }
 
   open(): Promise<void> {

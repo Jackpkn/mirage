@@ -224,14 +224,14 @@ export class DatabricksVolumeResource extends BaseResource implements Resource {
     return resolveDatabricksVolumeGlob(this.accessor, effective, this.index)
   }
 
-  getState(): Promise<DatabricksVolumeResourceState> {
+  override getState(): Promise<DatabricksVolumeResourceState> {
     return Promise.resolve({
       type: this.kind,
       config: redactDatabricksVolumeConfig(this.config),
     })
   }
 
-  loadState(_state: DatabricksVolumeResourceState): Promise<void> {
+  override loadState(_state: DatabricksVolumeResourceState): Promise<void> {
     return Promise.resolve()
   }
 }

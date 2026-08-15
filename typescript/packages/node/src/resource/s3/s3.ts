@@ -226,14 +226,14 @@ export class S3Resource extends BaseResource implements Resource {
     return globCore(this.accessor, effective, this.index)
   }
 
-  getState(): Promise<S3ResourceState> {
+  override getState(): Promise<S3ResourceState> {
     return Promise.resolve({
       type: this.kind,
       config: redactConfig(this.config),
     })
   }
 
-  loadState(_state: S3ResourceState): Promise<void> {
+  override loadState(_state: S3ResourceState): Promise<void> {
     return Promise.resolve()
   }
 }

@@ -26,6 +26,8 @@ import {
   mongoStat,
   mountKey,
   mountPrefixOf,
+  redactMongoDBConfig,
+  type MongoDBConfigRedacted,
   resolveMongoDBConfig,
   makeResolveGlob,
   type FileStat,
@@ -46,6 +48,11 @@ export interface MongoDBResourceOptions {
   prefix?: string
 }
 
+export interface MongoDBResourceState {
+  type: string
+  config: MongoDBConfigRedacted
+}
+
 export class MongoDBResource extends BaseResource implements Resource {
   readonly kind: string = ResourceName.MONGODB
   readonly cachesReads: boolean = false
@@ -63,6 +70,16 @@ export class MongoDBResource extends BaseResource implements Resource {
     this.store = new MongoDBStore(this.config.uri)
     this.accessor = new MongoDBAccessor(this.store, this.config)
     this.prompt = MONGODB_PROMPT.replace('{prefix}', prefix ?? '')
+  }
+
+  override getState(): MongoDBResourceState {
+    return { type: this.kind, config: redactMongoDBConfig(this.config) }
+  }
+
+  // The rows live in the database, so a restored mount reaches them
+  // through its config alone — there is nothing to take back.
+  override loadState(_state: MongoDBResourceState): Promise<void> {
+    return Promise.resolve()
   }
 
   open(): Promise<void> {

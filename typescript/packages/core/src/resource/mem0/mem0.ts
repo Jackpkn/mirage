@@ -12,6 +12,11 @@ import { MEM0_PROMPT } from './prompt.ts'
 
 const resolveGlob = makeResolveGlob(readdir)
 
+export interface Mem0ResourceState {
+  type: string
+  config: Mem0ConfigRedacted
+}
+
 export class Mem0Resource extends BaseResource implements Resource {
   readonly kind: string = ResourceName.MEM0
   readonly cachesReads: boolean = true
@@ -58,12 +63,12 @@ export class Mem0Resource extends BaseResource implements Resource {
     return stat(this.accessor, path, this.index)
   }
 
-  getState(): Record<string, unknown> {
+  override getState(): Mem0ResourceState {
     const config: Mem0ConfigRedacted = redactMem0Config(this.config)
     return { type: this.kind, config }
   }
 
-  loadState(_state: Record<string, unknown>): Promise<void> {
+  override loadState(_state: Mem0ResourceState): Promise<void> {
     return Promise.resolve()
   }
 }

@@ -12,6 +12,8 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import { REDACTED_SECRET, type RedactedConfig } from '../secrets.ts'
+
 export interface LanceDBConfig {
   uri: string
   apiKey?: string
@@ -66,4 +68,14 @@ export function resolveLanceDBConfig(config: LanceDBConfig): LanceDBConfigResolv
     searchLimit: config.searchLimit ?? 10,
     maxRows: config.maxRows ?? 1000,
   }
+}
+
+// `apiKey` is the credential. Masking it is what makes
+// `resourceStateRequiresOverride` demand a fresh one at load instead of
+// quietly rebuilding the mount as an empty RAMResource. Mirrors the
+// field Python annotates secret on this config.
+export type LanceDBConfigRedacted = RedactedConfig<LanceDBConfigResolved, 'apiKey'>
+
+export function redactLanceDBConfig(config: LanceDBConfigResolved): LanceDBConfigRedacted {
+  return { ...config, apiKey: REDACTED_SECRET }
 }
