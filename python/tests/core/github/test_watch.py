@@ -69,8 +69,7 @@ async def test_truncated_tree_is_not_adopted() -> None:
     # A partial tree would make find report the missing half as deleted.
     stale = {"a.txt": _entry("a.txt", "sha-a")}
     accessor = _accessor(stale)
-    with patch("mirage.core.github.watch.fetch_tree",
-               return_value=({}, True)):
+    with patch("mirage.core.github.watch.fetch_tree", return_value=({}, True)):
         with pytest.raises(IncompleteWalkError):
             await _collect(GitHubWalk(accessor), _root())
     assert accessor.tree == stale
@@ -83,5 +82,5 @@ async def test_walk_reports_blobs_with_their_sha() -> None:
     with patch("mirage.core.github.watch.fetch_tree",
                return_value=(tree, False)):
         entries = await _collect(GitHubWalk(accessor), _root())
-    assert [(e.virtual, e.fingerprint) for e in entries] == [("/gh/a.txt",
-                                                              "sha-a")]
+    assert [(e.virtual, e.fingerprint)
+            for e in entries] == [("/gh/a.txt", "sha-a")]
