@@ -175,7 +175,7 @@ export class RAMResource extends BaseResource implements Resource {
     return globCore(this.accessor, effective, this.index)
   }
 
-  getState(): RAMResourceState {
+  override getState(): RAMResourceState {
     const files: Record<string, Uint8Array> = {}
     for (const [k, v] of this.store.files) files[k] = v
     const modified: Record<string, string> = {}
@@ -191,7 +191,7 @@ export class RAMResource extends BaseResource implements Resource {
     }
   }
 
-  loadState(state: RAMResourceState): void {
+  override loadState(state: RAMResourceState): void {
     this.store.files.clear()
     for (const [k, v] of Object.entries(state.files ?? {})) this.store.files.set(k, v)
     this.store.dirs.clear()

@@ -38,6 +38,10 @@ function makeMount(prefix: string, supportsSnapshot: boolean): MountEntry {
     supportsSnapshot,
     open: () => Promise.resolve(),
     close: () => Promise.resolve(),
+    getState: () => ({ type: 's3' }),
+    loadState: () => {
+      // Nothing to take back.
+    },
   }
   const m: Partial<MountEntry> & {
     prefix: string

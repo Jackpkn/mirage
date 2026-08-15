@@ -45,8 +45,17 @@ export type ConfigOf<S extends z.ZodType> = {
 // the moment one was added. The mapping goes through `Pick` so it is
 // homomorphic and an optional secret stays optional: a bare `[P in K]` is
 // not, and made every optional secret required.
+//
+// A nullable secret keeps null in the redacted twin, because an absent
+// credential is not a masked one: `redactValueWithSchema` returns null
+// before it ever asks whether the field is secret, mirroring Python's
+// `if value is None: continue` in `_walk_config_dump`. Masking it would
+// plant a `<REDACTED>` marker that makes `Workspace.load` demand a fresh
+// config for a snapshot that never held a credential.
 export type RedactedConfig<T, K extends keyof T> = Omit<T, K> & {
-  [P in keyof Pick<T, K>]: typeof REDACTED_SECRET
+  [P in keyof Pick<T, K>]: null extends T[P]
+    ? typeof REDACTED_SECRET | null
+    : typeof REDACTED_SECRET
 }
 
 export function secretStr(): z.ZodString {
@@ -73,8 +82,25 @@ export function hasRedactedSecret(value: unknown): boolean {
   return false
 }
 
+/**
+ * Whether restoring this mount needs a live resource handed in.
+ *
+ * A redaction marker says the saved config is missing a credential. The
+ * explicit `needs_override` says the mount cannot be rebuilt from its
+ * state at all — which in TypeScript is true of every config-backed
+ * backend, because `buildMountArgs` substitutes a `RAMResource` for any
+ * mount it was not given (`snapshot/state.ts`). Python instead
+ * reconstructs the class from `resource_state["type"]` via its registry
+ * (`_resource_class_for`), so the field is inert there and only four of
+ * its resources bother to write it; TypeScript has to read it or a live
+ * database mount comes back as an empty directory.
+ *
+ * The lasting fix is to give `buildMountArgs` a resource factory, which
+ * core cannot import today (`buildResource` lives in node/browser).
+ */
 export function resourceStateRequiresOverride(state: unknown): boolean {
   if (!isRecord(state)) return false
+  if (state.needs_override === true) return true
   return hasRedactedSecret(state.config)
 }
 

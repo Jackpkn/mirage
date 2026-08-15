@@ -12,6 +12,8 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import { REDACTED_SECRET, type RedactedConfig } from '../secrets.ts'
+
 export interface LanceDBConfig {
   uri: string
   apiKey?: string
@@ -66,4 +68,15 @@ export function resolveLanceDBConfig(config: LanceDBConfig): LanceDBConfigResolv
     searchLimit: config.searchLimit ?? 10,
     maxRows: config.maxRows ?? 1000,
   }
+}
+
+// `apiKey` is the credential, and it is the field Python annotates secret
+// on this config. A null one stays null: a local on-disk LanceDB has no
+// credential to mask, and planting the marker anyway would make
+// `Workspace.load` demand a fresh config for a self-contained snapshot.
+// Python's redactor skips None for the same reason.
+export type LanceDBConfigRedacted = RedactedConfig<LanceDBConfigResolved, 'apiKey'>
+
+export function redactLanceDBConfig(config: LanceDBConfigResolved): LanceDBConfigRedacted {
+  return { ...config, apiKey: config.apiKey === null ? null : REDACTED_SECRET }
 }

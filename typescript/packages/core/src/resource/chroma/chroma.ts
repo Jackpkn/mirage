@@ -23,13 +23,25 @@ import { CHROMA_OPS } from '../../ops/chroma/index.ts'
 import type { RegisteredOp } from '../../ops/registry.ts'
 import { ResourceName, type FileStat, type PathSpec } from '../../types.ts'
 import { BaseResource, type Resource } from '../base.ts'
-import { resolveChromaConfig, type ChromaConfig, type ChromaConfigResolved } from './config.ts'
+import {
+  type ChromaConfigRedacted,
+  redactChromaConfig,
+  resolveChromaConfig,
+  type ChromaConfig,
+  type ChromaConfigResolved,
+} from './config.ts'
 import { CHROMA_PROMPT } from './prompt.ts'
 
 const resolveGlob = makeResolveGlob(chromaReaddir)
 
 export interface ChromaResourceOptions {
   config: ChromaConfig
+}
+
+export interface ChromaResourceState {
+  type: string
+  config: ChromaConfigRedacted
+  needs_override: true
 }
 
 export class ChromaResource extends BaseResource implements Resource {
@@ -49,6 +61,25 @@ export class ChromaResource extends BaseResource implements Resource {
     const config = 'config' in options ? options.config : options
     this.config = resolveChromaConfig(config)
     this.accessor = new ChromaAccessor(this.config)
+  }
+
+  override getState(): ChromaResourceState {
+    return {
+      type: this.kind,
+      config: redactChromaConfig(this.config),
+      // TypeScript cannot rebuild a config-backed mount from state:
+      // `buildMountArgs` substitutes a RAMResource for anything it was
+      // not handed. Saying so out loud turns a silently empty mount
+      // into a refusal to load. Python rebuilds via its registry, so it
+      // writes this on only four resources and reads it nowhere.
+      needs_override: true,
+    }
+  }
+
+  // Nothing to take back: the bytes live in the remote store, so a
+  // restored mount reaches them through its config alone.
+  override loadState(_state: ChromaResourceState): Promise<void> {
+    return Promise.resolve()
   }
 
   open(): Promise<void> {

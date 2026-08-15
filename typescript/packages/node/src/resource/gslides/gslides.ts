@@ -100,14 +100,14 @@ export class GSlidesResource extends BaseResource implements Resource {
     return gslidesResolveGlob(this.accessor, effective, this.index)
   }
 
-  getState(): Promise<GSlidesResourceState> {
+  override getState(): Promise<GSlidesResourceState> {
     return Promise.resolve({
       type: this.kind,
       config: redactGSlidesConfig(this.config),
     })
   }
 
-  loadState(_state: GSlidesResourceState): Promise<void> {
+  override loadState(_state: GSlidesResourceState): Promise<void> {
     return Promise.resolve()
   }
 }

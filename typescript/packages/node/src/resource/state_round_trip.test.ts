@@ -16,7 +16,10 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync, existsSync
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { RAMResource } from '@struktoai/mirage-core'
+import { RAMResource, resourceStateRequiresOverride } from '@struktoai/mirage-core'
+import { buildResource } from './registry.ts'
+import { Workspace } from '../workspace.ts'
+import { MountMode, toStateDict } from '@struktoai/mirage-core'
 import { DiskResource } from './disk/disk.ts'
 import { S3Resource } from './s3/s3.ts'
 import { GCSResource } from './gcs/gcs.ts'
@@ -183,4 +186,113 @@ describe('S3-derived backends redact creds (GCS/OCI/R2)', () => {
       expect(blob.includes('<REDACTED>')).toBe(true)
     })
   }
+})
+
+// The audit's ask: derive the table from the registry instead of hand-listing,
+// so a backend added later cannot quietly skip the contract. Before this,
+// taking a snapshot threw `resource.getState is not a function` on any
+// postgres or mongodb mount — both registry-mountable. BaseResource's `{type}`
+// default now keeps that from throwing, but a config-backed resource must
+// still carry its own: inheriting the bare default leaves no redaction marker,
+// so `resourceStateRequiresOverride` returns false and `buildMountArgs`
+// substitutes an empty RAMResource, turning a live database mount into an
+// empty directory on load. That is what these cases pin. Twin of
+// tests/resource/test_state_round_trip.py.
+describe('every registered resource answers the state contract', () => {
+  // Minimal configs per backend; the registry validates on build, so these
+  // only need to be well-formed, not reachable. `secret` is stated outright
+  // rather than sniffed: postgres and mongodb bury the password inside a
+  // DSN, so no string-shape heuristic finds it.
+  const CASES: { name: string; config: Record<string, unknown>; secret: string | null }[] = [
+    {
+      name: 'postgres',
+      config: { dsn: 'postgresql://u:PGSECRET@localhost:5432/db' },
+      secret: 'PGSECRET',
+    },
+    {
+      name: 'mongodb',
+      config: { uri: 'mongodb://u:MONGOSECRET@localhost:27017/db' },
+      secret: 'MONGOSECRET',
+    },
+    { name: 'lancedb', config: { uri: 'db://x', api_key: 'LANCESECRET' }, secret: 'LANCESECRET' },
+    // No credential at all: a local on-disk LanceDB and a keyless Qdrant.
+    // Masking the absent key would plant a marker for a snapshot that never
+    // held one, which is what Python's redactor avoids by skipping None.
+    { name: 'lancedb', config: { uri: 'db://x' }, secret: null },
+    { name: 'qdrant', config: { collection: 'c' }, secret: null },
+    {
+      name: 'qdrant',
+      config: { collection: 'c', api_key: 'QDRANTSECRET' },
+      secret: 'QDRANTSECRET',
+    },
+    {
+      name: 'dify',
+      config: { api_key: 'DIFYSECRET', base_url: 'http://x', dataset_id: 'd' },
+      secret: 'DIFYSECRET',
+    },
+    // chroma reaches its server with no credential at all, so it is the one
+    // backend that legitimately needs no override on load.
+    { name: 'chroma', config: { collection_name: 'c' }, secret: null },
+  ]
+
+  for (const { name, config, secret } of CASES) {
+    const what = secret === null ? 'no credential' : 'the credential is masked'
+    it(`${name} (${what}): getState/loadState exist, and load demands a resource`, async () => {
+      const resource = await buildResource(name, config)
+      const state = (await Promise.resolve(resource.getState())) as {
+        type: string
+        config?: Record<string, unknown>
+      }
+      expect(state.type).toBe(name)
+      expect(state.config).toBeDefined()
+
+      const blob = JSON.stringify(state)
+      if (secret !== null) {
+        // The credential must not survive into the snapshot, and the marker
+        // it leaves behind is one of the two things that make load demand a
+        // fresh one.
+        expect(blob.includes(secret)).toBe(false)
+        expect(blob.includes('<REDACTED>')).toBe(true)
+      } else {
+        // Nothing to mask, so nothing is masked. An absent secret must stay
+        // absent rather than become `<REDACTED>` — Python's redactor skips
+        // None, and a planted marker would claim a credential was dropped.
+        expect(blob.includes('<REDACTED>')).toBe(false)
+        if ('apiKey' in (state.config ?? {})) expect(state.config?.apiKey).toBeNull()
+      }
+      // Either way the mount needs a live resource, because TypeScript
+      // rebuilds none of these from state: without this, `buildMountArgs`
+      // hands back an empty RAMResource and a live database mount loads as
+      // an empty directory.
+      expect(resourceStateRequiresOverride(state)).toBe(true)
+
+      await Promise.resolve(resource.loadState(state))
+      await resource.close()
+    })
+  }
+})
+
+// The bug this contract closes, end to end. `snapshot/state.ts` cast every
+// mount's resource to `{ getState }` and called it unconditionally, while
+// neither postgres nor mongodb implemented one — so taking a snapshot of a
+// database mount died with `resource.getState is not a function`. (Python
+// spells the entry point `ws.save()`; TypeScript reaches the same
+// `toStateDict` through `copy()` and the snapshot api.)
+describe('snapshotting a database mount', () => {
+  it('reaches state for a postgres mount instead of throwing', async () => {
+    const resource = await buildResource('postgres', {
+      dsn: 'postgresql://u:PGSECRET@localhost:5432/db',
+    })
+    const ws = new Workspace({ '/pg': resource }, { mode: MountMode.READ })
+    const state = await toStateDict(ws)
+
+    const mount = state.mounts.find((m) => m.prefix === '/pg/')
+    expect(mount).toBeDefined()
+    expect(mount?.resource_class).toBe('postgres')
+    // Redacted, so loading this snapshot demands a fresh config rather than
+    // quietly substituting an empty RAMResource for a live database.
+    expect(JSON.stringify(state).includes('PGSECRET')).toBe(false)
+    expect(resourceStateRequiresOverride(mount?.resource_state)).toBe(true)
+    await ws.close()
+  })
 })

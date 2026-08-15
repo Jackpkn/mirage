@@ -13,6 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { normalizeFields } from '../../utils/normalize.ts'
+import { REDACTED_SECRET, type RedactedConfig } from '../secrets.ts'
 
 export interface PostgresConfig {
   dsn: string
@@ -45,4 +46,14 @@ export function resolvePostgresConfig(config: PostgresConfig): PostgresConfigRes
     maxReadBytes: config.maxReadBytes ?? 10 * 1024 * 1024,
     defaultSearchLimit: config.defaultSearchLimit ?? 100,
   }
+}
+
+// `dsn` is the credential. Masking it is what makes
+// `resourceStateRequiresOverride` demand a fresh one at load instead of
+// quietly rebuilding the mount as an empty RAMResource. Mirrors the
+// field Python annotates secret on this config.
+export type PostgresConfigRedacted = RedactedConfig<PostgresConfigResolved, 'dsn'>
+
+export function redactPostgresConfig(config: PostgresConfigResolved): PostgresConfigRedacted {
+  return { ...config, dsn: REDACTED_SECRET }
 }

@@ -41,6 +41,33 @@ export interface FindOptions {
   mtimeMax?: number | null
 }
 
+/**
+ * The two keys the snapshot machinery reads out of a resource's state.
+ *
+ * `type` is the registry name, and it is what rebuilds the resource:
+ * Python's `_resource_class_for` looks it up in the registry first and
+ * only falls back to the mount's `resource_class` import path when it
+ * misses. `config` is what `resourceStateRequiresOverride` scans for the
+ * `<REDACTED>` marker, which is what makes load demand a fresh config
+ * instead of silently substituting an empty mount.
+ *
+ * This lived as a private interface in `workspace/snapshot/types.ts`,
+ * where `ResourceState` still widens it with each backend's own keys; it
+ * moved here so the `Resource` contract and the snapshot format name one
+ * shape rather than two identical ones. Python needs no such type —
+ * `get_state` is annotated `dict[str, Any]` — but a TS interface is not
+ * assignable to `Record<string, unknown>` (no implicit index signature),
+ * so the literal twin would reject every named `XResourceState`.
+ */
+export interface ResourceStateBase {
+  type: string
+  config?: unknown
+  // Set by a backend whose mount cannot be rebuilt from this state alone,
+  // so `Workspace.load` refuses instead of substituting an empty
+  // RAMResource. See `resourceStateRequiresOverride`.
+  needs_override?: boolean
+}
+
 export interface Resource {
   readonly kind: string
   readonly prompt?: string
@@ -86,6 +113,12 @@ export interface Resource {
   setIndex?(config?: IndexConfig): void
   open(): Promise<void>
   close(): Promise<void>
+  // Non-optional on purpose: `toStateDict` calls both on every mount, so an
+  // absent one is a `Workspace.save()` crash rather than a missing feature.
+  // BaseResource supplies the bare `{type}` default, as Python's does; a
+  // resource holding config overrides it to carry that config too.
+  getState(): ResourceStateBase | Promise<ResourceStateBase>
+  loadState(state: ResourceStateBase): void | Promise<void>
   ops?(): readonly RegisteredOp[]
   commands?(): readonly RegisteredCommand[]
 
@@ -131,6 +164,10 @@ export function sizesAlwaysKnown(resource: Resource): boolean {
 }
 
 export abstract class BaseResource {
+  // Named here rather than only on the Resource interface so the state
+  // defaults below can spell themselves, mirroring Python's
+  // `BaseResource.name`.
+  abstract readonly kind: string
   readonly indexTtl: number = 600
   protected _index?: IndexCacheStore
   // JS has no object-identity primitive, so the default storageId hands
@@ -185,6 +222,26 @@ export abstract class BaseResource {
   // truthfully — a real filesystem, or a provider quota — override this.
   statfs(): Promise<CapacityResult> {
     return Promise.resolve({ state: CapacityState.UNKNOWN })
+  }
+
+  /**
+   * The snapshot state of a resource that holds nothing of its own: the
+   * class name, so `Workspace.load` can rebuild it. Storage-backed
+   * resources override this to carry their bytes, config-backed ones to
+   * carry their (redacted) config. Mirrors Python
+   * `BaseResource.get_state`.
+   */
+  getState(): ResourceStateBase | Promise<ResourceStateBase> {
+    return { type: this.kind }
+  }
+
+  /**
+   * Take back what {@link BaseResource.getState} put out. A no-op by
+   * default, because the bare `{type}` carries nothing to restore.
+   * Mirrors Python `BaseResource.load_state`.
+   */
+  loadState(_state: ResourceStateBase): void | Promise<void> {
+    // Nothing to take back.
   }
 
   /**

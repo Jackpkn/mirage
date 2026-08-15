@@ -13,6 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { rstripSlash } from '../../utils/slash.ts'
+import { REDACTED_SECRET, type RedactedConfig } from '../secrets.ts'
 
 export interface DifyConfig {
   apiKey: string
@@ -63,4 +64,15 @@ export function resolveDifyConfig(config: DifyConfig): DifyConfigResolved {
     retryAttempts: normalizePositive(config.retryAttempts, 4, 'retryAttempts'),
     retryMaxDelay: normalizePositive(config.retryMaxDelay, 30, 'retryMaxDelay'),
   }
+}
+
+// `apiKey` is the credential. Masking it is what makes
+// `resourceStateRequiresOverride` demand a fresh one at load instead of
+// quietly rebuilding the mount as an empty RAMResource. Python masks the
+// same field, though it spells it inside `DifyResource.get_state` rather
+// than as a SecretStr on the model — its generic redactor would miss it.
+export type DifyConfigRedacted = RedactedConfig<DifyConfigResolved, 'apiKey'>
+
+export function redactDifyConfig(config: DifyConfigResolved): DifyConfigRedacted {
+  return { ...config, apiKey: REDACTED_SECRET }
 }

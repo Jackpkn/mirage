@@ -29,6 +29,8 @@ import {
   type RegisteredOp,
   type Resource,
   ResourceName,
+  redactLanceDBConfig,
+  type LanceDBConfigRedacted,
   resolveLanceDBConfig,
 } from '@struktoai/mirage-core'
 import { LanceDBStore } from './store.ts'
@@ -37,6 +39,12 @@ const REMOTE_SCHEMES = ['s3://', 'gs://', 'az://', 'hf://', 'db://']
 
 export interface LanceDBResourceOptions {
   config: LanceDBConfig
+}
+
+export interface LanceDBResourceState {
+  type: string
+  config: LanceDBConfigRedacted
+  needs_override: true
 }
 
 export class LanceDBResource extends BaseResource implements Resource {
@@ -58,6 +66,25 @@ export class LanceDBResource extends BaseResource implements Resource {
     this.cachesReads = REMOTE_SCHEMES.some((scheme) => this.config.uri.startsWith(scheme))
     this.store = new LanceDBStore(this.config)
     this.accessor = new LanceDBAccessor(this.store, this.config)
+  }
+
+  override getState(): LanceDBResourceState {
+    return {
+      type: this.kind,
+      config: redactLanceDBConfig(this.config),
+      // TypeScript cannot rebuild a config-backed mount from state:
+      // `buildMountArgs` substitutes a RAMResource for anything it was
+      // not handed. Saying so out loud turns a silently empty mount
+      // into a refusal to load. Python rebuilds via its registry, so it
+      // writes this on only four resources and reads it nowhere.
+      needs_override: true,
+    }
+  }
+
+  // The rows live in the database, so a restored mount reaches them
+  // through its config alone — there is nothing to take back.
+  override loadState(_state: LanceDBResourceState): Promise<void> {
+    return Promise.resolve()
   }
 
   open(): Promise<void> {

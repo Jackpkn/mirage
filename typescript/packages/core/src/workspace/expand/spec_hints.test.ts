@@ -14,17 +14,17 @@
 
 import { describe, expect, it } from 'vitest'
 import { BUILTIN_SPECS, specOf } from '../../commands/spec/builtins.ts'
-import type { Resource } from '../../resource/base.ts'
+import { BaseResource, type Resource } from '../../resource/base.ts'
 import { MountMode } from '../../types.ts'
 import { MountRegistry } from '../mount/registry.ts'
 import { specForCommand, specWordKinds } from './spec_hints.ts'
 
-class StubResource implements Resource {
+class StubResource extends BaseResource implements Resource {
   readonly kind = 'stub'
   open(): Promise<void> {
     return Promise.resolve()
   }
-  close(): Promise<void> {
+  override close(): Promise<void> {
     return Promise.resolve()
   }
 }

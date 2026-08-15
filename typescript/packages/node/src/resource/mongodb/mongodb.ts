@@ -26,6 +26,8 @@ import {
   mongoStat,
   mountKey,
   mountPrefixOf,
+  redactMongoDBConfig,
+  type MongoDBConfigRedacted,
   resolveMongoDBConfig,
   makeResolveGlob,
   type FileStat,
@@ -46,6 +48,12 @@ export interface MongoDBResourceOptions {
   prefix?: string
 }
 
+export interface MongoDBResourceState {
+  type: string
+  config: MongoDBConfigRedacted
+  needs_override: true
+}
+
 export class MongoDBResource extends BaseResource implements Resource {
   readonly kind: string = ResourceName.MONGODB
   readonly cachesReads: boolean = false
@@ -63,6 +71,25 @@ export class MongoDBResource extends BaseResource implements Resource {
     this.store = new MongoDBStore(this.config.uri)
     this.accessor = new MongoDBAccessor(this.store, this.config)
     this.prompt = MONGODB_PROMPT.replace('{prefix}', prefix ?? '')
+  }
+
+  override getState(): MongoDBResourceState {
+    return {
+      type: this.kind,
+      config: redactMongoDBConfig(this.config),
+      // TypeScript cannot rebuild a config-backed mount from state:
+      // `buildMountArgs` substitutes a RAMResource for anything it was
+      // not handed. Saying so out loud turns a silently empty mount
+      // into a refusal to load. Python rebuilds via its registry, so it
+      // writes this on only four resources and reads it nowhere.
+      needs_override: true,
+    }
+  }
+
+  // The rows live in the database, so a restored mount reaches them
+  // through its config alone — there is nothing to take back.
+  override loadState(_state: MongoDBResourceState): Promise<void> {
+    return Promise.resolve()
   }
 
   open(): Promise<void> {

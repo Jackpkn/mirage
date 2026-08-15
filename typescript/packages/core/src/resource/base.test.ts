@@ -17,8 +17,10 @@ import { IndexType, type RedisIndexConfig } from '../cache/index/config.ts'
 import { RAMIndexCacheStore } from '../cache/index/ram.ts'
 import { RedisIndexCacheStore } from '../cache/index/redis.ts'
 import { BaseResource } from './base.ts'
+import { resourceStateRequiresOverride } from './secrets.ts'
 
 class Probe extends BaseResource {
+  readonly kind = 'probe'
   override readonly indexTtl: number = 123
 }
 
@@ -45,6 +47,25 @@ describe('BaseResource index', () => {
     }
     r.setIndex(cfg)
     expect(r.index).toBeInstanceOf(RedisIndexCacheStore)
+  })
+})
+
+describe('BaseResource state', () => {
+  // Mirrors Python `BaseResource.get_state` / `load_state`: a resource that
+  // holds nothing of its own names only the class to rebuild.
+  it('getState names the resource kind and carries no config', () => {
+    expect(new Probe().getState()).toEqual({ type: 'probe' })
+  })
+
+  it('loadState takes nothing back', () => {
+    expect(new Probe().loadState({ type: 'probe' })).toBeUndefined()
+  })
+
+  // A bare `{type}` leaves no redaction marker, which is exactly why a
+  // config-backed resource may not inherit it: the marker is what makes
+  // load demand a fresh config instead of substituting an empty mount.
+  it('the default state does not ask for an override at load', () => {
+    expect(resourceStateRequiresOverride(new Probe().getState())).toBe(false)
   })
 })
 

@@ -105,14 +105,14 @@ export class NotionResource extends BaseResource implements Resource {
     return resolveNotionGlob(this.accessor, effective, this.index)
   }
 
-  getState(): Promise<NotionResourceState> {
+  override getState(): Promise<NotionResourceState> {
     return Promise.resolve({
       type: this.kind,
       config: redactNotionConfig(this.config),
     })
   }
 
-  loadState(_state: NotionResourceState): Promise<void> {
+  override loadState(_state: NotionResourceState): Promise<void> {
     return Promise.resolve()
   }
 }

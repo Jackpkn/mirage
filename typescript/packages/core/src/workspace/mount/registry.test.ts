@@ -18,27 +18,27 @@ import { CLISpec } from '../../commands/cli/types.ts'
 import { command, type CommandFn } from '../../commands/config.ts'
 import { CommandSpec } from '../../commands/spec/types.ts'
 import { IOResult } from '../../io/types.ts'
-import type { Resource } from '../../resource/base.ts'
+import { BaseResource, type Resource } from '../../resource/base.ts'
 import { MountMode, PathSpec } from '../../types.ts'
 import { isNoMount } from '../../utils/errors.ts'
 import { MountCommandUnsupported, MountRegistry } from './registry.ts'
 
-class StubResource implements Resource {
+class StubResource extends BaseResource implements Resource {
   readonly kind = 'stub'
   open(): Promise<void> {
     return Promise.resolve()
   }
-  close(): Promise<void> {
+  override close(): Promise<void> {
     return Promise.resolve()
   }
 }
 
-class RAMStubResource implements Resource {
+class RAMStubResource extends BaseResource implements Resource {
   readonly kind = 'ram'
   open(): Promise<void> {
     return Promise.resolve()
   }
-  close(): Promise<void> {
+  override close(): Promise<void> {
     return Promise.resolve()
   }
 }
@@ -299,12 +299,12 @@ describe('MountRegistry.resolveMount: cross-mount fallback', () => {
   })
 })
 
-class LimitedResource implements Resource {
+class LimitedResource extends BaseResource implements Resource {
   readonly kind = 'limited'
   open(): Promise<void> {
     return Promise.resolve()
   }
-  close(): Promise<void> {
+  override close(): Promise<void> {
     return Promise.resolve()
   }
 }

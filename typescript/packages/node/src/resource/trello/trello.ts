@@ -121,14 +121,14 @@ export class TrelloResource extends BaseResource implements Resource {
     return resolveTrelloGlob(this.accessor, effective, this.index, this.filter())
   }
 
-  getState(): Promise<TrelloResourceState> {
+  override getState(): Promise<TrelloResourceState> {
     return Promise.resolve({
       type: this.kind,
       config: redactTrelloConfig(this.config),
     })
   }
 
-  loadState(_state: TrelloResourceState): Promise<void> {
+  override loadState(_state: TrelloResourceState): Promise<void> {
     return Promise.resolve()
   }
 }

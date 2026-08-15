@@ -109,14 +109,14 @@ export class BoxResource extends BaseResource implements Resource {
     return boxResolveGlob(this.accessor, effective, this.index)
   }
 
-  getState(): Promise<BoxResourceState> {
+  override getState(): Promise<BoxResourceState> {
     return Promise.resolve({
       type: this.kind,
       config: redactBoxConfig(this.config),
     })
   }
 
-  loadState(_state: BoxResourceState): Promise<void> {
+  override loadState(_state: BoxResourceState): Promise<void> {
     return Promise.resolve()
   }
 }

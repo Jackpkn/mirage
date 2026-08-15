@@ -13,13 +13,9 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import type { EventDict } from '../../observe/observer.ts'
+import type { ResourceStateBase } from '../../resource/base.ts'
 import type { RAMResourceState } from '../../resource/ram/ram.ts'
 import type { MountMode } from '../../types.ts'
-
-interface ResourceStateBase {
-  type: string
-  config?: unknown
-}
 
 export type ResourceState = RAMResourceState | (ResourceStateBase & Record<string, unknown>)
 

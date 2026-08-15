@@ -125,14 +125,14 @@ export class LinearResource extends BaseResource implements Resource {
     return resolveLinearGlob(this.accessor, effective, this.index, this.filter())
   }
 
-  getState(): Promise<LinearResourceState> {
+  override getState(): Promise<LinearResourceState> {
     return Promise.resolve({
       type: this.kind,
       config: redactLinearConfig(this.config),
     })
   }
 
-  loadState(_state: LinearResourceState): Promise<void> {
+  override loadState(_state: LinearResourceState): Promise<void> {
     return Promise.resolve()
   }
 }

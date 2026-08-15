@@ -235,7 +235,7 @@ export class DiskResource extends BaseResource implements Resource {
     return globCore(this.accessor, effective, this.index)
   }
 
-  async getState(): Promise<DiskResourceState> {
+  override async getState(): Promise<DiskResourceState> {
     await mkdir(this.root, { recursive: true })
     const files: Record<string, Uint8Array> = {}
     const modes: Record<string, number> = {}
@@ -257,7 +257,7 @@ export class DiskResource extends BaseResource implements Resource {
     }
   }
 
-  async loadState(state: DiskResourceState): Promise<void> {
+  override async loadState(state: DiskResourceState): Promise<void> {
     await mkdir(this.root, { recursive: true })
     for (const [rel, data] of Object.entries(state.files)) {
       const full = path.join(this.root, rel)

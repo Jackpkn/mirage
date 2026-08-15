@@ -20,16 +20,16 @@ import { IOResult } from '../../io/types.ts'
 import type { Accessor } from '../../accessor/base.ts'
 import { revisionFor } from '../../observe/context.ts'
 import type { RegisteredOp } from '../../ops/registry.ts'
-import type { Resource } from '../../resource/base.ts'
+import { BaseResource, type Resource } from '../../resource/base.ts'
 import { Limit, MountMode, PathSpec } from '../../types.ts'
 import { MountEntry } from './mount.ts'
 
-class StubResource implements Resource {
+class StubResource extends BaseResource implements Resource {
   readonly kind = 'ram'
   open(): Promise<void> {
     return Promise.resolve()
   }
-  close(): Promise<void> {
+  override close(): Promise<void> {
     return Promise.resolve()
   }
 }

@@ -189,11 +189,11 @@ export class NextcloudResource extends BaseResource implements Resource {
     return buildDeltaHook(this.accessor)
   }
 
-  getState(): Promise<NextcloudResourceState> {
+  override getState(): Promise<NextcloudResourceState> {
     return Promise.resolve({ type: this.kind, config: redactNextcloudConfig(this.config) })
   }
 
-  loadState(_state: NextcloudResourceState): Promise<void> {
+  override loadState(_state: NextcloudResourceState): Promise<void> {
     return Promise.resolve()
   }
 }

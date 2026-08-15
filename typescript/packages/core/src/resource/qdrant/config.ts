@@ -12,6 +12,8 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import { REDACTED_SECRET, type RedactedConfig } from '../secrets.ts'
+
 export interface QdrantConfig {
   url?: string
   host?: string
@@ -66,4 +68,15 @@ export function resolveQdrantConfig(config: QdrantConfig): QdrantConfigResolved 
     maxRows: config.maxRows ?? 1000,
     embeddingModel: config.embeddingModel ?? 'sentence-transformers/all-MiniLM-L6-v2',
   }
+}
+
+// `apiKey` is the credential, and it is the field Python annotates secret
+// on this config. A null one stays null: a local Qdrant reached without a
+// credential has nothing to mask, and planting the marker anyway would
+// make `Workspace.load` demand a fresh config for a self-contained
+// snapshot. Python's redactor skips None for the same reason.
+export type QdrantConfigRedacted = RedactedConfig<QdrantConfigResolved, 'apiKey'>
+
+export function redactQdrantConfig(config: QdrantConfigResolved): QdrantConfigRedacted {
+  return { ...config, apiKey: config.apiKey === null ? null : REDACTED_SECRET }
 }

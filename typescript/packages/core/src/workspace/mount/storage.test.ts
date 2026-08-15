@@ -41,7 +41,8 @@ class RootedResource extends BaseResource implements Resource {
 }
 
 // Implements Resource without extending BaseResource, so it has no
-// storageId at all.
+// storageId at all — and has to spell the state pair the base would
+// otherwise supply.
 class BareResource implements Resource {
   readonly kind = 'bare'
   open(): Promise<void> {
@@ -49,6 +50,12 @@ class BareResource implements Resource {
   }
   close(): Promise<void> {
     return Promise.resolve()
+  }
+  getState(): { type: string } {
+    return { type: this.kind }
+  }
+  loadState(_state: { type: string }): void {
+    // Nothing to take back.
   }
 }
 

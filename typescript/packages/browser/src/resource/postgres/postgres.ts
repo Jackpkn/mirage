@@ -32,6 +32,8 @@ import {
   type RegisteredOp,
   type Resource,
   ResourceName,
+  redactPostgresConfig,
+  type PostgresConfigRedacted,
   resolvePostgresConfig,
   makeResolveGlob,
 } from '@struktoai/mirage-core'
@@ -43,6 +45,12 @@ export interface PostgresResourceOptions {
   config: PostgresConfig
   prefix?: string
   driver?: PgDriver
+}
+
+export interface PostgresResourceState {
+  type: string
+  config: PostgresConfigRedacted
+  needs_override: true
 }
 
 export class PostgresResource implements Resource {
@@ -63,6 +71,25 @@ export class PostgresResource implements Resource {
     this.accessor = new PostgresAccessor(this.driver, this.config)
     this.index = new RAMIndexCacheStore({ ttl: this.indexTtl })
     this.prompt = POSTGRES_PROMPT.replace('{prefix}', prefix ?? '')
+  }
+
+  getState(): PostgresResourceState {
+    return {
+      type: this.kind,
+      config: redactPostgresConfig(this.config),
+      // TypeScript cannot rebuild a config-backed mount from state:
+      // `buildMountArgs` substitutes a RAMResource for anything it was
+      // not handed. Saying so out loud turns a silently empty mount
+      // into a refusal to load. Python rebuilds via its registry, so it
+      // writes this on only four resources and reads it nowhere.
+      needs_override: true,
+    }
+  }
+
+  // The rows live in the database, so a restored mount reaches them
+  // through its config alone — there is nothing to take back.
+  loadState(_state: PostgresResourceState): Promise<void> {
+    return Promise.resolve()
   }
 
   open(): Promise<void> {

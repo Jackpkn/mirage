@@ -20,7 +20,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { Accessor } from '../accessor/base.ts'
 import { record, revisionFor, runWithRecording } from '../observe/context.ts'
 import { type OpKwargs, OpsRegistry, type RegisteredOp } from '../ops/registry.ts'
-import type { Resource } from '../resource/base.ts'
+import { BaseResource, type Resource } from '../resource/base.ts'
 import { createShellParser, type ShellParser } from '../shell/parse.ts'
 import { splitManifestAndBlobs } from './snapshot/manifest.ts'
 import { writeSnapshotTar } from './snapshot/tar_io.ts'
@@ -69,20 +69,21 @@ class FakeRemoteAccessor extends Accessor {
   }
 }
 
-class FakeRemoteResource implements Resource {
+class FakeRemoteResource extends BaseResource implements Resource {
   readonly kind = 'fake-remote'
   readonly cachesReads = true
   readonly supportsSnapshot = true
   readonly accessor: FakeRemoteAccessor
 
   constructor(accessor: FakeRemoteAccessor) {
+    super()
     this.accessor = accessor
   }
 
   open(): Promise<void> {
     return Promise.resolve()
   }
-  close(): Promise<void> {
+  override close(): Promise<void> {
     return Promise.resolve()
   }
 
@@ -104,7 +105,7 @@ class FakeRemoteResource implements Resource {
     )
   }
 
-  getState(): { type: string; config: { token: string } } {
+  override getState(): { type: string; config: { token: string } } {
     return { type: this.kind, config: { token: '<REDACTED>' } }
   }
 }
