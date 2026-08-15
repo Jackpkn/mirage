@@ -65,13 +65,15 @@ class KeywordEmbedding extends TextEmbeddingFunction {
 getRegistry().register('fashion-keyword')(KeywordEmbedding)
 
 async function buildTable(uri: string): Promise<void> {
-  const func = getRegistry().get('fashion-keyword').create() as KeywordEmbedding
+  const create = getRegistry().get('fashion-keyword')
+  if (create === undefined) throw new Error('fashion-keyword embedding not registered')
+  const func = create.create() as KeywordEmbedding
   const schema = LanceSchema({
     id: new Int32(),
     gender: new Utf8(),
     articleType: new Utf8(),
     baseColour: new Utf8(),
-    productDisplayName: func.sourceField(new Utf8()),
+    productDisplayName: func.sourceField(),
     image_bytes: new Binary(),
     vector: func.vectorField(),
   })

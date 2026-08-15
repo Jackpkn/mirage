@@ -20,6 +20,7 @@ import dotenv from "dotenv";
 import {
   GSheetsResource,
   Mount,
+  MountBackend,
   MountMode,
   Workspace,
   type GSheetsConfig,

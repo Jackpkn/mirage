@@ -20,6 +20,7 @@ import dotenv from "dotenv";
 import {
   BoxResource,
   Mount,
+  MountBackend,
   MountMode,
   Workspace,
   type BoxConfig,

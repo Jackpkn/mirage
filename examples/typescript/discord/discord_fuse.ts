@@ -18,6 +18,7 @@ import dotenv from "dotenv";
 import {
   DiscordResource,
   Mount,
+  MountBackend,
   MountMode,
   Workspace,
   type DiscordConfig,

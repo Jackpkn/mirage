@@ -20,6 +20,7 @@ import dotenv from "dotenv";
 import {
   GSlidesResource,
   Mount,
+  MountBackend,
   MountMode,
   Workspace,
   type GSlidesConfig,

@@ -19,6 +19,7 @@ import { fileURLToPath } from "node:url";
 import {
   GmailResource,
   Mount,
+  MountBackend,
   MountMode,
   Workspace,
   type GmailConfig,

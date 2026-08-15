@@ -20,6 +20,7 @@ import dotenv from "dotenv";
 import {
   DropboxResource,
   Mount,
+  MountBackend,
   MountMode,
   Workspace,
   type DropboxConfig,

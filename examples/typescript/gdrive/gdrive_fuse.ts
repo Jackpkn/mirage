@@ -20,6 +20,7 @@ import dotenv from "dotenv";
 import {
   GDriveResource,
   Mount,
+  MountBackend,
   MountMode,
   Workspace,
   type GDriveConfig,
