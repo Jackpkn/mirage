@@ -18,7 +18,7 @@ import { norm, nowIso } from './utils.ts'
 import { rstripSlash } from '../../utils/slash.ts'
 import { enoent } from '../../utils/errors.ts'
 import { checkDestParents } from './dest.ts'
-import { invalidateAfterUnlink, invalidateAfterWrite } from '../../cache/context.ts'
+import { invalidateAfterUnlink } from '../../cache/context.ts'
 
 function moveAttrs(accessor: RAMAccessor, src: string, dst: string): void {
   const attrs = accessor.store.attrs.get(src)
@@ -41,7 +41,7 @@ export async function rename(accessor: RAMAccessor, src: PathSpec, dst: PathSpec
     accessor.store.modified.delete(s)
     moveAttrs(accessor, s, d)
     await invalidateAfterUnlink(src)
-    await invalidateAfterWrite(dst)
+    await invalidateAfterUnlink(dst)
     return Promise.resolve()
   }
   if (accessor.store.dirs.has(s)) {
@@ -64,7 +64,7 @@ export async function rename(accessor: RAMAccessor, src: PathSpec, dst: PathSpec
       }
     }
     await invalidateAfterUnlink(src)
-    await invalidateAfterWrite(dst)
+    await invalidateAfterUnlink(dst)
     return Promise.resolve()
   }
   throw enoent(src)

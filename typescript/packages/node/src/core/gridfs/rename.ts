@@ -12,12 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import {
-  enoent,
-  invalidateAfterUnlink,
-  invalidateAfterWrite,
-  type PathSpec,
-} from '@struktoai/mirage-core'
+import { enoent, invalidateAfterUnlink, type PathSpec } from '@struktoai/mirage-core'
 import type { GridFSAccessor } from '../../accessor/gridfs.ts'
 import { deleteAll, filesColl, gridfsKey, latestFile, rawPathOf } from './_client.ts'
 
@@ -36,6 +31,6 @@ export async function rename(
   await deleteAll(accessor, { filename: dstKey })
   const files = await filesColl(accessor)
   await files.updateMany({ filename: srcKey }, { $set: { filename: dstKey } })
-  await invalidateAfterWrite(dst)
+  await invalidateAfterUnlink(dst)
   await invalidateAfterUnlink(src)
 }

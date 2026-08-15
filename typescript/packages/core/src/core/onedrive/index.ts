@@ -222,7 +222,7 @@ export async function rename(
     accessor.loc(src.resourcePath),
     accessor.loc(dst.resourcePath),
   )
-  await invalidateAfterWrite(dst)
+  await invalidateAfterUnlink(dst)
   await invalidateAfterUnlink(src)
 }
 

@@ -12,12 +12,32 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { access, readFile, writeFile } from 'node:fs/promises'
+import { access, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { runWithCacheManager, type PathSpec } from '@struktoai/mirage-core'
 import type { DiskAccessor } from '../../accessor/disk.ts'
 import { spec, tmpRoot } from '../../test-utils.ts'
 import { rename } from './rename.ts'
+
+class FakeManager {
+  writes: string[] = []
+  unlinks: string[] = []
+
+  invalidateAfterWrite(path: string | PathSpec): Promise<void> {
+    this.writes.push(typeof path === 'string' ? path : path.mountPath)
+    return Promise.resolve()
+  }
+
+  invalidateAfterUnlink(path: string | PathSpec): Promise<void> {
+    this.unlinks.push(typeof path === 'string' ? path : path.mountPath)
+    return Promise.resolve()
+  }
+
+  cachedBytes(_path: PathSpec): Promise<Uint8Array | null> {
+    return Promise.resolve(null)
+  }
+}
 
 let root: string
 let accessor: DiskAccessor
@@ -41,5 +61,17 @@ describe('core/disk/rename', () => {
     await expect(rename(accessor, spec('/missing'), spec('/x'))).rejects.toMatchObject({
       code: 'ENOENT',
     })
+  })
+  it('evicts both identities so a replaced empty dir loses its listing', async () => {
+    await mkdir(join(root, 'src'))
+    await writeFile(join(root, 'src', 'f.txt'), 'x')
+    await mkdir(join(root, 'dst'))
+    const manager = new FakeManager()
+    await runWithCacheManager(manager, async () => {
+      await rename(accessor, spec('/src'), spec('/dst'))
+    })
+    expect(manager.unlinks).toEqual(['/src', '/dst'])
+    expect(manager.writes).toEqual([])
+    expect(await readFile(join(root, 'dst', 'f.txt'), 'utf-8')).toBe('x')
   })
 })

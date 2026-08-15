@@ -12,7 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { type PathSpec, invalidateAfterUnlink, invalidateAfterWrite } from '@struktoai/mirage-core'
+import { type PathSpec, invalidateAfterUnlink } from '@struktoai/mirage-core'
 import type { RedisAccessor } from '../../accessor/redis.ts'
 import { norm, nowIso } from './utils.ts'
 import { checkDestParents } from './dest.ts'
@@ -36,7 +36,7 @@ export async function rename(accessor: RedisAccessor, src: PathSpec, dst: PathSp
     await store.setModified(d, mod ?? now)
     if (Object.keys(attrs).length > 0) await store.setAttrs(d, attrs)
     await invalidateAfterUnlink(s)
-    await invalidateAfterWrite(d)
+    await invalidateAfterUnlink(d)
     return
   }
   if (await store.hasDir(s)) {
@@ -64,7 +64,7 @@ export async function rename(accessor: RedisAccessor, src: PathSpec, dst: PathSp
       }
     }
     await invalidateAfterUnlink(s)
-    await invalidateAfterWrite(d)
+    await invalidateAfterUnlink(d)
     return
   }
   throw enoent(src)

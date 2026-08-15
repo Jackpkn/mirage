@@ -1,9 +1,4 @@
-import {
-  enoent,
-  invalidateAfterUnlink,
-  invalidateAfterWrite,
-  type PathSpec,
-} from '@struktoai/mirage-core'
+import { enoent, invalidateAfterUnlink, type PathSpec } from '@struktoai/mirage-core'
 import type { NextcloudAccessor } from '../../accessor/nextcloud.ts'
 import { isNotFound, nextcloudKey } from './util.ts'
 
@@ -19,6 +14,6 @@ export async function rename(
     if (isNotFound(error)) throw enoent(source)
     throw error
   }
-  await invalidateAfterWrite(destination)
+  await invalidateAfterUnlink(destination)
   await invalidateAfterUnlink(source)
 }

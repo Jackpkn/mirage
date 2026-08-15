@@ -14,12 +14,7 @@
 
 import type { DiskAccessor } from '../../accessor/disk.ts'
 import { rename as fsRename } from 'node:fs/promises'
-import {
-  enoent,
-  invalidateAfterUnlink,
-  invalidateAfterWrite,
-  type PathSpec,
-} from '@struktoai/mirage-core'
+import { enoent, invalidateAfterUnlink, type PathSpec } from '@struktoai/mirage-core'
 import { resolveSafe } from './utils.ts'
 
 export async function rename(accessor: DiskAccessor, src: PathSpec, dst: PathSpec): Promise<void> {
@@ -34,5 +29,7 @@ export async function rename(accessor: DiskAccessor, src: PathSpec, dst: PathSpe
     throw err
   }
   await invalidateAfterUnlink(src)
-  await invalidateAfterWrite(dst)
+  // The unlink flavor on dst: a rename destroys the destination's previous
+  // identity, so a replaced empty directory loses its cached listing too.
+  await invalidateAfterUnlink(dst)
 }

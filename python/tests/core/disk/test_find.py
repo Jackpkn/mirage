@@ -12,6 +12,8 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+from pathlib import PureWindowsPath
+
 import pytest
 
 from mirage.accessor.disk import DiskAccessor
@@ -82,3 +84,18 @@ async def test_find_with_maxdepth(tmp_path):
     assert "/sub" in result
     assert "/sub/b.txt" not in result
     assert "/sub/deep/c.txt" not in result
+
+
+@pytest.mark.asyncio
+async def test_find_normalizes_native_separator(tmp_path, monkeypatch):
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "sub" / "deep").mkdir()
+    (tmp_path / "sub" / "deep" / "b.txt").write_text("b")
+    # Simulate Windows: str() of a walked Path joins with backslashes.
+    monkeypatch.setitem(find.__globals__, "Path", PureWindowsPath)
+    accessor = DiskAccessor(tmp_path)
+    result = await find(accessor,
+                        PathSpec(resource_path="", virtual="/", directory="/"))
+    assert "/sub/deep" in result
+    assert "/sub/deep/b.txt" in result
+    assert not any("\\" in r for r in result)

@@ -151,7 +151,9 @@ export async function rename(accessor: BoxAccessor, src: PathSpec, dst: PathSpec
   if (item.type === 'folder')
     await updateFolder(tm, item.id, { name: newName, parentId: dstParent })
   else await updateFile(tm, item.id, { name: newName, parentId: dstParent })
-  await invalidateAfterWrite(dst)
+  // The unlink flavor on dst: a rename destroys the destination's previous
+  // identity, so a replaced empty directory loses its cached listing too.
+  await invalidateAfterUnlink(dst)
   await invalidateAfterUnlink(src)
 }
 

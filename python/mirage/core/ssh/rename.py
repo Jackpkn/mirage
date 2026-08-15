@@ -15,8 +15,7 @@
 import asyncssh
 
 from mirage.accessor.ssh import SSHAccessor
-from mirage.cache.context import (invalidate_after_unlink,
-                                  invalidate_after_write)
+from mirage.cache.context import invalidate_after_unlink
 from mirage.core.ssh._client import _abs
 from mirage.types import PathSpec
 
@@ -38,5 +37,7 @@ async def rename(accessor: SSHAccessor, src_spec: PathSpec,
             raise FileNotFoundError(src)
     except asyncssh.SFTPNoSuchFile:
         raise FileNotFoundError(src)
-    await invalidate_after_write(dst_spec)
+    # The unlink flavor on dst: a rename destroys the destination's previous
+    # identity, so a replaced empty directory loses its cached listing too.
+    await invalidate_after_unlink(dst_spec)
     await invalidate_after_unlink(src_spec)

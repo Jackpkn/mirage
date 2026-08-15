@@ -12,7 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { invalidateAfterUnlink, invalidateAfterWrite } from '../../cache/context.ts'
+import { invalidateAfterUnlink } from '../../cache/context.ts'
 import type { PathSpec } from '../../types.ts'
 import type { S3Accessor } from '../../accessor/s3.ts'
 import { enoent } from '../../utils/errors.ts'
@@ -42,6 +42,6 @@ export async function rename(accessor: S3Accessor, src: PathSpec, dst: PathSpec)
     )
     await client.send(new DeleteObjectCommand({ Bucket: bucket, Key: srcKey }))
   })
-  await invalidateAfterWrite(dst)
+  await invalidateAfterUnlink(dst)
   await invalidateAfterUnlink(src)
 }

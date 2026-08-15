@@ -79,6 +79,7 @@ python/mirage/
   resource/<name>/
     __init__.py
     config.py
+    prompt.py
     <name>.py
   accessor/<name>.py
   core/<name>/
@@ -86,12 +87,10 @@ python/mirage/
     readdir.py
     stat.py
   ops/<name>/
-    __init__.py
-    read.py
-    readdir.py
-    stat.py
+    __init__.py          # OPS derived from the CommandIO table
   commands/builtin/<name>/
     __init__.py
+    io.py                # the CommandIO table
     <resource-specific commands>.py
 ```
 
@@ -143,28 +142,35 @@ Add write, append, create, unlink, rename, or directory operations only when the
 
 ## 3. Ops Layer
 
-Ops are thin typed adapters from the workspace dispatcher to core functions. Declare dispatcher-injected arguments explicitly and keep `**flags: object` opaque.
+Ops are derived, not hand-written. `ops/<name>/__init__.py` builds the whole VFS/FUSE op family from the same `CommandIO` table the commands use:
 
 ```python
-from mirage.accessor.base import Accessor
-from mirage.cache.index import IndexCacheStore
-from mirage.core.my_resource.read import read_bytes
+from mirage.commands.builtin.my_resource.io import IO
+from mirage.ops.generic import make_generic_ops
+
+OPS = make_generic_ops("my_resource", IO)
+```
+
+`make_generic_ops` emits read/readdir/stat plus whatever mutations the table carries — a `CommandIO` slot updates commands and ops together, and ops whose table field is `None` are omitted. Knobs mirror backend semantics, e.g. `make_generic_ops("databricks_volume", IO, mkdir_parents=True)`.
+
+Write a dedicated op module only for an irregular handler with no generic equivalent (a native `grep` push-down, a semantic `search`), and append it to the derived list:
+
+```python
+from mirage.core.my_resource.grep import grep_bytes
 from mirage.ops.registry import op
 from mirage.types import PathSpec
 
 
-@op("read", resource="my_resource")
-async def read(
-    accessor: Accessor,
-    path: PathSpec,
-    *,
-    index: IndexCacheStore | None,
-    **flags: object,
-) -> bytes:
-    return await read_bytes(accessor, path, index)
+@op("grep", resource="my_resource")
+async def grep(accessor, paths: list[PathSpec], pattern: str, *, index,
+               **kwargs) -> bytes:
+    return await grep_bytes(accessor, paths, pattern, index)
+
+
+OPS = [*make_generic_ops("my_resource", IO), grep]
 ```
 
-Mark mutation ops with `write=True`. Export the decorated functions as `OPS` from `ops/<name>/__init__.py`.
+Mark a hand-written mutation op with `write=True` so `MountMode.READ` remains a real boundary (derived ops carry this from the table).
 
 ## 4. Commands
 

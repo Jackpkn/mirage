@@ -1,0 +1,186 @@
+{
+  "cases": [
+    {
+      "id": "mv_empty_dir_prep",
+      "seq": 613200,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "databricks",
+        "databricks-prefix",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "mkdir -p /data/mvcache/src /data/mvcache/dst/src",
+      "expect": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "mv_empty_dir_seed",
+      "seq": 613201,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "databricks",
+        "databricks-prefix",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "echo payload > /data/mvcache/src/f.txt",
+      "expect": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "mv_empty_dir_warm",
+      "seq": 613202,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "databricks",
+        "databricks-prefix",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "ls /data/mvcache/dst/src",
+      "expect": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "mv_empty_dir_replace",
+      "seq": 613203,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "databricks",
+        "databricks-prefix",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "mv /data/mvcache/src /data/mvcache/dst",
+      "expect": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "mv_empty_dir_fresh_listing",
+      "seq": 613204,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "databricks",
+        "databricks-prefix",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "ls /data/mvcache/dst/src",
+      "expect": {
+        "exit": 0,
+        "stdout": "f.txt\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "mv_empty_dir_content",
+      "seq": 613205,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "databricks",
+        "databricks-prefix",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "cat /data/mvcache/dst/src/f.txt",
+      "expect": {
+        "exit": 0,
+        "stdout": "payload\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "mv_empty_dir_src_gone",
+      "seq": 613206,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "databricks",
+        "databricks-prefix",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "ls /data/mvcache",
+      "expect": {
+        "exit": 0,
+        "stdout": "dst\n",
+        "stderr": ""
+      }
+    }
+  ]
+}
