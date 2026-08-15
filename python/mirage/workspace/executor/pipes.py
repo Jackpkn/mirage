@@ -239,6 +239,17 @@ async def handle_subshell(
             if not child.is_named or child.type == NT.COMMENT:
                 i += 1
                 continue
+
+            # A subshell is its own shell, so `set -n` stops *it*: bash
+            # answers `(set -n; echo hi)` with nothing. This loop is a
+            # second statement loop beside `execute_program`'s, so the
+            # check has to be stated here too -- putting it only in the
+            # program loop let `set -n` work at top level and silently
+            # do nothing one paren deep. The restore at the end of the
+            # subshell is what keeps it from leaking to the parent.
+            if session.shell_options.get("noexec"):
+                break
+
             is_bg = (i + 1 < len(body) and body[i + 1].type == NT.BACKGROUND)
             if is_bg and job_table is not None:
                 stdout, io, last_exec = await handle_background(

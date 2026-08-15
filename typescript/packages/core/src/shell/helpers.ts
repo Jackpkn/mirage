@@ -180,6 +180,7 @@ function parseFileRedirect(child: TSNodeLike): Redirect {
   let targetNode: TSNodeLike | null = null
   let kind: RedirectKind = RedirectKind.STDOUT
   let append = false
+  let clobber = false
   let dupFd: number | null = null
 
   for (const c of child.children) {
@@ -187,6 +188,8 @@ function parseFileRedirect(child: TSNodeLike): Redirect {
       fd = parseInt(getText(c), 10)
     } else if (c.type === NT.REDIRECT_OUT) {
       // default STDOUT
+    } else if (c.type === NT.REDIRECT_CLOBBER) {
+      clobber = true
     } else if (c.type === NT.REDIRECT_APPEND) {
       append = true
     } else if (c.type === NT.REDIRECT_IN) {
@@ -228,14 +231,21 @@ function parseFileRedirect(child: TSNodeLike): Redirect {
   }
 
   if (fd === -1) {
-    return new Redirect({ fd: -1, target, targetNode, kind: RedirectKind.STDOUT, append })
+    return new Redirect({
+      fd: -1,
+      target,
+      targetNode,
+      kind: RedirectKind.STDOUT,
+      append,
+      clobber,
+    })
   }
 
   if (fd === 2 && kind !== RedirectKind.STDERR_TO_STDOUT) {
     kind = RedirectKind.STDERR
   }
 
-  return new Redirect({ fd, target, targetNode, kind, append })
+  return new Redirect({ fd, target, targetNode, kind, append, clobber })
 }
 
 function parseHerestringRedirect(child: TSNodeLike): Redirect {

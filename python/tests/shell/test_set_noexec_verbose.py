@@ -22,6 +22,13 @@ NOEXEC = [
     # it never runs. GNU behaves the same way.
     ("set -n; set +n; echo after", ""),
     ("echo a; set -o noexec; echo b", "a\n"),
+    # A subshell is its own shell, so `set -n` stops it and nothing
+    # leaks back out. Integ caught this: the check lived only in the
+    # program loop, and `handle_subshell` runs a second statement loop.
+    ("(set -n; echo hi); echo rc=$?", "rc=0\n"),
+    ("echo a; (set -n; echo b); echo c", "a\nc\n"),
+    ("(set -n; set +n; echo after); echo rc=$?", "rc=0\n"),
+    ("(set -n; echo x); echo still-here", "still-here\n"),
     ("echo a; echo b", "a\nb\n"),
 ]
 

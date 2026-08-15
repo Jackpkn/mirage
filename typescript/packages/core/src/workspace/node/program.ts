@@ -17,6 +17,7 @@ import { type ByteSource, IOResult, materialize } from '../../io/types.ts'
 import type { CallStack } from '../../shell/call_stack.ts'
 import { ExitSignal } from '../../shell/errors.ts'
 import type { JobTable } from '../../shell/job_table/index.ts'
+import { getText } from '../../shell/helpers.ts'
 import { ERREXIT_EXEMPT_TYPES, NodeType as NT } from '../../shell/types.ts'
 import type { TSNodeLike } from '../../shell/types.ts'
 import { errorVirtualPath, gnuStrerror } from '../../utils/errors.ts'
@@ -46,6 +47,9 @@ export async function executeProgram(
   const allStdout: ByteSource[] = []
   let mergedIo = new IOResult()
   let lastExec = new ExecutionNode({ command: '', exitCode: 0 })
+  // Source lines and the highest one `set -v` has already echoed.
+  const sourceLines = getText(node).split('\n')
+  let echoedRow = -1
 
   let i = 0
   while (i < children.length) {
@@ -65,6 +69,36 @@ export async function executeProgram(
       // structural errors would have raised before executeNode ran.
       i += 1
       continue
+    }
+
+    // `set -n` reads without executing, so every statement after the
+    // one that set it is skipped. Checking here rather than deeper
+    // gives bash's one-way trip for free: a later `set +n` is itself
+    // a statement, so it never runs and cannot turn execution back
+    // on within the same input.
+    if (session.shellOptions.noexec === true) break
+
+    // `set -v` echoes input to stderr as the reader consumes it, and
+    // the unit is a *line*, not a statement: GNU answers
+    // `set -v; echo a` with nothing at all, because that whole line
+    // was already read before the option took effect, while
+    // `set -v\necho a` echoes the second line. So a line is echoed
+    // once, when the first statement on it runs, and a statement
+    // spanning several lines carries all of them.
+    const startRow = child.startPosition?.row ?? 0
+    if (startRow > echoedRow) {
+      const first = Math.max(echoedRow + 1, startRow)
+      const last = child.endPosition?.row ?? startRow
+      if (session.shellOptions.verbose === true && last >= first) {
+        const text = sourceLines.slice(first, last + 1).join('\n')
+        mergedIo = await mergedIo.merge(
+          new IOResult({ stderr: new TextEncoder().encode(`${text}\n`) }),
+        )
+      }
+      // Marked read either way: a line reaches the reader once, so
+      // a line whose own first statement turned the option on was
+      // already past it and is never echoed.
+      echoedRow = last
     }
 
     const next = children[i + 1]

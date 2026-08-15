@@ -20,7 +20,7 @@ import { applyBarrier, BarrierPolicy } from '../../shell/barrier.ts'
 import { encodeText } from '../../shell/bytes.ts'
 import type { CallStack } from '../../shell/call_stack.ts'
 import { type Redirect, RedirectKind } from '../../shell/types.ts'
-import { PathSpec } from '../../types.ts'
+import { FileStat, FileType, PathSpec } from '../../types.ts'
 import type { TSNodeLike } from '../../shell/types.ts'
 import type { Session } from '../session/session.ts'
 import { ExecutionNode } from '../types.ts'
@@ -125,6 +125,12 @@ export async function handleRedirect(
   let fd2: FdDest = TO_STDERR
   const fileBufs = new Map<string, Uint8Array>()
   const fileScopes = new Map<string, PathSpec>()
+  // Targets the open refused, and the line each one answers with. The
+  // buffer is still built and fd1/fd2 still point at the path, so the
+  // command's output lands in a buffer nobody writes — bash never runs
+  // the command at all, and printing its stdout instead would be the
+  // one difference an agent could see.
+  const refused = new Map<string, Uint8Array>()
 
   for (const r of redirects) {
     if (
@@ -170,6 +176,14 @@ export async function handleRedirect(
     } else {
       fd1 = path
     }
+
+    const line = await openRefusal(dispatch, session, r, scope)
+    if (line !== null) {
+      refused.set(path, line)
+      // bash stops at the first redirect it cannot open, so the
+      // targets after this one are never touched.
+      break
+    }
   }
 
   let outStdout: Uint8Array = new Uint8Array()
@@ -188,6 +202,12 @@ export async function handleRedirect(
   }
 
   for (const [path, data] of fileBufs) {
+    const line = refused.get(path)
+    if (line !== undefined) {
+      outStderr = concat([outStderr, line])
+      io.exitCode = 1
+      break
+    }
     const scope = fileScopes.get(path)
     if (scope === undefined) continue
     try {
@@ -242,6 +262,48 @@ function redirectErrorLine(scope: PathSpec, err: unknown): Uint8Array {
 function redirectFailure(scope: PathSpec, err: unknown): Result {
   const io = new IOResult({ exitCode: 1, stderr: redirectErrorLine(scope, err) })
   return [null, io, new ExecutionNode({ command: 'redirect', exitCode: 1 })]
+}
+
+/**
+ * The line GNU answers with when this redirect cannot be opened, or null
+ * when the open is allowed.
+ *
+ * `set -C` refuses a truncating open onto anything that already exists —
+ * an empty file counts, since the test is existence and not size — while
+ * `>>` is always allowed and `>|` overrides for that one redirect without
+ * clearing the option. A directory reached under the option is refused
+ * too, in GNU's own wording for that case rather than the noclobber one.
+ *
+ * The probe runs only when the option is on, so the ordinary redirect
+ * path costs no extra round trip. That leaves `> <a directory>` with the
+ * option off silently succeeding, which is a separate pre-existing gap:
+ * GNU answers `Is a directory` and exit 1 whichever operator asked, and
+ * closing it means a stat on every output redirect.
+ *
+ * The target is stat'd through the op dispatcher rather than a backend,
+ * so a redirect that lands on another mount is answered by the mount that
+ * owns it.
+ */
+async function openRefusal(
+  dispatch: DispatchFn,
+  session: Session,
+  r: Redirect,
+  scope: PathSpec,
+): Promise<Uint8Array | null> {
+  if (r.append || r.clobber || session.shellOptions.noclobber !== true) return null
+  let stat: unknown
+  try {
+    ;[stat] = await dispatch('stat', scope)
+  } catch (err) {
+    // No target to overwrite is the ordinary case the option allows;
+    // anything that is not a filesystem error is a bug and propagates.
+    if (!isFsError(err)) throw err
+    return null
+  }
+  if (!(stat instanceof FileStat)) return null
+  const enc = new TextEncoder()
+  if (stat.type === FileType.DIRECTORY) return enc.encode(`${scope.rawPath}: Is a directory\n`)
+  return enc.encode(`${scope.rawPath}: cannot overwrite existing file\n`)
 }
 
 async function readExisting(dispatch: DispatchFn, scope: PathSpec): Promise<Uint8Array> {

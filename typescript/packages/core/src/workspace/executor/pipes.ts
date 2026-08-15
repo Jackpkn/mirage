@@ -263,6 +263,14 @@ export async function handleSubshell(
         i += 1
         continue
       }
+      // A subshell is its own shell, so `set -n` stops *it*: bash answers
+      // `(set -n; echo hi)` with nothing. This loop is a second statement
+      // loop beside `executeProgram`'s, so the check has to be stated here
+      // too -- putting it only in the program loop let `set -n` work at
+      // top level and silently do nothing one paren deep. The restore at
+      // the end of the subshell is what keeps it from leaking out.
+      if (session.shellOptions.noexec === true) break
+
       const isBg = body[i + 1]?.type === NT.BACKGROUND
       if (isBg && jobTable !== null) {
         const [bgStdout, bgIo, bgExec] = await handleBackground(

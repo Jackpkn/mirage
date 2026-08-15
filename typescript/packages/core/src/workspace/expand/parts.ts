@@ -148,7 +148,7 @@ export async function expandWords(
       result.push(...words)
       continue
     }
-    if (BRACE_WORD_TYPES.has(p.type)) {
+    if (BRACE_WORD_TYPES.has(p.type) && session.shellOptions.braceexpand !== false) {
       const braceWords = await expandBraceWord(p, session, executeFn, callStack, view)
       if (braceWords !== null) {
         // Empty unquoted words vanish, like bash: {,x} -> x.

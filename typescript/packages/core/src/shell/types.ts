@@ -12,6 +12,8 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import { compareCodePoints } from '../utils/sort.ts'
+
 export const NodeType = Object.freeze({
   COMMAND: 'command',
   PIPELINE: 'pipeline',
@@ -74,6 +76,7 @@ export const NodeType = Object.freeze({
   PIPE: '|',
   PIPE_STDERR: '|&',
   REDIRECT_OUT: '>',
+  REDIRECT_CLOBBER: '>|',
   REDIRECT_APPEND: '>>',
   REDIRECT_IN: '<',
   REDIRECT_STDERR: '>&',
@@ -126,12 +129,32 @@ export type NodeType = (typeof NodeType)[keyof typeof NodeType]
 // instead, so the executor loops skip only those.
 export const ERREXIT_EXEMPT_TYPES: ReadonlySet<string> = new Set<string>([NodeType.NEGATED_COMMAND])
 
+// Every letter bash's `set` accepts, mapped to the `-o` name it is a
+// synonym for. The full table is here rather than only the letters
+// mirage acts on, because a letter left out is silently dropped: `set -C`
+// read as "no such option, ignore" is exactly the silent-accept the
+// fail-loud rule exists to stop, and it made noclobber unreachable by its
+// own letter while `set -o noclobber` worked.
 export const SET_FLAG_TO_OPTION: Readonly<Record<string, string>> = Object.freeze({
+  a: 'allexport',
+  b: 'notify',
   e: 'errexit',
-  u: 'nounset',
-  x: 'xtrace',
   f: 'noglob',
+  h: 'hashall',
+  k: 'keyword',
+  m: 'monitor',
+  n: 'noexec',
+  p: 'privileged',
+  t: 'onecmd',
+  u: 'nounset',
+  v: 'verbose',
+  x: 'xtrace',
+  B: 'braceexpand',
+  C: 'noclobber',
+  E: 'errtrace',
+  H: 'histexpand',
   P: 'physical',
+  T: 'functrace',
 })
 
 // Every name GNU's `set -o` accepts, pinned from `set -o` on
@@ -170,6 +193,16 @@ export const SET_OPTION_NAMES: ReadonlySet<string> = new Set([
   'xtrace',
 ])
 
+const DEFAULT_ON: ReadonlySet<string> = new Set(['braceexpand', 'hashall', 'interactive-comments'])
+
+// What each option reads as before anything sets it, pinned from
+// `bash -c 'set -o'` on debian:stable-slim (5.2.37). Only three are on,
+// and all three are on for a non-interactive shell too, so this is the
+// table `set -o` prints rather than an interactive shell's.
+export const SET_OPTION_DEFAULTS: ReadonlyMap<string, boolean> = new Map(
+  [...SET_OPTION_NAMES].sort(compareCodePoints).map((name) => [name, DEFAULT_ON.has(name)]),
+)
+
 export interface OptionWord {
   // Shell options the word turns on or off, in the order written.
   settings: [string, boolean][]
@@ -193,12 +226,22 @@ export const RedirectKind = Object.freeze({
 export type RedirectKind = (typeof RedirectKind)[keyof typeof RedirectKind]
 
 export interface RedirectInit {
+  // The descriptor the redirect claims, -1 for `&>`.
   fd: number
+  // The target path, or the dup'd fd number.
   target: unknown
+  // The tree-sitter node the target came from.
   targetNode?: unknown
+  // Which stream the redirect moves.
   kind?: RedirectKind
+  // Whether the write appends rather than truncates.
   append?: boolean
+  // Whether the operator was `>|`, which overrides `set -C` for this one
+  // redirect and nothing else.
+  clobber?: boolean
+  // The process substitution feeding the target.
   pipeline?: unknown
+  // Whether the target undergoes expansion.
   expandVars?: boolean
 }
 
@@ -208,6 +251,7 @@ export class Redirect {
   readonly targetNode: unknown
   readonly kind: RedirectKind
   readonly append: boolean
+  readonly clobber: boolean
   pipeline: unknown
   readonly expandVars: boolean
 
@@ -217,6 +261,7 @@ export class Redirect {
     this.targetNode = init.targetNode ?? null
     this.kind = init.kind ?? RedirectKind.STDOUT
     this.append = init.append ?? false
+    this.clobber = init.clobber ?? false
     this.pipeline = init.pipeline ?? null
     this.expandVars = init.expandVars ?? true
   }
