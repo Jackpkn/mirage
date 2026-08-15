@@ -185,13 +185,7 @@ export {
   SPECS,
   UsageStyle,
 } from './commands/spec/index.ts'
-export {
-  type ByteSource,
-  IOResult,
-  type IOResultInit,
-  materialize,
-  OpReport,
-} from './io/types.ts'
+export { type ByteSource, IOResult, type IOResultInit, materialize, OpReport } from './io/types.ts'
 export { CachableAsyncIterator } from './io/cachable_iterator.ts'
 export {
   asyncChain,

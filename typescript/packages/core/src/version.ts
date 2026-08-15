@@ -12,6 +12,13 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import pkg from '../package.json'
+// The attribute is required: unbundled, this stays a real import at
+// runtime and Node refuses a JSON module without it. The bundler used to
+// inline the file, which is why it could be omitted before.
+//
+// `../package.json` resolves from both trees on purpose — `src/version.ts`
+// and `dist/version.js` are each one level below the package root, and
+// `files: ["dist"]` ships package.json at that root for consumers too.
+import pkg from '../package.json' with { type: 'json' }
 
 export const VERSION: string = pkg.version
