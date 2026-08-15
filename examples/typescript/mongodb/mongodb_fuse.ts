@@ -20,6 +20,7 @@ import dotenv from "dotenv";
 import {
   MongoDBResource,
   Mount,
+  MountBackend,
   MountMode,
   Workspace,
 } from "@struktoai/mirage-node";

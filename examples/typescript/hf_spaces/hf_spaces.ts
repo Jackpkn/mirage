@@ -14,9 +14,9 @@
 
 // Read-only Hugging Face Space demo against a public space repo.
 // No credentials required. Set HF_SPACE_REPO / HF_TOKEN for private repos.
-import { HfSpacesResource, Workspace, MountMode, type FileStat, type HfSpacesConfig } from '@struktoai/mirage-node'
+import { HfSpacesResource, Workspace, MountMode, type FileStat, type HfRepoConfig } from '@struktoai/mirage-node'
 
-function configFromEnv(): HfSpacesConfig {
+function configFromEnv(): HfRepoConfig {
   return {
     repoId: process.env.HF_SPACE_REPO ?? 'HuggingFaceBio/carbon-demo',
     ...(process.env.HF_TOKEN !== undefined ? { token: process.env.HF_TOKEN } : {}),

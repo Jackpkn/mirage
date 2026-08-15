@@ -21,6 +21,7 @@
 // Loads credentials from .env.development at the repo root.
 import {
   Mount,
+  MountBackend,
   MountMode,
   SeaweedFSResource,
   Workspace,

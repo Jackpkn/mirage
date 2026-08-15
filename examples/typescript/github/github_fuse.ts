@@ -20,6 +20,7 @@ import dotenv from "dotenv";
 import {
   GitHubResource,
   Mount,
+  MountBackend,
   MountMode,
   Workspace,
   type GitHubConfig,

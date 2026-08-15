@@ -20,6 +20,7 @@ import dotenv from "dotenv";
 import {
   GDocsResource,
   Mount,
+  MountBackend,
   MountMode,
   Workspace,
   type GDocsConfig,

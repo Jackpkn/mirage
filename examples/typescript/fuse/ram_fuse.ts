@@ -19,6 +19,7 @@ import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline/promises";
 import {
   Mount,
+  MountBackend,
   MountMode,
   RAMResource,
   Workspace,
