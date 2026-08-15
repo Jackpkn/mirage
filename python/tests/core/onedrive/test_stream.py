@@ -72,7 +72,7 @@ async def test_range_read_returns_requested_bytes():
     def _cb(url, **kwargs):
         from aioresponses import CallbackResult
         captured["range"] = kwargs["headers"].get("Range")
-        return CallbackResult(body=b"cde")
+        return CallbackResult(body=b"cde", status=206)
 
     with aioresponses() as m:
         m.get(_CONTENT, callback=_cb)

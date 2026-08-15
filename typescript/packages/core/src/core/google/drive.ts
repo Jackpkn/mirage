@@ -24,6 +24,7 @@ import {
   googleSendBytes,
 } from './_client.ts'
 import type { TokenManager } from './_client.ts'
+import type { ByteWindow } from '../../utils/ranges.ts'
 
 const FIELDS =
   'nextPageToken,' +
@@ -219,10 +220,10 @@ export async function listAllFiles(
 export async function downloadFile(
   tm: TokenManager,
   fileId: string,
-  rangeHeader?: string | null,
+  window?: ByteWindow,
 ): Promise<Uint8Array> {
   const url = `${driveBase(tm)}/files/${fileId}?alt=media&supportsAllDrives=true`
-  return googleGetBytes(tm, url, rangeHeader)
+  return googleGetBytes(tm, url, window)
 }
 
 export async function deleteFile(tm: TokenManager, fileId: string): Promise<void> {

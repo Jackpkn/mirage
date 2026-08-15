@@ -13,6 +13,29 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 /**
+ * A byte window, as every HTTP-backed reader takes one.
+ *
+ * The pair travels together because a store that sends a `Range` has to
+ * check the answer against the same two numbers, so a helper handed only
+ * the rendered header cannot finish the job.
+ */
+export interface ByteWindow {
+  offset: number
+  size: number | null
+}
+
+/**
+ * The window a reader was asked for, or undefined when it wants all of it.
+ *
+ * @param offset first byte to read
+ * @param size how many bytes, or null for the rest
+ */
+export function windowFor(offset: number, size: number | null): ByteWindow | undefined {
+  if (offset === 0 && size === null) return undefined
+  return { offset, size }
+}
+
+/**
  * An HTTP `Range` value for a byte window, or null for the whole file.
  *
  * Every HTTP-backed store spells a partial read the same way, so the spelling
@@ -77,6 +100,24 @@ export function windowIfUnranged(
 ): Uint8Array {
   if (status === PARTIAL_CONTENT) return data
   return sliceWindow(data, offset, size)
+}
+
+/**
+ * The same guarantee for a reader that takes the window as one value.
+ *
+ * A whole-file read passes no window and gets its bytes back untouched.
+ *
+ * @param data the body the server returned
+ * @param status the response status
+ * @param window the window the caller asked for, or undefined for all of it
+ */
+export function windowOf(
+  data: Uint8Array,
+  status: number,
+  window: ByteWindow | undefined,
+): Uint8Array {
+  if (window === undefined) return data
+  return windowIfUnranged(data, status, window.offset, window.size)
 }
 
 // HTTP 416, and the spellings the stores put on it. S3 and its clones answer

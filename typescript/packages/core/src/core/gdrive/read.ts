@@ -27,7 +27,7 @@ import type { TokenManager } from '../google/_client.ts'
 import { DIRECTORY_RESOURCE_TYPES, readdir } from './readdir.ts'
 import { rstripSlash } from '../../utils/slash.ts'
 import { eisdir, enoent } from '../../utils/errors.ts'
-import { rangeHeader, sliceWindow } from '../../utils/ranges.ts'
+import { sliceWindow, windowFor } from '../../utils/ranges.ts'
 
 export async function readBytes(tm: TokenManager, fileId: string): Promise<Uint8Array> {
   return downloadFile(tm, fileId)
@@ -46,7 +46,7 @@ export async function readFileVersioned(
   size: number | null = null,
 ): Promise<Uint8Array> {
   const pinned = revisionFor(virtual)
-  const window = rangeHeader(offset, size)
+  const window = windowFor(offset, size)
   const startMs = performance.now()
   let fingerprint: string | null = null
   let revision: string | null = pinned

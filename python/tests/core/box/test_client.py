@@ -12,14 +12,15 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from mirage.core.box._client import (BOX_API_BASE, BOX_TOKEN_URL,
                                      BoxTokenManager, api_base_of,
-                                     token_url_of)
+                                     box_get_bytes, token_url_of)
 from mirage.core.box.config import BoxConfig
+from mirage.utils.ranges import ByteWindow
 
 
 def test_urls_default_to_real_box():
@@ -108,3 +109,67 @@ async def test_ccg_mode_refetches_via_client_credentials():
         assert await tm.get_token() == "at-ccg"
         mock_ccg.assert_awaited_once_with(config)
     assert tm.get_refresh_token() == ""
+
+
+def _session(status: int, body: bytes) -> MagicMock:
+    """An aiohttp session whose one response carries `status` and `body`.
+
+    Args:
+        status (int): the response status to report.
+        body (bytes): the body to return from ``read``.
+    """
+    resp = AsyncMock()
+    resp.status = status
+    resp.read = AsyncMock(return_value=body)
+    session = AsyncMock()
+    session.get = MagicMock(return_value=AsyncMock(
+        __aenter__=AsyncMock(return_value=resp),
+        __aexit__=AsyncMock(return_value=False),
+    ))
+    return session
+
+
+async def _get_bytes(status: int, body: bytes,
+                     window: ByteWindow | None) -> tuple[bytes, MagicMock]:
+    tm = BoxTokenManager(BoxConfig(access_token="tok"))
+    session = _session(status, body)
+    with patch("mirage.core.box._client.box_auth_headers",
+               new_callable=AsyncMock,
+               return_value={}):
+        with patch("mirage.core.box._client.aiohttp.ClientSession") as mock_cs:
+            mock_cs.return_value.__aenter__ = AsyncMock(return_value=session)
+            mock_cs.return_value.__aexit__ = AsyncMock(return_value=False)
+            data = await box_get_bytes(tm, "https://api/x", window=window)
+    return data, session
+
+
+@pytest.mark.asyncio
+async def test_a_window_is_sent_as_a_range_header():
+    _, session = await _get_bytes(206, b"234", ByteWindow(2, 3))
+
+    assert session.get.call_args.kwargs["headers"]["Range"] == "bytes=2-4"
+
+
+@pytest.mark.asyncio
+async def test_a_206_body_is_trusted_as_the_window():
+    data, _ = await _get_bytes(206, b"234", ByteWindow(2, 3))
+
+    assert data == b"234"
+
+
+@pytest.mark.asyncio
+async def test_a_200_is_sliced_because_the_server_ignored_the_range():
+    """Box redirects content downloads to a CDN, which may answer the
+    whole object to a Range request. Before this was handled the caller
+    got every byte for what it asked to be a window."""
+    data, _ = await _get_bytes(200, b"0123456789", ByteWindow(2, 3))
+
+    assert data == b"234"
+
+
+@pytest.mark.asyncio
+async def test_no_window_sends_no_header_and_reads_whole():
+    data, session = await _get_bytes(200, b"0123456789", None)
+
+    assert data == b"0123456789"
+    assert "Range" not in session.get.call_args.kwargs["headers"]

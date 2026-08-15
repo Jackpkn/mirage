@@ -22,6 +22,7 @@ import aiohttp
 
 from mirage.resource.dropbox.config import DropboxConfig
 from mirage.resource.secrets import reveal_secret
+from mirage.utils.ranges import ByteWindow, range_header, window_of
 
 DROPBOX_TOKEN_URL = "https://api.dropboxapi.com/oauth2/token"
 DROPBOX_API_BASE = "https://api.dropboxapi.com/2"
@@ -145,19 +146,21 @@ async def dropbox_upload(tm: DropboxTokenManager, path: str,
 
 async def dropbox_download(tm: DropboxTokenManager,
                            path: str,
-                           range_header: str | None = None) -> bytes:
+                           window: ByteWindow | None = None) -> bytes:
     """Download a file, optionally only a byte range of it.
 
     Args:
         tm (DropboxTokenManager): token manager.
         path (str): Dropbox path of the file.
-        range_header (str | None): an HTTP ``Range`` value, or None for
-            the whole file.
+        window (ByteWindow | None): the byte window, or None for the
+            whole file.
     """
     headers = await dropbox_auth_headers(tm)
     headers["Dropbox-API-Arg"] = json.dumps({"path": path})
-    if range_header:
-        headers["Range"] = range_header
+    header = None if window is None else range_header(window.offset,
+                                                      window.size)
+    if header:
+        headers["Range"] = header
     url = f"{tm.content_base}/files/download"
     async with aiohttp.ClientSession() as session:
         async with session.post(url, headers=headers) as resp:
@@ -166,7 +169,7 @@ async def dropbox_download(tm: DropboxTokenManager,
                 raise DropboxApiError(
                     f"Dropbox download {path} → {resp.status} {text}",
                     resp.status)
-            return await resp.read()
+            return window_of(await resp.read(), resp.status, window)
 
 
 async def dropbox_download_stream(

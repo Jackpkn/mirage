@@ -23,7 +23,7 @@ from mirage.core.databricks_volume.path import backend_path
 from mirage.observe.context import record
 from mirage.types import PathSpec
 from mirage.utils.errors import enoent
-from mirage.utils.ranges import range_header
+from mirage.utils.ranges import range_header, slice_window
 
 
 def _read_response_bytes(response) -> bytes:
@@ -38,13 +38,28 @@ def _read_response_bytes(response) -> bytes:
     return bytes(contents)
 
 
+def _content_range(response) -> str | None:
+    if isinstance(response, dict):
+        value = response.get("content-range")
+        return value if isinstance(value, str) else None
+    return None
+
+
 def _download_bytes_sync(
     accessor: DatabricksVolumeAccessor,
     remote_path: str,
     window: str | None,
-) -> bytes:
+) -> tuple[bytes, bool]:
+    """Download a file, and whether the answer is already the window.
+
+    Args:
+        accessor (DatabricksVolumeAccessor): Databricks accessor.
+        remote_path (str): path inside the volume.
+        window (str | None): an HTTP ``Range`` value, or None for all
+            of it.
+    """
     if window is None:
-        return _read_response_bytes(accessor.files.download(remote_path))
+        return _read_response_bytes(accessor.files.download(remote_path)), True
     headers = {
         "Accept": "application/octet-stream",
         "Range": window,
@@ -66,7 +81,7 @@ def _download_bytes_sync(
         ],
         raw=True,
     )
-    return _read_response_bytes(response)
+    return _read_response_bytes(response), _content_range(response) is not None
 
 
 async def read_bytes(
@@ -83,7 +98,7 @@ async def read_bytes(
         record("read", virtual, "databricks_volume", 0, start_ms)
         return b""
     try:
-        data = await asyncio.to_thread(
+        data, ranged = await asyncio.to_thread(
             _download_bytes_sync,
             accessor,
             remote_path,
@@ -93,5 +108,11 @@ async def read_bytes(
         if is_not_found(exc):
             raise enoent(path) from exc
         raise
+    # A Range is a request, not an instruction: a gateway may answer 200
+    # with the whole object. Only a Content-Range proves the bytes are
+    # already the window, and the SDK surfaces the header rather than the
+    # status, so it stands in for the 206 the other backends check.
+    if not ranged:
+        data = slice_window(data, offset, size)
     record("read", virtual, "databricks_volume", len(data), start_ms)
     return data

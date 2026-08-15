@@ -14,6 +14,7 @@
 
 import type { TokenManager } from '../google/_client.ts'
 import { driveBase, googleGet, googleGetBytes } from '../google/_client.ts'
+import type { ByteWindow } from '../../utils/ranges.ts'
 
 const REVISION_FIELDS = 'nextPageToken,revisions(id,modifiedTime,md5Checksum,size)'
 
@@ -50,10 +51,10 @@ export async function downloadRevision(
   tm: TokenManager,
   fileId: string,
   revisionId: string,
-  rangeHeader?: string | null,
+  window?: ByteWindow,
 ): Promise<Uint8Array> {
   const url = `${driveBase(tm)}/files/${fileId}/revisions/${revisionId}?alt=media`
-  return googleGetBytes(tm, url, rangeHeader)
+  return googleGetBytes(tm, url, window)
 }
 
 // Fetch the (fingerprint, revision) pair for a file at read time. The head

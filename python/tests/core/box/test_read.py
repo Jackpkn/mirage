@@ -20,6 +20,7 @@ import pytest
 from mirage.cache.index.config import IndexEntry
 from mirage.core.box.read import read, stream
 from mirage.types import PathSpec
+from mirage.utils.ranges import ByteWindow
 
 
 def _spec(virtual: str) -> PathSpec:
@@ -61,7 +62,7 @@ async def test_a_ranged_read_asks_box_for_the_range(accessor, index):
         got = await read(accessor, _spec("/a.txt"), index, offset=1, size=3)
     assert got == b"ell"
     mock_dl.assert_awaited_once_with(accessor.token_manager, "200",
-                                     "bytes=1-3")
+                                     ByteWindow(1, 3))
 
 
 @pytest.mark.asyncio
@@ -78,7 +79,8 @@ async def test_a_read_to_the_end_leaves_the_range_open(accessor, index):
             return_value=b"llo",
     ) as mock_dl:
         assert await read(accessor, _spec("/a.txt"), index, offset=2) == b"llo"
-    mock_dl.assert_awaited_once_with(accessor.token_manager, "200", "bytes=2-")
+    mock_dl.assert_awaited_once_with(accessor.token_manager, "200",
+                                     ByteWindow(2, None))
 
 
 @pytest.mark.asyncio

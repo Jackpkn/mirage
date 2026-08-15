@@ -21,7 +21,7 @@ import { DropboxApiError, dropboxDownload, dropboxDownloadStream } from './_clie
 import { readdir } from './readdir.ts'
 import { rstripSlash, stripSlash } from '../../utils/slash.ts'
 import { eisdir, enoent } from '../../utils/errors.ts'
-import { rangeHeader } from '../../utils/ranges.ts'
+import { windowFor } from '../../utils/ranges.ts'
 
 function dropboxPathFromVirtual(root: string, virtualKey: string, prefix: string): string {
   let key = virtualKey
@@ -45,7 +45,7 @@ export async function read(
   index?: IndexCacheStore,
   options?: { offset?: number; size?: number },
 ): Promise<Uint8Array> {
-  const window = rangeHeader(options?.offset ?? 0, options?.size ?? null)
+  const window = windowFor(options?.offset ?? 0, options?.size ?? null)
   const prefix = mountPrefixOf(path.virtual, path.resourcePath)
   let p = path.virtual
   if (prefix !== '' && p.startsWith(prefix)) p = p.slice(prefix.length) || '/'

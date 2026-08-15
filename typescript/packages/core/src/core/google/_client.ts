@@ -13,6 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import type { GoogleConfig } from './config.ts'
+import { rangeHeader, windowOf, type ByteWindow } from '../../utils/ranges.ts'
 
 export const TOKEN_URL = 'https://oauth2.googleapis.com/token'
 export const DRIVE_API_BASE = 'https://www.googleapis.com/drive/v3'
@@ -249,17 +250,18 @@ export async function googleDelete(tm: TokenManager, url: string): Promise<void>
 export async function googleGetBytes(
   tm: TokenManager,
   url: string,
-  rangeHeader?: string | null,
+  window?: ByteWindow,
 ): Promise<Uint8Array> {
   const headers = await googleHeaders(tm)
-  if (rangeHeader != null && rangeHeader !== '') headers.Range = rangeHeader
+  const range = window === undefined ? null : rangeHeader(window.offset, window.size)
+  if (range !== null) headers.Range = range
   const r = await fetch(url, { headers, redirect: 'follow' })
   if (!r.ok) {
     const text = await r.text().catch(() => '')
     throw new GoogleApiError(`Google GET ${url} → ${String(r.status)} ${text}`, r.status)
   }
   const buf = await r.arrayBuffer()
-  return new Uint8Array(buf)
+  return windowOf(new Uint8Array(buf), r.status, window)
 }
 
 export async function* googleGetStream(tm: TokenManager, url: string): AsyncIterable<Uint8Array> {

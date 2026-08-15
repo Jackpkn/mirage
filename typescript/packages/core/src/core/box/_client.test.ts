@@ -13,7 +13,8 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { BOX_TOKEN_URL, BoxTokenManager } from './_client.ts'
+import { BOX_TOKEN_URL, BoxTokenManager, boxGetBytes } from './_client.ts'
+import type { ByteWindow } from '../../utils/ranges.ts'
 
 const CCG_CONFIG = { clientId: 'cid', clientSecret: 'csec', enterpriseId: '123456' }
 
@@ -102,5 +103,57 @@ describe('BoxTokenManager client credentials grant', () => {
     )
     const tm = new BoxTokenManager(CCG_CONFIG)
     await expect(tm.getToken()).rejects.toThrow('Box CCG token → 400')
+  })
+})
+
+const BODY = '0123456789'
+
+function bytesResponse(status: number, body: string): typeof globalThis.fetch {
+  return vi.fn(() =>
+    Promise.resolve({
+      ok: status < 400,
+      status,
+      arrayBuffer: () => Promise.resolve(new TextEncoder().encode(body).buffer),
+      text: () => Promise.resolve(''),
+    }),
+  ) as unknown as typeof globalThis.fetch
+}
+
+async function getBytes(
+  status: number,
+  body: string,
+  window?: ByteWindow,
+): Promise<{ out: Uint8Array; sent: Record<string, string> }> {
+  const fetch = bytesResponse(status, body)
+  vi.stubGlobal('fetch', fetch)
+  const tm = new BoxTokenManager({ ...CCG_CONFIG, accessToken: 'devtok' })
+  const out = await boxGetBytes(tm, 'https://api.box.com/2.0/files/1/content', undefined, window)
+  const init = vi.mocked(fetch).mock.calls[0]?.[1]
+  return { out, sent: (init?.headers ?? {}) as Record<string, string> }
+}
+
+describe('boxGetBytes', () => {
+  it('sends the window as a Range header', async () => {
+    const { sent } = await getBytes(206, '234', { offset: 2, size: 3 })
+    expect(sent.Range).toBe('bytes=2-4')
+  })
+
+  it('trusts a 206 body as already the window', async () => {
+    const { out } = await getBytes(206, '234', { offset: 2, size: 3 })
+    expect(new TextDecoder().decode(out)).toBe('234')
+  })
+
+  // Box redirects content downloads to a CDN, which may answer the whole
+  // object to a Range request. Before this was handled the caller got every
+  // byte for what it asked to be a window.
+  it('slices locally when the server ignores the range', async () => {
+    const { out } = await getBytes(200, BODY, { offset: 2, size: 3 })
+    expect(new TextDecoder().decode(out)).toBe('234')
+  })
+
+  it('sends no Range and reads whole when no window is asked for', async () => {
+    const { out, sent } = await getBytes(200, BODY)
+    expect(new TextDecoder().decode(out)).toBe(BODY)
+    expect(sent.Range).toBeUndefined()
   })
 })

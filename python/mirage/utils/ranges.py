@@ -12,6 +12,32 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True, slots=True)
+class ByteWindow:
+    """A byte window, as every HTTP-backed reader takes one.
+
+    The pair travels together because a store that sends a ``Range`` has
+    to check the answer against the same two numbers, so a helper handed
+    only the rendered header cannot finish the job.
+    """
+    offset: int
+    size: int | None
+
+
+def window_for(offset: int, size: int | None) -> ByteWindow | None:
+    """The window a reader was asked for, or None when it wants all of it.
+
+    Args:
+        offset (int): first byte to read.
+        size (int | None): how many bytes, or None for the rest.
+    """
+    if not offset and size is None:
+        return None
+    return ByteWindow(offset, size)
+
 
 def range_header(offset: int, size: int | None) -> str | None:
     """An HTTP ``Range`` value for a byte window, or None for the whole file.
@@ -80,6 +106,22 @@ def window_if_unranged(data: bytes, status: int, offset: int,
     if status == PARTIAL_CONTENT:
         return data
     return slice_window(data, offset, size)
+
+
+def window_of(data: bytes, status: int, window: "ByteWindow | None") -> bytes:
+    """The same guarantee for a reader that takes the window as one value.
+
+    A whole-file read passes no window and gets its bytes back untouched.
+
+    Args:
+        data (bytes): the body the server returned.
+        status (int): the response status.
+        window (ByteWindow | None): the window the caller asked for, or
+            None for all of it.
+    """
+    if window is None:
+        return data
+    return window_if_unranged(data, status, window.offset, window.size)
 
 
 def _status_of(exc: BaseException) -> int | None:

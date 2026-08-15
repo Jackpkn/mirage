@@ -22,6 +22,7 @@ import {
   boxUploadMultipart,
 } from './_client.ts'
 import type { BoxTokenManager } from './_client.ts'
+import type { ByteWindow } from '../../utils/ranges.ts'
 
 export type BoxItemType = 'file' | 'folder' | 'web_link'
 
@@ -93,9 +94,9 @@ export async function getFolderInfo(tm: BoxTokenManager, folderId: string): Prom
 export async function downloadFile(
   tm: BoxTokenManager,
   fileId: string,
-  rangeHeader?: string | null,
+  window?: ByteWindow,
 ): Promise<Uint8Array> {
-  return boxGetBytes(tm, `${tm.apiBase}/files/${fileId}/content`, undefined, rangeHeader)
+  return boxGetBytes(tm, `${tm.apiBase}/files/${fileId}/content`, undefined, window)
 }
 
 export async function* downloadFileStream(

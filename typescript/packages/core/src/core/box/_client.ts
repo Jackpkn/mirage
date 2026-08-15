@@ -13,6 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { rstripSlash } from '../../utils/slash.ts'
+import { rangeHeader, windowOf, type ByteWindow } from '../../utils/ranges.ts'
 
 export const BOX_TOKEN_URL = 'https://api.box.com/oauth2/token'
 export const BOX_API_BASE = 'https://api.box.com/2.0'
@@ -262,17 +263,18 @@ export async function boxGetBytes(
   tm: BoxTokenManager,
   url: string,
   params?: Record<string, string | number>,
-  rangeHeader?: string | null,
+  window?: ByteWindow,
 ): Promise<Uint8Array> {
   const headers = await boxAuthHeaders(tm)
-  if (rangeHeader != null && rangeHeader !== '') headers.Range = rangeHeader
+  const range = window === undefined ? null : rangeHeader(window.offset, window.size)
+  if (range !== null) headers.Range = range
   const r = await fetch(buildUrl(url, params), { headers, redirect: 'follow' })
   if (!r.ok) {
     const text = await r.text().catch(() => '')
     throw new BoxApiError(`Box GET ${url} → ${String(r.status)} ${text}`, r.status)
   }
   const buf = await r.arrayBuffer()
-  return new Uint8Array(buf)
+  return windowOf(new Uint8Array(buf), r.status, window)
 }
 
 export async function* boxGetStream(

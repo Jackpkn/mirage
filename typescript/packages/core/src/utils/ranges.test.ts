@@ -14,7 +14,14 @@
 
 import { describe, expect, it } from 'vitest'
 
-import { isUnsatisfiableRange, rangeHeader, sliceWindow, windowIfUnranged } from './ranges.js'
+import {
+  isUnsatisfiableRange,
+  rangeHeader,
+  sliceWindow,
+  windowFor,
+  windowIfUnranged,
+  windowOf,
+} from './ranges.js'
 
 const ENC = new TextEncoder()
 const DEC = new TextDecoder()
@@ -171,5 +178,32 @@ describe('isUnsatisfiableRange on a WebDAV 416', () => {
     expect(isUnsatisfiableRange(new Error('Unexpected (permanent) at read, status: 500'))).toBe(
       false,
     )
+  })
+})
+
+describe('windowFor', () => {
+  it('is undefined for a whole-file read', () => {
+    expect(windowFor(0, null)).toBeUndefined()
+  })
+
+  it('carries both numbers otherwise', () => {
+    expect(windowFor(2, 3)).toEqual({ offset: 2, size: 3 })
+    expect(windowFor(7, null)).toEqual({ offset: 7, size: null })
+  })
+})
+
+describe('windowOf', () => {
+  it('trusts a 206 body', () => {
+    expect(DEC.decode(windowOf(ENC.encode('234'), 206, { offset: 2, size: 3 }))).toBe('234')
+  })
+
+  it('slices a 200 body', () => {
+    expect(DEC.decode(windowOf(DATA, 200, { offset: 2, size: 3 }))).toBe('234')
+  })
+
+  // A reader with no window passes undefined, and the offset a slice would
+  // otherwise apply is not zero by accident but absent.
+  it('leaves a whole-file read alone', () => {
+    expect(DEC.decode(windowOf(DATA, 200, undefined))).toBe('0123456789')
   })
 })

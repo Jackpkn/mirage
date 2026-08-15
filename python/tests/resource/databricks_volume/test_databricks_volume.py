@@ -181,15 +181,22 @@ class FakeApiClient:
         remote_path = unquote(path.removeprefix("/api/2.0/fs/files"))
         if remote_path not in self.files.downloads:
             raise NotFoundError(remote_path)
-        payload = self.files.downloads[remote_path]
+        whole = self.files.downloads[remote_path]
+        payload = whole
         range_header = (headers or {}).get("Range")
+        # A server that honors a Range answers 206 with Content-Range;
+        # the reader takes that header as the proof the bytes are already
+        # the window, so a fake that honors one has to send it too.
         if range_header is not None:
-            payload = _apply_range_header(payload, range_header)
-        return {
+            payload = _apply_range_header(whole, range_header)
+        out = {
             "contents": BytesIO(payload),
             "content-length": str(len(payload)),
             "accept-ranges": "bytes",
         }
+        if range_header is not None:
+            out["content-range"] = f"bytes 0-{len(payload) - 1}/{len(whole)}"
+        return out
 
 
 class FakeClient:

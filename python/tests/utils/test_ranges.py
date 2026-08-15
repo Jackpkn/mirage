@@ -14,8 +14,9 @@
 
 import pytest
 
-from mirage.utils.ranges import (is_unsatisfiable_range, range_header,
-                                 slice_window, window_if_unranged)
+from mirage.utils.ranges import (ByteWindow, is_unsatisfiable_range,
+                                 range_header, slice_window, window_for,
+                                 window_if_unranged, window_of)
 
 DATA = b"0123456789"
 
@@ -165,3 +166,26 @@ def test_the_sabre_webdav_416_shape_is_unsatisfiable():
     status is only readable inside the string and the exception name has
     no spaces for the spaced spelling to match."""
     assert is_unsatisfiable_range(RuntimeError(SABRE_416))
+
+
+def test_a_whole_file_read_has_no_window():
+    assert window_for(0, None) is None
+
+
+def test_a_window_carries_both_numbers():
+    assert window_for(2, 3) == ByteWindow(2, 3)
+    assert window_for(7, None) == ByteWindow(7, None)
+
+
+def test_window_of_trusts_a_206_body():
+    assert window_of(b"234", 206, ByteWindow(2, 3)) == b"234"
+
+
+def test_window_of_slices_a_200_body():
+    assert window_of(b"0123456789", 200, ByteWindow(2, 3)) == b"234"
+
+
+def test_window_of_leaves_a_whole_file_read_alone():
+    """A reader with no window passes None, and the offset a slice would
+    otherwise apply is not zero by accident but absent."""
+    assert window_of(b"0123456789", 200, None) == b"0123456789"

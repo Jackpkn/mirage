@@ -13,6 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { rstripSlash } from '../../utils/slash.ts'
+import { rangeHeader, windowOf, type ByteWindow } from '../../utils/ranges.ts'
 
 export const DROPBOX_TOKEN_URL = 'https://api.dropboxapi.com/oauth2/token'
 export const DROPBOX_API_BASE = 'https://api.dropboxapi.com/2'
@@ -187,7 +188,7 @@ export async function dropboxUpload(
 export async function dropboxDownload(
   tm: DropboxTokenManager,
   path: string,
-  rangeHeader?: string | null,
+  window?: ByteWindow,
 ): Promise<Uint8Array> {
   const headers = await dropboxAuthHeaders(tm)
   const url = `${tm.contentBase}/files/download`
@@ -195,14 +196,15 @@ export async function dropboxDownload(
     ...headers,
     'Dropbox-API-Arg': JSON.stringify({ path }),
   }
-  if (rangeHeader != null && rangeHeader !== '') sent.Range = rangeHeader
+  const range = window === undefined ? null : rangeHeader(window.offset, window.size)
+  if (range !== null) sent.Range = range
   const r = await fetch(url, { method: 'POST', headers: sent })
   if (!r.ok) {
     const text = await r.text().catch(() => '')
     throw new DropboxApiError(`Dropbox download ${path} → ${String(r.status)} ${text}`, r.status)
   }
   const buf = await r.arrayBuffer()
-  return new Uint8Array(buf)
+  return windowOf(new Uint8Array(buf), r.status, window)
 }
 
 export async function* dropboxDownloadStream(
