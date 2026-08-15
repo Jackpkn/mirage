@@ -13,14 +13,12 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import {
-  cliSpecFor,
-  enoent,
-  materialize,
-  type CLIDoors,
-  type IOResult,
-  type PathSpec,
-} from '@struktoai/mirage-core'
+import { cliSpecFor } from '@struktoai/mirage-core/commands/cli/specs'
+import type { CLIDoors } from '@struktoai/mirage-core/commands/cli/types'
+import { materialize } from '@struktoai/mirage-core/io/types'
+import type { IOResult } from '@struktoai/mirage-core/io/types'
+import type { PathSpec } from '@struktoai/mirage-core/types'
+import { enoent } from '@struktoai/mirage-core/utils/errors'
 import { EmailAccessor } from '../../../../accessor/email.ts'
 import type { EmailConfig } from '../../../../core/email/config.ts'
 import { messageJsonBytes } from '../../../../core/email/render.ts'

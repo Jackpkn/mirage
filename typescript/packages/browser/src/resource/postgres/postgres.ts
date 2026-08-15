@@ -12,31 +12,32 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { mountKey, mountPrefixOf } from '@struktoai/mirage-core'
+import { PostgresAccessor } from '@struktoai/mirage-core/accessor/postgres'
+import { RAMIndexCacheStore } from '@struktoai/mirage-core/cache/index/ram'
+import type { IndexCacheStore } from '@struktoai/mirage-core/cache/index/store'
+import { makeResolveGlob } from '@struktoai/mirage-core/commands/builtin/generic_bind/index'
+import { POSTGRES_COMMANDS } from '@struktoai/mirage-core/commands/builtin/postgres/index'
+import type { RegisteredCommand } from '@struktoai/mirage-core/commands/config'
+import type { PgDriver } from '@struktoai/mirage-core/core/postgres/_driver'
+import { read as postgresRead } from '@struktoai/mirage-core/core/postgres/read'
+import { readdir as postgresReaddir } from '@struktoai/mirage-core/core/postgres/readdir'
+import { stat as postgresStat } from '@struktoai/mirage-core/core/postgres/stat'
+import { POSTGRES_OPS } from '@struktoai/mirage-core/ops/postgres/index'
+import type { RegisteredOp } from '@struktoai/mirage-core/ops/registry'
+import type { Resource } from '@struktoai/mirage-core/resource/base'
 import {
-  type FileStat,
-  type IndexCacheStore,
-  PathSpec,
-  type PgDriver,
-  POSTGRES_COMMANDS,
-  POSTGRES_OPS,
-  POSTGRES_PROMPT,
-  PostgresAccessor,
-  type PostgresConfig,
-  type PostgresConfigResolved,
-  postgresRead,
-  postgresReaddir,
-  postgresStat,
-  RAMIndexCacheStore,
-  type RegisteredCommand,
-  type RegisteredOp,
-  type Resource,
-  ResourceName,
   redactPostgresConfig,
-  type PostgresConfigRedacted,
   resolvePostgresConfig,
-  makeResolveGlob,
-} from '@struktoai/mirage-core'
+} from '@struktoai/mirage-core/resource/postgres/config'
+import type {
+  PostgresConfig,
+  PostgresConfigRedacted,
+  PostgresConfigResolved,
+} from '@struktoai/mirage-core/resource/postgres/config'
+import { POSTGRES_PROMPT } from '@struktoai/mirage-core/resource/postgres/prompt'
+import { PathSpec, ResourceName } from '@struktoai/mirage-core/types'
+import type { FileStat } from '@struktoai/mirage-core/types'
+import { mountKey, mountPrefixOf } from '@struktoai/mirage-core/utils/key_prefix'
 import { NeonPgDriver } from './neon_driver.ts'
 
 const resolvePostgresGlob = makeResolveGlob(postgresReaddir)

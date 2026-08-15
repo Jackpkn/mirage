@@ -12,13 +12,11 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import {
-  CachableAsyncIterator,
-  IOResult,
-  OpRecord,
-  applyIo,
-  defaultFingerprint,
-} from '@struktoai/mirage-core'
+import { applyIo } from '@struktoai/mirage-core/cache/file/io'
+import { defaultFingerprint } from '@struktoai/mirage-core/cache/file/utils'
+import { CachableAsyncIterator } from '@struktoai/mirage-core/io/cachable_iterator'
+import { IOResult } from '@struktoai/mirage-core/io/types'
+import { OpRecord } from '@struktoai/mirage-core/observe/record'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { RedisFileCacheStore } from './file.ts'
 

@@ -12,16 +12,14 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import {
-  mimeTypeFor,
-  IOResult,
-  PathSpec,
-  isMissingPath,
-  type ByteSource,
-  type CLIDoors,
-  type CommandFnResult,
-  type FlagView,
-} from '@struktoai/mirage-core'
+import type { CLIDoors } from '@struktoai/mirage-core/commands/cli/types'
+import type { CommandFnResult } from '@struktoai/mirage-core/commands/config'
+import type { FlagView } from '@struktoai/mirage-core/commands/spec/index'
+import { IOResult } from '@struktoai/mirage-core/io/types'
+import type { ByteSource } from '@struktoai/mirage-core/io/types'
+import { PathSpec } from '@struktoai/mirage-core/types'
+import { isMissingPath } from '@struktoai/mirage-core/utils/errors'
+import { mimeTypeFor } from '@struktoai/mirage-core/utils/filetype'
 import { parseRfc822, type ParsedRfc822 } from '../../../../core/email/_parse.ts'
 import type { EmailConfig } from '../../../../core/email/config.ts'
 import { build, readBody, splitAddresses, type Attachment, type Source } from './builder.ts'

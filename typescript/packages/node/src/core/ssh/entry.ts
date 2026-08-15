@@ -12,7 +12,8 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { FileStat, FileType, guessType } from '@struktoai/mirage-core'
+import { FileStat, FileType } from '@struktoai/mirage-core/types'
+import { guessType } from '@struktoai/mirage-core/utils/filetype'
 import { isDirectoryAttrs } from './utils.ts'
 
 export interface SshAttrs {

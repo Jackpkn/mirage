@@ -13,21 +13,16 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { posix } from 'node:path'
-import {
-  type FileStat,
-  DIR_MODE,
-  FILE_MODE,
-  FileTable,
-  FileType,
-  isMissingOp,
-  mergeWrites,
-  mtimeMs,
-  type OpRecord,
-  rstripSlash,
-  type Ops,
-  type Session,
-  compareCodePoints,
-} from '@struktoai/mirage-core'
+import type { OpRecord } from '@struktoai/mirage-core/observe/record'
+import type { Ops } from '@struktoai/mirage-core/ops/ops'
+import { FileTable, mergeWrites } from '@struktoai/mirage-core/runtime/handles/index'
+import { FileType } from '@struktoai/mirage-core/types'
+import type { FileStat } from '@struktoai/mirage-core/types'
+import { isMissingOp } from '@struktoai/mirage-core/utils/errors'
+import { rstripSlash } from '@struktoai/mirage-core/utils/slash'
+import { compareCodePoints } from '@struktoai/mirage-core/utils/sort'
+import { DIR_MODE, FILE_MODE, mtimeMs } from '@struktoai/mirage-core/utils/stat_view'
+import type { Session } from '@struktoai/mirage-core/workspace/session/session'
 import { errnoError } from './errors.ts'
 import { isMacosMetadata } from './platform/macos.ts'
 

@@ -26,14 +26,10 @@ vi.mock('../../../core/email/stat.ts', async () => {
   return { ...actual, stat: vi.fn() }
 })
 
-import {
-  FileStat,
-  FileType,
-  PathSpec,
-  RAMIndexCacheStore,
-  materialize,
-  stripSlash,
-} from '@struktoai/mirage-core'
+import { RAMIndexCacheStore } from '@struktoai/mirage-core/cache/index/ram'
+import { materialize } from '@struktoai/mirage-core/io/types'
+import { FileStat, FileType, PathSpec } from '@struktoai/mirage-core/types'
+import { stripSlash } from '@struktoai/mirage-core/utils/slash'
 import type { EmailAccessor } from '../../../accessor/email.ts'
 import * as readdirMod from '../../../core/email/readdir.ts'
 import * as statMod from '../../../core/email/stat.ts'

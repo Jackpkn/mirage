@@ -12,7 +12,9 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { DISCORD_COMMANDS, DISCORD_OPS, ResourceName } from '@struktoai/mirage-core'
+import { DISCORD_COMMANDS } from '@struktoai/mirage-core/commands/builtin/discord/index'
+import { DISCORD_OPS } from '@struktoai/mirage-core/ops/discord/index'
+import { ResourceName } from '@struktoai/mirage-core/types'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { buildResource } from '../registry.ts'
 import { redactDiscordConfig } from './config.ts'

@@ -15,7 +15,9 @@
 import type { DiskAccessor } from '../../accessor/disk.ts'
 import { stat as fsStat } from 'node:fs/promises'
 import path from 'node:path'
-import { FileStat, FileType, guessType, type PathSpec } from '@struktoai/mirage-core'
+import { FileStat, FileType } from '@struktoai/mirage-core/types'
+import type { PathSpec } from '@struktoai/mirage-core/types'
+import { guessType } from '@struktoai/mirage-core/utils/filetype'
 import { diskError } from './errors.ts'
 import { resolveSafe } from './utils.ts'
 

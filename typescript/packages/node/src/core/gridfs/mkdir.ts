@@ -12,7 +12,8 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { invalidateAfterWrite, invalidateAncestors, type PathSpec } from '@struktoai/mirage-core'
+import { invalidateAfterWrite, invalidateAncestors } from '@struktoai/mirage-core/cache/context'
+import type { PathSpec } from '@struktoai/mirage-core/types'
 import type { GridFSAccessor } from '../../accessor/gridfs.ts'
 import { gridfsPrefix, rawPathOf } from './_client.ts'
 import { uploadBytes } from './write.ts'

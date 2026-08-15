@@ -12,32 +12,24 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import {
-  BaseResource,
-  NodeSlackTransport,
-  PathSpec,
-  ResourceName,
-  SLACK_COMMANDS,
-  SLACK_PROMPT,
-  SLACK_OPS,
-  SLACK_WRITE_PROMPT,
-  SlackAccessor,
-  mountKey,
-  mountPrefixOf,
-  makeResolveGlob,
-  slackRead,
-  slackReaddir,
-  slackStat,
-  type FileStat,
-  type RegisteredCommand,
-  type RegisteredOp,
-  type Resource,
-} from '@struktoai/mirage-core'
-import {
-  redactSlackConfig,
-  type SlackConfig,
-  type SlackConfigRedacted,
-} from '@struktoai/mirage-core'
+import { SlackAccessor } from '@struktoai/mirage-core/accessor/slack'
+import { makeResolveGlob } from '@struktoai/mirage-core/commands/builtin/generic_bind/index'
+import { SLACK_COMMANDS } from '@struktoai/mirage-core/commands/builtin/slack/index'
+import type { RegisteredCommand } from '@struktoai/mirage-core/commands/config'
+import { NodeSlackTransport } from '@struktoai/mirage-core/core/slack/_client'
+import { redactSlackConfig } from '@struktoai/mirage-core/core/slack/config'
+import type { SlackConfig, SlackConfigRedacted } from '@struktoai/mirage-core/core/slack/config'
+import { read as slackRead } from '@struktoai/mirage-core/core/slack/read'
+import { readdir as slackReaddir } from '@struktoai/mirage-core/core/slack/readdir'
+import { stat as slackStat } from '@struktoai/mirage-core/core/slack/stat'
+import type { RegisteredOp } from '@struktoai/mirage-core/ops/registry'
+import { SLACK_OPS } from '@struktoai/mirage-core/ops/slack/index'
+import { BaseResource } from '@struktoai/mirage-core/resource/base'
+import type { Resource } from '@struktoai/mirage-core/resource/base'
+import { SLACK_PROMPT, SLACK_WRITE_PROMPT } from '@struktoai/mirage-core/resource/slack/prompt'
+import { PathSpec, ResourceName } from '@struktoai/mirage-core/types'
+import type { FileStat } from '@struktoai/mirage-core/types'
+import { mountKey, mountPrefixOf } from '@struktoai/mirage-core/utils/key_prefix'
 
 const resolveSlackGlob = makeResolveGlob(slackReaddir)
 

@@ -12,26 +12,22 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import {
-  BaseResource,
-  HttpJaegerTransport,
-  JAEGER_COMMANDS,
-  JAEGER_OPS,
-  JAEGER_PROMPT,
-  JaegerAccessor,
-  PathSpec,
-  ResourceName,
-  jaegerRead,
-  jaegerReaddir,
-  jaegerStat,
-  mountKey,
-  mountPrefixOf,
-  makeResolveGlob,
-  type FileStat,
-  type RegisteredCommand,
-  type RegisteredOp,
-  type Resource,
-} from '@struktoai/mirage-core'
+import { JaegerAccessor } from '@struktoai/mirage-core/accessor/jaeger'
+import { makeResolveGlob } from '@struktoai/mirage-core/commands/builtin/generic_bind/index'
+import { JAEGER_COMMANDS } from '@struktoai/mirage-core/commands/builtin/jaeger/index'
+import type { RegisteredCommand } from '@struktoai/mirage-core/commands/config'
+import { HttpJaegerTransport } from '@struktoai/mirage-core/core/jaeger/_client'
+import { read as jaegerRead } from '@struktoai/mirage-core/core/jaeger/read'
+import { readdir as jaegerReaddir } from '@struktoai/mirage-core/core/jaeger/readdir'
+import { stat as jaegerStat } from '@struktoai/mirage-core/core/jaeger/stat'
+import { JAEGER_OPS } from '@struktoai/mirage-core/ops/jaeger/index'
+import type { RegisteredOp } from '@struktoai/mirage-core/ops/registry'
+import { BaseResource } from '@struktoai/mirage-core/resource/base'
+import type { Resource } from '@struktoai/mirage-core/resource/base'
+import { JAEGER_PROMPT } from '@struktoai/mirage-core/resource/jaeger/prompt'
+import { PathSpec, ResourceName } from '@struktoai/mirage-core/types'
+import type { FileStat } from '@struktoai/mirage-core/types'
+import { mountKey, mountPrefixOf } from '@struktoai/mirage-core/utils/key_prefix'
 import { redactJaegerConfig, type JaegerConfig, type JaegerConfigRedacted } from './config.ts'
 
 const resolveJaegerGlob = makeResolveGlob(jaegerReaddir)

@@ -22,21 +22,14 @@ import {
   writeFile,
 } from 'node:fs/promises'
 import path from 'node:path'
-import {
-  BaseResource,
-  CapacityState,
-  PathSpec,
-  ResourceName,
-  makeResolveGlob,
-  mountKey,
-  mountPrefixOf,
-  type CapacityResult,
-  type FileStat,
-  type FindOptions,
-  type RegisteredCommand,
-  type RegisteredOp,
-  type Resource,
-} from '@struktoai/mirage-core'
+import { makeResolveGlob } from '@struktoai/mirage-core/commands/builtin/generic_bind/index'
+import type { RegisteredCommand } from '@struktoai/mirage-core/commands/config'
+import type { RegisteredOp } from '@struktoai/mirage-core/ops/registry'
+import { BaseResource } from '@struktoai/mirage-core/resource/base'
+import type { FindOptions, Resource } from '@struktoai/mirage-core/resource/base'
+import { CapacityState, PathSpec, ResourceName } from '@struktoai/mirage-core/types'
+import type { CapacityResult, FileStat } from '@struktoai/mirage-core/types'
+import { mountKey, mountPrefixOf } from '@struktoai/mirage-core/utils/key_prefix'
 import { DISK_COMMANDS } from '../../commands/builtin/disk/index.ts'
 import { appendBytes as appendCore } from '../../core/disk/append.ts'
 import { SCOPE_ERROR } from '../../core/disk/constants.ts'

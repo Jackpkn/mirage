@@ -1,4 +1,5 @@
-import type { IndexCacheStore, PathSpec } from '@struktoai/mirage-core'
+import type { IndexCacheStore } from '@struktoai/mirage-core/cache/index/store'
+import type { PathSpec } from '@struktoai/mirage-core/types'
 import type { NextcloudAccessor } from '../../accessor/nextcloud.ts'
 import { write } from './write.ts'
 

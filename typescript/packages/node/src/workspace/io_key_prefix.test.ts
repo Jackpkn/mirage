@@ -13,7 +13,10 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { describe, expect, it } from 'vitest'
-import { MountMode, RAMResource, type IOResult, type OpRecord } from '@struktoai/mirage-core'
+import type { IOResult } from '@struktoai/mirage-core/io/types'
+import type { OpRecord } from '@struktoai/mirage-core/observe/record'
+import { RAMResource } from '@struktoai/mirage-core/resource/ram/ram'
+import { MountMode } from '@struktoai/mirage-core/types'
 import { Workspace } from '../workspace.ts'
 
 type ApplyIoFn = (io: IOResult, records?: readonly OpRecord[]) => Promise<void>

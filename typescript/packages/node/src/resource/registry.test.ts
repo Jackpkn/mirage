@@ -16,16 +16,14 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import {
-  Mem0Resource,
-  normalizeMem0Config,
-  normalizeOneDriveConfig,
-  OneDriveResource,
-  ResourceName,
-  resourceStateRequiresOverride,
-  tokenUrl,
-  type TokenManager,
-} from '@struktoai/mirage-core'
+import { normalizeOneDriveConfig } from '@struktoai/mirage-core/accessor/onedrive'
+import { tokenUrl } from '@struktoai/mirage-core/core/google/_client'
+import type { TokenManager } from '@struktoai/mirage-core/core/google/_client'
+import { normalizeMem0Config } from '@struktoai/mirage-core/resource/mem0/config'
+import { Mem0Resource } from '@struktoai/mirage-core/resource/mem0/mem0'
+import { OneDriveResource } from '@struktoai/mirage-core/resource/onedrive/onedrive'
+import { resourceStateRequiresOverride } from '@struktoai/mirage-core/resource/secrets'
+import { ResourceName } from '@struktoai/mirage-core/types'
 import { normalizeS3Config } from './s3/config.ts'
 import { buildResource, knownResources, register } from './registry.ts'
 

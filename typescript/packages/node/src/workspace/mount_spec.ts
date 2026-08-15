@@ -12,7 +12,8 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import type { Limit, MountBackend, MountMode, Resource } from '@struktoai/mirage-core'
+import type { Resource } from '@struktoai/mirage-core/resource/base'
+import type { Limit, MountBackend, MountMode } from '@struktoai/mirage-core/types'
 
 export interface MountSpecOptions {
   /** Per-mount mode override; falls back to the workspace default when unset. */

@@ -12,15 +12,11 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import {
-  ListingDeltaHook,
-  mountPrefixOf,
-  statFingerprint,
-  stripSlash,
-  type DeltaHook,
-  type PathSpec,
-  type WalkEntry,
-} from '@struktoai/mirage-core'
+import type { PathSpec, WalkEntry } from '@struktoai/mirage-core/types'
+import { mountPrefixOf } from '@struktoai/mirage-core/utils/key_prefix'
+import { stripSlash } from '@struktoai/mirage-core/utils/slash'
+import { ListingDeltaHook, statFingerprint } from '@struktoai/mirage-core/watch/index'
+import type { DeltaHook } from '@struktoai/mirage-core/watch/index'
 import type { NextcloudAccessor } from '../../accessor/nextcloud.ts'
 import { isNotFound } from './util.ts'
 

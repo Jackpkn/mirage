@@ -12,11 +12,13 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { stripSlash } from '@struktoai/mirage-core'
+import type { Resource } from '@struktoai/mirage-core/resource/base'
+import { RAMResource } from '@struktoai/mirage-core/resource/ram/ram'
+import { MountMode } from '@struktoai/mirage-core/types'
+import { stripSlash } from '@struktoai/mirage-core/utils/slash'
 import os from 'node:os'
 import path from 'node:path'
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
-import { MountMode, RAMResource, type Resource } from '@struktoai/mirage-core'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Workspace } from '../../workspace.ts'
 import { DiskResource } from '../disk/disk.ts'

@@ -12,17 +12,16 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import { statGeneric } from '@struktoai/mirage-core/commands/builtin/generic/stat'
 import {
-  ResourceName,
-  command,
   overlaidStat,
   resolveGlobOf,
-  specOf,
-  statGeneric,
-  type CommandFnResult,
-  type CommandOpts,
-  type PathSpec,
-} from '@struktoai/mirage-core'
+} from '@struktoai/mirage-core/commands/builtin/generic_bind/index'
+import { command } from '@struktoai/mirage-core/commands/config'
+import type { CommandFnResult, CommandOpts } from '@struktoai/mirage-core/commands/config'
+import { specOf } from '@struktoai/mirage-core/commands/spec/index'
+import { ResourceName } from '@struktoai/mirage-core/types'
+import type { PathSpec } from '@struktoai/mirage-core/types'
 import type { GridFSAccessor } from '../../../accessor/gridfs.ts'
 import { stat as gridfsStat } from '../../../core/gridfs/stat.ts'
 import { GRIDFS_IO } from './io.ts'

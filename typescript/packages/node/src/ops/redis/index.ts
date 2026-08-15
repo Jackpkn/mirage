@@ -12,8 +12,9 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import type { RegisteredOp } from '@struktoai/mirage-core'
-import { ResourceName, makeGenericOps } from '@struktoai/mirage-core'
+import { makeGenericOps } from '@struktoai/mirage-core/ops/generic/factory'
+import type { RegisteredOp } from '@struktoai/mirage-core/ops/registry'
+import { ResourceName } from '@struktoai/mirage-core/types'
 import { REDIS_IO } from '../../commands/builtin/redis/io.ts'
 
 export const REDIS_OPS: readonly RegisteredOp[] = makeGenericOps(ResourceName.REDIS, REDIS_IO)

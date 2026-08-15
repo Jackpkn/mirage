@@ -12,8 +12,10 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { ResourceName, invalidateAfterWrite, record } from '@struktoai/mirage-core'
-import type { PathSpec } from '@struktoai/mirage-core'
+import { invalidateAfterWrite } from '@struktoai/mirage-core/cache/context'
+import { record } from '@struktoai/mirage-core/observe/context'
+import { ResourceName } from '@struktoai/mirage-core/types'
+import type { PathSpec } from '@struktoai/mirage-core/types'
 import type { SSHAccessor } from '../../accessor/ssh.ts'
 import { joinRoot, stripPrefix } from './utils.ts'
 

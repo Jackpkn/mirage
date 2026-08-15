@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import path from 'node:path'
-import { lstripSlash } from '@struktoai/mirage-core'
+import { lstripSlash } from '@struktoai/mirage-core/utils/slash'
 
 export { norm, parent, gnuBasename as basename } from '@struktoai/mirage-core'
 

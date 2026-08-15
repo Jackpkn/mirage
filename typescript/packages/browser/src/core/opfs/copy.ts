@@ -12,9 +12,9 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import type { PathSpec } from '@struktoai/mirage-core'
+import type { PathSpec } from '@struktoai/mirage-core/types'
+import { enoent } from '@struktoai/mirage-core/utils/errors'
 import type { OPFSAccessor } from '../../accessor/opfs.ts'
-import { enoent } from '@struktoai/mirage-core'
 import { destError, isNotFound, resolveFileHandle, toWritableChunk } from './utils.ts'
 
 export async function copy(accessor: OPFSAccessor, src: PathSpec, dst: PathSpec): Promise<void> {

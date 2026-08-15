@@ -1,4 +1,6 @@
-import { FileType, stripSlash, type PathSpec } from '@struktoai/mirage-core'
+import { FileType } from '@struktoai/mirage-core/types'
+import type { PathSpec } from '@struktoai/mirage-core/types'
+import { stripSlash } from '@struktoai/mirage-core/utils/slash'
 import type { NextcloudAccessor } from '../../../accessor/nextcloud.ts'
 import { isNotFound, rawPathOf } from '../util.ts'
 import { statOrNull } from './walk.ts'

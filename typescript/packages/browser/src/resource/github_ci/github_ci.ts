@@ -12,26 +12,23 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { mountKey, mountPrefixOf } from '@struktoai/mirage-core'
-import {
-  type FileStat,
-  GITHUB_CI_COMMANDS,
-  GITHUB_CI_PROMPT,
-  GITHUB_CI_OPS,
-  GitHubCIAccessor,
-  HttpCITransport,
-  type IndexCacheStore,
-  PathSpec,
-  RAMIndexCacheStore,
-  type RegisteredCommand,
-  type RegisteredOp,
-  type Resource,
-  ResourceName,
-  githubCiRead,
-  githubCiReaddir,
-  makeResolveGlob,
-  githubCiStat,
-} from '@struktoai/mirage-core'
+import { GitHubCIAccessor } from '@struktoai/mirage-core/accessor/github_ci'
+import { RAMIndexCacheStore } from '@struktoai/mirage-core/cache/index/ram'
+import type { IndexCacheStore } from '@struktoai/mirage-core/cache/index/store'
+import { makeResolveGlob } from '@struktoai/mirage-core/commands/builtin/generic_bind/index'
+import { GITHUB_CI_COMMANDS } from '@struktoai/mirage-core/commands/builtin/github_ci/index'
+import type { RegisteredCommand } from '@struktoai/mirage-core/commands/config'
+import { HttpCITransport } from '@struktoai/mirage-core/core/github_ci/_client'
+import { read as githubCiRead } from '@struktoai/mirage-core/core/github_ci/read'
+import { readdir as githubCiReaddir } from '@struktoai/mirage-core/core/github_ci/readdir'
+import { stat as githubCiStat } from '@struktoai/mirage-core/core/github_ci/stat'
+import { GITHUB_CI_OPS } from '@struktoai/mirage-core/ops/github_ci/index'
+import type { RegisteredOp } from '@struktoai/mirage-core/ops/registry'
+import type { Resource } from '@struktoai/mirage-core/resource/base'
+import { GITHUB_CI_PROMPT } from '@struktoai/mirage-core/resource/github_ci/prompt'
+import { PathSpec, ResourceName } from '@struktoai/mirage-core/types'
+import type { FileStat } from '@struktoai/mirage-core/types'
+import { mountKey, mountPrefixOf } from '@struktoai/mirage-core/utils/key_prefix'
 import { redactGitHubCIConfig, type GitHubCIConfig, type GitHubCIConfigRedacted } from './config.ts'
 
 const githubCiResolveGlob = makeResolveGlob(githubCiReaddir)

@@ -47,7 +47,9 @@ import {
   type WorkspaceOptions,
   type WorkspaceStateStore,
 } from '@struktoai/mirage-node'
-import { compareCodePoints, JobConsole, type ConsoleFactory } from '@struktoai/mirage-core'
+import { JobConsole } from '@struktoai/mirage-core/shell/console/index'
+import type { ConsoleFactory } from '@struktoai/mirage-core/shell/job_table/index'
+import { compareCodePoints } from '@struktoai/mirage-core/utils/sort'
 
 const VALID_MODES = new Set<string>([MountMode.READ, MountMode.WRITE, MountMode.EXEC])
 

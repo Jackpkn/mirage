@@ -12,15 +12,13 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import {
-  normalizeFields,
-  type ChromaConfig,
-  type DifyConfig,
-  type LanceDBConfig,
-  type QdrantConfig,
-  type Resource,
-  compareCodePoints,
-} from '@struktoai/mirage-core'
+import type { Resource } from '@struktoai/mirage-core/resource/base'
+import type { ChromaConfig } from '@struktoai/mirage-core/resource/chroma/config'
+import type { DifyConfig } from '@struktoai/mirage-core/resource/dify/config'
+import type { LanceDBConfig } from '@struktoai/mirage-core/resource/lancedb/config'
+import type { QdrantConfig } from '@struktoai/mirage-core/resource/qdrant/config'
+import { normalizeFields } from '@struktoai/mirage-core/utils/normalize'
+import { compareCodePoints } from '@struktoai/mirage-core/utils/sort'
 
 /**
  * Construct a resource by registry name. Mirrors Python's

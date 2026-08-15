@@ -13,13 +13,10 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import type { Connection, Table } from '@lancedb/lancedb'
-import {
-  loadOptionalPeer,
-  type LanceDriver,
-  type LanceRow,
-  type LanceDBConfigResolved,
-  compareCodePoints,
-} from '@struktoai/mirage-core'
+import type { LanceDriver, LanceRow } from '@struktoai/mirage-core/core/lancedb/_driver'
+import type { LanceDBConfigResolved } from '@struktoai/mirage-core/resource/lancedb/config'
+import { loadOptionalPeer } from '@struktoai/mirage-core/utils/optional_peer'
+import { compareCodePoints } from '@struktoai/mirage-core/utils/sort'
 
 function toStr(value: unknown): string {
   if (value === null || value === undefined) return ''

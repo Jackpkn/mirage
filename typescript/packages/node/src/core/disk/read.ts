@@ -14,7 +14,10 @@
 
 import type { DiskAccessor } from '../../accessor/disk.ts'
 import { open, readFile } from 'node:fs/promises'
-import { enoent, type PathSpec, record, ResourceName } from '@struktoai/mirage-core'
+import { record } from '@struktoai/mirage-core/observe/context'
+import { ResourceName } from '@struktoai/mirage-core/types'
+import type { PathSpec } from '@struktoai/mirage-core/types'
+import { enoent } from '@struktoai/mirage-core/utils/errors'
 import { resolveSafe } from './utils.ts'
 
 const CHUNK = 1 << 20

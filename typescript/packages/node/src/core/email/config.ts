@@ -12,14 +12,9 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import {
-  type ConfigOf,
-  normalizeFields,
-  redactConfigWithSchema,
-  type RedactedConfig,
-  secretStr,
-  z,
-} from '@struktoai/mirage-core'
+import { redactConfigWithSchema, secretStr, z } from '@struktoai/mirage-core/resource/secrets'
+import type { ConfigOf, RedactedConfig } from '@struktoai/mirage-core/resource/secrets'
+import { normalizeFields } from '@struktoai/mirage-core/utils/normalize'
 
 function asString(v: unknown): string {
   return typeof v === 'string' ? v : ''

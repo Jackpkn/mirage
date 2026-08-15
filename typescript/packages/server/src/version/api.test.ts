@@ -15,7 +15,7 @@
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { toStateDict } from '@struktoai/mirage-core'
+import { toStateDict } from '@struktoai/mirage-core/workspace/snapshot/state'
 import { MountMode, RAMResource, Workspace } from '@struktoai/mirage-node'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {

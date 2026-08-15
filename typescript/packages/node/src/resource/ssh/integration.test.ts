@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { PathSpec } from '@struktoai/mirage-core'
+import { PathSpec } from '@struktoai/mirage-core/types'
 import type { SSHConfig } from './config.ts'
 import { SSHResource } from './ssh.ts'
 

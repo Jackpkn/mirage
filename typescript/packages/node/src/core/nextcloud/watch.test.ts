@@ -1,4 +1,4 @@
-import { FileChangeKind, PathSpec } from '@struktoai/mirage-core'
+import { FileChangeKind, PathSpec } from '@struktoai/mirage-core/types'
 import { describe, expect, it } from 'vitest'
 import { NextcloudAccessor } from '../../accessor/nextcloud.ts'
 import { FakeNextcloudOperator, installFakeOperator } from './mock.ts'

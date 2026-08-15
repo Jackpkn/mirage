@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { randomUUID } from 'node:crypto'
-import { Channel, JobConsole } from '@struktoai/mirage-core'
+import { Channel, JobConsole } from '@struktoai/mirage-core/shell/console/index'
 import { afterEach, describe, expect, it } from 'vitest'
 import { RedisConsoleStore } from './store.ts'
 

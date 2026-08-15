@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import type { Db, MongoClient } from 'mongodb'
-import { Accessor } from '@struktoai/mirage-core'
+import { Accessor } from '@struktoai/mirage-core/accessor/index'
 import { loadOptionalPeer } from '../optional_peer.ts'
 import type { GridFSConfig } from '../resource/gridfs/config.ts'
 

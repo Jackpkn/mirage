@@ -29,7 +29,7 @@ import type {
   WriteResult,
 } from 'deepagents'
 import { ioToExecuteResponse, ioToFileInfos, ioToGrepMatches } from './convert.ts'
-import { gnuDirname } from '@struktoai/mirage-core'
+import { gnuDirname } from '@struktoai/mirage-core/utils/path'
 
 const TEXT_EXTENSIONS = new Set([
   'txt',
