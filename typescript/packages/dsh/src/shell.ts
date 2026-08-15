@@ -32,6 +32,7 @@ import {
   exitOutcome,
 } from '@struktoai/mirage-core/shell/console/index'
 import type { ConsoleChunk } from '@struktoai/mirage-core/shell/console/index'
+import { setCwd } from '@struktoai/mirage-core/workspace/session/shell_dirs'
 import type { ExecuteOptions, ExecuteResult } from '@struktoai/mirage-core/workspace/workspace'
 import type { Workspace } from '@struktoai/mirage-node'
 import { tailCap } from './text.ts'
@@ -413,9 +414,7 @@ export class MirageShellExecutor extends ShellExecutor {
     const ws = await this.workspace()
     await ws.ensureSessionsLoaded()
     if (ws.listSessions().some((s) => s.sessionId === sessionId)) return
-    const session = ws.createSession(sessionId)
-    session.cwd = this.workdir
-    session.env.PWD = this.workdir
+    setCwd(ws.createSession(sessionId), this.workdir)
   }
 
   async run(spec: ShellExecSpec): Promise<ShellRunResult> {
