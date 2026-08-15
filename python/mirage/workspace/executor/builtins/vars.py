@@ -29,7 +29,7 @@ from mirage.shell.array import (array_append, array_extent, array_unset,
 from mirage.shell.call_stack import CallStack
 from mirage.shell.errors import ExitSignal
 from mirage.shell.options import parse_option_word
-from mirage.shell.types import SET_OPTION_NAMES
+from mirage.shell.types import SET_OPTION_DEFAULTS, SET_OPTION_NAMES
 from mirage.utils.hidden import var_hidden
 from mirage.workspace.executor.builtins.text import _PRINTF_TARGET_RE
 from mirage.workspace.executor.control import ReturnSignal
@@ -949,6 +949,14 @@ async def handle_set(
         if tok == "--":
             session.positional_args = args[i + 1:]
             return None, IOResult(), ExecutionNode(command="set", exit_code=0)
+        # `-o` and `+o` with nothing after them print the option table
+        # instead of setting anything, in two different spellings: `-o`
+        # as a padded name/value column, `+o` as lines that can be fed
+        # back to `set`. Both are checked before the option grammar,
+        # since a bare `-o` is not a setting.
+        if tok in ("-o", "+o") and i + 1 >= len(args):
+            out = _option_listing(session, plus=tok == "+o")
+            return out, IOResult(), ExecutionNode(command="set", exit_code=0)
         word = parse_option_word(tok,
                                  args[i + 1] if i + 1 < len(args) else None)
         if word is None:
@@ -974,6 +982,30 @@ async def handle_set(
         # why the grammar hands them back instead of deciding here.
         i += word.consumed
     return None, IOResult(), ExecutionNode(command="set", exit_code=0)
+
+
+def _option_listing(session: Session, plus: bool) -> bytes:
+    """Render `set -o` or `set +o` with no name after it.
+
+    GNU 5.2.37 prints every option it knows, alphabetically, whether or
+    not the shell has been told anything about it: `-o` as a name padded
+    to 15 columns, a tab, then `on`/`off`, and `+o` as `set -o NAME` /
+    `set +o NAME` lines a script can source back. `interactive-comments`
+    is longer than the padding and simply overflows it, which is GNU's
+    own `%-15s\\t%s` and not a special case.
+
+    Args:
+        session (Session): the session holding the shell options.
+        plus (bool): render the `set +o` re-readable spelling.
+    """
+    lines = []
+    for name, default in SET_OPTION_DEFAULTS.items():
+        on = session.shell_options.get(name, default)
+        if plus:
+            lines.append(f"set {'-' if on else '+'}o {name}")
+        else:
+            lines.append(f"{name:<15}\t{'on' if on else 'off'}")
+    return ("\n".join(lines) + "\n").encode()
 
 
 _IDENTIFIER_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")

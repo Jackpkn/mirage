@@ -17,6 +17,7 @@ from typing import Any
 from mirage.io import IOResult
 from mirage.io.stream import async_chain, materialize
 from mirage.shell.errors import ExitSignal
+from mirage.shell.helpers import get_text
 from mirage.shell.types import ERREXIT_EXEMPT_TYPES
 from mirage.shell.types import NodeType as NT
 from mirage.utils.errors import format_fs_error
@@ -40,6 +41,9 @@ async def execute_program(
     all_stdout: list[Any] = []
     merged_io = IOResult()
     last_exec = ExecutionNode(command="", exit_code=0)
+    # Source lines and the highest one `set -v` has already echoed.
+    source_lines = get_text(node).split("\n")
+    echoed_row = -1
 
     i = 0
     while i < len(children):
@@ -52,6 +56,33 @@ async def execute_program(
                 continue
             i += 1
             continue
+
+        # `set -n` reads without executing, so every statement after the
+        # one that set it is skipped. Checking here rather than deeper
+        # gives bash's one-way trip for free: a later `set +n` is itself
+        # a statement, so it never runs and cannot turn execution back
+        # on within the same input.
+        if session.shell_options.get("noexec"):
+            break
+
+        # `set -v` echoes input to stderr as the reader consumes it, and
+        # the unit is a *line*, not a statement: GNU answers
+        # `set -v; echo a` with nothing at all, because that whole line
+        # was already read before the option took effect, while
+        # `set -v\necho a` echoes the second line. So a line is echoed
+        # once, when the first statement on it runs, and a statement
+        # spanning several lines carries all of them.
+        if child.start_point[0] > echoed_row:
+            first = max(echoed_row + 1, child.start_point[0])
+            last = child.end_point[0]
+            if session.shell_options.get("verbose") and last >= first:
+                text = "\n".join(source_lines[first:last + 1])
+                merged_io = await merged_io.merge(
+                    IOResult(stderr=text.encode() + b"\n"))
+            # Marked read either way: a line reaches the reader once, so
+            # a line whose own first statement turned the option on was
+            # already past it and is never echoed.
+            echoed_row = last
 
         # Check for background: named node followed by & token
         is_bg = (i + 1 < len(children)

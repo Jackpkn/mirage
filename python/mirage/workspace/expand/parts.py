@@ -184,7 +184,8 @@ async def expand_words(
                                                     view=view)
             result.extend(words)
             continue
-        if p.type in BRACE_WORD_TYPES:
+        if (p.type in BRACE_WORD_TYPES
+                and session.shell_options.get("braceexpand", True)):
             brace_words = await _expand_brace_word(p,
                                                    session,
                                                    execute_fn,

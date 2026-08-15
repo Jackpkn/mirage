@@ -217,6 +217,7 @@ def _parse_file_redirect(child: tree_sitter.Node) -> Redirect:
     target_node = None
     kind = RedirectKind.STDOUT
     append = False
+    clobber = False
     dup_fd = None
 
     for c in child.children:
@@ -224,6 +225,8 @@ def _parse_file_redirect(child: tree_sitter.Node) -> Redirect:
             fd = int(get_text(c))
         elif c.type == NT.REDIRECT_OUT:
             pass
+        elif c.type == NT.REDIRECT_CLOBBER:
+            clobber = True
         elif c.type == NT.REDIRECT_APPEND:
             append = True
         elif c.type == NT.REDIRECT_IN:
@@ -263,7 +266,8 @@ def _parse_file_redirect(child: tree_sitter.Node) -> Redirect:
                         target=target,
                         target_node=target_node,
                         kind=RedirectKind.STDOUT,
-                        append=append)
+                        append=append,
+                        clobber=clobber)
 
     if fd == 2 and kind != RedirectKind.STDERR_TO_STDOUT:
         kind = RedirectKind.STDERR
@@ -272,7 +276,8 @@ def _parse_file_redirect(child: tree_sitter.Node) -> Redirect:
                     target=target,
                     target_node=target_node,
                     kind=kind,
-                    append=append)
+                    append=append,
+                    clobber=clobber)
 
 
 def _parse_herestring_redirect(child: tree_sitter.Node) -> Redirect:
