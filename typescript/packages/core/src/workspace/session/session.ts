@@ -118,12 +118,19 @@ export interface SessionInit {
 /**
  * Variable records for a plain name/value map. The one conversion from
  * the shape an embedder speaks (a process environment) to the shape the
- * session stores. Attributes start empty: a seeded name is an ordinary
- * shell variable until something marks it.
+ * session stores.
+ *
+ * Every seeded name is exported, because a process environment is by
+ * definition the exported set: these are the names the embedder means a
+ * child runtime to inherit, and `envSnapshot` hands on only what carries
+ * the attribute. Seeding them plain would leave them visible to `$X` and
+ * invisible to every runtime, which is not what an embedder passing an
+ * env record is asking for.
  */
 export function varsFromEnv(env: Record<string, string>): Record<string, ShellVar> {
   const out = ownRecord<ShellVar>()
-  for (const [name, value] of Object.entries(env)) out[name] = makeVar(value)
+  const exported: ReadonlySet<VarAttr> = new Set([VarAttr.Export])
+  for (const [name, value] of Object.entries(env)) out[name] = makeVar(value, exported)
   return out
 }
 
@@ -228,8 +235,11 @@ export class Session {
     // bash exports $PWD from startup, so a session that has never run
     // `cd` still has one. Seeding here rather than at lookup time is what
     // makes it an ordinary variable: assignable, unsettable, and listed
-    // by `env`.
-    if (!Object.hasOwn(this.vars, 'PWD')) this.vars.PWD = makeVar(this.cwd)
+    // by `env`. "Exports" is literal -- it carries the attribute, which is
+    // what keeps it in `env` now that the process view is the exported set
+    // rather than every string.
+    if (!Object.hasOwn(this.vars, 'PWD'))
+      this.vars.PWD = makeVar(this.cwd, new Set([VarAttr.Export]))
   }
 
   /**
@@ -253,7 +263,7 @@ export class Session {
     const vars = overrides.vars ?? copyVars(this.vars)
     // $PWD names where the session is, so it follows the move even when
     // the caller also supplied variables to layer on.
-    if (movedTo !== undefined) vars.PWD = makeVar(movedTo)
+    if (movedTo !== undefined) vars.PWD = makeVar(movedTo, new Set([VarAttr.Export]))
     const forked = new Session({
       sessionId: overrides.sessionId ?? this.sessionId,
       cwd: overrides.cwd ?? this.cwd,

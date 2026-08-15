@@ -16,6 +16,7 @@ import type { SessionView } from '../../ops/types.ts'
 import { PolicyDenied, preSessionGate, type Policies } from '../../policy/index.ts'
 import { arrayValues, type ShellArray } from '../../shell/array.ts'
 import { varHidden } from '../../utils/hidden.ts'
+import { compareCodePoints } from '../../utils/sort.ts'
 import { ReadonlyVariableError } from './errors.ts'
 import { ownRecord, sessionEntry, setSessionEntry } from './session.ts'
 import type { ShellValue } from '../../shell/variable.ts'
@@ -30,15 +31,46 @@ import type { Session } from './session.ts'
  * through here, so the hidden-vars filter lands on all of them by
  * construction rather than on however many hand-rolled copies someone
  * remembers. The copy keeps the null prototype session records carry.
+ *
+ * *Exported* names only, which is what makes this the process view
+ * rather than a second spelling of `visibleEnv`. bash puts a variable
+ * in a child's environment when it carries the export attribute, not
+ * when it happens to hold a string: `X=hello` is absent from `env` and
+ * `export Y=world` is present. An unset name carrying the attribute
+ * (`export Z`) is absent too, which falls out of the value check
+ * rather than needing its own arm.
  */
 export function envSnapshot(session: Session): Record<string, string> {
   const out = ownRecord<string>()
   for (const [name, v] of Object.entries(session.vars)) {
-    if (typeof v.value === 'string' && !varHidden(session.hiddenVars, name)) {
+    if (
+      typeof v.value === 'string' &&
+      v.attrs.has(VarAttr.Export) &&
+      !varHidden(session.hiddenVars, name)
+    ) {
       out[name] = v.value
     }
   }
   return out
+}
+
+/**
+ * The names carrying the export attribute, sorted, hidden removed.
+ *
+ * Wider than `envSnapshot`'s keys by exactly the unset ones: a name
+ * `export Z` marked but never assigned is listed by `export -p` as
+ * `declare -x Z` while staying out of the environment. So the printers
+ * read this and the process view reads `envSnapshot`, rather than one
+ * of them re-deriving the other's filter.
+ */
+export function exportedNames(session: Session): string[] {
+  const out: string[] = []
+  for (const [name, v] of Object.entries(session.vars)) {
+    if (v.attrs.has(VarAttr.Export) && !varHidden(session.hiddenVars, name)) {
+      out.push(name)
+    }
+  }
+  return out.sort(compareCodePoints)
 }
 
 /** The variable's value, null when unset or hidden. Sync on purpose:
@@ -71,9 +103,24 @@ function envIsReadonly(session: Session, name: string): boolean {
  * mapping view deliberately: expansion sites read records with plain
  * property access, so a filtered copy is the shape they already
  * consume, and env sizes make the copy cost noise.
+ *
+ * The *shell* view, and no longer a synonym for `envSnapshot`: this is
+ * what `$X`, arithmetic, `[[ ]]`, `IFS` and the bare `set` listing
+ * resolve against, and they see every variable, exported or not. The
+ * two were the same function while the process view was also "every
+ * string", and reusing it once the process view narrowed would have
+ * stopped `$X` resolving a plain assignment. python kept them separate
+ * all along (`_VisibleEnv` beside `env_snapshot`); this is TS catching
+ * up to it.
  */
 export function visibleEnv(session: Session): Record<string, string> {
-  return envSnapshot(session)
+  const out = ownRecord<string>()
+  for (const [name, v] of Object.entries(session.vars)) {
+    if (typeof v.value === 'string' && !varHidden(session.hiddenVars, name)) {
+      out[name] = v.value
+    }
+  }
+  return out
 }
 
 /**
@@ -152,11 +199,15 @@ async function setVar(
   // container it was not landing in; one record cannot disagree with
   // itself that way.
   const existing = sessionEntry(session.vars, name)
-  setSessionEntry(
-    session.vars,
-    name,
-    existing === undefined ? makeVar(value) : withValue(existing, value),
-  )
+  let stored = existing === undefined ? makeVar(value) : withValue(existing, value)
+  // `set -a` marks every name assigned *while it is on*, which is why
+  // it is read here at write time rather than applied to the session in
+  // bulk when the option flips: `B=1; set -a; C=2; set +a; D=3` exports
+  // only C.
+  if (session.shellOptions.allexport === true) {
+    stored = withAttr(stored, VarAttr.Export)
+  }
+  setSessionEntry(session.vars, name, stored)
 }
 
 /**
@@ -224,12 +275,46 @@ export function setAttr(session: Session, name: string, attr: VarAttr, on = true
   setSessionEntry(session.vars, name, withAttr(existing, attr, on))
 }
 
+/**
+ * Turn one attribute on or off through the session plane's gate.
+ *
+ * The no-value writer beside `setVar`. `export NAME` and
+ * `readonly NAME` on a fresh name write no value at all -- the name
+ * stays unset and merely marked -- so routing them through `setVar`
+ * would have to invent one, and inventing `''` is exactly the
+ * divergence that made `export Z` show up in `env`.
+ *
+ * Gated all the same, because a mark is still a session write: a
+ * hidden name refuses, and `preSession` sees it with a null value,
+ * which is how a rule tells a mark from an assignment if it cares.
+ * Skipping the gate here would let a line the agent types put an
+ * attribute on a name the deployment refused it.
+ */
+async function markVar(
+  session: Session,
+  policies: Policies | null,
+  name: string,
+  attr: VarAttr,
+  on: boolean,
+): Promise<void> {
+  ensureVarVisible(session, name)
+  await preSessionGate(policies, {
+    plane: 'env',
+    verb: 'set',
+    key: name,
+    value: null,
+    sessionId: session.sessionId,
+  })
+  setAttr(session, name, attr, on)
+}
+
 export function sessionView(session: Session, policies: Policies | null = null): SessionView {
   return {
     get: (name) => envGet(session, name),
     snapshot: () => envSnapshot(session),
     set: (name, value) => setVar(session, policies, name, value),
     unset: (name) => unsetVar(session, policies, name),
+    mark: (name, attr, on) => markVar(session, policies, name, attr, on),
     isReadonly: (name) => envIsReadonly(session, name),
   }
 }

@@ -34,6 +34,7 @@ from mirage.shell.node_kind import NodeKind, node_kind
 from mirage.shell.types import ERREXIT_EXEMPT_TYPES
 from mirage.shell.types import NodeType as NT
 from mirage.shell.types import Redirect, RedirectKind
+from mirage.shell.variable import VarAttr
 from mirage.shell.xtrace import trace_assignment
 from mirage.types import word_text
 from mirage.workspace.abort import MirageAbortError
@@ -61,7 +62,8 @@ from mirage.workspace.node.test_expr import (expand_double_bracket,
                                              expand_test_expr)
 from mirage.workspace.session import Session
 from mirage.workspace.session.state import (ensure_var_visible, seed_var,
-                                            session_view, visible_env)
+                                            session_view, set_attr,
+                                            visible_env)
 from mirage.workspace.types import ExecutionNode
 
 from mirage.shell.helpers import (  # isort: skip
@@ -70,8 +72,8 @@ from mirage.shell.helpers import (  # isort: skip
     get_list_parts, get_negated_command, get_pipeline_commands, get_redirects,
     get_text, get_unset_args, get_while_parts)
 from mirage.workspace.executor.builtins import (  # isort: skip
-    handle_export, handle_local, handle_readonly, handle_test, handle_unset,
-    note_local_array)
+    handle_declare_print, handle_export, handle_local, handle_readonly,
+    handle_test, handle_unset, note_local_array)
 
 
 async def _assign_var(view: SessionView, key: str,
@@ -683,7 +685,15 @@ async def execute_node(
                                              execute_fn,
                                              cs,
                                              view=view)
-                if not expanded:
+                if not expanded and child.type in (NT.SIMPLE_EXPANSION,
+                                                   NT.EXPANSION):
+                    # An *unquoted* expansion that came back empty is
+                    # removed by word splitting, so `export $UNSET` is a
+                    # bare `export` and prints the listing. A quoted one
+                    # is a real, empty operand: GNU answers both
+                    # `export ""` and `export "$UNSET"` with
+                    # ``export: `': not a valid identifier``, so it has
+                    # to reach the builtin rather than vanish here.
                     continue
                 if (not opts_done and expanded.startswith("-")
                         and len(expanded) > 1):
@@ -741,11 +751,27 @@ async def execute_node(
         # semantics) and assign globally at top level, which is exactly
         # handle_local's fallback when no function scope is active.
         if keyword in (NT.LOCAL, "declare", "typeset"):
-            return await handle_local(
+            # `-p` prints rather than declares, so it is answered before
+            # the assignment path runs at all.
+            if "p" in flag_chars and keyword in ("declare", "typeset"):
+                return await handle_declare_print(assignments, session)
+            result = await handle_local(
                 assignments,
                 session,
                 session_view(session, namespace.registry.policies),
-                arrays=staged)
+                arrays=staged,
+                # `declare`/`typeset` share this handler but have to name
+                # themselves in a diagnostic rather than say `local`.
+                cmd="local" if keyword == NT.LOCAL else str(keyword))
+            # `declare -x NAME` marks an existing name without touching
+            # its value, and `declare -x NAME=v` assigns then marks, so
+            # the stamp lands after the assignment either way. Only on
+            # a run that stored something: a refusal returns non-zero
+            # and must not leave the attribute behind.
+            if "x" in flag_chars and result[1].exit_code == 0:
+                for assign in assignments:
+                    set_attr(session, assign.partition("=")[0], VarAttr.EXPORT)
+            return result
         # Pass export flags through so -p / bare print and bad options work.
         return await handle_export(flag_words + assignments,
                                    session,

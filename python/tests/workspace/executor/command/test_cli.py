@@ -28,13 +28,14 @@ from mirage.policy.types import SessionContext
 from mirage.resource.ram import RAMResource
 from mirage.runtime.language import LanguageRuntime
 from mirage.runtime.types import RunArgs, RunResult, ScriptSource
+from mirage.shell.variable import VarAttr
 from mirage.types import Limit, PathSpec
 from mirage.workspace import Workspace
 from mirage.workspace.cli.types import CLIInstall
 from mirage.workspace.executor.command.cli import handle_cli
 from mirage.workspace.executor.command.flags import option_error, parse_flags
 from mirage.workspace.session import Session
-from mirage.workspace.session.state import seed_var
+from mirage.workspace.session.state import seed_var, set_attr
 
 
 class TokenConfig(BaseModel):
@@ -74,6 +75,10 @@ async def test_leaf_runs_with_config_group_flags_and_texts():
     parts = ["prog", "-vv", "message", "send", "-t", "#eng", "hello", "world"]
     session = Session("t")
     seed_var(session, "EDITOR", "vi")
+    # Exported: `inv.env` is the process view a CLI receives, which
+    # carries exported names only, the way a child process's environ
+    # does. A plain shell variable is deliberately not in it.
+    set_attr(session, "EDITOR", VarAttr.EXPORT)
     stdout, io, node = await handle_cli(install, parts, session)
     assert io.exit_code == 0
     assert await materialize(stdout) == b"sent[tok]\n"
@@ -297,6 +302,10 @@ async def test_script_env_carries_mirage_config_json():
     install = script_install(config={"api_key": "k1"})
     session = Session("t")
     seed_var(session, "EDITOR", "vi")
+    # Exported: `inv.env` is the process view a CLI receives, which
+    # carries exported names only, the way a child process's environ
+    # does. A plain shell variable is deliberately not in it.
+    set_attr(session, "EDITOR", VarAttr.EXPORT)
     _, io, _ = await handle_cli(install, ["pager"], session, entries=[py])
     assert io.exit_code == 0
     run = py.seen.pop()

@@ -24,11 +24,12 @@ from mirage.io.types import IOResult
 from mirage.policy import Action, Deny, OpsContext, Policy
 from mirage.policy.types import SessionContext
 from mirage.resource.ram import RAMResource
+from mirage.shell.variable import VarAttr
 from mirage.types import HiddenPaths, HiddenVars, MountMode, PathSpec
 from mirage.workspace import Workspace
 from mirage.workspace.session import (env_snapshot, reset_current_session,
                                       set_current_session)
-from mirage.workspace.session.state import seed_var
+from mirage.workspace.session.state import seed_var, set_attr
 
 
 class DenyOp(Policy):
@@ -335,21 +336,26 @@ def test_facade_symlink_respects_session_grants():
 
 
 def test_bare_export_of_a_new_name_fires_the_gate():
-    # `export NAME` with no value writes an empty entry, which is still
-    # a session write; an existing name is re-marked, not rewritten.
+    # `export NAME` writes no value, but marking a name is still a
+    # session write, so it clears the same gate an assignment does.
     ws = _two_mounts(policies=[DenySecretEnv()])
 
     async def run():
         denied = await ws.execute("export SECRET_BARE")
         allowed = await ws.execute("export PUBLIC_BARE")
-        return denied, allowed
+        listed = await ws.execute("export -p")
+        return denied, allowed, await listed.stdout_str()
 
-    denied, allowed = asyncio.run(run())
+    denied, allowed, listed = asyncio.run(run())
     assert denied.exit_code != 0
     assert b"refused by policy" in (denied.stderr or b"")
     assert "SECRET_BARE" not in ws.env
     assert allowed.exit_code == 0
-    assert ws.env.get("PUBLIC_BARE") == ""
+    # Marked but unset, which is bash's third state: `export -p` lists
+    # it bare while the environment does not carry it at all.
+    assert "PUBLIC_BARE" not in ws.env
+    assert "declare -x PUBLIC_BARE\n" in listed
+    assert "SECRET_BARE" not in listed
 
 
 def test_local_fires_the_gate():
@@ -657,6 +663,12 @@ def _hidden_vars_ws() -> Workspace:
     sess = ws.create_session("agent", mounts={"/a": "write"})
     seed_var(sess, "SLACK_TOKEN", "xoxb-real")
     seed_var(sess, "PUBLIC", "ok")
+    # Exported, because these stand in for a process environment and the
+    # process view carries only exported names. Seeded plain they would
+    # be correct shell variables that `env` rightly never lists, which
+    # would make the hidden-vars assertions below vacuous.
+    set_attr(sess, "SLACK_TOKEN", VarAttr.EXPORT)
+    set_attr(sess, "PUBLIC", VarAttr.EXPORT)
     sess.hidden_vars = HiddenVars(names=("SLACK_TOKEN", ))
     return ws
 

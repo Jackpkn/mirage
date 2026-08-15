@@ -12,8 +12,9 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+from mirage.shell.variable import VarAttr
 from mirage.workspace.session.session import Session
-from mirage.workspace.session.state import env_get, seed_var
+from mirage.workspace.session.state import env_get, seed_var, set_attr
 
 
 def home_dir(session: Session) -> str | None:
@@ -99,6 +100,11 @@ def change_dir(session: Session,
             None keeps the pair collapsed, which is what ``-P`` wants.
     """
     seed_var(session, "OLDPWD", session.env.get("PWD", ""))
+    # bash exports $OLDPWD as it does $PWD (`declare -x OLDPWD`), and
+    # this is where the name is first created, so the mark has to be
+    # applied here; $PWD already carries it from startup and keeps it
+    # through `seed_var`, which replaces the value and not the record.
+    set_attr(session, "OLDPWD", VarAttr.EXPORT)
     session.cwd = new_cwd
     session.logical_cwd = logical if logical and logical != new_cwd else None
     seed_var(session, "PWD", logical_cwd(session))

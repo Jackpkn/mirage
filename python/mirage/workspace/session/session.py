@@ -109,14 +109,19 @@ def vars_from_env(env: Mapping[str, str]) -> dict[str, ShellVar]:
     """Variable records for a plain name/value map.
 
     The one conversion from the shape an embedder speaks (a process
-    environment) to the shape the session stores. Attributes start
-    empty: a seeded name is an ordinary shell variable until something
-    marks it.
+    environment) to the shape the session stores. Every seeded name is
+    exported, because a process environment is by definition the
+    exported set: these are the names the embedder means a child
+    runtime to inherit, and `env_snapshot` hands on only what carries
+    the attribute. Seeding them plain would leave them visible to `$X`
+    and invisible to every runtime, which is not what an embedder
+    passing an env dict is asking for.
 
     Args:
         env (Mapping[str, str]): the name/value pairs to seed.
     """
-    return {name: ShellVar(value) for name, value in env.items()}
+    exported = frozenset({VarAttr.EXPORT})
+    return {name: ShellVar(value, exported) for name, value in env.items()}
 
 
 @dataclass
@@ -282,8 +287,11 @@ class Session:
         # bash exports `$PWD` from startup, so a session that has never
         # run `cd` still has one. Seeding here rather than at lookup time
         # is what makes it an ordinary variable: assignable, unsettable,
-        # and listed by `env`.
-        self.vars.setdefault("PWD", ShellVar(self.cwd))
+        # and listed by `env`. "Exports" is literal -- it carries the
+        # attribute, which is what keeps it in `env` now that the
+        # process view is the exported set rather than every string.
+        self.vars.setdefault("PWD",
+                             ShellVar(self.cwd, frozenset({VarAttr.EXPORT})))
 
     def fork(self, **overrides: Any) -> "Session":
         """Return a copy of this session with overrides applied.
@@ -314,7 +322,8 @@ class Session:
             # `$PWD` names where the session is, so it follows the move
             # even when the caller also supplied an env to layer on.
             defaults["vars"] = {
-                **defaults["vars"], "PWD": ShellVar(overrides["cwd"])
+                **defaults["vars"], "PWD":
+                ShellVar(overrides["cwd"], frozenset({VarAttr.EXPORT}))
             }
         return Session(**defaults)
 

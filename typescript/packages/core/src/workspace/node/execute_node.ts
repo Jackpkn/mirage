@@ -72,6 +72,7 @@ import {
 import type { DispatchFn } from '../../runtime/types.ts'
 import {
   handleExport,
+  handleDeclarePrint,
   handleLocal,
   handleReadonly,
   handleTest,
@@ -90,7 +91,8 @@ import { executeProgram } from './program.ts'
 import { executeCommand } from './command_dispatch.ts'
 import { PolicyDenied } from '../../policy/errors.ts'
 import type { SessionView } from '../../ops/types.ts'
-import { ensureVarVisible, sessionView, visibleEnv } from '../session/state.ts'
+import { ensureVarVisible, sessionView, setAttr, visibleEnv } from '../session/state.ts'
+import { VarAttr } from '../../shell/variable.ts'
 import { traceAssignment } from '../../shell/xtrace.ts'
 import { Channel, type JobConsole } from '../../shell/console/index.ts'
 import { type ExecuteNodeOpts, pump } from '../executor/jobs.ts'
@@ -785,7 +787,14 @@ export async function executeNode(
           callStack,
           sessionView(session, registry.policies),
         )
-        if (expanded === '') continue
+        // An *unquoted* expansion that came back empty is removed by
+        // word splitting, so `export $UNSET` is a bare `export` and
+        // prints the listing. A quoted one is a real, empty operand:
+        // GNU answers both `export ""` and `export "$UNSET"` with
+        // ``export: `': not a valid identifier``, so it has to reach
+        // the builtin rather than vanish here.
+        if (expanded === '' && (child.type === NT.SIMPLE_EXPANSION || child.type === NT.EXPANSION))
+          continue
         if (!optsDone && expanded.startsWith('-') && expanded.length > 1) {
           flagWords.push(expanded)
           if (expanded === '--') optsDone = true
@@ -842,7 +851,32 @@ export async function executeNode(
     // semantics) and assign globally at top level, which is exactly
     // handleLocal's fallback when no function scope is active.
     if (keyword === NT.LOCAL || keyword === 'declare' || keyword === 'typeset') {
-      return handleLocal(assignments, session, sessionView(session, registry.policies), staged)
+      // `-p` prints rather than declares, so it is answered before the
+      // assignment path runs at all.
+      if (flagChars.has('p') && (keyword === 'declare' || keyword === 'typeset')) {
+        return handleDeclarePrint(assignments, session)
+      }
+      const result = await handleLocal(
+        assignments,
+        session,
+        sessionView(session, registry.policies),
+        staged,
+        // `declare`/`typeset` share this handler but have to name
+        // themselves in a diagnostic rather than say `local`.
+        keyword === NT.LOCAL ? 'local' : keyword,
+      )
+      // `declare -x NAME` marks an existing name without touching its
+      // value, and `declare -x NAME=v` assigns then marks, so the stamp
+      // lands after the assignment either way. Only on a run that stored
+      // something: a refusal returns non-zero and must not leave the
+      // attribute behind.
+      if (flagChars.has('x') && result[1].exitCode === 0) {
+        for (const assign of assignments) {
+          const eq = assign.indexOf('=')
+          setAttr(session, eq >= 0 ? assign.slice(0, eq) : assign, VarAttr.Export)
+        }
+      }
+      return result
     }
     // Pass export flags through so -p / bare print and illegal options work.
     return handleExport(

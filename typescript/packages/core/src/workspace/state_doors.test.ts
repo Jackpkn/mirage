@@ -270,6 +270,8 @@ describe('session-state writes go through the view', () => {
 
 describe('the remaining session writers clear the same gate', () => {
   it('bare export of a new name fires the gate', async () => {
+    // `export NAME` writes no value, but marking a name is still a
+    // session write, so it clears the same gate an assignment does.
     const ws = await makeWs([new DenySecretEnv()])
     const denied = await ws.execute('export SECRET_BARE')
     expect(denied.exitCode).not.toBe(0)
@@ -277,7 +279,12 @@ describe('the remaining session writers clear the same gate', () => {
     expect('SECRET_BARE' in ws.env).toBe(false)
     const allowed = await ws.execute('export PUBLIC_BARE')
     expect(allowed.exitCode).toBe(0)
-    expect(ws.env.PUBLIC_BARE).toBe('')
+    // Marked but unset, which is bash's third state: `export -p` lists
+    // it bare while the environment does not carry it at all.
+    expect(ws.env.PUBLIC_BARE).toBeUndefined()
+    const listed = stdoutStr(await ws.execute('export -p'))
+    expect(listed).toContain('declare -x PUBLIC_BARE\n')
+    expect(listed).not.toContain('SECRET_BARE')
   })
 
   it('local fires the gate', async () => {

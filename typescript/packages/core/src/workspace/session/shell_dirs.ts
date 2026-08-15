@@ -12,7 +12,8 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { seedVar } from './state.ts'
+import { VarAttr } from '../../shell/variable.ts'
+import { seedVar, setAttr } from './state.ts'
 import type { Session } from './session.ts'
 import { envGet } from './state.ts'
 
@@ -66,6 +67,11 @@ export function setCwd(session: Session, cwd: string): void {
 // spelled through leaves `pwd` still printing it. Nothing here checks it.
 export function changeDir(session: Session, newCwd: string, logical?: string): void {
   seedVar(session, 'OLDPWD', session.env.PWD ?? '')
+  // bash exports $OLDPWD as it does $PWD (`declare -x OLDPWD`), and
+  // this is where the name is first created, so the mark has to be
+  // applied here; $PWD already carries it from startup and keeps it
+  // through `seedVar`, which replaces the value and not the record.
+  setAttr(session, 'OLDPWD', VarAttr.Export)
   session.cwd = newCwd
   session.logicalCwd = logical !== undefined && logical !== newCwd ? logical : undefined
   seedVar(session, 'PWD', logicalCwd(session))

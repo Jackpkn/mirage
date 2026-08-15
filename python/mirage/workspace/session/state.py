@@ -36,14 +36,40 @@ def env_snapshot(session: Session) -> dict[str, str]:
     them by construction rather than on however many hand-rolled
     copies someone remembers.
 
+    *Exported* names only, which is what makes this the process view
+    rather than a second spelling of ``visible_env``. bash puts a
+    variable in a child's environment when it carries the export
+    attribute, not when it happens to hold a string: ``X=hello`` is
+    absent from ``env`` and ``export Y=world`` is present. An unset
+    name carrying the attribute (``export Z``) is absent too, which
+    falls out of the value check rather than needing its own arm.
+
     Args:
         session (Session): the session whose env to copy.
     """
     return {
         name: var.value
-        for name, var in session.vars.items() if isinstance(var.value, str)
+        for name, var in session.vars.items()
+        if isinstance(var.value, str) and VarAttr.EXPORT in var.attrs
         and not var_hidden(session.hidden_vars, name)
     }
+
+
+def exported_names(session: Session) -> list[str]:
+    """The names carrying the export attribute, sorted, hidden removed.
+
+    Wider than `env_snapshot`'s keys by exactly the unset ones: a name
+    `export Z` marked but never assigned is listed by `export -p` as
+    `declare -x Z` while staying out of the environment. So the
+    printers read this and the process view reads `env_snapshot`,
+    rather than one of them re-deriving the other's filter.
+
+    Args:
+        session (Session): the session to read.
+    """
+    return sorted(name for name, var in session.vars.items()
+                  if VarAttr.EXPORT in var.attrs
+                  and not var_hidden(session.hidden_vars, name))
 
 
 def env_get(session: Session, name: str) -> str | None:
@@ -229,8 +255,15 @@ async def set_var(session: Session, policies: Policies | None, name: str,
     # old two-container store had to remember to evict the name from
     # whichever container it was not landing in; one record cannot
     # disagree with itself that way.
-    session.vars[name] = (ShellVar(value) if existing is None else with_value(
-        existing, value))
+    stored = ShellVar(value) if existing is None else with_value(
+        existing, value)
+    # `set -a` marks every name assigned *while it is on*, which is why
+    # it is read here at write time rather than applied to the session
+    # in bulk when the option flips: `B=1; set -a; C=2; set +a; D=3`
+    # exports only C.
+    if session.shell_options.get("allexport"):
+        stored = with_attr(stored, VarAttr.EXPORT)
+    session.vars[name] = stored
 
 
 async def unset_var(session: Session, policies: Policies | None,
@@ -306,9 +339,50 @@ def set_attr(session: Session,
     session.vars[name] = with_attr(existing, attr, on)
 
 
+async def mark_var(session: Session,
+                   policies: Policies | None,
+                   name: str,
+                   attr: VarAttr,
+                   on: bool = True) -> None:
+    """Turn one attribute on or off through the session plane's gate.
+
+    The no-value writer beside ``set_var``. ``export NAME`` and
+    ``readonly NAME`` on a fresh name write no value at all -- the name
+    stays unset and merely marked -- so routing them through
+    ``set_var`` would have to invent one, and inventing ``""`` is
+    exactly the divergence that made ``export Z`` show up in ``env``.
+
+    Gated all the same, because a mark is still a session write: a
+    hidden name refuses, and ``pre_session`` sees it with a None value,
+    which is how a rule tells a mark from an assignment if it cares.
+    Skipping the gate here would let a line the agent types put an
+    attribute on a name the deployment refused it.
+
+    Args:
+        session (Session): the session being written.
+        policies (Policies | None): admission policies the mark clears.
+        name (str): variable name.
+        attr (VarAttr): the attribute to change.
+        on (bool): set it, or clear it.
+
+    Raises:
+        PolicyDenied: the name is hidden for this session, or a
+            pre_session policy refused the mark.
+    """
+    ensure_var_visible(session, name)
+    await pre_session_gate(
+        policies,
+        SessionContext(plane="env",
+                       verb="set",
+                       key=name,
+                       value=None,
+                       session_id=session.session_id))
+    set_attr(session, name, attr, on)
+
+
 def session_view(session: Session,
                  policies: Policies | None = None) -> SessionView:
-    """The session plane's view: five facts bound to one session.
+    """The session plane's view: six facts bound to one session.
 
     The one constructor every tier uses — builtins, the command
     dispatcher, a bare unit test — so the gate cannot be skipped by
@@ -325,4 +399,5 @@ def session_view(session: Session,
                        snapshot=functools.partial(env_snapshot, session),
                        set=functools.partial(set_var, session, policies),
                        unset=functools.partial(unset_var, session, policies),
+                       mark=functools.partial(mark_var, session, policies),
                        is_readonly=functools.partial(env_is_readonly, session))

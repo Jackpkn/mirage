@@ -96,11 +96,16 @@ describe('handleExport / handleUnset / handlePrintenv', () => {
     expect(s.env.BAZ).toBe('qux')
   })
 
-  it('export KEY (no =) initializes empty if missing', async () => {
+  it('export KEY (no =) marks it without giving it a value', async () => {
+    // bash's third state: declared and exported but *unset*. GNU prints
+    // `declare -x Y` with no `=`, and `env` does not carry it at all, so
+    // the empty string this used to write was a divergence.
     const s = new Session({ sessionId: 'test', vars: varsFromEnv({ X: 'existing' }) })
     await handleExport(['X', 'Y'], s)
     expect(s.env.X).toBe('existing')
-    expect(s.env.Y).toBe('')
+    expect(s.env.Y).toBeUndefined()
+    expect(s.vars.Y?.attrs.has(VarAttr.Export)).toBe(true)
+    expect(s.vars.Y?.value).toBeNull()
   })
 
   it('export -p prints declare -x lines', async () => {

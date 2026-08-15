@@ -13,6 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import type { ShellArray } from '../shell/array.ts'
+import type { VarAttr } from '../shell/variable.ts'
 import type { FileStat } from '../types.ts'
 
 export type StatOverlay = (path: string, stat: FileStat) => FileStat
@@ -93,6 +94,13 @@ export interface SessionView {
   set(name: string, value: string | ShellArray): Promise<void>
   // Drop one variable through the session plane; a missing name is quiet.
   unset(name: string): Promise<void>
+  // Turn one attribute on or off through the session plane. Separate
+  // from `set` because it writes no value: `export NAME` and
+  // `readonly NAME` on a fresh name leave it *unset* and merely marked,
+  // which is a state `set` cannot express. Gated all the same -- a mark
+  // is a session write, so a hidden name refuses and `preSession` still
+  // rules.
+  mark(name: string, attr: VarAttr, on: boolean): Promise<void>
   // Whether `readonly` has marked the name.
   isReadonly(name: string): boolean
 }

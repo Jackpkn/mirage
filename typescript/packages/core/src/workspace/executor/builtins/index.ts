@@ -25,6 +25,7 @@ export {
 export { handleDf } from './capacity.ts'
 export { handleChgrp, handleChmod, handleChown, handleTouch } from './metadata.ts'
 export {
+  handleDeclarePrint,
   handleEnv,
   handleExit,
   handleExport,

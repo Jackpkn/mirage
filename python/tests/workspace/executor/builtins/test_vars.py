@@ -21,6 +21,23 @@ def make_session() -> Session:
     return Session(session_id="s1")
 
 
+def seed_exported(session: Session, name: str, value: str) -> None:
+    """Seed a variable the process-view printers will actually list.
+
+    `env`, `printenv` and `export -p` show exported names only, so a
+    test whose subject is ordering or quoting has to mark what it seeds
+    or it renders nothing at all. `seed_var` alone makes a correct
+    plain shell variable, which those three rightly never print.
+
+    Args:
+        session (Session): the session being seeded.
+        name (str): variable name.
+        value (str): the value to store.
+    """
+    seed_var(session, name, value)
+    set_attr(session, name, VarAttr.EXPORT)
+
+
 def _unused_execute_fn():
     raise AssertionError("execute_fn should not be called")
 
@@ -28,8 +45,8 @@ def _unused_execute_fn():
 @pytest.mark.asyncio
 async def test_env_prints_environment_in_insertion_order():
     session = make_session()
-    seed_var(session, "ZZZ", "1")
-    seed_var(session, "AAA", "2")
+    seed_exported(session, "ZZZ", "1")
+    seed_exported(session, "AAA", "2")
     out, io, _ = await handle_env(_unused_execute_fn, [], session)
     assert io.exit_code == 0
     # `$PWD` is seeded at construction, so it leads the insertion order.
@@ -48,8 +65,8 @@ async def test_env_ignore_environment_and_null_terminator():
 @pytest.mark.asyncio
 async def test_env_unset_removes_variable():
     session = make_session()
-    seed_var(session, "DROP", "1")
-    seed_var(session, "KEEP", "2")
+    seed_exported(session, "DROP", "1")
+    seed_exported(session, "KEEP", "2")
     out, _, _ = await handle_env(_unused_execute_fn, ["-u", "DROP"], session)
     rendered = await materialize(out)
     assert b"DROP=" not in rendered
@@ -667,10 +684,10 @@ async def test_getopts_subshell_does_not_corrupt_parent_cursor():
 @pytest.mark.asyncio
 async def test_export_p_prints_declare_x():
     session = make_session()
-    seed_var(session, "ZZZ", "1")
-    seed_var(session, "AAA", 'a"b')
-    seed_var(session, "NL", "a\nb")
-    seed_var(session, "DOL", "a$b")
+    seed_exported(session, "ZZZ", "1")
+    seed_exported(session, "AAA", 'a"b')
+    seed_exported(session, "NL", "a\nb")
+    seed_exported(session, "DOL", "a$b")
     out, io, _ = await handle_export(["-p"], session)
     assert io.exit_code == 0
     text = (await materialize(out)).decode()
@@ -685,7 +702,7 @@ async def test_export_p_prints_declare_x():
 @pytest.mark.asyncio
 async def test_export_bare_prints_like_p():
     session = make_session()
-    seed_var(session, "FOO", "bar")
+    seed_exported(session, "FOO", "bar")
     out, io, _ = await handle_export([], session)
     assert io.exit_code == 0
     # `$PWD` is exported like any other variable, so bash lists it too.
@@ -767,12 +784,12 @@ async def test_export_invalid_option_via_workspace():
 async def test_export_p_quotes_control_characters():
     session = make_session()
     session.vars.clear()
-    seed_var(session, "TAB", "a\tb")
-    seed_var(session, "ESC", "a\x1bb")
-    seed_var(session, "BEL", "a\x07b")
-    seed_var(session, "SOH", "a\x01b")
-    seed_var(session, "DEL", "a\x7fb")
-    seed_var(session, "UTF", "café")
+    seed_exported(session, "TAB", "a\tb")
+    seed_exported(session, "ESC", "a\x1bb")
+    seed_exported(session, "BEL", "a\x07b")
+    seed_exported(session, "SOH", "a\x01b")
+    seed_exported(session, "DEL", "a\x7fb")
+    seed_exported(session, "UTF", "café")
     out, io, _ = await handle_export(["-p"], session)
     assert io.exit_code == 0
     text = (await materialize(out)).decode()
@@ -791,7 +808,7 @@ async def test_export_p_quotes_control_characters():
 async def test_export_p_double_terminator_still_prints():
     session = make_session()
     session.vars.clear()
-    seed_var(session, "FOO", "bar")
+    seed_exported(session, "FOO", "bar")
     out, io, _ = await handle_export(["-p", "--"], session)
     assert io.exit_code == 0
     assert await materialize(out) == b'declare -x FOO="bar"\n'

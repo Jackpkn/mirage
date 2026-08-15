@@ -16,6 +16,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
 from mirage.shell.array import ShellArray
+from mirage.shell.variable import VarAttr
 from mirage.types import FileStat
 
 StatOverlay = Callable[[str, FileStat], FileStat]
@@ -74,6 +75,12 @@ EnvSnapshot = Callable[[], dict[str, str]]
 EnvSet = Callable[[str, str | ShellArray], Awaitable[None]]
 # Drop one variable through the session plane; a missing name is quiet.
 EnvUnset = Callable[[str], Awaitable[None]]
+# Turn one attribute on or off through the session plane. Separate from
+# `EnvSet` because it writes no value: `export NAME` and `readonly NAME`
+# on a fresh name leave it *unset* and merely marked, which is a state
+# `EnvSet` cannot express. Gated all the same -- a mark is a session
+# write, so a hidden name refuses and `pre_session` still rules.
+EnvMark = Callable[[str, VarAttr, bool], Awaitable[None]]
 # Whether `readonly` has marked the name.
 EnvIsReadonly = Callable[[str], bool]
 
@@ -100,6 +107,7 @@ class SessionView:
     snapshot: EnvSnapshot
     set: EnvSet
     unset: EnvUnset
+    mark: EnvMark
     is_readonly: EnvIsReadonly
 
 
