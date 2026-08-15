@@ -12,27 +12,26 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { mountKey, mountPrefixOf } from '@struktoai/mirage-core'
+import { GSlidesAccessor } from '@struktoai/mirage-core/accessor/gslides'
+import { RAMIndexCacheStore } from '@struktoai/mirage-core/cache/index/ram'
+import type { IndexCacheStore } from '@struktoai/mirage-core/cache/index/store'
+import { makeResolveGlob } from '@struktoai/mirage-core/commands/builtin/generic_bind/index'
+import { GSLIDES_COMMANDS } from '@struktoai/mirage-core/commands/builtin/gslides/index'
+import type { RegisteredCommand } from '@struktoai/mirage-core/commands/config'
+import { TokenManager } from '@struktoai/mirage-core/core/google/_client'
+import { read as gslidesRead } from '@struktoai/mirage-core/core/gslides/read'
+import { readdir as gslidesReaddir } from '@struktoai/mirage-core/core/gslides/readdir'
+import { stat as gslidesStat } from '@struktoai/mirage-core/core/gslides/stat'
+import { GSLIDES_OPS } from '@struktoai/mirage-core/ops/gslides/index'
+import type { RegisteredOp } from '@struktoai/mirage-core/ops/registry'
+import type { Resource } from '@struktoai/mirage-core/resource/base'
 import {
-  type FileStat,
-  GSLIDES_COMMANDS,
   GSLIDES_PROMPT,
-  GSLIDES_OPS,
   GSLIDES_WRITE_PROMPT,
-  GSlidesAccessor,
-  type IndexCacheStore,
-  PathSpec,
-  RAMIndexCacheStore,
-  type RegisteredCommand,
-  type RegisteredOp,
-  type Resource,
-  ResourceName,
-  TokenManager,
-  gslidesRead,
-  gslidesReaddir,
-  makeResolveGlob,
-  gslidesStat,
-} from '@struktoai/mirage-core'
+} from '@struktoai/mirage-core/resource/gslides/prompt'
+import { PathSpec, ResourceName } from '@struktoai/mirage-core/types'
+import type { FileStat } from '@struktoai/mirage-core/types'
+import { mountKey, mountPrefixOf } from '@struktoai/mirage-core/utils/key_prefix'
 import { redactGSlidesConfig, type GSlidesConfig, type GSlidesConfigRedacted } from './config.ts'
 
 const gslidesResolveGlob = makeResolveGlob(gslidesReaddir)

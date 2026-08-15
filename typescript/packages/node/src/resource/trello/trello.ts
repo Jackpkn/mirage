@@ -12,29 +12,24 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import {
-  BaseResource,
-  HttpTrelloTransport,
-  PathSpec,
-  ResourceName,
-  TRELLO_COMMANDS,
-  TRELLO_PROMPT,
-  TRELLO_OPS,
-  TRELLO_WRITE_PROMPT,
-  TrelloAccessor,
-  makeResolveGlob,
-  mountKey,
-  mountPrefixOf,
-  trelloRead,
-  trelloReaddir,
-  trelloStat,
-  type FileStat,
-  type IndexCacheStore,
-  type RegisteredCommand,
-  type RegisteredOp,
-  type Resource,
-  type TrelloReaddirFilter,
-} from '@struktoai/mirage-core'
+import { TrelloAccessor } from '@struktoai/mirage-core/accessor/trello'
+import type { IndexCacheStore } from '@struktoai/mirage-core/cache/index/store'
+import { makeResolveGlob } from '@struktoai/mirage-core/commands/builtin/generic_bind/index'
+import { TRELLO_COMMANDS } from '@struktoai/mirage-core/commands/builtin/trello/index'
+import type { RegisteredCommand } from '@struktoai/mirage-core/commands/config'
+import { HttpTrelloTransport } from '@struktoai/mirage-core/core/trello/_client'
+import { read as trelloRead } from '@struktoai/mirage-core/core/trello/read'
+import { readdir as trelloReaddir } from '@struktoai/mirage-core/core/trello/readdir'
+import type { TrelloReaddirFilter } from '@struktoai/mirage-core/core/trello/readdir'
+import { stat as trelloStat } from '@struktoai/mirage-core/core/trello/stat'
+import type { RegisteredOp } from '@struktoai/mirage-core/ops/registry'
+import { TRELLO_OPS } from '@struktoai/mirage-core/ops/trello/index'
+import { BaseResource } from '@struktoai/mirage-core/resource/base'
+import type { Resource } from '@struktoai/mirage-core/resource/base'
+import { TRELLO_PROMPT, TRELLO_WRITE_PROMPT } from '@struktoai/mirage-core/resource/trello/prompt'
+import { PathSpec, ResourceName } from '@struktoai/mirage-core/types'
+import type { FileStat } from '@struktoai/mirage-core/types'
+import { mountKey, mountPrefixOf } from '@struktoai/mirage-core/utils/key_prefix'
 import { redactTrelloConfig, type TrelloConfig, type TrelloConfigRedacted } from './config.ts'
 
 const resolveTrelloGlob = (

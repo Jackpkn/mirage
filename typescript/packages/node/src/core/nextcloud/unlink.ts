@@ -1,10 +1,8 @@
-import {
-  enoent,
-  invalidateAfterUnlink,
-  record,
-  ResourceName,
-  type PathSpec,
-} from '@struktoai/mirage-core'
+import { invalidateAfterUnlink } from '@struktoai/mirage-core/cache/context'
+import { record } from '@struktoai/mirage-core/observe/context'
+import { ResourceName } from '@struktoai/mirage-core/types'
+import type { PathSpec } from '@struktoai/mirage-core/types'
+import { enoent } from '@struktoai/mirage-core/utils/errors'
 import type { NextcloudAccessor } from '../../accessor/nextcloud.ts'
 import { isNotFound, nextcloudKey } from './util.ts'
 

@@ -14,17 +14,17 @@
 
 import { createHash } from 'node:crypto'
 
+import type { FlagView } from '@struktoai/mirage-core/commands/spec/index'
+import { materialize } from '@struktoai/mirage-core/io/types'
+import type { ByteSource } from '@struktoai/mirage-core/io/types'
 import {
   assertHeaderValue,
   encodeBase64Lines,
-  encodeMimeText as encodeText,
+  encodeText,
   foldAddressList,
   foldContentDisposition,
   foldUnstructured,
-  materialize,
-  type ByteSource,
-  type FlagView,
-} from '@struktoai/mirage-core'
+} from '@struktoai/mirage-core/utils/mime'
 import type { FetchedMessage } from '../../../../core/email/_client.ts'
 
 type SourceMode = 'reply' | 'forward'

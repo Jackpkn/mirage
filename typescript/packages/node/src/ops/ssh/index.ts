@@ -12,8 +12,9 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import type { RegisteredOp } from '@struktoai/mirage-core'
-import { ResourceName, makeGenericOps } from '@struktoai/mirage-core'
+import { makeGenericOps } from '@struktoai/mirage-core/ops/generic/factory'
+import type { RegisteredOp } from '@struktoai/mirage-core/ops/registry'
+import { ResourceName } from '@struktoai/mirage-core/types'
 import { SSH_IO } from '../../commands/builtin/ssh/io.ts'
 
 export const SSH_OPS: readonly RegisteredOp[] = makeGenericOps(ResourceName.SSH, SSH_IO, {

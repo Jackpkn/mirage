@@ -12,27 +12,23 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { mountKey, mountPrefixOf } from '@struktoai/mirage-core'
-import {
-  BrowserSlackTransport,
-  type FileStat,
-  type IndexCacheStore,
-  PathSpec,
-  RAMIndexCacheStore,
-  type RegisteredCommand,
-  type RegisteredOp,
-  type Resource,
-  ResourceName,
-  makeResolveGlob,
-  SLACK_COMMANDS,
-  SLACK_PROMPT,
-  SLACK_OPS,
-  SLACK_WRITE_PROMPT,
-  SlackAccessor,
-  slackRead,
-  slackReaddir,
-  slackStat,
-} from '@struktoai/mirage-core'
+import { SlackAccessor } from '@struktoai/mirage-core/accessor/slack'
+import { RAMIndexCacheStore } from '@struktoai/mirage-core/cache/index/ram'
+import type { IndexCacheStore } from '@struktoai/mirage-core/cache/index/store'
+import { makeResolveGlob } from '@struktoai/mirage-core/commands/builtin/generic_bind/index'
+import { SLACK_COMMANDS } from '@struktoai/mirage-core/commands/builtin/slack/index'
+import type { RegisteredCommand } from '@struktoai/mirage-core/commands/config'
+import { BrowserSlackTransport } from '@struktoai/mirage-core/core/slack/_client_browser'
+import { read as slackRead } from '@struktoai/mirage-core/core/slack/read'
+import { readdir as slackReaddir } from '@struktoai/mirage-core/core/slack/readdir'
+import { stat as slackStat } from '@struktoai/mirage-core/core/slack/stat'
+import type { RegisteredOp } from '@struktoai/mirage-core/ops/registry'
+import { SLACK_OPS } from '@struktoai/mirage-core/ops/slack/index'
+import type { Resource } from '@struktoai/mirage-core/resource/base'
+import { SLACK_PROMPT, SLACK_WRITE_PROMPT } from '@struktoai/mirage-core/resource/slack/prompt'
+import { PathSpec, ResourceName } from '@struktoai/mirage-core/types'
+import type { FileStat } from '@struktoai/mirage-core/types'
+import { mountKey, mountPrefixOf } from '@struktoai/mirage-core/utils/key_prefix'
 import { redactSlackConfig, type SlackConfig, type SlackConfigRedacted } from './config.ts'
 
 const resolveSlackGlob = makeResolveGlob(slackReaddir)

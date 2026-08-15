@@ -12,14 +12,13 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import {
-  normMountPrefix,
-  resourceStateRequiresOverride,
-  toStateDict,
-  type Workspace as CoreWorkspace,
-  type WorkspaceStateDict,
-} from '@struktoai/mirage-core'
-import { buildResource, Workspace, type Resource } from '@struktoai/mirage-node'
+import { resourceStateRequiresOverride } from '@struktoai/mirage-core/resource/secrets'
+import { toStateDict } from '@struktoai/mirage-core/workspace/snapshot/state'
+import type { WorkspaceStateDict } from '@struktoai/mirage-core/workspace/snapshot/types'
+import { normMountPrefix } from '@struktoai/mirage-core/workspace/snapshot/utils'
+import type { Workspace as CoreWorkspace } from '@struktoai/mirage-core/workspace/workspace'
+import type { Resource } from '@struktoai/mirage-core/resource/base'
+import { Workspace, buildResource } from '@struktoai/mirage-node'
 
 interface OverrideMountBlock {
   resource: string

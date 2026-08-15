@@ -12,7 +12,8 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { FileType, PathSpec, RAMIndexCacheStore } from '@struktoai/mirage-core'
+import { RAMIndexCacheStore } from '@struktoai/mirage-core/cache/index/ram'
+import { FileType, PathSpec } from '@struktoai/mirage-core/types'
 import { describe, expect, it } from 'vitest'
 import { HfModelsAccessor } from '../../accessor/hf.ts'
 import { fakeHfOperator, installFakeOperator } from './mock.ts'

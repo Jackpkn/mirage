@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { MountMode } from '@struktoai/mirage-core'
+import { MountMode } from '@struktoai/mirage-core/types'
 import { installFakeNavigator, makeMockRoot } from '../../../test-utils.ts'
 import { OPFSResource } from '../../../resource/opfs/opfs.ts'
 import { Workspace } from '../../../workspace.ts'

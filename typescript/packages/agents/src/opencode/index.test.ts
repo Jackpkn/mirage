@@ -14,7 +14,10 @@
 
 import { describe, expect, it } from 'vitest'
 import type { ToolResult } from '@opencode-ai/plugin'
-import { OpsRegistry, RAMResource, MountMode, Workspace } from '@struktoai/mirage-node'
+import { OpsRegistry } from '@struktoai/mirage-core/ops/registry'
+import { RAMResource } from '@struktoai/mirage-core/resource/ram/ram'
+import { MountMode } from '@struktoai/mirage-core/types'
+import { Workspace } from '@struktoai/mirage-node'
 import { mirageTools, miragePlugin } from './index.ts'
 
 function mkWs(): Workspace {

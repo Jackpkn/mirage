@@ -1,4 +1,5 @@
-import { FileType, type FileType as MirageFileType } from '@struktoai/mirage-core'
+import { FileType } from '@struktoai/mirage-core/types'
+import type { FileType as MirageFileType } from '@struktoai/mirage-core/types'
 
 export const READ_FILE_MIME = Object.freeze({
   BINARY: 'application/octet-stream',

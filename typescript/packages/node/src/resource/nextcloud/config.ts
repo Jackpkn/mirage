@@ -1,4 +1,4 @@
-import type { RedactedConfig } from '@struktoai/mirage-core'
+import type { RedactedConfig } from '@struktoai/mirage-core/resource/secrets'
 
 export interface NextcloudConfig {
   url: string

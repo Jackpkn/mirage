@@ -13,8 +13,9 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import type { FileEntryWithStats, SFTPWrapper, Stats } from 'ssh2'
-import type { PathSpec } from '@struktoai/mirage-core'
-import { enoent, invalidateAfterUnlink } from '@struktoai/mirage-core'
+import { invalidateAfterUnlink } from '@struktoai/mirage-core/cache/context'
+import type { PathSpec } from '@struktoai/mirage-core/types'
+import { enoent } from '@struktoai/mirage-core/utils/errors'
 import type { SSHAccessor } from '../../accessor/ssh.ts'
 import { isDirectoryAttrs, isNoSuchFile, joinRoot, stripPrefix } from './utils.ts'
 

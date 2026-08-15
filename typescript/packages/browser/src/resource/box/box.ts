@@ -12,26 +12,23 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { mountKey, mountPrefixOf } from '@struktoai/mirage-core'
-import {
-  BOX_COMMANDS,
-  BOX_PROMPT,
-  BOX_OPS,
-  BoxAccessor,
-  BoxTokenManager,
-  type FileStat,
-  type IndexCacheStore,
-  PathSpec,
-  RAMIndexCacheStore,
-  type RegisteredCommand,
-  type RegisteredOp,
-  type Resource,
-  ResourceName,
-  boxRead,
-  boxReaddir,
-  makeResolveGlob,
-  boxStat,
-} from '@struktoai/mirage-core'
+import { BoxAccessor } from '@struktoai/mirage-core/accessor/box'
+import { RAMIndexCacheStore } from '@struktoai/mirage-core/cache/index/ram'
+import type { IndexCacheStore } from '@struktoai/mirage-core/cache/index/store'
+import { BOX_COMMANDS } from '@struktoai/mirage-core/commands/builtin/box/index'
+import { makeResolveGlob } from '@struktoai/mirage-core/commands/builtin/generic_bind/index'
+import type { RegisteredCommand } from '@struktoai/mirage-core/commands/config'
+import { BoxTokenManager } from '@struktoai/mirage-core/core/box/_client'
+import { read as boxRead } from '@struktoai/mirage-core/core/box/read'
+import { readdir as boxReaddir } from '@struktoai/mirage-core/core/box/readdir'
+import { stat as boxStat } from '@struktoai/mirage-core/core/box/stat'
+import { BOX_OPS } from '@struktoai/mirage-core/ops/box/index'
+import type { RegisteredOp } from '@struktoai/mirage-core/ops/registry'
+import type { Resource } from '@struktoai/mirage-core/resource/base'
+import { BOX_PROMPT } from '@struktoai/mirage-core/resource/box/prompt'
+import { PathSpec, ResourceName } from '@struktoai/mirage-core/types'
+import type { FileStat } from '@struktoai/mirage-core/types'
+import { mountKey, mountPrefixOf } from '@struktoai/mirage-core/utils/key_prefix'
 import { redactBoxConfig, type BoxConfig, type BoxConfigRedacted } from './config.ts'
 
 const boxResolveGlob = makeResolveGlob(boxReaddir)

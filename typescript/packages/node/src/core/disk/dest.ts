@@ -13,13 +13,11 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { stat as fsStat } from 'node:fs/promises'
-import {
-  ancestors,
-  enotdir,
-  mountedPath,
-  type FsError,
-  type PathSpec,
-} from '@struktoai/mirage-core'
+import type { PathSpec } from '@struktoai/mirage-core/types'
+import { enotdir } from '@struktoai/mirage-core/utils/errors'
+import type { FsError } from '@struktoai/mirage-core/utils/errors'
+import { mountedPath } from '@struktoai/mirage-core/utils/key_prefix'
+import { ancestors } from '@struktoai/mirage-core/utils/path'
 import { resolveSafe } from './utils.ts'
 
 // The ENOTDIR `mkdir -p` owes, named after the component to blame. The disk

@@ -14,8 +14,11 @@
 
 import { randomUUID } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
-import type { FileStat, RegisteredOp } from '@struktoai/mirage-core'
-import { MountMode, OpsRegistry, RAMResource } from '@struktoai/mirage-core'
+import { OpsRegistry } from '@struktoai/mirage-core/ops/registry'
+import type { RegisteredOp } from '@struktoai/mirage-core/ops/registry'
+import { RAMResource } from '@struktoai/mirage-core/resource/ram/ram'
+import { MountMode } from '@struktoai/mirage-core/types'
+import type { FileStat } from '@struktoai/mirage-core/types'
 import { Workspace } from '../../workspace.ts'
 import { RedisNamespaceStore } from './redis.ts'
 

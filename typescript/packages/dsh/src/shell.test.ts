@@ -14,7 +14,8 @@
 
 import { afterEach, describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
-import { MountMode, RAMResource } from '@struktoai/mirage-core'
+import { RAMResource } from '@struktoai/mirage-core/resource/ram/ram'
+import { MountMode } from '@struktoai/mirage-core/types'
 import { LocalRuntime, Workspace } from '@struktoai/mirage-node'
 import { MirageService } from './service.ts'
 import { MirageShellExecutor } from './shell.ts'

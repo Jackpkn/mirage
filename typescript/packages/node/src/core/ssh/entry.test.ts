@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { describe, expect, it } from 'vitest'
-import { FileType } from '@struktoai/mirage-core'
+import { FileType } from '@struktoai/mirage-core/types'
 import { attrsToFileStat } from './entry.ts'
 
 describe('attrsToFileStat', () => {

@@ -12,7 +12,10 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { command, findGeneric, metadataProvision, specOf } from '@struktoai/mirage-core'
+import { findGeneric } from '@struktoai/mirage-core/commands/builtin/generic/find'
+import { metadataProvision } from '@struktoai/mirage-core/commands/builtin/generic_bind/index'
+import { command } from '@struktoai/mirage-core/commands/config'
+import { specOf } from '@struktoai/mirage-core/commands/spec/index'
 import { HF_RESOURCES, type HfAccessor } from '../../../accessor/hf.ts'
 import { find as hfFind } from '../../../core/hf/find.ts'
 import { readdir as hfReaddir } from '../../../core/hf/readdir.ts'

@@ -13,7 +13,8 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { describe, expect, it } from 'vitest'
-import { PathSpec, ResourceName, runWithRecording } from '@struktoai/mirage-core'
+import { runWithRecording } from '@struktoai/mirage-core/observe/context'
+import { PathSpec, ResourceName } from '@struktoai/mirage-core/types'
 import { makeFakeAccessor } from './_test_utils.ts'
 import { read } from './read.ts'
 import { writeBytes } from './write.ts'

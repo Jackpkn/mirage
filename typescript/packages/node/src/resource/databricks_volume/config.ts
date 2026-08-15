@@ -15,6 +15,8 @@
 export {
   normalizeDatabricksVolumeConfig,
   redactDatabricksVolumeConfig,
-  type DatabricksVolumeConfig,
-  type DatabricksVolumeConfigRedacted,
-} from '@struktoai/mirage-core'
+} from '@struktoai/mirage-core/resource/databricks_volume/config'
+export type {
+  DatabricksVolumeConfig,
+  DatabricksVolumeConfigRedacted,
+} from '@struktoai/mirage-core/resource/databricks_volume/config'

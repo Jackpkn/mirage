@@ -12,7 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import type { Workspace } from '@struktoai/mirage-core'
+import type { Workspace } from '@struktoai/mirage-core/workspace/workspace'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { FuseManager } from './fuse.ts'
 

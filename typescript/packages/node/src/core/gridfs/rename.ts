@@ -12,7 +12,9 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { enoent, invalidateAfterUnlink, type PathSpec } from '@struktoai/mirage-core'
+import { invalidateAfterUnlink } from '@struktoai/mirage-core/cache/context'
+import type { PathSpec } from '@struktoai/mirage-core/types'
+import { enoent } from '@struktoai/mirage-core/utils/errors'
 import type { ObjectId } from 'mongodb'
 import type { GridFSAccessor } from '../../accessor/gridfs.ts'
 import {

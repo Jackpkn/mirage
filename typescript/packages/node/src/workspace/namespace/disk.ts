@@ -12,7 +12,8 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { NamespaceStore, type NodeFields } from '@struktoai/mirage-core'
+import { NamespaceStore } from '@struktoai/mirage-core/workspace/mount/namespace/store'
+import type { NodeFields } from '@struktoai/mirage-core/workspace/mount/namespace/store'
 import { DiskRecordClient } from '../record/disk.ts'
 
 const NAMESPACE_RECORD = 'namespace'

@@ -12,18 +12,18 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import { CLISpec } from '@struktoai/mirage-core/commands/cli/types'
+import { ScriptSource } from '@struktoai/mirage-core/runtime/policy/index'
+import { RAMNamespaceStore } from '@struktoai/mirage-core/workspace/mount/namespace/ram'
+import { RAMWorkspaceStateStore } from '@struktoai/mirage-core/workspace/store/ram'
+import { buildFileCache } from '@struktoai/mirage-core/workspace/workspace/cache'
 import {
-  buildFileCache,
-  CLISpec,
   DiskNamespaceStore,
   DiskWorkspaceStateStore,
-  RAMNamespaceStore,
-  RAMWorkspaceStateStore,
   RedisConsoleStore,
   RedisFileCacheStore,
   RedisNamespaceStore,
   RedisWorkspaceStateStore,
-  ScriptSource,
   Workspace,
 } from '@struktoai/mirage-node'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'

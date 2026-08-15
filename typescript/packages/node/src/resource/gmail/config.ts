@@ -15,6 +15,8 @@
 export {
   normalizeGoogleConfig as normalizeGmailConfig,
   redactGoogleConfig as redactGmailConfig,
-  type GoogleConfig as GmailConfig,
-  type GoogleConfigRedacted as GmailConfigRedacted,
-} from '@struktoai/mirage-core'
+} from '@struktoai/mirage-core/core/google/config'
+export type {
+  GoogleConfig as GmailConfig,
+  GoogleConfigRedacted as GmailConfigRedacted,
+} from '@struktoai/mirage-core/core/google/config'

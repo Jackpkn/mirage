@@ -1,6 +1,6 @@
 import type { Operator } from 'opendal'
 import { vi } from 'vitest'
-import { rstripSlash } from '@struktoai/mirage-core'
+import { rstripSlash } from '@struktoai/mirage-core/utils/slash'
 import type { NextcloudAccessor } from '../../accessor/nextcloud.ts'
 
 interface FakeMetadata {

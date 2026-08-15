@@ -12,26 +12,23 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { mountKey, mountPrefixOf } from '@struktoai/mirage-core'
-import {
-  type FileStat,
-  GDRIVE_COMMANDS,
-  GDRIVE_PROMPT,
-  GDRIVE_OPS,
-  GDriveAccessor,
-  type IndexCacheStore,
-  PathSpec,
-  RAMIndexCacheStore,
-  type RegisteredCommand,
-  type RegisteredOp,
-  type Resource,
-  ResourceName,
-  TokenManager,
-  gdriveRead,
-  gdriveReaddir,
-  makeResolveGlob,
-  gdriveStat,
-} from '@struktoai/mirage-core'
+import { GDriveAccessor } from '@struktoai/mirage-core/accessor/gdrive'
+import { RAMIndexCacheStore } from '@struktoai/mirage-core/cache/index/ram'
+import type { IndexCacheStore } from '@struktoai/mirage-core/cache/index/store'
+import { GDRIVE_COMMANDS } from '@struktoai/mirage-core/commands/builtin/gdrive/index'
+import { makeResolveGlob } from '@struktoai/mirage-core/commands/builtin/generic_bind/index'
+import type { RegisteredCommand } from '@struktoai/mirage-core/commands/config'
+import { read as gdriveRead } from '@struktoai/mirage-core/core/gdrive/read'
+import { readdir as gdriveReaddir } from '@struktoai/mirage-core/core/gdrive/readdir'
+import { stat as gdriveStat } from '@struktoai/mirage-core/core/gdrive/stat'
+import { TokenManager } from '@struktoai/mirage-core/core/google/_client'
+import { GDRIVE_OPS } from '@struktoai/mirage-core/ops/gdrive/index'
+import type { RegisteredOp } from '@struktoai/mirage-core/ops/registry'
+import type { Resource } from '@struktoai/mirage-core/resource/base'
+import { GDRIVE_PROMPT } from '@struktoai/mirage-core/resource/gdrive/prompt'
+import { PathSpec, ResourceName } from '@struktoai/mirage-core/types'
+import type { FileStat } from '@struktoai/mirage-core/types'
+import { mountKey, mountPrefixOf } from '@struktoai/mirage-core/utils/key_prefix'
 import { redactGDriveConfig, type GDriveConfig, type GDriveConfigRedacted } from './config.ts'
 
 const gdriveResolveGlob = makeResolveGlob(gdriveReaddir)

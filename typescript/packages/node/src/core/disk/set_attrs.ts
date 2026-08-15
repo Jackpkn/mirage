@@ -13,7 +13,8 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { chmod, stat as fsStat, utimes } from 'node:fs/promises'
-import { enoent, type PathSpec } from '@struktoai/mirage-core'
+import type { PathSpec } from '@struktoai/mirage-core/types'
+import { enoent } from '@struktoai/mirage-core/utils/errors'
 import type { DiskAccessor } from '../../accessor/disk.ts'
 import { resolveSafe } from './utils.ts'
 

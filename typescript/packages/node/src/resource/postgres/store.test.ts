@@ -12,7 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { resolvePostgresConfig } from '@struktoai/mirage-core'
+import { resolvePostgresConfig } from '@struktoai/mirage-core/resource/postgres/config'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { PostgresStore } from './store.ts'
 

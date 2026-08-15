@@ -13,7 +13,6 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { LinearConfigSchema } from '../../../../core/linear/config.ts'
-import { registerCliSpec } from '../../specs.ts'
 import { CLISpec } from '../../types.ts'
 import { Operand, Option } from '../../../spec/types.ts'
 import { add as commentAdd } from './comment/add.ts'
@@ -322,5 +321,3 @@ export const LINEAR = new CLISpec({
     }),
   ],
 })
-
-registerCliSpec(LINEAR)

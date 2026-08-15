@@ -13,7 +13,6 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { NotionConfigSchema } from '../../../../core/notion/config.ts'
-import { registerCliSpec } from '../../specs.ts'
 import { CLISpec } from '../../types.ts'
 import { Operand, Option, UsageStyle } from '../../../spec/types.ts'
 import { api } from './api.ts'
@@ -222,5 +221,3 @@ export const NTN = new CLISpec({
     }),
   ],
 })
-
-registerCliSpec(NTN)

@@ -12,27 +12,28 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import { LanceDBAccessor } from '@struktoai/mirage-core/accessor/lancedb'
+import { LANCEDB_COMMANDS } from '@struktoai/mirage-core/commands/builtin/lancedb/index'
+import type { RegisteredCommand } from '@struktoai/mirage-core/commands/config'
+import { read as lanceRead } from '@struktoai/mirage-core/core/lancedb/read'
+import { readdir as lanceReaddir } from '@struktoai/mirage-core/core/lancedb/readdir'
+import { stat as lanceStat } from '@struktoai/mirage-core/core/lancedb/stat'
+import { LANCEDB_OPS } from '@struktoai/mirage-core/ops/lancedb/index'
+import type { RegisteredOp } from '@struktoai/mirage-core/ops/registry'
+import { BaseResource } from '@struktoai/mirage-core/resource/base'
+import type { Resource } from '@struktoai/mirage-core/resource/base'
 import {
-  BaseResource,
-  type FileStat,
-  LANCEDB_COMMANDS,
-  LANCEDB_OPS,
-  LANCEDB_PROMPT,
-  LanceDBAccessor,
-  type LanceDBConfig,
-  type LanceDBConfigResolved,
-  lanceRead,
-  lanceReaddir,
-  lanceStat,
-  type PathSpec,
-  type RegisteredCommand,
-  type RegisteredOp,
-  type Resource,
-  ResourceName,
   redactLanceDBConfig,
-  type LanceDBConfigRedacted,
   resolveLanceDBConfig,
-} from '@struktoai/mirage-core'
+} from '@struktoai/mirage-core/resource/lancedb/config'
+import type {
+  LanceDBConfig,
+  LanceDBConfigRedacted,
+  LanceDBConfigResolved,
+} from '@struktoai/mirage-core/resource/lancedb/config'
+import { LANCEDB_PROMPT } from '@struktoai/mirage-core/resource/lancedb/prompt'
+import { ResourceName } from '@struktoai/mirage-core/types'
+import type { FileStat, PathSpec } from '@struktoai/mirage-core/types'
 import { LanceDBStore } from './store.ts'
 
 const REMOTE_SCHEMES = ['s3://', 'gs://', 'az://', 'hf://', 'db://']

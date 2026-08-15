@@ -15,7 +15,7 @@
 import { randomBytes } from 'node:crypto'
 import type { FastifyInstance } from 'fastify'
 import type { WorkspaceRegistry } from '../registry.ts'
-import type { MountMode } from '@struktoai/mirage-core'
+import type { MountMode } from '@struktoai/mirage-core/types'
 
 export interface SessionsRoutesDeps {
   registry: WorkspaceRegistry

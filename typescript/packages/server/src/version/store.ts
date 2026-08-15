@@ -15,7 +15,7 @@
 import git from 'isomorphic-git'
 import type { FsClient, GitRepo, VersionBackend } from './backend.ts'
 import { HeadMovedError } from './errors.ts'
-import { compareCodePoints } from '@struktoai/mirage-core'
+import { compareCodePoints } from '@struktoai/mirage-core/utils/sort'
 
 const AUTHOR = { name: 'mirage', email: 'mirage@local', timestamp: 0, timezoneOffset: 0 }
 

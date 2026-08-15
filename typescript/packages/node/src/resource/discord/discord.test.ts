@@ -12,16 +12,16 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import { DISCORD_COMMANDS } from '@struktoai/mirage-core/commands/builtin/discord/index'
 import {
-  DISCORD_COMMANDS,
-  DISCORD_OPS,
-  PathSpec,
-  ResourceName,
-  mountKey,
-} from '@struktoai/mirage-core'
+  normalizeDiscordConfig,
+  redactDiscordConfig,
+} from '@struktoai/mirage-core/core/discord/config'
+import { DISCORD_OPS } from '@struktoai/mirage-core/ops/discord/index'
+import { PathSpec, ResourceName } from '@struktoai/mirage-core/types'
+import { mountKey } from '@struktoai/mirage-core/utils/key_prefix'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { buildResource } from '../registry.ts'
-import { normalizeDiscordConfig, redactDiscordConfig } from '@struktoai/mirage-core'
 import { DiscordResource } from './discord.ts'
 
 function jsonResponse(body: unknown): Response {

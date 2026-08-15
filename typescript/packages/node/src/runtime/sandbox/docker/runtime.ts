@@ -13,12 +13,9 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { spawn } from 'node:child_process'
-import {
-  registerRuntime,
-  RemoteSandbox,
-  type RuntimeOptions,
-  type RunResult,
-} from '@struktoai/mirage-core'
+import { RemoteSandbox } from '@struktoai/mirage-core/runtime/sandbox/base'
+import { registerRuntime } from '@struktoai/mirage-core/runtime/table'
+import type { RunResult, RuntimeOptions } from '@struktoai/mirage-core/runtime/types'
 import { DOCKER_CONFIG_KEYS, type DockerConfig } from './config.ts'
 import { DOCKER_CLI_HINT } from './constants.ts'
 

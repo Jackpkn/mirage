@@ -12,12 +12,13 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { invalidateAfterWrite, invalidateAncestors } from '@struktoai/mirage-core'
-import type { PathSpec } from '@struktoai/mirage-core'
+import { invalidateAfterWrite, invalidateAncestors } from '@struktoai/mirage-core/cache/context'
+import type { PathSpec } from '@struktoai/mirage-core/types'
+import { enoent } from '@struktoai/mirage-core/utils/errors'
+import { stripSlash } from '@struktoai/mirage-core/utils/slash'
 import type { SFTPWrapper, Stats } from 'ssh2'
 import type { SSHAccessor } from '../../accessor/ssh.ts'
 import { isNoSuchFile, joinRoot, stripPrefix } from './utils.ts'
-import { enoent, stripSlash } from '@struktoai/mirage-core'
 
 async function statRemote(sftp: SFTPWrapper, remote: string): Promise<Stats | null> {
   return new Promise<Stats | null>((resolveFn) => {

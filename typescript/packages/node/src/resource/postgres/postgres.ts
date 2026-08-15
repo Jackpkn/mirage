@@ -12,30 +12,30 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import { PostgresAccessor } from '@struktoai/mirage-core/accessor/postgres'
+import { makeResolveGlob } from '@struktoai/mirage-core/commands/builtin/generic_bind/index'
+import { POSTGRES_COMMANDS } from '@struktoai/mirage-core/commands/builtin/postgres/index'
+import type { RegisteredCommand } from '@struktoai/mirage-core/commands/config'
+import { read as postgresRead } from '@struktoai/mirage-core/core/postgres/read'
+import { readdir as postgresReaddir } from '@struktoai/mirage-core/core/postgres/readdir'
+import { stat as postgresStat } from '@struktoai/mirage-core/core/postgres/stat'
+import { POSTGRES_OPS } from '@struktoai/mirage-core/ops/postgres/index'
+import type { RegisteredOp } from '@struktoai/mirage-core/ops/registry'
+import { BaseResource } from '@struktoai/mirage-core/resource/base'
+import type { Resource } from '@struktoai/mirage-core/resource/base'
 import {
-  BaseResource,
-  POSTGRES_COMMANDS,
-  POSTGRES_OPS,
-  POSTGRES_PROMPT,
-  PathSpec,
-  PostgresAccessor,
-  ResourceName,
-  mountKey,
-  mountPrefixOf,
-  postgresRead,
-  postgresReaddir,
-  postgresStat,
   redactPostgresConfig,
-  type PostgresConfigRedacted,
   resolvePostgresConfig,
-  makeResolveGlob,
-  type FileStat,
-  type PostgresConfig,
-  type PostgresConfigResolved,
-  type RegisteredCommand,
-  type RegisteredOp,
-  type Resource,
-} from '@struktoai/mirage-core'
+} from '@struktoai/mirage-core/resource/postgres/config'
+import type {
+  PostgresConfig,
+  PostgresConfigRedacted,
+  PostgresConfigResolved,
+} from '@struktoai/mirage-core/resource/postgres/config'
+import { POSTGRES_PROMPT } from '@struktoai/mirage-core/resource/postgres/prompt'
+import { PathSpec, ResourceName } from '@struktoai/mirage-core/types'
+import type { FileStat } from '@struktoai/mirage-core/types'
+import { mountKey, mountPrefixOf } from '@struktoai/mirage-core/utils/key_prefix'
 import { PostgresStore } from './store.ts'
 
 const resolvePostgresGlob = makeResolveGlob(postgresReaddir)

@@ -14,7 +14,8 @@
 
 import { tool, type Plugin, type ToolContext, type ToolDefinition } from '@opencode-ai/plugin'
 import type { Workspace } from '@struktoai/mirage-node'
-import { encodeBase64, gnuDirname } from '@struktoai/mirage-core'
+import { encodeBase64 } from '@struktoai/mirage-core/utils/base64'
+import { gnuDirname } from '@struktoai/mirage-core/utils/path'
 import { FileVersionTracker } from '../file-version.ts'
 import { readWorkspaceFile } from '../read-file.ts'
 

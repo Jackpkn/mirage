@@ -12,7 +12,9 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { CLISpec, Operand, Option, registerCliSpec } from '@struktoai/mirage-core'
+import { registerCliSpec } from '@struktoai/mirage-core/commands/cli/specs'
+import { CLISpec } from '@struktoai/mirage-core/commands/cli/types'
+import { Operand, Option } from '@struktoai/mirage-core/commands/spec/index'
 import { EmailConfigSchema } from '../../../../core/email/config.ts'
 import { compose } from './compose.ts'
 import { forward } from './forward.ts'

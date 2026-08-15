@@ -15,7 +15,7 @@
 import { chmodSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { Observer } from '@struktoai/mirage-core'
+import { Observer } from '@struktoai/mirage-core/observe/observer'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { DiskObserverStore } from './disk_store.ts'
 

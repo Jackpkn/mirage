@@ -12,10 +12,10 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import type { PathSpec } from '@struktoai/mirage-core'
+import type { PathSpec } from '@struktoai/mirage-core/types'
+import { stripSlash } from '@struktoai/mirage-core/utils/slash'
 import type { RedisAccessor } from '../../accessor/redis.ts'
 import { norm, nowIso } from './utils.ts'
-import { stripSlash } from '@struktoai/mirage-core'
 
 export async function mkdirP(accessor: RedisAccessor, path: PathSpec): Promise<void> {
   const p = norm(path.mountPath)

@@ -12,27 +12,23 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { mountKey, mountPrefixOf } from '@struktoai/mirage-core'
-import {
-  type FileStat,
-  GCAL_COMMANDS,
-  GCAL_PROMPT,
-  GCAL_WRITE_PROMPT,
-  GCAL_OPS,
-  GCalAccessor,
-  type IndexCacheStore,
-  PathSpec,
-  RAMIndexCacheStore,
-  type RegisteredCommand,
-  type RegisteredOp,
-  type Resource,
-  ResourceName,
-  TokenManager,
-  gcalRead,
-  gcalReaddir,
-  makeResolveGlob,
-  gcalStat,
-} from '@struktoai/mirage-core'
+import { GCalAccessor } from '@struktoai/mirage-core/accessor/gcal'
+import { RAMIndexCacheStore } from '@struktoai/mirage-core/cache/index/ram'
+import type { IndexCacheStore } from '@struktoai/mirage-core/cache/index/store'
+import { GCAL_COMMANDS } from '@struktoai/mirage-core/commands/builtin/gcal/index'
+import { makeResolveGlob } from '@struktoai/mirage-core/commands/builtin/generic_bind/index'
+import type { RegisteredCommand } from '@struktoai/mirage-core/commands/config'
+import { read as gcalRead } from '@struktoai/mirage-core/core/gcal/read'
+import { readdir as gcalReaddir } from '@struktoai/mirage-core/core/gcal/readdir'
+import { stat as gcalStat } from '@struktoai/mirage-core/core/gcal/stat'
+import { TokenManager } from '@struktoai/mirage-core/core/google/_client'
+import { GCAL_OPS } from '@struktoai/mirage-core/ops/gcal/index'
+import type { RegisteredOp } from '@struktoai/mirage-core/ops/registry'
+import type { Resource } from '@struktoai/mirage-core/resource/base'
+import { GCAL_PROMPT, GCAL_WRITE_PROMPT } from '@struktoai/mirage-core/resource/gcal/prompt'
+import { PathSpec, ResourceName } from '@struktoai/mirage-core/types'
+import type { FileStat } from '@struktoai/mirage-core/types'
+import { mountKey, mountPrefixOf } from '@struktoai/mirage-core/utils/key_prefix'
 import { redactGCalConfig, type GCalConfig, type GCalConfigRedacted } from './config.ts'
 
 const gcalResolveGlob = makeResolveGlob(gcalReaddir)

@@ -12,18 +12,14 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import {
-  type FileStat,
-  type FindOptions,
-  type PathSpec,
-  type RegisteredCommand,
-  type RegisteredOp,
-  type Resource,
-  ResourceName,
-  lstripSlash,
-  makeResolveGlob,
-  compareCodePoints,
-} from '@struktoai/mirage-core'
+import { makeResolveGlob } from '@struktoai/mirage-core/commands/builtin/generic_bind/index'
+import type { RegisteredCommand } from '@struktoai/mirage-core/commands/config'
+import type { RegisteredOp } from '@struktoai/mirage-core/ops/registry'
+import type { FindOptions, Resource } from '@struktoai/mirage-core/resource/base'
+import { ResourceName } from '@struktoai/mirage-core/types'
+import type { FileStat, PathSpec } from '@struktoai/mirage-core/types'
+import { lstripSlash } from '@struktoai/mirage-core/utils/slash'
+import { compareCodePoints } from '@struktoai/mirage-core/utils/sort'
 import { OPFSAccessor } from '../../accessor/opfs.ts'
 import { OPFS_COMMANDS } from '../../commands/builtin/opfs/index.ts'
 import { appendBytes as appendCore } from '../../core/opfs/append.ts'

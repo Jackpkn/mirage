@@ -12,11 +12,11 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import type { PathSpec } from '@struktoai/mirage-core'
+import type { PathSpec } from '@struktoai/mirage-core/types'
+import { compareCodePoints } from '@struktoai/mirage-core/utils/sort'
 import type { OPFSAccessor } from '../../../accessor/opfs.ts'
 import { isNotFound, norm, resolveDirHandle, resolveParentDirHandle } from '../utils.ts'
 import { walkAll } from './walk.ts'
-import { compareCodePoints } from '@struktoai/mirage-core'
 
 export async function entries(
   accessor: OPFSAccessor,

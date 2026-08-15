@@ -23,7 +23,7 @@ import {
   writeFile,
 } from 'node:fs/promises'
 import path from 'node:path'
-import { ObserverStoreBase } from '@struktoai/mirage-core'
+import { ObserverStoreBase } from '@struktoai/mirage-core/observe/store'
 
 /**
  * ObserverStore backed by a directory of JSONL files. Created lazily on

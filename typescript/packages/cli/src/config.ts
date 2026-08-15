@@ -12,7 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { compareCodePoints } from '@struktoai/mirage-core'
+import { compareCodePoints } from '@struktoai/mirage-core/utils/sort'
 import { ALLOWED_KEYS, DaemonConfigError } from '@struktoai/mirage-server'
 import type { Command } from 'commander'
 import { emit, fail } from './output.ts'

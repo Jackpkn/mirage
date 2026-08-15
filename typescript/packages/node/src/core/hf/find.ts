@@ -15,15 +15,14 @@
 import {
   buildTree,
   emitStartPath,
-  type FindOptions,
   keep,
-  type PathSpec,
-  type PredNode,
-  rstripSlash,
   startBasename,
-  stripSlash,
-  compareCodePoints,
-} from '@struktoai/mirage-core'
+} from '@struktoai/mirage-core/commands/builtin/findEval'
+import type { PredNode } from '@struktoai/mirage-core/commands/builtin/findEval'
+import type { FindOptions } from '@struktoai/mirage-core/resource/base'
+import type { PathSpec } from '@struktoai/mirage-core/types'
+import { rstripSlash, stripSlash } from '@struktoai/mirage-core/utils/slash'
+import { compareCodePoints } from '@struktoai/mirage-core/utils/sort'
 import type { HfAccessor } from '../../accessor/hf.ts'
 import { isNotFound, rawPathOf } from './util.ts'
 

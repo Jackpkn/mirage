@@ -12,38 +12,35 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import { DatabricksVolumeAccessor } from '@struktoai/mirage-core/accessor/databricks_volume'
+import { DATABRICKS_VOLUME_COMMANDS } from '@struktoai/mirage-core/commands/builtin/databricks_volume/index'
+import { makeResolveGlob } from '@struktoai/mirage-core/commands/builtin/generic_bind/index'
+import type { RegisteredCommand } from '@struktoai/mirage-core/commands/config'
+import { copy as databricksVolumeCopy } from '@struktoai/mirage-core/core/databricks_volume/copy'
+import { create as databricksVolumeCreate } from '@struktoai/mirage-core/core/databricks_volume/create'
+import { exists as databricksVolumeExists } from '@struktoai/mirage-core/core/databricks_volume/exists'
+import { mkdir as databricksVolumeMkdir } from '@struktoai/mirage-core/core/databricks_volume/mkdir'
+import { readBytes as databricksVolumeRead } from '@struktoai/mirage-core/core/databricks_volume/read'
+import { readdir as databricksVolumeReaddir } from '@struktoai/mirage-core/core/databricks_volume/readdir'
+import { rename as databricksVolumeRename } from '@struktoai/mirage-core/core/databricks_volume/rename'
+import { rmRecursive as databricksVolumeRmRecursive } from '@struktoai/mirage-core/core/databricks_volume/rm'
+import { rmdir as databricksVolumeRmdir } from '@struktoai/mirage-core/core/databricks_volume/rmdir'
+import { stat as databricksVolumeStat } from '@struktoai/mirage-core/core/databricks_volume/stat'
 import {
-  BaseResource,
-  DATABRICKS_VOLUME_COMMANDS,
-  DATABRICKS_VOLUME_OPS,
-  DATABRICKS_VOLUME_PROMPT,
-  DatabricksVolumeAccessor,
-  PathSpec,
-  ResourceName,
-  databricksVolumeCopy,
-  databricksVolumeCreate,
-  databricksVolumeExists,
-  databricksVolumeMkdir,
-  databricksVolumeRangeRead,
-  databricksVolumeRead,
-  databricksVolumeReadStream,
-  databricksVolumeReaddir,
-  databricksVolumeRename,
-  databricksVolumeRmRecursive,
-  databricksVolumeRmdir,
-  databricksVolumeStat,
-  databricksVolumeUnlink,
-  databricksVolumeWrite,
-  mountKey,
-  mountPrefixOf,
-  makeResolveGlob,
-  type FileStat,
-  type FindOptions,
-  type RegisteredCommand,
-  type RegisteredOp,
-  type Resource,
-  walkFind,
-} from '@struktoai/mirage-core'
+  rangeRead as databricksVolumeRangeRead,
+  readStream as databricksVolumeReadStream,
+} from '@struktoai/mirage-core/core/databricks_volume/stream'
+import { unlink as databricksVolumeUnlink } from '@struktoai/mirage-core/core/databricks_volume/unlink'
+import { writeBytes as databricksVolumeWrite } from '@struktoai/mirage-core/core/databricks_volume/write'
+import { walkFind } from '@struktoai/mirage-core/core/generic/find'
+import { DATABRICKS_VOLUME_OPS } from '@struktoai/mirage-core/ops/databricks_volume/index'
+import type { RegisteredOp } from '@struktoai/mirage-core/ops/registry'
+import { BaseResource } from '@struktoai/mirage-core/resource/base'
+import type { FindOptions, Resource } from '@struktoai/mirage-core/resource/base'
+import { DATABRICKS_VOLUME_PROMPT } from '@struktoai/mirage-core/resource/databricks_volume/prompt'
+import { PathSpec, ResourceName } from '@struktoai/mirage-core/types'
+import type { FileStat } from '@struktoai/mirage-core/types'
+import { mountKey, mountPrefixOf } from '@struktoai/mirage-core/utils/key_prefix'
 import {
   redactDatabricksVolumeConfig,
   type DatabricksVolumeConfig,

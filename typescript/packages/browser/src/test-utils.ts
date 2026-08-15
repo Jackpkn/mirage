@@ -12,7 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { PathSpec } from '@struktoai/mirage-core'
+import { PathSpec } from '@struktoai/mirage-core/types'
 import { OPFSAccessor } from './accessor/opfs.ts'
 
 export function spec(p: string): PathSpec {
