@@ -27,6 +27,7 @@ import type { TokenManager } from '../google/_client.ts'
 import { DIRECTORY_RESOURCE_TYPES, readdir } from './readdir.ts'
 import { rstripSlash } from '../../utils/slash.ts'
 import { eisdir, enoent } from '../../utils/errors.ts'
+import { sliceWindow, windowFor } from '../../utils/ranges.ts'
 
 export async function readBytes(tm: TokenManager, fileId: string): Promise<Uint8Array> {
   return downloadFile(tm, fileId)
@@ -41,29 +42,48 @@ export async function readFileVersioned(
   fileId: string,
   virtual: string,
   label: string,
+  offset = 0,
+  size: number | null = null,
 ): Promise<Uint8Array> {
   const pinned = revisionFor(virtual)
+  const window = windowFor(offset, size)
   const startMs = performance.now()
   let fingerprint: string | null = null
   let revision: string | null = pinned
   let data: Uint8Array
   if (pinned !== null) {
-    data = await downloadRevision(tm, fileId, pinned)
+    data = await downloadRevision(tm, fileId, pinned, window)
   } else if (recordingActive()) {
     ;[fingerprint, revision] = await captureFileMetadata(tm, fileId)
-    data = await downloadFile(tm, fileId)
+    data = await downloadFile(tm, fileId, window)
   } else {
-    data = await downloadFile(tm, fileId)
+    data = await downloadFile(tm, fileId, window)
   }
   record('read', label, 'gdrive', data.length, startMs, { fingerprint, revision })
   return data
 }
 
+/**
+ * Read a Drive file, optionally only a byte range of it.
+ *
+ * Only a binary file has a remote range to ask for. A google-apps file
+ * is rendered here into JSON, so its bytes do not exist until we make
+ * them and the window can only be taken afterwards.
+ *
+ * Args:
+ *   accessor: Drive accessor.
+ *   path: the path to read.
+ *   index: listing cache, consulted for the file id.
+ *   options: `{offset, size}`, the byte window, or absent for the whole file.
+ */
 export async function read(
   accessor: GDriveAccessor,
   path: PathSpec,
   index?: IndexCacheStore,
+  options?: { offset?: number; size?: number },
 ): Promise<Uint8Array> {
+  const offset = options?.offset ?? 0
+  const size = options?.size ?? null
   const prefix = mountPrefixOf(path.virtual, path.resourcePath)
   const key = path.resourcePath
   if (index === undefined) throw enoent(path.virtual)
@@ -79,10 +99,13 @@ export async function read(
   if (entry === null) throw enoent(path.virtual)
   const rt = entry.resourceType
   if (DIRECTORY_RESOURCE_TYPES.has(rt)) throw eisdir(path.virtual)
-  if (rt === 'gdrive/gdoc') return readDoc(accessor.tokenManager, entry.id)
-  if (rt === 'gdrive/gsheet') return readSpreadsheet(accessor.tokenManager, entry.id)
-  if (rt === 'gdrive/gslide') return readPresentation(accessor.tokenManager, entry.id)
-  return readFileVersioned(accessor.tokenManager, entry.id, path.virtual, key)
+  if (rt === 'gdrive/gdoc')
+    return sliceWindow(await readDoc(accessor.tokenManager, entry.id), offset, size)
+  if (rt === 'gdrive/gsheet')
+    return sliceWindow(await readSpreadsheet(accessor.tokenManager, entry.id), offset, size)
+  if (rt === 'gdrive/gslide')
+    return sliceWindow(await readPresentation(accessor.tokenManager, entry.id), offset, size)
+  return readFileVersioned(accessor.tokenManager, entry.id, path.virtual, key, offset, size)
 }
 
 export async function* stream(

@@ -44,7 +44,6 @@ import {
   GCalResource,
   GCSResource,
   GitHubResource,
-  GitHubCIResource,
   GridFSResource,
   GSheetsResource,
   GSlidesResource,
@@ -1467,27 +1466,6 @@ async function openGitHub(target: Target): Promise<Open> {
   return { ws: ws as unknown as ExecWorkspace, cleanup: () => ws.close() }
 }
 
-// Reuses the external github_server.py process on GITHUB_URL, which also
-// serves the fixed Actions dataset (workflows/runs/jobs/artifacts).
-async function openGitHubCI(target: Target): Promise<Open> {
-  let base = process.env.GITHUB_URL ?? ''
-  while (base.endsWith('/')) base = base.slice(0, -1)
-  if (base === '') throw new Error('github_ci target requires GITHUB_URL')
-  const mounts: Record<string, GitHubCIResource | [GitHubCIResource, MountMode]> = {}
-  for (const m of target.mounts) {
-    const [owner, repo] = String(m.repo).split('/')
-    const resource = new GitHubCIResource({
-      token: 'ghp-integ',
-      owner: owner ?? '',
-      repo: repo ?? '',
-      baseUrl: base,
-    })
-    mounts[m.path] = m.mode === 'read' ? [resource, MountMode.READ] : resource
-  }
-  const ws = new Workspace(mounts, { mode: MountMode.WRITE })
-  return { ws: ws as unknown as ExecWorkspace, cleanup: () => ws.close() }
-}
-
 async function openDify(target: Target): Promise<Open> {
   const endpoint = process.env.DIFY_ENDPOINT
   if (!endpoint) throw new Error('dify target requires DIFY_ENDPOINT')
@@ -1644,7 +1622,6 @@ const ARG_ERROR_RESOURCES: Record<string, () => Resource> = {
     }),
   gdocs: () => new GDocsResource({ clientId: 'c', refreshToken: 'r' }),
   gdrive: () => new GDriveResource({ clientId: 'c', refreshToken: 'r' }),
-  github_ci: () => new GitHubCIResource({ token: 't', owner: 'o', repo: 'r' }),
   gmail: () => new GmailResource({ clientId: 'c', refreshToken: 'r' }),
   gsheets: () => new GSheetsResource({ clientId: 'c', refreshToken: 'r' }),
   gslides: () => new GSlidesResource({ clientId: 'c', refreshToken: 'r' }),
@@ -1721,7 +1698,6 @@ export const ADAPTERS: Record<
   lancedb: openLancedb,
   notion: openNotion,
   github: openGitHub,
-  github_ci: openGitHubCI,
   slack: openSlack,
   trello: openTrello,
   discord: openDiscord,

@@ -16,11 +16,9 @@ import argparse
 import asyncio
 import base64
 import hashlib
-import io
 import json
 import re
 import sys
-import zipfile
 from pathlib import Path
 
 from aiohttp import web
@@ -48,89 +46,6 @@ DEFAULT_LOGIN = "integ-user"
 # and the root stands for everything before the fixture rather than for a
 # moment.
 ROOT_COMMIT_DATE = "1970-01-01T00:00:00Z"
-
-
-def _build_artifact_zip() -> bytes:
-    # ZIP_STORED with a pinned date_time keeps the archive byte-identical
-    # across runs, so size_in_bytes below is a stable contract.
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w", zipfile.ZIP_STORED) as zf:
-        info = zipfile.ZipInfo("dist/report.txt",
-                               date_time=(2026, 5, 3, 0, 0, 0))
-        zf.writestr(info, "ci artifact payload\n")
-    return buf.getvalue()
-
-
-# One fixed Actions dataset served for every seeded repository. The list
-# payloads and the single-object payloads share the same dicts on purpose:
-# the github_ci backend sizes files from list responses and renders reads
-# from the GET responses, and GitHub serves the same object shape on both.
-CI_ARTIFACT_ZIP = _build_artifact_zip()
-CI_JOB_LOG = (b"2026-05-03T00:05:00Z build started\n"
-              b"2026-05-03T00:08:00Z build finished\n")
-CI_WORKFLOWS = [{
-    "id": 101,
-    "node_id": "W_101",
-    "name": "CI",
-    "path": ".github/workflows/ci.yml",
-    "state": "active",
-    "created_at": "2026-05-01T00:00:00Z",
-    "updated_at": "2026-05-02T00:00:00Z",
-}]
-CI_RUNS = [{
-    "id": 9001,
-    "name": "CI",
-    "run_number": 42,
-    "event": "push",
-    "status": "completed",
-    "conclusion": "success",
-    "head_branch": "main",
-    "created_at": "2026-05-03T00:00:00Z",
-    "updated_at": "2026-05-03T00:10:00Z",
-}]
-CI_JOBS = {
-    "9001": [{
-        "id":
-        7001,
-        "run_id":
-        9001,
-        "name":
-        "build",
-        "status":
-        "completed",
-        "conclusion":
-        "success",
-        "started_at":
-        "2026-05-03T00:05:00Z",
-        "completed_at":
-        "2026-05-03T00:08:00Z",
-        "steps": [{
-            "name": "checkout",
-            "status": "completed",
-            "conclusion": "success",
-            "number": 1,
-        }],
-    }],
-}
-CI_ARTIFACTS = {
-    "9001": [{
-        "id": 5001,
-        "name": "dist",
-        "size_in_bytes": len(CI_ARTIFACT_ZIP),
-        "expired": False,
-        "created_at": "2026-05-03T00:09:00Z",
-        "updated_at": "2026-05-03T00:09:00Z",
-    }],
-}
-CI_ANNOTATIONS = {
-    "7001": [{
-        "path": "src/app.py",
-        "start_line": 3,
-        "end_line": 3,
-        "annotation_level": "warning",
-        "message": "unused import",
-    }],
-}
 
 
 def _blob_sha(data: bytes) -> str:
@@ -1673,99 +1588,6 @@ class GitHubServer:
             "items": items,
         })
 
-    async def _ci_guard(self, request: web.Request) -> web.Response | None:
-        if not self._authed(request):
-            return _error(401, "Requires authentication")
-        if self._lookup(request) is None:
-            return _error(404, "Not Found")
-        return None
-
-    async def ci_workflows(self, request: web.Request) -> web.Response:
-        guard = await self._ci_guard(request)
-        if guard is not None:
-            return guard
-        return web.json_response({
-            "total_count": len(CI_WORKFLOWS),
-            "workflows": CI_WORKFLOWS,
-        })
-
-    async def ci_workflow(self, request: web.Request) -> web.Response:
-        guard = await self._ci_guard(request)
-        if guard is not None:
-            return guard
-        wanted = request.match_info["workflow_id"]
-        for wf in CI_WORKFLOWS:
-            if str(wf["id"]) == wanted:
-                return web.json_response(wf)
-        return _error(404, "Not Found")
-
-    async def ci_runs(self, request: web.Request) -> web.Response:
-        guard = await self._ci_guard(request)
-        if guard is not None:
-            return guard
-        return web.json_response({
-            "total_count": len(CI_RUNS),
-            "workflow_runs": CI_RUNS,
-        })
-
-    async def ci_run(self, request: web.Request) -> web.Response:
-        guard = await self._ci_guard(request)
-        if guard is not None:
-            return guard
-        wanted = request.match_info["run_id"]
-        for run in CI_RUNS:
-            if str(run["id"]) == wanted:
-                return web.json_response(run)
-        return _error(404, "Not Found")
-
-    async def ci_jobs(self, request: web.Request) -> web.Response:
-        guard = await self._ci_guard(request)
-        if guard is not None:
-            return guard
-        jobs = CI_JOBS.get(request.match_info["run_id"], [])
-        return web.json_response({"total_count": len(jobs), "jobs": jobs})
-
-    async def ci_job(self, request: web.Request) -> web.Response:
-        guard = await self._ci_guard(request)
-        if guard is not None:
-            return guard
-        wanted = request.match_info["job_id"]
-        for jobs in CI_JOBS.values():
-            for job in jobs:
-                if str(job["id"]) == wanted:
-                    return web.json_response(job)
-        return _error(404, "Not Found")
-
-    async def ci_job_logs(self, request: web.Request) -> web.Response:
-        guard = await self._ci_guard(request)
-        if guard is not None:
-            return guard
-        return web.Response(body=CI_JOB_LOG, content_type="text/plain")
-
-    async def ci_artifacts(self, request: web.Request) -> web.Response:
-        guard = await self._ci_guard(request)
-        if guard is not None:
-            return guard
-        artifacts = CI_ARTIFACTS.get(request.match_info["run_id"], [])
-        return web.json_response({
-            "total_count": len(artifacts),
-            "artifacts": artifacts,
-        })
-
-    async def ci_artifact_zip(self, request: web.Request) -> web.Response:
-        guard = await self._ci_guard(request)
-        if guard is not None:
-            return guard
-        return web.Response(body=CI_ARTIFACT_ZIP,
-                            content_type="application/zip")
-
-    async def ci_annotations(self, request: web.Request) -> web.Response:
-        guard = await self._ci_guard(request)
-        if guard is not None:
-            return guard
-        anns = CI_ANNOTATIONS.get(request.match_info["check_run_id"], [])
-        return web.json_response(anns)
-
 
 def _add_routes(app: web.Application, server: "GitHubServer",
                 prefix: str) -> None:
@@ -1844,34 +1666,6 @@ def _add_routes(app: web.Application, server: "GitHubServer",
                        server.blob)
     app.router.add_get(f"{prefix}/search/code", server.search_code)
     app.router.add_get(f"{prefix}/search/repositories", server.search_repos)
-    app.router.add_get(f"{prefix}/repos/{{owner}}/{{repo}}/actions/workflows",
-                       server.ci_workflows)
-    app.router.add_get(
-        f"{prefix}/repos/{{owner}}/{{repo}}/actions/workflows/{{workflow_id}}",
-        server.ci_workflow)
-    app.router.add_get(f"{prefix}/repos/{{owner}}/{{repo}}/actions/runs",
-                       server.ci_runs)
-    app.router.add_get(
-        f"{prefix}/repos/{{owner}}/{{repo}}/actions/runs/{{run_id}}",
-        server.ci_run)
-    app.router.add_get(
-        f"{prefix}/repos/{{owner}}/{{repo}}/actions/runs/{{run_id}}/jobs",
-        server.ci_jobs)
-    app.router.add_get(
-        f"{prefix}/repos/{{owner}}/{{repo}}/actions/jobs/{{job_id}}",
-        server.ci_job)
-    app.router.add_get(
-        f"{prefix}/repos/{{owner}}/{{repo}}/actions/jobs/{{job_id}}/logs",
-        server.ci_job_logs)
-    app.router.add_get(
-        f"{prefix}/repos/{{owner}}/{{repo}}/actions/runs/{{run_id}}/artifacts",
-        server.ci_artifacts)
-    app.router.add_get(
-        f"{prefix}/repos/{{owner}}/{{repo}}/actions/artifacts/"
-        f"{{artifact_id}}/zip", server.ci_artifact_zip)
-    app.router.add_get(
-        f"{prefix}/repos/{{owner}}/{{repo}}/check-runs/"
-        f"{{check_run_id}}/annotations", server.ci_annotations)
 
 
 def build_app(server: GitHubServer) -> web.Application:

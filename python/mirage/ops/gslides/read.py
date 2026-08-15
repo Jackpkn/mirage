@@ -16,9 +16,34 @@ from mirage.accessor.gslides import GSlidesAccessor
 from mirage.core.gslides.read import read as core_read
 from mirage.ops.registry import op
 from mirage.types import PathSpec
+from mirage.utils.ranges import slice_window
 
 
 @op("read", resource=["gslides", "gdrive"], filetype=".gslide.json")
-async def read(accessor: GSlidesAccessor, path: PathSpec, *, index,
+async def read(accessor: GSlidesAccessor,
+               path: PathSpec,
+               *,
+               index,
+               offset: int = 0,
+               size: int | None = None,
                **kwargs) -> bytes:
-    return await core_read(accessor, path, index)
+    """Read the rendered document, optionally only a byte range of it.
+
+    A backend that registers its own read op does not go through the
+    generic factory, so the read-and-slice fallback never reaches it and
+    the window has to be applied here. These bytes are rendered, so
+    there is nothing to push down.
+
+    Args:
+        accessor (GSlidesAccessor): the backend handle.
+        path (PathSpec): the path to read.
+        index: the index cache the readdir populated.
+        offset (int): first byte to keep.
+        size (int | None): how many bytes, or None for the rest.
+    """
+    if size == 0:
+        return b""
+    data = await core_read(accessor, path, index)
+    if offset == 0 and size is None:
+        return data
+    return slice_window(data, offset, size)

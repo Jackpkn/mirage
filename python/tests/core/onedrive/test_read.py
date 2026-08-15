@@ -48,7 +48,7 @@ async def test_read_range_sends_range_header():
 
     def _cb(url, **kwargs):
         captured["range"] = kwargs["headers"].get("Range")
-        return CallbackResult(body=b"llo")
+        return CallbackResult(body=b"llo", status=206)
 
     with aioresponses() as m:
         m.get(_CONTENT, callback=_cb)
@@ -57,6 +57,20 @@ async def test_read_range_sends_range_header():
                                 offset=2,
                                 size=3)
     assert captured["range"] == "bytes=2-4"
+    assert data == b"llo"
+
+
+@pytest.mark.asyncio
+async def test_a_200_answer_to_a_range_request_is_sliced_locally():
+    """Graph redirects content downloads to a pre-authenticated URL,
+    which may answer 200 with the whole item. Before this was handled
+    the caller got every byte for what it asked to be a window."""
+    with aioresponses() as m:
+        m.get(_CONTENT, body=b"hello", status=200)
+        data = await read_bytes(_accessor(),
+                                PathSpec.from_str_path("/Docs/a.txt"),
+                                offset=2,
+                                size=3)
     assert data == b"llo"
 
 

@@ -111,11 +111,6 @@ OPS_INVENTORY = {
         ("readdir", "github", "", False),
         ("stat", "github", "", False),
     ],
-    "github_ci": [
-        ("read", "github_ci", "", False),
-        ("readdir", "github_ci", "", False),
-        ("stat", "github_ci", "", False),
-    ],
     "gmail": [
         ("read", "gmail", "", False),
         ("readdir", "gmail", "", False),

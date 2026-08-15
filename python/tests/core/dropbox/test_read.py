@@ -23,6 +23,7 @@ from mirage.core.dropbox.read import read
 from mirage.resource.dropbox.config import DropboxConfig
 from mirage.types import PathSpec
 from mirage.utils.key_prefix import mount_key
+from mirage.utils.ranges import ByteWindow
 
 
 def make_accessor(root_path: str = "/") -> DropboxAccessor:
@@ -81,7 +82,7 @@ async def test_a_ranged_read_asks_dropbox_for_the_range(index):
                               offset=1,
                               size=2)
     assert data == b"i!"
-    assert download.await_args.args[2] == "bytes=1-2"
+    assert download.await_args.args[2] == ByteWindow(1, 2)
 
 
 @pytest.mark.asyncio
@@ -97,7 +98,7 @@ async def test_an_index_less_ranged_read_still_carries_the_range(index):
                             resource_path="note.txt"),
                    offset=1,
                    size=2)
-    assert download.await_args.args[2] == "bytes=1-2"
+    assert download.await_args.args[2] == ByteWindow(1, 2)
 
 
 @pytest.mark.asyncio

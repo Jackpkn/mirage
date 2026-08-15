@@ -38,7 +38,7 @@ from mirage.observe.context import (active_recorder, record, record_stream,
 from mirage.types import FileStat, FileType, PathSpec
 from mirage.utils.errors import enoent, listing_error
 from mirage.utils.filetype import guess_type
-from mirage.utils.ranges import range_header
+from mirage.utils.ranges import window_for
 
 SIMPLE_UPLOAD_MAX = 4 * 1024 * 1024
 UPLOAD_CHUNK = 10 * 327680
@@ -311,7 +311,7 @@ async def read_item(config: MsGraphConfig,
                     offset: int = 0,
                     size: int | None = None) -> bytes:
     pinned = revision_for(virtual)
-    window = range_header(offset, size)
+    window = window_for(offset, size)
     start_ms = int(time.monotonic() * 1000)
     fingerprint = None
     revision = pinned

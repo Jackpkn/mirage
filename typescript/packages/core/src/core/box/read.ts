@@ -21,12 +21,24 @@ import { downloadFile, downloadFileStream } from './api.ts'
 import { readdir } from './readdir.ts'
 import { rstripSlash, stripSlash } from '../../utils/slash.ts'
 import { eisdir, enoent } from '../../utils/errors.ts'
+import { windowFor } from '../../utils/ranges.ts'
 
+/**
+ * Read a file, optionally only a byte range of it.
+ *
+ * Args:
+ *   accessor: Box accessor.
+ *   path: the path to read.
+ *   index: listing cache, consulted for the file id.
+ *   options: `{offset, size}`, the byte window, or absent for the whole file.
+ */
 export async function read(
   accessor: BoxAccessor,
   path: PathSpec,
   index?: IndexCacheStore,
+  options?: { offset?: number; size?: number },
 ): Promise<Uint8Array> {
+  const window = windowFor(options?.offset ?? 0, options?.size ?? null)
   const prefix = mountPrefixOf(path.virtual, path.resourcePath)
   let p = path.virtual
   if (prefix !== '' && p.startsWith(prefix)) p = p.slice(prefix.length) || '/'
@@ -45,7 +57,7 @@ export async function read(
   )
   if (entry === null) throw enoent(path.virtual)
   if (entry.resourceType === 'box/folder') throw eisdir(path.virtual)
-  return downloadFile(accessor.tokenManager, entry.id)
+  return downloadFile(accessor.tokenManager, entry.id, window)
 }
 
 export async function* stream(

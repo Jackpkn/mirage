@@ -12,6 +12,8 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import { rangeHeader, windowIfUnranged } from '../../utils/ranges.ts'
+
 export interface SlackResponse {
   ok: boolean
   error?: string
@@ -46,7 +48,7 @@ function formatSlackErrorMessage(
 
 export interface SlackTransport {
   call(endpoint: string, params?: Record<string, string>, body?: unknown): Promise<SlackResponse>
-  downloadFile?(url: string): Promise<Uint8Array>
+  downloadFile?(url: string, offset?: number, size?: number | null): Promise<Uint8Array>
 }
 
 export abstract class HttpSlackTransport implements SlackTransport {
@@ -87,14 +89,21 @@ export abstract class HttpSlackTransport implements SlackTransport {
     return data
   }
 
-  async downloadFile(url: string): Promise<Uint8Array> {
+  // Takes the window rather than a prepared header so the answer can be
+  // checked against it: Slack serves files from a CDN, and a server is free
+  // to ignore Range and reply 200 with the whole file, which windowIfUnranged
+  // then trims.
+  async downloadFile(url: string, offset = 0, size: number | null = null): Promise<Uint8Array> {
     const auth = await this.authHeaders()
-    const res = await this.fetch(url, { method: 'GET', headers: auth })
+    const headers: Record<string, string> = { ...auth }
+    const window = rangeHeader(offset, size)
+    if (window !== null) headers.Range = window
+    const res = await this.fetch(url, { method: 'GET', headers })
     if (!res.ok) {
       throw new Error(`slack: download failed (${String(res.status)}): ${url}`)
     }
     const buf = await res.arrayBuffer()
-    return new Uint8Array(buf)
+    return windowIfUnranged(new Uint8Array(buf), res.status, offset, size)
   }
 }
 

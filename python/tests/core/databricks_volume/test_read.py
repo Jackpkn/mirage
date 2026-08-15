@@ -113,3 +113,20 @@ async def test_read_zero_size_returns_empty_without_network(
     assert result == b""
     assert files.download_calls == []
     assert accessor.client.api_client.do_calls == []
+
+
+@pytest.mark.asyncio
+async def test_a_gateway_that_ignores_the_range_is_sliced_locally(
+        accessor, files, remote_root):
+    """A Range is a request, not an instruction: the Files API may sit
+    behind a gateway that answers with the whole object. Before this was
+    handled the caller got every byte for what it asked to be a window."""
+    files.downloads[f"{remote_root}/reports/latest.md"] = b"abcdef"
+    accessor.client.api_client.ignore_range = True
+    path = PathSpec.from_str_path(
+        "/volume/reports/latest.md",
+        mount_key("/volume/reports/latest.md", "/volume"))
+
+    result = await read_bytes(accessor, path, offset=1, size=3)
+
+    assert result == b"bcd"

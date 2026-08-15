@@ -12,7 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import type { CommandIO } from '@struktoai/mirage-core/commands/builtin/generic_bind/index'
+import { type CommandIO, rangeOf } from '@struktoai/mirage-core/commands/builtin/generic_bind/index'
 import type { RedisAccessor } from '../../../accessor/redis.ts'
 import { appendBytes as redisAppend } from '../../../core/redis/append.ts'
 import { SCOPE_ERROR } from '../../../core/redis/constants.ts'
@@ -37,6 +37,7 @@ import { writeBytes as redisWrite } from '../../../core/redis/write.ts'
 export const REDIS_IO: CommandIO<RedisAccessor> = {
   readdir: redisReaddir,
   readBytes: redisRead,
+  readRange: rangeOf(redisRead),
   readStream: redisStream,
   stat: redisStat,
   isMounted: () => true,

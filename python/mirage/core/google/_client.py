@@ -21,6 +21,7 @@ import aiohttp
 
 from mirage.core.google.config import GoogleConfig
 from mirage.resource.secrets import reveal_secret
+from mirage.utils.ranges import ByteWindow, range_header, window_of
 
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 DRIVE_API_BASE = "https://www.googleapis.com/drive/v3"
@@ -275,20 +276,22 @@ async def google_delete(
 async def google_get_bytes(
     token_manager: TokenManager,
     url: str,
-    range_header: str | None = None,
+    window: ByteWindow | None = None,
 ) -> bytes:
     """GET a URL as raw bytes, optionally only a byte range of it.
 
     Args:
         token_manager (TokenManager): OAuth2 token manager.
         url (str): API URL.
-        range_header (str | None): an HTTP ``Range`` value, or None for
-            the whole body.
+        window (ByteWindow | None): the byte window, or None for the
+            whole body.
     """
     headers = await google_headers(token_manager)
-    if range_header:
-        headers["Range"] = range_header
+    header = None if window is None else range_header(window.offset,
+                                                      window.size)
+    if header:
+        headers["Range"] = header
     async with aiohttp.ClientSession() as session:
         async with session.get(url, headers=headers) as resp:
             await raise_for_google_status(resp)
-            return await resp.read()
+            return window_of(await resp.read(), resp.status, window)

@@ -28,11 +28,12 @@ import { stat as gdriveStat } from '../../../core/gdrive/stat.ts'
 import { truncate as gdriveTruncate } from '../../../core/gdrive/truncate.ts'
 import { unlink as gdriveUnlink } from '../../../core/gdrive/unlink.ts'
 import { write as gdriveWrite } from '../../../core/gdrive/write.ts'
-import type { CommandIO } from '../generic_bind/index.ts'
+import { type CommandIO, rangeOf } from '../generic_bind/index.ts'
 
 export const GDRIVE_IO: CommandIO<GDriveAccessor> = {
   readdir: gdriveReaddir,
   readBytes: gdriveRead,
+  readRange: rangeOf(gdriveRead),
   readStream: gdriveStream,
   stat: gdriveStat,
   isMounted: () => true,

@@ -17,12 +17,13 @@ import { read as slackRead } from '../../../core/slack/read.ts'
 import { DU_MAX_ENTRIES } from '../../../core/slack/constants.ts'
 import { readdir as slackReaddir } from '../../../core/slack/readdir.ts'
 import { stat as slackStat } from '../../../core/slack/stat.ts'
-import type { CommandIO } from '../generic_bind/index.ts'
+import { type CommandIO, rangeOf } from '../generic_bind/index.ts'
 import { streamFromBytes } from '../utils/wrap.ts'
 
 export const SLACK_IO: CommandIO<SlackAccessor> = {
   readdir: slackReaddir,
   readBytes: slackRead,
+  readRange: rangeOf(slackRead),
   readStream: (a, p, i) => streamFromBytes(slackRead, a, p, i),
   stat: slackStat,
   isMounted: () => true,

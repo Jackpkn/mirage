@@ -23,7 +23,7 @@ from mirage.core.databricks_volume.path import backend_path
 from mirage.observe.context import record
 from mirage.types import PathSpec
 from mirage.utils.errors import enoent
-from mirage.utils.ranges import range_header
+from mirage.utils.ranges import range_header, slice_window
 
 
 def _read_response_bytes(response) -> bytes:
@@ -43,6 +43,14 @@ def _download_bytes_sync(
     remote_path: str,
     window: str | None,
 ) -> bytes:
+    """Download a file, optionally only a byte range of it.
+
+    Args:
+        accessor (DatabricksVolumeAccessor): Databricks accessor.
+        remote_path (str): path inside the volume.
+        window (str | None): an HTTP ``Range`` value, or None for all
+            of it.
+    """
     if window is None:
         return _read_response_bytes(accessor.files.download(remote_path))
     headers = {
@@ -93,5 +101,15 @@ async def read_bytes(
         if is_not_found(exc):
             raise enoent(path) from exc
         raise
+    # A Range is a request, not an instruction: a gateway may answer with
+    # the whole object. The other HTTP backends tell the two apart by the
+    # 206, but the SDK hands back a dict of the headers it was asked for
+    # and no status, and the Files API answers a honored range with no
+    # Content-Range either, so neither proof is available here. A body
+    # longer than the window is one, though, and it is the only case that
+    # matters: it is the read that returns more bytes than the caller
+    # gave room for. A short answer is what EOF looks like and is kept.
+    if size is not None and len(data) > size:
+        data = slice_window(data, offset, size)
     record("read", virtual, "databricks_volume", len(data), start_ms)
     return data

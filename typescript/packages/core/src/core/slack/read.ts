@@ -20,12 +20,29 @@ import type { PathSpec } from '../../types.ts'
 import { getHistoryJsonl } from './history.ts'
 import { getUserProfile, userJsonBytes } from './users.ts'
 import { stripSlash } from '../../utils/slash.ts'
+import { sliceWindow } from '../../utils/ranges.ts'
 
+/**
+ * Read a Slack path, optionally only a byte range of it.
+ *
+ * Only an uploaded file has a remote range to ask for. A channel's history
+ * and a user profile are rendered here into JSON, so their bytes do not
+ * exist until we make them and the window can only be taken afterwards.
+ *
+ * Args:
+ *   accessor: Slack accessor.
+ *   path: the path to read.
+ *   index: listing cache, consulted for the entry.
+ *   options: `{offset, size}`, the byte window, or absent for the whole file.
+ */
 export async function read(
   accessor: SlackAccessor,
   path: PathSpec,
   index?: IndexCacheStore,
+  options?: { offset?: number; size?: number },
 ): Promise<Uint8Array> {
+  const offset = options?.offset ?? 0
+  const size = options?.size ?? null
   const prefix = mountPrefixOf(path.virtual, path.resourcePath)
   let raw = path.virtual
   if (prefix !== '' && raw.startsWith(prefix)) {
@@ -45,7 +62,7 @@ export async function read(
     if (lookup.entry === undefined || lookup.entry === null) {
       throw enoent(path)
     }
-    return await getHistoryJsonl(accessor, lookup.entry.id, part2)
+    return sliceWindow(await getHistoryJsonl(accessor, lookup.entry.id, part2), offset, size)
   }
 
   if (parts.length === 5 && (part0 === 'channels' || part0 === 'dms') && part3 === 'files') {
@@ -62,7 +79,7 @@ export async function read(
     if (accessor.transport.downloadFile === undefined) {
       throw new Error('slack: transport does not support file download')
     }
-    return await accessor.transport.downloadFile(url)
+    return await accessor.transport.downloadFile(url, offset, size)
   }
 
   if (parts.length === 2 && part0 === 'users') {
@@ -73,7 +90,7 @@ export async function read(
       throw enoent(path)
     }
     const user = await getUserProfile(accessor, lookup.entry.id)
-    return userJsonBytes(user)
+    return sliceWindow(userJsonBytes(user), offset, size)
   }
 
   throw enoent(path)

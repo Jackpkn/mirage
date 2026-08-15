@@ -65,13 +65,6 @@ def build(backend: str):
                                username=os.environ["EMAIL_USERNAME"],
                                password=os.environ["EMAIL_PASSWORD"],
                                max_messages=5))
-    if backend == "github_ci":
-        from mirage.resource.github_ci import GitHubCIConfig, GitHubCIResource
-        return GitHubCIResource(
-            config=GitHubCIConfig(token=os.environ["GITHUB_TOKEN"],
-                                  owner="strukto-ai",
-                                  repo="mirage",
-                                  max_runs=20))
     if backend == "gdocs":
         from mirage.resource.gdocs import GDocsConfig, GDocsResource
         return GDocsResource(config=GDocsConfig(
@@ -94,7 +87,6 @@ BACKENDS = [
     "trello",
     "langfuse",
     "email",
-    "github_ci",
     "gdocs",
     "gmail",
 ]

@@ -19,6 +19,7 @@ from mirage.core.box._client import (BoxTokenManager, box_delete, box_get,
                                      box_get_bytes, box_get_stream,
                                      box_post_json, box_put_json,
                                      box_upload_multipart)
+from mirage.utils.ranges import ByteWindow
 
 LIST_FIELDS = "id,name,type,size,modified_at,etag,sha1,parent"
 SEARCH_FIELDS = "id,name,type,path_collection"
@@ -67,18 +68,18 @@ async def get_folder_info(tm: BoxTokenManager,
 
 async def download_file(tm: BoxTokenManager,
                         file_id: str,
-                        range_header: str | None = None) -> bytes:
+                        window: ByteWindow | None = None) -> bytes:
     """Download a file's content, optionally only a byte range of it.
 
     Args:
         tm (BoxTokenManager): token manager.
         file_id (str): Box file id.
-        range_header (str | None): an HTTP ``Range`` value, or None for
-            the whole file.
+        window (ByteWindow | None): the byte window, or None for the
+            whole file.
     """
     return await box_get_bytes(tm,
                                f"{tm.api_base}/files/{file_id}/content",
-                               range_header=range_header)
+                               window=window)
 
 
 def download_file_stream(tm: BoxTokenManager,

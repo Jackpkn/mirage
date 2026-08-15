@@ -252,6 +252,25 @@ describe('LangchainWorkspace.grep', () => {
     const r = await lw.grep('zzz', '/log.txt')
     expect(r.matches).toEqual([])
   })
+
+  it('caps at maxCount across files and flags the rest as truncated', async () => {
+    const ws = mkWs()
+    await ws.fs.writeFile('/a.txt', 'hit\nhit\n')
+    await ws.fs.writeFile('/b.txt', 'hit\n')
+    const lw = new LangchainWorkspace(ws)
+    const r = await lw.grep('hit', '/', null, 2)
+    expect(r.matches?.length).toBe(2)
+    expect(r.truncated).toBe(true)
+  })
+
+  it('lands on maxCount exactly without flagging truncation', async () => {
+    const ws = mkWs()
+    await ws.fs.writeFile('/a.txt', 'hit\nhit\n')
+    const lw = new LangchainWorkspace(ws)
+    const r = await lw.grep('hit', '/', null, 2)
+    expect(r.matches?.length).toBe(2)
+    expect(r.truncated).toBeUndefined()
+  })
 })
 
 describe('LangchainWorkspace.uploadFiles / downloadFiles', () => {

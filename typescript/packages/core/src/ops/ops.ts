@@ -187,8 +187,19 @@ export class Ops {
   // `raw` skips the filetype cascade: an explicit null filetype stops
   // the door from stamping the path's extension, so a rendered read op
   // (gdoc/gsheet/gmail) is bypassed and the stored bytes come back.
-  async readFile(path: string, options: { raw?: boolean } = {}): Promise<Uint8Array> {
+  // `offset`/`size` ride the same kwargs the generic read op already reads,
+  // so a backend with a native range fetches one window instead of the whole
+  // object. Python spells this `read(path, offset, size, raw)`.
+  async readFile(
+    path: string,
+    options: { raw?: boolean; offset?: number; size?: number | null } = {},
+  ): Promise<Uint8Array> {
     const kwargs: OpKwargs = options.raw === true ? { filetype: null } : {}
+    const offset = options.offset ?? 0
+    const size = options.size ?? null
+    if (offset !== 0 || size !== null) {
+      return (await this.through('read', path, [], { ...kwargs, offset, size })) as Uint8Array
+    }
     return (await this.through('read', path, [], kwargs)) as Uint8Array
   }
 

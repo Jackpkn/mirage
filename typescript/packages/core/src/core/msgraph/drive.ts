@@ -21,6 +21,7 @@ import type { FindOptions } from '../../resource/base.ts'
 import { FileStat, FileType, PathSpec } from '../../types.ts'
 import { enoent, listingError } from '../../utils/errors.ts'
 import { guessType } from '../../utils/filetype.ts'
+import { windowFor } from '../../utils/ranges.ts'
 import { rstripSlash, stripSlash } from '../../utils/slash.ts'
 import type { MsGraphConfigResolved } from './config.ts'
 import {
@@ -280,12 +281,6 @@ export async function writeItem(
   }
 }
 
-function rangeHeader(offset: number, size?: number): string | undefined {
-  if (offset === 0 && size === undefined) return undefined
-  const end = size === undefined ? '' : String(offset + size - 1)
-  return `bytes=${String(offset)}-${end}`
-}
-
 function entryStat(item: Record<string, unknown>): FileStat {
   const name = asString(item.name) ?? ''
   if (isFolder(item)) {
@@ -348,10 +343,10 @@ export async function readItem(
   label: string,
   backend: string,
   offset = 0,
-  size?: number,
+  size: number | null = null,
 ): Promise<Uint8Array> {
   const pinned = revisionFor(virtual)
-  const range = rangeHeader(offset, size)
+  const window = windowFor(offset, size)
   const startMs = performance.now()
   let fingerprint: string | null = null
   let revision: string | null = pinned
@@ -361,17 +356,17 @@ export async function readItem(
       data = await graphGetBytes(
         config,
         loc.item(`/versions/${encodeURIComponent(pinned)}/content`),
-        range,
+        window,
       )
     } else if (recordingActive()) {
       let downloadUrl: string | null
       ;[fingerprint, revision, downloadUrl] = await captureItemMetadata(config, loc)
       data =
         downloadUrl === null
-          ? await graphGetBytes(config, loc.item('/content'), range)
-          : await graphGetBytes(config, downloadUrl, range, false)
+          ? await graphGetBytes(config, loc.item('/content'), window)
+          : await graphGetBytes(config, downloadUrl, window, false)
     } else {
-      data = await graphGetBytes(config, loc.item('/content'), range)
+      data = await graphGetBytes(config, loc.item('/content'), window)
     }
     record('read', label, backend, data.length, startMs, { fingerprint, revision })
     return data

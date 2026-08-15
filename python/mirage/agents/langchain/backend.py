@@ -260,15 +260,33 @@ class LangchainWorkspace(SandboxBackendProtocol):
         pattern: str,
         path: str | None = None,
         glob: str | None = None,
+        *,
+        max_count: int | None = None,
     ) -> GrepResult:
-        return self._run(self.agrep(pattern, path, glob))
+        return self._run(self.agrep(pattern, path, glob, max_count=max_count))
 
     async def agrep(
         self,
         pattern: str,
         path: str | None = None,
         glob: str | None = None,
+        *,
+        max_count: int | None = None,
     ) -> GrepResult:
+        """Search file contents, optionally capping the matches returned.
+
+        ``max_count`` is a total cap across every file, which is not what
+        ``grep -m`` means (that one caps each file separately), so it is
+        applied to the collected matches rather than pushed onto the
+        command line. A run that hits the cap with matches left over is
+        reported truncated; one that lands on it exactly is complete.
+
+        Args:
+            pattern (str): literal text to search for.
+            path (str | None): directory to search, root when absent.
+            glob (str | None): filename filter for which files to search.
+            max_count (int | None): total cap on matches returned.
+        """
         parts = ["grep", "-rn"]
         if glob:
             parts.extend(["--include", shlex.quote(glob)])
@@ -279,7 +297,10 @@ class LangchainWorkspace(SandboxBackendProtocol):
         error = await _command_error(io, GREP_SUCCESS_EXIT_CODES)
         if error:
             return GrepResult(error=error)
-        return GrepResult(matches=io_to_grep_matches(io))
+        matches = io_to_grep_matches(io)
+        if max_count is None or len(matches) <= max_count:
+            return GrepResult(matches=matches)
+        return GrepResult(matches=matches[:max_count], truncated=True)
 
     # ── glob ─────────────────────────────────────────────────
 

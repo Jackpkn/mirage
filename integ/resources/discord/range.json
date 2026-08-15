@@ -1,0 +1,80 @@
+{
+  "cases": [
+    {
+      "id": "dc_range_attachment_head",
+      "seq": 950020,
+      "targets": [
+        "discord"
+      ],
+      "command": "true",
+      "check": {
+        "read": "/discord/Mirage HQ__100000000000000001/channels/general__200000000000000001/2026-06-01/files/budget__500000000000000001.csv",
+        "offset": 0,
+        "size": 7
+      },
+      "expect": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": "",
+        "check": "quarter"
+      }
+    },
+    {
+      "id": "dc_range_attachment_middle",
+      "seq": 950021,
+      "targets": [
+        "discord"
+      ],
+      "command": "true",
+      "check": {
+        "read": "/discord/Mirage HQ__100000000000000001/channels/general__200000000000000001/2026-06-01/files/budget__500000000000000001.csv",
+        "offset": 8,
+        "size": 6
+      },
+      "expect": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": "",
+        "check": "amount"
+      }
+    },
+    {
+      "id": "dc_range_rendered_history",
+      "seq": 950022,
+      "targets": [
+        "discord"
+      ],
+      "command": "true",
+      "check": {
+        "read": "/discord/Mirage HQ__100000000000000001/channels/general__200000000000000001/2026-06-01/chat.jsonl",
+        "offset": 0,
+        "size": 1
+      },
+      "expect": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": "",
+        "check": "{"
+      }
+    },
+    {
+      "id": "dc_range_rendered_member",
+      "seq": 950023,
+      "targets": [
+        "discord"
+      ],
+      "command": "true",
+      "check": {
+        "read": "/discord/Mirage HQ__100000000000000001/members/alice__300000000000000001.json",
+        "offset": 0,
+        "size": 7
+      },
+      "expect": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": "",
+        "check": "{\"user\""
+      }
+    }
+  ]
+}

@@ -33,6 +33,26 @@ def _content_hit(query: str, text: str) -> bool:
                      text) is not None
 
 
+def _parse_range(header: str | None, size: int) -> tuple[int, int] | None:
+    """The byte window an HTTP ``Range`` header asks for, clamped to `size`.
+
+    Dropbox's content endpoints honor ``Range`` on ``/2/files/download``,
+    so the fake has to as well: without it a windowed read reads whole and
+    the push-down looks correct while moving every byte.
+
+    Args:
+        header (str | None): the request's ``Range`` value.
+        size (int): length of the stored content.
+    """
+    if not header or not header.startswith("bytes="):
+        return None
+    spec = header[len("bytes="):]
+    start_s, _, end_s = spec.partition("-")
+    start = int(start_s) if start_s else 0
+    end = int(end_s) + 1 if end_s else size
+    return start, min(end, size)
+
+
 class FakeDropbox:
     """One fake Dropbox account with explicit folder objects.
 
@@ -157,7 +177,24 @@ class FakeDropbox:
         if stored is None:
             return web.json_response({"error_summary": "path/not_found/..."},
                                      status=409)
-        return web.Response(body=stored[0],
+        content = stored[0]
+        rng = _parse_range(request.headers.get("Range"), len(content))
+        if rng is None:
+            return web.Response(body=content,
+                                content_type="application/octet-stream")
+        start, end = rng
+        if start >= len(content):
+            return web.Response(
+                body=b"",
+                status=416,
+                headers={"Content-Range": f"bytes */{len(content)}"},
+                content_type="application/octet-stream")
+        return web.Response(body=content[start:end],
+                            status=206,
+                            headers={
+                                "Content-Range":
+                                f"bytes {start}-{end - 1}/{len(content)}"
+                            },
                             content_type="application/octet-stream")
 
     async def handle_upload(self, request: web.Request) -> web.Response:

@@ -26,11 +26,12 @@ import { rmdir as dropboxRmdir } from '../../../core/dropbox/rmdir.ts'
 import { stat as dropboxStat } from '../../../core/dropbox/stat.ts'
 import { unlink as dropboxUnlink } from '../../../core/dropbox/unlink.ts'
 import { write as dropboxWrite } from '../../../core/dropbox/write.ts'
-import type { CommandIO } from '../generic_bind/index.ts'
+import { type CommandIO, rangeOf } from '../generic_bind/index.ts'
 
 export const DROPBOX_IO: CommandIO<DropboxAccessor> = {
   readdir: dropboxReaddir,
   readBytes: dropboxRead,
+  readRange: rangeOf(dropboxRead),
   readStream: dropboxStream,
   stat: dropboxStat,
   isMounted: () => true,

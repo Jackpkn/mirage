@@ -76,3 +76,26 @@ async def test_read_not_found(accessor, index):
             PathSpec(resource_path="no/such/path",
                      virtual="/no/such/path",
                      directory="/no/such/path"), index)
+
+
+@pytest.mark.asyncio
+async def test_read_jsonl_window_is_sliced_locally(accessor, index):
+    """A rendered branch has no remote range, so the window is taken after."""
+    fake_data = b'{"id":"100","content":"hello"}\n'
+    with patch(
+            "mirage.core.discord.read.get_history_jsonl",
+            new_callable=AsyncMock,
+            return_value=fake_data,
+    ):
+        path = "/My Server/channels/general/2024-01-15/chat.jsonl"
+        result = await read(
+            accessor,
+            PathSpec(virtual=path,
+                     directory=path,
+                     resource_path=path.strip("/")),
+            index,
+            offset=1,
+            size=4,
+        )
+
+    assert result == b'"id"'

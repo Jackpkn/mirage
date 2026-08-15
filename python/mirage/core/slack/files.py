@@ -18,6 +18,7 @@ import aiohttp
 
 from mirage.core.slack.config import SlackConfig
 from mirage.resource.secrets import reveal_secret
+from mirage.utils.ranges import range_header, window_if_unranged
 from mirage.utils.sanitize import path_safe_name
 
 
@@ -39,18 +40,32 @@ def file_blob_name(file_meta: dict[str, Any]) -> str:
     return f"{path_safe_name(raw_name)}__{fid}"
 
 
-async def download_file(config: SlackConfig, url: str) -> bytes:
-    """Download a Slack-hosted file blob.
+async def download_file(config: SlackConfig,
+                        url: str,
+                        offset: int = 0,
+                        size: int | None = None) -> bytes:
+    """Download a Slack-hosted file blob, optionally only a byte range.
+
+    Takes the window rather than a prepared header so the answer can be
+    checked against it: Slack serves files from a CDN, and a server is
+    free to ignore Range and reply 200 with the whole file, which
+    ``window_if_unranged`` then trims.
 
     Args:
         config (SlackConfig): Slack credentials.
         url (str): Slack file URL (typically url_private_download).
+        offset (int): first byte to read.
+        size (int | None): how many bytes, or None for the rest.
 
     Returns:
         bytes: raw file content.
     """
     headers = {"Authorization": f"Bearer {reveal_secret(config.token)}"}
+    window = range_header(offset, size)
+    if window:
+        headers["Range"] = window
     async with aiohttp.ClientSession() as session:
         async with session.get(url, headers=headers) as resp:
             resp.raise_for_status()
-            return await resp.read()
+            data = await resp.read()
+            return window_if_unranged(data, resp.status, offset, size)

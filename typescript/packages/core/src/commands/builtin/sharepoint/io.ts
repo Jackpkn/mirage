@@ -1,10 +1,11 @@
 import type { SharePointAccessor } from '../../../accessor/sharepoint.ts'
 import * as drive from '../../../core/sharepoint/index.ts'
-import type { CommandIO } from '../generic_bind/index.ts'
+import { type CommandIO, rangeOf } from '../generic_bind/index.ts'
 
 export const SHAREPOINT_IO: CommandIO<SharePointAccessor> = {
   readdir: drive.readdir,
   readBytes: drive.read,
+  readRange: rangeOf(drive.read),
   readStream: drive.stream,
   stat: drive.stat,
   isMounted: () => true,

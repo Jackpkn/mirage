@@ -25,7 +25,7 @@ from mirage.core.dropbox.readdir import readdir
 from mirage.types import PathSpec
 from mirage.utils.errors import enoent
 from mirage.utils.key_prefix import mount_key, mount_prefix_of
-from mirage.utils.ranges import range_header
+from mirage.utils.ranges import window_for
 
 
 def dropbox_path_from_virtual(root: str, virtual_key: str, prefix: str) -> str:
@@ -81,7 +81,7 @@ async def read(
         offset (int): first byte to read.
         size (int | None): how many bytes, or None for the rest.
     """
-    window = range_header(offset, size)
+    window = window_for(offset, size)
     if index is NULL_INDEX:
         # Index-less callers (the ops factory's emulated truncate)
         # download directly; the API 409s on missing paths and folders.

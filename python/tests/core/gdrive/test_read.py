@@ -23,6 +23,7 @@ from mirage.core.gdrive.read import read
 from mirage.core.google._client import TokenManager
 from mirage.core.google.config import GoogleConfig
 from mirage.types import PathSpec
+from mirage.utils.ranges import ByteWindow
 
 
 async def fail_list_files(_tm, folder_id, drive_id=None):
@@ -110,7 +111,7 @@ async def test_a_ranged_read_of_a_binary_file_asks_drive_for_the_range(
                             size=4)
     assert result == b"tent"
     mock_download.assert_awaited_once_with(accessor.token_manager, "file123",
-                                           "bytes=3-6")
+                                           ByteWindow(3, 4))
 
 
 @pytest.mark.asyncio
