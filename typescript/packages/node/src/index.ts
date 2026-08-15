@@ -304,6 +304,12 @@ export {
   redactNotionConfig,
 } from '@struktoai/mirage-core/core/notion/config'
 export type { NotionConfig, NotionConfigRedacted } from '@struktoai/mirage-core/core/notion/config'
+// Named rather than left to the `export *` above: the three resources come
+// through it, but core's front door carries no config type of theirs, so
+// dropping these lines would take them out of this package's API too.
+export type { Mem0Config } from '@struktoai/mirage-core/resource/mem0/config'
+export type { OneDriveConfig } from '@struktoai/mirage-core/accessor/onedrive'
+export type { SharePointConfig } from '@struktoai/mirage-core/accessor/sharepoint'
 export { LangfuseResource, type LangfuseResourceState } from './resource/langfuse/langfuse.ts'
 export { JaegerResource, type JaegerResourceState } from './resource/jaeger/jaeger.ts'
 export {
