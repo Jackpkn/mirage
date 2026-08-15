@@ -35,7 +35,7 @@ export interface SharePointConfig extends MsGraphConfig {
   keyPrefix?: string
 }
 
-export const SharePointConfigSchema = z.object({
+const SharePointConfigSchema = z.object({
   ...MSGRAPH_CONFIG_SHAPE,
   siteFilter: z.string().optional(),
   site: z.string().optional(),
@@ -85,7 +85,7 @@ function optionalText(value: string | undefined): string | null {
   return normalized === undefined || normalized === '' ? null : normalized
 }
 
-export function resolveSharePointConfig(config: SharePointConfig): SharePointConfigResolved {
+function resolveSharePointConfig(config: SharePointConfig): SharePointConfigResolved {
   return {
     ...resolveMsGraphConfig(config),
     siteFilter: optionalText(config.siteFilter),
@@ -106,7 +106,7 @@ function encodedPath(path: string): string {
 // Takes the config, not just the drive id, because the service root is a
 // per-mount setting (national cloud, private endpoint, test server) rather
 // than a constant.
-export function sharePointItemUrl(
+function sharePointItemUrl(
   config: MsGraphConfigResolved,
   driveId: string,
   path: string,
@@ -119,7 +119,7 @@ export function sharePointItemUrl(
   return action !== '' ? `${stem}:${action}` : stem
 }
 
-export function sharePointRefPath(driveId: string, folder = ''): string {
+function sharePointRefPath(driveId: string, folder = ''): string {
   const base = `/drives/${driveId}`
   const stripped = stripSlash(folder)
   return stripped !== '' ? `${base}/root:/${encodedPath(stripped)}` : `${base}/root:`

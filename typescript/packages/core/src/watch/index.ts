@@ -12,22 +12,10 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-export type {
-  DeltaHook,
-  SupportsChanges,
-  WatchMount,
-  WatchOptions,
-  WatchRegistry,
-  WatchRuntime,
-} from './base.ts'
-export { ListingDeltaHook, specFor } from './delta.ts'
-export { IncompleteWalkError, QueueClosed, QueueOverflowError } from './errors.ts'
+export type { DeltaHook } from './base.ts'
+export { ListingDeltaHook } from './delta.ts'
+export { IncompleteWalkError } from './errors.ts'
 export { statFingerprint } from './fingerprint.ts'
-export {
-  type QueueFactory,
-  RAMWatchQueue,
-  type RAMWatchQueueOptions,
-  type WatchQueue,
-} from './queue/index.ts'
+export { RAMWatchQueue } from './queue/index.ts'
 export { Watcher } from './watcher.ts'
 export { entryOf, ReaddirWalk, type WalkReaddirFn, synthDirs, type WalkStatFn } from './walk.ts'

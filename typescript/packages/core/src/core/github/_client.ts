@@ -137,7 +137,7 @@ export interface GitHubTreeItem {
   size?: number
 }
 
-export interface GitHubBlob {
+interface GitHubBlob {
   content: string
   encoding: string
   sha: string

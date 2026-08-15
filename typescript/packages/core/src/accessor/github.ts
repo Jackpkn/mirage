@@ -15,7 +15,6 @@
 import { Accessor } from './base.ts'
 import type { GitHubTransport } from '../core/github/_client.ts'
 import type { TreeEntry } from '../core/github/tree_entry.ts'
-import type { Resource } from '../resource/base.ts'
 
 export class GitHubAccessor extends Accessor {
   readonly transport: GitHubTransport
@@ -50,8 +49,4 @@ export class GitHubAccessor extends Accessor {
   get isDefaultBranch(): boolean {
     return this.ref === this.defaultBranch
   }
-}
-
-export interface GitHubResourceLike extends Resource {
-  readonly accessor: GitHubAccessor
 }

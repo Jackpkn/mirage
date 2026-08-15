@@ -31,36 +31,6 @@ function formatLineNo(n: number): string {
   return String(n).padStart(6, ' ')
 }
 
-/**
- * Number lines like GNU `cat -n`: a 6-wide right-justified count followed by a
- * tab, then the line. A final line with no trailing newline keeps its missing
- * newline (no spurious `\n` is appended).
- */
-export async function* numberLines(source: AsyncIterable<Uint8Array>): AsyncIterable<Uint8Array> {
-  let lineNo = 0
-  let buf = new Uint8Array(0)
-  for await (const chunk of source) {
-    if (chunk.byteLength === 0) continue
-    const merged = new Uint8Array(buf.byteLength + chunk.byteLength)
-    merged.set(buf, 0)
-    merged.set(chunk, buf.byteLength)
-    buf = merged
-    let nl = buf.indexOf(NL)
-    while (nl >= 0) {
-      lineNo += 1
-      yield ENC.encode(`${formatLineNo(lineNo)}\t`)
-      yield buf.subarray(0, nl + 1)
-      buf = buf.subarray(nl + 1)
-      nl = buf.indexOf(NL)
-    }
-  }
-  if (buf.byteLength > 0) {
-    lineNo += 1
-    yield ENC.encode(`${formatLineNo(lineNo)}\t`)
-    yield buf
-  }
-}
-
 interface CatDisplay {
   numberLines: boolean
   numberNonblank: boolean

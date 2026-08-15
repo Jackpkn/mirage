@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { enoent } from '../../utils/errors.ts'
-export class LinearApiError extends Error {
+class LinearApiError extends Error {
   constructor(
     message: string,
     public readonly errors: readonly unknown[] = [],

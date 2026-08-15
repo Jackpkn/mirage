@@ -151,10 +151,6 @@ export interface Resource {
   deltaHook?(): DeltaHook
 }
 
-export function throwUnsupported(op: string): never {
-  throw new Error(`resource has no ${op} support`)
-}
-
 export function cachesReads(resource: Resource): boolean {
   return resource.cachesReads === true
 }

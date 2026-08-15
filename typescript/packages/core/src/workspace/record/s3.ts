@@ -27,7 +27,7 @@ import { generationOf } from './types.ts'
  * compare-read (412) or a concurrent conditional write is in flight
  * (409). Mirrors the Python `_is_condition_lost`.
  */
-export function isConditionLostError(err: unknown): boolean {
+function isConditionLostError(err: unknown): boolean {
   if (err === null || typeof err !== 'object') return false
   const e = err as { name?: string; $metadata?: { httpStatusCode?: number } }
   if (e.name === 'PreconditionFailed' || e.name === 'ConditionalRequestConflict') return true

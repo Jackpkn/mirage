@@ -18,9 +18,9 @@ import { rstripSlash } from '../../utils/slash.ts'
 
 export type AccessTokenProvider = () => string | Promise<string>
 
-export const GRAPH_VERSION = 'v1.0'
+const GRAPH_VERSION = 'v1.0'
 
-export const DEFAULT_GRAPH_API = `https://graph.microsoft.com/${GRAPH_VERSION}`
+const DEFAULT_GRAPH_API = `https://graph.microsoft.com/${GRAPH_VERSION}`
 
 // Shared by the OneDrive and SharePoint config schemas, mirroring Python's
 // MsGraphConfig base model. `accessToken` accepts a provider callable as well

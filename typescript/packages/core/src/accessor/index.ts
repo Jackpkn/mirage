@@ -12,5 +12,4 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-export { Accessor, NOOPAccessor } from './base.ts'
-export { RAMAccessor } from './ram.ts'
+export { Accessor } from './base.ts'

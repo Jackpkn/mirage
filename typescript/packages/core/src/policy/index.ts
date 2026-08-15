@@ -14,18 +14,14 @@
 
 export type { Policy } from './base.ts'
 export { PolicyDenied } from './errors.ts'
-export { MountRootPolicy, hasParentsFlag } from './builtin/mount_root.ts'
+export { MountRootPolicy } from './builtin/mount_root.ts'
 export { OutputCapPolicy, resolveProducer, resolveLimit } from './builtin/output_cap.ts'
 export { Policies, postExecuteGate, postOpsGate, preOpsGate, preSessionGate } from './policies.ts'
-export { SpecPolicy, wildcardRegex } from './spec.ts'
 export {
-  VALIDITY,
   type Action,
   type CommandContext,
-  type Deny,
   type ExecuteResultContext,
   type GuardSpec,
-  type MountRootQuery,
   type OpsContext,
   type OpsResultContext,
   type SessionContext,

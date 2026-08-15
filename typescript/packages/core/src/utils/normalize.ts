@@ -12,7 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-export type ValueTransform = (value: unknown) => unknown
+type ValueTransform = (value: unknown) => unknown
 
 export interface FieldNormalizer {
   /** Explicit `python_snake_case` → `tsCamelCase` overrides. */

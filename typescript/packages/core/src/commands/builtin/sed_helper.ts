@@ -351,7 +351,7 @@ function addrMatches(
   return compilePattern(val, '', extended).test(line)
 }
 
-export function translateReplacement(repl: string): string {
+function translateReplacement(repl: string): string {
   let out = ''
   for (let i = 0; i < repl.length; i++) {
     const ch = repl[i]

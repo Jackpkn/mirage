@@ -31,8 +31,6 @@ interface SchemaDef {
   innerType?: SchemaType
 }
 
-export type SecretStr = string & { readonly __mirageSecret: unique symbol }
-
 // A config's shape, read off the schema that already validates it rather
 // than declared a second time by hand. `z.infer` alone is not a drop-in:
 // it renders an optional field as `k?: T | undefined`, which under

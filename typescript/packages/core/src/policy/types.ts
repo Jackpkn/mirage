@@ -20,7 +20,7 @@ import type { Limit, PathSpec, Producer } from '../types.ts'
  * a leaf (no workspace imports), so the registry can host a Policies
  * instance without a cycle. Mirrors the Python MountRootQuery.
  */
-export interface MountRootQuery {
+interface MountRootQuery {
   isMountRoot(path: string): boolean
 }
 

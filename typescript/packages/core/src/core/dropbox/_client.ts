@@ -15,9 +15,9 @@
 import { rstripSlash } from '../../utils/slash.ts'
 import { rangeHeader, windowOf, type ByteWindow } from '../../utils/ranges.ts'
 
-export const DROPBOX_TOKEN_URL = 'https://api.dropboxapi.com/oauth2/token'
-export const DROPBOX_API_BASE = 'https://api.dropboxapi.com/2'
-export const DROPBOX_CONTENT_BASE = 'https://content.dropboxapi.com/2'
+const DROPBOX_TOKEN_URL = 'https://api.dropboxapi.com/oauth2/token'
+const DROPBOX_API_BASE = 'https://api.dropboxapi.com/2'
+const DROPBOX_CONTENT_BASE = 'https://content.dropboxapi.com/2'
 const TOKEN_BUFFER_SECONDS = 300
 
 export interface DropboxConfig {
@@ -58,7 +58,7 @@ function tokenUrlOf(config: DropboxConfig): string {
   return `${rstripSlash(config.endpoint)}/oauth2/token`
 }
 
-export async function refreshAccessToken(config: DropboxConfig): Promise<[string, number]> {
+async function refreshAccessToken(config: DropboxConfig): Promise<[string, number]> {
   const body = new URLSearchParams({
     grant_type: 'refresh_token',
     refresh_token: config.refreshToken,
@@ -130,7 +130,7 @@ export class DropboxTokenManager {
   }
 }
 
-export async function dropboxAuthHeaders(tm: DropboxTokenManager): Promise<Record<string, string>> {
+async function dropboxAuthHeaders(tm: DropboxTokenManager): Promise<Record<string, string>> {
   const token = await tm.getToken()
   return { Authorization: `Bearer ${token}` }
 }

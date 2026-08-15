@@ -13,7 +13,6 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { Accessor } from './base.ts'
-import type { Resource } from '../resource/base.ts'
 import type { DatabricksVolumeConfig } from '../resource/databricks_volume/config.ts'
 
 export class DatabricksVolumeAccessor extends Accessor {
@@ -29,8 +28,4 @@ export class DatabricksVolumeAccessor extends Accessor {
     this.host = h
     this.token = token
   }
-}
-
-export interface DatabricksVolumeResourceLike extends Resource {
-  readonly accessor: DatabricksVolumeAccessor
 }

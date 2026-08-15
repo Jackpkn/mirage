@@ -23,14 +23,6 @@ function parseSafe(text: string): unknown {
   return JSON.parse(text) as unknown
 }
 
-function parseJsonl(raw: Uint8Array): unknown[] {
-  const text = DEC.decode(raw)
-  return text
-    .split('\n')
-    .filter((line) => line.trim() !== '')
-    .map((line) => parseSafe(line))
-}
-
 function documentEnd(text: string, start: number): number {
   const opener = text[start]
   if (opener !== '{' && opener !== '[') {
@@ -147,11 +139,6 @@ export function splitRawLines(raw: Uint8Array): string[] {
   const lines = text.split('\n')
   if (lines[lines.length - 1] === '') lines.pop()
   return lines
-}
-
-export function parseJsonPath(raw: Uint8Array, path: string): unknown {
-  if (path.endsWith('.jsonl') || path.endsWith('.ndjson')) return parseJsonl(raw)
-  return parseSafe(DEC.decode(raw))
 }
 
 export function isJsonlPath(path: string): boolean {

@@ -14,7 +14,7 @@
 
 import { sheetsBase, type TokenManager, googleHeaders } from '../google/_client.ts'
 
-export class SheetsApiError extends Error {
+class SheetsApiError extends Error {
   readonly status: number
   constructor(message: string, status: number) {
     super(message)

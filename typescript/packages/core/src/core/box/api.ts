@@ -24,7 +24,7 @@ import {
 import type { BoxTokenManager } from './_client.ts'
 import type { ByteWindow } from '../../utils/ranges.ts'
 
-export type BoxItemType = 'file' | 'folder' | 'web_link'
+type BoxItemType = 'file' | 'folder' | 'web_link'
 
 export interface BoxItem {
   type: BoxItemType

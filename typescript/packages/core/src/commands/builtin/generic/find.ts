@@ -40,7 +40,7 @@ import { compareCodePoints } from '../../../utils/sort.ts'
 
 const ENC = new TextEncoder()
 
-export function invalidFindArg(value: string, flag: string): CommandFnResult {
+function invalidFindArg(value: string, flag: string): CommandFnResult {
   return [
     null,
     new IOResult({
@@ -58,8 +58,6 @@ function parseMtime(spec: string): [number | null, number | null] {
   if (spec.startsWith('-')) return [now - n * day, null]
   return [now - (n + 1) * day, now - n * day]
 }
-
-const nan = (v: number | null): boolean => v !== null && Number.isNaN(v)
 
 async function applyMtimeFilter(
   results: string[],
@@ -91,24 +89,6 @@ async function applyMtimeFilter(
     filtered.push(r)
   }
   return filtered
-}
-
-// Reject malformed -size/-mtime on backends that do not implement those
-// predicates, so a typo errors instead of being silently ignored. Returns the
-// exit-1 result on bad input, else null.
-export function findSizeMtimeError(
-  sizeFlag: string | null,
-  mtimeFlag: string | null,
-): CommandFnResult | null {
-  if (sizeFlag !== null) {
-    const [lo, hi] = parseSize(sizeFlag)
-    if (nan(lo) || nan(hi)) return invalidFindArg(sizeFlag, '-size')
-  }
-  if (mtimeFlag !== null) {
-    const [lo, hi] = parseMtime(mtimeFlag)
-    if (nan(lo) || nan(hi)) return invalidFindArg(mtimeFlag, '-mtime')
-  }
-  return null
 }
 
 function extractNotName(texts: readonly string[]): string | null {

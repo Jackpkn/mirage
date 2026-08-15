@@ -62,8 +62,8 @@ export type IndexType = (typeof IndexType)[keyof typeof IndexType]
 export const PRIMARY_KEY = '_id'
 
 export const RESOURCE_TYPE_DATABASE = 'mongodb/database'
-export const RESOURCE_TYPE_COLLECTION = 'mongodb/collection'
-export const RESOURCE_TYPE_VIEW = 'mongodb/view'
+const RESOURCE_TYPE_COLLECTION = 'mongodb/collection'
+const RESOURCE_TYPE_VIEW = 'mongodb/view'
 
 export const KIND_TO_DIR: Record<EntityKind, string> = {
   [EntityKind.COLLECTION]: 'collections',

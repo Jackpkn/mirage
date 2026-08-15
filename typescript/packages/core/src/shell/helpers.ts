@@ -330,13 +330,6 @@ export function getRedirects(node: TSNodeLike): [TSNodeLike | null, Redirect[]] 
   return [command, redirects]
 }
 
-export function getRedirectTargetNode(node: TSNodeLike): TSNodeLike | null {
-  const [, redirects] = getRedirects(node)
-  const first = redirects[0]
-  if (first === undefined) return null
-  return (first.targetNode as TSNodeLike | null) ?? null
-}
-
 export function getListParts(node: TSNodeLike): [TSNodeLike, string | null, TSNodeLike] {
   const left = node.namedChildren[0]
   const right = node.namedChildren[1]
@@ -517,7 +510,7 @@ export function getNegatedCommand(node: TSNodeLike): TSNodeLike {
   return first
 }
 
-export function getHeredocParts(redirectNode: TSNodeLike): [string, string] {
+function getHeredocParts(redirectNode: TSNodeLike): [string, string] {
   let delimiter = ''
   let body = ''
   for (const c of redirectNode.namedChildren) {
@@ -527,7 +520,7 @@ export function getHeredocParts(redirectNode: TSNodeLike): [string, string] {
   return [delimiter, body]
 }
 
-export function getHeredocMeta(redirectNode: TSNodeLike): [string, boolean, boolean] {
+function getHeredocMeta(redirectNode: TSNodeLike): [string, boolean, boolean] {
   const [delimiter, rawBody] = getHeredocParts(redirectNode)
   // Any quoting anywhere in the delimiter (even partial, `EN'D'`)
   // disables expansion, matching bash.
@@ -567,22 +560,6 @@ function normalizeHeredocBody(body: string, delimiter: string): string {
   }
   if (out !== '' && !out.endsWith('\n')) out += '\n'
   return out
-}
-
-export function getHerestringContent(node: TSNodeLike): string {
-  for (const c of node.namedChildren) {
-    if (c.type === NT.HERESTRING_REDIRECT) {
-      const first = c.namedChildren[0]
-      return first !== undefined ? getText(first) : ''
-    }
-  }
-  return ''
-}
-
-export function getProcessSubCommand(node: TSNodeLike): TSNodeLike {
-  const first = node.namedChildren[0]
-  if (first === undefined) throw new Error('process_substitution: missing inner')
-  return first
 }
 
 export const ProcessSubDirection = {

@@ -13,15 +13,10 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { Accessor } from './base.ts'
-import type { Resource } from '../resource/base.ts'
 import type { LinearTransport } from '../core/linear/_client.ts'
 
 export class LinearAccessor extends Accessor {
   constructor(public readonly transport: LinearTransport) {
     super()
   }
-}
-
-export interface LinearResourceLike extends Resource {
-  readonly accessor: LinearAccessor
 }

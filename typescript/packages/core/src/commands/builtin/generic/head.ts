@@ -69,7 +69,7 @@ function concat(a: Uint8Array, b: Uint8Array): Uint8Array {
  * but the last N lines, 0 = nothing. A final line without a trailing newline is
  * preserved as-is (no newline is appended).
  */
-export async function* headStream(
+async function* headStream(
   source: AsyncIterable<Uint8Array>,
   lines: number,
   bytesMode: number | null,

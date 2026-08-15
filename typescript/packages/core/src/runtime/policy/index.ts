@@ -21,19 +21,5 @@ export {
 } from './decide.ts'
 export { PolicyDeny, PolicyError } from './errors.ts'
 export { parsedCommands } from './facts.ts'
-export {
-  DenyResult,
-  RouteResult,
-  ScriptSource,
-  policyContextFromPayload,
-  policyContextPayload,
-} from './types.ts'
-export type {
-  ParsedCommand,
-  PolicyDecision,
-  PolicyContext,
-  PolicyFn,
-  PolicyResult,
-  PolicyScript,
-  PolicyVerdict,
-} from './types.ts'
+export { DenyResult, RouteResult, ScriptSource } from './types.ts'
+export type { PolicyDecision, PolicyContext, PolicyFn } from './types.ts'

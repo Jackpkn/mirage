@@ -18,9 +18,7 @@ export {
   evalJsonlStream,
   isJsonlPath,
   isStreamableJsonlExpr,
-  parseJsonAuto,
   parseJsonDocs,
-  parseJsonPath,
   parseSeqDocs,
   splitRawLines,
 } from './stream.ts'

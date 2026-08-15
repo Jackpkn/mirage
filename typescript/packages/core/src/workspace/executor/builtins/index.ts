@@ -12,8 +12,6 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-export type { ExecuteStringFn } from './scope.ts'
-
 export { handleCd } from './dirs.ts'
 export {
   acceptsLine,

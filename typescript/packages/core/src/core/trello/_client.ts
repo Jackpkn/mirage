@@ -14,7 +14,7 @@
 
 import { rstripSlash } from '../../utils/slash.ts'
 
-export class TrelloApiError extends Error {
+class TrelloApiError extends Error {
   constructor(
     public readonly endpoint: string,
     public readonly status: number,

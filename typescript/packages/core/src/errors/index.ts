@@ -13,6 +13,5 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 export { classify } from './classify.ts'
-export { gnuPhrase, POSIX, posixErrno } from './posix.ts'
 export { FS_CONDITIONS } from './types.ts'
-export type { FsCondition, PosixErrno } from './types.ts'
+export type { FsCondition } from './types.ts'

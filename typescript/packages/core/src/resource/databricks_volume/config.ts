@@ -34,7 +34,7 @@ function normalizeRootPath(value: string): string {
   return '/' + parts.join('/')
 }
 
-export const DatabricksVolumeConfigSchema = z.object({
+const DatabricksVolumeConfigSchema = z.object({
   catalog: z.string().refine(validVolumePart, 'must be a non-empty path segment'),
   schema: z.string().refine(validVolumePart, 'must be a non-empty path segment'),
   volume: z.string().refine(validVolumePart, 'must be a non-empty path segment'),

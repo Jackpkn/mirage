@@ -13,7 +13,6 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { Accessor } from './base.ts'
-import type { Resource } from '../resource/base.ts'
 import type { JaegerTransport } from '../core/jaeger/_client.ts'
 
 export interface JaegerAccessorConfig {
@@ -29,8 +28,4 @@ export class JaegerAccessor extends Accessor {
   ) {
     super()
   }
-}
-
-export interface JaegerResourceLike extends Resource {
-  readonly accessor: JaegerAccessor
 }

@@ -22,7 +22,7 @@ import { grepContextLines } from './grep_context.ts'
 import { fnmatch } from '../../utils/fnmatch.ts'
 import type { AsyncReadBytesFn, AsyncReaddirFn, AsyncStatFn } from './utils/types.ts'
 
-export const TYPE_EXTENSIONS: Record<string, string[]> = {
+const TYPE_EXTENSIONS: Record<string, string[]> = {
   py: ['.py'],
   js: ['.js', '.jsx'],
   ts: ['.ts', '.tsx'],
@@ -45,7 +45,7 @@ export const TYPE_EXTENSIONS: Record<string, string[]> = {
   csv: ['.csv'],
 }
 
-export function rgMatchesFilter(
+function rgMatchesFilter(
   entry: string,
   fileType: string | null,
   globPattern: string | null,

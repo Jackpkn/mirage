@@ -13,9 +13,8 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { z } from 'zod'
-import type { ConfigOf, RedactedConfig } from '../../resource/secrets.ts'
-import { redactConfigWithSchema, secretStr } from '../../resource/secrets.ts'
-import { normalizeFields } from '../../utils/normalize.ts'
+import type { ConfigOf } from '../../resource/secrets.ts'
+import { secretStr } from '../../resource/secrets.ts'
 
 export const GhConfigSchema = z.object({
   token: secretStr(),
@@ -29,13 +28,3 @@ export const GhConfigSchema = z.object({
 // redaction reads -- so a hand-written twin only adds a shape that can
 // drift from it, which is how `branch` reached the schema and not the type.
 export type GhConfig = ConfigOf<typeof GhConfigSchema>
-
-export type GhConfigRedacted = RedactedConfig<GhConfig, 'token'>
-
-export function redactGhConfig(config: GhConfig): GhConfigRedacted {
-  return redactConfigWithSchema(GhConfigSchema, config) as unknown as GhConfigRedacted
-}
-
-export function normalizeGhConfig(input: Record<string, unknown>): GhConfig {
-  return normalizeFields(input, {}) as unknown as GhConfig
-}

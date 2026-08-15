@@ -16,7 +16,7 @@ import { rstripSlash } from '../../utils/slash.ts'
 import { rangeHeader, windowOf, type ByteWindow } from '../../utils/ranges.ts'
 
 export const BOX_TOKEN_URL = 'https://api.box.com/oauth2/token'
-export const BOX_API_BASE = 'https://api.box.com/2.0'
+const BOX_API_BASE = 'https://api.box.com/2.0'
 const TOKEN_BUFFER_SECONDS = 300
 
 export interface BoxConfig {
@@ -66,7 +66,7 @@ export class BoxApiError extends Error {
   }
 }
 
-export async function refreshAccessToken(
+async function refreshAccessToken(
   config: BoxConfig,
   currentRefreshToken: string,
 ): Promise<{ accessToken: string; refreshToken: string; expiresIn: number }> {
@@ -233,7 +233,7 @@ export class BoxTokenManager {
   }
 }
 
-export async function boxAuthHeaders(tm: BoxTokenManager): Promise<Record<string, string>> {
+async function boxAuthHeaders(tm: BoxTokenManager): Promise<Record<string, string>> {
   const token = await tm.getToken()
   return { Authorization: `Bearer ${token}` }
 }

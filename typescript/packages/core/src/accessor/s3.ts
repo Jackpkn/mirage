@@ -13,7 +13,6 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { Accessor } from './base.ts'
-import type { Resource } from '../resource/base.ts'
 import type { S3Config } from '../resource/s3/config.ts'
 
 export class S3Accessor extends Accessor {
@@ -23,8 +22,4 @@ export class S3Accessor extends Accessor {
     super()
     this.config = config
   }
-}
-
-export interface S3ResourceLike extends Resource {
-  readonly accessor: S3Accessor
 }

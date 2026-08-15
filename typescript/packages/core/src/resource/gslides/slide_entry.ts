@@ -18,18 +18,7 @@ const TITLE_MAX_CHARS = 100
 const UNSAFE_CHARS = /[^\w\s\-.]/g
 const MULTI_UNDERSCORE = /_+/g
 
-export interface SlideEntry {
-  id: string
-  name: string
-  modifiedTime: string
-  createdTime: string
-  owner: string | null
-  ownedByMe: boolean
-  canEdit: boolean
-  filename: string
-}
-
-export function sanitizeTitle(title: string): string {
+function sanitizeTitle(title: string): string {
   if (title.trim() === '') return 'Untitled'
   let cleaned = title.replace(UNSAFE_CHARS, '_')
   cleaned = cleaned.replace(/ /g, '_')
