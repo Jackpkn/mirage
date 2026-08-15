@@ -184,13 +184,19 @@ export async function dropboxUpload(
   await r.arrayBuffer()
 }
 
-export async function dropboxDownload(tm: DropboxTokenManager, path: string): Promise<Uint8Array> {
+export async function dropboxDownload(
+  tm: DropboxTokenManager,
+  path: string,
+  rangeHeader?: string | null,
+): Promise<Uint8Array> {
   const headers = await dropboxAuthHeaders(tm)
   const url = `${tm.contentBase}/files/download`
-  const r = await fetch(url, {
-    method: 'POST',
-    headers: { ...headers, 'Dropbox-API-Arg': JSON.stringify({ path }) },
-  })
+  const sent: Record<string, string> = {
+    ...headers,
+    'Dropbox-API-Arg': JSON.stringify({ path }),
+  }
+  if (rangeHeader != null && rangeHeader !== '') sent.Range = rangeHeader
+  const r = await fetch(url, { method: 'POST', headers: sent })
   if (!r.ok) {
     const text = await r.text().catch(() => '')
     throw new DropboxApiError(`Dropbox download ${path} → ${String(r.status)} ${text}`, r.status)

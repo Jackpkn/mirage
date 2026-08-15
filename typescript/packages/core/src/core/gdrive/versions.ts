@@ -50,9 +50,10 @@ export async function downloadRevision(
   tm: TokenManager,
   fileId: string,
   revisionId: string,
+  rangeHeader?: string | null,
 ): Promise<Uint8Array> {
   const url = `${driveBase(tm)}/files/${fileId}/revisions/${revisionId}?alt=media`
-  return googleGetBytes(tm, url)
+  return googleGetBytes(tm, url, rangeHeader)
 }
 
 // Fetch the (fingerprint, revision) pair for a file at read time. The head

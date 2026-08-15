@@ -210,3 +210,81 @@ async def test_download_file_uses_bot_token():
         await download_file(SlackConfig(token="xoxb-bot"), "http://x")
     assert seen[0] == {"Authorization": "Bearer xoxb-bot"}
     assert seen[1] == {"Authorization": "Bearer xoxb-bot"}
+
+
+@pytest.mark.asyncio
+async def test_read_file_blob_pushes_the_window_down(accessor, index):
+    """An upload is stored bytes, so the window becomes a Range header."""
+    await index.set_dir("/channels", [
+        (
+            "general__C001",
+            IndexEntry(
+                id="C001",
+                name="general",
+                resource_type="slack/channel",
+                vfs_name="general__C001",
+            ),
+        ),
+    ])
+    await index.set_dir(
+        "/channels/general__C001/2026-04-10/files",
+        [
+            (
+                "report__F1.pdf",
+                IndexEntry(
+                    id="F1",
+                    name="report.pdf",
+                    resource_type="slack/file",
+                    vfs_name="report__F1.pdf",
+                    size=4096,
+                    extra={
+                        "url_private_download":
+                        "https://files.slack.com/x/report.pdf",
+                    },
+                ),
+            ),
+        ],
+    )
+    with patch("mirage.core.slack.files.download_file",
+               new_callable=AsyncMock,
+               return_value=b"1.4 f") as mock_dl:
+        data = await read(
+            accessor,
+            PathSpec(resource_path=("channels/general__C001/2026-04-10"
+                                    "/files/report__F1.pdf"),
+                     virtual=("/channels/general__C001/2026-04-10"
+                              "/files/report__F1.pdf"),
+                     directory=("/channels/general__C001/2026-04-10"
+                                "/files/report__F1.pdf")),
+            index=index,
+            offset=5,
+            size=5,
+        )
+    assert data == b"1.4 f"
+    mock_dl.assert_called_once_with(accessor.config,
+                                    "https://files.slack.com/x/report.pdf",
+                                    "bytes=5-9")
+
+
+@pytest.mark.asyncio
+async def test_read_jsonl_window_is_sliced_locally(accessor, index):
+    """Rendered history has no remote range, so the window is taken after."""
+    await _populate_index(index)
+    with patch(
+            "mirage.core.slack.read.get_history_jsonl",
+            new_callable=AsyncMock,
+            return_value=b'{"text":"hello"}\n',
+    ):
+        result = await read(
+            accessor,
+            PathSpec(
+                resource_path=(
+                    "/channels/general__C001/2023-11-14/chat.jsonl"),
+                virtual="/channels/general__C001/2023-11-14/chat.jsonl",
+                directory="/channels/general__C001/2023-11-14/chat.jsonl",
+            ),
+            index=index,
+            offset=1,
+            size=6,
+        )
+    assert result == b'"text"'

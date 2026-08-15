@@ -262,8 +262,10 @@ export async function boxGetBytes(
   tm: BoxTokenManager,
   url: string,
   params?: Record<string, string | number>,
+  rangeHeader?: string | null,
 ): Promise<Uint8Array> {
   const headers = await boxAuthHeaders(tm)
+  if (rangeHeader != null && rangeHeader !== '') headers.Range = rangeHeader
   const r = await fetch(buildUrl(url, params), { headers, redirect: 'follow' })
   if (!r.ok) {
     const text = await r.text().catch(() => '')

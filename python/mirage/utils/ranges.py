@@ -102,6 +102,11 @@ def is_unsatisfiable_range(exc: BaseException) -> bool:
     predicate lives here so the ops factory can turn all of them into the
     empty read the caller expects, rather than each backend re-deciding.
 
+    A reader that seeks rather than sending a header (OpenDAL's file
+    object, which hf and nextcloud both open) raises an OSError from the
+    seek itself instead of surfacing a status. It is the same condition,
+    so it is matched here rather than guarded in each of those backends.
+
     Args:
         exc (BaseException): whatever the backend reader raised.
     """
@@ -109,4 +114,7 @@ def is_unsatisfiable_range(exc: BaseException) -> bool:
         return True
     if _code_of(exc) in ("InvalidRange", "RequestedRangeNotSatisfiable"):
         return True
-    return "range not satisfiable" in str(exc).lower()
+    text = str(exc).lower()
+    if "range not satisfiable" in text:
+        return True
+    return "seek" in text and "beyond the end" in text

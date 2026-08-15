@@ -1005,34 +1005,6 @@ export {
   narrowPaths as githubNarrowPaths,
 } from './core/github/search.ts'
 export { GITHUB_PROMPT } from './resource/github/prompt.ts'
-export { type CITransport, HttpCITransport } from './core/github_ci/_client.ts'
-export { GitHubCIAccessor, type GitHubCIResourceLike } from './accessor/github_ci.ts'
-export { GITHUB_CI_COMMANDS } from './commands/builtin/github_ci/index.ts'
-export { GITHUB_CI_OPS } from './ops/github_ci/index.ts'
-export { read as githubCiRead, stream as githubCiStream } from './core/github_ci/read.ts'
-export { readdir as githubCiReaddir } from './core/github_ci/readdir.ts'
-export { stat as githubCiStat } from './core/github_ci/stat.ts'
-export {
-  type CIWorkflow,
-  listWorkflows as githubCiListWorkflows,
-  getWorkflow as githubCiGetWorkflow,
-} from './core/github_ci/workflows.ts'
-export {
-  type CIRun,
-  type CIJob,
-  listRuns as githubCiListRuns,
-  getRun as githubCiGetRun,
-  listJobsForRun as githubCiListJobsForRun,
-  getJob as githubCiGetJob,
-  downloadJobLog as githubCiDownloadJobLog,
-} from './core/github_ci/runs.ts'
-export {
-  type CIArtifact,
-  listArtifacts as githubCiListArtifacts,
-  downloadArtifact as githubCiDownloadArtifact,
-} from './core/github_ci/artifacts.ts'
-export { listAnnotations as githubCiListAnnotations } from './core/github_ci/annotations.ts'
-export { GITHUB_CI_PROMPT } from './resource/github_ci/prompt.ts'
 export {
   CALENDAR_API_BASE,
   DOCS_API_BASE,

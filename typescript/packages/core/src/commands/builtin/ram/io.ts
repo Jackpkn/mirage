@@ -32,11 +32,12 @@ import { stream as ramStream } from '../../../core/ram/stream.ts'
 import { truncate as ramTruncate } from '../../../core/ram/truncate.ts'
 import { unlink as ramUnlink } from '../../../core/ram/unlink.ts'
 import { writeBytes as ramWrite } from '../../../core/ram/write.ts'
-import type { CommandIO } from '../generic_bind/index.ts'
+import { type CommandIO, rangeOf } from '../generic_bind/index.ts'
 
 export const RAM_IO: CommandIO<RAMAccessor> = {
   readdir: ramReaddir,
   readBytes: ramRead,
+  readRange: rangeOf(ramRead),
   readStream: ramStream,
   stat: ramStat,
   isMounted: () => true,

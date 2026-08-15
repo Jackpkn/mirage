@@ -435,7 +435,6 @@ class ResourceName(str, Enum):
     JAEGER = "jaeger"
     SSH = "ssh"
     REDIS = "redis"
-    GITHUB_CI = "github_ci"
     GCS = "gcs"
     EMAIL = "email"
     DIFY = "dify"

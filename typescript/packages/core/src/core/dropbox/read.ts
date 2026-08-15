@@ -21,6 +21,7 @@ import { DropboxApiError, dropboxDownload, dropboxDownloadStream } from './_clie
 import { readdir } from './readdir.ts'
 import { rstripSlash, stripSlash } from '../../utils/slash.ts'
 import { eisdir, enoent } from '../../utils/errors.ts'
+import { rangeHeader } from '../../utils/ranges.ts'
 
 function dropboxPathFromVirtual(root: string, virtualKey: string, prefix: string): string {
   let key = virtualKey
@@ -29,11 +30,22 @@ function dropboxPathFromVirtual(root: string, virtualKey: string, prefix: string
   return key === '' ? root : `${root}/${key}`
 }
 
+/**
+ * Read a file, optionally only a byte range of it.
+ *
+ * Args:
+ *   accessor: Dropbox accessor.
+ *   path: the path to read.
+ *   index: listing cache, consulted for the entry.
+ *   options: `{offset, size}`, the byte window, or absent for the whole file.
+ */
 export async function read(
   accessor: DropboxAccessor,
   path: PathSpec,
   index?: IndexCacheStore,
+  options?: { offset?: number; size?: number },
 ): Promise<Uint8Array> {
+  const window = rangeHeader(options?.offset ?? 0, options?.size ?? null)
   const prefix = mountPrefixOf(path.virtual, path.resourcePath)
   let p = path.virtual
   if (prefix !== '' && p.startsWith(prefix)) p = p.slice(prefix.length) || '/'
@@ -46,7 +58,7 @@ export async function read(
     // Index-less callers (the ops factory's emulated truncate) download
     // directly; the API 409s on missing paths and folders.
     try {
-      return await dropboxDownload(accessor.tokenManager, dropboxPath)
+      return await dropboxDownload(accessor.tokenManager, dropboxPath, window)
     } catch (err) {
       if (err instanceof DropboxApiError && err.status === 409) throw enoent(path.virtual)
       throw err
@@ -62,7 +74,7 @@ export async function read(
   )
   if (entry === null) throw enoent(path.virtual)
   if (entry.resourceType === 'dropbox/folder') throw eisdir(path.virtual)
-  return dropboxDownload(accessor.tokenManager, dropboxPath)
+  return dropboxDownload(accessor.tokenManager, dropboxPath, window)
 }
 
 export async function* stream(

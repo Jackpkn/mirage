@@ -22,13 +22,29 @@ from mirage.utils.errors import enoent
 from mirage.utils.path import norm
 
 
-async def read_bytes(accessor: RedisAccessor, path_spec: PathSpec) -> bytes:
+async def read_bytes(accessor: RedisAccessor,
+                     path_spec: PathSpec,
+                     index: IndexCacheStore = NULL_INDEX,
+                     offset: int = 0,
+                     size: int | None = None) -> bytes:
+    """Read a file, optionally only a byte range of it.
+
+    Args:
+        accessor (RedisAccessor): Redis accessor.
+        path_spec (PathSpec): the path to read.
+        index (IndexCacheStore): unused; the key space is the listing.
+        offset (int): first byte to read.
+        size (int | None): how many bytes, or None for the rest.
+    """
     virtual = path_spec.virtual
     path = path_spec.mount_path
     store = accessor.store
     start_ms = int(time.monotonic() * 1000)
     key = norm(path)
-    data = await store.get_file(key)
+    if offset or size is not None:
+        data = await store.get_file_range(key, offset, size)
+    else:
+        data = await store.get_file(key)
     if data is None:
         raise enoent(virtual)
     record("read", path, "redis", len(data), start_ms)
@@ -39,8 +55,10 @@ async def read(
     accessor: RedisAccessor,
     path: PathSpec,
     index: IndexCacheStore = NULL_INDEX,
+    offset: int = 0,
+    size: int | None = None,
 ) -> bytes:
     try:
-        return await read_bytes(accessor, path)
+        return await read_bytes(accessor, path, index, offset, size)
     except FileNotFoundError as exc:
         raise enoent(path.virtual) from exc

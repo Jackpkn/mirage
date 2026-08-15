@@ -66,7 +66,7 @@ describe('dropbox read', () => {
       index,
     )
     expect(data).toEqual(new Uint8Array([104, 105, 33]))
-    expect(client.dropboxDownload).toHaveBeenCalledWith(STUB_TM, '/note.txt')
+    expect(client.dropboxDownload).toHaveBeenCalledWith(STUB_TM, '/note.txt', null)
   })
 
   it('downloads through the subfolder mount root', async () => {
@@ -93,7 +93,7 @@ describe('dropbox read', () => {
       index,
     )
     expect(data).toEqual(new Uint8Array([104, 105]))
-    expect(client.dropboxDownload).toHaveBeenCalledWith(STUB_TM, '/Team/data/note.txt')
+    expect(client.dropboxDownload).toHaveBeenCalledWith(STUB_TM, '/Team/data/note.txt', null)
   })
 
   it('throws EISDIR when path resolves to a folder', async () => {

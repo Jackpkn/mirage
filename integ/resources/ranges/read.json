@@ -1,0 +1,238 @@
+{
+  "cases": [
+    {
+      "id": "range_window_middle",
+      "seq": 950000,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "s3",
+        "s3-prefix",
+        "gridfs",
+        "gridfs-prefix",
+        "databricks",
+        "databricks-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "ssh",
+        "nextcloud",
+        "sharepoint",
+        "sharepoint-prefix",
+        "hf",
+        "hf-prefix",
+        "box",
+        "gdrive",
+        "opfs"
+      ],
+      "command": "printf '0123456789' > {mount}/range.txt",
+      "check": {
+        "read": "{mount}/range.txt",
+        "offset": 2,
+        "size": 3
+      },
+      "expect": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": "",
+        "check": "234"
+      }
+    },
+    {
+      "id": "range_window_to_eof",
+      "seq": 950001,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "s3",
+        "s3-prefix",
+        "gridfs",
+        "gridfs-prefix",
+        "databricks",
+        "databricks-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "ssh",
+        "nextcloud",
+        "sharepoint",
+        "sharepoint-prefix",
+        "hf",
+        "hf-prefix",
+        "box",
+        "gdrive",
+        "opfs"
+      ],
+      "command": "printf '0123456789' > {mount}/range_eof.txt",
+      "check": {
+        "read": "{mount}/range_eof.txt",
+        "offset": 7,
+        "size": null
+      },
+      "expect": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": "",
+        "check": "789"
+      }
+    },
+    {
+      "id": "range_head_of_file",
+      "seq": 950002,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "s3",
+        "s3-prefix",
+        "gridfs",
+        "gridfs-prefix",
+        "databricks",
+        "databricks-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "ssh",
+        "nextcloud",
+        "sharepoint",
+        "sharepoint-prefix",
+        "hf",
+        "hf-prefix",
+        "box",
+        "gdrive",
+        "opfs"
+      ],
+      "command": "printf '0123456789' > {mount}/range_head.txt",
+      "check": {
+        "read": "{mount}/range_head.txt",
+        "offset": 0,
+        "size": 4
+      },
+      "expect": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": "",
+        "check": "0123"
+      }
+    },
+    {
+      "id": "range_size_past_eof_is_short",
+      "seq": 950003,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "s3",
+        "s3-prefix",
+        "gridfs",
+        "gridfs-prefix",
+        "databricks",
+        "databricks-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "ssh",
+        "nextcloud",
+        "sharepoint",
+        "sharepoint-prefix",
+        "hf",
+        "hf-prefix",
+        "box",
+        "gdrive",
+        "opfs"
+      ],
+      "command": "printf 'abc' > {mount}/range_short.txt",
+      "check": {
+        "read": "{mount}/range_short.txt",
+        "offset": 0,
+        "size": 100
+      },
+      "expect": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": "",
+        "check": "abc"
+      }
+    },
+    {
+      "id": "range_offset_past_eof_is_empty",
+      "seq": 950004,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "s3",
+        "s3-prefix",
+        "gridfs",
+        "gridfs-prefix",
+        "databricks",
+        "databricks-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "ssh",
+        "nextcloud",
+        "sharepoint",
+        "sharepoint-prefix",
+        "hf",
+        "hf-prefix",
+        "box",
+        "gdrive",
+        "opfs"
+      ],
+      "command": "printf 'abc' > {mount}/range_past.txt",
+      "check": {
+        "read": "{mount}/range_past.txt",
+        "offset": 99,
+        "size": 5
+      },
+      "expect": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": "",
+        "check": ""
+      }
+    },
+    {
+      "id": "range_zero_length_is_empty",
+      "seq": 950005,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "s3",
+        "s3-prefix",
+        "gridfs",
+        "gridfs-prefix",
+        "databricks",
+        "databricks-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "ssh",
+        "nextcloud",
+        "sharepoint",
+        "sharepoint-prefix",
+        "hf",
+        "hf-prefix",
+        "box",
+        "gdrive",
+        "opfs"
+      ],
+      "command": "printf 'abc' > {mount}/range_zero.txt",
+      "check": {
+        "read": "{mount}/range_zero.txt",
+        "offset": 1,
+        "size": 0
+      },
+      "expect": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": "",
+        "check": ""
+      }
+    }
+  ]
+}

@@ -20,13 +20,30 @@ from mirage.core.slack.users import get_user_profile, user_json_bytes
 from mirage.types import PathSpec
 from mirage.utils.errors import enoent
 from mirage.utils.key_prefix import mount_prefix_of
+from mirage.utils.ranges import range_header, slice_window
 
 
 async def read(
     accessor: SlackAccessor,
     path: PathSpec,
     index: IndexCacheStore = NULL_INDEX,
+    offset: int = 0,
+    size: int | None = None,
 ) -> bytes:
+    """Read a Slack path, optionally only a byte range of it.
+
+    Only an uploaded file has a remote range to ask for. A channel's
+    history and a user profile are rendered here into JSON, so their
+    bytes do not exist until we make them and the window can only be
+    taken afterwards.
+
+    Args:
+        accessor (SlackAccessor): Slack accessor.
+        path (PathSpec): the path to read.
+        index (IndexCacheStore): listing cache, consulted for the entry.
+        offset (int): first byte to read.
+        size (int | None): how many bytes, or None for the rest.
+    """
     virtual = path.virtual
     prefix = mount_prefix_of(path.virtual, path.resource_path) if isinstance(
         path, PathSpec) else ""
@@ -45,7 +62,9 @@ async def read(
             raise enoent(virtual)
         channel_id = lookup.entry.id
         date_str = parts[2]
-        return await get_history_jsonl(accessor.config, channel_id, date_str)
+        history = await get_history_jsonl(accessor.config, channel_id,
+                                          date_str)
+        return slice_window(history, offset, size)
 
     if (len(parts) == 5 and parts[0] in ("channels", "dms")
             and parts[3] == "files"):
@@ -56,7 +75,8 @@ async def read(
         url = lookup.entry.extra.get("url_private_download")
         if not url:
             raise enoent(virtual)
-        return await slack_files.download_file(accessor.config, url)
+        return await slack_files.download_file(accessor.config, url,
+                                               range_header(offset, size))
 
     if len(parts) == 2 and parts[0] == "users":
         virtual_key = prefix + "/" + key
@@ -64,6 +84,6 @@ async def read(
         if lookup.entry is None:
             raise enoent(virtual)
         user = await get_user_profile(accessor.config, lookup.entry.id)
-        return user_json_bytes(user)
+        return slice_window(user_json_bytes(user), offset, size)
 
     raise enoent(virtual)

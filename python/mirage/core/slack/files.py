@@ -39,17 +39,23 @@ def file_blob_name(file_meta: dict[str, Any]) -> str:
     return f"{path_safe_name(raw_name)}__{fid}"
 
 
-async def download_file(config: SlackConfig, url: str) -> bytes:
-    """Download a Slack-hosted file blob.
+async def download_file(config: SlackConfig,
+                        url: str,
+                        range_header: str | None = None) -> bytes:
+    """Download a Slack-hosted file blob, optionally only a byte range.
 
     Args:
         config (SlackConfig): Slack credentials.
         url (str): Slack file URL (typically url_private_download).
+        range_header (str | None): an HTTP ``Range`` value, or None for
+            the whole file.
 
     Returns:
         bytes: raw file content.
     """
     headers = {"Authorization": f"Bearer {reveal_secret(config.token)}"}
+    if range_header:
+        headers["Range"] = range_header
     async with aiohttp.ClientSession() as session:
         async with session.get(url, headers=headers) as resp:
             resp.raise_for_status()

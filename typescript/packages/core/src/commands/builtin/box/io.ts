@@ -29,11 +29,12 @@ import {
   unlink as boxUnlink,
   write as boxWrite,
 } from '../../../core/box/write.ts'
-import type { CommandIO } from '../generic_bind/index.ts'
+import { type CommandIO, rangeOf } from '../generic_bind/index.ts'
 
 export const BOX_IO: CommandIO<BoxAccessor> = {
   readdir: boxReaddir,
   readBytes: boxRead,
+  readRange: rangeOf(boxRead),
   readStream: boxStream,
   stat: boxStat,
   isMounted: () => true,

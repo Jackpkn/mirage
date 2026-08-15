@@ -37,7 +37,7 @@ def file_blob_name(att: dict[str, Any]) -> str:
     return f"{path_safe_name(raw_name)}__{aid}"
 
 
-async def download_file(url: str) -> bytes:
+async def download_file(url: str, range_header: str | None = None) -> bytes:
     """Download a Discord-hosted file blob.
 
     Discord CDN URLs (``cdn.discordapp.com`` for ``url``,
@@ -47,11 +47,14 @@ async def download_file(url: str) -> bytes:
     Args:
         url (str): Discord attachment URL (typically ``url`` from the
             attachment object).
+        range_header (str | None): an HTTP ``Range`` value, or None for
+            the whole file.
 
     Returns:
         bytes: raw file content.
     """
+    headers = {"Range": range_header} if range_header else None
     async with aiohttp.ClientSession() as session:
-        async with session.get(url) as resp:
+        async with session.get(url, headers=headers) as resp:
             resp.raise_for_status()
             return await resp.read()

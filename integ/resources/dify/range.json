@@ -1,0 +1,80 @@
+{
+  "cases": [
+    {
+      "id": "df_range_head",
+      "seq": 950030,
+      "targets": [
+        "dify"
+      ],
+      "command": "true",
+      "check": {
+        "read": "/knowledge/guides/auth",
+        "offset": 0,
+        "size": 14
+      },
+      "expect": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": "",
+        "check": "Authentication"
+      }
+    },
+    {
+      "id": "df_range_middle",
+      "seq": 950031,
+      "targets": [
+        "dify"
+      ],
+      "command": "true",
+      "check": {
+        "read": "/knowledge/guides/auth",
+        "offset": 64,
+        "size": 8
+      },
+      "expect": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": "",
+        "check": "Requests"
+      }
+    },
+    {
+      "id": "df_range_to_eof",
+      "seq": 950032,
+      "targets": [
+        "dify"
+      ],
+      "command": "true",
+      "check": {
+        "read": "/knowledge/guides/auth",
+        "offset": 161,
+        "size": 200
+      },
+      "expect": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": "",
+        "check": "HTTP 429 and must back off."
+      }
+    },
+    {
+      "id": "df_range_past_eof",
+      "seq": 950033,
+      "targets": [
+        "dify"
+      ],
+      "command": "true",
+      "check": {
+        "read": "/knowledge/guides/auth",
+        "offset": 500,
+        "size": 10
+      },
+      "expect": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": "",
+        "check": ""
+      }
+    }
+  ]
+}

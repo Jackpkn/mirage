@@ -120,3 +120,14 @@ def test_a_real_failure_is_not_swallowed():
     assert not is_unsatisfiable_range(_BotoError("NoSuchKey", 404))
     assert not is_unsatisfiable_range(_AiohttpError(500))
     assert not is_unsatisfiable_range(RuntimeError("AccessDenied"))
+
+
+def test_the_opendal_seek_shape_is_unsatisfiable():
+    """hf and nextcloud seek instead of sending a header, and the seek
+    itself raises rather than surfacing a status."""
+    assert is_unsatisfiable_range(
+        OSError("invalid seek to a position beyond the end of the range"))
+
+
+def test_an_ordinary_seek_error_is_not_unsatisfiable():
+    assert not is_unsatisfiable_range(OSError("invalid seek: bad whence"))

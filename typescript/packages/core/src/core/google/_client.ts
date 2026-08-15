@@ -246,8 +246,13 @@ export async function googleDelete(tm: TokenManager, url: string): Promise<void>
   }
 }
 
-export async function googleGetBytes(tm: TokenManager, url: string): Promise<Uint8Array> {
+export async function googleGetBytes(
+  tm: TokenManager,
+  url: string,
+  rangeHeader?: string | null,
+): Promise<Uint8Array> {
   const headers = await googleHeaders(tm)
+  if (rangeHeader != null && rangeHeader !== '') headers.Range = rangeHeader
   const r = await fetch(url, { headers, redirect: 'follow' })
   if (!r.ok) {
     const text = await r.text().catch(() => '')

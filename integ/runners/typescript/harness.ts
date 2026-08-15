@@ -105,8 +105,11 @@ export interface Expect {
 }
 
 export interface StatCheck {
-  stat: string
-  fields: string[]
+  stat?: string
+  fields?: string[]
+  read?: string
+  offset?: number
+  size?: number | null
 }
 
 export interface Case {
@@ -157,7 +160,7 @@ export interface HarnessStat {
 
 export interface ExecWorkspace {
   execute(cmd: string, opts?: { stdin?: Uint8Array; sessionId?: string }): Promise<ExecResult>
-  dispatch(opName: string, path: string): Promise<unknown>
+  dispatch(opName: string, path: string, args?: readonly unknown[], kwargs?: Record<string, unknown>): Promise<unknown>
   cache: { clear(): Promise<void> }
   mounts(): readonly { resource: { index?: { clear(): Promise<void> } } }[]
   createSession(sessionId: string, options: { mounts: Record<string, string> | string[] }): unknown
@@ -393,15 +396,31 @@ function checkField(st: HarnessStat, name: string): string {
   return `${name}=${value}`
 }
 
+/**
+ * The probe a case runs beside its command, as one printable line.
+ *
+ * Two forms. `stat` names a path and the FileStat fields to print. `read`
+ * names a path and a byte window, and prints what that window returned: no
+ * shell command asks for one, because commands read whole files, so the
+ * ranged read op is only reachable through the same door FUSE and the ops
+ * facade use.
+ */
 export async function statCheck(ws: ExecWorkspace, check: StatCheck): Promise<string> {
+  if (check.read !== undefined) {
+    const data = (await ws.dispatch('read', check.read, [], {
+      offset: check.offset ?? 0,
+      size: check.size ?? null,
+    })) as Uint8Array
+    return new TextDecoder().decode(data)
+  }
   let st: HarnessStat
   try {
-    st = (await ws.dispatch('stat', check.stat)) as HarnessStat
+    st = (await ws.dispatch('stat', check.stat ?? '')) as HarnessStat
   } catch (err) {
     if ((err as { code?: string }).code === 'ENOENT') return 'absent\n'
     throw err
   }
-  return check.fields.map((name) => checkField(st, name)).join(' ') + '\n'
+  return (check.fields ?? []).map((name) => checkField(st, name)).join(' ') + '\n'
 }
 
 function provisionLine(r: ProvisionInfo): string {
@@ -433,16 +452,29 @@ export function bindMount(c: Case, mountPath: string): Case {
     ([token]) =>
       c.command?.includes(token) === true ||
       c.expect.stdout.includes(token) ||
-      c.expect.stderr.includes(token),
+      c.expect.stderr.includes(token) ||
+      c.check?.stat?.includes(token) === true ||
+      c.check?.read?.includes(token) === true ||
+      c.expect.check?.includes(token) === true,
   )
   if (!present) return c
+  const check =
+    c.check === undefined
+      ? undefined
+      : {
+          ...c.check,
+          ...(c.check.stat !== undefined ? { stat: subst(c.check.stat) } : {}),
+          ...(c.check.read !== undefined ? { read: subst(c.check.read) } : {}),
+        }
   return {
     ...c,
     ...(c.command !== undefined ? { command: subst(c.command) } : {}),
+    ...(check !== undefined ? { check } : {}),
     expect: {
       ...c.expect,
       stdout: subst(c.expect.stdout),
       stderr: subst(c.expect.stderr),
+      ...(c.expect.check !== undefined ? { check: subst(c.expect.check) } : {}),
     },
   }
 }

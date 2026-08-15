@@ -12,12 +12,33 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { type PathSpec, record, ResourceName } from '@struktoai/mirage-core'
+import { type IndexCacheStore, type PathSpec, record, ResourceName } from '@struktoai/mirage-core'
 import { eisdir, enoent } from '@struktoai/mirage-core'
 import type { OPFSAccessor } from '../../accessor/opfs.ts'
 import { isNotFound, resolveFileHandle } from './utils.ts'
 
-export async function read(accessor: OPFSAccessor, path: PathSpec): Promise<Uint8Array> {
+/**
+ * Read a file, optionally only a byte range of it.
+ *
+ * `File` is a `Blob`, so `slice` bounds the window without materializing the
+ * whole file: only the sliced bytes are read off the origin-private store.
+ * `slice`'s end is exclusive, and it clamps past EOF rather than throwing,
+ * which is the POSIX answer the ops factory expects.
+ *
+ * Args:
+ *   accessor: OPFS accessor.
+ *   path: the path to read.
+ *   _index: unused; OPFS resolves the handle from the path itself.
+ *   options: `{offset, size}`, the byte window, or absent for the whole file.
+ */
+export async function read(
+  accessor: OPFSAccessor,
+  path: PathSpec,
+  _index?: IndexCacheStore,
+  options?: { offset?: number; size?: number },
+): Promise<Uint8Array> {
+  const offset = options?.offset ?? 0
+  const size = options?.size ?? null
   const root = accessor.rootHandle
   const start = performance.now()
   const virtual = path.mountPath
@@ -30,7 +51,11 @@ export async function read(accessor: OPFSAccessor, path: PathSpec): Promise<Uint
     throw err
   }
   const file = await handle.getFile()
-  const bytes = new Uint8Array(await file.arrayBuffer())
+  const window =
+    offset === 0 && size === null
+      ? file
+      : file.slice(offset, size === null ? undefined : offset + size)
+  const bytes = new Uint8Array(await window.arrayBuffer())
   record('read', virtual, ResourceName.OPFS, bytes.byteLength, start)
   return bytes
 }

@@ -155,7 +155,7 @@ describe('gdrive versioned reads', () => {
       readFileVersioned(STUB_TOKEN_MANAGER, 'f1', '/data/f.txt', 'f.txt'),
     )
     expect(new TextDecoder().decode(data)).toBe('pinned')
-    expect(versions.downloadRevision).toHaveBeenCalledWith(STUB_TOKEN_MANAGER, 'f1', 'r1')
+    expect(versions.downloadRevision).toHaveBeenCalledWith(STUB_TOKEN_MANAGER, 'f1', 'r1', null)
     expect(drive.downloadFile).not.toHaveBeenCalled()
   })
 

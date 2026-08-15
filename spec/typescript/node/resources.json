@@ -136,14 +136,6 @@
       "storage_id": false,
       "supports_snapshot": true
     },
-    "github_ci": {
-      "caches_reads": true,
-      "index_ttl": 86400,
-      "sizes_always_known": false,
-      "statfs": false,
-      "storage_id": false,
-      "supports_snapshot": false
-    },
     "gmail": {
       "caches_reads": true,
       "index_ttl": 86400,
@@ -439,6 +431,7 @@
         "is_mounted",
         "mkdir",
         "read_bytes",
+        "read_range",
         "read_stream",
         "readdir",
         "rename",
@@ -503,6 +496,7 @@
       "slots": [
         "is_mounted",
         "read_bytes",
+        "read_range",
         "read_stream",
         "readdir",
         "stat"
@@ -547,6 +541,7 @@
         "is_mounted",
         "mkdir",
         "read_bytes",
+        "read_range",
         "read_stream",
         "readdir",
         "rename",
@@ -607,6 +602,7 @@
         "is_mounted",
         "mkdir",
         "read_bytes",
+        "read_range",
         "read_stream",
         "readdir",
         "rename",
@@ -622,18 +618,6 @@
       "local": false,
       "max_du_entries": 10000,
       "max_glob_matches": 5000,
-      "slots": [
-        "is_mounted",
-        "read_bytes",
-        "read_stream",
-        "readdir",
-        "stat"
-      ]
-    },
-    "github_ci": {
-      "local": false,
-      "max_du_entries": 10000,
-      "max_glob_matches": 10000,
       "slots": [
         "is_mounted",
         "read_bytes",
@@ -858,6 +842,7 @@
         "is_mounted",
         "mkdir",
         "read_bytes",
+        "read_range",
         "read_stream",
         "readdir",
         "rename",
@@ -933,6 +918,7 @@
         "is_mounted",
         "mkdir",
         "read_bytes",
+        "read_range",
         "read_stream",
         "readdir",
         "rename",
@@ -984,6 +970,7 @@
         "is_mounted",
         "mkdir",
         "read_bytes",
+        "read_range",
         "read_stream",
         "readdir",
         "rename",
@@ -1002,6 +989,7 @@
       "slots": [
         "is_mounted",
         "read_bytes",
+        "read_range",
         "read_stream",
         "readdir",
         "stat"
@@ -1021,6 +1009,7 @@
         "is_mounted",
         "mkdir",
         "read_bytes",
+        "read_range",
         "read_stream",
         "readdir",
         "rename",
@@ -1059,7 +1048,6 @@
     "gdocs",
     "gdrive",
     "github",
-    "github_ci",
     "gmail",
     "gridfs",
     "gsheets",
@@ -1106,7 +1094,6 @@
     "gdocs",
     "gdrive",
     "github",
-    "github_ci",
     "gmail",
     "gridfs",
     "gsheets",

@@ -20,6 +20,7 @@ import { record, recordingActive, recordStream, revisionFor } from '../../observ
 import type { FindOptions } from '../../resource/base.ts'
 import { FileStat, FileType, PathSpec } from '../../types.ts'
 import { enoent, enotdir } from '../../utils/errors.ts'
+import { rangeHeader } from '../../utils/ranges.ts'
 import { guessType } from '../../utils/filetype.ts'
 import { rstripSlash, stripSlash } from '../../utils/slash.ts'
 import type { MsGraphConfigResolved } from './config.ts'
@@ -273,12 +274,6 @@ export async function writeItem(
   }
 }
 
-function rangeHeader(offset: number, size?: number): string | undefined {
-  if (offset === 0 && size === undefined) return undefined
-  const end = size === undefined ? '' : String(offset + size - 1)
-  return `bytes=${String(offset)}-${end}`
-}
-
 function entryStat(item: Record<string, unknown>): FileStat {
   const name = asString(item.name) ?? ''
   if (isFolder(item)) {
@@ -341,10 +336,10 @@ export async function readItem(
   label: string,
   backend: string,
   offset = 0,
-  size?: number,
+  size: number | null = null,
 ): Promise<Uint8Array> {
   const pinned = revisionFor(virtual)
-  const range = rangeHeader(offset, size)
+  const range = rangeHeader(offset, size) ?? undefined
   const startMs = performance.now()
   let fingerprint: string | null = null
   let revision: string | null = pinned

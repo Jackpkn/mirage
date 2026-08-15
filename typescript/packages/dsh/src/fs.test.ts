@@ -190,6 +190,54 @@ describe('reads', () => {
   })
 })
 
+describe('readBytes', () => {
+  it('returns raw bytes that readText refuses as binary', async () => {
+    const blob = new Uint8Array([104, 105, 0, 106])
+    const { fs } = await makeFs({ 'blob.bin': blob })
+    const target = await fs.resolve('/data/blob.bin')
+    expect(await fs.readBytes(target, undefined, 1024)).toEqual(blob)
+    expect(await errorCode(fs.readText(target))).toBe('FS_NOT_TEXT')
+  })
+
+  it('admits a file exactly at the cap', async () => {
+    const { fs } = await makeFs({ 'a.txt': 'hello' })
+    const bytes = await fs.readBytes(await fs.resolve('/data/a.txt'), undefined, 5)
+    expect(bytes.byteLength).toBe(5)
+  })
+
+  it('refuses a known over-cap size before fetching', async () => {
+    const { fs } = await makeFs({ 'a.txt': 'hello world' })
+    const target = await fs.resolve('/data/a.txt')
+    expect(await errorCode(fs.readBytes(target, undefined, 4))).toBe('FS_TOO_LARGE')
+  })
+
+  it('refuses an over-cap read the backend reported no size for', async () => {
+    const { fs } = await makeFs({ 'a.txt': 'hello world' })
+    const target = await fs.resolve('/data/a.txt')
+    const real = fs.stat.bind(fs)
+    // Most API mounts report size null, so the cap has to hold on the
+    // rendered length alone rather than truncating to it.
+    fs.stat = async (t, signal) => {
+      const info = await real(t, signal)
+      if (info === undefined) return undefined
+      return { version: info.version, type: info.type }
+    }
+    expect(await errorCode(fs.readBytes(target, undefined, 4))).toBe('FS_TOO_LARGE')
+  })
+
+  it('reports a missing file as FS_NOT_FOUND', async () => {
+    const { fs } = await makeFs()
+    const target = await fs.resolve('/data/nope')
+    expect(await errorCode(fs.readBytes(target, undefined, 1024))).toBe('FS_NOT_FOUND')
+  })
+
+  it('refuses a directory as FS_NOT_REGULAR_FILE', async () => {
+    const { fs } = await makeFs({ 'sub/a.txt': 'x' })
+    const target = await fs.resolve('/data/sub')
+    expect(await errorCode(fs.readBytes(target, undefined, 1024))).toBe('FS_NOT_REGULAR_FILE')
+  })
+})
+
 describe('listDir', () => {
   it('lists children sorted with types, sizes and resolvable targets', async () => {
     const { fs } = await makeFs({ 'b.txt': 'bee', 'sub/c.txt': 'cee' })

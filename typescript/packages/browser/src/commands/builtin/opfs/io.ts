@@ -12,7 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import type { CommandIO } from '@struktoai/mirage-core'
+import { type CommandIO, rangeOf } from '@struktoai/mirage-core'
 import type { OPFSAccessor } from '../../../accessor/opfs.ts'
 import { appendBytes as opfsAppend } from '../../../core/opfs/append.ts'
 import { SCOPE_ERROR } from '../../../core/opfs/constants.ts'
@@ -36,6 +36,7 @@ import { writeBytes as opfsWrite } from '../../../core/opfs/write.ts'
 export const OPFS_IO: CommandIO<OPFSAccessor> = {
   readdir: opfsReaddir,
   readBytes: opfsRead,
+  readRange: rangeOf(opfsRead),
   readStream: opfsStream,
   stat: opfsStat,
   isMounted: () => true,

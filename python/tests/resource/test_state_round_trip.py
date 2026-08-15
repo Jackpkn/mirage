@@ -243,8 +243,6 @@ REDACTION_CASES = [
     ("mirage.resource.trello", "TrelloResource", "TrelloConfig",
      dict(api_key="TRELLO-KEY-LEAK", api_token="TRELLO-TOKEN-LEAK"),
      ["TRELLO-KEY-LEAK", "TRELLO-TOKEN-LEAK"]),
-    ("mirage.resource.github_ci", "GitHubCIResource", "GitHubCIConfig",
-     dict(token="GHCI-TOKEN-LEAK", owner="o", repo="r"), ["GHCI-TOKEN-LEAK"]),
     ("mirage.resource.email", "EmailResource", "EmailConfig",
      dict(imap_host="h",
           smtp_host="h",

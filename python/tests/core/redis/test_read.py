@@ -113,3 +113,37 @@ async def test_read_bytes_normalizes_path():
     assert result == b"data"
     await s.clear()
     await s.close()
+
+
+@pytest.mark.asyncio
+async def test_read_bytes_window_uses_getrange(accessor):
+    """A window is sliced by redis, and the bounds are inclusive."""
+    spec = PathSpec(resource_path="hello.txt",
+                    virtual="/hello.txt",
+                    directory="/hello.txt")
+    assert await read_bytes(accessor, offset=6, size=5,
+                            path_spec=spec) == b"world"
+    assert await read_bytes(accessor, offset=6, size=None,
+                            path_spec=spec) == b"world"
+    assert await read_bytes(accessor, offset=0, size=5,
+                            path_spec=spec) == b"hello"
+
+
+@pytest.mark.asyncio
+async def test_read_bytes_window_past_eof_is_empty(accessor):
+    spec = PathSpec(resource_path="hello.txt",
+                    virtual="/hello.txt",
+                    directory="/hello.txt")
+    assert await read_bytes(accessor, offset=99, size=5, path_spec=spec) == b""
+
+
+@pytest.mark.asyncio
+async def test_read_bytes_window_on_a_missing_key_still_raises(accessor):
+    """GETRANGE answers "" for a missing key, so EXISTS decides absence."""
+    with pytest.raises(FileNotFoundError):
+        await read_bytes(accessor,
+                         PathSpec(resource_path="nope.txt",
+                                  virtual="/nope.txt",
+                                  directory="/nope.txt"),
+                         offset=1,
+                         size=2)

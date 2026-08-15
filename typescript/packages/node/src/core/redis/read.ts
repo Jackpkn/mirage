@@ -17,14 +17,29 @@ import { enoent } from '@struktoai/mirage-core'
 import type { RedisAccessor } from '../../accessor/redis.ts'
 import { norm } from './utils.ts'
 
+/**
+ * Read a file, optionally only a byte range of it.
+ *
+ * Args:
+ *   accessor: Redis accessor.
+ *   path: the path to read.
+ *   _index: unused; the key space is the listing.
+ *   options: `{offset, size}`, the byte window, or absent for the whole file.
+ */
 export async function read(
   accessor: RedisAccessor,
   path: PathSpec,
   _index?: IndexCacheStore,
+  options?: { offset?: number; size?: number },
 ): Promise<Uint8Array> {
+  const offset = options?.offset ?? 0
+  const size = options?.size ?? null
   const start = performance.now()
   const p = norm(path.mountPath)
-  const data = await accessor.store.getFile(p)
+  const data =
+    offset !== 0 || size !== null
+      ? await accessor.store.getFileRange(p, offset, size)
+      : await accessor.store.getFile(p)
   if (data === null) {
     throw enoent(path)
   }

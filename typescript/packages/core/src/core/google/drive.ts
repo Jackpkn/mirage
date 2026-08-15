@@ -216,9 +216,13 @@ export async function listAllFiles(
   return { files, complete }
 }
 
-export async function downloadFile(tm: TokenManager, fileId: string): Promise<Uint8Array> {
+export async function downloadFile(
+  tm: TokenManager,
+  fileId: string,
+  rangeHeader?: string | null,
+): Promise<Uint8Array> {
   const url = `${driveBase(tm)}/files/${fileId}?alt=media&supportsAllDrives=true`
-  return googleGetBytes(tm, url)
+  return googleGetBytes(tm, url, rangeHeader)
 }
 
 export async function deleteFile(tm: TokenManager, fileId: string): Promise<void> {

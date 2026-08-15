@@ -94,5 +94,10 @@ export function isUnsatisfiableRange(err: unknown): boolean {
   const { status, code, message } = errorFields(err)
   if (status === 416) return true
   if (code !== undefined && UNSATISFIABLE_CODES.has(code)) return true
-  return /range not satisfiable/i.test(message)
+  if (/range not satisfiable/i.test(message)) return true
+  // A reader that seeks rather than sending a header (OpenDAL's file object,
+  // which hf and nextcloud both open) raises from the seek itself instead of
+  // surfacing a status. Same condition, so it is matched here rather than
+  // guarded in each of those backends.
+  return /seek/i.test(message) && /beyond the end/i.test(message)
 }

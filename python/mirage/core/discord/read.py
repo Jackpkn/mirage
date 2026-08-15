@@ -22,6 +22,7 @@ from mirage.core.discord.render import member_json_bytes
 from mirage.types import PathSpec
 from mirage.utils.errors import enoent
 from mirage.utils.key_prefix import mount_key, mount_prefix_of
+from mirage.utils.ranges import range_header, slice_window
 
 
 async def _ensure_channel(
@@ -41,7 +42,23 @@ async def read(
     accessor: DiscordAccessor,
     path: PathSpec,
     index: IndexCacheStore = NULL_INDEX,
+    offset: int = 0,
+    size: int | None = None,
 ) -> bytes:
+    """Read a Discord path, optionally only a byte range of it.
+
+    Only an attachment has a remote range to ask for. A channel's
+    history and a member profile are rendered here into JSON, so their
+    bytes do not exist until we make them and the window can only be
+    taken afterwards.
+
+    Args:
+        accessor (DiscordAccessor): Discord accessor.
+        path (PathSpec): the path to read.
+        index (IndexCacheStore): listing cache, consulted for the entry.
+        offset (int): first byte to read.
+        size (int | None): how many bytes, or None for the rest.
+    """
     virtual = path.virtual if isinstance(path, PathSpec) else path
     prefix = mount_prefix_of(path.virtual, path.resource_path)
     key = path.resource_path
@@ -52,8 +69,9 @@ async def read(
             and parts[4] == "chat.jsonl"):
         ch_key = f"{parts[0]}/{parts[1]}/{parts[2]}"
         ch_lookup = await _ensure_channel(index, prefix, ch_key, virtual)
-        return await get_history_jsonl(accessor.config, ch_lookup.entry.id,
-                                       parts[3])
+        history = await get_history_jsonl(accessor.config, ch_lookup.entry.id,
+                                          parts[3])
+        return slice_window(history, offset, size)
 
     # <guild>/channels/<ch>/<date>/files/<blob>
     if (len(parts) == 6 and parts[1] == "channels" and parts[4] == "files"):
@@ -76,7 +94,7 @@ async def read(
                                      or {}).get("proxy_url") or ""
         if not url:
             raise enoent(virtual)
-        return await download_file(url)
+        return await download_file(url, range_header(offset, size))
 
     # <guild>/members/<user>.json
     if len(parts) == 3 and parts[1] == "members":
@@ -92,7 +110,7 @@ async def read(
         for m in members:
             user = m.get("user", {})
             if user.get("id") == entry_lookup.entry.id:
-                return member_json_bytes(m)
+                return slice_window(member_json_bytes(m), offset, size)
         raise enoent(virtual)
 
     raise enoent(virtual)

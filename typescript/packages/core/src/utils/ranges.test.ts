@@ -102,6 +102,18 @@ describe('isUnsatisfiableRange', () => {
     expect(isUnsatisfiableRange(new Error('416 Range Not Satisfiable'))).toBe(true)
   })
 
+  it('recognizes the seek a reader without a header raises', () => {
+    // hf and nextcloud open an OpenDAL file object and seek, so a window
+    // past EOF surfaces as the seek failing rather than as a status.
+    expect(
+      isUnsatisfiableRange(new Error('invalid seek to a position beyond the end of the range')),
+    ).toBe(true)
+  })
+
+  it('does not swallow an ordinary seek failure', () => {
+    expect(isUnsatisfiableRange(new Error('invalid seek: bad whence'))).toBe(false)
+  })
+
   it('does not swallow a real failure', () => {
     // Anything broader here would turn a missing object or a denied request
     // into a silent empty read, which is the bug this guards against.

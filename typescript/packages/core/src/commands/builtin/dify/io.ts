@@ -16,7 +16,7 @@ import type { DifyAccessor } from '../../../accessor/dify.ts'
 import { readBytes as difyRead, readStream as difyStream } from '../../../core/dify/read.ts'
 import { readdir as difyReaddir } from '../../../core/dify/readdir.ts'
 import { stat as difyStat } from '../../../core/dify/stat.ts'
-import type { CommandIO } from '../generic_bind/index.ts'
+import { type CommandIO, rangeOf } from '../generic_bind/index.ts'
 
 // Dify is read-only, so no write op is wired and the generic byte-mutation
 // commands are intentionally absent. stat is the full document-detail stat;
@@ -27,6 +27,7 @@ import type { CommandIO } from '../generic_bind/index.ts'
 export const DIFY_IO: CommandIO<DifyAccessor> = {
   readdir: difyReaddir,
   readBytes: difyRead,
+  readRange: rangeOf(difyRead),
   readStream: difyStream,
   stat: difyStat,
   isMounted: () => true,

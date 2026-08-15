@@ -36,8 +36,10 @@ export function fileBlobName(att: DiscordAttachment): string {
   return `${pathSafeName(rawName)}__${aid}`
 }
 
-export async function downloadFile(url: string): Promise<Uint8Array> {
-  const resp = await globalThis.fetch(url, { method: 'GET' })
+export async function downloadFile(url: string, rangeHeader?: string | null): Promise<Uint8Array> {
+  const headers: Record<string, string> = {}
+  if (rangeHeader != null && rangeHeader !== '') headers.Range = rangeHeader
+  const resp = await globalThis.fetch(url, { method: 'GET', headers })
   if (!resp.ok) {
     throw new Error(`discord download_file failed: ${String(resp.status)} ${resp.statusText}`)
   }

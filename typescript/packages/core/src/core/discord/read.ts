@@ -22,6 +22,7 @@ import { listMembers } from './members.ts'
 import { readdir as discordReaddir } from './readdir.ts'
 import { memberJsonBytes } from './render.ts'
 import { stripSlash } from '../../utils/slash.ts'
+import { rangeHeader, sliceWindow } from '../../utils/ranges.ts'
 
 function fileNotFound(key: string): Error {
   const e = new Error(`ENOENT: ${key}`) as Error & { code: string }
@@ -29,11 +30,27 @@ function fileNotFound(key: string): Error {
   return e
 }
 
+/**
+ * Read a Discord path, optionally only a byte range of it.
+ *
+ * Only an attachment has a remote range to ask for. A channel's history and
+ * a member profile are rendered here into JSON, so their bytes do not exist
+ * until we make them and the window can only be taken afterwards.
+ *
+ * Args:
+ *   accessor: Discord accessor.
+ *   path: the path to read.
+ *   index: listing cache, consulted for the entry.
+ *   options: `{offset, size}`, the byte window, or absent for the whole file.
+ */
 export async function read(
   accessor: DiscordAccessor,
   path: PathSpec,
   index?: IndexCacheStore,
+  options?: { offset?: number; size?: number },
 ): Promise<Uint8Array> {
+  const offset = options?.offset ?? 0
+  const size = options?.size ?? null
   const prefix = mountPrefixOf(path.virtual, path.resourcePath)
   let raw = path.virtual
   if (prefix !== '' && raw.startsWith(prefix)) {
@@ -55,7 +72,7 @@ export async function read(
     const chKey = `${parts[0]}/${parts[1]}/${parts[2]}`
     const chLookup = await index.get(`${prefix}/${chKey}`)
     if (chLookup.entry === undefined || chLookup.entry === null) throw fileNotFound(key)
-    return await getHistoryJsonl(accessor, chLookup.entry.id, parts[3])
+    return sliceWindow(await getHistoryJsonl(accessor, chLookup.entry.id, parts[3]), offset, size)
   }
 
   // <guild>/channels/<ch>/<date>/files/<blob>
@@ -87,7 +104,7 @@ export async function read(
           ? extra.proxy_url
           : ''
     if (url === '') throw fileNotFound(key)
-    return await downloadFile(url)
+    return await downloadFile(url, rangeHeader(offset, size))
   }
 
   // <guild>/members/<user>.json
@@ -106,7 +123,7 @@ export async function read(
     const members = await listMembers(accessor, guildLookup.entry.id)
     for (const m of members) {
       if (m.user?.id === lookup.entry.id) {
-        return memberJsonBytes(m)
+        return sliceWindow(memberJsonBytes(m), offset, size)
       }
     }
     throw fileNotFound(key)

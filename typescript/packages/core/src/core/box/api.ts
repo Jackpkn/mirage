@@ -90,8 +90,12 @@ export async function getFolderInfo(tm: BoxTokenManager, folderId: string): Prom
   return (await boxGet(tm, `${tm.apiBase}/folders/${folderId}`)) as BoxItem
 }
 
-export async function downloadFile(tm: BoxTokenManager, fileId: string): Promise<Uint8Array> {
-  return boxGetBytes(tm, `${tm.apiBase}/files/${fileId}/content`)
+export async function downloadFile(
+  tm: BoxTokenManager,
+  fileId: string,
+  rangeHeader?: string | null,
+): Promise<Uint8Array> {
+  return boxGetBytes(tm, `${tm.apiBase}/files/${fileId}/content`, undefined, rangeHeader)
 }
 
 export async function* downloadFileStream(

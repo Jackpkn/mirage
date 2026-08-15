@@ -1,10 +1,11 @@
 import type { OneDriveAccessor } from '../../../accessor/onedrive.ts'
 import * as drive from '../../../core/onedrive/index.ts'
-import type { CommandIO } from '../generic_bind/index.ts'
+import { type CommandIO, rangeOf } from '../generic_bind/index.ts'
 
 export const ONEDRIVE_IO: CommandIO<OneDriveAccessor> = {
   readdir: drive.readdir,
   readBytes: drive.read,
+  readRange: rangeOf(drive.read),
   readStream: drive.stream,
   stat: drive.stat,
   isMounted: () => true,
