@@ -19,10 +19,11 @@
 //
 // So do not add a name because something inside the repo wants it; that
 // something should name the module instead, and check_barrel_surface.py
-// fails the build when it does not. The same gate reports a line here
-// that no consumer imports -- the rule the 1500-line version of this file
-// never had. It is a repo-root script rather than knip because knip's
-// project root is typescript/, which leaves the consumers out of view.
+// fails the build when it does not. The same gate holds this list to its
+// consumers in both directions -- a line nothing imports, and an import of
+// a name no line carries -- which the 1500-line version of this file never
+// did. It is a repo-root script rather than knip because knip's project
+// root is typescript/, which leaves the consumers out of view.
 
 export { defaultFingerprint } from './cache/file/utils.ts'
 export { IndexEntry } from './cache/index/config.ts'
@@ -38,13 +39,9 @@ export { SLACK } from './commands/cli/builtin/slack/index.ts'
 export { CLISpec } from './commands/cli/types.ts'
 export type { CLIInvocation } from './commands/cli/types.ts'
 export { command } from './commands/config.ts'
-export type { CommandFnResult } from './commands/config.ts'
+export type { CommandFnResult, CommandOpts } from './commands/config.ts'
 export { Operand, SPECS, specOf } from './commands/spec/index.ts'
-export type { DiscordConfig } from './core/discord/config.ts'
-export type { LinearConfig } from './core/linear/config.ts'
 export { MemoryOAuthClientProvider } from './core/notion/_oauth.ts'
-export type { NotionConfig } from './core/notion/config.ts'
-export type { SlackConfig } from './core/slack/config.ts'
 export { IOResult } from './io/types.ts'
 export { OpsRegistry } from './ops/registry.ts'
 export type {

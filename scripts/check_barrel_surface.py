@@ -92,11 +92,14 @@ def own_exports(pkg: str) -> set[str]:
     """
     src = (TS / f"packages/{pkg}/src/index.ts").read_text()
     names: set[str] = set()
+    # Any module but the bare barrel supplies the name itself, core subpaths
+    # included: only the `export * from core` line draws on index.ts, so a
+    # name spelled out beside it is this package's own regardless of origin.
     for m in BLOCK_RE.finditer(src):
-        if m.group(3).startswith("."):
+        if m.group(3) != CORE_PKG:
             names |= set(specifier_names(m.group(2), "public"))
     for m in NAMESPACE_RE.finditer(src):
-        if m.group(2).startswith("."):
+        if m.group(2) != CORE_PKG:
             names.add(m.group(1))
     return names
 
@@ -184,6 +187,18 @@ def main() -> int:
             f"this: its project root is typescript/, which leaves the "
             f"barrel's real consumers outside its graph.\n  " +
             "\n  ".join(unused))
+
+    # The other direction, which tsc only half covers: it reads examples and
+    # integ, but a name in a docs page is prose to it. A consumer asking for
+    # a name the barrel does not carry is the failure a shrunken index.ts
+    # invites, so the gate owns both halves rather than one.
+    missing = sorted(used - declared)
+    if missing:
+        failures.append(
+            f"{len(missing)} name(s) imported from {CORE_PKG} by a consumer "
+            f"under {', '.join(CONSUMER_ROOTS)} are not exported by "
+            f"packages/core/src/index.ts. Add the line, or point the consumer "
+            f"at the module that declares it.\n  " + "\n  ".join(missing))
 
     if failures:
         print("\n\n".join(failures), file=sys.stderr)
