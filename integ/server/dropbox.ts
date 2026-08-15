@@ -12,6 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import { createHash } from 'node:crypto'
 import {
   createServer,
   type IncomingMessage,
@@ -38,6 +39,8 @@ interface DropboxEntryJson {
   path_display: string
   size?: number
   server_modified?: string
+  rev?: string
+  content_hash?: string
 }
 
 interface SearchMatchJson {
@@ -96,6 +99,7 @@ class Account {
   readonly folders = new Set<string>()
   readonly files = new Map<string, StoredFile>()
   readonly searchCursors = new Map<string, { matches: SearchMatchJson[]; start: number; limit: number }>()
+  readonly listCursors = new Map<string, DropboxEntryJson[]>()
 
   addAncestors(path: string): void {
     const parts = path.split('/').slice(1, -1)
@@ -109,6 +113,12 @@ class Account {
   entryFor(path: string): DropboxEntryJson | null {
     const stored = this.files.get(path)
     if (stored !== undefined) {
+      // Real Dropbox derives content_hash from a SHA-256 over 4 MiB
+      // block digests; the fake hashes the whole content instead, which
+      // is opaque to a client that only ever compares it for equality,
+      // and keeps the property that matters: identical bytes hash
+      // identically.
+      const digest = createHash('sha256').update(stored.data).digest('hex')
       return {
         '.tag': 'file',
         id: `id:${path}`,
@@ -117,6 +127,8 @@ class Account {
         path_display: path,
         size: stored.data.length,
         server_modified: stored.modified,
+        rev: digest.slice(0, 16),
+        content_hash: digest,
       }
     }
     if (this.folders.has(path)) {
@@ -131,18 +143,37 @@ class Account {
     return null
   }
 
-  listChildren(path: string): DropboxEntryJson[] | null {
+  listChildren(path: string, recursive = false): DropboxEntryJson[] | null {
     if (path !== '' && !this.folders.has(path)) return null
+    const prefix = `${path}/`
+    const under = (candidate: string): boolean =>
+      recursive ? candidate.startsWith(prefix) : candidate.slice(0, candidate.lastIndexOf('/')) === path
     const out: DropboxEntryJson[] = []
     for (const folder of this.folders) {
-      if (folder.slice(0, folder.lastIndexOf('/')) !== path) continue
-      out.push(this.entryFor(folder) as DropboxEntryJson)
+      if (under(folder)) out.push(this.entryFor(folder) as DropboxEntryJson)
     }
     for (const file of this.files.keys()) {
-      if (file.slice(0, file.lastIndexOf('/')) !== path) continue
-      out.push(this.entryFor(file) as DropboxEntryJson)
+      if (under(file)) out.push(this.entryFor(file) as DropboxEntryJson)
     }
-    return out.sort((a, b) => (a.name < b.name ? -1 : 1))
+    // A recursive listing is ordered parent-before-child, which is what
+    // real Dropbox guarantees and what a consumer building a tree from
+    // the stream relies on.
+    const key = recursive ? 'path_display' : 'name'
+    return out.sort((a, b) => ((a[key] ?? '') < (b[key] ?? '') ? -1 : 1))
+  }
+
+  // Real list_folder always returns a cursor and pages on `limit`, so
+  // the fake does too: a client that ignores `has_more` sees a short
+  // listing, which is the bug the pagination loop exists to avoid.
+  listPage(
+    entries: DropboxEntryJson[],
+    limit: number,
+  ): { entries: DropboxEntryJson[]; cursor: string; has_more: boolean } {
+    const head = entries.slice(0, limit)
+    const tail = entries.slice(limit)
+    const token = `cursor-${this.listCursors.size}`
+    this.listCursors.set(token, tail)
+    return { entries: head, cursor: token, has_more: tail.length > 0 }
   }
 
   // Removes a file, or a folder plus its subtree (delete_v2 semantics).
@@ -223,13 +254,32 @@ function handle(
     return
   }
   if (url === '/2/files/list_folder') {
-    const { path = '' } = JSON.parse(body.toString('utf8') || '{}') as { path?: string }
-    const entries = account.listChildren(path)
+    const {
+      path = '',
+      recursive = false,
+      limit = 2000,
+    } = JSON.parse(body.toString('utf8') || '{}') as {
+      path?: string
+      recursive?: boolean
+      limit?: number
+    }
+    const entries = account.listChildren(path, recursive)
     if (entries === null) {
       jsonError(res, 'path/not_found/...')
       return
     }
-    json(res, { entries, cursor: 'cursor-0', has_more: false })
+    json(res, account.listPage(entries, limit))
+    return
+  }
+  if (url === '/2/files/list_folder/continue') {
+    const { cursor = '' } = JSON.parse(body.toString('utf8') || '{}') as { cursor?: string }
+    const rest = account.listCursors.get(cursor)
+    if (rest === undefined) {
+      jsonError(res, 'reset/...')
+      return
+    }
+    account.listCursors.delete(cursor)
+    json(res, account.listPage(rest, 2000))
     return
   }
   if (url === '/2/files/get_metadata') {

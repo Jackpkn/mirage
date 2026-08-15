@@ -13,6 +13,7 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 from mirage.accessor.base import Accessor
+from mirage.core.github.tree_entry import TreeEntry
 
 
 class GitHubAccessor(Accessor):
@@ -23,10 +24,18 @@ class GitHubAccessor(Accessor):
                  repo,
                  ref,
                  default_branch,
+                 tree: dict[str, TreeEntry] | None = None,
                  truncated=False):
         self.config = config
         self.owner = owner
         self.repo = repo
         self.ref = ref
         self.default_branch = default_branch
+        # The recursive git tree, keyed repo-relative with no leading
+        # slash, which is this mount's whole listing. find, du and grep's
+        # scope counter read it straight, the way TypeScript's always
+        # have: repo-relative path logic belongs on a git tree, not on an
+        # index whose keys are the mount's business. Reseated by every
+        # refill, so it is as fresh as the last one.
+        self.tree: dict[str, TreeEntry] = tree if tree is not None else {}
         self.truncated = truncated

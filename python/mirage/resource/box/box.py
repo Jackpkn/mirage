@@ -20,12 +20,14 @@ from mirage.commands.builtin.box import COMMANDS as BOX_COMMANDS
 from mirage.core.box._client import BoxTokenManager
 from mirage.core.box.config import BoxConfig
 from mirage.core.box.readdir import readdir
+from mirage.core.box.watch import build_delta_hook
 from mirage.ops.box import OPS as BOX_OPS
 from mirage.resource.base import BaseResource
 from mirage.resource.box.prompt import PROMPT
 from mirage.types import PathSpec, ResourceName
 from mirage.utils.glob_walk import make_resolve_glob
 from mirage.utils.key_prefix import mount_key
+from mirage.watch.base import DeltaHook
 
 _resolve_glob = make_resolve_glob(readdir)
 
@@ -50,6 +52,9 @@ class BoxResource(BaseResource):
             self.register(fn)
         for op in BOX_OPS:
             self.register_op(op)
+
+    def delta_hook(self) -> DeltaHook:
+        return build_delta_hook(self.accessor)
 
     async def resolve_glob(self, paths, prefix: str = ""):
         if prefix:

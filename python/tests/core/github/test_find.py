@@ -16,34 +16,32 @@ from datetime import datetime, timezone
 
 import pytest
 
-from mirage.cache.index import IndexCacheStore, IndexEntry
-from mirage.cache.index.ram import RAMIndexCacheStore
+from mirage.accessor.github import GitHubAccessor
 from mirage.core.github.find import find
+from mirage.core.github.tree_entry import TreeEntry
 from mirage.types import PathSpec
 from mirage.utils.key_prefix import mount_key
 
 
-def _index() -> RAMIndexCacheStore:
-    index = RAMIndexCacheStore()
-    index._entries.update({
-        "/src":
-        IndexEntry(id="a", name="src", resource_type="folder", size=None),
-        "/src/main.py":
-        IndexEntry(id="b", name="main.py", resource_type="file", size=120),
-        "/src/utils":
-        IndexEntry(id="c", name="utils", resource_type="folder", size=None),
-        "/src/utils/helpers.py":
-        IndexEntry(id="d", name="helpers.py", resource_type="file", size=80),
-        "/README.md":
-        IndexEntry(id="e", name="README.md", resource_type="file", size=50),
-    })
-    return index
+def _accessor() -> GitHubAccessor:
+    """A mount whose git tree holds the fixture repository.
 
-
-class EntryOnlyIndex(IndexCacheStore):
-
-    async def entries(self) -> dict[str, IndexEntry]:
-        return await _index().entries()
+    find reads the tree, not the index: the tree keys are repo-relative,
+    which is the space find compares in.
+    """
+    tree = {
+        "src":
+        TreeEntry(path="src", type="tree", sha="a", size=None),
+        "src/main.py":
+        TreeEntry(path="src/main.py", type="blob", sha="b", size=120),
+        "src/utils":
+        TreeEntry(path="src/utils", type="tree", sha="c", size=None),
+        "src/utils/helpers.py":
+        TreeEntry(path="src/utils/helpers.py", type="blob", sha="d", size=80),
+        "README.md":
+        TreeEntry(path="README.md", type="blob", sha="e", size=50),
+    }
+    return GitHubAccessor(None, "acme", "proj", "main", "main", tree=tree)
 
 
 def _spec(path: str, prefix: str = "") -> PathSpec:
@@ -54,7 +52,7 @@ def _spec(path: str, prefix: str = "") -> PathSpec:
 
 @pytest.mark.asyncio
 async def test_find_all_from_root():
-    results = await find(None, _spec("/"), index=_index())
+    results = await find(_accessor(), _spec("/"))
     assert results == [
         "/", "/README.md", "/src", "/src/main.py", "/src/utils",
         "/src/utils/helpers.py"
@@ -62,47 +60,40 @@ async def test_find_all_from_root():
 
 
 @pytest.mark.asyncio
-async def test_find_uses_store_interface_not_ram_implementation():
-    results = await find(None, _spec("/"), index=EntryOnlyIndex())
-    assert "/src/main.py" in results
-
-
-@pytest.mark.asyncio
 async def test_find_name_pattern():
-    results = await find(None, _spec("/"), name="*.py", index=_index())
+    results = await find(_accessor(), _spec("/"), name="*.py")
     assert results == ["/src/main.py", "/src/utils/helpers.py"]
 
 
 @pytest.mark.asyncio
 async def test_find_type_directory():
-    results = await find(None, _spec("/src"), type="d", index=_index())
+    results = await find(_accessor(), _spec("/src"), type="d")
     assert results == ["/src", "/src/utils"]
 
 
 @pytest.mark.asyncio
 async def test_find_type_file_under_subdir():
-    results = await find(None, _spec("/src"), type="f", index=_index())
+    results = await find(_accessor(), _spec("/src"), type="f")
     assert results == ["/src/main.py", "/src/utils/helpers.py"]
 
 
 @pytest.mark.asyncio
 async def test_find_maxdepth():
-    results = await find(None, _spec("/src"), maxdepth=1, index=_index())
+    results = await find(_accessor(), _spec("/src"), maxdepth=1)
     assert results == ["/src", "/src/main.py", "/src/utils"]
 
 
 @pytest.mark.asyncio
 async def test_find_mindepth():
-    results = await find(None, _spec("/src"), mindepth=2, index=_index())
+    results = await find(_accessor(), _spec("/src"), mindepth=2)
     assert results == ["/src/utils/helpers.py"]
 
 
 @pytest.mark.asyncio
 async def test_find_strips_mount_prefix():
-    results = await find(None,
+    results = await find(_accessor(),
                          _spec("/github/src", prefix="/github"),
-                         type="f",
-                         index=_index())
+                         type="f")
     assert results == ["/src/main.py", "/src/utils/helpers.py"]
 
 
@@ -110,58 +101,51 @@ async def test_find_strips_mount_prefix():
 async def test_find_size_filters():
     # Directories contribute size 0 to -size, so the root is excluded
     # under a positive minimum (#318).
-    results = await find(None, _spec("/"), min_size=100, index=_index())
+    results = await find(_accessor(), _spec("/"), min_size=100)
     assert results == ["/src/main.py"]
 
 
 @pytest.mark.asyncio
 async def test_find_file_start_path():
-    results = await find(None, _spec("/src/main.py"), index=_index())
+    results = await find(_accessor(), _spec("/src/main.py"))
     assert results == ["/src/main.py"]
 
 
 @pytest.mark.asyncio
 async def test_find_size_filters_file_start():
-    too_big = await find(None,
-                         _spec("/src/main.py"),
-                         max_size=50,
-                         index=_index())
+    too_big = await find(_accessor(), _spec("/src/main.py"), max_size=50)
     assert too_big == []
-    big_enough = await find(None,
-                            _spec("/src/main.py"),
-                            min_size=100,
-                            index=_index())
+    big_enough = await find(_accessor(), _spec("/src/main.py"), min_size=100)
     assert big_enough == ["/src/main.py"]
 
 
 @pytest.mark.asyncio
-async def test_find_mtime_filters_unknown_and_out_of_window_entries():
-    index = _index()
-    index._entries["/src/main.py"] = index._entries["/src/main.py"].model_copy(
-        update={"remote_time": "2026-07-15T12:00:00+00:00"})
-
+async def test_find_mtime_excludes_every_entry_a_git_tree_has_no_times():
+    # A git tree carries no timestamps, so every entry's mtime is unknown
+    # and -mtime excludes it. This was already true through the index,
+    # which nothing ever gave a remote_time.
     results = await find(
-        None,
+        _accessor(),
         _spec("/"),
         mtime_min=datetime(2026, 7, 15, tzinfo=timezone.utc).timestamp(),
         mtime_max=datetime(2026, 7, 16, tzinfo=timezone.utc).timestamp(),
-        index=index,
     )
 
-    assert results == ["/src/main.py"]
+    assert results == []
 
 
 @pytest.mark.asyncio
 async def test_find_empty_matches_empty_files_and_directories():
-    index = _index()
-    index._entries["/empty.txt"] = IndexEntry(id="empty-file",
-                                              name="empty.txt",
-                                              resource_type="file",
-                                              size=0)
-    index._entries["/empty-dir"] = IndexEntry(id="empty-dir",
-                                              name="empty-dir",
-                                              resource_type="folder")
+    accessor = _accessor()
+    accessor.tree["empty.txt"] = TreeEntry(path="empty.txt",
+                                           type="blob",
+                                           sha="empty-file",
+                                           size=0)
+    accessor.tree["empty-dir"] = TreeEntry(path="empty-dir",
+                                           type="tree",
+                                           sha="empty-dir",
+                                           size=None)
 
-    results = await find(None, _spec("/"), empty=True, index=index)
+    results = await find(accessor, _spec("/"), empty=True)
 
     assert results == ["/empty-dir", "/empty.txt"]

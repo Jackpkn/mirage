@@ -29,19 +29,13 @@ async def stat(accessor,
                index: IndexCacheStore = NULL_INDEX) -> FileStat:
     virtual = path_spec.virtual
     prefix = mount_prefix_of(path_spec.virtual, path_spec.resource_path)
-    path = path_spec.virtual
-
-    if prefix and path.startswith(prefix):
-        rest = path[len(prefix):]
-        if prefix.endswith("/") or rest == "" or rest.startswith("/"):
-            path = rest or "/"
-    if path == "/" or path == "":
+    rel = path_spec.mount_path.strip("/")
+    if not rel:
         return FileStat(name="/", type=FileType.DIRECTORY)
-    key = "/" + path.strip("/") if path.strip("/") else "/"
+    key = prefix + "/" + rel if prefix else "/" + rel
     result = await index.get(key)
     if result.entry is None:
-        parent_idx = key.rsplit("/", 1)[0] or "/"
-        parent_path = (prefix + parent_idx) if prefix else parent_idx
+        parent_path = key.rsplit("/", 1)[0] or "/"
         try:
             await _readdir(
                 accessor,

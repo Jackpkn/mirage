@@ -29,6 +29,8 @@ import { PathSpec, ResourceName } from '@struktoai/mirage-core/types'
 import type { FileStat } from '@struktoai/mirage-core/types'
 import { mountKey, mountPrefixOf } from '@struktoai/mirage-core/utils/key_prefix'
 import { redactBoxConfig, type BoxConfig, type BoxConfigRedacted } from './config.ts'
+import { buildDeltaHook } from '@struktoai/mirage-core/core/box/watch'
+import { type DeltaHook } from '@struktoai/mirage-core/watch/index'
 
 const boxResolveGlob = makeResolveGlob(boxReaddir)
 
@@ -103,6 +105,10 @@ export class BoxResource extends BaseResource implements Resource {
           )
         : paths
     return boxResolveGlob(this.accessor, effective, this.index)
+  }
+
+  deltaHook(): DeltaHook {
+    return buildDeltaHook(this.accessor)
   }
 
   override getState(): Promise<BoxResourceState> {

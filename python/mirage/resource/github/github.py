@@ -12,20 +12,20 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from mirage.accessor.github import GitHubAccessor
-from mirage.cache.index import IndexConfig
 from mirage.core.github.config import GitHubConfig
 from mirage.core.github.readdir import readdir
 from mirage.core.github.repo import fetch_default_branch
-from mirage.core.github.tree import fetch_tree, index_rows
+from mirage.core.github.tree import fetch_tree
 from mirage.core.github.tree_entry import TreeEntry
+from mirage.core.github.watch import build_delta_hook
 from mirage.resource.base import BaseResource
 from mirage.resource.github.prompt import PROMPT
 from mirage.types import ResourceName
 from mirage.utils.glob_walk import make_resolve_glob
+from mirage.watch.base import DeltaHook
 
 _resolve_glob = make_resolve_glob(readdir)
 
@@ -73,14 +73,14 @@ class GitHubResource(BaseResource):
             truncated (bool): whether GitHub truncated that tree, in
                 which case readdir falls back to per-directory fetches.
         """
-        super().__init__()
         self.accessor = GitHubAccessor(config,
                                        owner,
                                        repo,
                                        ref,
                                        default_branch,
+                                       tree=tree,
                                        truncated=truncated)
-        self._populate_index(tree)
+        super().__init__()
         from mirage.commands.builtin.github import COMMANDS as _github_cmds
         from mirage.ops.github import OPS as _github_vfs_ops
 
@@ -138,23 +138,8 @@ class GitHubResource(BaseResource):
                    tree,
                    truncated=truncated)
 
-    def _populate_index(self, tree: dict[str, TreeEntry]) -> None:
-        entries, children = index_rows(tree)
-        self._github_index_entries = entries
-        self._github_index_children = children
-        self._github_index_expiry = (datetime.now(timezone.utc) +
-                                     timedelta(days=365))
-        self._seed_github_index()
-
-    def _seed_github_index(self) -> None:
-        self._index.seed(self._github_index_entries,
-                         self._github_index_children,
-                         self._github_index_expiry)
-
-    def set_index(self, config: IndexConfig | None = None) -> None:
-        super().set_index(config)
-        if hasattr(self, "_github_index_entries"):
-            self._seed_github_index()
+    def delta_hook(self) -> DeltaHook:
+        return build_delta_hook(self.accessor)
 
     async def resolve_glob(self, paths, prefix: str = ""):
         return await _resolve_glob(self.accessor, paths, self._index)

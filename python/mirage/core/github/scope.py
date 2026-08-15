@@ -12,7 +12,7 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from mirage.cache.index import IndexEntry
+from mirage.core.github.tree_entry import TreeEntry
 from mirage.types import PathSpec
 from mirage.utils.key_prefix import mount_prefix_of
 
@@ -45,24 +45,26 @@ def is_repo_root(key: str) -> bool:
     return key in ("", "/")
 
 
-def count_scope_files(entries: dict[str, IndexEntry], key: str) -> int:
-    """Count indexed files under a repo-relative scope key.
+def count_scope_files(tree: dict[str, TreeEntry], key: str) -> int:
+    """Count files under a repo-relative scope key.
+
+    Counted off the git tree rather than the index, mirroring
+    TypeScript's: the tree keys are repo-relative with no leading slash,
+    which is the space ``key`` is already in.
 
     Args:
-        entries (dict[str, IndexEntry]): Index entries keyed by repo-relative
-            path with a leading slash.
+        tree (dict[str, TreeEntry]): The recursive git tree.
         key (str): Repo-relative scope key from :func:`scope_relative_key`.
 
     Returns:
         int: Number of file entries at or below the scope.
     """
     if is_repo_root(key):
-        return sum(1 for e in entries.values() if e.resource_type == "file")
-    norm = "/" + key.strip("/")
+        return sum(1 for e in tree.values() if e.type == "blob")
+    norm = key.strip("/")
     prefix = norm + "/"
-    return sum(
-        1 for p, e in entries.items()
-        if e.resource_type == "file" and (p == norm or p.startswith(prefix)))
+    return sum(1 for p, e in tree.items()
+               if e.type == "blob" and (p == norm or p.startswith(prefix)))
 
 
 def should_use_search(

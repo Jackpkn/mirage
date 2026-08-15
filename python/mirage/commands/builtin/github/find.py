@@ -51,9 +51,7 @@ async def find(
     return await find_generic(paths,
                               texts,
                               opts,
-                              find_core=partial(find_core,
-                                                accessor,
-                                                index=opts.index),
+                              find_core=partial(find_core, accessor),
                               stat=partial(stat_core,
                                            accessor,
                                            index=opts.index))

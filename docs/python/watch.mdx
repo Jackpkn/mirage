@@ -111,8 +111,10 @@ is [`examples/python/nextcloud/watch.py`](https://github.com/strukto-ai/mirage/b
 
 ## Pull Mode
 
-Backends that implement `delta_hook()` (Nextcloud today) answer one question:
-*what changed under this root since the last checkpoint?* A baseline pull
+Backends that implement `delta_hook()` answer one question:
+*what changed under this root since the last checkpoint?* Eleven resource
+families ship one today, listed in the [Watch Matrix](/python/watch-matrix)
+with the fingerprint each one compares on. A baseline pull
 (`checkpoint=None`) emits nothing; every later pull diffs against the
 checkpoint you hand back. The whole consumer poller is:
 
@@ -126,6 +128,11 @@ while True:
         await ws.notify(event)
     await asyncio.sleep(30)
 ```
+
+A runnable version needing no credentials is
+[`examples/python/disk/watch.py`](https://github.com/strukto-ai/mirage/blob/main/examples/python/disk/watch.py):
+it writes to the mount's directory behind mirage's back, pulls the diff, and
+reads the changed file back through the workspace.
 
 Pull is self-healing: it diffs current backend state against your checkpoint,
 so events missed while your service was down surface on the next pull. A
@@ -180,7 +187,7 @@ loops end cleanly) and the workspace returns to its idle state; the next
   `ws.notify`.
 - The TypeScript API has the same delivery, queue, and delta-hook design; see
   [TypeScript Watch](/typescript/watch).
-- Nextcloud is the first backend with a `delta_hook`; push mode works with any
+- Pull detection ships for eleven resource families; push mode works with any
   backend today since `ws.notify` accepts events from any detection you run.
   See the [Watch Matrix](/python/watch-matrix) for per-resource support.
 - Events are in-memory and at-most-once per subscriber; durable queues and

@@ -21,6 +21,7 @@ from pathlib import Path
 
 import aiohttp
 from aiohttp import web
+from backends import BUILDERS as BACKEND_BUILDERS
 from webhook_server import make_app
 
 from mirage import MountMode, Workspace
@@ -53,7 +54,7 @@ def _nextcloud_config(url: str) -> NextcloudConfig:
     )
 
 
-def _build_nextcloud(spec: dict) -> tuple[Workspace, object] | None:
+async def _build_nextcloud(spec: dict) -> tuple[Workspace, object] | None:
     """Build the watched workspace and a separate external writer.
 
     Returns None when the deployment env is absent, so a local run
@@ -72,7 +73,8 @@ def _build_nextcloud(spec: dict) -> tuple[Workspace, object] | None:
     return ws, external
 
 
-def _build_nextcloud_nested(spec: dict) -> tuple[Workspace, object] | None:
+async def _build_nextcloud_nested(
+        spec: dict) -> tuple[Workspace, object] | None:
     """Build the nested-mount battery's workspace: the outer mount at
     the account root plus a second mount, rooted at a subfolder of the
     same account, nested inside the outer mount's subtree.
@@ -97,12 +99,21 @@ def _build_nextcloud_nested(spec: dict) -> tuple[Workspace, object] | None:
     return ws, external
 
 
-BUILDERS = {"nextcloud": _build_nextcloud}
+BUILDERS = {"nextcloud": _build_nextcloud, **BACKEND_BUILDERS}
 
 
 def _files_prefix() -> str:
     """The ``/<user>/files`` prefix Nextcloud puts in webhook paths."""
     return f"/{os.environ.get('NEXTCLOUD_USERNAME', 'admin')}/files"
+
+
+def _watch_rel(spec: dict) -> str:
+    """The watch dir as the external writer spells it, mount-relative.
+
+    Args:
+        spec (dict): Parsed case file.
+    """
+    return spec["watch_dir"][len(spec["mount"].rstrip("/")):].strip("/")
 
 
 def _framed_root(spec: dict) -> PathSpec:
@@ -111,8 +122,8 @@ def _framed_root(spec: dict) -> PathSpec:
     Args:
         spec (dict): Parsed case file.
     """
-    rel = spec["watch_dir"][len(spec["mount"].rstrip("/")):].strip("/")
-    return PathSpec.from_str_path(spec["watch_dir"], resource_path=rel)
+    return PathSpec.from_str_path(spec["watch_dir"],
+                                  resource_path=_watch_rel(spec))
 
 
 async def _mutate(op: object, mutate: dict) -> None:
@@ -362,11 +373,22 @@ async def _run_case(ws: Workspace, op: object, trigger, stream: EventStream,
 async def _seed(ws: Workspace, op: object, spec: dict) -> None:
     """Reset the watch dir and lay down the seed files.
 
+    Both halves of the reset are load-bearing. The external writer
+    empties the directory, because a mount that is a read view of its
+    backend cannot ``rm -rf`` its own watch dir (github's is one: a ref
+    changes by being committed to), and a battery whose reset silently
+    did nothing carries one scope's files into the next, where their
+    CREATEs arrive as UPDATEs. The watched workspace then runs its own
+    ``rm -rf``, which is what drops the listing it had cached.
+
     Args:
         ws (Workspace): Watched workspace.
         op (object): External writer operator.
         spec (dict): Parsed case file.
     """
+    root = _watch_rel(spec) + "/"
+    await op.create_dir(root)
+    await op.remove_all(root)
     await ws.execute(f"rm -rf {spec['watch_dir']}")
     await ws.execute(f"mkdir -p {spec['watch_dir']}")
     for name in spec["seed"]:
@@ -450,7 +472,7 @@ async def _overflow_core(spec: dict, ws: Workspace, op: object, trigger,
         await stream.close()
 
 
-def _overflow_workspace(spec: dict) -> tuple[Workspace, object]:
+async def _overflow_workspace(spec: dict) -> tuple[Workspace, object]:
     """Build the overflow battery's own workspace with a tiny queue.
 
     A dedicated workspace is required because the custom queue factory
@@ -459,7 +481,7 @@ def _overflow_workspace(spec: dict) -> tuple[Workspace, object]:
     Args:
         spec (dict): Parsed case file.
     """
-    ws, op = BUILDERS[spec["resource"]](spec)
+    ws, op = await BUILDERS[spec["resource"]](spec)
     ws.attach_watch_runtime(
         Watcher(ws.registry,
                 queue_factory=partial(
@@ -477,7 +499,7 @@ async def _run_overflow_pull(spec: dict, results: list) -> None:
     """
     if "overflow" not in spec:
         return
-    ws, op = _overflow_workspace(spec)
+    ws, op = await _overflow_workspace(spec)
     try:
         await _seed(ws, op, spec)
         resource = ws.registry.mount_for(spec["mount"]).resource
@@ -499,7 +521,7 @@ async def _run_overflow_push(spec: dict, results: list) -> None:
     """
     if "overflow" not in spec:
         return
-    ws, op = _overflow_workspace(spec)
+    ws, op = await _overflow_workspace(spec)
     try:
         await _seed(ws, op, spec)
         runner = web.AppRunner(make_app(ws, _files_prefix(), spec["mount"]))
@@ -577,7 +599,7 @@ async def _run_nested_pull(spec: dict, results: list) -> None:
     """
     if "nested" not in spec:
         return
-    built = _build_nextcloud_nested(spec)
+    built = await _build_nextcloud_nested(spec)
     if built is None:
         return
     ws, op = built
@@ -605,7 +627,7 @@ async def _run_nested_push(spec: dict, results: list) -> None:
     """
     if "nested" not in spec:
         return
-    built = _build_nextcloud_nested(spec)
+    built = await _build_nextcloud_nested(spec)
     if built is None:
         return
     ws, op = built
@@ -653,6 +675,10 @@ async def _run_pull(spec: dict, ws: Workspace,
                                       spec["cases"], "pull", "pull"))
 
     for scope in spec.get("scopes", []):
+        # A scope whose mutation the backend has no op for (hf has no
+        # rename) is declared inapplicable rather than run and excused.
+        if spec["resource"] in scope.get("skip_resources", []):
+            continue
         await _seed(ws, op, spec)
         agen = ws.watch(scope["watch"])
         poller = ConsumerPoller(resource.delta_hook(), ws, hook_root)
@@ -718,31 +744,54 @@ async def _run_file(spec: dict) -> list[tuple[str, bool, str]]:
     builder = BUILDERS.get(spec["resource"])
     if builder is None:
         return [(spec["resource"], False, "no builder")]
+    modes = {"pull": _run_pull, "push": _run_push}
+    # Push mode needs a provider that can send a webhook, which only the
+    # Nextcloud deployment has; every other backend declares pull only.
+    wanted = spec.get("modes", ["pull", "push"])
     results: list[tuple[str, bool, str]] = []
-    for mode in (_run_pull, _run_push):
-        built = builder(spec)
+    for name in wanted:
+        built = await builder(spec)
         if built is None:
             print(f"skip [{spec['resource']}]: deployment env absent",
                   file=sys.stderr)
             return []
         ws, op = built
         try:
-            results.extend(await mode(spec, ws, op))
+            results.extend(await modes[name](spec, ws, op))
         finally:
             await ws.close()
+            closer = getattr(op, "close", None)
+            if closer is not None:
+                await closer()
     return results
+
+
+def _expand(spec: dict) -> list[dict]:
+    """Fan one case file out over the resources it names.
+
+    A file that declares ``resources`` runs its whole body once per
+    backend, so the shared batteries are written down once rather than
+    copied per target.
+
+    Args:
+        spec (dict): Parsed case file.
+    """
+    names = spec.get("resources")
+    if not names:
+        return [spec]
+    return [{**spec, "resource": name} for name in names]
 
 
 async def main() -> None:
     files = sorted(p for p in CASE_DIR.glob("*.json"))
     failed = 0
     for path in files:
-        spec = json.loads(path.read_text())
-        for case_id, ok, detail in await _run_file(spec):
-            status = "PASS" if ok else "FAIL"
-            print(f"{status} [{spec['resource']}] {case_id}: {detail}")
-            if not ok:
-                failed += 1
+        for spec in _expand(json.loads(path.read_text())):
+            for case_id, ok, detail in await _run_file(spec):
+                status = "PASS" if ok else "FAIL"
+                print(f"{status} [{spec['resource']}] {case_id}: {detail}")
+                if not ok:
+                    failed += 1
     if failed:
         print(f"FAIL: {failed} watch case(s) failed", file=sys.stderr)
         sys.exit(1)

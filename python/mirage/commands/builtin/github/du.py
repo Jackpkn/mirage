@@ -27,24 +27,33 @@ from mirage.provision.types import ProvisionResult
 from mirage.types import PathSpec
 
 
-async def _subtree(index: IndexCacheStore,
-                   path: PathSpec) -> list[tuple[str, int]]:
-    key = "/" + path.resource_path if path.resource_path else "/"
-    prefix = key.rstrip("/") + "/"
-    found = [(ep, entry.size) for ep, entry in (await index.entries()).items()
-             if (ep == key or ep.startswith(prefix)) and entry.size is not None
-             ]
+def _subtree(accessor: GitHubAccessor,
+             path: PathSpec) -> list[tuple[str, int]]:
+    """Every sized entry at or under ``path``, in mount-relative space.
+
+    Read off the git tree rather than the index, mirroring TypeScript's
+    du: the tree is keyed repo-relative, which is the space these
+    comparisons are in.
+
+    Args:
+        accessor (GitHubAccessor): backend handle holding the tree.
+        path (PathSpec): subtree root.
+    """
+    key = path.resource_path.strip("/")
+    prefix = key + "/" if key else ""
+    found = [("/" + p, entry.size) for p, entry in accessor.tree.items()
+             if (p == key or p.startswith(prefix)) and entry.size is not None]
     found.sort()
     return found
 
 
-async def _du_size(index: IndexCacheStore, path: PathSpec) -> int:
-    return sum(size for _, size in await _subtree(index, path))
+async def _du_size(accessor: GitHubAccessor, path: PathSpec) -> int:
+    return sum(size for _, size in _subtree(accessor, path))
 
 
-async def _du_entries(index: IndexCacheStore,
+async def _du_entries(accessor: GitHubAccessor,
                       path: PathSpec) -> tuple[list[tuple[str, int]], int]:
-    found = await _subtree(index, path)
+    found = _subtree(accessor, path)
     return found, sum(size for _, size in found)
 
 
@@ -70,5 +79,5 @@ async def du(accessor: GitHubAccessor, paths: list[PathSpec], texts: list[str],
     return await du_generic(paths, list(texts), opts,
                             partial(_resolve, accessor, opts.index),
                             partial(_stat, accessor, opts.index),
-                            partial(_du_size, opts.index),
-                            partial(_du_entries, opts.index))
+                            partial(_du_size, accessor),
+                            partial(_du_entries, accessor))

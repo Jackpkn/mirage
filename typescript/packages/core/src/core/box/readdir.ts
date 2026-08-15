@@ -82,6 +82,7 @@ export async function readdir(
     }
     const isDir = it.type === 'folder'
     const filename = it.name
+    const sha1 = typeof it.sha1 === 'string' && it.sha1 !== '' ? it.sha1 : null
     const entry = new IndexEntry({
       id: it.id,
       name: filename,
@@ -89,6 +90,7 @@ export async function readdir(
       remoteTime: it.modified_at ?? '',
       vfsName: filename,
       size: isDir ? null : typeof it.size === 'number' ? it.size : null,
+      extra: sha1 === null ? {} : { sha1 },
     })
     entries.push({ name: filename, entry, isDir })
   }

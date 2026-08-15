@@ -18,9 +18,10 @@ from mirage.accessor.github import GitHubAccessor
 from mirage.cache.index import NULL_INDEX, IndexCacheStore, LookupStatus
 from mirage.core.github._client import github_get
 from mirage.core.github.config import GitHubConfig
-from mirage.core.github.tree import refill_index
+from mirage.core.github.tree import ensure_live_index, refill_index
 from mirage.types import PathSpec
 from mirage.utils.errors import enoent
+from mirage.utils.key_prefix import mount_prefix_of
 
 
 async def read_bytes(config: GitHubConfig, owner: str, repo: str,
@@ -42,9 +43,9 @@ async def read(
     index: IndexCacheStore = NULL_INDEX,
 ) -> bytes:
     virtual = path_spec.virtual
-    path = path_spec.mount_path
-
-    key = "/" + path.strip("/")
+    prefix = mount_prefix_of(path_spec.virtual, path_spec.resource_path)
+    key = path_spec.mount_path.strip("/")
+    key = prefix + "/" + key if key else prefix or "/"
     # Freshness is tracked per directory, never per entry, so a blob's row
     # is exactly as fresh as its parent's listing and `get` can never
     # report staleness of its own. The parent is therefore the probe:
@@ -53,11 +54,12 @@ async def read(
     # miss is not a probe either -- against a live index it is a real
     # absence, and refetching the whole tree on every ENOENT costs a
     # recursive-tree call per miss.
+    await ensure_live_index(accessor, index, prefix)
     if not accessor.truncated:
         cut = key.rfind("/")
         parent = key[:cut] if cut > 0 else "/"
         if (await index.list_dir(parent)).status == LookupStatus.EXPIRED:
-            await refill_index(accessor, index)
+            await refill_index(accessor, index, prefix)
     result = await index.get(key)
     if result.status == LookupStatus.NOT_FOUND or result.entry is None:
         raise enoent(virtual)

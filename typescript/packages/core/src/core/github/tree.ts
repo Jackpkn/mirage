@@ -15,9 +15,11 @@
 import type { GitHubAccessor } from '../../accessor/github.ts'
 import { fetchTree } from './_client.ts'
 import type { IndexCacheStore } from '../../cache/index/store.ts'
+import { LookupStatus } from '../../cache/index/config.ts'
 import type { IndexEntry } from '../../cache/index/config.ts'
 import type { GitHubTreeItem } from './_client.ts'
 import { indexEntryFromTree, makeTreeEntry, type TreeEntry } from './tree_entry.ts'
+import { rstripSlash } from '../../utils/slash.ts'
 
 export function buildTreeMap(tree: GitHubTreeItem[]): Record<string, TreeEntry> {
   const map: Record<string, TreeEntry> = {}
@@ -25,17 +27,44 @@ export function buildTreeMap(tree: GitHubTreeItem[]): Record<string, TreeEntry> 
   return map
 }
 
-export async function populateIndex(index: IndexCacheStore, tree: GitHubTreeItem[]): Promise<void> {
+export async function populateIndex(
+  index: IndexCacheStore,
+  tree: Record<string, TreeEntry>,
+  prefix: string,
+): Promise<void> {
+  // Keyed by mount-absolute path, the way every other backend keys its
+  // index, so the shared cache machinery can spell an eviction without
+  // knowing which backend it is talking to. The tree itself stays
+  // repo-relative; `prefix` is what lifts it.
+  const stem = rstripSlash(prefix)
   const dirs = new Map<string, [string, IndexEntry][]>()
-  for (const item of tree) {
+  // The repository root always exists, so it gets a row even when the tree
+  // is empty. Without it an empty repository is byte for byte a dropped
+  // index, and `ensureLiveIndex` would refetch on every read of one.
+  dirs.set(stem === '' ? '/' : stem, [])
+  for (const item of Object.values(tree)) {
     const parts = item.path.split('/')
     const name = parts[parts.length - 1] ?? item.path
-    const parent = parts.length > 1 ? `/${parts.slice(0, -1).join('/')}` : '/'
+    const parent =
+      parts.length > 1 ? `${stem}/${parts.slice(0, -1).join('/')}` : stem === '' ? '/' : stem
     const arr = dirs.get(parent) ?? []
     arr.push([name, indexEntryFromTree(item)])
     dirs.set(parent, arr)
   }
   await Promise.all([...dirs].map(([parent, entries]) => index.setDir(parent, entries)))
+}
+
+/**
+ * Write the accessor's tree into `index` under `prefix`.
+ *
+ * Mirrors Python's `seed_index`.
+ */
+async function seedIndex(
+  accessor: GitHubAccessor,
+  index: IndexCacheStore,
+  prefix: string,
+): Promise<void> {
+  await populateIndex(index, accessor.tree, prefix)
 }
 
 /**
@@ -61,6 +90,7 @@ export async function populateIndex(index: IndexCacheStore, tree: GitHubTreeItem
 export async function refillIndex(
   accessor: GitHubAccessor,
   index: IndexCacheStore | undefined,
+  prefix: string,
 ): Promise<boolean> {
   if (index === undefined) return false
   const { tree, truncated } = await fetchTree(
@@ -71,6 +101,57 @@ export async function refillIndex(
   )
   accessor.truncated = truncated
   accessor.tree = buildTreeMap(tree)
-  await populateIndex(index, tree)
+  await seedIndex(accessor, index, prefix)
   return true
+}
+
+/**
+ * Refetch when the index holds no listing at all.
+ *
+ * Every reader here treats a missing listing as a real absence, which is
+ * right against a *live* index and wrong against one that was never filled
+ * or has been dropped, and invalidation drops rather than expires:
+ * `invalidateDir` removes the directory's row outright, so the EXPIRED
+ * probe each reader already runs never fires. An external change (a watch
+ * event is the only thing that invalidates a mount with no write ops)
+ * therefore left the whole mount answering ENOENT permanently, since the
+ * seeded expiry is a year out.
+ *
+ * The root listing is what tells live from not, in one lookup and no
+ * request: the tree is written whole, so while the index is live every
+ * directory has a row and the mount root always does. One refill makes it
+ * live again, so this cannot cost a fetch per miss, which is what kept the
+ * readers from probing on absence in the first place.
+ *
+ * Not live always **refetches**, and never re-seeds the tree the mount was
+ * built with. That tree is only true at build time: the first read of a
+ * mount can come long after it, and reusing it then served an index built
+ * from a repository five external writes ago. It is still what
+ * `accessor.tree` starts as, so find and du have something to read before
+ * any listing happens, and every refill reseats it.
+ *
+ * Mirrors Python's `ensure_live_index`.
+ *
+ * Args:
+ *   accessor (GitHubAccessor): the mount's accessor.
+ *   index (IndexCacheStore | undefined): the index to check and fill.
+ *   prefix (string): the mount prefix the index keys are built against.
+ *
+ * Returns:
+ *   boolean: whether the index was filled.
+ */
+export async function ensureLiveIndex(
+  accessor: GitHubAccessor,
+  index: IndexCacheStore | undefined,
+  prefix: string,
+): Promise<boolean> {
+  if (index === undefined) return false
+  // The liveness probe comes before anything on the accessor, so a live
+  // index still answers every read without one.
+  const root = rstripSlash(prefix) === '' ? '/' : rstripSlash(prefix)
+  if ((await index.listDir(root)).status !== LookupStatus.NOT_FOUND) return false
+  // A truncated tree is not the whole listing, so the invariant this rests
+  // on does not hold and readdir's per-directory fallback owns the miss.
+  if (accessor.truncated) return false
+  return refillIndex(accessor, index, prefix)
 }

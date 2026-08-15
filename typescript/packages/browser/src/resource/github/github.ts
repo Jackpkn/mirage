@@ -26,10 +26,7 @@ import {
 import { read as githubRead } from '@struktoai/mirage-core/core/github/read'
 import { readdir as githubReaddir } from '@struktoai/mirage-core/core/github/readdir'
 import { stat as githubStat } from '@struktoai/mirage-core/core/github/stat'
-import {
-  buildTreeMap as githubBuildTreeMap,
-  populateIndex as githubPopulateIndex,
-} from '@struktoai/mirage-core/core/github/tree'
+import { buildTreeMap as githubBuildTreeMap } from '@struktoai/mirage-core/core/github/tree'
 import { GITHUB_OPS } from '@struktoai/mirage-core/ops/github/index'
 import type { RegisteredOp } from '@struktoai/mirage-core/ops/registry'
 import type { Resource } from '@struktoai/mirage-core/resource/base'
@@ -87,8 +84,9 @@ export class GitHubResource implements Resource {
       truncated,
       tree: treeMap,
     })
+    // Not seeded here: the index is keyed by mount prefix, which only a
+    // PathSpec knows, so the first read seeds it from the accessor's tree.
     const index = new RAMIndexCacheStore({ ttl: 86_400 })
-    await githubPopulateIndex(index, tree)
     return new GitHubResource(config, accessor, index)
   }
 

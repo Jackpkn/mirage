@@ -1,0 +1,10 @@
+# Shared by both languages: a delta hook reports the same events from the
+# same directory whichever implementation pulled it, so one truth file
+# gates examples/python/disk/watch.py and examples/typescript/disk/watch.ts.
+baseline: 0 changes
+pull: 3 changes
+  update /data/reports/q1.txt
+  delete /data/reports/q2.txt
+  create /data/reports/q3.txt
+read after notify: 'first quarter, revised'
+listing: q1.txt q3.txt
