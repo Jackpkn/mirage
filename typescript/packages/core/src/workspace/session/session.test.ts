@@ -45,6 +45,11 @@ describe('Session', () => {
       session_id: 'x',
       cwd: '/a',
       env: { K: 'V', PWD: '/a' },
+      // The attributes ride beside the values rather than being guessed
+      // on the way back in: `varsFromEnv` exports what it seeds, so both
+      // names carry `x` here, and a plain `Y=1` would carry no entry at
+      // all and restore unexported.
+      var_attrs: { K: 'x', PWD: 'x' },
       created_at: s.createdAt,
       generation: 0,
     })
@@ -188,5 +193,41 @@ describe('ownRecord', () => {
     expect(Object.getPrototypeOf(forked.env)).toBe(null)
     seedVar(forked, '__proto__', '6')
     expect(session.env.__proto__).toBe('5')
+  })
+})
+
+describe('a stored session keeps its attributes', () => {
+  it('round-trips without promoting anything', () => {
+    // The bug this replaced: `toJSON` wrote every scalar under `env` and
+    // `fromJSON` read `env` as a process environment, so one flush and
+    // reload turned a plain `X=hello` into an exported one and shipped it
+    // to every child runtime.
+    const s = new Session({ sessionId: 's1' })
+    seedVar(s, 'PLAIN', 'hello')
+    s.vars.EXPO = makeVar('world', new Set([VarAttr.Export]))
+    s.vars.MARKED = makeVar(null, new Set([VarAttr.Readonly]))
+    const back = Session.fromJSON(s.toJSON() as Parameters<typeof Session.fromJSON>[0])
+    expect(back.vars.PLAIN?.attrs.size).toBe(0)
+    expect(back.vars.PLAIN?.value).toBe('hello')
+    expect([...(back.vars.EXPO?.attrs ?? [])]).toEqual([VarAttr.Export])
+    expect(back.vars.MARKED?.value).toBe(null)
+    expect([...(back.vars.MARKED?.attrs ?? [])]).toEqual([VarAttr.Readonly])
+  })
+
+  it('reads a payload with no attributes as a process environment', () => {
+    // An embedder's record, or one another writer hand-built, carries
+    // values and no letters. That shape *is* a process environment, so
+    // every name in it is exported -- which is what `ws.env = {...}` and
+    // a cross-language handoff both mean.
+    const back = Session.fromJSON({ session_id: 'x', env: { A: '1' } })
+    expect([...(back.vars.A?.attrs ?? [])]).toEqual([VarAttr.Export])
+  })
+
+  it('carries an unset marked name through with no value', () => {
+    const s = new Session({ sessionId: 's1' })
+    s.vars.Z = makeVar(null, new Set([VarAttr.Export]))
+    const json = s.toJSON() as { env: Record<string, string>; var_attrs: Record<string, string> }
+    expect('Z' in json.env).toBe(false)
+    expect(json.var_attrs.Z).toBe('x')
   })
 })

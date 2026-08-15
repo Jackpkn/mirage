@@ -159,8 +159,9 @@ class SessionManager:
             session.generation = expected + 1
             fields = session.to_dict()
             if await self._store.cas_set(sid, fields, expected):
-                # Deep copy: to_dict() shares the live env dict, and
-                # the baseline must stay frozen at what was written.
+                # Deep copy: to_dict() returns nested dicts the caller
+                # may go on to mutate, and the baseline this is compared
+                # against must stay frozen at what was written.
                 self._persisted[sid] = copy.deepcopy(fields)
                 return
             # Lost the race: adopt the winner's generation and retry

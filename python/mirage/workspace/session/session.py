@@ -23,7 +23,8 @@ from mirage.io.types import ByteSource
 from mirage.shell.array import ShellArray
 from mirage.shell.constants import SHELL_ARGV0
 from mirage.shell.types import FunctionBody
-from mirage.shell.variable import ShellVar, VarAttr, with_value
+from mirage.shell.variable import (ShellVar, VarAttr, attrs_from_letters,
+                                   stored_attrs, with_value)
 from mirage.types import HiddenPaths, HiddenVars, MountMode
 
 # What a fork of this session carries over. Written down once because
@@ -124,6 +125,35 @@ def vars_from_env(env: Mapping[str, str]) -> dict[str, ShellVar]:
     return {name: ShellVar(value, exported) for name, value in env.items()}
 
 
+def vars_from_dict(env: Mapping[str, str],
+                   attrs: Mapping[str, str]) -> dict[str, ShellVar]:
+    """Variable records for a stored session's two halves.
+
+    The restore side of `to_dict`. `env` carries every scalar and
+    `attrs` the letter cluster for the names that have one, so a name
+    in `attrs` alone is bash's declared-but-unset third state
+    (``export Z``) and restores with no value.
+
+    Not `vars_from_env`: that one reads a bare map as a *process*
+    environment and exports all of it, which is right for an embedder
+    handing over an env dict and wrong here, where the attributes were
+    recorded. Restoring through it promoted every plain ``X=hello`` to
+    an exported one on the first reload.
+
+    Args:
+        env (Mapping[str, str]): stored ``name -> value`` pairs.
+        attrs (Mapping[str, str]): stored ``name -> letters`` clusters.
+    """
+    out = {
+        name: ShellVar(value, attrs_from_letters(attrs.get(name, "")))
+        for name, value in env.items()
+    }
+    for name, letters in attrs.items():
+        if name not in out:
+            out[name] = ShellVar(None, attrs_from_letters(letters))
+    return out
+
+
 @dataclass
 class Session:
     session_id: str
@@ -189,6 +219,13 @@ class Session:
     _cmdsub_status: int = field(default=0, repr=False)
 
     def to_dict(self) -> dict[str, Any]:
+        # `env` is every scalar and `var_attrs` the letters set on the
+        # names that carry any, rather than one key holding both: `env`
+        # is the shape an embedder writes and another language reads, so
+        # it stays a plain name/value map, and the attributes ride
+        # beside it. Without the second key a reload could only guess,
+        # and guessing "exported" turned every plain `X=hello` into an
+        # exported one on the first round trip.
         data = {
             "session_id": self.session_id,
             "cwd": self.cwd,
@@ -196,6 +233,12 @@ class Session:
             "created_at": self.created_at,
             "generation": self.generation,
         }
+        letters = {
+            name: stored_attrs(var)
+            for name, var in self.vars.items() if var.attrs
+        }
+        if letters:
+            data["var_attrs"] = letters
         if self.mount_modes is not None:
             data["mount_modes"] = {
                 prefix: mode.value
@@ -215,9 +258,18 @@ class Session:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Session":
-        if "env" in data:
+        if "env" in data or "var_attrs" in data:
             data = dict(data)
-            data["vars"] = vars_from_env(data.pop("env"))
+            env = data.pop("env", {})
+            attrs = data.pop("var_attrs", None)
+            # No `var_attrs` at all means the payload is a bare process
+            # environment -- an embedder's dict, or a record another
+            # writer hand-built -- so every name in it is exported,
+            # which is what a process environment means. With the key
+            # present the attributes were recorded and are restored as
+            # they were written.
+            data["vars"] = (vars_from_env(env)
+                            if attrs is None else vars_from_dict(env, attrs))
         modes = data.get("mount_modes")
         paths = data.get("hidden_paths")
         vars_ = data.get("hidden_vars")

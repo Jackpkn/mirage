@@ -16,7 +16,7 @@ import { SHELL_ARGV0 } from '../../shell/constants.ts'
 import type { AsyncLineIterator } from '../../io/async_line_iterator.ts'
 import type { ShellArray } from '../../shell/array.ts'
 import type { ShellVar } from '../../shell/variable.ts'
-import { makeVar, VarAttr, withValue } from '../../shell/variable.ts'
+import { attrsFromLetters, makeVar, storedAttrs, VarAttr, withValue } from '../../shell/variable.ts'
 import type { HiddenPaths, HiddenVars, MountMode } from '../../types.ts'
 
 /**
@@ -131,6 +131,32 @@ export function varsFromEnv(env: Record<string, string>): Record<string, ShellVa
   const out = ownRecord<ShellVar>()
   const exported: ReadonlySet<VarAttr> = new Set([VarAttr.Export])
   for (const [name, value] of Object.entries(env)) out[name] = makeVar(value, exported)
+  return out
+}
+
+/**
+ * Variable records for a stored session's two halves, the restore side
+ * of `toJSON`. `env` carries every scalar and `attrs` the letter cluster
+ * for the names that have one, so a name in `attrs` alone is bash's
+ * declared-but-unset third state (`export Z`) and restores with no value.
+ *
+ * Not `varsFromEnv`: that one reads a bare record as a *process*
+ * environment and exports all of it, which is right for an embedder
+ * handing over an env record and wrong here, where the attributes were
+ * recorded. Restoring through it promoted every plain `X=hello` to an
+ * exported one on the first reload.
+ */
+export function varsFromDict(
+  env: Record<string, string>,
+  attrs: Record<string, string>,
+): Record<string, ShellVar> {
+  const out = ownRecord<ShellVar>()
+  for (const [name, value] of Object.entries(env)) {
+    out[name] = makeVar(value, attrsFromLetters(attrs[name] ?? ''))
+  }
+  for (const [name, letters] of Object.entries(attrs)) {
+    if (!(name in out)) out[name] = makeVar(null, attrsFromLetters(letters))
+  }
   return out
 }
 
@@ -380,6 +406,13 @@ export class Session {
    * session, a node kernel tier binds it).
    */
   toJSON(): Record<string, unknown> {
+    // `env` is every scalar and `var_attrs` the letters set on the names
+    // that carry any, rather than one key holding both: `env` is the
+    // shape an embedder writes and the other language reads, so it stays
+    // a plain name/value map, and the attributes ride beside it. Without
+    // the second key a reload could only guess, and guessing "exported"
+    // turned every plain `X=hello` into an exported one on the first
+    // round trip.
     const data: Record<string, unknown> = {
       session_id: this.sessionId,
       cwd: this.cwd,
@@ -387,6 +420,11 @@ export class Session {
       created_at: this.createdAt,
       generation: this.generation,
     }
+    const letters = ownRecord<string>()
+    for (const [name, v] of Object.entries(this.vars)) {
+      if (v.attrs.size > 0) letters[name] = storedAttrs(v)
+    }
+    if (Object.keys(letters).length > 0) data.var_attrs = letters
     if (this.mountModes !== null) {
       data.mount_modes = Object.fromEntries(this.mountModes)
     }
@@ -409,6 +447,7 @@ export class Session {
     session_id: string
     cwd?: string
     env?: Record<string, string>
+    var_attrs?: Record<string, string>
     created_at?: number
     mount_modes?: Record<string, MountMode> | null
     hidden_paths?: { paths?: string[]; patterns?: string[] } | null
@@ -418,7 +457,19 @@ export class Session {
     return new Session({
       sessionId: data.session_id,
       ...(data.cwd !== undefined ? { cwd: data.cwd } : {}),
-      ...(data.env !== undefined ? { vars: varsFromEnv(data.env) } : {}),
+      // No `var_attrs` at all means the payload is a bare process
+      // environment -- an embedder's record, or one another writer
+      // hand-built -- so every name in it is exported, which is what a
+      // process environment means. With the key present the attributes
+      // were recorded and are restored as they were written.
+      ...(data.env !== undefined || data.var_attrs !== undefined
+        ? {
+            vars:
+              data.var_attrs === undefined
+                ? varsFromEnv(data.env ?? {})
+                : varsFromDict(data.env ?? {}, data.var_attrs),
+          }
+        : {}),
       ...(data.created_at !== undefined ? { createdAt: data.created_at } : {}),
       ...(data.generation !== undefined ? { generation: data.generation } : {}),
       mountModes: data.mount_modes != null ? new Map(Object.entries(data.mount_modes)) : null,

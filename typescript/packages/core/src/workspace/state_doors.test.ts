@@ -295,6 +295,29 @@ describe('the remaining session writers clear the same gate', () => {
     expect('SECRET_L' in ws.env).toBe(false)
   })
 
+  it('every declaring spelling fires the gate', async () => {
+    // `readonly NAME` marked through `setAttr` and walked straight past
+    // it: a deployment refusing SECRET_* still saw the line exit 0,
+    // create the record, and freeze the name against every later write
+    // the deployment's own wiring would make.
+    const ws = await makeWs([new DenySecretEnv()])
+    const session = ws.getSession(ws.defaultSessionId)
+    for (const line of [
+      'SECRET_A=1',
+      'export SECRET_B',
+      'readonly SECRET_C',
+      'readonly SECRET_D=1',
+      'declare SECRET_E',
+    ]) {
+      const io = await ws.execute(line)
+      expect(io.exitCode, line).not.toBe(0)
+      expect(stderrStr(io), line).toContain('refused by policy')
+    }
+    for (const name of ['SECRET_A', 'SECRET_B', 'SECRET_C', 'SECRET_D', 'SECRET_E']) {
+      expect(name in session.vars, name).toBe(false)
+    }
+  })
+
   it('a plain assignment fires the gate', async () => {
     // The assignment path used to write session.env directly, so a
     // policy that vetoed `export SECRET_X=1` still admitted

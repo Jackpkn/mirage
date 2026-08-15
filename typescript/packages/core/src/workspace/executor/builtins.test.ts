@@ -1097,9 +1097,19 @@ describe('handleTrap / handleReturn / handleLocal', () => {
     expect(() => handleReturn([], s, null)).toThrow(ReturnSignal)
   })
 
-  it('handleLocal assigns to session.env', async () => {
+  it('handleLocal outside a function is refused, as GNU refuses it', async () => {
+    // `bash: line 1: local: can only be used in a function`, exit 1 and
+    // nothing stored. Storing it globally and exiting 0 is the
+    // silent-accept this tier removes.
     const s = new Session({ sessionId: 'test' })
-    await handleLocal(['X=1'], s)
+    const [, io] = await handleLocal(['X=1'], s)
+    expect(io.exitCode).toBe(1)
+    expect(s.env.X).toBeUndefined()
+  })
+
+  it('handleLocal assigns to session.env under the declare spelling', async () => {
+    const s = new Session({ sessionId: 'test' })
+    await handleLocal(['X=1'], s, null, null, 'declare')
     expect(s.env.X).toBe('1')
   })
 })

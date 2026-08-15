@@ -24,7 +24,7 @@ from mirage.runtime.policy import PolicyDecision
 from mirage.shell.bytes import encode_text
 from mirage.shell.types import NodeType as NT
 from mirage.shell.types import ShellBuiltin as SB
-from mirage.shell.variable import ShellVar
+from mirage.shell.variable import ShellVar, VarAttr
 from mirage.shell.xtrace import trace_command
 from mirage.types import PathSpec, Producer, word_text
 from mirage.utils.glob_walk import glob_pattern
@@ -41,7 +41,7 @@ from mirage.workspace.route import (SLASH_KEEPS_LAST, UNSUPPORTED_BUILTINS,
                                     follows_last_component)
 from mirage.workspace.session.shell_dirs import home_dir, logical_cwd
 from mirage.workspace.session.state import (ensure_var_visible, seed_var,
-                                            session_view)
+                                            session_view, set_attr)
 from mirage.workspace.types import ExecutionNode
 
 from mirage.shell.helpers import (  # isort: skip
@@ -188,7 +188,17 @@ async def execute_command(
     for k, v in prefix_assignments:
         if not is_function_call:
             saved_env_overrides[k] = session.vars.get(k)
+        # Exported for the duration, which is the whole point of the
+        # form: `TOKEN=x printenv TOKEN` prints `x` because bash puts a
+        # prefix assignment in the *command's environment*, not merely in
+        # the shell. Seeding it plain left it invisible to every reader
+        # of `env_snapshot` -- the command's own env, an installed CLI,
+        # a guest runtime -- once that view narrowed to the exported set.
+        # The saved record is put back below, so the attribute does not
+        # outlive the command; a function call deliberately saves nothing
+        # and keeps the assignment, as bash does.
         seed_var(session, k, v)
+        set_attr(session, k, VarAttr.EXPORT)
 
     try:
         return await _dispatch_command_body(recurse, dispatch, registry,

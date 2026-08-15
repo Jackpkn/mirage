@@ -21,7 +21,15 @@ REPO = Path(__file__).resolve().parents[4]
 # of the variable records (MappingProxyType in python, Object.freeze in
 # TypeScript), so a write into one raises at runtime rather than landing.
 # Writers go through `seed_var`/`seedVar`, `set_attr`/`setAttr`, or the
-# `env` setter, which is what makes the pre_session gate unskippable.
+# `env` setter.
+#
+# Those three are the *ungated* doors and this test does not claim
+# otherwise: the gate is `SessionView.set`/`.mark`, and anything a line
+# the agent typed can reach has to use it. What this test pins is
+# narrower and still worth pinning, because it is a silent failure the
+# other one is not: a write into a projection lands in a throwaway
+# mapping (or raises, once the projection was frozen), so the value is
+# simply lost.
 #
 # This is a meta-test rather than a type rule because the code that keeps
 # getting it wrong is exactly the code no type checker sees: mypy runs on

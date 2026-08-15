@@ -159,3 +159,57 @@ describe('declare -p reports an unknown name', () => {
     await ws.close()
   })
 })
+
+describe('an array is exportable like anything else', () => {
+  // `export -p` prints the whole cluster, not just `-x`. Pinned on
+  // bash 5.2.37.
+  const CASES: [string, string][] = [
+    ['export ARR=(a b); declare -p ARR', 'declare -ax ARR=([0]="a" [1]="b")\n'],
+    ['declare -x ARR=(a b); declare -p ARR', 'declare -ax ARR=([0]="a" [1]="b")\n'],
+    ['ARR=(a b); export ARR; declare -p ARR', 'declare -ax ARR=([0]="a" [1]="b")\n'],
+    ["readonly R=1; export R; export -p | grep ' R='", 'declare -rx R="1"\n'],
+    ['export ARR=(a b); export -p | grep ARR', 'declare -ax ARR=([0]="a" [1]="b")\n'],
+  ]
+  it.each(CASES)('%s', async (cmd, want) => {
+    const { ws } = await makeWorkspace()
+    expect(stdoutStr(await ws.execute(cmd))).toBe(want)
+    await ws.close()
+  })
+
+  it('stays out of the process view all the same', async () => {
+    // Marked, listed by `export -p`, and still absent from `env`: bash
+    // puts no array in a child's environment.
+    const { ws } = await makeWorkspace()
+    const io = await ws.execute('export ARR=(a b); env | grep -c ARR || true')
+    expect(stdoutStr(io)).toBe('0\n')
+    await ws.close()
+  })
+})
+
+describe('a bare local declares without assigning', () => {
+  // The same third state `export Z` has: declared, unset, so `${L-d}`
+  // still expands to `d` and `declare -p` prints no `=`. Writing `''`
+  // here was the invented-empty-string bug the mark door exists to fix.
+  const CASES: [string, string][] = [
+    ['f() { local L; echo "[${L-UNSET}]"; }; f', '[UNSET]\n'],
+    ['f() { local L; declare -p L; }; f', 'declare -- L\n'],
+    ['declare D; declare -p D', 'declare -- D\n'],
+    // An explicit empty value is a value, and prints as one.
+    ['f() { local L=; echo "[${L-UNSET}]"; }; f', '[]\n'],
+  ]
+  it.each(CASES)('%s', async (cmd, want) => {
+    const { ws } = await makeWorkspace()
+    expect(stdoutStr(await ws.execute(cmd))).toBe(want)
+    await ws.close()
+  })
+
+  it('refuses `local` outside a function', async () => {
+    const { ws } = await makeWorkspace()
+    const io = await ws.execute('local x=1; echo rc=$?')
+    expect(stderrStr(io)).toBe('bash: local: can only be used in a function\n')
+    expect(stdoutStr(io)).toBe('rc=1\n')
+    // `declare` is the spelling that is legal at top level.
+    expect(stdoutStr(await ws.execute('declare x=1; declare -p x'))).toBe('declare -- x="1"\n')
+    await ws.close()
+  })
+})

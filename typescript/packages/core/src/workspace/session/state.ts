@@ -98,10 +98,11 @@ function envIsReadonly(session: Session, name: string): boolean {
 /**
  * The env mapping a reader tier should resolve names against.
  *
- * The raw record when nothing is hidden (the common case pays
- * nothing), a filtered copy otherwise. TS diverges from python's lazy
- * mapping view deliberately: expansion sites read records with plain
- * property access, so a filtered copy is the shape they already
+ * Always a filtered copy, never `session.env`: that getter is itself a
+ * projection built fresh per access, so handing it out would copy the
+ * store anyway and freeze the answer at that moment. TS diverges from
+ * python's lazy mapping view deliberately: expansion sites read records
+ * with plain property access, so a copy is the shape they already
  * consume, and env sizes make the copy cost noise.
  *
  * The *shell* view, and no longer a synonym for `envSnapshot`: this is
@@ -269,20 +270,27 @@ export function seedVar(session: Session, name: string, value: ShellValue): void
  * yet marks it anyway, and the name stays *unset*: GNU prints
  * `declare -r ONLY` with no value and `${ONLY-d}` still expands to `d`.
  * So the record is created with no value, not with an empty string.
+ *
+ * A null attribute changes no attribute and only ensures the name
+ * exists, which is what a bare `local L` / `declare D` does: GNU answers
+ * `declare -- L` and `${L-d}` still expands to `d`, so those two cannot
+ * route through a value writer either.
  */
-export function setAttr(session: Session, name: string, attr: VarAttr, on = true): void {
+export function setAttr(session: Session, name: string, attr: VarAttr | null, on = true): void {
   const existing = sessionEntry(session.vars, name) ?? makeVar()
-  setSessionEntry(session.vars, name, withAttr(existing, attr, on))
+  setSessionEntry(session.vars, name, attr === null ? existing : withAttr(existing, attr, on))
 }
 
 /**
  * Turn one attribute on or off through the session plane's gate.
  *
- * The no-value writer beside `setVar`. `export NAME` and
- * `readonly NAME` on a fresh name write no value at all -- the name
- * stays unset and merely marked -- so routing them through `setVar`
- * would have to invent one, and inventing `''` is exactly the
- * divergence that made `export Z` show up in `env`.
+ * The no-value writer beside `setVar`. `export NAME`, `readonly NAME`
+ * and a bare `local NAME` on a fresh name write no value at all -- the
+ * name stays unset and merely declared -- so routing them through
+ * `setVar` would have to invent one, and inventing `''` is exactly the
+ * divergence that made `export Z` show up in `env` and `${L-d}` stop
+ * expanding to `d`. A null attribute declares the name and changes no
+ * attribute.
  *
  * Gated all the same, because a mark is still a session write: a
  * hidden name refuses, and `preSession` sees it with a null value,
@@ -294,7 +302,7 @@ async function markVar(
   session: Session,
   policies: Policies | null,
   name: string,
-  attr: VarAttr,
+  attr: VarAttr | null,
   on: boolean,
 ): Promise<void> {
   ensureVarVisible(session, name)

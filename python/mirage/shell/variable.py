@@ -118,6 +118,37 @@ def with_attr(var: ShellVar, attr: VarAttr, on: bool = True) -> ShellVar:
     return replace(var, attrs=frozenset(attrs))
 
 
+def stored_attrs(var: ShellVar) -> str:
+    """The stored attribute letters, in `declare -p` print order.
+
+    The tail of `attr_letters` without the `a`/`A` kind lead, which is
+    derived rather than stored. Split out because two callers want the
+    stored half alone: the serializer, which must not write a letter it
+    would then read back as an attribute the value already implies, and
+    `attr_letters` itself.
+
+    Args:
+        var (ShellVar): the variable.
+    """
+    return "".join(a.value for a in VarAttr if a in var.attrs)
+
+
+def attrs_from_letters(letters: str) -> frozenset[VarAttr]:
+    """The attribute set a stored letter cluster spells.
+
+    The inverse of `stored_attrs`, used when a persisted session is read
+    back. A letter that names no attribute is ignored rather than
+    raising: the store is shared with the other language and with future
+    versions, and refusing to load a session because one letter is
+    unknown loses far more than the letter.
+
+    Args:
+        letters (str): the cluster written by `stored_attrs`.
+    """
+    known = {a.value: a for a in VarAttr}
+    return frozenset(known[c] for c in letters if c in known)
+
+
 def attr_letters(var: ShellVar) -> str:
     """The attribute cluster `declare -p` prints for this variable.
 
@@ -135,4 +166,4 @@ def attr_letters(var: ShellVar) -> str:
         lead = "a"
     elif kind == VarKind.ASSOC:
         lead = "A"
-    return lead + "".join(a.value for a in VarAttr if a in var.attrs)
+    return lead + stored_attrs(var)

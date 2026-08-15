@@ -339,6 +339,18 @@ async def execute_node(
     # expansion-time write (`${X:=d}`, `$((X=5))`) lands through it,
     # so a pre_session rule governs those exactly as it governs `X=d`.
     view = session_view(session, registry.policies)
+    # `set -n` reads without executing, and it stops *everything* after
+    # it, at every depth: GNU answers `if true; then set -n; echo BAD;
+    # fi` and `f(){ set -n; echo BAD; }; f` with nothing at all. Stated
+    # here, at the one door every node goes through, rather than in each
+    # statement runner -- the program loop, the subshell body, a group,
+    # a function body and every loop body are five places for one rule to
+    # drift, and it did: the check lived in the program loop alone, so
+    # `set -n` worked flat and did nothing one construct deep. The
+    # program loop keeps its own `break` as the reader-level stop, which
+    # is also what silences `set -v` for the lines it never reads.
+    if session.shell_options.get("noexec"):
+        return None, IOResult(), ExecutionNode(command="", exit_code=0)
     if cancel is not None and cancel.is_set():
         raise MirageAbortError()
     cs = call_stack if call_stack is not None else CallStack()
@@ -765,12 +777,18 @@ async def execute_node(
                 cmd="local" if keyword == NT.LOCAL else str(keyword))
             # `declare -x NAME` marks an existing name without touching
             # its value, and `declare -x NAME=v` assigns then marks, so
-            # the stamp lands after the assignment either way. Only on
-            # a run that stored something: a refusal returns non-zero
-            # and must not leave the attribute behind.
+            # the stamp lands after the assignment either way. The
+            # staged array literals are stamped too, since an array is
+            # as exportable as a scalar: GNU answers `declare -x A=(a b)`
+            # with `declare -ax A=([0]="a" [1]="b")`, and reading only
+            # `assignments` left every `declare -x NAME=(...)` unmarked.
+            # Only on a run that stored something: a refusal returns
+            # non-zero and must not leave the attribute behind.
             if "x" in flag_chars and result[1].exit_code == 0:
-                for assign in assignments:
-                    set_attr(session, assign.partition("=")[0], VarAttr.EXPORT)
+                marked = [a.partition("=")[0] for a in assignments]
+                marked += [name for name, _, _ in staged or []]
+                for name in marked:
+                    set_attr(session, name, VarAttr.EXPORT)
             return result
         # Pass export flags through so -p / bare print and bad options work.
         return await handle_export(flag_words + assignments,

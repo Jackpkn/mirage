@@ -140,9 +140,12 @@ class _VisibleEnv(Mapping[str, str]):
 def visible_env(session: Session) -> Mapping[str, str]:
     """The env mapping a reader tier should resolve names against.
 
-    The raw dict when nothing is hidden (the common case pays
-    nothing), a filtering view otherwise. Read-only by type: writers
-    go through ``set_var``/``unset_var``, never a mapping.
+    Always the live view, never ``session.env``: that property is a
+    projection built fresh on every access, so handing it out would
+    copy the whole store per read *and* freeze the answer at that
+    moment. The view costs one dict lookup plus the hidden check per
+    name and shows later writes through. Read-only by type: writers go
+    through ``set_var``/``unset_var``, never a mapping.
 
     Args:
         session (Session): the session holding the environment.
@@ -238,7 +241,12 @@ async def set_var(session: Session, policies: Policies | None, name: str,
             pre_session policy refused the write.
     """
     ensure_var_visible(session, name)
-    if name in session.readonly_vars:
+    # The record, not the `readonly_vars` projection: that property
+    # rebuilds a frozenset over every variable in the session, and this
+    # is the hot path every assignment takes. TypeScript's `setVar` has
+    # always read the record directly. `ensure_var_visible` has already
+    # refused a hidden name, so the two answer identically here.
+    if env_is_readonly(session, name):
         raise ReadonlyVariableError(name)
     rendered = value if isinstance(value, str) else " ".join(
         array_values(value))
@@ -285,7 +293,9 @@ async def unset_var(session: Session, policies: Policies | None,
         # a quiet no-op; popping the real value would let a session
         # mutate state it cannot see.
         return
-    if name in session.readonly_vars:
+    # Same as `set_var`: the record, not the projection. The hidden
+    # branch above has already returned, so the answers match.
+    if env_is_readonly(session, name):
         raise ReadonlyVariableError(name)
     await pre_session_gate(
         policies,
@@ -300,12 +310,27 @@ async def unset_var(session: Session, policies: Policies | None,
 def seed_var(session: Session, name: str, value: ShellValue) -> None:
     """Write a variable without consulting the gate.
 
-    For seeding a session before it is handed out -- the embedder
-    populating an environment, a test arranging state. `visible_arrays`
-    already names this case ("the embedder can seed session.arrays
-    before narrowing"). Anything reached from a command line goes
-    through `SessionView.set` instead, which is the whole point of the
-    store being read-only from outside.
+    Two kinds of caller. One is seeding a session before it is handed
+    out: the embedder populating an environment, a test arranging
+    state. `visible_arrays` already names this case ("the embedder can
+    seed session.arrays before narrowing"). The other is the shell
+    writing its own bookkeeping -- ``$PWD``/``$OLDPWD`` after a ``cd``,
+    ``BASH_REMATCH`` after a ``[[ =~ ]]``, the loop variable a ``for``
+    puts back when it ends -- which are the shell's to maintain, not
+    the session's to admit, and which a ``pre_session`` rule refusing
+    them could only break.
+
+    A variable the *line* named goes through `SessionView.set` instead,
+    which is the whole point of the store being read-only from outside.
+    One caller is neither, and is called out here rather than left to
+    be discovered: `execute_command` lands a prefix assignment
+    (``FOO=bar cmd``) through this door, so a ``pre_session`` rule
+    never sees one. That predates the record store -- the same site
+    wrote ``session.env[k]`` before -- and closing it means deciding
+    what bash does when a prefix assignment is refused, which is its
+    own divergence (GNU prints the readonly refusal, runs the command
+    anyway and exits 0, where mirage refuses the whole statement). It
+    belongs with that work, not here.
 
     Args:
         session (Session): the session being seeded.
@@ -319,7 +344,7 @@ def seed_var(session: Session, name: str, value: ShellValue) -> None:
 
 def set_attr(session: Session,
              name: str,
-             attr: VarAttr,
+             attr: VarAttr | None,
              on: bool = True) -> None:
     """Turn one attribute on or off, creating the name if needed.
 
@@ -329,28 +354,37 @@ def set_attr(session: Session,
     `d`. So the record is created with no value, not with an empty
     string.
 
+    A None attribute changes no attribute and only ensures the name
+    exists, which is what a bare `local L` / `declare D` does: GNU
+    answers `declare -- L` and `${L-d}` still expands to `d`, so those
+    two cannot route through a value writer either.
+
     Args:
         session (Session): the session being written.
         name (str): variable name.
-        attr (VarAttr): the attribute to change.
+        attr (VarAttr | None): the attribute to change, None to declare
+            the name and change nothing.
         on (bool): set it, or clear it.
     """
     existing = session.vars.get(name, ShellVar())
-    session.vars[name] = with_attr(existing, attr, on)
+    session.vars[name] = (existing if attr is None else with_attr(
+        existing, attr, on))
 
 
 async def mark_var(session: Session,
                    policies: Policies | None,
                    name: str,
-                   attr: VarAttr,
+                   attr: VarAttr | None,
                    on: bool = True) -> None:
     """Turn one attribute on or off through the session plane's gate.
 
-    The no-value writer beside ``set_var``. ``export NAME`` and
-    ``readonly NAME`` on a fresh name write no value at all -- the name
-    stays unset and merely marked -- so routing them through
-    ``set_var`` would have to invent one, and inventing ``""`` is
-    exactly the divergence that made ``export Z`` show up in ``env``.
+    The no-value writer beside ``set_var``. ``export NAME``,
+    ``readonly NAME`` and a bare ``local NAME`` on a fresh name write no
+    value at all -- the name stays unset and merely declared -- so
+    routing them through ``set_var`` would have to invent one, and
+    inventing ``""`` is exactly the divergence that made ``export Z``
+    show up in ``env`` and ``${L-d}`` stop expanding to ``d``. A None
+    attribute declares the name and changes no attribute.
 
     Gated all the same, because a mark is still a session write: a
     hidden name refuses, and ``pre_session`` sees it with a None value,
@@ -362,7 +396,8 @@ async def mark_var(session: Session,
         session (Session): the session being written.
         policies (Policies | None): admission policies the mark clears.
         name (str): variable name.
-        attr (VarAttr): the attribute to change.
+        attr (VarAttr | None): the attribute to change, None to declare
+            the name and change nothing.
         on (bool): set it, or clear it.
 
     Raises:

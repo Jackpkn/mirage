@@ -269,6 +269,51 @@ def test_export_fires_the_state_gate():
     assert ws.env.get("PUBLIC_X") == "1"
 
 
+def test_every_declaring_spelling_fires_the_state_gate():
+    # A mark is a session write, so the no-value forms clear the gate
+    # too. `readonly NAME` marked through `set_attr` and walked straight
+    # past it: a deployment refusing SECRET_* still saw the line exit 0,
+    # create the record, and freeze the name against every later write
+    # the deployment's own wiring would make.
+    ws = _two_mounts(policies=[DenySecretEnv()])
+
+    async def run():
+        return [
+            await ws.execute(line) for line in (
+                "SECRET_A=1",
+                "export SECRET_B",
+                "readonly SECRET_C",
+                "readonly SECRET_D=1",
+                "declare SECRET_E",
+            )
+        ]
+
+    for io in asyncio.run(run()):
+        assert io.exit_code != 0, f"unexpected success: {io}"
+        assert b"refused by policy" in (io.stderr or b"")
+    session = ws.get_session(ws.default_session_id)
+    for name in ("SECRET_A", "SECRET_B", "SECRET_C", "SECRET_D", "SECRET_E"):
+        assert name not in session.vars
+
+
+def test_a_hidden_name_cannot_be_marked_readonly():
+    # The same door from the other side: a session that cannot see the
+    # name must not be able to freeze it either, which would deny the
+    # host's own wiring a write to state the session never had.
+    ws = _two_mounts()
+    session = ws.get_session(ws.default_session_id)
+    seed_var(session, "SECRET", "topsecret")
+    session.hidden_vars = HiddenVars(names=("SECRET", ), patterns=())
+
+    async def run():
+        return await ws.execute("readonly SECRET")
+
+    io = asyncio.run(run())
+    assert io.exit_code != 0
+    assert b"permission denied" in (io.stderr or b"")
+    assert session.vars["SECRET"].attrs == frozenset()
+
+
 def test_command_env_is_a_snapshot_not_the_live_dict():
     # A command's env is the process view: a child cannot write the
     # parent's environment, so a mutation must not land in the session.

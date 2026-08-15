@@ -363,6 +363,19 @@ export async function executeNode(
   const { dispatch, registry, jobTable, executeFn, agentId } = deps
   const kind = nodeKind(node)
 
+  // `set -n` reads without executing, and it stops *everything* after
+  // it, at every depth: GNU answers `if true; then set -n; echo BAD; fi`
+  // and `f(){ set -n; echo BAD; }; f` with nothing at all. Stated here,
+  // at the one door every node goes through, rather than in each
+  // statement runner — the program loop, the subshell body, a group, a
+  // function body and every loop body are five places for one rule to
+  // drift, and it did: the check lived in the program loop alone, so
+  // `set -n` worked flat and did nothing one construct deep. The program
+  // loop keeps its own `break` as the reader-level stop, which is also
+  // what silences `set -v` for the lines it never reads.
+  if (session.shellOptions.noexec === true) {
+    return [null, new IOResult(), new ExecutionNode({ command: '', exitCode: 0 })]
+  }
   if (deps.signal?.aborted === true || session.abortSignal?.aborted === true) {
     throw makeAbortError()
   }
@@ -867,14 +880,20 @@ export async function executeNode(
       )
       // `declare -x NAME` marks an existing name without touching its
       // value, and `declare -x NAME=v` assigns then marks, so the stamp
-      // lands after the assignment either way. Only on a run that stored
-      // something: a refusal returns non-zero and must not leave the
-      // attribute behind.
+      // lands after the assignment either way. The staged array literals
+      // are stamped too, since an array is as exportable as a scalar:
+      // GNU answers `declare -x A=(a b)` with
+      // `declare -ax A=([0]="a" [1]="b")`, and reading only `assignments`
+      // left every `declare -x NAME=(...)` unmarked. Only on a run that
+      // stored something: a refusal returns non-zero and must not leave
+      // the attribute behind.
       if (flagChars.has('x') && result[1].exitCode === 0) {
-        for (const assign of assignments) {
-          const eq = assign.indexOf('=')
-          setAttr(session, eq >= 0 ? assign.slice(0, eq) : assign, VarAttr.Export)
-        }
+        const marked = assignments.map((a) => {
+          const eq = a.indexOf('=')
+          return eq >= 0 ? a.slice(0, eq) : a
+        })
+        for (const { name } of staged) marked.push(name)
+        for (const name of marked) setAttr(session, name, VarAttr.Export)
       }
       return result
     }

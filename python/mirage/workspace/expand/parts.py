@@ -21,6 +21,7 @@ import tree_sitter
 from mirage.ops.types import SessionView
 from mirage.shell.call_stack import CallStack
 from mirage.shell.helpers import get_text
+from mirage.shell.types import SET_OPTION_DEFAULTS
 from mirage.shell.types import NodeType as NT
 from mirage.types import PathSpec
 from mirage.utils.glob_walk import mark_escaped_globs, mark_globs, unmark_globs
@@ -184,8 +185,11 @@ async def expand_words(
                                                     view=view)
             result.extend(words)
             continue
-        if (p.type in BRACE_WORD_TYPES
-                and session.shell_options.get("braceexpand", True)):
+        # The default comes from the option table, not a literal here:
+        # two spellings of "brace expansion is on unless told otherwise"
+        # is one to drift.
+        if (p.type in BRACE_WORD_TYPES and session.shell_options.get(
+                "braceexpand", SET_OPTION_DEFAULTS["braceexpand"])):
             brace_words = await _expand_brace_word(p,
                                                    session,
                                                    execute_fn,

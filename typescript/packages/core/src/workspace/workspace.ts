@@ -12,7 +12,6 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { seedVar } from './session/state.ts'
 import type { FileCache } from '../cache/file/mixin.ts'
 import { RAMResource } from '../resource/ram/ram.ts'
 import { IOResult } from '../io/types.ts'
@@ -65,6 +64,7 @@ import { buildFilePrompt } from './file_prompt.ts'
 import { SessionManager } from './session/manager.ts'
 import type { WorkspaceFields, WorkspaceStateStore } from './store/base.ts'
 import type { Session } from './session/session.ts'
+import { varsFromEnv } from './session/session.ts'
 import type { SessionProfile } from './session/profile.ts'
 import { newSessionId, newWorkspaceId } from '../utils/ids.ts'
 import { stripSlash } from '../utils/slash.ts'
@@ -513,7 +513,12 @@ export class Workspace {
       session.hiddenPaths = profile.hiddenPaths ?? null
       session.hiddenVars = profile.hiddenVars ?? null
       if (profile.env != null) {
-        for (const [name, value] of Object.entries(profile.env)) seedVar(session, name, value)
+        // A profile's env is a *process* environment, the same shape
+        // `ws.env = {...}` speaks, so every name in it is exported.
+        // Seeding them plain left `$TOKEN` expanding while every command,
+        // CLI and guest runtime in the profiled session saw nothing,
+        // since all three read `envSnapshot` and that is the exported set.
+        Object.assign(session.vars, varsFromEnv(profile.env))
       }
     }
     return session

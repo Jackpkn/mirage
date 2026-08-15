@@ -97,3 +97,29 @@ describe('brace expansion follows its option', () => {
     await ws.close()
   })
 })
+
+describe('noexec stops a nested statement runner', () => {
+  // `set -n` stops everything after it at every depth, not only at the
+  // top of the input. GNU answers each of these with nothing at all: the
+  // option is read by the reader, so the statements after it are never
+  // executed wherever they sit. The check lived in the program loop
+  // alone, so `set -n` worked flat and silently did nothing one
+  // construct deep. Pinned on bash 5.2.37, debian:stable-slim.
+  const CASES = [
+    'if true; then set -n; echo BAD; fi; echo rc=1',
+    'f(){ set -n; echo BAD; }; f; echo rc=2',
+    'for i in 1 2; do set -n; echo BAD; done; echo rc=3',
+    '{ set -n; echo BAD; }; echo rc=4',
+    'while true; do set -n; echo BAD; break; done; echo rc=5',
+    'case x in x) set -n; echo BAD;; esac; echo rc=6',
+    'for ((i=0;i<3;i++)); do set -n; echo BAD; done; echo rc=7',
+    'until false; do set -n; echo BAD; done; echo rc=8',
+  ]
+  it.each(CASES)('%s', async (cmd) => {
+    const { ws } = await makeWorkspace()
+    const io = await ws.execute(cmd)
+    expect(stdoutStr(io)).toBe('')
+    expect(stderrStr(io)).toBe('')
+    await ws.close()
+  })
+})

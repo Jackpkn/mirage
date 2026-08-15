@@ -99,7 +99,10 @@ def change_dir(session: Session,
         logical: The spelling to report when it differs from ``new_cwd``.
             None keeps the pair collapsed, which is what ``-P`` wants.
     """
-    seed_var(session, "OLDPWD", session.env.get("PWD", ""))
+    # `env_get`, not `session.env`: the property builds a fresh dict over
+    # every variable on each access, and the direct read is the same
+    # answer for one lookup.
+    seed_var(session, "OLDPWD", env_get(session, "PWD") or "")
     # bash exports $OLDPWD as it does $PWD (`declare -x OLDPWD`), and
     # this is where the name is first created, so the mark has to be
     # applied here; $PWD already carries it from startup and keeps it

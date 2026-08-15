@@ -188,8 +188,18 @@ def test_unset_removes_env():
     assert "FOO" not in session.env
 
 
-def test_local_sets_env():
-    _, _, _, session, _, _ = _exec("local X=hello")
+def test_local_outside_a_function_is_refused():
+    # GNU: `bash: line 1: local: can only be used in a function`, exit 1
+    # and nothing stored. Storing it globally and exiting 0 is the
+    # silent-accept this tier removes; `declare` is the spelling that is
+    # legal here.
+    _, io, _, session, _, _ = _exec("local X=hello")
+    assert io.exit_code == 1
+    assert "X" not in session.env
+
+
+def test_declare_sets_env_at_top_level():
+    _, _, _, session, _, _ = _exec("declare X=hello")
     assert session.env["X"] == "hello"
 
 
@@ -1090,9 +1100,14 @@ def test_export_multiple_with_expansion():
     assert session.env["B"] == "2"
 
 
-def test_local_expands_value():
-    """local V=$BASE/file → V=/data/file."""
-    _, _, _, session, _, _ = _exec("local V=$BASE/file", env={"BASE": "/data"})
+def test_declare_expands_value():
+    """declare V=$BASE/file → V=/data/file.
+
+    Spelled `declare` rather than `local` because `local` outside a
+    function is refused, as GNU refuses it.
+    """
+    _, _, _, session, _, _ = _exec("declare V=$BASE/file",
+                                   env={"BASE": "/data"})
     assert session.env["V"] == "/data/file"
 
 

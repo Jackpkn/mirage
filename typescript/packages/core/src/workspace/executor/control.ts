@@ -160,6 +160,11 @@ export async function handleIf(
   return [null, new IOResult(), new ExecutionNode({ exitCode: 0 })]
 }
 
+// `set -n` inside a loop body has to stop the *driver* too, not only the
+// statements: `executeNode` refuses every node while the option is on, so
+// the `break` or the false condition the driver is waiting for is one of
+// the refused nodes and it would spin to MAX_WHILE. GNU never runs the
+// loop at all, which is what falling straight out of it produces.
 export async function handleFor(
   executeNode: ExecuteNodeFn,
   variable: string,
@@ -187,6 +192,7 @@ export async function handleFor(
 
   try {
     for (const val of values) {
+      if (session.shellOptions.noexec === true) break
       // env stores strings only; bash keeps `for f in sub/*.txt`
       // matches relative, so the loop variable takes the typed form.
       // The write goes through the session door; a policy denial
@@ -255,6 +261,10 @@ async function conditionLoop(
 
   try {
     for (let i = 0; i < MAX_WHILE; i++) {
+      if (session.shellOptions.noexec === true) {
+        hitLimit = false
+        break
+      }
       const [condStdout, condIo] = await executeNode(condition, session, stdin, callStack)
       await applyBarrier(condStdout, condIo, BarrierPolicy.STATUS)
       session.lastExitCode = condIo.exitCode
@@ -343,6 +353,10 @@ export async function handleCfor(
     try {
       await evalExpr(exprs[0] ?? null, 0)
       for (let i = 0; i < MAX_WHILE; i++) {
+        if (session.shellOptions.noexec === true) {
+          hitLimit = false
+          break
+        }
         if ((await evalExpr(exprs[1] ?? null, 1)) === 0) {
           hitLimit = false
           break
@@ -506,6 +520,7 @@ export async function handleSelect(
   mergedIo = await mergedIo.merge(new IOResult({ stderr: menu }))
   try {
     for (let i = 0; i < MAX_WHILE; i++) {
+      if (session.shellOptions.noexec === true) break
       mergedIo = await mergedIo.merge(new IOResult({ stderr: new TextEncoder().encode('#? ') }))
       const lineBytes = session.stdinBuffer !== null ? await session.stdinBuffer.readline() : null
       if (lineBytes === null) {

@@ -41,16 +41,13 @@ export enum VarAttr {
   Upper = 'u',
 }
 
-/** `declare -p` print order, which is not the enum's member order. */
-const ATTR_ORDER: VarAttr[] = [
-  VarAttr.Integer,
-  VarAttr.Nameref,
-  VarAttr.Readonly,
-  VarAttr.Trace,
-  VarAttr.Export,
-  VarAttr.Lower,
-  VarAttr.Upper,
-]
+// `declare -p` print order, derived from the enum rather than restated:
+// a string enum has no reverse mapping, so `Object.values` is its
+// declaration order exactly. Python reads the same order off `VarAttr`
+// itself, so an attribute added to one enum cannot print in a different
+// place from the other, and cannot be silently dropped by a hand-written
+// list nobody remembered to extend.
+const ATTR_ORDER: VarAttr[] = Object.values(VarAttr)
 
 /** What a variable's value is, derived from the value itself. */
 export enum VarKind {
@@ -122,6 +119,36 @@ export function withAttr(v: ShellVar, attr: VarAttr, on = true): ShellVar {
 }
 
 /**
+ * The stored attribute letters, in `declare -p` print order.
+ *
+ * The tail of `attrLetters` without the `a`/`A` kind lead, which is
+ * derived rather than stored. Split out because two callers want the
+ * stored half alone: the serializer, which must not write a letter it
+ * would then read back as an attribute the value already implies, and
+ * `attrLetters` itself.
+ */
+export function storedAttrs(v: ShellVar): string {
+  return ATTR_ORDER.filter((a) => v.attrs.has(a)).join('')
+}
+
+/**
+ * The attribute set a stored letter cluster spells, the inverse of
+ * `storedAttrs`, used when a persisted session is read back. A letter
+ * that names no attribute is ignored rather than throwing: the store is
+ * shared with the other language and with future versions, and refusing
+ * to load a session because one letter is unknown loses far more than
+ * the letter.
+ */
+export function attrsFromLetters(letters: string): ReadonlySet<VarAttr> {
+  const known = new Set<string>(ATTR_ORDER)
+  const out = new Set<VarAttr>()
+  for (const c of letters.split('')) {
+    if (known.has(c)) out.add(c as VarAttr)
+  }
+  return out
+}
+
+/**
  * The attribute cluster `declare -p` prints for this variable.
  *
  * `-a`/`-A` come from the value's kind and lead, then the stored
@@ -134,5 +161,5 @@ export function attrLetters(v: ShellVar): string {
   let lead = ''
   if (kind === VarKind.Indexed) lead = 'a'
   else if (kind === VarKind.Assoc) lead = 'A'
-  return lead + ATTR_ORDER.filter((a) => v.attrs.has(a)).join('')
+  return lead + storedAttrs(v)
 }

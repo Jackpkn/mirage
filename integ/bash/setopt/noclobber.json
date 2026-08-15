@@ -184,8 +184,6 @@
         "s3-prefix",
         "databricks-prefix",
         "gridfs-prefix",
-        "hf",
-        "hf-prefix",
         "dropbox",
         "dropbox-root",
         "onedrive",
@@ -236,6 +234,74 @@
         "exit": 0,
         "stdout": "rc=0\nb\n",
         "stderr": ""
+      }
+    },
+    {
+      "id": "opt_noclobber_refused_open_never_runs_the_command",
+      "seq": 502807,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "echo a > /data/zqs7.txt; (set -C; touch /data/zqs7m.txt > /data/zqs7.txt); echo rc=$?; ls /data/zqs7m.txt",
+      "expect": {
+        "exit": 0,
+        "stdout": "rc=1\n",
+        "stderr": "/data/zqs7.txt: cannot overwrite existing file\nls: cannot access '/data/zqs7m.txt': No such file or directory\n"
+      }
+    },
+    {
+      "id": "opt_noclobber_command_cannot_clear_its_own_target",
+      "seq": 502808,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "echo one > /data/zqs8.txt; (set -C; rm /data/zqs8.txt > /data/zqs8.txt); echo rc=$?; cat /data/zqs8.txt",
+      "expect": {
+        "exit": 0,
+        "stdout": "rc=1\none\n",
+        "stderr": "/data/zqs8.txt: cannot overwrite existing file\n"
       }
     }
   ]

@@ -78,3 +78,28 @@ def test_brace_expansion_follows_its_option(shell):
     assert shell.mirage("echo {a,b}") == "a b\n"
     assert shell.mirage("set +B; echo {a,b}") == "{a,b}\n"
     assert "braceexpand    \toff\n" in shell.mirage("set +B; set -o")
+
+
+# `set -n` stops everything after it at every depth, not only at the top
+# of the input. GNU answers each of these with nothing at all: the option
+# is read by the reader, so the statements after it are never executed
+# wherever they sit. Pinned on bash 5.2.37, debian:stable-slim.
+NESTED_NOEXEC = [
+    "if true; then set -n; echo BAD; fi; echo rc=1",
+    "f(){ set -n; echo BAD; }; f; echo rc=2",
+    "for i in 1 2; do set -n; echo BAD; done; echo rc=3",
+    "{ set -n; echo BAD; }; echo rc=4",
+    "while true; do set -n; echo BAD; break; done; echo rc=5",
+    "case x in x) set -n; echo BAD;; esac; echo rc=6",
+]
+
+
+@pytest.mark.parametrize("cmd", NESTED_NOEXEC)
+def test_noexec_stops_a_nested_statement_runner(shell, cmd):
+    # The check lived in the program loop alone, so `set -n` worked flat
+    # and silently did nothing one construct deep: every one of these
+    # printed BAD. It is stated in `execute_node` now, the one door
+    # every node goes through.
+    _, out, err = shell.mirage_result(cmd)
+    assert out == ""
+    assert err == ""

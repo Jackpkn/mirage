@@ -63,6 +63,30 @@ def test_noclobber(shell, cmd, last_rc, out, err):
     assert f"rc={last_rc}" in got_out or last_rc == 0
 
 
+def test_a_refused_open_stops_the_command_from_running(shell):
+    # bash opens every redirect before it forks, so a refused open means
+    # the command never runs at all. Checking after the fact matched the
+    # target's contents and nothing else: `touch marker > existing` still
+    # created the marker.
+    _, out, err = shell.mirage_result(
+        "echo a > /data/f; set -C; touch /data/marker > /data/f;"
+        " echo rc=$?; ls /data/marker")
+    assert err == ("/data/f: cannot overwrite existing file\n"
+                   "ls: cannot access '/data/marker':"
+                   " No such file or directory\n")
+    assert out == "rc=1\n"
+
+
+def test_a_command_cannot_clear_the_way_for_its_own_refused_redirect(shell):
+    # The worst shape of the same bug: `rm f > f` ran first, so by the
+    # time the probe looked there was nothing to refuse and the line
+    # reported success while the file was gone.
+    _, out, _ = shell.mirage_result("echo one > /data/f; set -C;"
+                                    " rm /data/f > /data/f; echo rc=$?;"
+                                    " cat /data/f")
+    assert out == "rc=1\none\n"
+
+
 def test_noclobber_shows_in_the_option_listing(shell):
     # The fixture reuses one session across calls, so the default is
     # asserted before anything sets the option.

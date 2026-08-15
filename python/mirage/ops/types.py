@@ -75,12 +75,13 @@ EnvSnapshot = Callable[[], dict[str, str]]
 EnvSet = Callable[[str, str | ShellArray], Awaitable[None]]
 # Drop one variable through the session plane; a missing name is quiet.
 EnvUnset = Callable[[str], Awaitable[None]]
-# Turn one attribute on or off through the session plane. Separate from
-# `EnvSet` because it writes no value: `export NAME` and `readonly NAME`
-# on a fresh name leave it *unset* and merely marked, which is a state
-# `EnvSet` cannot express. Gated all the same -- a mark is a session
-# write, so a hidden name refuses and `pre_session` still rules.
-EnvMark = Callable[[str, VarAttr, bool], Awaitable[None]]
+# Turn one attribute on or off through the session plane, or with a None
+# attribute declare the name and change nothing. Separate from `EnvSet`
+# because it writes no value: `export NAME`, `readonly NAME` and a bare
+# `local NAME` on a fresh name leave it *unset* and merely declared,
+# which is a state `EnvSet` cannot express. Gated all the same -- a mark
+# is a session write, so a hidden name refuses and `pre_session` rules.
+EnvMark = Callable[[str, VarAttr | None, bool], Awaitable[None]]
 # Whether `readonly` has marked the name.
 EnvIsReadonly = Callable[[str], bool]
 

@@ -94,7 +94,7 @@ async def _store_staged_arrays(
     session: Session,
     view: SessionView,
     arrays: list[tuple[str, bool, list[str]]],
-    mark: bool = False,
+    mark: VarAttr | None = None,
     fatal: bool = False,
 ) -> tuple[ByteSource | None, IOResult, ExecutionNode] | None:
     """Store a declaration's array literals through the session door.
@@ -115,8 +115,13 @@ async def _store_staged_arrays(
         view (SessionView): the session plane's gated door.
         arrays (list[tuple[str, bool, list[str]]]): staged
             ``(name, append, items)`` literals from the declaration.
-        mark (bool): also mark each stored name readonly (the
-            ``readonly`` keyword's half).
+        mark (VarAttr | None): the attribute the declaring keyword puts
+            on each stored name -- READONLY for ``readonly``, EXPORT for
+            ``export``. An attribute rather than a bool because both
+            keywords stage array literals through here and hardcoding
+            one of them silently dropped the other: ``export ARR=(a b)``
+            stored the array and never marked it, so GNU's
+            ``declare -ax`` came out ``declare -a``.
         fatal (bool): render a readonly refusal as the fatal
             assignment error instead of a builtin failure.
 
@@ -147,8 +152,11 @@ async def _store_staged_arrays(
             await view.set(name, base)
         except PolicyDenied as exc:
             return _refusal(cmd, exc)
-        if mark:
-            set_attr(session, name, VarAttr.READONLY)
+        if mark is not None:
+            # Ungated on purpose: the `view.set` immediately above put
+            # this same name through the gate, so re-asking would show a
+            # policy two writes for one operand.
+            set_attr(session, name, mark)
     return None
 
 
@@ -250,33 +258,32 @@ def _split_decl_flags(
 
 
 def _export_lines(session: Session, flags: set[str]) -> list[str]:
-    """Build sorted ``declare -x`` lines for every exported name.
+    """Build sorted declaration lines for every exported name.
 
     The exported set, not every shell variable: ``X=hello`` is absent
-    and ``export Y=world`` is present, which is what bash prints. A
-    name marked but never assigned prints bare, with no ``=`` and no
-    value (``declare -x Z``), since that is how GNU renders the
-    declared-but-unset state. ``-f`` selects shell functions instead of
-    variables; mirage tracks no export attribute on functions, so that
-    form lists nothing, as bash does with none exported.
+    and ``export Y=world`` is present, which is what bash prints. ``-f``
+    selects shell functions instead of variables; mirage tracks no
+    export attribute on functions, so that form lists nothing, as bash
+    does with none exported.
+
+    Rendering is ``_declare_line``'s, not a second spelling of it: GNU's
+    ``export -p`` prints the *whole* cluster, so a readonly exported
+    scalar is ``declare -rx R="1"`` and an exported array is
+    ``declare -ax AR=([0]="a")``. Writing ``declare -x`` here by hand
+    printed neither, and rendered an exported array as a bare
+    ``declare -x AR`` because it looked the value up among the scalars.
 
     Args:
         session (Session): shell session state.
         flags (set[str]): option letters the caller supplied.
 
     Returns:
-        list[str]: one ``declare -x`` line per selected name.
+        list[str]: one declaration line per exported name.
     """
     if "f" in flags:
         return []
-    env = visible_env(session)
-    lines: list[str] = []
-    for name in exported_names(session):
-        if name in env:
-            lines.append(f"declare -x {name}={_bash_declare_quote(env[name])}")
-        else:
-            lines.append(f"declare -x {name}")
-    return lines
+    lines = [_declare_line(session, name) for name in exported_names(session)]
+    return [line for line in lines if line is not None]
 
 
 def _readonly_lines(session: Session, flags: set[str]) -> list[str]:
@@ -479,11 +486,15 @@ async def handle_export(
     view = _view(session, state)
     on = "n" not in flags
     if arrays:
-        refused = await _store_staged_arrays("export",
-                                             session,
-                                             view,
-                                             arrays,
-                                             fatal=True)
+        # `export ARR=(a b)` marks the array as surely as it marks a
+        # scalar: GNU prints `declare -ax ARR=([0]="a" [1]="b")`.
+        refused = await _store_staged_arrays(
+            "export",
+            session,
+            view,
+            arrays,
+            mark=VarAttr.EXPORT if on else None,
+            fatal=True)
         if refused is not None:
             return refused
     errors: list[str] = []
@@ -548,7 +559,7 @@ async def handle_readonly(
                                              session,
                                              view,
                                              arrays,
-                                             mark=True,
+                                             mark=VarAttr.READONLY,
                                              fatal=True)
         if refused is not None:
             return refused
@@ -566,9 +577,20 @@ async def handle_readonly(
                 await view.set(key, val)
             except PolicyDenied as exc:
                 return _refusal("readonly", exc)
+            # Ungated: the `view.set` above already put this name
+            # through the gate, so the mark rides on that decision.
             set_attr(session, key, VarAttr.READONLY)
         else:
-            set_attr(session, assign, VarAttr.READONLY)
+            # Gated, exactly as `export NAME` is. The bare form writes no
+            # value, so it has no `view.set` to ride on, and marking
+            # through `set_attr` walked straight past `pre_session`: a
+            # deployment refusing `AWS_*` still saw `readonly AWS_KEY`
+            # exit 0, create the record, and freeze the name against
+            # every later legitimate write.
+            try:
+                await view.mark(assign, VarAttr.READONLY, True)
+            except PolicyDenied as exc:
+                return _refusal("readonly", exc)
     if errors:
         return _identifier_failure("readonly", errors)
     return None, IOResult(), ExecutionNode(command="readonly", exit_code=0)
@@ -1026,7 +1048,18 @@ async def handle_local(
             ``declare`` and ``typeset`` route through this handler and
             must say their own name, not ``local``.
     """
-    local_vars = getattr(session, "_local_vars", None)
+    local_vars = session._local_vars
+    if cmd == "local" and local_vars is None:
+        # `local` is the one spelling that needs a function scope;
+        # `declare`/`typeset` share this handler and are legal at top
+        # level. Without the check the builtin took its operands, stored
+        # them globally and exited 0, which is the silent-accept this
+        # whole tier exists to remove.
+        err = b"bash: local: can only be used in a function\n"
+        return None, IOResult(exit_code=1,
+                              stderr=err), ExecutionNode(command=cmd,
+                                                         exit_code=1,
+                                                         stderr=err)
     view = _view(session, state)
     if arrays:
         refused = await _store_staged_arrays(cmd,
@@ -1064,7 +1097,13 @@ async def handle_local(
                 if view.is_readonly(assign):
                     return _readonly_refusal(cmd, assign)
                 try:
-                    await view.set(assign, "")
+                    # Declared, not assigned. `local L` leaves the name
+                    # *unset*, exactly as `export Z` does: GNU prints
+                    # `declare -- L` and `${L-d}` still expands to `d`.
+                    # Writing `""` here made both wrong, which is the
+                    # same invented-empty-string bug the mark door was
+                    # added to fix for `export`.
+                    await view.mark(assign, None, True)
                 except PolicyDenied as exc:
                     return _refusal(cmd, exc)
     if errors:

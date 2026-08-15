@@ -105,6 +105,15 @@ export async function handleRedirect(
     }
   }
 
+  // Before the command, because bash decides an open before it forks:
+  // `set -C; touch marker > existing` creates no marker at all. Running
+  // first and discarding the output afterwards matched the file contents
+  // and nothing else, so a refused redirect still let `rm` delete its own
+  // target — and then the probe found nothing there and did not even
+  // refuse.
+  const barred = await noclobberRefusal(dispatch, session, redirects)
+  if (barred !== null) return barred
+
   let stdoutData: Uint8Array
   let stderrData: Uint8Array
   let io: IOResult
@@ -125,12 +134,6 @@ export async function handleRedirect(
   let fd2: FdDest = TO_STDERR
   const fileBufs = new Map<string, Uint8Array>()
   const fileScopes = new Map<string, PathSpec>()
-  // Targets the open refused, and the line each one answers with. The
-  // buffer is still built and fd1/fd2 still point at the path, so the
-  // command's output lands in a buffer nobody writes — bash never runs
-  // the command at all, and printing its stdout instead would be the
-  // one difference an agent could see.
-  const refused = new Map<string, Uint8Array>()
 
   for (const r of redirects) {
     if (
@@ -176,14 +179,6 @@ export async function handleRedirect(
     } else {
       fd1 = path
     }
-
-    const line = await openRefusal(dispatch, session, r, scope)
-    if (line !== null) {
-      refused.set(path, line)
-      // bash stops at the first redirect it cannot open, so the
-      // targets after this one are never touched.
-      break
-    }
   }
 
   let outStdout: Uint8Array = new Uint8Array()
@@ -202,12 +197,6 @@ export async function handleRedirect(
   }
 
   for (const [path, data] of fileBufs) {
-    const line = refused.get(path)
-    if (line !== undefined) {
-      outStderr = concat([outStderr, line])
-      io.exitCode = 1
-      break
-    }
     const scope = fileScopes.get(path)
     if (scope === undefined) continue
     try {
@@ -265,45 +254,70 @@ function redirectFailure(scope: PathSpec, err: unknown): Result {
 }
 
 /**
- * The line GNU answers with when this redirect cannot be opened, or null
- * when the open is allowed.
+ * Refuse the whole statement when `set -C` bars one of its opens.
+ *
+ * Returned *instead of* running the command, because that is what bash
+ * does: it opens every redirect before it forks, so a refusal means the
+ * command never runs. `set -C; touch marker > existing` leaves no marker
+ * behind. Deciding this after the fact only matched the file contents,
+ * and on `rm f > f` it did not even do that — the command deleted its
+ * own target first, so the probe found nothing there and let the line
+ * succeed.
  *
  * `set -C` refuses a truncating open onto anything that already exists —
  * an empty file counts, since the test is existence and not size — while
  * `>>` is always allowed and `>|` overrides for that one redirect without
  * clearing the option. A directory reached under the option is refused
  * too, in GNU's own wording for that case rather than the noclobber one.
+ * bash stops at the first target it cannot open, so the scan reports one
+ * line and stops.
  *
- * The probe runs only when the option is on, so the ordinary redirect
- * path costs no extra round trip. That leaves `> <a directory>` with the
- * option off silently succeeding, which is a separate pre-existing gap:
- * GNU answers `Is a directory` and exit 1 whichever operator asked, and
- * closing it means a stat on every output redirect.
+ * The whole scan is skipped unless the option is on, so the ordinary
+ * redirect path costs no extra round trip. That leaves
+ * `> <a directory>` with the option off silently succeeding, which is a
+ * separate pre-existing gap: GNU answers `Is a directory` and exit 1
+ * whichever operator asked, and closing it means a stat on every output
+ * redirect.
  *
- * The target is stat'd through the op dispatcher rather than a backend,
- * so a redirect that lands on another mount is answered by the mount that
+ * Targets are stat'd through the op dispatcher rather than a backend, so
+ * a redirect that lands on another mount is answered by the mount that
  * owns it.
  */
-async function openRefusal(
+async function noclobberRefusal(
   dispatch: DispatchFn,
   session: Session,
-  r: Redirect,
-  scope: PathSpec,
-): Promise<Uint8Array | null> {
-  if (r.append || r.clobber || session.shellOptions.noclobber !== true) return null
-  let stat: unknown
-  try {
-    ;[stat] = await dispatch('stat', scope)
-  } catch (err) {
-    // No target to overwrite is the ordinary case the option allows;
-    // anything that is not a filesystem error is a bug and propagates.
-    if (!isFsError(err)) throw err
-    return null
+  redirects: readonly Redirect[],
+): Promise<Result | null> {
+  if (session.shellOptions.noclobber !== true) return null
+  for (const r of redirects) {
+    if (
+      r.kind === RedirectKind.STDIN ||
+      r.kind === RedirectKind.HEREDOC ||
+      r.kind === RedirectKind.HERESTRING ||
+      r.append ||
+      r.clobber ||
+      typeof r.target === 'number'
+    ) {
+      continue
+    }
+    const scope = ensureScope(r.target)
+    let stat: unknown
+    try {
+      ;[stat] = await dispatch('stat', scope)
+    } catch (err) {
+      // No target to overwrite is the ordinary case the option allows;
+      // anything that is not a filesystem error is a bug and propagates.
+      if (!isFsError(err)) throw err
+      continue
+    }
+    if (!(stat instanceof FileStat)) continue
+    const detail =
+      stat.type === FileType.DIRECTORY ? 'Is a directory' : 'cannot overwrite existing file'
+    const err = new TextEncoder().encode(`${scope.rawPath}: ${detail}\n`)
+    const io = new IOResult({ exitCode: 1, stderr: err })
+    return [null, io, new ExecutionNode({ command: 'redirect', exitCode: 1 })]
   }
-  if (!(stat instanceof FileStat)) return null
-  const enc = new TextEncoder()
-  if (stat.type === FileType.DIRECTORY) return enc.encode(`${scope.rawPath}: Is a directory\n`)
-  return enc.encode(`${scope.rawPath}: cannot overwrite existing file\n`)
+  return null
 }
 
 async function readExisting(dispatch: DispatchFn, scope: PathSpec): Promise<Uint8Array> {

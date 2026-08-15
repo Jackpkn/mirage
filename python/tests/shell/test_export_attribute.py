@@ -135,3 +135,70 @@ def test_a_plain_variable_still_expands_and_lists(shell):
     # listing are the shell's own view and see every variable.
     assert shell.mirage("X=hello; echo $X") == "hello\n"
     assert "X=hello\n" in shell.mirage("X=hello; set")
+
+
+# `export -p` prints the whole cluster, not just `-x`, and an array is
+# exportable like anything else. Pinned on bash 5.2.37.
+ARRAY_EXPORT_CASES = [
+    ("export ARR=(a b); declare -p ARR",
+     'declare -ax ARR=([0]="a" [1]="b")\n'),
+    ("declare -x ARR=(a b); declare -p ARR",
+     'declare -ax ARR=([0]="a" [1]="b")\n'),
+    ("ARR=(a b); export ARR; declare -p ARR",
+     'declare -ax ARR=([0]="a" [1]="b")\n'),
+    ("readonly R=1; export R; export -p | grep ' R='", 'declare -rx R="1"\n'),
+    ("export ARR=(a b); export -p | grep ARR",
+     'declare -ax ARR=([0]="a" [1]="b")\n'),
+]
+
+
+@pytest.mark.parametrize("cmd,want", ARRAY_EXPORT_CASES)
+def test_export_marks_and_renders_arrays(shell, cmd, want):
+    assert shell.mirage(cmd) == want
+
+
+def test_an_exported_array_stays_out_of_the_process_view(shell):
+    # Marked, listed by `export -p`, and still absent from `env`: bash
+    # puts no array in a child's environment.
+    assert shell.mirage("export ARR=(a b); env | grep -c ARR || true") == "0\n"
+
+
+def test_a_bare_local_declares_without_assigning(shell):
+    # The same third state `export Z` has: declared, unset, so `${L-d}`
+    # still expands to `d` and `declare -p` prints no `=`. Writing `""`
+    # here was the invented-empty-string bug the mark door exists to fix.
+    assert shell.mirage('f() { local L; echo "[${L-UNSET}]"; }; f') == (
+        "[UNSET]\n")
+    assert shell.mirage("f() { local L; declare -p L; }; f") == (
+        "declare -- L\n")
+    assert shell.mirage("declare D; declare -p D") == "declare -- D\n"
+    # An explicit empty value is a value, and prints as one.
+    assert shell.mirage('f() { local L=; echo "[${L-UNSET}]"; }; f') == "[]\n"
+
+
+def test_local_outside_a_function_is_refused(shell):
+    _, out, err = shell.mirage_result("local x=1; echo rc=$?")
+    assert err == "bash: local: can only be used in a function\n"
+    assert out == "rc=1\n"
+    # `declare` is the spelling that is legal at top level.
+    assert shell.mirage("declare x=1; declare -p x") == 'declare -- x="1"\n'
+
+
+# A prefix assignment goes in the *command's* environment, which is the
+# whole point of the form. Pinned on bash 5.2.37.
+PREFIX_CASES = [
+    ("TOKEN=x printenv TOKEN", "x\n"),
+    ("TOKEN=x env | grep '^TOKEN='", "TOKEN=x\n"),
+    # And only for that command: the shell is unchanged afterwards.
+    ("TOKEN=x true; echo \"[${TOKEN-unset}]\"", "[unset]\n"),
+    # A plain assignment is still a shell variable, not an exported one.
+    ("T2=y; env | grep -c '^T2=' || true", "0\n"),
+]
+
+
+@pytest.mark.parametrize("cmd,want", PREFIX_CASES)
+def test_a_prefix_assignment_reaches_the_command_environment(shell, cmd, want):
+    # `env_snapshot` narrowing to the exported set is what broke this:
+    # the prefix was seeded plain, so the command, an installed CLI and a
+    # guest runtime all stopped seeing it.
+    assert shell.mirage(cmd) == want

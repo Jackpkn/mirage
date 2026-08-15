@@ -14,7 +14,8 @@
 
 import type { ShellVar } from '../../shell/variable.ts'
 import { sessionEntry, setSessionEntry } from '../session/session.ts'
-import { seedVar } from '../session/state.ts'
+import { seedVar, setAttr } from '../session/state.ts'
+import { VarAttr } from '../../shell/variable.ts'
 import type { Runtime } from '../../runtime/base.ts'
 import type { PolicyDecision } from '../../runtime/policy/index.ts'
 import { mergeSignals } from '../abort.ts'
@@ -240,7 +241,17 @@ export async function executeCommand(
   const savedEnvOverrides = new Map<string, ShellVar | null>()
   for (const [k, v] of prefixAssignments) {
     if (!isFunctionCall) savedEnvOverrides.set(k, sessionEntry(session.vars, k) ?? null)
+    // Exported for the duration, which is the whole point of the form:
+    // `TOKEN=x printenv TOKEN` prints `x` because bash puts a prefix
+    // assignment in the *command's environment*, not merely in the
+    // shell. Seeding it plain left it invisible to every reader of
+    // `envSnapshot` — the command's own env, an installed CLI, a guest
+    // runtime — once that view narrowed to the exported set. The saved
+    // record is put back below, so the attribute does not outlive the
+    // command; a function call deliberately saves nothing and keeps the
+    // assignment, as bash does.
     seedVar(session, k, v)
+    setAttr(session, k, VarAttr.Export)
   }
 
   try {

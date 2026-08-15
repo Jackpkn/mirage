@@ -20,6 +20,7 @@ import tree_sitter
 from mirage.io import IOResult
 from mirage.io.stream import materialize
 from mirage.io.types import ByteSource
+from mirage.runtime.types import DispatchFn
 from mirage.shell.barrier import BarrierPolicy, apply_barrier
 from mirage.shell.bytes import encode_text
 from mirage.shell.call_stack import CallStack
@@ -115,6 +116,16 @@ async def handle_redirect(
             else:
                 cmd_stdin = text
 
+    # Before the command, because bash decides an open before it forks:
+    # `set -C; touch marker > existing` creates no marker at all. Running
+    # first and discarding the output afterwards matched the file
+    # contents and nothing else, so a refused redirect still let `rm`
+    # delete its own target -- and then the probe found nothing there
+    # and did not even refuse.
+    refusal = await _noclobber_refusal(dispatch, session, redirects)
+    if refusal is not None:
+        return refusal
+
     if command is None:
         stdout_data = b""
         stderr_data = b""
@@ -132,12 +143,6 @@ async def handle_redirect(
     fd2: _Fd | str = _TO_STDERR
     file_bufs: dict[str, bytearray] = {}
     file_scopes: dict[str, PathSpec] = {}
-    # Targets the open refused, and the line each one answers with. The
-    # buffer is still built and fd1/fd2 still point at the path, so the
-    # command's output lands in a buffer nobody writes -- bash never runs
-    # the command at all, and printing its stdout instead would be the
-    # one difference an agent could see.
-    refused: dict[str, bytes] = {}
 
     for r in redirects:
         if r.kind in (RedirectKind.STDIN, RedirectKind.HEREDOC,
@@ -177,13 +182,6 @@ async def handle_redirect(
         else:
             fd1 = path
 
-        line = await _open_refusal(dispatch, session, r, scope)
-        if line is not None:
-            refused[path] = line
-            # bash stops at the first redirect it cannot open, so the
-            # targets after this one are never touched.
-            break
-
     out_stdout = bytearray()
     out_stderr = bytearray()
     for data, dest in ((stdout_data, fd1), (stderr_data, fd2)):
@@ -195,10 +193,6 @@ async def handle_redirect(
             file_bufs[dest] += data
 
     for path, buf in file_bufs.items():
-        if path in refused:
-            out_stderr += refused[path]
-            io.exit_code = 1
-            break
         data = bytes(buf)
         scope = file_scopes[path]
         try:
@@ -265,47 +259,71 @@ def _redirect_failure(scope: PathSpec,
     return None, io, ExecutionNode(command="redirect", exit_code=1)
 
 
-async def _open_refusal(dispatch, session: Session, r: Redirect,
-                        scope: PathSpec) -> bytes | None:
-    """The line GNU answers with when this redirect cannot be opened, or
-    None when the open is allowed.
+async def _noclobber_refusal(
+    dispatch: DispatchFn,
+    session: Session,
+    redirects: list[Redirect],
+) -> tuple[None, IOResult, ExecutionNode] | None:
+    """Refuse the whole statement when `set -C` bars one of its opens.
+
+    Returned *instead of* running the command, because that is what bash
+    does: it opens every redirect before it forks, so a refusal means
+    the command never runs. `set -C; touch marker > existing` leaves no
+    marker behind. Deciding this after the fact only matched the file
+    contents, and on `rm f > f` it did not even do that -- the command
+    deleted its own target first, so the probe found nothing there and
+    let the line succeed.
 
     `set -C` refuses a truncating open onto anything that already exists
     -- an empty file counts, since the test is existence and not size --
     while `>>` is always allowed and `>|` overrides for that one
     redirect without clearing the option. A directory reached under the
     option is refused too, in GNU's own wording for that case rather
-    than the noclobber one.
+    than the noclobber one. bash stops at the first target it cannot
+    open, so the scan reports one line and stops.
 
-    The probe runs only when the option is on, so the ordinary redirect
-    path costs no extra round trip. That leaves `> <a directory>` with
-    the option off silently succeeding, which is a separate pre-existing
-    gap: GNU answers `Is a directory` and exit 1 whichever operator
-    asked, and closing it means a stat on every output redirect.
+    The whole scan is skipped unless the option is on, so the ordinary
+    redirect path costs no extra round trip. That leaves
+    `> <a directory>` with the option off silently succeeding, which is
+    a separate pre-existing gap: GNU answers `Is a directory` and exit 1
+    whichever operator asked, and closing it means a stat on every
+    output redirect.
 
-    The target is stat'd through the op dispatcher rather than a
-    backend, so a redirect that lands on another mount is answered by
-    the mount that owns it.
+    Targets are stat'd through the op dispatcher rather than a backend,
+    so a redirect that lands on another mount is answered by the mount
+    that owns it.
 
     Args:
         dispatch (DispatchFn): op dispatcher.
         session (Session): the session holding the shell options.
-        r (Redirect): the redirect being processed.
-        scope (PathSpec): its resolved target.
+        redirects (list[Redirect]): the statement's redirects, in the
+            order they were written.
+
+    Returns:
+        The refusal result, or None when every open is allowed.
     """
-    if r.append or r.clobber or not session.shell_options.get("noclobber"):
+    if not session.shell_options.get("noclobber"):
         return None
-    try:
-        stat, _ = await dispatch("stat", scope)
-    except FS_ERRORS as exc:
-        logger.debug("redirect open probe found no target at %s: %s",
-                     scope.raw_path, exc)
-        return None
-    if stat is None:
-        return None
-    if getattr(stat, "type", None) == FileType.DIRECTORY:
-        return f"{scope.raw_path}: Is a directory\n".encode()
-    return f"{scope.raw_path}: cannot overwrite existing file\n".encode()
+    for r in redirects:
+        if (r.kind in (RedirectKind.STDIN, RedirectKind.HEREDOC,
+                       RedirectKind.HERESTRING) or r.append or r.clobber
+                or isinstance(r.target, int)):
+            continue
+        scope = _ensure_scope(r.target)
+        try:
+            stat, _ = await dispatch("stat", scope)
+        except FS_ERRORS as exc:
+            logger.debug("noclobber probe found no target at %s: %s",
+                         scope.raw_path, exc)
+            continue
+        if stat is None:
+            continue
+        detail = ("Is a directory" if stat.type == FileType.DIRECTORY else
+                  "cannot overwrite existing file")
+        err = f"{scope.raw_path}: {detail}\n".encode()
+        io = IOResult(exit_code=1, stderr=err)
+        return None, io, ExecutionNode(command="redirect", exit_code=1)
+    return None
 
 
 async def _read_existing(dispatch, scope) -> bytes:

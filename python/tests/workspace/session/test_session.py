@@ -261,3 +261,41 @@ def test_snapshot_and_restore_undo_a_child_shell():
 def test_argv0_keeps_an_empty_script_name():
     assert Session(session_id="s").argv0 == "mirage"
     assert Session(session_id="s", script_name="").argv0 == ""
+
+
+def test_to_dict_carries_the_attributes_beside_the_values():
+    s = Session(session_id="s1")
+    seed_var(s, "PLAIN", "hello")
+    s.vars["EXPO"] = ShellVar("world", frozenset({VarAttr.EXPORT}))
+    s.vars["MARKED"] = ShellVar(None,
+                                frozenset({VarAttr.EXPORT, VarAttr.READONLY}))
+    data = s.to_dict()
+    # `env` stays a plain name/value map, the shape an embedder writes
+    # and the other language reads; the letters ride beside it. An unset
+    # name has no value to carry and appears only in `var_attrs`.
+    assert data["env"] == {"PWD": "/", "PLAIN": "hello", "EXPO": "world"}
+    assert data["var_attrs"] == {"PWD": "x", "EXPO": "x", "MARKED": "rx"}
+
+
+def test_a_stored_session_round_trips_without_promoting_anything():
+    # The bug this replaced: `to_dict` wrote every scalar under `env` and
+    # `from_dict` read `env` as a process environment, so one flush and
+    # reload turned a plain `X=hello` into an exported one and shipped it
+    # to every child runtime.
+    s = Session(session_id="s1")
+    seed_var(s, "PLAIN", "hello")
+    s.vars["EXPO"] = ShellVar("world", frozenset({VarAttr.EXPORT}))
+    s.vars["MARKED"] = ShellVar(None, frozenset({VarAttr.READONLY}))
+    back = Session.from_dict(s.to_dict())
+    assert back.vars["PLAIN"] == ShellVar("hello", frozenset())
+    assert back.vars["EXPO"] == ShellVar("world", frozenset({VarAttr.EXPORT}))
+    assert back.vars["MARKED"] == ShellVar(None, frozenset({VarAttr.READONLY}))
+
+
+def test_a_payload_with_no_attributes_is_read_as_a_process_environment():
+    # An embedder's dict, or a record another writer hand-built, carries
+    # values and no letters. That shape *is* a process environment, so
+    # every name in it is exported -- which is what `ws.env = {...}` and
+    # a cross-language handoff both mean.
+    back = Session.from_dict({"session_id": "x", "env": {"A": "1"}})
+    assert back.vars["A"] == ShellVar("1", frozenset({VarAttr.EXPORT}))

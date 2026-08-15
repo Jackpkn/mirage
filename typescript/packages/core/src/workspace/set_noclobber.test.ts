@@ -78,6 +78,35 @@ describe('set -C noclobber', () => {
     await ws.close()
   })
 
+  it('a refused open stops the command from running', async () => {
+    // bash opens every redirect before it forks, so a refused open means
+    // the command never runs at all. Checking after the fact matched the
+    // target's contents and nothing else: `touch marker > existing` still
+    // created the marker.
+    const { ws } = await makeWorkspace()
+    const io = await ws.execute(
+      'echo a > /ram/f; set -C; touch /ram/marker > /ram/f;' + ' echo rc=$?; ls /ram/marker',
+    )
+    expect(stderrStr(io)).toBe(
+      '/ram/f: cannot overwrite existing file\n' +
+        "ls: cannot access '/ram/marker': No such file or directory\n",
+    )
+    expect(stdoutStr(io)).toBe('rc=1\n')
+    await ws.close()
+  })
+
+  it('a command cannot clear the way for its own refused redirect', async () => {
+    // The worst shape of the same bug: `rm f > f` ran first, so by the
+    // time the probe looked there was nothing to refuse and the line
+    // reported success while the file was gone.
+    const { ws } = await makeWorkspace()
+    const io = await ws.execute(
+      'echo one > /ram/f; set -C; rm /ram/f > /ram/f; echo rc=$?; cat /ram/f',
+    )
+    expect(stdoutStr(io)).toBe('rc=1\none\n')
+    await ws.close()
+  })
+
   it('shows in the option listing', async () => {
     const { ws } = await makeWorkspace()
     // The session is reused across calls, so the default is asserted
