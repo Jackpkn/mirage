@@ -12,7 +12,9 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { encodeBase64, gnuDirname, type Workspace } from '@struktoai/mirage-core'
+import { encodeBase64 } from '@struktoai/mirage-core/utils/base64'
+import { gnuDirname } from '@struktoai/mirage-core/utils/path'
+import type { Workspace } from '@struktoai/mirage-core/workspace/workspace'
 import { tool, type ToolSet } from 'ai'
 import { z } from 'zod'
 import { readWorkspaceFile } from '../read-file.ts'

@@ -12,14 +12,11 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import {
-  Precision,
-  ProvisionResult,
-  type Accessor,
-  type CommandOpts,
-  type IndexCacheStore,
-  type PathSpec,
-} from '@struktoai/mirage-core'
+import type { Accessor } from '@struktoai/mirage-core/accessor/index'
+import type { IndexCacheStore } from '@struktoai/mirage-core/cache/index/store'
+import type { CommandOpts } from '@struktoai/mirage-core/commands/config'
+import { Precision, ProvisionResult } from '@struktoai/mirage-core/provision/types'
+import type { PathSpec } from '@struktoai/mirage-core/types'
 
 export async function fileReadProvision(
   _accessor: Accessor,

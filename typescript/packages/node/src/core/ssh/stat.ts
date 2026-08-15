@@ -12,12 +12,13 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import type { FileStat, PathSpec } from '@struktoai/mirage-core'
+import type { FileStat, PathSpec } from '@struktoai/mirage-core/types'
+import { enoent } from '@struktoai/mirage-core/utils/errors'
+import { rstripSlash } from '@struktoai/mirage-core/utils/slash'
 import type { Stats } from 'ssh2'
 import type { SSHAccessor } from '../../accessor/ssh.ts'
 import { attrsToFileStat } from './entry.ts'
 import { isNoSuchFile, joinRoot, stripPrefix } from './utils.ts'
-import { enoent, rstripSlash } from '@struktoai/mirage-core'
 
 export async function stat(accessor: SSHAccessor, p: PathSpec): Promise<FileStat> {
   const sftp = await accessor.sftp()

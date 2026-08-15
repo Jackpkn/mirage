@@ -12,14 +12,10 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import {
-  FileStat,
-  FileType,
-  MountMode,
-  mtimeMs,
-  RAMResource,
-  runWithSession,
-} from '@struktoai/mirage-core'
+import { runWithSession } from '@struktoai/mirage-core/context/session_context'
+import { RAMResource } from '@struktoai/mirage-core/resource/ram/ram'
+import { FileStat, FileType, MountMode } from '@struktoai/mirage-core/types'
+import { mtimeMs } from '@struktoai/mirage-core/utils/stat_view'
 import { describe, expect, it } from 'vitest'
 import { Workspace } from '../workspace.ts'
 import { MountCore } from './core.ts'

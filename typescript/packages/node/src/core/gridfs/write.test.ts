@@ -20,7 +20,8 @@ vi.mock('./_client.ts', async () => {
   return { ...actual, bucket: vi.fn() }
 })
 
-import { PathSpec, runWithCacheManager } from '@struktoai/mirage-core'
+import { runWithCacheManager } from '@struktoai/mirage-core/cache/context'
+import { PathSpec } from '@struktoai/mirage-core/types'
 import { GridFSAccessor } from '../../accessor/gridfs.ts'
 import type { GridFSConfig } from '../../resource/gridfs/config.ts'
 import * as clientMod from './_client.ts'

@@ -14,19 +14,18 @@
 
 import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
-import {
-  type Limit,
-  createShellParser,
-  type ExecuteOptions,
-  type ExecuteResult,
-  KERNEL_BACKENDS,
-  MountBackend,
-  type MountSpec,
-  type ProvisionResult,
-  type ShellParser,
-  Workspace as CoreWorkspace,
-  type WorkspaceOptions,
-} from '@struktoai/mirage-core'
+import type { ProvisionResult } from '@struktoai/mirage-core/provision/types'
+import { createShellParser } from '@struktoai/mirage-core/shell/parse'
+import type { ShellParser } from '@struktoai/mirage-core/shell/parse'
+import { KERNEL_BACKENDS, MountBackend } from '@struktoai/mirage-core/types'
+import type { Limit } from '@struktoai/mirage-core/types'
+import { Workspace as CoreWorkspace } from '@struktoai/mirage-core/workspace/workspace'
+import type {
+  ExecuteOptions,
+  ExecuteResult,
+  MountSpec,
+  WorkspaceOptions,
+} from '@struktoai/mirage-core/workspace/workspace'
 import { FuseManager } from './workspace/fuse.ts'
 import { Mount } from './workspace/mount_spec.ts'
 import './compression_codecs.ts'

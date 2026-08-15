@@ -1,4 +1,5 @@
-import type { PathSpec, PredNode } from '@struktoai/mirage-core'
+import type { PredNode } from '@struktoai/mirage-core/commands/builtin/findEval'
+import type { PathSpec } from '@struktoai/mirage-core/types'
 import {
   DISPLAY_NAME,
   LAST_MODIFIED,

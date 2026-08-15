@@ -1,4 +1,5 @@
-import { rstripSlash, stripSlash, type PathSpec } from '@struktoai/mirage-core'
+import type { PathSpec } from '@struktoai/mirage-core/types'
+import { rstripSlash, stripSlash } from '@struktoai/mirage-core/utils/slash'
 import { rawPathOf } from '../util.ts'
 import { SEARCH_ENDPOINT_PATH } from './constants.ts'
 import type { SearchTarget } from './types.ts'

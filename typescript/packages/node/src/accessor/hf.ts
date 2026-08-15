@@ -13,7 +13,8 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import type { Operator } from 'opendal'
-import { Accessor, ResourceName } from '@struktoai/mirage-core'
+import { Accessor } from '@struktoai/mirage-core/accessor/index'
+import { ResourceName } from '@struktoai/mirage-core/types'
 import { loadOptionalPeer } from '../optional_peer.ts'
 import type { HfBucketsConfig, HfRepoConfig } from '../resource/hf_buckets/config.ts'
 

@@ -12,19 +12,19 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import type { PathSpec } from '@struktoai/mirage-core'
-import type { RedisAccessor } from '../../accessor/redis.ts'
-import { norm } from './utils.ts'
 import {
   buildTree,
   computeNonemptyDirs,
   emitStartPath,
   keep,
-  type PredNode,
-  rstripSlash,
   startBasename,
-  compareCodePoints,
-} from '@struktoai/mirage-core'
+} from '@struktoai/mirage-core/commands/builtin/findEval'
+import type { PredNode } from '@struktoai/mirage-core/commands/builtin/findEval'
+import type { PathSpec } from '@struktoai/mirage-core/types'
+import { rstripSlash } from '@struktoai/mirage-core/utils/slash'
+import { compareCodePoints } from '@struktoai/mirage-core/utils/sort'
+import type { RedisAccessor } from '../../accessor/redis.ts'
+import { norm } from './utils.ts'
 
 export interface FindOptions {
   name?: string | null

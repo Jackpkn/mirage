@@ -12,7 +12,8 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { normalizeKeyPrefix, ResourceName } from '@struktoai/mirage-core'
+import { normalizeKeyPrefix } from '@struktoai/mirage-core/resource/s3/config'
+import { ResourceName } from '@struktoai/mirage-core/types'
 import { HfBucketsAccessor } from '../../accessor/hf.ts'
 import { HfResource } from './base.ts'
 import {

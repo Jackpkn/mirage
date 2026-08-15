@@ -12,14 +12,11 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import {
-  applyStateDict,
-  norm,
-  toStateDict,
-  type Workspace as CoreWorkspace,
-  type WorkspaceStateDict,
-  compareCodePoints,
-} from '@struktoai/mirage-core'
+import { norm } from '@struktoai/mirage-core/utils/path'
+import { compareCodePoints } from '@struktoai/mirage-core/utils/sort'
+import { applyStateDict, toStateDict } from '@struktoai/mirage-core/workspace/snapshot/state'
+import type { WorkspaceStateDict } from '@struktoai/mirage-core/workspace/snapshot/types'
+import type { Workspace as CoreWorkspace } from '@struktoai/mirage-core/workspace/workspace'
 import { readVersion, resolveRef } from './api.ts'
 import { CATEGORIES, toState, type AnyDict, type Category } from './stateTree.ts'
 import type { VersionStore } from './store.ts'

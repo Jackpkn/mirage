@@ -15,7 +15,6 @@
 import { z } from 'zod'
 import { GoogleConfigSchema, type GoogleConfig } from '../../../../core/google/config.ts'
 import { ResourceName } from '../../../../types.ts'
-import { registerCliSpec } from '../../specs.ts'
 import { CLISpec } from '../../types.ts'
 import { Option } from '../../../spec/types.ts'
 import { apiGroups } from './api.ts'
@@ -211,5 +210,3 @@ export const GWS = new CLISpec({
     }),
   ],
 })
-
-registerCliSpec(GWS)

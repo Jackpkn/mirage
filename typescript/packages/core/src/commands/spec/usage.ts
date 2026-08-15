@@ -19,7 +19,7 @@ import {
   pythonUsage,
   USAGE_EXIT,
   USAGE_HINT_PREFIX,
-} from './constants'
+} from './constants.ts'
 import { CommandName } from './types.ts'
 
 /** GNU usage-error exit code for a command. */

@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { describe, expect, it } from 'vitest'
-import { buildRuntime } from '@struktoai/mirage-core'
+import { buildRuntime } from '@struktoai/mirage-core/runtime/table'
 import { LocalRuntime } from './local.ts'
 
 const DEC = new TextDecoder()

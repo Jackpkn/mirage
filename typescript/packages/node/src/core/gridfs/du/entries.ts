@@ -12,7 +12,8 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { rstripSlash, type PathSpec } from '@struktoai/mirage-core'
+import type { PathSpec } from '@struktoai/mirage-core/types'
+import { rstripSlash } from '@struktoai/mirage-core/utils/slash'
 import type { GridFSAccessor } from '../../../accessor/gridfs.ts'
 import { gridfsKey, iterLatest, rawPathOf, stripKeyPrefix } from '../_client.ts'
 import { duQuery } from './walk.ts'

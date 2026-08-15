@@ -12,7 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { Channel } from '@struktoai/mirage-core'
+import { Channel } from '@struktoai/mirage-core/shell/console/index'
 
 /** Where a spill sink writes: a workspace directory it can create and extend. */
 export interface SpillTarget {

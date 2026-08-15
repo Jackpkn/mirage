@@ -14,6 +14,13 @@
 
 import { z, type ZodObject, type ZodRawShape } from 'zod'
 
+// Re-exported so a config schema in the browser or node package is built
+// with the zod core resolves, not with a second copy of its own. The
+// helpers below are typed against this instance, and two installs make
+// every ZodObject here structurally unrelated to the one over there --
+// it still type-checks, but it takes minutes per config file.
+export { z }
+
 export const REDACTED_SECRET = '<REDACTED>' as const
 
 const SECRET_META_KEY = 'mirageSecret'

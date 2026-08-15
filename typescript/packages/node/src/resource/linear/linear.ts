@@ -12,34 +12,26 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import {
-  BaseResource,
-  HttpLinearTransport,
-  LINEAR_COMMANDS,
-  LINEAR_PROMPT,
-  LINEAR_OPS,
-  LINEAR_WRITE_PROMPT,
-  LinearAccessor,
-  PathSpec,
-  ResourceName,
-  linearRead,
-  linearReaddir,
-  linearStat,
-  makeResolveGlob,
-  mountKey,
-  mountPrefixOf,
-  type FileStat,
-  type IndexCacheStore,
-  type LinearReaddirFilter,
-  type RegisteredCommand,
-  type RegisteredOp,
-  type Resource,
-} from '@struktoai/mirage-core'
-import {
-  redactLinearConfig,
-  type LinearConfig,
-  type LinearConfigRedacted,
-} from '@struktoai/mirage-core'
+import { LinearAccessor } from '@struktoai/mirage-core/accessor/linear'
+import type { IndexCacheStore } from '@struktoai/mirage-core/cache/index/store'
+import { makeResolveGlob } from '@struktoai/mirage-core/commands/builtin/generic_bind/index'
+import { LINEAR_COMMANDS } from '@struktoai/mirage-core/commands/builtin/linear/index'
+import type { RegisteredCommand } from '@struktoai/mirage-core/commands/config'
+import { HttpLinearTransport } from '@struktoai/mirage-core/core/linear/_client'
+import { redactLinearConfig } from '@struktoai/mirage-core/core/linear/config'
+import type { LinearConfig, LinearConfigRedacted } from '@struktoai/mirage-core/core/linear/config'
+import { read as linearRead } from '@struktoai/mirage-core/core/linear/read'
+import { readdir as linearReaddir } from '@struktoai/mirage-core/core/linear/readdir'
+import type { LinearReaddirFilter } from '@struktoai/mirage-core/core/linear/readdir'
+import { stat as linearStat } from '@struktoai/mirage-core/core/linear/stat'
+import { LINEAR_OPS } from '@struktoai/mirage-core/ops/linear/index'
+import type { RegisteredOp } from '@struktoai/mirage-core/ops/registry'
+import { BaseResource } from '@struktoai/mirage-core/resource/base'
+import type { Resource } from '@struktoai/mirage-core/resource/base'
+import { LINEAR_PROMPT, LINEAR_WRITE_PROMPT } from '@struktoai/mirage-core/resource/linear/prompt'
+import { PathSpec, ResourceName } from '@struktoai/mirage-core/types'
+import type { FileStat } from '@struktoai/mirage-core/types'
+import { mountKey, mountPrefixOf } from '@struktoai/mirage-core/utils/key_prefix'
 
 const resolveLinearGlob = (
   accessor: LinearAccessor,

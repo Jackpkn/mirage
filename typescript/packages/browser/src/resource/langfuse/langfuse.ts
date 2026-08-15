@@ -12,26 +12,23 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { mountKey, mountPrefixOf } from '@struktoai/mirage-core'
-import {
-  type FileStat,
-  HttpLangfuseTransport,
-  type IndexCacheStore,
-  LANGFUSE_COMMANDS,
-  LANGFUSE_PROMPT,
-  LANGFUSE_OPS,
-  LangfuseAccessor,
-  langfuseRead,
-  langfuseReaddir,
-  langfuseStat,
-  PathSpec,
-  RAMIndexCacheStore,
-  type RegisteredCommand,
-  type RegisteredOp,
-  type Resource,
-  ResourceName,
-  makeResolveGlob,
-} from '@struktoai/mirage-core'
+import { LangfuseAccessor } from '@struktoai/mirage-core/accessor/langfuse'
+import { RAMIndexCacheStore } from '@struktoai/mirage-core/cache/index/ram'
+import type { IndexCacheStore } from '@struktoai/mirage-core/cache/index/store'
+import { makeResolveGlob } from '@struktoai/mirage-core/commands/builtin/generic_bind/index'
+import { LANGFUSE_COMMANDS } from '@struktoai/mirage-core/commands/builtin/langfuse/index'
+import type { RegisteredCommand } from '@struktoai/mirage-core/commands/config'
+import { HttpLangfuseTransport } from '@struktoai/mirage-core/core/langfuse/_client'
+import { read as langfuseRead } from '@struktoai/mirage-core/core/langfuse/read'
+import { readdir as langfuseReaddir } from '@struktoai/mirage-core/core/langfuse/readdir'
+import { stat as langfuseStat } from '@struktoai/mirage-core/core/langfuse/stat'
+import { LANGFUSE_OPS } from '@struktoai/mirage-core/ops/langfuse/index'
+import type { RegisteredOp } from '@struktoai/mirage-core/ops/registry'
+import type { Resource } from '@struktoai/mirage-core/resource/base'
+import { LANGFUSE_PROMPT } from '@struktoai/mirage-core/resource/langfuse/prompt'
+import { PathSpec, ResourceName } from '@struktoai/mirage-core/types'
+import type { FileStat } from '@struktoai/mirage-core/types'
+import { mountKey, mountPrefixOf } from '@struktoai/mirage-core/utils/key_prefix'
 import { redactLangfuseConfig, type LangfuseConfig, type LangfuseConfigRedacted } from './config.ts'
 
 const resolveLangfuseGlob = makeResolveGlob(langfuseReaddir)

@@ -13,7 +13,8 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import type { RedisClientType } from 'redis'
-import { NamespaceStore, type NodeFields } from '@struktoai/mirage-core'
+import { NamespaceStore } from '@struktoai/mirage-core/workspace/mount/namespace/store'
+import type { NodeFields } from '@struktoai/mirage-core/workspace/mount/namespace/store'
 import { loadOptionalPeer } from '../../optional_peer.ts'
 
 export interface RedisNamespaceStoreOptions {

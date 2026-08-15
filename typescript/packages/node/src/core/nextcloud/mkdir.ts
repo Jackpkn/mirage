@@ -1,9 +1,6 @@
-import {
-  invalidateAfterWrite,
-  invalidateAncestors,
-  rstripSlash,
-  type PathSpec,
-} from '@struktoai/mirage-core'
+import { invalidateAfterWrite, invalidateAncestors } from '@struktoai/mirage-core/cache/context'
+import type { PathSpec } from '@struktoai/mirage-core/types'
+import { rstripSlash } from '@struktoai/mirage-core/utils/slash'
 import type { NextcloudAccessor } from '../../accessor/nextcloud.ts'
 import { nextcloudKey } from './util.ts'
 

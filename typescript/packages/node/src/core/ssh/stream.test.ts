@@ -15,7 +15,7 @@
 import { Readable } from 'node:stream'
 import { setImmediate as nextTurn } from 'node:timers/promises'
 import { describe, expect, it } from 'vitest'
-import { PathSpec } from '@struktoai/mirage-core'
+import { PathSpec } from '@struktoai/mirage-core/types'
 import type { ReadStream, SFTPWrapper } from 'ssh2'
 import { SSHAccessor } from '../../accessor/ssh.ts'
 import { makeFakeAccessor } from './_test_utils.ts'

@@ -1,4 +1,6 @@
-import { lstripSlash, mountPrefixOf, type PathSpec } from '@struktoai/mirage-core'
+import type { PathSpec } from '@struktoai/mirage-core/types'
+import { mountPrefixOf } from '@struktoai/mirage-core/utils/key_prefix'
+import { lstripSlash } from '@struktoai/mirage-core/utils/slash'
 
 export function rawPathOf(path: PathSpec): string {
   const prefix = mountPrefixOf(path.virtual, path.resourcePath)

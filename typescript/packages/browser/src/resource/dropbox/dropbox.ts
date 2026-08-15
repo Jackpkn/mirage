@@ -12,26 +12,23 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { mountKey, mountPrefixOf } from '@struktoai/mirage-core'
-import {
-  type FileStat,
-  DROPBOX_COMMANDS,
-  DROPBOX_PROMPT,
-  DROPBOX_OPS,
-  DropboxAccessor,
-  DropboxTokenManager,
-  type IndexCacheStore,
-  PathSpec,
-  RAMIndexCacheStore,
-  type RegisteredCommand,
-  type RegisteredOp,
-  type Resource,
-  ResourceName,
-  dropboxRead,
-  dropboxReaddir,
-  makeResolveGlob,
-  dropboxStat,
-} from '@struktoai/mirage-core'
+import { DropboxAccessor } from '@struktoai/mirage-core/accessor/dropbox'
+import { RAMIndexCacheStore } from '@struktoai/mirage-core/cache/index/ram'
+import type { IndexCacheStore } from '@struktoai/mirage-core/cache/index/store'
+import { DROPBOX_COMMANDS } from '@struktoai/mirage-core/commands/builtin/dropbox/index'
+import { makeResolveGlob } from '@struktoai/mirage-core/commands/builtin/generic_bind/index'
+import type { RegisteredCommand } from '@struktoai/mirage-core/commands/config'
+import { DropboxTokenManager } from '@struktoai/mirage-core/core/dropbox/_client'
+import { read as dropboxRead } from '@struktoai/mirage-core/core/dropbox/read'
+import { readdir as dropboxReaddir } from '@struktoai/mirage-core/core/dropbox/readdir'
+import { stat as dropboxStat } from '@struktoai/mirage-core/core/dropbox/stat'
+import { DROPBOX_OPS } from '@struktoai/mirage-core/ops/dropbox/index'
+import type { RegisteredOp } from '@struktoai/mirage-core/ops/registry'
+import type { Resource } from '@struktoai/mirage-core/resource/base'
+import { DROPBOX_PROMPT } from '@struktoai/mirage-core/resource/dropbox/prompt'
+import { PathSpec, ResourceName } from '@struktoai/mirage-core/types'
+import type { FileStat } from '@struktoai/mirage-core/types'
+import { mountKey, mountPrefixOf } from '@struktoai/mirage-core/utils/key_prefix'
 import { redactDropboxConfig, type DropboxConfig, type DropboxConfigRedacted } from './config.ts'
 
 const dropboxResolveGlob = makeResolveGlob(dropboxReaddir)

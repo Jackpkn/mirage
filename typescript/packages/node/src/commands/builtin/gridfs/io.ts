@@ -12,7 +12,8 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { type CommandIO, rangeOf } from '@struktoai/mirage-core'
+import { rangeOf } from '@struktoai/mirage-core/commands/builtin/generic_bind/index'
+import type { CommandIO } from '@struktoai/mirage-core/commands/builtin/generic_bind/index'
 import type { GridFSAccessor } from '../../../accessor/gridfs.ts'
 import { SCOPE_ERROR } from '../../../core/gridfs/constants.ts'
 import { copy as gridfsCopy } from '../../../core/gridfs/copy.ts'

@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { createRequire } from 'node:module'
-import { registerCompressionCodec } from '@struktoai/mirage-core'
+import { registerCompressionCodec } from '@struktoai/mirage-core/utils/compress'
 
 interface BunzipModule {
   decode(input: Uint8Array): Uint8Array

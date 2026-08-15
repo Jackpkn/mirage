@@ -14,7 +14,7 @@
 
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { compareCodePoints } from '@struktoai/mirage-core'
+import { compareCodePoints } from '@struktoai/mirage-core/utils/sort'
 
 export const ALLOWED_KEYS: ReadonlySet<string> = new Set([
   'url',

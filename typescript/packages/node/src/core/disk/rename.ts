@@ -14,7 +14,9 @@
 
 import type { DiskAccessor } from '../../accessor/disk.ts'
 import { rename as fsRename } from 'node:fs/promises'
-import { enoent, invalidateAfterUnlink, type PathSpec } from '@struktoai/mirage-core'
+import { invalidateAfterUnlink } from '@struktoai/mirage-core/cache/context'
+import type { PathSpec } from '@struktoai/mirage-core/types'
+import { enoent } from '@struktoai/mirage-core/utils/errors'
 import { resolveSafe } from './utils.ts'
 
 export async function rename(accessor: DiskAccessor, src: PathSpec, dst: PathSpec): Promise<void> {

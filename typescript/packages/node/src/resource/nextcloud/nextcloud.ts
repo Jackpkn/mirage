@@ -1,17 +1,12 @@
-import {
-  BaseResource,
-  makeResolveGlob,
-  mountKey,
-  mountPrefixOf,
-  PathSpec,
-  ResourceName,
-  type DeltaHook,
-  type FileStat,
-  type FindOptions,
-  type RegisteredCommand,
-  type RegisteredOp,
-  type Resource,
-} from '@struktoai/mirage-core'
+import { makeResolveGlob } from '@struktoai/mirage-core/commands/builtin/generic_bind/index'
+import type { RegisteredCommand } from '@struktoai/mirage-core/commands/config'
+import type { RegisteredOp } from '@struktoai/mirage-core/ops/registry'
+import { BaseResource } from '@struktoai/mirage-core/resource/base'
+import type { FindOptions, Resource } from '@struktoai/mirage-core/resource/base'
+import { PathSpec, ResourceName } from '@struktoai/mirage-core/types'
+import type { FileStat } from '@struktoai/mirage-core/types'
+import { mountKey, mountPrefixOf } from '@struktoai/mirage-core/utils/key_prefix'
+import type { DeltaHook } from '@struktoai/mirage-core/watch/index'
 import { NextcloudAccessor } from '../../accessor/nextcloud.ts'
 import { NEXTCLOUD_COMMANDS } from '../../commands/builtin/nextcloud/index.ts'
 import { SCOPE_ERROR } from '../../core/nextcloud/constants.ts'

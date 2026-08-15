@@ -27,11 +27,12 @@ import type {
 import {
   Channel,
   JobConsole,
+  KILLED_OUTCOME,
   RAMConsoleStore,
   exitOutcome,
-  KILLED_OUTCOME,
-} from '@struktoai/mirage-core'
-import type { ConsoleChunk, ExecuteOptions, ExecuteResult } from '@struktoai/mirage-core'
+} from '@struktoai/mirage-core/shell/console/index'
+import type { ConsoleChunk } from '@struktoai/mirage-core/shell/console/index'
+import type { ExecuteOptions, ExecuteResult } from '@struktoai/mirage-core/workspace/workspace'
 import type { Workspace } from '@struktoai/mirage-node'
 import { tailCap } from './text.ts'
 import { SpillSink, ensureDirPath, type SpillTarget } from './spill.ts'

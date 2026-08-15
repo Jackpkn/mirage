@@ -1,4 +1,4 @@
-import type { PredNode } from '@struktoai/mirage-core'
+import type { PredNode } from '@struktoai/mirage-core/commands/builtin/findEval'
 
 export const Namespace = {
   DAV: 'DAV:',

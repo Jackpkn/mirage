@@ -13,7 +13,8 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { describe, expect, it } from 'vitest'
-import { PathSpec, mountKey } from '@struktoai/mirage-core'
+import { PathSpec } from '@struktoai/mirage-core/types'
+import { mountKey } from '@struktoai/mirage-core/utils/key_prefix'
 import { makeFakeAccessor } from './_test_utils.ts'
 import { readdir } from './readdir.ts'
 

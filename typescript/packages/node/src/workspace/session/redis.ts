@@ -14,7 +14,8 @@
 
 import { readFileSync } from 'node:fs'
 import type { RedisClientType } from 'redis'
-import { SessionStore, type SessionFields } from '@struktoai/mirage-core'
+import { SessionStore } from '@struktoai/mirage-core/workspace/session/store'
+import type { SessionFields } from '@struktoai/mirage-core/workspace/session/store'
 import { loadOptionalPeer } from '../../optional_peer.ts'
 
 // Shipped next to this module in src and copied beside the bundle in

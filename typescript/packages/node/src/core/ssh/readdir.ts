@@ -13,10 +13,13 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import type { FileEntryWithStats } from 'ssh2'
-import type { PathSpec } from '@struktoai/mirage-core'
+import type { PathSpec } from '@struktoai/mirage-core/types'
+import { enoent } from '@struktoai/mirage-core/utils/errors'
+import { mountPrefixOf } from '@struktoai/mirage-core/utils/key_prefix'
+import { stripSlash } from '@struktoai/mirage-core/utils/slash'
+import { compareCodePoints } from '@struktoai/mirage-core/utils/sort'
 import type { SSHAccessor } from '../../accessor/ssh.ts'
 import { isNoSuchFile, joinRoot, stripPrefix } from './utils.ts'
-import { compareCodePoints, enoent, mountPrefixOf, stripSlash } from '@struktoai/mirage-core'
 
 export async function readdir(accessor: SSHAccessor, p: PathSpec): Promise<string[]> {
   const sftp = await accessor.sftp()

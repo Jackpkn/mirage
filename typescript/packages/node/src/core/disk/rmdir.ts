@@ -14,7 +14,8 @@
 
 import type { DiskAccessor } from '../../accessor/disk.ts'
 import { rmdir as fsRmdir } from 'node:fs/promises'
-import { type PathSpec, invalidateAfterUnlink } from '@struktoai/mirage-core'
+import { invalidateAfterUnlink } from '@struktoai/mirage-core/cache/context'
+import type { PathSpec } from '@struktoai/mirage-core/types'
 import { resolveSafe } from './utils.ts'
 
 export async function rmdir(accessor: DiskAccessor, path: PathSpec): Promise<void> {

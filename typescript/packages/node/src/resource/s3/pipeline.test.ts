@@ -12,7 +12,9 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { MountMode, PathSpec, RAMResource, stripSlash } from '@struktoai/mirage-core'
+import { RAMResource } from '@struktoai/mirage-core/resource/ram/ram'
+import { MountMode, PathSpec } from '@struktoai/mirage-core/types'
+import { stripSlash } from '@struktoai/mirage-core/utils/slash'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { Workspace } from '../../workspace.ts'
 

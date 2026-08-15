@@ -12,10 +12,10 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import type { Workspace } from '@struktoai/mirage-core'
+import { gnuDirname } from '@struktoai/mirage-core/utils/path'
+import type { Workspace } from '@struktoai/mirage-core/workspace/workspace'
 import { applyDiff } from '@openai/agents'
 import type { ApplyPatchOperation, ApplyPatchResult, Editor } from '@openai/agents'
-import { gnuDirname } from '@struktoai/mirage-core'
 
 async function ensureParent(ws: Workspace, path: string): Promise<void> {
   const parent = gnuDirname(path)

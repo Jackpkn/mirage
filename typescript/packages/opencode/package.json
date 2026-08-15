@@ -19,13 +19,14 @@
   },
   "license": "Apache-2.0",
   "author": "Zecheng Zhang <zecheng@strukto.ai>",
-  "engines": {
-    "opencode": ">=1.18.3"
-  },
   "publishConfig": {
     "access": "public"
   },
   "type": "module",
+  "engines": {
+    "opencode": ">=1.18.3",
+    "node": ">=20.10.0"
+  },
   "main": "./dist/server.js",
   "types": "./dist/server.d.ts",
   "exports": {

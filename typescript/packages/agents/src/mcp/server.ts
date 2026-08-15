@@ -12,8 +12,8 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import type { Workspace } from '@struktoai/mirage-core'
-import { VERSION } from '@struktoai/mirage-core'
+import { VERSION } from '@struktoai/mirage-core/version'
+import type { Workspace } from '@struktoai/mirage-core/workspace/workspace'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod'

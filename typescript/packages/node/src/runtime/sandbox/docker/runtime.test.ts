@@ -15,9 +15,9 @@
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { buildRuntime } from '@struktoai/mirage-core'
+import { buildRuntime } from '@struktoai/mirage-core/runtime/table'
+import type { RuntimeOptions } from '@struktoai/mirage-core/runtime/types'
 import { describe, expect, it } from 'vitest'
-import type { RuntimeOptions } from '@struktoai/mirage-core'
 import type { DockerConfig } from './config.ts'
 import { DockerRuntime } from './runtime.ts'
 
