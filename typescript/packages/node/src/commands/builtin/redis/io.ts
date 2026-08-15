@@ -12,10 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import {
-  type CommandIO,
-  rangeOf,
-} from '@struktoai/mirage-core/commands/builtin/generic_bind/index'
+import { type CommandIO, rangeOf } from '@struktoai/mirage-core/commands/builtin/generic_bind/index'
 import type { RedisAccessor } from '../../../accessor/redis.ts'
 import { appendBytes as redisAppend } from '../../../core/redis/append.ts'
 import { SCOPE_ERROR } from '../../../core/redis/constants.ts'
