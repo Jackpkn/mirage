@@ -46,6 +46,19 @@ export class CacheManager {
     this.cachesReads = cachesReads
   }
 
+  /**
+   * Drop one directory's cached listing.
+   *
+   * Both spellings of the directory go, because a backend may have keyed
+   * it with or without its trailing slash and an eviction that hits no
+   * key is silent.
+   */
+  private async evictDir(virtual: string): Promise<void> {
+    if (this.index === null) return
+    await this.index.invalidateDir(virtual)
+    await this.index.invalidateDir(virtual + '/')
+  }
+
   private virtual(path: string | PathSpec): string {
     let p = path instanceof PathSpec ? path.mountPath : path
     if (!p.startsWith('/')) p = '/' + p
@@ -87,10 +100,7 @@ export class CacheManager {
     if (this.cachesReads && this.fileCache !== null) {
       await this.fileCache.remove(virtual)
     }
-    if (this.index !== null) {
-      await this.index.invalidateDir(virtual)
-      await this.index.invalidateDir(virtual + '/')
-    }
+    await this.evictDir(virtual)
     await this.invalidateParent(virtual)
   }
 
@@ -109,8 +119,7 @@ export class CacheManager {
     let parent = virtual.slice(0, Math.max(virtual.lastIndexOf('/'), 0))
     while (parent !== '' && parent !== this.prefix) {
       parent = parent.slice(0, Math.max(parent.lastIndexOf('/'), 0))
-      await this.index.invalidateDir(parent === '' ? '/' : parent)
-      await this.index.invalidateDir(parent + '/')
+      await this.evictDir(parent === '' ? '/' : parent)
     }
   }
 
@@ -133,10 +142,7 @@ export class CacheManager {
   }
 
   private async invalidateParent(virtual: string): Promise<void> {
-    if (this.index === null) return
     const lastSlash = virtual.lastIndexOf('/')
-    const parent = lastSlash > 0 ? virtual.slice(0, lastSlash) : '/'
-    await this.index.invalidateDir(parent)
-    await this.index.invalidateDir(parent + '/')
+    await this.evictDir(lastSlash > 0 ? virtual.slice(0, lastSlash) : '/')
   }
 }

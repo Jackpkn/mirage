@@ -30,9 +30,8 @@ LINK_AWARE = ("ls", "stat", "find", "du", "file")
 
 # The two spellings of delegation: the family's full-command generic
 # entry, or find's walk primitives for the wrappers with custom guards
-# (email pushes a folder-level -name down to IMAP search, github_ci
-# refuses cross-run walks) that still route filtering through the
-# shared walk.
+# (email pushes a folder-level -name down to IMAP search) that still
+# route filtering through the shared walk.
 GENERIC_CALLS = {
     "ls": ("ls_generic(", ),
     "stat": ("stat_generic(", "generic_stat("),

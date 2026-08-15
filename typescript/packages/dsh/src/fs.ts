@@ -81,6 +81,14 @@ async function* singleChunk(text: string): AsyncGenerator<string, void, void> {
   yield await Promise.resolve(text)
 }
 
+function tooLarge(displayPath: string, maxBytes: number, size?: number): FsError {
+  const found = size === undefined ? '' : `${String(size)} bytes `
+  return new FsError(
+    `cannot read "${displayPath}": ${found}exceeds the ${String(maxBytes)} byte cap`,
+    'FS_TOO_LARGE',
+  )
+}
+
 /**
  * Mirage-backed implementation of `ctx.fs`. Targets are canonical virtual
  * paths (namespace symlinks followed), every operation walks the workspace
@@ -250,6 +258,41 @@ export class MirageFileSystem extends FileSystem {
     // chunk with readText's exact text semantics.
     const text = await this.readText(target, signal)
     return singleChunk(text)
+  }
+
+  async readBytes(
+    target: FsTarget,
+    signal: AbortSignal | undefined,
+    maxBytes: number,
+  ): Promise<Uint8Array> {
+    assertNotAborted(signal, 'read')
+    const info = await this.stat(target, signal)
+    if (info !== undefined && info.type !== 'file') {
+      // A backend read of a directory key surfaces as a missing path, which
+      // would report a path that plainly exists as absent.
+      throw new FsError(
+        `cannot read "${target.displayPath}": not a regular file`,
+        'FS_NOT_REGULAR_FILE',
+      )
+    }
+    if (info?.size !== undefined && info.size > maxBytes) {
+      throw tooLarge(target.displayPath, maxBytes, info.size)
+    }
+    // Ask for one byte past the cap rather than the whole object: a backend
+    // with a native range fetches only that window, and a full-length answer
+    // is itself the proof the file is over the cap, which is what a mount
+    // reporting no size (most API mounts) has no other way to establish.
+    const key = String(target.targetKey)
+    let bytes: Uint8Array
+    try {
+      bytes = await (await this.ops(signal, 'read')).readFile(key, { size: maxBytes + 1 })
+    } catch (err) {
+      throw mapMirageError(err, 'read', target.displayPath)
+    }
+    if (bytes.byteLength > maxBytes) {
+      throw tooLarge(target.displayPath, maxBytes)
+    }
+    return bytes
   }
 
   async listDir(target: FsTarget, signal?: AbortSignal): Promise<FsDirEntry[]> {

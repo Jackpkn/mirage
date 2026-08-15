@@ -13,6 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import type { MsGraphConfigResolved } from './config.ts'
+import { rangeHeader, windowOf, type ByteWindow } from '../../utils/ranges.ts'
 
 export const RETRY_STATUSES: ReadonlySet<number> = new Set([429, 503, 504])
 export const MAX_BACKOFF = 30
@@ -166,12 +167,13 @@ export async function graphList(
 export async function graphGetBytes(
   config: MsGraphConfigResolved,
   url: string,
-  range?: string,
+  window?: ByteWindow,
   auth = true,
 ): Promise<Uint8Array> {
-  const headers = range === undefined ? undefined : { Range: range }
+  const range = window === undefined ? null : rangeHeader(window.offset, window.size)
+  const headers = range === null ? undefined : { Range: range }
   const response = await request(config, 'GET', url, { auth, ...(headers ? { headers } : {}) })
-  return new Uint8Array(await response.arrayBuffer())
+  return windowOf(new Uint8Array(await response.arrayBuffer()), response.status, window)
 }
 
 export async function* graphStream(

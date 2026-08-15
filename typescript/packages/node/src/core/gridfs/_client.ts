@@ -117,6 +117,15 @@ export async function latestFile(
   return doc as GridFSFileDoc | null
 }
 
+export async function fileById(
+  accessor: GridFSAccessor,
+  id: ObjectId,
+): Promise<GridFSFileDoc | null> {
+  const files = await filesColl(accessor)
+  const doc = await files.findOne({ _id: id })
+  return doc as GridFSFileDoc | null
+}
+
 /**
  * Yield the newest revision of each filename matching a query, sorted by
  * filename. Mirrors Python's `iter_latest`.

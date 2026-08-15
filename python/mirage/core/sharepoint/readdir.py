@@ -1,12 +1,9 @@
-from functools import partial
-
 from mirage.accessor.sharepoint import SharePointAccessor
 from mirage.cache.index import (NULL_INDEX, IndexCacheStore, IndexEntry,
                                 ResourceType)
 from mirage.core.msgraph.drive_ops import readdir_items
 from mirage.core.sharepoint._resolver import (drive_loc, list_drives,
                                               list_sites, resolve)
-from mirage.core.sharepoint.stat import stat
 from mirage.types import PathSpec
 from mirage.utils.key_prefix import mount_prefix_of
 
@@ -14,7 +11,6 @@ from mirage.utils.key_prefix import mount_prefix_of
 async def readdir(accessor: SharePointAccessor,
                   path: PathSpec,
                   index: IndexCacheStore = NULL_INDEX) -> list[str]:
-    original = path
     prefix = mount_prefix_of(path.virtual, path.resource_path) or ""
     raw = path.directory if path.pattern else path.virtual
     if prefix and raw.startswith(prefix):
@@ -62,5 +58,4 @@ async def readdir(accessor: SharePointAccessor,
 
     return await readdir_items(accessor.config,
                                drive_loc(accessor.config, resolved, stripped),
-                               index, prefix, stripped, virtual_key,
-                               partial(stat, accessor, original, index))
+                               index, prefix, stripped, virtual_key)

@@ -22,6 +22,7 @@ import aiohttp
 
 from mirage.core.box.config import BoxConfig
 from mirage.resource.secrets import reveal_secret
+from mirage.utils.ranges import ByteWindow, range_header, window_of
 
 BOX_TOKEN_URL = "https://api.box.com/oauth2/token"
 BOX_API_BASE = "https://api.box.com/2.0"
@@ -225,7 +226,7 @@ async def box_get_bytes(
     tm: BoxTokenManager,
     url: str,
     params: dict[str, Any] | None = None,
-    range_header: str | None = None,
+    window: ByteWindow | None = None,
 ) -> bytes:
     """GET a URL as raw bytes, optionally only a byte range of it.
 
@@ -233,12 +234,14 @@ async def box_get_bytes(
         tm (BoxTokenManager): token manager.
         url (str): API URL.
         params (dict | None): query parameters.
-        range_header (str | None): an HTTP ``Range`` value, or None for
-            the whole body.
+        window (ByteWindow | None): the byte window, or None for the
+            whole body.
     """
     headers = await box_auth_headers(tm)
-    if range_header:
-        headers["Range"] = range_header
+    header = None if window is None else range_header(window.offset,
+                                                      window.size)
+    if header:
+        headers["Range"] = header
     async with aiohttp.ClientSession() as session:
         async with session.get(url,
                                headers=headers,
@@ -247,7 +250,7 @@ async def box_get_bytes(
                 text = await resp.text()
                 raise BoxApiError(f"Box GET {url} -> {resp.status} {text}",
                                   resp.status)
-            return await resp.read()
+            return window_of(await resp.read(), resp.status, window)
 
 
 async def box_get_stream(

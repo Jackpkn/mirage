@@ -114,9 +114,6 @@ REGISTRY: dict[str, ResourceEntry] = {
     "github":
     ResourceEntry("mirage.resource.github:GitHubResource",
                   "mirage.resource.github:GitHubConfig"),
-    "github_ci":
-    ResourceEntry("mirage.resource.github_ci:GitHubCIResource",
-                  "mirage.resource.github_ci:GitHubCIConfig"),
     "linear":
     ResourceEntry("mirage.resource.linear:LinearResource",
                   "mirage.resource.linear:LinearConfig"),

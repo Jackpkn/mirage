@@ -29,6 +29,7 @@ from mirage.core.hf_buckets.readdir import readdir
 from mirage.core.hf_buckets.stat import stat as hf_stat
 from mirage.core.hf_buckets.stream import range_read, read_stream
 from mirage.core.hf_buckets.unlink import unlink
+from mirage.core.hf_buckets.watch import build_delta_hook
 from mirage.core.hf_buckets.write import write_bytes
 from mirage.ops.hf_buckets import OPS as HF_OPS
 from mirage.resource.base import BaseResource
@@ -36,6 +37,7 @@ from mirage.resource.hf_models.prompt import PROMPT
 from mirage.types import PathSpec, ResourceName
 from mirage.utils.glob_walk import make_resolve_glob
 from mirage.utils.key_prefix import mount_key
+from mirage.watch.base import DeltaHook
 
 _resolve_glob = make_resolve_glob(readdir, SCOPE_ERROR)
 
@@ -76,6 +78,9 @@ class HfModelsResource(BaseResource):
             self.register(fn)
         for op in HF_OPS:
             self.register_op(op)
+
+    def delta_hook(self) -> DeltaHook:
+        return build_delta_hook(self.accessor)
 
     async def resolve_glob(self, paths, prefix: str = ""):
         if prefix:

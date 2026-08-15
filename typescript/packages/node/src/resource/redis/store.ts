@@ -88,6 +88,51 @@ export class RedisStore {
     return new Uint8Array(raw.buffer, raw.byteOffset, raw.byteLength)
   }
 
+  /**
+   * A byte window of a stored file, or null when the key is absent.
+   *
+   * `GETRANGE` slices server-side, so a window costs the window rather than
+   * the whole value on the wire. Its bounds are inclusive and `-1` means the
+   * last byte, which is how "to the end" is spelled.
+   *
+   * `EXISTS` rides along because `GETRANGE` answers an empty string for a
+   * missing key, for an empty file and for a window past the end alike;
+   * without it a read of a deleted path would return an empty buffer instead
+   * of throwing. The two are issued together rather than through `MULTI`,
+   * which drops the Buffer type mapping and hands back a lossy string:
+   * node-redis pipelines commands issued in the same tick, so this is still
+   * one round trip.
+   *
+   * @param path mount-relative path of the file
+   * @param offset first byte to read
+   * @param size how many bytes, or null for the rest
+   */
+  async getFileRange(
+    path: string,
+    offset: number,
+    size: number | null,
+  ): Promise<Uint8Array | null> {
+    const c = await this.client()
+    const mod = (await import('redis')) as unknown as {
+      RESP_TYPES: { readonly BLOB_STRING: number }
+    }
+    const typed = c as unknown as {
+      withTypeMapping: (m: Record<number, unknown>) => {
+        getRange: (k: string, s: number, e: number) => Promise<Buffer>
+      }
+      exists: (k: string) => Promise<number>
+    }
+    const mapping: Record<number, unknown> = { [mod.RESP_TYPES.BLOB_STRING]: Buffer }
+    const end = size === null ? -1 : offset + size - 1
+    const key = this.fk(path)
+    const [exists, raw] = await Promise.all([
+      typed.exists(key),
+      typed.withTypeMapping(mapping).getRange(key, offset, end),
+    ])
+    if (exists === 0) return null
+    return new Uint8Array(raw.buffer, raw.byteOffset, raw.byteLength)
+  }
+
   async setFile(path: string, data: Uint8Array): Promise<void> {
     const c = await this.client()
     await c.set(this.fk(path), Buffer.from(data.buffer, data.byteOffset, data.byteLength))

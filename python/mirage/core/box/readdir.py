@@ -75,6 +75,7 @@ async def readdir(
             continue
         is_dir = it.get("type") == "folder"
         filename = it["name"]
+        sha1 = it.get("sha1")
         entry = IndexEntry(
             id=it["id"],
             name=filename,
@@ -82,6 +83,7 @@ async def readdir(
             remote_time=it.get("modified_at") or "",
             vfs_name=filename,
             size=None if is_dir else it.get("size"),
+            extra={"sha1": sha1} if sha1 else {},
         )
         entries.append((filename, entry, is_dir))
 

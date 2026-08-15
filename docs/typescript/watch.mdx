@@ -112,8 +112,10 @@ HTTP framework, authentication, retries, and deployment model.
 ## Pull Mode
 
 Backends that implement `deltaHook()` answer one question: what changed under
-this root since the last checkpoint? Nextcloud ships this capability today. A
-baseline pull (`checkpoint === null`) establishes state and emits no changes.
+this root since the last checkpoint? Eleven resource families ship one today,
+listed in the [Watch Matrix](/typescript/watch-matrix) with the fingerprint
+each one compares on. A baseline pull (`checkpoint === null`) establishes
+state and emits no changes.
 
 ```ts
 import { PathSpec } from "@struktoai/mirage-node";
@@ -134,6 +136,11 @@ for (;;) {
   await new Promise((resolve) => setTimeout(resolve, 30_000));
 }
 ```
+
+A runnable version needing no credentials is
+[`examples/typescript/disk/watch.ts`](https://github.com/strukto-ai/mirage/blob/main/examples/typescript/disk/watch.ts):
+it writes to the mount's directory behind mirage's back, pulls the diff, and
+reads the changed file back through the workspace.
 
 Pull is self-healing because current backend state is compared with the saved
 checkpoint. Events missed while your service was down appear on the next pull.
@@ -178,7 +185,7 @@ watch loops cleanly without closing the workspace. The next `watch()` or
   the scope.
 - One watch may span mounts, including nested mounts. Each event is invalidated
   on the longest-prefix mount that owns its path.
-- Delivery works on every backend. Nextcloud is currently the first backend
-  with a shipped `deltaHook()`; see the [Watch Matrix](/typescript/watch-matrix).
+- Delivery works on every backend. Pull detection ships for eleven resource
+  families; see the [Watch Matrix](/typescript/watch-matrix).
 - Events are in-memory and at-most-once per subscriber unless you provide a
   durable queue implementation.

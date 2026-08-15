@@ -16,6 +16,7 @@ import type { DifyAccessor } from '../../accessor/dify.ts'
 import type { IndexCacheStore } from '../../cache/index/store.ts'
 import { PathSpec } from '../../types.ts'
 import { eisdir } from '../../utils/errors.ts'
+import { sliceWindow } from '../../utils/ranges.ts'
 import { getDocumentSegments, iterSegmentPages } from './_client.ts'
 import { resolvePath, type ResolvedDifyPath } from './path.ts'
 
@@ -37,15 +38,29 @@ function segmentsToBytes(segments: Record<string, unknown>[]): Uint8Array {
   return ENC.encode(segments.map((segment) => segmentText(segment)).join('\n'))
 }
 
+/**
+ * Read a document, optionally only a byte range of it.
+ *
+ * A document is rendered here from its segments, so its bytes do not exist
+ * until we make them and the window can only be taken afterwards, the same
+ * way the rendered branches of gdrive, slack and discord take theirs.
+ *
+ * Args:
+ *   accessor: Dify accessor.
+ *   path: the path to read.
+ *   index: listing cache, consulted for the entry.
+ *   options: `{offset, size}`, the byte window, or absent for the whole file.
+ */
 export async function readBytes(
   accessor: DifyAccessor,
   path: PathSpec | string,
   index?: IndexCacheStore,
+  options?: { offset?: number; size?: number },
 ): Promise<Uint8Array> {
   const spec = typeof path === 'string' ? PathSpec.fromStrPath(path) : path
   const resolved = await resolvePath(accessor, spec, index)
   const segments = await getDocumentSegments(accessor, fileId(resolved, spec.virtual))
-  return segmentsToBytes(segments)
+  return sliceWindow(segmentsToBytes(segments), options?.offset ?? 0, options?.size ?? null)
 }
 
 export async function* readStream(

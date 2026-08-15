@@ -249,6 +249,24 @@ def _check_field(st: FileStat, name: str) -> str:
 
 
 async def stat_check(ws, check: dict) -> str:
+    """The probe a case runs beside its command, as one printable line.
+
+    Two forms. ``stat`` names a path and the FileStat fields to print.
+    ``read`` names a path and a byte window, and prints what that window
+    returned: no shell command asks for one, because commands read whole
+    files, so the ranged read op is only reachable through the same door
+    FUSE and the ops facade use.
+
+    Args:
+        ws: the workspace the case runs against.
+        check (dict): the case's ``check`` block.
+    """
+    if "read" in check:
+        data, _ = await ws.dispatch("read",
+                                    PathSpec.from_str_path(check["read"]),
+                                    offset=check.get("offset", 0),
+                                    size=check.get("size"))
+        return data.decode("utf-8", "replace")
     try:
         st, _ = await ws.dispatch("stat",
                                   PathSpec.from_str_path(check["stat"]))
@@ -292,8 +310,16 @@ def bind_mount(case: dict, mount_path: str) -> dict:
     if "command" in bound:
         for token, value in tokens.items():
             bound["command"] = bound["command"].replace(token, value)
+    check = bound.get("check")
+    if isinstance(check, dict):
+        bound["check"] = dict(check)
+        for name in ("stat", "read"):
+            if isinstance(check.get(name), str):
+                for token, value in tokens.items():
+                    bound["check"][name] = bound["check"][name].replace(
+                        token, value)
     expect = dict(bound["expect"])
-    for name in ("stdout", "stderr"):
+    for name in ("stdout", "stderr", "check"):
         if isinstance(expect.get(name), str):
             for token, value in tokens.items():
                 expect[name] = expect[name].replace(token, value)

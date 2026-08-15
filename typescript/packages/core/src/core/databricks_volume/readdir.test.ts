@@ -68,6 +68,38 @@ describe('readdir', () => {
     expect(err.code).toBe('ENOENT')
   })
 
+  it('reports ENOTDIR for an operand under a file', async () => {
+    // The Files API 404s `/a.txt/x` exactly as it does a name that is simply
+    // absent, so only the ancestor walk can tell GNU's "Not a directory"
+    // from "No such file or directory".
+    const { fetch } = routedFetch((call) => {
+      // The two probes differ only by endpoint, so the route has to read it:
+      // both URLs end in the same volume path.
+      if (call.url.includes('/fs/files') && call.url.endsWith(`${TEST_ROOT}/a.txt`)) {
+        return jsonResponse({})
+      }
+      return notFoundResponse()
+    })
+    vi.stubGlobal('fetch', fetch)
+    const err = (await readdir(makeAccessor(), spec('/volume/a.txt/x')).catch(
+      (e: unknown) => e,
+    )) as Error & { code?: string }
+    expect(err.code).toBe('ENOTDIR')
+  })
+
+  it('settles a file operand on one probe, without walking its ancestors', async () => {
+    const { fetch, calls } = routedFetch((call) => {
+      if (call.method === 'HEAD') return jsonResponse({})
+      return notFoundResponse()
+    })
+    vi.stubGlobal('fetch', fetch)
+    const err = (await readdir(makeAccessor(), spec('/volume/docs/a.txt')).catch(
+      (e: unknown) => e,
+    )) as Error & { code?: string }
+    expect(err.code).toBe('ENOTDIR')
+    expect(calls.filter((c) => c.method === 'HEAD')).toHaveLength(1)
+  })
+
   it('stores size, type, and modified time in the index cache', async () => {
     const { fetch } = routedFetch(() =>
       jsonResponse({

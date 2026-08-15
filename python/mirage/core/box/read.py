@@ -24,7 +24,7 @@ from mirage.core.box.readdir import readdir
 from mirage.types import PathSpec
 from mirage.utils.errors import enoent
 from mirage.utils.key_prefix import mount_key, mount_prefix_of
-from mirage.utils.ranges import range_header
+from mirage.utils.ranges import window_for
 
 
 async def _resolve_entry(
@@ -69,7 +69,7 @@ async def read(
     """
     entry = await _resolve_entry(accessor, path, index)
     return await download_file(accessor.token_manager, entry.id,
-                               range_header(offset, size))
+                               window_for(offset, size))
 
 
 async def stream(

@@ -32,7 +32,7 @@ from mirage.observe.context import active_recorder, record, revision_for
 from mirage.types import PathSpec
 from mirage.utils.errors import enoent
 from mirage.utils.key_prefix import mount_key, mount_prefix_of
-from mirage.utils.ranges import range_header, slice_window
+from mirage.utils.ranges import slice_window, window_for
 
 
 async def read_bytes(
@@ -63,7 +63,7 @@ async def read_file_versioned(token_manager: TokenManager,
         size (int | None): how many bytes, or None for the rest.
     """
     pinned = revision_for(virtual)
-    window = range_header(offset, size)
+    window = window_for(offset, size)
     start_ms = int(time.monotonic() * 1000)
     fingerprint = None
     revision = pinned

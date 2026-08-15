@@ -26,10 +26,8 @@ import {
 import { read as githubRead } from '@struktoai/mirage-core/core/github/read'
 import { readdir as githubReaddir } from '@struktoai/mirage-core/core/github/readdir'
 import { stat as githubStat } from '@struktoai/mirage-core/core/github/stat'
-import {
-  buildTreeMap as githubBuildTreeMap,
-  populateIndex as githubPopulateIndex,
-} from '@struktoai/mirage-core/core/github/tree'
+import { buildTreeMap as githubBuildTreeMap } from '@struktoai/mirage-core/core/github/tree'
+import { buildDeltaHook } from '@struktoai/mirage-core/core/github/watch'
 import { GITHUB_OPS } from '@struktoai/mirage-core/ops/github/index'
 import type { RegisteredOp } from '@struktoai/mirage-core/ops/registry'
 import { BaseResource } from '@struktoai/mirage-core/resource/base'
@@ -37,6 +35,7 @@ import type { Resource } from '@struktoai/mirage-core/resource/base'
 import { PathSpec, ResourceName } from '@struktoai/mirage-core/types'
 import type { FileStat } from '@struktoai/mirage-core/types'
 import { mountKey, mountPrefixOf } from '@struktoai/mirage-core/utils/key_prefix'
+import type { DeltaHook } from '@struktoai/mirage-core/watch/index'
 import { redactGitHubConfig, type GitHubConfig, type GitHubConfigRedacted } from './config.ts'
 
 const githubResolveGlob = makeResolveGlob(githubReaddir)
@@ -86,8 +85,9 @@ export class GitHubResource extends BaseResource implements Resource {
       truncated,
       tree: treeMap,
     })
+    // Not seeded here: the index is keyed by mount prefix, which only a
+    // PathSpec knows, so the first read seeds it from the accessor's tree.
     const index = new RAMIndexCacheStore({ ttl: 86_400 })
-    await githubPopulateIndex(index, tree)
     return new GitHubResource(config, accessor, index)
   }
 
@@ -131,6 +131,10 @@ export class GitHubResource extends BaseResource implements Resource {
           )
         : paths
     return githubResolveGlob(this.accessor, effective, this.index)
+  }
+
+  deltaHook(): DeltaHook {
+    return buildDeltaHook(this.accessor)
   }
 
   override getState(): Promise<GitHubResourceState> {

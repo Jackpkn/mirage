@@ -24,7 +24,7 @@ from mirage.core.s3._client import (_client_kwargs, _key, _prefix,
 from mirage.core.s3.constants import SCOPE_ERROR
 from mirage.core.timeutil import to_iso_z
 from mirage.types import PathSpec
-from mirage.utils.errors import enotdir, readdir_error
+from mirage.utils.errors import listing_error
 from mirage.utils.key_prefix import mount_prefix_of
 
 logger = logging.getLogger(__name__)
@@ -46,27 +46,6 @@ async def _is_dir(client: Any, config: S3Config, key: str) -> bool:
                                         Delimiter="/",
                                         MaxKeys=1)
     return bool(resp.get("CommonPrefixes") or resp.get("Contents"))
-
-
-async def _listing_error(client: Any, config: S3Config, path_spec: PathSpec,
-                         path: str) -> OSError:
-    """The errno for a path the bucket holds no key at or under.
-
-    Args:
-        client (Any): Open S3 client.
-        config (S3Config): Bucket and key-prefix configuration.
-        path_spec (PathSpec): The operand; ``virtual`` is the reported
-            spelling.
-        path (str): Mount-local path that was listed.
-    """
-    is_file = partial(_is_file, client, config)
-    if await is_file(path):
-        # An object, not a prefix: opendir(2) reports ENOTDIR, and the
-        # ancestor walk cannot change that answer, because every ancestor
-        # of a stored key is a prefix by construction.
-        return enotdir(path_spec)
-    return await readdir_error(path_spec, path, is_file,
-                               partial(_is_dir, client, config))
 
 
 async def readdir(accessor: S3Accessor,
@@ -122,7 +101,9 @@ async def readdir(accessor: S3Accessor,
             # this, `ls /s3/never` rendered an empty directory and exited
             # 0 where every real filesystem reports ENOENT. The mount root
             # is exempt: it exists because it is mounted.
-            raise await _listing_error(client, config, path_spec, path)
+            raise await listing_error(path_spec, path,
+                                      partial(_is_file, client, config),
+                                      partial(_is_dir, client, config))
     names = sorted(names)
     if len(names) > SCOPE_ERROR:
         logger.warning(

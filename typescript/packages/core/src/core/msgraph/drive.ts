@@ -19,8 +19,9 @@ import { buildTree, emitStartPath, keep, type PredNode } from '../../commands/bu
 import { record, recordingActive, recordStream, revisionFor } from '../../observe/context.ts'
 import type { FindOptions } from '../../resource/base.ts'
 import { FileStat, FileType, PathSpec } from '../../types.ts'
-import { enoent, enotdir } from '../../utils/errors.ts'
+import { enoent, listingError } from '../../utils/errors.ts'
 import { guessType } from '../../utils/filetype.ts'
+import { windowFor } from '../../utils/ranges.ts'
 import { rstripSlash, stripSlash } from '../../utils/slash.ts'
 import type { MsGraphConfigResolved } from './config.ts'
 import {
@@ -68,6 +69,13 @@ export class DriveLoc {
 
   item(action = ''): string {
     return this.url(this.path, action)
+  }
+
+  // Any item on the same drive, addressed the way this loc addresses its
+  // own. The ancestor probes need it: a DriveLoc's `path` is already
+  // spelled the way its url callable expects, so an ancestor of it is too.
+  itemAt(path: string, action = ''): string {
+    return this.url(path, action)
   }
 
   child(name: string): DriveLoc {
@@ -273,12 +281,6 @@ export async function writeItem(
   }
 }
 
-function rangeHeader(offset: number, size?: number): string | undefined {
-  if (offset === 0 && size === undefined) return undefined
-  const end = size === undefined ? '' : String(offset + size - 1)
-  return `bytes=${String(offset)}-${end}`
-}
-
 function entryStat(item: Record<string, unknown>): FileStat {
   const name = asString(item.name) ?? ''
   if (isFolder(item)) {
@@ -341,10 +343,10 @@ export async function readItem(
   label: string,
   backend: string,
   offset = 0,
-  size?: number,
+  size: number | null = null,
 ): Promise<Uint8Array> {
   const pinned = revisionFor(virtual)
-  const range = rangeHeader(offset, size)
+  const window = windowFor(offset, size)
   const startMs = performance.now()
   let fingerprint: string | null = null
   let revision: string | null = pinned
@@ -354,17 +356,17 @@ export async function readItem(
       data = await graphGetBytes(
         config,
         loc.item(`/versions/${encodeURIComponent(pinned)}/content`),
-        range,
+        window,
       )
     } else if (recordingActive()) {
       let downloadUrl: string | null
       ;[fingerprint, revision, downloadUrl] = await captureItemMetadata(config, loc)
       data =
         downloadUrl === null
-          ? await graphGetBytes(config, loc.item('/content'), range)
-          : await graphGetBytes(config, downloadUrl, range, false)
+          ? await graphGetBytes(config, loc.item('/content'), window)
+          : await graphGetBytes(config, downloadUrl, window, false)
     } else {
-      data = await graphGetBytes(config, loc.item('/content'), range)
+      data = await graphGetBytes(config, loc.item('/content'), window)
     }
     record('read', label, backend, data.length, startMs, { fingerprint, revision })
     return data
@@ -518,6 +520,33 @@ export async function driveRootEmpty(
   return (await graphList(config, loc.item('/children'))).length === 0
 }
 
+async function itemOrNull(
+  config: MsGraphConfigResolved,
+  loc: DriveLoc,
+  path: string,
+): Promise<Record<string, unknown> | null> {
+  try {
+    return await graphGet(config, loc.itemAt(stripSlash(path)))
+  } catch (error) {
+    if (error instanceof GraphError && error.status === 404) return null
+    throw error
+  }
+}
+
+async function isFile(
+  config: MsGraphConfigResolved,
+  loc: DriveLoc,
+  path: string,
+): Promise<boolean> {
+  const item = await itemOrNull(config, loc, path)
+  return item !== null && !('folder' in item)
+}
+
+async function isDir(config: MsGraphConfigResolved, loc: DriveLoc, path: string): Promise<boolean> {
+  const item = await itemOrNull(config, loc, path)
+  return item !== null && 'folder' in item
+}
+
 export async function readdirItems(
   config: MsGraphConfigResolved,
   loc: DriveLoc,
@@ -526,16 +555,21 @@ export async function readdirItems(
   stripped: string,
   virtualKey: string,
   path: PathSpec,
-  statFn: () => Promise<FileStat>,
 ): Promise<string[]> {
   let children: Record<string, unknown>[]
   try {
     children = await graphList(config, loc.item('/children'))
   } catch (error) {
     if (!(error instanceof GraphError) || error.status !== 404) throw error
-    const info = await statFn()
-    if (info.type !== FileType.DIRECTORY) throw enotdir(path)
-    throw enoent(path)
+    // Graph 404s a children listing for a missing item and for one under a
+    // file alike, so the errno comes from walking the ancestors: one item
+    // request per component, on this failure path only.
+    throw await listingError(
+      path,
+      loc.path,
+      (p) => isFile(config, loc, p),
+      (p) => isDir(config, loc, p),
+    )
   }
   const base = stripped !== '' ? `/${stripped}` : ''
   const names: string[] = []

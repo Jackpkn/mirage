@@ -24,12 +24,14 @@ from mirage.core.dropbox.rename import rename
 from mirage.core.dropbox.rmdir import rmdir
 from mirage.core.dropbox.stat import stat
 from mirage.core.dropbox.unlink import unlink
+from mirage.core.dropbox.watch import build_delta_hook
 from mirage.core.dropbox.write import write_bytes
 from mirage.resource.base import BaseResource
 from mirage.resource.dropbox.config import DropboxConfig
 from mirage.resource.dropbox.prompt import PROMPT
 from mirage.types import ResourceName
 from mirage.utils.glob_walk import make_resolve_glob
+from mirage.watch.base import DeltaHook
 
 _resolve_glob = make_resolve_glob(readdir)
 
@@ -71,6 +73,9 @@ class DropboxResource(BaseResource):
             self.register(fn)
         for op in DROPBOX_VFS_OPS:
             self.register_op(op)
+
+    def delta_hook(self) -> DeltaHook:
+        return build_delta_hook(self.accessor)
 
     async def resolve_glob(self, paths, prefix: str = ""):
         return await _resolve_glob(self.accessor, paths, self._index)

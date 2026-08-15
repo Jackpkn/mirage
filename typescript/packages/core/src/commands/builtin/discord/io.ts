@@ -16,12 +16,13 @@ import type { DiscordAccessor } from '../../../accessor/discord.ts'
 import { read as discordRead } from '../../../core/discord/read.ts'
 import { readdir as discordReaddir } from '../../../core/discord/readdir.ts'
 import { stat as discordStat } from '../../../core/discord/stat.ts'
-import type { CommandIO } from '../generic_bind/index.ts'
+import { type CommandIO, rangeOf } from '../generic_bind/index.ts'
 import { streamFromBytes } from '../utils/wrap.ts'
 
 export const DISCORD_IO: CommandIO<DiscordAccessor> = {
   readdir: discordReaddir,
   readBytes: discordRead,
+  readRange: rangeOf(discordRead),
   readStream: (a, p, i) => streamFromBytes(discordRead, a, p, i),
   stat: discordStat,
   isMounted: () => true,

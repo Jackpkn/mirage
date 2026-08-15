@@ -284,7 +284,6 @@ export const ResourceName = Object.freeze({
   JAEGER: 'jaeger',
   SSH: 'ssh',
   REDIS: 'redis',
-  GITHUB_CI: 'github_ci',
   GCS: 'gcs',
   OCI: 'oci',
   R2: 'r2',

@@ -22,7 +22,6 @@ import { DROPBOX_OPS } from './dropbox/index.ts'
 import { GDOCS_OPS } from './gdocs/index.ts'
 import { GDRIVE_OPS } from './gdrive/index.ts'
 import { GITHUB_OPS } from './github/index.ts'
-import { GITHUB_CI_OPS } from './github_ci/index.ts'
 import { GMAIL_OPS } from './gmail/index.ts'
 import { GSHEETS_OPS } from './gsheets/index.ts'
 import { GSLIDES_OPS } from './gslides/index.ts'
@@ -57,7 +56,6 @@ const TABLES = {
   gdocs: GDOCS_OPS,
   gdrive: GDRIVE_OPS,
   github: GITHUB_OPS,
-  github_ci: GITHUB_CI_OPS,
   gmail: GMAIL_OPS,
   gsheets: GSHEETS_OPS,
   gslides: GSLIDES_OPS,
@@ -144,11 +142,6 @@ const OPS_INVENTORY: Record<string, Row[]> = {
     ['read', 'github', '', false],
     ['readdir', 'github', '', false],
     ['stat', 'github', '', false],
-  ],
-  github_ci: [
-    ['read', 'github_ci', '', false],
-    ['readdir', 'github_ci', '', false],
-    ['stat', 'github_ci', '', false],
   ],
   gmail: [
     ['read', 'gmail', '', false],

@@ -14,7 +14,14 @@
 
 import { describe, expect, it } from 'vitest'
 
-import { isUnsatisfiableRange, rangeHeader, sliceWindow } from './ranges.js'
+import {
+  isUnsatisfiableRange,
+  rangeHeader,
+  sliceWindow,
+  windowFor,
+  windowIfUnranged,
+  windowOf,
+} from './ranges.js'
 
 const ENC = new TextEncoder()
 const DEC = new TextDecoder()
@@ -102,6 +109,18 @@ describe('isUnsatisfiableRange', () => {
     expect(isUnsatisfiableRange(new Error('416 Range Not Satisfiable'))).toBe(true)
   })
 
+  it('recognizes the seek a reader without a header raises', () => {
+    // hf and nextcloud open an OpenDAL file object and seek, so a window
+    // past EOF surfaces as the seek failing rather than as a status.
+    expect(
+      isUnsatisfiableRange(new Error('invalid seek to a position beyond the end of the range')),
+    ).toBe(true)
+  })
+
+  it('does not swallow an ordinary seek failure', () => {
+    expect(isUnsatisfiableRange(new Error('invalid seek: bad whence'))).toBe(false)
+  })
+
   it('does not swallow a real failure', () => {
     // Anything broader here would turn a missing object or a denied request
     // into a silent empty read, which is the bug this guards against.
@@ -114,5 +133,94 @@ describe('isUnsatisfiableRange', () => {
     expect(isUnsatisfiableRange({ status: 500 })).toBe(false)
     expect(isUnsatisfiableRange(null)).toBe(false)
     expect(isUnsatisfiableRange(undefined)).toBe(false)
+  })
+})
+
+const bytes = (s: string): Uint8Array => new TextEncoder().encode(s)
+const text = (b: Uint8Array): string => new TextDecoder().decode(b)
+
+describe('windowIfUnranged', () => {
+  it('trusts a 206 as already the window', () => {
+    expect(text(windowIfUnranged(bytes('234'), 206, 2, 3))).toBe('234')
+  })
+
+  // RFC 9110 lets a server answer the whole representation to a Range
+  // request, and a CDN in front of one may. Without this the caller gets the
+  // entire file for what it asked to be a window.
+  it('slices a 200 because the server ignored the range', () => {
+    expect(text(windowIfUnranged(bytes('0123456789'), 200, 2, 3))).toBe('234')
+  })
+
+  it('slices a 200 to EOF from the offset', () => {
+    expect(text(windowIfUnranged(bytes('0123456789'), 200, 7, null))).toBe('789')
+  })
+
+  it('answers empty for a 200 whose offset is past EOF', () => {
+    expect(text(windowIfUnranged(bytes('abc'), 200, 500, 10))).toBe('')
+  })
+})
+
+describe('isUnsatisfiableRange on a WebDAV 416', () => {
+  // OpenDAL puts the whole response in the message, so the status is only
+  // readable inside the string and the exception name has no spaces for the
+  // spaced spelling to match.
+  it('recognises the SabreDAV shape nextcloud answers with', () => {
+    expect(
+      isUnsatisfiableRange(
+        new Error(
+          `Unexpected (permanent) at read, context: { uri: http://h/x, response: Parts { status: 416 } } <d:error><s:exception>Sabre\\DAV\\Exception\\RequestedRangeNotSatisfiable</s:exception><s:message>The start offset (99) exceeded the size of the entity (3)</s:message></d:error>`,
+        ),
+      ),
+    ).toBe(true)
+  })
+
+  it('still refuses an unrelated permanent error', () => {
+    expect(isUnsatisfiableRange(new Error('Unexpected (permanent) at read, status: 500'))).toBe(
+      false,
+    )
+  })
+})
+
+describe('windowFor', () => {
+  it('is undefined for a whole-file read', () => {
+    expect(windowFor(0, null)).toBeUndefined()
+  })
+
+  it('carries both numbers otherwise', () => {
+    expect(windowFor(2, 3)).toEqual({ offset: 2, size: 3 })
+    expect(windowFor(7, null)).toEqual({ offset: 7, size: null })
+  })
+})
+
+describe('windowOf', () => {
+  it('trusts a 206 body', () => {
+    expect(DEC.decode(windowOf(ENC.encode('234'), 206, { offset: 2, size: 3 }))).toBe('234')
+  })
+
+  it('slices a 200 body', () => {
+    expect(DEC.decode(windowOf(DATA, 200, { offset: 2, size: 3 }))).toBe('234')
+  })
+
+  // A reader with no window passes undefined, and the offset a slice would
+  // otherwise apply is not zero by accident but absent.
+  it('leaves a whole-file read alone', () => {
+    expect(DEC.decode(windowOf(DATA, 200, undefined))).toBe('0123456789')
+  })
+})
+
+const HF_INVALID_CONTENT_RANGE =
+  'Unexpected (permanent) at read, context: { value: bytes 99-2/3, ' +
+  'called: BytesContentRange::from_str, service: hf, path: range_past.txt, ' +
+  'range: 99-103 } => header content range is invalid: end is less than start'
+
+describe('isUnsatisfiableRange on huggingface', () => {
+  // Past the end huggingface echoes a range whose end precedes its start and
+  // OpenDAL refuses to parse it, so no status ever surfaces.
+  it('reads a backwards content range as past the end', () => {
+    expect(isUnsatisfiableRange(new Error(HF_INVALID_CONTENT_RANGE))).toBe(true)
+  })
+
+  it('still raises on a malformed header with no such wording', () => {
+    expect(isUnsatisfiableRange(new Error('header content range is invalid: junk'))).toBe(false)
   })
 })

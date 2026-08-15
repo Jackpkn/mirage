@@ -18,6 +18,7 @@ import type { PathSpec } from '@struktoai/mirage-core/types'
 import { enoent } from '@struktoai/mirage-core/utils/errors'
 import type { HfAccessor } from '../../accessor/hf.ts'
 import { hfKey, isNotFound, rawPathOf } from './util.ts'
+import { isShortRangeRefusal, sliceWindow } from '@struktoai/mirage-core/utils/ranges'
 
 export interface HfReadOptions {
   offset?: number
@@ -43,15 +44,19 @@ export async function read(
     readOptions.size = BigInt(options.size)
   }
   const startMs = performance.now()
+  const windowed = readOptions.offset !== undefined || readOptions.size !== undefined
   let data: Buffer
   try {
-    data =
-      readOptions.offset !== undefined || readOptions.size !== undefined
-        ? await op.read(key, readOptions)
-        : await op.read(key)
+    data = windowed ? await op.read(key, readOptions) : await op.read(key)
   } catch (err) {
     if (isNotFound(err)) throw enoent(path)
-    throw err
+    // OpenDAL's node binding refuses to return fewer bytes than the range
+    // asked for, where a POSIX read comes back short, so a window that runs
+    // past EOF has to be read unbounded and trimmed here. Python's binding
+    // reads through a file object and is short naturally.
+    if (!windowed || !isShortRangeRefusal(err)) throw err
+    const whole = await op.read(key, { offset: readOptions.offset ?? 0n })
+    data = Buffer.from(sliceWindow(new Uint8Array(whole), 0, options.size ?? null))
   }
   const bytes = new Uint8Array(data)
   record('read', virtual, accessor.resourceName, bytes.byteLength, startMs)

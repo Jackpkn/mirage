@@ -67,6 +67,22 @@ describe('Ops', () => {
     expect([...bytes]).toEqual([1, 2, 3])
   })
 
+  it('readFile takes a window the way the python facade does', async () => {
+    const ws = mkWorkspace()
+    await ws.fs.writeFile('/data/r.txt', '0123456789')
+    expect(DEC.decode(await ws.fs.readFile('/data/r.txt', { offset: 2, size: 3 }))).toBe('234')
+    expect(DEC.decode(await ws.fs.readFile('/data/r.txt', { offset: 7 }))).toBe('789')
+    expect(DEC.decode(await ws.fs.readFile('/data/r.txt', { size: 4 }))).toBe('0123')
+  })
+
+  it('reads a window shorter than asked rather than failing past EOF', async () => {
+    const ws = mkWorkspace()
+    await ws.fs.writeFile('/data/r.txt', 'abc')
+    expect(DEC.decode(await ws.fs.readFile('/data/r.txt', { size: 100 }))).toBe('abc')
+    expect(await ws.fs.readFile('/data/r.txt', { offset: 99, size: 5 })).toEqual(new Uint8Array(0))
+    expect(await ws.fs.readFile('/data/r.txt', { size: 0 })).toEqual(new Uint8Array(0))
+  })
+
   it('mkdir + readdir lists entries', async () => {
     const ws = mkWorkspace()
     await ws.fs.mkdir('/data/sub')

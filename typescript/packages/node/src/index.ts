@@ -325,13 +325,6 @@ export {
   type GitHubConfig,
   type GitHubConfigRedacted,
 } from './resource/github/config.ts'
-export { GitHubCIResource, type GitHubCIResourceState } from './resource/github_ci/github_ci.ts'
-export {
-  normalizeGitHubCIConfig,
-  redactGitHubCIConfig,
-  type GitHubCIConfig,
-  type GitHubCIConfigRedacted,
-} from './resource/github_ci/config.ts'
 export { GDocsResource, type GDocsResourceState } from './resource/gdocs/gdocs.ts'
 export {
   normalizeGDocsConfig,

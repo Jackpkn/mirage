@@ -15,6 +15,7 @@
 import type { GSheetsAccessor } from '../../accessor/gsheets.ts'
 import { read as coreRead } from '../../core/gsheets/read.ts'
 import type { OpKwargs, RegisteredOp } from '../registry.ts'
+import { sliceWindow } from '../../utils/ranges.ts'
 import { type PathSpec, ResourceName } from '../../types.ts'
 
 export const readOp: RegisteredOp = {
@@ -22,7 +23,20 @@ export const readOp: RegisteredOp = {
   resource: ResourceName.GSHEETS,
   filetype: '.gsheet.json',
   write: false,
-  fn: (accessor: GSheetsAccessor, path: PathSpec, _args: readonly unknown[], kwargs: OpKwargs) => {
-    return coreRead(accessor, path, kwargs.index)
+  // A backend that registers its own read op does not go through
+  // makeGenericOps, so the read-and-slice fallback never reaches it: the
+  // window has to be applied here or the whole file comes back. These bytes
+  // are rendered, so there is nothing to push down.
+  fn: async (
+    accessor: GSheetsAccessor,
+    path: PathSpec,
+    _args: readonly unknown[],
+    kwargs: OpKwargs,
+  ) => {
+    const offset = typeof kwargs.offset === 'number' ? kwargs.offset : 0
+    const size = typeof kwargs.size === 'number' ? kwargs.size : null
+    if (size === 0) return new Uint8Array(0)
+    const data = await coreRead(accessor, path, kwargs.index)
+    return offset === 0 && size === null ? data : sliceWindow(data, offset, size)
   },
 }

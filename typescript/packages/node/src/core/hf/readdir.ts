@@ -15,7 +15,7 @@
 import { IndexEntry, ResourceType } from '@struktoai/mirage-core/cache/index/config'
 import type { IndexCacheStore } from '@struktoai/mirage-core/cache/index/store'
 import type { PathSpec } from '@struktoai/mirage-core/types'
-import { enoent, enotdir, readdirError } from '@struktoai/mirage-core/utils/errors'
+import { listingError } from '@struktoai/mirage-core/utils/errors'
 import { mountPrefixOf } from '@struktoai/mirage-core/utils/key_prefix'
 import { rstripSlash, stripSlash } from '@struktoai/mirage-core/utils/slash'
 import { compareCodePoints } from '@struktoai/mirage-core/utils/sort'
@@ -27,9 +27,9 @@ async function isFile(accessor: HfAccessor, key: string): Promise<boolean> {
   const op = await accessor.operator()
   try {
     return !(await op.stat(stripSlash(key))).isDirectory()
-  } catch (error) {
-    if (isNotFound(error)) return false
-    throw error
+  } catch (err) {
+    if (isNotFound(err)) return false
+    throw err
   }
 }
 
@@ -37,18 +37,10 @@ async function isDir(accessor: HfAccessor, key: string): Promise<boolean> {
   const op = await accessor.operator()
   try {
     return (await op.stat(`${stripSlash(key)}/`)).isDirectory()
-  } catch (error) {
-    if (isNotFound(error)) return false
-    throw error
+  } catch (err) {
+    if (isNotFound(err)) return false
+    throw err
   }
-}
-
-// The errno for a path the tree API listed nothing at all under. Mirrors
-// Python's mirage/core/hf_buckets/readdir.py `_listing_error`.
-async function listingError(accessor: HfAccessor, path: PathSpec, target: string): Promise<Error> {
-  const file = (p: string): Promise<boolean> => isFile(accessor, p)
-  if (await file(target)) return enotdir(path)
-  return readdirError(path, target, file, (p) => isDir(accessor, p))
 }
 
 export async function readdir(
@@ -81,19 +73,37 @@ export async function readdir(
   try {
     entries = await op.list(listPath)
   } catch (err) {
-    if (isNotFound(err)) throw enoent(path)
+    if (isNotFound(err)) {
+      throw await listingError(
+        path,
+        target,
+        (key) => isFile(accessor, key),
+        (key) => isDir(accessor, key),
+      )
+    }
     throw err
   }
   if (entries.length === 0 && strippedTarget !== '') {
     // Nothing stands for the directory itself here: the tree API lists
     // children only, and the hf service refuses a directory marker
     // client-side (create_dir=false), so a bucket directory exists exactly
-    // while it holds a key and any entry at all proves it. The Hub answers
-    // a missing subpath with 200 and [], which the lister reports as an
-    // empty result rather than raising, so the NotFound arm above never
-    // fired and `ls /hf/never` rendered an empty directory and exited 0.
-    // The mount root is exempt: it exists because it is mounted.
-    throw await listingError(accessor, path, target)
+    // while it holds a key. The Hub answers a missing subpath with 200 and
+    // [], which the lister reports as an empty result rather than raising,
+    // so the NotFound arm above never fired and `ls /hf/never` rendered an
+    // empty directory and exited 0.
+    //
+    // Both halves are thrown, ENOENT included. hf cannot tell an emptied
+    // directory from one the repo never had, and `stat` already resolves
+    // that ambiguity toward absence (it lists the prefix and raises ENOENT
+    // when nothing is under it), so keeping the empty listing here is what
+    // made `ls` and `stat` disagree about the same path. The mount root is
+    // exempt: it exists because it is mounted.
+    throw await listingError(
+      path,
+      target,
+      (key) => isFile(accessor, key),
+      (key) => isDir(accessor, key),
+    )
   }
   for (const entry of entries) {
     const relative = entry.path()

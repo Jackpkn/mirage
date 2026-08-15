@@ -22,6 +22,7 @@ from mirage.core.msgraph.config import MsGraphConfig
 from mirage.resource.secrets import reveal_secret
 from mirage.types import PathSpec
 from mirage.utils.key_prefix import mount_prefix_of
+from mirage.utils.ranges import ByteWindow, range_header, window_of
 
 RETRY_STATUSES = {429, 503, 504}
 MAX_BACKOFF = 30.0
@@ -135,7 +136,8 @@ async def _request(config: MsGraphConfig,
                    data: bytes | None = None,
                    extra_headers: dict[str, Any] | None = None,
                    auth: bool = True,
-                   read: str = "json"):
+                   read: str = "json",
+                   window: ByteWindow | None = None):
     own = session is None
     sess = (session if session is not None else aiohttp.ClientSession(
         timeout=_timeout(config)))
@@ -162,7 +164,7 @@ async def _request(config: MsGraphConfig,
                     continue
                 await _raise_for_status(method, url, resp)
                 if read == "bytes":
-                    return await resp.read()
+                    return window_of(await resp.read(), resp.status, window)
                 if read == "none":
                     return None
                 if read == "location":
@@ -215,17 +217,20 @@ async def graph_list(
 
 async def graph_get_bytes(config: MsGraphConfig,
                           url: str,
-                          range_header: str | None = None,
+                          window: ByteWindow | None = None,
                           session: aiohttp.ClientSession | None = None,
                           auth: bool = True) -> bytes:
-    extra = {"Range": range_header} if range_header else None
+    header = None if window is None else range_header(window.offset,
+                                                      window.size)
+    extra = {"Range": header} if header else None
     return await _request(config,
                           "GET",
                           url,
                           extra_headers=extra,
                           session=session,
                           auth=auth,
-                          read="bytes")
+                          read="bytes",
+                          window=window)
 
 
 async def graph_stream(config: MsGraphConfig,

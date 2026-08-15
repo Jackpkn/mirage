@@ -234,11 +234,6 @@ const REGISTRY: Record<string, ResourceFactory> = {
     const { normalizeGitHubConfig } = await import('./github/config.ts')
     return GitHubResource.create(normalizeGitHubConfig(config))
   },
-  github_ci: async (config) => {
-    const { GitHubCIResource } = await import('./github_ci/github_ci.ts')
-    const { normalizeGitHubCIConfig } = await import('./github_ci/config.ts')
-    return new GitHubCIResource(normalizeGitHubCIConfig(config))
-  },
   gcal: async (config) => {
     const { GCalResource } = await import('./gcal/gcal.ts')
     const { normalizeGCalConfig } = await import('./gcal/config.ts')

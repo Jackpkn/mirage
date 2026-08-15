@@ -53,6 +53,8 @@ import { mountKey, mountPrefixOf } from '@struktoai/mirage-core/utils/key_prefix
 import { HttpProxyAgent } from 'http-proxy-agent'
 import { HttpsProxyAgent } from 'https-proxy-agent'
 import { redactConfig, type S3Config, type S3ConfigRedacted } from './config.ts'
+import { buildDeltaHook } from '@struktoai/mirage-core/core/s3/watch'
+import { type DeltaHook } from '@struktoai/mirage-core/watch/index'
 
 const globCore = makeResolveGlob(readdirCore, S3_SCOPE_ERROR)
 
@@ -223,6 +225,10 @@ export class S3Resource extends BaseResource implements Resource {
         )
       : paths
     return globCore(this.accessor, effective, this.index)
+  }
+
+  deltaHook(): DeltaHook {
+    return buildDeltaHook(this.accessor)
   }
 
   override getState(): Promise<S3ResourceState> {

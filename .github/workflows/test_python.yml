@@ -106,6 +106,7 @@ jobs:
           run examples/python/ram/ram_python.py integ/truth/python/ram_python.txt
           run examples/python/disk/disk.py integ/truth/python/disk.txt
           run examples/python/disk/disk_vfs.py integ/truth/python/disk_vfs.txt
+          run examples/python/disk/watch.py integ/truth/watch_delta.txt
           run examples/python/other/custom_command.py integ/truth/python/custom_command.txt
           run examples/python/filetype/filetype.py integ/truth/python/filetype.txt
           run examples/python/redis_resource/example_redis.py integ/truth/python/redis.txt

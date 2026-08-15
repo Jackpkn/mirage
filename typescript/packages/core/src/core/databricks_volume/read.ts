@@ -19,14 +19,7 @@ import { ResourceName, type PathSpec } from '../../types.ts'
 import { dbxFetch } from './_client.ts'
 import { isNotFound, notFoundError } from './errors.ts'
 import { backendPath } from './path.ts'
-
-export function rangeHeader(offset: number, size: number | null): string | null {
-  if (offset < 0) throw new Error('offset must be non-negative')
-  if (size !== null && size < 0) throw new Error('size must be non-negative')
-  if (offset === 0 && size === null) return null
-  if (size === null) return `bytes=${String(offset)}-`
-  return `bytes=${String(offset)}-${String(offset + size - 1)}`
-}
+import { rangeHeader, windowIfUnranged } from '../../utils/ranges.ts'
 
 export interface DbxReadOptions {
   offset?: number
@@ -58,7 +51,7 @@ export async function readBytes(
     if (isNotFound(exc)) throw notFoundError(path.virtual)
     throw exc
   }
-  const data = new Uint8Array(await r.arrayBuffer())
+  const data = windowIfUnranged(new Uint8Array(await r.arrayBuffer()), r.status, offset, size)
   record('read', virtual, ResourceName.DATABRICKS_VOLUME, data.byteLength, startMs)
   return data
 }

@@ -43,6 +43,17 @@ async def test_readdir_subdir(make_acc):
 
 
 @pytest.mark.asyncio
+async def test_readdir_under_a_file_is_enotdir(make_acc):
+    # A repo holds no directory objects, so the tree API answers a path it
+    # does not have with an empty listing rather than an error; without a
+    # check `ls /hf/a.txt/x` rendered an empty directory and exited 0.
+    acc = make_acc({"a.txt": b"a"})
+    with pytest.raises(NotADirectoryError):
+        await readdir(acc, PathSpec.from_str_path("/a.txt/x"),
+                      RAMIndexCacheStore(ttl=60))
+
+
+@pytest.mark.asyncio
 async def test_readdir_populates_index_cache(make_acc):
     acc = make_acc({"f.txt": b"hello"})
     cache = RAMIndexCacheStore(ttl=60)

@@ -203,6 +203,37 @@ async def test_readdir_missing_subfolder_raises_after_recursion(
 
 
 @pytest.mark.asyncio
+async def test_readdir_under_a_file_is_not_a_directory(accessor, index):
+    # Listing a file's own id answers with an empty child set rather than
+    # an error, so the recursion below has to refuse at the file itself or
+    # `/a.txt/x` comes back ENOENT where opendir(2) says ENOTDIR.
+    root_files = [{
+        "id": "f1",
+        "name": "a.txt",
+        "mimeType": "text/plain",
+        "modifiedTime": "2026-04-01T00:00:00.000Z",
+        "owners": [],
+        "capabilities": {},
+    }]
+
+    async def fake_list_files(_tm, folder_id, drive_id=None):
+        if folder_id == "root":
+            return root_files
+        raise AssertionError(f"should not list folder_id={folder_id}")
+
+    with patch(
+            "mirage.core.gdrive.readdir.list_files",
+            new=fake_list_files,
+    ):
+        with pytest.raises(NotADirectoryError):
+            await readdir(
+                accessor,
+                PathSpec(resource_path="a.txt/x",
+                         virtual="/a.txt/x",
+                         directory="/a.txt/x"), index)
+
+
+@pytest.mark.asyncio
 async def test_readdir_root_includes_shared_drives(accessor, index):
     files = [{
         "id": "f1",

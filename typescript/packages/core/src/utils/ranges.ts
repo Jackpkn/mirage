@@ -13,6 +13,29 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 /**
+ * A byte window, as every HTTP-backed reader takes one.
+ *
+ * The pair travels together because a store that sends a `Range` has to
+ * check the answer against the same two numbers, so a helper handed only
+ * the rendered header cannot finish the job.
+ */
+export interface ByteWindow {
+  offset: number
+  size: number | null
+}
+
+/**
+ * The window a reader was asked for, or undefined when it wants all of it.
+ *
+ * @param offset first byte to read
+ * @param size how many bytes, or null for the rest
+ */
+export function windowFor(offset: number, size: number | null): ByteWindow | undefined {
+  if (offset === 0 && size === null) return undefined
+  return { offset, size }
+}
+
+/**
  * An HTTP `Range` value for a byte window, or null for the whole file.
  *
  * Every HTTP-backed store spells a partial read the same way, so the spelling
@@ -51,6 +74,52 @@ export function sliceWindow(data: Uint8Array, offset: number, size: number | nul
   return data.slice(offset, size === null ? undefined : offset + size)
 }
 
+const PARTIAL_CONTENT = 206
+
+/**
+ * The window, whether or not the server honored the Range header.
+ *
+ * Sending a Range is a request, not an instruction: RFC 9110 lets a server
+ * ignore it and answer 200 with the whole representation, and a CDN in front
+ * of one may do that even when the origin would not. Trusting the header
+ * alone therefore hands back the entire file for what the caller asked to be
+ * a window, which over FUSE is a read that returns far more bytes than it was
+ * given room for. Only a 206 is proof the bytes are already the window, so
+ * anything else is sliced here.
+ *
+ * @param data the body the server returned
+ * @param status the response status
+ * @param offset first byte the caller asked for
+ * @param size how many bytes, or null for the rest
+ */
+export function windowIfUnranged(
+  data: Uint8Array,
+  status: number,
+  offset: number,
+  size: number | null,
+): Uint8Array {
+  if (status === PARTIAL_CONTENT) return data
+  return sliceWindow(data, offset, size)
+}
+
+/**
+ * The same guarantee for a reader that takes the window as one value.
+ *
+ * A whole-file read passes no window and gets its bytes back untouched.
+ *
+ * @param data the body the server returned
+ * @param status the response status
+ * @param window the window the caller asked for, or undefined for all of it
+ */
+export function windowOf(
+  data: Uint8Array,
+  status: number,
+  window: ByteWindow | undefined,
+): Uint8Array {
+  if (window === undefined) return data
+  return windowIfUnranged(data, status, window.offset, window.size)
+}
+
 // HTTP 416, and the spellings the stores put on it. S3 and its clones answer
 // `InvalidRange`, Azure/OneDrive `InvalidRange` too, and a bare WebDAV or
 // static host only sets the status line.
@@ -81,6 +150,24 @@ function errorFields(err: unknown): {
 }
 
 /**
+ * Whether an error means "that window runs past the end of the object".
+ *
+ * OpenDAL's node binding takes an exact byte range and refuses to return
+ * fewer bytes than asked for, where a POSIX read simply comes back short.
+ * Python is not affected: its binding opens a file object, and `f.read(n)`
+ * stops at EOF like any file. The two OpenDAL-backed node backends (hf and
+ * nextcloud) therefore retry the read unbounded and take the window
+ * themselves; the predicate lives here beside the 416 one rather than in
+ * both of them.
+ *
+ * @param err whatever the reader threw
+ */
+export function isShortRangeRefusal(err: unknown): boolean {
+  const { message } = errorFields(err)
+  return /got too little data/i.test(message) || /reader got too little/i.test(message)
+}
+
+/**
  * Whether an error means "that byte window starts past the end of the object".
  *
  * A POSIX read at or past EOF returns zero bytes; an HTTP store answers 416
@@ -94,5 +181,22 @@ export function isUnsatisfiableRange(err: unknown): boolean {
   const { status, code, message } = errorFields(err)
   if (status === 416) return true
   if (code !== undefined && UNSATISFIABLE_CODES.has(code)) return true
-  return /range not satisfiable/i.test(message)
+  if (/range not satisfiable/i.test(message)) return true
+  // OpenDAL reports the store's whole response as message text rather than
+  // fields, so a WebDAV 416 arrives as SabreDAV's exception name and wording
+  // with the status only readable inside the string. Neither the code nor the
+  // spaced spelling above can see it.
+  if (/RequestedRangeNotSatisfiable/i.test(message)) return true
+  if (/exceeded the size of the entity/i.test(message)) return true
+  // Asked for a window past the end, huggingface echoes a Content-Range whose
+  // end precedes its start (`bytes 99-2/3` for a 3-byte file) and OpenDAL
+  // refuses to parse it rather than reporting a status. Both halves are
+  // matched so a genuinely malformed header from anywhere else still raises.
+  if (/content range is invalid/i.test(message) && /end is less than start/i.test(message))
+    return true
+  // A reader that seeks rather than sending a header (OpenDAL's file object,
+  // which hf and nextcloud both open) raises from the seek itself instead of
+  // surfacing a status. Same condition, so it is matched here rather than
+  // guarded in each of those backends.
+  return /seek/i.test(message) && /beyond the end/i.test(message)
 }

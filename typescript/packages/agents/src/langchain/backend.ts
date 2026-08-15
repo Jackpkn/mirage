@@ -239,7 +239,17 @@ export class LangchainWorkspace implements SandboxBackendProtocol {
     return { path: filePath, occurrences: replaceAll ? count : 1 }
   }
 
-  async grep(pattern: string, path?: string | null, glob?: string | null): Promise<GrepResult> {
+  // maxCount is a total cap across every file, which is not what `grep -m`
+  // means (that one caps each file separately), so it is applied to the
+  // collected matches rather than pushed onto the command line. A run that
+  // hits the cap with matches left over is truncated; one that lands on it
+  // exactly is complete.
+  async grep(
+    pattern: string,
+    path?: string | null,
+    glob?: string | null,
+    maxCount?: number | null,
+  ): Promise<GrepResult> {
     const parts: string[] = ['grep', '-rn']
     if (glob !== undefined && glob !== null && glob.length > 0) {
       parts.push('--include', shellQuote(glob))
@@ -247,7 +257,11 @@ export class LangchainWorkspace implements SandboxBackendProtocol {
     parts.push(shellQuote(pattern))
     parts.push(shellQuote(path ?? '/'))
     const io = await this.ws.execute(parts.join(' '))
-    return { matches: ioToGrepMatches(io) }
+    const matches = ioToGrepMatches(io)
+    if (maxCount === undefined || maxCount === null || matches.length <= maxCount) {
+      return { matches }
+    }
+    return { matches: matches.slice(0, maxCount), truncated: true }
   }
 
   async glob(pattern: string, path = '/'): Promise<GlobResult> {

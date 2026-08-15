@@ -18,10 +18,11 @@ import { IndexEntry } from '../../cache/index/config.ts'
 import type { IndexCacheStore } from '../../cache/index/store.ts'
 import type { PathSpec } from '../../types.ts'
 import { rstripSlash } from '../../utils/slash.ts'
-import { dbxFetch } from './_client.ts'
-import { isNotFound, notFoundError } from './errors.ts'
+import { dbxFetch, type DbxEndpoint } from './_client.ts'
+import { isNotFound } from './errors.ts'
 import { backendPath, virtualPath } from './path.ts'
 import { compareCodePoints } from '../../utils/sort.ts'
+import { listingError } from '../../utils/errors.ts'
 
 export interface DbxDirectoryEntry {
   path: string
@@ -52,6 +53,20 @@ export async function listDirectoryContents(
   return entries
 }
 
+async function head(
+  accessor: DatabricksVolumeAccessor,
+  endpoint: DbxEndpoint,
+  key: string,
+): Promise<boolean> {
+  try {
+    await dbxFetch(accessor, 'HEAD', endpoint, backendPath(accessor.config, key))
+  } catch (exc) {
+    if (isNotFound(exc)) return false
+    throw exc
+  }
+  return true
+}
+
 export async function readdir(
   accessor: DatabricksVolumeAccessor,
   path: PathSpec,
@@ -68,7 +83,17 @@ export async function readdir(
   try {
     entries = await listDirectoryContents(accessor, remotePath)
   } catch (exc) {
-    if (isNotFound(exc)) throw notFoundError(listPath.virtual)
+    // The Files API answers 404 for a missing path and for a path under a
+    // file alike, so the errno comes from walking the ancestors: one
+    // metadata request per component, on this failure path only.
+    if (isNotFound(exc)) {
+      throw await listingError(
+        listPath.virtual,
+        listPath.mountPath,
+        (p) => head(accessor, 'files', p),
+        (p) => head(accessor, 'directories', p),
+      )
+    }
     throw exc
   }
   const pairs = entries

@@ -12,13 +12,34 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import type { IndexCacheStore } from '@struktoai/mirage-core/cache/index/store'
 import type { PathSpec } from '@struktoai/mirage-core/types'
 import { enoent } from '@struktoai/mirage-core/utils/errors'
 import type { SSHAccessor } from '../../accessor/ssh.ts'
 import { readChunks } from './stream.ts'
 import { isNoSuchFile, joinRoot, stripPrefix } from './utils.ts'
 
-export async function read(accessor: SSHAccessor, p: PathSpec): Promise<Uint8Array> {
+/**
+ * Read a file, optionally only a byte range of it.
+ *
+ * SFTP seeks, so a window costs the window rather than the whole file:
+ * `start`/`end` bound the READs the stream issues. `end` is inclusive,
+ * matching node's own `createReadStream`.
+ *
+ * Args:
+ *   accessor: SSH accessor.
+ *   p: the path to read.
+ *   _index: unused; SFTP resolves the path itself.
+ *   options: `{offset, size}`, the byte window, or absent for the whole file.
+ */
+export async function read(
+  accessor: SSHAccessor,
+  p: PathSpec,
+  _index?: IndexCacheStore,
+  options?: { offset?: number; size?: number },
+): Promise<Uint8Array> {
+  const start = options?.offset ?? 0
+  const size = options?.size ?? null
   const sftp = await accessor.sftp()
   const virtual = stripPrefix(p)
   const remote = joinRoot(accessor.config.root ?? '/', virtual)
@@ -26,7 +47,10 @@ export async function read(accessor: SSHAccessor, p: PathSpec): Promise<Uint8Arr
   // size; servers that honor large reads (asyncssh) reply with a packet over
   // ssh2's 256 KiB cap, a fatal protocol error that strands the pending
   // callback. Stream in bounded chunks instead.
-  const rs = sftp.createReadStream(remote)
+  const rs = sftp.createReadStream(remote, {
+    start,
+    ...(size === null ? {} : { end: start + size - 1 }),
+  })
   const chunks: Uint8Array[] = []
   let total = 0
   try {
@@ -39,10 +63,10 @@ export async function read(accessor: SSHAccessor, p: PathSpec): Promise<Uint8Arr
     throw err
   }
   const out = new Uint8Array(total)
-  let offset = 0
+  let at = 0
   for (const c of chunks) {
-    out.set(c, offset)
-    offset += c.byteLength
+    out.set(c, at)
+    at += c.byteLength
   }
   return out
 }

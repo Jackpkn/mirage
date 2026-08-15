@@ -70,7 +70,6 @@ describe('ResourceName', () => {
     expect(ResourceName.LANGFUSE).toBe('langfuse')
     expect(ResourceName.SSH).toBe('ssh')
     expect(ResourceName.REDIS).toBe('redis')
-    expect(ResourceName.GITHUB_CI).toBe('github_ci')
     expect(ResourceName.GCS).toBe('gcs')
     expect(ResourceName.EMAIL).toBe('email')
     expect(ResourceName.OPFS).toBe('opfs')
@@ -111,7 +110,6 @@ describe('ResourceName', () => {
       'gdocs',
       'gdrive',
       'github',
-      'github_ci',
       'gmail',
       'gridfs',
       'gsheets',

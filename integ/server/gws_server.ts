@@ -1924,6 +1924,25 @@ interface Ctx {
   query: URLSearchParams
   body: Buffer
   contentType: string
+  range: string
+}
+
+/**
+ * Serve `content` for an `alt=media` read, honoring an HTTP `Range`.
+ *
+ * Drive honors `Range` on media downloads, so the fake has to as well:
+ * without it a windowed read reads whole and the push-down looks correct
+ * while moving every byte. A window starting past EOF is a 416, which the
+ * ops factory turns back into the empty read POSIX expects.
+ */
+function media(content: Buffer, range: string): [number, Buffer, string] {
+  const octet = 'application/octet-stream'
+  if (!range.startsWith('bytes=')) return [200, content, octet]
+  const [startText, endText] = range.slice('bytes='.length).split('-')
+  const start = startText === '' ? 0 : Number(startText)
+  const end = endText === undefined || endText === '' ? content.length : Number(endText) + 1
+  if (start >= content.length) return [416, Buffer.alloc(0), octet]
+  return [206, content.subarray(start, Math.min(end, content.length)), octet]
 }
 
 function json(ctx: Ctx): Record<string, unknown> {
@@ -2097,7 +2116,7 @@ function route(ctx: Ctx): [number, object | Buffer | null, string?] {
     const item = state.files.get(m[1] as string)
     if (item === undefined) return NOT_FOUND
     if (method === 'GET' && query.get('alt') === 'media') {
-      return [200, item.content, 'application/octet-stream']
+      return media(item.content, ctx.range)
     }
     if (method === 'GET') return [200, fmtFile(item)]
     if (method === 'PATCH') {
@@ -2190,7 +2209,7 @@ function route(ctx: Ctx): [number, object | Buffer | null, string?] {
     const item = state.files.get(m[1] as string)
     const revision = item?.revisions.find((r) => r.id === m?.[2])
     if (item === undefined || revision === undefined) return NOT_FOUND
-    if (query.get('alt') === 'media') return [200, revision.content, 'application/octet-stream']
+    if (query.get('alt') === 'media') return media(revision.content, ctx.range)
     return [
       200,
       {
@@ -2887,6 +2906,7 @@ export function startServer(port: number): Promise<http.Server> {
           query: url.searchParams,
           body: Buffer.concat(chunks),
           contentType: req.headers['content-type'] ?? '',
+          range: req.headers.range ?? '',
         })
       } catch (err) {
         console.error('gws_server: unhandled route error', err)

@@ -13,6 +13,8 @@ import { ResourceName, type FileStat, type PathSpec } from '../../types.ts'
 import type { RegisteredCommand } from '../../commands/config.ts'
 import { BaseResource, type Resource } from '../base.ts'
 import { SHAREPOINT_PROMPT } from './prompt.ts'
+import type { DeltaHook } from '../../watch/base.ts'
+import { buildDeltaHook } from '../../core/sharepoint/watch.ts'
 
 const resolveGlob = makeResolveGlob(readdir)
 
@@ -66,6 +68,10 @@ export class SharePointResource extends BaseResource implements Resource {
 
   stat(path: PathSpec): Promise<FileStat> {
     return stat(this.accessor, path, this.index)
+  }
+
+  deltaHook(): DeltaHook {
+    return buildDeltaHook(this.accessor)
   }
 
   override getState(): SharePointResourceState {

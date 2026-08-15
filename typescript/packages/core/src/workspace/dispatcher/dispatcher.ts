@@ -526,20 +526,20 @@ export class Dispatcher {
     const mount = this.namespace.tryMountFor(path)
     if (mount === null) return
     await this.namespace.clearTimes(path, observed)
-    if (cachesReads(mount.resource)) {
-      await this.cache.remove(path)
-    }
-    const idx = mount.resource.index
-    if (idx !== undefined) {
-      const slash = path.lastIndexOf('/')
-      const parent = slash <= 0 ? '/' : path.slice(0, slash)
-      await idx.invalidateDir(parent)
-      await idx.invalidateDir(parent + '/')
-      const manager =
-        mount.cacheManager ??
-        new CacheManager(this.cache, idx, mount.prefix, cachesReads(mount.resource))
-      await manager.invalidateAncestors(path)
-    }
+    // One manager for both halves, as Python's invalidate_after_write
+    // does: it is what knows the file cache is keyed mount-absolute while
+    // the index may not be, and evicting the index inline here spelled
+    // the key the other way and missed.
+    const manager =
+      mount.cacheManager ??
+      new CacheManager(
+        this.cache,
+        mount.resource.index ?? null,
+        mount.prefix,
+        cachesReads(mount.resource),
+      )
+    await manager.invalidateAfterWrite(path)
+    await manager.invalidateAncestors(path)
   }
 
   // The file cache only holds paths for read-caching mounts, mirroring

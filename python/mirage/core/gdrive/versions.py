@@ -16,6 +16,7 @@ from typing import Any
 
 from mirage.core.google._client import (TokenManager, drive_base, google_get,
                                         google_get_bytes)
+from mirage.utils.ranges import ByteWindow
 
 REVISION_FIELDS = "nextPageToken,revisions(id,modifiedTime,md5Checksum,size)"
 
@@ -49,19 +50,19 @@ async def list_revisions(token_manager: TokenManager,
 async def download_revision(token_manager: TokenManager,
                             file_id: str,
                             revision_id: str,
-                            range_header: str | None = None) -> bytes:
+                            window: ByteWindow | None = None) -> bytes:
     """Download a pinned revision's content (binary files only).
 
     Args:
         token_manager (TokenManager): OAuth2 token manager.
         file_id (str): file ID.
         revision_id (str): revision ID to read.
-        range_header (str | None): an HTTP ``Range`` value to fetch only
-            part of the revision, or None for all of it.
+        window (ByteWindow | None): the byte window to fetch, or None
+            for all of it.
     """
     url = (f"{drive_base(token_manager)}/files/{file_id}"
            f"/revisions/{revision_id}?alt=media")
-    return await google_get_bytes(token_manager, url, range_header)
+    return await google_get_bytes(token_manager, url, window)
 
 
 async def capture_file_metadata(token_manager: TokenManager,

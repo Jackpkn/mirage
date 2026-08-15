@@ -31,7 +31,12 @@ export function makeTreeEntry(item: GitHubTreeItem): TreeEntry {
   }
 }
 
-export function indexEntryFromTree(item: GitHubTreeItem): IndexEntry {
+export function indexEntryFromTree(item: {
+  path: string
+  type: string
+  sha: string
+  size?: number | null
+}): IndexEntry {
   const parts = item.path.split('/')
   const name = parts[parts.length - 1] ?? item.path
   return new IndexEntry({

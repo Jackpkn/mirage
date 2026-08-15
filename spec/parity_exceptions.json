@@ -1,28 +1,10 @@
 {
   "command_io": {
-    "box": {
-      "slots": "python range-reads; the typescript core read has no window argument."
-    },
-    "dropbox": {
-      "slots": "python range-reads; the typescript core read has no window argument."
-    },
-    "gdrive": {
-      "slots": "python range-reads; the typescript core read has no window argument."
-    },
     "hf": {
       "slots": "find is a slot in python and a bespoke command in typescript (see notion) \u2014 the same query, expressed at a different layer."
     },
     "notion": {
       "slots": "find is a slot in python and a bespoke command in typescript (notion/find.ts). Both pass stat=None, so the -mtime behavior matches; only the layer differs."
-    },
-    "onedrive": {
-      "slots": "python range-reads; typescript has no core/onedrive/read.ts to add a window to."
-    },
-    "sharepoint": {
-      "slots": "python range-reads; typescript has no core/sharepoint/read.ts to add a window to."
-    },
-    "ssh": {
-      "slots": "python range-reads over SFTP; typescript's read is whole-file because of the ssh2 256 KiB packet cap."
     }
   },
   "command_io_aliases": {

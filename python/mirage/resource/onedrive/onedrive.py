@@ -33,6 +33,7 @@ from mirage.core.onedrive.stat import stat as onedrive_stat
 from mirage.core.onedrive.stream import range_read, read_stream
 from mirage.core.onedrive.truncate import truncate
 from mirage.core.onedrive.unlink import unlink
+from mirage.core.onedrive.watch import build_delta_hook
 from mirage.core.onedrive.write import write_bytes
 from mirage.ops.onedrive import OPS as ONEDRIVE_OPS
 from mirage.resource.base import BaseResource
@@ -40,6 +41,7 @@ from mirage.resource.onedrive.prompt import PROMPT
 from mirage.types import PathSpec, ResourceName
 from mirage.utils.glob_walk import make_resolve_glob
 from mirage.utils.key_prefix import mount_key
+from mirage.watch.base import DeltaHook
 
 _resolve_glob = make_resolve_glob(readdir)
 
@@ -90,6 +92,9 @@ class OneDriveResource(BaseResource):
             self.register(fn)
         for op in ONEDRIVE_OPS:
             self.register_op(op)
+
+    def delta_hook(self) -> DeltaHook:
+        return build_delta_hook(self.accessor)
 
     async def resolve_glob(self, paths, prefix: str = ""):
         if prefix:

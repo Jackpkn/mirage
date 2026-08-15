@@ -18,17 +18,45 @@ Watching splits into two halves, and they have different support stories:
   would subscribe to; mapping its payload to a `FileEvent` is consumer code,
   and Mirage ships a sample where marked.
 
-| Resource | Pull (`delta_hook`) | Push signal (provider-side) | Sample |
-| --- | --- | --- | --- |
-| Nextcloud | ✓ ETag walk diff | `webhook_listeners` app (Nextcloud 30+) | [example](https://github.com/strukto-ai/mirage/blob/main/examples/python/nextcloud/watch.py) + integ receiver |
-| S3 / S3-compatible | planned | S3 Event Notifications (SQS/EventBridge) | — |
-| Google Drive | planned | `changes.watch` push channels | — |
-| Dropbox | planned | Dropbox webhooks + cursor delta | — |
-| OneDrive / SharePoint | planned | Graph change notifications + delta API | — |
-| GitHub | planned | repository webhooks (push events) | — |
-| Slack | planned | Events API (`message`, `file_shared`, ...) | — |
-| Disk | planned | local inotify / FSEvents / watchdog | — |
-| RAM, Redis, others | — | (no external writers to observe) | — |
+| Resource | Pull (`delta_hook`) | Fingerprint | Push signal (provider-side) | Sample |
+| --- | --- | --- | --- | --- |
+| Nextcloud | ✓ recursive PROPFIND | WebDAV ETag | `webhook_listeners` app (Nextcloud 30+) | [example](https://github.com/strukto-ai/mirage/blob/main/examples/python/nextcloud/watch.py) + integ receiver |
+| S3 / S3-compatible | ✓ recursive `list_objects_v2` | object ETag | S3 Event Notifications (SQS/EventBridge) | — |
+| GitHub | ✓ recursive git tree | blob sha | repository webhooks (push events) | — |
+| Dropbox | ✓ recursive `list_folder` | `content_hash` | Dropbox webhooks + cursor delta | — |
+| GridFS | ✓ `fs.files` prefix query | revision ObjectId | MongoDB change streams | — |
+| Hugging Face | ✓ recursive tree listing | Hub ETag | — | — |
+| Disk | ✓ recursive directory walk | mtime\|size | local inotify / FSEvents / watchdog | [example](https://github.com/strukto-ai/mirage/blob/main/examples/python/disk/watch.py) |
+| SSH / SFTP | ✓ per-directory descent | mtime\|size | — | — |
+| Google Drive | ✓ per-folder descent | `modifiedTime` | `changes.watch` push channels | — |
+| OneDrive / SharePoint | ✓ per-folder descent | `cTag` | Graph change notifications + delta API | — |
+| Box | ✓ per-folder descent | content `sha1` | Box `/events` long poll | — |
+| Slack | planned | — | Events API (`message`, `file_shared`, ...) | — |
+| RAM, Redis, others | — | — | (no external writers to observe) | — |
+
+The **Fingerprint** column is what decides UPDATE. A content-addressed one
+(GitHub's blob sha, S3's single-part ETag, Dropbox's `content_hash`, Box's
+`sha1`) reports
+nothing when a write stores identical bytes. `mtime|size` cannot: rewriting a
+file with its own contents moves the mtime, so disk and SSH report an UPDATE.
+That is the filesystem's own resolution, not a Mirage choice.
+
+### Cost per pull
+
+Not every hook costs the same, and the poll cadence should follow the shape:
+
+- **One request per pull**, whatever the tree: GitHub (one recursive tree
+  call), Nextcloud (one recursive PROPFIND), Hugging Face, and GridFS (one
+  prefix query). S3 is one request per 1000 keys.
+- **One request per directory**: Google Drive, OneDrive/SharePoint and Box key
+  their trees by opaque id and offer no whole-subtree listing, so the walk
+  descends folder by folder. SFTP does too, for the same reason.
+
+Where a provider offers a native cursor (Dropbox `list_folder/continue`, Graph
+`/delta`, Drive `changes.list`), that is a **faster** pull, not a more correct
+one, and it does not replace the walk: a server may invalidate a cursor at any
+time, and the only answer to that is a full listing. Those fast paths belong
+behind `pull()` with the walk as their reset.
 
 ## What "Delivery ✓" buys you without a hook
 
@@ -54,6 +82,17 @@ The guarantee is identical on every backend: caches for the changed path and
 its ancestor listings are invalidated before delivery, so reads after an event
 are fresh.
 
+One thing every backend has to agree on for that to hold: the index is
+keyed by the mount-absolute path (`/m/data/x`), which is what
+`CacheManager` builds when it evicts. GitHub was the one exception, keying
+its by the repo-relative path because its index is a materialized git
+tree, and the mismatch was silent: evicting a key an index never held
+succeeds, so a GitHub mount kept serving pre-change bytes with nothing
+failing anywhere a caller could see. It now keys like the rest, and the
+repo-relative path logic that wanted the other spelling (`find`, `du`,
+grep's scope counter) reads the git tree on the accessor instead, which is
+where a repo-relative path belongs.
+
 ## Adding pull detection to a backend
 
 `ListingDeltaHook` is generic; a backend earns the **Pull** column with one
@@ -71,7 +110,32 @@ def delta_hook(self):
     return ListingDeltaHook(S3Walk(self.accessor))
 ```
 
+Two shared helpers cover the shapes that recur, so a new backend usually
+writes neither loop itself:
+
+- **`synth_dirs`** (`mirage/watch/walk.py`) builds the directory rows a prefix
+  store implies but does not store. An object store has no directories, so a
+  walk that reported only keys would show a file appearing inside a directory
+  that never appeared. S3 and GridFS use it, and it takes explicitly stored
+  markers too, so an empty directory made by `mkdir` is still reported.
+- **`ReaddirWalk`** covers a backend with no recursive listing at all. It
+  descends through the backend's own `readdir` and `stat`, exactly as `find`
+  does, and gives each pull a **fresh private index**. That is what keeps the
+  DeltaHook contract: the index is not Mirage's read cache, so the walk cannot
+  compare the cache to itself, and it starts empty every pull. It has to exist
+  at all because Drive, Box and Graph resolve a path's id through the index its
+  parent's readdir populated; a null index makes every path below the root read
+  as absent.
+
 Backends with a native cursor API (Dropbox `list_folder/continue`, Graph
-delta) can skip the walk and implement `pull(root, checkpoint)` directly; the
-opaque checkpoint becomes the server cursor, and consumers cannot tell the
-difference.
+delta) can implement `pull(root, checkpoint)` directly and let the opaque
+checkpoint be the server cursor; consumers cannot tell the difference. Keep the
+walk as the reset path, though. A cursor is a promise the server keeps, and
+when it breaks (`path/reset`, `resyncRequired`) a full listing is the only
+answer.
+
+A walk that knows it saw only part of the tree must raise
+`IncompleteWalkError` rather than return what it has. A snapshot diff reads
+every unlisted path as a DELETE, so a partial listing does not degrade into
+fewer events, it invents wrong ones. GitHub does this when the API truncates a
+large repository's tree.

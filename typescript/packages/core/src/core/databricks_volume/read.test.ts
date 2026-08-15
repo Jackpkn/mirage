@@ -13,27 +13,11 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { rangeHeader, readBytes } from './read.ts'
+import { readBytes } from './read.ts'
 import { makeAccessor, notFoundResponse, routedFetch, spec } from './_test_util.ts'
 
 afterEach(() => {
   vi.unstubAllGlobals()
-})
-
-describe('rangeHeader', () => {
-  it('returns null for whole-file reads', () => {
-    expect(rangeHeader(0, null)).toBeNull()
-  })
-
-  it('builds open and closed ranges', () => {
-    expect(rangeHeader(5, null)).toBe('bytes=5-')
-    expect(rangeHeader(5, 10)).toBe('bytes=5-14')
-  })
-
-  it('rejects negative offset or size', () => {
-    expect(() => rangeHeader(-1, null)).toThrow('offset must be non-negative')
-    expect(() => rangeHeader(0, -2)).toThrow('size must be non-negative')
-  })
 })
 
 describe('readBytes', () => {
@@ -54,6 +38,19 @@ describe('readBytes', () => {
     })
     expect(new TextDecoder().decode(data)).toBe('ell')
     expect(calls[0]?.headers.Range).toBe('bytes=1-3')
+  })
+
+  // A gateway in front of the Files API may answer 200 with the whole
+  // object, which is a legal answer to a Range request and used to be
+  // handed back whole for what the caller asked to be a window.
+  it('slices locally when the server ignores the range', async () => {
+    const { fetch } = routedFetch(() => new Response('hello', { status: 200 }))
+    vi.stubGlobal('fetch', fetch)
+    const data = await readBytes(makeAccessor(), spec('/volume/a.txt'), undefined, {
+      offset: 1,
+      size: 3,
+    })
+    expect(new TextDecoder().decode(data)).toBe('ell')
   })
 
   it('short-circuits size=0 reads without a request', async () => {

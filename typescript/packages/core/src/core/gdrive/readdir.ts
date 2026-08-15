@@ -21,6 +21,7 @@ import { MIME_TO_EXT, listFiles, listSharedDrives } from '../google/drive.ts'
 import { rootContext } from './resolve.ts'
 import { rstripSlash } from '../../utils/slash.ts'
 import { compareCodePoints } from '../../utils/sort.ts'
+import { enotdir } from '../../utils/errors.ts'
 
 export const DIRECTORY_RESOURCE_TYPES: ReadonlySet<string> = new Set([
   'gdrive/folder',
@@ -91,6 +92,15 @@ export async function readdir(
         e.code = 'ENOENT'
         throw e
       }
+    }
+    if (!DIRECTORY_RESOURCE_TYPES.has(result.entry.resourceType)) {
+      // Listing a file's id answers with an empty child set rather than an
+      // error, so without this the recursion above reported
+      // `ls /data/a.txt/x` as ENOENT where opendir(2) says ENOTDIR. The
+      // index walk that resolved the path IS the ancestor walk readdirError
+      // performs, already done and already paid for, so the errno falls out
+      // of it with no extra request.
+      throw enotdir(path.virtual)
     }
     folderId = result.entry.id
     const entryDriveId = result.entry.extra.drive_id

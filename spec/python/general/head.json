@@ -73,12 +73,6 @@
         "has_provision": true,
         "has_write": false
       },
-      "github_ci": {
-        "filetypes": [],
-        "has_aggregate": false,
-        "has_provision": true,
-        "has_write": false
-      },
       "gmail": {
         "filetypes": [],
         "has_aggregate": false,
@@ -241,7 +235,6 @@
       "gdocs",
       "gdrive",
       "github",
-      "github_ci",
       "gmail",
       "gridfs",
       "gsheets",

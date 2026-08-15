@@ -158,6 +158,7 @@ class FakeApiClient:
     def __init__(self, files: FakeFiles) -> None:
         self.files = files
         self.do_calls: list[dict[str, object]] = []
+        self.ignore_range = False
 
     def do(
         self,
@@ -192,10 +193,13 @@ class FakeApiClient:
         remote_path = unquote(path.removeprefix("/api/2.0/fs/files"))
         if remote_path not in self.files.downloads:
             raise NotFoundError(remote_path)
-        payload = self.files.downloads[remote_path]
+        whole = self.files.downloads[remote_path]
+        payload = whole
         range_header = (headers or {}).get("Range")
-        if range_header is not None:
-            payload = _apply_range_header(payload, range_header)
+        # `ignore_range` stands in for a gateway that answers with the
+        # whole object anyway, which a Range request permits.
+        if range_header is not None and not self.ignore_range:
+            payload = _apply_range_header(whole, range_header)
         return {
             "contents": BytesIO(payload),
             "content-length": str(len(payload)),

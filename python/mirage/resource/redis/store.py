@@ -79,6 +79,35 @@ class RedisStore:
         return await cast("Awaitable[bytes | None]",
                           self._client.get(self._fk(path)))
 
+    async def get_file_range(self, path: str, offset: int,
+                             size: int | None) -> bytes | None:
+        """A byte window of a stored file, or None when the key is absent.
+
+        ``GETRANGE`` slices server-side, so a window costs the window
+        rather than the whole value on the wire. Its bounds are
+        inclusive and ``-1`` means the last byte, which is how "to the
+        end" is spelled.
+
+        ``EXISTS`` rides along in the same pipeline because ``GETRANGE``
+        answers an empty string for a missing key, for an empty file and
+        for a window past the end alike; without it a read of a deleted
+        path would return b"" instead of raising.
+
+        Args:
+            path (str): mount-relative path of the file.
+            offset (int): first byte to read.
+            size (int | None): how many bytes, or None for the rest.
+        """
+        key = self._fk(path)
+        end = -1 if size is None else offset + size - 1
+        async with self._client.pipeline(transaction=False) as pipe:
+            pipe.exists(key)
+            pipe.getrange(key, offset, end)
+            exists, data = await pipe.execute()
+        if not exists:
+            return None
+        return data if isinstance(data, bytes) else str(data).encode()
+
     async def set_file(self, path: str, data: bytes) -> None:
         await self._client.set(self._fk(path), data)
 

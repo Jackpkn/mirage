@@ -28,16 +28,36 @@ OWNER = "test-owner"
 REPO = "test-repo"
 
 
+def _offline(tree: dict,
+             truncated: bool = False,
+             default_branch: str = "main"):
+    """Patch every path that would reach the network.
+
+    ``mirage.core.github.tree.fetch_tree`` is the second one: a read fills
+    the index by refetching, because the tree a mount was built with is
+    only true at build time.
+
+    Args:
+        tree (dict): The recursive tree to answer with.
+        truncated (bool): Whether to report it truncated.
+        default_branch (str): Branch the repo endpoint reports.
+    """
+    return (patch("mirage.resource.github.github.fetch_default_branch",
+                  return_value=default_branch),
+            patch("mirage.resource.github.github.fetch_tree",
+                  return_value=(tree, truncated)),
+            patch("mirage.core.github.tree.fetch_tree",
+                  return_value=(tree, truncated)))
+
+
 async def _make_resource(ref: str = "main",
                          default_branch: str = "main",
                          tree: dict | None = None,
                          truncated: bool = False) -> GitHubResource:
     if tree is None:
         tree = {}
-    with patch("mirage.resource.github.github.fetch_default_branch",
-               return_value=default_branch), \
-         patch("mirage.resource.github.github.fetch_tree",
-               return_value=(tree, truncated)):
+    branch_p, build_p, core_p = _offline(tree, truncated, default_branch)
+    with branch_p, build_p, core_p:
         return await GitHubResource.build(
             config=CONFIG,
             owner=OWNER,
@@ -137,13 +157,15 @@ async def test_stat_returns_sha_fingerprint() -> None:
         TreeEntry(path="src/main.py", type="blob", sha="abc123", size=100),
     }
     resource = await _make_resource(tree=tree)
-    result = await stat(resource.accessor,
-                        PathSpec.from_str_path("/src/main.py"), resource.index)
+    with _offline(tree)[2]:
+        result = await stat(resource.accessor,
+                            PathSpec.from_str_path("/src/main.py"),
+                            resource.index)
     assert result.fingerprint == "abc123"
 
 
 @pytest.mark.asyncio
-async def test_replacing_index_preserves_preloaded_tree() -> None:
+async def test_replacing_index_still_serves_the_tree() -> None:
     tree = {
         "src/main.py":
         TreeEntry(path="src/main.py", type="blob", sha="abc123", size=100),
@@ -151,15 +173,19 @@ async def test_replacing_index_preserves_preloaded_tree() -> None:
     resource = await _make_resource(tree=tree)
     resource.set_index(IndexConfig())
 
-    result = await stat(resource.accessor,
-                        PathSpec.from_str_path("/src/main.py"), resource.index)
+    # The fresh store is empty, which reads as not-live, so the next read
+    # fills it by refetching rather than reporting the path gone.
+    with _offline(tree)[2]:
+        result = await stat(resource.accessor,
+                            PathSpec.from_str_path("/src/main.py"),
+                            resource.index)
     assert result.fingerprint == "abc123"
 
 
 @pytest.mark.asyncio
 async def test_stat_raises_when_path_not_in_tree() -> None:
     resource = await _make_resource()
-    with pytest.raises(FileNotFoundError):
+    with _offline({})[2], pytest.raises(FileNotFoundError):
         await stat(resource.accessor,
                    PathSpec.from_str_path("/nonexistent.py"), resource.index)
 
@@ -194,6 +220,10 @@ async def test_the_constructor_reaches_no_network() -> None:
     branch.assert_not_called()
     fetch.assert_not_called()
     assert resource.accessor.default_branch == "main"
-    result = await stat(resource.accessor,
-                        PathSpec.from_str_path("/src/main.py"), resource.index)
+    # A read is where the network comes in: the index is keyed by mount
+    # prefix, so filling it waits for a PathSpec and refetches then.
+    with _offline(tree)[2]:
+        result = await stat(resource.accessor,
+                            PathSpec.from_str_path("/src/main.py"),
+                            resource.index)
     assert result.fingerprint == "abc123"

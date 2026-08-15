@@ -66,10 +66,20 @@ function baseName(path: string): string {
   return index < 0 ? path : path.slice(index + 1)
 }
 
+/**
+ * Read a file, optionally only a byte range of it.
+ *
+ * Args:
+ *   accessor: OneDrive accessor.
+ *   path: the path to read.
+ *   _index: unused; Graph resolves the item from the path itself.
+ *   options: `{offset, size}`, the byte window, or absent for the whole file.
+ */
 export async function read(
   accessor: OneDriveAccessor,
   path: PathSpec,
   _index?: IndexCacheStore,
+  options?: { offset?: number; size?: number },
 ): Promise<Uint8Array> {
   return readItem(
     accessor.config,
@@ -77,6 +87,8 @@ export async function read(
     path.virtual,
     path.resourcePath,
     'onedrive',
+    options?.offset ?? 0,
+    options?.size ?? null,
   )
 }
 
@@ -114,7 +126,6 @@ export async function readdir(
     target.resourcePath,
     key,
     target,
-    () => stat(accessor, target, index),
   )
 }
 

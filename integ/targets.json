@@ -8,7 +8,6 @@
     "dropbox": { "python": [], "typescript": [] },
     "email": { "python": ["EMAIL_HOST"], "typescript": ["EMAIL_HOST"] },
     "github": { "python": ["GITHUB_URL"], "typescript": ["GITHUB_URL"] },
-    "github_ci": { "python": ["GITHUB_URL"], "typescript": ["GITHUB_URL"] },
     "gridfs": { "python": [], "typescript": [] },
     "gws": { "python": ["GWS_URL"], "typescript": ["GWS_URL"] },
     "hf": { "python": [], "typescript": ["HF_ENDPOINT"] },
@@ -1201,23 +1200,6 @@
       ]
     },
     {
-      "id": "github_ci",
-      "hosts": [
-        "python",
-        "typescript-node"
-      ],
-      "service": "github_ci",
-      "mounts": [
-        {
-          "path": "/ci",
-          "resource": "github_ci",
-          "backend": "github_ci",
-          "repo": "integ/repo-v1",
-          "mode": "read"
-        }
-      ]
-    },
-    {
       "id": "hf-prefix",
       "hosts": [
         "python",
@@ -1842,22 +1824,6 @@
           "path": "/gdrive",
           "resource": "arg_error",
           "backend": "gdrive",
-          "mode": "read"
-        }
-      ]
-    },
-    {
-      "id": "argerr-github_ci",
-      "facet": "argerr",
-      "hosts": [
-        "python",
-        "typescript-node"
-      ],
-      "mounts": [
-        {
-          "path": "/github_ci",
-          "resource": "arg_error",
-          "backend": "github_ci",
           "mode": "read"
         }
       ]

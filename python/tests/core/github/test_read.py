@@ -58,6 +58,14 @@ def _index() -> RAMIndexCacheStore:
     index._entries["/src/main.py"] = entry
     index._children["/src"] = ["/src/main.py"]
     index._expiry["/src"] = datetime.now(timezone.utc) + timedelta(days=365)
+    # The root row is what makes this a live index rather than a dropped
+    # one; without it every read here would be a refill, which is the
+    # distinction ensure_live_index draws.
+    index._entries["/src"] = IndexEntry(id="aaa",
+                                        name="src",
+                                        resource_type="folder")
+    index._children["/"] = ["/src"]
+    index._expiry["/"] = datetime.now(timezone.utc) + timedelta(days=365)
     return index
 
 

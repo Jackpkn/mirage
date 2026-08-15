@@ -31,4 +31,21 @@ describe('opfs/read', () => {
   it('throws "file not found" on missing', async () => {
     await expect(read(accessor, spec('/nope'))).rejects.toMatchObject({ code: 'ENOENT' })
   })
+  it('slices the window off the File rather than reading the whole thing', async () => {
+    await writeBytes(accessor, spec('/w'), new TextEncoder().encode('0123456789'))
+    const dec = new TextDecoder()
+    expect(dec.decode(await read(accessor, spec('/w'), undefined, { offset: 2, size: 3 }))).toBe(
+      '234',
+    )
+    expect(dec.decode(await read(accessor, spec('/w'), undefined, { offset: 7 }))).toBe('789')
+    expect(dec.decode(await read(accessor, spec('/w'), undefined, { size: 4 }))).toBe('0123')
+  })
+  it('clamps a window past EOF instead of throwing', async () => {
+    await writeBytes(accessor, spec('/s'), new TextEncoder().encode('abc'))
+    const dec = new TextDecoder()
+    expect(dec.decode(await read(accessor, spec('/s'), undefined, { size: 100 }))).toBe('abc')
+    expect((await read(accessor, spec('/s'), undefined, { offset: 99, size: 5 })).byteLength).toBe(
+      0,
+    )
+  })
 })

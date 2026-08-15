@@ -143,6 +143,11 @@ async def readdir_error(path: str | PathSpec, key: str,
     ``a`` and a key ``a/x``, ``ls /a/never`` must report ENOENT, not ENOTDIR.
     On a store where the two are mutually exclusive the order is immaterial,
     so ram, redis and disk are unaffected.
+
+    Every component is walked, the listed path included, because the walk
+    is the only thing that can see a gap above it. A backend whose store
+    cannot hold such a gap should call ``listing_error`` instead, which
+    settles the common case in one probe.
     Mirrors TS ``readdirError``.
 
     Args:
@@ -163,6 +168,38 @@ async def readdir_error(path: str | PathSpec, key: str,
             return enotdir(path)
         return enoent(path)
     return enoent(path)
+
+
+async def listing_error(path: str | PathSpec, key: str,
+                        is_file: Callable[[str], Awaitable[bool]],
+                        is_dir: Callable[[str], Awaitable[bool]]) -> OSError:
+    """``readdir_error`` for a store that cannot hold an orphan.
+
+    An object store's key implies every prefix of it, and a hierarchy the
+    backend addresses by path implies every folder above it, so on those
+    backends a path that exists proves its ancestors are directories and
+    the answer for one that is not a directory is ENOTDIR outright. Probing
+    it first is what keeps a ``readdir`` on a plain file to one round trip
+    where each probe is an API request rather than a dict lookup.
+
+    That premise is exactly what a flat store breaks: ram and redis rename
+    without creating the destination's ancestors, so they can hold
+    ``/missing/a.txt`` with ``/missing`` absent, where resolution stops and
+    the answer is ENOENT. Those call ``readdir_error`` directly.
+    Mirrors TS ``listingError``.
+
+    Args:
+        path (str | PathSpec): The operand; ``virtual`` is the reported
+            spelling.
+        key (str): The mount-local normalized path that was looked up.
+        is_file (Callable[[str], Awaitable[bool]]): Probe reporting whether a
+            mount-local path exists as a non-directory.
+        is_dir (Callable[[str], Awaitable[bool]]): Probe reporting whether a
+            mount-local path exists as a directory.
+    """
+    if key.strip("/") and await is_file(key):
+        return enotdir(path)
+    return await readdir_error(path, key, is_file, is_dir)
 
 
 def enotsup(resource: str, op_name: str,
