@@ -2,16 +2,14 @@ import type { Metadata } from 'opendal'
 import {
   keep,
   optionsTree,
-  rstripSlash,
   startBasename,
-  stripSlash,
   treeHasEmpty,
-  type FindEntry,
-  type FindOptions,
-  type PathSpec,
-  type PredNode,
-  compareCodePoints,
-} from '@struktoai/mirage-core'
+} from '@struktoai/mirage-core/commands/builtin/findEval'
+import type { FindEntry, PredNode } from '@struktoai/mirage-core/commands/builtin/findEval'
+import type { FindOptions } from '@struktoai/mirage-core/resource/base'
+import type { PathSpec } from '@struktoai/mirage-core/types'
+import { rstripSlash, stripSlash } from '@struktoai/mirage-core/utils/slash'
+import { compareCodePoints } from '@struktoai/mirage-core/utils/sort'
 import type { NextcloudAccessor } from '../../accessor/nextcloud.ts'
 import {
   searchFiles,

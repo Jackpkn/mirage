@@ -14,7 +14,10 @@
 
 import type { DiskAccessor } from '../../accessor/disk.ts'
 import { readFile, writeFile } from 'node:fs/promises'
-import { ResourceName, invalidateAfterWrite, record, type PathSpec } from '@struktoai/mirage-core'
+import { invalidateAfterWrite } from '@struktoai/mirage-core/cache/context'
+import { record } from '@struktoai/mirage-core/observe/context'
+import { ResourceName } from '@struktoai/mirage-core/types'
+import type { PathSpec } from '@struktoai/mirage-core/types'
 import { resolveSafe } from './utils.ts'
 
 export async function truncate(

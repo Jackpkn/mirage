@@ -12,7 +12,9 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { type ConfigOf, normalizeFields, redactConfigWithSchema, z } from '@struktoai/mirage-core'
+import { redactConfigWithSchema, z } from '@struktoai/mirage-core/resource/secrets'
+import type { ConfigOf } from '@struktoai/mirage-core/resource/secrets'
+import { normalizeFields } from '@struktoai/mirage-core/utils/normalize'
 
 const JaegerConfigSchema = z.object({
   host: z.string().optional(),

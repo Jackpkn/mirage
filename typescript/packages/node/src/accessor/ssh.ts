@@ -14,7 +14,7 @@
 
 import type * as Ssh2Mod from 'ssh2'
 import type { Client, SFTPWrapper } from 'ssh2'
-import { Accessor } from '@struktoai/mirage-core'
+import { Accessor } from '@struktoai/mirage-core/accessor/index'
 import { homedir } from 'node:os'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'

@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { describe, expect, it } from 'vitest'
-import { PathSpec } from '@struktoai/mirage-core'
+import { PathSpec } from '@struktoai/mirage-core/types'
 import { exists } from './exists.ts'
 import { makeFakeAccessor } from './_test_utils.ts'
 import { read } from './read.ts'

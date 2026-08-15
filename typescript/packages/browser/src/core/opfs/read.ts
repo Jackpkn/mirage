@@ -12,8 +12,11 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { type IndexCacheStore, type PathSpec, record, ResourceName } from '@struktoai/mirage-core'
-import { eisdir, enoent } from '@struktoai/mirage-core'
+import type { IndexCacheStore } from '@struktoai/mirage-core/cache/index/store'
+import { record } from '@struktoai/mirage-core/observe/context'
+import { ResourceName } from '@struktoai/mirage-core/types'
+import type { PathSpec } from '@struktoai/mirage-core/types'
+import { eisdir, enoent } from '@struktoai/mirage-core/utils/errors'
 import type { OPFSAccessor } from '../../accessor/opfs.ts'
 import { isNotFound, resolveFileHandle } from './utils.ts'
 

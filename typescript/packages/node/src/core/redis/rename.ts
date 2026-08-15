@@ -12,11 +12,14 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { type PathSpec, invalidateAfterUnlink } from '@struktoai/mirage-core'
+import { invalidateAfterUnlink } from '@struktoai/mirage-core/cache/context'
+import type { PathSpec } from '@struktoai/mirage-core/types'
+import { enoent } from '@struktoai/mirage-core/utils/errors'
+import { rstripSlash } from '@struktoai/mirage-core/utils/slash'
+import { compareCodePoints } from '@struktoai/mirage-core/utils/sort'
 import type { RedisAccessor } from '../../accessor/redis.ts'
 import { norm, nowIso } from './utils.ts'
 import { checkDestParents } from './dest.ts'
-import { compareCodePoints, enoent, rstripSlash } from '@struktoai/mirage-core'
 
 // Re-key every descendant of a renamed directory. A synthetic-directory
 // store keeps subdirectories as members of their own set, so moving only

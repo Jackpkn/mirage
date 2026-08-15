@@ -251,12 +251,8 @@ export { MongoDBStore } from './resource/mongodb/store.ts'
 export { LanceDBResource, type LanceDBResourceOptions } from './resource/lancedb/lancedb.ts'
 export { LanceDBStore } from './resource/lancedb/store.ts'
 export { SlackResource, type SlackResourceState } from './resource/slack/slack.ts'
-export {
-  normalizeSlackConfig,
-  redactSlackConfig,
-  type SlackConfig,
-  type SlackConfigRedacted,
-} from '@struktoai/mirage-core'
+export { normalizeSlackConfig, redactSlackConfig } from '@struktoai/mirage-core/core/slack/config'
+export type { SlackConfig, SlackConfigRedacted } from '@struktoai/mirage-core/core/slack/config'
 export { SSHResource, type SSHResourceState } from './resource/ssh/ssh.ts'
 export {
   normalizeSshConfig,
@@ -284,9 +280,11 @@ export { DiscordResource, type DiscordResourceState } from './resource/discord/d
 export {
   normalizeDiscordConfig,
   redactDiscordConfig,
-  type DiscordConfig,
-  type DiscordConfigRedacted,
-} from '@struktoai/mirage-core'
+} from '@struktoai/mirage-core/core/discord/config'
+export type {
+  DiscordConfig,
+  DiscordConfigRedacted,
+} from '@struktoai/mirage-core/core/discord/config'
 export { TrelloResource, type TrelloResourceState } from './resource/trello/trello.ts'
 export {
   normalizeTrelloConfig,
@@ -298,16 +296,20 @@ export { LinearResource, type LinearResourceState } from './resource/linear/line
 export {
   normalizeLinearConfig,
   redactLinearConfig,
-  type LinearConfig,
-  type LinearConfigRedacted,
-} from '@struktoai/mirage-core'
+} from '@struktoai/mirage-core/core/linear/config'
+export type { LinearConfig, LinearConfigRedacted } from '@struktoai/mirage-core/core/linear/config'
 export { NotionResource, type NotionResourceState } from './resource/notion/notion.ts'
 export {
   normalizeNotionConfig,
   redactNotionConfig,
-  type NotionConfig,
-  type NotionConfigRedacted,
-} from '@struktoai/mirage-core'
+} from '@struktoai/mirage-core/core/notion/config'
+export type { NotionConfig, NotionConfigRedacted } from '@struktoai/mirage-core/core/notion/config'
+// Named rather than left to the `export *` above: the three resources come
+// through it, but core's front door carries no config type of theirs, so
+// dropping these lines would take them out of this package's API too.
+export type { Mem0Config } from '@struktoai/mirage-core/resource/mem0/config'
+export type { OneDriveConfig } from '@struktoai/mirage-core/accessor/onedrive'
+export type { SharePointConfig } from '@struktoai/mirage-core/accessor/sharepoint'
 export { LangfuseResource, type LangfuseResourceState } from './resource/langfuse/langfuse.ts'
 export { JaegerResource, type JaegerResourceState } from './resource/jaeger/jaeger.ts'
 export {
@@ -345,14 +347,6 @@ export {
   type GSlidesConfigRedacted,
 } from './resource/gslides/config.ts'
 export { GDriveResource, type GDriveResourceState } from './resource/gdrive/gdrive.ts'
-export {
-  Mem0Resource,
-  OneDriveResource,
-  SharePointResource,
-  type Mem0Config,
-  type OneDriveConfig,
-  type SharePointConfig,
-} from '@struktoai/mirage-core'
 export {
   normalizeGDriveConfig,
   redactGDriveConfig,

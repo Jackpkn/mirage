@@ -13,12 +13,12 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import {
-  ResourceName,
   makeGenericCommands,
   resolveGlobOf,
   withDefaultProvisions,
-  type RegisteredCommand,
-} from '@struktoai/mirage-core'
+} from '@struktoai/mirage-core/commands/builtin/generic_bind/index'
+import type { RegisteredCommand } from '@struktoai/mirage-core/commands/config'
+import { ResourceName } from '@struktoai/mirage-core/types'
 import type { GridFSAccessor } from '../../../accessor/gridfs.ts'
 import { GRIDFS_IO } from './io.ts'
 import { GRIDFS_MKDIR } from './mkdir.ts'

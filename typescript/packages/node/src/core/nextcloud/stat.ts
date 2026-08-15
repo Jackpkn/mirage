@@ -1,15 +1,12 @@
 import type { Metadata } from 'opendal'
-import {
-  enoent,
-  FileStat,
-  FileType,
-  guessType,
-  mountPrefixOf,
-  ResourceType,
-  stripSlash,
-  type IndexCacheStore,
-  type PathSpec,
-} from '@struktoai/mirage-core'
+import { ResourceType } from '@struktoai/mirage-core/cache/index/config'
+import type { IndexCacheStore } from '@struktoai/mirage-core/cache/index/store'
+import { FileStat, FileType } from '@struktoai/mirage-core/types'
+import type { PathSpec } from '@struktoai/mirage-core/types'
+import { enoent } from '@struktoai/mirage-core/utils/errors'
+import { guessType } from '@struktoai/mirage-core/utils/filetype'
+import { mountPrefixOf } from '@struktoai/mirage-core/utils/key_prefix'
+import { stripSlash } from '@struktoai/mirage-core/utils/slash'
 import type { NextcloudAccessor } from '../../accessor/nextcloud.ts'
 import { isNotFound, rawPathOf } from './util.ts'
 

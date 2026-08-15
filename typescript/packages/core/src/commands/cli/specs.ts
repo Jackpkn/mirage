@@ -13,13 +13,25 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import type { CLISpec } from './types.ts'
+import { DISCORD } from './builtin/discord/index.ts'
+import { GH } from './builtin/gh/index.ts'
+import { GIT } from './builtin/git/index.ts'
+import { GWS } from './builtin/gws/index.ts'
+import { LINEAR } from './builtin/linear/index.ts'
+import { NTN } from './builtin/ntn/index.ts'
+import { SLACK } from './builtin/slack/index.ts'
 import { compareCodePoints } from '../../utils/sort.ts'
 
 // Named CLISpec trees the YAML `clis:` section resolves against
-// (`cli: slack` looks up "slack" here). Bundled programs register at
-// import time; user programs register through registerCliSpec before
-// the workspace loads.
-const CLI_SPECS = new Map<string, CLISpec>()
+// (`cli: slack` looks up "slack" here). The bundled programs are seeded
+// here rather than self-registering from their own modules: a side
+// effect only fires if something imported that module, so which CLIs
+// existed depended on what the caller happened to pull in. Runtime
+// packages add theirs through registerCliSpec from their entry point,
+// and user programs do the same before the workspace loads.
+const CLI_SPECS = new Map<string, CLISpec>(
+  [DISCORD, GH, GIT, GWS, LINEAR, NTN, SLACK].map((spec) => [spec.name, spec]),
+)
 
 /** Make a CLISpec resolvable by name from YAML; its root name is the key. */
 export function registerCliSpec(spec: CLISpec): void {

@@ -12,8 +12,8 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import type { ExecuteResult, Workspace } from '@struktoai/mirage-core'
-import { gnuDirname } from '@struktoai/mirage-core'
+import { gnuDirname } from '@struktoai/mirage-core/utils/path'
+import type { ExecuteResult, Workspace } from '@struktoai/mirage-core/workspace/workspace'
 import { FileVersionTracker, StaleMirageFileError } from './file-version.ts'
 import { decode, ioToStr } from './io-text.ts'
 

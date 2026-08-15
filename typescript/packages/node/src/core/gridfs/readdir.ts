@@ -12,17 +12,13 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import {
-  IndexEntry,
-  ResourceType,
-  mountPrefixOf,
-  rstripSlash,
-  type IndexCacheStore,
-  type PathSpec,
-  compareCodePoints,
-  enotdir,
-  readdirError,
-} from '@struktoai/mirage-core'
+import { IndexEntry, ResourceType } from '@struktoai/mirage-core/cache/index/config'
+import type { IndexCacheStore } from '@struktoai/mirage-core/cache/index/store'
+import type { PathSpec } from '@struktoai/mirage-core/types'
+import { enotdir, readdirError } from '@struktoai/mirage-core/utils/errors'
+import { mountPrefixOf } from '@struktoai/mirage-core/utils/key_prefix'
+import { rstripSlash } from '@struktoai/mirage-core/utils/slash'
+import { compareCodePoints } from '@struktoai/mirage-core/utils/sort'
 import type { GridFSAccessor } from '../../accessor/gridfs.ts'
 import {
   filesColl,

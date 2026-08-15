@@ -12,12 +12,10 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import {
-  MemoryOAuthClientProvider,
-  NOTION_COMMANDS,
-  NOTION_OPS,
-  ResourceName,
-} from '@struktoai/mirage-core'
+import { NOTION_COMMANDS } from '@struktoai/mirage-core/commands/builtin/notion/index'
+import { MemoryOAuthClientProvider } from '@struktoai/mirage-core/core/notion/_oauth'
+import { NOTION_OPS } from '@struktoai/mirage-core/ops/notion/index'
+import { ResourceName } from '@struktoai/mirage-core/types'
 import type { OAuthClientMetadata } from '@modelcontextprotocol/sdk/shared/auth.js'
 import { describe, expect, it } from 'vitest'
 import { NotionResource } from './notion.ts'

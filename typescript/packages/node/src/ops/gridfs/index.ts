@@ -12,7 +12,9 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { ResourceName, makeGenericOps, type RegisteredOp } from '@struktoai/mirage-core'
+import { makeGenericOps } from '@struktoai/mirage-core/ops/generic/factory'
+import type { RegisteredOp } from '@struktoai/mirage-core/ops/registry'
+import { ResourceName } from '@struktoai/mirage-core/types'
 import { GRIDFS_IO } from '../../commands/builtin/gridfs/io.ts'
 
 export const GRIDFS_OPS: readonly RegisteredOp[] = makeGenericOps(

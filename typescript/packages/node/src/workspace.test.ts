@@ -15,7 +15,8 @@
 import { chmodSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { MountMode, RAMResource } from '@struktoai/mirage-core'
+import { RAMResource } from '@struktoai/mirage-core/resource/ram/ram'
+import { MountMode } from '@struktoai/mirage-core/types'
 import { DiskResource } from './resource/disk/disk.ts'
 import { tmpRoot } from './test-utils.ts'
 import { Workspace } from './workspace.ts'
@@ -46,7 +47,7 @@ describe('@struktoai/mirage-node Workspace', () => {
         mode: MountMode.WRITE,
         shellParserFactory: async () => {
           calls += 1
-          const { createShellParser } = await import('@struktoai/mirage-core')
+          const { createShellParser } = await import('@struktoai/mirage-core/shell/parse')
           const { readFileSync } = await import('node:fs')
           const { createRequire } = await import('node:module')
           const requireCjs = createRequire(import.meta.url)

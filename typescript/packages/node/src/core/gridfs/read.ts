@@ -13,14 +13,11 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import type { ObjectId } from 'mongodb'
-import {
-  ResourceName,
-  enoent,
-  record,
-  revisionFor,
-  type IndexCacheStore,
-  type PathSpec,
-} from '@struktoai/mirage-core'
+import type { IndexCacheStore } from '@struktoai/mirage-core/cache/index/store'
+import { record, revisionFor } from '@struktoai/mirage-core/observe/context'
+import { ResourceName } from '@struktoai/mirage-core/types'
+import type { PathSpec } from '@struktoai/mirage-core/types'
+import { enoent } from '@struktoai/mirage-core/utils/errors'
 import type { GridFSAccessor } from '../../accessor/gridfs.ts'
 import { bucket, fileById, gridfsKey, latestFile, loadGridFSModule, rawPathOf } from './_client.ts'
 

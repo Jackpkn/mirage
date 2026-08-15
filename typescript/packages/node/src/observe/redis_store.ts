@@ -13,7 +13,8 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import type { RedisClientType } from 'redis'
-import { compareCodePoints, ObserverStoreBase } from '@struktoai/mirage-core'
+import { ObserverStoreBase } from '@struktoai/mirage-core/observe/store'
+import { compareCodePoints } from '@struktoai/mirage-core/utils/sort'
 import { loadOptionalPeer } from '../optional_peer.ts'
 
 export interface RedisObserverStoreOptions {

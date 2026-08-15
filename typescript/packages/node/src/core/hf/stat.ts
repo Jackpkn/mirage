@@ -12,19 +12,16 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import {
-  FileStat,
-  FileType,
-  guessType,
-  mountPrefixOf,
-  stripSlash,
-  type IndexCacheStore,
-  type PathSpec,
-} from '@struktoai/mirage-core'
+import type { IndexCacheStore } from '@struktoai/mirage-core/cache/index/store'
+import { FileStat, FileType } from '@struktoai/mirage-core/types'
+import type { PathSpec } from '@struktoai/mirage-core/types'
+import { enoent } from '@struktoai/mirage-core/utils/errors'
+import { guessType } from '@struktoai/mirage-core/utils/filetype'
+import { mountPrefixOf } from '@struktoai/mirage-core/utils/key_prefix'
+import { stripSlash } from '@struktoai/mirage-core/utils/slash'
 import type { Metadata } from 'opendal'
 import type { HfAccessor } from '../../accessor/hf.ts'
 import { isNotFound, rawPathOf } from './util.ts'
-import { enoent } from '@struktoai/mirage-core'
 
 export async function stat(
   accessor: HfAccessor,

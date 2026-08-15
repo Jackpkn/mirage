@@ -12,14 +12,10 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import {
-  ancestors,
-  eexist,
-  enoent,
-  enotdir,
-  mountedPath,
-  type PathSpec,
-} from '@struktoai/mirage-core'
+import type { PathSpec } from '@struktoai/mirage-core/types'
+import { eexist, enoent, enotdir } from '@struktoai/mirage-core/utils/errors'
+import { mountedPath } from '@struktoai/mirage-core/utils/key_prefix'
+import { ancestors } from '@struktoai/mirage-core/utils/path'
 import type { RedisStore } from '../../resource/redis/store.ts'
 
 // Reject a destination whose parent chain is not all directories. Mirrors how

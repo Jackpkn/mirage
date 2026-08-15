@@ -12,9 +12,10 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { enoent, enotdir, type PathSpec } from '@struktoai/mirage-core'
+import type { PathSpec } from '@struktoai/mirage-core/types'
+import { enoent, enotdir } from '@struktoai/mirage-core/utils/errors'
 
-export { norm, parent, gnuBasename as basename } from '@struktoai/mirage-core'
+export { gnuBasename as basename, norm, parent } from '@struktoai/mirage-core/utils/path'
 
 export function dirname(p: string): string {
   const i = p.lastIndexOf('/')

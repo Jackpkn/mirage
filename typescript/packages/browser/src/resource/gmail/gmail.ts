@@ -12,27 +12,23 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { mountKey, mountPrefixOf } from '@struktoai/mirage-core'
-import {
-  type FileStat,
-  GMAIL_COMMANDS,
-  GMAIL_PROMPT,
-  GMAIL_WRITE_PROMPT,
-  GMAIL_OPS,
-  GmailAccessor,
-  type IndexCacheStore,
-  PathSpec,
-  RAMIndexCacheStore,
-  type RegisteredCommand,
-  type RegisteredOp,
-  type Resource,
-  ResourceName,
-  TokenManager,
-  gmailRead,
-  gmailReaddir,
-  makeResolveGlob,
-  gmailStat,
-} from '@struktoai/mirage-core'
+import { GmailAccessor } from '@struktoai/mirage-core/accessor/gmail'
+import { RAMIndexCacheStore } from '@struktoai/mirage-core/cache/index/ram'
+import type { IndexCacheStore } from '@struktoai/mirage-core/cache/index/store'
+import { makeResolveGlob } from '@struktoai/mirage-core/commands/builtin/generic_bind/index'
+import { GMAIL_COMMANDS } from '@struktoai/mirage-core/commands/builtin/gmail/index'
+import type { RegisteredCommand } from '@struktoai/mirage-core/commands/config'
+import { read as gmailRead } from '@struktoai/mirage-core/core/gmail/read'
+import { readdir as gmailReaddir } from '@struktoai/mirage-core/core/gmail/readdir'
+import { stat as gmailStat } from '@struktoai/mirage-core/core/gmail/stat'
+import { TokenManager } from '@struktoai/mirage-core/core/google/_client'
+import { GMAIL_OPS } from '@struktoai/mirage-core/ops/gmail/index'
+import type { RegisteredOp } from '@struktoai/mirage-core/ops/registry'
+import type { Resource } from '@struktoai/mirage-core/resource/base'
+import { GMAIL_PROMPT, GMAIL_WRITE_PROMPT } from '@struktoai/mirage-core/resource/gmail/prompt'
+import { PathSpec, ResourceName } from '@struktoai/mirage-core/types'
+import type { FileStat } from '@struktoai/mirage-core/types'
+import { mountKey, mountPrefixOf } from '@struktoai/mirage-core/utils/key_prefix'
 import { redactGmailConfig, type GmailConfig, type GmailConfigRedacted } from './config.ts'
 
 const gmailResolveGlob = makeResolveGlob(gmailReaddir)

@@ -12,22 +12,21 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import { cpWalk } from '@struktoai/mirage-core/commands/builtin/generic/cp'
+import { resolveGlobOf } from '@struktoai/mirage-core/commands/builtin/generic_bind/index'
+import { formatRecords } from '@struktoai/mirage-core/commands/builtin/utils/output'
 import {
-  FileType,
-  FlagView,
-  IOResult,
-  ResourceName,
-  command,
-  cpWalk,
-  formatRecords,
-  removalLines,
-  resolveGlobOf,
-  specOf,
-  type ByteSource,
-  type CommandFnResult,
-  type CommandOpts,
-  type PathSpec,
-} from '@struktoai/mirage-core'
+  isSlashedLink,
+  rmLinkRefusal,
+} from '@struktoai/mirage-core/commands/builtin/utils/slash_links'
+import { removalLines } from '@struktoai/mirage-core/commands/builtin/utils/verbose'
+import { command } from '@struktoai/mirage-core/commands/config'
+import type { CommandFnResult, CommandOpts } from '@struktoai/mirage-core/commands/config'
+import { FlagView, specOf } from '@struktoai/mirage-core/commands/spec/index'
+import { IOResult } from '@struktoai/mirage-core/io/types'
+import type { ByteSource } from '@struktoai/mirage-core/io/types'
+import { FileType, ResourceName } from '@struktoai/mirage-core/types'
+import type { PathSpec } from '@struktoai/mirage-core/types'
 import type { GridFSAccessor } from '../../../accessor/gridfs.ts'
 import { readdir as gridfsReaddir } from '../../../core/gridfs/readdir.ts'
 import { rmR as gridfsRmR } from '../../../core/gridfs/rm.ts'
@@ -35,7 +34,6 @@ import { rmdir as gridfsRmdir } from '../../../core/gridfs/rmdir.ts'
 import { stat as gridfsStat } from '../../../core/gridfs/stat.ts'
 import { unlink as gridfsUnlink } from '../../../core/gridfs/unlink.ts'
 import { GRIDFS_IO } from './io.ts'
-import { isSlashedLink, rmLinkRefusal } from '@struktoai/mirage-core'
 
 const resolveGlob = resolveGlobOf(GRIDFS_IO)
 

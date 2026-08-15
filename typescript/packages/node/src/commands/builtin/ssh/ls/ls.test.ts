@@ -13,7 +13,8 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { describe, expect, it } from 'vitest'
-import { PathSpec, materialize } from '@struktoai/mirage-core'
+import { materialize } from '@struktoai/mirage-core/io/types'
+import { PathSpec } from '@struktoai/mirage-core/types'
 import type { SSHAccessor } from '../../../../accessor/ssh.ts'
 import { makeFakeAccessor } from '../../../../core/ssh/_test_utils.ts'
 import { SSH_COMMANDS } from '../index.ts'

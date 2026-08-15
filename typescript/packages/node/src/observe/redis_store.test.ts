@@ -12,7 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { Observer } from '@struktoai/mirage-core'
+import { Observer } from '@struktoai/mirage-core/observe/observer'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { RedisObserverStore } from './redis_store.ts'
 

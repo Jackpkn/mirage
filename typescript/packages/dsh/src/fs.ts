@@ -26,8 +26,11 @@ import type {
   FsWriteIntent,
   FsWriteOutcome,
 } from '@deepseek-ai/dsh-fs'
-import { compareCodePoints, FileType, isMissingPath } from '@struktoai/mirage-core'
-import type { FileStat, Ops } from '@struktoai/mirage-core'
+import type { Ops } from '@struktoai/mirage-core/ops/ops'
+import { FileType } from '@struktoai/mirage-core/types'
+import type { FileStat } from '@struktoai/mirage-core/types'
+import { isMissingPath } from '@struktoai/mirage-core/utils/errors'
+import { compareCodePoints } from '@struktoai/mirage-core/utils/sort'
 import { assertNotAborted, mapMirageError } from './errors.ts'
 import {
   applyLiteralEdit,

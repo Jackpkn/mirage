@@ -14,7 +14,8 @@
 
 import { randomUUID } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
-import { MountMode, RAMResource } from '@struktoai/mirage-core'
+import { RAMResource } from '@struktoai/mirage-core/resource/ram/ram'
+import { MountMode } from '@struktoai/mirage-core/types'
 import { Workspace } from '../../workspace.ts'
 import { RedisSessionStore } from './redis.ts'
 

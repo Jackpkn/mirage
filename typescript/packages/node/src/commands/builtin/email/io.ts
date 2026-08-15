@@ -12,7 +12,9 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import type { CommandIO, IndexCacheStore, PathSpec } from '@struktoai/mirage-core'
+import type { IndexCacheStore } from '@struktoai/mirage-core/cache/index/store'
+import type { CommandIO } from '@struktoai/mirage-core/commands/builtin/generic_bind/index'
+import type { PathSpec } from '@struktoai/mirage-core/types'
 import type { EmailAccessor } from '../../../accessor/email.ts'
 import { read as emailRead } from '../../../core/email/read.ts'
 import { readdir as emailReaddir } from '../../../core/email/readdir.ts'

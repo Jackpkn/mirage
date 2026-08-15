@@ -12,8 +12,9 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import type { IndexCacheStore, PathSpec } from '@struktoai/mirage-core'
-import { enoent } from '@struktoai/mirage-core'
+import type { IndexCacheStore } from '@struktoai/mirage-core/cache/index/store'
+import type { PathSpec } from '@struktoai/mirage-core/types'
+import { enoent } from '@struktoai/mirage-core/utils/errors'
 import type { SSHAccessor } from '../../accessor/ssh.ts'
 import { readChunks } from './stream.ts'
 import { isNoSuchFile, joinRoot, stripPrefix } from './utils.ts'

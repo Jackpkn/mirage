@@ -12,45 +12,44 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import { S3Accessor } from '@struktoai/mirage-core/accessor/s3'
+import { makeResolveGlob } from '@struktoai/mirage-core/commands/builtin/generic_bind/index'
+import { S3_COMMANDS } from '@struktoai/mirage-core/commands/builtin/s3/index'
+import type { RegisteredCommand } from '@struktoai/mirage-core/commands/config'
+import { SCOPE_ERROR as S3_SCOPE_ERROR } from '@struktoai/mirage-core/core/s3/constants'
+import { copy as copyCore } from '@struktoai/mirage-core/core/s3/copy'
+import { create as createCore } from '@struktoai/mirage-core/core/s3/create'
 import {
-  BaseResource,
-  PathSpec,
-  ResourceName,
-  S3Accessor,
-  S3_COMMANDS,
-  S3_OPS,
-  S3_PROMPT,
-  copy as copyCore,
-  create as createCore,
-  s3DuSize as duSizeCore,
-  s3DuEntries as duEntriesCore,
-  exists as existsCore,
-  find as findCore,
-  makeResolveGlob,
-  mkdir as mkdirCore,
-  mountKey,
-  mountPrefixOf,
-  normalizeKeyPrefix,
+  entries as duEntriesCore,
+  size as duSizeCore,
+} from '@struktoai/mirage-core/core/s3/du/index'
+import { exists as existsCore } from '@struktoai/mirage-core/core/s3/exists'
+import { find as findCore } from '@struktoai/mirage-core/core/s3/find'
+import { mkdir as mkdirCore } from '@struktoai/mirage-core/core/s3/mkdir'
+import { read as readCore } from '@struktoai/mirage-core/core/s3/read'
+import { readdir as readdirCore } from '@struktoai/mirage-core/core/s3/readdir'
+import { rename as renameCore } from '@struktoai/mirage-core/core/s3/rename'
+import { rmR as rmRCore } from '@struktoai/mirage-core/core/s3/rm'
+import { rmdir as rmdirCore } from '@struktoai/mirage-core/core/s3/rmdir'
+import { stat as statCore } from '@struktoai/mirage-core/core/s3/stat'
+import {
   rangeRead as rangeReadCore,
-  read as readCore,
-  readdir as readdirCore,
-  rename as renameCore,
-  S3_SCOPE_ERROR,
-  rmR as rmRCore,
-  rmdir as rmdirCore,
-  stat as statCore,
   stream as streamCore,
-  truncate as truncateCore,
-  type FileStat,
-  type FindOptions,
-  type S3HttpAgents,
-  type RegisteredCommand,
-  type RegisteredOp,
-  type Resource,
-  unlink as unlinkCore,
-  write as writeCore,
-  s3StorageId,
-} from '@struktoai/mirage-core'
+} from '@struktoai/mirage-core/core/s3/stream'
+import { truncate as truncateCore } from '@struktoai/mirage-core/core/s3/truncate'
+import { unlink as unlinkCore } from '@struktoai/mirage-core/core/s3/unlink'
+import { write as writeCore } from '@struktoai/mirage-core/core/s3/write'
+import type { RegisteredOp } from '@struktoai/mirage-core/ops/registry'
+import { S3_OPS } from '@struktoai/mirage-core/ops/s3/index'
+import { BaseResource } from '@struktoai/mirage-core/resource/base'
+import type { FindOptions, Resource } from '@struktoai/mirage-core/resource/base'
+import { normalizeKeyPrefix } from '@struktoai/mirage-core/resource/s3/config'
+import type { S3HttpAgents } from '@struktoai/mirage-core/resource/s3/config'
+import { S3_PROMPT } from '@struktoai/mirage-core/resource/s3/prompt'
+import { s3StorageId } from '@struktoai/mirage-core/resource/s3/storage_id'
+import { PathSpec, ResourceName } from '@struktoai/mirage-core/types'
+import type { FileStat } from '@struktoai/mirage-core/types'
+import { mountKey, mountPrefixOf } from '@struktoai/mirage-core/utils/key_prefix'
 import { HttpProxyAgent } from 'http-proxy-agent'
 import { HttpsProxyAgent } from 'https-proxy-agent'
 import { redactConfig, type S3Config, type S3ConfigRedacted } from './config.ts'

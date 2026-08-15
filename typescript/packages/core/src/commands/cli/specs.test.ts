@@ -60,4 +60,14 @@ describe('cli spec registry', () => {
   it('an unknown key names the known specs', () => {
     expect(() => cliSpecFor('spectest4')).toThrow(/known: /)
   })
+
+  // This file imports the registry and nothing else, so the seven resolve
+  // only because specs.ts seeds them. Back when each builtin registered
+  // itself, a caller saw only the CLIs whose modules something had
+  // already imported -- which the old barrel hid by importing them all.
+  it('resolves the bundled CLIs without importing their modules', () => {
+    for (const name of ['discord', 'gh', 'git', 'gws', 'linear', 'ntn', 'slack']) {
+      expect(cliSpecFor(name).name).toBe(name)
+    }
+  })
 })

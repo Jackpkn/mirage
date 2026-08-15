@@ -12,7 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { PathSpec } from '@struktoai/mirage-core'
+import { PathSpec } from '@struktoai/mirage-core/types'
 import { describe, expect, it } from 'vitest'
 import { fakeHfOperator, installFakeOperator } from '../../core/hf/mock.ts'
 import { HfBucketsResource } from '../hf_buckets/hf_buckets.ts'

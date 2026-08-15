@@ -12,7 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import type { RegisteredOp } from '@struktoai/mirage-core'
+import type { RegisteredOp } from '@struktoai/mirage-core/ops/registry'
 import { appendOp } from './append.ts'
 import { createOp } from './create.ts'
 import { mkdirOp } from './mkdir.ts'

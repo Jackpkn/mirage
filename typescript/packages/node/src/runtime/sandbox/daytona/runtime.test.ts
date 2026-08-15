@@ -12,9 +12,10 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { buildRuntime, stdinRedirect } from '@struktoai/mirage-core'
+import { stdinRedirect } from '@struktoai/mirage-core/runtime/sandbox/constants'
+import { buildRuntime } from '@struktoai/mirage-core/runtime/table'
+import type { RuntimeOptions } from '@struktoai/mirage-core/runtime/types'
 import { beforeEach, describe, expect, it } from 'vitest'
-import type { RuntimeOptions } from '@struktoai/mirage-core'
 import type { DaytonaConfig } from './config.ts'
 import { DaytonaRuntime, type DaytonaSdk } from './runtime.ts'
 

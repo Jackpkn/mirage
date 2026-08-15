@@ -12,15 +12,10 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import {
-  normalizeFields,
-  normalizeKeyPrefix,
-  redactConfigWithSchema,
-  type ConfigOf,
-  type RedactedConfig,
-  secretStr,
-  z,
-} from '@struktoai/mirage-core'
+import { normalizeKeyPrefix } from '@struktoai/mirage-core/resource/s3/config'
+import { redactConfigWithSchema, secretStr, z } from '@struktoai/mirage-core/resource/secrets'
+import type { ConfigOf, RedactedConfig } from '@struktoai/mirage-core/resource/secrets'
+import { normalizeFields } from '@struktoai/mirage-core/utils/normalize'
 
 const GridFSConfigSchema = z.object({
   uri: secretStr(),

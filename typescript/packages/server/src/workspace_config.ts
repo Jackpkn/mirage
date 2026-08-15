@@ -14,8 +14,10 @@
 
 import { existsSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
-import type { Limit, MountSpec } from '@struktoai/mirage-node'
-import { Workspace, newWorkspaceId } from '@struktoai/mirage-node'
+import type { Limit } from '@struktoai/mirage-core/types'
+import type { MountSpec } from '@struktoai/mirage-core/workspace/workspace'
+import { newWorkspaceId } from '@struktoai/mirage-core/utils/ids'
+import { Workspace } from '@struktoai/mirage-node'
 import { configToWorkspaceArgs, loadWorkspaceConfigFile } from './config.ts'
 
 export const WORKSPACE_CONFIG_CANDIDATES = [

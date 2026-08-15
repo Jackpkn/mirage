@@ -14,7 +14,8 @@
 
 import type { DiskAccessor } from '../../accessor/disk.ts'
 import { copyFile, stat } from 'node:fs/promises'
-import { invalidateAfterWrite, type PathSpec } from '@struktoai/mirage-core'
+import { invalidateAfterWrite } from '@struktoai/mirage-core/cache/context'
+import type { PathSpec } from '@struktoai/mirage-core/types'
 import { diskError } from './errors.ts'
 import { resolveSafe } from './utils.ts'
 

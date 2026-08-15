@@ -12,8 +12,9 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import type { PathSpec } from '@struktoai/mirage-core'
-import { lstripSlash, mountPrefixOf, rstripSlash } from '@struktoai/mirage-core'
+import type { PathSpec } from '@struktoai/mirage-core/types'
+import { mountPrefixOf } from '@struktoai/mirage-core/utils/key_prefix'
+import { lstripSlash, rstripSlash } from '@struktoai/mirage-core/utils/slash'
 
 const S_IFMT = 0o170000
 const S_IFDIR = 0o040000

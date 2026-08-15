@@ -13,12 +13,12 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import type { RedisClientType } from 'redis'
-import {
-  Channel,
-  type ConsoleChunk,
-  type ConsoleStore,
-  type ReadResult,
-} from '@struktoai/mirage-core'
+import { Channel } from '@struktoai/mirage-core/shell/console/index'
+import type {
+  ConsoleChunk,
+  ConsoleStore,
+  ReadResult,
+} from '@struktoai/mirage-core/shell/console/index'
 import { loadOptionalPeer } from '../../../optional_peer.ts'
 import { APPEND_LUA, POLL_MS } from './constants.ts'
 

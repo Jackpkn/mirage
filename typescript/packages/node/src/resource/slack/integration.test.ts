@@ -12,7 +12,8 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { MountMode, SLACK } from '@struktoai/mirage-core'
+import { SLACK } from '@struktoai/mirage-core/commands/cli/builtin/slack/index'
+import { MountMode } from '@struktoai/mirage-core/types'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Workspace } from '../../workspace.ts'
 import { SlackResource } from './slack.ts'

@@ -12,8 +12,9 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import type { OpKwargs, PathSpec, RegisteredOp } from '@struktoai/mirage-core'
-import { ResourceName } from '@struktoai/mirage-core'
+import type { OpKwargs, RegisteredOp } from '@struktoai/mirage-core/ops/registry'
+import { ResourceName } from '@struktoai/mirage-core/types'
+import type { PathSpec } from '@struktoai/mirage-core/types'
 import type { OPFSAccessor } from '../../accessor/opfs.ts'
 import { read as coreRead } from '../../core/opfs/read.ts'
 

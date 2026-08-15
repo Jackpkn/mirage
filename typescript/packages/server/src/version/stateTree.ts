@@ -12,12 +12,9 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import {
-  compareCodePoints,
-  lstripSlash,
-  stripSlash,
-  type WorkspaceStateDict,
-} from '@struktoai/mirage-core'
+import { lstripSlash, stripSlash } from '@struktoai/mirage-core/utils/slash'
+import { compareCodePoints } from '@struktoai/mirage-core/utils/sort'
+import type { WorkspaceStateDict } from '@struktoai/mirage-core/workspace/snapshot/types'
 
 export type { WorkspaceStateDict }
 

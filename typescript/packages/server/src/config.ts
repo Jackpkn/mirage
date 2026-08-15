@@ -16,38 +16,41 @@ import { randomBytes } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { parse as parseYaml } from 'yaml'
+import type { CacheConfig } from '@struktoai/mirage-core/cache/file/config'
+import type { IndexConfig, RedisIndexConfig } from '@struktoai/mirage-core/cache/index/config'
+import { CLISpec } from '@struktoai/mirage-core/commands/cli/types'
+import type { GuardSpec } from '@struktoai/mirage-core/policy/index'
+import type { Resource } from '@struktoai/mirage-core/resource/base'
+import type { RuntimeEntry } from '@struktoai/mirage-core/runtime/base'
+import { ScriptSource } from '@struktoai/mirage-core/runtime/policy/index'
+import { buildRuntime } from '@struktoai/mirage-core/runtime/table'
 import {
+  ConsistencyPolicy,
+  KERNEL_BACKENDS,
+  Limit,
+  MountBackend,
+  MountMode,
+  OnExceed,
+} from '@struktoai/mirage-core/types'
+import { snakeToCamel } from '@struktoai/mirage-core/utils/normalize'
+import type { WorkspaceStateStore } from '@struktoai/mirage-core/workspace/store/base'
+import { RAMWorkspaceStateStore } from '@struktoai/mirage-core/workspace/store/ram'
+import { S3WorkspaceStateStore } from '@struktoai/mirage-core/workspace/store/s3'
+import type { WorkspaceOptions } from '@struktoai/mirage-core/workspace/workspace'
+import {
+  DiskWorkspaceStateStore,
+  RedisConsoleStore,
+  RedisWorkspaceStateStore,
   buildResource,
   isModulePath,
   loadAttr,
-  splitRef,
-  CLISpec,
-  Limit,
-  ConsistencyPolicy,
-  KERNEL_BACKENDS,
-  MountBackend,
-  ScriptSource,
-  MountMode,
-  OnExceed,
-  RAMWorkspaceStateStore,
-  RedisConsoleStore,
-  RedisWorkspaceStateStore,
-  DiskWorkspaceStateStore,
-  S3WorkspaceStateStore,
   normalizeS3Config,
-  snakeToCamel,
-  buildRuntime,
-  type RuntimeEntry,
-  type CacheConfig,
-  type GuardSpec,
-  type IndexConfig,
-  type RedisIndexConfig,
-  type Resource,
-  type S3Config,
-  type WorkspaceOptions,
-  type WorkspaceStateStore,
+  splitRef,
 } from '@struktoai/mirage-node'
-import { compareCodePoints, JobConsole, type ConsoleFactory } from '@struktoai/mirage-core'
+import type { S3Config } from '@struktoai/mirage-node'
+import { JobConsole } from '@struktoai/mirage-core/shell/console/index'
+import type { ConsoleFactory } from '@struktoai/mirage-core/shell/job_table/index'
+import { compareCodePoints } from '@struktoai/mirage-core/utils/sort'
 
 const VALID_MODES = new Set<string>([MountMode.READ, MountMode.WRITE, MountMode.EXEC])
 

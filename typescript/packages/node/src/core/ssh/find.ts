@@ -13,17 +13,18 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import type { FileEntryWithStats } from 'ssh2'
-import type { PathSpec } from '@struktoai/mirage-core'
-import type { SSHAccessor } from '../../accessor/ssh.ts'
-import { isDirectoryAttrs, joinRoot, stripPrefix } from './utils.ts'
-import { compareCodePoints, norm } from '@struktoai/mirage-core'
 import {
   buildTree,
   emitStartPath,
   keep,
-  type PredNode,
   startBasename,
-} from '@struktoai/mirage-core'
+} from '@struktoai/mirage-core/commands/builtin/findEval'
+import type { PredNode } from '@struktoai/mirage-core/commands/builtin/findEval'
+import type { PathSpec } from '@struktoai/mirage-core/types'
+import { norm } from '@struktoai/mirage-core/utils/path'
+import { compareCodePoints } from '@struktoai/mirage-core/utils/sort'
+import type { SSHAccessor } from '../../accessor/ssh.ts'
+import { isDirectoryAttrs, joinRoot, stripPrefix } from './utils.ts'
 
 export interface FindOptions {
   name?: string | null

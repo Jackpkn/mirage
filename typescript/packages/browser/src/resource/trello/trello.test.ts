@@ -12,8 +12,9 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { mountKey } from '@struktoai/mirage-core'
-import { PathSpec, ResourceName, TRELLO_OPS } from '@struktoai/mirage-core'
+import { TRELLO_OPS } from '@struktoai/mirage-core/ops/trello/index'
+import { PathSpec, ResourceName } from '@struktoai/mirage-core/types'
+import { mountKey } from '@struktoai/mirage-core/utils/key_prefix'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { buildResource } from '../registry.ts'
 import { redactTrelloConfig } from './config.ts'

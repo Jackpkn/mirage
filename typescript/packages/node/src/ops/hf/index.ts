@@ -12,8 +12,8 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import type { RegisteredOp } from '@struktoai/mirage-core'
-import { makeGenericOps } from '@struktoai/mirage-core'
+import { makeGenericOps } from '@struktoai/mirage-core/ops/generic/factory'
+import type { RegisteredOp } from '@struktoai/mirage-core/ops/registry'
 import { HF_RESOURCES } from '../../accessor/hf.ts'
 import { HF_IO } from '../../commands/builtin/hf/io.ts'
 

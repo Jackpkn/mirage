@@ -12,7 +12,9 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { FileType, type PathSpec, stripSlash } from '@struktoai/mirage-core'
+import { FileType } from '@struktoai/mirage-core/types'
+import type { PathSpec } from '@struktoai/mirage-core/types'
+import { stripSlash } from '@struktoai/mirage-core/utils/slash'
 import type { HfAccessor } from '../../../accessor/hf.ts'
 import { isNotFound, rawPathOf } from '../util.ts'
 import { statOrNull } from './walk.ts'

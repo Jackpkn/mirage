@@ -12,15 +12,9 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import {
-  FileStat,
-  FileType,
-  MountMode,
-  RAMResource,
-  type Action,
-  type OpsResultContext,
-  type Policy,
-} from '@struktoai/mirage-core'
+import type { Action, OpsResultContext, Policy } from '@struktoai/mirage-core/policy/index'
+import { RAMResource } from '@struktoai/mirage-core/resource/ram/ram'
+import { FileStat, FileType, MountMode } from '@struktoai/mirage-core/types'
 import { describe, expect, it, vi } from 'vitest'
 import { Workspace } from '../workspace.ts'
 import { MirageFS, type FuseAttr } from './fs.ts'
