@@ -42,21 +42,43 @@ export interface SedCommand {
 
 function parseAddress(addr: string): SedAddr | null {
   if (addr === '') return null
-  if (addr.startsWith('/')) {
-    const end = addr.indexOf('/', 1)
-    return ['regex', addr.slice(1, end)]
-  }
   if (/^\d+$/.test(addr)) return ['line', addr]
   if (addr === '$') return ['last', '']
   return null
 }
 
+// Collect an address regex up to its unescaped closing delimiter. A
+// backslash escapes the next character (so `\/` inside `/re/` is a literal
+// slash) and the pair is kept verbatim: BRE escapes like `\+` must survive
+// for the regex translator, and the engine accepts a redundant `\/`.
+function scanRegexField(rest: string, start: number, delim: string): [string, number] {
+  let out = ''
+  let i = start
+  while (i < rest.length) {
+    const ch = rest.charAt(i)
+    if (ch === '\\' && i + 1 < rest.length) {
+      out += rest.slice(i, i + 2)
+      i += 2
+      continue
+    }
+    if (ch === delim) return [out, i + 1]
+    out += ch
+    i += 1
+  }
+  throw new Error('sed: unterminated address regex')
+}
+
 function consumeAddress(rest: string): [SedAddr | null, string] {
   if (rest === '') return [null, rest]
   if (rest.startsWith('/')) {
-    const end = rest.indexOf('/', 1)
-    const addr: SedAddr = ['regex', rest.slice(1, end)]
-    return [addr, rest.slice(end + 1)]
+    const [pattern, next] = scanRegexField(rest, 1, '/')
+    return [['regex', pattern], rest.slice(next)]
+  }
+  if (rest.startsWith('\\') && rest.length > 1) {
+    // GNU's \cREc form: the character after the backslash delimits the
+    // regex in place of `/`.
+    const [pattern, next] = scanRegexField(rest, 2, rest.charAt(1))
+    return [['regex', pattern], rest.slice(next)]
   }
   const first = rest[0]
   if (first !== undefined && (/\d/.test(first) || first === '$')) {

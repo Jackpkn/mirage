@@ -18,7 +18,7 @@ from mirage.core.langfuse._client import (fetch_dataset_items,
                                           fetch_dataset_runs, fetch_datasets,
                                           fetch_prompts, fetch_sessions,
                                           fetch_traces)
-from mirage.core.langfuse.render import jsonl_bytes
+from mirage.core.render.json import jsonl_bytes
 from mirage.types import PathSpec
 from mirage.utils.errors import enoent
 from mirage.utils.key_prefix import mount_prefix_of

@@ -74,6 +74,8 @@ export enum Cmd {
   PASTE = 'paste',
   COMM = 'comm',
   JOIN = 'join',
+  TAR = 'tar',
+  UNZIP = 'unzip',
 }
 
 export type { DispatchFn } from '../../../../runtime/types.ts'

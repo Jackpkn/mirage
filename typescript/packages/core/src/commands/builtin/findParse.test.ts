@@ -196,3 +196,19 @@ describe('parseFindExpression', () => {
     }
   })
 })
+
+describe('find -printf parsing', () => {
+  it('stores the format on the expression', () => {
+    const expr = parseFindExpression(['-printf', '%p\\n'])
+    expect(expr.printf).toBe('%p\\n')
+  })
+
+  it('refuses a missing argument', () => {
+    expect(() => parseFindExpression(['-printf'])).toThrow("missing argument to '-printf'")
+  })
+
+  it('combines with tests', () => {
+    const expr = parseFindExpression(['-name', '*.txt', '-printf', '%f\\n'])
+    expect(expr.printf).toBe('%f\\n')
+  })
+})

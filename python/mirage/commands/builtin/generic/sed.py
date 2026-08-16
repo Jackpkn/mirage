@@ -95,7 +95,11 @@ async def sed(
             stderr=err or None)
 
     if paths:
-        modifying = in_place and any(c["cmd"] in ("s", "d") for c in commands)
+        # GNU -i redirects the whole output stream to the file whatever the
+        # script ran: `p` doubles lines in place, `q` truncates, `a`/`i`/`c`
+        # land their text. Gating on the command set left every non-s/d
+        # script printing to stdout while reporting success (#326 corpus).
+        modifying = in_place
         all_outputs: list[str] = []
         writes = {}
         err = b""
@@ -127,7 +131,9 @@ async def sed(
                                   cache=[p.mount_path for p in edited],
                                   exit_code=1 if err else 0,
                                   stderr=err or None)
-        return "\n".join(all_outputs).encode(), IOResult(
+        # GNU concatenates per-file output with no separator (each file's
+        # output already carries its own newlines).
+        return "".join(all_outputs).encode(), IOResult(
             exit_code=1 if err else 0, stderr=err or None)
 
     raw = await _read_stdin_async(stdin)

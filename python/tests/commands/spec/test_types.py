@@ -86,3 +86,10 @@ def test_flag_view_float_reads():
     assert fl.as_float("verbose") == 3.0
     assert fl.as_float("missing") is None
     assert FlagView({"append": True}).as_float("append") is None
+
+
+def test_flag_view_typed_order_follows_bag_insertion():
+    fl = FlagView({"exclude": ["a"], "n": True, "include": ["b"]})
+    assert fl.typed_order("include", "exclude") == ["exclude", "include"]
+    assert fl.typed_order("include") == ["include"]
+    assert fl.typed_order("color") == []

@@ -529,13 +529,217 @@
       "command": "mkdir -p /data/ml && echo m > /data/ml/m.txt && tar -cf /data/ml.tar -C /data ml && tar -tf /data/ml.tar data; echo exit=$?",
       "expect": {
         "exit": 0,
-        "stdout": "ml/\nml/m.txt\nexit=0\n",
-        "stderr": ""
+        "stdout": "exit=2\n",
+        "stderr": "tar: data: Not found in archive\ntar: Exiting with failure status due to previous errors\n"
       },
       "flags": [
         "c",
         "C"
       ]
+    },
+    {
+      "id": "arch_tar_member_selector_lists_the_subtree",
+      "seq": 962301,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "mkdir -p /data/msel/sub && echo one | tee /data/msel/a.txt > /dev/null && echo two | tee /data/msel/sub/b.txt > /dev/null && tar -czf /data/msel.tgz -C /data msel && tar -tzf /data/msel.tgz msel/sub",
+      "expect": {
+        "exit": 0,
+        "stdout": "msel/sub/\nmsel/sub/b.txt\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "arch_tar_member_selector_miss_exits_2",
+      "seq": 962302,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "tar -tzf /data/msel.tgz nope; echo exit=$?",
+      "expect": {
+        "exit": 0,
+        "stdout": "exit=2\n",
+        "stderr": "tar: nope: Not found in archive\ntar: Exiting with failure status due to previous errors\n"
+      }
+    },
+    {
+      "id": "arch_tar_extract_to_stdout",
+      "seq": 962303,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "tar -xOzf /data/msel.tgz msel/a.txt",
+      "expect": {
+        "exit": 0,
+        "stdout": "one\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "arch_tar_xvO_lists_names_on_stderr",
+      "seq": 962304,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "tar -xvOzf /data/msel.tgz msel/a.txt",
+      "expect": {
+        "exit": 0,
+        "stdout": "one\n",
+        "stderr": "msel/a.txt\n"
+      }
+    },
+    {
+      "id": "arch_tar_extract_selector_takes_only_its_subtree",
+      "seq": 962305,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "tar -xzf /data/msel.tgz -C /data/mselout msel/sub && ls /data/mselout/msel && cat /data/mselout/msel/sub/b.txt",
+      "expect": {
+        "exit": 0,
+        "stdout": "sub\ntwo\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "arch_tar_extract_defaults_to_the_cwd",
+      "seq": 962306,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "mkdir -p /data/cwdx && echo k > /data/cwdx/.keep && bash -c 'cd /data/cwdx && tar -xzf /data/msel.tgz && ls msel'",
+      "expect": {
+        "exit": 0,
+        "stdout": "a.txt\nsub\n",
+        "stderr": ""
+      }
     }
   ]
 }

@@ -57,6 +57,8 @@ export const RELAY_COMMANDS: ReadonlySet<string> = new Set([
   Cmd.PASTE,
   Cmd.COMM,
   Cmd.JOIN,
+  Cmd.TAR,
+  Cmd.UNZIP,
 ])
 export const CROSS_MOUNT_COMMANDS: ReadonlySet<string> = new Set([
   ...STREAM_COMMANDS,

@@ -12,7 +12,185 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from datetime import datetime, timezone
+import re
+from calendar import monthrange
+from datetime import datetime, timedelta, timezone
+
+_UNIT_SECONDS = {
+    "sec": 1,
+    "second": 1,
+    "min": 60,
+    "minute": 60,
+    "hour": 3600,
+    "day": 86400,
+    "week": 604800,
+}
+_CALENDAR_UNITS = ("month", "year")
+_NUMBER_UNIT_RE = re.compile(r"([+-]?\d+)([a-z]+)\Z")
+_NUMBER_RE = re.compile(r"[+-]?\d+\Z")
+
+
+def _date_unit(word: str) -> str | None:
+    unit = word.removesuffix("s") if word != "s" else word
+    if unit in _UNIT_SECONDS or unit in _CALENDAR_UNITS:
+        return unit
+    return None
+
+
+def _add_months(dt: datetime, count: int) -> datetime:
+    total = dt.month - 1 + count
+    year = dt.year + total // 12
+    month = total % 12 + 1
+    # GNU normalizes an overflowing day-of-month through mktime rather
+    # than clamping: Jan 31 + 1 month is Mar 3, not Feb 28.
+    days = monthrange(year, month)[1]
+    day = dt.day
+    if day > days:
+        day -= days
+        month += 1
+        if month == 13:
+            month = 1
+            year += 1
+    return dt.replace(year=year, month=month, day=day)
+
+
+def _shift(dt: datetime, unit: str, count: int) -> datetime:
+    if unit == "month":
+        return _add_months(dt, count)
+    if unit == "year":
+        return _add_months(dt, 12 * count)
+    return dt + timedelta(seconds=_UNIT_SECONDS[unit] * count)
+
+
+def _localize(dt: datetime, utc: bool) -> datetime:
+    if dt.tzinfo is not None:
+        return dt.astimezone(timezone.utc) if utc else dt.astimezone()
+    return dt.replace(tzinfo=timezone.utc) if utc else dt
+
+
+def _apply_relative(base: datetime, words: list[str]) -> datetime | None:
+    result = base
+    # What `ago` would negate: the state before the last displacement plus
+    # that displacement. Re-applying from the checkpoint (rather than
+    # subtracting twice) keeps month normalization exact.
+    checkpoint: tuple[datetime, str, int] | None = None
+    i = 0
+    while i < len(words):
+        word = words[i].lower()
+        if word in ("now", "today"):
+            checkpoint = None
+            i += 1
+            continue
+        if word in ("yesterday", "tomorrow"):
+            days = -1 if word == "yesterday" else 1
+            checkpoint = (result, "day", days)
+            result = _shift(result, "day", days)
+            i += 1
+            continue
+        if word in ("last", "next"):
+            if i + 1 >= len(words):
+                return None
+            unit = _date_unit(words[i + 1].lower())
+            if unit is None:
+                return None
+            count = -1 if word == "last" else 1
+            checkpoint = (result, unit, count)
+            result = _shift(result, unit, count)
+            i += 2
+            continue
+        if word == "ago":
+            if checkpoint is None:
+                return None
+            before, unit, count = checkpoint
+            result = _shift(before, unit, -count)
+            checkpoint = None
+            i += 1
+            continue
+        sign = 1
+        if word in ("+", "-"):
+            sign = -1 if word == "-" else 1
+            i += 1
+            if i >= len(words):
+                return None
+            word = words[i].lower()
+        combined = _NUMBER_UNIT_RE.match(word)
+        if combined:
+            unit = _date_unit(combined.group(2))
+            if unit is None:
+                return None
+            count = int(combined.group(1)) * sign
+            checkpoint = (result, unit, count)
+            result = _shift(result, unit, count)
+            i += 1
+            continue
+        if _NUMBER_RE.match(word):
+            if i + 1 >= len(words):
+                return None
+            unit = _date_unit(words[i + 1].lower())
+            if unit is None:
+                return None
+            count = int(word) * sign
+            checkpoint = (result, unit, count)
+            result = _shift(result, unit, count)
+            i += 2
+            continue
+        unit = _date_unit(word)
+        if unit is not None:
+            checkpoint = (result, unit, sign)
+            result = _shift(result, unit, sign)
+            i += 1
+            continue
+        return None
+    return result
+
+
+def parse_date_expr(text: str,
+                    *,
+                    utc: bool = False,
+                    now: datetime | None = None) -> datetime | None:
+    """Parse a GNU `date -d` expression, or None when it is invalid.
+
+    Covers the forms agents actually type: ISO 8601 dates and datetimes
+    (with or without zone), `@epoch`, and gnulib's relative grammar
+    (`24 hours ago`, `yesterday`, `next month`, `-2 weeks`, an ISO date
+    followed by displacements). A None return is the caller's cue for
+    GNU's `date: invalid date '...'` refusal, never a silent fallback.
+
+    Args:
+        text (str): the -d argument as typed.
+        utc (bool): whether -u pinned the timeline to UTC.
+        now (datetime | None): the current moment, injectable for tests.
+    """
+    raw = text.strip()
+    if not raw:
+        return None
+    if raw.startswith("@"):
+        try:
+            epoch = float(raw[1:])
+        except ValueError:
+            return None
+        return datetime.fromtimestamp(epoch, tz=timezone.utc if utc else None)
+    try:
+        return _localize(datetime.fromisoformat(raw), utc)
+    except ValueError:
+        pass
+    words = raw.split()
+    if now is None:
+        now = datetime.now(timezone.utc) if utc else datetime.now()
+    base = now
+    index = 0
+    for take in (2, 1):
+        if len(words) < take:
+            continue
+        try:
+            prefix = _localize(datetime.fromisoformat(" ".join(words[:take])),
+                               utc)
+        except ValueError:
+            continue
+        base = prefix
+        index = take
+        break
+    return _apply_relative(base, words[index:])
 
 
 def utc_date_folder(ts: float | None = None) -> str:

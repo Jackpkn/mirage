@@ -12,8 +12,9 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import json
 from typing import Any
+
+from mirage.core.render.json import compact_json_bytes, jsonl_bytes
 
 
 def history_jsonl_bytes(messages: list[dict[str, Any]]) -> bytes:
@@ -22,16 +23,7 @@ def history_jsonl_bytes(messages: list[dict[str, Any]]) -> bytes:
     Args:
         messages (list[dict]): message dicts, oldest first.
     """
-    # Single renderer for a channel-day: read() and the readdir-time sizing
-    # must produce the same bytes for the same messages, so the advertised
-    # size is exact by construction.
-    if not messages:
-        return b""
-    lines = [
-        json.dumps(m, ensure_ascii=False, separators=(",", ":"))
-        for m in messages
-    ]
-    return ("\n".join(lines) + "\n").encode()
+    return jsonl_bytes(messages)
 
 
 def member_json_bytes(member: dict[str, Any]) -> bytes:
@@ -40,5 +32,4 @@ def member_json_bytes(member: dict[str, Any]) -> bytes:
     Args:
         member (dict): guild member dict as returned by the members API.
     """
-    return json.dumps(member, ensure_ascii=False,
-                      separators=(",", ":")).encode()
+    return compact_json_bytes(member)

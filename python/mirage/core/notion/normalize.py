@@ -12,11 +12,11 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import json
 from typing import Any
 
 from mirage.core.notion.pathing import extract_title
 from mirage.core.notion.render import blocks_to_markdown
+from mirage.core.render.json import json_bytes
 
 
 def normalize_page(page: dict[str, Any],
@@ -89,4 +89,4 @@ def normalize_data_source(data_source: dict[str, Any]) -> dict[str, Any]:
 
 
 def to_json_bytes(obj: dict[str, Any] | list[Any]) -> bytes:
-    return json.dumps(obj, indent=2, ensure_ascii=False).encode("utf-8")
+    return json_bytes(obj)

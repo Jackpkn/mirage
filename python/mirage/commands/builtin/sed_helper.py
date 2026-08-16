@@ -67,9 +67,6 @@ def _apply_repl(m: "re.Match[str]", repl: str) -> str:
 def _parse_address(addr: str) -> tuple[str, str] | None:
     if not addr:
         return None
-    if addr[0] == "/":
-        end = addr.index("/", 1)
-        return ("regex", addr[1:end])
     if addr.isascii() and addr.isdigit():
         return ("line", addr)
     if addr == "$":
@@ -77,13 +74,48 @@ def _parse_address(addr: str) -> tuple[str, str] | None:
     return None
 
 
+def _scan_regex_field(rest: str, start: int, delim: str) -> tuple[str, int]:
+    """Collect an address regex up to its unescaped closing delimiter.
+
+    A backslash escapes the next character (so ``\\/`` inside ``/re/`` is a
+    literal slash) and the pair is kept verbatim: BRE escapes like ``\\+``
+    must survive for the regex translator, and both engines accept a
+    redundant ``\\/``.
+
+    Args:
+        rest (str): the script text, positioned at the address.
+        delim (str): the delimiter character to stop at.
+        start (int): index of the first regex character.
+
+    Returns:
+        tuple[str, int]: the regex and the index after the delimiter.
+    """
+    out: list[str] = []
+    i = start
+    while i < len(rest):
+        ch = rest[i]
+        if ch == "\\" and i + 1 < len(rest):
+            out.append(rest[i:i + 2])
+            i += 2
+            continue
+        if ch == delim:
+            return "".join(out), i + 1
+        out.append(ch)
+        i += 1
+    raise ValueError("sed: unterminated address regex")
+
+
 def _consume_address(rest: str) -> tuple[tuple[str, str] | None, str]:
     if not rest:
         return None, rest
     if rest[0] == "/":
-        end = rest.index("/", 1)
-        addr = ("regex", rest[1:end])
-        return addr, rest[end + 1:]
+        pattern, nxt = _scan_regex_field(rest, 1, "/")
+        return ("regex", pattern), rest[nxt:]
+    if rest[0] == "\\" and len(rest) > 1:
+        # GNU's \cREc form: the character after the backslash delimits the
+        # regex in place of `/`.
+        pattern, nxt = _scan_regex_field(rest, 2, rest[1])
+        return ("regex", pattern), rest[nxt:]
     if rest[0] in "0123456789" or rest[0] == "$":
         num = ""
         while rest and (rest[0] in "0123456789" or rest[0] == "$"):

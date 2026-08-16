@@ -19,15 +19,21 @@ import {
   classifyPattern,
   compilePattern,
   extractRequiredLiteral,
+  type FileGlob,
+  fileAdmitted,
   grepFilesOnly,
   hasSearchShapingFlags,
   isLiteralPattern,
   isRegexPattern,
   mergePatternList,
   NEVER_MATCH,
+  NO_FILTERS,
+  parseFileGlobs,
   searchPushdownOk,
   searchQuery,
 } from './grep_helper.ts'
+import { SPECS } from '../spec/index.ts'
+import { FlagView } from '../spec/types.ts'
 
 const ENC = new TextEncoder()
 
@@ -261,5 +267,52 @@ describe('searchPushdownOk', () => {
   it('rejects a regex pattern but allows it under -F', () => {
     expect(searchPushdownOk({}, 'a.b')).toBe(false)
     expect(searchPushdownOk({ F: true }, 'a.b')).toBe(true)
+  })
+})
+
+function rules(...pairs: [string, boolean][]): {
+  fileGlobs: FileGlob[]
+  excludeDir: string[]
+  text: boolean
+} {
+  return {
+    fileGlobs: pairs.map(([glob, admit]) => ({ glob, admit })),
+    excludeDir: [],
+    text: false,
+  }
+}
+
+describe('fileAdmitted', () => {
+  it('resolves rules in line order', () => {
+    // Pinned against GNU grep 3.11: the last matching rule decides.
+    expect(fileAdmitted('/d/a.txt', rules(['*.txt', true], ['*.txt', false]))).toBe(false)
+    expect(fileAdmitted('/d/a.txt', rules(['*.txt', false], ['*.txt', true]))).toBe(true)
+  })
+
+  it('defaults a no-match file by the first rule', () => {
+    // GNU 3.11: a file matching no rule is admitted only when the
+    // first rule is an exclude.
+    expect(fileAdmitted('/d/a.txt', rules(['*.log', false], ['*.zzz', true]))).toBe(true)
+    expect(fileAdmitted('/d/a.txt', rules(['*.zzz', true], ['*.log', false]))).toBe(false)
+  })
+
+  it('admits everything with no rules', () => {
+    expect(fileAdmitted('/d/a.bin', NO_FILTERS)).toBe(true)
+  })
+})
+
+describe('parseFileGlobs', () => {
+  it('reads dests in typed order', () => {
+    const spec = SPECS.grep
+    const excFirst = new FlagView({ exclude: ['notes.*'], include: ['*.tex'] }, spec)
+    expect(parseFileGlobs(excFirst)).toEqual([
+      { glob: 'notes.*', admit: false },
+      { glob: '*.tex', admit: true },
+    ])
+    const incFirst = new FlagView({ include: ['*.tex'], exclude: ['notes.*'] }, spec)
+    expect(parseFileGlobs(incFirst)).toEqual([
+      { glob: '*.tex', admit: true },
+      { glob: 'notes.*', admit: false },
+    ])
   })
 })

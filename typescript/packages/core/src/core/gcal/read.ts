@@ -20,8 +20,7 @@ import { eisdir, enoent } from '../../utils/errors.ts'
 import { dayBounds } from './day.ts'
 import { listEvents } from './client.ts'
 import { bucketZone, calendarIndex, calendarPayload, normalize } from './readdir.ts'
-
-const ENC = new TextEncoder()
+import { compactJsonBytes } from '../render/json.ts'
 
 /**
  * Read one calendar.json or one event's raw API payload.
@@ -53,7 +52,7 @@ export async function read(
   const [eventId] = parseEventFilename(file)
   const [timeMin, timeMax] = dayBounds(day, tz)
   for (const event of await listEvents(accessor.tokenManager, calId, timeMin, timeMax, tz)) {
-    if (event.id === eventId) return ENC.encode(JSON.stringify(event))
+    if (event.id === eventId) return compactJsonBytes(event)
   }
   throw enoent(path.virtual)
 }

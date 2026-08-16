@@ -49,7 +49,7 @@ function spec(virtual: string): PathSpec {
 }
 
 import { readdir } from './readdir.ts'
-import { jaegerJsonBytes } from './render.ts'
+import { jsonBytes } from '../render/json.ts'
 
 const SERVICES = { '/api/services': { data: ['checkout', 'search'] } }
 
@@ -93,7 +93,7 @@ describe('jaeger readdir', () => {
     const idx = new RAMIndexCacheStore()
     await readdir(accessor(transport), spec('/services/checkout'), idx)
     const lookup = await idx.get('/services/checkout/operations.json')
-    expect(lookup.entry?.size).toBe(jaegerJsonBytes(operations).byteLength)
+    expect(lookup.entry?.size).toBe(jsonBytes(operations).byteLength)
   })
 
   it('fetches operations once per service directory', async () => {
@@ -145,7 +145,7 @@ describe('jaeger readdir', () => {
     const idx = new RAMIndexCacheStore()
     await readdir(accessor(transport), spec('/services/checkout/traces'), idx)
     const lookup = await idx.get(`/services/checkout/traces/${TRACE_A}.json`)
-    expect(lookup.entry?.size).toBe(jaegerJsonBytes(trace).byteLength)
+    expect(lookup.entry?.size).toBe(jsonBytes(trace).byteLength)
   })
 
   it('skips malformed trace ids', async () => {

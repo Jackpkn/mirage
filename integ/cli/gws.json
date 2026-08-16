@@ -910,6 +910,45 @@
         "stdout": "[[\"a\"],[\"b\"]]\n",
         "stderr": ""
       }
+    },
+    {
+      "id": "gw_drive_fulltext_finds_a_doc_by_body_text",
+      "command": "gws drive files list --params \"{\\\"q\\\": \\\"fullText contains 'facet'\\\"}\" | jq -r '.files[].id'",
+      "expect": {
+        "exit": 0,
+        "stdout": "doc0001\n",
+        "stderr": ""
+      },
+      "seq": 563073,
+      "targets": [
+        "cli-gws"
+      ]
+    },
+    {
+      "id": "gw_drive_fulltext_with_mimetype_is_the_search_spreadsheets_query",
+      "command": "gws drive files list --params \"{\\\"q\\\": \\\"fullText contains 'metrics' and mimeType = 'application/vnd.google-apps.spreadsheet'\\\"}\" | jq -r '.files[].id'",
+      "expect": {
+        "exit": 0,
+        "stdout": "sheet0001\n",
+        "stderr": ""
+      },
+      "seq": 563074,
+      "targets": [
+        "cli-gws"
+      ]
+    },
+    {
+      "id": "gw_drive_unknown_query_field_is_a_400_not_a_500",
+      "command": "gws drive files list --params \"{\\\"q\\\": \\\"sharedWithMe = true\\\"}\" 2>&1 | grep -c 'unsupported query field: sharedWithMe'",
+      "expect": {
+        "exit": 0,
+        "stdout": "1\n",
+        "stderr": ""
+      },
+      "seq": 563075,
+      "targets": [
+        "cli-gws"
+      ]
     }
   ]
 }

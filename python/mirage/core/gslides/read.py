@@ -12,7 +12,6 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import json
 import posixpath
 from functools import partial
 
@@ -21,6 +20,7 @@ from mirage.cache.index import NULL_INDEX, IndexCacheStore
 from mirage.cache.index.warm import entry_or_warm
 from mirage.core.gslides._client import TokenManager, google_get, slides_base
 from mirage.core.gslides.readdir import readdir
+from mirage.core.render.json import compact_json_bytes
 from mirage.types import PathSpec
 from mirage.utils.errors import enoent
 from mirage.utils.key_prefix import mount_key, mount_prefix_of
@@ -30,7 +30,7 @@ async def read_presentation(token_manager: TokenManager,
                             presentation_id: str) -> bytes:
     url = f"{slides_base(token_manager)}/presentations/{presentation_id}"
     data = await google_get(token_manager, url)
-    return json.dumps(data, ensure_ascii=False, separators=(",", ":")).encode()
+    return compact_json_bytes(data)
 
 
 async def read(

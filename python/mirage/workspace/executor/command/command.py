@@ -20,6 +20,7 @@ from mirage.commands.builtin.generic.crossmount import (handle_cross_mount,
                                                         is_cross_mount)
 from mirage.commands.builtin.generic.crossmount.detect import strategy_for
 from mirage.commands.builtin.generic.crossmount.types import Strategy
+from mirage.commands.builtin.generic.tar.mode import is_create_mode
 from mirage.commands.builtin.utils.limit import maybe_with_timeout
 from mirage.commands.config import version_request
 from mirage.commands.spec import SPECS
@@ -190,8 +191,13 @@ async def handle_command(
                                       stderr=msg.encode())
 
     # Path-valued flags count: `cp -t /other/mount/dir src` spans mounts
-    # exactly like a positional destination would.
-    if is_cross_mount(cmd_name, routing_scopes, registry):
+    # exactly like a positional destination would. A create-mode tar is
+    # the one relay member kept out: its planner walks a single
+    # backend's tree, so a span there falls through to the refusal
+    # below instead of a relay run that would cross nested mounts.
+    if is_cross_mount(
+            cmd_name, routing_scopes,
+            registry) and not (cmd_name == "tar" and is_create_mode(raw_argv)):
         # Cross-mount execution bypasses a resource command handler. Parse
         # against the shared spec so flags and text operands do not depend on
         # the source mount. The bound single-mount runner lets the strategy

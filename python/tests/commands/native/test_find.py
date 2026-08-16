@@ -70,3 +70,44 @@ def test_find_mtime(env):
     env.create_file("f.txt", b"hello")
     result = env.mirage("find /data -mtime -1 -type f")
     assert "f.txt" in result
+
+
+def test_find_printf_paths(env):
+    env.create_file("a.txt", b"hello\n")
+    env.create_file("sub/b.txt", b"hi\n")
+    result = env.mirage("find /data -printf '%p\\n'")
+    assert result == "/data\n/data/a.txt\n/data/sub\n/data/sub/b.txt\n"
+
+
+def test_find_printf_stat_directives(env):
+    env.create_file("a.txt", b"hello\n")
+    result = env.mirage("find /data -name a.txt -printf '%f %s %y %d\\n'")
+    assert result == "a.txt 6 f 1\n"
+
+
+def test_find_printf_relative_and_dirname(env):
+    env.create_file("sub/b.txt", b"hi\n")
+    result = env.mirage("find /data -name b.txt -printf '%h|%P|%m|%M\\n'")
+    assert result == "/data/sub|sub/b.txt|644|-rw-r--r--\n"
+
+
+def test_find_printf_escapes(env):
+    env.create_file("a.txt", b"x")
+    result = env.mirage("find /data -name a.txt -printf 'A\\tB\\n'")
+    assert result == "A\tB\n"
+
+
+def test_find_printf_no_trailing_newline(env):
+    env.create_file("a.txt", b"x")
+    result = env.mirage("find /data -name a.txt -printf '%f'")
+    assert result == "a.txt"
+
+
+def test_find_printf_time_directives(env):
+    env.create_file("a.txt", b"x")
+    result = env.mirage("find /data -name a.txt -printf '%TY\\n'")
+    assert len(result.strip()) == 4
+    assert result.strip().isdigit()
+    epoch = env.mirage("find /data -name a.txt -printf '%T@\\n'").strip()
+    assert "." in epoch
+    assert len(epoch.split(".")[1]) == 10

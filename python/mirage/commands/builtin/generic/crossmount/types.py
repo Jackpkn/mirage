@@ -85,6 +85,8 @@ class Cmd(StrEnum):
     PASTE = "paste"
     COMM = "comm"
     JOIN = "join"
+    TAR = "tar"
+    UNZIP = "unzip"
 
 
 CrossResult = tuple[ByteSource | None, IOResult]

@@ -23,6 +23,7 @@ const VALUE_PREDICATES = new Set([
   '-mtime',
   '-maxdepth',
   '-mindepth',
+  '-printf',
 ])
 
 const BARE_PREDICATES = new Set(['-empty', '-print', '-print0', '-delete', '-ls', '-depth'])
@@ -48,6 +49,7 @@ export interface FindExpr {
   mtimeMin: number | null
   mtimeMax: number | null
   usesEmpty: boolean
+  printf: string | null
 }
 
 // GNU rounds the file size up to whole units before comparing, and
@@ -130,6 +132,7 @@ export function parseFindExpression(tokens: string[]): FindExpr {
     mtimeMin: null as number | null,
     mtimeMax: null as number | null,
     usesEmpty: false,
+    printf: null as string | null,
   }
   let pos = 0
   let depth = 0
@@ -162,6 +165,15 @@ export function parseFindExpression(tokens: string[]): FindExpr {
       if (tok === '-iname') return { op: 'name', pattern: value, icase: true }
       if (tok === '-path') return { op: 'path', pattern: value }
       if (tok === '-type') return typeNode(value)
+      if (tok === '-printf') {
+        // An action, not a test: it always matches, replaces the default
+        // -print rendering, and one format applies to every row (GNU
+        // evaluates actions per expression position, which the flat
+        // window cannot express; a single trailing -printf, the way
+        // agents write it, renders identically).
+        g.printf = value
+        return { op: 'true' }
+      }
       if (tok === '-maxdepth') {
         g.maxDepth = intArg(value, '-maxdepth')
         return { op: 'true' }

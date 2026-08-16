@@ -15,11 +15,15 @@
 from functools import partial
 
 from mirage.accessor.base import Accessor
+from mirage.commands.builtin.generic.crossmount.utils import \
+    transfer_primitives
 from mirage.commands.builtin.generic.tar import tar_generic
 from mirage.commands.builtin.generic_bind.adapter import (Builder, CommandIO,
                                                           Operation, bound_op)
 from mirage.commands.builtin.generic_bind.archive_io import is_dir_of, walk_of
 from mirage.commands.config import CommandOpts
+from mirage.commands.spec import SPECS
+from mirage.commands.spec.types import FlagView
 from mirage.io.types import ByteSource, IOResult
 from mirage.types import PathSpec
 
@@ -30,6 +34,23 @@ async def tar(ops: CommandIO, accessor: Accessor, paths: list[PathSpec],
     if not ops.is_mounted(accessor):
         raise ValueError("tar: missing operand")
     resolved = await ops.resolve_glob(accessor, paths, opts.index)
+    fl = FlagView(opts.flags, spec=SPECS["tar"])
+    if opts.dispatch is not None and not fl.as_bool("c"):
+        # -t reads and -x writes wherever cwd or -C says, which needs
+        # not be this mount, so both run on dispatch-relayed doors and
+        # each path routes to the mount that owns it. Only -c stays on
+        # the accessor: its planner walks this mount's tree.
+        prim = transfer_primitives(opts.dispatch)
+        return await tar_generic(resolved,
+                                 list(texts),
+                                 opts,
+                                 prim["read_bytes"],
+                                 prim["write"],
+                                 prim["mkdir"],
+                                 prim["stat"],
+                                 walk_of(ops, accessor, opts.index),
+                                 is_dir_of(ops, accessor, opts.index),
+                                 relay=True)
     return await tar_generic(resolved, list(texts), opts,
                              bound_op(ops.read_bytes, accessor, opts.index),
                              partial(ops.require(Operation.WRITE), accessor),

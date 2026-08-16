@@ -5,6 +5,7 @@ import { FileStat, FileType, type PathSpec } from '../../types.ts'
 import { enoent, enotdir } from '../../utils/errors.ts'
 import { formatScore } from '../../utils/score.ts'
 import { rstripSlash, stripSlash } from '../../utils/slash.ts'
+import { jsonBytes } from '../render/json.ts'
 import { getAllMemories, getMemory, searchMemories } from './api.ts'
 
 const ENCODER = new TextEncoder()
@@ -20,10 +21,6 @@ function detect(path: PathSpec): Mem0Scope {
     return { level: 'memory', memoryId: key.slice(0, -5) }
   }
   return { level: 'invalid' }
-}
-
-function jsonBytes(memory: Record<string, unknown>): Uint8Array {
-  return ENCODER.encode(JSON.stringify(memory, null, 2))
 }
 
 function cachedMemory(

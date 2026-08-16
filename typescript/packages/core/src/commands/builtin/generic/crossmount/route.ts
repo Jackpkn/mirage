@@ -47,7 +47,7 @@ export async function handleCrossMount(
     const cmd = cmdName as Cmd
     const strategy = strategyFor(cmd, flagKwargs)
     if (strategy === Strategy.RELAY) {
-      return await runRelay(cmd, scopes, flagKwargs, dispatch, storageKey)
+      return await runRelay(cmd, scopes, textArgs, flagKwargs, dispatch, storageKey)
     }
     if (strategy === Strategy.STREAM) {
       return await runStream(cmd, scopes, textArgs, flagKwargs, runSingle)

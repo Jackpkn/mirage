@@ -353,6 +353,26 @@
       "type": "path"
     },
     {
+      "long": "--text",
+      "short": "-a",
+      "type": "bool"
+    },
+    {
+      "long": "--include",
+      "multiple": true,
+      "type": "str"
+    },
+    {
+      "long": "--exclude",
+      "multiple": true,
+      "type": "str"
+    },
+    {
+      "long": "--exclude-dir",
+      "multiple": true,
+      "type": "str"
+    },
+    {
       "long": "--color",
       "type": "str",
       "value_optional": true

@@ -154,7 +154,11 @@ export async function sedGeneric(
       ]
     }
 
-    const modifying = inPlace && commands.some((c) => c.cmd === 's' || c.cmd === 'd')
+    // GNU -i redirects the whole output stream to the file whatever the
+    // script ran: `p` doubles lines in place, `q` truncates, `a`/`i`/`c`
+    // land their text. Gating on the command set left every non-s/d script
+    // printing to stdout while reporting success.
+    const modifying = inPlace
     const allOutputs: string[] = []
     const writes: Record<string, Uint8Array> = {}
     const edited: string[] = []
@@ -187,7 +191,9 @@ export async function sedGeneric(
       io.cache = edited
       return [null, io]
     }
-    const out: ByteSource = ENC.encode(allOutputs.join('\n'))
+    // GNU concatenates per-file output with no separator (each file's
+    // output already carries its own newlines).
+    const out: ByteSource = ENC.encode(allOutputs.join(''))
     return [out, io]
   }
 

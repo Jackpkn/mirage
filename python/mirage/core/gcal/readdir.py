@@ -12,7 +12,6 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import json
 from datetime import date, timedelta
 
 from mirage.accessor.gcal import GCalAccessor
@@ -22,6 +21,7 @@ from mirage.core.gcal.day import (WINDOW_AHEAD_DAYS, WINDOW_BACK_DAYS,
                                   clamped_hhmm, day_bounds, days_covered,
                                   event_span, valid_day, window_bounds)
 from mirage.core.google.date_glob import glob_to_date_range
+from mirage.core.render.json import compact_json_bytes
 from mirage.resource.gcal.event_entry import (CALENDAR_FILE, PRIMARY_DIR,
                                               event_title,
                                               make_calendar_dirname,
@@ -57,7 +57,7 @@ def calendar_payload(entry: dict[str, JsonValue], tz: str) -> bytes:
         # and therefore not always this calendar's own.
         "bucketTimeZone": tz,
     }
-    return json.dumps(body, ensure_ascii=False, separators=(",", ":")).encode()
+    return compact_json_bytes(body)
 
 
 def normalize(path: PathSpec) -> tuple[str, str, str]:
@@ -190,8 +190,7 @@ def event_entries(events: list[dict[str, JsonValue]], day: str, tz: str,
         name = make_event_filename(event_id, clamped_hhmm(span, day, tz),
                                    title)
         updated = event.get("updated")
-        payload = json.dumps(event, ensure_ascii=False,
-                             separators=(",", ":")).encode()
+        payload = compact_json_bytes(event)
         rows.append(
             (name,
              IndexEntry(

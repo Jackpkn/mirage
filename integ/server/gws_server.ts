@@ -459,6 +459,21 @@ function unescapeQ(value: string): string {
   return out
 }
 
+// Everything the live index searches for `fullText`: the display name, a
+// Doc's flat text, a Sheet's cell values, and an uploaded file's bytes.
+// Case-insensitive, the way the real search index answers.
+function fullTextOf(item: DriveItem): string {
+  const parts: string[] = [item.name]
+  const doc = state.docs.get(item.id)
+  if (doc !== undefined) parts.push(doc.text)
+  const sheet = state.sheets.get(item.id)
+  if (sheet !== undefined) {
+    for (const tab of sheet.tabs) parts.push([...tab.cells.values()].join(' '))
+  }
+  if (item.content.length > 0) parts.push(item.content.toString('utf8'))
+  return parts.join('\n')
+}
+
 function matchClause(item: DriveItem, clause: QueryClause): boolean {
   switch (clause.field) {
     case 'parents':
@@ -471,6 +486,14 @@ function matchClause(item: DriveItem, clause: QueryClause): boolean {
       if (clause.op === 'contains') return item.mimeType.includes(clause.value)
       if (clause.op === '!=') return item.mimeType !== clause.value
       return item.mimeType === clause.value
+    case 'fullText':
+      // The live API defines only `contains` for fullText; any other
+      // operator is an invalid query, reported as the 400 the caller
+      // catches below.
+      if (clause.op !== 'contains') {
+        throw new Error(`unsupported operator for fullText: ${clause.op}`)
+      }
+      return fullTextOf(item).toLowerCase().includes(clause.value.toLowerCase())
     case 'trashed':
       return item.trashed === (clause.value === 'true')
     case 'modifiedTime': {
@@ -500,13 +523,15 @@ function listFiles(query: URLSearchParams): [number, object] {
     items = items.filter((item) => item.driveId === undefined)
   }
   if (q !== null && q.trim() !== '') {
-    let clauses: QueryClause[]
+    // Matching sits inside the guard too: an unknown field surfaces from
+    // matchClause, and the live API answers a query it cannot interpret
+    // with 400 invalid-query, never a 500.
     try {
-      clauses = parseDriveQuery(q)
+      const clauses = parseDriveQuery(q)
+      items = items.filter((item) => clauses.every((c) => matchClause(item, c)))
     } catch (err) {
       return googleError(400, err instanceof Error ? err.message : String(err), 'INVALID_ARGUMENT')
     }
-    items = items.filter((item) => clauses.every((c) => matchClause(item, c)))
   } else {
     items = items.filter((item) => !item.trashed)
   }

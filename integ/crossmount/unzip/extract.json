@@ -1,0 +1,38 @@
+{
+  "cases": [
+    {
+      "id": "xm_unzip_dash_d_into_the_other_mount",
+      "seq": 962315,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "mkdir -p /data/xzip && echo zx | tee /data/xzip/z.txt > /dev/null && zip -q -r /data/xz.zip /data/xzip && unzip -q -d /data2/xzout /data/xz.zip && cat /data2/xzout/data/xzip/z.txt",
+      "expect": {
+        "exit": 0,
+        "stdout": "zx\n",
+        "stderr": ""
+      }
+    }
+  ]
+}

@@ -1,0 +1,221 @@
+{
+  "cases": [
+    {
+      "id": "exec_path_runs_a_script_on_a_mount",
+      "seq": 962330,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "gridfs",
+        "s3-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "printf 'echo ran from script\\n' > /data/run.sh && /data/run.sh",
+      "expect": {
+        "exit": 0,
+        "stdout": "ran from script\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "exec_path_relative_resolves_against_cwd",
+      "seq": 962331,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "gridfs",
+        "s3-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "bash -c 'cd /data && ./run.sh'",
+      "expect": {
+        "exit": 0,
+        "stdout": "ran from script\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "exec_path_shebang_options_apply",
+      "seq": 962332,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "gridfs",
+        "s3-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "printf '#!/bin/sh -x\\necho traced\\n' > /data/t.sh && /data/t.sh",
+      "expect": {
+        "exit": 0,
+        "stdout": "traced\n",
+        "stderr": "+ echo traced\n"
+      }
+    },
+    {
+      "id": "exec_path_missing_file_is_127",
+      "seq": 962333,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "gridfs",
+        "s3-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "/data/nope.sh; echo exit=$?",
+      "expect": {
+        "exit": 0,
+        "stdout": "exit=127\n",
+        "stderr": "/data/nope.sh: No such file or directory\n"
+      }
+    },
+    {
+      "id": "exec_path_directory_is_126",
+      "seq": 962334,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "gridfs",
+        "s3-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "mkdir -p /data/adir && echo k > /data/adir/k.txt && /data/adir; echo exit=$?",
+      "expect": {
+        "exit": 0,
+        "stdout": "exit=126\n",
+        "stderr": "/data/adir: Is a directory\n"
+      }
+    },
+    {
+      "id": "exec_path_unknown_interpreter_is_127",
+      "seq": 962335,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "gridfs",
+        "s3-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "printf '#!/usr/bin/env ruby\\nputs 1\\n' > /data/r.rb && /data/r.rb; echo exit=$?",
+      "expect": {
+        "exit": 0,
+        "stdout": "exit=127\n",
+        "stderr": "ruby: command not found\n"
+      }
+    },
+    {
+      "id": "exec_path_env_split_string_applies_options",
+      "seq": 962336,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "gridfs",
+        "s3-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "printf '#!/usr/bin/env -S bash -x\\necho ok\\n' > /data/es.sh && /data/es.sh",
+      "expect": {
+        "exit": 0,
+        "stdout": "ok\n",
+        "stderr": "+ echo ok\n"
+      }
+    }
+  ]
+}

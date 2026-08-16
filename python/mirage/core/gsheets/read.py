@@ -12,7 +12,6 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import json
 import posixpath
 from functools import partial
 
@@ -21,6 +20,7 @@ from mirage.cache.index import NULL_INDEX, IndexCacheStore
 from mirage.cache.index.warm import entry_or_warm
 from mirage.core.gsheets._client import TokenManager, google_get, sheets_base
 from mirage.core.gsheets.readdir import readdir
+from mirage.core.render.json import compact_json_bytes
 from mirage.types import PathSpec
 from mirage.utils.errors import enoent
 from mirage.utils.key_prefix import mount_key, mount_prefix_of
@@ -46,7 +46,7 @@ async def read_spreadsheet(token_manager: TokenManager,
     url = f"{sheets_base(token_manager)}/spreadsheets/{spreadsheet_id}"
     data = await google_get(token_manager, url,
                             {"includeGridData": GRID_DATA_PARAM})
-    return json.dumps(data, ensure_ascii=False, separators=(",", ":")).encode()
+    return compact_json_bytes(data)
 
 
 async def read_values(token_manager: TokenManager, spreadsheet_id: str,
@@ -64,7 +64,7 @@ async def read_values(token_manager: TokenManager, spreadsheet_id: str,
     base = sheets_base(token_manager)
     url = f"{base}/spreadsheets/{spreadsheet_id}/values/{range_}"
     data = await google_get(token_manager, url)
-    return json.dumps(data, ensure_ascii=False, separators=(",", ":")).encode()
+    return compact_json_bytes(data)
 
 
 async def read(

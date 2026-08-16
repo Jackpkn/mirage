@@ -178,7 +178,7 @@
       "command": "gh repo fork integ/repo-cli --fork-name forked",
       "expect": {
         "exit": 0,
-        "stdout": "✓ Created fork integ-user/forked\n",
+        "stdout": "\u2713 Created fork integ-user/forked\n",
         "stderr": ""
       }
     },
@@ -191,7 +191,7 @@
       "command": "gh repo rename renamed -R integ-user/forked",
       "expect": {
         "exit": 0,
-        "stdout": "✓ Renamed repository integ-user/renamed\n",
+        "stdout": "\u2713 Renamed repository integ-user/renamed\n",
         "stderr": ""
       }
     },
@@ -389,6 +389,58 @@
         "stdout": "jq fail\n",
         "stderr": ""
       }
+    },
+    {
+      "id": "gh_api_contents_accepts_the_qualified_ref_spelling",
+      "command": "gh api -X GET repos/integ/repo-cli/contents/README.md -F ref=refs/heads/main --jq .path",
+      "expect": {
+        "exit": 0,
+        "stdout": "README.md\n",
+        "stderr": ""
+      },
+      "seq": 569031,
+      "targets": [
+        "cli-gh"
+      ]
+    },
+    {
+      "id": "gh_api_commits_list_carries_no_files_key",
+      "command": "gh api repos/integ/repo-cli/commits --jq 'map(has(\"files\")) | unique'",
+      "expect": {
+        "exit": 0,
+        "stdout": "[false]\n",
+        "stderr": ""
+      },
+      "seq": 569032,
+      "targets": [
+        "cli-gh"
+      ]
+    },
+    {
+      "id": "gh_api_one_commit_reports_files_as_objects",
+      "command": "gh api repos/integ/repo-cli/commits/$(gh api repos/integ/repo-cli/commits --jq '.[0].sha') --jq '.files[0] | keys'",
+      "expect": {
+        "exit": 0,
+        "stdout": "[\"filename\",\"status\"]\n",
+        "stderr": ""
+      },
+      "seq": 569033,
+      "targets": [
+        "cli-gh"
+      ]
+    },
+    {
+      "id": "gh_api_commits_by_qualified_ref_is_the_branch_head",
+      "command": "test \"$(gh api repos/integ/repo-cli/commits/refs/heads/main --jq .sha)\" = \"$(gh api repos/integ/repo-cli/commits --jq '.[0].sha')\" && echo same",
+      "expect": {
+        "exit": 0,
+        "stdout": "same\n",
+        "stderr": ""
+      },
+      "seq": 569034,
+      "targets": [
+        "cli-gh"
+      ]
     }
   ]
 }
