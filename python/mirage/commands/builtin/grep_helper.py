@@ -12,9 +12,11 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import fnmatch
 import re
 from collections.abc import (AsyncIterator, Awaitable, Callable, Mapping,
                              Sequence)
+from dataclasses import dataclass
 
 from mirage.commands.builtin.constants import PatternType
 from mirage.commands.builtin.grep_context import grep_context_lines
@@ -42,6 +44,59 @@ BINARY_EXTENSIONS = frozenset({
 })
 
 NEVER_MATCH = r"(?!)"
+
+
+@dataclass(frozen=True, slots=True)
+class WalkFilters:
+    """GNU's file-selection flags, threaded as one value.
+
+    ``include``/``exclude`` gate files, ``exclude_dir`` prunes
+    directories from the -r walk, and ``text`` (-a) lets the walk read
+    the extensions it would otherwise skip as binary. The empty value
+    admits everything, which is what every caller without the flags
+    passes.
+    """
+    include: tuple[str, ...] = ()
+    exclude: tuple[str, ...] = ()
+    exclude_dir: tuple[str, ...] = ()
+    text: bool = False
+
+
+NO_FILTERS = WalkFilters()
+
+
+def file_admitted(path: str, filters: WalkFilters) -> bool:
+    """GNU's --include/--exclude gate for one candidate file.
+
+    Globs match the base name with fnmatch wildcards, case sensitively
+    (a glob carrying a slash therefore matches nothing, which is what
+    GNU 3.11 answers too), and --exclude wins when both match. Applies
+    to command-line files exactly as to walked ones, which is pinned
+    GNU behavior: an explicit operand --include passes over is silently
+    no match, not an error.
+
+    Args:
+        path (str): candidate file path, any path space.
+        filters (WalkFilters): the parsed selection flags.
+    """
+    base = path.rstrip("/").rsplit("/", 1)[-1]
+    if any(fnmatch.fnmatchcase(base, glob) for glob in filters.exclude):
+        return False
+    if filters.include:
+        return any(fnmatch.fnmatchcase(base, glob) for glob in filters.include)
+    return True
+
+
+def dir_admitted(path: str, filters: WalkFilters) -> bool:
+    """Whether the -r walk may descend into this directory.
+
+    Args:
+        path (str): candidate directory path, any path space.
+        filters (WalkFilters): the parsed selection flags.
+    """
+    base = path.rstrip("/").rsplit("/", 1)[-1]
+    return not any(
+        fnmatch.fnmatchcase(base, glob) for glob in filters.exclude_dir)
 
 
 def classify_pattern(
@@ -164,9 +219,10 @@ def search_query(pattern: str, fixed_string: bool) -> str | None:
 
 
 _PUSHDOWN_SHAPING_BOOL = ("v", "n", "c", "args_l", "w", "o", "q", "H", "h",
-                          "args_I")
+                          "args_I", "text")
 _PUSHDOWN_SHAPING_INT = ("m", "A", "B", "C")
 _PUSHDOWN_FILTER_STR = ("type", "glob")
+_PUSHDOWN_FILTER_LIST = ("include", "exclude", "exclude_dir")
 
 
 def has_search_shaping_flags(flags: Mapping[str, FlagValue] | None) -> bool:
@@ -186,6 +242,8 @@ def has_search_shaping_flags(flags: Mapping[str, FlagValue] | None) -> bool:
     if any(fl.as_bool(k) for k in _PUSHDOWN_SHAPING_BOOL):
         return True
     if any(fl.as_int(k) is not None for k in _PUSHDOWN_SHAPING_INT):
+        return True
+    if any(fl.as_list(k) for k in _PUSHDOWN_FILTER_LIST):
         return True
     return any(fl.as_str(k) is not None for k in _PUSHDOWN_FILTER_STR)
 
@@ -584,6 +642,7 @@ async def grep_recursive(
     max_count: int | None,
     warnings: list[str] | None = None,
     read_stream_fn=None,
+    filters: WalkFilters = NO_FILTERS,
 ) -> list[str]:
     results: list[str] = []
     try:
@@ -600,6 +659,8 @@ async def grep_recursive(
                 warnings.append(f"grep: {entry}: {exc}")
             continue
         if s.type == FileType.DIRECTORY:
+            if not dir_admitted(entry, filters):
+                continue
             results.extend(await grep_recursive(
                 readdir_fn,
                 stat_fn,
@@ -614,9 +675,12 @@ async def grep_recursive(
                 max_count,
                 warnings,
                 read_stream_fn,
+                filters,
             ))
             continue
-        if get_extension(entry) in BINARY_EXTENSIONS:
+        if not file_admitted(entry, filters):
+            continue
+        if not filters.text and get_extension(entry) in BINARY_EXTENSIONS:
             continue
         if read_stream_fn is not None:
             try:
@@ -769,6 +833,7 @@ async def grep_files_only(
     basic: bool,
     warnings: list[str] | None,
     read_stream_fn=None,
+    filters: WalkFilters = NO_FILTERS,
 ) -> list[str]:
     compiled = compile_pattern(pattern, ignore_case, fixed_string, whole_word,
                                basic)
@@ -804,6 +869,7 @@ async def grep_files_only(
                 max_count,
                 warnings,
                 read_stream_fn,
+                filters,
             )
 
     # GNU names a directory operand and moves on without descending into
@@ -812,6 +878,9 @@ async def grep_files_only(
     if await operand_is_directory(readdir_fn, info, path):
         if warnings is not None:
             warnings.append(f"grep: {path}: Is a directory")
+        return []
+
+    if not file_admitted(path, filters):
         return []
 
     try:

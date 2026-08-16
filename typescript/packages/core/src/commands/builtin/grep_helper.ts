@@ -18,6 +18,7 @@ import { mountKey, mountPrefixOf } from '../../utils/key_prefix.ts'
 import { AsyncLineIterator } from '../../io/async_line_iterator.ts'
 import { materialize, type IOResult } from '../../io/types.ts'
 import { type FileStat, FileType, PathSpec } from '../../types.ts'
+import { fnmatch } from '../../utils/fnmatch.ts'
 import { getExtension } from '../resolve.ts'
 import { PatternType } from './constants.ts'
 import { grepContextLines } from './grep_context.ts'
@@ -35,6 +36,48 @@ export const BINARY_EXTENSIONS: ReadonlySet<string> = new Set([
 ])
 
 export const NEVER_MATCH = '(?!)'
+
+/**
+ * GNU's file-selection flags, threaded as one value.
+ *
+ * `include`/`exclude` gate files, `excludeDir` prunes directories from
+ * the -r walk, and `text` (-a) lets the walk read the extensions it
+ * would otherwise skip as binary. The empty value admits everything,
+ * which is what every caller without the flags passes.
+ */
+export interface WalkFilters {
+  include: readonly string[]
+  exclude: readonly string[]
+  excludeDir: readonly string[]
+  text: boolean
+}
+
+export const NO_FILTERS: WalkFilters = { include: [], exclude: [], excludeDir: [], text: false }
+
+/**
+ * GNU's --include/--exclude gate for one candidate file.
+ *
+ * Globs match the base name with fnmatch wildcards, case sensitively (a
+ * glob carrying a slash therefore matches nothing, which is what GNU
+ * 3.11 answers too), and --exclude wins when both match. Applies to
+ * command-line files exactly as to walked ones, which is pinned GNU
+ * behavior: an explicit operand --include passes over is silently no
+ * match, not an error.
+ */
+export function fileAdmitted(path: string, filters: WalkFilters): boolean {
+  const trimmed = path.endsWith('/') ? path.slice(0, -1) : path
+  const base = trimmed.slice(trimmed.lastIndexOf('/') + 1)
+  if (filters.exclude.some((glob) => fnmatch(base, glob))) return false
+  if (filters.include.length > 0) return filters.include.some((glob) => fnmatch(base, glob))
+  return true
+}
+
+/** Whether the -r walk may descend into this directory. */
+export function dirAdmitted(path: string, filters: WalkFilters): boolean {
+  const trimmed = path.endsWith('/') ? path.slice(0, -1) : path
+  const base = trimmed.slice(trimmed.lastIndexOf('/') + 1)
+  return !filters.excludeDir.some((glob) => fnmatch(base, glob))
+}
 
 const DEC = new TextDecoder()
 
@@ -267,7 +310,11 @@ export function hasSearchShapingFlags(flags: Record<string, FlagValue>): boolean
     typeof flags.B === 'string' ||
     typeof flags.C === 'string' ||
     flags.type !== undefined ||
-    flags.glob !== undefined
+    flags.glob !== undefined ||
+    flags.text === true ||
+    flags.include !== undefined ||
+    flags.exclude !== undefined ||
+    flags.exclude_dir !== undefined
   )
 }
 
@@ -450,6 +497,7 @@ export interface GrepFilesOnlyOptions {
   maxCount: number | null
   wholeWord: boolean
   basic: boolean
+  filters?: WalkFilters
 }
 
 export async function grepRecursive(
@@ -488,7 +536,9 @@ export async function grepRecursive(
         warnings.push(`grep: ${entry}: ${err instanceof Error ? err.message : String(err)}`)
       continue
     }
+    const filters = opts.filters ?? NO_FILTERS
     if (s.type === FileType.DIRECTORY) {
+      if (!dirAdmitted(entry, filters)) continue
       const sub = await grepRecursive(
         readdirFn,
         statFn,
@@ -502,7 +552,8 @@ export async function grepRecursive(
       for (const r of sub) results.push(r)
       continue
     }
-    if (BINARY_EXTENSIONS.has(getExtension(entry) ?? '')) continue
+    if (!fileAdmitted(entry, filters)) continue
+    if (!filters.text && BINARY_EXTENSIONS.has(getExtension(entry) ?? '')) continue
     try {
       const lines = new TextDecoder('utf-8', { fatal: false })
         .decode(await readBytesFn(entry))
@@ -608,6 +659,7 @@ export async function grepFilesOnly(
     if (warnings !== null) warnings.push(`grep: ${path}: Is a directory`)
     return []
   }
+  if (!fileAdmitted(path, opts.filters ?? NO_FILTERS)) return []
   let data: Uint8Array
   try {
     data = await readBytesFn(path)

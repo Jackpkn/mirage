@@ -12,6 +12,8 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import type { PathSpec } from '../../../../types.ts'
+import { readBytesOp, statOp } from '../../generic/crossmount/utils.ts'
 import { unzipGeneric } from '../../generic/unzip.ts'
 import { type Builder, resolveGlobOf } from '../adapter.ts'
 
@@ -26,6 +28,30 @@ export const UNZIP_BUILDER: Builder = {
       throw new Error('unzip: backend provides no write op')
     }
     const resolved = paths.length > 0 ? await resolveGlobOf(ops)(accessor, paths, idx) : []
+    const dispatch = opts.dispatch
+    if (dispatch !== undefined) {
+      // Extraction writes wherever cwd or -d says, which need not be
+      // this mount, so the doors are dispatch-relayed and each path
+      // routes to the mount that owns it.
+      const readBytes = readBytesOp(dispatch)
+      async function* streamOf(p: PathSpec): AsyncIterable<Uint8Array> {
+        yield await readBytes(p)
+      }
+      return unzipGeneric(
+        resolved,
+        texts,
+        opts,
+        streamOf,
+        async (p, data) => {
+          await dispatch('write', p, [data])
+        },
+        async (p) => {
+          await dispatch('mkdir', p)
+        },
+        statOp(dispatch),
+        true,
+      )
+    }
     return unzipGeneric(
       resolved,
       texts,

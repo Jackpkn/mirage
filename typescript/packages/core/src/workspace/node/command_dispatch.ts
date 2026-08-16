@@ -47,6 +47,7 @@ import {
   acceptsLine,
   followPaths,
   handleBash,
+  handleExecPath,
   handleCd,
   handleCommandBuiltin,
   handleType,
@@ -508,6 +509,14 @@ async function runArgv(
         }),
       ]
     }
+  }
+
+  // Path execution: bash hands a slash-carrying head word to the
+  // loader, never to command lookup: no builtin, function, or CLI can
+  // claim it. After the admission gate so a policy sees the line like
+  // any other.
+  if (name.includes('/')) {
+    return handleExecPath(dispatch, executeFn, name, args, session, stdin)
   }
 
   // Unsupported bash builtins. Constructs the parser accepts but the

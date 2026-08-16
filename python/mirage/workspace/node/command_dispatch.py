@@ -47,13 +47,14 @@ from mirage.shell.helpers import (  # isort: skip
     get_process_sub_direction, get_text, split_env_prefix)
 from mirage.workspace.executor.builtins import (  # isort: skip
     accepts_line, follow_paths, handle_bash, handle_cd, handle_chgrp,
-    handle_chmod, handle_chown, handle_command_builtin, handle_df, handle_echo,
-    handle_env, handle_eval, handle_exit, handle_export, handle_getopts,
-    handle_history, handle_ln, handle_local, handle_man, handle_printenv,
-    handle_printf, handle_read, handle_readlink, handle_return, handle_set,
-    handle_shift, handle_sleep, handle_source, handle_test, handle_timeout,
-    handle_touch, handle_trap, handle_type, handle_unset, handle_which,
-    handle_whoami, handle_xargs, link_flags, prepare_mv, strip_link_operands)
+    handle_exec_path, handle_chmod, handle_chown, handle_command_builtin,
+    handle_df, handle_echo, handle_env, handle_eval, handle_exit,
+    handle_export, handle_getopts, handle_history, handle_ln, handle_local,
+    handle_man, handle_printenv, handle_printf, handle_read, handle_readlink,
+    handle_return, handle_set, handle_shift, handle_sleep, handle_source,
+    handle_test, handle_timeout, handle_touch, handle_trap, handle_type,
+    handle_unset, handle_which, handle_whoami, handle_xargs, link_flags,
+    prepare_mv, strip_link_operands)
 
 _CdArgs = list[str | PathSpec]
 
@@ -362,6 +363,15 @@ async def _run_argv(
                                       command=cmd_str,
                                       exit_code=deny.exit_code,
                                       stderr=err)
+
+    # ── path execution ─────────────────────────
+    # bash hands a slash-carrying head word to the loader, never to
+    # command lookup: no builtin, function, or CLI can claim it. After
+    # the admission gate so a policy sees the line like any other.
+    if name and "/" in name:
+        return await handle_exec_path(dispatch, execute_fn, name,
+                                      [word_text(a) for a in args], session,
+                                      stdin)
 
     # ── unsupported bash builtins ──────────────
     # Constructs the parser accepts but the executor cannot honor.

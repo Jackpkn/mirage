@@ -34,6 +34,7 @@ from mirage.workspace.executor.builtins.metadata import (handle_chgrp,
 from mirage.workspace.executor.builtins.scope import _scope_path, _to_scope
 from mirage.workspace.executor.builtins.script import (handle_bash,
                                                        handle_eval,
+                                                       handle_exec_path,
                                                        handle_sleep,
                                                        handle_source)
 from mirage.workspace.executor.builtins.text import (_interpret_escapes,
@@ -86,6 +87,7 @@ __all__ = [
     'handle_set',
     'handle_shift',
     'handle_sleep',
+    'handle_exec_path',
     'handle_source',
     'handle_test',
     'handle_timeout',

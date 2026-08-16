@@ -15,6 +15,7 @@
 import asyncio
 import math
 import re
+import shlex
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -374,6 +375,79 @@ async def handle_bash(
         session.restore(saved)
     label = f"{name} {parsed.path}" if parsed.path else f"{name} -c {script}"
     return io.stdout, io, ExecutionNode(command=label, exit_code=io.exit_code)
+
+
+def _shebang_words(script: str) -> list[str]:
+    """The interpreter words a script's first line names, env resolved.
+
+    Args:
+        script (str): the script text.
+    """
+    first = script.split("\n", 1)[0]
+    if not first.startswith("#!"):
+        return []
+    words = first[2:].strip().split()
+    if words and words[0].rsplit("/", 1)[-1] == "env":
+        words = words[1:]
+        return words
+    if words:
+        words[0] = words[0].rsplit("/", 1)[-1]
+    return words
+
+
+async def handle_exec_path(
+    dispatch: DispatchFn,
+    execute_fn: Callable[..., Any],
+    path: str,
+    args: list[str],
+    session: Session,
+    stdin: ByteSource | None = None,
+) -> tuple[ByteSource | None, IOResult, ExecutionNode]:
+    """Run a slash-carrying head word as a program, bash's loader rule.
+
+    bash hands a word containing a slash straight to the loader: no
+    builtin, function, or install can claim it, and the file either
+    runs or the shell reports why not. Two deliberate divergences from
+    bash, both consequences of the VFS: there is no exec bit to check
+    (``chmod`` is stored, not enforced; mount mode does real access
+    control), so an existing file runs without ``+x``; and the shell
+    prefix bash puts on the diagnostic is dropped, matching every other
+    mirage diagnostic.
+
+    A shebang naming sh or bash (directly or via env) runs through the
+    nested-shell machinery, as does a script with none. Any other
+    interpreter word is re-dispatched as a command line, so
+    ``#!/usr/bin/env python3`` reaches the python3 command wherever the
+    workspace routes it, and an interpreter nobody registers answers
+    with its own "command not found".
+
+    Args:
+        dispatch (DispatchFn): op dispatcher, used to read the file.
+        execute_fn (Callable): runs a program line in this session.
+        path (str): the head word, as typed.
+        args (list[str]): the words after it, positional for the script.
+        session (Session): shell session state.
+        stdin (ByteSource | None): input stream for the script.
+    """
+    try:
+        script = await read_script_text(dispatch, path, session.cwd)
+    except FS_ERRORS as exc:
+        strerror = fs_strerror(exc)
+        if strerror is None:
+            raise
+        code = 127 if isinstance(exc, FileNotFoundError) else 126
+        return script_error(path, strerror, code)
+    words = _shebang_words(script)
+    interp = words[0] if words else "sh"
+    if interp in ("sh", "bash"):
+        return await handle_bash(dispatch, execute_fn,
+                                 [*words[1:], path, *args], session, stdin,
+                                 interp)
+    line = shlex.join([*words, path, *args])
+    io = await execute_fn(line, session_id=session.session_id, stdin=stdin)
+    return io.stdout, io, ExecutionNode(command=f"{path} " +
+                                        " ".join(args) if args else path,
+                                        exit_code=io.exit_code)
 
 
 # Finite non-negative decimals only ("0", "0.2", ".5", "1.", "+1", "1e-3").

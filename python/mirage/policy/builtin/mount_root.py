@@ -14,6 +14,7 @@
 
 from collections.abc import Sequence
 
+from mirage.commands.builtin.generic.tar.mode import is_create_mode
 from mirage.policy.base import Policy
 from mirage.policy.types import Action, CommandContext, Deny, MountRootQuery
 from mirage.types import PathSpec
@@ -33,38 +34,6 @@ def has_symlink_flag(argv: tuple[str, ...]) -> bool:
         if isinstance(tok, str) and (tok == "--symbolic" or
                                      (tok.startswith("-") and "s" in tok[1:]
                                       and not tok.startswith("--"))):
-            return True
-    return False
-
-
-def is_create_mode(argv: tuple[str, ...]) -> bool:
-    """Whether a tar line reads the filesystem rather than an archive.
-
-    Only ``-c`` makes tar's operands source paths. Under ``-t`` and
-    ``-x`` they are member selectors matched against names inside the
-    archive, so a selector that happens to spell a mount root is not a
-    mount at all and refusing it would deny an ordinary listing.
-
-    Scanned raw for the same reason :func:`has_symlink_flag` is: the
-    policy fires before flag parsing. Only the first word may be GNU's
-    dashless option cluster (``tar cf a.tar d``), so a later bare word
-    is an operand and cannot turn the mode on.
-
-    Args:
-        argv (tuple[str, ...]): raw argv after the command name.
-    """
-    for i, tok in enumerate(argv):
-        if not isinstance(tok, str):
-            continue
-        if tok == "--create":
-            return True
-        if tok.startswith("--"):
-            continue
-        if tok.startswith("-"):
-            if "c" in tok[1:]:
-                return True
-            continue
-        if i == 0 and "c" in tok:
             return True
     return False
 

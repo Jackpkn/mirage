@@ -5,10 +5,15 @@ from functools import partial
 
 from mirage.cache.read_through import (cache_aware_bound_bytes,
                                        cache_aware_bound_stream)
-from mirage.commands.builtin.grep_helper import (  # yapf: disable
-    compile_pattern, count_exit_stream, count_records_have_matches,
-    exit_code_for, grep_files_only, grep_lines, grep_recursive, grep_stream,
-    prefix_lines, resolve_pattern)
+from mirage.commands.builtin.grep_helper import WalkFilters  # yapf: disable
+from mirage.commands.builtin.grep_helper import \
+    compile_pattern  # yapf: disable
+from mirage.commands.builtin.grep_helper import (count_exit_stream,
+                                                 count_records_have_matches,
+                                                 exit_code_for, file_admitted,
+                                                 grep_files_only, grep_lines,
+                                                 grep_recursive, grep_stream,
+                                                 prefix_lines, resolve_pattern)
 from mirage.commands.builtin.utils.lines import split_lines
 from mirage.commands.builtin.utils.output import (format_optional_records,
                                                   format_records)
@@ -44,6 +49,7 @@ class GrepFlags:
     max_count: int | None
     after_context: int
     before_context: int
+    filters: WalkFilters
 
 
 def parse_flags(fl: FlagView, never_match: bool) -> GrepFlags:
@@ -76,6 +82,10 @@ def parse_flags(fl: FlagView, never_match: bool) -> GrepFlags:
         max_count=fl.as_int("m"),
         after_context=a_ctx if a_ctx is not None else (c_ctx or 0),
         before_context=b_ctx if b_ctx is not None else (c_ctx or 0),
+        filters=WalkFilters(include=tuple(fl.as_list("include")),
+                            exclude=tuple(fl.as_list("exclude")),
+                            exclude_dir=tuple(fl.as_list("exclude_dir")),
+                            text=fl.as_bool("text")),
     )
 
 
@@ -149,6 +159,7 @@ async def grep(
                     basic=f.basic_regexp,
                     warnings=warnings,
                     read_stream_fn=None,
+                    filters=f.filters,
                 )
                 results.extend(respell_raw(hits, p.virtual, p.raw_path))
             stderr = format_optional_records(warnings)
@@ -197,8 +208,11 @@ async def grep(
                         max_count=f.max_count,
                         warnings=warnings,
                         read_stream_fn=None,
+                        filters=f.filters,
                     )
                     all_results.extend(respell_raw(res, p.virtual, p.raw_path))
+                elif not file_admitted(p.virtual, f.filters):
+                    continue
                 else:
                     data = split_lines(
                         (await rb(p.virtual)).decode(errors="replace"))
@@ -237,6 +251,8 @@ async def grep(
                     multi_warnings.append(
                         f"grep: {p.raw_path}: Is a directory")
                     continue
+                if not file_admitted(p.virtual, f.filters):
+                    continue
                 data = split_lines((await
                                     rb(p.virtual)).decode(errors="replace"))
                 # -l returned at the top of this function, so every path
@@ -271,6 +287,11 @@ async def grep(
         if first_stat.type == FileType.DIRECTORY:
             stderr = f"grep: {paths[0].raw_path}: Is a directory\n".encode()
             return b"", IOResult(exit_code=2, stderr=stderr)
+
+        if not file_admitted(paths[0].virtual, f.filters):
+            # GNU passes over a command-line file --include leaves out
+            # in silence: no output, no diagnostic, exit "no match".
+            return b"", IOResult(exit_code=1)
 
         if read_stream is not None:
             source: AsyncIterator[bytes] = read_stream(paths[0])

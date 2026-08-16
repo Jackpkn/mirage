@@ -4,6 +4,9 @@ import zipfile
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 
+from mirage.commands.builtin.generic.archive.extract import (ensure_dir,
+                                                             extract_dest)
+from mirage.commands.builtin.generic.archive.walk import StatFn
 from mirage.commands.config import CommandOpts
 from mirage.commands.spec import SPECS
 from mirage.commands.spec.types import FlagValue, FlagView
@@ -13,16 +16,6 @@ from mirage.utils.key_prefix import mount_prefix_of
 
 # Info-ZIP's wording and spacing, verbatim (two spaces after the colon).
 CAUTION_PREFIX = "caution: filename not matched:  "
-
-
-def _resolve_dest(d: str | PathSpec | None, mount_prefix: str) -> str:
-    d_str = d.virtual if isinstance(d, PathSpec) else d
-    dest_raw = d_str if d_str else "/"
-    if mount_prefix and dest_raw.startswith(mount_prefix + "/"):
-        return dest_raw[len(mount_prefix):]
-    if dest_raw == mount_prefix:
-        return "/"
-    return dest_raw
 
 
 def _spec_index(name: bytes, members: tuple[bytes, ...]) -> int | None:
@@ -60,12 +53,34 @@ def _cautions(unmatched: list[str]) -> str:
     return "".join(CAUTION_PREFIX + member + "\n" for member in unmatched)
 
 
+async def _make_dirs(dir_path: str, mkdir_fn: Callable[..., Awaitable[None]],
+                     stat: StatFn | None, made: set[str]) -> None:
+    """Create the chain for one entry, per door space.
+
+    With a stat door the shared single-level walk runs (dispatch mkdir
+    is single-level on most backends); without one the accessor's own
+    mkdir handles the chain, which is the pre-workspace construction
+    path where no dispatcher exists.
+
+    Args:
+        dir_path (str): the directory whose chain must exist.
+        mkdir_fn (Callable): mkdir door.
+        stat (StatFn | None): stat door in the same path space, if any.
+        made (set[str]): levels already ensured this run.
+    """
+    if stat is None:
+        await mkdir_fn(PathSpec.from_str_path(dir_path), parents=True)
+        return
+    await ensure_dir(dir_path, mkdir_fn, stat, made)
+
+
 async def unzip(
     paths: list[PathSpec],
     *,
     read_bytes: Callable[..., Awaitable[bytes]],
     write_bytes: Callable[..., Awaitable[None]],
     mkdir_fn: Callable[..., Awaitable[None]],
+    stat: StatFn | None = None,
     members: tuple[str, ...] = (),
     o: bool = False,
     args_l: bool = False,
@@ -73,10 +88,17 @@ async def unzip(
     q: bool = False,
     p: bool = False,
     t: bool = False,
+    cwd: PathSpec | str = "/",
+    relay: bool = False,
 ) -> tuple[ByteSource | None, IOResult]:
     if not paths:
         raise ValueError("unzip: missing operand")
     archive_path = paths[0]
+    if relay:
+        # Relay doors address by full virtual path (flat_scopes'
+        # convention), not by the mount-relative key the wrapper's
+        # accessor stamped.
+        archive_path = PathSpec.from_str_path(archive_path.virtual)
     data = await read_bytes(archive_path)
     with zipfile.ZipFile(io.BytesIO(data), "r") as zf:
         selected, unmatched = _select(zf.infolist(), members)
@@ -128,28 +150,34 @@ async def unzip(
         mount_prefix = mount_prefix_of(
             archive_path.virtual, archive_path.resource_path) if isinstance(
                 archive_path, PathSpec) else ""
-        dest = _resolve_dest(d, mount_prefix)
+        dest = extract_dest(d, cwd, relay)
         writes: dict[str, ByteSource] = {}
+        made: set[str] = set()
         output_lines: list[str] = []
         for info in selected:
             entry_name = info.filename.lstrip("/")
             out_path = dest.rstrip("/") + "/" + entry_name.rstrip("/")
-            report_path = (mount_prefix +
-                           out_path) if mount_prefix else out_path
+            report_path = out_path if relay else ((
+                mount_prefix + out_path) if mount_prefix else out_path)
             if info.is_dir():
                 # A directory entry is the only record an empty
                 # directory leaves, so it has to be recreated even
                 # though nothing is written inside it.
-                await mkdir_fn(PathSpec.from_str_path(out_path), parents=True)
+                await _make_dirs(out_path, mkdir_fn, stat, made)
                 if not q:
                     output_lines.append(f"   creating: {report_path}/")
                 continue
             content = zf.read(info)
             parent = out_path.rsplit("/", 1)[0] or "/"
             if parent != "/":
-                await mkdir_fn(PathSpec.from_str_path(parent), parents=True)
-            await write_bytes(PathSpec.from_str_path(out_path), content)
-            writes[out_path] = content
+                await _make_dirs(parent, mkdir_fn, stat, made)
+            await write_bytes(PathSpec.from_str_path(out_path), data=content)
+            if not relay:
+                # Relay writes land on whichever mount owns each path
+                # and invalidate through the dispatcher; keying them
+                # here would have the runner prefix them onto this
+                # mount.
+                writes[out_path] = content
             if not q:
                 output_lines.append(f"  inflating: {report_path}")
     output = ("\n".join(output_lines) +
@@ -187,17 +215,26 @@ def parse_flags(flags: Mapping[str, FlagValue]) -> UnzipFlags:
     )
 
 
-async def unzip_generic(paths, texts, opts: CommandOpts, read_bytes,
-                        write_bytes, mkdir_fn):
+async def unzip_generic(paths,
+                        texts,
+                        opts: CommandOpts,
+                        read_bytes,
+                        write_bytes,
+                        mkdir_fn,
+                        stat: StatFn | None = None,
+                        relay: bool = False):
     parsed = parse_flags(opts.flags)
     return await unzip(paths,
                        read_bytes=read_bytes,
                        write_bytes=write_bytes,
                        mkdir_fn=mkdir_fn,
+                       stat=stat,
                        members=tuple(texts),
                        o=parsed.overwrite,
                        args_l=parsed.list_only,
                        d=parsed.dest,
                        q=parsed.quiet,
                        p=parsed.to_stdout,
-                       t=parsed.test_only)
+                       t=parsed.test_only,
+                       cwd=opts.cwd,
+                       relay=relay)

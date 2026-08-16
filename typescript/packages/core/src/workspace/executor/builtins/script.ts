@@ -233,6 +233,85 @@ async function readScriptFile(
   }
 }
 
+/** The interpreter words a script's first line names, env resolved. */
+function shebangWords(script: string): string[] {
+  const first = script.split('\n', 1)[0] ?? ''
+  if (!first.startsWith('#!')) return []
+  let words = first
+    .slice(2)
+    .trim()
+    .split(/\s+/)
+    .filter((w) => w !== '')
+  const head = words[0] ?? ''
+  if (head.slice(head.lastIndexOf('/') + 1) === 'env') {
+    words = words.slice(1)
+    return words
+  }
+  if (words.length > 0) {
+    words[0] = head.slice(head.lastIndexOf('/') + 1)
+  }
+  return words
+}
+
+/** Quote one word for re-dispatch as a shell line. */
+function quoteWord(word: string): string {
+  if (/^[A-Za-z0-9_\-./]+$/.test(word)) return word
+  return `'${word.replaceAll("'", `'\\''`)}'`
+}
+
+/**
+ * Run a slash-carrying head word as a program, bash's loader rule.
+ *
+ * bash hands a word containing a slash straight to the loader: no
+ * builtin, function, or install can claim it, and the file either runs
+ * or the shell reports why not. Two deliberate divergences from bash,
+ * both consequences of the VFS: there is no exec bit to check (`chmod`
+ * is stored, not enforced; mount mode does real access control), so an
+ * existing file runs without `+x`; and the shell prefix bash puts on
+ * the diagnostic is dropped, matching every other mirage diagnostic.
+ *
+ * A shebang naming sh or bash (directly or via env) runs through the
+ * nested-shell machinery, as does a script with none. Any other
+ * interpreter word is re-dispatched as a command line, so
+ * `#!/usr/bin/env python3` reaches the python3 command wherever the
+ * workspace routes it, and an interpreter nobody registers answers with
+ * its own "command not found".
+ */
+export async function handleExecPath(
+  dispatch: DispatchFn,
+  executeFn: ExecuteStringFn,
+  path: string,
+  args: string[],
+  session: Session,
+  stdin: ByteSource | null = null,
+): Promise<Result> {
+  let script: string
+  try {
+    script = await readScriptText(dispatch, path, session.cwd)
+  } catch (exc) {
+    const strerror = fsStrerror(exc)
+    if (strerror === null) throw exc
+    const code = (exc as { code?: string }).code
+    return scriptError(path, strerror, code === 'ENOENT' ? 127 : 126)
+  }
+  const words = shebangWords(script)
+  const interp = words[0] ?? 'sh'
+  if (interp === 'sh' || interp === 'bash') {
+    return handleBash(
+      dispatch,
+      executeFn,
+      [...words.slice(1), path, ...args],
+      session,
+      stdin,
+      interp,
+    )
+  }
+  const line = [...words, path, ...args].map(quoteWord).join(' ')
+  const io = await executeFn(line, { sessionId: session.sessionId, stdin })
+  const label = args.length > 0 ? `${path} ${args.join(' ')}` : path
+  return [io.stdout, io, new ExecutionNode({ command: label, exitCode: io.exitCode })]
+}
+
 /**
  * Run a nested shell: inline text from `-c`, or a script file.
  *

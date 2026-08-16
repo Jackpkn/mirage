@@ -1,0 +1,242 @@
+{
+  "cases": [
+    {
+      "id": "grep_include_filters_the_walk",
+      "seq": 962320,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "mkdir -p /data/gflt/sub && echo 'score 9' | tee /data/gflt/notes.tex > /dev/null && echo 'score 8' | tee /data/gflt/notes.txt > /dev/null && echo 'score 7' | tee /data/gflt/sub/inner.tex > /dev/null && grep -RInE --include='*.tex' score /data/gflt",
+      "expect": {
+        "exit": 0,
+        "stdout": "/data/gflt/notes.tex:1:score 9\n/data/gflt/sub/inner.tex:1:score 7\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "grep_exclude_wins_over_include",
+      "seq": 962321,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "grep -r --include='*.tex' --exclude='notes.*' score /data/gflt",
+      "expect": {
+        "exit": 0,
+        "stdout": "/data/gflt/sub/inner.tex:score 7\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "grep_exclude_dir_prunes_the_walk",
+      "seq": 962322,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "grep -r --include='*.tex' --exclude-dir=sub score /data/gflt",
+      "expect": {
+        "exit": 0,
+        "stdout": "/data/gflt/notes.tex:score 9\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "grep_include_with_a_slash_matches_nothing",
+      "seq": 962323,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "grep -r --include='sub/*.tex' score /data/gflt; echo exit=$?",
+      "expect": {
+        "exit": 0,
+        "stdout": "exit=1\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "grep_include_filters_an_explicit_operand_in_silence",
+      "seq": 962324,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "grep --include='*.tex' -n score /data/gflt/notes.txt; echo exit=$?",
+      "expect": {
+        "exit": 0,
+        "stdout": "exit=1\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "grep_dash_a_reads_binary_extensions_in_the_walk",
+      "seq": 962325,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "echo 'score binary' | tee /data/gflt/d.parquet > /dev/null && grep -r score /data/gflt | grep -c parquet; grep -ra score /data/gflt | grep -c parquet",
+      "expect": {
+        "exit": 0,
+        "stdout": "0\n1\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "grep_dash_a_is_accepted_on_an_explicit_operand",
+      "seq": 962326,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "grep -aoiE 'SCORE' /data/gflt/notes.tex",
+      "expect": {
+        "exit": 0,
+        "stdout": "score\n",
+        "stderr": ""
+      }
+    }
+  ]
+}
