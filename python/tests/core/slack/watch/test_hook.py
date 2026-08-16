@@ -3,6 +3,7 @@ import asyncio
 from mirage.accessor.slack import SlackAccessor
 from mirage.core.slack.config import SlackConfig
 from mirage.core.slack.watch.hook import SlackEventHook
+from mirage.resource.slack import SlackResource
 from mirage.types import FileChangeKind, PathSpec
 
 # 2025-08-15T23:30:00Z is 4:30pm PDT the same day, so client and mount
@@ -174,18 +175,9 @@ def test_a_non_object_payload_maps_to_nothing(monkeypatch):
     assert _map(hook, "message", "not-an-object") == ()
 
 
-def test_the_resource_exposes_the_hook():
-    from mirage.resource.slack import SlackResource
-
+def test_a_consumer_builds_the_hook_from_the_accessor():
+    # A consumer reaches the hook by importing it, not through the
+    # resource: the payload it must build is Slack's own shape, so the
+    # call site names the backend either way.
     resource = SlackResource(SlackConfig(token="xoxb-t"))
-    assert isinstance(resource.event_hook(), SlackEventHook)
-
-
-def test_a_resource_without_one_answers_none():
-    # What replaced the SupportsEvents capability protocol: the base
-    # answers for every backend, so a consumer checks the return value
-    # rather than the resource's type.
-    from mirage.resource.ram import RAMResource
-
-    assert RAMResource().event_hook() is None
-    assert RAMResource().delta_hook() is None
+    assert isinstance(SlackEventHook(resource.accessor), SlackEventHook)

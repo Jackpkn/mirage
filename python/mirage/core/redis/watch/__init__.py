@@ -12,6 +12,6 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from mirage.core.redis.watch.hook import RedisEventHook, build_event_hook
+from mirage.core.redis.watch.hook import RedisEventHook
 
-__all__ = ["RedisEventHook", "build_event_hook"]
+__all__ = ["RedisEventHook"]

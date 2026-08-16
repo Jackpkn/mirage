@@ -12,5 +12,4 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-export { buildEventHook } from './hook.ts'
 export { buildDeltaHook } from './walk.ts'

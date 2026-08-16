@@ -24,7 +24,6 @@ from mirage.core.slack.watch.payload import (affected_ts, channel_id_of,
                                              day_of, item_channel)
 from mirage.core.slack.watch.types import ConversationDir
 from mirage.types import FileChangeKind, FileEvent, JsonValue, PathSpec
-from mirage.watch.base import EventHook
 from mirage.watch.events import event_at, text_field
 
 
@@ -230,12 +229,3 @@ class SlackEventHook:
         if event_type in USER_LIST_EVENTS:
             return (event_at(root, "users", FileChangeKind.UNKNOWN), )
         return ()
-
-
-def build_event_hook(accessor: SlackAccessor) -> EventHook:
-    """Build the Slack event hook.
-
-    Args:
-        accessor (SlackAccessor): Backend handle.
-    """
-    return SlackEventHook(accessor)

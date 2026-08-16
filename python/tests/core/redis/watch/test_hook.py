@@ -97,7 +97,7 @@ async def test_a_real_keyspace_notification_refreshes_the_listing():
         await other.execute("sh -c 'echo two > /r/day/b.txt'")
 
         # Exactly what a `__keyevent@N__:set` subscriber would forward.
-        hook = watched.event_hook()
+        hook = RedisEventHook(watched.accessor)
         for change in await hook.to_events(_root(), "set",
                                            f"{prefix}file:/day/b.txt"):
             await ws.notify(change)

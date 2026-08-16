@@ -12,7 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import type { Delta, FileEvent, JsonValue, PathSpec } from '../types.ts'
+import type { Delta, FileEvent, PathSpec } from '../types.ts'
 import type { WatchQueue } from './queue/base.ts'
 
 export interface CacheInvalidator {
@@ -52,11 +52,7 @@ export interface DeltaHook {
  * honest answer when the service cannot say more, so a hook never has to
  * invent a path it was not told about.
  *
- * Mirrors Python `EventHook` (`watch/base.py`).
  */
-export interface EventHook {
-  toEvents(root: PathSpec, eventType: string, payload: JsonValue): Promise<readonly FileEvent[]>
-}
 
 export interface WatchOptions {
   queue?: WatchQueue

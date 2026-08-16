@@ -2,6 +2,7 @@ import asyncio
 
 import pytest
 
+from mirage.core.disk.watch import DiskEventHook
 from mirage.resource.disk import DiskResource
 from mirage.types import FileChangeKind, MountMode, PathSpec
 from mirage.watch.events import event_at
@@ -27,7 +28,7 @@ async def test_mapped_event_makes_the_next_read_fresh(tmp_path):
     assert await warm.stdout_str() == "one\n"
 
     (tmp_path / "day" / "chat.jsonl").write_text("one\ntwo\n")
-    hook = ws.registry.mount_for("/d").resource.event_hook()
+    hook = DiskEventHook(ws.registry.mount_for("/d").resource.accessor)
     body = {"src_path": str(tmp_path / "day" / "chat.jsonl")}
     for change in await hook.to_events(_root(), "modified", body):
         await ws.notify(change)
@@ -45,7 +46,7 @@ async def test_mapped_create_appears_in_a_warm_listing(tmp_path):
     assert "a.txt" in await (await ws.execute("ls /d/day")).stdout_str()
 
     (tmp_path / "day" / "b.txt").write_text("b")
-    hook = ws.registry.mount_for("/d").resource.event_hook()
+    hook = DiskEventHook(ws.registry.mount_for("/d").resource.accessor)
     for change in await hook.to_events(
             _root(), "created", {"src_path": str(tmp_path / "day" / "b.txt")}):
         await ws.notify(change)
@@ -77,7 +78,7 @@ async def test_a_scoped_event_is_delivered_to_a_matching_watch(tmp_path):
     task = asyncio.ensure_future(agen.__anext__())
     await asyncio.sleep(0.03)
 
-    hook = ws.registry.mount_for("/d").resource.event_hook()
+    hook = DiskEventHook(ws.registry.mount_for("/d").resource.accessor)
     for change in await hook.to_events(
             _root(), "created", {"src_path": str(tmp_path / "day" / "c.txt")}):
         await ws.notify(change)

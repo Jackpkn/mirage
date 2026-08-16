@@ -17,12 +17,10 @@ from typing import Any
 from mirage.accessor.slack import SlackAccessor
 from mirage.core.slack.config import SlackConfig
 from mirage.core.slack.readdir import readdir
-from mirage.core.slack.watch import build_event_hook
 from mirage.resource.base import BaseResource
 from mirage.resource.slack.prompt import PROMPT, WRITE_PROMPT
 from mirage.types import ResourceName
 from mirage.utils.glob_walk import make_resolve_glob
-from mirage.watch.base import EventHook
 
 _resolve_glob = make_resolve_glob(readdir)
 
@@ -51,9 +49,6 @@ class SlackResource(BaseResource):
             self.register(fn)
         for fn in SLACK_VFS_OPS:
             self.register_op(fn)
-
-    def event_hook(self) -> EventHook:
-        return build_event_hook(self.accessor)
 
     async def resolve_glob(self, paths, prefix: str = ""):
         return await _resolve_glob(self.accessor, paths, index=self._index)

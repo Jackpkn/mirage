@@ -41,7 +41,6 @@ from mirage.core.redis.stat import stat as redis_stat
 from mirage.core.redis.stream import read_stream
 from mirage.core.redis.truncate import truncate
 from mirage.core.redis.unlink import unlink
-from mirage.core.redis.watch import build_event_hook
 from mirage.core.redis.write import write_bytes
 from mirage.ops.redis import OPS as REDIS_OPS
 from mirage.resource.base import BaseResource
@@ -51,7 +50,6 @@ from mirage.resource.secrets import REDACTED_SECRET
 from mirage.types import PathSpec, ResourceName
 from mirage.utils.glob_walk import make_resolve_glob
 from mirage.utils.key_prefix import mount_key
-from mirage.watch.base import EventHook
 
 _resolve_glob = make_resolve_glob(readdir, SCOPE_ERROR)
 
@@ -109,9 +107,6 @@ class RedisResource(BaseResource):
         prefix = self.key_prefix.strip("/")
         base = f"{self.name}:{self.url}"
         return f"{base}/{prefix}" if prefix else base
-
-    def event_hook(self) -> EventHook:
-        return build_event_hook(self.accessor)
 
     async def resolve_glob(self, paths, prefix: str = ""):
         if prefix:

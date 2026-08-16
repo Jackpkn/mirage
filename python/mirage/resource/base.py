@@ -24,7 +24,7 @@ from mirage.commands.config import RegisteredCommand
 from mirage.ops.registry import RegisteredOp
 from mirage.resource.secrets import redacted_config_dump
 from mirage.types import CapacityResult, CapacityState, PathSpec
-from mirage.watch.base import DeltaHook, EventHook
+from mirage.watch.base import DeltaHook
 
 try:
     from mirage.cache.index import RedisIndexCacheStore
@@ -193,15 +193,6 @@ class BaseResource:
         have one", which a None default answers with no ``isinstance``,
         no import, and no second place to keep in step. TypeScript has
         always done it this way (``deltaHook?()`` on ``Resource``).
-        """
-        return None
-
-    def event_hook(self) -> EventHook | None:
-        """Hook that maps this service's notifications, or None.
-
-        The push counterpart of ``delta_hook``, with the same default
-        and for the same reason. A backend may have one, both, or
-        neither.
         """
         return None
 

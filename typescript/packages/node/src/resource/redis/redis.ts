@@ -26,8 +26,6 @@ import { compareCodePoints } from '@struktoai/mirage-core/utils/sort'
 import { REDIS_COMMANDS } from '../../commands/builtin/redis/index.ts'
 import type { RedisClientType } from 'redis'
 import { RedisAccessor } from '../../accessor/redis.ts'
-import { type EventHook } from '@struktoai/mirage-core/watch/index'
-import { buildEventHook } from '../../core/redis/watch/index.ts'
 import { appendBytes } from '../../core/redis/append.ts'
 import { SCOPE_ERROR } from '../../core/redis/constants.ts'
 import { copy as copyCore } from '../../core/redis/copy.ts'
@@ -148,10 +146,6 @@ export class RedisResource extends BaseResource implements Resource {
 
   commands(): readonly RegisteredCommand[] {
     return REDIS_COMMANDS
-  }
-
-  eventHook(): EventHook {
-    return buildEventHook(this.accessor)
   }
 
   streamPath(p: PathSpec): AsyncIterable<Uint8Array> {

@@ -26,9 +26,10 @@ from webhook_server import make_app
 
 from mirage import MountMode, Workspace
 from mirage.accessor.nextcloud import NextcloudAccessor
+from mirage.core.disk.watch import DiskEventHook
 from mirage.resource.nextcloud import NextcloudConfig, NextcloudResource
 from mirage.types import PathSpec
-from mirage.watch import EventHook, RAMWatchQueue, Watcher
+from mirage.watch import RAMWatchQueue, Watcher
 
 CASE_DIR = Path(__file__).resolve().parent
 
@@ -358,7 +359,7 @@ class EventTrigger:
     that the harness built, where a consumer in production only ever
     has the raw notification its watcher or webhook received."""
 
-    def __init__(self, ws: Workspace, hook: EventHook, root: PathSpec,
+    def __init__(self, ws: Workspace, hook: DiskEventHook, root: PathSpec,
                  mount: str, host_root: str) -> None:
         self._ws = ws
         self._hook = hook
@@ -762,10 +763,12 @@ async def _run_event(spec: dict, ws: Workspace,
         ws (Workspace): Watched workspace.
         op (object): External writer operator.
     """
+    # The battery names the backend rather than asking the mount for a
+    # hook: the payload it has to build is watchdog's, so the call site
+    # is disk-specific either way. Push has no vendor-neutral shape, so
+    # a generic accessor would buy nothing here.
     resource = ws.registry.mount_for(spec["mount"]).resource
-    hook = resource.event_hook()
-    if hook is None:
-        return [(spec["resource"], False, "resource exposes no event hook")]
+    hook = DiskEventHook(resource.accessor)
     host_root = str(resource.accessor.root)
     trigger = EventTrigger(ws, hook, _framed_root(spec), spec["mount"],
                            host_root)

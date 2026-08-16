@@ -12,6 +12,6 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from mirage.core.slack.watch.hook import SlackEventHook, build_event_hook
+from mirage.core.slack.watch.hook import SlackEventHook
 
-__all__ = ["SlackEventHook", "build_event_hook"]
+__all__ = ["SlackEventHook"]

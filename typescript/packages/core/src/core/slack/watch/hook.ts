@@ -14,7 +14,7 @@
 
 import type { SlackAccessor } from '../../../accessor/slack.ts'
 import { FileChangeKind, type FileEvent, type JsonValue, type PathSpec } from '../../../types.ts'
-import { eventAt, type EventHook, textField } from '../../../watch/index.ts'
+import { eventAt, textField } from '../../../watch/index.ts'
 import { channelDirname, dmDirname } from '../formatters.ts'
 import {
   CHANNEL_LIST_EVENTS,
@@ -187,8 +187,4 @@ export class SlackEventHook {
     if (USER_LIST_EVENTS.has(eventType)) return [eventAt(root, 'users', FileChangeKind.UNKNOWN)]
     return []
   }
-}
-
-export function buildEventHook(accessor: SlackAccessor): EventHook {
-  return new SlackEventHook(accessor)
 }

@@ -52,8 +52,8 @@ import { writeBytes as writeCore } from '../../core/disk/write.ts'
 import { DiskAccessor } from '../../accessor/disk.ts'
 import { DISK_OPS } from '../../ops/disk/index.ts'
 import { DISK_PROMPT } from './prompt.ts'
-import { type DeltaHook, type EventHook } from '@struktoai/mirage-core/watch/index'
-import { buildDeltaHook, buildEventHook } from '../../core/disk/watch/index.ts'
+import { type DeltaHook } from '@struktoai/mirage-core/watch/index'
+import { buildDeltaHook } from '../../core/disk/watch/index.ts'
 
 const globCore = makeResolveGlob(readdirCore, SCOPE_ERROR)
 
@@ -215,10 +215,6 @@ export class DiskResource extends BaseResource implements Resource {
 
   deltaHook(): DeltaHook {
     return buildDeltaHook(this.accessor)
-  }
-
-  eventHook(): EventHook {
-    return buildEventHook(this.accessor)
   }
 
   glob(paths: readonly PathSpec[], prefix = ''): Promise<PathSpec[]> {

@@ -18,7 +18,6 @@ from pathlib import Path
 from mirage.accessor.disk import DiskAccessor
 from mirage.core.disk.watch.constants import DISK_KINDS
 from mirage.types import FileChangeKind, FileEvent, JsonValue, PathSpec
-from mirage.watch.base import EventHook
 from mirage.watch.events import event_at, text_field
 
 
@@ -125,12 +124,3 @@ class DiskEventHook:
         if moved_from is None:
             return (event_at(root, moved_to, FileChangeKind.CREATE), )
         return (event_at(root, moved_to, FileChangeKind.MOVE, moved_from), )
-
-
-def build_event_hook(accessor: DiskAccessor) -> EventHook:
-    """Build the disk event hook.
-
-    Args:
-        accessor (DiskAccessor): Backend handle.
-    """
-    return DiskEventHook(accessor)

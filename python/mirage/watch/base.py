@@ -15,7 +15,7 @@
 from collections.abc import AsyncIterator, Sequence
 from typing import Protocol
 
-from mirage.types import Delta, FileEvent, JsonValue, PathSpec
+from mirage.types import Delta, FileEvent, PathSpec
 from mirage.watch.queue.base import WatchQueue
 
 
@@ -80,45 +80,6 @@ class DeltaHook(Protocol):
             root (PathSpec): Watch root (mount-virtual path).
             checkpoint (str | None): Opaque state returned by the
                 previous pull, or None for a baseline.
-        """
-        ...
-
-
-class EventHook(Protocol):
-    """Translation of one service notification into mount paths.
-
-    The push counterpart of ``DeltaHook``: where a hook pulls and diffs,
-    this maps a notification the service already delivered. Mirage owns
-    no transport either way, so the consumer runs the socket, the
-    webhook receiver or the change stream and passes what arrived here;
-    only the path arithmetic lives beside the backend, because the
-    naming rules (a slack day directory is bucketed in UTC, a channel
-    directory is ``<name>__<id>``) are the backend's and a consumer
-    reimplementing them drifts.
-
-    A notification that names only a scope maps to ``UNKNOWN`` on that
-    directory, which the watcher reads as "re-inventory everything
-    below". That is the honest answer when the service cannot say more
-    (IMAP IDLE reports that a mailbox changed, never which message), so
-    a hook never has to invent a path it was not told about.
-    """
-
-    async def to_events(self, root: PathSpec, event_type: str,
-                        payload: JsonValue) -> Sequence[FileEvent]:
-        """Map one notification to the changes it implies.
-
-        Args:
-            root (PathSpec): Any path on the target mount, read for its
-                mount prefix so returned paths are workspace-virtual.
-            event_type (str): The service's own name for the event
-                (GitHub's ``X-GitHub-Event``, a redis keyspace verb, a
-                mongo ``operationType``). Empty when the payload
-                carries it and the transport does not.
-            payload (JsonValue): The notification body as delivered.
-
-        Returns:
-            Sequence[FileEvent]: Zero or more changes; empty when the
-            notification touches nothing this mount exposes.
         """
         ...
 

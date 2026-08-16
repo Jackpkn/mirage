@@ -18,7 +18,7 @@ import {
   type JsonValue,
   type PathSpec,
 } from '@struktoai/mirage-core/types'
-import { eventAt, type EventHook } from '@struktoai/mirage-core/watch/index'
+import { eventAt } from '@struktoai/mirage-core/watch/index'
 import type { RedisAccessor } from '../../../accessor/redis.ts'
 import { DIR_SEGMENT, DIR_SET_VERBS, FILE_SEGMENT, REDIS_KINDS } from './constants.ts'
 
@@ -81,8 +81,4 @@ export class RedisEventHook {
     if (kind === undefined) return Promise.resolve([])
     return Promise.resolve([eventAt(root, relative, kind)])
   }
-}
-
-export function buildEventHook(accessor: RedisAccessor): EventHook {
-  return new RedisEventHook(accessor)
 }

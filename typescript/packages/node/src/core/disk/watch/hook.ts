@@ -18,7 +18,7 @@ import {
   type JsonValue,
   type PathSpec,
 } from '@struktoai/mirage-core/types'
-import { eventAt, type EventHook, textField } from '@struktoai/mirage-core/watch/index'
+import { eventAt, textField } from '@struktoai/mirage-core/watch/index'
 import path from 'node:path'
 import type { DiskAccessor } from '../../../accessor/disk.ts'
 import { DISK_KINDS } from './constants.ts'
@@ -115,8 +115,4 @@ export class DiskEventHook {
     if (kind === undefined) return Promise.resolve([])
     return Promise.resolve([eventAt(root, relative, kind)])
   }
-}
-
-export function buildEventHook(accessor: DiskAccessor): EventHook {
-  return new DiskEventHook(accessor)
 }

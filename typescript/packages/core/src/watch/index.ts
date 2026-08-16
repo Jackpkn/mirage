@@ -12,7 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-export type { DeltaHook, EventHook } from './base.ts'
+export type { DeltaHook } from './base.ts'
 export { ListingDeltaHook, specFor } from './delta.ts'
 export { eventAt, field, textField, virtualOf } from './events.ts'
 export { IncompleteWalkError } from './errors.ts'

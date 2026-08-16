@@ -18,7 +18,6 @@ from mirage.accessor.redis import RedisAccessor
 from mirage.core.redis.watch.constants import (DIR_SEGMENT, DIR_SET_VERBS,
                                                FILE_SEGMENT, REDIS_KINDS)
 from mirage.types import FileChangeKind, FileEvent, JsonValue, PathSpec
-from mirage.watch.base import EventHook
 from mirage.watch.events import event_at
 
 
@@ -95,12 +94,3 @@ class RedisEventHook:
         if kind is None:
             return ()
         return (event_at(root, relative, kind), )
-
-
-def build_event_hook(accessor: RedisAccessor) -> EventHook:
-    """Build the redis event hook.
-
-    Args:
-        accessor (RedisAccessor): Backend handle.
-    """
-    return RedisEventHook(accessor)

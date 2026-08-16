@@ -12,7 +12,7 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from mirage.core.disk.watch.hook import DiskEventHook, build_event_hook
+from mirage.core.disk.watch.hook import DiskEventHook
 from mirage.core.disk.watch.walk import DiskWalk, build_delta_hook
 
-__all__ = ["DiskEventHook", "DiskWalk", "build_delta_hook", "build_event_hook"]
+__all__ = ["DiskEventHook", "DiskWalk", "build_delta_hook"]
