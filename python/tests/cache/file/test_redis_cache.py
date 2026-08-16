@@ -104,6 +104,33 @@ async def test_add_existing(cache):
 
 
 @pytest.mark.asyncio
+async def test_concurrent_add_has_one_winner(cache):
+    contenders = [(f"value-{i}".encode(), f"fingerprint-{i}")
+                  for i in range(32)]
+    inserted = await asyncio.gather(
+        *(cache.add("/shared.txt", data, fingerprint=fingerprint)
+          for data, fingerprint in contenders))
+
+    assert sum(inserted) == 1
+    winner = inserted.index(True)
+    data, fingerprint = contenders[winner]
+    assert await cache.get("/shared.txt") == data
+    assert await cache.is_fresh("/shared.txt", fingerprint) is True
+
+
+@pytest.mark.asyncio
+async def test_add_preserves_binary_data_and_ttl(cache):
+    data = b"\x00\xff\x80binary"
+    assert await cache.add("/binary.bin", data, fingerprint="binary-fp", ttl=1)
+    assert await cache.get("/binary.bin") == data
+    assert await cache.is_fresh("/binary.bin", "binary-fp") is True
+
+    await asyncio.sleep(1.1)
+    assert await cache.get("/binary.bin") is None
+    assert await cache.is_fresh("/binary.bin", "binary-fp") is False
+
+
+@pytest.mark.asyncio
 async def test_set_with_fingerprint(cache):
     await cache.set("/file.txt", b"data", fingerprint="fp1")
     assert await cache.is_fresh("/file.txt", "fp1") is True

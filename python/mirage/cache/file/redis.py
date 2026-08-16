@@ -13,13 +13,26 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import asyncio
-from collections.abc import Iterable
-from typing import Any
+from collections.abc import Awaitable, Iterable
+from typing import Any, cast
 
 from mirage.cache.file.mixin import FileCacheMixin, validate_max_drain_bytes
 from mirage.cache.file.utils import (default_fingerprint, glob_escape,
                                      parse_limit)
 from mirage.resource.redis.redis import RedisResource
+
+ADD_SCRIPT = """
+if redis.call('EXISTS', KEYS[1]) ~= 0 then
+    return 0
+end
+redis.call('SET', KEYS[1], ARGV[1])
+redis.call('SET', KEYS[2], ARGV[2])
+if ARGV[3] ~= '' then
+    redis.call('EXPIRE', KEYS[1], ARGV[3])
+    redis.call('EXPIRE', KEYS[2], ARGV[3])
+end
+return 1
+"""
 
 
 class RedisFileCacheStore(RedisResource, FileCacheMixin):
@@ -75,11 +88,26 @@ class RedisFileCacheStore(RedisResource, FileCacheMixin):
         ttl: int | None = None,
     ) -> bool:
         dk = f"{self._data_prefix}{key}"
-        exists = await self._cache_client.exists(dk)
-        if exists:
-            return False
-        await self.set(key, data, fingerprint=fingerprint, ttl=ttl)
-        return True
+        mk = f"{self._meta_prefix}{key}"
+        if fingerprint is None:
+            fingerprint = default_fingerprint(data)
+        # The background drain deliberately uses insert-only semantics: an
+        # older drain finishing late must not overwrite a newer cache fill.
+        # Keep the existence check, bytes, fingerprint and TTL in one Redis
+        # execution so shared-cache writers cannot interleave between them.
+        inserted = await cast(
+            Awaitable[int],
+            self._cache_client.eval(
+                ADD_SCRIPT,
+                2,
+                dk,
+                mk,
+                data,
+                fingerprint,
+                "" if ttl is None else str(ttl),
+            ),
+        )
+        return inserted == 1
 
     async def remove(self, key: str) -> None:
         task = self._drain_tasks.pop(key, None)

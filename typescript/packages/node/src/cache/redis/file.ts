@@ -21,6 +21,19 @@ import { registerFileCacheStore } from '@struktoai/mirage-core/workspace/workspa
 import type { RedisClientType } from 'redis'
 import { RedisResource, type RedisResourceOptions } from '../../resource/redis/redis.ts'
 
+const ADD_SCRIPT = `
+if redis.call('EXISTS', KEYS[1]) ~= 0 then
+  return 0
+end
+redis.call('SET', KEYS[1], ARGV[1])
+redis.call('SET', KEYS[2], ARGV[2])
+if ARGV[3] ~= '' then
+  redis.call('EXPIRE', KEYS[1], ARGV[3])
+  redis.call('EXPIRE', KEYS[2], ARGV[3])
+end
+return 1
+`
+
 export interface RedisFileCacheOptions extends RedisResourceOptions {
   cacheLimit?: string | number
   maxDrainBytes?: number | null
@@ -109,10 +122,21 @@ export class RedisFileCacheStore extends RedisResource implements FileCache {
     options: { fingerprint?: string | null; ttl?: number | null } = {},
   ): Promise<boolean> {
     const c = await this.cacheClient()
-    const exists = await c.exists(`${this.dataPrefix}${key}`)
-    if (exists) return false
-    await this.set(key, data, options)
-    return true
+    const dk = `${this.dataPrefix}${key}`
+    const mk = `${this.metaPrefix}${key}`
+    const fp = options.fingerprint ?? defaultFingerprint(data)
+    // A background drain is insert-only: an older drain finishing late must
+    // not overwrite a newer cache fill. Execute the check, bytes, fingerprint
+    // and TTL atomically so shared-cache writers cannot interleave.
+    const inserted = await c.eval(ADD_SCRIPT, {
+      keys: [dk, mk],
+      arguments: [
+        Buffer.from(data.buffer, data.byteOffset, data.byteLength),
+        fp,
+        options.ttl === null || options.ttl === undefined ? '' : String(options.ttl),
+      ],
+    })
+    return inserted === 1
   }
 
   async remove(key: string): Promise<void> {
