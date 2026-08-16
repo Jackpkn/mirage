@@ -19,27 +19,8 @@ import {
   type PathSpec,
 } from '@struktoai/mirage-core/types'
 import { eventAt, type EventHook } from '@struktoai/mirage-core/watch/index'
-import type { RedisAccessor } from '../../accessor/redis.ts'
-
-const FILE_SEGMENT = 'file:'
-const DIR_SEGMENT = 'dir'
-
-const DIR_SET_VERBS = new Set(['sadd', 'srem', 'del', 'unlink', 'expired'])
-
-const REDIS_KINDS: Record<string, FileChangeKind> = {
-  set: FileChangeKind.UPDATE,
-  setrange: FileChangeKind.UPDATE,
-  append: FileChangeKind.UPDATE,
-  incrby: FileChangeKind.UPDATE,
-  copy_to: FileChangeKind.UPDATE,
-  restore: FileChangeKind.UPDATE,
-  rename_to: FileChangeKind.UPDATE,
-  del: FileChangeKind.DELETE,
-  unlink: FileChangeKind.DELETE,
-  expired: FileChangeKind.DELETE,
-  evicted: FileChangeKind.DELETE,
-  rename_from: FileChangeKind.DELETE,
-}
+import type { RedisAccessor } from '../../../accessor/redis.ts'
+import { DIR_SEGMENT, DIR_SET_VERBS, FILE_SEGMENT, REDIS_KINDS } from './constants.ts'
 
 /**
  * Map one redis keyspace notification onto mount paths.
@@ -72,7 +53,7 @@ const REDIS_KINDS: Record<string, FileChangeKind> = {
  * Keys outside those two (the `modified:` and `attrs:` side keys) name nothing
  * this mount serves and map to nothing.
  *
- * Mirrors Python `RedisEventHook` (`core/redis/watch.py`).
+ * Mirrors Python `RedisEventHook` (`core/redis/watch/hook.py`).
  */
 export class RedisEventHook {
   private readonly accessor: RedisAccessor

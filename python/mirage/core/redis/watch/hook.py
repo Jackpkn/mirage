@@ -15,29 +15,11 @@
 from collections.abc import Sequence
 
 from mirage.accessor.redis import RedisAccessor
+from mirage.core.redis.watch.constants import (DIR_SEGMENT, DIR_SET_VERBS,
+                                               FILE_SEGMENT, REDIS_KINDS)
 from mirage.types import FileChangeKind, FileEvent, JsonValue, PathSpec
 from mirage.watch.base import EventHook
 from mirage.watch.events import event_at
-
-FILE_SEGMENT = "file:"
-DIR_SEGMENT = "dir"
-
-_DIR_SET_VERBS = frozenset({"sadd", "srem", "del", "unlink", "expired"})
-
-_REDIS_KINDS = {
-    "set": FileChangeKind.UPDATE,
-    "setrange": FileChangeKind.UPDATE,
-    "append": FileChangeKind.UPDATE,
-    "incrby": FileChangeKind.UPDATE,
-    "copy_to": FileChangeKind.UPDATE,
-    "restore": FileChangeKind.UPDATE,
-    "rename_to": FileChangeKind.UPDATE,
-    "del": FileChangeKind.DELETE,
-    "unlink": FileChangeKind.DELETE,
-    "expired": FileChangeKind.DELETE,
-    "evicted": FileChangeKind.DELETE,
-    "rename_from": FileChangeKind.DELETE,
-}
 
 
 class RedisEventHook:
@@ -103,13 +85,13 @@ class RedisEventHook:
         if not isinstance(payload, str):
             return ()
         if payload == f"{self._accessor.store.key_prefix}{DIR_SEGMENT}":
-            if event_type not in _DIR_SET_VERBS:
+            if event_type not in DIR_SET_VERBS:
                 return ()
             return (event_at(root, "/", FileChangeKind.UNKNOWN), )
         relative = self._relative(payload)
         if relative is None:
             return ()
-        kind = _REDIS_KINDS.get(event_type)
+        kind = REDIS_KINDS.get(event_type)
         if kind is None:
             return ()
         return (event_at(root, relative, kind), )

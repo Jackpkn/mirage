@@ -3,7 +3,7 @@ import os
 
 import pytest
 
-from mirage.core.redis.watch import RedisEventHook
+from mirage.core.redis.watch.hook import RedisEventHook
 from mirage.resource.redis import RedisResource
 from mirage.types import FileChangeKind, MountMode, PathSpec
 from mirage.workspace import Workspace

@@ -14,9 +14,9 @@
 
 import { FileChangeKind, PathSpec } from '@struktoai/mirage-core/types'
 import { describe, expect, it } from 'vitest'
-import { RedisAccessor } from '../../accessor/redis.ts'
-import { RedisStore } from '../../resource/redis/store.ts'
-import { RedisEventHook } from './watch.ts'
+import { RedisAccessor } from '../../../accessor/redis.ts'
+import { RedisStore } from '../../../resource/redis/store.ts'
+import { RedisEventHook } from './hook.ts'
 
 const ROOT = new PathSpec({ virtual: '/r', directory: '/r', resourcePath: '' })
 

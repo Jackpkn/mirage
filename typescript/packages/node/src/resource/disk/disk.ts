@@ -53,7 +53,7 @@ import { DiskAccessor } from '../../accessor/disk.ts'
 import { DISK_OPS } from '../../ops/disk/index.ts'
 import { DISK_PROMPT } from './prompt.ts'
 import { type DeltaHook, type EventHook } from '@struktoai/mirage-core/watch/index'
-import { buildDeltaHook, buildEventHook } from '../../core/disk/watch.ts'
+import { buildDeltaHook, buildEventHook } from '../../core/disk/watch/index.ts'
 
 const globCore = makeResolveGlob(readdirCore, SCOPE_ERROR)
 
