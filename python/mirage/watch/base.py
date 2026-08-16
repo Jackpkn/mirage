@@ -13,7 +13,7 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 from collections.abc import AsyncIterator, Sequence
-from typing import Protocol, runtime_checkable
+from typing import Protocol
 
 from mirage.types import Delta, FileEvent, JsonValue, PathSpec
 from mirage.watch.queue.base import WatchQueue
@@ -84,22 +84,6 @@ class DeltaHook(Protocol):
         ...
 
 
-@runtime_checkable
-class SupportsChanges(Protocol):
-    """Optional resource capability: native change detection.
-
-    A resource that implements this returns a hook a consumer's poll
-    loop can pull deltas from (Nextcloud: WebDAV listing walk with
-    ETag fingerprints). Subscribing to changes never requires it;
-    it only powers pull-based detection.
-    """
-
-    def delta_hook(self) -> DeltaHook:
-        """Build the resource's delta hook (stateless; per-watch
-        checkpoints are held by the caller)."""
-        ...
-
-
 class EventHook(Protocol):
     """Translation of one service notification into mount paths.
 
@@ -136,20 +120,6 @@ class EventHook(Protocol):
             Sequence[FileEvent]: Zero or more changes; empty when the
             notification touches nothing this mount exposes.
         """
-        ...
-
-
-@runtime_checkable
-class SupportsEvents(Protocol):
-    """Optional resource capability: service notification mapping.
-
-    A resource that implements this can translate its service's push
-    notifications into ``FileEvent``s. Independent of
-    ``SupportsChanges``: a backend may have one, both, or neither.
-    """
-
-    def event_hook(self) -> EventHook:
-        """Build the resource's event hook (stateless)."""
         ...
 
 
