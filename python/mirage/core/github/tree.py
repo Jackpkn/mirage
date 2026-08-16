@@ -17,6 +17,7 @@ from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from mirage.accessor.github import GitHubAccessor
 from mirage.cache.index import (NULL_INDEX, IndexCacheStore, IndexEntry,
                                 LookupStatus)
 from mirage.core.github._client import github_get
@@ -156,7 +157,11 @@ def index_rows(
     return entries, children
 
 
-def seed_index(accessor, index: IndexCacheStore, prefix: str) -> None:
+def seed_index(
+    accessor: GitHubAccessor,
+    index: IndexCacheStore,
+    prefix: str,
+) -> None:
     """Write the accessor's tree into ``index`` under ``prefix``.
 
     Args:
@@ -169,7 +174,11 @@ def seed_index(accessor, index: IndexCacheStore, prefix: str) -> None:
                datetime.now(timezone.utc) + timedelta(days=365))
 
 
-async def refill_index(accessor, index: IndexCacheStore, prefix: str) -> bool:
+async def refill_index(
+    accessor: GitHubAccessor,
+    index: IndexCacheStore,
+    prefix: str,
+) -> bool:
     """Refetch the recursive tree and re-seed the index from it.
 
     The mount fetches the whole tree once and seeds the index with it, so
@@ -201,8 +210,11 @@ async def refill_index(accessor, index: IndexCacheStore, prefix: str) -> bool:
     return True
 
 
-async def ensure_live_index(accessor, index: IndexCacheStore,
-                            prefix: str) -> bool:
+async def ensure_live_index(
+    accessor: GitHubAccessor,
+    index: IndexCacheStore,
+    prefix: str,
+) -> bool:
     """Refetch when the index holds no listing at all.
 
     Every reader here treats a missing listing as a real absence, which
@@ -250,9 +262,11 @@ async def ensure_live_index(accessor, index: IndexCacheStore,
     return await refill_index(accessor, index, prefix)
 
 
-async def ensure_tree(accessor,
-                      index: IndexCacheStore = NULL_INDEX,
-                      prefix: str = "") -> None:
+async def ensure_tree(
+    accessor: GitHubAccessor,
+    index: IndexCacheStore = NULL_INDEX,
+    prefix: str = '',
+) -> None:
     """Fetch the recursive tree if this mount has not got one yet.
 
     The mount is constructed without touching the network, so readers

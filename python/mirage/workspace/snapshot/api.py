@@ -12,12 +12,22 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+from typing import TYPE_CHECKING
+
 from mirage.workspace.snapshot.manifest import split_manifest_and_blobs
 from mirage.workspace.snapshot.state import to_state_dict
 from mirage.workspace.snapshot.tar_io import write_tar
 
+if TYPE_CHECKING:
+    from mirage.workspace.workspace import Workspace
 
-async def snapshot(ws, target, *, compress: str | None = None) -> None:
+
+async def snapshot(
+    ws: "Workspace",
+    target,
+    *,
+    compress: str | None = None,
+) -> None:
     """Serialize a Workspace to a tar archive.
 
     Fingerprints come from ``ws._ops.records`` (each read carries the

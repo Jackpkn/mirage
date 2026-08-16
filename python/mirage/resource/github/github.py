@@ -21,7 +21,7 @@ from mirage.core.github.tree_entry import TreeEntry
 from mirage.core.github.watch import build_delta_hook
 from mirage.resource.base import BaseResource
 from mirage.resource.github.prompt import PROMPT
-from mirage.types import ResourceName
+from mirage.types import PathSpec, ResourceName
 from mirage.utils.glob_walk import make_resolve_glob
 from mirage.watch.base import DeltaHook
 
@@ -119,7 +119,11 @@ class GitHubResource(BaseResource):
     def delta_hook(self) -> DeltaHook:
         return build_delta_hook(self.accessor)
 
-    async def resolve_glob(self, paths, prefix: str = ""):
+    async def resolve_glob(
+        self,
+        paths: list[str | PathSpec],
+        prefix: str = '',
+    ) -> list[PathSpec]:
         return await _resolve_glob(self.accessor, paths, self._index)
 
     @property

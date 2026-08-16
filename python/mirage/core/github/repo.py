@@ -15,6 +15,7 @@
 import base64
 from dataclasses import dataclass
 
+from mirage.accessor.github import GitHubAccessor
 from mirage.core.github._client import (GitHubApiError, github_get,
                                         github_request)
 from mirage.core.github.config import GhConfig, GitHubConfig
@@ -37,7 +38,7 @@ async def fetch_default_branch(config: GitHubConfig, owner: str,
     return data["default_branch"]
 
 
-async def ensure_default_branch(accessor) -> str:
+async def ensure_default_branch(accessor: GitHubAccessor, ) -> str:
     """Fetch the repo's default branch once, on the first read needing it.
 
     The mount names a repository without contacting it, so this is the

@@ -187,8 +187,14 @@ def parse_flags(flags: Mapping[str, FlagValue]) -> UnzipFlags:
     )
 
 
-async def unzip_generic(paths, texts, opts: CommandOpts, read_bytes,
-                        write_bytes, mkdir_fn):
+async def unzip_generic(
+    paths: list[PathSpec],
+    texts: list[str],
+    opts: CommandOpts,
+    read_bytes: Callable[..., Awaitable[bytes]],
+    write_bytes: Callable[..., Awaitable[None]],
+    mkdir_fn: Callable[..., Awaitable[None]],
+) -> tuple[ByteSource | None, IOResult]:
     parsed = parse_flags(opts.flags)
     return await unzip(paths,
                        read_bytes=read_bytes,

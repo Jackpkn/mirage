@@ -29,7 +29,7 @@ from mirage.core.dropbox.write import write_bytes
 from mirage.resource.base import BaseResource
 from mirage.resource.dropbox.config import DropboxConfig
 from mirage.resource.dropbox.prompt import PROMPT
-from mirage.types import ResourceName
+from mirage.types import PathSpec, ResourceName
 from mirage.utils.glob_walk import make_resolve_glob
 from mirage.watch.base import DeltaHook
 
@@ -77,7 +77,11 @@ class DropboxResource(BaseResource):
     def delta_hook(self) -> DeltaHook:
         return build_delta_hook(self.accessor)
 
-    async def resolve_glob(self, paths, prefix: str = ""):
+    async def resolve_glob(
+        self,
+        paths: list[str | PathSpec],
+        prefix: str = '',
+    ) -> list[PathSpec]:
         return await _resolve_glob(self.accessor, paths, self._index)
 
     def get_state(self) -> dict[str, Any]:

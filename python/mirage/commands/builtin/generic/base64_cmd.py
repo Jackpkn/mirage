@@ -8,7 +8,7 @@ from mirage.commands.spec import SPECS
 from mirage.commands.spec.types import CommandName, FlagValue, FlagView
 from mirage.commands.spec.usage import extra_operand_error
 from mirage.io.types import ByteSource, IOResult
-from mirage.types import PathSpec
+from mirage.types import PathSpec, ReadStreamFn
 
 
 async def _base64_encode_stream(source: AsyncIterator[bytes],
@@ -83,7 +83,12 @@ def parse_flags(flags: Mapping[str, FlagValue]) -> Base64Flags:
     )
 
 
-async def base64_generic(paths, texts, opts: CommandOpts, read_stream):
+async def base64_generic(
+    paths: list[PathSpec],
+    texts: list[str],
+    opts: CommandOpts,
+    read_stream: ReadStreamFn,
+) -> tuple[ByteSource | None, IOResult]:
     parsed = parse_flags(opts.flags)
     return await base64_cmd(paths,
                             read_stream=read_stream,

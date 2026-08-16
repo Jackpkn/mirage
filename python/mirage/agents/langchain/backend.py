@@ -14,7 +14,9 @@
 
 import base64
 import shlex
+from collections.abc import Awaitable
 from pathlib import PurePosixPath
+from typing import TypeVar
 
 from deepagents.backends.protocol import (EditResult, ExecuteResponse,
                                           FileData, FileDownloadResponse,
@@ -29,6 +31,8 @@ from mirage.agents.langchain._convert import (io_to_execute_response,
 from mirage.bridge.sync import run_async_from_sync
 from mirage.io.types import IOResult
 from mirage.workspace.workspace import Workspace
+
+T = TypeVar("T")
 
 BINARY_EXTENSIONS = frozenset({
     ".3gpp",
@@ -119,7 +123,7 @@ class LangchainWorkspace(SandboxBackendProtocol):
         self._id = sandbox_id
         self._session_id = session_id
 
-    def _run(self, coro):
+    def _run(self, coro: Awaitable[T]) -> T:
         return run_async_from_sync(coro)
 
     @property

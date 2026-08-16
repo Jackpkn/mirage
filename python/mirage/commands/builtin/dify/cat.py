@@ -1,3 +1,4 @@
+from mirage.accessor.dify import DifyAccessor
 from mirage.commands.builtin.generic.cat import cat_generic
 from mirage.commands.builtin.generic_bind import CommandIO
 from mirage.commands.builtin.generic_bind.adapter import (bound_op,
@@ -20,8 +21,12 @@ def make_cat(ops: CommandIO):
     """
 
     @command("cat", resource="dify", spec=SPECS["cat"])
-    async def cat(accessor, paths: list[PathSpec], texts: list[str],
-                  opts: CommandOpts) -> tuple[ByteSource | None, IOResult]:
+    async def cat(
+        accessor: DifyAccessor,
+        paths: list[PathSpec],
+        texts: list[str],
+        opts: CommandOpts,
+    ) -> tuple[ByteSource | None, IOResult]:
         resolved = await resolve_or_empty(ops, accessor, paths, opts.index)
         return await cat_generic(resolved,
                                  list(texts),

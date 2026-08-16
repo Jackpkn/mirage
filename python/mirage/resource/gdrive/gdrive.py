@@ -21,7 +21,7 @@ from mirage.core.google._client import TokenManager
 from mirage.resource.base import BaseResource
 from mirage.resource.gdrive.config import GoogleDriveConfig
 from mirage.resource.gdrive.prompt import PROMPT
-from mirage.types import ResourceName
+from mirage.types import PathSpec, ResourceName
 from mirage.utils.glob_walk import make_resolve_glob
 from mirage.watch.base import DeltaHook
 
@@ -56,7 +56,11 @@ class GoogleDriveResource(BaseResource):
     def delta_hook(self) -> DeltaHook:
         return build_delta_hook(self.accessor)
 
-    async def resolve_glob(self, paths, prefix: str = ""):
+    async def resolve_glob(
+        self,
+        paths: list[str | PathSpec],
+        prefix: str = '',
+    ) -> list[PathSpec]:
         return await _resolve_glob(self.accessor, paths, index=self._index)
 
     def get_state(self) -> dict[str, Any]:

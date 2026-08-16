@@ -22,7 +22,7 @@ from mirage.ops.gslides import OPS as GSLIDES_VFS_OPS
 from mirage.resource.base import BaseResource
 from mirage.resource.gslides.config import GSlidesConfig
 from mirage.resource.gslides.prompt import PROMPT, WRITE_PROMPT
-from mirage.types import ResourceName
+from mirage.types import PathSpec, ResourceName
 from mirage.utils.glob_walk import make_resolve_glob
 
 _resolve_glob = make_resolve_glob(readdir)
@@ -51,7 +51,11 @@ class GSlidesResource(BaseResource):
         for fn in GSLIDES_VFS_OPS:
             self.register_op(fn)
 
-    async def resolve_glob(self, paths, prefix: str = ""):
+    async def resolve_glob(
+        self,
+        paths: list[str | PathSpec],
+        prefix: str = '',
+    ) -> list[PathSpec]:
         return await _resolve_glob(self.accessor, paths, index=self._index)
 
     def get_state(self) -> dict[str, Any]:

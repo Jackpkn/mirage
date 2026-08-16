@@ -87,7 +87,11 @@ class RAMResource(BaseResource):
         for ro in RAM_OPS:
             self.register_op(ro)
 
-    async def resolve_glob(self, paths, prefix: str = ""):
+    async def resolve_glob(
+        self,
+        paths: list[str | PathSpec],
+        prefix: str = '',
+    ) -> list[PathSpec]:
         if prefix:
             paths = [
                 dataclasses.replace(p,

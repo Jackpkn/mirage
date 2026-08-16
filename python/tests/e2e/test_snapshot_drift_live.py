@@ -21,9 +21,23 @@ import pytest
 
 from mirage.core.s3.write import write_bytes
 from mirage.resource.s3 import S3Config, S3Resource
-from mirage.types import DriftPolicy, MountMode
+from mirage.types import DriftPolicy, MountMode, PathSpec
 from mirage.workspace import Workspace
 from mirage.workspace.snapshot import ContentDriftError
+
+
+def _spec(key: str, virtual: str) -> PathSpec:
+    """The operand write_bytes expects; it reads only ``mount_path``.
+
+    Passing the bare string was an AttributeError waiting for a live
+    versioned bucket -- this test skips without one, so nothing caught it.
+    """
+    return PathSpec(resource_path=key,
+                    virtual=virtual,
+                    directory="/s3",
+                    pattern=None,
+                    resolved=True)
+
 
 LIVE_BUCKET = os.environ.get("MIRAGE_LIVE_S3_BUCKET") or os.environ.get(
     "AWS_S3_BUCKET")
@@ -285,7 +299,7 @@ def test_live_stat_populates_revision_when_versioned(tmp_path):
     client.put_object(Bucket=LIVE_BUCKET, Key=key, Body=b"x\n")
     try:
         resource = S3Resource(_config())
-        asyncio.run(write_bytes(resource.accessor, probe, b"x\n"))
+        asyncio.run(write_bytes(resource.accessor, _spec(key, probe), b"x\n"))
         stat = asyncio.run(resource._ops["stat"](resource.accessor, probe))
         assert stat.fingerprint is not None
         assert stat.revision is not None, (

@@ -9,9 +9,9 @@ from mirage.commands.config import CommandOpts
 from mirage.commands.spec import SPECS
 from mirage.commands.spec.types import FlagValue, FlagView
 from mirage.context import mount_allowed
-from mirage.io.types import IOResult
+from mirage.io.types import ByteSource, IOResult
 from mirage.ops.types import MountView, ReaddirPath, StatPath
-from mirage.types import FileStat, FileType, PathSpec
+from mirage.types import FileStat, FileType, PathSpec, ReaddirFn
 from mirage.utils.errors import WALK_ERRORS
 from mirage.utils.fnmatch import fnmatch
 from mirage.utils.key_prefix import rekey
@@ -327,7 +327,13 @@ def parse_flags(flags: Mapping[str, FlagValue]) -> TreeFlags:
     )
 
 
-async def tree_generic(paths, texts, opts: CommandOpts, readdir, stat):
+async def tree_generic(
+    paths: list[PathSpec],
+    texts: list[str],
+    opts: CommandOpts,
+    readdir: ReaddirFn,
+    stat: Stat,
+) -> tuple[ByteSource | None, IOResult]:
     parsed = parse_flags(opts.flags)
     return await tree(paths[0],
                       readdir=readdir,

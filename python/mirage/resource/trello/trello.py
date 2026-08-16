@@ -19,7 +19,7 @@ from mirage.core.trello.readdir import readdir
 from mirage.resource.base import BaseResource
 from mirage.resource.trello.config import TrelloConfig
 from mirage.resource.trello.prompt import PROMPT, WRITE_PROMPT
-from mirage.types import ResourceName
+from mirage.types import PathSpec, ResourceName
 from mirage.utils.glob_walk import make_resolve_glob
 
 _resolve_glob = make_resolve_glob(readdir)
@@ -45,7 +45,11 @@ class TrelloResource(BaseResource):
         for fn in TRELLO_VFS_OPS:
             self.register_op(fn)
 
-    async def resolve_glob(self, paths, prefix: str = ""):
+    async def resolve_glob(
+        self,
+        paths: list[str | PathSpec],
+        prefix: str = '',
+    ) -> list[PathSpec]:
         return await _resolve_glob(self.accessor, paths, index=self._index)
 
     def get_state(self) -> dict[str, Any]:

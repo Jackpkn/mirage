@@ -84,7 +84,11 @@ class DatabricksVolumeResource(BaseResource):
         for op in DATABRICKS_VOLUME_OPS:
             self.register_op(op)
 
-    async def resolve_glob(self, paths, prefix: str = ""):
+    async def resolve_glob(
+        self,
+        paths: list[str | PathSpec],
+        prefix: str = '',
+    ) -> list[PathSpec]:
         if prefix:
             paths = [
                 dataclasses.replace(p,

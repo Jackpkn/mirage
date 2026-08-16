@@ -1,11 +1,13 @@
 from collections.abc import AsyncIterator
 from typing import Any
 
+from mirage.accessor.chroma import ChromaAccessor
+
 PATH_TREE_ID = "__path_tree__"
 PAGE_CHUNK_BATCH_SIZE = 100
 
 
-async def fetch_path_tree(accessor) -> str:
+async def fetch_path_tree(accessor: ChromaAccessor, ) -> str:
     collection = await accessor.get_collection()
     result = await collection.get(ids=[PATH_TREE_ID])
     documents = result.get("documents") or []
@@ -19,18 +21,27 @@ async def fetch_path_tree(accessor) -> str:
     return str(value)
 
 
-async def fetch_page_chunks(accessor, slug: str) -> str:
+async def fetch_page_chunks(
+    accessor: ChromaAccessor,
+    slug: str,
+) -> str:
     chunks = await page_chunks(accessor, slug)
     return "\n".join(chunk["document"] for chunk in chunks)
 
 
-async def iter_page_chunks(accessor, slug: str) -> AsyncIterator[str]:
+async def iter_page_chunks(
+    accessor: ChromaAccessor,
+    slug: str,
+) -> AsyncIterator[str]:
     chunks = await page_chunks(accessor, slug)
     for chunk in chunks:
         yield chunk["document"]
 
 
-async def page_chunks(accessor, slug: str) -> list[dict[str, Any]]:
+async def page_chunks(
+    accessor: ChromaAccessor,
+    slug: str,
+) -> list[dict[str, Any]]:
     collection = await accessor.get_collection()
     chunks: list[dict[str, Any]] = []
     offset = 0
@@ -57,7 +68,7 @@ async def page_chunks(accessor, slug: str) -> list[dict[str, Any]]:
 
 
 async def pages_chunks(
-    accessor,
+    accessor: ChromaAccessor,
     slugs: list[str],
 ) -> dict[str, list[dict[str, Any]]]:
     """Fetch every chunk of several pages in one scan.
@@ -108,7 +119,7 @@ async def pages_chunks(
 
 
 async def query_contains(
-    accessor,
+    accessor: ChromaAccessor,
     pattern: str,
     candidate_slugs: list[str],
     *,

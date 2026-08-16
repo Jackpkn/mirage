@@ -10,7 +10,7 @@ from mirage.commands.spec.types import FlagValue, FlagView
 from mirage.core.timeutil import iso_to_epoch
 from mirage.io.types import ByteSource, IOResult
 from mirage.ops.types import LinkView
-from mirage.types import LINK_TARGET_KEY, FileStat, FileType, PathSpec
+from mirage.types import LINK_TARGET_KEY, FileStat, FileType, PathSpec, StatFn
 from mirage.utils.errors import FS_ERRORS, fs_error_line
 
 _STR_DIRECTIVES = frozenset("nNF")
@@ -427,7 +427,12 @@ def parse_flags(flags: Mapping[str, FlagValue]) -> StatFlags:
     )
 
 
-async def stat_generic(paths, texts, opts: CommandOpts, stat_fn):
+async def stat_generic(
+    paths: list[PathSpec],
+    texts: list[str],
+    opts: CommandOpts,
+    stat_fn: StatFn,
+) -> tuple[ByteSource | None, IOResult]:
     parsed = parse_flags(opts.flags)
     return await stat(paths,
                       stat_fn=stat_fn,

@@ -1,3 +1,4 @@
+from mirage.accessor.dify import DifyAccessor
 from mirage.cache.index import NULL_INDEX, IndexCacheStore
 from mirage.core.dify.path import resolve_path
 from mirage.core.dify.readdir import readdir
@@ -6,7 +7,7 @@ from mirage.utils.key_prefix import rekey
 
 
 async def walk(
-    accessor,
+    accessor: DifyAccessor,
     path: PathSpec,
     index: IndexCacheStore = NULL_INDEX,
     *,
