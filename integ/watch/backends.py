@@ -459,7 +459,7 @@ async def build_github(spec: dict) -> Pair | None:
                           repo=GITHUB_REPO,
                           ref=GITHUB_REF,
                           base_url=state.base)
-    resource = await GitHubResource.build(config)
+    resource = GitHubResource(config)
     ws = Workspace({spec["mount"]: resource}, mode=MountMode.WRITE)
     return ws, GitHubWriter(config, GITHUB_OWNER, GITHUB_REPO, GITHUB_REF)
 

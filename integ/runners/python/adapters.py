@@ -1055,9 +1055,9 @@ class GitHubService:
     shared with the typescript host. It used to be out of process by
     necessity — GitHubResource fetched the repo tree with a blocking
     urlopen from its constructor, which would starve an aiohttp fake on
-    the runner's loop. That constraint is gone now that the fetch is
-    awaited in `GitHubResource.build`; sharing one fake across both hosts
-    is why it stays external.
+    the runner's loop. That constraint is gone now that the constructor
+    touches no network and the tree hydrates on first read; sharing one
+    fake across both hosts is why it stays external.
 
     Args:
         url (str): GITHUB_URL origin the fake is listening on.
@@ -1082,7 +1082,7 @@ class GitHubService:
 
     async def resource(self, mount: dict) -> GitHubResource:
         owner, _, repo = mount["repo"].partition("/")
-        return await GitHubResource.build(
+        return GitHubResource(
             GitHubConfig(token="ghp-integ",
                          owner=owner,
                          repo=repo,
