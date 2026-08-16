@@ -178,7 +178,7 @@
       "command": "gh repo fork integ/repo-cli --fork-name forked",
       "expect": {
         "exit": 0,
-        "stdout": "\u2713 Created fork integ-user/forked\n",
+        "stdout": "✓ Created fork integ-user/forked\n",
         "stderr": ""
       }
     },
@@ -191,7 +191,7 @@
       "command": "gh repo rename renamed -R integ-user/forked",
       "expect": {
         "exit": 0,
-        "stdout": "\u2713 Renamed repository integ-user/renamed\n",
+        "stdout": "✓ Renamed repository integ-user/renamed\n",
         "stderr": ""
       }
     },
@@ -323,6 +323,19 @@
         "exit": 0,
         "stdout": "{\n  \"type\": \"file\",\n",
         "stderr": ""
+      }
+    },
+    {
+      "id": "gh_api_create_repo_is_refused_by_the_token",
+      "seq": 569026,
+      "targets": [
+        "cli-gh"
+      ],
+      "command": "gh api user/repos -f name=fresh-repo",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "gh api: Resource not accessible by personal access token\n"
       }
     }
   ]

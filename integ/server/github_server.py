@@ -540,6 +540,13 @@ class FakeGitHub:
         self.login = DEFAULT_LOGIN
         # The command line's seed, kept so `POST /reset` can rebuild it.
         self.seed: tuple[list[str], list[str], list[str]] = ([], [], [])
+        # Whether this token may create a repository from nothing. A real
+        # fine-grained PAT without Administration:write may not, and a
+        # harness that restricts its agent to named repositories issues
+        # exactly that kind of token, so the fake has to be able to model
+        # one. Forking and renaming stay open: the restriction is on
+        # creating from nothing, not on a repository coming into existence.
+        self.create_repos = True
 
     def repo(self,
              owner: str,
@@ -681,10 +688,14 @@ class GitHubServer:
             request (web.Request): the incoming request.
 
         Returns:
-            web.Response: the created repository, or 422 if it exists.
+            web.Response: the created repository, 422 if it exists, or 403
+                if the token was issued without the scope.
         """
         if not self._authed(request):
             return _error(401, "Requires authentication")
+        if not self.state.create_repos:
+            return _error(403,
+                          "Resource not accessible by personal access token")
         body = await _json_body(request)
         name = str(body.get("name") or "").strip()
         if not name:
@@ -1857,8 +1868,9 @@ def seed_state(state: FakeGitHub, repos: list[str], metadata: list[str],
 
 
 async def _serve(port: int, repos: list[str], metadata: list[str],
-                 commits: list[str]) -> None:
+                 commits: list[str], create_repos: bool) -> None:
     state = FakeGitHub()
+    state.create_repos = create_repos
     state.seed = (repos, metadata, commits)
     seed_state(state, repos, metadata, commits)
     server = GitHubServer(state)
@@ -1893,8 +1905,16 @@ def main() -> None:
         default=[],
         help="owner/name=<JSON file of commits keyed by branch, each array "
         "oldest first>; repeatable")
+    parser.add_argument(
+        "--no-create-repos",
+        action="store_true",
+        help="refuse POST /user/repos with 403, the way a fine-grained "
+        "token without Administration:write does; fork and rename stay "
+        "available")
     args = parser.parse_args()
-    asyncio.run(_serve(args.port, args.repo, args.metadata, args.commits))
+    asyncio.run(
+        _serve(args.port, args.repo, args.metadata, args.commits,
+               not args.no_create_repos))
 
 
 if __name__ == "__main__":
