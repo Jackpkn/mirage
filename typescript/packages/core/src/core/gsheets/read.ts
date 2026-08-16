@@ -21,8 +21,7 @@ import { sheetsBase, type TokenManager, googleGet } from '../google/_client.ts'
 import { readdir } from './readdir.ts'
 import { rstripSlash } from '../../utils/slash.ts'
 import { enoent } from '../../utils/errors.ts'
-
-const ENC = new TextEncoder()
+import { compactJsonBytes } from '../render/json.ts'
 
 const GRID_DATA_PARAM = 'true'
 
@@ -39,7 +38,7 @@ export async function readSpreadsheet(
 ): Promise<Uint8Array> {
   const url = `${sheetsBase(tm)}/spreadsheets/${spreadsheetId}`
   const data = await googleGet(tm, url, { includeGridData: GRID_DATA_PARAM })
-  return ENC.encode(JSON.stringify(data))
+  return compactJsonBytes(data)
 }
 
 export async function readValues(
@@ -49,7 +48,7 @@ export async function readValues(
 ): Promise<Uint8Array> {
   const url = `${sheetsBase(tm)}/spreadsheets/${spreadsheetId}/values/${range}`
   const data = await googleGet(tm, url)
-  return ENC.encode(JSON.stringify(data))
+  return compactJsonBytes(data)
 }
 
 export async function read(

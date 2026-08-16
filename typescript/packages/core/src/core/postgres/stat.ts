@@ -16,6 +16,7 @@ import { mountKey, mountPrefixOf } from '../../utils/key_prefix.ts'
 import { FileStat, FileType, PathSpec } from '../../types.ts'
 import type { IndexCacheStore } from '../../cache/index/store.ts'
 import { sha256Hex } from '../../utils/hash.ts'
+import { compactJsonBytes } from '../render/json.ts'
 import type { PostgresAccessor } from '../../accessor/postgres.ts'
 import {
   estimatedRowCount,
@@ -128,9 +129,7 @@ async function rowsStat(
   const cols = await fetchColumns(accessor, schema, entity)
   const rows = await estimatedRowCount(accessor, schema, entity)
   const size = await tableSizeBytes(accessor, schema, entity)
-  const fingerprint = await sha256Hex(
-    new TextEncoder().encode(JSON.stringify({ columns: cols, rows })),
-  )
+  const fingerprint = await sha256Hex(compactJsonBytes({ columns: cols, rows }))
   // size stays null: tableSizeBytes is the on-disk storage size, not the
   // rendered JSONL length (FileStat.size must be render-derived or null,
   // see the CLAUDE.md FUSE rules). The storage size remains in extra.

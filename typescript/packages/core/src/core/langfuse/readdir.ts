@@ -25,7 +25,7 @@ import {
   fetchSessions,
   fetchTraces,
 } from './_client.ts'
-import { toJsonlBytes } from './render.ts'
+import { jsonlBytes } from '../render/json.ts'
 import { stripSlash } from '../../utils/slash.ts'
 import { enoent } from '../../utils/errors.ts'
 
@@ -285,7 +285,7 @@ async function readdirDataset(
         name: 'items.jsonl',
         resourceType: 'langfuse/dataset_items',
         vfsName: 'items.jsonl',
-        size: toJsonlBytes(items).byteLength,
+        size: jsonlBytes(items).byteLength,
       }),
     ],
     [
@@ -328,7 +328,7 @@ async function readdirDatasetRuns(
         name: runName,
         resourceType: 'langfuse/dataset_run',
         vfsName: filename,
-        size: toJsonlBytes([r]).byteLength,
+        size: jsonlBytes([r]).byteLength,
       }),
     ])
     names.push(`${prefix}/datasets/${datasetName}/runs/${filename}`)

@@ -14,6 +14,7 @@
 
 import type { SlackAccessor } from '../../accessor/slack.ts'
 import { cursorPages } from './paginate.ts'
+import { compactJsonBytes } from '../render/json.ts'
 
 export interface SlackUser {
   id: string
@@ -65,7 +66,7 @@ export async function listUsers(
 // users.list and users.info from one row through one helper, so they agree
 // by construction; only a live call tests the assumption.
 export function userJsonBytes(user: SlackUser | Record<string, never>): Uint8Array {
-  return new TextEncoder().encode(JSON.stringify(user))
+  return compactJsonBytes(user)
 }
 
 export async function getUserProfile(

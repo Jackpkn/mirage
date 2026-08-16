@@ -12,6 +12,8 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import { jsonBytes, jsonlBytes } from '../render/json.ts'
+
 type Json = Record<string, unknown>
 
 function pick(record: Json, key: string): unknown {
@@ -198,11 +200,10 @@ export function normalizeComment(comment: Json, cardId: string): NormalizedComme
 }
 
 export function toJsonBytes(value: unknown): Uint8Array {
-  return new TextEncoder().encode(JSON.stringify(value, null, 2))
+  return jsonBytes(value)
 }
 
 export function toJsonlBytes(rows: readonly NormalizedComment[]): Uint8Array {
-  if (rows.length === 0) return new Uint8Array()
   const ordered = [...rows].sort((a, b) => {
     const ka = a.created_at ?? ''
     const kb = b.created_at ?? ''
@@ -210,6 +211,5 @@ export function toJsonlBytes(rows: readonly NormalizedComment[]): Uint8Array {
     if (ka > kb) return 1
     return 0
   })
-  const text = ordered.map((row) => JSON.stringify(row)).join('\n') + '\n'
-  return new TextEncoder().encode(text)
+  return jsonlBytes(ordered)
 }

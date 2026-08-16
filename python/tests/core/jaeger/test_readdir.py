@@ -19,7 +19,7 @@ import pytest
 from mirage.accessor.jaeger import JaegerAccessor
 from mirage.cache.index.ram import RAMIndexCacheStore
 from mirage.core.jaeger.readdir import readdir
-from mirage.core.jaeger.render import jaeger_json_bytes
+from mirage.core.render.json import json_bytes
 from mirage.resource.jaeger.config import JaegerConfig
 from mirage.types import PathSpec
 
@@ -71,7 +71,7 @@ async def test_readdir_service_children(accessor, index):
         "/services/checkout/traces",
     ]
     lookup = await index.get("/services/checkout/operations.json")
-    assert lookup.entry.size == len(jaeger_json_bytes(operations))
+    assert lookup.entry.size == len(json_bytes(operations))
 
 
 @pytest.mark.asyncio
@@ -128,7 +128,7 @@ async def test_readdir_traces_stores_rendered_size(accessor, index):
             await readdir(accessor, spec("services/checkout/traces"), index)
     lookup = await index.get(f"/services/checkout/traces/{TRACE_A}.json")
     assert lookup.entry is not None
-    assert lookup.entry.size == len(jaeger_json_bytes(trace))
+    assert lookup.entry.size == len(json_bytes(trace))
 
 
 @pytest.mark.asyncio

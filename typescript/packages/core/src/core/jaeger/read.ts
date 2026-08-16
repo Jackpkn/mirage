@@ -18,7 +18,7 @@ import type { PathSpec } from '../../types.ts'
 import { enoent } from '../../utils/errors.ts'
 import { JaegerApiError, fetchOperations, fetchTrace, isTraceId } from './_client.ts'
 import { assertService } from './readdir.ts'
-import { jaegerJsonBytes } from './render.ts'
+import { jsonBytes } from '../render/json.ts'
 import { detectScope } from './scope.ts'
 
 // Whether any span in the trace was emitted by the service. A trace is fetched
@@ -52,7 +52,7 @@ export async function read(
     const service = scope.service ?? ''
     await assertService(accessor, service, path)
     const operations = await fetchOperations(accessor.transport, service)
-    return jaegerJsonBytes(operations)
+    return jsonBytes(operations)
   }
 
   if (scope.level === 'trace') {
@@ -72,7 +72,7 @@ export async function read(
     // Reading by id would otherwise serve any trace through any service
     // directory, contradicting stat and ls for the same path.
     if (!hasService(trace, service)) throw enoent(path)
-    return jaegerJsonBytes(trace)
+    return jsonBytes(trace)
   }
 
   throw enoent(path)

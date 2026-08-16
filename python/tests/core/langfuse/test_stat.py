@@ -19,8 +19,8 @@ import pytest
 from mirage.accessor.langfuse import LangfuseAccessor
 from mirage.cache.index import IndexEntry
 from mirage.cache.index.ram import RAMIndexCacheStore
-from mirage.core.langfuse.render import jsonl_bytes
 from mirage.core.langfuse.stat import stat
+from mirage.core.render.json import jsonl_bytes
 from mirage.resource.langfuse.config import LangfuseConfig
 from mirage.types import FileType, PathSpec
 
