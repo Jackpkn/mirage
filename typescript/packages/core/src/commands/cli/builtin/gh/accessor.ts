@@ -46,7 +46,7 @@ export function jsonOut(value: unknown, mutated?: boolean): CommandFnResult {
   return [out, new IOResult(mutated === undefined ? {} : { mutated })]
 }
 
-export function textOut(text: string): CommandFnResult {
+export function textOut(text: string, mutated?: boolean): CommandFnResult {
   const out: ByteSource = ENC.encode(text)
-  return [out, new IOResult()]
+  return [out, new IOResult(mutated === undefined ? {} : { mutated })]
 }

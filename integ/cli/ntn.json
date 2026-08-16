@@ -896,6 +896,58 @@
         "stdout": "",
         "stderr": "error: Public API request failed (404 Not Found object_not_found): Could not find data source with ID: 11111111-1111-1111-1111-111111111111. Make sure the relevant pages and databases are shared with your integration.\n  hint: Could not find a data source or database with ID `11111111-1111-1111-1111-111111111111`. Check that the ID or URL points to a data source or database shared with your integration.\n"
       }
+    },
+    {
+      "id": "ntn_api_block_retrieve",
+      "seq": 566069,
+      "targets": [
+        "cli-ntn"
+      ],
+      "command": "ntn api v1/blocks/dddd2222-3333-4444-5555-666677778888 | jq -r '.type, .has_children, .in_trash'",
+      "expect": {
+        "exit": 0,
+        "stdout": "bulleted_list_item\ntrue\nfalse\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "ntn_api_block_of_a_database",
+      "seq": 566070,
+      "targets": [
+        "cli-ntn"
+      ],
+      "command": "ntn api v1/blocks/eeee1111-2222-3333-4444-555566667777 | jq -r '.type, .child_database.title'",
+      "expect": {
+        "exit": 0,
+        "stdout": "child_database\nTasks\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "ntn_api_block_of_a_page",
+      "seq": 566071,
+      "targets": [
+        "cli-ntn"
+      ],
+      "command": "ntn api v1/blocks/aaaa1111-2222-3333-4444-555566667777 | jq -r '.type, .has_children, .child_page.title'",
+      "expect": {
+        "exit": 0,
+        "stdout": "child_page\ntrue\nProject Roadmap\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "ntn_api_trashed_block_answers_with_the_flag",
+      "seq": 566072,
+      "targets": [
+        "cli-ntn"
+      ],
+      "command": "ntn api v1/blocks/ffff1111-2222-3333-4444-555566667777 | jq -r '.object, .type, .in_trash'",
+      "expect": {
+        "exit": 0,
+        "stdout": "block\nchild_page\ntrue\n",
+        "stderr": ""
+      }
     }
   ]
 }

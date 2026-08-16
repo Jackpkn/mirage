@@ -221,6 +221,34 @@ describe('gh api', () => {
   })
 })
 
+// `--jq` renders the way gh 2.85 does, probed live: a string raw, null as
+// an empty line, everything else as compact JSON, one output per line.
+describe('gh api --jq', () => {
+  it('prints a string raw', async () => {
+    reset({ full_name: 'o/r' })
+    const out = await api(inv(['repos/o/r'], { jq: '.full_name' }))
+    expect(out === null ? '' : text(out)).toBe('o/r\n')
+  })
+
+  it('prints non-strings as compact JSON', async () => {
+    reset({ name: 'r', count: 2, ok: true })
+    const out = await api(inv(['repos/o/r'], { jq: '{name: .name, count: .count}, .ok' }))
+    expect(out === null ? '' : text(out)).toBe('{"name":"r","count":2}\ntrue\n')
+  })
+
+  it('prints null as an empty line', async () => {
+    reset({ name: 'r' })
+    const out = await api(inv(['repos/o/r'], { jq: '.nope' }))
+    expect(out === null ? '' : text(out)).toBe('\n')
+  })
+
+  it('emits one line per output', async () => {
+    reset({ a: 'x', b: 'y' })
+    const out = await api(inv(['repos/o/r'], { jq: '.a, .b' }))
+    expect(out === null ? '' : text(out)).toBe('x\ny\n')
+  })
+})
+
 // gh prints two tab-separated header lines and then the README verbatim;
 // with no README there is no `--` separator at all. Probed against 2.85.
 describe('gh repo view rendering', () => {

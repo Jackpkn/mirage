@@ -254,6 +254,49 @@ async def test_api_stringifies_a_typed_field_bound_for_the_query():
     assert "body" not in CALLS[0]
 
 
+# `--jq` renders the way gh 2.85 does, probed live: a string raw, null as
+# an empty line, everything else as compact JSON, one output per line.
+@pytest.mark.asyncio
+async def test_api_jq_prints_a_string_raw():
+    _reset({"full_name": "o/r"})
+    out, _io = await api(_inv(["repos/o/r"], {"jq": ".full_name"}))
+    assert await materialize(out) == b"o/r\n"
+
+
+@pytest.mark.asyncio
+async def test_api_jq_prints_non_strings_as_compact_json():
+    _reset({"name": "r", "count": 2, "ok": True})
+    out, _io = await api(
+        _inv(["repos/o/r"], {"jq": "{name: .name, count: .count}, .ok"}))
+    assert await materialize(out) == b'{"name":"r","count":2}\ntrue\n'
+
+
+@pytest.mark.asyncio
+async def test_api_jq_prints_null_as_an_empty_line():
+    _reset({"name": "r"})
+    out, _io = await api(_inv(["repos/o/r"], {"jq": ".nope"}))
+    assert await materialize(out) == b"\n"
+
+
+@pytest.mark.asyncio
+async def test_api_jq_emits_one_line_per_output():
+    _reset({"a": "x", "b": "y"})
+    out, _io = await api(_inv(["repos/o/r"], {"jq": ".a, .b"}))
+    assert await materialize(out) == b"x\ny\n"
+
+
+@pytest.mark.asyncio
+async def test_api_jq_keeps_the_write_flag_of_the_method():
+    _reset({"ok": True})
+    _out, io = await api(
+        _inv(["repos/o/r/contents/f"], {
+            "method": "PUT",
+            "raw_field": ["content=YQ=="],
+            "jq": ".ok"
+        }))
+    assert io.mutated is True
+
+
 # gh prints two tab-separated header lines and then the README verbatim;
 # with no README there is no `--` separator at all. Probed against 2.85.
 def test_summary_is_gh_s_two_headers_then_the_readme():

@@ -554,3 +554,60 @@ describe('handleCli script arm', () => {
     ).rejects.toThrow(/pager: timed out/)
   })
 })
+
+// A write may have landed before the leaf threw: `gh api -X PUT --jq`
+// filters a response the service already applied, so the failure arm
+// falls back to the spec's static `write` the same way the success arm
+// does when a handler's result says nothing.
+describe('cache drop on a thrown leaf', () => {
+  function throwingInstall(write: boolean): CLIInstall {
+    const spec = new CLISpec({
+      name: 'prog',
+      configModel: (input) => input,
+      subcommands: [
+        new CLISpec({
+          name: 'push',
+          write,
+          fn: () => {
+            throw new Error('filter failed after the request')
+          },
+        }),
+      ],
+    })
+    return { name: 'prog', spec, config: { token: 'tok' } }
+  }
+
+  it('a write leaf that throws still drops caches', async () => {
+    const dropped: boolean[] = []
+    const [, io] = await handleCli(
+      throwingInstall(true),
+      ['prog', 'push'],
+      new Session({ sessionId: 't' }),
+      null,
+      {},
+      () => {
+        dropped.push(true)
+        return Promise.resolve()
+      },
+    )
+    expect(io.exitCode).toBe(1)
+    expect(dropped).toEqual([true])
+  })
+
+  it('a read leaf that throws drops nothing', async () => {
+    const dropped: boolean[] = []
+    const [, io] = await handleCli(
+      throwingInstall(false),
+      ['prog', 'push'],
+      new Session({ sessionId: 't' }),
+      null,
+      {},
+      () => {
+        dropped.push(true)
+        return Promise.resolve()
+      },
+    )
+    expect(io.exitCode).toBe(1)
+    expect(dropped).toEqual([])
+  })
+})

@@ -349,6 +349,13 @@ async def handle_cli(
         # Any other thrown leaf error (an API RuntimeError, a ValueError)
         # becomes this command's IOResult, prefixed like GNU
         # (prog: message), so the rest of the line keeps running.
+        # The write may already have landed when a leaf throws after its
+        # request (a PUT whose --jq program fails filters a response the
+        # service already applied), and with no IOResult to consult the
+        # spec's static answer is the only one left; without the drop a
+        # github mount keeps serving its pre-write bytes.
+        if leaf.write and drop_caches is not None:
+            await drop_caches()
         err_stderr = f"{prog}: {exc}\n".encode()
         err_io = IOResult(exit_code=1, stderr=err_stderr)
         return None, err_io, ExecutionNode(command=cmd_str,

@@ -52,5 +52,7 @@ def json_out(
     return yield_bytes(text.encode()), IOResult(mutated=mutated)
 
 
-def text_out(text: str) -> tuple[ByteSource | None, IOResult]:
-    return yield_bytes(text.encode()), IOResult()
+def text_out(
+        text: str,
+        mutated: bool | None = None) -> tuple[ByteSource | None, IOResult]:
+    return yield_bytes(text.encode()), IOResult(mutated=mutated)

@@ -178,7 +178,7 @@
       "command": "gh repo fork integ/repo-cli --fork-name forked",
       "expect": {
         "exit": 0,
-        "stdout": "\u2713 Created fork integ-user/forked\n",
+        "stdout": "✓ Created fork integ-user/forked\n",
         "stderr": ""
       }
     },
@@ -191,7 +191,7 @@
       "command": "gh repo rename renamed -R integ-user/forked",
       "expect": {
         "exit": 0,
-        "stdout": "\u2713 Renamed repository integ-user/renamed\n",
+        "stdout": "✓ Renamed repository integ-user/renamed\n",
         "stderr": ""
       }
     },
@@ -322,6 +322,71 @@
       "expect": {
         "exit": 0,
         "stdout": "{\n  \"type\": \"file\",\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "gh_api_create_repo_is_refused_by_the_token",
+      "seq": 569026,
+      "targets": [
+        "cli-gh"
+      ],
+      "command": "gh api user/repos -f name=fresh-repo",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "gh api: Resource not accessible by personal access token\n"
+      }
+    },
+    {
+      "id": "gh_api_jq_prints_a_string_raw",
+      "seq": 569027,
+      "targets": [
+        "cli-gh"
+      ],
+      "command": "gh api repos/integ/repo-cli --jq .full_name",
+      "expect": {
+        "exit": 0,
+        "stdout": "integ/repo-cli\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "gh_api_jq_compacts_non_strings_one_per_line",
+      "seq": 569028,
+      "targets": [
+        "cli-gh"
+      ],
+      "command": "gh api repos/integ/repo-cli --jq '{repo: .name}, .default_branch'",
+      "expect": {
+        "exit": 0,
+        "stdout": "{\"repo\":\"repo-cli\"}\nmain\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "gh_api_jq_prints_null_as_an_empty_line",
+      "seq": 569029,
+      "targets": [
+        "cli-gh"
+      ],
+      "command": "gh api repos/integ/repo-cli -q .description",
+      "expect": {
+        "exit": 0,
+        "stdout": "\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "gh_api_jq_failure_still_expires_the_mount",
+      "seq": 569030,
+      "targets": [
+        "cli-gh"
+      ],
+      "command": "gh api repos/integ/repo-cli/contents/JQFAIL.md -X PUT -f message=x -f content=anEgZmFpbAo= --jq '.content |' 2>/dev/null; cat /repo/JQFAIL.md",
+      "expect": {
+        "exit": 0,
+        "stdout": "jq fail\n",
         "stderr": ""
       }
     }

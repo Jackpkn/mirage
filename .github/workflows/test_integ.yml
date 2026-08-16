@@ -1330,6 +1330,7 @@ jobs:
         run: |
           nohup ./python/.venv/bin/python integ/server/github_server.py \
             --port 5098 --repo integ/repo-cli=github/repo-v1 \
+            --no-create-repos \
             > /tmp/github.log 2>&1 &
           for i in $(seq 1 30); do grep -q "GITHUB_ENDPOINT=" /tmp/github.log && break; sleep 1; done
           cat /tmp/github.log
