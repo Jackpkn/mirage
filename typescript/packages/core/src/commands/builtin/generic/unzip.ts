@@ -15,6 +15,7 @@
 import { specOf } from '../../spec/builtins.ts'
 import { FlagView } from '../../spec/types.ts'
 import { mountPrefixOf } from '../../../utils/key_prefix.ts'
+import { ensureDir, extractDest, type StatDoor } from './archive/extract.ts'
 import { IOResult, materialize, type ByteSource } from '../../../io/types.ts'
 import { PathSpec } from '../../../types.ts'
 import { inflateRaw } from '../../../utils/compress.ts'
@@ -179,13 +180,18 @@ export async function unzipGeneric(
   stream: (p: PathSpec) => AsyncIterable<Uint8Array>,
   write: (p: PathSpec, data: Uint8Array) => Promise<void>,
   mkdir: (p: PathSpec, parents?: boolean) => Promise<void>,
+  stat?: StatDoor,
+  relay = false,
 ): Promise<CommandFnResult> {
   const fl = new FlagView(opts.flags, specOf('unzip'))
   if (paths.length === 0) {
     return [null, new IOResult({ exitCode: 1, stderr: ENC.encode('unzip: missing operand\n') })]
   }
-  const archivePath = paths[0]
+  let archivePath = paths[0]
   if (archivePath === undefined) return [null, new IOResult()]
+  // Relay doors address by full virtual path (flatten's convention),
+  // not by the mount-relative key the wrapper's accessor stamped.
+  if (relay) archivePath = makePathSpec(archivePath.virtual)
   const data = await materialize(stream(archivePath))
   const entries = await readZipEntries(data)
   const { selected, unmatched } = selectEntries(entries, members)
@@ -194,8 +200,8 @@ export async function unzipGeneric(
   const testMode = fl.asBool('t')
   const pipeMode = fl.asBool('p')
   const quiet = fl.asBool('q')
-  const mountPrefix = mountPrefixOf(archivePath.virtual, archivePath.resourcePath)
-  const destRaw = fl.asStr('d') ?? '/'
+  const mountPrefix = relay ? '' : mountPrefixOf(archivePath.virtual, archivePath.resourcePath)
+  const destRaw = extractDest(fl.asStr('d') ?? null, opts.cwd)
   const dest =
     mountPrefix !== '' && destRaw.startsWith(mountPrefix + '/')
       ? destRaw.slice(mountPrefix.length)
@@ -252,6 +258,7 @@ export async function unzipGeneric(
 
   const writes: Record<string, Uint8Array> = {}
   const outputLines: string[] = []
+  const made = new Set<string>()
   for (const e of selected) {
     const entryName = lstripSlash(e.name)
     const outPath = rstripSlash(dest) + '/' + rstripSlash(entryName)
@@ -260,13 +267,28 @@ export async function unzipGeneric(
       // A directory entry is the only record an empty directory leaves,
       // so it has to be recreated even though nothing is written inside
       // it.
-      await mkdir(makePathSpec(outPath), true)
+      if (stat !== undefined) {
+        await ensureDir(outPath, makePathSpec, mkdir, stat, made)
+      } else {
+        await mkdir(makePathSpec(outPath), true)
+      }
       if (!quiet) outputLines.push(`   creating: ${reportPath}/`)
       continue
     }
-    await ensureParents(mkdir, outPath)
+    const parentEnd = outPath.lastIndexOf('/')
+    const parent = parentEnd > 0 ? outPath.slice(0, parentEnd) : ''
+    if (parent !== '' && parent !== '/') {
+      if (stat !== undefined) {
+        await ensureDir(parent, makePathSpec, mkdir, stat, made)
+      } else {
+        await ensureParents(mkdir, outPath)
+      }
+    }
     await write(makePathSpec(outPath), e.data)
-    writes[outPath] = e.data
+    // Relay writes land on whichever mount owns each path and
+    // invalidate through the dispatcher; keying them here would have
+    // the runner prefix them onto this mount.
+    if (!relay) writes[outPath] = e.data
     if (!quiet) outputLines.push(`  inflating: ${reportPath}`)
   }
   const stdout: ByteSource | null =

@@ -42,6 +42,8 @@ import { type ExecuteFn, expandNode } from '../expand/node.ts'
 import type { TSNodeLike } from '../../shell/types.ts'
 import { handleCommand } from '../executor/command.ts'
 import { pathFlagScopes, positionalScopes } from '../executor/command/routing.ts'
+import { toScope } from '../executor/builtins/scope.ts'
+import { resolvePath } from '../../utils/path.ts'
 import { runWithTimeout } from '../../commands/builtin/utils/limit.ts'
 import { PolicyDenied, resolveLimit } from '../../policy/index.ts'
 import { BreakSignal, ContinueSignal } from '../executor/control.ts'
@@ -51,6 +53,7 @@ import {
   acceptsLine,
   followPaths,
   handleBash,
+  handleExecPath,
   handleCd,
   handleCommandBuiltin,
   handleType,
@@ -516,6 +519,13 @@ async function runArgv(
       if (p instanceof PathSpec) scopes.push(p)
     }
     scopes.push(...pathFlagScopes(name, args, session.cwd))
+    if (name.includes('/')) {
+      // A slash-carrying head word is a file the line executes (the
+      // path-execution branch below), and it lives in argv[0], not the
+      // operands, so a path-pattern guard would never see it without
+      // this row.
+      scopes.unshift(toScope(resolvePath(name, session.cwd)))
+    }
     const deny = await registry.policies.preCommand({
       command: name,
       paths: scopes,
@@ -537,6 +547,14 @@ async function runArgv(
         }),
       ]
     }
+  }
+
+  // Path execution: bash hands a slash-carrying head word to the
+  // loader, never to command lookup: no builtin, function, or CLI can
+  // claim it. After the admission gate so a policy sees the line like
+  // any other.
+  if (name.includes('/')) {
+    return handleExecPath(dispatch, executeFn, name, args, session, stdin)
   }
 
   // Unsupported bash builtins. Constructs the parser accepts but the

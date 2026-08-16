@@ -42,6 +42,13 @@ SPECS: dict[str, CommandSpec] = {
             Option(short="-C", type="str"),
             Option(short="-e", type="str", multiple=True),
             Option(short="-f", type="path", multiple=True),
+            # -a searches the extensions the -r walk skips as binary;
+            # explicit operands are always read as text, which is the
+            # documented divergence (no "binary file matches" rows).
+            Option(short="-a", long="--text"),
+            Option(long="--include", type="str", multiple=True),
+            Option(long="--exclude", type="str", multiple=True),
+            Option(long="--exclude-dir", type="str", multiple=True),
             # Accepted no-ops: output is never a tty, so plain output is
             # exactly what GNU produces with --color=auto (#471).
             Option(long="--color", type="str", value_optional=True),

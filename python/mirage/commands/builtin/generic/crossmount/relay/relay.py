@@ -21,6 +21,8 @@ from mirage.commands.builtin.generic.crossmount.relay.diff import run_diff
 from mirage.commands.builtin.generic.crossmount.relay.join import run_join
 from mirage.commands.builtin.generic.crossmount.relay.mv import run_mv
 from mirage.commands.builtin.generic.crossmount.relay.paste import run_paste
+from mirage.commands.builtin.generic.crossmount.relay.tar import run_tar
+from mirage.commands.builtin.generic.crossmount.relay.unzip import run_unzip
 from mirage.commands.builtin.generic.crossmount.types import Cmd, CrossResult
 from mirage.commands.spec.types import FlagValue
 from mirage.runtime.types import DispatchFn
@@ -30,6 +32,7 @@ from mirage.types import PathSpec
 async def run_relay(
         cmd_name: str,
         scopes: list[PathSpec],
+        text_args: list[str],
         flag_kwargs: dict[str, FlagValue],
         dispatch: DispatchFn,
         storage_key: Callable[[PathSpec], str] | None = None) -> CrossResult:
@@ -40,8 +43,10 @@ async def run_relay(
     its primitive mode, so output matches the single-mount commands.
 
     Args:
-        cmd_name (str): One of cp, mv, diff, cmp, paste, comm, join.
+        cmd_name (str): One of cp, mv, diff, cmp, paste, comm, join, tar.
         scopes (list[PathSpec]): Path operands in command-line order.
+        text_args (list[str]): Positional text operands (tar's member
+            selectors; empty for the transfer and merge commands).
         flag_kwargs (dict): Flags parsed against the shared command spec.
         dispatch (DispatchFn): Workspace operation dispatcher.
         storage_key (Callable | None): Maps an operand to its storage
@@ -60,4 +65,8 @@ async def run_relay(
         return await run_comm(scopes, flag_kwargs, dispatch)
     if cmd_name == Cmd.JOIN:
         return await run_join(scopes, flag_kwargs, dispatch)
+    if cmd_name == Cmd.TAR:
+        return await run_tar(scopes, text_args, flag_kwargs, dispatch)
+    if cmd_name == Cmd.UNZIP:
+        return await run_unzip(scopes, text_args, flag_kwargs, dispatch)
     return await run_cmp(scopes, flag_kwargs, dispatch)
