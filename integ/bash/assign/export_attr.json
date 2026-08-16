@@ -1119,6 +1119,40 @@
         "stdout": "declare -a QAX=([0]=\"b\")\n",
         "stderr": ""
       }
+    },
+    {
+      "id": "declare_x_stamps_what_stored_despite_a_bad_sibling",
+      "seq": 930433,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "declare -x QG2=1 1BAD2=x; declare -p QG2",
+      "expect": {
+        "exit": 0,
+        "stdout": "declare -x QG2=\"1\"\n",
+        "stderr": "bash: declare: `1BAD2=x': not a valid identifier\n"
+      }
     }
   ]
 }

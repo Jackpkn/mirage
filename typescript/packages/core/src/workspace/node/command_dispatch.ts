@@ -97,6 +97,7 @@ import { SLASH_KEEPS_LAST, UNSUPPORTED_BUILTINS, followsLastComponent } from '..
 import type { Session } from '../session/session.ts'
 import { homeDir, logicalCwd } from '../session/shell_dirs.ts'
 import { ensureVarVisible, sessionView } from '../session/state.ts'
+import { preSessionGate } from '../../policy/index.ts'
 import { ExecutionNode } from '../types.ts'
 
 type Result = [ByteSource | null, IOResult, ExecutionNode]
@@ -204,7 +205,7 @@ export async function executeCommand(
     prefixAssignments.push([key, v])
   }
 
-  for (const [k] of prefixAssignments) {
+  for (const [k, v] of prefixAssignments) {
     // The hidden gate runs first, as in setVar: calling a hidden name
     // "readonly" would leak that it exists. Both branches below write
     // session.env raw (a function-call prefix on purpose never
@@ -212,6 +213,20 @@ export async function executeCommand(
     // the host's value.
     try {
       ensureVarVisible(session, k)
+      // ...and `preSession` right after, with the value, because a
+      // prefix assignment is a session write like any other and the form
+      // exports it for the command. Only the hidden half was checked
+      // here, so a deployment refusing `SECRET_*` still saw
+      // `SECRET_K=leak printenv SECRET_K` print the secret: the seeding
+      // below goes through `seedVar`, which is the ungated door, so this
+      // loop is the only place the rule can be asked.
+      await preSessionGate(registry.policies, {
+        plane: 'env',
+        verb: 'set',
+        key: k,
+        value: v,
+        sessionId: session.sessionId,
+      })
     } catch (err) {
       if (!(err instanceof PolicyDenied)) throw err
       const stderr = new TextEncoder().encode(`bash: ${err.message}\n`)

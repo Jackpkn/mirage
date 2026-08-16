@@ -13,6 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { seedVar } from '../workspace/session/state.ts'
+import { VarAttr } from '../shell/variable.ts'
 import { afterEach, describe, expect, it } from 'vitest'
 import { RegisteredCommand } from '../commands/config.ts'
 import { CommandSpec, Operand } from '../commands/spec/types.ts'
@@ -226,6 +227,50 @@ describe('session-state writes go through the view', () => {
     const allowed = await ws.execute('export PUBLIC_X=1')
     expect(allowed.exitCode).toBe(0)
     expect(ws.env.PUBLIC_X).toBe('1')
+  })
+
+  it('a prefix assignment clears the gate', async () => {
+    // `SECRET=leak cmd` is a session write like any other, and the form
+    // puts it in the command's environment, so a deployment refusing
+    // `SECRET_*` has to be asked. Only the hidden half was checked here,
+    // and the seeding goes through the ungated door, so the secret
+    // reached the command and printed.
+    const ws = await makeWs([new DenySecretEnv()])
+    const denied = await ws.execute('SECRET_K=leak printenv SECRET_K')
+    expect(denied.exitCode).not.toBe(0)
+    expect(stderrStr(denied)).toContain('refused by policy')
+    expect(stdoutStr(denied)).toBe('')
+    // A name no rule covers still reaches the command.
+    const allowed = await ws.execute('OPEN_K=fine printenv OPEN_K')
+    expect(stdoutStr(allowed)).toBe('fine\n')
+  })
+
+  it('declare -x on an existing name clears the gate', async () => {
+    // `declare -x NAME` on a name that already exists writes no value,
+    // so the handler reaches the gate on no other path and the export
+    // mark is the only session write there is. Stamping it directly let
+    // an agent export a host-seeded credential the deployment refused.
+    const ws = await makeWs([new DenySecretEnv()])
+    const sess = ws.getSession(ws.defaultSessionId)
+    seedVar(sess, 'SECRET_TOKEN', 'hunter2')
+    const io = await ws.execute('declare -x SECRET_TOKEN')
+    expect(io.exitCode).not.toBe(0)
+    expect(stderrStr(io)).toContain('refused by policy')
+    expect(sess.vars.SECRET_TOKEN?.attrs.has(VarAttr.Export)).toBe(false)
+    expect(sess.vars.SECRET_TOKEN?.value).toBe('hunter2')
+  })
+
+  it('stamps what stored despite a bad sibling', async () => {
+    // GNU keeps the valid operands and reports the invalid one, so
+    // `declare -x GOOD=1 1BAD=x` exits 1 and still answers
+    // `declare -x GOOD="1"`. Gating the stamp on the aggregate status
+    // left GOOD unexported. Pinned on bash 5.2.37.
+    const ws = await makeWs([])
+    const bad = await ws.execute('declare -x QGOOD=1 1BAD=x')
+    expect(bad.exitCode).toBe(1)
+    expect(stderrStr(bad)).toContain('not a valid identifier')
+    const shown = await ws.execute('declare -p QGOOD')
+    expect(stdoutStr(shown)).toBe('declare -x QGOOD="1"\n')
   })
 
   it('command env is a snapshot, not the live dict', async () => {

@@ -517,6 +517,63 @@ def test_declaration_array_assignment_fires_the_gate():
     assert "SECRET_D" not in sess.arrays
 
 
+def test_a_prefix_assignment_clears_the_gate():
+    # `SECRET=leak cmd` is a session write like any other, and the form
+    # puts it in the command's environment, so a deployment refusing
+    # `SECRET_*` has to be asked. Only the hidden half was checked here,
+    # and the seeding goes through the ungated door, so the secret
+    # reached the command and printed.
+    ws = _two_mounts(policies=[DenySecretEnv()])
+
+    async def run():
+        denied = await ws.execute("SECRET_K=leak printenv SECRET_K")
+        out = await denied.stdout_str() if denied.stdout else ""
+        allowed = await ws.execute("OPEN_K=fine printenv OPEN_K")
+        return denied, out, await allowed.stdout_str()
+
+    denied, out, allowed_out = asyncio.run(run())
+    assert denied.exit_code != 0
+    assert b"refused by policy" in (denied.stderr or b"")
+    assert out == ""
+    # A name no rule covers still reaches the command.
+    assert allowed_out == "fine\n"
+
+
+def test_declare_x_on_an_existing_name_clears_the_gate():
+    # `declare -x NAME` on a name that already exists writes no value, so
+    # the handler reaches the gate on no other path and the export mark
+    # is the only session write there is. Stamping it directly let an
+    # agent export a host-seeded credential the deployment had refused.
+    ws = _two_mounts(policies=[DenySecretEnv()])
+    sess = ws._session_mgr.get(ws._session_mgr.default_id)
+    seed_var(sess, "SECRET_TOKEN", "hunter2")
+
+    io = asyncio.run(ws.execute("declare -x SECRET_TOKEN"))
+    assert io.exit_code != 0
+    assert b"refused by policy" in (io.stderr or b"")
+    assert VarAttr.EXPORT not in sess.vars["SECRET_TOKEN"].attrs
+    # The value is untouched and still readable as a shell variable.
+    assert sess.vars["SECRET_TOKEN"].value == "hunter2"
+
+
+def test_a_declaration_stamps_what_stored_despite_a_bad_sibling():
+    # GNU keeps the valid operands and reports the invalid one, so
+    # `declare -x GOOD=1 1BAD=x` exits 1 and still answers
+    # `declare -x GOOD="1"`. Gating the stamp on the aggregate status
+    # left GOOD unexported. Pinned on bash 5.2.37.
+    ws = _two_mounts()
+
+    async def run():
+        bad = await ws.execute("declare -x QGOOD=1 1BAD=x")
+        shown = await ws.execute("declare -p QGOOD")
+        return bad, await shown.stdout_str() if shown.stdout else ""
+
+    bad, shown = asyncio.run(run())
+    assert bad.exit_code == 1
+    assert b"not a valid identifier" in (bad.stderr or b"")
+    assert shown == 'declare -x QGOOD="1"\n'
+
+
 def test_readonly_name_refuses_a_declaration_array_store():
     # The staged-array store is the builtin's own; the shell's readonly
     # rule is pre-checked there, before the door is asked.

@@ -424,7 +424,13 @@ export class Session {
     for (const [name, v] of Object.entries(this.vars)) {
       if (v.attrs.size > 0) letters[name] = storedAttrs(v)
     }
-    if (Object.keys(letters).length > 0) data.var_attrs = letters
+    // Always written, even empty, because its *presence* is the
+    // discriminator: a payload without it is read as a bare process
+    // environment and every name in it comes back exported. Writing it
+    // only when non-empty made `export -n X` (or any session whose last
+    // attribute was cleared) serialize as a process environment, so the
+    // reload re-exported everything it held.
+    data.var_attrs = letters
     if (this.mountModes !== null) {
       data.mount_modes = Object.fromEntries(this.mountModes)
     }

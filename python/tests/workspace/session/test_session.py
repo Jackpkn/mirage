@@ -20,7 +20,7 @@ from mirage.workspace.session import Session
 from mirage.workspace.session.session import (CHILD_SHELL_FIELDS,
                                               INHERITED_FIELDS,
                                               TRANSIENT_FIELDS, vars_from_env)
-from mirage.workspace.session.state import seed_var
+from mirage.workspace.session.state import seed_var, set_attr
 
 
 def test_session_defaults():
@@ -275,6 +275,22 @@ def test_to_dict_carries_the_attributes_beside_the_values():
     # name has no value to carry and appears only in `var_attrs`.
     assert data["env"] == {"PWD": "/", "PLAIN": "hello", "EXPO": "world"}
     assert data["var_attrs"] == {"PWD": "x", "EXPO": "x", "MARKED": "rx"}
+
+
+def test_var_attrs_is_written_even_when_empty():
+    # Its *presence* is the discriminator, so it has to be there even
+    # with nothing in it. Written only when non-empty, a session whose
+    # last attribute had been cleared serialized as a bare process
+    # environment, and the reload re-exported everything it held.
+    s = Session(session_id="s1")
+    seed_var(s, "X", "secret")
+    # `export -n PWD` clears the one attribute a fresh session carries.
+    set_attr(s, "PWD", VarAttr.EXPORT, False)
+    data = s.to_dict()
+    assert data["var_attrs"] == {}
+    back = Session.from_dict(data)
+    assert back.vars["X"] == ShellVar("secret", frozenset())
+    assert VarAttr.EXPORT not in back.vars["PWD"].attrs
 
 
 def test_a_stored_session_round_trips_without_promoting_anything():

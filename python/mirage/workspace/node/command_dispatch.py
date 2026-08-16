@@ -20,6 +20,7 @@ from mirage.commands.builtin.utils.limit import run_with_timeout
 from mirage.io import IOResult
 from mirage.io.types import materialize
 from mirage.policy import CommandContext, PolicyDenied, resolve_limit
+from mirage.policy.types import SessionContext
 from mirage.runtime.policy import PolicyDecision
 from mirage.shell.bytes import encode_text
 from mirage.shell.types import NodeType as NT
@@ -40,7 +41,8 @@ from mirage.workspace.expand.globs import expand_boundary_globs
 from mirage.workspace.route import (SLASH_KEEPS_LAST, UNSUPPORTED_BUILTINS,
                                     follows_last_component)
 from mirage.workspace.session.shell_dirs import home_dir, logical_cwd
-from mirage.workspace.session.state import (ensure_var_visible, seed_var,
+from mirage.workspace.session.state import (ensure_var_visible,
+                                            pre_session_gate, seed_var,
                                             session_view, set_attr)
 from mirage.workspace.types import ExecutionNode
 
@@ -155,7 +157,7 @@ async def execute_command(
             v = raw_val
         prefix_assignments.append((key, v))
 
-    for k, _ in prefix_assignments:
+    for k, v in prefix_assignments:
         # The hidden gate runs first, as in set_var: calling a hidden
         # name "readonly" would leak that it exists. Both branches
         # below write session.env raw (a function-call prefix on
@@ -163,6 +165,20 @@ async def execute_command(
         # narrowed session clobber the host's value.
         try:
             ensure_var_visible(session, k)
+            # ...and `pre_session` right after, with the value, because a
+            # prefix assignment is a session write like any other and the
+            # form exports it for the command. Only the hidden half was
+            # checked here, so a deployment refusing `SECRET_*` still saw
+            # `SECRET_K=leak printenv SECRET_K` print the secret: the
+            # seeding below goes through `seed_var`, which is the ungated
+            # door, so this loop is the only place the rule can be asked.
+            await pre_session_gate(
+                registry.policies,
+                SessionContext(plane="env",
+                               verb="set",
+                               key=k,
+                               value=v,
+                               session_id=session.session_id))
         except PolicyDenied as exc:
             err = f"bash: {exc.strerror}\n".encode()
             return None, IOResult(exit_code=1,

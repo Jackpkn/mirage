@@ -300,13 +300,14 @@ async def _recurse_pipe_stderr(
     return stdout, io, exec_node
 
 
-def _stamp_export(
+async def _stamp_export(
     session: Session,
+    view: SessionView,
     flag_chars: set[str],
     assignments: list[str],
     staged: list[tuple[str, bool, list[str]]] | None,
-    io: IOResult,
-) -> None:
+    stored: list[str],
+) -> tuple[Any, IOResult, ExecutionNode] | None:
     """Mark every name a `-x` declaration stored as exported.
 
     `declare -x NAME` marks an existing name without touching its value
@@ -321,21 +322,48 @@ def _stamp_export(
     `declare -rx X=1` goes down the readonly one and still owes the
     export attribute.
 
+    Only the names the handler reports storing are marked, and marking
+    is not gated on the aggregate status: a declaration keeps its valid
+    operands when a sibling refuses, so `declare -x GOOD=1 1BAD=x` exits
+    1 and still answers `declare -x GOOD="1"`. Reading the exit code
+    instead left `GOOD` unexported.
+
+    A name that carried a value went through `view.set`, so its mark
+    rides on that decision; a bare name did not, and on an *existing*
+    name the handler writes nothing at all, so the mark is the only
+    session write there is and has to clear `pre_session` itself.
+    Stamping it through `set_attr` let `declare -x AWS_TOKEN` export a
+    host-seeded credential the deployment had refused.
+
     Args:
         session (Session): shell session state.
+        view (SessionView): the session plane's gated door.
         flag_chars (set[str]): the declaration's collected flag letters.
         assignments (list[str]): `NAME` / `NAME=value` operands.
         staged (list[tuple[str, bool, list[str]]] | None): staged array
             literals from the same declaration.
-        io (IOResult): what the handler answered; a non-zero exit means
-            nothing was stored, so nothing is marked.
+        stored (list[str]): the names the handler actually stored.
+
+    Returns:
+        A refusal result when the gate denied a mark, else None.
     """
-    if "x" not in flag_chars or io.exit_code != 0:
-        return
-    marked = [a.partition("=")[0] for a in assignments]
-    marked += [name for name, _, _ in staged or []]
-    for name in marked:
-        set_attr(session, name, VarAttr.EXPORT)
+    if "x" not in flag_chars:
+        return None
+    covered = {a.partition("=")[0] for a in assignments if "=" in a}
+    covered |= {name for name, _, _ in staged or []}
+    for name in stored:
+        if name in covered:
+            set_attr(session, name, VarAttr.EXPORT)
+            continue
+        try:
+            await view.mark(name, VarAttr.EXPORT, True)
+        except PolicyDenied as exc:
+            err = f"{exc.strerror}\n".encode()
+            return None, IOResult(exit_code=1,
+                                  stderr=err), ExecutionNode(command="declare",
+                                                             exit_code=1,
+                                                             stderr=err)
+    return None
 
 
 async def execute_node(
@@ -782,25 +810,28 @@ async def execute_node(
         # the session door and owns both refusal voices, so the executor
         # only expands and stages.
         if is_readonly:
+            decl_view = session_view(session, namespace.registry.policies)
+            stored: list[str] = []
             # Only the `readonly` keyword owns -p / illegal-option
             # handling; `declare -r` keeps names only.
             if keyword == "readonly":
-                result = await handle_readonly(
-                    flag_words + assignments,
-                    session,
-                    session_view(session, namespace.registry.policies),
-                    arrays=staged)
+                result = await handle_readonly(flag_words + assignments,
+                                               session,
+                                               decl_view,
+                                               arrays=staged,
+                                               stored=stored)
             else:
-                result = await handle_readonly(
-                    assignments,
-                    session,
-                    session_view(session, namespace.registry.policies),
-                    arrays=staged)
+                result = await handle_readonly(assignments,
+                                               session,
+                                               decl_view,
+                                               arrays=staged,
+                                               stored=stored)
             # `declare -rx X=1` carries both attributes: GNU prints
             # `declare -rx X="1"`. Readonly answers first, so the export
             # stamp has to land here too, or `-r` silently ate the `-x`.
-            _stamp_export(session, flag_chars, assignments, staged, result[1])
-            return result
+            refused = await _stamp_export(session, decl_view, flag_chars,
+                                          assignments, staged, stored)
+            return refused if refused is not None else result
         # declare/typeset scope like `local` inside a function (bash
         # semantics) and assign globally at top level, which is exactly
         # handle_local's fallback when no function scope is active.
@@ -809,25 +840,20 @@ async def execute_node(
             # the assignment path runs at all.
             if "p" in flag_chars and keyword in ("declare", "typeset"):
                 return await handle_declare_print(assignments, session)
+            decl_view = session_view(session, namespace.registry.policies)
+            stored = []
             result = await handle_local(
                 assignments,
                 session,
-                session_view(session, namespace.registry.policies),
+                decl_view,
                 arrays=staged,
                 # `declare`/`typeset` share this handler but have to name
                 # themselves in a diagnostic rather than say `local`.
-                cmd="local" if keyword == NT.LOCAL else str(keyword))
-            # `declare -x NAME` marks an existing name without touching
-            # its value, and `declare -x NAME=v` assigns then marks, so
-            # the stamp lands after the assignment either way. The
-            # staged array literals are stamped too, since an array is
-            # as exportable as a scalar: GNU answers `declare -x A=(a b)`
-            # with `declare -ax A=([0]="a" [1]="b")`, and reading only
-            # `assignments` left every `declare -x NAME=(...)` unmarked.
-            # Only on a run that stored something: a refusal returns
-            # non-zero and must not leave the attribute behind.
-            _stamp_export(session, flag_chars, assignments, staged, result[1])
-            return result
+                cmd="local" if keyword == NT.LOCAL else str(keyword),
+                stored=stored)
+            refused = await _stamp_export(session, decl_view, flag_chars,
+                                          assignments, staged, stored)
+            return refused if refused is not None else result
         # Pass export flags through so -p / bare print and bad options work.
         return await handle_export(flag_words + assignments,
                                    session,

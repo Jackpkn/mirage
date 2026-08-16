@@ -346,23 +346,53 @@ export interface ExecuteNodeDeps {
  *
  * Shared by the readonly and the plain declaration branch because
  * `declare -rx X=1` goes down the readonly one and still owes the export
- * attribute. A non-zero exit means nothing was stored, so nothing is
- * marked.
+ * attribute.
+ *
+ * Only the names the handler reports storing are marked, and marking is
+ * not gated on the aggregate status: a declaration keeps its valid
+ * operands when a sibling refuses, so `declare -x GOOD=1 1BAD=x` exits 1
+ * and still answers `declare -x GOOD="1"`.
+ *
+ * A name that carried a value went through `view.set`, so its mark rides
+ * on that decision; a bare name did not, and on an *existing* name the
+ * handler writes nothing at all, so the mark is the only session write
+ * there is and has to clear `pre_session` itself. Stamping it through
+ * `setAttr` let `declare -x AWS_TOKEN` export a host-seeded credential
+ * the deployment had refused.
  */
-function stampExport(
+async function stampExport(
   session: Session,
+  view: SessionView,
   flagChars: Set<string>,
   assignments: string[],
   staged: { name: string; append: boolean; items: string[] }[],
-  io: IOResult,
-): void {
-  if (!flagChars.has('x') || io.exitCode !== 0) return
-  const marked = assignments.map((a) => {
+  stored: string[],
+): Promise<Result | null> {
+  if (!flagChars.has('x')) return null
+  const covered = new Set<string>()
+  for (const a of assignments) {
     const eq = a.indexOf('=')
-    return eq >= 0 ? a.slice(0, eq) : a
-  })
-  for (const { name } of staged) marked.push(name)
-  for (const name of marked) setAttr(session, name, VarAttr.Export)
+    if (eq >= 0) covered.add(a.slice(0, eq))
+  }
+  for (const { name } of staged) covered.add(name)
+  for (const name of stored) {
+    if (covered.has(name)) {
+      setAttr(session, name, VarAttr.Export)
+      continue
+    }
+    try {
+      await view.mark(name, VarAttr.Export, true)
+    } catch (err) {
+      if (!(err instanceof PolicyDenied)) throw err
+      const encoded = new TextEncoder().encode(`${err.message}\n`)
+      return [
+        null,
+        new IOResult({ exitCode: 1, stderr: encoded }),
+        new ExecutionNode({ command: 'declare', exitCode: 1, stderr: encoded }),
+      ]
+    }
+  }
+  return null
 }
 
 export async function executeNode(
@@ -881,25 +911,17 @@ export async function executeNode(
     if (isReadonly) {
       // Only the `readonly` keyword owns -p / illegal-option handling;
       // `declare -r` keeps names only.
+      const declView = sessionView(session, registry.policies)
+      const stored: string[] = []
       const result =
         keyword === 'readonly'
-          ? await handleReadonly(
-              [...flagWords, ...assignments],
-              session,
-              sessionView(session, registry.policies),
-              staged,
-            )
-          : await handleReadonly(
-              assignments,
-              session,
-              sessionView(session, registry.policies),
-              staged,
-            )
+          ? await handleReadonly([...flagWords, ...assignments], session, declView, staged, stored)
+          : await handleReadonly(assignments, session, declView, staged, stored)
       // `declare -rx X=1` carries both attributes: GNU prints
       // `declare -rx X="1"`. Readonly answers first, so the export stamp
       // has to land here too, or `-r` silently ate the `-x`.
-      stampExport(session, flagChars, assignments, staged, result[1])
-      return result
+      const refused = await stampExport(session, declView, flagChars, assignments, staged, stored)
+      return refused ?? result
     }
     // declare/typeset scope like `local` inside a function (bash
     // semantics) and assign globally at top level, which is exactly
@@ -910,26 +932,27 @@ export async function executeNode(
       if (flagChars.has('p') && (keyword === 'declare' || keyword === 'typeset')) {
         return handleDeclarePrint(assignments, session)
       }
+      const declView2 = sessionView(session, registry.policies)
+      const stored2: string[] = []
       const result = await handleLocal(
         assignments,
         session,
-        sessionView(session, registry.policies),
+        declView2,
         staged,
         // `declare`/`typeset` share this handler but have to name
         // themselves in a diagnostic rather than say `local`.
         keyword === NT.LOCAL ? 'local' : keyword,
+        stored2,
       )
-      // `declare -x NAME` marks an existing name without touching its
-      // value, and `declare -x NAME=v` assigns then marks, so the stamp
-      // lands after the assignment either way. The staged array literals
-      // are stamped too, since an array is as exportable as a scalar:
-      // GNU answers `declare -x A=(a b)` with
-      // `declare -ax A=([0]="a" [1]="b")`, and reading only `assignments`
-      // left every `declare -x NAME=(...)` unmarked. Only on a run that
-      // stored something: a refusal returns non-zero and must not leave
-      // the attribute behind.
-      stampExport(session, flagChars, assignments, staged, result[1])
-      return result
+      const refused2 = await stampExport(
+        session,
+        declView2,
+        flagChars,
+        assignments,
+        staged,
+        stored2,
+      )
+      return refused2 ?? result
     }
     // Pass export flags through so -p / bare print and illegal options work.
     return handleExport(

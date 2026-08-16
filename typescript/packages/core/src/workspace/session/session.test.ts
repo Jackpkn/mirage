@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { makeVar, VarAttr } from '../../shell/variable.ts'
-import { seedVar } from './state.ts'
+import { seedVar, setAttr } from './state.ts'
 import { varsFromEnv } from './session.ts'
 import { describe, expect, it } from 'vitest'
 import { Session } from './session.ts'
@@ -221,6 +221,20 @@ describe('a stored session keeps its attributes', () => {
     // a cross-language handoff both mean.
     const back = Session.fromJSON({ session_id: 'x', env: { A: '1' } })
     expect([...(back.vars.A?.attrs ?? [])]).toEqual([VarAttr.Export])
+  })
+
+  it('writes var_attrs even when empty', () => {
+    // Its *presence* is the discriminator, so it has to be there even
+    // with nothing in it. Written only when non-empty, a session whose
+    // last attribute had been cleared serialized as a bare process
+    // environment, and the reload re-exported everything it held.
+    const s = new Session({ sessionId: 's1' })
+    seedVar(s, 'X', 'secret')
+    setAttr(s, 'PWD', VarAttr.Export, false)
+    const json = s.toJSON() as { var_attrs: Record<string, string> }
+    expect(json.var_attrs).toEqual({})
+    const back = Session.fromJSON(json as never)
+    expect(back.vars.X?.attrs.has(VarAttr.Export)).toBe(false)
   })
 
   it('carries an unset marked name through with no value', () => {

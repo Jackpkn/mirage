@@ -97,6 +97,7 @@ async def _store_staged_arrays(
     mark: VarAttr | None = None,
     on: bool = True,
     fatal: bool = False,
+    stored: list[str] | None = None,
 ) -> tuple[ByteSource | None, IOResult, ExecutionNode] | None:
     """Store a declaration's array literals through the session door.
 
@@ -129,6 +130,10 @@ async def _store_staged_arrays(
             the mark unapplied left an exported array exported.
         fatal (bool): render a readonly refusal as the fatal
             assignment error instead of a builtin failure.
+        stored (list[str] | None): filled with each name that actually
+            stored, in order. A declaration keeps its valid operands
+            when a sibling refuses, so the caller cannot read "what was
+            written" off the aggregate exit status.
 
     Returns:
         The refusal result, or None when every literal stored.
@@ -157,6 +162,8 @@ async def _store_staged_arrays(
             await view.set(name, base)
         except PolicyDenied as exc:
             return _refusal(cmd, exc)
+        if stored is not None:
+            stored.append(name)
         if mark is not None:
             # Ungated on purpose: the `view.set` immediately above put
             # this same name through the gate, so re-asking would show a
@@ -539,6 +546,7 @@ async def handle_readonly(
     session: Session,
     state: SessionView | None = None,
     arrays: list[tuple[str, bool, list[str]]] | None = None,
+    stored: list[str] | None = None,
 ) -> tuple[ByteSource | None, IOResult, ExecutionNode]:
     """Mark names readonly, or print them (``readonly -p`` / bare form).
 
@@ -565,7 +573,8 @@ async def handle_readonly(
                                              view,
                                              arrays,
                                              mark=VarAttr.READONLY,
-                                             fatal=True)
+                                             fatal=True,
+                                             stored=stored)
         if refused is not None:
             return refused
     errors: list[str] = []
@@ -585,6 +594,8 @@ async def handle_readonly(
             # Ungated: the `view.set` above already put this name
             # through the gate, so the mark rides on that decision.
             set_attr(session, key, VarAttr.READONLY)
+            if stored is not None:
+                stored.append(key)
         else:
             # Gated, exactly as `export NAME` is. The bare form writes no
             # value, so it has no `view.set` to ride on, and marking
@@ -596,6 +607,8 @@ async def handle_readonly(
                 await view.mark(assign, VarAttr.READONLY, True)
             except PolicyDenied as exc:
                 return _refusal("readonly", exc)
+            if stored is not None:
+                stored.append(assign)
     if errors:
         return _identifier_failure("readonly", errors)
     return None, IOResult(), ExecutionNode(command="readonly", exit_code=0)
@@ -1040,6 +1053,7 @@ async def handle_local(
     state: SessionView | None = None,
     arrays: list[tuple[str, bool, list[str]]] | None = None,
     cmd: str = "local",
+    stored: list[str] | None = None,
 ) -> tuple[ByteSource | None, IOResult, ExecutionNode]:
     """Declare names in the running function's scope, or globally.
 
@@ -1071,7 +1085,8 @@ async def handle_local(
                                              session,
                                              view,
                                              arrays,
-                                             fatal=session._local_vars is None)
+                                             fatal=session._local_vars is None,
+                                             stored=stored)
         if refused is not None:
             return refused
     errors: list[str] = []
@@ -1090,6 +1105,8 @@ async def handle_local(
                 await view.set(key, val)
             except PolicyDenied as exc:
                 return _refusal(cmd, exc)
+            if stored is not None:
+                stored.append(key)
         else:
             if local_vars is not None and assign not in local_vars:
                 local_vars[assign] = session.vars.get(assign)
@@ -1111,6 +1128,8 @@ async def handle_local(
                     await view.mark(assign, None, True)
                 except PolicyDenied as exc:
                     return _refusal(cmd, exc)
+            if stored is not None:
+                stored.append(assign)
     if errors:
         return _identifier_failure(cmd, errors)
     return None, IOResult(), ExecutionNode(command=cmd, exit_code=0)

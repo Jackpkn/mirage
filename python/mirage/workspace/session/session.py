@@ -233,12 +233,16 @@ class Session:
             "created_at": self.created_at,
             "generation": self.generation,
         }
-        letters = {
+        # Always written, even empty, because its *presence* is the
+        # discriminator: a payload without it is read as a bare process
+        # environment and every name in it comes back exported. Writing
+        # it only when non-empty made `export -n X` (or any session whose
+        # last attribute was cleared) serialize as a process environment,
+        # so the reload re-exported everything it held.
+        data["var_attrs"] = {
             name: stored_attrs(var)
             for name, var in self.vars.items() if var.attrs
         }
-        if letters:
-            data["var_attrs"] = letters
         if self.mount_modes is not None:
             data["mount_modes"] = {
                 prefix: mode.value

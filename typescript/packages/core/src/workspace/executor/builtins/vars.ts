@@ -101,6 +101,10 @@ function readonlyRefusal(cmd: string, name: string): Result {
  * `export ARR=(a b)` stored the array and never marked it, so GNU's
  * `declare -ax` came out `declare -a`.
  *
+ * `stored` is filled with each name that actually stored, in order. A
+ * declaration keeps its valid operands when a sibling refuses, so the
+ * caller cannot read "what was written" off the aggregate exit status.
+ *
  * `on` is the direction of that mark. `export -n ARR=(b)` stores the
  * array and takes the attribute *off*, and the store keeps whatever the
  * name already carried, so leaving the mark unapplied left an exported
@@ -120,6 +124,7 @@ async function storeStagedArrays(
   mark: VarAttr | null = null,
   on = true,
   fatal = false,
+  stored: string[] | null = null,
 ): Promise<Result | null> {
   for (const { name, append, items } of arrays) {
     if (view.isReadonly(name)) {
@@ -149,6 +154,7 @@ async function storeStagedArrays(
       if (err instanceof PolicyDenied) return doorRefusal(cmd, err)
       throw err
     }
+    if (stored !== null) stored.push(name)
     // Ungated on purpose: the `view.set` immediately above put this same
     // name through the gate, so re-asking would show a policy two writes
     // for one operand.
@@ -489,6 +495,7 @@ export async function handleReadonly(
   session: Session,
   state: SessionView | null = null,
   arrays: { name: string; append: boolean; items: string[] }[] | null = null,
+  stored: string[] | null = null,
 ): Promise<Result> {
   const { flags, names, bad } = splitDeclFlags(assignments, READONLY_FLAGS)
   if (bad !== null) {
@@ -516,6 +523,7 @@ export async function handleReadonly(
       VarAttr.Readonly,
       true,
       true,
+      stored,
     )
     if (refused !== null) return refused
   }
@@ -539,6 +547,7 @@ export async function handleReadonly(
       // Ungated: the `view.set` above already put this name through the
       // gate, so the mark rides on that decision.
       setAttr(session, key, VarAttr.Readonly)
+      if (stored !== null) stored.push(key)
     } else {
       // Gated, exactly as `export NAME` is. The bare form writes no
       // value, so it has no `view.set` to ride on, and marking through
@@ -551,6 +560,7 @@ export async function handleReadonly(
         if (err instanceof PolicyDenied) return doorRefusal('readonly', err)
         throw err
       }
+      if (stored !== null) stored.push(assign)
     }
   }
   if (errors.length > 0) return identifierFailure('readonly', errors)
@@ -938,6 +948,7 @@ export async function handleLocal(
   state: SessionView | null = null,
   arrays: { name: string; append: boolean; items: string[] }[] | null = null,
   cmd = 'local',
+  stored: string[] | null = null,
 ): Promise<Result> {
   const locals = session.localVars
   if (cmd === 'local' && locals === null) {
@@ -955,7 +966,16 @@ export async function handleLocal(
   }
   const view = viewOf(session, state)
   if (arrays !== null && arrays.length > 0) {
-    const refused = await storeStagedArrays(cmd, session, view, arrays, null, true, locals === null)
+    const refused = await storeStagedArrays(
+      cmd,
+      session,
+      view,
+      arrays,
+      null,
+      true,
+      locals === null,
+      stored,
+    )
     if (refused !== null) return refused
   }
   const errors: string[] = []
@@ -978,6 +998,7 @@ export async function handleLocal(
         if (err instanceof PolicyDenied) return doorRefusal(cmd, err)
         throw err
       }
+      if (stored !== null) stored.push(key)
     } else {
       if (locals !== null && !locals.has(assign)) {
         locals.set(assign, sessionEntry(session.vars, assign) ?? null)
@@ -1000,6 +1021,7 @@ export async function handleLocal(
           throw err
         }
       }
+      if (stored !== null) stored.push(assign)
     }
   }
   if (errors.length > 0) return identifierFailure(cmd, errors)
