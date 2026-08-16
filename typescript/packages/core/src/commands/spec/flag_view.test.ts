@@ -128,3 +128,12 @@ describe('FlagView — count values', () => {
     expect(fl.asBool('append')).toBe(true)
   })
 })
+
+describe('FlagView.typedOrder', () => {
+  it('follows bag insertion order and drops absent names', () => {
+    const fl = new FlagView({ exclude: ['a'], n: true, include: ['b'] })
+    expect(fl.typedOrder('include', 'exclude')).toEqual(['exclude', 'include'])
+    expect(fl.typedOrder('include')).toEqual(['include'])
+    expect(fl.typedOrder('color')).toEqual([])
+  })
+})

@@ -24,10 +24,14 @@
  * mount-root policy at admission, and the cross-mount router deciding
  * whether a span is real. Only the first word may be GNU's dashless
  * option cluster (`tar cf a.tar d`), so a later bare word is an operand
- * and cannot turn the mode on.
+ * and cannot turn the mode on. `--` ends the scan the way it ends GNU's
+ * option parsing: a later `-c` names a member, and reading it as the
+ * create flag would refuse the very selector fix this gate exists to
+ * protect (`tar -xf a.tar -C /dst -- -c`).
  */
 export function isCreateMode(argv: readonly string[]): boolean {
   for (const [i, tok] of argv.entries()) {
+    if (tok === '--') return false
     if (tok === '--create') return true
     if (tok.startsWith('--')) continue
     if (tok.startsWith('-')) {

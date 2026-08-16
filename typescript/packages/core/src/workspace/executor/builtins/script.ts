@@ -234,6 +234,31 @@ async function readScriptFile(
 }
 
 /** The interpreter words a script's first line names, env resolved. */
+/**
+ * Consume env's -S/--split-string option on a shebang line.
+ *
+ * GNU env documents -S as the facility for passing an interpreter plus
+ * options through a shebang (the kernel hands env everything after it
+ * as one argument, and -S re-splits it), so the option is spelling, not
+ * a word: `-S bash -x`, `-Sbash -x` and `--split-string=bash -x` all
+ * name bash. The line is already whitespace-split here, so consuming
+ * the option is all that is left.
+ */
+function envSplitString(words: string[]): string[] {
+  const first = words[0]
+  if (first === undefined) return words
+  if (first === '-S' || first === '--split-string') return words.slice(1)
+  let head: string
+  if (first.startsWith('--split-string=')) {
+    head = first.slice('--split-string='.length)
+  } else if (first.startsWith('-S')) {
+    head = first.slice(2)
+  } else {
+    return words
+  }
+  return head === '' ? words.slice(1) : [head, ...words.slice(1)]
+}
+
 function shebangWords(script: string): string[] {
   const first = script.split('\n', 1)[0] ?? ''
   if (!first.startsWith('#!')) return []
@@ -244,11 +269,11 @@ function shebangWords(script: string): string[] {
     .filter((w) => w !== '')
   const head = words[0] ?? ''
   if (head.slice(head.lastIndexOf('/') + 1) === 'env') {
-    words = words.slice(1)
-    return words
+    words = envSplitString(words.slice(1))
   }
-  if (words.length > 0) {
-    words[0] = head.slice(head.lastIndexOf('/') + 1)
+  const lead = words[0]
+  if (lead !== undefined) {
+    words[0] = lead.slice(lead.lastIndexOf('/') + 1)
   }
   return words
 }

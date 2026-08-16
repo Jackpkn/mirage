@@ -27,7 +27,8 @@ from mirage.shell.types import ShellBuiltin as SB
 from mirage.shell.xtrace import trace_command
 from mirage.types import PathSpec, Producer, word_text
 from mirage.utils.glob_walk import glob_pattern
-from mirage.utils.path import CycleError
+from mirage.utils.path import CycleError, resolve_path
+from mirage.workspace.executor.builtins.scope import _to_scope
 from mirage.workspace.executor.command import handle_command
 from mirage.workspace.executor.command.routing import (path_flag_scopes,
                                                        positional_scopes)
@@ -346,6 +347,12 @@ async def _run_argv(
     if name:
         scopes = [p for p in operands if isinstance(p, PathSpec)]
         scopes.extend(path_flag_scopes(name, args, session.cwd))
+        if "/" in name:
+            # A slash-carrying head word is a file the line executes
+            # (the path-execution branch below), and it lives in
+            # argv[0], not the operands, so a path-pattern guard would
+            # never see it without this row.
+            scopes.insert(0, _to_scope(resolve_path(name, session.cwd)))
         deny = await registry.policies.pre_command(
             CommandContext(command=name,
                            paths=tuple(scopes),

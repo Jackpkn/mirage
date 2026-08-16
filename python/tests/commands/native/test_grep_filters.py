@@ -28,13 +28,69 @@ def test_include_filters_the_recursive_walk(env):
                    "/data/sub/inner.tex:1:score 7\n")
 
 
-def test_exclude_wins_over_include(env):
+def test_a_later_exclude_overrides_an_earlier_include(env):
     _seed(env)
     result = asyncio.run(
         env.ws.execute(
             "grep -r --include='*.tex' --exclude='notes.*' score /data"))
     assert result.exit_code == 0
     assert result.stdout == b"/data/sub/inner.tex:score 7\n"
+
+
+def test_a_later_include_overrides_an_earlier_exclude(env):
+    # GNU 3.11 resolves the two kinds by line order, so the reversed
+    # spelling searches what the previous test skipped.
+    _seed(env)
+    result = asyncio.run(
+        env.ws.execute(
+            "grep -r --exclude='notes.*' --include='*.tex' score /data"))
+    assert result.exit_code == 0
+    assert result.stdout == (b"/data/notes.tex:score 9\n"
+                             b"/data/sub/inner.tex:score 7\n")
+
+
+def test_same_pattern_resolves_by_line_order(env):
+    # Pinned GNU 3.11: include-then-exclude of one pattern skips the
+    # file, exclude-then-include searches it. The reversed order also
+    # flips the no-match default, which is what admits notes.txt below.
+    _seed(env)
+    skipped = asyncio.run(
+        env.ws.execute(
+            "grep -r --include='*.tex' --exclude='*.tex' score /data"))
+    assert skipped.exit_code == 1
+    searched = asyncio.run(
+        env.ws.execute(
+            "grep -r --exclude='*.tex' --include='*.tex' score /data"))
+    assert searched.exit_code == 0
+    assert searched.stdout == (b"/data/notes.tex:score 9\n"
+                               b"/data/notes.txt:score 8\n"
+                               b"/data/sub/inner.tex:score 7\n")
+
+
+def test_no_match_default_follows_the_first_kind(env):
+    # GNU 3.11: a file matching no rule is searched when the first
+    # filter option is an exclude, skipped when it is an include.
+    _seed(env)
+    exclude_first = asyncio.run(
+        env.ws.execute(
+            "grep -r --exclude='*.log' --include='*.zzz' score /data"))
+    assert exclude_first.exit_code == 0
+    include_first = asyncio.run(
+        env.ws.execute(
+            "grep -r --include='*.zzz' --exclude='*.log' score /data"))
+    assert include_first.exit_code == 1
+
+
+def test_explicit_operand_follows_the_order_rule(env):
+    _seed(env)
+    admitted = asyncio.run(
+        env.ws.execute(
+            "grep --exclude='*.txt' --include='*.txt' score /data/notes.txt"))
+    assert admitted.exit_code == 0
+    skipped = asyncio.run(
+        env.ws.execute(
+            "grep --include='*.txt' --exclude='*.txt' score /data/notes.txt"))
+    assert skipped.exit_code == 1
 
 
 def test_exclude_dir_prunes_the_walk(env):

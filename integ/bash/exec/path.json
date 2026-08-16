@@ -185,6 +185,37 @@
         "stdout": "exit=127\n",
         "stderr": "ruby: command not found\n"
       }
+    },
+    {
+      "id": "exec_path_env_split_string_applies_options",
+      "seq": 962336,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "gridfs",
+        "s3-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "printf '#!/usr/bin/env -S bash -x\\necho ok\\n' > /data/es.sh && /data/es.sh",
+      "expect": {
+        "exit": 0,
+        "stdout": "ok\n",
+        "stderr": "+ echo ok\n"
+      }
     }
   ]
 }

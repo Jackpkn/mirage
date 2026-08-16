@@ -45,10 +45,56 @@ describe('grep --include/--exclude/--exclude-dir and -a', () => {
     expect(stdoutStr(io)).toBe('/notes.tex:1:score 9\n/sub/inner.tex:1:score 7\n')
   })
 
-  it('--exclude wins over --include', async () => {
+  it('a later exclude overrides an earlier include', async () => {
     const ws = await makeWs()
     const io = await ws.execute("grep -r --include='*.tex' --exclude='notes.*' score /")
     expect(stdoutStr(io)).toBe('/sub/inner.tex:score 7\n')
+  })
+
+  it('a later include overrides an earlier exclude', async () => {
+    // GNU 3.11 resolves the two kinds by line order, so the reversed
+    // spelling searches what the previous test skipped.
+    const ws = await makeWs()
+    const io = await ws.execute("grep -r --exclude='notes.*' --include='*.tex' score /")
+    expect(io.exitCode).toBe(0)
+    expect(stdoutStr(io)).toBe('/notes.tex:score 9\n/sub/inner.tex:score 7\n')
+  })
+
+  it('the same pattern resolves by line order', async () => {
+    // Pinned GNU 3.11: include-then-exclude of one pattern skips the
+    // file, exclude-then-include searches it. The reversed order also
+    // flips the no-match default, which is what admits notes.txt.
+    const ws = await makeWs()
+    const skipped = await ws.execute("grep -r --include='*.tex' --exclude='*.tex' score /")
+    expect(skipped.exitCode).toBe(1)
+    // The reversed order admits every no-match file, /.bash_history
+    // included, so the pattern requires the digit only file bodies
+    // carry to keep the recorded command lines out of the output.
+    const searched = await ws.execute(
+      "grep -rE --exclude='*.tex' --include='*.tex' 'score [0-9]' /",
+    )
+    expect(searched.exitCode).toBe(0)
+    expect(stdoutStr(searched)).toBe(
+      '/notes.tex:score 9\n/notes.txt:score 8\n/sub/inner.tex:score 7\n',
+    )
+  })
+
+  it('the no-match default follows the first kind', async () => {
+    // GNU 3.11: a file matching no rule is searched when the first
+    // filter option is an exclude, skipped when it is an include.
+    const ws = await makeWs()
+    const excludeFirst = await ws.execute("grep -r --exclude='*.log' --include='*.zzz' score /")
+    expect(excludeFirst.exitCode).toBe(0)
+    const includeFirst = await ws.execute("grep -r --include='*.zzz' --exclude='*.log' score /")
+    expect(includeFirst.exitCode).toBe(1)
+  })
+
+  it('an explicit operand follows the order rule', async () => {
+    const ws = await makeWs()
+    const admitted = await ws.execute("grep --exclude='*.txt' --include='*.txt' score /notes.txt")
+    expect(admitted.exitCode).toBe(0)
+    const skipped = await ws.execute("grep --include='*.txt' --exclude='*.txt' score /notes.txt")
+    expect(skipped.exitCode).toBe(1)
   })
 
   it('--exclude-dir prunes the walk', async () => {

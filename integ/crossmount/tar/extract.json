@@ -101,6 +101,40 @@
         "stdout": "exit=1\n",
         "stderr": "tar: paths span multiple mounts (/data/, /data2/), cross-mount not supported\n"
       }
+    },
+    {
+      "id": "xm_tar_option_terminator_keeps_selectors",
+      "seq": 962313,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "mkdir -p /data/xtd && echo dash | tee '/data/xtd/-c' > /dev/null && tar -cf /data/xtd.tar -C /data/xtd -- -c && tar -xf /data/xtd.tar -C /data2/xdout -- -c && cat '/data2/xdout/-c'",
+      "expect": {
+        "exit": 0,
+        "stdout": "dash\n",
+        "stderr": ""
+      }
     }
   ]
 }

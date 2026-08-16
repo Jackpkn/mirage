@@ -237,6 +237,108 @@
         "stdout": "score\n",
         "stderr": ""
       }
+    },
+    {
+      "id": "grep_a_later_include_overrides_an_earlier_exclude",
+      "seq": 962327,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "grep -r --exclude='notes.*' --include='*.tex' score /data/gflt",
+      "expect": {
+        "exit": 0,
+        "stdout": "/data/gflt/notes.tex:score 9\n/data/gflt/sub/inner.tex:score 7\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "grep_no_match_default_admits_after_a_leading_exclude",
+      "seq": 962328,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "grep -rn --exclude='*.log' --include='*.zzz' score /data/gflt",
+      "expect": {
+        "exit": 0,
+        "stdout": "/data/gflt/notes.tex:1:score 9\n/data/gflt/notes.txt:1:score 8\n/data/gflt/sub/inner.tex:1:score 7\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "grep_include_then_exclude_of_one_pattern_skips",
+      "seq": 962329,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "grep -r --include='*.tex' --exclude='*.tex' score /data/gflt; echo exit=$?",
+      "expect": {
+        "exit": 0,
+        "stdout": "exit=1\n",
+        "stderr": ""
+      }
     }
   ]
 }

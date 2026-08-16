@@ -88,4 +88,68 @@ describe('direct path execution', () => {
     const io = await ws.execute('/child.sh; echo "$?:$(pwd)"')
     expect(stdoutStr(io)).toBe('3:/\n')
   })
+
+  it("consumes env's -S and applies the split interpreter options", async () => {
+    // GNU env's -S is how a shebang passes interpreter options; the
+    // option must never read as the interpreter itself.
+    const ws = await makeWs()
+    await ws.execute("printf '#!/usr/bin/env -S bash -x\\necho ok\\n' > /work/s.sh")
+    const io = await ws.execute('/work/s.sh')
+    expect(stdoutStr(io)).toBe('ok\n')
+    expect(stderrStr(io)).toBe('+ echo ok\n')
+  })
+
+  it('reads the attached and long -S spellings too', async () => {
+    const ws = await makeWs()
+    await ws.execute("printf '#!/usr/bin/env -Sbash -x\\necho a\\n' > /work/a.sh")
+    await ws.execute("printf '#!/usr/bin/env --split-string=bash -x\\necho b\\n' > /work/b.sh")
+    const a = await ws.execute('/work/a.sh')
+    expect(stdoutStr(a)).toBe('a\n')
+    expect(stderrStr(a)).toBe('+ echo a\n')
+    const b = await ws.execute('/work/b.sh')
+    expect(stdoutStr(b)).toBe('b\n')
+    expect(stderrStr(b)).toBe('+ echo b\n')
+  })
+
+  it('a path guard sees the executed file', async () => {
+    // The executed file lives in argv[0], not the operands, so the
+    // admission context must carry it or a path-pattern guard never
+    // fires on direct execution. Seeding runs through an unguarded
+    // workspace sharing the resource, since a command-less guard also
+    // seals the op layer.
+    const parser = await getTestParser()
+    const prod = new RAMResource()
+    const seedOps = new OpsRegistry()
+    seedOps.registerResource(prod)
+    const seed = new Workspace(
+      { '/data/': prod },
+      { mode: MountMode.WRITE, ops: seedOps, shellParser: parser },
+    )
+    await seed.execute('mkdir -p /data/prod')
+    await seed.execute("printf 'echo leaked\\n' > /data/prod/run.sh")
+    await seed.execute("printf 'echo fine\\n' > /data/ok.sh")
+    const root = new RAMResource()
+    const ops = new OpsRegistry()
+    ops.registerResource(root)
+    ops.registerResource(prod)
+    const ws = new Workspace(
+      { '/': root, '/data/': prod },
+      {
+        mode: MountMode.WRITE,
+        ops,
+        shellParser: parser,
+        guards: [{ reason: 'production scripts are sealed', paths: ['/data/prod/*'] }],
+      },
+    )
+    const refused = await ws.execute('/data/prod/run.sh')
+    expect(refused.exitCode).toBe(1)
+    expect(stderrStr(refused)).toContain('production scripts are sealed')
+    expect(stdoutStr(refused)).toBe('')
+    const relative = await ws.execute('cd /data/prod && ./run.sh')
+    expect(relative.exitCode).toBe(1)
+    expect(stderrStr(relative)).toContain('production scripts are sealed')
+    const outside = await ws.execute('/data/ok.sh')
+    expect(outside.exitCode).toBe(0)
+    expect(stdoutStr(outside)).toBe('fine\n')
+  })
 })

@@ -33,6 +33,7 @@ import {
   grepLines,
   grepRecursive,
   type WalkFilters,
+  parseFileGlobs,
   grepStream,
   prefixLines,
   resolvePatternFromFlags,
@@ -71,8 +72,7 @@ function parseFlags(fl: FlagView): FlagSet {
   const cCtx = fl.asInt('C')
   return {
     filters: {
-      include: fl.asList('include'),
-      exclude: fl.asList('exclude'),
+      fileGlobs: parseFileGlobs(fl),
       excludeDir: fl.asList('exclude_dir'),
       text: fl.asBool('text'),
     },

@@ -508,6 +508,23 @@ export class FlagView {
     return name
   }
 
+  /**
+   * The given flag names, ordered as the line first typed them.
+   *
+   * The parser fills the bag in scan order and every hop between
+   * (object spreads, copies) preserves string-key insertion order, so
+   * a key's position is its first occurrence on the line; a flag
+   * supplied by a default or the environment lands after every typed
+   * one. Names the line never carried are dropped. This is what an
+   * order-sensitive option family (grep's --include/--exclude, where
+   * the later kind overrides the earlier) reads, since the bag has no
+   * per-occurrence positions.
+   */
+  typedOrder(...names: string[]): string[] {
+    const wanted = new Set(names.map((n) => this.key(n)))
+    return Object.keys(this.flags).filter((k) => wanted.has(k))
+  }
+
   asBool(name: string): boolean {
     const value = this.flags[this.key(name)]
     if (typeof value === 'boolean') return value

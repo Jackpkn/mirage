@@ -32,3 +32,11 @@ def test_only_the_first_word_may_be_a_dashless_cluster():
 
 def test_long_options_never_read_as_clusters():
     assert not is_create_mode(("--exclude", "c", "-xf", "a.tar"))
+
+
+def test_option_terminator_ends_the_scan():
+    # GNU reads everything after -- as an operand: `-c` and even `-C
+    # out` name members there (`tar: -C: Not found in archive`).
+    assert not is_create_mode(("-xf", "a.tar", "--", "-c"))
+    assert not is_create_mode(("-xf", "a.tar", "--", "--create"))
+    assert is_create_mode(("-cf", "a.tar", "--", "-c"))

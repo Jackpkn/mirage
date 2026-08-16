@@ -298,6 +298,24 @@ class FlagView:
                            f"spec (known: {sorted(self._allowed)})")
         return name
 
+    def typed_order(self, *names: str) -> list[str]:
+        """The given flag names, ordered as the line first typed them.
+
+        The parser fills the bag in scan order and every hop between
+        (kwargs, dict copies) preserves insertion order, so a key's
+        position is its first occurrence on the line; a flag supplied
+        by a default or the environment lands after every typed one.
+        Names the line never carried are dropped. This is what an
+        order-sensitive option family (grep's --include/--exclude,
+        where the later kind overrides the earlier) reads, since the
+        bag has no per-occurrence positions.
+
+        Args:
+            names (str): flag names to order.
+        """
+        wanted = {self._key(n) for n in names}
+        return [k for k in self._flags if k in wanted]
+
     def as_bool(self, name: str) -> bool:
         value = self._flags.get(self._key(name))
         if isinstance(value, bool):

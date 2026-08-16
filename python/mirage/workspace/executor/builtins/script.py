@@ -377,6 +377,33 @@ async def handle_bash(
     return io.stdout, io, ExecutionNode(command=label, exit_code=io.exit_code)
 
 
+def _env_split_string(words: list[str]) -> list[str]:
+    """Consume env's ``-S``/``--split-string`` option on a shebang line.
+
+    GNU env documents ``-S`` as the facility for passing an interpreter
+    plus options through a shebang (the kernel hands env everything
+    after it as one argument, and ``-S`` re-splits it), so the option
+    is spelling, not a word: ``-S bash -x``, ``-Sbash -x`` and
+    ``--split-string=bash -x`` all name bash. The line is already
+    whitespace-split here, so consuming the option is all that is left.
+
+    Args:
+        words (list[str]): the words after env on a shebang line.
+    """
+    if not words:
+        return words
+    head = words[0]
+    if head in ("-S", "--split-string"):
+        return words[1:]
+    if head.startswith("--split-string="):
+        head = head[len("--split-string="):]
+    elif head.startswith("-S"):
+        head = head[2:]
+    else:
+        return words
+    return [head, *words[1:]] if head else words[1:]
+
+
 def _shebang_words(script: str) -> list[str]:
     """The interpreter words a script's first line names, env resolved.
 
@@ -388,8 +415,7 @@ def _shebang_words(script: str) -> list[str]:
         return []
     words = first[2:].strip().split()
     if words and words[0].rsplit("/", 1)[-1] == "env":
-        words = words[1:]
-        return words
+        words = _env_split_string(words[1:])
     if words:
         words[0] = words[0].rsplit("/", 1)[-1]
     return words

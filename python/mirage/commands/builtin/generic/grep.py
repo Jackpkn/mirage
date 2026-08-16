@@ -8,6 +8,8 @@ from mirage.cache.read_through import (cache_aware_bound_bytes,
 from mirage.commands.builtin.grep_helper import WalkFilters  # yapf: disable
 from mirage.commands.builtin.grep_helper import \
     compile_pattern  # yapf: disable
+from mirage.commands.builtin.grep_helper import \
+    parse_file_globs  # yapf: disable
 from mirage.commands.builtin.grep_helper import (count_exit_stream,
                                                  count_records_have_matches,
                                                  exit_code_for, file_admitted,
@@ -82,8 +84,7 @@ def parse_flags(fl: FlagView, never_match: bool) -> GrepFlags:
         max_count=fl.as_int("m"),
         after_context=a_ctx if a_ctx is not None else (c_ctx or 0),
         before_context=b_ctx if b_ctx is not None else (c_ctx or 0),
-        filters=WalkFilters(include=tuple(fl.as_list("include")),
-                            exclude=tuple(fl.as_list("exclude")),
+        filters=WalkFilters(file_globs=parse_file_globs(fl),
                             exclude_dir=tuple(fl.as_list("exclude_dir")),
                             text=fl.as_bool("text")),
     )

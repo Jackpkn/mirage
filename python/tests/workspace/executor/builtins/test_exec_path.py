@@ -16,6 +16,7 @@ import asyncio
 
 import pytest
 
+from mirage import GuardSpec
 from mirage.resource import RAMResource
 from mirage.types import MountMode
 from mirage.workspace import Workspace
@@ -96,3 +97,52 @@ def test_shebang_words_resolves_env_and_basenames():
     assert _shebang_words("#!/bin/bash -x\n") == ["bash", "-x"]
     assert _shebang_words("#!/usr/bin/env python3\n") == ["python3"]
     assert _shebang_words("echo no shebang\n") == []
+
+
+def test_shebang_words_consumes_env_split_string():
+    # GNU env's -S is how a shebang passes interpreter options; the
+    # option must never read as the interpreter itself.
+    assert _shebang_words("#!/usr/bin/env -S bash -x\n") == ["bash", "-x"]
+    assert _shebang_words("#!/usr/bin/env -Sbash -x\n") == ["bash", "-x"]
+    assert _shebang_words("#!/usr/bin/env --split-string=bash -x\n") == [
+        "bash", "-x"
+    ]
+    assert _shebang_words("#!/usr/bin/env -S /bin/bash -x\n") == ["bash", "-x"]
+
+
+def test_path_guard_sees_the_executed_file():
+    # The executed file lives in argv[0], not the operands, so the
+    # admission context must carry it or a path-pattern guard never
+    # fires on direct execution.
+    # A command-less guard also seals the op layer, so the script is
+    # seeded through an unguarded workspace sharing the same resource.
+    prod = RAMResource()
+    seed = Workspace(resources={"/data/": (prod, MountMode.WRITE)})
+    _run(seed, "mkdir -p /data/prod")
+    asyncio.run(seed.ops.write("/data/prod/run.sh", b"echo leaked\n"))
+    asyncio.run(seed.ops.write("/data/ok.sh", b"echo fine\n"))
+    ws = Workspace(resources={
+        "/": (RAMResource(), MountMode.WRITE),
+        "/data/": (prod, MountMode.WRITE),
+    },
+                   guards=[
+                       GuardSpec(reason="production scripts are sealed",
+                                 paths=("/data/prod/*", ))
+                   ])
+    result = _run(ws, "/data/prod/run.sh")
+    assert result.exit_code == 1
+    assert b"production scripts are sealed" in result.stderr
+    assert result.stdout == b""
+    relative = _run(ws, "cd /data/prod && ./run.sh")
+    assert relative.exit_code == 1
+    assert b"production scripts are sealed" in relative.stderr
+    outside = _run(ws, "/data/ok.sh")
+    assert outside.exit_code == 0
+    assert outside.stdout == b"fine\n"
+
+
+def test_env_split_string_shebang_runs_with_options(ws):
+    _run(ws, "printf '#!/usr/bin/env -S bash -x\\necho ok\\n' > /work/s.sh")
+    result = _run(ws, "/work/s.sh")
+    assert result.stdout == b"ok\n"
+    assert result.stderr == b"+ echo ok\n"
