@@ -16,6 +16,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { toStateDict } from '@struktoai/mirage-core/workspace/snapshot/state'
+import { seedVar } from '@struktoai/mirage-core/workspace/session/state'
 import { RAMResource } from '@struktoai/mirage-core/resource/ram/ram'
 import { MountMode } from '@struktoai/mirage-core/types'
 import { Workspace } from '@struktoai/mirage-node'
@@ -135,13 +136,13 @@ describe('version api', () => {
     await ws.execute('echo original > /m/a.txt')
     await ws.execute('ln -s /m/a.txt /m/l.txt')
     const narrow = ws.createSession('narrow', { mounts: { '/m': 'read' } })
-    narrow.env.API_KEY = '@aws:prod-key'
+    seedVar(narrow, 'API_KEY', '@aws:prod-key')
     await ws.flushSessions()
     await commitState(store, await toStateDict(ws), 'main', 'v1')
 
     await ws.execute('echo mutated > /m/a.txt')
     await ws.execute('rm /m/l.txt')
-    narrow.env.API_KEY = '@aws:other-key'
+    seedVar(narrow, 'API_KEY', '@aws:other-key')
     narrow.mountModes = new Map([['/m', MountMode.WRITE]])
 
     await checkout(store, ws, 'main')

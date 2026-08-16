@@ -49,6 +49,7 @@ from mirage.workspace.mount.namespace import Namespace
 from mirage.workspace.mount.namespace.store import NamespaceStore
 from mirage.workspace.session import (Session, SessionManager, SessionProfile,
                                       SessionStore)
+from mirage.workspace.session.session import vars_from_env
 from mirage.workspace.snapshot import (DriftQueue, apply_state_dict,
                                        build_mount_args, install_fingerprints,
                                        read_tar)
@@ -346,7 +347,7 @@ class Workspace:
         self._session_mgr.cwd = value
 
     @property
-    def env(self) -> dict[str, str]:
+    def env(self) -> Mapping[str, str]:
         return self._session_mgr.env
 
     @env.setter
@@ -644,7 +645,13 @@ class Workspace:
             session.hidden_paths = profile.hidden_paths
             session.hidden_vars = profile.hidden_vars
             if profile.env:
-                session.env.update(profile.env)
+                # A profile's env is a *process* environment, the same
+                # shape `ws.env = {...}` speaks, so every name in it is
+                # exported. Seeding them plain left `$TOKEN` expanding
+                # while every command, CLI and guest runtime in the
+                # profiled session saw nothing, since all three read
+                # `env_snapshot` and that is the exported set.
+                session.vars.update(vars_from_env(profile.env))
         return session
 
     def get_session(self, session_id: str) -> Session:

@@ -12,8 +12,9 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+from mirage.shell.variable import VarAttr
 from mirage.workspace.session.session import Session
-from mirage.workspace.session.state import env_get
+from mirage.workspace.session.state import env_get, seed_var, set_attr
 
 
 def home_dir(session: Session) -> str | None:
@@ -72,7 +73,7 @@ def set_cwd(session: Session, cwd: str) -> None:
     """
     session.cwd = cwd
     session.logical_cwd = None
-    session.env["PWD"] = cwd
+    seed_var(session, "PWD", cwd)
 
 
 def change_dir(session: Session,
@@ -98,7 +99,15 @@ def change_dir(session: Session,
         logical: The spelling to report when it differs from ``new_cwd``.
             None keeps the pair collapsed, which is what ``-P`` wants.
     """
-    session.env["OLDPWD"] = session.env.get("PWD", "")
+    # `env_get`, not `session.env`: the property builds a fresh dict over
+    # every variable on each access, and the direct read is the same
+    # answer for one lookup.
+    seed_var(session, "OLDPWD", env_get(session, "PWD") or "")
+    # bash exports $OLDPWD as it does $PWD (`declare -x OLDPWD`), and
+    # this is where the name is first created, so the mark has to be
+    # applied here; $PWD already carries it from startup and keeps it
+    # through `seed_var`, which replaces the value and not the record.
+    set_attr(session, "OLDPWD", VarAttr.EXPORT)
     session.cwd = new_cwd
     session.logical_cwd = logical if logical and logical != new_cwd else None
-    session.env["PWD"] = logical_cwd(session)
+    seed_var(session, "PWD", logical_cwd(session))

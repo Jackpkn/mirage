@@ -12,6 +12,9 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import { makeVar, VarAttr } from '../../shell/variable.ts'
+import { seedVar, setAttr } from './state.ts'
+import { varsFromEnv } from './session.ts'
 import { describe, expect, it } from 'vitest'
 import { Session } from './session.ts'
 import { MountMode } from '../../types.ts'
@@ -30,18 +33,23 @@ describe('Session', () => {
   it('cwd and env are mutable', () => {
     const s = new Session({ sessionId: 'x' })
     s.cwd = '/data'
-    s.env = { FOO: 'bar' }
+    seedVar(s, 'FOO', 'bar')
     expect(s.cwd).toBe('/data')
     expect(s.env.FOO).toBe('bar')
   })
 
   it('toJSON includes only the serializable fields, snake_case like Python', () => {
-    const s = new Session({ sessionId: 'x', cwd: '/a', env: { K: 'V' } })
+    const s = new Session({ sessionId: 'x', cwd: '/a', vars: varsFromEnv({ K: 'V' }) })
     const json = s.toJSON()
     expect(json).toEqual({
       session_id: 'x',
       cwd: '/a',
       env: { K: 'V', PWD: '/a' },
+      // The attributes ride beside the values rather than being guessed
+      // on the way back in: `varsFromEnv` exports what it seeds, so both
+      // names carry `x` here, and a plain `Y=1` would carry no entry at
+      // all and restore unexported.
+      var_attrs: { K: 'x', PWD: 'x' },
       created_at: s.createdAt,
       generation: 0,
     })
@@ -50,7 +58,7 @@ describe('Session', () => {
   })
 
   it('fromJSON round-trips', () => {
-    const original = new Session({ sessionId: 'x', cwd: '/a', env: { K: 'V' } })
+    const original = new Session({ sessionId: 'x', cwd: '/a', vars: varsFromEnv({ K: 'V' }) })
     const restored = Session.fromJSON(
       original.toJSON() as {
         session_id: string
@@ -93,15 +101,17 @@ describe('Session.fork', () => {
     const original = new Session({
       sessionId: 'orig',
       cwd: '/disk',
-      env: { FOO: 'bar' },
       mountModes: new Map([
         ['/s3', MountMode.READ],
         ['/dev', MountMode.EXEC],
         ['/', MountMode.EXEC],
       ]),
       shellOptions: { errexit: true },
-      readonlyVars: new Set(['HOME']),
-      arrays: { ARGV: ['a', 'b'] },
+      vars: {
+        FOO: makeVar('bar'),
+        HOME: makeVar(null, new Set([VarAttr.Readonly])),
+        ARGV: makeVar(['a', 'b']),
+      },
       positionalArgs: ['x'],
       lastExitCode: 7,
     })
@@ -121,9 +131,9 @@ describe('Session.fork', () => {
     const original = new Session({
       sessionId: 'orig',
       cwd: '/disk',
-      env: { FOO: 'bar' },
+      vars: varsFromEnv({ FOO: 'bar' }),
     })
-    const forked = original.fork({ cwd: '/ram', env: { BAZ: 'qux' } })
+    const forked = original.fork({ cwd: '/ram', vars: varsFromEnv({ BAZ: 'qux' }) })
     expect(forked.cwd).toBe('/ram')
     // $PWD follows the caller-supplied cwd rather than staying stale.
     expect(forked.env).toEqual({ BAZ: 'qux', PWD: '/ram' })
@@ -153,11 +163,10 @@ describe('Session.fork', () => {
   it('deep-copies mutable containers so mutations on the fork do not leak', () => {
     const original = new Session({
       sessionId: 'orig',
-      env: { FOO: 'bar' },
-      arrays: { A: ['1'] },
+      vars: { FOO: makeVar('bar'), A: makeVar(['1']) },
     })
     const forked = original.fork({})
-    forked.env.NEW = 'leaked?'
+    seedVar(forked, 'NEW', 'leaked?')
     forked.arrays.A?.push('2')
     expect('NEW' in original.env).toBe(false)
     expect(original.arrays.A).toEqual(['1'])
@@ -167,7 +176,7 @@ describe('Session.fork', () => {
 describe('ownRecord', () => {
   it('session records treat prototype-colliding names as ordinary keys', () => {
     const session = new Session({ sessionId: 's' })
-    session.env.__proto__ = '5'
+    seedVar(session, '__proto__', '5')
     expect(session.env.__proto__).toBe('5')
     expect(Object.getPrototypeOf(session.env)).toBe(null)
     // A helper defeats TS resolving `.toString` to the Object method.
@@ -178,11 +187,61 @@ describe('ownRecord', () => {
 
   it('fork keeps the null prototype and copies prototype-named entries', () => {
     const session = new Session({ sessionId: 's' })
-    session.env.__proto__ = '5'
+    seedVar(session, '__proto__', '5')
     const forked = session.fork()
     expect(forked.env.__proto__).toBe('5')
     expect(Object.getPrototypeOf(forked.env)).toBe(null)
-    forked.env.__proto__ = '6'
+    seedVar(forked, '__proto__', '6')
     expect(session.env.__proto__).toBe('5')
+  })
+})
+
+describe('a stored session keeps its attributes', () => {
+  it('round-trips without promoting anything', () => {
+    // The bug this replaced: `toJSON` wrote every scalar under `env` and
+    // `fromJSON` read `env` as a process environment, so one flush and
+    // reload turned a plain `X=hello` into an exported one and shipped it
+    // to every child runtime.
+    const s = new Session({ sessionId: 's1' })
+    seedVar(s, 'PLAIN', 'hello')
+    s.vars.EXPO = makeVar('world', new Set([VarAttr.Export]))
+    s.vars.MARKED = makeVar(null, new Set([VarAttr.Readonly]))
+    const back = Session.fromJSON(s.toJSON() as Parameters<typeof Session.fromJSON>[0])
+    expect(back.vars.PLAIN?.attrs.size).toBe(0)
+    expect(back.vars.PLAIN?.value).toBe('hello')
+    expect([...(back.vars.EXPO?.attrs ?? [])]).toEqual([VarAttr.Export])
+    expect(back.vars.MARKED?.value).toBe(null)
+    expect([...(back.vars.MARKED?.attrs ?? [])]).toEqual([VarAttr.Readonly])
+  })
+
+  it('reads a payload with no attributes as a process environment', () => {
+    // An embedder's record, or one another writer hand-built, carries
+    // values and no letters. That shape *is* a process environment, so
+    // every name in it is exported -- which is what `ws.env = {...}` and
+    // a cross-language handoff both mean.
+    const back = Session.fromJSON({ session_id: 'x', env: { A: '1' } })
+    expect([...(back.vars.A?.attrs ?? [])]).toEqual([VarAttr.Export])
+  })
+
+  it('writes var_attrs even when empty', () => {
+    // Its *presence* is the discriminator, so it has to be there even
+    // with nothing in it. Written only when non-empty, a session whose
+    // last attribute had been cleared serialized as a bare process
+    // environment, and the reload re-exported everything it held.
+    const s = new Session({ sessionId: 's1' })
+    seedVar(s, 'X', 'secret')
+    setAttr(s, 'PWD', VarAttr.Export, false)
+    const json = s.toJSON() as { var_attrs: Record<string, string> }
+    expect(json.var_attrs).toEqual({})
+    const back = Session.fromJSON(json as never)
+    expect(back.vars.X?.attrs.has(VarAttr.Export)).toBe(false)
+  })
+
+  it('carries an unset marked name through with no value', () => {
+    const s = new Session({ sessionId: 's1' })
+    s.vars.Z = makeVar(null, new Set([VarAttr.Export]))
+    const json = s.toJSON() as { env: Record<string, string>; var_attrs: Record<string, string> }
+    expect('Z' in json.env).toBe(false)
+    expect(json.var_attrs.Z).toBe('x')
   })
 })

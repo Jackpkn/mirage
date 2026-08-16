@@ -7,16 +7,35 @@ from mirage.io import IOResult
 from mirage.io.stream import materialize
 from mirage.shell.call_stack import CallStack
 from mirage.shell.errors import ExitSignal
+from mirage.shell.variable import VarAttr
 from mirage.workspace.executor.builtins.vars import (  # yapf: disable
     handle_env, handle_exit, handle_export, handle_getopts, handle_read,
     handle_readonly, handle_return, handle_shift, handle_unset, handle_whoami)
 from mirage.workspace.executor.control import ReturnSignal
 from mirage.workspace.mount.namespace import Namespace
 from mirage.workspace.session.session import Session
+from mirage.workspace.session.state import seed_var, set_attr
 
 
 def make_session() -> Session:
     return Session(session_id="s1")
+
+
+def seed_exported(session: Session, name: str, value: str) -> None:
+    """Seed a variable the process-view printers will actually list.
+
+    `env`, `printenv` and `export -p` show exported names only, so a
+    test whose subject is ordering or quoting has to mark what it seeds
+    or it renders nothing at all. `seed_var` alone makes a correct
+    plain shell variable, which those three rightly never print.
+
+    Args:
+        session (Session): the session being seeded.
+        name (str): variable name.
+        value (str): the value to store.
+    """
+    seed_var(session, name, value)
+    set_attr(session, name, VarAttr.EXPORT)
 
 
 def _unused_execute_fn():
@@ -26,8 +45,8 @@ def _unused_execute_fn():
 @pytest.mark.asyncio
 async def test_env_prints_environment_in_insertion_order():
     session = make_session()
-    session.env["ZZZ"] = "1"
-    session.env["AAA"] = "2"
+    seed_exported(session, "ZZZ", "1")
+    seed_exported(session, "AAA", "2")
     out, io, _ = await handle_env(_unused_execute_fn, [], session)
     assert io.exit_code == 0
     # `$PWD` is seeded at construction, so it leads the insertion order.
@@ -37,7 +56,7 @@ async def test_env_prints_environment_in_insertion_order():
 @pytest.mark.asyncio
 async def test_env_ignore_environment_and_null_terminator():
     session = make_session()
-    session.env["KEEP"] = "x"
+    seed_var(session, "KEEP", "x")
     out, _, _ = await handle_env(_unused_execute_fn,
                                  ["-i", "-0", "A=1", "B=2"], session)
     assert await materialize(out) == b"A=1\x00B=2\x00"
@@ -46,8 +65,8 @@ async def test_env_ignore_environment_and_null_terminator():
 @pytest.mark.asyncio
 async def test_env_unset_removes_variable():
     session = make_session()
-    session.env["DROP"] = "1"
-    session.env["KEEP"] = "2"
+    seed_exported(session, "DROP", "1")
+    seed_exported(session, "KEEP", "2")
     out, _, _ = await handle_env(_unused_execute_fn, ["-u", "DROP"], session)
     rendered = await materialize(out)
     assert b"DROP=" not in rendered
@@ -58,7 +77,7 @@ async def test_env_unset_removes_variable():
 async def test_unset_f_removes_function_only():
     session = make_session()
     session.functions["fn"] = []
-    session.env["fn"] = "keepvar"
+    seed_var(session, "fn", "keepvar")
     await handle_unset(["-f", "fn"], session)
     assert "fn" not in session.functions
     assert session.env["fn"] == "keepvar"
@@ -68,7 +87,7 @@ async def test_unset_f_removes_function_only():
 async def test_unset_v_removes_variable_not_function():
     session = make_session()
     session.functions["fn"] = []
-    session.env["fn"] = "v"
+    seed_var(session, "fn", "v")
     await handle_unset(["-v", "fn"], session)
     assert "fn" in session.functions
     assert "fn" not in session.env
@@ -78,7 +97,7 @@ async def test_unset_v_removes_variable_not_function():
 async def test_unset_bare_prefers_variable_then_function():
     session = make_session()
     session.functions["a"] = []
-    session.env["a"] = "v"
+    seed_var(session, "a", "v")
     await handle_unset(["a"], session)
     # The variable existed, so only it is removed.
     assert "a" not in session.env
@@ -92,7 +111,7 @@ async def test_unset_bare_prefers_variable_then_function():
 @pytest.mark.asyncio
 async def test_unset_removes_whole_array_and_one_element():
     session = make_session()
-    session.arrays["arr"] = ["x", "y", "z"]
+    seed_var(session, "arr", ["x", "y", "z"])
     # An interior element leaves a hole: the later indices keep their
     # positions, as bash does.
     await handle_unset(["arr[1]"], session)
@@ -107,8 +126,8 @@ async def test_unset_removes_whole_array_and_one_element():
 @pytest.mark.asyncio
 async def test_unset_readonly_array_element_is_rejected():
     session = make_session()
-    session.arrays["arr"] = ["x", "y"]
-    session.readonly_vars.add("arr")
+    seed_var(session, "arr", ["x", "y"])
+    set_attr(session, "arr", VarAttr.READONLY)
     _, io, node = await handle_unset(["arr[1]"], session)
     assert node.exit_code == 1
     assert io.stderr == b"bash: unset: arr: cannot unset: readonly variable\n"
@@ -118,7 +137,7 @@ async def test_unset_readonly_array_element_is_rejected():
 @pytest.mark.asyncio
 async def test_unset_element_zero_of_a_scalar_removes_it():
     session = make_session()
-    session.env["Y"] = "sc"
+    seed_var(session, "Y", "sc")
     _, io, node = await handle_unset(["Y[0]"], session)
     assert node.exit_code == 0
     assert "Y" not in session.env
@@ -127,7 +146,7 @@ async def test_unset_element_zero_of_a_scalar_removes_it():
 @pytest.mark.asyncio
 async def test_unset_nonzero_element_of_a_scalar_errors():
     session = make_session()
-    session.env["Y"] = "sc"
+    seed_var(session, "Y", "sc")
     _, io, node = await handle_unset(["Y[1]"], session)
     assert node.exit_code == 1
     assert io.stderr == b"bash: unset: Y: not an array variable\n"
@@ -137,7 +156,7 @@ async def test_unset_nonzero_element_of_a_scalar_errors():
 @pytest.mark.asyncio
 async def test_unset_negative_element_outside_the_extent_errors():
     session = make_session()
-    session.arrays["arr"] = ["x"]
+    seed_var(session, "arr", ["x"])
     _, io, node = await handle_unset(["arr[-2]"], session)
     assert node.exit_code == 1
     # bash prints only the bracketed part here, not the base name.
@@ -148,7 +167,7 @@ async def test_unset_negative_element_outside_the_extent_errors():
 @pytest.mark.asyncio
 async def test_unset_negative_element_inside_the_extent_works():
     session = make_session()
-    session.arrays["arr"] = ["x", "y"]
+    seed_var(session, "arr", ["x", "y"])
     _, io, node = await handle_unset(["arr[-2]"], session)
     assert node.exit_code == 0
     assert session.arrays["arr"] == [None, "y"]
@@ -172,7 +191,7 @@ async def test_unset_invalid_option_errors():
 @pytest.mark.asyncio
 async def test_env_run_form_forwards_stdin_and_restores_env():
     session = make_session()
-    session.env["FOO"] = "original"
+    seed_var(session, "FOO", "original")
     execute_fn = AsyncMock(return_value=IOResult(exit_code=0))
     await handle_env(execute_fn, ["-i", "FOO=temp", "printenv", "FOO"],
                      session,
@@ -188,7 +207,7 @@ async def test_env_run_form_forwards_stdin_and_restores_env():
 @pytest.mark.asyncio
 async def test_env_lone_dash_implies_ignore_environment():
     session = make_session()
-    session.env["KEEP"] = "x"
+    seed_var(session, "KEEP", "x")
     out, io, _ = await handle_env(_unused_execute_fn, ["-", "A=1"], session)
     assert io.exit_code == 0
     assert await materialize(out) == b"A=1\n"
@@ -556,7 +575,7 @@ async def test_getopts_optind_reset_reparses():
     await handle_getopts(["ab", "o"], session)
     _, stop, _ = await handle_getopts(["ab", "o"], session)
     assert stop.exit_code == 1
-    session.env["OPTIND"] = "1"
+    seed_var(session, "OPTIND", "1")
     session.positional_args = ["-b", "-a"]
     _, io, _ = await handle_getopts(["ab", "o"], session)
     assert io.exit_code == 0
@@ -590,7 +609,7 @@ async def test_getopts_stale_offset_shorter_word_no_crash():
 async def test_getopts_nonpositive_optind_restarts_at_one():
     session = make_session()
     session.positional_args = ["-a", "-b"]
-    session.env["OPTIND"] = "0"
+    seed_var(session, "OPTIND", "0")
     _, io, _ = await handle_getopts(["ab", "o"], session)
     assert io.exit_code == 0
     assert session.env["o"] == "a"
@@ -609,8 +628,8 @@ async def test_getopts_invalid_identifier_destination():
 @pytest.mark.asyncio
 async def test_getopts_readonly_destination_is_not_overwritten():
     session = make_session()
-    session.env["o"] = "orig"
-    session.readonly_vars.add("o")
+    seed_var(session, "o", "orig")
+    set_attr(session, "o", VarAttr.READONLY)
     _, io, _ = await handle_getopts(["a", "o", "-a"], session)
     assert io.exit_code == 1
     assert session.env["o"] == "orig"
@@ -620,7 +639,7 @@ async def test_getopts_readonly_destination_is_not_overwritten():
 @pytest.mark.asyncio
 async def test_getopts_opterr_zero_suppresses_stderr():
     session = make_session()
-    session.env["OPTERR"] = "0"
+    seed_var(session, "OPTERR", "0")
     _, io, _ = await handle_getopts(["ab", "o", "-x"], session)
     assert session.env["o"] == "?"
     assert (await materialize(io.stderr)) == b""
@@ -665,10 +684,10 @@ async def test_getopts_subshell_does_not_corrupt_parent_cursor():
 @pytest.mark.asyncio
 async def test_export_p_prints_declare_x():
     session = make_session()
-    session.env["ZZZ"] = "1"
-    session.env["AAA"] = 'a"b'
-    session.env["NL"] = "a\nb"
-    session.env["DOL"] = "a$b"
+    seed_exported(session, "ZZZ", "1")
+    seed_exported(session, "AAA", 'a"b')
+    seed_exported(session, "NL", "a\nb")
+    seed_exported(session, "DOL", "a$b")
     out, io, _ = await handle_export(["-p"], session)
     assert io.exit_code == 0
     text = (await materialize(out)).decode()
@@ -683,7 +702,7 @@ async def test_export_p_prints_declare_x():
 @pytest.mark.asyncio
 async def test_export_bare_prints_like_p():
     session = make_session()
-    session.env["FOO"] = "bar"
+    seed_exported(session, "FOO", "bar")
     out, io, _ = await handle_export([], session)
     assert io.exit_code == 0
     # `$PWD` is exported like any other variable, so bash lists it too.
@@ -704,7 +723,7 @@ async def test_export_invalid_option_exit_2():
 @pytest.mark.asyncio
 async def test_export_p_with_name_does_not_print():
     session = make_session()
-    session.env["KEEP"] = "1"
+    seed_var(session, "KEEP", "1")
     out, io, _ = await handle_export(["-p", "FOO=bar"], session)
     assert io.exit_code == 0
     assert out is None
@@ -714,11 +733,11 @@ async def test_export_p_with_name_does_not_print():
 @pytest.mark.asyncio
 async def test_readonly_p_prints_scalars_and_arrays():
     session = make_session()
-    session.env["VAL"] = "x"
-    session.readonly_vars.add("VAL")
-    session.readonly_vars.add("ONLY")
-    session.arrays["AR"] = ["a", "b c"]
-    session.readonly_vars.add("AR")
+    seed_var(session, "VAL", "x")
+    set_attr(session, "VAL", VarAttr.READONLY)
+    set_attr(session, "ONLY", VarAttr.READONLY)
+    seed_var(session, "AR", ["a", "b c"])
+    set_attr(session, "AR", VarAttr.READONLY)
     out, io, _ = await handle_readonly(["-p"], session)
     assert io.exit_code == 0
     text = (await materialize(out)).decode()
@@ -764,13 +783,13 @@ async def test_export_invalid_option_via_workspace():
 @pytest.mark.asyncio
 async def test_export_p_quotes_control_characters():
     session = make_session()
-    session.env.clear()
-    session.env["TAB"] = "a\tb"
-    session.env["ESC"] = "a\x1bb"
-    session.env["BEL"] = "a\x07b"
-    session.env["SOH"] = "a\x01b"
-    session.env["DEL"] = "a\x7fb"
-    session.env["UTF"] = "café"
+    session.vars.clear()
+    seed_exported(session, "TAB", "a\tb")
+    seed_exported(session, "ESC", "a\x1bb")
+    seed_exported(session, "BEL", "a\x07b")
+    seed_exported(session, "SOH", "a\x01b")
+    seed_exported(session, "DEL", "a\x7fb")
+    seed_exported(session, "UTF", "café")
     out, io, _ = await handle_export(["-p"], session)
     assert io.exit_code == 0
     text = (await materialize(out)).decode()
@@ -788,8 +807,8 @@ async def test_export_p_quotes_control_characters():
 @pytest.mark.asyncio
 async def test_export_p_double_terminator_still_prints():
     session = make_session()
-    session.env.clear()
-    session.env["FOO"] = "bar"
+    session.vars.clear()
+    seed_exported(session, "FOO", "bar")
     out, io, _ = await handle_export(["-p", "--"], session)
     assert io.exit_code == 0
     assert await materialize(out) == b'declare -x FOO="bar"\n'
@@ -798,7 +817,7 @@ async def test_export_p_double_terminator_still_prints():
 @pytest.mark.asyncio
 async def test_export_f_lists_no_variables():
     session = make_session()
-    session.env["FOO"] = "bar"
+    seed_var(session, "FOO", "bar")
     out, io, _ = await handle_export(["-f"], session)
     assert io.exit_code == 0
     assert await materialize(out) == b""
@@ -814,10 +833,10 @@ async def test_export_reports_first_invalid_option():
 @pytest.mark.asyncio
 async def test_readonly_a_lists_arrays_only():
     session = make_session()
-    session.env["VAL"] = "x"
-    session.readonly_vars.add("VAL")
-    session.arrays["AR"] = ["a"]
-    session.readonly_vars.add("AR")
+    seed_var(session, "VAL", "x")
+    set_attr(session, "VAL", VarAttr.READONLY)
+    seed_var(session, "AR", ["a"])
+    set_attr(session, "AR", VarAttr.READONLY)
     out, io, _ = await handle_readonly(["-a"], session)
     assert io.exit_code == 0
     assert await materialize(out) == b'declare -ar AR=([0]="a")\n'
@@ -826,8 +845,8 @@ async def test_readonly_a_lists_arrays_only():
 @pytest.mark.asyncio
 async def test_readonly_f_and_A_list_nothing():
     session = make_session()
-    session.env["VAL"] = "x"
-    session.readonly_vars.add("VAL")
+    seed_var(session, "VAL", "x")
+    set_attr(session, "VAL", VarAttr.READONLY)
     for flag in ("-f", "-A"):
         out, io, _ = await handle_readonly([flag], session)
         assert io.exit_code == 0

@@ -12,7 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { ownRecord, Session } from './session.ts'
+import { Session, varsFromEnv } from './session.ts'
 import { setCwd } from './shell_dirs.ts'
 import { RAMSessionStore } from './ram.ts'
 import { CAS_MAX_RETRIES, generationOf, type SessionFields, type SessionStore } from './store.ts'
@@ -93,7 +93,7 @@ export class SessionManager {
   }
 
   set env(value: Record<string, string>) {
-    this.defaultSession().env = ownRecord(value)
+    this.defaultSession().vars = varsFromEnv(value)
   }
 
   /**
@@ -117,7 +117,7 @@ export class SessionManager {
       if (sid === this.defaultId) {
         const dflt = this.defaultSession()
         setCwd(dflt, stored.cwd)
-        dflt.env = stored.env
+        dflt.vars = stored.vars
         dflt.createdAt = stored.createdAt
         dflt.mountModes = stored.mountModes
         // The hidden shapes are durable restrictions, not scratch

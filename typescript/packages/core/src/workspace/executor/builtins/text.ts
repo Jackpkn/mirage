@@ -12,12 +12,13 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import { seedVar } from '../../session/state.ts'
 import { ECHO_OPTION } from '../../../commands/spec/shell.ts'
 import { IOResult } from '../../../io/types.ts'
 import { arrayExtent, arrayWith, type ShellArray } from '../../../shell/array.ts'
 import { byteChar, encodeText } from '../../../shell/bytes.ts'
 import { arrayIndex } from '../../expand/variable.ts'
-import { sessionEntry, setSessionEntry } from '../../session/session.ts'
+import { sessionEntry } from '../../session/session.ts'
 import { PolicyDenied } from '../../../policy/errors.ts'
 import type { Session } from '../../session/session.ts'
 import type { SessionView } from '../../../ops/types.ts'
@@ -898,13 +899,7 @@ async function assignPrintfTarget(
     await view.set(name, stored)
     return 'ok'
   }
-  if (typeof stored === 'string') {
-    setSessionEntry(session.env, name, stored)
-  } else {
-    setSessionEntry(session.arrays, name, stored)
-    // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
-    delete session.env[name]
-  }
+  seedVar(session, name, stored)
   return 'ok'
 }
 

@@ -20,11 +20,12 @@ import tree_sitter
 from mirage.io import IOResult
 from mirage.io.stream import materialize
 from mirage.io.types import ByteSource
+from mirage.runtime.types import DispatchFn
 from mirage.shell.barrier import BarrierPolicy, apply_barrier
 from mirage.shell.bytes import encode_text
 from mirage.shell.call_stack import CallStack
 from mirage.shell.types import Redirect, RedirectKind
-from mirage.types import PathSpec
+from mirage.types import FileType, PathSpec
 from mirage.utils.errors import FS_ERRORS, fs_strerror
 from mirage.workspace.executor.builtins import _to_scope
 from mirage.workspace.session import Session
@@ -114,6 +115,16 @@ async def handle_redirect(
                 cmd_stdin = encode_text(text + "\n")
             else:
                 cmd_stdin = text
+
+    # Before the command, because bash decides an open before it forks:
+    # `set -C; touch marker > existing` creates no marker at all. Running
+    # first and discarding the output afterwards matched the file
+    # contents and nothing else, so a refused redirect still let `rm`
+    # delete its own target -- and then the probe found nothing there
+    # and did not even refuse.
+    refusal = await _noclobber_refusal(dispatch, session, redirects)
+    if refusal is not None:
+        return refusal
 
     if command is None:
         stdout_data = b""
@@ -246,6 +257,121 @@ def _redirect_failure(scope: PathSpec,
     """
     io = IOResult(exit_code=1, stderr=_redirect_error_line(scope, exc))
     return None, io, ExecutionNode(command="redirect", exit_code=1)
+
+
+async def _noclobber_refusal(
+    dispatch: DispatchFn,
+    session: Session,
+    redirects: list[Redirect],
+) -> tuple[None, IOResult, ExecutionNode] | None:
+    """Refuse the whole statement when `set -C` bars one of its opens.
+
+    Returned *instead of* running the command, because that is what bash
+    does: it opens every redirect before it forks, so a refusal means
+    the command never runs. `set -C; touch marker > existing` leaves no
+    marker behind. Deciding this after the fact only matched the file
+    contents, and on `rm f > f` it did not even do that -- the command
+    deleted its own target first, so the probe found nothing there and
+    let the line succeed.
+
+    `set -C` refuses a truncating open onto anything that already exists
+    -- an empty file counts, since the test is existence and not size --
+    while `>>` is always allowed and `>|` overrides for that one
+    redirect without clearing the option. A directory reached under the
+    option is refused too, in GNU's own wording for that case rather
+    than the noclobber one. bash stops at the first target it cannot
+    open, so the scan reports one line and stops.
+
+    The opens are modelled in the order they were written, because each
+    one is visible to the next: `set -C; echo x > a > a` creates `a` on
+    the first redirect and then refuses the second, even though `a` did
+    not exist when the statement began. Probing every target against one
+    pre-command snapshot passed both and wrote the output. `>>` and `>|`
+    never refuse but do create, so they count as opens too.
+
+    The whole scan is skipped unless the option is on, so the ordinary
+    redirect path costs no extra round trip. That leaves
+    `> <a directory>` with the option off silently succeeding, which is
+    a separate pre-existing gap: GNU answers `Is a directory` and exit 1
+    whichever operator asked, and closing it means a stat on every
+    output redirect.
+
+    Targets are stat'd through the op dispatcher rather than a backend,
+    so a redirect that lands on another mount is answered by the mount
+    that owns it.
+
+    Args:
+        dispatch (DispatchFn): op dispatcher.
+        session (Session): the session holding the shell options.
+        redirects (list[Redirect]): the statement's redirects, in the
+            order they were written.
+
+    Returns:
+        The refusal result, or None when every open is allowed.
+    """
+    if not session.shell_options.get("noclobber"):
+        return None
+    opened: set[str] = set()
+    pending: list[PathSpec] = []
+    for r in redirects:
+        if (r.kind in (RedirectKind.STDIN, RedirectKind.HEREDOC,
+                       RedirectKind.HERESTRING) or isinstance(r.target, int)):
+            continue
+        scope = _ensure_scope(r.target)
+        path = scope.virtual
+        is_dir = False
+        if path in opened:
+            exists = True
+        else:
+            try:
+                stat, _ = await dispatch("stat", scope)
+            except FS_ERRORS as exc:
+                logger.debug("noclobber probe found no target at %s: %s",
+                             scope.raw_path, exc)
+                stat = None
+            exists = stat is not None
+            is_dir = stat is not None and stat.type == FileType.DIRECTORY
+        if exists and not r.append and not r.clobber:
+            await _apply_pending_opens(dispatch, pending)
+            detail = ("Is a directory"
+                      if is_dir else "cannot overwrite existing file")
+            err = f"{scope.raw_path}: {detail}\n".encode()
+            io = IOResult(exit_code=1, stderr=err)
+            return None, io, ExecutionNode(command="redirect", exit_code=1)
+        # This open succeeds, so the target exists for every redirect
+        # after it, and a truncating one leaves it empty to be found.
+        opened.add(path)
+        if not exists or not r.append:
+            pending.append(scope)
+    return None
+
+
+async def _apply_pending_opens(dispatch: DispatchFn,
+                               pending: list[PathSpec]) -> None:
+    """Apply the opens a refused statement already performed.
+
+    bash opens redirects left to right, so the ones before the refused
+    one have happened by the time it refuses: ``set -C; echo x >> a > a``
+    leaves ``a`` existing and empty, and ``>| a > a`` truncates it. Only
+    targets the scan found absent, or opened for truncation, are listed,
+    so an append onto an existing file keeps its bytes.
+
+    A write that fails is logged rather than raised: the failure belongs
+    to that earlier redirect, which bash would have reported instead of
+    the noclobber refusal, and inventing that error here would replace
+    the refusal the caller is about to return.
+
+    Args:
+        dispatch (DispatchFn): op dispatcher.
+        pending (list[PathSpec]): targets to create or truncate, in the
+            order they were opened.
+    """
+    for scope in pending:
+        try:
+            await dispatch("write", scope, data=b"")
+        except FS_ERRORS as exc:
+            logger.debug("noclobber pre-open write failed for %s: %s",
+                         scope.raw_path, exc)
 
 
 async def _read_existing(dispatch, scope) -> bytes:

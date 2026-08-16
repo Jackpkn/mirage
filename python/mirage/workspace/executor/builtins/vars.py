@@ -29,7 +29,8 @@ from mirage.shell.array import (array_append, array_extent, array_unset,
 from mirage.shell.call_stack import CallStack
 from mirage.shell.errors import ExitSignal
 from mirage.shell.options import parse_option_word
-from mirage.shell.types import SET_OPTION_NAMES
+from mirage.shell.types import SET_OPTION_DEFAULTS, SET_OPTION_NAMES
+from mirage.shell.variable import VarAttr, attr_letters
 from mirage.utils.hidden import var_hidden
 from mirage.workspace.executor.builtins.text import _PRINTF_TARGET_RE
 from mirage.workspace.executor.control import ReturnSignal
@@ -37,8 +38,10 @@ from mirage.workspace.expand.variable import _array_index
 from mirage.workspace.mount.namespace import Namespace
 from mirage.workspace.session import Session
 from mirage.workspace.session.errors import ReadonlyVariableError
+from mirage.workspace.session.session import vars_from_env
 from mirage.workspace.session.state import (env_get, env_is_readonly,
-                                            env_snapshot, session_view,
+                                            env_snapshot, exported_names,
+                                            session_view, set_attr,
                                             visible_arrays, visible_env)
 from mirage.workspace.types import ExecutionNode
 
@@ -91,8 +94,10 @@ async def _store_staged_arrays(
     session: Session,
     view: SessionView,
     arrays: list[tuple[str, bool, list[str]]],
-    mark: bool = False,
+    mark: VarAttr | None = None,
+    on: bool = True,
     fatal: bool = False,
+    stored: list[str] | None = None,
 ) -> tuple[ByteSource | None, IOResult, ExecutionNode] | None:
     """Store a declaration's array literals through the session door.
 
@@ -112,10 +117,23 @@ async def _store_staged_arrays(
         view (SessionView): the session plane's gated door.
         arrays (list[tuple[str, bool, list[str]]]): staged
             ``(name, append, items)`` literals from the declaration.
-        mark (bool): also mark each stored name readonly (the
-            ``readonly`` keyword's half).
+        mark (VarAttr | None): the attribute the declaring keyword puts
+            on each stored name -- READONLY for ``readonly``, EXPORT for
+            ``export``. An attribute rather than a bool because both
+            keywords stage array literals through here and hardcoding
+            one of them silently dropped the other: ``export ARR=(a b)``
+            stored the array and never marked it, so GNU's
+            ``declare -ax`` came out ``declare -a``.
+        on (bool): the direction of that mark. ``export -n ARR=(b)``
+            stores the array and takes the attribute *off*, and the
+            store keeps whatever the name already carried, so leaving
+            the mark unapplied left an exported array exported.
         fatal (bool): render a readonly refusal as the fatal
             assignment error instead of a builtin failure.
+        stored (list[str] | None): filled with each name that actually
+            stored, in order. A declaration keeps its valid operands
+            when a sibling refuses, so the caller cannot read "what was
+            written" off the aggregate exit status.
 
     Returns:
         The refusal result, or None when every literal stored.
@@ -144,8 +162,13 @@ async def _store_staged_arrays(
             await view.set(name, base)
         except PolicyDenied as exc:
             return _refusal(cmd, exc)
-        if mark:
-            session.readonly_vars.add(name)
+        if stored is not None:
+            stored.append(name)
+        if mark is not None:
+            # Ungated on purpose: the `view.set` immediately above put
+            # this same name through the gate, so re-asking would show a
+            # policy two writes for one operand.
+            set_attr(session, name, mark, on)
     return None
 
 
@@ -247,28 +270,32 @@ def _split_decl_flags(
 
 
 def _export_lines(session: Session, flags: set[str]) -> list[str]:
-    """Build sorted ``declare -x`` lines for every variable in the env.
+    """Build sorted declaration lines for every exported name.
 
-    Mirage keeps shell variables in ``session.env`` and treats that map
-    as the exported environment (``printenv`` / ``env`` already do), so
-    ``export -p`` lists the same set. ``-f`` selects shell functions
-    instead of variables; mirage tracks no export attribute on functions,
-    so that form lists nothing, as bash does with none exported.
+    The exported set, not every shell variable: ``X=hello`` is absent
+    and ``export Y=world`` is present, which is what bash prints. ``-f``
+    selects shell functions instead of variables; mirage tracks no
+    export attribute on functions, so that form lists nothing, as bash
+    does with none exported.
+
+    Rendering is ``_declare_line``'s, not a second spelling of it: GNU's
+    ``export -p`` prints the *whole* cluster, so a readonly exported
+    scalar is ``declare -rx R="1"`` and an exported array is
+    ``declare -ax AR=([0]="a")``. Writing ``declare -x`` here by hand
+    printed neither, and rendered an exported array as a bare
+    ``declare -x AR`` because it looked the value up among the scalars.
 
     Args:
         session (Session): shell session state.
         flags (set[str]): option letters the caller supplied.
 
     Returns:
-        list[str]: one ``declare -x`` line per selected name.
+        list[str]: one declaration line per exported name.
     """
     if "f" in flags:
         return []
-    env = visible_env(session)
-    lines: list[str] = []
-    for name in sorted(env):
-        lines.append(f"declare -x {name}={_bash_declare_quote(env[name])}")
-    return lines
+    lines = [_declare_line(session, name) for name in exported_names(session)]
+    return [line for line in lines if line is not None]
 
 
 def _readonly_lines(session: Session, flags: set[str]) -> list[str]:
@@ -312,6 +339,132 @@ def _readonly_lines(session: Session, flags: set[str]) -> list[str]:
     return lines
 
 
+def _identifier_refusal(cmd: str, word: str) -> str | None:
+    """GNU's ``not a valid identifier`` line for one declaration operand.
+
+    A declaration builtin refuses a name it cannot declare rather than
+    storing it: ``export 1BAD=x`` used to land a variable that ``$1BAD``
+    can never name back (bash reads that as ``$1`` then ``BAD``) and
+    then shipped it to every child environment.
+
+    Which text GNU quotes depends on why the word failed, and both
+    spellings are pinned. A word that is not a valid assignment at all
+    is echoed whole (``export: `1BAD=x'``); a word whose target parses
+    but is not a plain name -- an array element -- is echoed as just
+    that target (``export: `arr[0]'``), since the value it would have
+    taken is not what is wrong with it.
+
+    Args:
+        cmd (str): the builtin's name, for the diagnostic.
+        word (str): the operand as typed, ``NAME`` or ``NAME=value``.
+
+    Returns:
+        str | None: the refusal line, or None when the name is legal.
+    """
+    name = word.partition("=")[0]
+    if _is_valid_name(name):
+        return None
+    subscript = _SUBSCRIPT_RE.fullmatch(name)
+    quoted = name if subscript else word
+    return f"bash: {cmd}: `{quoted}': not a valid identifier"
+
+
+def _identifier_failure(
+        cmd: str, errors: list[str]
+) -> tuple[ByteSource | None, IOResult, ExecutionNode]:
+    """Render the refusals collected while declaring names.
+
+    One line per bad operand, exit 1, and the good operands on the same
+    line are already stored: GNU reports each and keeps going, so
+    ``export GOOD=1 1BAD=x GOOD2=2`` exports both good names.
+
+    Args:
+        cmd (str): builtin name for the node.
+        errors (list[str]): the refusal lines, in operand order.
+    """
+    err = ("\n".join(errors) + "\n").encode()
+    return None, IOResult(exit_code=1, stderr=err), ExecutionNode(command=cmd,
+                                                                  exit_code=1,
+                                                                  stderr=err)
+
+
+def _declare_line(session: Session, name: str) -> str | None:
+    """The ``declare -p`` line for one name, or None when it has none.
+
+    The attribute cluster is `attr_letters`, which is why this renders
+    `declare -rx` and `declare -ar` without a table of its own: the
+    record already knows its own letters and their print order. bash
+    spells an empty cluster ``--``, and that spelling is the caller's
+    because only a `declare` line needs it.
+
+    A hidden name answers None, the same way `env_is_readonly` answers
+    False for one: reporting it as declared would leak it.
+
+    Args:
+        session (Session): shell session state.
+        name (str): the variable to render.
+
+    Returns:
+        str | None: the rendered line, or None when unset and
+        unattributed, hidden, or absent.
+    """
+    if var_hidden(session.hidden_vars, name):
+        return None
+    var = session.vars.get(name)
+    if var is None:
+        return None
+    letters = attr_letters(var)
+    head = f"declare -{letters}" if letters else "declare --"
+    if var.value is None:
+        return f"{head} {name}"
+    if isinstance(var.value, list):
+        parts = [
+            f"[{i}]={_bash_declare_quote(v)}" for i, v in enumerate(var.value)
+            if v is not None
+        ]
+        return f"{head} {name}=({' '.join(parts)})"
+    if not isinstance(var.value, str):
+        # An associative value; rendering one is the `declare -A` stage's
+        # job, and guessing at it here would print a shape bash does not.
+        return None
+    return f"{head} {name}={_bash_declare_quote(var.value)}"
+
+
+async def handle_declare_print(
+    names: list[str],
+    session: Session,
+) -> tuple[ByteSource | None, IOResult, ExecutionNode]:
+    """Run ``declare -p``: render declarations for names, or for all.
+
+    With names, they print in the order given and a name that does not
+    exist is reported on stderr without stopping the rest, exiting 1 at
+    the end -- GNU prints the names it knows and refuses only the ones
+    it does not. Bare ``declare -p`` lists every visible name sorted.
+
+    Args:
+        names (list[str]): the names to render, empty for all.
+        session (Session): shell session state.
+    """
+    targets = names or sorted(session.vars)
+    lines: list[str] = []
+    errors: list[str] = []
+    for name in targets:
+        line = _declare_line(session, name)
+        if line is None:
+            errors.append(f"bash: declare: {name}: not found")
+        else:
+            lines.append(line)
+    out = (("\n".join(lines) + "\n") if lines else "").encode()
+    code = 1 if errors else 0
+    if not errors:
+        return out, IOResult(), ExecutionNode(command="declare", exit_code=0)
+    err = ("\n".join(errors) + "\n").encode()
+    return out, IOResult(exit_code=code,
+                         stderr=err), ExecutionNode(command="declare",
+                                                    exit_code=code,
+                                                    stderr=err)
+
+
 async def handle_export(
     assignments: list[str],
     session: Session,
@@ -339,17 +492,29 @@ async def handle_export(
         lines = _export_lines(session, flags)
         out = (("\n".join(lines) + "\n") if lines else "").encode()
         return out, IOResult(), ExecutionNode(command="export", exit_code=0)
-    # -f/-n accepted; name path matches prior export semantics.
+    # -f is accepted and marks nothing: mirage carries no export
+    # attribute on functions. -n is the off direction, and applies to
+    # both spellings, since `export -n K=v` assigns and unexports.
     view = _view(session, state)
+    on = "n" not in flags
     if arrays:
+        # `export ARR=(a b)` marks the array as surely as it marks a
+        # scalar: GNU prints `declare -ax ARR=([0]="a" [1]="b")`.
         refused = await _store_staged_arrays("export",
                                              session,
                                              view,
                                              arrays,
+                                             mark=VarAttr.EXPORT,
+                                             on=on,
                                              fatal=True)
         if refused is not None:
             return refused
+    errors: list[str] = []
     for assign in names:
+        refusal = _identifier_refusal("export", assign)
+        if refusal is not None:
+            errors.append(refusal)
+            continue
         if "=" in assign:
             key, _, val = assign.partition("=")
             if view.is_readonly(key):
@@ -358,21 +523,21 @@ async def handle_export(
                 await view.set(key, val)
             except PolicyDenied as exc:
                 return _refusal("export", exc)
-        elif (env_get(session, assign) is None
-              and assign not in visible_arrays(session)):
-            # `export NAME` with no value writes an empty entry, which
-            # is still a session write; an existing name (scalar or
-            # array) is only re-marked for export, so nothing is
-            # written — a scalar write here would erase an array. The
-            # membership reads are visible ones: a hidden name counts
-            # as unset, so the write is attempted and the door refuses
-            # it like the valued form.
-            if view.is_readonly(assign):
-                return _readonly_refusal("export", assign)
+            set_attr(session, key, VarAttr.EXPORT, on)
+        else:
+            # The bare form writes no value, so it marks through the
+            # plane's no-value door rather than inventing an empty
+            # string. On a name that does not exist yet that leaves it
+            # *unset and exported*, which is bash's own third state --
+            # `export Z` prints `declare -x Z` and stays out of `env`
+            # until something gives it a value. Still gated: marking a
+            # hidden or policy-refused name is a session write.
             try:
-                await view.set(assign, "")
+                await view.mark(assign, VarAttr.EXPORT, on)
             except PolicyDenied as exc:
                 return _refusal("export", exc)
+    if errors:
+        return _identifier_failure("export", errors)
     return None, IOResult(), ExecutionNode(command="export", exit_code=0)
 
 
@@ -381,6 +546,7 @@ async def handle_readonly(
     session: Session,
     state: SessionView | None = None,
     arrays: list[tuple[str, bool, list[str]]] | None = None,
+    stored: list[str] | None = None,
 ) -> tuple[ByteSource | None, IOResult, ExecutionNode]:
     """Mark names readonly, or print them (``readonly -p`` / bare form).
 
@@ -406,11 +572,17 @@ async def handle_readonly(
                                              session,
                                              view,
                                              arrays,
-                                             mark=True,
-                                             fatal=True)
+                                             mark=VarAttr.READONLY,
+                                             fatal=True,
+                                             stored=stored)
         if refused is not None:
             return refused
+    errors: list[str] = []
     for assign in names:
+        refusal = _identifier_refusal("readonly", assign)
+        if refusal is not None:
+            errors.append(refusal)
+            continue
         if "=" in assign:
             key, _, val = assign.partition("=")
             if view.is_readonly(key):
@@ -419,9 +591,26 @@ async def handle_readonly(
                 await view.set(key, val)
             except PolicyDenied as exc:
                 return _refusal("readonly", exc)
-            session.readonly_vars.add(key)
+            # Ungated: the `view.set` above already put this name
+            # through the gate, so the mark rides on that decision.
+            set_attr(session, key, VarAttr.READONLY)
+            if stored is not None:
+                stored.append(key)
         else:
-            session.readonly_vars.add(assign)
+            # Gated, exactly as `export NAME` is. The bare form writes no
+            # value, so it has no `view.set` to ride on, and marking
+            # through `set_attr` walked straight past `pre_session`: a
+            # deployment refusing `AWS_*` still saw `readonly AWS_KEY`
+            # exit 0, create the record, and freeze the name against
+            # every later legitimate write.
+            try:
+                await view.mark(assign, VarAttr.READONLY, True)
+            except PolicyDenied as exc:
+                return _refusal("readonly", exc)
+            if stored is not None:
+                stored.append(assign)
+    if errors:
+        return _identifier_failure("readonly", errors)
     return None, IOResult(), ExecutionNode(command="readonly", exit_code=0)
 
 
@@ -440,7 +629,7 @@ def _unset_variable(session: Session, name: str) -> None:
         name (str): a bare variable name (no subscript).
     """
     if not var_hidden(session.hidden_vars, name):
-        session.arrays.pop(name, None)
+        session.vars.pop(name, None)
     if name == "OPTIND":
         session._getopts_optind = None
 
@@ -597,14 +786,18 @@ async def handle_printenv(
     name: str | None,
     session: Session,
 ) -> tuple[ByteSource | None, IOResult, ExecutionNode]:
+    # The process view, not the shell view: GNU printenv is a separate
+    # binary, so the only names it can possibly see are the exported
+    # ones. A plain `X=hello` is invisible to it and exits 1.
+    env = env_snapshot(session)
     if name:
-        val = visible_env(session).get(name)
+        val = env.get(name)
         if val is None:
             return None, IOResult(exit_code=1), ExecutionNode(
                 command="printenv", exit_code=1)
         out = f"{val}\n".encode()
     else:
-        lines = [f"{k}={v}" for k, v in visible_env(session).items()]
+        lines = [f"{k}={v}" for k, v in env.items()]
         out = ("\n".join(sorted(lines)) + "\n").encode()
     return out, IOResult(), ExecutionNode(command="printenv", exit_code=0)
 
@@ -707,14 +900,21 @@ async def handle_env(
         out = "".join(f"{k}={v}{sep}" for k, v in base.items()).encode()
         return out, IOResult(), ExecutionNode(command="env", exit_code=0)
 
-    saved = session.env
-    session.env = base
+    # `env NAME=v cmd` runs the command with a replaced environment.
+    # Only the scalars are replaced: arrays were never part of the env
+    # the old two-container store swapped, and bash does not put one in
+    # a child's environment either.
+    saved = session.vars
+    session.vars = {
+        name: var
+        for name, var in saved.items() if not isinstance(var.value, str)
+    } | vars_from_env(base)
     try:
         io = await execute_fn(shlex.join(command),
                               session_id=session.session_id,
                               stdin=stdin)
     finally:
-        session.env = saved
+        session.vars = saved
     return io.stdout, io, ExecutionNode(command="env", exit_code=io.exit_code)
 
 
@@ -839,12 +1039,11 @@ def note_local_array(session: Session, name: str) -> bool:
         bool: True when a function scope is active, so the caller should
             shadow rather than reuse whatever is already there.
     """
-    local_arrays = session._local_arrays
-    if local_arrays is None:
+    local_vars = session._local_vars
+    if local_vars is None:
         return False
-    if name not in local_arrays:
-        existing = session.arrays.get(name)
-        local_arrays[name] = None if existing is None else list(existing)
+    if name not in local_vars:
+        local_vars[name] = session.vars.get(name)
     return True
 
 
@@ -853,32 +1052,64 @@ async def handle_local(
     session: Session,
     state: SessionView | None = None,
     arrays: list[tuple[str, bool, list[str]]] | None = None,
+    cmd: str = "local",
+    stored: list[str] | None = None,
 ) -> tuple[ByteSource | None, IOResult, ExecutionNode]:
-    local_vars = getattr(session, "_local_vars", None)
+    """Declare names in the running function's scope, or globally.
+
+    Args:
+        assignments (list[str]): ``NAME`` / ``NAME=value`` operands.
+        session (Session): shell session state.
+        state (SessionView | None): the session plane's gated door.
+        arrays (list[tuple[str, bool, list[str]]] | None): staged array
+            literals from the declaration.
+        cmd (str): the spelling that reached here, for diagnostics.
+            ``declare`` and ``typeset`` route through this handler and
+            must say their own name, not ``local``.
+    """
+    local_vars = session._local_vars
+    if cmd == "local" and local_vars is None:
+        # `local` is the one spelling that needs a function scope;
+        # `declare`/`typeset` share this handler and are legal at top
+        # level. Without the check the builtin took its operands, stored
+        # them globally and exited 0, which is the silent-accept this
+        # whole tier exists to remove.
+        err = b"bash: local: can only be used in a function\n"
+        return None, IOResult(exit_code=1,
+                              stderr=err), ExecutionNode(command=cmd,
+                                                         exit_code=1,
+                                                         stderr=err)
     view = _view(session, state)
     if arrays:
-        refused = await _store_staged_arrays("local",
+        refused = await _store_staged_arrays(cmd,
                                              session,
                                              view,
                                              arrays,
-                                             fatal=session._local_arrays
-                                             is None)
+                                             fatal=session._local_vars is None,
+                                             stored=stored)
         if refused is not None:
             return refused
+    errors: list[str] = []
     for assign in assignments:
+        refusal = _identifier_refusal(cmd, assign)
+        if refusal is not None:
+            errors.append(refusal)
+            continue
         if "=" in assign:
             key, _, val = assign.partition("=")
             if view.is_readonly(key):
-                return _readonly_refusal("local", key)
+                return _readonly_refusal(cmd, key)
             if local_vars is not None and key not in local_vars:
-                local_vars[key] = session.env.get(key)
+                local_vars[key] = session.vars.get(key)
             try:
                 await view.set(key, val)
             except PolicyDenied as exc:
-                return _refusal("local", exc)
+                return _refusal(cmd, exc)
+            if stored is not None:
+                stored.append(key)
         else:
             if local_vars is not None and assign not in local_vars:
-                local_vars[assign] = session.env.get(assign)
+                local_vars[assign] = session.vars.get(assign)
             if (env_get(session, assign) is None
                     and assign not in visible_arrays(session)):
                 # A bare declaration of an existing array re-scopes it;
@@ -886,12 +1117,22 @@ async def handle_local(
                 # hidden name counts as unset, so the write is
                 # attempted and the door refuses it.
                 if view.is_readonly(assign):
-                    return _readonly_refusal("local", assign)
+                    return _readonly_refusal(cmd, assign)
                 try:
-                    await view.set(assign, "")
+                    # Declared, not assigned. `local L` leaves the name
+                    # *unset*, exactly as `export Z` does: GNU prints
+                    # `declare -- L` and `${L-d}` still expands to `d`.
+                    # Writing `""` here made both wrong, which is the
+                    # same invented-empty-string bug the mark door was
+                    # added to fix for `export`.
+                    await view.mark(assign, None, True)
                 except PolicyDenied as exc:
-                    return _refusal("local", exc)
-    return None, IOResult(), ExecutionNode(command="local", exit_code=0)
+                    return _refusal(cmd, exc)
+            if stored is not None:
+                stored.append(assign)
+    if errors:
+        return _identifier_failure(cmd, errors)
+    return None, IOResult(), ExecutionNode(command=cmd, exit_code=0)
 
 
 async def handle_shift(
@@ -949,6 +1190,14 @@ async def handle_set(
         if tok == "--":
             session.positional_args = args[i + 1:]
             return None, IOResult(), ExecutionNode(command="set", exit_code=0)
+        # `-o` and `+o` with nothing after them print the option table
+        # instead of setting anything, in two different spellings: `-o`
+        # as a padded name/value column, `+o` as lines that can be fed
+        # back to `set`. Both are checked before the option grammar,
+        # since a bare `-o` is not a setting.
+        if tok in ("-o", "+o") and i + 1 >= len(args):
+            out = _option_listing(session, plus=tok == "+o")
+            return out, IOResult(), ExecutionNode(command="set", exit_code=0)
         word = parse_option_word(tok,
                                  args[i + 1] if i + 1 < len(args) else None)
         if word is None:
@@ -976,7 +1225,34 @@ async def handle_set(
     return None, IOResult(), ExecutionNode(command="set", exit_code=0)
 
 
+def _option_listing(session: Session, plus: bool) -> bytes:
+    """Render `set -o` or `set +o` with no name after it.
+
+    GNU 5.2.37 prints every option it knows, alphabetically, whether or
+    not the shell has been told anything about it: `-o` as a name padded
+    to 15 columns, a tab, then `on`/`off`, and `+o` as `set -o NAME` /
+    `set +o NAME` lines a script can source back. `interactive-comments`
+    is longer than the padding and simply overflows it, which is GNU's
+    own `%-15s\\t%s` and not a special case.
+
+    Args:
+        session (Session): the session holding the shell options.
+        plus (bool): render the `set +o` re-readable spelling.
+    """
+    lines = []
+    for name, default in SET_OPTION_DEFAULTS.items():
+        on = session.shell_options.get(name, default)
+        if plus:
+            lines.append(f"set {'-' if on else '+'}o {name}")
+        else:
+            lines.append(f"{name:<15}\t{'on' if on else 'off'}")
+    return ("\n".join(lines) + "\n").encode()
+
+
 _IDENTIFIER_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+# `arr[0]` and friends: a target that parses as an assignment but is
+# not a plain name, which the declaration builtins quote on its own.
+_SUBSCRIPT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\[.*\]")
 
 
 def _is_valid_name(name: str) -> bool:

@@ -25,6 +25,7 @@ from mirage.server.version.state_tree import META_PATH
 from mirage.server.version.store import VersionStore
 from mirage.types import CacheKey, MountMode, StateKey
 from mirage.workspace import Workspace
+from mirage.workspace.session.state import seed_var
 from mirage.workspace.snapshot import to_state_dict
 
 
@@ -43,13 +44,13 @@ async def test_checkout_restores_the_whole_world(tmp_path):
     await ws.execute("echo original > /m/a.txt")
     await ws.execute("ln -s /m/a.txt /m/l.txt")
     narrow = ws.create_session("narrow", mounts={"/m": "read"})
-    narrow.env["API_KEY"] = "@aws:prod-key"
+    seed_var(narrow, "API_KEY", "@aws:prod-key")
     await ws.flush_sessions()
     await commit(store, ws, branch="main", message="v1")
 
     await ws.execute("echo mutated > /m/a.txt")
     await ws.execute("rm /m/l.txt")
-    narrow.env["API_KEY"] = "@aws:other-key"
+    seed_var(narrow, "API_KEY", "@aws:other-key")
     narrow.mount_modes = {"/m": MountMode.WRITE}
 
     await checkout(store, ws, "main")

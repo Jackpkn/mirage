@@ -12,6 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import { varsFromEnv } from '../../workspace/session/session.ts'
 import { describe, expect, it } from 'vitest'
 
 import { HISTORY_PREFIX } from '../../resource/history/history.ts'
@@ -31,7 +32,7 @@ describe('commandName', () => {
 })
 
 function makeSession(): Session {
-  return new Session({ sessionId: 's1', cwd: '/home', env: { A: '1', B: '2' } })
+  return new Session({ sessionId: 's1', cwd: '/home', vars: varsFromEnv({ A: '1', B: '2' }) })
 }
 
 describe('forkForCall', () => {

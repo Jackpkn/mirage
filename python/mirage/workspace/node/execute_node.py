@@ -34,6 +34,7 @@ from mirage.shell.node_kind import NodeKind, node_kind
 from mirage.shell.types import ERREXIT_EXEMPT_TYPES
 from mirage.shell.types import NodeType as NT
 from mirage.shell.types import Redirect, RedirectKind
+from mirage.shell.variable import VarAttr
 from mirage.shell.xtrace import trace_assignment
 from mirage.types import word_text
 from mirage.workspace.abort import MirageAbortError
@@ -60,7 +61,8 @@ from mirage.workspace.node.program import execute_program
 from mirage.workspace.node.test_expr import (expand_double_bracket,
                                              expand_test_expr)
 from mirage.workspace.session import Session
-from mirage.workspace.session.state import (ensure_var_visible, session_view,
+from mirage.workspace.session.state import (ensure_var_visible, seed_var,
+                                            session_view, set_attr,
                                             visible_env)
 from mirage.workspace.types import ExecutionNode
 
@@ -70,8 +72,8 @@ from mirage.shell.helpers import (  # isort: skip
     get_list_parts, get_negated_command, get_pipeline_commands, get_redirects,
     get_text, get_unset_args, get_while_parts)
 from mirage.workspace.executor.builtins import (  # isort: skip
-    handle_export, handle_local, handle_readonly, handle_test, handle_unset,
-    note_local_array)
+    handle_declare_print, handle_export, handle_local, handle_readonly,
+    handle_test, handle_unset, note_local_array)
 
 
 async def _assign_var(view: SessionView, key: str,
@@ -144,7 +146,7 @@ async def _eval_cfor_expr(
     # assignment exactly as it governs `X=1`.
     for name, updated in updates.items():
         if view is None:
-            session.env[name] = updated
+            seed_var(session, name, updated)
         else:
             await view.set(name, updated)
     return int(value)
@@ -298,6 +300,72 @@ async def _recurse_pipe_stderr(
     return stdout, io, exec_node
 
 
+async def _stamp_export(
+    session: Session,
+    view: SessionView,
+    flag_chars: set[str],
+    assignments: list[str],
+    staged: list[tuple[str, bool, list[str]]] | None,
+    stored: list[str],
+) -> tuple[Any, IOResult, ExecutionNode] | None:
+    """Mark every name a `-x` declaration stored as exported.
+
+    `declare -x NAME` marks an existing name without touching its value
+    and `declare -x NAME=v` assigns then marks, so the stamp lands after
+    the assignment either way. Staged array literals are stamped too,
+    since an array is as exportable as a scalar: GNU answers
+    `declare -x A=(a b)` with `declare -ax A=([0]="a" [1]="b")`, and
+    reading only `assignments` left every `declare -x NAME=(...)`
+    unmarked.
+
+    Shared by the readonly and the plain declaration branch because
+    `declare -rx X=1` goes down the readonly one and still owes the
+    export attribute.
+
+    Only the names the handler reports storing are marked, and marking
+    is not gated on the aggregate status: a declaration keeps its valid
+    operands when a sibling refuses, so `declare -x GOOD=1 1BAD=x` exits
+    1 and still answers `declare -x GOOD="1"`. Reading the exit code
+    instead left `GOOD` unexported.
+
+    A name that carried a value went through `view.set`, so its mark
+    rides on that decision; a bare name did not, and on an *existing*
+    name the handler writes nothing at all, so the mark is the only
+    session write there is and has to clear `pre_session` itself.
+    Stamping it through `set_attr` let `declare -x AWS_TOKEN` export a
+    host-seeded credential the deployment had refused.
+
+    Args:
+        session (Session): shell session state.
+        view (SessionView): the session plane's gated door.
+        flag_chars (set[str]): the declaration's collected flag letters.
+        assignments (list[str]): `NAME` / `NAME=value` operands.
+        staged (list[tuple[str, bool, list[str]]] | None): staged array
+            literals from the same declaration.
+        stored (list[str]): the names the handler actually stored.
+
+    Returns:
+        A refusal result when the gate denied a mark, else None.
+    """
+    if "x" not in flag_chars:
+        return None
+    covered = {a.partition("=")[0] for a in assignments if "=" in a}
+    covered |= {name for name, _, _ in staged or []}
+    for name in stored:
+        if name in covered:
+            set_attr(session, name, VarAttr.EXPORT)
+            continue
+        try:
+            await view.mark(name, VarAttr.EXPORT, True)
+        except PolicyDenied as exc:
+            err = f"{exc.strerror}\n".encode()
+            return None, IOResult(exit_code=1,
+                                  stderr=err), ExecutionNode(command="declare",
+                                                             exit_code=1,
+                                                             stderr=err)
+    return None
+
+
 async def execute_node(
     dispatch: DispatchFn,
     registry: MountRegistry,
@@ -337,6 +405,18 @@ async def execute_node(
     # expansion-time write (`${X:=d}`, `$((X=5))`) lands through it,
     # so a pre_session rule governs those exactly as it governs `X=d`.
     view = session_view(session, registry.policies)
+    # `set -n` reads without executing, and it stops *everything* after
+    # it, at every depth: GNU answers `if true; then set -n; echo BAD;
+    # fi` and `f(){ set -n; echo BAD; }; f` with nothing at all. Stated
+    # here, at the one door every node goes through, rather than in each
+    # statement runner -- the program loop, the subshell body, a group,
+    # a function body and every loop body are five places for one rule to
+    # drift, and it did: the check lived in the program loop alone, so
+    # `set -n` worked flat and did nothing one construct deep. The
+    # program loop keeps its own `break` as the reader-level stop, which
+    # is also what silences `set -v` for the lines it never reads.
+    if session.shell_options.get("noexec"):
+        return None, IOResult(), ExecutionNode(command="", exit_code=0)
     if cancel is not None and cancel.is_set():
         raise MirageAbortError()
     cs = call_stack if call_stack is not None else CallStack()
@@ -683,7 +763,15 @@ async def execute_node(
                                              execute_fn,
                                              cs,
                                              view=view)
-                if not expanded:
+                if not expanded and child.type in (NT.SIMPLE_EXPANSION,
+                                                   NT.EXPANSION):
+                    # An *unquoted* expansion that came back empty is
+                    # removed by word splitting, so `export $UNSET` is a
+                    # bare `export` and prints the listing. A quoted one
+                    # is a real, empty operand: GNU answers both
+                    # `export ""` and `export "$UNSET"` with
+                    # ``export: `': not a valid identifier``, so it has
+                    # to reach the builtin rather than vanish here.
                     continue
                 if (not opts_done and expanded.startswith("-")
                         and len(expanded) > 1):
@@ -713,39 +801,59 @@ async def execute_node(
                 if note_local_array(session, bare):
                     # Inside a function this shadows whatever the caller
                     # had with a fresh empty array.
-                    session.arrays[bare] = []
+                    seed_var(session, bare, [])
                 elif bare not in session.arrays:
                     # At top level an existing scalar becomes element 0.
-                    scalar = session.env.pop(bare, None)
-                    session.arrays[bare] = [] if scalar is None else [scalar]
+                    scalar = session.env.get(bare)
+                    seed_var(session, bare, [] if scalar is None else [scalar])
         # Array literals travel as data: the handler stores them through
         # the session door and owns both refusal voices, so the executor
         # only expands and stages.
         if is_readonly:
+            decl_view = session_view(session, namespace.registry.policies)
+            stored: list[str] = []
             # Only the `readonly` keyword owns -p / illegal-option
             # handling; `declare -r` keeps names only.
             if keyword == "readonly":
-                return await handle_readonly(flag_words + assignments,
-                                             session,
-                                             session_view(
-                                                 session,
-                                                 namespace.registry.policies),
-                                             arrays=staged)
-            return await handle_readonly(assignments,
-                                         session,
-                                         session_view(
-                                             session,
-                                             namespace.registry.policies),
-                                         arrays=staged)
+                result = await handle_readonly(flag_words + assignments,
+                                               session,
+                                               decl_view,
+                                               arrays=staged,
+                                               stored=stored)
+            else:
+                result = await handle_readonly(assignments,
+                                               session,
+                                               decl_view,
+                                               arrays=staged,
+                                               stored=stored)
+            # `declare -rx X=1` carries both attributes: GNU prints
+            # `declare -rx X="1"`. Readonly answers first, so the export
+            # stamp has to land here too, or `-r` silently ate the `-x`.
+            refused = await _stamp_export(session, decl_view, flag_chars,
+                                          assignments, staged, stored)
+            return refused if refused is not None else result
         # declare/typeset scope like `local` inside a function (bash
         # semantics) and assign globally at top level, which is exactly
         # handle_local's fallback when no function scope is active.
         if keyword in (NT.LOCAL, "declare", "typeset"):
-            return await handle_local(
+            # `-p` prints rather than declares, so it is answered before
+            # the assignment path runs at all.
+            if "p" in flag_chars and keyword in ("declare", "typeset"):
+                return await handle_declare_print(assignments, session)
+            decl_view = session_view(session, namespace.registry.policies)
+            stored = []
+            result = await handle_local(
                 assignments,
                 session,
-                session_view(session, namespace.registry.policies),
-                arrays=staged)
+                decl_view,
+                arrays=staged,
+                # `declare`/`typeset` share this handler but have to name
+                # themselves in a diagnostic rather than say `local`.
+                cmd="local" if keyword == NT.LOCAL else str(keyword),
+                stored=stored)
+            refused = await _stamp_export(session, decl_view, flag_chars,
+                                          assignments, staged, stored)
+            return refused if refused is not None else result
         # Pass export flags through so -p / bare print and bad options work.
         return await handle_export(flag_words + assignments,
                                    session,

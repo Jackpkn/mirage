@@ -20,6 +20,8 @@ from mirage.ops.types import SessionView
 from mirage.policy import Policies, PolicyDenied, pre_session_gate
 from mirage.policy.types import SessionContext
 from mirage.shell.array import ShellArray, array_values
+from mirage.shell.variable import (ShellValue, ShellVar, VarAttr, with_attr,
+                                   with_value)
 from mirage.utils.hidden import var_hidden
 from mirage.workspace.session.errors import ReadonlyVariableError
 from mirage.workspace.session.session import Session
@@ -34,16 +36,40 @@ def env_snapshot(session: Session) -> dict[str, str]:
     them by construction rather than on however many hand-rolled
     copies someone remembers.
 
+    *Exported* names only, which is what makes this the process view
+    rather than a second spelling of ``visible_env``. bash puts a
+    variable in a child's environment when it carries the export
+    attribute, not when it happens to hold a string: ``X=hello`` is
+    absent from ``env`` and ``export Y=world`` is present. An unset
+    name carrying the attribute (``export Z``) is absent too, which
+    falls out of the value check rather than needing its own arm.
+
     Args:
         session (Session): the session whose env to copy.
     """
-    if session.hidden_vars is None:
-        return dict(session.env)
     return {
-        name: value
-        for name, value in session.env.items()
-        if not var_hidden(session.hidden_vars, name)
+        name: var.value
+        for name, var in session.vars.items()
+        if isinstance(var.value, str) and VarAttr.EXPORT in var.attrs
+        and not var_hidden(session.hidden_vars, name)
     }
+
+
+def exported_names(session: Session) -> list[str]:
+    """The names carrying the export attribute, sorted, hidden removed.
+
+    Wider than `env_snapshot`'s keys by exactly the unset ones: a name
+    `export Z` marked but never assigned is listed by `export -p` as
+    `declare -x Z` while staying out of the environment. So the
+    printers read this and the process view reads `env_snapshot`,
+    rather than one of them re-deriving the other's filter.
+
+    Args:
+        session (Session): the session to read.
+    """
+    return sorted(name for name, var in session.vars.items()
+                  if VarAttr.EXPORT in var.attrs
+                  and not var_hidden(session.hidden_vars, name))
 
 
 def env_get(session: Session, name: str) -> str | None:
@@ -58,7 +84,9 @@ def env_get(session: Session, name: str) -> str | None:
     """
     if var_hidden(session.hidden_vars, name):
         return None
-    return session.env.get(name)
+    var = session.vars.get(name)
+    return var.value if var is not None and isinstance(var.value,
+                                                       str) else None
 
 
 def env_is_readonly(session: Session, name: str) -> bool:
@@ -74,7 +102,8 @@ def env_is_readonly(session: Session, name: str) -> bool:
     """
     if var_hidden(session.hidden_vars, name):
         return False
-    return name in session.readonly_vars
+    var = session.vars.get(name)
+    return var is not None and VarAttr.READONLY in var.attrs
 
 
 class _VisibleEnv(Mapping[str, str]):
@@ -93,32 +122,34 @@ class _VisibleEnv(Mapping[str, str]):
     def __getitem__(self, name: str) -> str:
         if var_hidden(self._session.hidden_vars, name):
             raise KeyError(name)
-        return self._session.env[name]
+        var = self._session.vars[name]
+        if not isinstance(var.value, str):
+            raise KeyError(name)
+        return var.value
 
     def __iter__(self) -> Iterator[str]:
         hidden = self._session.hidden_vars
-        for name in self._session.env:
-            if not var_hidden(hidden, name):
+        for name, var in self._session.vars.items():
+            if isinstance(var.value, str) and not var_hidden(hidden, name):
                 yield name
 
     def __len__(self) -> int:
-        hidden = self._session.hidden_vars
-        return sum(1 for name in self._session.env
-                   if not var_hidden(hidden, name))
+        return sum(1 for _ in self)
 
 
 def visible_env(session: Session) -> Mapping[str, str]:
     """The env mapping a reader tier should resolve names against.
 
-    The raw dict when nothing is hidden (the common case pays
-    nothing), a filtering view otherwise. Read-only by type: writers
-    go through ``set_var``/``unset_var``, never a mapping.
+    Always the live view, never ``session.env``: that property is a
+    projection built fresh on every access, so handing it out would
+    copy the whole store per read *and* freeze the answer at that
+    moment. The view costs one dict lookup plus the hidden check per
+    name and shows later writes through. Read-only by type: writers go
+    through ``set_var``/``unset_var``, never a mapping.
 
     Args:
         session (Session): the session holding the environment.
     """
-    if session.hidden_vars is None:
-        return session.env
     return _VisibleEnv(session)
 
 
@@ -138,18 +169,19 @@ class _VisibleArrays(Mapping[str, ShellArray]):
     def __getitem__(self, name: str) -> ShellArray:
         if var_hidden(self._session.hidden_vars, name):
             raise KeyError(name)
-        return self._session.arrays[name]
+        var = self._session.vars[name]
+        if not isinstance(var.value, list):
+            raise KeyError(name)
+        return var.value
 
     def __iter__(self) -> Iterator[str]:
         hidden = self._session.hidden_vars
-        for name in self._session.arrays:
-            if not var_hidden(hidden, name):
+        for name, var in self._session.vars.items():
+            if isinstance(var.value, list) and not var_hidden(hidden, name):
                 yield name
 
     def __len__(self) -> int:
-        hidden = self._session.hidden_vars
-        return sum(1 for name in self._session.arrays
-                   if not var_hidden(hidden, name))
+        return sum(1 for _ in self)
 
 
 def visible_arrays(session: Session) -> Mapping[str, ShellArray]:
@@ -158,8 +190,6 @@ def visible_arrays(session: Session) -> Mapping[str, ShellArray]:
     Args:
         session (Session): the session holding the arrays.
     """
-    if session.hidden_vars is None:
-        return session.arrays
     return _VisibleArrays(session)
 
 
@@ -211,7 +241,12 @@ async def set_var(session: Session, policies: Policies | None, name: str,
             pre_session policy refused the write.
     """
     ensure_var_visible(session, name)
-    if name in session.readonly_vars:
+    # The record, not the `readonly_vars` projection: that property
+    # rebuilds a frozenset over every variable in the session, and this
+    # is the hot path every assignment takes. TypeScript's `setVar` has
+    # always read the record directly. `ensure_var_visible` has already
+    # refused a hidden name, so the two answer identically here.
+    if env_is_readonly(session, name):
         raise ReadonlyVariableError(name)
     rendered = value if isinstance(value, str) else " ".join(
         array_values(value))
@@ -222,12 +257,21 @@ async def set_var(session: Session, policies: Policies | None, name: str,
                        key=name,
                        value=rendered,
                        session_id=session.session_id))
-    if isinstance(value, str):
-        session.env[name] = value
-        session.arrays.pop(name, None)
-    else:
-        session.arrays[name] = value
-        session.env.pop(name, None)
+    existing = session.vars.get(name)
+    # Attributes belong to the name, not to the value, so a plain
+    # assignment keeps them: `declare -i n; n=3` stays an integer. The
+    # old two-container store had to remember to evict the name from
+    # whichever container it was not landing in; one record cannot
+    # disagree with itself that way.
+    stored = ShellVar(value) if existing is None else with_value(
+        existing, value)
+    # `set -a` marks every name assigned *while it is on*, which is why
+    # it is read here at write time rather than applied to the session
+    # in bulk when the option flips: `B=1; set -a; C=2; set +a; D=3`
+    # exports only C.
+    if session.shell_options.get("allexport"):
+        stored = with_attr(stored, VarAttr.EXPORT)
+    session.vars[name] = stored
 
 
 async def unset_var(session: Session, policies: Policies | None,
@@ -249,7 +293,9 @@ async def unset_var(session: Session, policies: Policies | None,
         # a quiet no-op; popping the real value would let a session
         # mutate state it cannot see.
         return
-    if name in session.readonly_vars:
+    # Same as `set_var`: the record, not the projection. The hidden
+    # branch above has already returned, so the answers match.
+    if env_is_readonly(session, name):
         raise ReadonlyVariableError(name)
     await pre_session_gate(
         policies,
@@ -258,12 +304,120 @@ async def unset_var(session: Session, policies: Policies | None,
                        key=name,
                        value=None,
                        session_id=session.session_id))
-    session.env.pop(name, None)
+    session.vars.pop(name, None)
+
+
+def seed_var(session: Session, name: str, value: ShellValue) -> None:
+    """Write a variable without consulting the gate.
+
+    Two kinds of caller. One is seeding a session before it is handed
+    out: the embedder populating an environment, a test arranging
+    state. `visible_arrays` already names this case ("the embedder can
+    seed session.arrays before narrowing"). The other is the shell
+    writing its own bookkeeping -- ``$PWD``/``$OLDPWD`` after a ``cd``,
+    ``BASH_REMATCH`` after a ``[[ =~ ]]``, the loop variable a ``for``
+    puts back when it ends -- which are the shell's to maintain, not
+    the session's to admit, and which a ``pre_session`` rule refusing
+    them could only break.
+
+    A variable the *line* named goes through `SessionView.set` instead,
+    which is the whole point of the store being read-only from outside.
+    One caller is neither, and is called out here rather than left to
+    be discovered: `execute_command` lands a prefix assignment
+    (``FOO=bar cmd``) through this door, so a ``pre_session`` rule
+    never sees one. That predates the record store -- the same site
+    wrote ``session.env[k]`` before -- and closing it means deciding
+    what bash does when a prefix assignment is refused, which is its
+    own divergence (GNU prints the readonly refusal, runs the command
+    anyway and exits 0, where mirage refuses the whole statement). It
+    belongs with that work, not here.
+
+    Args:
+        session (Session): the session being seeded.
+        name (str): variable name.
+        value (ShellValue): the value to store.
+    """
+    existing = session.vars.get(name)
+    session.vars[name] = (ShellVar(value) if existing is None else with_value(
+        existing, value))
+
+
+def set_attr(session: Session,
+             name: str,
+             attr: VarAttr | None,
+             on: bool = True) -> None:
+    """Turn one attribute on or off, creating the name if needed.
+
+    bash's `readonly NAME` / `export NAME` on a name that does not exist
+    yet marks it anyway, and the name stays *unset*: GNU prints
+    `declare -r ONLY` with no value and `${ONLY-d}` still expands to
+    `d`. So the record is created with no value, not with an empty
+    string.
+
+    A None attribute changes no attribute and only ensures the name
+    exists, which is what a bare `local L` / `declare D` does: GNU
+    answers `declare -- L` and `${L-d}` still expands to `d`, so those
+    two cannot route through a value writer either.
+
+    Args:
+        session (Session): the session being written.
+        name (str): variable name.
+        attr (VarAttr | None): the attribute to change, None to declare
+            the name and change nothing.
+        on (bool): set it, or clear it.
+    """
+    existing = session.vars.get(name, ShellVar())
+    session.vars[name] = (existing if attr is None else with_attr(
+        existing, attr, on))
+
+
+async def mark_var(session: Session,
+                   policies: Policies | None,
+                   name: str,
+                   attr: VarAttr | None,
+                   on: bool = True) -> None:
+    """Turn one attribute on or off through the session plane's gate.
+
+    The no-value writer beside ``set_var``. ``export NAME``,
+    ``readonly NAME`` and a bare ``local NAME`` on a fresh name write no
+    value at all -- the name stays unset and merely declared -- so
+    routing them through ``set_var`` would have to invent one, and
+    inventing ``""`` is exactly the divergence that made ``export Z``
+    show up in ``env`` and ``${L-d}`` stop expanding to ``d``. A None
+    attribute declares the name and changes no attribute.
+
+    Gated all the same, because a mark is still a session write: a
+    hidden name refuses, and ``pre_session`` sees it with a None value,
+    which is how a rule tells a mark from an assignment if it cares.
+    Skipping the gate here would let a line the agent types put an
+    attribute on a name the deployment refused it.
+
+    Args:
+        session (Session): the session being written.
+        policies (Policies | None): admission policies the mark clears.
+        name (str): variable name.
+        attr (VarAttr | None): the attribute to change, None to declare
+            the name and change nothing.
+        on (bool): set it, or clear it.
+
+    Raises:
+        PolicyDenied: the name is hidden for this session, or a
+            pre_session policy refused the mark.
+    """
+    ensure_var_visible(session, name)
+    await pre_session_gate(
+        policies,
+        SessionContext(plane="env",
+                       verb="set",
+                       key=name,
+                       value=None,
+                       session_id=session.session_id))
+    set_attr(session, name, attr, on)
 
 
 def session_view(session: Session,
                  policies: Policies | None = None) -> SessionView:
-    """The session plane's view: five facts bound to one session.
+    """The session plane's view: six facts bound to one session.
 
     The one constructor every tier uses — builtins, the command
     dispatcher, a bare unit test — so the gate cannot be skipped by
@@ -280,4 +434,5 @@ def session_view(session: Session,
                        snapshot=functools.partial(env_snapshot, session),
                        set=functools.partial(set_var, session, policies),
                        unset=functools.partial(unset_var, session, policies),
+                       mark=functools.partial(mark_var, session, policies),
                        is_readonly=functools.partial(env_is_readonly, session))

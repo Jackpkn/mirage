@@ -14,11 +14,13 @@
 
 import dataclasses
 
+from mirage.shell.variable import ShellVar, VarAttr
 from mirage.types import MountMode
 from mirage.workspace.session import Session
 from mirage.workspace.session.session import (CHILD_SHELL_FIELDS,
                                               INHERITED_FIELDS,
-                                              TRANSIENT_FIELDS)
+                                              TRANSIENT_FIELDS, vars_from_env)
+from mirage.workspace.session.state import seed_var, set_attr
 
 
 def test_session_defaults():
@@ -39,16 +41,16 @@ def test_session_custom_cwd():
 
 
 def test_session_env():
-    s = Session(session_id="s1", env={"A": "1", "B": "2"})
+    s = Session(session_id="s1", vars=vars_from_env({"A": "1", "B": "2"}))
     assert s.env["A"] == "1"
     assert s.env["B"] == "2"
 
 
 def test_session_env_mutation():
     s = Session(session_id="s1")
-    s.env["X"] = "hello"
+    seed_var(s, "X", "hello")
     assert s.env["X"] == "hello"
-    del s.env["X"]
+    del s.vars["X"]
     assert "X" not in s.env
 
 
@@ -73,7 +75,7 @@ def test_session_stdin_buffer():
 
 
 def test_session_to_dict():
-    s = Session(session_id="s1", cwd="/data", env={"K": "V"})
+    s = Session(session_id="s1", cwd="/data", vars=vars_from_env({"K": "V"}))
     d = s.to_dict()
     assert d["session_id"] == "s1"
     assert d["cwd"] == "/data"
@@ -98,7 +100,9 @@ def test_session_from_dict():
 
 
 def test_session_roundtrip():
-    original = Session(session_id="rt", cwd="/x", env={"K": "V"})
+    original = Session(session_id="rt",
+                       cwd="/x",
+                       vars=vars_from_env({"K": "V"}))
     restored = Session.from_dict(original.to_dict())
     assert restored.session_id == original.session_id
     assert restored.cwd == original.cwd
@@ -108,7 +112,7 @@ def test_session_roundtrip():
 def test_session_independent_envs():
     s1 = Session(session_id="a")
     s2 = Session(session_id="b")
-    s1.env["X"] = "1"
+    seed_var(s1, "X", "1")
     assert "X" not in s2.env
 
 
@@ -127,12 +131,14 @@ def test_fork_copies_every_field_including_mount_modes():
     original = Session(
         session_id="orig",
         cwd="/disk",
-        env={"FOO": "bar"},
         functions={"f": object()},
         last_exit_code=7,
         shell_options={"errexit": True},
-        readonly_vars={"HOME"},
-        arrays={"ARGV": ["a", "b"]},
+        vars={
+            "FOO": ShellVar("bar"),
+            "HOME": ShellVar(None, frozenset({VarAttr.READONLY})),
+            "ARGV": ShellVar(["a", "b"]),
+        },
         mount_modes={
             "/s3": MountMode.READ,
             "/dev": MountMode.EXEC,
@@ -179,8 +185,10 @@ def test_to_dict_omits_grants_when_unrestricted():
 
 
 def test_fork_overrides_apply_without_mutating_original():
-    original = Session(session_id="orig", cwd="/disk", env={"FOO": "bar"})
-    forked = original.fork(cwd="/ram", env={"BAZ": "qux"})
+    original = Session(session_id="orig",
+                       cwd="/disk",
+                       vars=vars_from_env({"FOO": "bar"}))
+    forked = original.fork(cwd="/ram", vars=vars_from_env({"BAZ": "qux"}))
     assert forked.cwd == "/ram"
     # `$PWD` follows the caller-supplied cwd rather than staying stale.
     assert forked.env == {"BAZ": "qux", "PWD": "/ram"}
@@ -207,10 +215,12 @@ def test_fork_keeps_an_explicit_logical_cwd_beside_a_cwd_override():
 
 def test_fork_deep_copies_mutable_containers():
     original = Session(session_id="orig",
-                       env={"FOO": "bar"},
-                       arrays={"A": ["1"]})
+                       vars={
+                           "FOO": ShellVar("bar"),
+                           "A": ShellVar(["1"]),
+                       })
     forked = original.fork()
-    forked.env["NEW"] = "leaked?"
+    seed_var(forked, "NEW", "leaked?")
     forked.arrays["A"].append("2")
     assert "NEW" not in original.env
     assert original.arrays["A"] == ["1"]
@@ -233,10 +243,12 @@ def test_fork_carries_every_inherited_field():
 
 
 def test_snapshot_and_restore_undo_a_child_shell():
-    session = Session(session_id="s", cwd="/data", env={"A": "1"})
+    session = Session(session_id="s",
+                      cwd="/data",
+                      vars=vars_from_env({"A": "1"}))
     saved = session.snapshot()
     session.cwd = "/other"
-    session.env["A"] = "2"
+    seed_var(session, "A", "2")
     session.functions["f"] = []
     session.script_name = "run.sh"
     session.restore(saved)
@@ -249,3 +261,57 @@ def test_snapshot_and_restore_undo_a_child_shell():
 def test_argv0_keeps_an_empty_script_name():
     assert Session(session_id="s").argv0 == "mirage"
     assert Session(session_id="s", script_name="").argv0 == ""
+
+
+def test_to_dict_carries_the_attributes_beside_the_values():
+    s = Session(session_id="s1")
+    seed_var(s, "PLAIN", "hello")
+    s.vars["EXPO"] = ShellVar("world", frozenset({VarAttr.EXPORT}))
+    s.vars["MARKED"] = ShellVar(None,
+                                frozenset({VarAttr.EXPORT, VarAttr.READONLY}))
+    data = s.to_dict()
+    # `env` stays a plain name/value map, the shape an embedder writes
+    # and the other language reads; the letters ride beside it. An unset
+    # name has no value to carry and appears only in `var_attrs`.
+    assert data["env"] == {"PWD": "/", "PLAIN": "hello", "EXPO": "world"}
+    assert data["var_attrs"] == {"PWD": "x", "EXPO": "x", "MARKED": "rx"}
+
+
+def test_var_attrs_is_written_even_when_empty():
+    # Its *presence* is the discriminator, so it has to be there even
+    # with nothing in it. Written only when non-empty, a session whose
+    # last attribute had been cleared serialized as a bare process
+    # environment, and the reload re-exported everything it held.
+    s = Session(session_id="s1")
+    seed_var(s, "X", "secret")
+    # `export -n PWD` clears the one attribute a fresh session carries.
+    set_attr(s, "PWD", VarAttr.EXPORT, False)
+    data = s.to_dict()
+    assert data["var_attrs"] == {}
+    back = Session.from_dict(data)
+    assert back.vars["X"] == ShellVar("secret", frozenset())
+    assert VarAttr.EXPORT not in back.vars["PWD"].attrs
+
+
+def test_a_stored_session_round_trips_without_promoting_anything():
+    # The bug this replaced: `to_dict` wrote every scalar under `env` and
+    # `from_dict` read `env` as a process environment, so one flush and
+    # reload turned a plain `X=hello` into an exported one and shipped it
+    # to every child runtime.
+    s = Session(session_id="s1")
+    seed_var(s, "PLAIN", "hello")
+    s.vars["EXPO"] = ShellVar("world", frozenset({VarAttr.EXPORT}))
+    s.vars["MARKED"] = ShellVar(None, frozenset({VarAttr.READONLY}))
+    back = Session.from_dict(s.to_dict())
+    assert back.vars["PLAIN"] == ShellVar("hello", frozenset())
+    assert back.vars["EXPO"] == ShellVar("world", frozenset({VarAttr.EXPORT}))
+    assert back.vars["MARKED"] == ShellVar(None, frozenset({VarAttr.READONLY}))
+
+
+def test_a_payload_with_no_attributes_is_read_as_a_process_environment():
+    # An embedder's dict, or a record another writer hand-built, carries
+    # values and no letters. That shape *is* a process environment, so
+    # every name in it is exported -- which is what `ws.env = {...}` and
+    # a cross-language handoff both mean.
+    back = Session.from_dict({"session_id": "x", "env": {"A": "1"}})
+    assert back.vars["A"] == ShellVar("1", frozenset({VarAttr.EXPORT}))

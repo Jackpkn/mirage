@@ -21,8 +21,8 @@ from mirage.workspace.session.profile import SessionProfile
 from mirage.workspace.session.ram import RAMSessionStore
 from mirage.workspace.session.session import Session
 from mirage.workspace.session.state import (ensure_var_visible, env_snapshot,
-                                            session_view, visible_arrays,
-                                            visible_env)
+                                            exported_names, session_view,
+                                            visible_arrays, visible_env)
 from mirage.workspace.session.store import SessionFields, SessionStore
 
 __all__ = [
@@ -30,6 +30,7 @@ __all__ = [
     "ReadonlyVariableError",
     "env_snapshot",
     "ensure_var_visible",
+    "exported_names",
     "SessionProfile",
     "session_view",
     "visible_arrays",

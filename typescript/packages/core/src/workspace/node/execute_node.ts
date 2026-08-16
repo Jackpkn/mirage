@@ -12,6 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import { seedVar } from '../session/state.ts'
 import type { Runtime } from '../../runtime/base.ts'
 import type { PolicyDecision } from '../../runtime/policy/index.ts'
 import { asyncChain } from '../../io/stream.ts'
@@ -71,6 +72,7 @@ import {
 import type { DispatchFn } from '../../runtime/types.ts'
 import {
   handleExport,
+  handleDeclarePrint,
   handleLocal,
   handleReadonly,
   handleTest,
@@ -89,7 +91,8 @@ import { executeProgram } from './program.ts'
 import { executeCommand } from './command_dispatch.ts'
 import { PolicyDenied } from '../../policy/errors.ts'
 import type { SessionView } from '../../ops/types.ts'
-import { ensureVarVisible, sessionView, visibleEnv } from '../session/state.ts'
+import { ensureVarVisible, sessionView, setAttr, visibleEnv } from '../session/state.ts'
+import { VarAttr } from '../../shell/variable.ts'
 import { traceAssignment } from '../../shell/xtrace.ts'
 import { Channel, type JobConsole } from '../../shell/console/index.ts'
 import { type ExecuteNodeOpts, pump } from '../executor/jobs.ts'
@@ -193,7 +196,7 @@ async function evalCforExpr(
   // Through the door, so a preSession rule governs an arithmetic assignment
   // exactly as it governs `X=1`.
   for (const [name, updated] of Object.entries(updates)) {
-    if (view === undefined) session.env[name] = updated
+    if (view === undefined) seedVar(session, name, updated)
     else await view.set(name, updated)
   }
   return Number(value)
@@ -331,6 +334,67 @@ export interface ExecuteNodeDeps {
   sink?: JobConsole
 }
 
+/**
+ * Mark every name a `-x` declaration stored as exported.
+ *
+ * `declare -x NAME` marks an existing name without touching its value and
+ * `declare -x NAME=v` assigns then marks, so the stamp lands after the
+ * assignment either way. Staged array literals are stamped too, since an
+ * array is as exportable as a scalar: GNU answers `declare -x A=(a b)`
+ * with `declare -ax A=([0]="a" [1]="b")`, and reading only `assignments`
+ * left every `declare -x NAME=(...)` unmarked.
+ *
+ * Shared by the readonly and the plain declaration branch because
+ * `declare -rx X=1` goes down the readonly one and still owes the export
+ * attribute.
+ *
+ * Only the names the handler reports storing are marked, and marking is
+ * not gated on the aggregate status: a declaration keeps its valid
+ * operands when a sibling refuses, so `declare -x GOOD=1 1BAD=x` exits 1
+ * and still answers `declare -x GOOD="1"`.
+ *
+ * A name that carried a value went through `view.set`, so its mark rides
+ * on that decision; a bare name did not, and on an *existing* name the
+ * handler writes nothing at all, so the mark is the only session write
+ * there is and has to clear `pre_session` itself. Stamping it through
+ * `setAttr` let `declare -x AWS_TOKEN` export a host-seeded credential
+ * the deployment had refused.
+ */
+async function stampExport(
+  session: Session,
+  view: SessionView,
+  flagChars: Set<string>,
+  assignments: string[],
+  staged: { name: string; append: boolean; items: string[] }[],
+  stored: string[],
+): Promise<Result | null> {
+  if (!flagChars.has('x')) return null
+  const covered = new Set<string>()
+  for (const a of assignments) {
+    const eq = a.indexOf('=')
+    if (eq >= 0) covered.add(a.slice(0, eq))
+  }
+  for (const { name } of staged) covered.add(name)
+  for (const name of stored) {
+    if (covered.has(name)) {
+      setAttr(session, name, VarAttr.Export)
+      continue
+    }
+    try {
+      await view.mark(name, VarAttr.Export, true)
+    } catch (err) {
+      if (!(err instanceof PolicyDenied)) throw err
+      const encoded = new TextEncoder().encode(`${err.message}\n`)
+      return [
+        null,
+        new IOResult({ exitCode: 1, stderr: encoded }),
+        new ExecutionNode({ command: 'declare', exitCode: 1, stderr: encoded }),
+      ]
+    }
+  }
+  return null
+}
+
 export async function executeNode(
   deps: ExecuteNodeDeps,
   node: TSNodeLike,
@@ -360,6 +424,19 @@ export async function executeNode(
   const { dispatch, registry, jobTable, executeFn, agentId } = deps
   const kind = nodeKind(node)
 
+  // `set -n` reads without executing, and it stops *everything* after
+  // it, at every depth: GNU answers `if true; then set -n; echo BAD; fi`
+  // and `f(){ set -n; echo BAD; }; f` with nothing at all. Stated here,
+  // at the one door every node goes through, rather than in each
+  // statement runner — the program loop, the subshell body, a group, a
+  // function body and every loop body are five places for one rule to
+  // drift, and it did: the check lived in the program loop alone, so
+  // `set -n` worked flat and did nothing one construct deep. The program
+  // loop keeps its own `break` as the reader-level stop, which is also
+  // what silences `set -v` for the lines it never reads.
+  if (session.shellOptions.noexec === true) {
+    return [null, new IOResult(), new ExecutionNode({ command: '', exitCode: 0 })]
+  }
   if (deps.signal?.aborted === true || session.abortSignal?.aborted === true) {
     throw makeAbortError()
   }
@@ -784,7 +861,14 @@ export async function executeNode(
           callStack,
           sessionView(session, registry.policies),
         )
-        if (expanded === '') continue
+        // An *unquoted* expansion that came back empty is removed by
+        // word splitting, so `export $UNSET` is a bare `export` and
+        // prints the listing. A quoted one is a real, empty operand:
+        // GNU answers both `export ""` and `export "$UNSET"` with
+        // ``export: `': not a valid identifier``, so it has to reach
+        // the builtin rather than vanish here.
+        if (expanded === '' && (child.type === NT.SIMPLE_EXPANSION || child.type === NT.EXPANSION))
+          continue
         if (!optsDone && expanded.startsWith('-') && expanded.length > 1) {
           flagWords.push(expanded)
           if (expanded === '--') optsDone = true
@@ -813,13 +897,11 @@ export async function executeNode(
         if (noteLocalArray(session, bare)) {
           // Inside a function this shadows whatever the caller had with a
           // fresh empty array.
-          session.arrays[bare] = []
+          seedVar(session, bare, [])
         } else if (!Object.hasOwn(session.arrays, bare)) {
           // At top level an existing scalar becomes element 0.
           const scalar = session.env[bare]
-          // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
-          delete session.env[bare]
-          session.arrays[bare] = scalar === undefined ? [] : [scalar]
+          seedVar(session, bare, scalar === undefined ? [] : [scalar])
         }
       }
     }
@@ -829,21 +911,48 @@ export async function executeNode(
     if (isReadonly) {
       // Only the `readonly` keyword owns -p / illegal-option handling;
       // `declare -r` keeps names only.
-      if (keyword === 'readonly') {
-        return handleReadonly(
-          [...flagWords, ...assignments],
-          session,
-          sessionView(session, registry.policies),
-          staged,
-        )
-      }
-      return handleReadonly(assignments, session, sessionView(session, registry.policies), staged)
+      const declView = sessionView(session, registry.policies)
+      const stored: string[] = []
+      const result =
+        keyword === 'readonly'
+          ? await handleReadonly([...flagWords, ...assignments], session, declView, staged, stored)
+          : await handleReadonly(assignments, session, declView, staged, stored)
+      // `declare -rx X=1` carries both attributes: GNU prints
+      // `declare -rx X="1"`. Readonly answers first, so the export stamp
+      // has to land here too, or `-r` silently ate the `-x`.
+      const refused = await stampExport(session, declView, flagChars, assignments, staged, stored)
+      return refused ?? result
     }
     // declare/typeset scope like `local` inside a function (bash
     // semantics) and assign globally at top level, which is exactly
     // handleLocal's fallback when no function scope is active.
     if (keyword === NT.LOCAL || keyword === 'declare' || keyword === 'typeset') {
-      return handleLocal(assignments, session, sessionView(session, registry.policies), staged)
+      // `-p` prints rather than declares, so it is answered before the
+      // assignment path runs at all.
+      if (flagChars.has('p') && (keyword === 'declare' || keyword === 'typeset')) {
+        return handleDeclarePrint(assignments, session)
+      }
+      const declView2 = sessionView(session, registry.policies)
+      const stored2: string[] = []
+      const result = await handleLocal(
+        assignments,
+        session,
+        declView2,
+        staged,
+        // `declare`/`typeset` share this handler but have to name
+        // themselves in a diagnostic rather than say `local`.
+        keyword === NT.LOCAL ? 'local' : keyword,
+        stored2,
+      )
+      const refused2 = await stampExport(
+        session,
+        declView2,
+        flagChars,
+        assignments,
+        staged,
+        stored2,
+      )
+      return refused2 ?? result
     }
     // Pass export flags through so -p / bare print and illegal options work.
     return handleExport(

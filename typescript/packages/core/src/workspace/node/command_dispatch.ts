@@ -12,6 +12,10 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import type { ShellVar } from '../../shell/variable.ts'
+import { sessionEntry, setSessionEntry } from '../session/session.ts'
+import { seedVar, setAttr } from '../session/state.ts'
+import { VarAttr } from '../../shell/variable.ts'
 import type { Runtime } from '../../runtime/base.ts'
 import type { PolicyDecision } from '../../runtime/policy/index.ts'
 import { mergeSignals } from '../abort.ts'
@@ -93,6 +97,7 @@ import { SLASH_KEEPS_LAST, UNSUPPORTED_BUILTINS, followsLastComponent } from '..
 import type { Session } from '../session/session.ts'
 import { homeDir, logicalCwd } from '../session/shell_dirs.ts'
 import { ensureVarVisible, sessionView } from '../session/state.ts'
+import { preSessionGate } from '../../policy/index.ts'
 import { ExecutionNode } from '../types.ts'
 
 type Result = [ByteSource | null, IOResult, ExecutionNode]
@@ -200,7 +205,7 @@ export async function executeCommand(
     prefixAssignments.push([key, v])
   }
 
-  for (const [k] of prefixAssignments) {
+  for (const [k, v] of prefixAssignments) {
     // The hidden gate runs first, as in setVar: calling a hidden name
     // "readonly" would leak that it exists. Both branches below write
     // session.env raw (a function-call prefix on purpose never
@@ -208,6 +213,20 @@ export async function executeCommand(
     // the host's value.
     try {
       ensureVarVisible(session, k)
+      // ...and `preSession` right after, with the value, because a
+      // prefix assignment is a session write like any other and the form
+      // exports it for the command. Only the hidden half was checked
+      // here, so a deployment refusing `SECRET_*` still saw
+      // `SECRET_K=leak printenv SECRET_K` print the secret: the seeding
+      // below goes through `seedVar`, which is the ungated door, so this
+      // loop is the only place the rule can be asked.
+      await preSessionGate(registry.policies, {
+        plane: 'env',
+        verb: 'set',
+        key: k,
+        value: v,
+        sessionId: session.sessionId,
+      })
     } catch (err) {
       if (!(err instanceof PolicyDenied)) throw err
       const stderr = new TextEncoder().encode(`bash: ${err.message}\n`)
@@ -228,16 +247,26 @@ export async function executeCommand(
   }
 
   if (prefixAssignments.length > 0 && name === '') {
-    for (const [k, v] of prefixAssignments) session.env[k] = v
+    for (const [k, v] of prefixAssignments) seedVar(session, k, v)
     const cmdLabel = prefixAssignments.map(([k, v]) => `${k}=${v}`).join(' ')
     return [null, new IOResult(), new ExecutionNode({ command: cmdLabel, exitCode: 0 })]
   }
 
   const isFunctionCall = name !== '' && session.functions[name] !== undefined
-  const savedEnvOverrides: Record<string, string | null> = {}
+  const savedEnvOverrides = new Map<string, ShellVar | null>()
   for (const [k, v] of prefixAssignments) {
-    if (!isFunctionCall) savedEnvOverrides[k] = k in session.env ? (session.env[k] ?? null) : null
-    session.env[k] = v
+    if (!isFunctionCall) savedEnvOverrides.set(k, sessionEntry(session.vars, k) ?? null)
+    // Exported for the duration, which is the whole point of the form:
+    // `TOKEN=x printenv TOKEN` prints `x` because bash puts a prefix
+    // assignment in the *command's environment*, not merely in the
+    // shell. Seeding it plain left it invisible to every reader of
+    // `envSnapshot` — the command's own env, an installed CLI, a guest
+    // runtime — once that view narrowed to the exported set. The saved
+    // record is put back below, so the attribute does not outlive the
+    // command; a function call deliberately saves nothing and keeps the
+    // assignment, as bash does.
+    seedVar(session, k, v)
+    setAttr(session, k, VarAttr.Export)
   }
 
   try {
@@ -260,12 +289,12 @@ export async function executeCommand(
       signal,
     )
   } finally {
-    for (const [k, prev] of Object.entries(savedEnvOverrides)) {
+    for (const [k, prev] of savedEnvOverrides) {
       if (prev === null) {
         // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
-        delete session.env[k]
+        delete session.vars[k]
       } else {
-        session.env[k] = prev
+        setSessionEntry(session.vars, k, prev)
       }
     }
   }

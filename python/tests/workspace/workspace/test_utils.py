@@ -15,7 +15,7 @@
 import pytest
 
 from mirage.resource.history import HISTORY_PREFIX
-from mirage.workspace.session.session import Session
+from mirage.workspace.session.session import Session, vars_from_env
 from mirage.workspace.workspace.utils import (command_name, fork_for_call,
                                               infrastructure_prefixes)
 
@@ -32,7 +32,12 @@ def test_command_name_reads_the_leading_word(line, expected):
 
 
 def _session() -> Session:
-    return Session(session_id="s1", cwd="/home", env={"A": "1", "B": "2"})
+    return Session(session_id="s1",
+                   cwd="/home",
+                   vars=vars_from_env({
+                       "A": "1",
+                       "B": "2"
+                   }))
 
 
 def test_no_overrides_reuses_the_persistent_session():

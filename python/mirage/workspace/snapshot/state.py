@@ -340,7 +340,7 @@ async def _restore_sessions(ws, state: dict[str, Any]) -> None:
                 session = ws._session_mgr.get(sid)
         fields = Session.from_dict(s_data)
         set_cwd(session, fields.cwd)
-        session.env = fields.env
+        session.vars = fields.vars
         session.mount_modes = fields.mount_modes
         restored.append(session)
     # The snapshot's session table wins over prior store contents,

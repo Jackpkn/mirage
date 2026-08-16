@@ -12,6 +12,10 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import { makeVar } from '../../shell/variable.ts'
+import { seedVar, setAttr } from '../../workspace/session/state.ts'
+import { VarAttr } from '../../shell/variable.ts'
+import { varsFromEnv } from '../../workspace/session/session.ts'
 import { describe, expect, it, vi } from 'vitest'
 import { CLISpec } from '../../commands/cli/types.ts'
 import { GENERAL_COMMANDS } from '../../commands/builtin/general/index.ts'
@@ -92,15 +96,20 @@ describe('handleExport / handleUnset / handlePrintenv', () => {
     expect(s.env.BAZ).toBe('qux')
   })
 
-  it('export KEY (no =) initializes empty if missing', async () => {
-    const s = new Session({ sessionId: 'test', env: { X: 'existing' } })
+  it('export KEY (no =) marks it without giving it a value', async () => {
+    // bash's third state: declared and exported but *unset*. GNU prints
+    // `declare -x Y` with no `=`, and `env` does not carry it at all, so
+    // the empty string this used to write was a divergence.
+    const s = new Session({ sessionId: 'test', vars: varsFromEnv({ X: 'existing' }) })
     await handleExport(['X', 'Y'], s)
     expect(s.env.X).toBe('existing')
-    expect(s.env.Y).toBe('')
+    expect(s.env.Y).toBeUndefined()
+    expect(s.vars.Y?.attrs.has(VarAttr.Export)).toBe(true)
+    expect(s.vars.Y?.value).toBeNull()
   })
 
   it('export -p prints declare -x lines', async () => {
-    const s = new Session({ sessionId: 'test', env: { ZZZ: '1', AAA: 'a"b' } })
+    const s = new Session({ sessionId: 'test', vars: varsFromEnv({ ZZZ: '1', AAA: 'a"b' }) })
     const [out, io] = await handleExport(['-p'], s)
     expect(io.exitCode).toBe(0)
     const text = decode(out as Uint8Array)
@@ -110,7 +119,7 @@ describe('handleExport / handleUnset / handlePrintenv', () => {
   })
 
   it('bare export prints like -p', async () => {
-    const s = new Session({ sessionId: 'test', env: { FOO: 'bar' } })
+    const s = new Session({ sessionId: 'test', vars: varsFromEnv({ FOO: 'bar' }) })
     const [out, io] = await handleExport([], s)
     expect(io.exitCode).toBe(0)
     // $PWD is exported like any other variable, so bash lists it here too.
@@ -126,7 +135,7 @@ describe('handleExport / handleUnset / handlePrintenv', () => {
   })
 
   it('export -p with a name does not print', async () => {
-    const s = new Session({ sessionId: 'test', env: { KEEP: '1' } })
+    const s = new Session({ sessionId: 'test', vars: varsFromEnv({ KEEP: '1' }) })
     const [out, io] = await handleExport(['-p', 'FOO=bar'], s)
     expect(io.exitCode).toBe(0)
     expect(out).toBeNull()
@@ -134,11 +143,11 @@ describe('handleExport / handleUnset / handlePrintenv', () => {
   })
 
   it('readonly -p prints scalars and arrays', async () => {
-    const s = new Session({ sessionId: 'test', env: { VAL: 'x' } })
-    s.readonlyVars.add('VAL')
-    s.readonlyVars.add('ONLY')
-    s.arrays.AR = ['a', 'b c']
-    s.readonlyVars.add('AR')
+    const s = new Session({ sessionId: 'test', vars: varsFromEnv({ VAL: 'x' }) })
+    setAttr(s, 'VAL', VarAttr.Readonly)
+    setAttr(s, 'ONLY', VarAttr.Readonly)
+    seedVar(s, 'AR', ['a', 'b c'])
+    setAttr(s, 'AR', VarAttr.Readonly)
     const [out, io] = await handleReadonly(['-p'], s)
     expect(io.exitCode).toBe(0)
     const text = decode(out as Uint8Array)
@@ -157,14 +166,14 @@ describe('handleExport / handleUnset / handlePrintenv', () => {
   it('export -p quotes control characters like bash', async () => {
     const s = new Session({
       sessionId: 'test',
-      env: {
+      vars: varsFromEnv({
         TAB: 'a\tb',
         ESC: 'a\x1bb',
         BEL: 'a\x07b',
         SOH: 'a\x01b',
         DEL: 'a\x7fb',
         UTF: 'café',
-      },
+      }),
     })
     const [out, io] = await handleExport(['-p'], s)
     expect(io.exitCode).toBe(0)
@@ -181,14 +190,14 @@ describe('handleExport / handleUnset / handlePrintenv', () => {
   })
 
   it('export -p -- still prints', async () => {
-    const s = new Session({ sessionId: 'test', env: { FOO: 'bar' } })
+    const s = new Session({ sessionId: 'test', vars: varsFromEnv({ FOO: 'bar' }) })
     const [out, io] = await handleExport(['-p', '--'], s)
     expect(io.exitCode).toBe(0)
     expect(decode(out as Uint8Array)).toBe('declare -x FOO="bar"\ndeclare -x PWD="/"\n')
   })
 
   it('export -f lists no variables', async () => {
-    const s = new Session({ sessionId: 'test', env: { FOO: 'bar' } })
+    const s = new Session({ sessionId: 'test', vars: varsFromEnv({ FOO: 'bar' }) })
     const [out, io] = await handleExport(['-f'], s)
     expect(io.exitCode).toBe(0)
     expect(decode(out as Uint8Array)).toBe('')
@@ -202,18 +211,18 @@ describe('handleExport / handleUnset / handlePrintenv', () => {
   })
 
   it('readonly -a lists arrays only', async () => {
-    const s = new Session({ sessionId: 'test', env: { VAL: 'x' } })
-    s.readonlyVars.add('VAL')
-    s.arrays.AR = ['a']
-    s.readonlyVars.add('AR')
+    const s = new Session({ sessionId: 'test', vars: varsFromEnv({ VAL: 'x' }) })
+    setAttr(s, 'VAL', VarAttr.Readonly)
+    seedVar(s, 'AR', ['a'])
+    setAttr(s, 'AR', VarAttr.Readonly)
     const [out, io] = await handleReadonly(['-a'], s)
     expect(io.exitCode).toBe(0)
     expect(decode(out as Uint8Array)).toBe('declare -ar AR=([0]="a")\n')
   })
 
   it('readonly -f and -A list nothing', async () => {
-    const s = new Session({ sessionId: 'test', env: { VAL: 'x' } })
-    s.readonlyVars.add('VAL')
+    const s = new Session({ sessionId: 'test', vars: varsFromEnv({ VAL: 'x' }) })
+    setAttr(s, 'VAL', VarAttr.Readonly)
     for (const flag of ['-f', '-A']) {
       const [out, io] = await handleReadonly([flag], s)
       expect(io.exitCode).toBe(0)
@@ -222,14 +231,14 @@ describe('handleExport / handleUnset / handlePrintenv', () => {
   })
 
   it('unset removes keys', async () => {
-    const s = new Session({ sessionId: 'test', env: { A: '1', B: '2' } })
+    const s = new Session({ sessionId: 'test', vars: varsFromEnv({ A: '1', B: '2' }) })
     await handleUnset(['A'], s)
     expect('A' in s.env).toBe(false)
     expect(s.env.B).toBe('2')
   })
 
   it('unset -f removes a function but not a same-named variable', async () => {
-    const s = new Session({ sessionId: 'test', env: { fn: 'v' } })
+    const s = new Session({ sessionId: 'test', vars: varsFromEnv({ fn: 'v' }) })
     s.functions.fn = []
     await handleUnset(['-f', 'fn'], s)
     expect('fn' in s.functions).toBe(false)
@@ -237,7 +246,7 @@ describe('handleExport / handleUnset / handlePrintenv', () => {
   })
 
   it('unset -v removes a variable but not a same-named function', async () => {
-    const s = new Session({ sessionId: 'test', env: { fn: 'v' } })
+    const s = new Session({ sessionId: 'test', vars: varsFromEnv({ fn: 'v' }) })
     s.functions.fn = []
     await handleUnset(['-v', 'fn'], s)
     expect('fn' in s.functions).toBe(true)
@@ -245,7 +254,7 @@ describe('handleExport / handleUnset / handlePrintenv', () => {
   })
 
   it('unset bare prefers a variable, else the function', async () => {
-    const s = new Session({ sessionId: 'test', env: { a: 'v' } })
+    const s = new Session({ sessionId: 'test', vars: varsFromEnv({ a: 'v' }) })
     s.functions.a = []
     await handleUnset(['a'], s)
     expect('a' in s.env).toBe(false)
@@ -257,7 +266,7 @@ describe('handleExport / handleUnset / handlePrintenv', () => {
 
   it('unset removes a whole array and a single element', async () => {
     const s = new Session({ sessionId: 'test' })
-    s.arrays.arr = ['x', 'y', 'z']
+    seedVar(s, 'arr', ['x', 'y', 'z'])
     // An interior element leaves a hole so later indices keep their
     // positions; a trailing one drops off, as bash does.
     await handleUnset(['arr[1]'], s)
@@ -270,8 +279,8 @@ describe('handleExport / handleUnset / handlePrintenv', () => {
 
   it('unset rejects an element of a readonly array', async () => {
     const s = new Session({ sessionId: 'test' })
-    s.arrays.arr = ['x', 'y']
-    s.readonlyVars.add('arr')
+    seedVar(s, 'arr', ['x', 'y'])
+    setAttr(s, 'arr', VarAttr.Readonly)
     const [, io] = await handleUnset(['arr[1]'], s)
     expect(io.exitCode).toBe(1)
     expect(decode(io.stderr as Uint8Array)).toBe(
@@ -281,7 +290,7 @@ describe('handleExport / handleUnset / handlePrintenv', () => {
   })
 
   it('unset NAME[0] removes a scalar, a non-zero subscript errors', async () => {
-    const s = new Session({ sessionId: 'test', env: { Y: 'sc', Z: 'sc' } })
+    const s = new Session({ sessionId: 'test', vars: varsFromEnv({ Y: 'sc', Z: 'sc' }) })
     const [, io] = await handleUnset(['Y[0]'], s)
     expect(io.exitCode).toBe(0)
     expect('Y' in s.env).toBe(false)
@@ -293,13 +302,13 @@ describe('handleExport / handleUnset / handlePrintenv', () => {
 
   it('unset of a negative element outside the extent errors', async () => {
     const s = new Session({ sessionId: 'test' })
-    s.arrays.arr = ['x']
+    seedVar(s, 'arr', ['x'])
     const [, io] = await handleUnset(['arr[-2]'], s)
     expect(io.exitCode).toBe(1)
     // bash prints only the bracketed part here, not the base name.
     expect(decode(io.stderr as Uint8Array)).toBe('bash: unset: [-2]: bad array subscript\n')
     expect(s.arrays.arr).toEqual(['x'])
-    s.arrays.two = ['x', 'y']
+    seedVar(s, 'two', ['x', 'y'])
     const [, io2] = await handleUnset(['two[-2]'], s)
     expect(io2.exitCode).toBe(0)
     expect(s.arrays.two).toEqual([null, 'y'])
@@ -318,7 +327,7 @@ describe('handleExport / handleUnset / handlePrintenv', () => {
   })
 
   it('printenv VAR emits value + newline; exit 1 if missing', () => {
-    const s = new Session({ sessionId: 'test', env: { X: 'yes' } })
+    const s = new Session({ sessionId: 'test', vars: varsFromEnv({ X: 'yes' }) })
     const [out, io] = handlePrintenv('X', s)
     expect(decode(out as Uint8Array)).toBe('yes\n')
     expect(io.exitCode).toBe(0)
@@ -327,7 +336,7 @@ describe('handleExport / handleUnset / handlePrintenv', () => {
   })
 
   it('printenv with no name lists sorted KEY=VAL', () => {
-    const s = new Session({ sessionId: 'test', env: { B: '2', A: '1' } })
+    const s = new Session({ sessionId: 'test', vars: varsFromEnv({ B: '2', A: '1' }) })
     const [out] = handlePrintenv(null, s)
     expect(decode(out as Uint8Array)).toBe('A=1\nB=2\nPWD=/\n')
   })
@@ -568,14 +577,14 @@ describe('handlePrintf', () => {
   })
 
   it('-v refuses a readonly scalar and a readonly array element', async () => {
-    const s = new Session({ sessionId: 'test', env: { R: 'orig' } })
-    s.readonlyVars.add('R')
+    const s = new Session({ sessionId: 'test', vars: varsFromEnv({ R: 'orig' }) })
+    setAttr(s, 'R', VarAttr.Readonly)
     const [, io] = await handlePrintf(['-v', 'R', 'new'], s)
     expect(io.exitCode).toBe(1)
     expect(decode(io.stderr as Uint8Array)).toBe('bash: R: readonly variable\n')
     expect(s.env.R).toBe('orig')
-    s.arrays.A = ['x', 'y']
-    s.readonlyVars.add('A')
+    seedVar(s, 'A', ['x', 'y'])
+    setAttr(s, 'A', VarAttr.Readonly)
     const [, io2] = await handlePrintf(['-v', 'A[0]', '%d', 'nope'], s)
     expect(io2.exitCode).toBe(1)
     expect(decode(io2.stderr as Uint8Array)).toBe(
@@ -586,7 +595,7 @@ describe('handlePrintf', () => {
 
   it('-v on a bare name keeps the other elements of an existing array', async () => {
     const s = new Session({ sessionId: 'test' })
-    s.arrays.B = ['p', 'q', 'r']
+    seedVar(s, 'B', ['p', 'q', 'r'])
     const [, io] = await handlePrintf(['-v', 'B', 'Q'], s)
     expect(io.exitCode).toBe(0)
     expect(s.arrays.B).toEqual(['Q', 'q', 'r'])
@@ -594,7 +603,7 @@ describe('handlePrintf', () => {
   })
 
   it('-v with an out-of-range subscript keeps the scalar', async () => {
-    const s = new Session({ sessionId: 'test', env: { V: 'orig' } })
+    const s = new Session({ sessionId: 'test', vars: varsFromEnv({ V: 'orig' }) })
     const [, io] = await handlePrintf(['-v', 'V[-2]', 'hi'], s)
     expect(io.exitCode).toBe(1)
     expect(decode(io.stderr as Uint8Array)).toBe('bash: V[-2]: bad array subscript\n')
@@ -603,7 +612,7 @@ describe('handlePrintf', () => {
   })
 
   it('-v with a negative subscript wraps over the scalar', async () => {
-    const s = new Session({ sessionId: 'test', env: { W: 'orig' } })
+    const s = new Session({ sessionId: 'test', vars: varsFromEnv({ W: 'orig' }) })
     const [, io] = await handlePrintf(['-v', 'W[-1]', 'hi'], s)
     expect(io.exitCode).toBe(0)
     expect(s.arrays.W).toEqual(['hi'])
@@ -958,7 +967,7 @@ describe('handleGetopts', () => {
     await handleGetopts(['ab', 'o'], s)
     const [, stop] = await handleGetopts(['ab', 'o'], s)
     expect(stop.exitCode).toBe(1)
-    s.env.OPTIND = '1'
+    seedVar(s, 'OPTIND', '1')
     s.positionalArgs = ['-b', '-a']
     const [, io] = await handleGetopts(['ab', 'o'], s)
     expect(io.exitCode).toBe(0)
@@ -976,7 +985,7 @@ describe('handleGetopts', () => {
 
   it('treats a nonpositive OPTIND as a restart at argument 1', async () => {
     const s = new Session({ sessionId: 't', positionalArgs: ['-a', '-b'] })
-    s.env.OPTIND = '0'
+    seedVar(s, 'OPTIND', '0')
     const [, io] = await handleGetopts(['ab', 'o'], s)
     expect(io.exitCode).toBe(0)
     expect(s.env.o).toBe('a')
@@ -992,7 +1001,10 @@ describe('handleGetopts', () => {
   })
 
   it('does not overwrite a readonly destination', async () => {
-    const s = new Session({ sessionId: 't', env: { o: 'orig' }, readonlyVars: new Set(['o']) })
+    const s = new Session({
+      sessionId: 't',
+      vars: { o: makeVar('orig', new Set([VarAttr.Readonly])) },
+    })
     const [, io] = await handleGetopts(['a', 'o', '-a'], s)
     expect(io.exitCode).toBe(1)
     expect(s.env.o).toBe('orig')
@@ -1000,7 +1012,7 @@ describe('handleGetopts', () => {
   })
 
   it('suppresses diagnostics when OPTERR=0', async () => {
-    const s = new Session({ sessionId: 't', env: { OPTERR: '0' } })
+    const s = new Session({ sessionId: 't', vars: varsFromEnv({ OPTERR: '0' }) })
     const [, io] = await handleGetopts(['ab', 'o', '-x'], s)
     expect(s.env.o).toBe('?')
     expect(io.stderr ?? null).toBeNull()
@@ -1027,7 +1039,7 @@ describe('handleGetopts', () => {
 
 describe('handleSet', () => {
   it('no args → print env', () => {
-    const s = new Session({ sessionId: 'test', env: { A: '1' } })
+    const s = new Session({ sessionId: 'test', vars: varsFromEnv({ A: '1' }) })
     const [out] = handleSet([], s)
     expect(decode(out as Uint8Array)).toBe('A=1\nPWD=/\n')
   })
@@ -1085,9 +1097,19 @@ describe('handleTrap / handleReturn / handleLocal', () => {
     expect(() => handleReturn([], s, null)).toThrow(ReturnSignal)
   })
 
-  it('handleLocal assigns to session.env', async () => {
+  it('handleLocal outside a function is refused, as GNU refuses it', async () => {
+    // `bash: line 1: local: can only be used in a function`, exit 1 and
+    // nothing stored. Storing it globally and exiting 0 is the
+    // silent-accept this tier removes.
     const s = new Session({ sessionId: 'test' })
-    await handleLocal(['X=1'], s)
+    const [, io] = await handleLocal(['X=1'], s)
+    expect(io.exitCode).toBe(1)
+    expect(s.env.X).toBeUndefined()
+  })
+
+  it('handleLocal assigns to session.env under the declare spelling', async () => {
+    const s = new Session({ sessionId: 'test' })
+    await handleLocal(['X=1'], s, null, null, 'declare')
     expect(s.env.X).toBe('1')
   })
 })
@@ -1160,7 +1182,7 @@ describe('handleRead', () => {
 
   it('a scalar read replaces an array of the same name', async () => {
     const s = new Session({ sessionId: 'test' })
-    s.arrays.A = ['x', 'y']
+    seedVar(s, 'A', ['x', 'y'])
     const stdin = new TextEncoder().encode('one\n')
     await handleRead(['A'], s, stdin)
     expect(s.env.A).toBe('one')

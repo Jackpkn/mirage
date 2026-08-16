@@ -189,6 +189,7 @@ async def expand_redirects(
                          target_node=r.target_node,
                          kind=r.kind,
                          append=r.append,
+                         clobber=r.clobber,
                          pipeline=r.pipeline,
                          expand_vars=r.expand_vars))
             continue
@@ -242,6 +243,7 @@ async def expand_redirects(
                      target_node=r.target_node,
                      kind=r.kind,
                      append=r.append,
+                     clobber=r.clobber,
                      pipeline=r.pipeline))
     pipe_node = None
     for r in expanded:

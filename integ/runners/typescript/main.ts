@@ -85,7 +85,11 @@ async function runTarget(
     // (ntn's --notion-version off NOTION_API_VERSION) behaves differently with
     // and without it, so the conformance runner passes the same map to the real
     // binary and the comparison stays like for like.
-    Object.assign(ws.env, target.env ?? {})
+    // Through the setter, not into the record: `ws.env` is a frozen
+    // projection of the variable records, and a target's declared
+    // environment is exported by definition -- a CLI reads it as a
+    // process environment, which carries exported names only.
+    ws.env = { ...ws.env, ...(target.env ?? {}) }
     for (const mount of target.mounts) {
       await seedFixture(ws, mount.fixture, mount.path, root)
       if (mount.seed_root) await seedMountRoot(ws, mount.path)
@@ -166,7 +170,7 @@ async function runTarget(
       // Same rule as the ordinary path: a target's declared environment reaches
       // every workspace a case can run against, or a consistency scenario would
       // silently run under a different one.
-      Object.assign(opened.ws.env, target.env ?? {})
+      opened.ws.env = { ...opened.ws.env, ...(target.env ?? {}) }
       const { exitCode, out } = await runScenario(opened.ws, opened.mutate, c.scenario)
       if (emit !== null) {
         emit.push({ target: target.id, id: c.id, exit: exitCode, stdout: out, stderr: '' })

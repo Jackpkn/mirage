@@ -12,6 +12,8 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import { setCwd } from './session/shell_dirs.ts'
+import { seedVar } from './session/state.ts'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -248,8 +250,10 @@ describe('Workspace.fromState — sessions and finished jobs', () => {
     await ws.execute('cd /data')
     await ws.execute('export FOO=bar')
     const worker = ws.sessionManager.create('worker')
-    worker.cwd = '/data'
-    worker.env = { ROLE: 'bg' }
+    // Through setCwd, so $PWD tracks the move: assigning `cwd` directly
+    // leaves PWD stale, which the old wholesale env replacement hid.
+    setCwd(worker, '/data')
+    seedVar(worker, 'ROLE', 'bg')
     ws.jobTable.submit({
       command: 'sleep 0',
       run: () => Promise.resolve([new IOResult(), new ExecutionNode()] as JobResult),
@@ -262,7 +266,7 @@ describe('Workspace.fromState — sessions and finished jobs', () => {
     const state = await toStateDict(ws)
     const workerSnap = state.sessions.find((s) => s.session_id === 'worker')
     expect(workerSnap?.cwd).toBe('/data')
-    expect(workerSnap?.env).toEqual({ ROLE: 'bg' })
+    expect(workerSnap?.env).toEqual({ ROLE: 'bg', PWD: '/data' })
     expect(state.jobs.length).toBe(1)
     expect(state.jobs[0]?.command).toBe('sleep 0')
     expect(state.jobs[0]?.status).toBe('completed')

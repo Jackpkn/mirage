@@ -1,8 +1,10 @@
 import pytest
 
 from mirage.shell.bytes import byte_char
+from mirage.shell.variable import VarAttr
 from mirage.workspace.executor.builtins.text import handle_echo, handle_printf
 from mirage.workspace.session import Session
+from mirage.workspace.session.state import seed_var, set_attr
 
 
 async def echo_bytes(args: list[str]) -> bytes:
@@ -283,8 +285,8 @@ async def test_printf_v_blank_subscript_is_arithmetic_zero():
 @pytest.mark.asyncio
 async def test_printf_v_readonly_scalar_is_rejected():
     session = Session(session_id="s1")
-    session.env["R"] = "orig"
-    session.readonly_vars.add("R")
+    seed_var(session, "R", "orig")
+    set_attr(session, "R", VarAttr.READONLY)
     out, io, node = await handle_printf(["-v", "R", "new"], session)
     assert node.exit_code == 1
     assert io.stderr == b"bash: R: readonly variable\n"
@@ -294,8 +296,8 @@ async def test_printf_v_readonly_scalar_is_rejected():
 @pytest.mark.asyncio
 async def test_printf_v_readonly_array_element_is_rejected():
     session = Session(session_id="s1")
-    session.arrays["A"] = ["x", "y"]
-    session.readonly_vars.add("A")
+    seed_var(session, "A", ["x", "y"])
+    set_attr(session, "A", VarAttr.READONLY)
     out, io, node = await handle_printf(["-v", "A[0]", "%d", "nope"], session)
     assert node.exit_code == 1
     assert io.stderr == (b"printf: nope: invalid number\n"
@@ -306,7 +308,7 @@ async def test_printf_v_readonly_array_element_is_rejected():
 @pytest.mark.asyncio
 async def test_printf_v_scalar_target_keeps_other_array_elements():
     session = Session(session_id="s1")
-    session.arrays["B"] = ["p", "q", "r"]
+    seed_var(session, "B", ["p", "q", "r"])
     out, io, node = await handle_printf(["-v", "B", "Q"], session)
     assert node.exit_code == 0
     assert session.arrays["B"] == ["Q", "q", "r"]
@@ -316,7 +318,7 @@ async def test_printf_v_scalar_target_keeps_other_array_elements():
 @pytest.mark.asyncio
 async def test_printf_v_bad_subscript_keeps_the_scalar():
     session = Session(session_id="s1")
-    session.env["V"] = "orig"
+    seed_var(session, "V", "orig")
     out, io, node = await handle_printf(["-v", "V[-2]", "hi"], session)
     assert node.exit_code == 1
     assert io.stderr == b"bash: V[-2]: bad array subscript\n"
@@ -327,7 +329,7 @@ async def test_printf_v_bad_subscript_keeps_the_scalar():
 @pytest.mark.asyncio
 async def test_printf_v_negative_subscript_wraps_over_the_scalar():
     session = Session(session_id="s1")
-    session.env["W"] = "orig"
+    seed_var(session, "W", "orig")
     out, io, node = await handle_printf(["-v", "W[-1]", "hi"], session)
     assert node.exit_code == 0
     assert session.arrays["W"] == ["hi"]

@@ -16,6 +16,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { toStateDict } from '@struktoai/mirage-core/workspace/snapshot/state'
+import { seedVar } from '@struktoai/mirage-core/workspace/session/state'
 import { RAMResource } from '@struktoai/mirage-core/resource/ram/ram'
 import { MountMode } from '@struktoai/mirage-core/types'
 import { Workspace } from '@struktoai/mirage-node'
@@ -44,13 +45,13 @@ describe('stateDiff + restore', () => {
   it('covers every category', async () => {
     await ws.execute('echo one > /m/a.txt')
     const session = ws.createSession('narrow', { mounts: { '/m': 'read' } })
-    session.env.API_KEY = '@aws:prod-key'
+    seedVar(session, 'API_KEY', '@aws:prod-key')
     await ws.flushSessions()
     const v1 = await commitState(store, await toStateDict(ws), 'main', 'v1')
 
     await ws.execute('echo two > /m/a.txt')
     await ws.execute('ln -s /m/a.txt /m/l.txt')
-    session.env.API_KEY = '@aws:other-key'
+    seedVar(session, 'API_KEY', '@aws:other-key')
     session.mountModes = new Map([...(session.mountModes ?? []), ['/m', MountMode.WRITE]])
     await ws.flushSessions()
     const v2 = await commitState(store, await toStateDict(ws), 'main', 'v2')

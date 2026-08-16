@@ -1,0 +1,106 @@
+{
+  "cases": [
+    {
+      "id": "opt_braceexpand_on_by_default",
+      "seq": 502813,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "echo {a,b}",
+      "expect": {
+        "exit": 0,
+        "stdout": "a b\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "opt_braceexpand_plus_b_keeps_literal",
+      "seq": 502814,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "(set +B; echo {a,b})",
+      "expect": {
+        "exit": 0,
+        "stdout": "{a,b}\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "opt_braceexpand_listed_off_under_plus_b",
+      "seq": 502815,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "(set +B; set -o | grep braceexpand)",
+      "expect": {
+        "exit": 0,
+        "stdout": "braceexpand    \toff\n",
+        "stderr": ""
+      }
+    }
+  ]
+}

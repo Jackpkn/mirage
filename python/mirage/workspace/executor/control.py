@@ -30,7 +30,7 @@ from mirage.types import PathSpec, word_text
 from mirage.utils.fnmatch import fnmatch
 from mirage.workspace.executor.statement import finish_statement
 from mirage.workspace.session import Session
-from mirage.workspace.session.state import session_view
+from mirage.workspace.session.state import seed_var, session_view
 from mirage.workspace.types import ExecutionNode
 
 # Safety cap on while/until iterations. Independent of stdin size:
@@ -157,6 +157,11 @@ async def handle_if(
     return None, IOResult(), ExecutionNode(exit_code=0)
 
 
+# `set -n` inside a loop body has to stop the *driver* too, not only the
+# statements: `execute_node` refuses every node while the option is on,
+# so the `break` or the false condition the driver is waiting for is one
+# of the refused nodes and it would spin to `_MAX_WHILE`. GNU never runs
+# the loop at all, which is what falling straight out of it produces.
 async def handle_for(
     execute_node: Callable[..., Any],
     variable: str,
@@ -187,6 +192,8 @@ async def handle_for(
 
     try:
         for val in values:
+            if session.shell_options.get("noexec"):
+                break
             # env stores strings only; bash keeps `for f in sub/*.txt`
             # matches relative, so the loop variable takes the typed form.
             # The write goes through the session door; a policy denial
@@ -224,9 +231,9 @@ async def handle_for(
     finally:
         session._stdin_buffer = prev_buffer
         if saved is not None:
-            session.env[variable] = saved
+            seed_var(session, variable, saved)
         else:
-            session.env.pop(variable, None)
+            session.vars.pop(variable, None)
     return _collect_loop_result(all_stdout, merged_io, "for")
 
 
@@ -249,6 +256,9 @@ async def _condition_loop(
     try:
         hit_limit = True
         for _ in range(_MAX_WHILE):
+            if session.shell_options.get("noexec"):
+                hit_limit = False
+                break
             cond_stdout, cond_io, _ = await execute_node(
                 condition, session, stdin, call_stack)
             await apply_barrier(cond_stdout, cond_io, BarrierPolicy.STATUS)
@@ -333,6 +343,9 @@ async def handle_cfor(
         try:
             await eval_expr(exprs[0], 0)
             for _ in range(_MAX_WHILE):
+                if session.shell_options.get("noexec"):
+                    hit_limit = False
+                    break
                 if await eval_expr(exprs[1], 1) == 0:
                     hit_limit = False
                     break
@@ -510,6 +523,8 @@ async def handle_select(
     merged_io = await merged_io.merge(IOResult(stderr=menu))
     try:
         for _ in range(_MAX_WHILE):
+            if session.shell_options.get("noexec"):
+                break
             merged_io = await merged_io.merge(IOResult(stderr=b"#? "))
             line_bytes = None
             if session._stdin_buffer is not None:
@@ -571,7 +586,7 @@ async def handle_select(
     finally:
         session._stdin_buffer = prev_buffer
         if saved is not None:
-            session.env[variable] = saved
+            seed_var(session, variable, saved)
         else:
-            session.env.pop(variable, None)
+            session.vars.pop(variable, None)
     return _collect_loop_result(all_stdout, merged_io, "select")

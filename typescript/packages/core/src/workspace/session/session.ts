@@ -15,6 +15,8 @@
 import { SHELL_ARGV0 } from '../../shell/constants.ts'
 import type { AsyncLineIterator } from '../../io/async_line_iterator.ts'
 import type { ShellArray } from '../../shell/array.ts'
+import type { ShellVar } from '../../shell/variable.ts'
+import { attrsFromLetters, makeVar, storedAttrs, VarAttr, withValue } from '../../shell/variable.ts'
 import type { HiddenPaths, HiddenVars, MountMode } from '../../types.ts'
 
 /**
@@ -31,11 +33,9 @@ export interface ChildShellState {
   cwd: string
   logicalCwd: string | undefined
   sourceDepth: number
-  env: Record<string, string>
+  vars: Record<string, ShellVar>
   functions: Record<string, unknown>
   shellOptions: Record<string, boolean>
-  readonlyVars: Set<string>
-  arrays: Record<string, ShellArray>
   positionalArgs: string[]
   scriptName: string | null
   lastBgJobId: number | null
@@ -86,15 +86,13 @@ export interface SessionInit {
   sessionId: string
   cwd?: string
   logicalCwd?: string | undefined
-  env?: Record<string, string>
+  vars?: Record<string, ShellVar>
   createdAt?: number
   functions?: Record<string, unknown>
   lastExitCode?: number
   positionalArgs?: string[]
   scriptName?: string | null
   shellOptions?: Record<string, boolean>
-  readonlyVars?: Set<string>
-  arrays?: Record<string, ShellArray>
   /**
    * Per-mount mode caps for this session. `null` (the default) means
    * no restriction: every mount in the workspace is reachable at its own
@@ -117,6 +115,65 @@ export interface SessionInit {
   lastBgJobId?: number | null
 }
 
+/**
+ * Variable records for a plain name/value map. The one conversion from
+ * the shape an embedder speaks (a process environment) to the shape the
+ * session stores.
+ *
+ * Every seeded name is exported, because a process environment is by
+ * definition the exported set: these are the names the embedder means a
+ * child runtime to inherit, and `envSnapshot` hands on only what carries
+ * the attribute. Seeding them plain would leave them visible to `$X` and
+ * invisible to every runtime, which is not what an embedder passing an
+ * env record is asking for.
+ */
+export function varsFromEnv(env: Record<string, string>): Record<string, ShellVar> {
+  const out = ownRecord<ShellVar>()
+  const exported: ReadonlySet<VarAttr> = new Set([VarAttr.Export])
+  for (const [name, value] of Object.entries(env)) out[name] = makeVar(value, exported)
+  return out
+}
+
+/**
+ * Variable records for a stored session's two halves, the restore side
+ * of `toJSON`. `env` carries every scalar and `attrs` the letter cluster
+ * for the names that have one, so a name in `attrs` alone is bash's
+ * declared-but-unset third state (`export Z`) and restores with no value.
+ *
+ * Not `varsFromEnv`: that one reads a bare record as a *process*
+ * environment and exports all of it, which is right for an embedder
+ * handing over an env record and wrong here, where the attributes were
+ * recorded. Restoring through it promoted every plain `X=hello` to an
+ * exported one on the first reload.
+ */
+export function varsFromDict(
+  env: Record<string, string>,
+  attrs: Record<string, string>,
+): Record<string, ShellVar> {
+  const out = ownRecord<ShellVar>()
+  for (const [name, value] of Object.entries(env)) {
+    out[name] = makeVar(value, attrsFromLetters(attrs[name] ?? ''))
+  }
+  for (const [name, letters] of Object.entries(attrs)) {
+    if (!(name in out)) out[name] = makeVar(null, attrsFromLetters(letters))
+  }
+  return out
+}
+
+/** Copy a variable store deeply enough that a child cannot write back. */
+function copyVars(vars: Record<string, ShellVar>): Record<string, ShellVar> {
+  const out = ownRecord<ShellVar>()
+  for (const [name, v] of Object.entries(vars)) {
+    // The record is frozen, but an indexed or associative value is a
+    // live container, so the copy has to reach inside it.
+    if (Array.isArray(v.value)) out[name] = withValue(v, [...v.value])
+    else if (v.value !== null && typeof v.value === 'object')
+      out[name] = withValue(v, { ...v.value })
+    else out[name] = v
+  }
+  return out
+}
+
 export class Session {
   sessionId: string
   cwd: string
@@ -126,7 +183,12 @@ export class Session {
   // which is every session that has not walked through a symlink. `cwd`
   // stays physical because it is what every operand resolves against.
   logicalCwd: string | undefined
-  env: Record<string, string>
+  // One record per variable: value plus attributes. This is the whole
+  // variable store -- `env`, `arrays` and `readonlyVars` are read-only
+  // projections of it, so a name cannot be a scalar in one container and
+  // an array in another, and an attribute cannot drift from the value it
+  // describes.
+  vars: Record<string, ShellVar>
   createdAt: number
   functions: Record<string, unknown>
   lastExitCode: number
@@ -136,8 +198,6 @@ export class Session {
   // `-c`, and restores it afterwards.
   scriptName: string | null
   shellOptions: Record<string, boolean>
-  readonlyVars: Set<string>
-  arrays: Record<string, ShellArray>
   // Transient `set -e` marker: true when the failure just returned
   // came from a short-circuited &&/|| branch or a `!`-negated command,
   // which bash exempts from errexit. Reset on every node execution.
@@ -147,10 +207,11 @@ export class Session {
   sourceDepth = 0
   stdinBuffer: AsyncLineIterator | null = null
   stdinSource: unknown = null
-  localVars: Map<string, string | null> | null = null
-  // Arrays shadowed by `local -a` / `declare -a` in the running
-  // function; null means the caller had no array of that name.
-  localArrays: Map<string, ShellArray | null> | null = null
+  // Variables shadowed by `local` / `declare` in the running function; a
+  // null value means the caller had no variable of that name. One stack,
+  // not one per container: a local shadows the whole record, so its
+  // value and its attributes are saved and restored together.
+  localVars: Map<string, ShellVar | null> | null = null
   // Hidden `getopts` state: the char offset within the word being
   // scanned (0 = positioned at the word's leading dash), plus the OPTIND
   // that offset belongs to. A caller resetting OPTIND makes the seen
@@ -184,15 +245,13 @@ export class Session {
     this.errexitImmune = false
     this.cwd = init.cwd ?? '/'
     this.logicalCwd = init.logicalCwd
-    this.env = ownRecord(init.env)
+    this.vars = ownRecord(init.vars)
     this.createdAt = init.createdAt ?? Date.now() / 1000
     this.functions = ownRecord(init.functions)
     this.lastExitCode = init.lastExitCode ?? 0
     this.positionalArgs = init.positionalArgs ?? []
     this.scriptName = init.scriptName ?? null
     this.shellOptions = init.shellOptions ?? {}
-    this.readonlyVars = init.readonlyVars ?? new Set()
-    this.arrays = ownRecord(init.arrays)
     this.mountModes = init.mountModes ?? null
     this.hiddenPaths = init.hiddenPaths ?? null
     this.hiddenVars = init.hiddenVars ?? null
@@ -202,8 +261,11 @@ export class Session {
     // bash exports $PWD from startup, so a session that has never run
     // `cd` still has one. Seeding here rather than at lookup time is what
     // makes it an ordinary variable: assignable, unsettable, and listed
-    // by `env`.
-    if (!('PWD' in this.env)) this.env.PWD = this.cwd
+    // by `env`. "Exports" is literal -- it carries the attribute, which is
+    // what keeps it in `env` now that the process view is the exported set
+    // rather than every string.
+    if (!Object.hasOwn(this.vars, 'PWD'))
+      this.vars.PWD = makeVar(this.cwd, new Set([VarAttr.Export]))
   }
 
   /**
@@ -224,25 +286,21 @@ export class Session {
    */
   fork(overrides: Partial<SessionInit> = {}): Session {
     const movedTo = 'logicalCwd' in overrides ? undefined : overrides.cwd
-    const env = overrides.env ?? { ...this.env }
+    const vars = overrides.vars ?? copyVars(this.vars)
     // $PWD names where the session is, so it follows the move even when
-    // the caller also supplied an env to layer on.
-    if (movedTo !== undefined) env.PWD = movedTo
+    // the caller also supplied variables to layer on.
+    if (movedTo !== undefined) vars.PWD = makeVar(movedTo, new Set([VarAttr.Export]))
     const forked = new Session({
       sessionId: overrides.sessionId ?? this.sessionId,
       cwd: overrides.cwd ?? this.cwd,
       logicalCwd: movedTo !== undefined ? undefined : (overrides.logicalCwd ?? this.logicalCwd),
-      env,
+      vars,
       createdAt: overrides.createdAt ?? this.createdAt,
       functions: overrides.functions ?? { ...this.functions },
       lastExitCode: overrides.lastExitCode ?? this.lastExitCode,
       positionalArgs: overrides.positionalArgs ?? [...this.positionalArgs],
       scriptName: overrides.scriptName ?? this.scriptName,
       shellOptions: overrides.shellOptions ?? { ...this.shellOptions },
-      readonlyVars: overrides.readonlyVars ?? new Set(this.readonlyVars),
-      arrays:
-        overrides.arrays ??
-        Object.fromEntries(Object.entries(this.arrays).map(([k, v]) => [k, [...v]])),
       mountModes: overrides.mountModes ?? this.mountModes,
       hiddenPaths: overrides.hiddenPaths ?? this.hiddenPaths,
       hiddenVars: overrides.hiddenVars ?? this.hiddenVars,
@@ -269,22 +327,55 @@ export class Session {
   }
 
   /**
+   * The scalar variables, by name.
+   *
+   * A frozen read-only projection of `vars`, not a container: a writer
+   * goes through `SessionView.set` (or `seedVar` when seeding a session
+   * before it is narrowed), so a `pre_session` policy sees every write.
+   * `state.ts` has always documented that rule; freezing the projection
+   * is what stops it being walked around by assigning into storage, and
+   * an assignment into a plain object would land in a throwaway and
+   * vanish -- silent loss is the exact failure this store removes.
+   */
+  get env(): Readonly<Record<string, string>> {
+    const out = ownRecord<string>()
+    for (const [name, v] of Object.entries(this.vars)) {
+      if (typeof v.value === 'string') out[name] = v.value
+    }
+    return Object.freeze(out)
+  }
+
+  /** The indexed arrays, by name. Read-only, like `env`. */
+  get arrays(): Readonly<Record<string, ShellArray>> {
+    const out = ownRecord<ShellArray>()
+    for (const [name, v] of Object.entries(this.vars)) {
+      if (Array.isArray(v.value)) out[name] = v.value
+    }
+    return Object.freeze(out)
+  }
+
+  /** The names `readonly` has marked. Read-only, like `env`. */
+  get readonlyVars(): ReadonlySet<string> {
+    const out = new Set<string>()
+    for (const [name, v] of Object.entries(this.vars)) {
+      if (v.attrs.has(VarAttr.Readonly)) out.add(name)
+    }
+    return out
+  }
+
+  /**
    * Copy the state a child shell runs on top of. The records go through
    * `ownRecord` because they hold script-controlled names and must keep
    * their null prototype across the round trip.
    */
   snapshot(): ChildShellState {
-    const arrays: Record<string, ShellArray> = ownRecord()
-    for (const [name, value] of Object.entries(this.arrays)) arrays[name] = [...value]
     return {
       cwd: this.cwd,
       logicalCwd: this.logicalCwd,
       sourceDepth: this.sourceDepth,
-      env: ownRecord(this.env),
+      vars: copyVars(this.vars),
       functions: ownRecord(this.functions),
       shellOptions: { ...this.shellOptions },
-      readonlyVars: new Set(this.readonlyVars),
-      arrays,
       positionalArgs: [...this.positionalArgs],
       scriptName: this.scriptName,
       lastBgJobId: this.lastBgJobId,
@@ -298,11 +389,9 @@ export class Session {
     this.cwd = state.cwd
     this.logicalCwd = state.logicalCwd
     this.sourceDepth = state.sourceDepth
-    this.env = state.env
+    this.vars = state.vars
     this.functions = state.functions
     this.shellOptions = state.shellOptions
-    this.readonlyVars = state.readonlyVars
-    this.arrays = state.arrays
     this.positionalArgs = state.positionalArgs
     this.scriptName = state.scriptName
     this.lastBgJobId = state.lastBgJobId
@@ -317,13 +406,31 @@ export class Session {
    * session, a node kernel tier binds it).
    */
   toJSON(): Record<string, unknown> {
+    // `env` is every scalar and `var_attrs` the letters set on the names
+    // that carry any, rather than one key holding both: `env` is the
+    // shape an embedder writes and the other language reads, so it stays
+    // a plain name/value map, and the attributes ride beside it. Without
+    // the second key a reload could only guess, and guessing "exported"
+    // turned every plain `X=hello` into an exported one on the first
+    // round trip.
     const data: Record<string, unknown> = {
       session_id: this.sessionId,
       cwd: this.cwd,
-      env: this.env,
+      env: { ...this.env },
       created_at: this.createdAt,
       generation: this.generation,
     }
+    const letters = ownRecord<string>()
+    for (const [name, v] of Object.entries(this.vars)) {
+      if (v.attrs.size > 0) letters[name] = storedAttrs(v)
+    }
+    // Always written, even empty, because its *presence* is the
+    // discriminator: a payload without it is read as a bare process
+    // environment and every name in it comes back exported. Writing it
+    // only when non-empty made `export -n X` (or any session whose last
+    // attribute was cleared) serialize as a process environment, so the
+    // reload re-exported everything it held.
+    data.var_attrs = letters
     if (this.mountModes !== null) {
       data.mount_modes = Object.fromEntries(this.mountModes)
     }
@@ -346,6 +453,7 @@ export class Session {
     session_id: string
     cwd?: string
     env?: Record<string, string>
+    var_attrs?: Record<string, string>
     created_at?: number
     mount_modes?: Record<string, MountMode> | null
     hidden_paths?: { paths?: string[]; patterns?: string[] } | null
@@ -355,7 +463,19 @@ export class Session {
     return new Session({
       sessionId: data.session_id,
       ...(data.cwd !== undefined ? { cwd: data.cwd } : {}),
-      ...(data.env !== undefined ? { env: data.env } : {}),
+      // No `var_attrs` at all means the payload is a bare process
+      // environment -- an embedder's record, or one another writer
+      // hand-built -- so every name in it is exported, which is what a
+      // process environment means. With the key present the attributes
+      // were recorded and are restored as they were written.
+      ...(data.env !== undefined || data.var_attrs !== undefined
+        ? {
+            vars:
+              data.var_attrs === undefined
+                ? varsFromEnv(data.env ?? {})
+                : varsFromDict(data.env ?? {}, data.var_attrs),
+          }
+        : {}),
       ...(data.created_at !== undefined ? { createdAt: data.created_at } : {}),
       ...(data.generation !== undefined ? { generation: data.generation } : {}),
       mountModes: data.mount_modes != null ? new Map(Object.entries(data.mount_modes)) : null,

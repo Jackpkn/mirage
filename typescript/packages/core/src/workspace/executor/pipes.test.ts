@@ -12,6 +12,8 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import { seedVar } from '../../workspace/session/state.ts'
+import { varsFromEnv } from '../../workspace/session/session.ts'
 import { describe, expect, it } from 'vitest'
 import { IOResult, materialize } from '../../io/types.ts'
 import { NodeType as NT } from '../../shell/types.ts'
@@ -206,10 +208,10 @@ describe('handleConnection (&&, ||, ;)', () => {
 
 describe('handleSubshell', () => {
   it('restores cwd and env after body execution', async () => {
-    const s = new Session({ sessionId: 'test', cwd: '/orig', env: { X: 'orig' } })
+    const s = new Session({ sessionId: 'test', cwd: '/orig', vars: varsFromEnv({ X: 'orig' }) })
     const execute: ExecuteNodeFn = (_n, session) => {
       session.cwd = '/inside'
-      session.env.X = 'inside'
+      seedVar(session, 'X', 'inside')
       return Promise.resolve([null, new IOResult(), new ExecutionNode()])
     }
     await handleSubshell(execute, [node('a')], s)

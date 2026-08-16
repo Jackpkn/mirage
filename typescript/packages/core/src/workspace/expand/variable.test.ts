@@ -12,6 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import { varsFromEnv } from '../../workspace/session/session.ts'
 import { describe, expect, it } from 'vitest'
 import { CallStack } from '../../shell/call_stack.ts'
 import { NodeType as NT } from '../../shell/types.ts'
@@ -29,7 +30,7 @@ function stringNode(type: string, text: string): TSNodeLike {
 
 describe('lookupVar', () => {
   it('reads from session env', () => {
-    const s = makeSession({ env: { FOO: 'bar' } })
+    const s = makeSession({ vars: varsFromEnv({ FOO: 'bar' }) })
     expect(lookupVar('FOO', s, null)).toBe('bar')
   })
 
@@ -67,7 +68,7 @@ describe('lookupVar', () => {
   })
 
   it('call stack local overrides env', () => {
-    const s = makeSession({ env: { X: 'from-env' } })
+    const s = makeSession({ vars: varsFromEnv({ X: 'from-env' }) })
     const cs = new CallStack()
     cs.setLocal('X', 'from-local')
     expect(lookupVar('X', s, cs)).toBe('from-local')
@@ -85,7 +86,7 @@ describe('expandBraces', () => {
       children: [stringNode('${', '${'), varName, stringNode('}', '}')],
       namedChildren: [varName],
     }
-    const s = makeSession({ env: { FOO: 'bar' } })
+    const s = makeSession({ vars: varsFromEnv({ FOO: 'bar' }) })
     expect(await expandBraces(node, s, null, textExpandChild)).toBe('bar')
   })
 
@@ -113,7 +114,7 @@ describe('expandBraces', () => {
       children: [stringNode('${', '${'), varName, op, word, stringNode('}', '}')],
       namedChildren: [varName, word],
     }
-    const s = makeSession({ env: { FOO: 'real' } })
+    const s = makeSession({ vars: varsFromEnv({ FOO: 'real' }) })
     expect(await expandBraces(node, s, null, textExpandChild)).toBe('real')
   })
 })

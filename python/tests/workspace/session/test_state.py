@@ -19,10 +19,13 @@ import pytest
 from mirage.ops.types import SessionView
 from mirage.policy import Action, Deny, Policies, Policy, PolicyDenied
 from mirage.policy.types import SessionContext
+from mirage.shell.variable import VarAttr
 from mirage.types import HiddenVars
 from mirage.workspace.session import Session
 from mirage.workspace.session.errors import ReadonlyVariableError
-from mirage.workspace.session.state import (env_snapshot, session_view,
+from mirage.workspace.session.session import vars_from_env
+from mirage.workspace.session.state import (env_snapshot, seed_var,
+                                            session_view, set_attr,
                                             visible_env)
 
 
@@ -35,7 +38,7 @@ class DenySecrets(Policy):
 
 
 def _view(policies: Policies | None = None) -> tuple[SessionView, Session]:
-    session = Session(session_id="s", cwd="/", env={"A": "1"})
+    session = Session(session_id="s", cwd="/", vars=vars_from_env({"A": "1"}))
     return session_view(session, policies), session
 
 
@@ -109,7 +112,7 @@ def test_readonly_refusal_is_typed():
 
     async def run():
         view, session = _view()
-        session.readonly_vars.add("A")
+        set_attr(session, "A", VarAttr.READONLY)
         assert view.is_readonly("A")
         with pytest.raises(ReadonlyVariableError):
             await view.set("A", "2")
@@ -138,7 +141,7 @@ def test_pre_session_gate_vetoes_a_write():
 
 
 def test_env_snapshot_is_a_copy():
-    session = Session(session_id="s", cwd="/", env={"A": "1"})
+    session = Session(session_id="s", cwd="/", vars=vars_from_env({"A": "1"}))
     snap = env_snapshot(session)
     assert snap == session.env
     assert snap is not session.env
@@ -155,11 +158,11 @@ def _hidden_view(
         policies: Policies | None = None) -> tuple[SessionView, Session]:
     session = Session(session_id="s",
                       cwd="/",
-                      env={
+                      vars=vars_from_env({
                           "PUBLIC": "1",
                           "SLACK_TOKEN": "xoxb",
                           "AWS_SECRET_KEY": "k"
-                      },
+                      }),
                       hidden_vars=HiddenVars(names=("SLACK_TOKEN", ),
                                              patterns=("AWS_*", )))
     return session_view(session, policies), session
@@ -215,15 +218,15 @@ def test_a_hidden_readonly_var_reports_not_readonly():
     # is_readonly answers about the session's visible world; saying
     # "readonly" about a name that reads as unset would leak it.
     view, session = _hidden_view()
-    session.readonly_vars.add("SLACK_TOKEN")
+    set_attr(session, "SLACK_TOKEN", VarAttr.READONLY)
     assert not view.is_readonly("SLACK_TOKEN")
 
 
-def test_visible_env_is_the_raw_dict_when_nothing_is_hidden():
+def test_visible_env_matches_the_scalars_when_nothing_is_hidden():
     # $X expansion is the hot path; no hiding means no wrapper and no
     # copy.
-    session = Session(session_id="s", cwd="/", env={"A": "1"})
-    assert visible_env(session) is session.env
+    session = Session(session_id="s", cwd="/", vars=vars_from_env({"A": "1"}))
+    assert dict(visible_env(session)) == dict(session.env)
 
 
 def test_visible_env_filters_reads_without_copying():
@@ -236,5 +239,5 @@ def test_visible_env_filters_reads_without_copying():
     assert len(env) == 2
     with pytest.raises(KeyError):
         env["SLACK_TOKEN"]
-    session.env["NEW"] = "2"
+    seed_var(session, "NEW", "2")
     assert env["NEW"] == "2"

@@ -12,6 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import { varsFromEnv } from '../../workspace/session/session.ts'
 import { describe, expect, it } from 'vitest'
 import { getCaseItems } from '../../shell/helpers.ts'
 import { fnmatch } from '../../utils/fnmatch.ts'
@@ -35,7 +36,7 @@ async function expand(snippet: string, env: Record<string, string> = {}): Promis
   expect(patterns).toHaveLength(1)
   const pattern = patterns[0]
   if (pattern === undefined) throw new Error('no pattern parsed')
-  const session = new Session({ sessionId: 'test', env })
+  const session = new Session({ sessionId: 'test', vars: varsFromEnv(env) })
   return expandPattern(pattern, session, failExec)
 }
 

@@ -12,6 +12,8 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import { seedVar } from '../workspace/session/state.ts'
+import { VarAttr } from '../shell/variable.ts'
 import { afterEach, describe, expect, it } from 'vitest'
 import { RegisteredCommand } from '../commands/config.ts'
 import { CommandSpec, Operand } from '../commands/spec/types.ts'
@@ -227,6 +229,50 @@ describe('session-state writes go through the view', () => {
     expect(ws.env.PUBLIC_X).toBe('1')
   })
 
+  it('a prefix assignment clears the gate', async () => {
+    // `SECRET=leak cmd` is a session write like any other, and the form
+    // puts it in the command's environment, so a deployment refusing
+    // `SECRET_*` has to be asked. Only the hidden half was checked here,
+    // and the seeding goes through the ungated door, so the secret
+    // reached the command and printed.
+    const ws = await makeWs([new DenySecretEnv()])
+    const denied = await ws.execute('SECRET_K=leak printenv SECRET_K')
+    expect(denied.exitCode).not.toBe(0)
+    expect(stderrStr(denied)).toContain('refused by policy')
+    expect(stdoutStr(denied)).toBe('')
+    // A name no rule covers still reaches the command.
+    const allowed = await ws.execute('OPEN_K=fine printenv OPEN_K')
+    expect(stdoutStr(allowed)).toBe('fine\n')
+  })
+
+  it('declare -x on an existing name clears the gate', async () => {
+    // `declare -x NAME` on a name that already exists writes no value,
+    // so the handler reaches the gate on no other path and the export
+    // mark is the only session write there is. Stamping it directly let
+    // an agent export a host-seeded credential the deployment refused.
+    const ws = await makeWs([new DenySecretEnv()])
+    const sess = ws.getSession(ws.defaultSessionId)
+    seedVar(sess, 'SECRET_TOKEN', 'hunter2')
+    const io = await ws.execute('declare -x SECRET_TOKEN')
+    expect(io.exitCode).not.toBe(0)
+    expect(stderrStr(io)).toContain('refused by policy')
+    expect(sess.vars.SECRET_TOKEN?.attrs.has(VarAttr.Export)).toBe(false)
+    expect(sess.vars.SECRET_TOKEN?.value).toBe('hunter2')
+  })
+
+  it('stamps what stored despite a bad sibling', async () => {
+    // GNU keeps the valid operands and reports the invalid one, so
+    // `declare -x GOOD=1 1BAD=x` exits 1 and still answers
+    // `declare -x GOOD="1"`. Gating the stamp on the aggregate status
+    // left GOOD unexported. Pinned on bash 5.2.37.
+    const ws = await makeWs([])
+    const bad = await ws.execute('declare -x QGOOD=1 1BAD=x')
+    expect(bad.exitCode).toBe(1)
+    expect(stderrStr(bad)).toContain('not a valid identifier')
+    const shown = await ws.execute('declare -p QGOOD')
+    expect(stdoutStr(shown)).toBe('declare -x QGOOD="1"\n')
+  })
+
   it('command env is a snapshot, not the live dict', async () => {
     // A command's env is the process view: a child cannot write the
     // parent's environment, so a mutation must not land in the session.
@@ -269,6 +315,8 @@ describe('session-state writes go through the view', () => {
 
 describe('the remaining session writers clear the same gate', () => {
   it('bare export of a new name fires the gate', async () => {
+    // `export NAME` writes no value, but marking a name is still a
+    // session write, so it clears the same gate an assignment does.
     const ws = await makeWs([new DenySecretEnv()])
     const denied = await ws.execute('export SECRET_BARE')
     expect(denied.exitCode).not.toBe(0)
@@ -276,7 +324,12 @@ describe('the remaining session writers clear the same gate', () => {
     expect('SECRET_BARE' in ws.env).toBe(false)
     const allowed = await ws.execute('export PUBLIC_BARE')
     expect(allowed.exitCode).toBe(0)
-    expect(ws.env.PUBLIC_BARE).toBe('')
+    // Marked but unset, which is bash's third state: `export -p` lists
+    // it bare while the environment does not carry it at all.
+    expect(ws.env.PUBLIC_BARE).toBeUndefined()
+    const listed = stdoutStr(await ws.execute('export -p'))
+    expect(listed).toContain('declare -x PUBLIC_BARE\n')
+    expect(listed).not.toContain('SECRET_BARE')
   })
 
   it('local fires the gate', async () => {
@@ -285,6 +338,29 @@ describe('the remaining session writers clear the same gate', () => {
     expect(io.exitCode).not.toBe(0)
     expect(stderrStr(io)).toContain('refused by policy')
     expect('SECRET_L' in ws.env).toBe(false)
+  })
+
+  it('every declaring spelling fires the gate', async () => {
+    // `readonly NAME` marked through `setAttr` and walked straight past
+    // it: a deployment refusing SECRET_* still saw the line exit 0,
+    // create the record, and freeze the name against every later write
+    // the deployment's own wiring would make.
+    const ws = await makeWs([new DenySecretEnv()])
+    const session = ws.getSession(ws.defaultSessionId)
+    for (const line of [
+      'SECRET_A=1',
+      'export SECRET_B',
+      'readonly SECRET_C',
+      'readonly SECRET_D=1',
+      'declare SECRET_E',
+    ]) {
+      const io = await ws.execute(line)
+      expect(io.exitCode, line).not.toBe(0)
+      expect(stderrStr(io), line).toContain('refused by policy')
+    }
+    for (const name of ['SECRET_A', 'SECRET_B', 'SECRET_C', 'SECRET_D', 'SECRET_E']) {
+      expect(name in session.vars, name).toBe(false)
+    }
   })
 
   it('a plain assignment fires the gate', async () => {
@@ -343,7 +419,7 @@ describe('the remaining session writers clear the same gate', () => {
     // write.
     const ws = await makeWs([new DenySecretEnv()])
     const sess = ws.sessionManager.get(ws.sessionManager.defaultId)
-    sess.arrays.SECRET_E = ['a']
+    seedVar(sess, 'SECRET_E', ['a'])
     const io = await ws.execute('SECRET_E+=x')
     expect(io.exitCode).not.toBe(0)
     expect(sess.arrays.SECRET_E).toEqual(['a'])
@@ -440,7 +516,7 @@ describe('the remaining session writers clear the same gate', () => {
     // `unset 'SECRET[0]'` on a scalar is the whole unset in element
     // clothing; the element branch used to skip the view entirely.
     const ws = await makeWs([new DenySecretEnv()])
-    ws.env.SECRET_U = 'v'
+    seedVar(ws.getSession(ws.defaultSessionId), 'SECRET_U', 'v')
     const io = await ws.execute("unset 'SECRET_U[0]'")
     expect(io.exitCode).not.toBe(0)
     expect(stderrStr(io)).toContain('refused by policy')
@@ -450,7 +526,7 @@ describe('the remaining session writers clear the same gate', () => {
   it('a subscripted unset of an array element fires the gate', async () => {
     const ws = await makeWs([new DenySecretEnv()])
     const sess = ws.sessionManager.get(ws.sessionManager.defaultId)
-    sess.arrays.SECRET_W = ['a', 'b']
+    seedVar(sess, 'SECRET_W', ['a', 'b'])
     const io = await ws.execute("unset 'SECRET_W[1]'")
     expect(io.exitCode).not.toBe(0)
     expect(sess.arrays.SECRET_W).toEqual(['a', 'b'])
@@ -473,8 +549,8 @@ describe('the remaining session writers clear the same gate', () => {
 async function makeHiddenVarsWs(): Promise<Workspace> {
   const ws = await makeWs()
   const sess = ws.createSession('agent', { mounts: { '/a': MountMode.WRITE } })
-  sess.env.SLACK_TOKEN = 'xoxb-real'
-  sess.env.PUBLIC = 'ok'
+  seedVar(sess, 'SLACK_TOKEN', 'xoxb-real')
+  seedVar(sess, 'PUBLIC', 'ok')
   sess.hiddenVars = { names: ['SLACK_TOKEN'] }
   return ws
 }
@@ -556,7 +632,7 @@ describe('hidden vars across the shell tier', () => {
     // only on the generic env lookup.
     const ws = await makeHiddenVarsWs()
     const sess = ws.getSession('agent')
-    sess.env.HOME = '/a/homedir'
+    seedVar(sess, 'HOME', '/a/homedir')
     sess.hiddenVars = { names: ['SLACK_TOKEN', 'HOME'] }
     const home = await ws.execute('echo "[$HOME]"', { sessionId: 'agent' })
     expect(stdoutStr(home)).toBe('[]\n')
@@ -643,7 +719,7 @@ describe('hidden vars across the shell tier', () => {
     // and leak by placement; hidden reads as unset, which is 0.
     const ws = await makeWs()
     const sess = ws.createSession('agent', { mounts: { '/a': MountMode.WRITE } })
-    sess.env.SECRET_IDX = '1'
+    seedVar(sess, 'SECRET_IDX', '1')
     sess.hiddenVars = { names: ['SECRET_IDX'] }
     await ws.execute('b=(x y)', { sessionId: 'agent' })
     const io = await ws.execute('b[SECRET_IDX]=z', { sessionId: 'agent' })
@@ -655,8 +731,8 @@ describe('hidden vars across the shell tier', () => {
 async function makeHiddenArrayWs(): Promise<Workspace> {
   const ws = await makeWs()
   const sess = ws.createSession('agent', { mounts: { '/a': MountMode.WRITE } })
-  sess.arrays.SLACK_TOKEN = ['xoxb-real', 'xoxb-two']
-  sess.env.PUBLIC = 'ok'
+  seedVar(sess, 'SLACK_TOKEN', ['xoxb-real', 'xoxb-two'])
+  seedVar(sess, 'PUBLIC', 'ok')
   sess.hiddenVars = { names: ['SLACK_TOKEN'] }
   return ws
 }

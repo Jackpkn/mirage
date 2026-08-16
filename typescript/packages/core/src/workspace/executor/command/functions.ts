@@ -12,15 +12,16 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import type { ShellVar } from '../../../shell/variable.ts'
 import type { ByteSource } from '../../../io/types.ts'
 import { IOResult } from '../../../io/types.ts'
-import type { ShellArray } from '../../../shell/array.ts'
 import { finishStatement } from '../statement.ts'
 import { CallStack } from '../../../shell/call_stack.ts'
 import { ERREXIT_EXEMPT_TYPES } from '../../../shell/types.ts'
 import type { PathSpec } from '../../../types.ts'
 import { wordText } from '../../../types.ts'
 import type { Session } from '../../session/session.ts'
+import { setSessionEntry } from '../../session/session.ts'
 import { ExecutionNode } from '../../types.ts'
 import { asyncChain } from '../../../io/stream.ts'
 import type { ExecuteNodeFn } from '../jobs.ts'
@@ -41,10 +42,10 @@ export async function executeShellFunction(
   // Positional args carry the word as typed ($1 stays sub/a.txt).
   const textArgs = restParts.map(wordText)
   cs.push(textArgs, cmdName)
-  const savedLocals = new Map<string, string | null>()
-  const savedArrays = new Map<string, ShellArray | null>()
+  // One stack: a local shadows the whole record, so the caller's value
+  // and attributes are saved and put back together.
+  const savedLocals = new Map<string, ShellVar | null>()
   session.localVars = savedLocals
-  session.localArrays = savedArrays
   const allStdout: (ByteSource | null)[] = []
   let mergedIo = new IOResult()
   let lastExec = new ExecutionNode({ command: cmdName, exitCode: 0 })
@@ -82,24 +83,15 @@ export async function executeShellFunction(
     }
   } finally {
     cs.pop()
-    for (const [key, oldVal] of savedLocals) {
-      if (oldVal === null) {
+    for (const [key, old] of savedLocals) {
+      if (old === null) {
         // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
-        delete session.env[key]
+        delete session.vars[key]
       } else {
-        session.env[key] = oldVal
-      }
-    }
-    for (const [key, oldArr] of savedArrays) {
-      if (oldArr === null) {
-        // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
-        delete session.arrays[key]
-      } else {
-        session.arrays[key] = oldArr
+        setSessionEntry(session.vars, key, old)
       }
     }
     session.localVars = null
-    session.localArrays = null
   }
 
   const combined = allStdout.length > 0 ? asyncChain(...allStdout) : null

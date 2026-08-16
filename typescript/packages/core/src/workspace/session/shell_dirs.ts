@@ -12,6 +12,8 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import { VarAttr } from '../../shell/variable.ts'
+import { seedVar, setAttr } from './state.ts'
 import type { Session } from './session.ts'
 import { envGet } from './state.ts'
 
@@ -49,7 +51,7 @@ export function logicalCwd(session: Session): string {
 export function setCwd(session: Session, cwd: string): void {
   session.cwd = cwd
   session.logicalCwd = undefined
-  session.env.PWD = cwd
+  seedVar(session, 'PWD', cwd)
 }
 
 // Moves the session. $OLDPWD is a straight copy of $PWD as it stands
@@ -64,8 +66,13 @@ export function setCwd(session: Session, cwd: string): void {
 // bash never re-validates the logical name: deleting the symlink it was
 // spelled through leaves `pwd` still printing it. Nothing here checks it.
 export function changeDir(session: Session, newCwd: string, logical?: string): void {
-  session.env.OLDPWD = session.env.PWD ?? ''
+  seedVar(session, 'OLDPWD', session.env.PWD ?? '')
+  // bash exports $OLDPWD as it does $PWD (`declare -x OLDPWD`), and
+  // this is where the name is first created, so the mark has to be
+  // applied here; $PWD already carries it from startup and keeps it
+  // through `seedVar`, which replaces the value and not the record.
+  setAttr(session, 'OLDPWD', VarAttr.Export)
   session.cwd = newCwd
   session.logicalCwd = logical !== undefined && logical !== newCwd ? logical : undefined
-  session.env.PWD = logicalCwd(session)
+  seedVar(session, 'PWD', logicalCwd(session))
 }

@@ -342,7 +342,7 @@ async function restoreSessions(ws: Workspace, state: WorkspaceStateDict): Promis
       : ws.sessionManager.create(s.session_id)
     const fields = Session.fromJSON(s)
     setCwd(session, fields.cwd)
-    session.env = fields.env
+    session.vars = fields.vars
     session.mountModes = fields.mountModes
     restored.push(session)
   }

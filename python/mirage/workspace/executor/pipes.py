@@ -239,6 +239,11 @@ async def handle_subshell(
             if not child.is_named or child.type == NT.COMMENT:
                 i += 1
                 continue
+
+            # `set -n` needs no arm here: `execute_node` refuses every
+            # node while the option is on, so this loop simply runs a
+            # tail of no-ops. The restore at the end of the subshell is
+            # what keeps the option from leaking to the parent.
             is_bg = (i + 1 < len(body) and body[i + 1].type == NT.BACKGROUND)
             if is_bg and job_table is not None:
                 stdout, io, last_exec = await handle_background(

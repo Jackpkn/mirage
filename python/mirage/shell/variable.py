@@ -1,0 +1,169 @@
+# ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
+
+from dataclasses import dataclass, field, replace
+from enum import StrEnum
+
+from mirage.shell.array import ShellArray
+
+ShellValue = str | ShellArray | dict[str, str]
+
+
+class VarAttr(StrEnum):
+    """One bash variable attribute, spelled as its `declare` letter.
+
+    Declaration order is the order `declare -p` prints a cluster in,
+    pinned exhaustively against bash 5.2.37 over all 72 ordered pairs
+    of `a A i l n r t u x`: `a`/`A` first, then `i n r t x`, then
+    `l`/`u`. It is bash's own internal order, not the order the letters
+    were typed in (`declare -xri` prints `-irx`), and not alphabetical.
+
+    `-a` and `-A` are deliberately absent: whether a variable is an
+    indexed array, an associative array or a scalar is what its value
+    *is*, so storing it a second time as an attribute would let the two
+    contradict each other. `attr_letters` derives them from the value.
+    """
+    INTEGER = "i"
+    NAMEREF = "n"
+    READONLY = "r"
+    TRACE = "t"
+    EXPORT = "x"
+    LOWER = "l"
+    UPPER = "u"
+
+
+class VarKind(StrEnum):
+    """What a variable's value is, derived from the value itself."""
+    SCALAR = "scalar"
+    INDEXED = "indexed"
+    ASSOC = "assoc"
+
+
+@dataclass(frozen=True, slots=True)
+class ShellVar:
+    """One shell variable: a value plus the attributes set on it.
+
+    Frozen on purpose. Every writer in the repo already computes its
+    result on a copy and hands the finished value to the session door
+    (`arr = list(arr)` before an element write, and so on), precisely so
+    a refused write leaves nothing half-applied. Making the record
+    immutable turns that convention into something the type enforces:
+    the only way to change a variable is to hand the door a new record,
+    so a policy gate cannot be walked around by reaching into storage.
+
+    Args:
+        value (ShellValue | None): the scalar text, indexed array, or
+            associative map this variable holds. None is bash's third
+            state: declared with attributes but *unset*, which
+            `readonly NAME` and `export NAME` on a fresh name both
+            produce. It is not the empty string -- GNU prints
+            `declare -r ONLY` for one and `declare -r EMPTY=""` for the
+            other, `${ONLY-d}` expands to `d` while `${EMPTY-d}` does
+            not, and `env` carries the empty one but not the unset one.
+        attrs (frozenset[VarAttr]): the attributes set on the name.
+    """
+    value: ShellValue | None = None
+    attrs: frozenset[VarAttr] = field(default_factory=frozenset)
+
+
+def var_kind(var: ShellVar) -> VarKind:
+    """What kind of variable this is, read off its value.
+
+    An unset variable reads as a scalar: bash renders `declare -i n`
+    with no `-a`, so nothing but an actual array value earns the letter.
+
+    Args:
+        var (ShellVar): the variable.
+    """
+    if isinstance(var.value, dict):
+        return VarKind.ASSOC
+    if isinstance(var.value, list):
+        return VarKind.INDEXED
+    return VarKind.SCALAR
+
+
+def with_value(var: ShellVar, value: ShellValue | None) -> ShellVar:
+    """The variable with a new value and the same attributes.
+
+    Args:
+        var (ShellVar): the variable to copy.
+        value (ShellValue | None): the value to store.
+    """
+    return replace(var, value=value)
+
+
+def with_attr(var: ShellVar, attr: VarAttr, on: bool = True) -> ShellVar:
+    """The variable with one attribute turned on or off.
+
+    `+attr` is the off direction, which is why this takes a flag rather
+    than being two functions.
+
+    Args:
+        var (ShellVar): the variable to copy.
+        attr (VarAttr): the attribute to change.
+        on (bool): set it, or clear it.
+    """
+    attrs = var.attrs | {attr} if on else var.attrs - {attr}
+    return replace(var, attrs=frozenset(attrs))
+
+
+def stored_attrs(var: ShellVar) -> str:
+    """The stored attribute letters, in `declare -p` print order.
+
+    The tail of `attr_letters` without the `a`/`A` kind lead, which is
+    derived rather than stored. Split out because two callers want the
+    stored half alone: the serializer, which must not write a letter it
+    would then read back as an attribute the value already implies, and
+    `attr_letters` itself.
+
+    Args:
+        var (ShellVar): the variable.
+    """
+    return "".join(a.value for a in VarAttr if a in var.attrs)
+
+
+def attrs_from_letters(letters: str) -> frozenset[VarAttr]:
+    """The attribute set a stored letter cluster spells.
+
+    The inverse of `stored_attrs`, used when a persisted session is read
+    back. A letter that names no attribute is ignored rather than
+    raising: the store is shared with the other language and with future
+    versions, and refusing to load a session because one letter is
+    unknown loses far more than the letter.
+
+    Args:
+        letters (str): the cluster written by `stored_attrs`.
+    """
+    known = {a.value: a for a in VarAttr}
+    return frozenset(known[c] for c in letters if c in known)
+
+
+def attr_letters(var: ShellVar) -> str:
+    """The attribute cluster `declare -p` prints for this variable.
+
+    `-a`/`-A` come from the value's kind and lead, then the stored
+    attributes in `VarAttr` declaration order. bash prints `--` for a
+    plain scalar with nothing set, which is the caller's to render since
+    only it knows it is writing a `declare` line.
+
+    Args:
+        var (ShellVar): the variable.
+    """
+    kind = var_kind(var)
+    lead = ""
+    if kind == VarKind.INDEXED:
+        lead = "a"
+    elif kind == VarKind.ASSOC:
+        lead = "A"
+    return lead + stored_attrs(var)

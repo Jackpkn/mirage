@@ -263,6 +263,10 @@ export async function handleSubshell(
         i += 1
         continue
       }
+      // `set -n` needs no arm here: `executeNode` refuses every node
+      // while the option is on, so this loop simply runs a tail of
+      // no-ops. The restore at the end of the subshell is what keeps the
+      // option from leaking to the parent.
       const isBg = body[i + 1]?.type === NT.BACKGROUND
       if (isBg && jobTable !== null) {
         const [bgStdout, bgIo, bgExec] = await handleBackground(

@@ -17,6 +17,7 @@ import pytest
 from mirage.types import FileStat, FileType, PathSpec
 from mirage.workspace.executor.builtins.dirs import handle_cd
 from mirage.workspace.session import Session
+from mirage.workspace.session.session import vars_from_env
 
 
 def dispatcher(dirs=(), files=()):
@@ -38,7 +39,7 @@ def no_mount_root(_path: str) -> bool:
 
 
 def session(cwd="/", **env) -> Session:
-    return Session(session_id="test", cwd=cwd, env=dict(env))
+    return Session(session_id="test", cwd=cwd, vars=vars_from_env(env))
 
 
 @pytest.mark.asyncio

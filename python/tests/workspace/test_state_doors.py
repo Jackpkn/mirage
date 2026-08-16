@@ -24,10 +24,12 @@ from mirage.io.types import IOResult
 from mirage.policy import Action, Deny, OpsContext, Policy
 from mirage.policy.types import SessionContext
 from mirage.resource.ram import RAMResource
+from mirage.shell.variable import VarAttr
 from mirage.types import HiddenPaths, HiddenVars, MountMode, PathSpec
 from mirage.workspace import Workspace
 from mirage.workspace.session import (env_snapshot, reset_current_session,
                                       set_current_session)
+from mirage.workspace.session.state import seed_var, set_attr
 
 
 class DenyOp(Policy):
@@ -267,6 +269,51 @@ def test_export_fires_the_state_gate():
     assert ws.env.get("PUBLIC_X") == "1"
 
 
+def test_every_declaring_spelling_fires_the_state_gate():
+    # A mark is a session write, so the no-value forms clear the gate
+    # too. `readonly NAME` marked through `set_attr` and walked straight
+    # past it: a deployment refusing SECRET_* still saw the line exit 0,
+    # create the record, and freeze the name against every later write
+    # the deployment's own wiring would make.
+    ws = _two_mounts(policies=[DenySecretEnv()])
+
+    async def run():
+        return [
+            await ws.execute(line) for line in (
+                "SECRET_A=1",
+                "export SECRET_B",
+                "readonly SECRET_C",
+                "readonly SECRET_D=1",
+                "declare SECRET_E",
+            )
+        ]
+
+    for io in asyncio.run(run()):
+        assert io.exit_code != 0, f"unexpected success: {io}"
+        assert b"refused by policy" in (io.stderr or b"")
+    session = ws.get_session(ws.default_session_id)
+    for name in ("SECRET_A", "SECRET_B", "SECRET_C", "SECRET_D", "SECRET_E"):
+        assert name not in session.vars
+
+
+def test_a_hidden_name_cannot_be_marked_readonly():
+    # The same door from the other side: a session that cannot see the
+    # name must not be able to freeze it either, which would deny the
+    # host's own wiring a write to state the session never had.
+    ws = _two_mounts()
+    session = ws.get_session(ws.default_session_id)
+    seed_var(session, "SECRET", "topsecret")
+    session.hidden_vars = HiddenVars(names=("SECRET", ), patterns=())
+
+    async def run():
+        return await ws.execute("readonly SECRET")
+
+    io = asyncio.run(run())
+    assert io.exit_code != 0
+    assert b"permission denied" in (io.stderr or b"")
+    assert session.vars["SECRET"].attrs == frozenset()
+
+
 def test_command_env_is_a_snapshot_not_the_live_dict():
     # A command's env is the process view: a child cannot write the
     # parent's environment, so a mutation must not land in the session.
@@ -334,21 +381,26 @@ def test_facade_symlink_respects_session_grants():
 
 
 def test_bare_export_of_a_new_name_fires_the_gate():
-    # `export NAME` with no value writes an empty entry, which is still
-    # a session write; an existing name is re-marked, not rewritten.
+    # `export NAME` writes no value, but marking a name is still a
+    # session write, so it clears the same gate an assignment does.
     ws = _two_mounts(policies=[DenySecretEnv()])
 
     async def run():
         denied = await ws.execute("export SECRET_BARE")
         allowed = await ws.execute("export PUBLIC_BARE")
-        return denied, allowed
+        listed = await ws.execute("export -p")
+        return denied, allowed, await listed.stdout_str()
 
-    denied, allowed = asyncio.run(run())
+    denied, allowed, listed = asyncio.run(run())
     assert denied.exit_code != 0
     assert b"refused by policy" in (denied.stderr or b"")
     assert "SECRET_BARE" not in ws.env
     assert allowed.exit_code == 0
-    assert ws.env.get("PUBLIC_BARE") == ""
+    # Marked but unset, which is bash's third state: `export -p` lists
+    # it bare while the environment does not carry it at all.
+    assert "PUBLIC_BARE" not in ws.env
+    assert "declare -x PUBLIC_BARE\n" in listed
+    assert "SECRET_BARE" not in listed
 
 
 def test_local_fires_the_gate():
@@ -440,7 +492,7 @@ def test_scalar_append_onto_an_existing_array_fires_the_gate():
     # write.
     ws = _two_mounts(policies=[DenySecretEnv()])
     sess = ws._session_mgr.get(ws._session_mgr.default_id)
-    sess.arrays["SECRET_E"] = ["a"]
+    seed_var(sess, "SECRET_E", ["a"])
 
     async def run():
         return await ws.execute("SECRET_E+=x")
@@ -463,6 +515,63 @@ def test_declaration_array_assignment_fires_the_gate():
     assert b"refused by policy" in (io.stderr or b"")
     sess = ws._session_mgr.get(ws._session_mgr.default_id)
     assert "SECRET_D" not in sess.arrays
+
+
+def test_a_prefix_assignment_clears_the_gate():
+    # `SECRET=leak cmd` is a session write like any other, and the form
+    # puts it in the command's environment, so a deployment refusing
+    # `SECRET_*` has to be asked. Only the hidden half was checked here,
+    # and the seeding goes through the ungated door, so the secret
+    # reached the command and printed.
+    ws = _two_mounts(policies=[DenySecretEnv()])
+
+    async def run():
+        denied = await ws.execute("SECRET_K=leak printenv SECRET_K")
+        out = await denied.stdout_str() if denied.stdout else ""
+        allowed = await ws.execute("OPEN_K=fine printenv OPEN_K")
+        return denied, out, await allowed.stdout_str()
+
+    denied, out, allowed_out = asyncio.run(run())
+    assert denied.exit_code != 0
+    assert b"refused by policy" in (denied.stderr or b"")
+    assert out == ""
+    # A name no rule covers still reaches the command.
+    assert allowed_out == "fine\n"
+
+
+def test_declare_x_on_an_existing_name_clears_the_gate():
+    # `declare -x NAME` on a name that already exists writes no value, so
+    # the handler reaches the gate on no other path and the export mark
+    # is the only session write there is. Stamping it directly let an
+    # agent export a host-seeded credential the deployment had refused.
+    ws = _two_mounts(policies=[DenySecretEnv()])
+    sess = ws._session_mgr.get(ws._session_mgr.default_id)
+    seed_var(sess, "SECRET_TOKEN", "hunter2")
+
+    io = asyncio.run(ws.execute("declare -x SECRET_TOKEN"))
+    assert io.exit_code != 0
+    assert b"refused by policy" in (io.stderr or b"")
+    assert VarAttr.EXPORT not in sess.vars["SECRET_TOKEN"].attrs
+    # The value is untouched and still readable as a shell variable.
+    assert sess.vars["SECRET_TOKEN"].value == "hunter2"
+
+
+def test_a_declaration_stamps_what_stored_despite_a_bad_sibling():
+    # GNU keeps the valid operands and reports the invalid one, so
+    # `declare -x GOOD=1 1BAD=x` exits 1 and still answers
+    # `declare -x GOOD="1"`. Gating the stamp on the aggregate status
+    # left GOOD unexported. Pinned on bash 5.2.37.
+    ws = _two_mounts()
+
+    async def run():
+        bad = await ws.execute("declare -x QGOOD=1 1BAD=x")
+        shown = await ws.execute("declare -p QGOOD")
+        return bad, await shown.stdout_str() if shown.stdout else ""
+
+    bad, shown = asyncio.run(run())
+    assert bad.exit_code == 1
+    assert b"not a valid identifier" in (bad.stderr or b"")
+    assert shown == 'declare -x QGOOD="1"\n'
 
 
 def test_readonly_name_refuses_a_declaration_array_store():
@@ -606,7 +715,7 @@ def test_subscripted_unset_of_a_scalar_fires_the_gate():
     # `unset 'SECRET[0]'` on a scalar is the whole unset in element
     # clothing; the element branch used to skip the view entirely.
     ws = _two_mounts(policies=[DenySecretEnv()])
-    ws.env["SECRET_U"] = "v"
+    seed_var(ws.get_session(ws.default_session_id), "SECRET_U", "v")
 
     async def run():
         return await ws.execute("unset 'SECRET_U[0]'")
@@ -620,7 +729,7 @@ def test_subscripted_unset_of_a_scalar_fires_the_gate():
 def test_subscripted_unset_of_an_array_element_fires_the_gate():
     ws = _two_mounts(policies=[DenySecretEnv()])
     sess = ws._session_mgr.get(ws._session_mgr.default_id)
-    sess.arrays["SECRET_W"] = ["a", "b"]
+    seed_var(sess, "SECRET_W", ["a", "b"])
 
     async def run():
         return await ws.execute("unset 'SECRET_W[1]'")
@@ -654,8 +763,14 @@ def test_for_loop_variable_fires_the_gate():
 def _hidden_vars_ws() -> Workspace:
     ws = _two_mounts()
     sess = ws.create_session("agent", mounts={"/a": "write"})
-    sess.env["SLACK_TOKEN"] = "xoxb-real"
-    sess.env["PUBLIC"] = "ok"
+    seed_var(sess, "SLACK_TOKEN", "xoxb-real")
+    seed_var(sess, "PUBLIC", "ok")
+    # Exported, because these stand in for a process environment and the
+    # process view carries only exported names. Seeded plain they would
+    # be correct shell variables that `env` rightly never lists, which
+    # would make the hidden-vars assertions below vacuous.
+    set_attr(sess, "SLACK_TOKEN", VarAttr.EXPORT)
+    set_attr(sess, "PUBLIC", VarAttr.EXPORT)
     sess.hidden_vars = HiddenVars(names=("SLACK_TOKEN", ))
     return ws
 
@@ -806,8 +921,8 @@ def test_unset_of_a_hidden_var_is_quiet_and_preserves_it():
 def _hidden_array_ws() -> Workspace:
     ws = _two_mounts()
     sess = ws.create_session("agent", mounts={"/a": "write"})
-    sess.arrays["SLACK_TOKEN"] = ["xoxb-real", "xoxb-two"]
-    sess.env["PUBLIC"] = "ok"
+    seed_var(sess, "SLACK_TOKEN", ["xoxb-real", "xoxb-two"])
+    seed_var(sess, "PUBLIC", "ok")
     sess.hidden_vars = HiddenVars(names=("SLACK_TOKEN", ))
     return ws
 
@@ -913,7 +1028,7 @@ def test_subscript_arithmetic_resolves_against_the_visible_env():
     # and leak by placement; hidden reads as unset, which is 0.
     ws = _two_mounts()
     sess = ws.create_session("agent", mounts={"/a": "write"})
-    sess.env["SECRET_IDX"] = "1"
+    seed_var(sess, "SECRET_IDX", "1")
     sess.hidden_vars = HiddenVars(names=("SECRET_IDX", ))
 
     async def run():
@@ -931,7 +1046,7 @@ def test_hidden_home_reads_as_unset_everywhere():
     # only on the generic env lookup.
     ws = _two_mounts()
     sess = ws.create_session("agent", mounts={"/a": "write"})
-    sess.env["HOME"] = "/a/homedir"
+    seed_var(sess, "HOME", "/a/homedir")
     sess.hidden_vars = HiddenVars(names=("HOME", ))
 
     async def run():

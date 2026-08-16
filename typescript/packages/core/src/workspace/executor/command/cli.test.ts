@@ -12,6 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import { varsFromEnv } from '../../../workspace/session/session.ts'
 import { describe, expect, it } from 'vitest'
 
 import { CLISpec, type CLIInvocation, type CLIVerbFn } from '../../../commands/cli/types.ts'
@@ -63,7 +64,7 @@ describe('handleCli', () => {
     calls.length = 0
     const install = makeInstall()
     const parts = ['prog', '-vv', 'message', 'send', '-t', '#eng', 'hello', 'world']
-    const session = new Session({ sessionId: 't', env: { EDITOR: 'vi' } })
+    const session = new Session({ sessionId: 't', vars: varsFromEnv({ EDITOR: 'vi' }) })
     const [stdout, io, node] = await handleCli(install, parts, session)
     expect(io.exitCode).toBe(0)
     expect(dec.decode(await materialize(stdout))).toBe('sent[tok]\n')
@@ -317,7 +318,7 @@ describe('handleCli script arm', () => {
 
   it('the env carries MIRAGE_CLI_CONFIG as JSON', async () => {
     const py = new FakePyRuntime()
-    const session = new Session({ sessionId: 't', env: { EDITOR: 'vi' } })
+    const session = new Session({ sessionId: 't', vars: varsFromEnv({ EDITOR: 'vi' }) })
     const [, io] = await handleCli(
       scriptInstall({ config: { apiKey: 'k1' } }),
       ['pager'],

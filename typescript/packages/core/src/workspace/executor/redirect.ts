@@ -20,7 +20,7 @@ import { applyBarrier, BarrierPolicy } from '../../shell/barrier.ts'
 import { encodeText } from '../../shell/bytes.ts'
 import type { CallStack } from '../../shell/call_stack.ts'
 import { type Redirect, RedirectKind } from '../../shell/types.ts'
-import { PathSpec } from '../../types.ts'
+import { FileStat, FileType, PathSpec } from '../../types.ts'
 import type { TSNodeLike } from '../../shell/types.ts'
 import type { Session } from '../session/session.ts'
 import { ExecutionNode } from '../types.ts'
@@ -104,6 +104,15 @@ export async function handleRedirect(
       }
     }
   }
+
+  // Before the command, because bash decides an open before it forks:
+  // `set -C; touch marker > existing` creates no marker at all. Running
+  // first and discarding the output afterwards matched the file contents
+  // and nothing else, so a refused redirect still let `rm` delete its own
+  // target — and then the probe found nothing there and did not even
+  // refuse.
+  const barred = await noclobberRefusal(dispatch, session, redirects)
+  if (barred !== null) return barred
 
   let stdoutData: Uint8Array
   let stderrData: Uint8Array
@@ -242,6 +251,116 @@ function redirectErrorLine(scope: PathSpec, err: unknown): Uint8Array {
 function redirectFailure(scope: PathSpec, err: unknown): Result {
   const io = new IOResult({ exitCode: 1, stderr: redirectErrorLine(scope, err) })
   return [null, io, new ExecutionNode({ command: 'redirect', exitCode: 1 })]
+}
+
+/**
+ * Refuse the whole statement when `set -C` bars one of its opens.
+ *
+ * Returned *instead of* running the command, because that is what bash
+ * does: it opens every redirect before it forks, so a refusal means the
+ * command never runs. `set -C; touch marker > existing` leaves no marker
+ * behind. Deciding this after the fact only matched the file contents,
+ * and on `rm f > f` it did not even do that — the command deleted its
+ * own target first, so the probe found nothing there and let the line
+ * succeed.
+ *
+ * `set -C` refuses a truncating open onto anything that already exists —
+ * an empty file counts, since the test is existence and not size — while
+ * `>>` is always allowed and `>|` overrides for that one redirect without
+ * clearing the option. A directory reached under the option is refused
+ * too, in GNU's own wording for that case rather than the noclobber one.
+ * bash stops at the first target it cannot open, so the scan reports one
+ * line and stops.
+ *
+ * The opens are modelled in the order they were written, because each one
+ * is visible to the next: `set -C; echo x > a > a` creates `a` on the
+ * first redirect and then refuses the second, even though `a` did not
+ * exist when the statement began. Probing every target against one
+ * pre-command snapshot passed both and wrote the output. `>>` and `>|`
+ * never refuse but do create, so they count as opens too.
+ *
+ * The whole scan is skipped unless the option is on, so the ordinary
+ * redirect path costs no extra round trip. That leaves
+ * `> <a directory>` with the option off silently succeeding, which is a
+ * separate pre-existing gap: GNU answers `Is a directory` and exit 1
+ * whichever operator asked, and closing it means a stat on every output
+ * redirect.
+ *
+ * Targets are stat'd through the op dispatcher rather than a backend, so
+ * a redirect that lands on another mount is answered by the mount that
+ * owns it.
+ */
+async function noclobberRefusal(
+  dispatch: DispatchFn,
+  session: Session,
+  redirects: readonly Redirect[],
+): Promise<Result | null> {
+  if (session.shellOptions.noclobber !== true) return null
+  const opened = new Set<string>()
+  const pending: PathSpec[] = []
+  for (const r of redirects) {
+    if (
+      r.kind === RedirectKind.STDIN ||
+      r.kind === RedirectKind.HEREDOC ||
+      r.kind === RedirectKind.HERESTRING ||
+      typeof r.target === 'number'
+    ) {
+      continue
+    }
+    const scope = ensureScope(r.target)
+    const path = scope.virtual
+    let exists = opened.has(path)
+    let isDir = false
+    if (!exists) {
+      let stat: unknown
+      try {
+        ;[stat] = await dispatch('stat', scope)
+      } catch (err) {
+        // No target to overwrite is the ordinary case the option allows;
+        // anything that is not a filesystem error is a bug and propagates.
+        if (!isFsError(err)) throw err
+        stat = null
+      }
+      exists = stat instanceof FileStat
+      isDir = stat instanceof FileStat && stat.type === FileType.DIRECTORY
+    }
+    if (exists && !r.append && !r.clobber) {
+      await applyPendingOpens(dispatch, pending)
+      const detail = isDir ? 'Is a directory' : 'cannot overwrite existing file'
+      const err = new TextEncoder().encode(`${scope.rawPath}: ${detail}\n`)
+      const io = new IOResult({ exitCode: 1, stderr: err })
+      return [null, io, new ExecutionNode({ command: 'redirect', exitCode: 1 })]
+    }
+    // This open succeeds, so the target exists for every redirect after
+    // it, and a truncating one leaves it empty to be found.
+    opened.add(path)
+    if (!exists || !r.append) pending.push(scope)
+  }
+  return null
+}
+
+/**
+ * Apply the opens a refused statement already performed.
+ *
+ * bash opens redirects left to right, so the ones before the refused one
+ * have happened by the time it refuses: `set -C; echo x >> a > a` leaves
+ * `a` existing and empty, and `>| a > a` truncates it. Only targets the
+ * scan found absent, or opened for truncation, are listed, so an append
+ * onto an existing file keeps its bytes.
+ *
+ * A write that fails is swallowed rather than raised: the failure belongs
+ * to that earlier redirect, which bash would have reported instead of the
+ * noclobber refusal, and inventing that error here would replace the
+ * refusal the caller is about to return.
+ */
+async function applyPendingOpens(dispatch: DispatchFn, pending: PathSpec[]): Promise<void> {
+  for (const scope of pending) {
+    try {
+      await dispatch('write', scope, [new Uint8Array()])
+    } catch (err) {
+      if (!isFsError(err)) throw err
+    }
+  }
 }
 
 async function readExisting(dispatch: DispatchFn, scope: PathSpec): Promise<Uint8Array> {

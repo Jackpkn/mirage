@@ -84,6 +84,7 @@ class NodeType(StrEnum):
     PIPE = "|"
     PIPE_STDERR = "|&"
     REDIRECT_OUT = ">"
+    REDIRECT_CLOBBER = ">|"
     REDIRECT_APPEND = ">>"
     REDIRECT_IN = "<"
     REDIRECT_STDERR = ">&"
@@ -136,12 +137,32 @@ ERREXIT_EXEMPT_TYPES = frozenset({
     NodeType.NEGATED_COMMAND,
 })
 
+# Every letter bash's `set` accepts, mapped to the `-o` name it is a
+# synonym for. The full table is here rather than only the letters
+# mirage acts on, because a letter left out is silently dropped: `set -C`
+# read as "no such option, ignore" is exactly the silent-accept the
+# fail-loud rule exists to stop, and it made noclobber unreachable by its
+# own letter while `set -o noclobber` worked.
 SET_FLAG_TO_OPTION = {
+    "a": "allexport",
+    "b": "notify",
     "e": "errexit",
-    "u": "nounset",
-    "x": "xtrace",
     "f": "noglob",
+    "h": "hashall",
+    "k": "keyword",
+    "m": "monitor",
+    "n": "noexec",
+    "p": "privileged",
+    "t": "onecmd",
+    "u": "nounset",
+    "v": "verbose",
+    "x": "xtrace",
+    "B": "braceexpand",
+    "C": "noclobber",
+    "E": "errtrace",
+    "H": "histexpand",
     "P": "physical",
+    "T": "functrace",
 }
 
 # Every name GNU's `set -o` accepts, pinned from `set -o` on
@@ -180,6 +201,15 @@ SET_OPTION_NAMES = frozenset({
     "xtrace",
 })
 
+# What each option reads as before anything sets it, pinned from
+# `bash -c 'set -o'` on debian:stable-slim (5.2.37). Only three are on,
+# and all three are on for a non-interactive shell too, so this is the
+# table `set -o` prints rather than an interactive shell's.
+SET_OPTION_DEFAULTS: dict[str, bool] = {
+    name: name in ("braceexpand", "hashall", "interactive-comments")
+    for name in sorted(SET_OPTION_NAMES)
+}
+
 
 @dataclass(frozen=True, slots=True)
 class OptionWord:
@@ -209,12 +239,25 @@ class RedirectKind(StrEnum):
 
 @dataclass
 class Redirect:
-    """Parsed redirect from a redirected_statement."""
+    """Parsed redirect from a redirected_statement.
+
+    Args:
+        fd (int): the descriptor the redirect claims, -1 for `&>`.
+        target (Any): the target path, or the dup'd fd number.
+        target_node (Any): the tree-sitter node the target came from.
+        kind (RedirectKind): which stream the redirect moves.
+        append (bool): whether the write appends rather than truncates.
+        clobber (bool): whether the operator was `>|`, which overrides
+            `set -C` for this one redirect and nothing else.
+        pipeline (Any): the process substitution feeding the target.
+        expand_vars (bool): whether the target undergoes expansion.
+    """
     fd: int
     target: Any
     target_node: Any = None
     kind: RedirectKind = RedirectKind.STDOUT
     append: bool = False
+    clobber: bool = False
     pipeline: Any = None
     expand_vars: bool = True
 

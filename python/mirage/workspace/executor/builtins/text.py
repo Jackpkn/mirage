@@ -24,6 +24,7 @@ from mirage.shell.array import ShellArray, array_extent, array_with
 from mirage.shell.bytes import byte_char, encode_text
 from mirage.workspace.expand.variable import _array_index
 from mirage.workspace.session import Session, ensure_var_visible, visible_env
+from mirage.workspace.session.state import seed_var
 from mirage.workspace.types import ExecutionNode
 
 # A subscript must be non-empty: bash rejects `a[]` as an invalid
@@ -709,11 +710,7 @@ async def _assign_printf_target(session: Session, view: SessionView | None,
     if view is not None:
         await view.set(name, stored)
         return "ok"
-    if isinstance(stored, str):
-        session.env[name] = stored
-    else:
-        session.arrays[name] = stored
-        session.env.pop(name, None)
+    seed_var(session, name, stored)
     return "ok"
 
 
