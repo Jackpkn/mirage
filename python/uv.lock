@@ -4343,7 +4343,7 @@ requires-dist = [
     { name = "claude-agent-sdk", marker = "extra == 'claude-agent-sdk'", specifier = ">=0.2.123" },
     { name = "databricks-sdk", marker = "extra == 'databricks'", specifier = ">=0.72.0" },
     { name = "daytona", marker = "extra == 'daytona'", specifier = ">=0.176.0" },
-    { name = "deepagents", marker = "extra == 'deepagents'", specifier = ">=0.6.12" },
+    { name = "deepagents", marker = "extra == 'deepagents'", specifier = ">=0.7.6" },
     { name = "dulwich", specifier = ">=1.2.5" },
     { name = "e2b", marker = "extra == 'e2b'", specifier = ">=2.0.0" },
     { name = "fastapi", specifier = ">=0.135.1" },

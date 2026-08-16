@@ -141,7 +141,7 @@ pydantic-ai = [
 
 # --- deepagents ---
 deepagents  = [
-    "deepagents>=0.6.12",
+    "deepagents>=0.7.6",
 ]
 
 # --- openhands ---
