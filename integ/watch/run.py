@@ -28,9 +28,11 @@ from mirage import MountMode, Workspace
 from mirage.accessor.nextcloud import NextcloudAccessor
 from mirage.resource.nextcloud import NextcloudConfig, NextcloudResource
 from mirage.types import PathSpec
-from mirage.watch import RAMWatchQueue, Watcher
+from mirage.watch import EventHook, RAMWatchQueue, Watcher
 
 CASE_DIR = Path(__file__).resolve().parent
+
+ALL_MODES = ("pull", "push", "event")
 EVENT_TIMEOUT = 20.0
 ABSENT_WINDOW = 1.0
 CLASS_BY_KIND = {
@@ -288,6 +290,37 @@ class ConsumerPoller:
             await self._ws.notify(change)
 
 
+DISK_EVENT_BY_KIND = {
+    "create": "created",
+    "update": "modified",
+    "delete": "deleted",
+    "move": "moved",
+}
+
+
+def _disk_notification(expect: dict, mount: str,
+                       host_root: str) -> tuple[str, dict]:
+    """Build the watchdog event a real filesystem watcher would emit.
+
+    Field names are watchdog's own, so what the harness posts is byte
+    for byte what a consumer forwards from ``FileSystemEvent``.
+
+    Args:
+        expect (dict): Case ``expect`` block ({"kind", "path", ...}).
+        mount (str): Mirage mount root.
+        host_root (str): The disk resource's root on the host.
+    """
+    base = host_root.rstrip("/")
+    rel = expect["path"][len(mount.rstrip("/")):]
+    if expect["kind"] == "move":
+        prev = expect["previous"][len(mount.rstrip("/")):]
+        return "moved", {
+            "src_path": base + prev,
+            "dest_path": base + rel,
+        }
+    return DISK_EVENT_BY_KIND[expect["kind"]], {"src_path": base + rel}
+
+
 class PullTrigger:
     """Case trigger for pull mode: pump the consumer's poller once."""
 
@@ -313,6 +346,31 @@ class PushTrigger:
         payload = _webhook_payload(case["expect"], self._mount)
         async with self._session.post(self._url, json=payload) as resp:
             await resp.read()
+
+
+class EventTrigger:
+    """Case trigger for event mode: hand the backend its own service
+    notification and notify whatever the event hook maps it to.
+
+    No poller and no webhook exists, so a delivered change can only
+    have come from ``to_events``. This is the half the pull and push
+    batteries never touch: they both hand the watcher a ``FileEvent``
+    that the harness built, where a consumer in production only ever
+    has the raw notification its watcher or webhook received."""
+
+    def __init__(self, ws: Workspace, hook: EventHook, root: PathSpec,
+                 mount: str, host_root: str) -> None:
+        self._ws = ws
+        self._hook = hook
+        self._root = root
+        self._mount = mount
+        self._host_root = host_root
+
+    async def __call__(self, case: dict) -> None:
+        kind, payload = _disk_notification(case["expect"], self._mount,
+                                           self._host_root)
+        for change in await self._hook.to_events(self._root, kind, payload):
+            await self._ws.notify(change)
 
 
 async def _run_check(ws: Workspace, check: dict) -> tuple[bool, str]:
@@ -408,15 +466,19 @@ async def _run_battery(ws: Workspace, op: object, trigger, agen: object,
         cases (list[dict]): Cases to run in order; a case with a
             ``modes`` list runs only in those modes (a rename is a
             MOVE via webhook, but a DELETE + CREATE pair via diff).
+            The default is every mode: a per-case list is how a case
+            opts *out*, so defaulting to a subset would silently skip
+            every case of any mode added later, which is how the first
+            event battery ran zero cases and still reported OK.
         label (str): Result-line prefix (mode and scope).
-        mode (str): "pull" or "push".
+        mode (str): "pull", "push" or "event".
     """
     stream = EventStream(agen)
     await stream.start()
     results: list[tuple[str, bool, str]] = []
     try:
         for case in cases:
-            if mode not in case.get("modes", ["pull", "push"]):
+            if mode not in case.get("modes", ALL_MODES):
                 continue
             ok, detail = await _run_case(ws, op, trigger, stream, case)
             results.append((f"{label}:{case['id']}", ok, detail))
@@ -691,6 +753,40 @@ async def _run_pull(spec: dict, ws: Workspace,
     return results
 
 
+async def _run_event(spec: dict, ws: Workspace,
+                     op: object) -> list[tuple[str, bool, str]]:
+    """Run all batteries in event mode (raw notification -> hook -> notify).
+
+    Args:
+        spec (dict): Parsed case file.
+        ws (Workspace): Watched workspace.
+        op (object): External writer operator.
+    """
+    resource = ws.registry.mount_for(spec["mount"]).resource
+    hook = resource.event_hook()
+    if hook is None:
+        return [(spec["resource"], False, "resource exposes no event hook")]
+    host_root = str(resource.accessor.root)
+    trigger = EventTrigger(ws, hook, _framed_root(spec), spec["mount"],
+                           host_root)
+    results: list[tuple[str, bool, str]] = []
+
+    await _seed(ws, op, spec)
+    agen = ws.watch(spec["watch_dir"])
+    results.extend(await _run_battery(ws, op, trigger, agen, spec["cases"],
+                                      "event", "event"))
+
+    for scope in spec.get("scopes", []):
+        if spec["resource"] in scope.get("skip_resources", []):
+            continue
+        await _seed(ws, op, spec)
+        agen = ws.watch(scope["watch"])
+        results.extend(await
+                       _run_battery(ws, op, trigger, agen, scope["cases"],
+                                    f"event:{scope['id']}", "event"))
+    return results
+
+
 async def _run_push(spec: dict, ws: Workspace,
                     op: object) -> list[tuple[str, bool, str]]:
     """Run all batteries in push mode (webhook -> notify).
@@ -744,7 +840,7 @@ async def _run_file(spec: dict) -> list[tuple[str, bool, str]]:
     builder = BUILDERS.get(spec["resource"])
     if builder is None:
         return [(spec["resource"], False, "no builder")]
-    modes = {"pull": _run_pull, "push": _run_push}
+    modes = {"pull": _run_pull, "push": _run_push, "event": _run_event}
     # Push mode needs a provider that can send a webhook, which only the
     # Nextcloud deployment has; every other backend declares pull only.
     wanted = spec.get("modes", ["pull", "push"])
