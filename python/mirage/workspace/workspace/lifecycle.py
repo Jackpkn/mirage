@@ -15,14 +15,17 @@
 import asyncio
 import builtins
 import sys
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from mirage.ops.open import make_open
 from mirage.ops.os_patch import make_os_module
 from mirage.shell.job_table import cancel_job
 
+if TYPE_CHECKING:
+    from mirage.workspace.workspace import Workspace
 
-def patch_process(ws) -> None:
+
+def patch_process(ws: "Workspace", ) -> None:
     """Point ``open`` and ``os`` at the workspace for a ``with`` block.
 
     Args:
@@ -34,17 +37,19 @@ def patch_process(ws) -> None:
     sys.modules["os"] = make_os_module(ws._ops)
 
 
-def unpatch_process(ws) -> None:
+def unpatch_process(ws: "Workspace", ) -> None:
     """Restore the process-level ``open`` and ``os`` patched on entry.
 
     Args:
         ws: the workspace leaving context-manager scope.
     """
-    builtins.open = ws._original_open
-    sys.modules["os"] = ws._original_os
+    if ws._original_open is not None:
+        builtins.open = ws._original_open
+    if ws._original_os is not None:
+        sys.modules["os"] = ws._original_os
 
 
-def close_sync_parts(ws) -> None:
+def close_sync_parts(ws: "Workspace", ) -> None:
     """Tear down everything that needs no event loop (idempotent).
 
     Kernel mounts, running jobs, and in-flight cache drains; the
@@ -68,7 +73,7 @@ def close_sync_parts(ws) -> None:
     ws._cache._drain_tasks.clear()
 
 
-async def close_async(ws) -> None:
+async def close_async(ws: "Workspace", ) -> None:
     """Release everything the workspace owns, exactly once.
 
     Order matters: the watch runtime goes first (it reads mounts), then

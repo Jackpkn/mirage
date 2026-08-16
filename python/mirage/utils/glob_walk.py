@@ -14,8 +14,8 @@
 
 import dataclasses
 import logging
-from collections.abc import Callable
-from typing import Any
+from collections.abc import Awaitable, Callable, Sequence
+from typing import Any, Protocol
 
 from mirage.accessor.base import Accessor
 from mirage.cache.index import NULL_INDEX, IndexCacheStore
@@ -305,11 +305,29 @@ async def expand_pattern(
     ]
 
 
+class ResolveGlobFn(Protocol):
+    """One backend's glob resolver, bound to its own readdir.
+
+    Named rather than left as `Callable[..., Any]`, because that erasure
+    is what let the resource base declare a wider parameter than any
+    implementation accepts. `ResolveGlobOp` in the generic_bind adapter
+    is the consumer-side twin; mypy checks the two agree where the
+    adapter hands this function out, which is the check that was missing.
+    """
+
+    def __call__(self,
+                 accessor: Any,
+                 paths: Sequence[PathSpec],
+                 /,
+                 index: IndexCacheStore = ...) -> Awaitable[list[PathSpec]]:
+        ...
+
+
 def make_resolve_glob(
     readdir: Callable[..., Any],
     max_glob_matches: int | None = DEFAULT_MAX_GLOB_MATCHES,
     children: ChildMounts | None = None,
-) -> Callable[..., Any]:
+) -> ResolveGlobFn:
     """Build a resolve_glob generic over a backend's readdir.
 
     Args:
@@ -322,7 +340,8 @@ def make_resolve_glob(
 
     async def resolve_glob(
         accessor: Accessor,
-        paths: list[PathSpec],
+        paths: Sequence[PathSpec],
+        /,
         index: IndexCacheStore = NULL_INDEX,
     ) -> list[PathSpec]:
         return await resolve_glob_with(readdir, accessor, paths, index,
@@ -334,7 +353,7 @@ def make_resolve_glob(
 async def resolve_glob_with(
     readdir: Callable[..., Any],
     accessor: Accessor,
-    paths: list[PathSpec],
+    paths: Sequence[PathSpec],
     index: IndexCacheStore,
     cap: int | None = None,
     children: ChildMounts | None = None,
@@ -360,7 +379,7 @@ async def resolve_glob_with(
         readdir (Callable): backend readdir ``(accessor, path, index)``
             returning absolute virtual paths.
         accessor (Accessor): backend handle passed through to readdir.
-        paths (list[PathSpec]): specs to resolve.
+        paths (Sequence[PathSpec]): specs to resolve.
         index (IndexCacheStore): the per-call cache index.
         cap (int | None): cap on matches per pattern before truncation.
         children (ChildMounts | None): child names the namespace owes a

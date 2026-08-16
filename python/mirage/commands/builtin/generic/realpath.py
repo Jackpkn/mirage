@@ -58,7 +58,12 @@ def parse_flags(flags: Mapping[str, FlagValue]) -> RealpathFlags:
                          allow_missing=fl.as_bool("m"))
 
 
-async def realpath_generic(paths, texts, opts: CommandOpts, stat_fn):
+async def realpath_generic(
+    paths: list[PathSpec],
+    texts: list[str],
+    opts: CommandOpts,
+    stat_fn: StatFn,
+) -> tuple[ByteSource | None, IOResult]:
     parsed = parse_flags(opts.flags)
     return await realpath(paths,
                           stat_fn=stat_fn,

@@ -186,8 +186,14 @@ def parse_flags(flags: Mapping[str, FlagValue]) -> PatchFlags:
     )
 
 
-async def patch_generic(paths, texts, opts: CommandOpts, read_bytes,
-                        write_bytes, has_resource):
+async def patch_generic(
+    paths: list[PathSpec],
+    texts: list[str],
+    opts: CommandOpts,
+    read_bytes: Callable[..., Awaitable[bytes]],
+    write_bytes: Callable[..., Awaitable[None]],
+    has_resource: bool,
+) -> tuple[ByteSource | None, IOResult]:
     parsed = parse_flags(opts.flags)
     return await patch(paths,
                        read_bytes=read_bytes,

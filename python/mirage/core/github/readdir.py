@@ -14,6 +14,7 @@
 
 import logging
 
+from mirage.accessor.github import GitHubAccessor
 from mirage.cache.index import (NULL_INDEX, IndexCacheStore, IndexEntry,
                                 LookupStatus)
 from mirage.core.github.tree import (ensure_live_index, fetch_dir_tree,
@@ -25,9 +26,11 @@ from mirage.utils.key_prefix import mount_prefix_of
 log = logging.getLogger(__name__)
 
 
-async def readdir(accessor,
-                  path_spec: PathSpec,
-                  index: IndexCacheStore = NULL_INDEX) -> list[str]:
+async def readdir(
+    accessor: GitHubAccessor,
+    path_spec: PathSpec,
+    index: IndexCacheStore = NULL_INDEX,
+) -> list[str]:
     virtual = path_spec.virtual
     prefix = mount_prefix_of(path_spec.virtual, path_spec.resource_path)
     path = (path_spec.dir if path_spec.pattern else path_spec).mount_path
@@ -53,7 +56,7 @@ async def readdir(accessor,
 
 
 async def _fallback_readdir(
-    accessor,
+    accessor: GitHubAccessor,
     virtual_key: str,
     index: IndexCacheStore,
     virtual: str,
@@ -94,10 +97,12 @@ async def _fallback_readdir(
     return sorted(child_keys)
 
 
-async def _resolve_dir_sha(accessor,
-                           virtual_key: str,
-                           index: IndexCacheStore,
-                           prefix: str = "") -> str | None:
+async def _resolve_dir_sha(
+    accessor: GitHubAccessor,
+    virtual_key: str,
+    index: IndexCacheStore,
+    prefix: str = '',
+) -> str | None:
     """Get the tree SHA for a directory path.
 
     Walks from root if needed, fetching per-directory trees.

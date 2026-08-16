@@ -108,7 +108,11 @@ class RedisResource(BaseResource):
         base = f"{self.name}:{self.url}"
         return f"{base}/{prefix}" if prefix else base
 
-    async def resolve_glob(self, paths, prefix: str = ""):
+    async def resolve_glob(
+        self,
+        paths: list[PathSpec],
+        prefix: str = '',
+    ) -> list[PathSpec]:
         if prefix:
             paths = [
                 dataclasses.replace(p,

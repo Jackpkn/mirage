@@ -1,3 +1,4 @@
+from mirage.accessor.chroma import ChromaAccessor
 from mirage.commands.builtin.chroma.io import resolve_glob
 from mirage.commands.builtin.utils.paths import default_paths
 from mirage.commands.config import CommandOpts
@@ -18,7 +19,7 @@ def is_mount_root(path: PathSpec) -> bool:
 
 @command("chroma-query", resource="chroma", spec=SPECS["search"])
 async def search(
-    accessor,
+    accessor: ChromaAccessor,
     paths: list[PathSpec],
     texts: list[str],
     opts: CommandOpts,

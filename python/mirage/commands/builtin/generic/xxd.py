@@ -10,7 +10,7 @@ from mirage.commands.spec import SPECS
 from mirage.commands.spec.types import CommandName, FlagValue, FlagView
 from mirage.commands.spec.usage import extra_operand_error
 from mirage.io.types import ByteSource, IOResult
-from mirage.types import PathSpec
+from mirage.types import PathSpec, ReadStreamFn
 
 
 async def _xxd_dump_stream(source: AsyncIterator[bytes], cols: int, group: int,
@@ -182,7 +182,12 @@ def parse_flags(flags: Mapping[str, FlagValue]) -> XxdFlags:
     )
 
 
-async def xxd_generic(paths, texts, opts: CommandOpts, read_stream):
+async def xxd_generic(
+    paths: list[PathSpec],
+    texts: list[str],
+    opts: CommandOpts,
+    read_stream: ReadStreamFn,
+) -> tuple[ByteSource | None, IOResult]:
     parsed = parse_flags(opts.flags)
     return await xxd(paths,
                      read_stream=read_stream,

@@ -14,10 +14,13 @@
 
 import asyncio
 import logging
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
 from mirage.types import DriftPolicy, FingerprintKey
 from mirage.workspace.mount.mount import MountEntry
+
+if TYPE_CHECKING:
+    from mirage.workspace.workspace import Workspace
 
 TryMountFor = Callable[[str], MountEntry | None]
 
@@ -113,7 +116,7 @@ class DriftQueue:
                 raise result
 
 
-def capture_fingerprints(ws) -> list[dict[str, Any]]:
+def capture_fingerprints(ws: "Workspace", ) -> list[dict[str, Any]]:
     """Walk session ops and emit one entry per distinct read on a
     ``SUPPORTS_SNAPSHOT`` mount.
 
@@ -161,8 +164,11 @@ def capture_fingerprints(ws) -> list[dict[str, Any]]:
     return out
 
 
-def install_fingerprints(ws, fingerprint_entries: list[dict[str, Any]],
-                         drift_policy: DriftPolicy) -> None:
+def install_fingerprints(
+    ws: "Workspace",
+    fingerprint_entries: list[dict[str, Any]],
+    drift_policy: DriftPolicy,
+) -> None:
     """Install snapshot fingerprints/revisions onto a reconstructed ws.
 
     Revisions pin replay reads to exact backend versions; bare
@@ -193,7 +199,7 @@ def install_fingerprints(ws, fingerprint_entries: list[dict[str, Any]],
             ws._drift.queue(path, fingerprint)
 
 
-def live_only_mount_prefixes(ws) -> list[str]:
+def live_only_mount_prefixes(ws: "Workspace", ) -> list[str]:
     """Return mount prefixes whose resource opts out of snapshot replay.
 
     These mounts will serve current state at load time with no drift

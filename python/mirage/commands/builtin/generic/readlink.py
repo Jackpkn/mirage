@@ -53,7 +53,11 @@ def parse_flags(flags: Mapping[str, FlagValue]) -> ReadlinkFlags:
     )
 
 
-async def readlink_generic(paths, texts, opts: CommandOpts):
+async def readlink_generic(
+    paths: list[PathSpec],
+    texts: list[str],
+    opts: CommandOpts,
+) -> tuple[ByteSource | None, IOResult]:
     if not paths:
         raise ValueError("readlink: missing operand")
     parsed = parse_flags(opts.flags)

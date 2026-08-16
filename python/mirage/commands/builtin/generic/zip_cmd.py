@@ -285,8 +285,15 @@ def parse_flags(flags: Mapping[str, FlagValue]) -> ZipFlags:
     )
 
 
-async def zip_generic(paths, texts, opts: CommandOpts, read_bytes, write_bytes,
-                      stat, walk):
+async def zip_generic(
+    paths: list[PathSpec],
+    texts: list[str],
+    opts: CommandOpts,
+    read_bytes: Callable[..., Awaitable[bytes]],
+    write_bytes: Callable[..., Awaitable[None]],
+    stat: StatFn,
+    walk: WalkFn,
+) -> tuple[ByteSource | None, IOResult]:
     parsed = parse_flags(opts.flags)
     return await zip_cmd(
         paths,

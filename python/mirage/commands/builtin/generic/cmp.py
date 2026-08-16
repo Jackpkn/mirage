@@ -91,7 +91,12 @@ def parse_flags(flags: Mapping[str, FlagValue]) -> CmpFlags:
     )
 
 
-async def cmp_generic(paths, texts, opts: CommandOpts, read_bytes):
+async def cmp_generic(
+    paths: list[PathSpec],
+    texts: list[str],
+    opts: CommandOpts,
+    read_bytes: Callable[..., Awaitable[bytes]],
+) -> tuple[ByteSource | None, IOResult]:
     parsed = parse_flags(opts.flags)
     return await cmp_cmd(paths,
                          read_bytes=read_bytes,

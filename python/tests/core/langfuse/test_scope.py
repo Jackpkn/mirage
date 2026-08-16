@@ -17,72 +17,89 @@ from mirage.types import PathSpec
 from mirage.utils.key_prefix import mount_key
 
 
+def _spec(path: str) -> PathSpec:
+    """A mount-relative operand, the way a command hands one to a scope.
+
+    detect_scope declares PathSpec and reads only mount_path; passing the
+    bare string relied on its isinstance fallback, which is the raw-string
+    path CLAUDE.md forbids.
+    """
+    key = path.strip("/")
+    return PathSpec(
+        resource_path=key,
+        virtual="/langfuse/" + key,
+        directory="/langfuse",
+        pattern=None,
+        resolved=True,
+    )
+
+
 def test_root_path():
-    scope = detect_scope("/")
+    scope = detect_scope(_spec("/"))
     assert scope.level == "root"
 
 
 def test_traces_dir():
-    scope = detect_scope("/traces")
+    scope = detect_scope(_spec("/traces"))
     assert scope.level == "traces"
     assert scope.resource_type == "traces"
 
 
 def test_traces_file():
-    scope = detect_scope("/traces/abc.json")
+    scope = detect_scope(_spec("/traces/abc.json"))
     assert scope.level == "file"
     assert scope.resource_type == "traces"
     assert scope.resource_id == "abc"
 
 
 def test_sessions_dir():
-    scope = detect_scope("/sessions")
+    scope = detect_scope(_spec("/sessions"))
     assert scope.level == "sessions"
     assert scope.resource_type == "sessions"
 
 
 def test_sessions_id():
-    scope = detect_scope("/sessions/sid1")
+    scope = detect_scope(_spec("/sessions/sid1"))
     assert scope.level == "sessions"
     assert scope.resource_type == "sessions"
     assert scope.resource_id == "sid1"
 
 
 def test_sessions_trace_file():
-    scope = detect_scope("/sessions/sid1/tid1.json")
+    scope = detect_scope(_spec("/sessions/sid1/tid1.json"))
     assert scope.level == "file"
     assert scope.resource_type == "sessions"
     assert scope.resource_id == "sid1"
 
 
 def test_prompts_dir():
-    scope = detect_scope("/prompts")
+    scope = detect_scope(_spec("/prompts"))
     assert scope.level == "prompts"
     assert scope.resource_type == "prompts"
 
 
 def test_prompts_name():
-    scope = detect_scope("/prompts/summarize")
+    scope = detect_scope(_spec("/prompts/summarize"))
     assert scope.level == "prompts"
     assert scope.resource_type == "prompts"
     assert scope.resource_id == "summarize"
 
 
 def test_prompts_version_file():
-    scope = detect_scope("/prompts/summarize/1.json")
+    scope = detect_scope(_spec("/prompts/summarize/1.json"))
     assert scope.level == "file"
     assert scope.resource_type == "prompts"
     assert scope.resource_id == "summarize"
 
 
 def test_datasets_dir():
-    scope = detect_scope("/datasets")
+    scope = detect_scope(_spec("/datasets"))
     assert scope.level == "datasets"
     assert scope.resource_type == "datasets"
 
 
 def test_datasets_name():
-    scope = detect_scope("/datasets/qa-eval")
+    scope = detect_scope(_spec("/datasets/qa-eval"))
     assert scope.level == "datasets"
     assert scope.resource_type == "datasets"
     assert scope.resource_id == "qa-eval"
@@ -130,5 +147,5 @@ def test_glob_scope_file():
 def test_unrecognized_path_is_not_root():
     # Falling back to "root" made the grep/rg push-down treat any bogus path
     # as "search every trace", answering a missing file with the whole mount.
-    assert detect_scope("__nf_missing__").level == "unknown"
-    assert detect_scope("traces/a/b/c/d").level == "unknown"
+    assert detect_scope(_spec("__nf_missing__")).level == "unknown"
+    assert detect_scope(_spec("traces/a/b/c/d")).level == "unknown"

@@ -358,7 +358,7 @@ def sort_lines(lines: list[str], cfg: SortConfig) -> list[str]:
     ordered = sorted(lines, key=cmp_to_key(compare))
     if not cfg.unique:
         return ordered
-    seen: set[tuple[object, ...]] = set()
+    seen: set[DedupKey] = set()
     deduped: list[str] = []
     for line in ordered:
         dk = _dedup_key(line, cfg)
