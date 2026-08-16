@@ -130,7 +130,9 @@ function parseIsoWords(text: string, utc: boolean): Date | null {
   const hour = m[4] !== undefined ? Number(m[4]) : 0
   const minute = m[5] !== undefined ? Number(m[5]) : 0
   const second = m[6] !== undefined ? Number(m[6]) : 0
-  const ms = m[7] !== undefined ? Math.round(Number(`0.${m[7]}`) * 1000) : 0
+  // Truncate, never round: `.9999` must stay inside its own second, as
+  // it does for `new Date(iso)` and for Python's microsecond field.
+  const ms = m[7] !== undefined ? Number(`${m[7]}000`.slice(0, 3)) : 0
   const zone = m[8]
   if (zone !== undefined) {
     let offsetMin = 0

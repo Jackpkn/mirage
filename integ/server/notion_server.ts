@@ -1138,6 +1138,17 @@ async function appendChildren(
   const parentPage = await db.notionPage.findFirst({ where: { workspaceId, id: parentId } })
   const parentBlock = await db.notionBlock.findFirst({ where: { workspaceId, id: parentId } })
   if (parentPage === null && parentBlock === null) return notFound('block', parentId)
+  // Validate every child before touching the table: a refused request
+  // must leave no partial insert and no shifted sibling behind.
+  const specs: [string, Json][] = []
+  for (const child of children) {
+    const spec = asObject(child)
+    const type = typeof spec.type === 'string' ? spec.type : ''
+    if (type === '' || spec[type] === undefined) {
+      return apiError(400, 'validation_error', 'body.children[].type should be defined.')
+    }
+    specs.push([type, asObject(spec[type])])
+  }
   let at = await db.notionBlock.count({ where: { workspaceId, parentId } })
   let anchorPos: number | null = null
   const after = typeof body.after === 'string' ? body.after : null
@@ -1162,12 +1173,7 @@ async function appendChildren(
     at = anchor.position + 1
   }
   const created: Json[] = []
-  for (const child of children) {
-    const spec = asObject(child)
-    const type = typeof spec.type === 'string' ? spec.type : ''
-    if (type === '' || spec[type] === undefined) {
-      return apiError(400, 'validation_error', 'body.children[].type should be defined.')
-    }
+  for (const [type, payload] of specs) {
     const id = mintId(workspaceId, 'b0000000')
     await db.notionBlock.create({
       data: {
@@ -1176,7 +1182,7 @@ async function appendChildren(
         parentId,
         position: at++,
         type,
-        payloadJson: JSON.stringify(normalizeBlockPayload(asObject(spec[type]))),
+        payloadJson: JSON.stringify(normalizeBlockPayload(payload)),
         hasChildren: false,
         createdTime: fx.defaults.created_time,
         lastEditedTime: fx.defaults.last_edited_time,

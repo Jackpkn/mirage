@@ -466,6 +466,43 @@ async def test_awk_ofs_joins_print_arguments():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "program, expected",
+    [
+        ("{{print $1}}", "Welcome\nInstall\n"),
+        ("{{{print $1}}}", "Welcome\nInstall\n"),
+        ("{{print $1}; print $2}", "Welcome\nto\nInstall\nit\n"),
+        ("{print $1;{print $2}}", "Welcome\nto\nInstall\nit\n"),
+    ],
+)
+async def test_awk_compound_statement_runs_its_body(program, expected):
+    rb, rs = _make_backend({})
+    output, _ = await awk(
+        [],
+        (program, ),
+        None,
+        read_bytes=rb,
+        read_stream=rs,
+        stdin=b"Welcome to x\nInstall it\n",
+    )
+    assert (await _drain(output)).decode() == expected
+
+
+@pytest.mark.asyncio
+async def test_awk_semicolon_inside_string_is_not_a_separator():
+    rb, rs = _make_backend({})
+    output, _ = await awk(
+        [],
+        ('{print "a;b", $1}', ),
+        None,
+        read_bytes=rb,
+        read_stream=rs,
+        stdin=b"x\n",
+    )
+    assert (await _drain(output)).decode() == "a;b x\n"
+
+
+@pytest.mark.asyncio
 async def test_awk_rejects_arithmetic_assignment():
     rb, rs = _make_backend({})
     with pytest.raises(UsageError, match="unsupported construct"):

@@ -27,6 +27,7 @@ import { mountKey, mountPrefixOf } from '../../../utils/key_prefix.ts'
 import {
   emitStartPath,
   expandPrintf,
+  printfKind,
   hasLinkChildren,
   keep,
   optionsTree,
@@ -536,11 +537,16 @@ async function printfStat(
   const virtual = unrespellRaw(row, root.virtual, root.rawPath !== '' ? root.rawPath : root.virtual)
   const links = opts.ns?.links ?? null
   const linkRow = links?.statAt(virtual)
-  if (linkRow !== undefined && linkRow !== null) {
+  if (links !== null && linkRow !== undefined && linkRow !== null) {
+    // %Y reads the target through the workspace, so a link into another
+    // mount classifies correctly and a dangling one reads N.
+    const target = await links.targetStat(virtual)
     return {
       size: linkRow.size ?? 0,
       kind: 'l',
       mtimeEpoch: modifiedTs(linkRow.modified ?? null) ?? 0,
+      mode: linkRow.mode,
+      targetKind: target === null ? 'N' : printfKind(target),
     }
   }
   let st: FileStat | null = null
@@ -564,8 +570,13 @@ async function printfStat(
     st = await opts.statPath(virtual)
   }
   if (st === null) return null
-  const kind = st.type === FileType.DIRECTORY ? 'd' : st.type === FileType.SYMLINK ? 'l' : 'f'
-  return { size: st.size ?? 0, kind, mtimeEpoch: modifiedTs(st.modified ?? null) ?? 0 }
+  return {
+    size: st.size ?? 0,
+    kind: printfKind(st),
+    mtimeEpoch: modifiedTs(st.modified ?? null) ?? 0,
+    mode: st.mode,
+    targetKind: null,
+  }
 }
 
 // Render matched rows through a -printf format. Stats are fetched per row

@@ -115,13 +115,36 @@ async def _printf_stat(
     stat: Callable[[PathSpec], Awaitable[FileStat]] | None,
     stat_path: StatPath | None,
     links: LinkView | None,
-) -> FileStat | None:
+) -> tuple[FileStat | None, FileStat | None]:
+    """The stat one -printf row renders from, plus what %Y classifies.
+
+    A namespace link answers first (it has no backend inode); its
+    second element is the target's stat through the workspace, None
+    when the link dangles. Every other row's second element is None
+    and unused, since %Y is %y there.
+
+    Args:
+        row (str): the display row.
+        search (PathSpec): the start point the row came from.
+        stat (Callable | None): bound overlay-aware stat, when wired.
+        stat_path (StatPath | None): the dispatcher's stat probe.
+        links (LinkView | None): the namespace's symlink facts.
+    """
     virtual = unrespell_raw(row, search.virtual, search.raw_path
                             or search.virtual)
     if links is not None:
         link_row = links.stat_at(virtual)
         if link_row is not None:
-            return link_row
+            return link_row, await links.target_stat(virtual)
+    return await _backend_stat(virtual, search, stat, stat_path), None
+
+
+async def _backend_stat(
+    virtual: str,
+    search: PathSpec,
+    stat: Callable[[PathSpec], Awaitable[FileStat]] | None,
+    stat_path: StatPath | None,
+) -> FileStat | None:
     if stat is not None:
         prefix = mount_prefix_of(search.virtual, search.resource_path)
         spec = PathSpec(virtual=virtual,
@@ -175,9 +198,9 @@ async def render_printf_rows(
     needs = printf_needs_stat(fmt)
     parts: list[str] = []
     for row, search in pairs:
-        st = (await _printf_stat(row, search, stat, stat_path, links)
-              if needs else None)
-        parts.append(expand_printf(fmt, row, search, st, warnings))
+        st, target = (await _printf_stat(row, search, stat, stat_path, links)
+                      if needs else (None, None))
+        parts.append(expand_printf(fmt, row, search, st, warnings, target))
     err = missing + warnings
     io = IOResult(stderr=("\n".join(err) + "\n").encode() if err else None,
                   exit_code=1 if missing else 0)

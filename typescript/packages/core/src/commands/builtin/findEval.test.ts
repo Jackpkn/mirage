@@ -223,7 +223,13 @@ describe('emitStartPath size on directories', () => {
 })
 
 describe('expandPrintf', () => {
-  const stat = { size: 6, kind: 'f' as const, mtimeEpoch: 1786887930 }
+  const stat = {
+    size: 6,
+    kind: 'f' as const,
+    mtimeEpoch: 1786887930,
+    mode: null,
+    targetKind: null,
+  }
 
   it('expands the path family', () => {
     const warnings: string[] = []
@@ -243,10 +249,38 @@ describe('expandPrintf', () => {
         '%y %m\n',
         '/data/sub',
         '/data',
-        { size: 0, kind: 'd', mtimeEpoch: 0 },
+        { size: 0, kind: 'd', mtimeEpoch: 0, mode: null, targetKind: null },
         warnings,
       ),
     ).toBe('d 755\n')
+  })
+
+  it('renders a reported mode over the per-kind default', () => {
+    const warnings: string[] = []
+    expect(
+      expandPrintf('%m %M\n', '/data/a.txt', '/data', { ...stat, mode: 0o600 }, warnings),
+    ).toBe('600 -rw-------\n')
+    expect(
+      expandPrintf(
+        '%m %M\n',
+        '/data/sub',
+        '/data',
+        { size: 0, kind: 'd', mtimeEpoch: 0, mode: 0o700, targetKind: null },
+        warnings,
+      ),
+    ).toBe('700 drwx------\n')
+  })
+
+  it('reports the target kind for %Y on a link, N when it dangles', () => {
+    const warnings: string[] = []
+    const link = { size: 5, kind: 'l' as const, mtimeEpoch: 0, mode: null, targetKind: null }
+    expect(
+      expandPrintf('%y %Y\n', '/data/lnk', '/data', { ...link, targetKind: 'd' }, warnings),
+    ).toBe('l d\n')
+    expect(
+      expandPrintf('%y %Y\n', '/data/lnk', '/data', { ...link, targetKind: 'N' }, warnings),
+    ).toBe('l N\n')
+    expect(expandPrintf('%y %Y\n', '/data/a.txt', '/data', stat, warnings)).toBe('f f\n')
   })
 
   it('expands time directives in UTC', () => {

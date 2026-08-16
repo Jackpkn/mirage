@@ -53,6 +53,29 @@ def test_expand_stat_directives():
     assert dir_out == "d 755\n"
 
 
+def test_expand_reported_mode_over_default():
+    warnings: list[str] = []
+    search = _spec("/data")
+    st = FileStat(name="a", size=6, type=FileType.TEXT, mode=0o600)
+    assert expand_printf("%m %M\n", "/data/a.txt", search, st,
+                         warnings) == "600 -rw-------\n"
+    d = FileStat(name="sub", size=0, type=FileType.DIRECTORY, mode=0o700)
+    assert expand_printf("%m %M\n", "/data/sub", search, d,
+                         warnings) == "700 drwx------\n"
+
+
+def test_expand_capital_y_reports_target_kind():
+    warnings: list[str] = []
+    search = _spec("/data")
+    link = _stat(5, FileType.SYMLINK)
+    assert expand_printf("%y %Y\n", "/data/lnk", search, link, warnings,
+                         _stat(0, FileType.DIRECTORY)) == "l d\n"
+    assert expand_printf("%y %Y\n", "/data/lnk", search, link, warnings,
+                         None) == "l N\n"
+    assert expand_printf("%y %Y\n", "/data/a.txt", search, _stat(),
+                         warnings) == "f f\n"
+
+
 def test_expand_time_directives():
     warnings: list[str] = []
     search = _spec("/data")

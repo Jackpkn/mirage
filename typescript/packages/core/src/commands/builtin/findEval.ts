@@ -15,6 +15,9 @@
 import { fnmatch } from '../../utils/fnmatch.ts'
 import type { LinkView } from '../../ops/types.ts'
 import { rstripSlash, stripSlash } from '../../utils/slash.ts'
+import { DIR_MODE, FILE_MODE } from '../../utils/stat_view.ts'
+import { FileStat, FileType } from '../../types.ts'
+import { lsModeString } from './utils/formatting.ts'
 
 export interface FindEntry {
   key: string
@@ -275,12 +278,13 @@ const PRINTF_ESCAPES: Record<string, string> = {
 const STAT_DIRECTIVES = new Set(['s', 'y', 'Y', 'm', 'M', 'T'])
 // One mode per kind, spelled from the same constants every stat
 // translator uses (utils/stat_view.ts); links are 777 the way ls draws
-// them.
-const KIND_OCTAL: Record<string, string> = { d: '755', l: '777', f: '644' }
-const KIND_SYMBOLIC: Record<string, string> = {
-  d: 'drwxr-xr-x',
-  l: 'lrwxrwxrwx',
-  f: '-rw-r--r--',
+// them. A reported mode (chmod overlay, a backend that knows) supplies
+// the permission bits; the kind always fixes the type bits.
+const KIND_MODE: Record<PrintfKind, number> = { d: DIR_MODE, l: 0o120777, f: FILE_MODE }
+const KIND_TYPE: Record<PrintfKind, FileType> = {
+  d: FileType.DIRECTORY,
+  l: FileType.SYMLINK,
+  f: FileType.TEXT,
 }
 const DAY_ABBR = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 const MONTH_ABBR = [
@@ -376,10 +380,29 @@ function timeDirective(letter: string, ts: number): string | null {
   }
 }
 
+export type PrintfKind = 'f' | 'd' | 'l'
+
 export interface PrintfStatFacts {
   size: number
-  kind: 'f' | 'd' | 'l'
+  kind: PrintfKind
   mtimeEpoch: number
+  // The permission bits a backend or the namespace overlay reported,
+  // null for the per-kind default.
+  mode: number | null
+  // What %Y classifies on a symlink row: the target's kind, 'N' when the
+  // link dangles. Ignored for a non-link row, where %Y is %y.
+  targetKind: PrintfKind | 'N' | null
+}
+
+export function printfKind(st: FileStat): PrintfKind {
+  return st.type === FileType.DIRECTORY ? 'd' : st.type === FileType.SYMLINK ? 'l' : 'f'
+}
+
+function modeBits(st: PrintfStatFacts | null, kind: PrintfKind): number {
+  const base = KIND_MODE[kind]
+  const mode = st?.mode ?? null
+  if (mode === null) return base
+  return (base & ~0o7777) | (mode & 0o7777)
 }
 
 function warnUnrecognized(src: string, warnings: string[]): void {
@@ -394,7 +417,9 @@ function warnUnrecognized(src: string, warnings: string[]): void {
 // unrecognized directive or escape renders literally and adds GNU's
 // warning line once, exit code untouched -- which is GNU's own behavior.
 // Times render in UTC (mirage timestamps are zone-carrying ISO strings;
-// GNU renders the local zone). Mirrors the Python expand_printf.
+// GNU renders the local zone). %Y on a symlink row reports the target's
+// kind, N when the link dangles; on any other row it is %y. Mirrors the
+// Python expand_printf.
 export function expandPrintf(
   fmt: string,
   row: string,
@@ -449,12 +474,21 @@ export function expandPrintf(
       out.push(rel === '' ? '0' : String(rel.split('/').length))
     } else if (code === 's') {
       out.push(String(st === null ? 0 : st.size))
-    } else if (code === 'y' || code === 'Y') {
+    } else if (code === 'y') {
       out.push(st === null ? 'U' : kind)
+    } else if (code === 'Y') {
+      if (st === null) {
+        out.push('U')
+      } else if (kind === 'l') {
+        out.push(st.targetKind ?? 'N')
+      } else {
+        out.push(kind)
+      }
     } else if (code === 'm') {
-      out.push(KIND_OCTAL[kind] ?? '644')
+      out.push((modeBits(st, kind) & 0o7777).toString(8))
     } else if (code === 'M') {
-      out.push(KIND_SYMBOLIC[kind] ?? '-rw-r--r--')
+      const bits = modeBits(st, kind)
+      out.push(lsModeString(new FileStat({ name: '', type: KIND_TYPE[kind], mode: bits & 0o7777 })))
     } else if (code === 'T' && i < n) {
       const letter = fmt.charAt(i)
       i += 1

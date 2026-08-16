@@ -168,8 +168,28 @@ def _warn_unrecognized(src: str, warnings: list[str]) -> None:
         warnings.append(line)
 
 
-def expand_printf(fmt: str, row: str, search: PathSpec, st: FileStat | None,
-                  warnings: list[str]) -> str:
+def _kind_letter(st: FileStat | None) -> str:
+    if st is None or st.type is None:
+        return "f"
+    return _TYPE_LETTER.get(st.type, "f")
+
+
+def _mode_bits(st: FileStat | None, kind: str) -> int:
+    # The kind fixes the type bits; a reported mode (chmod overlay, a
+    # backend that knows) supplies the permission bits, else the
+    # per-kind default every stat translator uses.
+    base = _KIND_MODE[kind]
+    if st is None or st.mode is None:
+        return base
+    return (base & ~0o7777) | (st.mode & 0o7777)
+
+
+def expand_printf(fmt: str,
+                  row: str,
+                  search: PathSpec,
+                  st: FileStat | None,
+                  warnings: list[str],
+                  target: FileStat | None = None) -> str:
     """Expand one -printf format against one result row.
 
     Directives cover what GNU's find agents actually use: the path family
@@ -177,7 +197,9 @@ def expand_printf(fmt: str, row: str, search: PathSpec, st: FileStat | None,
     backslash escapes. An unrecognized directive or escape renders
     literally and adds GNU's warning line once, exit code untouched --
     which is GNU's own behavior. Times render in UTC (mirage timestamps
-    are zone-carrying ISO strings; GNU renders the local zone).
+    are zone-carrying ISO strings; GNU renders the local zone). ``%Y``
+    on a symlink row reports the target's kind, ``N`` when the link
+    dangles; on any other row it is ``%y``.
 
     Args:
         fmt (str): the format string as typed.
@@ -185,12 +207,13 @@ def expand_printf(fmt: str, row: str, search: PathSpec, st: FileStat | None,
         search (PathSpec): the start point the row came from.
         st (FileStat | None): the row's stat, when the format needs one.
         warnings (list[str]): sink for GNU's warning lines, deduplicated.
+        target (FileStat | None): a symlink row's resolved target stat,
+            None when the link dangles; ignored for non-link rows.
     """
     out: list[str] = []
     i = 0
     n = len(fmt)
-    kind = ("f" if st is None or st.type is None else _TYPE_LETTER.get(
-        st.type, "f"))
+    kind = _kind_letter(st)
     while i < n:
         ch = fmt[i]
         if ch == "\\" and i + 1 < n:
@@ -229,12 +252,19 @@ def expand_printf(fmt: str, row: str, search: PathSpec, st: FileStat | None,
             out.append("0" if not rel else str(rel.count("/") + 1))
         elif code == "s":
             out.append(str((st.size if st is not None else 0) or 0))
-        elif code in ("y", "Y"):
+        elif code == "y":
             out.append("U" if st is None else kind)
+        elif code == "Y":
+            if st is None:
+                out.append("U")
+            elif kind == "l":
+                out.append("N" if target is None else _kind_letter(target))
+            else:
+                out.append(kind)
         elif code == "m":
-            out.append(format(_KIND_MODE[kind] & 0o7777, "o"))
+            out.append(format(_mode_bits(st, kind) & 0o7777, "o"))
         elif code == "M":
-            out.append(filemode(_KIND_MODE[kind]))
+            out.append(filemode(_mode_bits(st, kind)))
         elif code == "T" and i < n:
             letter = fmt[i]
             i += 1

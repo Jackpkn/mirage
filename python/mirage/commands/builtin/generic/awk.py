@@ -78,6 +78,48 @@ def _reject(construct: str) -> None:
     raise UsageError(f"awk: unsupported construct: '{construct}'")
 
 
+def _split_statements(action: str) -> list[str]:
+    """Split an action into its leaf statements.
+
+    Splits on ``;`` at brace depth zero and outside double quotes. A
+    compound statement (``{ stmts }``, legal wherever a statement is)
+    contributes its inner statements in place, so ``{{print $1}}`` runs
+    ``print $1`` the way gawk does rather than reading as one unknown
+    statement. Validator and evaluator both iterate this list, so they
+    cannot disagree about where a statement ends.
+
+    Args:
+        action (str): the action block's source text, braces stripped.
+    """
+    pieces: list[str] = []
+    depth = 0
+    quoted = False
+    start = 0
+    for i, ch in enumerate(action):
+        if ch == '"':
+            quoted = not quoted
+        elif quoted:
+            continue
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth = max(depth - 1, 0)
+        elif ch == ";" and depth == 0:
+            pieces.append(action[start:i])
+            start = i + 1
+    pieces.append(action[start:])
+    stmts: list[str] = []
+    for piece in pieces:
+        stmt = piece.strip()
+        if not stmt:
+            continue
+        if stmt.startswith("{") and stmt.endswith("}"):
+            stmts.extend(_split_statements(stmt[1:-1]))
+        else:
+            stmts.append(stmt)
+    return stmts
+
+
 def _validate_print_args(args: str, stmt: str) -> None:
     for tok in re.split(r",\s*", args):
         if not _is_simple_operand(tok.strip()):
@@ -90,15 +132,12 @@ def _validate_action(action: str) -> None:
     ``_eval_statements`` executes ``print``, ``var = value`` and
     ``var += value``; every other statement used to vanish (and
     ``printf`` ran as a mangled ``print``), so an agent's script exited 0
-    having done nothing. Mirrors the statement split the evaluator uses.
+    having done nothing. Shares the statement split with the evaluator.
 
     Args:
         action (str): the action block's source text.
     """
-    for stmt in action.split(";"):
-        stmt = stmt.strip()
-        if not stmt:
-            continue
+    for stmt in _split_statements(action):
         m = re.match(r"\w+\s*\+=\s*(.+)\Z", stmt)
         if m:
             if not _is_simple_operand(m.group(1).strip()):
@@ -268,10 +307,7 @@ def _eval_statements(action: str, field_map: dict[str, str],
     """
     parts: list[str] = []
     printed = False
-    for stmt in action.split(";"):
-        stmt = stmt.strip()
-        if not stmt:
-            continue
+    for stmt in _split_statements(action):
         m_add = re.match(r"(\w+)\s*\+=\s*(.+)", stmt)
         if m_add:
             var, expr = m_add.group(1), m_add.group(2).strip()

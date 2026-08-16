@@ -93,6 +93,15 @@ describe('parseDateExpr', () => {
     )
   })
 
+  it('truncates fractional seconds instead of rounding into the next second', () => {
+    expect(parseDateExpr('2026-01-01T00:00:00.9999Z', true)).toEqual(
+      new Date(Date.UTC(2026, 0, 1, 0, 0, 0, 999)),
+    )
+    expect(parseDateExpr('2026-01-01T00:00:00.5Z', true)).toEqual(
+      new Date(Date.UTC(2026, 0, 1, 0, 0, 0, 500)),
+    )
+  })
+
   it('returns null for anything it cannot parse', () => {
     expect(parseDateExpr('not a date', true, NOW)).toBeNull()
     expect(parseDateExpr('24 hours agoo', true, NOW)).toBeNull()

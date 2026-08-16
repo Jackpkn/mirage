@@ -331,6 +331,25 @@ describe('awk assignments and OFS', () => {
   })
 })
 
+describe('awk compound statements', () => {
+  const INPUT = ENC.encode('Welcome to x\nInstall it\n')
+
+  it.each([
+    ['{{print $1}}', 'Welcome\nInstall\n'],
+    ['{{{print $1}}}', 'Welcome\nInstall\n'],
+    ['{{print $1}; print $2}', 'Welcome\nto\nInstall\nit\n'],
+    ['{print $1;{print $2}}', 'Welcome\nto\nInstall\nit\n'],
+  ])('runs the body of %s', async (program, expected) => {
+    const [out] = await run([], [program], opts({}, INPUT))
+    expect(out).toBe(expected)
+  })
+
+  it('does not split on a semicolon inside a string', async () => {
+    const [out] = await run([], ['{print "a;b", $1}'], opts({}, ENC.encode('x\n')))
+    expect(out).toBe('a;b x\n')
+  })
+})
+
 describe('awk unset values', () => {
   it('prints empty for an unset variable', async () => {
     const [out] = await run([], ['{print foo}'], opts({}, ENC.encode('line\n')))

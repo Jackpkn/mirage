@@ -82,6 +82,46 @@ function reject(construct: string): never {
   throw new UsageError(`awk: unsupported construct: '${construct}'`)
 }
 
+// Split an action into its leaf statements: on `;` at brace depth zero
+// and outside double quotes. A compound statement (`{ stmts }`, legal
+// wherever a statement is) contributes its inner statements in place, so
+// `{{print $1}}` runs `print $1` the way gawk does rather than reading as
+// one unknown statement. Validator and evaluator both iterate this list,
+// so they cannot disagree about where a statement ends.
+function splitStatements(action: string): string[] {
+  const pieces: string[] = []
+  let depth = 0
+  let quoted = false
+  let start = 0
+  for (let i = 0; i < action.length; i++) {
+    const ch = action.charAt(i)
+    if (ch === '"') {
+      quoted = !quoted
+    } else if (quoted) {
+      continue
+    } else if (ch === '{') {
+      depth += 1
+    } else if (ch === '}') {
+      depth = Math.max(depth - 1, 0)
+    } else if (ch === ';' && depth === 0) {
+      pieces.push(action.slice(start, i))
+      start = i + 1
+    }
+  }
+  pieces.push(action.slice(start))
+  const stmts: string[] = []
+  for (const piece of pieces) {
+    const stmt = piece.trim()
+    if (stmt === '') continue
+    if (stmt.startsWith('{') && stmt.endsWith('}')) {
+      stmts.push(...splitStatements(stmt.slice(1, -1)))
+    } else {
+      stmts.push(stmt)
+    }
+  }
+  return stmts
+}
+
 function validatePrintArgs(args: string, stmt: string): void {
   for (const tok of args.split(/,\s*/)) {
     if (!isSimpleOperand(tok.trim())) reject(stmt)
@@ -93,12 +133,10 @@ const ASSIGN_RE = /^([A-Za-z_]\w*)\s*=(?!=)\s*(.+)$/
 // Refuse any statement the streamer would silently drop or mangle.
 // `evalStatements` executes `print`, `var = value` and `var += value`;
 // every other statement used to vanish (and `printf` ran as a mangled
-// `print`), so an agent's script exited 0 having done nothing. Mirrors
-// the statement split the evaluator uses.
+// `print`), so an agent's script exited 0 having done nothing. Shares
+// the statement split with the evaluator.
 function validateAction(action: string): void {
-  for (const rawStmt of action.split(';')) {
-    const stmt = rawStmt.trim()
-    if (stmt === '') continue
+  for (const stmt of splitStatements(action)) {
     const m = /^\w+\s*\+=\s*(.+)$/.exec(stmt)
     if (m !== null) {
       if (!isSimpleOperand((m[1] ?? '').trim())) reject(stmt)
@@ -247,9 +285,7 @@ function evalStatements(
 ): string | null {
   const parts: string[] = []
   let printed = false
-  for (const rawStmt of action.split(';')) {
-    const stmt = rawStmt.trim()
-    if (stmt === '') continue
+  for (const stmt of splitStatements(action)) {
     const mAdd = /^(\w+)\s*\+=\s*(.+)$/.exec(stmt)
     if (mAdd !== null) {
       const variable = mAdd[1] ?? ''
