@@ -14,6 +14,7 @@
 
 import { decodeBase64 } from '../../utils/base64.ts'
 import { type TokenManager, gmailBase, googleGet } from '../google/_client.ts'
+import { compactJsonBytes } from '../render/json.ts'
 
 export interface GmailHeader {
   name?: string
@@ -262,5 +263,5 @@ function processMessage(raw: GmailMessageRaw): GmailMessageProcessed {
 // The single renderer behind both read and the readdir-time size, so
 // stat().size == len(read()) by construction.
 export function messageJsonBytes(raw: GmailMessageRaw): Uint8Array {
-  return new TextEncoder().encode(JSON.stringify(processMessage(raw)))
+  return compactJsonBytes(processMessage(raw))
 }

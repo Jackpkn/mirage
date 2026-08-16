@@ -17,7 +17,7 @@ from mirage.cache.index import NULL_INDEX, IndexCacheStore
 from mirage.core.langfuse._client import (fetch_dataset_items,
                                           fetch_dataset_runs, fetch_or_enoent,
                                           fetch_prompt, fetch_trace)
-from mirage.core.langfuse.render import json_bytes, jsonl_bytes
+from mirage.core.render.json import json_bytes, jsonl_bytes
 from mirage.types import PathSpec
 from mirage.utils.errors import enoent
 from mirage.utils.key_prefix import mount_prefix_of

@@ -17,6 +17,7 @@ import { listMatviews, listSchemas, listTables, listViews, quoteIdent } from './
 import { buildEntitySchemaJson } from './_schema_json.ts'
 import { buildEntitySemanticJson } from './semantic.ts'
 import { compareCodePoints } from '../../utils/sort.ts'
+import { jsonText } from '../render/json.ts'
 
 const TEXT_TYPES = [
   'text',
@@ -110,7 +111,7 @@ export async function searchEntityMetadata(
   ]
   const lines: string[] = []
   for (const [name, doc] of docs) {
-    const rendered = JSON.stringify(doc, null, 2)
+    const rendered = jsonText(doc)
     for (const line of rendered.split('\n')) {
       const hay = caseInsensitive ? line.toLowerCase() : line
       if (hay.includes(needle)) {

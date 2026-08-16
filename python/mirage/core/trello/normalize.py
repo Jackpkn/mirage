@@ -12,8 +12,9 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import json
 from typing import Any
+
+from mirage.core.render.json import json_bytes, jsonl_bytes
 
 
 def normalize_workspace(workspace: dict[str, Any]) -> dict[str, Any]:
@@ -94,14 +95,9 @@ def normalize_comment(comment: dict[str, Any], *,
 
 
 def to_json_bytes(value: dict[str, Any] | list[Any]) -> bytes:
-    return json.dumps(value, ensure_ascii=False, indent=2).encode()
+    return json_bytes(value)
 
 
 def to_jsonl_bytes(rows: list[dict[str, Any]]) -> bytes:
     ordered = sorted(rows, key=lambda row: row.get("created_at") or "")
-    if not ordered:
-        return b""
-    text = "\n".join(
-        json.dumps(row, ensure_ascii=False, separators=(",", ":"))
-        for row in ordered)
-    return text.encode() + b"\n"
+    return jsonl_bytes(ordered)

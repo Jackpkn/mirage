@@ -13,8 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import type { SlackAccessor } from '../../accessor/slack.ts'
-
-const ENC = new TextEncoder()
+import { compactJsonBytes } from '../render/json.ts'
 
 export async function searchMessages(
   accessor: SlackAccessor,
@@ -29,7 +28,7 @@ export async function searchMessages(
     sort: 'timestamp',
   }
   const data = await accessor.transport.call('search.messages', params)
-  return ENC.encode(JSON.stringify(data))
+  return compactJsonBytes(data)
 }
 
 export async function searchFiles(
@@ -45,5 +44,5 @@ export async function searchFiles(
     sort: 'timestamp',
   }
   const data = await accessor.transport.call('search.files', params)
-  return ENC.encode(JSON.stringify(data))
+  return compactJsonBytes(data)
 }

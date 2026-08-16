@@ -11,13 +11,3 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
-
-import json
-from typing import Any
-
-
-def jaeger_json_bytes(data: Any) -> bytes:
-    # Single renderer for trace and operations files: read() and the
-    # readdir-time sizing must produce the same bytes for the same payload,
-    # so the advertised size is exact by construction.
-    return json.dumps(data, ensure_ascii=False, indent=2).encode()

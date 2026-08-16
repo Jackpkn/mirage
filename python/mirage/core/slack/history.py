@@ -12,11 +12,11 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import json
 from collections.abc import AsyncIterator
 from datetime import datetime, timezone
 from typing import Any
 
+from mirage.core.render.json import jsonl_bytes
 from mirage.core.slack._client import slack_get
 from mirage.core.slack.config import SlackConfig
 from mirage.core.slack.paginate import cursor_pages
@@ -96,11 +96,7 @@ def messages_to_jsonl(messages: list[dict[str, Any]]) -> bytes:
     Returns:
         bytes: JSONL-encoded messages.
     """
-    lines = [
-        json.dumps(m, ensure_ascii=False, separators=(",", ":"))
-        for m in messages
-    ]
-    return ("\n".join(lines) + "\n").encode() if lines else b""
+    return jsonl_bytes(messages)
 
 
 async def get_history_jsonl(

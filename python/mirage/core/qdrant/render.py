@@ -13,9 +13,9 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import base64
-import json
 from typing import Any
 
+from mirage.core.render.json import compact_json_text
 from mirage.resource.qdrant.config import QdrantConfig
 from mirage.types import JsonValue
 
@@ -36,8 +36,7 @@ def render_json(row: dict[str, Any], config: QdrantConfig) -> bytes:
         for key, value in row.items() if key not in _SKIP_KEYS
         and key != config.vector_field and key != config.blob_field
     }
-    return (json.dumps(data, separators=(",", ":"), ensure_ascii=False) +
-            "\n").encode()
+    return (compact_json_text(data) + "\n").encode()
 
 
 def render_text(row: dict[str, Any], config: QdrantConfig) -> bytes:

@@ -19,7 +19,7 @@ import { PathSpec } from '../../types.ts'
 import { stripSlash } from '../../utils/slash.ts'
 import type { LangfuseTransport } from './_client.ts'
 import { readdir } from './readdir.ts'
-import { toJsonlBytes } from './render.ts'
+import { jsonlBytes } from '../render/json.ts'
 
 interface Call {
   path: string
@@ -127,7 +127,7 @@ describe('langfuse readdir dataset sizes', () => {
 
     expect(entries).toEqual(['/datasets/qa-eval/items.jsonl', '/datasets/qa-eval/runs'])
     const lookup = await idx.get('/datasets/qa-eval/items.jsonl')
-    expect(lookup.entry?.size).toBe(toJsonlBytes(items).byteLength)
+    expect(lookup.entry?.size).toBe(jsonlBytes(items).byteLength)
     expect(transport.calls.filter((c) => c.path === '/api/public/dataset-items')).toHaveLength(1)
   })
 
@@ -140,6 +140,6 @@ describe('langfuse readdir dataset sizes', () => {
     await readdir(accessor(transport), spec('/datasets/qa-eval/runs'), idx)
 
     const lookup = await idx.get('/datasets/qa-eval/runs/run-a.jsonl')
-    expect(lookup.entry?.size).toBe(toJsonlBytes([runs[0] as Record<string, unknown>]).byteLength)
+    expect(lookup.entry?.size).toBe(jsonlBytes([runs[0] as Record<string, unknown>]).byteLength)
   })
 })

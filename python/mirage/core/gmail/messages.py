@@ -13,10 +13,10 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import base64
-import json
 from typing import Any
 
 from mirage.core.google._client import TokenManager, gmail_base, google_get
+from mirage.core.render.json import compact_json_bytes
 
 
 async def list_messages(
@@ -186,9 +186,7 @@ def message_json_bytes(raw: dict[str, Any]) -> bytes:
     Returns:
         bytes: compact JSON encoding of the processed message.
     """
-    return json.dumps(process_message(raw),
-                      ensure_ascii=False,
-                      separators=(",", ":")).encode()
+    return compact_json_bytes(process_message(raw))
 
 
 def process_message(raw: dict[str, Any]) -> dict[str, Any]:
