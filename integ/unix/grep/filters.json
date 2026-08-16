@@ -27,7 +27,7 @@
         "gdrive-folder",
         "box"
       ],
-      "command": "mkdir -p /data/gflt/sub && echo 'score 9' | tee /data/gflt/notes.tex > /dev/null && echo 'score 8' | tee /data/gflt/notes.txt > /dev/null && echo 'score 7' | tee /data/gflt/sub/inner.tex > /dev/null && grep -RInE --include='*.tex' score /data/gflt",
+      "command": "mkdir -p /data/gflt/sub && echo 'score 9' | tee /data/gflt/notes.tex > /dev/null && echo 'score 8' | tee /data/gflt/notes.txt > /dev/null && echo 'score 7' | tee /data/gflt/sub/inner.tex > /dev/null && grep -RInE --include='*.tex' score /data/gflt | sort",
       "expect": {
         "exit": 0,
         "stdout": "/data/gflt/notes.tex:1:score 9\n/data/gflt/sub/inner.tex:1:score 7\n",
@@ -265,7 +265,7 @@
         "gdrive-folder",
         "box"
       ],
-      "command": "grep -r --exclude='notes.*' --include='*.tex' score /data/gflt",
+      "command": "grep -r --exclude='notes.*' --include='*.tex' score /data/gflt | sort",
       "expect": {
         "exit": 0,
         "stdout": "/data/gflt/notes.tex:score 9\n/data/gflt/sub/inner.tex:score 7\n",
@@ -299,7 +299,7 @@
         "gdrive-folder",
         "box"
       ],
-      "command": "grep -rn --exclude='*.log' --include='*.zzz' score /data/gflt",
+      "command": "grep -rn --exclude='*.log' --include='*.zzz' score /data/gflt | sort",
       "expect": {
         "exit": 0,
         "stdout": "/data/gflt/notes.tex:1:score 9\n/data/gflt/notes.txt:1:score 8\n/data/gflt/sub/inner.tex:1:score 7\n",

@@ -70,12 +70,16 @@ async def read_script_text(dispatch: DispatchFn, path: str, cwd: str) -> str:
 
     Every way of running a script off a mount comes through here, so a
     backend quirk is answered once rather than per caller. The one
-    answered today is a directory: a keyed backend has no directory
-    object to open, so it reports a read of one as ENOENT where a real
-    filesystem reports EISDIR. The stat probe that tells the two apart
-    runs only on the failure path, and asks both channels a backend can
-    answer on, since on a prefix store a directory is the set of keys
-    under it rather than an object.
+    answered today is a directory, which only a real filesystem reports
+    as EISDIR on read: a keyed backend has no directory object to open
+    and answers ENOENT, ssh's raw error carries no errno, and WebDAV
+    serves the collection's HTML listing as bytes, which a loader that
+    read first would then run as a script. So the stat probe runs
+    before the read, and asks both channels a backend can answer on,
+    since on a prefix store a directory is the set of keys under it
+    rather than an object. A stat miss alone proves nothing (absence
+    takes two channels), so only a positive directory answer is acted
+    on and the read still owns "no such file".
 
     The caller owns the diagnostic: `source` and a nested shell word
     the same failure differently and exit differently on it.
@@ -86,13 +90,10 @@ async def read_script_text(dispatch: DispatchFn, path: str, cwd: str) -> str:
         cwd (str): working directory a relative operand resolves against.
     """
     scope = _to_scope(resolve_path(path, cwd))
-    try:
-        data, _ = await dispatch("read", scope)
-    except FileNotFoundError:
-        stat = await resolve_path_stat(dispatch, scope)
-        if stat is not None and stat.type == FileType.DIRECTORY:
-            raise eisdir(path) from None
-        raise
+    stat = await resolve_path_stat(dispatch, scope)
+    if stat is not None and stat.type == FileType.DIRECTORY:
+        raise eisdir(path)
+    data, _ = await dispatch("read", scope)
     if isinstance(data, bytes):
         return data.decode(errors="replace")
     if data is None:

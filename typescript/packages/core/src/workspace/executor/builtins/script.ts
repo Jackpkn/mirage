@@ -174,26 +174,24 @@ export function parseBashArgs(args: string[]): BashArgs {
  *
  * Every way of running a script off a mount comes through here, so a backend
  * quirk is answered once rather than per caller. The one answered today is a
- * directory: a keyed backend has no directory object to open, so it reports a
- * read of one as ENOENT where a real filesystem reports EISDIR. The stat
- * probe that tells the two apart runs only on the failure path, and asks both
- * channels a backend can answer on, since on a prefix store a directory is
- * the set of keys under it rather than an object.
+ * directory, which only a real filesystem reports as EISDIR on read: a keyed
+ * backend has no directory object to open and answers ENOENT, ssh's raw error
+ * carries no errno, and WebDAV serves the collection's HTML listing as bytes,
+ * which a loader that read first would then run as a script. So the stat
+ * probe runs before the read, and asks both channels a backend can answer on,
+ * since on a prefix store a directory is the set of keys under it rather than
+ * an object. A stat miss alone proves nothing (absence takes two channels), so
+ * only a positive directory answer is acted on and the read still owns "no
+ * such file".
  *
  * The caller owns the diagnostic: `source` and a nested shell word the same
  * failure differently and exit differently on it.
  */
 async function readScriptText(dispatch: DispatchFn, path: string, cwd: string): Promise<string> {
   const scope = toScope(resolvePath(path, cwd))
-  let data: unknown
-  try {
-    ;[data] = await dispatch('read', scope)
-  } catch (exc) {
-    if ((exc as { code?: string }).code !== 'ENOENT') throw exc
-    const stat = await resolvePathStat(dispatch, scope)
-    if (stat !== null && stat.type === FileType.DIRECTORY) throw eisdir(path)
-    throw exc
-  }
+  const stat = await resolvePathStat(dispatch, scope)
+  if (stat !== null && stat.type === FileType.DIRECTORY) throw eisdir(path)
+  const [data] = await dispatch('read', scope)
   if (data instanceof Uint8Array) return new TextDecoder().decode(data)
   if (data === null || data === undefined) return ''
   return new TextDecoder().decode(await materialize(data as ByteSource))

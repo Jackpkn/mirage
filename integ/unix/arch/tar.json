@@ -734,7 +734,7 @@
         "gdrive-folder",
         "box"
       ],
-      "command": "mkdir -p /data/cwdx && bash -c 'cd /data/cwdx && tar -xzf /data/msel.tgz && ls msel'",
+      "command": "mkdir -p /data/cwdx && echo k > /data/cwdx/.keep && bash -c 'cd /data/cwdx && tar -xzf /data/msel.tgz && ls msel'",
       "expect": {
         "exit": 0,
         "stdout": "a.txt\nsub\n",
