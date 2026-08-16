@@ -20,7 +20,9 @@ import time
 
 try:
     import mfusepy as fuse
-except ImportError:
+except (ImportError, OSError):
+    # mfusepy raises OSError("Unable to find libfuse") at import time when
+    # the package is installed but no libfuse is on the system.
     fuse = None
 
 from mirage.fuse.backend import MountBackend, prepare_backend

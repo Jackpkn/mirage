@@ -12,6 +12,9 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import subprocess
+import sys
+
 import pytest
 
 from mirage.fuse.backend import MountBackend
@@ -133,3 +136,37 @@ def test_fuse_backend_keeps_direct_io(monkeypatch, fs):
     assert _CaptureFuse.kwargs["direct_io"] is True
     assert "backend" not in _CaptureFuse.kwargs
     assert "volname" not in _CaptureFuse.kwargs
+
+
+_NO_LIBFUSE_PROBE = """
+import sys
+
+
+class _Blocker:
+
+    def find_spec(self, name, path=None, target=None):
+        if name == "mfusepy":
+            raise OSError("Unable to find libfuse")
+        return None
+
+
+sys.meta_path.insert(0, _Blocker())
+
+import mirage  # noqa: F401
+from mirage.fuse import darwin, fs, mount
+
+assert mount.fuse is None
+assert fs.fuse is None
+assert darwin.mfusepy is None
+"""
+
+
+def test_import_survives_missing_libfuse():
+    # mfusepy raises OSError, not ImportError, when the package is installed
+    # but no libfuse is on the system, and mirage/__init__ reaches
+    # fuse/mount.py eagerly. A guard catching only ImportError therefore
+    # breaks `import mirage` outright rather than degrading to fuse = None.
+    proc = subprocess.run([sys.executable, "-c", _NO_LIBFUSE_PROBE],
+                          capture_output=True,
+                          text=True)
+    assert proc.returncode == 0, proc.stderr

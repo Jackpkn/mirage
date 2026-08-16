@@ -16,7 +16,6 @@ import ctypes
 import errno
 import sys
 
-import mfusepy
 import pytest
 
 from mirage.fuse import darwin
@@ -24,6 +23,17 @@ from mirage.fuse.darwin import (RENAME_EXCL, RENAME_SWAP, SetattrX,
                                 changes_from_setattr,
                                 install_macfuse_extensions, rename_flags_check,
                                 timespec_to_float)
+
+try:
+    import mfusepy
+except (ImportError, OSError):
+    # mfusepy raises OSError("Unable to find libfuse") at import time when
+    # the package is installed but no libfuse is on the system.
+    mfusepy = None
+
+requires_mfusepy = pytest.mark.skipif(
+    mfusepy is None,
+    reason="mfusepy needs a libfuse on the system (macFUSE, fuse3, WinFsp)")
 
 
 def make_attr(valid: int, **fields: int) -> SetattrX:
@@ -91,6 +101,7 @@ def test_rename_flags_swap_is_unsupported():
                               flags=RENAME_SWAP) == errno.ENOTSUP
 
 
+@requires_mfusepy
 @pytest.mark.skipif(sys.platform != "darwin",
                     reason="mfusepy builds fuse_operations per platform; the "
                     "reserved tail the Apple fields replace only exists in "
@@ -111,6 +122,7 @@ def test_install_extends_struct_and_keeps_size(monkeypatch):
     assert hasattr(mfusepy.FUSE, "renamex")
 
 
+@requires_mfusepy
 def test_install_is_idempotent(monkeypatch):
     monkeypatch.setattr(darwin, "_installed", False)
     monkeypatch.setattr(darwin.sys, "platform", "darwin")
@@ -120,6 +132,7 @@ def test_install_is_idempotent(monkeypatch):
     assert mfusepy.fuse_operations is fields_after_first
 
 
+@requires_mfusepy
 def test_install_skips_off_darwin(monkeypatch):
     monkeypatch.setattr(darwin, "_installed", False)
     monkeypatch.setattr(darwin.sys, "platform", "linux")

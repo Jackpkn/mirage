@@ -23,7 +23,9 @@ from mirage.types import JsonValue
 
 try:
     import mfusepy
-except ImportError:
+except (ImportError, OSError):
+    # mfusepy raises OSError("Unable to find libfuse") at import time when
+    # the package is installed but no libfuse is on the system.
     mfusepy = None
 
 logger = logging.getLogger(__name__)
