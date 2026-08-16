@@ -14,7 +14,7 @@
 
 import { unlink } from '../../../core/gslides/unlink.ts'
 import { ResourceName } from '../../../types.ts'
-import { makeRm } from '../generic/rm_command.ts'
+import { makeRm } from '../generic/rm_cmd.ts'
 import { GSLIDES_IO } from './io.ts'
 
 export const GSLIDES_RM = makeRm(ResourceName.GSLIDES, GSLIDES_IO, unlink)

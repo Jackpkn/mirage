@@ -20,7 +20,7 @@ import type { NotionStatAccessor } from './stat.ts'
 import { readdir } from './readdir.ts'
 import { stat } from './stat.ts'
 import { stripSlash } from '../../utils/slash.ts'
-import { buildTree, keep, startBasename } from '../../commands/builtin/findEval.ts'
+import { buildTree, keep, startBasename } from '../../commands/builtin/find_eval.ts'
 import { compareCodePoints } from '../../utils/sort.ts'
 
 async function collect(

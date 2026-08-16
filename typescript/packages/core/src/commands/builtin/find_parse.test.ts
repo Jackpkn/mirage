@@ -13,8 +13,8 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { describe, expect, it } from 'vitest'
-import { evalPredicate } from './findEval.ts'
-import { FindParseError, parseFindExpression } from './findParse.ts'
+import { evalPredicate } from './find_eval.ts'
+import { FindParseError, parseFindExpression } from './find_parse.ts'
 
 describe('parseFindExpression', () => {
   it('negation', () => {

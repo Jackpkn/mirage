@@ -15,7 +15,7 @@
 import { invalidateAfterWrite } from '../../cache/context.ts'
 import { IndexEntry, ResourceType } from '../../cache/index/config.ts'
 import type { IndexCacheStore } from '../../cache/index/store.ts'
-import { buildTree, emitStartPath, keep, type PredNode } from '../../commands/builtin/findEval.ts'
+import { buildTree, emitStartPath, keep, type PredNode } from '../../commands/builtin/find_eval.ts'
 import { record, recordingActive, recordStream, revisionFor } from '../../observe/context.ts'
 import type { FindOptions } from '../../resource/base.ts'
 import { FileStat, FileType, PathSpec } from '../../types.ts'

@@ -22,7 +22,7 @@ import { GitHubAccessor } from '../../../accessor/github.ts'
 import type { GitHubTransport } from '../../../core/github/_client.ts'
 import type { TreeEntry } from '../../../core/github/tree_entry.ts'
 import { PathSpec } from '../../../types.ts'
-import { narrowScope } from './narrow.ts'
+import { narrowScope } from './pushdown.ts'
 
 // 150 blobs under src/ so the scope clears SCOPE_WARN (100) and search kicks in.
 function bigTree(): Record<string, TreeEntry> {

@@ -17,7 +17,7 @@ import {
   emitStartPath,
   keep,
   startBasename,
-} from '@struktoai/mirage-core/commands/builtin/findEval'
+} from '@struktoai/mirage-core/commands/builtin/find_eval'
 import type { FindOptions } from '@struktoai/mirage-core/resource/base'
 import type { PathSpec } from '@struktoai/mirage-core/types'
 import { rstripSlash } from '@struktoai/mirage-core/utils/slash'

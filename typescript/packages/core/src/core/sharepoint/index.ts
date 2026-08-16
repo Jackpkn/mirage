@@ -27,7 +27,7 @@ import {
   startBasename,
   type FindEntry,
   type PredNode,
-} from '../../commands/builtin/findEval.ts'
+} from '../../commands/builtin/find_eval.ts'
 import { record } from '../../observe/context.ts'
 import type { FindOptions } from '../../resource/base.ts'
 import { FileStat, FileType, type PathSpec } from '../../types.ts'

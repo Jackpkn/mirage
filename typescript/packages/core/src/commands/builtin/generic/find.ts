@@ -18,7 +18,7 @@ import { modifiedTs } from '../../../core/generic/find.ts'
 import { isEnoent } from '../../../utils/errors.ts'
 import { IOResult, type ByteSource } from '../../../io/types.ts'
 import type { FindOptions } from '../../../resource/base.ts'
-import { parseFindExpression, parseSize } from '../findParse.ts'
+import { parseFindExpression, parseSize } from '../find_parse.ts'
 import { FileType, PathSpec, type FileStat } from '../../../types.ts'
 import type { CommandFnResult, CommandOpts } from '../../config.ts'
 import { rstripSlash, stripSlash } from '../../../utils/slash.ts'
@@ -38,7 +38,7 @@ import {
   type FindEntry,
   type PredNode,
   type PrintfStatFacts,
-} from '../findEval.ts'
+} from '../find_eval.ts'
 import type { LinkView } from '../../../ops/types.ts'
 import { pathAllowed } from '../../../context/session_context.ts'
 import { compareCodePoints } from '../../../utils/sort.ts'
