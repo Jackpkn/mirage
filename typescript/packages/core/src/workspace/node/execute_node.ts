@@ -74,6 +74,7 @@ import {
 import type { DispatchFn } from '../../runtime/types.ts'
 import {
   handleExport,
+  handleDeclareFunctions,
   handleDeclarePrint,
   handleLocal,
   handleReadonly,
@@ -1027,6 +1028,17 @@ export async function executeNode(
 
   if (kind === NodeKind.FUNCTION_DEF) {
     const name = getFunctionName(node)
+    if (session.readonlyFunctions.has(name)) {
+      // `readonly -f f` froze the body: either definition syntax refuses
+      // with `f: readonly function`, exit 1, and the old body stays,
+      // pinned on 5.2.37.
+      const err = new TextEncoder().encode(`bash: ${name}: readonly function\n`)
+      return [
+        null,
+        new IOResult({ exitCode: 1, stderr: err }),
+        new ExecutionNode({ command: `function ${name}`, exitCode: 1, stderr: err }),
+      ]
+    }
     const body = getFunctionBody(node)
     session.functions[name] = body
     return [null, new IOResult(), new ExecutionNode({ command: `function ${name}`, exitCode: 0 })]
@@ -1130,6 +1142,15 @@ export async function executeNode(
     if (keyword === NT.LOCAL || keyword === 'declare' || keyword === 'typeset') {
       const refused = declareOptionRefusal(cmdWord, flagChars, plusChars)
       if (refused !== null) return refused
+    }
+    if (
+      (flagChars.has('f') || flagChars.has('F')) &&
+      (keyword === NT.LOCAL || keyword === 'declare' || keyword === 'typeset')
+    ) {
+      // `-f`/`-F` select functions, not variables: `-rf` freezes, `-f
+      // NAME` prints the body, `-F NAME` prints the name, and a missing
+      // name is exit 1 without a word.
+      return handleDeclareFunctions(cmdWord, session, flagChars, assignments)
     }
     const isReadonly = keyword === 'readonly' || flagChars.has('r')
     // `-l` and `-u` cannot both hold; a cluster naming both sets neither

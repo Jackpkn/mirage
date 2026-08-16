@@ -287,10 +287,74 @@ ATTR_CASES = [
      'declare -- v="1"\nrc=0\n', "", 0),
 ]
 
+# `readonly -f`, `declare -f/-F/-rf`, and the `jobs` flags, pinned the
+# same way. A frozen function refuses redefinition and unset in its own
+# voice and keeps the old body. The `jobs` rows are mirage's own shape
+# (`[N] status cmd`, table id where GNU prints a pid); the flags apply
+# to that shape, and `-s` lists nothing because mirage jobs never stop.
+FUNC_JOB_CASES = [
+    ("rof_refuses_redefinition",
+     'f(){ echo one; }; readonly -f f; f(){ echo two; }; echo rc=$?; f',
+     "rc=1\none\n", "bash: f: readonly function\n", 0),
+    ("rof_refuses_keyword_form",
+     'f(){ echo one; }; readonly -f f; function f { echo two; }; '
+     'echo rc=$?; f', "rc=1\none\n", "bash: f: readonly function\n", 0),
+    ("rof_refuses_unset_f",
+     'f(){ echo one; }; readonly -f f; unset -f f; echo rc=$?; f',
+     "rc=1\none\n", "bash: unset: f: cannot unset: readonly function\n", 0),
+    ("rof_refuses_unset_auto",
+     'f(){ echo one; }; readonly -f f; unset f; echo rc=$?; f', "rc=1\none\n",
+     "bash: unset: f: cannot unset: readonly function\n", 0),
+    ("rof_not_a_function", "readonly -f nothere; echo rc=$?", "rc=1\n",
+     "bash: readonly: nothere: not a function\n", 0),
+    ("rof_lists_frozen", "f(){ :; }; g(){ :; }; readonly -f f; readonly -f",
+     "declare -fr f\n", "", 0),
+    ("rof_variable_untouched",
+     'f(){ echo one; }; f=var; readonly -f f; f=other; echo "$f"', "other\n",
+     "", 0),
+    ("rof_two_names_both_freeze",
+     "f(){ :; }; g(){ :; }; readonly -f f g; f(){ :; }; echo rc=$?; "
+     "g(){ :; }; echo rc=$?", "rc=1\nrc=1\n",
+     "bash: f: readonly function\nbash: g: readonly function\n", 0),
+    ("rof_inherited_by_subshell",
+     'f(){ echo one; }; readonly -f f; ( f(){ echo in; }; echo rc=$? ); f',
+     "rc=1\none\n", "bash: f: readonly function\n", 0),
+    ("declare_rf_freezes",
+     'f(){ echo one; }; declare -rf f; f(){ echo two; }; echo rc=$?; f',
+     "rc=1\none\n", "bash: f: readonly function\n", 0),
+    ("declare_F_lists_and_names",
+     "f(){ :; }; g(){ :; }; declare -F; declare -F f; echo rc=$?; "
+     "declare -F nothere; echo rc=$?",
+     "declare -f f\ndeclare -f g\nf\nrc=0\nrc=1\n", "", 0),
+    ("declare_f_names_row",
+     "h(){ :; }; declare -f h; echo rc=$?; declare -f nothere; echo rc=$?",
+     "declare -f h\nrc=0\nrc=1\n", "", 0),
+    ("jobs_r_running_only", "sleep 5 & echo hi & sleep 0.3; jobs -r",
+     "[1] running sleep 5\n", "", 0),
+    ("jobs_p_ids_only", "sleep 5 & sleep 5 & jobs -p", "1\n2\n", "", 0),
+    ("jobs_l_id_column", "sleep 5 & jobs -l", "[1] 1 running sleep 5\n", "",
+     0),
+    ("jobs_s_lists_nothing", "sleep 5 & jobs -s; echo rc=$?", "rc=0\n", "", 0),
+    ("jobs_n_changed_then_none",
+     "sleep 5 & echo hi & sleep 0.3; jobs -n; echo ---; jobs -n",
+     "[2] completed echo hi\n---\n", "", 0),
+    ("jobs_spec_filters", "sleep 5 & sleep 5 & jobs %2; jobs 1",
+     "[2] running sleep 5\n[1] running sleep 5\n", "", 0),
+    ("jobs_no_such_job", "sleep 5 & jobs %9; echo rc=$?", "rc=1\n",
+     "bash: jobs: %9: no such job\n", 0),
+    ("jobs_bad_flag_usage", "jobs -q; echo rc=$?", "rc=2\n",
+     "bash: jobs: -q: invalid option\n"
+     "jobs: usage: jobs [-lnprs] [jobspec ...] or jobs -x command [args]\n",
+     0),
+    ("jobs_lp_combined", "sleep 5 & sleep 5 & jobs -lp", "1\n2\n", "", 0),
+]
+
+ALL_CASES = CASES + ATTR_CASES + FUNC_JOB_CASES
+
 
 @pytest.mark.parametrize("case_id,cmd,out,err,code",
-                         CASES + ATTR_CASES,
-                         ids=[c[0] for c in CASES + ATTR_CASES])
+                         ALL_CASES,
+                         ids=[c[0] for c in ALL_CASES])
 def test_assoc_case(case_id, cmd, out, err, code):
 
     async def run():

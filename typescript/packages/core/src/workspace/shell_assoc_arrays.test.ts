@@ -30,8 +30,9 @@ afterEach(async () => {
 // table, whose order is unpredictable), and a bare `declare -A m`
 // prints `declare -A m=()` where GNU omits the value, the same
 // spelling the indexed kind already answers with. The declaration
-// attributes (`-i -l -u -t -n`, `+attr`) ride the same table. The python
-// twin is tests/workspace/test_assoc_arrays.py, case for case.
+// attributes (`-i -l -u -t -n`, `+attr`), `readonly -f`, `declare -f/-F`
+// and the `jobs` flags ride the same table. The python twin is
+// tests/workspace/test_assoc_arrays.py, case for case.
 const CASES: [string, string, string, string, number][] = [
   [
     'elements_and_count',
@@ -631,6 +632,123 @@ const CASES: [string, string, string, string, number][] = [
     0,
   ],
   ['plus_p_is_print', 'v=1; declare +p v; echo rc=$?', 'declare -- v="1"\nrc=0\n', '', 0],
+  [
+    'rof_refuses_redefinition',
+    'f(){ echo one; }; readonly -f f; f(){ echo two; }; echo rc=$?; f',
+    'rc=1\none\n',
+    'bash: f: readonly function\n',
+    0,
+  ],
+  [
+    'rof_refuses_keyword_form',
+    'f(){ echo one; }; readonly -f f; function f { echo two; }; echo rc=$?; f',
+    'rc=1\none\n',
+    'bash: f: readonly function\n',
+    0,
+  ],
+  [
+    'rof_refuses_unset_f',
+    'f(){ echo one; }; readonly -f f; unset -f f; echo rc=$?; f',
+    'rc=1\none\n',
+    'bash: unset: f: cannot unset: readonly function\n',
+    0,
+  ],
+  [
+    'rof_refuses_unset_auto',
+    'f(){ echo one; }; readonly -f f; unset f; echo rc=$?; f',
+    'rc=1\none\n',
+    'bash: unset: f: cannot unset: readonly function\n',
+    0,
+  ],
+  [
+    'rof_not_a_function',
+    'readonly -f nothere; echo rc=$?',
+    'rc=1\n',
+    'bash: readonly: nothere: not a function\n',
+    0,
+  ],
+  [
+    'rof_lists_frozen',
+    'f(){ :; }; g(){ :; }; readonly -f f; readonly -f',
+    'declare -fr f\n',
+    '',
+    0,
+  ],
+  [
+    'rof_variable_untouched',
+    'f(){ echo one; }; f=var; readonly -f f; f=other; echo "$f"',
+    'other\n',
+    '',
+    0,
+  ],
+  [
+    'rof_two_names_both_freeze',
+    'f(){ :; }; g(){ :; }; readonly -f f g; f(){ :; }; echo rc=$?; g(){ :; }; echo rc=$?',
+    'rc=1\nrc=1\n',
+    'bash: f: readonly function\nbash: g: readonly function\n',
+    0,
+  ],
+  [
+    'rof_inherited_by_subshell',
+    'f(){ echo one; }; readonly -f f; ( f(){ echo in; }; echo rc=$? ); f',
+    'rc=1\none\n',
+    'bash: f: readonly function\n',
+    0,
+  ],
+  [
+    'declare_rf_freezes',
+    'f(){ echo one; }; declare -rf f; f(){ echo two; }; echo rc=$?; f',
+    'rc=1\none\n',
+    'bash: f: readonly function\n',
+    0,
+  ],
+  [
+    'declare_F_lists_and_names',
+    'f(){ :; }; g(){ :; }; declare -F; declare -F f; echo rc=$?; declare -F nothere; echo rc=$?',
+    'declare -f f\ndeclare -f g\nf\nrc=0\nrc=1\n',
+    '',
+    0,
+  ],
+  [
+    'declare_f_names_row',
+    'h(){ :; }; declare -f h; echo rc=$?; declare -f nothere; echo rc=$?',
+    'declare -f h\nrc=0\nrc=1\n',
+    '',
+    0,
+  ],
+  ['jobs_r_running_only', 'sleep 5 & echo hi & sleep 0.3; jobs -r', '[1] running sleep 5\n', '', 0],
+  ['jobs_p_ids_only', 'sleep 5 & sleep 5 & jobs -p', '1\n2\n', '', 0],
+  ['jobs_l_id_column', 'sleep 5 & jobs -l', '[1] 1 running sleep 5\n', '', 0],
+  ['jobs_s_lists_nothing', 'sleep 5 & jobs -s; echo rc=$?', 'rc=0\n', '', 0],
+  [
+    'jobs_n_changed_then_none',
+    'sleep 5 & echo hi & sleep 0.3; jobs -n; echo ---; jobs -n',
+    '[2] completed echo hi\n---\n',
+    '',
+    0,
+  ],
+  [
+    'jobs_spec_filters',
+    'sleep 5 & sleep 5 & jobs %2; jobs 1',
+    '[2] running sleep 5\n[1] running sleep 5\n',
+    '',
+    0,
+  ],
+  [
+    'jobs_no_such_job',
+    'sleep 5 & jobs %9; echo rc=$?',
+    'rc=1\n',
+    'bash: jobs: %9: no such job\n',
+    0,
+  ],
+  [
+    'jobs_bad_flag_usage',
+    'jobs -q; echo rc=$?',
+    'rc=2\n',
+    'bash: jobs: -q: invalid option\njobs: usage: jobs [-lnprs] [jobspec ...] or jobs -x command [args]\n',
+    0,
+  ],
+  ['jobs_lp_combined', 'sleep 5 & sleep 5 & jobs -lp', '1\n2\n', '', 0],
 ]
 
 describe('associative arrays', () => {

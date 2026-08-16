@@ -39,6 +39,7 @@ INHERITED_FIELDS: tuple[str, ...] = (
     "vars",
     "created_at",
     "functions",
+    "readonly_functions",
     "last_exit_code",
     "shell_options",
     "mount_modes",
@@ -78,6 +79,7 @@ CHILD_SHELL_FIELDS: tuple[str, ...] = (
     "source_depth",
     "vars",
     "functions",
+    "readonly_functions",
     "shell_options",
     "positional_args",
     "script_name",
@@ -172,6 +174,14 @@ class Session:
     vars: dict[str, ShellVar] = field(default_factory=dict)
     created_at: float = field(default_factory=time.time)
     functions: dict[str, FunctionBody] = field(default_factory=dict)
+    # The functions `readonly -f` has frozen. A set beside `functions`
+    # rather than a flag on the body because a body is a list of parsed
+    # nodes shared with the parser, and the readonly fact is the
+    # session's, not the definition's. Kept in step with the readonly
+    # *variable* set only by name: `readonly -f f` and `readonly f` are
+    # two different frozen things in bash, and each refuses in its own
+    # voice.
+    readonly_functions: set[str] = field(default_factory=set)
     last_exit_code: int = 0
     shell_options: dict[str, bool] = field(default_factory=dict)
     mount_modes: dict[str, MountMode] | None = None

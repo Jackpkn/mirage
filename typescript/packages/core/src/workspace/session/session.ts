@@ -35,6 +35,7 @@ export interface ChildShellState {
   sourceDepth: number
   vars: Record<string, ShellVar>
   functions: Record<string, unknown>
+  readonlyFunctions: Set<string>
   shellOptions: Record<string, boolean>
   positionalArgs: string[]
   scriptName: string | null
@@ -89,6 +90,7 @@ export interface SessionInit {
   vars?: Record<string, ShellVar>
   createdAt?: number
   functions?: Record<string, unknown>
+  readonlyFunctions?: Set<string>
   lastExitCode?: number
   positionalArgs?: string[]
   scriptName?: string | null
@@ -191,6 +193,12 @@ export class Session {
   vars: Record<string, ShellVar>
   createdAt: number
   functions: Record<string, unknown>
+  // The functions `readonly -f` has frozen. A set beside `functions`
+  // rather than a flag on the body, because the readonly fact is the
+  // session's, not the definition's. Kept apart from the readonly
+  // *variable* set: `readonly -f f` and `readonly f` are two different
+  // frozen things in bash, and each refuses in its own voice.
+  readonlyFunctions: Set<string>
   lastExitCode: number
   positionalArgs: string[]
   // What `$0` expands to. Null is the shell itself; a nested `bash`/`sh`
@@ -248,6 +256,7 @@ export class Session {
     this.vars = ownRecord(init.vars)
     this.createdAt = init.createdAt ?? Date.now() / 1000
     this.functions = ownRecord(init.functions)
+    this.readonlyFunctions = new Set(init.readonlyFunctions ?? [])
     this.lastExitCode = init.lastExitCode ?? 0
     this.positionalArgs = init.positionalArgs ?? []
     this.scriptName = init.scriptName ?? null
@@ -297,6 +306,7 @@ export class Session {
       vars,
       createdAt: overrides.createdAt ?? this.createdAt,
       functions: overrides.functions ?? { ...this.functions },
+      readonlyFunctions: overrides.readonlyFunctions ?? new Set(this.readonlyFunctions),
       lastExitCode: overrides.lastExitCode ?? this.lastExitCode,
       positionalArgs: overrides.positionalArgs ?? [...this.positionalArgs],
       scriptName: overrides.scriptName ?? this.scriptName,
@@ -386,6 +396,7 @@ export class Session {
       sourceDepth: this.sourceDepth,
       vars: copyVars(this.vars),
       functions: ownRecord(this.functions),
+      readonlyFunctions: new Set(this.readonlyFunctions),
       shellOptions: { ...this.shellOptions },
       positionalArgs: [...this.positionalArgs],
       scriptName: this.scriptName,
@@ -402,6 +413,7 @@ export class Session {
     this.sourceDepth = state.sourceDepth
     this.vars = state.vars
     this.functions = state.functions
+    this.readonlyFunctions = state.readonlyFunctions
     this.shellOptions = state.shellOptions
     this.positionalArgs = state.positionalArgs
     this.scriptName = state.scriptName

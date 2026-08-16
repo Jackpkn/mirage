@@ -654,6 +654,79 @@ async def handle_export(
     return None, IOResult(), ExecutionNode(command="export", exit_code=0)
 
 
+def handle_declare_functions(
+    cmd: str,
+    session: Session,
+    flags: set[str],
+    names: list[str],
+) -> tuple[ByteSource | None, IOResult, ExecutionNode]:
+    """Run the function half of ``declare``: ``-f`` / ``-F`` / ``-rf``.
+
+    ``-F NAME`` prints the name; ``-f NAME`` prints ``declare -f NAME``
+    where GNU prints the reformatted body (mirage carries no
+    pretty-printer, so the name row is the deliberate stand-in, the
+    same shape ``-F`` and ``readonly -f`` list in). A missing name is
+    exit 1 with no message. With ``-r`` the named functions freeze, as
+    ``readonly -f`` does. With no names, ``-F`` lists every function
+    and ``-f`` lists them the same way.
+
+    Args:
+        cmd (str): the builtin's own name for a diagnostic.
+        session (Session): shell session state.
+        flags (set[str]): the declaration's collected flag letters.
+        names (list[str]): the function names, empty to list all.
+    """
+    if "r" in flags:
+        return _readonly_functions(session, names)
+    targets = names or sorted(session.functions)
+    lines: list[str] = []
+    missing = False
+    for name in targets:
+        if name not in session.functions:
+            missing = True
+            continue
+        if "F" in flags:
+            lines.append(name if names else f"declare -f {name}")
+        else:
+            lines.append(f"declare -f {name}")
+    out = (("\n".join(lines) + "\n") if lines else "").encode()
+    code = 1 if missing else 0
+    return out, IOResult(exit_code=code), ExecutionNode(command=cmd,
+                                                        exit_code=code)
+
+
+def _readonly_functions(
+        session: Session,
+        names: list[str]) -> tuple[ByteSource | None, IOResult, ExecutionNode]:
+    """Run ``readonly -f``: freeze the named functions, or list the frozen.
+
+    Args:
+        session (Session): shell session state.
+        names (list[str]): the function names, empty to list.
+    """
+    if not names:
+        lines = [
+            f"declare -fr {name}"
+            for name in sorted(session.readonly_functions)
+            if name in session.functions
+        ]
+        out = (("\n".join(lines) + "\n") if lines else "").encode()
+        return out, IOResult(), ExecutionNode(command="readonly", exit_code=0)
+    errors: list[str] = []
+    for name in names:
+        if name not in session.functions:
+            errors.append(f"bash: readonly: {name}: not a function")
+            continue
+        session.readonly_functions.add(name)
+    if errors:
+        err = ("\n".join(errors) + "\n").encode()
+        return None, IOResult(exit_code=1,
+                              stderr=err), ExecutionNode(command="readonly",
+                                                         exit_code=1,
+                                                         stderr=err)
+    return None, IOResult(), ExecutionNode(command="readonly", exit_code=0)
+
+
 async def handle_readonly(
     assignments: list[str],
     session: Session,
@@ -667,6 +740,14 @@ async def handle_readonly(
 
     With no name operands, prints every readonly name as ``declare -r``
     (or ``declare -ar`` for arrays). Invalid options fail with status 2.
+
+    ``-f`` freezes *functions*: a frozen one refuses redefinition and
+    ``unset -f`` with its own message, exit 1, and the old body stays.
+    A name that is not a function is ``not a function``, exit 1, and
+    the other operands still freeze. With no names, ``-f`` lists the
+    frozen functions as ``declare -fr NAME``; GNU prints each body first
+    through its own pretty-printer, which mirage does not carry, so the
+    body line is the one deliberate omission.
     """
     flags, names, bad = _split_decl_flags(assignments, _READONLY_FLAGS)
     if bad is not None:
@@ -676,6 +757,8 @@ async def handle_readonly(
                               stderr=err), ExecutionNode(command="readonly",
                                                          exit_code=2,
                                                          stderr=err)
+    if "f" in flags:
+        return _readonly_functions(session, names)
     if not names and not arrays:
         lines = _readonly_lines(session, flags)
         out = (("\n".join(lines) + "\n") if lines else "").encode()
@@ -867,6 +950,11 @@ async def handle_unset(
             # variable this leaves the name untouched.
             continue
         if mode == "f":
+            if name in session.readonly_functions:
+                err = (f"bash: unset: {name}: cannot unset: "
+                       "readonly function\n").encode()
+                return None, IOResult(exit_code=1, stderr=err), ExecutionNode(
+                    command="unset", exit_code=1, stderr=err)
             session.functions.pop(name, None)
             continue
         target = _PRINTF_TARGET_RE.match(name)
@@ -911,6 +999,11 @@ async def handle_unset(
                                                              exit_code=1,
                                                              stderr=err)
         if mode == "auto" and not existed and name in session.functions:
+            if name in session.readonly_functions:
+                err = (f"bash: unset: {name}: cannot unset: "
+                       "readonly function\n").encode()
+                return None, IOResult(exit_code=1, stderr=err), ExecutionNode(
+                    command="unset", exit_code=1, stderr=err)
             session.functions.pop(name, None)
     return None, IOResult(), ExecutionNode(command="unset", exit_code=0)
 

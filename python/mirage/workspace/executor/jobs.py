@@ -20,7 +20,7 @@ from mirage.io.types import ByteSource
 from mirage.shell.console import Channel, JobConsole
 from mirage.shell.errors import ExitSignal
 from mirage.shell.helpers import get_text
-from mirage.shell.job_table import Job, JobTable
+from mirage.shell.job_table import Job, JobStatus, JobTable
 from mirage.workspace.session import (Session, reset_current_session,
                                       set_current_session)
 from mirage.workspace.types import ExecutionNode
@@ -277,14 +277,83 @@ async def handle_kill(
     return None, IOResult(), ExecutionNode(command=cmd_str, exit_code=0)
 
 
+_JOBS_FLAGS = frozenset("lnprs")
+_JOBS_USAGE = ("jobs: usage: jobs [-lnprs] [jobspec ...] "
+               "or jobs -x command [args]")
+
+
+def _job_row(job: Job, long: bool) -> str:
+    """One `jobs` line in mirage's own row shape.
+
+    Args:
+        job (Job): the job.
+        long (bool): `-l`, which inserts the id a second time where GNU
+            prints the process id; mirage jobs have no pid, so the job
+            id stands in and the row stays parseable.
+    """
+    if long:
+        return f"[{job.id}] {job.id} {job.status.value} {job.command}"
+    return f"[{job.id}] {job.status.value} {job.command}"
+
+
 async def handle_jobs(
     job_table: JobTable,
     parts: list[str],
 ) -> tuple[ByteSource | None, IOResult, ExecutionNode]:
+    """List jobs, with bash's flags applied to mirage's row shape.
+
+    Mirage jobs are identified by table id, not pid, and never stop, so
+    two of GNU's flags map onto that model rather than reproducing it:
+    `-p` prints the job id (GNU's pid), and `-s` (stopped only) lists
+    nothing. `-r` keeps the running ones, `-l` adds the id column, and
+    `-n` lists only the jobs whose status changed since the last `jobs`
+    (which is every completed one not yet reaped, since reaping is what
+    a listing does). A jobspec operand (`%2` or `2`) filters to that
+    job; one that names no job is `no such job`, exit 1. `-x` is not
+    carried, and an unknown letter is GNU's usage line, exit 2.
+
+    Args:
+        job_table (JobTable): the session's jobs.
+        parts (list[str]): the command words, `jobs` first.
+    """
     cmd_str = " ".join(parts)
-    lines = []
-    for job in job_table.list_jobs():
-        lines.append(f"[{job.id}] {job.status.value} {job.command}")
+    flags: set[str] = set()
+    specs: list[str] = []
+    for word in parts[1:]:
+        if word.startswith("-") and len(word) > 1 and not specs:
+            if word == "--":
+                continue
+            bad = next((c for c in word[1:] if c not in _JOBS_FLAGS), None)
+            if bad is not None:
+                err = (f"bash: jobs: -{bad}: invalid option\n"
+                       f"{_JOBS_USAGE}\n").encode()
+                return None, IOResult(exit_code=2, stderr=err), ExecutionNode(
+                    command=cmd_str, exit_code=2, stderr=err)
+            flags.update(word[1:])
+        else:
+            specs.append(word)
+    jobs = job_table.list_jobs()
+    if specs:
+        picked: list[Job] = []
+        for spec in specs:
+            raw = spec.lstrip("%")
+            job = job_table.get(int(raw)) if raw.isdigit() else None
+            if job is None:
+                err = f"bash: jobs: {spec}: no such job\n".encode()
+                return None, IOResult(exit_code=1, stderr=err), ExecutionNode(
+                    command=cmd_str, exit_code=1, stderr=err)
+            picked.append(job)
+        jobs = picked
+    if "r" in flags:
+        jobs = [j for j in jobs if j.status == JobStatus.RUNNING]
+    if "s" in flags:
+        jobs = []
+    if "n" in flags:
+        jobs = [j for j in jobs if j.status != JobStatus.RUNNING]
+    if "p" in flags:
+        lines = [str(j.id) for j in jobs]
+    else:
+        lines = [_job_row(j, "l" in flags) for j in jobs]
     job_table.pop_completed()
     out = ("\n".join(lines) + "\n").encode() if lines else b""
     return out, IOResult(), ExecutionNode(command=cmd_str, exit_code=0)

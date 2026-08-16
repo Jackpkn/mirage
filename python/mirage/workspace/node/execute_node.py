@@ -75,8 +75,8 @@ from mirage.shell.helpers import (  # isort: skip
     get_list_parts, get_negated_command, get_pipeline_commands, get_redirects,
     get_text, get_unset_args, get_while_parts)
 from mirage.workspace.executor.builtins import (  # isort: skip
-    handle_declare_print, handle_export, handle_local, handle_readonly,
-    handle_test, handle_unset, note_local_array)
+    handle_declare_functions, handle_declare_print, handle_export,
+    handle_local, handle_readonly, handle_test, handle_unset, note_local_array)
 
 
 async def _assign_var(view: SessionView, key: str, value: ShellValue) -> None:
@@ -981,6 +981,13 @@ async def execute_node(
     # ── function definition ─────────────────────
     if kind == NodeKind.FUNCTION_DEF:
         name = get_function_name(node)
+        if name in session.readonly_functions:
+            # `readonly -f f` froze the body: either definition syntax
+            # refuses with `f: readonly function`, exit 1, and the old
+            # body stays, pinned on 5.2.37.
+            err = f"bash: {name}: readonly function\n".encode()
+            return None, IOResult(exit_code=1, stderr=err), ExecutionNode(
+                command=f"function {name}", exit_code=1, stderr=err)
         func_body = get_function_body(node)
         session.functions[name] = func_body
         return None, IOResult(), ExecutionNode(command=f"function {name}",
@@ -1066,6 +1073,13 @@ async def execute_node(
                                               session)
             if refused is not None:
                 return refused
+        if (("f" in flag_chars or "F" in flag_chars)
+                and keyword in (NT.LOCAL, "declare", "typeset")):
+            # `-f`/`-F` select functions, not variables: `-rf` freezes,
+            # `-f NAME` prints the body, `-F NAME` prints the name, and
+            # a missing name is exit 1 without a word.
+            return handle_declare_functions(cmd_word, session, flag_chars,
+                                            assignments)
         is_readonly = keyword == "readonly" or "r" in flag_chars
         # `-l` and `-u` cannot both hold; a cluster naming both sets
         # neither (pinned: `declare -lu s=aBc` prints `declare -- s`).

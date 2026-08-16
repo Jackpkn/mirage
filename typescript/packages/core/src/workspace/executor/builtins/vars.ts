@@ -585,6 +585,92 @@ export async function handleExport(
   return [null, new IOResult(), new ExecutionNode({ command: 'export', exitCode: 0 })]
 }
 
+/** The `unset` refusal for a function `readonly -f` froze. */
+function readonlyFunctionUnset(name: string): Result {
+  const err = new TextEncoder().encode(`bash: unset: ${name}: cannot unset: readonly function\n`)
+  return [
+    null,
+    new IOResult({ exitCode: 1, stderr: err }),
+    new ExecutionNode({ command: 'unset', exitCode: 1, stderr: err }),
+  ]
+}
+
+/**
+ * Run `readonly -f`: freeze the named functions, or list the frozen.
+ *
+ * A frozen function refuses redefinition and `unset -f` with its own
+ * message, exit 1, and the old body stays. A name that is not a
+ * function is `not a function`, exit 1, and the other operands still
+ * freeze. With no names, lists the frozen functions as `declare -fr
+ * NAME`; GNU prints each body first through its own pretty-printer,
+ * which mirage does not carry, so the body line is the one deliberate
+ * omission.
+ */
+function readonlyFunctions(session: Session, names: readonly string[]): Result {
+  if (names.length === 0) {
+    const lines = [...session.readonlyFunctions]
+      .filter((name) => name in session.functions)
+      .sort(compareCodePoints)
+      .map((name) => `declare -fr ${name}`)
+    const out = new TextEncoder().encode(lines.length > 0 ? `${lines.join('\n')}\n` : '')
+    return [out, new IOResult(), new ExecutionNode({ command: 'readonly', exitCode: 0 })]
+  }
+  const errors: string[] = []
+  for (const name of names) {
+    if (!(name in session.functions)) {
+      errors.push(`bash: readonly: ${name}: not a function`)
+      continue
+    }
+    session.readonlyFunctions.add(name)
+  }
+  if (errors.length > 0) {
+    const err = new TextEncoder().encode(`${errors.join('\n')}\n`)
+    return [
+      null,
+      new IOResult({ exitCode: 1, stderr: err }),
+      new ExecutionNode({ command: 'readonly', exitCode: 1, stderr: err }),
+    ]
+  }
+  return [null, new IOResult(), new ExecutionNode({ command: 'readonly', exitCode: 0 })]
+}
+
+/**
+ * Run the function half of `declare`: `-f` / `-F` / `-rf`.
+ *
+ * `-F NAME` prints the name; `-f NAME` prints `declare -f NAME` where
+ * GNU prints the reformatted body (mirage carries no pretty-printer, so
+ * the name row is the deliberate stand-in, the same shape `-F` and
+ * `readonly -f` list in). A missing name is exit 1 with no message.
+ * With `-r` the named functions freeze, as `readonly -f` does. With no
+ * names, `-F` lists every function and `-f` lists them the same way.
+ */
+export function handleDeclareFunctions(
+  cmd: string,
+  session: Session,
+  flags: ReadonlySet<string>,
+  names: readonly string[],
+): Result {
+  if (flags.has('r')) return readonlyFunctions(session, names)
+  const targets = names.length > 0 ? names : Object.keys(session.functions).sort(compareCodePoints)
+  const lines: string[] = []
+  let missing = false
+  for (const name of targets) {
+    if (!(name in session.functions)) {
+      missing = true
+      continue
+    }
+    if (flags.has('F')) lines.push(names.length > 0 ? name : `declare -f ${name}`)
+    else lines.push(`declare -f ${name}`)
+  }
+  const out = new TextEncoder().encode(lines.length > 0 ? `${lines.join('\n')}\n` : '')
+  const code = missing ? 1 : 0
+  return [
+    out,
+    new IOResult({ exitCode: code }),
+    new ExecutionNode({ command: cmd, exitCode: code }),
+  ]
+}
+
 /**
  * Mark names readonly, or print them (`readonly -p` / bare `readonly`).
  *
@@ -611,6 +697,7 @@ export async function handleReadonly(
       new ExecutionNode({ command: 'readonly', exitCode: 2, stderr: err }),
     ]
   }
+  if (flags.has('f')) return readonlyFunctions(session, names)
   if (names.length === 0 && (arrays === null || arrays.length === 0)) {
     const lines = readonlyLines(session, flags)
     const out = new TextEncoder().encode(lines.length > 0 ? `${lines.join('\n')}\n` : '')
@@ -795,6 +882,7 @@ export async function handleUnset(
       continue
     }
     if (mode === 'f') {
+      if (session.readonlyFunctions.has(name)) return readonlyFunctionUnset(name)
       // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
       delete session.functions[name]
       continue
@@ -850,6 +938,7 @@ export async function handleUnset(
       ]
     }
     if (mode === 'auto' && !existed && name in session.functions) {
+      if (session.readonlyFunctions.has(name)) return readonlyFunctionUnset(name)
       // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
       delete session.functions[name]
     }
