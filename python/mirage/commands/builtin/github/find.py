@@ -23,6 +23,7 @@ from mirage.commands.registry import command
 from mirage.commands.spec import SPECS
 from mirage.core.github.find import find as find_core
 from mirage.core.github.stat import stat as stat_core
+from mirage.core.github.tree import ensure_tree
 from mirage.io.types import ByteSource, IOResult
 from mirage.provision.types import ProvisionResult
 from mirage.types import PathSpec
@@ -47,6 +48,9 @@ async def find(
     texts: list[str],
     opts: CommandOpts,
 ) -> tuple[ByteSource | None, IOResult]:
+    # find walks accessor.tree directly rather than the index, so the
+    # tree has to be hydrated first; the mount is built without it.
+    await ensure_tree(accessor, opts.index, opts.mount_prefix)
     paths = await resolve_glob(accessor, paths, opts.index)
     return await find_generic(paths,
                               texts,

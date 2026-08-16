@@ -26,7 +26,7 @@ REF = "main"
 
 @pytest_asyncio.fixture()
 async def github_env(mock_github_api, github_config):
-    resource = await GitHubResource.build(
+    resource = GitHubResource(
         config=github_config,
         owner=OWNER,
         repo=REPO,

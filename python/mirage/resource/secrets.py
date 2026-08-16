@@ -27,11 +27,32 @@ def reveal_secret(value: Any) -> Any:
 
 
 def redacted_config_dump(config: BaseModel) -> dict[str, Any]:
-    return _walk_config_dump(config, config.model_dump(mode="json"), True)
+    return _walk_config_dump(config, _base_dump(config), True)
 
 
 def revealed_config_dump(config: BaseModel) -> dict[str, Any]:
-    return _walk_config_dump(config, config.model_dump(mode="json"), False)
+    return _walk_config_dump(config, _base_dump(config), False)
+
+
+def _base_dump(config: BaseModel) -> dict[str, Any]:
+    """Dump every field pydantic can serialize, secrets excluded.
+
+    A credential is not always a ``SecretStr``: ``MsGraphConfig`` and
+    ``GoogleConfig`` both accept a provider callable, so the holder of
+    the OAuth dance can hand over a fresh token per request instead of a
+    long-lived one. pydantic cannot serialize a function, so dumping the
+    whole model raised ``PydanticSerializationError`` and took the whole
+    snapshot with it. The walk writes every secret field back off the
+    model anyway, so excluding them here loses nothing.
+
+    Args:
+        config (BaseModel): the resource config being dumped.
+
+    Returns:
+        dict[str, Any]: the JSON-mode dump, minus the secret fields.
+    """
+    return config.model_dump(mode="json",
+                             exclude=set(secret_field_names(config)))
 
 
 def _walk_config_dump(config: BaseModel, data: dict[str, Any],
@@ -42,13 +63,25 @@ def _walk_config_dump(config: BaseModel, data: dict[str, Any],
     # as a real credential and never demands a fresh override.
     secrets = set(secret_field_names(config))
     for name in type(config).model_fields:
-        if name not in data:
+        # A secret is absent from `data` by construction (_base_dump
+        # excludes them) and is written back below off the model.
+        if name not in data and name not in secrets:
             continue
         value = getattr(config, name)
         if name in secrets:
             if value is None:
-                continue
-            data[name] = REDACTED_SECRET if redact else reveal_secret(value)
+                data[name] = None
+            elif callable(value):
+                # A provider callable has no serialized form, and
+                # revealing it would mean calling it and freezing one
+                # token into a snapshot that outlives it. Redacted in
+                # both modes, which is already the contract that makes
+                # `requires_resource_override` demand a fresh resource
+                # at load.
+                data[name] = REDACTED_SECRET
+            else:
+                data[name] = REDACTED_SECRET if redact else reveal_secret(
+                    value)
         elif isinstance(value, BaseModel):
             data[name] = _walk_config_dump(value, data[name], redact)
         elif isinstance(value, (list, tuple)):

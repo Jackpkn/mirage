@@ -196,6 +196,7 @@ async def refill_index(accessor, index: IndexCacheStore, prefix: str) -> bool:
                                        accessor.repo, accessor.ref)
     accessor.truncated = truncated
     accessor.tree = tree
+    accessor.tree_loaded = True
     seed_index(accessor, index, prefix)
     return True
 
@@ -247,3 +248,47 @@ async def ensure_live_index(accessor, index: IndexCacheStore,
     if accessor.truncated:
         return False
     return await refill_index(accessor, index, prefix)
+
+
+async def ensure_tree(accessor,
+                      index: IndexCacheStore = NULL_INDEX,
+                      prefix: str = "") -> None:
+    """Fetch the recursive tree if this mount has not got one yet.
+
+    The mount is constructed without touching the network, so readers
+    that consult ``accessor.tree`` directly rather than through the
+    index -- find, du and grep's scope counter -- have to hydrate it
+    first. Readers that go through the index do not call this:
+    :func:`ensure_live_index` already refetches for them.
+
+    Prefers that same refill when an index is wired, so a first `find`
+    seeds the index for the `ls` after it instead of fetching a tree
+    only this call can see. Falls back to a bare fetch when there is no
+    index, which is the only case the old build-time fetch was really
+    covering.
+
+    Hydration is tracked by ``tree_loaded``, never by whether the tree
+    holds anything: an empty repository hydrates to ``{}``, and reading
+    that as "not hydrated" refetched it on every call, twice per call
+    once an index was wired (the refill seeds an empty root, then the
+    fallback runs because the tree still looks empty).
+
+    Args:
+        accessor (GitHubAccessor): the mount's accessor.
+        index (IndexCacheStore): the mount's index, when it has one.
+        prefix (str): the mount prefix the index keys are built against.
+    """
+    if accessor.tree_loaded:
+        return
+    async with accessor.tree_lock:
+        if accessor.tree_loaded:
+            return
+        if index is not NULL_INDEX:
+            await ensure_live_index(accessor, index, prefix)
+            if accessor.tree_loaded:
+                return
+        tree, truncated = await fetch_tree(accessor.config, accessor.owner,
+                                           accessor.repo, accessor.ref)
+        accessor.truncated = truncated
+        accessor.tree = tree
+        accessor.tree_loaded = True

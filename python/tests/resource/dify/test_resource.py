@@ -13,7 +13,7 @@ async def test_dify_resource_is_registered_and_redacts_api_key():
         "dify"].resource_path == "mirage.resource.dify:DifyResource"
     assert REGISTRY["dify"].config_path == "mirage.resource.dify:DifyConfig"
 
-    resource = await build_resource(
+    resource = build_resource(
         "dify",
         {
             "api_key": "dataset-secret",
@@ -48,7 +48,7 @@ async def test_dify_resource_is_registered_and_redacts_api_key():
 
 @pytest.mark.asyncio
 async def test_dify_resource_accepts_configured_slug_metadata_name():
-    resource = await build_resource(
+    resource = build_resource(
         "dify",
         {
             "api_key": "dataset-secret",
@@ -84,7 +84,7 @@ def test_dify_config_rejects_non_positive_request_limits(field):
 
 @pytest.mark.asyncio
 async def test_dify_resource_registers_expected_commands_and_ops():
-    resource = await build_resource(
+    resource = build_resource(
         "dify",
         {
             "api_key": "dataset-secret",
@@ -103,7 +103,7 @@ async def test_dify_resource_registers_expected_commands_and_ops():
 
 @pytest.mark.asyncio
 async def test_dify_resource_close_closes_shared_client():
-    resource = await build_resource(
+    resource = build_resource(
         "dify",
         {
             "api_key": "dataset-secret",

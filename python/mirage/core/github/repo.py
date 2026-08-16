@@ -37,6 +37,29 @@ async def fetch_default_branch(config: GitHubConfig, owner: str,
     return data["default_branch"]
 
 
+async def ensure_default_branch(accessor) -> str:
+    """Fetch the repo's default branch once, on the first read needing it.
+
+    The mount names a repository without contacting it, so this is the
+    hydration point for the one caller that compares against the default
+    branch (grep's code-search push-down, which GitHub only serves
+    there).
+
+    Args:
+        accessor (GitHubAccessor): the mount's accessor.
+
+    Returns:
+        str: the repository's default branch.
+    """
+    if accessor.default_branch is not None:
+        return accessor.default_branch
+    async with accessor.branch_lock:
+        if accessor.default_branch is None:
+            accessor.default_branch = await fetch_default_branch(
+                accessor.config, accessor.owner, accessor.repo)
+        return accessor.default_branch
+
+
 def parse_repo(spec: str) -> RepoRef:
     """Split gh's `[HOST/]OWNER/REPO`.
 

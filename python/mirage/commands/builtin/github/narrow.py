@@ -18,10 +18,13 @@ from mirage.commands.builtin.github.io import resolve_glob
 from mirage.commands.builtin.grep_helper import (is_literal_pattern,
                                                  search_query)
 from mirage.core.github.constants import SCOPE_WARN
+from mirage.core.github.repo import ensure_default_branch
 from mirage.core.github.scope import (count_scope_files, scope_relative_key,
                                       should_use_search)
 from mirage.core.github.search import narrow_paths
+from mirage.core.github.tree import ensure_tree
 from mirage.types import PathSpec
+from mirage.utils.key_prefix import mount_prefix_of
 
 
 async def narrow_scope(
@@ -67,17 +70,26 @@ async def narrow_scope(
             search actually narrowed the set.
     """
     key = scope_relative_key(paths[0])
+    # Both facts below are hydrated on first use, not at construction:
+    # the scope count reads the git tree, and the push-down is only
+    # offered on the default branch.
+    await ensure_tree(
+        accessor, index,
+        mount_prefix_of(paths[0].virtual, paths[0].resource_path))
     file_count = count_scope_files(accessor.tree, key)
     query = search_query(pattern,
                          fixed_string) if pattern is not None else None
     literal = (pattern is not None
                and is_literal_pattern(pattern, fixed_string))
+    # The scope size moved ahead of should_use_search: it is free, and
+    # resolving the default branch is the one term here that can cost a
+    # request.
     use_search = (query is not None and whole_word and literal
-                  and should_use_search(
+                  and file_count > SCOPE_WARN and should_use_search(
                       recursive=recursive,
-                      on_default_branch=(accessor.ref
-                                         == accessor.default_branch),
-                  ) and file_count > SCOPE_WARN)
+                      on_default_branch=(accessor.ref == await
+                                         ensure_default_branch(accessor)),
+                  ))
     if use_search:
         assert query is not None
         narrowed = await narrow_paths(accessor.config, accessor.owner,

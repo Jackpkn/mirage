@@ -29,8 +29,10 @@ await ws.execute('cat /repo/README.md')
 ```
 
 The constructor is private: `create` fetches the repo's git tree before it
-builds the resource, so it has to be awaited. Python's equivalent is
-`await GitHubResource.build(...)`.
+builds the resource, so it has to be awaited. Python deliberately differs
+here: `GitHubResource(...)` is an ordinary call that contacts nothing, and
+hydrates the tree on first read, which is what lets its `build_resource`
+stay synchronous.
 
 ## Browser
 

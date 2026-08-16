@@ -12,6 +12,8 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import asyncio
+
 import pytest
 
 from mirage.resource.ram import RAMResource
@@ -87,3 +89,35 @@ def test_limits_are_copied_not_aliased():
         {"/a": (RAMResource(), MountMode.READ, source)}, MountMode.WRITE)
     source["wget"] = guard
     assert set(specs[0].command_limits) == {"curl"}
+
+
+def test_a_coroutine_is_refused_naming_the_await():
+    # 0.0.5 made build_resource async, so every caller written against
+    # 0.0.3/0.0.4 handed the mount table an un-awaited coroutine and got
+    # `'coroutine' object has no attribute 'set_index'` from
+    # install_mounts. The mount and the fix have to be in the message.
+    coro = asyncio.sleep(0)
+    try:
+        with pytest.raises(TypeError) as excinfo:
+            normalize_resources({"/gh": (coro, MountMode.READ)},
+                                MountMode.WRITE)
+    finally:
+        coro.close()
+    message = str(excinfo.value)
+    assert "'/gh'" in message
+    assert "await" in message
+
+
+@pytest.mark.parametrize("value", ["not-a-resource", 42, None])
+def test_a_non_resource_is_refused_naming_the_mount(value):
+    with pytest.raises(TypeError, match=r"'/x'.*expected a BaseResource"):
+        normalize_resources({"/x": value}, MountMode.WRITE)
+
+
+def test_the_guard_runs_before_any_mount_is_installed():
+    # A bad second entry must not leave the first one half-installed.
+    with pytest.raises(TypeError):
+        normalize_resources({
+            "/good": RAMResource(),
+            "/bad": "nope",
+        }, MountMode.WRITE)
