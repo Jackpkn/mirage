@@ -376,6 +376,19 @@
         "stdout": "\n",
         "stderr": ""
       }
+    },
+    {
+      "id": "gh_api_jq_failure_still_expires_the_mount",
+      "seq": 569030,
+      "targets": [
+        "cli-gh"
+      ],
+      "command": "gh api repos/integ/repo-cli/contents/JQFAIL.md -X PUT -f message=x -f content=anEgZmFpbAo= --jq '.content |' 2>/dev/null; cat /repo/JQFAIL.md",
+      "expect": {
+        "exit": 0,
+        "stdout": "jq fail\n",
+        "stderr": ""
+      }
     }
   ]
 }

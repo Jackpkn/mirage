@@ -343,6 +343,12 @@ export async function handleCli(
     // Any other thrown leaf error (an API error, a TypeError) becomes
     // this command's IOResult, prefixed like GNU (prog: message), so
     // the rest of the line keeps running.
+    // The write may already have landed when a leaf throws after its
+    // request (a PUT whose --jq program fails filters a response the
+    // service already applied), and with no IOResult to consult the
+    // spec's static answer is the only one left; without the drop a
+    // github mount keeps serving its pre-write bytes.
+    if (leaf.write && dropCaches !== null) await dropCaches()
     const message = err instanceof Error ? err.message : String(err)
     const stderr = new TextEncoder().encode(`${prog}: ${message}\n`)
     return [
