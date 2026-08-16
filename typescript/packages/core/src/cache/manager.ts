@@ -54,14 +54,18 @@ export class CacheManager {
    * it with or without its trailing slash and an eviction that hits no
    * key is silent.
    */
-  private async evictDir(virtual: string): Promise<void> {
+  private async evictDir(key: string): Promise<void> {
     if (this.index === null) return
-    await this.index.invalidateDir(virtual)
-    await this.index.invalidateDir(virtual + '/')
+    await this.index.invalidateDir(key)
+    await this.index.invalidateDir(key + '/')
   }
 
   /**
-   * Mount-absolute key for a path, derived rather than inferred.
+   * Cache key for a path, derived rather than inferred.
+   *
+   * Both caches this class evicts from are keyed by the mount-absolute virtual
+   * path, so that is what this returns: the mount prefix still attached, not
+   * the mount-relative spelling `mountKey` produces on the way there.
    *
    * Only `virtual` is read, and the key is rebuilt against this manager's own
    * prefix, exactly as `Mount.executeOp` rebuilds one before handing a path to
@@ -76,13 +80,13 @@ export class CacheManager {
    * evicts nothing -- which is why it survived. Deriving asks no question that
    * has no answer.
    *
-   * Mirrors Python `CacheManager._virtual`.
+   * Mirrors Python `CacheManager._cache_key`.
    */
-  private virtual(path: string | PathSpec): string {
+  private cacheKey(path: string | PathSpec): string {
     const virtual = path instanceof PathSpec ? path.virtual : path
-    const key = mountKey(virtual, this.prefix)
-    if (key === '') return this.prefix === '' ? '/' : this.prefix
-    return `${this.prefix}/${key}`
+    const relative = mountKey(virtual, this.prefix)
+    if (relative === '') return this.prefix === '' ? '/' : this.prefix
+    return `${this.prefix}/${relative}`
   }
 
   /**
@@ -95,30 +99,30 @@ export class CacheManager {
    */
   async cachedBytes(path: PathSpec): Promise<Uint8Array | null> {
     if (!this.cachesReads || this.fileCache === null) return null
-    const virtual = this.virtual(path)
-    if (await this.fileCache.exists(virtual)) {
-      return this.fileCache.get(virtual)
+    const key = this.cacheKey(path)
+    if (await this.fileCache.exists(key)) {
+      return this.fileCache.get(key)
     }
     return null
   }
 
-  /** Invalidate caches after a write to `path` (resource-relative). */
+  /** Invalidate caches after a write to `path`; only `virtual` is read. */
   async invalidateAfterWrite(path: string | PathSpec): Promise<void> {
-    const virtual = this.virtual(path)
+    const key = this.cacheKey(path)
     if (this.cachesReads && this.fileCache !== null) {
-      await this.fileCache.remove(virtual)
+      await this.fileCache.remove(key)
     }
-    await this.invalidateParent(virtual)
+    await this.invalidateParent(key)
   }
 
-  /** Invalidate caches after a deletion of `path` (resource-relative). */
+  /** Invalidate caches after a deletion of `path`; only `virtual` is read. */
   async invalidateAfterUnlink(path: string | PathSpec): Promise<void> {
-    const virtual = this.virtual(path)
+    const key = this.cacheKey(path)
     if (this.cachesReads && this.fileCache !== null) {
-      await this.fileCache.remove(virtual)
+      await this.fileCache.remove(key)
     }
-    await this.evictDir(virtual)
-    await this.invalidateParent(virtual)
+    await this.evictDir(key)
+    await this.invalidateParent(key)
   }
 
   /**
@@ -134,14 +138,14 @@ export class CacheManager {
    * Mirrors Python `CacheManager.invalidate_subtree`.
    */
   async invalidateSubtree(path: string | PathSpec): Promise<void> {
-    const virtual = this.virtual(path)
+    const key = this.cacheKey(path)
     if (this.cachesReads && this.fileCache !== null) {
-      await this.fileCache.remove(virtual)
-      await this.fileCache.evictPrefix(rstripSlash(virtual) + '/')
+      await this.fileCache.remove(key)
+      await this.fileCache.evictPrefix(rstripSlash(key) + '/')
     }
-    if (this.index !== null) await this.index.invalidatePrefix(virtual)
-    await this.evictDir(virtual)
-    await this.invalidateParent(virtual)
+    if (this.index !== null) await this.index.invalidatePrefix(key)
+    await this.evictDir(key)
+    await this.invalidateParent(key)
   }
 
   /**
@@ -155,8 +159,8 @@ export class CacheManager {
    */
   async invalidateAncestors(path: string | PathSpec): Promise<void> {
     if (this.index === null) return
-    const virtual = this.virtual(path)
-    let parent = virtual.slice(0, Math.max(virtual.lastIndexOf('/'), 0))
+    const key = this.cacheKey(path)
+    let parent = key.slice(0, Math.max(key.lastIndexOf('/'), 0))
     while (parent !== '' && parent !== this.prefix) {
       parent = parent.slice(0, Math.max(parent.lastIndexOf('/'), 0))
       await this.evictDir(parent === '' ? '/' : parent)
@@ -181,8 +185,8 @@ export class CacheManager {
     await this.fileCache.evictPrefix(this.prefix + '/')
   }
 
-  private async invalidateParent(virtual: string): Promise<void> {
-    const lastSlash = virtual.lastIndexOf('/')
-    await this.evictDir(lastSlash > 0 ? virtual.slice(0, lastSlash) : '/')
+  private async invalidateParent(key: string): Promise<void> {
+    const lastSlash = key.lastIndexOf('/')
+    await this.evictDir(lastSlash > 0 ? key.slice(0, lastSlash) : '/')
   }
 }
