@@ -60,6 +60,7 @@ import { arrayIndex } from '../expand/variable.ts'
 import { assignElement, elementIndex, sessionElements } from '../session/elements.ts'
 import type { ArithResult, TSNodeLike } from '../../shell/types.ts'
 import { wordText } from '../../types.ts'
+import { compareCodePoints } from '../../utils/sort.ts'
 import {
   type CforEval,
   handleCase,
@@ -152,6 +153,11 @@ async function assignVar(view: SessionView, key: string, value: ShellValue): Pro
     if (err instanceof PolicyDenied) {
       const denied = new TextEncoder().encode(`${err.message}\n`)
       throw new ExitSignal(1, denied, null, 1)
+    }
+    if (err instanceof ArithError) {
+      // The `-i` coercion refused the text. GNU aborts the line the way
+      // a bad subscript does, in the evaluator's voice with the text led.
+      throw new ExitSignal(1, new TextEncoder().encode(`bash: ${err.message}\n`), null, 1)
     }
     throw err
   }
@@ -418,13 +424,175 @@ function mergeConversionErrors(result: Result, errors: readonly string[]): Resul
   return [stream, newIo, new ExecutionNode({ command: node.command, exitCode: 1, stderr: merged })]
 }
 
+// Every letter GNU's `declare` accepts, so a typo refuses with the usage
+// line instead of being silently dropped. `-a`/`-A` are kinds, not
+// attributes, and are handled by the array branch; `-p`/`-f`/`-F`/`-g`
+// /`-I` are modes the handlers read. `-n` is accepted and stored, but
+// aliasing (reads and writes through the reference) is not wired: it is
+// a separate seam through every expansion site, so a name carrying it
+// declares and prints, and nothing more, rather than a partial alias
+// that works in some spellings and not others.
+const DECLARE_LETTERS: ReadonlySet<string> = new Set('aAfFgiIlnprtux')
+const DECLARE_USAGE =
+  'declare: usage: declare [-aAfFgiIlnrtux] [name[=value] ...] or declare -p [-aAfFilnrtux] [name ...]'
+// The stored attributes a `-letter` / `+letter` toggles.
+const ATTR_LETTERS: ReadonlyMap<string, VarAttr> = new Map([
+  ['i', VarAttr.Integer],
+  ['l', VarAttr.Lower],
+  ['u', VarAttr.Upper],
+  ['n', VarAttr.Nameref],
+  ['t', VarAttr.Trace],
+  ['x', VarAttr.Export],
+  ['r', VarAttr.Readonly],
+])
+
+/** The attributes the given letters name, in the order given, skipping
+ * letters that name none (kinds and modes are not attributes). */
+function attrsFor(letters: string, has: (c: string) => boolean): VarAttr[] {
+  const out: VarAttr[] = []
+  for (const c of letters) {
+    const attr = ATTR_LETTERS.get(c)
+    if (attr !== undefined && has(c)) out.push(attr)
+  }
+  return out
+}
+
+/**
+ * The refusal a `declare` family option cluster earns, if any.
+ *
+ * An unknown letter is GNU's `invalid option` plus the usage line, exit
+ * 2, and it wins over every other check because bash refuses the
+ * cluster before it looks at a single operand.
+ */
+function declareOptionRefusal(
+  cmd: string,
+  flagChars: ReadonlySet<string>,
+  plusChars: ReadonlySet<string>,
+): Result | null {
+  const bad = [...flagChars, ...plusChars]
+    .sort(compareCodePoints)
+    .find((c) => !DECLARE_LETTERS.has(c))
+  if (bad === undefined) return null
+  const sign = flagChars.has(bad) ? '-' : '+'
+  const err = new TextEncoder().encode(
+    `bash: ${cmd}: ${sign}${bad}: invalid option\n${DECLARE_USAGE}\n`,
+  )
+  return [
+    null,
+    new IOResult({ exitCode: 2, stderr: err }),
+    new ExecutionNode({ command: cmd, exitCode: 2, stderr: err }),
+  ]
+}
+
+/**
+ * The per-name refusals a `+letter` earns after the operands are known.
+ *
+ * Two letters cannot be taken off. `+r` on a readonly name is
+ * `declare: R: readonly variable`, exit 1, and the name stays frozen.
+ * `+a` / `+A` on an array is `cannot destroy array variables in this
+ * way`, exit 1, since the kind is what the value is, not a mark. Both
+ * are pinned on 5.2.37 and neither stops the other operands from
+ * declaring; the first refusal is what the builtin reports.
+ */
+function plusRefusals(
+  cmd: string,
+  session: Session,
+  view: SessionView,
+  plusChars: ReadonlySet<string>,
+  assignments: readonly string[],
+  staged: readonly { name: string }[] | null,
+): Result | null {
+  if (!plusChars.has('r') && !plusChars.has('a') && !plusChars.has('A')) return null
+  const names = assignments.map((a) => a.split('=')[0] ?? a)
+  for (const { name } of staged ?? []) names.push(name)
+  for (const name of names) {
+    if (plusChars.has('r') && view.isReadonly(name)) {
+      const err = new TextEncoder().encode(`bash: ${cmd}: ${name}: readonly variable\n`)
+      return [
+        null,
+        new IOResult({ exitCode: 1, stderr: err }),
+        new ExecutionNode({ command: cmd, exitCode: 1, stderr: err }),
+      ]
+    }
+    if (
+      (plusChars.has('a') && Object.hasOwn(session.arrays, name)) ||
+      (plusChars.has('A') && Object.hasOwn(session.assocs, name))
+    ) {
+      const err = new TextEncoder().encode(
+        `bash: ${cmd}: ${name}: cannot destroy array variables in this way\n`,
+      )
+      return [
+        null,
+        new IOResult({ exitCode: 1, stderr: err }),
+        new ExecutionNode({ command: cmd, exitCode: 1, stderr: err }),
+      ]
+    }
+  }
+  return null
+}
+
+/**
+ * Apply every `-attr` / `+attr` letter to the names a declaration
+ * stored, on top of the export stamp.
+ *
+ * The letters that shape a value (`-i -l -u`) are stored as attributes
+ * and applied by the door on every *later* write, which is GNU's rule:
+ * `v=MiXeD; declare -l v` keeps `MiXeD`, and the next `v=ABC` stores
+ * `abc`. So this stamps and never rewrites. `-l` and `-u` are exclusive:
+ * setting one clears the other, and a cluster naming both (`-lu`, `-ul`)
+ * sets neither, both pinned on 5.2.37. A `+` letter clears; `+r` is
+ * refused earlier on a readonly name and a no-op otherwise, so it is not
+ * an off toggle. Through the gated mark door for every name, covered or
+ * not: the handler already cleared the gate for these names, so this is
+ * one redundant policy call per attribute, and it keeps this stamp out
+ * of the ungated-write allowlist that `setAttr` sites must justify.
+ */
+async function stampAttrs(
+  session: Session,
+  view: SessionView,
+  flagChars: ReadonlySet<string>,
+  plusChars: ReadonlySet<string>,
+  assignments: readonly string[],
+  staged: readonly { name: string }[] | null,
+  stored: readonly string[],
+): Promise<Result | null> {
+  const refused = await stampExport(session, view, flagChars, assignments, staged, stored)
+  if (refused !== null) return refused
+  let onAttrs = attrsFor('ilunt', (c) => flagChars.has(c) && !plusChars.has(c))
+  if (flagChars.has('l') && flagChars.has('u')) {
+    onAttrs = onAttrs.filter((a) => a !== VarAttr.Lower && a !== VarAttr.Upper)
+  }
+  const offAttrs = attrsFor('iluntx', (c) => plusChars.has(c))
+  if (onAttrs.length === 0 && offAttrs.length === 0) return null
+  try {
+    for (const name of stored) {
+      for (const attr of onAttrs) {
+        await view.mark(name, attr, true)
+        // `-l` displaces `-u` and vice versa; the record keeps one.
+        if (attr === VarAttr.Lower) await view.mark(name, VarAttr.Upper, false)
+        else if (attr === VarAttr.Upper) await view.mark(name, VarAttr.Lower, false)
+      }
+      for (const attr of offAttrs) await view.mark(name, attr, false)
+    }
+  } catch (err) {
+    if (!(err instanceof PolicyDenied)) throw err
+    const denied = new TextEncoder().encode(`${err.message}\n`)
+    return [
+      null,
+      new IOResult({ exitCode: 1, stderr: denied }),
+      new ExecutionNode({ command: 'declare', exitCode: 1, stderr: denied }),
+    ]
+  }
+  return null
+}
+
 async function stampExport(
   session: Session,
   view: SessionView,
-  flagChars: Set<string>,
-  assignments: string[],
-  staged: { name: string; append: boolean; items: string[] }[],
-  stored: string[],
+  flagChars: ReadonlySet<string>,
+  assignments: readonly string[],
+  staged: readonly { name: string }[] | null,
+  stored: readonly string[],
 ): Promise<Result | null> {
   if (!flagChars.has('x')) return null
   const covered = new Set<string>()
@@ -432,7 +600,7 @@ async function stampExport(
     const eq = a.indexOf('=')
     if (eq >= 0) covered.add(a.slice(0, eq))
   }
-  for (const { name } of staged) covered.add(name)
+  for (const { name } of staged ?? []) covered.add(name)
   for (const name of stored) {
     if (covered.has(name)) {
       setAttr(session, name, VarAttr.Export)
@@ -875,6 +1043,7 @@ export async function executeNode(
     // letter the way bash does.
     const flagWords: string[] = []
     const flagChars = new Set<string>()
+    const plusChars = new Set<string>()
     let optsDone = false
     for (const child of node.namedChildren) {
       if (child.type === NT.VARIABLE_ASSIGNMENT) {
@@ -941,13 +1110,34 @@ export async function executeNode(
           flagWords.push(expanded)
           if (expanded === '--') optsDone = true
           else for (const ch of expanded.slice(1)) flagChars.add(ch)
+        } else if (
+          !optsDone &&
+          expanded.startsWith('+') &&
+          expanded.length > 1 &&
+          (keyword === NT.LOCAL || keyword === 'declare' || keyword === 'typeset')
+        ) {
+          // `+attr` turns an attribute off. Only the declare family
+          // reads it: `export +x` and `readonly +r` are `not a valid
+          // identifier` in GNU, so for those two the word falls through
+          // as an operand and refuses there.
+          for (const ch of expanded.slice(1)) plusChars.add(ch)
         } else {
           assignments.push(expanded)
         }
       }
     }
-    const isReadonly = keyword === 'readonly' || flagChars.has('r')
     const cmdWord = keyword === NT.LOCAL ? 'local' : keyword
+    if (keyword === NT.LOCAL || keyword === 'declare' || keyword === 'typeset') {
+      const refused = declareOptionRefusal(cmdWord, flagChars, plusChars)
+      if (refused !== null) return refused
+    }
+    const isReadonly = keyword === 'readonly' || flagChars.has('r')
+    // `-l` and `-u` cannot both hold; a cluster naming both sets neither
+    // (pinned: `declare -lu s=aBc` prints `declare -- s`).
+    let shaping = new Set(attrsFor('ilu', (c) => flagChars.has(c) && !plusChars.has(c)))
+    if (shaping.has(VarAttr.Lower) && shaping.has(VarAttr.Upper)) {
+      shaping = new Set([...shaping].filter((a) => a !== VarAttr.Lower && a !== VarAttr.Upper))
+    }
     const conversionErrors: string[] = []
     if (flagChars.has('A') || flagChars.has('a')) {
       // `declare -a NAME` / `declare -A NAME` with no value declare an
@@ -1013,12 +1203,29 @@ export async function executeNode(
               staged,
               stored,
               flagChars.has('A'),
+              shaping,
             )
-          : await handleReadonly(assignments, session, declView, staged, stored, flagChars.has('A'))
+          : await handleReadonly(
+              assignments,
+              session,
+              declView,
+              staged,
+              stored,
+              flagChars.has('A'),
+              shaping,
+            )
       // `declare -rx X=1` carries both attributes: GNU prints
       // `declare -rx X="1"`. Readonly answers first, so the export stamp
       // has to land here too, or `-r` silently ate the `-x`.
-      const refused = await stampExport(session, declView, flagChars, assignments, staged, stored)
+      const refused = await stampAttrs(
+        session,
+        declView,
+        flagChars,
+        plusChars,
+        assignments,
+        staged,
+        stored,
+      )
       return refused ?? mergeConversionErrors(result, conversionErrors)
     }
     // declare/typeset scope like `local` inside a function (bash
@@ -1027,7 +1234,10 @@ export async function executeNode(
     if (keyword === NT.LOCAL || keyword === 'declare' || keyword === 'typeset') {
       // `-p` prints rather than declares, so it is answered before the
       // assignment path runs at all.
-      if (flagChars.has('p') && (keyword === 'declare' || keyword === 'typeset')) {
+      if (
+        (flagChars.has('p') || plusChars.has('p')) &&
+        (keyword === 'declare' || keyword === 'typeset')
+      ) {
         return handleDeclarePrint(assignments, session)
       }
       const declView2 = sessionView(session, registry.policies)
@@ -1042,11 +1252,15 @@ export async function executeNode(
         cmdWord,
         stored2,
         flagChars.has('A'),
+        shaping,
       )
-      const refused2 = await stampExport(
+      const plusRefused = plusRefusals(cmdWord, session, declView2, plusChars, assignments, staged)
+      if (plusRefused !== null) return plusRefused
+      const refused2 = await stampAttrs(
         session,
         declView2,
         flagChars,
+        plusChars,
         assignments,
         staged,
         stored2,
@@ -1282,7 +1496,15 @@ export async function executeNode(
       arraySet(newArr, 0, append ? arrayGet(newArr, 0) + val : val)
       await assignVar(view, key, newArr)
     } else {
-      const newVal = append ? (session.env[key] ?? '') + val : val
+      const heldVar = session.vars[key]
+      let newVal: string
+      if (append && heldVar?.attrs.has(VarAttr.Integer) === true) {
+        // `n+=3` on an integer name adds: the door evaluates `old + new`,
+        // so `declare -i n=5; n+=3` stores 8, not 53.
+        newVal = `${session.env[key] ?? '0'} + (${val})`
+      } else {
+        newVal = append ? (session.env[key] ?? '') + val : val
+      }
       await assignVar(view, key, newVal)
     }
     // Reassigning OPTIND (even to its current value) restarts the getopts

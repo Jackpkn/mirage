@@ -18,7 +18,7 @@ import { asyncChain } from '../../../io/stream.ts'
 import { IOResult } from '../../../io/types.ts'
 import type { ByteSource } from '../../../io/types.ts'
 import type { CallStack } from '../../../shell/call_stack.ts'
-import { ExitSignal } from '../../../shell/errors.ts'
+import { ArithError, ExitSignal } from '../../../shell/errors.ts'
 import { shellJoin } from '../../../shell/join.ts'
 import { parseOptionWord } from '../../../shell/options.ts'
 import { SET_OPTION_DEFAULTS, SET_OPTION_NAMES } from '../../../shell/types.ts'
@@ -87,6 +87,43 @@ function readonlyRefusal(cmd: string, name: string): Result {
 }
 
 /**
+ * Put a declaration's value-shaping attributes on a name before its
+ * value stores.
+ *
+ * The door coerces on write by reading the record's attributes, so for
+ * the declaration's *own* value to coerce (`declare -i n=3+4` stores
+ * `7`), the attribute has to be there first. Gated through `view.mark`
+ * like every other mark, and a no-op with nothing to shape, so a plain
+ * `declare X=1` costs no extra gate call.
+ */
+async function premark(
+  view: SessionView,
+  name: string,
+  shaping: ReadonlySet<VarAttr>,
+): Promise<void> {
+  for (const attr of shaping) await view.mark(name, attr, true)
+}
+
+/**
+ * Render the `-i` coercion's arithmetic error as bash does.
+ *
+ * GNU voices it as the evaluator's own line, prefixed by the builtin and
+ * the offending text (`bash: read: 1+: syntax error: operand expected`),
+ * and fails the builtin with 1 while the variable keeps its old value,
+ * which is what the door's copy-then-store already guarantees. A plain
+ * assignment (`n=1+`) is fatal instead and is voiced by the executor
+ * without a builtin name.
+ */
+function arithRefusal(cmd: string, err: ArithError): Result {
+  const encoded = new TextEncoder().encode(`bash: ${cmd}: ${err.message}\n`)
+  return [
+    null,
+    new IOResult({ exitCode: 1, stderr: encoded }),
+    new ExecutionNode({ command: cmd, exitCode: 1, stderr: encoded }),
+  ]
+}
+
+/**
  * Store a declaration's array literals through the session door.
  *
  * The builtin owns the store so a refusal speaks in its own voice:
@@ -137,6 +174,7 @@ async function storeStagedArrays(
   stored: string[] | null = null,
   assoc = false,
   errors: string[] | null = null,
+  shaping: ReadonlySet<VarAttr> = new Set(),
 ): Promise<Result | null> {
   for (const { name, append, items } of arrays) {
     if (view.isReadonly(name)) {
@@ -147,6 +185,12 @@ async function storeStagedArrays(
       return readonlyRefusal(cmd, name)
     }
     noteLocalArray(session, name)
+    try {
+      await premark(view, name, shaping)
+    } catch (err) {
+      if (err instanceof PolicyDenied) return doorRefusal(cmd, err)
+      throw err
+    }
     let base: ShellValue
     if (assoc || Object.hasOwn(session.assocs, name)) {
       const { map, badWords } = buildAssocLiteral(session.assocs[name] ?? null, items, append)
@@ -172,6 +216,7 @@ async function storeStagedArrays(
       await view.set(name, base)
     } catch (err) {
       if (err instanceof PolicyDenied) return doorRefusal(cmd, err)
+      if (err instanceof ArithError) return arithRefusal(cmd, err)
       throw err
     }
     if (stored !== null) stored.push(name)
@@ -553,6 +598,7 @@ export async function handleReadonly(
   arrays: { name: string; append: boolean; items: string[] }[] | null = null,
   stored: string[] | null = null,
   assoc = false,
+  shaping: ReadonlySet<VarAttr> = new Set(),
 ): Promise<Result> {
   const { flags, names, bad } = splitDeclFlags(assignments, READONLY_FLAGS)
   if (bad !== null) {
@@ -584,6 +630,7 @@ export async function handleReadonly(
       stored,
       assoc || flags.has('A'),
       errors,
+      shaping,
     )
     if (refused !== null) return refused
   }
@@ -598,9 +645,11 @@ export async function handleReadonly(
       const key = assign.slice(0, eq)
       if (view.isReadonly(key)) return readonlyRefusal('readonly', key)
       try {
+        await premark(view, key, shaping)
         await view.set(key, assign.slice(eq + 1))
       } catch (err) {
         if (err instanceof PolicyDenied) return doorRefusal('readonly', err)
+        if (err instanceof ArithError) return arithRefusal('readonly', err)
         throw err
       }
       // Ungated: the `view.set` above already put this name through the
@@ -1023,6 +1072,7 @@ export async function handleLocal(
   cmd = 'local',
   stored: string[] | null = null,
   assoc = false,
+  shaping: ReadonlySet<VarAttr> = new Set(),
 ): Promise<Result> {
   const locals = session.localVars
   if (cmd === 'local' && locals === null) {
@@ -1052,6 +1102,7 @@ export async function handleLocal(
       stored,
       assoc,
       errors,
+      shaping,
     )
     if (refused !== null) return refused
   }
@@ -1069,9 +1120,11 @@ export async function handleLocal(
         locals.set(key, sessionEntry(session.vars, key) ?? null)
       }
       try {
+        await premark(view, key, shaping)
         await view.set(key, assign.slice(eq + 1))
       } catch (err) {
         if (err instanceof PolicyDenied) return doorRefusal(cmd, err)
+        if (err instanceof ArithError) return arithRefusal(cmd, err)
         throw err
       }
       if (stored !== null) stored.push(key)
@@ -1568,6 +1621,7 @@ async function readStore(
       await view.set(varName, value)
     } catch (err) {
       if (err instanceof PolicyDenied) return doorRefusal('read', err)
+      if (err instanceof ArithError) return arithRefusal('read', err)
       throw err
     }
     return null
@@ -1577,6 +1631,7 @@ async function readStore(
     status = await assignElement(session, view, base, subscript, value)
   } catch (err) {
     if (err instanceof PolicyDenied) return doorRefusal('read', err)
+    if (err instanceof ArithError) return arithRefusal('read', err)
     throw err
   }
   if (status === 'readonly') return readonlyRefusal('read', base)

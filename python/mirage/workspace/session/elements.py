@@ -218,6 +218,8 @@ async def assign_element(session: Session,
     Raises:
         PolicyDenied: a pre_session rule refused the write; the caller
             renders the rule's own message.
+        ArithError: the name carries ``-i`` and the text does not
+            evaluate; the caller voices it after the offending text.
     """
     try:
         ensure_var_visible(session, name)

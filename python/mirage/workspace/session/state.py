@@ -19,9 +19,11 @@ from collections.abc import Iterator, Mapping
 from mirage.ops.types import SessionView
 from mirage.policy import Policies, PolicyDenied, pre_session_gate
 from mirage.policy.types import SessionContext
+from mirage.shell.arith import evaluate_arith
 from mirage.shell.array import ShellArray, array_values
-from mirage.shell.variable import (ShellValue, ShellVar, VarAttr, with_attr,
-                                   with_value)
+from mirage.shell.errors import ArithError
+from mirage.shell.variable import (ShellValue, ShellVar, VarAttr, coerce_value,
+                                   with_attr, with_value)
 from mirage.utils.hidden import var_hidden
 from mirage.workspace.session.errors import ReadonlyVariableError
 from mirage.workspace.session.session import Session
@@ -235,6 +237,32 @@ def visible_assocs(session: Session) -> Mapping[str, dict[str, str]]:
     return _VisibleAssocs(session)
 
 
+def _integer_text(session: Session, text: str) -> str:
+    """The `-i` coercion: evaluate the incoming text as arithmetic.
+
+    Reads resolve against the visible env, so `n=x+1` sees `x`; an
+    unresolvable name is 0 (`n=abc` stores `0`), which is the arithmetic
+    rule, not a refusal. A malformed expression raises ArithError, and
+    the caller decides how to voice it (bash aborts the line with the
+    evaluator's own message). Scalars only: an element reference in
+    the text (`n=a[1]+1`) is not resolved here, because the element
+    resolver lives above the door and importing it would close a
+    cycle; that spelling stays a syntax error, which bash also reports
+    for the unresolvable case.
+
+    Args:
+        session (Session): the session the expression reads.
+        text (str): the incoming value.
+    """
+    try:
+        return str(evaluate_arith(text, visible_env(session)).value)
+    except ArithError as exc:
+        # The offending text leads, which is how every caller voices it
+        # (`bash: 1+: syntax error: operand expected`), so it is spelled
+        # once here rather than at each of the sites that catch it.
+        raise ArithError(f"{text}: {exc}") from exc
+
+
 def ensure_var_visible(session: Session, name: str) -> None:
     """Refuse a write that names a hidden variable.
 
@@ -309,7 +337,14 @@ async def set_var(session: Session, policies: Policies | None, name: str,
     # assignment keeps them: `declare -i n; n=3` stays an integer. The
     # old two-container store had to remember to evict the name from
     # whichever container it was not landing in; one record cannot
-    # disagree with itself that way.
+    # disagree with itself that way. The value-shaping attributes
+    # (`-i -l -u`) apply here, at the write, which is where bash applies
+    # them: `declare -l s; s=ABC` stores `abc`, so every reader agrees
+    # without per-read work. `-i` evaluates against the visible env,
+    # and a bad expression raises the arithmetic error as bash does.
+    if existing is not None and existing.attrs:
+        value = coerce_value(value, existing.attrs,
+                             functools.partial(_integer_text, session))
     stored = ShellVar(value) if existing is None else with_value(
         existing, value)
     # `set -a` marks every name assigned *while it is on*, which is why

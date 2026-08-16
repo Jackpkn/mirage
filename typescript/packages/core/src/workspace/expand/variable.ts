@@ -780,7 +780,9 @@ export async function expansionWrite(
   try {
     await view.set(name, stored)
   } catch (err) {
-    if (!(err instanceof PolicyDenied)) throw err
+    // A PolicyDenied is the gate; an ArithError is the name carrying
+    // `-i` refusing the text. Both die as `n=1+` does, in that voice.
+    if (!(err instanceof PolicyDenied) && !(err instanceof ArithError)) throw err
     throw new ExitSignal(1, new TextEncoder().encode(`bash: ${err.message}\n`), null, 1)
   }
 }

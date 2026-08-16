@@ -16,6 +16,7 @@ import { ECHO_OPTION } from '../../../commands/spec/shell.ts'
 import { IOResult } from '../../../io/types.ts'
 import { byteChar, encodeText } from '../../../shell/bytes.ts'
 import { PolicyDenied } from '../../../policy/errors.ts'
+import { ArithError } from '../../../shell/errors.ts'
 import type { Session } from '../../session/session.ts'
 import type { SessionView } from '../../../ops/types.ts'
 import { assignElement } from '../../session/elements.ts'
@@ -930,6 +931,16 @@ export async function handlePrintf(
     try {
       status = await assignPrintfTarget(session, view, base, parsed[2], output)
     } catch (err) {
+      if (err instanceof ArithError) {
+        // The target carries `-i` and the formatted text does not
+        // evaluate; bash voices the evaluator after the builtin name.
+        const bad = new TextEncoder().encode(errors.join('') + `bash: printf: ${err.message}\n`)
+        return [
+          null,
+          new IOResult({ exitCode: 1, stderr: bad }),
+          new ExecutionNode({ command: 'printf', exitCode: 1, stderr: bad }),
+        ]
+      }
       if (!(err instanceof PolicyDenied)) throw err
       const denied = new TextEncoder().encode(errors.join('') + `bash: ${err.message}\n`)
       return [

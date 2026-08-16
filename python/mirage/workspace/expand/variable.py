@@ -159,6 +159,11 @@ async def expansion_write(session: Session, view: SessionView | None,
         raise ExitSignal(1,
                          stderr=f"bash: {exc.strerror}\n".encode(),
                          contained_code=1) from exc
+    except ArithError as exc:
+        # The name carries `-i` and the text does not evaluate. The
+        # line dies as it does for `n=1+`, in the evaluator's voice.
+        raise ExitSignal(1, stderr=f"bash: {exc}\n".encode(),
+                         contained_code=1) from exc
 
 
 async def expansion_write_element(session: Session, view: SessionView | None,

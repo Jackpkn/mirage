@@ -21,6 +21,7 @@ from mirage.io.types import ByteSource
 from mirage.ops.types import SessionView
 from mirage.policy import PolicyDenied
 from mirage.shell.bytes import byte_char, encode_text
+from mirage.shell.errors import ArithError
 from mirage.workspace.session import Session
 from mirage.workspace.session.elements import assign_element
 from mirage.workspace.types import ExecutionNode
@@ -738,6 +739,14 @@ async def handle_printf(
                                                  subscript, output)
         except PolicyDenied as exc:
             err_bytes += f"bash: {exc.strerror}\n".encode()
+            return None, IOResult(
+                exit_code=1, stderr=err_bytes), ExecutionNode(command="printf",
+                                                              exit_code=1,
+                                                              stderr=err_bytes)
+        except ArithError as exc:
+            # The target carries `-i` and the formatted text does not
+            # evaluate; bash voices the evaluator after the text.
+            err_bytes += f"bash: printf: {exc}\n".encode()
             return None, IOResult(
                 exit_code=1, stderr=err_bytes), ExecutionNode(command="printf",
                                                               exit_code=1,

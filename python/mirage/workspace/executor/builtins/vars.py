@@ -28,7 +28,7 @@ from mirage.policy import PolicyDenied
 from mirage.shell.array import (array_extent, array_unset, build_assoc_literal,
                                 build_indexed_literal)
 from mirage.shell.call_stack import CallStack
-from mirage.shell.errors import ExitSignal
+from mirage.shell.errors import ArithError, ExitSignal
 from mirage.shell.options import parse_option_word
 from mirage.shell.types import SET_OPTION_DEFAULTS, SET_OPTION_NAMES
 from mirage.shell.variable import ShellValue, VarAttr, attr_letters
@@ -93,6 +93,48 @@ def _readonly_refusal(
                                                                   stderr=err)
 
 
+async def _premark(view: SessionView, name: str,
+                   shaping: frozenset[VarAttr]) -> None:
+    """Put a declaration's value-shaping attributes on a name before its
+    value stores.
+
+    The door coerces on write by reading the record's attributes, so
+    for the declaration's *own* value to coerce (``declare -i n=3+4``
+    stores ``7``), the attribute has to be there first. Gated through
+    ``view.mark`` like every other mark, and a no-op with nothing to
+    shape, so a plain ``declare X=1`` costs no extra gate call.
+
+    Args:
+        view (SessionView): the session plane's gated door.
+        name (str): the variable being declared.
+        shaping (frozenset[VarAttr]): the ``-i -l -u`` attributes set.
+    """
+    for attr in shaping:
+        await view.mark(name, attr, True)
+
+
+def _arith_refusal(
+        cmd: str,
+        exc: ArithError) -> tuple[ByteSource | None, IOResult, ExecutionNode]:
+    """Render the ``-i`` coercion's arithmetic error as bash does.
+
+    GNU voices it as the evaluator's own line, prefixed by the builtin
+    and the offending text (``bash: read: 1+: syntax error: operand
+    expected``), and fails the builtin with 1 while the variable keeps
+    its old value, which is what the door's copy-then-store already
+    guarantees. A plain assignment (``n=1+``) is fatal instead and is
+    voiced by the executor without a builtin name.
+
+    Args:
+        cmd (str): builtin name for the node.
+        exc (ArithError): the evaluator's refusal, text already led.
+    """
+    err = f"bash: {cmd}: {exc}\n".encode()
+    return None, IOResult(exit_code=1, stderr=err), ExecutionNode(command=cmd,
+                                                                  exit_code=1,
+                                                                  stderr=err)
+
+
 async def _store_staged_arrays(
     cmd: str,
     session: Session,
@@ -104,6 +146,7 @@ async def _store_staged_arrays(
     stored: list[str] | None = None,
     assoc: bool = False,
     errors: list[str] | None = None,
+    shaping: frozenset[VarAttr] = frozenset(),
 ) -> tuple[ByteSource | None, IOResult, ExecutionNode] | None:
     """Store a declaration's array literals through the session door.
 
@@ -163,6 +206,10 @@ async def _store_staged_arrays(
                 raise ExitSignal(1, stderr=err, contained_code=1)
             return _readonly_refusal(cmd, name)
         note_local_array(session, name)
+        try:
+            await _premark(view, name, shaping)
+        except PolicyDenied as exc:
+            return _refusal(cmd, exc)
         base: ShellValue
         if assoc or name in session.assocs:
             built, bad_words = build_assoc_literal(session.assocs.get(name),
@@ -186,6 +233,8 @@ async def _store_staged_arrays(
             await view.set(name, base)
         except PolicyDenied as exc:
             return _refusal(cmd, exc)
+        except ArithError as exc:
+            return _arith_refusal(cmd, exc)
         if stored is not None:
             stored.append(name)
         if mark is not None:
@@ -612,6 +661,7 @@ async def handle_readonly(
     arrays: list[tuple[str, bool, list[str]]] | None = None,
     stored: list[str] | None = None,
     assoc: bool = False,
+    shaping: frozenset[VarAttr] = frozenset(),
 ) -> tuple[ByteSource | None, IOResult, ExecutionNode]:
     """Mark names readonly, or print them (``readonly -p`` / bare form).
 
@@ -641,7 +691,8 @@ async def handle_readonly(
                                              fatal=True,
                                              stored=stored,
                                              assoc=assoc or "A" in flags,
-                                             errors=errors)
+                                             errors=errors,
+                                             shaping=shaping)
         if refused is not None:
             return refused
     for assign in names:
@@ -654,9 +705,12 @@ async def handle_readonly(
             if view.is_readonly(key):
                 return _readonly_refusal("readonly", key)
             try:
+                await _premark(view, key, shaping)
                 await view.set(key, val)
             except PolicyDenied as exc:
                 return _refusal("readonly", exc)
+            except ArithError as exc:
+                return _arith_refusal("readonly", exc)
             # Ungated: the `view.set` above already put this name
             # through the gate, so the mark rides on that decision.
             set_attr(session, key, VarAttr.READONLY)
@@ -1046,11 +1100,15 @@ async def _read_store(
             await view.set(var, value)
         except PolicyDenied as exc:
             return _refusal("read", exc)
+        except ArithError as exc:
+            return _arith_refusal("read", exc)
         return None
     try:
         status = await assign_element(session, view, base, subscript, value)
     except PolicyDenied as exc:
         return _refusal("read", exc)
+    except ArithError as exc:
+        return _arith_refusal("read", exc)
     if status == "readonly":
         return _readonly_refusal("read", base)
     if status == "denied":
@@ -1183,6 +1241,7 @@ async def handle_local(
     cmd: str = "local",
     stored: list[str] | None = None,
     assoc: bool = False,
+    shaping: frozenset[VarAttr] = frozenset(),
 ) -> tuple[ByteSource | None, IOResult, ExecutionNode]:
     """Declare names in the running function's scope, or globally.
 
@@ -1198,6 +1257,12 @@ async def handle_local(
         stored (list[str] | None): filled with each name that stored.
         assoc (bool): the declaration carried ``-A``, so staged
             literals build associative maps.
+        shaping (frozenset[VarAttr]): the value-shaping attributes
+            (``-i -l -u``) the declaration carries. They are marked on
+            each name *before* its value stores, after the local
+            snapshot, so the declaration's own value coerces exactly as
+            a later write would: GNU stores ``7`` for
+            ``declare -i n=3+4`` and ``hello`` for ``declare -l s=HeLLo``.
     """
     local_vars = session._local_vars
     if cmd == "local" and local_vars is None:
@@ -1221,7 +1286,8 @@ async def handle_local(
                                              fatal=session._local_vars is None,
                                              stored=stored,
                                              assoc=assoc,
-                                             errors=errors)
+                                             errors=errors,
+                                             shaping=shaping)
         if refused is not None:
             return refused
     for assign in assignments:
@@ -1236,9 +1302,12 @@ async def handle_local(
             if local_vars is not None and key not in local_vars:
                 local_vars[key] = session.vars.get(key)
             try:
+                await _premark(view, key, shaping)
                 await view.set(key, val)
             except PolicyDenied as exc:
                 return _refusal(cmd, exc)
+            except ArithError as exc:
+                return _arith_refusal(cmd, exc)
             if stored is not None:
                 stored.append(key)
         else:

@@ -14,13 +14,15 @@
 
 import type { SessionView } from '../../ops/types.ts'
 import { PolicyDenied, preSessionGate, type Policies } from '../../policy/index.ts'
+import { evaluateArith } from '../../shell/arith.ts'
 import { arrayValues, type ShellArray } from '../../shell/array.ts'
+import { ArithError } from '../../shell/errors.ts'
 import { varHidden } from '../../utils/hidden.ts'
 import { compareCodePoints } from '../../utils/sort.ts'
 import { ReadonlyVariableError } from './errors.ts'
 import { ownRecord, sessionEntry, setSessionEntry } from './session.ts'
 import type { ShellValue } from '../../shell/variable.ts'
-import { makeVar, VarAttr, withAttr, withValue } from '../../shell/variable.ts'
+import { coerceValue, makeVar, VarAttr, withAttr, withValue } from '../../shell/variable.ts'
 import type { Session } from './session.ts'
 
 /**
@@ -192,6 +194,29 @@ export function visibleAssocs(session: Session): Record<string, Record<string, s
  * gaslight the writer; refuse loudly instead, the vars twin of EACCES
  * on a create into hidden path space.
  */
+/**
+ * The `-i` coercion: evaluate the incoming text as arithmetic.
+ *
+ * Reads resolve against the visible env, so `n=x+1` sees `x`; an
+ * unresolvable name is 0 (`n=abc` stores `0`), which is the arithmetic
+ * rule, not a refusal. A malformed expression throws ArithError with the
+ * offending text led, which is how every caller voices it (`bash: 1+:
+ * syntax error: operand expected`), so it is spelled once here rather
+ * than at each of the sites that catch it. Scalars only: an element
+ * reference in the text (`n=a[1]+1`) is not resolved here, because the
+ * element resolver lives above the door and importing it would close a
+ * cycle; that spelling stays a syntax error, which bash also reports for
+ * the unresolvable case.
+ */
+function integerText(session: Session, text: string): string {
+  try {
+    return evaluateArith(text, visibleEnv(session)).value.toString()
+  } catch (err) {
+    if (err instanceof ArithError) throw new ArithError(`${text}: ${err.message}`)
+    throw err
+  }
+}
+
 export function ensureVarVisible(session: Session, name: string): void {
   if (varHidden(session.hiddenVars, name)) {
     throw new PolicyDenied(`${name}: permission denied`, name)
@@ -230,7 +255,16 @@ async function setVar(
   // container it was not landing in; one record cannot disagree with
   // itself that way.
   const existing = sessionEntry(session.vars, name)
-  let stored = existing === undefined ? makeVar(value) : withValue(existing, value)
+  // The value-shaping attributes (`-i -l -u`) apply here, at the write,
+  // which is where bash applies them: `declare -l s; s=ABC` stores `abc`,
+  // so every reader agrees without per-read work. `-i` evaluates against
+  // the visible env, and a bad expression throws the arithmetic error
+  // as bash does.
+  const shaped =
+    existing !== undefined && existing.attrs.size > 0
+      ? coerceValue(value, existing.attrs, (text) => integerText(session, text))
+      : value
+  let stored = existing === undefined ? makeVar(shaped) : withValue(existing, shaped)
   // `set -a` marks every name assigned *while it is on*, which is why
   // it is read here at write time rather than applied to the session in
   // bulk when the option flips: `B=1; set -a; C=2; set +a; D=3` exports

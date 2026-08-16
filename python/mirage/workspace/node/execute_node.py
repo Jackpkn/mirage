@@ -98,6 +98,12 @@ async def _assign_var(view: SessionView, key: str, value: ShellValue) -> None:
     except PolicyDenied as exc:
         err = f"{exc.strerror}\n".encode()
         raise ExitSignal(1, stderr=err, contained_code=1) from exc
+    except ArithError as exc:
+        # The `-i` coercion refused the text. GNU aborts the line the
+        # way a bad subscript does, voicing the evaluator's own message
+        # after the offending value: `bash: 1+: syntax error: ...`.
+        err = f"bash: {exc}\n".encode()
+        raise ExitSignal(1, stderr=err, contained_code=1) from exc
 
 
 async def _eval_cfor_expr(
@@ -377,6 +383,182 @@ def _merge_conversion_errors(
                       cache=io.cache)
     new_node = ExecutionNode(command=node.command, exit_code=1, stderr=merged)
     return stream, new_io, new_node
+
+
+# Every letter GNU's `declare` accepts, so a typo refuses with the usage
+# line instead of being silently dropped. `-a`/`-A` are kinds, not
+# attributes, and are handled by the array branch; `-p`/`-f`/`-F`/`-g`
+# /`-I` are modes the handlers read. `-n` is accepted and stored, but
+# aliasing (reads and writes through the reference) is not wired: it
+# is a separate seam through every expansion site, so a name carrying
+# it declares and prints, and nothing more, rather than a partial
+# alias that works in some spellings and not others.
+_DECLARE_LETTERS = frozenset("aAfFgiIlnprtux")
+_DECLARE_USAGE = (
+    "declare: usage: declare [-aAfFgiIlnrtux] [name[=value] ...] "
+    "or declare -p [-aAfFilnrtux] [name ...]")
+# The stored attributes a `-letter` / `+letter` toggles.
+_ATTR_LETTERS = {
+    "i": VarAttr.INTEGER,
+    "l": VarAttr.LOWER,
+    "u": VarAttr.UPPER,
+    "n": VarAttr.NAMEREF,
+    "t": VarAttr.TRACE,
+    "x": VarAttr.EXPORT,
+    "r": VarAttr.READONLY,
+}
+
+
+def _declare_option_refusal(
+    cmd: str,
+    flag_chars: set[str],
+    plus_chars: set[str],
+    session: Session,
+) -> tuple[Any, IOResult, ExecutionNode] | None:
+    """The refusal a `declare` family option cluster earns, if any.
+
+    An unknown letter is GNU's `invalid option` plus the usage line,
+    exit 2, and it wins over every other check because bash refuses
+    the cluster before it looks at a single operand.
+
+    Args:
+        cmd (str): the builtin's own name for the diagnostic.
+        flag_chars (set[str]): the `-` letters, `--` excluded.
+        plus_chars (set[str]): the `+` letters.
+        session (Session): shell session state (unused today, kept so
+            a later check that reads it does not change the signature).
+    """
+    bad = next((c for c in sorted(flag_chars | plus_chars)
+                if c not in _DECLARE_LETTERS), None)
+    if bad is None:
+        return None
+    sign = "-" if bad in flag_chars else "+"
+    err = (f"bash: {cmd}: {sign}{bad}: invalid option\n"
+           f"{_DECLARE_USAGE}\n").encode()
+    return None, IOResult(exit_code=2, stderr=err), ExecutionNode(command=cmd,
+                                                                  exit_code=2,
+                                                                  stderr=err)
+
+
+async def _plus_refusals(
+    cmd: str,
+    session: Session,
+    view: SessionView,
+    plus_chars: set[str],
+    assignments: list[str],
+    staged: list[tuple[str, bool, list[str]]] | None,
+) -> tuple[Any, IOResult, ExecutionNode] | None:
+    """The per-name refusals a `+letter` earns after the operands are
+    known.
+
+    Two letters cannot be taken off. `+r` on a readonly name is
+    `declare: R: readonly variable`, exit 1, and the name stays frozen.
+    `+a` / `+A` on an array is `cannot destroy array variables in this
+    way`, exit 1, since the kind is what the value is, not a mark. Both
+    are pinned on 5.2.37 and neither stops the other operands from
+    declaring; the first refusal is what the builtin reports.
+
+    Args:
+        cmd (str): the builtin's own name for the diagnostic.
+        session (Session): shell session state.
+        view (SessionView): the session plane's gated door.
+        plus_chars (set[str]): the `+` letters.
+        assignments (list[str]): `NAME` / `NAME=value` operands.
+        staged (list[tuple[str, bool, list[str]]] | None): staged array
+            literals from the same declaration.
+    """
+    if not (plus_chars & {"r", "a", "A"}):
+        return None
+    names = [a.partition("=")[0] for a in assignments]
+    names += [name for name, _, _ in staged or []]
+    for name in names:
+        if "r" in plus_chars and view.is_readonly(name):
+            err = f"bash: {cmd}: {name}: readonly variable\n".encode()
+            return None, IOResult(exit_code=1,
+                                  stderr=err), ExecutionNode(command=cmd,
+                                                             exit_code=1,
+                                                             stderr=err)
+        if (("a" in plus_chars and name in session.arrays)
+                or ("A" in plus_chars and name in session.assocs)):
+            err = (f"bash: {cmd}: {name}: cannot destroy array variables "
+                   "in this way\n").encode()
+            return None, IOResult(exit_code=1,
+                                  stderr=err), ExecutionNode(command=cmd,
+                                                             exit_code=1,
+                                                             stderr=err)
+    return None
+
+
+async def _stamp_attrs(
+    session: Session,
+    view: SessionView,
+    flag_chars: set[str],
+    plus_chars: set[str],
+    assignments: list[str],
+    staged: list[tuple[str, bool, list[str]]] | None,
+    stored: list[str],
+) -> tuple[Any, IOResult, ExecutionNode] | None:
+    """Apply every `-attr` / `+attr` letter to the names a declaration
+    stored, on top of the export stamp.
+
+    The letters that shape a value (`-i -l -u`) are stored as
+    attributes and applied by the door on every *later* write, which is
+    GNU's rule: `v=MiXeD; declare -l v` keeps `MiXeD`, and the next
+    `v=ABC` stores `abc`. So this stamps and never rewrites. `-l` and
+    `-u` are exclusive: setting one clears the other, and a cluster
+    naming both (`-lu`, `-ul`) sets neither, both pinned on 5.2.37.
+    A `+` letter clears; `+r` is refused by the door as a readonly write
+    would be, in the builtin's voice.
+
+    Args:
+        session (Session): shell session state.
+        view (SessionView): the session plane's gated door.
+        flag_chars (set[str]): the `-` letters.
+        plus_chars (set[str]): the `+` letters.
+        assignments (list[str]): `NAME` / `NAME=value` operands.
+        staged (list[tuple[str, bool, list[str]]] | None): staged array
+            literals from the same declaration.
+        stored (list[str]): the names the handler actually stored.
+    """
+    refused = await _stamp_export(session, view, flag_chars, assignments,
+                                  staged, stored)
+    if refused is not None:
+        return refused
+    on_attrs = [
+        _ATTR_LETTERS[c] for c in "ilunt"
+        if c in flag_chars and c not in plus_chars
+    ]
+    if "l" in flag_chars and "u" in flag_chars:
+        on_attrs = [
+            a for a in on_attrs if a not in (VarAttr.LOWER, VarAttr.UPPER)
+        ]
+    # `+r` is refused earlier on a readonly name and a no-op otherwise,
+    # so it is not an off toggle; every other stored letter clears.
+    off_attrs = [_ATTR_LETTERS[c] for c in "iluntx" if c in plus_chars]
+    if not on_attrs and not off_attrs:
+        return None
+    # Through the gated mark door for every name, covered or not: the
+    # handler already cleared the gate for these names, so this is one
+    # redundant policy call per attribute, and it keeps this stamp out
+    # of the ungated-write allowlist that `set_attr` sites must justify.
+    try:
+        for name in stored:
+            for attr in on_attrs:
+                await view.mark(name, attr, True)
+                # `-l` displaces `-u` and vice versa; the record keeps one.
+                if attr == VarAttr.LOWER:
+                    await view.mark(name, VarAttr.UPPER, False)
+                elif attr == VarAttr.UPPER:
+                    await view.mark(name, VarAttr.LOWER, False)
+            for attr in off_attrs:
+                await view.mark(name, attr, False)
+    except PolicyDenied as exc:
+        err = f"{exc.strerror}\n".encode()
+        return None, IOResult(exit_code=1,
+                              stderr=err), ExecutionNode(command="declare",
+                                                         exit_code=1,
+                                                         stderr=err)
+    return None
 
 
 async def _stamp_export(
@@ -816,6 +998,7 @@ async def execute_node(
         # option letter the way bash does.
         flag_words: list[str] = []
         flag_chars: set[str] = set()
+        plus_chars: set[str] = set()
         opts_done = False
         for child in node.named_children:
             if child.type == NT.VARIABLE_ASSIGNMENT:
@@ -866,10 +1049,30 @@ async def execute_node(
                         opts_done = True
                     else:
                         flag_chars.update(expanded[1:])
+                elif (not opts_done and expanded.startswith("+")
+                      and len(expanded) > 1
+                      and keyword in (NT.LOCAL, "declare", "typeset")):
+                    # `+attr` turns an attribute off. Only the declare
+                    # family reads it: `export +x` and `readonly +r` are
+                    # `not a valid identifier` in GNU, so for those two
+                    # the word falls through as an operand and refuses
+                    # there.
+                    plus_chars.update(expanded[1:])
                 else:
                     assignments.append(expanded)
-        is_readonly = keyword == "readonly" or "r" in flag_chars
         cmd_word = "local" if keyword == NT.LOCAL else str(keyword)
+        if keyword in (NT.LOCAL, "declare", "typeset"):
+            refused = _declare_option_refusal(cmd_word, flag_chars, plus_chars,
+                                              session)
+            if refused is not None:
+                return refused
+        is_readonly = keyword == "readonly" or "r" in flag_chars
+        # `-l` and `-u` cannot both hold; a cluster naming both sets
+        # neither (pinned: `declare -lu s=aBc` prints `declare -- s`).
+        shaping = frozenset(_ATTR_LETTERS[c] for c in "ilu"
+                            if c in flag_chars and c not in plus_chars)
+        if VarAttr.LOWER in shaping and VarAttr.UPPER in shaping:
+            shaping = shaping - {VarAttr.LOWER, VarAttr.UPPER}
         conversion_errors: list[str] = []
         if "A" in flag_chars or "a" in flag_chars:
             # `declare -a NAME` / `declare -A NAME` with no value declare
@@ -929,19 +1132,22 @@ async def execute_node(
                                                decl_view,
                                                arrays=staged,
                                                stored=stored,
-                                               assoc="A" in flag_chars)
+                                               assoc="A" in flag_chars,
+                                               shaping=shaping)
             else:
                 result = await handle_readonly(assignments,
                                                session,
                                                decl_view,
                                                arrays=staged,
                                                stored=stored,
-                                               assoc="A" in flag_chars)
+                                               assoc="A" in flag_chars,
+                                               shaping=shaping)
             # `declare -rx X=1` carries both attributes: GNU prints
             # `declare -rx X="1"`. Readonly answers first, so the export
             # stamp has to land here too, or `-r` silently ate the `-x`.
-            refused = await _stamp_export(session, decl_view, flag_chars,
-                                          assignments, staged, stored)
+            refused = await _stamp_attrs(session, decl_view, flag_chars,
+                                         plus_chars, assignments, staged,
+                                         stored)
             if refused is not None:
                 return refused
             return _merge_conversion_errors(result, conversion_errors)
@@ -951,7 +1157,8 @@ async def execute_node(
         if keyword in (NT.LOCAL, "declare", "typeset"):
             # `-p` prints rather than declares, so it is answered before
             # the assignment path runs at all.
-            if "p" in flag_chars and keyword in ("declare", "typeset"):
+            if (("p" in flag_chars or "p" in plus_chars)
+                    and keyword in ("declare", "typeset")):
                 return await handle_declare_print(assignments, session)
             decl_view = session_view(session, namespace.registry.policies)
             stored = []
@@ -964,9 +1171,16 @@ async def execute_node(
                 # themselves in a diagnostic rather than say `local`.
                 cmd=cmd_word,
                 stored=stored,
-                assoc="A" in flag_chars)
-            refused = await _stamp_export(session, decl_view, flag_chars,
-                                          assignments, staged, stored)
+                assoc="A" in flag_chars,
+                shaping=shaping)
+            plus_refused = await _plus_refusals(cmd_word, session, decl_view,
+                                                plus_chars, assignments,
+                                                staged)
+            if plus_refused is not None:
+                return plus_refused
+            refused = await _stamp_attrs(session, decl_view, flag_chars,
+                                         plus_chars, assignments, staged,
+                                         stored)
             if refused is not None:
                 return refused
             return _merge_conversion_errors(result, conversion_errors)
@@ -1166,7 +1380,14 @@ async def execute_node(
                       (array_get(new_arr, 0) + val) if append else val)
             await _assign_var(view, key, new_arr)
         else:
-            new_val = session.env.get(key, "") + val if append else val
+            held_var = session.vars.get(key)
+            if (append and held_var is not None
+                    and VarAttr.INTEGER in held_var.attrs):
+                # `n+=3` on an integer name adds: the door evaluates
+                # `old + new`, so `declare -i n=5; n+=3` stores 8, not 53.
+                new_val = f"{session.env.get(key, '0')} + ({val})"
+            else:
+                new_val = session.env.get(key, "") + val if append else val
             await _assign_var(view, key, new_val)
         # Reassigning OPTIND (even to its current value) restarts the
         # getopts scan, matching bash's internal char pointer.
