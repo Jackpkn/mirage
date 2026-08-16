@@ -1468,6 +1468,63 @@ async function handle(
     return { status: 200, json: pageOf(rows.map(blockJson), q.get('start_cursor'), size) }
   }
 
+  // Retrieve one block. The children route was here and this one was not,
+  // which is a gap only a client that walks *to* a block notices:
+  // @notionhq/notion-mcp-server reads an inline database by asking for the
+  // block whose id it is, and got a 404 saying the object did not exist. A
+  // database and a page both answer, because in Notion the child_database /
+  // child_page block and the thing it points at share an id; a trashed row
+  // still answers with the flag set, the way retrieve serves a trashed page
+  // and DELETE reports the block it just trashed.
+  if (method === 'GET' && parts.length === 3 && parts[1] === 'blocks') {
+    const id = parts[2] ?? ''
+    const block = (await db.notionBlock.findFirst({
+      where: { workspaceId: ws, id },
+    })) as BlockRow | null
+    if (block !== null) {
+      return {
+        status: 200,
+        json: { ...blockJson(block), archived: block.inTrash, in_trash: block.inTrash },
+      }
+    }
+    const database = (await db.notionDatabase.findFirst({
+      where: { workspaceId: ws, id },
+    })) as DatabaseRow | null
+    if (database !== null) {
+      return {
+        status: 200,
+        json: {
+          object: 'block',
+          id: database.id,
+          type: 'child_database',
+          has_children: false,
+          child_database: { title: database.titleText },
+          archived: database.inTrash,
+          in_trash: database.inTrash,
+        },
+      }
+    }
+    const page = (await db.notionPage.findFirst({
+      where: { workspaceId: ws, id },
+    })) as PageRow | null
+    if (page !== null) {
+      const kids = await childrenOf(db, ws, id)
+      return {
+        status: 200,
+        json: {
+          object: 'block',
+          id: page.id,
+          type: 'child_page',
+          has_children: kids.length > 0,
+          child_page: { title: page.titleText },
+          archived: page.inTrash,
+          in_trash: page.inTrash,
+        },
+      }
+    }
+    return notFound('block', id)
+  }
+
   if (method === 'POST' && parts.length === 2 && parts[1] === 'search') {
     const results = await searchResults(db, ws, body, apiVersion(req))
     const size = intOr(body.page_size, MAX_PAGE_SIZE)
