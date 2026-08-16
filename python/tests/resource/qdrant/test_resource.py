@@ -34,7 +34,7 @@ def test_resource_registers_commands():
 @pytest.mark.asyncio
 async def test_resource_in_registry():
     assert "qdrant" in REGISTRY
-    res = await build_resource("qdrant", {"collection": "docs"})
+    res = build_resource("qdrant", {"collection": "docs"})
     assert res.name == "qdrant"
 
 

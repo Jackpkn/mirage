@@ -22,6 +22,7 @@ from mirage.commands.builtin.github.io import IO, resolve_glob
 from mirage.commands.config import CommandOpts
 from mirage.commands.registry import command
 from mirage.commands.spec import SPECS
+from mirage.core.github.tree import ensure_tree
 from mirage.io.types import ByteSource, IOResult
 from mirage.provision.types import ProvisionResult
 from mirage.types import PathSpec
@@ -76,6 +77,9 @@ async def _stat(accessor: GitHubAccessor, index: IndexCacheStore,
 @command("du", resource="github", spec=SPECS["du"], provision=du_provision)
 async def du(accessor: GitHubAccessor, paths: list[PathSpec], texts: list[str],
              opts: CommandOpts) -> tuple[ByteSource | None, IOResult]:
+    # `_subtree` reads accessor.tree directly rather than the index, so
+    # the tree has to be hydrated first; the mount is built without it.
+    await ensure_tree(accessor, opts.index, opts.mount_prefix)
     return await du_generic(paths, list(texts), opts,
                             partial(_resolve, accessor, opts.index),
                             partial(_stat, accessor, opts.index),

@@ -58,7 +58,7 @@ def test_state_does_not_leak_secrets():
 
 @pytest.mark.asyncio
 async def test_registry_builds_dropbox():
-    resource = await build_resource(
+    resource = build_resource(
         "dropbox", {
             "client_id": "c",
             "client_secret": "s",

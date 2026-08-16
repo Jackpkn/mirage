@@ -127,13 +127,12 @@ def mock_github_api(monkeypatch):
             results = [r for r in results if r.path.startswith(path_filter)]
         return results
 
-    monkeypatch.setattr("mirage.resource.github.github.fetch_default_branch",
+    # Both are patched in the module that fetches, because the mount is
+    # built without touching the network and hydrates on first use:
+    # `ensure_tree` and `refill_index` call fetch_tree in tree.py, and
+    # `ensure_default_branch` calls fetch_default_branch in repo.py.
+    monkeypatch.setattr("mirage.core.github.repo.fetch_default_branch",
                         _fetch_default_branch)
-    monkeypatch.setattr("mirage.resource.github.github.fetch_tree",
-                        _fetch_tree)
-    # refill_index reads the name in its own module, and an empty index is
-    # a refill trigger now, so leaving this one real let a test reach the
-    # live API.
     monkeypatch.setattr("mirage.core.github.tree.fetch_tree", _fetch_tree)
     monkeypatch.setattr("mirage.core.github.read.read_bytes", _read_bytes)
     monkeypatch.setattr("mirage.core.github.search.search_code", _search_code)

@@ -51,7 +51,7 @@ def test_resource_registers_commands():
 @pytest.mark.asyncio
 async def test_resource_in_registry():
     assert "lancedb" in REGISTRY
-    res = await build_resource("lancedb", {"uri": "/tmp/db"})
+    res = build_resource("lancedb", {"uri": "/tmp/db"})
     assert res.name == "lancedb"
 
 

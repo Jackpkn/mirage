@@ -13,7 +13,6 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import importlib.metadata
-import inspect
 import logging
 from typing import TYPE_CHECKING, Any, NamedTuple
 
@@ -259,35 +258,8 @@ def resolve_class(ref: str | type) -> type:
     return ref if isinstance(ref, type) else load_backend_class(ref)
 
 
-async def _instantiate(resource_cls: type, *args: Any,
-                       **kwargs: Any) -> "BaseResource":
-    """Build one resource, awaiting its factory when it has one.
-
-    :func:`register_resource` and the ``mirage.resources`` entry point
-    both accept any class, not only :class:`BaseResource` subclasses, so
-    the async ``build`` factory is not guaranteed to exist. A class
-    without one is constructed directly — which is how it has always
-    been built, and a plain constructor has nothing to await anyway.
-    The coroutine check also keeps a third-party class that happens to
-    carry a synchronous ``build`` attribute out of the await path.
-
-    Args:
-        resource_cls (type): the class to instantiate.
-        *args (Any): forwarded to ``build`` or the constructor.
-        **kwargs (Any): forwarded to ``build`` or the constructor.
-
-    Returns:
-        BaseResource: the new instance.
-    """
-    factory = getattr(resource_cls, "build", None)
-    if not inspect.iscoroutinefunction(factory):
-        return resource_cls(*args, **kwargs)
-    return await factory(*args, **kwargs)
-
-
-async def build_resource(name: str,
-                         config: dict[str, Any] | None = None
-                         ) -> "BaseResource":
+def build_resource(name: str,
+                   config: dict[str, Any] | None = None) -> "BaseResource":
     """Construct a resource instance by its registry name.
 
     Resolves resource and config classes lazily via importlib, so
@@ -296,10 +268,25 @@ async def build_resource(name: str,
     order: builtin ``REGISTRY``, then :func:`register_resource` names,
     then ``mirage.resources`` entry points from installed packages.
 
-    Async because construction is: backends whose setup needs I/O do it
-    in :meth:`BaseResource.create`, which this awaits. The alternative
-    is a blocking client inside ``__init__``, which stalls the caller's
-    event loop. Mirrors the TypeScript ``buildResource``.
+    **Synchronous on purpose. Do not make this async.** It is the door
+    every caller who describes a mount as data comes through: the YAML
+    loader (:meth:`mirage.config.WorkspaceConfig.to_workspace_kwargs`),
+    the daemon's create/load routes, ``clone``, and every embedder
+    reaching it through ``mirage.sdk``. 0.0.5 made it async to let one
+    backend fetch over the network at build time; that broke every
+    out-of-tree caller, and because nothing validated the return value
+    the failure surfaced as ``'coroutine' object has no attribute
+    'set_index'`` two frames away in ``install_mounts``. Reverted in
+    0.0.6.
+
+    A backend whose setup needs I/O hydrates lazily on first use, the
+    way ``github`` does through ``ensure_tree`` /
+    ``ensure_default_branch``, and never from ``__init__``, which cannot
+    await and so would have to block the caller's event loop. This is a
+    deliberate divergence from the TypeScript ``buildResource``, which
+    stays ``Promise<Resource>`` because two of its backends
+    (``github``, ``databricks_volume``) construct through
+    ``static async create``.
 
     Args:
         name (str): registry key such as ``"s3"`` or ``"ram"``.
@@ -327,6 +314,6 @@ async def build_resource(name: str,
     if config_ref is None:
         config_ref = getattr(resource_cls, "CONFIG_CLS", None)
     if config_ref is None:
-        return await _instantiate(resource_cls, **cfg_dict)
+        return resource_cls(**cfg_dict)
     config_cls = resolve_class(config_ref)
-    return await _instantiate(resource_cls, config_cls(**cfg_dict))
+    return resource_cls(config_cls(**cfg_dict))

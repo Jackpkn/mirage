@@ -67,7 +67,7 @@ async def test_load_full_yaml_with_env_interpolation():
     assert cfg.kernel_mounts() == {
         "/": (MountBackend.FUSE, "/tmp/mirage-fuse-full")
     }
-    assert "kernel_mounts" not in await cfg.to_workspace_kwargs()
+    assert "kernel_mounts" not in cfg.to_workspace_kwargs()
 
 
 def test_missing_env_var_raises_with_full_list():
@@ -85,7 +85,7 @@ def test_redis_cache_discriminated_union():
 @pytest.mark.asyncio
 async def test_to_workspace_kwargs_yields_constructible_workspace():
     cfg = load_config(FIXTURES / "minimal.yaml")
-    kwargs = await cfg.to_workspace_kwargs()
+    kwargs = cfg.to_workspace_kwargs()
     assert "/" in kwargs["resources"]
     mount = kwargs["resources"]["/"]
     assert isinstance(mount.resource, RAMResource)
@@ -97,7 +97,7 @@ async def test_to_workspace_kwargs_yields_constructible_workspace():
 @pytest.mark.asyncio
 async def test_to_workspace_kwargs_emits_redis_cache_config():
     cfg = load_config(FIXTURES / "redis_cache.yaml")
-    kwargs = await cfg.to_workspace_kwargs()
+    kwargs = cfg.to_workspace_kwargs()
     assert isinstance(kwargs["cache"], RedisCacheConfig)
     assert kwargs["cache"].url == "redis://localhost:6379/3"
 
@@ -115,7 +115,7 @@ async def test_to_workspace_kwargs_emits_ram_cache_config():
             }
         },
     })
-    kwargs = await cfg.to_workspace_kwargs()
+    kwargs = cfg.to_workspace_kwargs()
     assert isinstance(kwargs["cache"], CacheConfig)
     assert not isinstance(kwargs["cache"], RedisCacheConfig)
     assert kwargs["cache"].limit == "128MB"
@@ -137,7 +137,7 @@ async def test_store_redis_block_builds_redis_provider():
     })
     assert cfg.store is not None
     assert cfg.store.key_prefix == "test_store:"
-    kwargs = await cfg.to_workspace_kwargs()
+    kwargs = cfg.to_workspace_kwargs()
     assert isinstance(kwargs["store"], RedisWorkspaceStateStore)
     assert isinstance(kwargs["store"].namespace("ws1"), RedisNamespaceStore)
 
@@ -154,7 +154,7 @@ async def test_store_ram_block_builds_ram_provider():
             }
         },
     })
-    kwargs = await cfg.to_workspace_kwargs()
+    kwargs = cfg.to_workspace_kwargs()
     assert isinstance(kwargs["store"], RAMWorkspaceStateStore)
     assert kwargs["owns_store"] is True
     assert isinstance(kwargs["store"].namespace("ws1"), RAMNamespaceStore)
@@ -175,7 +175,7 @@ async def test_store_disk_block_builds_disk_provider(tmp_path):
     })
     assert cfg.store is not None
     assert cfg.store.root == str(tmp_path)
-    kwargs = await cfg.to_workspace_kwargs()
+    kwargs = cfg.to_workspace_kwargs()
     assert isinstance(kwargs["store"], DiskWorkspaceStateStore)
     assert kwargs["owns_store"] is True
     assert isinstance(kwargs["store"].namespace("ws1"), DiskNamespaceStore)
@@ -198,7 +198,7 @@ async def test_store_disk_group_override(tmp_path):
         },
     })
     assert isinstance(cfg.store.workspace, DiskStoreBlock)
-    store = (await cfg.to_workspace_kwargs())["store"]
+    store = cfg.to_workspace_kwargs()["store"]
     assert isinstance(store, RAMWorkspaceStateStore)
     assert isinstance(store.sessions("ws1"), DiskSessionStore)
 
@@ -221,7 +221,7 @@ async def test_store_group_override_redirects_one_plane():
         },
     })
     assert isinstance(cfg.store.observer, RedisStoreBlock)
-    store = (await cfg.to_workspace_kwargs())["store"]
+    store = cfg.to_workspace_kwargs()["store"]
     assert isinstance(store, RAMWorkspaceStateStore)
     assert isinstance(store.namespace("ws1"), RAMNamespaceStore)
     assert type(store.observer("ws1")).__name__ == "RedisObserverStore"
@@ -246,7 +246,7 @@ async def test_store_s3_workspace_group_builds_s3_provider():
         },
     })
     assert isinstance(cfg.store.workspace, S3StoreBlock)
-    store = (await cfg.to_workspace_kwargs())["store"]
+    store = cfg.to_workspace_kwargs()["store"]
     assert isinstance(store, RAMWorkspaceStateStore)
     assert isinstance(store.namespace("ws1"), RAMNamespaceStore)
     assert type(store.sessions("ws1")).__name__ == "S3SessionStore"
@@ -262,7 +262,7 @@ async def test_workspace_id_passes_through():
             }
         },
     })
-    assert (await cfg.to_workspace_kwargs())["workspace_id"] == "agent-ws-7"
+    assert cfg.to_workspace_kwargs()["workspace_id"] == "agent-ws-7"
 
 
 def test_store_block_rejects_unknown_field():
@@ -300,7 +300,7 @@ def test_unknown_mount_field_rejected():
 @pytest.mark.asyncio
 async def test_workspace_built_from_config_executes_command():
     cfg = load_config(FIXTURES / "minimal.yaml")
-    kwargs = await cfg.to_workspace_kwargs()
+    kwargs = cfg.to_workspace_kwargs()
     ws = Workspace(**kwargs)
     result = await ws.execute("echo hello")
     assert result.exit_code == 0
@@ -338,7 +338,7 @@ async def test_resource_built_via_registry_has_correct_type():
             },
         },
     })
-    kwargs = await cfg.to_workspace_kwargs()
+    kwargs = cfg.to_workspace_kwargs()
     mount = kwargs["resources"]["/s3"]
     assert isinstance(mount.resource, S3Resource)
     assert mount.mode == MountMode.READ
@@ -360,7 +360,7 @@ runtimes:
   - vfs
 """)
     cfg = load_config(cfg_file)
-    kwargs = await cfg.to_workspace_kwargs()
+    kwargs = cfg.to_workspace_kwargs()
     assert kwargs["policy"] == ScriptSource("'local'")
     entry = kwargs["runtimes"][0]
     assert entry.script == ScriptSource("ctx['command'] == 'python3'")
@@ -377,7 +377,7 @@ mounts:
 policy: policy.js
 """)
     cfg = load_config(cfg_file)
-    kwargs = await cfg.to_workspace_kwargs()
+    kwargs = cfg.to_workspace_kwargs()
     assert kwargs["policy"] == ScriptSource("null", language="js")
     assert kwargs["policy"].language == "js"
 
@@ -397,7 +397,7 @@ guards:
     commands: [python3]
 """)
     cfg = load_config(cfg_file)
-    kwargs = await cfg.to_workspace_kwargs()
+    kwargs = cfg.to_workspace_kwargs()
     assert kwargs["guards"] == [
         GuardSpec(reason="production data is protected",
                   commands=("rm", "mv"),
@@ -426,7 +426,7 @@ async def test_clis_section_parses_and_maps_to_kwargs():
             },
         },
     })
-    kwargs = await cfg.to_workspace_kwargs()
+    kwargs = cfg.to_workspace_kwargs()
     assert kwargs["clis"] == {
         "sl": ("slack", {
             "token": "x"
@@ -451,7 +451,7 @@ clis:
       page_size: 20
 """)
     cfg = load_config(cfg_file)
-    kwargs = await cfg.to_workspace_kwargs()
+    kwargs = cfg.to_workspace_kwargs()
     spec, config = kwargs["clis"]["pager"]
     assert spec.name == "pager"
     assert spec.script == ScriptSource("print('page')")
@@ -472,7 +472,7 @@ clis:
     script: pager.mjs
 """)
     cfg = load_config(cfg_file)
-    kwargs = await cfg.to_workspace_kwargs()
+    kwargs = cfg.to_workspace_kwargs()
     spec, _ = kwargs["clis"]["pager"]
     # .mjs also stamps module: the path is gone once the source is
     # embedded, so the engine could not otherwise know to run it as an
@@ -494,8 +494,7 @@ clis:
   pager:
     script: pager.js
 """)
-    spec, _ = (await
-               load_config(cfg_file).to_workspace_kwargs())["clis"]["pager"]
+    spec, _ = load_config(cfg_file).to_workspace_kwargs()["clis"]["pager"]
     assert spec.script.language == "js"
     assert spec.script.module is False
 
@@ -521,7 +520,7 @@ clis:
 """)
     monkeypatch.chdir(tmp_path.parent)
     cfg = load_config(cfg_file)
-    ref, _ = (await cfg.to_workspace_kwargs())["clis"]["tool"]
+    ref, _ = cfg.to_workspace_kwargs()["clis"]["tool"]
     assert ref == f"{tmp_path / 'tool.py'}:TREE"
 
 
@@ -539,7 +538,7 @@ clis:
     cli: mypkg.clis:TREE
 """)
     cfg = load_config(cfg_file)
-    ref, _ = (await cfg.to_workspace_kwargs())["clis"]["tool"]
+    ref, _ = cfg.to_workspace_kwargs()["clis"]["tool"]
     assert ref == "mypkg.clis:TREE"
 
 
@@ -555,7 +554,7 @@ clis:
     cli: slack
 """)
     cfg = load_config(cfg_file)
-    ref, _ = (await cfg.to_workspace_kwargs())["clis"]["sl"]
+    ref, _ = cfg.to_workspace_kwargs()["clis"]["sl"]
     assert ref == "slack"
 
 
@@ -572,7 +571,7 @@ clis:
 """)
     cfg = load_config(cfg_file)
     with pytest.raises(FileNotFoundError):
-        await cfg.to_workspace_kwargs()
+        cfg.to_workspace_kwargs()
 
 
 def test_clis_entry_takes_exactly_one_of_cli_or_script():
@@ -660,7 +659,7 @@ async def test_console_redis_block_builds_factory():
             }
         },
     })
-    kwargs = await cfg.to_workspace_kwargs()
+    kwargs = cfg.to_workspace_kwargs()
     factory = kwargs["console_factory"]
     first = factory(1)
     second = factory(1)
@@ -688,7 +687,7 @@ async def test_console_ram_block_emits_no_factory():
             }
         },
     })
-    assert "console_factory" not in await cfg.to_workspace_kwargs()
+    assert "console_factory" not in cfg.to_workspace_kwargs()
 
 
 def test_shared_rejection_fixture_is_refused():

@@ -44,8 +44,7 @@ async def test_resource_in_registry():
     from mirage.resource.registry import REGISTRY, build_resource
 
     assert "postgres" in REGISTRY
-    res = await build_resource("postgres",
-                               config={"dsn": "postgres://localhost/db"})
+    res = build_resource("postgres", config={"dsn": "postgres://localhost/db"})
     assert res.name == "postgres"
 
 

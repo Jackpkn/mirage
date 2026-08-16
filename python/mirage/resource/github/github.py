@@ -17,8 +17,6 @@ from typing import Any
 from mirage.accessor.github import GitHubAccessor
 from mirage.core.github.config import GitHubConfig
 from mirage.core.github.readdir import readdir
-from mirage.core.github.repo import fetch_default_branch
-from mirage.core.github.tree import fetch_tree
 from mirage.core.github.tree_entry import TreeEntry
 from mirage.core.github.watch import build_delta_hook
 from mirage.resource.base import BaseResource
@@ -48,31 +46,60 @@ class GitHubResource(BaseResource):
     def __init__(
         self,
         config: GitHubConfig,
-        owner: str,
-        repo: str,
-        ref: str,
-        default_branch: str,
-        tree: dict[str, TreeEntry],
+        owner: str | None = None,
+        repo: str | None = None,
+        ref: str | None = None,
+        default_branch: str | None = None,
+        tree: dict[str, TreeEntry] | None = None,
         truncated: bool = False,
     ) -> None:
-        """Build the mount from a tree that has already been fetched.
+        """Name the repository. Fetch nothing.
 
-        Takes the repo metadata rather than fetching it, so that
-        nothing here touches the network. Use :meth:`create` unless the
-        tree is already in hand.
+        **Do not fetch here, and do not add an async factory in front of
+        this.** A constructor cannot await, so network in one means a
+        blocking client, which stalls whatever event loop the caller is
+        on; the daemon's ``load_workspace`` froze for two GitHub round
+        trips that way. The alternative tried in 0.0.5 was to make
+        :func:`mirage.resource.registry.build_resource` async, which
+        broke every out-of-tree caller for the sake of this one backend.
+        So the tree and the default branch hydrate on first use instead,
+        through ``ensure_tree`` and ``ensure_default_branch``.
+
+        Hydrating lazily also removes a wasted round trip rather than
+        adding one: nothing seeds the index at build time, so the first
+        ``readdir`` ran ``ensure_live_index`` and refetched the whole
+        tree anyway, discarding the one fetched here.
+
+        ``default_branch``, ``tree`` and ``truncated`` stay accepted so a
+        caller holding the answers (a test, a snapshot restore) can skip
+        the hydration; they are not fetched when omitted.
 
         Args:
             config (GitHubConfig): token, base URL and defaults.
-            owner (str): repository owner.
-            repo (str): repository name.
-            ref (str): branch, tag or commit the mount is pinned to.
-            default_branch (str): the repo's default branch, for
-                ``is_default_branch``.
-            tree (dict[str, TreeEntry]): the recursive git tree, keyed
-                by repo-relative path.
+            owner (str | None): repository owner; falls back to
+                ``config.owner``.
+            repo (str | None): repository name; falls back to
+                ``config.repo``.
+            ref (str | None): branch, tag or commit the mount is pinned
+                to; falls back to ``config.ref``.
+            default_branch (str | None): the repo's default branch, for
+                ``is_default_branch``. Fetched on first use when None.
+            tree (dict[str, TreeEntry] | None): the recursive git tree,
+                keyed by repo-relative path. Fetched on first use when
+                None.
             truncated (bool): whether GitHub truncated that tree, in
                 which case readdir falls back to per-directory fetches.
+
+        Raises:
+            ValueError: neither the kwargs nor the config name a repo.
         """
+        owner = owner or config.owner
+        repo = repo or config.repo
+        ref = ref or config.ref
+        if owner is None or repo is None:
+            raise ValueError(
+                "GitHubResource requires owner and repo, either as "
+                "constructor kwargs or in GitHubConfig")
         self.accessor = GitHubAccessor(config,
                                        owner,
                                        repo,
@@ -88,55 +115,6 @@ class GitHubResource(BaseResource):
             self.register(fn)
         for fn in _github_vfs_ops:
             self.register_op(fn)
-
-    @classmethod
-    async def build(
-        cls,
-        config: GitHubConfig,
-        owner: str | None = None,
-        repo: str | None = None,
-        ref: str | None = None,
-    ) -> "GitHubResource":
-        """Fetch the repo's tree, then build the mount around it.
-
-        The two GitHub round trips this needs are why construction is
-        async. They used to run in ``__init__`` over a blocking
-        ``urlopen``, which froze whatever event loop the caller was on —
-        for the daemon that meant every other mount's in-flight I/O and
-        the FUSE queue stalling for the length of a recursive-tree call.
-        Mirrors the TypeScript ``GitHubResource.create``.
-
-        Args:
-            config (GitHubConfig): token, base URL and defaults.
-            owner (str | None): repository owner; falls back to
-                ``config.owner``.
-            repo (str | None): repository name; falls back to
-                ``config.repo``.
-            ref (str | None): branch, tag or commit; falls back to
-                ``config.ref``.
-
-        Returns:
-            GitHubResource: a mount pinned to ``ref``.
-
-        Raises:
-            ValueError: neither the kwargs nor the config name a repo.
-        """
-        owner = owner or config.owner
-        repo = repo or config.repo
-        ref = ref or config.ref
-        if owner is None or repo is None:
-            raise ValueError(
-                "GitHubResource requires owner and repo, either as "
-                "build() kwargs or in GitHubConfig")
-        default_branch = await fetch_default_branch(config, owner, repo)
-        tree, truncated = await fetch_tree(config, owner, repo, ref)
-        return cls(config,
-                   owner,
-                   repo,
-                   ref,
-                   default_branch,
-                   tree,
-                   truncated=truncated)
 
     def delta_hook(self) -> DeltaHook:
         return build_delta_hook(self.accessor)

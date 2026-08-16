@@ -547,13 +547,15 @@ class WorkspaceConfig(BaseModel):
     def _v_cons(cls, v):
         return _coerce_consistency(v)
 
-    async def to_workspace_kwargs(self) -> dict[str, Any]:
+    def to_workspace_kwargs(self) -> dict[str, Any]:
         """Produce kwargs ready to splat into ``Workspace(**kwargs)``.
 
-        Async because building a mount's resource can be: a backend
-        whose setup needs I/O does it in ``BaseResource.build``. Only
-        the resources are awaited — ``Workspace(**kwargs)`` itself stays
-        synchronous. Mirrors the TypeScript ``configToWorkspaceArgs``.
+        Synchronous, and must stay that way: this is the YAML door, and
+        :func:`mirage.resource.registry.build_resource` behind it is the
+        one every embedder calls. A backend needing I/O hydrates lazily
+        instead of moving that cost into construction; see
+        ``build_resource`` for the full rule. Deliberately diverges from
+        the TypeScript ``configToWorkspaceArgs``, which is async.
 
         Returns:
             dict[str, Any]: resource instances, cache config, and
@@ -562,7 +564,7 @@ class WorkspaceConfig(BaseModel):
         """
         resources: dict[str, Mount] = {}
         for prefix, block in self.mounts.items():
-            prov = await build_resource(block.resource, block.config)
+            prov = build_resource(block.resource, block.config)
             mode = block.mode if block.mode is not None else self.mode
             resources[prefix] = Mount(
                 resource=prov,

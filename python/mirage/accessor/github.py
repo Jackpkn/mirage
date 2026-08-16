@@ -12,6 +12,8 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import asyncio
+
 from mirage.accessor.base import Accessor
 from mirage.core.github.tree_entry import TreeEntry
 
@@ -23,14 +25,23 @@ class GitHubAccessor(Accessor):
                  owner,
                  repo,
                  ref,
-                 default_branch,
+                 default_branch: str | None = None,
                  tree: dict[str, TreeEntry] | None = None,
                  truncated=False):
         self.config = config
         self.owner = owner
         self.repo = repo
         self.ref = ref
-        self.default_branch = default_branch
+        # None until hydrated: the mount is constructed without touching
+        # the network, so the repo's default branch is fetched on the
+        # first read that needs it (`ensure_default_branch`).
+        self.default_branch: str | None = default_branch
+        # Guard the two lazy fetches so concurrent first reads make one
+        # request each rather than one per caller. Constructed outside a
+        # running loop on purpose; asyncio.Lock has not bound to a loop
+        # at construction since 3.10.
+        self.tree_lock = asyncio.Lock()
+        self.branch_lock = asyncio.Lock()
         # The recursive git tree, keyed repo-relative with no leading
         # slash, which is this mount's whole listing. find, du and grep's
         # scope counter read it straight, the way TypeScript's always
