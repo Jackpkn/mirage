@@ -17,7 +17,8 @@ import type { CommandFnResult } from '../../../config.ts'
 import type { CLIInvocation } from '../../types.ts'
 import { expand } from '../../../../core/github/placeholder.ts'
 import type { GhConfig } from '../../../../core/github/config.ts'
-import { ghTransport, jsonOut } from './accessor.ts'
+import { jqEval } from '../../../../core/jq/index.ts'
+import { ghTransport, jsonOut, textOut } from './accessor.ts'
 
 /**
  * `-f key=value` is always a string; `-F key=value` reads `true`, `false`,
@@ -38,6 +39,18 @@ function split(pair: string): [string, string] {
   const at = pair.indexOf('=')
   if (at < 0) throw new Error(`expected "key=value", got "${pair}"`)
   return [pair.slice(0, at), pair.slice(at + 1)]
+}
+
+/**
+ * One `--jq` output the way gh renders it, probed against 2.85: a string
+ * prints raw, null prints as an empty line (where jq's own `-r` would
+ * print the word), and every other value prints as compact JSON. Each
+ * output ends its own line.
+ */
+function jqLine(value: unknown): string {
+  if (value === null || value === undefined) return ''
+  if (typeof value === 'string') return value
+  return JSON.stringify(value)
 }
 
 export async function api(inv: CLIInvocation): Promise<CommandFnResult> {
@@ -69,13 +82,22 @@ export async function api(inv: CLIInvocation): Promise<CommandFnResult> {
   const empty = Object.keys(fields).length === 0
   // A GET carries its fields in the query string, everything else in a JSON
   // body; a call with no fields sends neither, so a bare DELETE has no body.
+  let reply: unknown
   if (upper === 'GET') {
     const params: Record<string, string> = {}
     for (const [key, value] of Object.entries(fields)) params[key] = String(value)
-    return jsonOut(await ghTransport(inv.config).request(upper, path, undefined, params), mutated)
+    reply = await ghTransport(inv.config).request(upper, path, undefined, params)
+  } else {
+    reply = await ghTransport(inv.config).request(upper, path, empty ? undefined : fields)
   }
-  return jsonOut(
-    await ghTransport(inv.config).request(upper, path, empty ? undefined : fields),
-    mutated,
-  )
+  // `--jq` filters the response client-side, exactly as real gh does; a
+  // failing request never reaches it. Deliberate divergence: a bad or
+  // failing program is reported in mirage's jq engine's words, not
+  // gojq's, with the same exit code.
+  const program = fl.asStr('jq')
+  if (program !== undefined && program !== '') {
+    const values = await jqEval(reply, program)
+    return textOut(values.map((v) => `${jqLine(v)}\n`).join(''), mutated)
+  }
+  return jsonOut(reply, mutated)
 }

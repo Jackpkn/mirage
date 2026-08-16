@@ -337,6 +337,45 @@
         "stdout": "",
         "stderr": "gh api: Resource not accessible by personal access token\n"
       }
+    },
+    {
+      "id": "gh_api_jq_prints_a_string_raw",
+      "seq": 569027,
+      "targets": [
+        "cli-gh"
+      ],
+      "command": "gh api repos/integ/repo-cli --jq .full_name",
+      "expect": {
+        "exit": 0,
+        "stdout": "integ/repo-cli\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "gh_api_jq_compacts_non_strings_one_per_line",
+      "seq": 569028,
+      "targets": [
+        "cli-gh"
+      ],
+      "command": "gh api repos/integ/repo-cli --jq '{repo: .name}, .default_branch'",
+      "expect": {
+        "exit": 0,
+        "stdout": "{\"repo\":\"repo-cli\"}\nmain\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "gh_api_jq_prints_null_as_an_empty_line",
+      "seq": 569029,
+      "targets": [
+        "cli-gh"
+      ],
+      "command": "gh api repos/integ/repo-cli -q .description",
+      "expect": {
+        "exit": 0,
+        "stdout": "\n",
+        "stderr": ""
+      }
     }
   ]
 }

@@ -103,6 +103,12 @@ export const GH = new CLISpec({
           multiple: true,
           description: 'Add a typed parameter in key=value format',
         }),
+        new Option({
+          short: '-q',
+          long: '--jq',
+          type: 'str',
+          description: 'Query to select values from the response using jq syntax',
+        }),
       ],
     }),
   ],

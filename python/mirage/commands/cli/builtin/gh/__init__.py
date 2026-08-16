@@ -105,6 +105,13 @@ GH = CLISpec(
                     multiple=True,
                     description="Add a typed parameter in key=value format",
                 ),
+                Option(
+                    short="-q",
+                    long="--jq",
+                    type="str",
+                    description="Query to select values from the response "
+                    "using jq syntax",
+                ),
             ),
         ),
     ),

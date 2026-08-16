@@ -12,14 +12,16 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import json
 import re
 
-from mirage.commands.cli.builtin.gh.accessor import json_out
+from mirage.commands.cli.builtin.gh.accessor import json_out, text_out
 from mirage.commands.cli.types import CLIInvocation
 from mirage.commands.spec.types import FlagView
 from mirage.core.github._client import github_request
 from mirage.core.github.config import GhConfig
 from mirage.core.github.placeholder import expand
+from mirage.core.jq import jq_eval
 from mirage.io.types import ByteSource, IOResult
 from mirage.types import JsonValue
 
@@ -49,6 +51,26 @@ def typed(value: str) -> JsonValue:
     if INT_RE.match(value):
         return int(value)
     return value
+
+
+def jq_line(value: JsonValue) -> str:
+    """One `--jq` output the way gh renders it, probed against 2.85.
+
+    A string prints raw, null prints as an empty line (where jq's own
+    `-r` would print the word), and every other value prints as compact
+    JSON. Each output ends its own line.
+
+    Args:
+        value (JsonValue): one value the jq program emitted.
+
+    Returns:
+        str: the line's body, without its newline.
+    """
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
 
 
 def split(pair: str) -> tuple[str, str]:
@@ -110,6 +132,14 @@ async def api(
                                       path,
                                       fields or None,
                                       base_url=inv.config.base_url)
+    # `--jq` filters the response client-side, exactly as real gh does; a
+    # failing request never reaches it. Deliberate divergence: a bad or
+    # failing program is reported in mirage's jq engine's words, not
+    # gojq's, with the same exit code.
+    program = fl.as_str("jq")
+    if program:
+        lines = "".join(f"{jq_line(v)}\n" for v in jq_eval(result, program))
+        return text_out(lines, mutated)
     return json_out(result, mutated)
 
 
