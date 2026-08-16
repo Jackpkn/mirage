@@ -1138,14 +1138,42 @@ async function appendChildren(
   const parentPage = await db.notionPage.findFirst({ where: { workspaceId, id: parentId } })
   const parentBlock = await db.notionBlock.findFirst({ where: { workspaceId, id: parentId } })
   if (parentPage === null && parentBlock === null) return notFound('block', parentId)
-  let at = await db.notionBlock.count({ where: { workspaceId, parentId } })
-  const created: Json[] = []
+  // Validate every child before touching the table: a refused request
+  // must leave no partial insert and no shifted sibling behind.
+  const specs: [string, Json][] = []
   for (const child of children) {
     const spec = asObject(child)
     const type = typeof spec.type === 'string' ? spec.type : ''
     if (type === '' || spec[type] === undefined) {
       return apiError(400, 'validation_error', 'body.children[].type should be defined.')
     }
+    specs.push([type, asObject(spec[type])])
+  }
+  let at = await db.notionBlock.count({ where: { workspaceId, parentId } })
+  let anchorPos: number | null = null
+  const after = typeof body.after === 'string' ? body.after : null
+  if (after !== null) {
+    // `after` inserts the new blocks directly behind an existing child;
+    // later siblings shift down. The live API reports a malformed id and
+    // a well-formed one that is not a child of this parent with the SAME
+    // validation message (probed on 2025-09-03).
+    const anchor = await db.notionBlock.findFirst({ where: { workspaceId, id: after } })
+    if (anchor === null || anchor.parentId !== parentId) {
+      return apiError(
+        400,
+        'validation_error',
+        `body failed validation: body.position.after_block.id should be a valid uuid, instead was \`"${after}"\`.`,
+      )
+    }
+    await db.notionBlock.updateMany({
+      where: { workspaceId, parentId, position: { gt: anchor.position } },
+      data: { position: { increment: children.length } },
+    })
+    anchorPos = anchor.position
+    at = anchor.position + 1
+  }
+  const created: Json[] = []
+  for (const [type, payload] of specs) {
     const id = mintId(workspaceId, 'b0000000')
     await db.notionBlock.create({
       data: {
@@ -1154,7 +1182,7 @@ async function appendChildren(
         parentId,
         position: at++,
         type,
-        payloadJson: JSON.stringify(normalizeBlockPayload(asObject(spec[type]))),
+        payloadJson: JSON.stringify(normalizeBlockPayload(payload)),
         hasChildren: false,
         createdTime: fx.defaults.created_time,
         lastEditedTime: fx.defaults.last_edited_time,
@@ -1171,9 +1199,20 @@ async function appendChildren(
       data: { hasChildren: true },
     })
   }
+  // With `after`, the live API answers with the inserted blocks AND every
+  // sibling behind them, in order (probed); a plain append returns just
+  // the inserted blocks.
+  let results = created
+  if (anchorPos !== null) {
+    const fromAnchor = await db.notionBlock.findMany({
+      where: { workspaceId, parentId, position: { gt: anchorPos } },
+      orderBy: [{ position: 'asc' }, { id: 'asc' }],
+    })
+    results = fromAnchor.map((row) => blockJson(row as BlockRow))
+  }
   return {
     status: 200,
-    json: { object: 'list', results: created, has_more: false, next_cursor: null },
+    json: { object: 'list', results, has_more: false, next_cursor: null },
   }
 }
 

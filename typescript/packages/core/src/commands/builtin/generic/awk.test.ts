@@ -271,3 +271,93 @@ describe('awkGeneric', () => {
     expect(out).toBe('}\n')
   })
 })
+
+describe('awk unsupported constructs fail loud', () => {
+  it('rejects an arithmetic assignment', async () => {
+    await expect(run([], ['{x = y + 1; print x}'], opts({}, ENC.encode('line\n')))).rejects.toThrow(
+      'unsupported construct',
+    )
+  })
+
+  it('rejects a function call in print', async () => {
+    await expect(run([], ['{print toupper($1)}'], opts({}, ENC.encode('line\n')))).rejects.toThrow(
+      "unsupported construct: 'print toupper($1)'",
+    )
+  })
+
+  it('rejects printf', async () => {
+    await expect(run([], ['{printf "%s\\n", $1}'], opts({}, ENC.encode('line\n')))).rejects.toThrow(
+      'unsupported construct',
+    )
+  })
+
+  it('rejects an if statement', async () => {
+    await expect(run([], ['{if ($1) print $1}'], opts({}, ENC.encode('line\n')))).rejects.toThrow(
+      'unsupported construct',
+    )
+  })
+
+  it('rejects a tilde match condition', async () => {
+    await expect(run([], ['$1 ~ /x/ {print}'], opts({}, ENC.encode('x\n')))).rejects.toThrow(
+      'unsupported construct',
+    )
+  })
+
+  it('rejects arithmetic in a condition', async () => {
+    await expect(run([], ['NR % 2 == 0 {print}'], opts({}, ENC.encode('a\nb\n')))).rejects.toThrow(
+      'unsupported construct',
+    )
+  })
+})
+
+describe('awk assignments and OFS', () => {
+  it('executes a simple assignment', async () => {
+    const [out] = await run([], ['{x = 1; print x}'], opts({}, ENC.encode('line\n')))
+    expect(out).toBe('1\n')
+  })
+
+  it('assigns from a field', async () => {
+    const [out] = await run([], ['{x = $2; print x}'], opts({}, ENC.encode('a b\n')))
+    expect(out).toBe('b\n')
+  })
+
+  it('joins print arguments with OFS', async () => {
+    const [out] = await run(
+      [],
+      ['BEGIN{OFS=":"} {print $1, $2}'],
+      opts({}, ENC.encode('name age\nalice 30\n')),
+    )
+    expect(out).toBe('name:age\nalice:30\n')
+  })
+})
+
+describe('awk compound statements', () => {
+  const INPUT = ENC.encode('Welcome to x\nInstall it\n')
+
+  it.each([
+    ['{{print $1}}', 'Welcome\nInstall\n'],
+    ['{{{print $1}}}', 'Welcome\nInstall\n'],
+    ['{{print $1}; print $2}', 'Welcome\nto\nInstall\nit\n'],
+    ['{print $1;{print $2}}', 'Welcome\nto\nInstall\nit\n'],
+  ])('runs the body of %s', async (program, expected) => {
+    const [out] = await run([], [program], opts({}, INPUT))
+    expect(out).toBe(expected)
+  })
+
+  it('does not split on a semicolon inside a string', async () => {
+    const [out] = await run([], ['{print "a;b", $1}'], opts({}, ENC.encode('x\n')))
+    expect(out).toBe('a;b x\n')
+  })
+})
+
+describe('awk unset values', () => {
+  it('prints empty for an unset variable', async () => {
+    const [out] = await run([], ['{print foo}'], opts({}, ENC.encode('line\n')))
+    expect(out).toBe('\n')
+  })
+
+  it('prints empty for an out-of-range field', async () => {
+    const [out] = await run([], ['{print $5}'], opts({}, ENC.encode('one two\n')))
+    expect(out).toBe('\n')
+  })
+})

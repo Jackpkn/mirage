@@ -386,7 +386,7 @@
       "command": "awk '{{print $1}}' /knowledge/guides/quickstart.md",
       "expect": {
         "exit": 0,
-        "stdout": "",
+        "stdout": "Welcome\nInstall\nSet\n",
         "stderr": ""
       }
     },

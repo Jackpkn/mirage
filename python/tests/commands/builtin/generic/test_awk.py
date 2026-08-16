@@ -421,3 +421,208 @@ async def test_awk_repeated_program_files_concatenate():
         read_stream=rs,
     )
     assert (await _drain(output)).decode() == "6\n"
+
+
+@pytest.mark.asyncio
+async def test_awk_simple_assignment_executes():
+    rb, rs = _make_backend({})
+    output, _ = await awk(
+        [],
+        ("{x = 1; print x}", ),
+        None,
+        read_bytes=rb,
+        read_stream=rs,
+        stdin=b"line\n",
+    )
+    assert (await _drain(output)).decode() == "1\n"
+
+
+@pytest.mark.asyncio
+async def test_awk_assignment_from_field():
+    rb, rs = _make_backend({})
+    output, _ = await awk(
+        [],
+        ("{x = $2; print x}", ),
+        None,
+        read_bytes=rb,
+        read_stream=rs,
+        stdin=b"a b\n",
+    )
+    assert (await _drain(output)).decode() == "b\n"
+
+
+@pytest.mark.asyncio
+async def test_awk_ofs_joins_print_arguments():
+    rb, rs = _make_backend({})
+    output, _ = await awk(
+        [],
+        ('BEGIN{OFS=":"} {print $1, $2}', ),
+        None,
+        read_bytes=rb,
+        read_stream=rs,
+        stdin=b"name age\nalice 30\n",
+    )
+    assert (await _drain(output)).decode() == "name:age\nalice:30\n"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "program, expected",
+    [
+        ("{{print $1}}", "Welcome\nInstall\n"),
+        ("{{{print $1}}}", "Welcome\nInstall\n"),
+        ("{{print $1}; print $2}", "Welcome\nto\nInstall\nit\n"),
+        ("{print $1;{print $2}}", "Welcome\nto\nInstall\nit\n"),
+    ],
+)
+async def test_awk_compound_statement_runs_its_body(program, expected):
+    rb, rs = _make_backend({})
+    output, _ = await awk(
+        [],
+        (program, ),
+        None,
+        read_bytes=rb,
+        read_stream=rs,
+        stdin=b"Welcome to x\nInstall it\n",
+    )
+    assert (await _drain(output)).decode() == expected
+
+
+@pytest.mark.asyncio
+async def test_awk_semicolon_inside_string_is_not_a_separator():
+    rb, rs = _make_backend({})
+    output, _ = await awk(
+        [],
+        ('{print "a;b", $1}', ),
+        None,
+        read_bytes=rb,
+        read_stream=rs,
+        stdin=b"x\n",
+    )
+    assert (await _drain(output)).decode() == "a;b x\n"
+
+
+@pytest.mark.asyncio
+async def test_awk_rejects_arithmetic_assignment():
+    rb, rs = _make_backend({})
+    with pytest.raises(UsageError, match="unsupported construct"):
+        await awk(
+            [],
+            ("{x = y + 1; print x}", ),
+            None,
+            read_bytes=rb,
+            read_stream=rs,
+            stdin=b"line\n",
+        )
+
+
+@pytest.mark.asyncio
+async def test_awk_rejects_function_call_in_print():
+    rb, rs = _make_backend({})
+    with pytest.raises(UsageError, match=r"unsupported construct.*toupper"):
+        await awk(
+            [],
+            ("{print toupper($1)}", ),
+            None,
+            read_bytes=rb,
+            read_stream=rs,
+            stdin=b"line\n",
+        )
+
+
+@pytest.mark.asyncio
+async def test_awk_rejects_printf():
+    rb, rs = _make_backend({})
+    with pytest.raises(UsageError, match="unsupported construct"):
+        await awk(
+            [],
+            ('{printf "%s\\n", $1}', ),
+            None,
+            read_bytes=rb,
+            read_stream=rs,
+            stdin=b"line\n",
+        )
+
+
+@pytest.mark.asyncio
+async def test_awk_rejects_if_statement():
+    rb, rs = _make_backend({})
+    with pytest.raises(UsageError, match="unsupported construct"):
+        await awk(
+            [],
+            ("{if ($1) print $1}", ),
+            None,
+            read_bytes=rb,
+            read_stream=rs,
+            stdin=b"line\n",
+        )
+
+
+@pytest.mark.asyncio
+async def test_awk_rejects_tilde_match_condition():
+    rb, rs = _make_backend({})
+    with pytest.raises(UsageError, match="unsupported construct"):
+        await awk(
+            [],
+            ("$1 ~ /x/ {print}", ),
+            None,
+            read_bytes=rb,
+            read_stream=rs,
+            stdin=b"x\n",
+        )
+
+
+@pytest.mark.asyncio
+async def test_awk_rejects_arithmetic_in_condition():
+    rb, rs = _make_backend({})
+    with pytest.raises(UsageError, match="unsupported construct"):
+        await awk(
+            [],
+            ("NR % 2 == 0 {print}", ),
+            None,
+            read_bytes=rb,
+            read_stream=rs,
+            stdin=b"a\nb\n",
+        )
+
+
+@pytest.mark.asyncio
+async def test_awk_rejects_program_file_with_unsupported_statement():
+    rb, rs = _make_backend({"/p.awk": b'{gsub(/a/, "b"); print}\n'})
+    with pytest.raises(UsageError, match="unsupported construct"):
+        await awk(
+            [],
+            (),
+            {"f": [_spec("/p.awk")]},
+            read_bytes=rb,
+            read_stream=rs,
+            stdin=b"line\n",
+        )
+
+
+@pytest.mark.asyncio
+async def test_awk_unset_variable_prints_empty():
+    rb, rs = _make_backend({})
+    output, _ = await awk(
+        [],
+        ("{print foo}", ),
+        None,
+        read_bytes=rb,
+        read_stream=rs,
+        stdin=b"line\n",
+    )
+    assert (await _drain(output)).decode() == "\n"
+
+
+@pytest.mark.asyncio
+async def test_awk_out_of_range_field_prints_empty():
+    rb, rs = _make_backend({})
+    output, _ = await awk(
+        [],
+        ("{print $5}", ),
+        None,
+        read_bytes=rb,
+        read_stream=rs,
+        stdin=b"one two\n",
+    )
+    assert (await _drain(output)).decode() == "\n"

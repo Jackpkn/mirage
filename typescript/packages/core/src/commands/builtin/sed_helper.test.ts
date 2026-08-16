@@ -253,3 +253,25 @@ describe('sed s/// edge cases', () => {
     expect(() => parseProgram('s/o/O/0')).toThrow(/may not be zero/)
   })
 })
+
+describe('sed address delimiters', () => {
+  it('escaped delimiter inside an address regex is a literal slash', () => {
+    expect(sed('/a\\/b/d', 'x\na/b\ny\n')).toBe('x\ny\n')
+  })
+
+  it('custom-delimiter address form \\cREc', () => {
+    expect(sed('\\%a/b%d', 'a/b\nz\n')).toBe('z\n')
+  })
+
+  it('BRE escapes inside an address survive to the regex', () => {
+    expect(sed('/a\\+b/d', 'x\na+b\naab\ny\n')).toBe('x\na+b\ny\n')
+  })
+
+  it('range addresses honor escaped delimiters', () => {
+    expect(sed('/a\\/b/,/c\\/d/d', 'x\na/b\nmid\nc/d\ny\n')).toBe('x\ny\n')
+  })
+
+  it('unterminated address regex throws', () => {
+    expect(() => sed('/a\\/b', 'x\n')).toThrow('unterminated address regex')
+  })
+})

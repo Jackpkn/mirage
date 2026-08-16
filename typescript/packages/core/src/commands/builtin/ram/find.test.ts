@@ -209,3 +209,32 @@ describe('find', () => {
     expect(r.lines).toEqual([])
   })
 })
+
+describe('find -printf', () => {
+  it('renders rows through the format with stats', async () => {
+    const resource = new RAMResource()
+    resource.store.dirs.add('/data')
+    resource.store.dirs.add('/data/sub')
+    resource.store.files.set('/data/a.txt', ENC.encode('hello\n'))
+    resource.store.files.set('/data/sub/b.txt', ENC.encode('hi\n'))
+    const { lines, exitCode } = await runFind(resource, [PathSpec.fromStrPath('/data')], {}, [
+      '-printf',
+      '%p %y %d\\n',
+    ])
+    expect(exitCode).toBe(0)
+    expect(lines).toEqual(['/data d 0', '/data/a.txt f 1', '/data/sub d 1', '/data/sub/b.txt f 2'])
+  })
+
+  it('renders %f %s for one match', async () => {
+    const resource = new RAMResource()
+    resource.store.dirs.add('/data')
+    resource.store.files.set('/data/a.txt', ENC.encode('hello\n'))
+    const { lines } = await runFind(resource, [PathSpec.fromStrPath('/data')], {}, [
+      '-name',
+      'a.txt',
+      '-printf',
+      '%f %s\\n',
+    ])
+    expect(lines).toEqual(['a.txt 6'])
+  })
+})
