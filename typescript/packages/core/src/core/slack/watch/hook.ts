@@ -24,7 +24,7 @@ import {
   ITEM_EVENTS,
   USER_LIST_EVENTS,
 } from './constants.ts'
-import { channelIdOf, dayOf, itemChannel, messageTs } from './payload.ts'
+import { affectedTs, channelIdOf, dayOf, itemChannel } from './payload.ts'
 import type { ConversationDir } from './types.ts'
 
 /**
@@ -58,6 +58,22 @@ import type { ConversationDir } from './types.ts'
  * because the rendered filename comes from `fileBlobName` over metadata the
  * notification does not carry, and the accompanying `message` event already
  * refreshes `chat.jsonl`.
+ *
+ * Two file events are unmapped, and neither is unmappable. A file blob is
+ * addressed by the day it was *shared*, and neither event carries a
+ * conversation or that day: `file_change` sends only `file_id`, `file_deleted`
+ * sends `file_id` and the deletion's own `event_ts`. Asking Slack does not
+ * recover it either, since `files.info` on a deleted file answers with the
+ * `file_deleted` error. What does recover it is this mount's own index, which
+ * stores each blob's Slack id as `IndexEntry.id`, so a reverse lookup names the
+ * exact path; and a file the index has never seen is one nothing has cached, so
+ * there is nothing to invalidate. The hook simply is not handed the index
+ * today. Until it is, both ride the index TTL, which bounds the staleness
+ * rather than removing it.
+ *
+ * `channel_shared` / `channel_unshared` are a third that looks like a gap and
+ * is not: they change only the Slack Connect flags on the channel object, never
+ * its `name` or `id`, which are the two things the directory is spelled from.
  *
  * Mirrors Python `SlackEventHook` (`core/slack/watch/hook.py`).
  */
@@ -116,6 +132,17 @@ export class SlackEventHook {
     return `${where.container}/${where.dirname}/${day}`
   }
 
+  /** One UPDATE per day directory the stamps land in. */
+  private async transcripts(
+    root: PathSpec,
+    channelId: string | null,
+    stamps: readonly string[],
+  ): Promise<readonly FileEvent[]> {
+    const out: FileEvent[] = []
+    for (const ts of stamps) out.push(...(await this.transcript(root, channelId, ts)))
+    return out
+  }
+
   /** One UPDATE on the transcript a conversation and ts name. */
   private async transcript(
     root: PathSpec,
@@ -144,7 +171,7 @@ export class SlackEventHook {
     payload: JsonValue,
   ): Promise<readonly FileEvent[]> {
     if (eventType === 'message') {
-      return this.transcript(root, textField(payload, 'channel') ?? null, messageTs(payload))
+      return this.transcripts(root, textField(payload, 'channel') ?? null, affectedTs(payload))
     }
     if (ITEM_EVENTS.has(eventType)) {
       const [channelId, ts] = itemChannel(payload)

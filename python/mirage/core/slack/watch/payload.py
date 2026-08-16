@@ -50,8 +50,25 @@ def item_channel(payload: JsonValue) -> tuple[str | None, str | None]:
     return text_field(item, "channel"), text_field(item, "ts")
 
 
+def subject(payload: JsonValue) -> JsonValue:
+    """The message object an event is about.
+
+    An edit and a deletion both describe another message rather than
+    themselves, and nest it under a different key.
+
+    Args:
+        payload (JsonValue): The message event body.
+    """
+    kind = text_field(payload, "subtype")
+    if kind == "message_deleted":
+        return field(payload, "previous_message") or payload
+    if kind == "message_changed":
+        return field(payload, "message") or payload
+    return payload
+
+
 def message_ts(payload: JsonValue) -> str | None:
-    """The ts whose day a message event belongs in.
+    """The ts of the message an event is about.
 
     Not always the event's own ``ts``: an edit and a deletion both
     arrive stamped now while naming a message from any earlier day, so
@@ -61,17 +78,49 @@ def message_ts(payload: JsonValue) -> str | None:
     Args:
         payload (JsonValue): The message event body.
     """
-    subtype = text_field(payload, "subtype")
-    if subtype == "message_deleted":
+    if text_field(payload, "subtype") == "message_deleted":
         deleted = text_field(payload, "deleted_ts")
         if deleted is not None:
             return deleted
-        return text_field(field(payload, "previous_message"), "ts")
-    if subtype == "message_changed":
-        changed = text_field(field(payload, "message"), "ts")
-        if changed is not None:
-            return changed
-    return text_field(payload, "ts")
+    return text_field(subject(payload), "ts")
+
+
+def is_broadcast(payload: JsonValue) -> bool:
+    """Whether a thread reply was also sent to the channel.
+
+    Args:
+        payload (JsonValue): The message event body.
+    """
+    body = subject(payload)
+    if text_field(body, "subtype") == "thread_broadcast":
+        return True
+    return field(body, "reply_broadcast") is True
+
+
+def affected_ts(payload: JsonValue) -> tuple[str, ...]:
+    """Timestamps whose day directories a message event makes stale.
+
+    Usually just the message's own, but a thread reply is the case that
+    breaks that: ``chat.jsonl`` renders ``conversations.history``, which
+    returns parents only, so a reply is in no day file at all. What
+    changed is the *parent's* row, whose ``reply_count`` and
+    ``latest_reply`` the same listing carries, in the parent's day. A
+    reply to a week-old thread therefore refreshes a week-old
+    directory and leaves today's alone.
+
+    A broadcast reply is the exception to the exception: Slack puts it
+    in the channel history too, so both days change.
+
+    Args:
+        payload (JsonValue): The message event body.
+    """
+    own = message_ts(payload)
+    if own is None:
+        return ()
+    thread = text_field(subject(payload), "thread_ts")
+    if thread is None or thread == own:
+        return (own, )
+    return (thread, own) if is_broadcast(payload) else (thread, )
 
 
 def channel_id_of(payload: JsonValue) -> str | None:

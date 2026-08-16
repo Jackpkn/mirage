@@ -46,7 +46,20 @@ export function itemChannel(payload: JsonValue): [string | null, string | null] 
 }
 
 /**
- * The ts whose day a message event belongs in.
+ * The message object an event is about.
+ *
+ * An edit and a deletion both describe another message rather than themselves,
+ * and nest it under a different key.
+ */
+export function subject(payload: JsonValue): JsonValue {
+  const kind = textField(payload, 'subtype')
+  if (kind === 'message_deleted') return field(payload, 'previous_message') ?? payload
+  if (kind === 'message_changed') return field(payload, 'message') ?? payload
+  return payload
+}
+
+/**
+ * The ts of the message an event is about.
  *
  * Not always the event's own `ts`: an edit and a deletion both arrive stamped
  * now while naming a message from any earlier day, so taking the top-level ts
@@ -54,19 +67,39 @@ export function itemChannel(payload: JsonValue): [string | null, string | null] 
  * stale.
  */
 export function messageTs(payload: JsonValue): string | null {
-  const subtype = textField(payload, 'subtype')
-  if (subtype === 'message_deleted') {
+  if (textField(payload, 'subtype') === 'message_deleted') {
     const deleted = textField(payload, 'deleted_ts')
     if (deleted !== undefined) return deleted
-    const previous = field(payload, 'previous_message')
-    return previous === undefined ? null : (textField(previous, 'ts') ?? null)
   }
-  if (subtype === 'message_changed') {
-    const message = field(payload, 'message')
-    const changed = message === undefined ? undefined : textField(message, 'ts')
-    if (changed !== undefined) return changed
-  }
-  return textField(payload, 'ts') ?? null
+  return textField(subject(payload), 'ts') ?? null
+}
+
+/** Whether a thread reply was also sent to the channel. */
+export function isBroadcast(payload: JsonValue): boolean {
+  const body = subject(payload)
+  if (textField(body, 'subtype') === 'thread_broadcast') return true
+  return field(body, 'reply_broadcast') === true
+}
+
+/**
+ * Timestamps whose day directories a message event makes stale.
+ *
+ * Usually just the message's own, but a thread reply is the case that breaks
+ * that: `chat.jsonl` renders `conversations.history`, which returns parents
+ * only, so a reply is in no day file at all. What changed is the *parent's*
+ * row, whose `reply_count` and `latest_reply` the same listing carries, in the
+ * parent's day. A reply to a week-old thread therefore refreshes a week-old
+ * directory and leaves today's alone.
+ *
+ * A broadcast reply is the exception to the exception: Slack puts it in the
+ * channel history too, so both days change.
+ */
+export function affectedTs(payload: JsonValue): readonly string[] {
+  const own = messageTs(payload)
+  if (own === null) return []
+  const thread = textField(subject(payload), 'thread_ts')
+  if (thread === undefined || thread === own) return [own]
+  return isBroadcast(payload) ? [thread, own] : [thread]
 }
 
 /**

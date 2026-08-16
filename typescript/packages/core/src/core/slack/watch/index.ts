@@ -21,5 +21,5 @@ export {
   USER_LIST_EVENTS,
 } from './constants.ts'
 export { buildEventHook, SlackEventHook } from './hook.ts'
-export { channelIdOf, dayOf, itemChannel, messageTs } from './payload.ts'
+export { affectedTs, channelIdOf, dayOf, itemChannel, messageTs } from './payload.ts'
 export type { ConversationDir } from './types.ts'

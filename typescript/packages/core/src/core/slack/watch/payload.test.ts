@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { describe, expect, it } from 'vitest'
-import { channelIdOf, dayOf, messageTs } from './payload.ts'
+import { affectedTs, channelIdOf, dayOf, messageTs } from './payload.ts'
 
 // 2025-08-15T23:30:00Z is 4:30pm PDT the same day, so client and mount
 // agree; 2025-08-16T05:00:00Z is 10pm PDT on the 15th, where they do not.
@@ -67,5 +67,54 @@ describe('channelIdOf', () => {
 
   it('reads neither', () => {
     expect(channelIdOf({ user: { id: 'U1' } })).toBeNull()
+  })
+})
+
+describe('affectedTs', () => {
+  it('affects its own day for a plain message', () => {
+    expect(affectedTs({ ts: TS })).toEqual([TS])
+  })
+
+  it('affects its own day for a thread parent', () => {
+    expect(affectedTs({ ts: TS, thread_ts: TS })).toEqual([TS])
+  })
+
+  it("affects the parent's day, not its own, for a thread reply", () => {
+    // chat.jsonl renders conversations.history, which returns parents
+    // only, so the reply is in no day file. The parent's reply_count is.
+    expect(affectedTs({ ts: LATE, thread_ts: TS })).toEqual([TS])
+  })
+
+  it('affects both days for a broadcast reply', () => {
+    expect(affectedTs({ ts: LATE, thread_ts: TS, subtype: 'thread_broadcast' })).toEqual([TS, LATE])
+  })
+
+  it('affects both days for a reply_broadcast flag', () => {
+    expect(affectedTs({ ts: LATE, thread_ts: TS, reply_broadcast: true })).toEqual([TS, LATE])
+  })
+
+  it("affects the parent's day for a deleted reply", () => {
+    expect(
+      affectedTs({
+        subtype: 'message_deleted',
+        ts: '1755400000.0',
+        deleted_ts: LATE,
+        previous_message: { ts: LATE, thread_ts: TS },
+      }),
+    ).toEqual([TS])
+  })
+
+  it("affects the parent's day for an edited reply", () => {
+    expect(
+      affectedTs({
+        subtype: 'message_changed',
+        ts: '1755400000.0',
+        message: { ts: LATE, thread_ts: TS },
+      }),
+    ).toEqual([TS])
+  })
+
+  it('affects nothing without a ts', () => {
+    expect(affectedTs({ channel: 'C1' })).toEqual([])
   })
 })

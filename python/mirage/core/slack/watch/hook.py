@@ -20,8 +20,8 @@ from mirage.core.slack.formatters import channel_dirname, dm_dirname
 from mirage.core.slack.watch.constants import (CHANNEL_LIST_EVENTS, CHAT_FILE,
                                                DM_LIST_EVENTS, FILES_DIR,
                                                ITEM_EVENTS, USER_LIST_EVENTS)
-from mirage.core.slack.watch.payload import (channel_id_of, day_of,
-                                             item_channel, message_ts)
+from mirage.core.slack.watch.payload import (affected_ts, channel_id_of,
+                                             day_of, item_channel)
 from mirage.core.slack.watch.types import ConversationDir
 from mirage.types import FileChangeKind, FileEvent, JsonValue, PathSpec
 from mirage.watch.base import EventHook
@@ -63,6 +63,24 @@ class SlackEventHook:
     rendered filename comes from ``file_blob_name`` over metadata the
     notification does not carry, and the accompanying ``message`` event
     already refreshes ``chat.jsonl``.
+
+    Two file events are unmapped, and neither is unmappable. A file
+    blob is addressed by the day it was *shared*, and neither event
+    carries a conversation or that day: ``file_change`` sends only
+    ``file_id``, ``file_deleted`` sends ``file_id`` and the deletion's
+    own ``event_ts``. Asking Slack does not recover it either, since
+    ``files.info`` on a deleted file answers with the ``file_deleted``
+    error. What does recover it is this mount's own index, which stores
+    each blob's Slack id as ``IndexEntry.id``, so a reverse lookup
+    names the exact path; and a file the index has never seen is one
+    nothing has cached, so there is nothing to invalidate. The hook
+    simply is not handed the index today. Until it is, both ride the
+    index TTL, which bounds the staleness rather than removing it.
+
+    ``channel_shared`` / ``channel_unshared`` are a third that looks
+    like a gap and is not: they change only the Slack Connect flags on
+    the channel object, never its ``name`` or ``id``, which are the two
+    things the directory is spelled from.
     """
 
     def __init__(self, accessor: SlackAccessor) -> None:
@@ -127,6 +145,20 @@ class SlackEventHook:
         where = await self._resolve(channel_id)
         return f"{where.container}/{where.dirname}/{day}"
 
+    async def _transcripts(self, root: PathSpec, channel_id: str | None,
+                           stamps: Sequence[str]) -> Sequence[FileEvent]:
+        """One UPDATE per day directory the stamps land in.
+
+        Args:
+            root (PathSpec): Any path on the target mount.
+            channel_id (str | None): The conversation, if the event named one.
+            stamps (Sequence[str]): Timestamps whose days went stale.
+        """
+        out: list[FileEvent] = []
+        for ts in stamps:
+            out.extend(await self._transcript(root, channel_id, ts))
+        return tuple(out)
+
     async def _transcript(self, root: PathSpec, channel_id: str | None,
                           ts: str | None) -> Sequence[FileEvent]:
         """One UPDATE on the transcript a conversation and ts name.
@@ -182,8 +214,9 @@ class SlackEventHook:
             payload (JsonValue): The inner event body.
         """
         if event_type == "message":
-            return await self._transcript(root, text_field(payload, "channel"),
-                                          message_ts(payload))
+            return await self._transcripts(root,
+                                           text_field(payload, "channel"),
+                                           affected_ts(payload))
         if event_type in ITEM_EVENTS:
             channel_id, ts = item_channel(payload)
             return await self._transcript(root, channel_id, ts)

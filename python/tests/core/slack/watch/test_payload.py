@@ -1,4 +1,5 @@
-from mirage.core.slack.watch.payload import channel_id_of, day_of, message_ts
+from mirage.core.slack.watch.payload import (affected_ts, channel_id_of,
+                                             day_of, message_ts)
 
 # 2025-08-15T23:30:00Z is 4:30pm PDT the same day, so client and mount
 # agree; 2025-08-16T05:00:00Z is 10pm PDT on the 15th, where they do not.
@@ -64,3 +65,60 @@ def test_channel_id_of_reads_a_channel_object():
 
 def test_channel_id_of_reads_neither():
     assert channel_id_of({"user": {"id": "U1"}}) is None
+
+
+def test_a_plain_message_affects_its_own_day():
+    assert affected_ts({"ts": TS}) == (TS, )
+
+
+def test_a_thread_parent_affects_its_own_day():
+    assert affected_ts({"ts": TS, "thread_ts": TS}) == (TS, )
+
+
+def test_a_thread_reply_affects_the_parents_day_not_its_own():
+    # chat.jsonl renders conversations.history, which returns parents
+    # only, so the reply is in no day file. The parent's reply_count is.
+    assert affected_ts({"ts": LATE, "thread_ts": TS}) == (TS, )
+
+
+def test_a_broadcast_reply_affects_both_days():
+    assert affected_ts({
+        "ts": LATE,
+        "thread_ts": TS,
+        "subtype": "thread_broadcast",
+    }) == (TS, LATE)
+
+
+def test_a_reply_broadcast_flag_also_affects_both():
+    assert affected_ts({
+        "ts": LATE,
+        "thread_ts": TS,
+        "reply_broadcast": True,
+    }) == (TS, LATE)
+
+
+def test_a_deleted_reply_affects_the_parents_day():
+    assert affected_ts({
+        "subtype": "message_deleted",
+        "ts": "1755400000.0",
+        "deleted_ts": LATE,
+        "previous_message": {
+            "ts": LATE,
+            "thread_ts": TS
+        },
+    }) == (TS, )
+
+
+def test_an_edited_reply_affects_the_parents_day():
+    assert affected_ts({
+        "subtype": "message_changed",
+        "ts": "1755400000.0",
+        "message": {
+            "ts": LATE,
+            "thread_ts": TS
+        },
+    }) == (TS, )
+
+
+def test_a_message_with_no_ts_affects_nothing():
+    assert affected_ts({"channel": "C1"}) == ()

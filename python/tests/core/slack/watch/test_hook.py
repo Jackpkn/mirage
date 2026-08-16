@@ -1,7 +1,5 @@
 import asyncio
 
-import pytest
-
 from mirage.accessor.slack import SlackAccessor
 from mirage.core.slack.config import SlackConfig
 from mirage.core.slack.watch.hook import SlackEventHook
@@ -176,11 +174,18 @@ def test_a_non_object_payload_maps_to_nothing(monkeypatch):
     assert _map(hook, "message", "not-an-object") == ()
 
 
-@pytest.mark.asyncio
-async def test_the_resource_exposes_the_hook():
+def test_the_resource_exposes_the_hook():
     from mirage.resource.slack import SlackResource
-    from mirage.watch.base import SupportsEvents
 
     resource = SlackResource(SlackConfig(token="xoxb-t"))
-    assert isinstance(resource, SupportsEvents)
     assert isinstance(resource.event_hook(), SlackEventHook)
+
+
+def test_a_resource_without_one_answers_none():
+    # What replaced the SupportsEvents capability protocol: the base
+    # answers for every backend, so a consumer checks the return value
+    # rather than the resource's type.
+    from mirage.resource.ram import RAMResource
+
+    assert RAMResource().event_hook() is None
+    assert RAMResource().delta_hook() is None
