@@ -319,7 +319,7 @@ module = [
     "mirage.core.dify.path",
     "mirage.core.dify.find",
     "mirage.core.dify.search",
-    "mirage.core.github.scope",
+    "mirage.core.github.pushdown",
     "mirage.core.github.find",
     "mirage.core.hf_buckets.find",
     "mirage.core.lancedb.scope",
