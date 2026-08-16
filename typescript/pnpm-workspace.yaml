@@ -7,3 +7,11 @@ packages:
 
 onlyBuiltDependencies:
   - '@zkochan/fuse-native'
+
+# A node_modules older than the lockfile does not announce itself: it fails as
+# a type error inside whatever package the drifted dependency types, which
+# reads as a source bug in a file nobody touched. Refuse the script and name
+# the real cause instead. This has to live here rather than in .npmrc — inside
+# a workspace pnpm overwrites .npmrc settings from this file, so the
+# equivalent verify-deps-before-run= line there is silently inert.
+verifyDepsBeforeRun: error
