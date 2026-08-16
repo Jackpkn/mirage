@@ -48,16 +48,17 @@ import { expandPattern } from '../expand/pattern.ts'
 import { evaluateArith } from '../../shell/arith.ts'
 import {
   type ShellArray,
-  arrayAppend,
   arrayExtent,
   arrayGet,
   arraySet,
-  makeArray,
+  buildAssocLiteral,
+  buildIndexedLiteral,
 } from '../../shell/array.ts'
 import { ArithError, ExitSignal, ReadonlyError } from '../../shell/errors.ts'
 import { expandAndClassify } from '../expand/parts.ts'
 import { arrayIndex } from '../expand/variable.ts'
-import type { TSNodeLike } from '../../shell/types.ts'
+import { assignElement, elementIndex, sessionElements } from '../session/elements.ts'
+import type { ArithResult, TSNodeLike } from '../../shell/types.ts'
 import { wordText } from '../../types.ts'
 import {
   type CforEval,
@@ -92,7 +93,7 @@ import { executeCommand } from './command_dispatch.ts'
 import { PolicyDenied } from '../../policy/errors.ts'
 import type { SessionView } from '../../ops/types.ts'
 import { ensureVarVisible, sessionView, setAttr, visibleEnv } from '../session/state.ts'
-import { VarAttr } from '../../shell/variable.ts'
+import { type ShellValue, VarAttr } from '../../shell/variable.ts'
 import { traceAssignment } from '../../shell/xtrace.ts'
 import { Channel, type JobConsole } from '../../shell/console/index.ts'
 import { type ExecuteNodeOpts, pump } from '../executor/jobs.ts'
@@ -144,11 +145,7 @@ function withOpts(base: ExecuteNodeDeps, opts?: ExecuteNodeOpts): ExecuteNodeDep
  * mirrors the readonly case: a fatal variable-assignment error that
  * abandons the rest of the line.
  */
-async function assignVar(
-  view: SessionView,
-  key: string,
-  value: string | ShellArray,
-): Promise<void> {
+async function assignVar(view: SessionView, key: string, value: ShellValue): Promise<void> {
   try {
     await view.set(key, value)
   } catch (err) {
@@ -178,18 +175,19 @@ async function evalCforExpr(
 ): Promise<number> {
   if (expr === null) return dflt
   const text = await expandArith(expr, session, executeFn, callStack, view)
-  let value: bigint
-  let updates: Record<string, string>
+  let result: ArithResult
   try {
     // Reads resolve against the visible env so a hidden name counts as
     // unset; a hidden write refuses through the session door
     // (ensureVarVisible), caught by the loop beside ReadonlyError.
-    ;({ value, updates } = evaluateArith(text, visibleEnv(session)))
+    result = evaluateArith(text, visibleEnv(session), 0, sessionElements(session))
   } catch (err) {
     if (!(err instanceof ArithError)) throw err
     throw new ArithError(`${text}: ${err.message}`)
   }
-  for (const name of Object.keys(updates)) {
+  const updates = result.updates
+  const elementNames = result.elementUpdates.map((write) => write.name)
+  for (const name of [...Object.keys(updates), ...elementNames]) {
     ensureVarVisible(session, name)
     if (session.readonlyVars.has(name)) throw new ReadonlyError(name)
   }
@@ -199,7 +197,10 @@ async function evalCforExpr(
     if (view === undefined) seedVar(session, name, updated)
     else await view.set(name, updated)
   }
-  return Number(value)
+  for (const write of result.elementUpdates) {
+    await assignElement(session, view ?? null, write.name, write.key, write.value)
+  }
+  return Number(result.value)
 }
 
 // Array-literal elements behave like any other shell word list: command
@@ -360,6 +361,63 @@ export interface ExecuteNodeDeps {
  * `setAttr` let `declare -x AWS_TOKEN` export a host-seeded credential
  * the deployment had refused.
  */
+const SUBSCRIPT_LITERAL_TYPES: ReadonlySet<string> = new Set([NT.WORD, NT.NUMBER, NT.ERROR])
+
+/**
+ * The expanded subscript text of one `name[...]=` assignment.
+ *
+ * A purely literal subscript keeps its raw spelling, spaces included
+ * (bash stores `m[ k ]` under the key `" k "`); anything carrying an
+ * expansion or quoting expands node by node so `m[$k]` and `m["a b"]`
+ * resolve with quote removal. The associative path uses the result as
+ * the key verbatim; the indexed path evaluates it as arithmetic.
+ */
+async function subscriptKeyText(
+  subscriptNode: TSNodeLike,
+  name: string,
+  session: Session,
+  executeFn: ExecuteFn,
+  callStack: CallStack | null,
+  view?: SessionView,
+): Promise<string> {
+  const inner = subscriptNode.namedChildren.filter((sc) => sc.type !== NT.VARIABLE_NAME)
+  const raw = subscriptNode.text.slice(name.length + 1, -1)
+  if (inner.length === 0 || inner.every((sc) => SUBSCRIPT_LITERAL_TYPES.has(sc.type))) {
+    return raw
+  }
+  const parts: string[] = []
+  for (const sc of inner) {
+    parts.push(await expandNode(sc, session, executeFn, callStack, view))
+  }
+  return parts.join('')
+}
+
+/**
+ * Fold kind-conversion refusals into a declaration's result.
+ *
+ * GNU reports `cannot convert indexed to associative array` per refused
+ * name on stderr and fails the builtin with 1 while the other operands
+ * still declare, so the refusals ride the handler's own result rather
+ * than replacing it.
+ */
+function mergeConversionErrors(result: Result, errors: readonly string[]): Result {
+  if (errors.length === 0) return result
+  const [stream, io, node] = result
+  const extra = new TextEncoder().encode(errors.join('\n') + '\n')
+  const prior = io.stderr instanceof Uint8Array ? io.stderr : new Uint8Array(0)
+  const merged = new Uint8Array(prior.length + extra.length)
+  merged.set(prior, 0)
+  merged.set(extra, prior.length)
+  const newIo = new IOResult({
+    exitCode: 1,
+    stderr: merged,
+    reads: io.reads,
+    writes: io.writes,
+    cache: io.cache,
+  })
+  return [stream, newIo, new ExecutionNode({ command: node.command, exitCode: 1, stderr: merged })]
+}
+
 async function stampExport(
   session: Session,
   view: SessionView,
@@ -620,13 +678,12 @@ export async function executeNode(
       callStack,
       sessionView(session, registry.policies),
     )
-    let value: bigint
-    let updates: Record<string, string>
+    let result: ArithResult
     try {
       // Reads resolve against the visible env so a hidden name counts
       // as unset; a hidden write refuses below, in this command's own
       // voice like the readonly refusal.
-      ;({ value, updates } = evaluateArith(expr, visibleEnv(session)))
+      result = evaluateArith(expr, visibleEnv(session), 0, sessionElements(session))
     } catch (err) {
       if (!(err instanceof ArithError)) throw err
       const errBytes = new TextEncoder().encode(`bash: ((: ${expr}: ${err.message}\n`)
@@ -636,7 +693,9 @@ export async function executeNode(
         new ExecutionNode({ command: text, exitCode: 1, stderr: errBytes }),
       ]
     }
-    for (const name of Object.keys(updates)) {
+    const updates = result.updates
+    const elementNames = result.elementUpdates.map((write) => write.name)
+    for (const name of [...Object.keys(updates), ...elementNames]) {
       try {
         ensureVarVisible(session, name)
       } catch (err) {
@@ -661,6 +720,15 @@ export async function executeNode(
       for (const [name, updated] of Object.entries(updates)) {
         await sessionView(session, registry.policies).set(name, updated)
       }
+      for (const write of result.elementUpdates) {
+        await assignElement(
+          session,
+          sessionView(session, registry.policies),
+          write.name,
+          write.key,
+          write.value,
+        )
+      }
     } catch (err) {
       if (!(err instanceof PolicyDenied)) throw err
       const errBytes = new TextEncoder().encode(`bash: ${err.message}\n`)
@@ -670,7 +738,7 @@ export async function executeNode(
         new ExecutionNode({ command: text, exitCode: 1, stderr: errBytes }),
       ]
     }
-    const code = value !== 0n ? 0 : 1
+    const code = result.value !== 0n ? 0 : 1
     return [
       null,
       new IOResult({ exitCode: code }),
@@ -879,26 +947,49 @@ export async function executeNode(
       }
     }
     const isReadonly = keyword === 'readonly' || flagChars.has('r')
-    if (flagChars.has('a')) {
-      // `declare -a NAME` with no value declares an empty array, so
-      // ${#NAME[@]} is 0 and NAME[3]=x leaves index 0 unassigned.
+    const cmdWord = keyword === NT.LOCAL ? 'local' : keyword
+    const conversionErrors: string[] = []
+    if (flagChars.has('A') || flagChars.has('a')) {
+      // `declare -a NAME` / `declare -A NAME` with no value declare an
+      // empty array of that kind, so ${#NAME[@]} is 0 and an element
+      // write leaves the other slots unassigned. GNU refuses to
+      // convert between the two kinds and says so per name while the
+      // rest of the operands still declare.
+      const wantAssoc = flagChars.has('A')
       for (const bare of assignments) {
         if (bare.includes('=')) continue
         // Both branches below write array storage raw (the top-level
-        // one migrates an existing scalar into element 0), so a hidden
-        // name refuses like any assignment spelling before either
-        // lands.
+        // one migrates an existing scalar), so a hidden name refuses
+        // like any assignment spelling before either lands.
         try {
           ensureVarVisible(session, bare)
         } catch (err) {
           if (!(err instanceof PolicyDenied)) throw err
           throw new ExitSignal(1, new TextEncoder().encode(`${err.message}\n`), null, 1)
         }
+        if (wantAssoc && Object.hasOwn(session.arrays, bare)) {
+          conversionErrors.push(
+            `bash: ${cmdWord}: ${bare}: cannot convert indexed to associative array`,
+          )
+          continue
+        }
+        if (!wantAssoc && Object.hasOwn(session.assocs, bare)) {
+          conversionErrors.push(
+            `bash: ${cmdWord}: ${bare}: cannot convert associative to indexed array`,
+          )
+          continue
+        }
         if (noteLocalArray(session, bare)) {
-          // Inside a function this shadows whatever the caller had with a
-          // fresh empty array.
-          seedVar(session, bare, [])
-        } else if (!Object.hasOwn(session.arrays, bare)) {
+          // Inside a function this shadows whatever the caller had with
+          // a fresh empty array of the declared kind.
+          seedVar(session, bare, wantAssoc ? {} : [])
+        } else if (wantAssoc && !Object.hasOwn(session.assocs, bare)) {
+          // At top level an existing scalar becomes the value at the
+          // literal key "0" (GNU allows scalar-to-associative
+          // conversion, unlike indexed).
+          const scalar = session.env[bare]
+          seedVar(session, bare, scalar === undefined ? {} : { '0': scalar })
+        } else if (!wantAssoc && !Object.hasOwn(session.arrays, bare)) {
           // At top level an existing scalar becomes element 0.
           const scalar = session.env[bare]
           seedVar(session, bare, scalar === undefined ? [] : [scalar])
@@ -915,13 +1006,20 @@ export async function executeNode(
       const stored: string[] = []
       const result =
         keyword === 'readonly'
-          ? await handleReadonly([...flagWords, ...assignments], session, declView, staged, stored)
-          : await handleReadonly(assignments, session, declView, staged, stored)
+          ? await handleReadonly(
+              [...flagWords, ...assignments],
+              session,
+              declView,
+              staged,
+              stored,
+              flagChars.has('A'),
+            )
+          : await handleReadonly(assignments, session, declView, staged, stored, flagChars.has('A'))
       // `declare -rx X=1` carries both attributes: GNU prints
       // `declare -rx X="1"`. Readonly answers first, so the export stamp
       // has to land here too, or `-r` silently ate the `-x`.
       const refused = await stampExport(session, declView, flagChars, assignments, staged, stored)
-      return refused ?? result
+      return refused ?? mergeConversionErrors(result, conversionErrors)
     }
     // declare/typeset scope like `local` inside a function (bash
     // semantics) and assign globally at top level, which is exactly
@@ -941,8 +1039,9 @@ export async function executeNode(
         staged,
         // `declare`/`typeset` share this handler but have to name
         // themselves in a diagnostic rather than say `local`.
-        keyword === NT.LOCAL ? 'local' : keyword,
+        cmdWord,
         stored2,
+        flagChars.has('A'),
       )
       const refused2 = await stampExport(
         session,
@@ -952,15 +1051,16 @@ export async function executeNode(
         staged,
         stored2,
       )
-      return refused2 ?? result
+      return refused2 ?? mergeConversionErrors(result, conversionErrors)
     }
     // Pass export flags through so -p / bare print and illegal options work.
-    return handleExport(
+    const exportResult = await handleExport(
       [...flagWords, ...assignments],
       session,
       sessionView(session, registry.policies),
       staged,
     )
+    return mergeConversionErrors(exportResult, conversionErrors)
   }
 
   if (kind === NodeKind.UNSET) {
@@ -1044,21 +1144,44 @@ export async function executeNode(
         deps.namespace,
         callStack,
       )
-      let base: ShellArray
-      if (append) {
-        const existing = session.arrays[key]
-        if (existing === undefined) {
-          const scalar = session.env[key]
-          base = scalar === undefined ? [] : [scalar]
-        } else {
-          base = [...existing]
+      const heldMap = session.assocs[key]
+      if (heldMap !== undefined) {
+        const { map, badWords } = buildAssocLiteral(heldMap, items, append)
+        await assignVar(view, key, map)
+        if (badWords.length > 0) {
+          const errBytes = new TextEncoder().encode(
+            badWords
+              .map(
+                (word) =>
+                  `bash: ${key}: '${word}': must use subscript when assigning associative array`,
+              )
+              .join('\n') + '\n',
+          )
+          return [
+            null,
+            new IOResult({ exitCode: 1, stderr: errBytes }),
+            new ExecutionNode({ command: text, exitCode: 1, stderr: errBytes }),
+          ]
         }
-        // `arr+=(...)` starts at the extent, so it fills the hole a
-        // trailing `unset arr[last]` left but skips interior ones.
-        arrayAppend(base, items)
-      } else {
-        base = makeArray(items)
+        const mapCode = assignmentStatus(session, subSeq)
+        return [
+          null,
+          new IOResult({ exitCode: mapCode }),
+          new ExecutionNode({ command: text, exitCode: mapCode }),
+        ]
       }
+      let held: ShellArray | null = session.arrays[key] ?? null
+      if (append && held === null) {
+        const scalar = session.env[key]
+        held = scalar === undefined ? null : [scalar]
+      }
+      // `arr+=(...)` starts at the extent, so it fills the hole a
+      // trailing `unset arr[last]` left but skips interior ones; a
+      // `[i]=v` element places at i and the next plain word continues
+      // from there.
+      const base = buildIndexedLiteral(held, items, append, (sub) =>
+        elementIndex(sub, visibleEnv(session), sessionElements(session)),
+      )
       await assignVar(view, key, base)
       const arrCode = assignmentStatus(session, subSeq)
       return [
@@ -1078,12 +1201,42 @@ export async function executeNode(
       )
     }
     if (subscriptNode !== null) {
-      let idxText = ''
-      for (const sc of subscriptNode.namedChildren) {
-        if (sc.type !== NT.VARIABLE_NAME) {
-          idxText = sc.text
-          break
-        }
+      const subText = await subscriptKeyText(
+        subscriptNode,
+        key,
+        session,
+        executeFn,
+        callStack,
+        sessionView(session, registry.policies),
+      )
+      const heldMap = session.assocs[key]
+      const rawSub = subscriptNode.text.slice(key.length + 1, -1)
+      if (rawSub.trim() === '' || (heldMap !== undefined && subText === '')) {
+        // bash aborts the whole line on a bad assignment subscript
+        // (status 1), naming the raw spelling (`m[$e]: bad array
+        // subscript`). An indexed subscript that merely *expands*
+        // empty stays legal (arithmetic on nothing is 0), so only the
+        // associative kind checks the expanded text.
+        const nameText = text.slice(0, eq).replace(/\+$/, '')
+        throw new ExitSignal(
+          1,
+          new TextEncoder().encode(`bash: ${nameText}: bad array subscript\n`),
+          null,
+          1,
+        )
+      }
+      if (heldMap !== undefined) {
+        // The subscript is the key: no arithmetic, `m[1+1]` writes the
+        // key "1+1".
+        const newMap = { ...heldMap }
+        newMap[subText] = append ? (heldMap[subText] ?? '') + val : val
+        await assignVar(view, key, newMap)
+        const mapCode = assignmentStatus(session, subSeq)
+        return [
+          null,
+          new IOResult({ exitCode: mapCode }),
+          new ExecutionNode({ command: text, exitCode: mapCode }),
+        ]
       }
       const existing = session.arrays[key]
       let arr: ShellArray
@@ -1093,11 +1246,10 @@ export async function executeNode(
       } else {
         arr = [...existing]
       }
-      let idx = arrayIndex(idxText, visibleEnv(session))
+      let idx = arrayIndex(subText, visibleEnv(session), sessionElements(session))
       if (idx < 0) idx += arrayExtent(arr)
       if (idx < 0) {
-        // bash aborts the whole line on a bad assignment subscript
-        // (status 1); containment mirrors ${var:?}.
+        // Same fatal shape as the empty subscript above.
         const nameText = text.slice(0, eq).replace(/\+$/, '')
         throw new ExitSignal(
           1,
@@ -1115,11 +1267,19 @@ export async function executeNode(
         new ExecutionNode({ command: text, exitCode: subCode }),
       ]
     }
-    const appendArr = append ? session.arrays[key] : undefined
-    if (append && appendArr !== undefined) {
-      // `arr+=x` appends to element 0.
-      const newArr = [...appendArr]
-      arraySet(newArr, 0, arrayGet(newArr, 0) + val)
+    const heldMap = session.assocs[key]
+    const heldArr = session.arrays[key]
+    if (heldMap !== undefined) {
+      // `m=x` on an associative array writes the literal key "0" and
+      // keeps every other key, as bash does.
+      const newMap = { ...heldMap }
+      newMap['0'] = append ? (heldMap['0'] ?? '') + val : val
+      await assignVar(view, key, newMap)
+    } else if (heldArr !== undefined) {
+      // `a=x` writes element 0 and keeps the rest; `a+=x` appends onto
+      // element 0.
+      const newArr = [...heldArr]
+      arraySet(newArr, 0, append ? arrayGet(newArr, 0) + val : val)
       await assignVar(view, key, newArr)
     } else {
       const newVal = append ? (session.env[key] ?? '') + val : val

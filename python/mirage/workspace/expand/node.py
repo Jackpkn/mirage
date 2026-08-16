@@ -31,8 +31,10 @@ from mirage.utils.glob_walk import mark_escaped_globs, mark_globs, unmark_globs
 from mirage.utils.path import expand_tilde
 from mirage.workspace.expand.constants import ARITH_DELIMITERS, ARITH_OPERATORS
 from mirage.workspace.expand.variable import (_lookup_var, expand_braces,
-                                              expansion_write)
+                                              expansion_write,
+                                              expansion_write_element)
 from mirage.workspace.session import Session, visible_env
+from mirage.workspace.session.elements import session_elements
 from mirage.workspace.session.shell_dirs import home_dir
 
 
@@ -171,6 +173,9 @@ async def expand_arith(
                                             execute_fn,
                                             call_stack,
                                             view=view))
+        elif child.type == "subscript":
+            parts.append(await _arith_subscript(child, session, execute_fn,
+                                                call_stack, view))
         elif child.type in ARITH_OPERATORS:
             parts.append(get_text(child))
         elif child.type == NT.NUMBER:
@@ -191,6 +196,55 @@ async def expand_arith(
                                            call_stack,
                                            view=view))
     return " ".join(parts)
+
+
+async def _arith_subscript(
+    sub_node: tree_sitter.Node,
+    session: Session,
+    execute_fn: Callable[..., Any],
+    call_stack: CallStack | None,
+    view: SessionView | None,
+) -> str:
+    """Reconstruct one element reference for the arithmetic tokenizer.
+
+    The subscript's ``$``-expansions substitute here, since bash
+    expands the whole expression text before evaluating it, while a
+    literal interior rides verbatim: for an associative array the text
+    *is* the key (``m[k]`` reads the key ``k`` even when a variable
+    ``k`` exists), and for an indexed one the evaluator's resolver
+    still gets the arithmetic spelling.
+
+    Args:
+        sub_node (tree_sitter.Node): the ``subscript`` node.
+        session (Session): shell session state.
+        execute_fn (Callable): evaluator for command substitutions.
+        call_stack (CallStack | None): shell call stack.
+        view (SessionView | None): the session plane's gated door.
+    """
+    name = ""
+    inner: list[tree_sitter.Node] = []
+    for sc in sub_node.named_children:
+        if sc.type == NT.VARIABLE_NAME and not name:
+            name = get_text(sc)
+        else:
+            inner.append(sc)
+    raw = get_text(sub_node)[len(name) + 1:-1]
+    if not any(ch in raw for ch in "$'\"`"):
+        return f"{name}[{raw}]"
+    parts = []
+    for sc in inner:
+        if sc.type in (NT.SIMPLE_EXPANSION, NT.EXPANSION,
+                       NT.COMMAND_SUBSTITUTION, NT.STRING, NT.RAW_STRING,
+                       NT.ANSI_C_STRING, NT.TRANSLATED_STRING,
+                       NT.CONCATENATION):
+            parts.append(await expand_node(sc,
+                                           session,
+                                           execute_fn,
+                                           call_stack,
+                                           view=view))
+        else:
+            parts.append(get_text(sc))
+    return f"{name}[{''.join(parts)}]"
 
 
 async def expand_node(
@@ -328,12 +382,17 @@ async def expand_node_marked(
             # counts as unset; the write-back below goes through the
             # session plane's door, so a pre_session rule governs
             # `$((X=5))` exactly as it governs `X=5`.
-            value, updates = evaluate_arith(expr, visible_env(session))
+            result = evaluate_arith(expr,
+                                    visible_env(session),
+                                    elements=session_elements(session))
         except ArithError:
             return get_text(ts_node)
-        for name, updated in updates.items():
+        for name, updated in result.updates.items():
             await expansion_write(session, view, name, updated)
-        return prefix + str(value)
+        for write in result.element_updates:
+            await expansion_write_element(session, view, write.name, write.key,
+                                          write.value)
+        return prefix + str(result.value)
 
     if ntype == NT.CONCATENATION:
         # Each piece carries its own quoting, which is the whole reason

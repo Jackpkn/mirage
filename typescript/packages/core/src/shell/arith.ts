@@ -12,31 +12,94 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { ARITH_ASSIGN_OPS, ARITH_MAX_DEPTH, ARITH_NAME, ARITH_TOKEN } from './constants.ts'
+import {
+  ARITH_ASSIGN_OPS,
+  ARITH_ELEM,
+  ARITH_MAX_DEPTH,
+  ARITH_NAME,
+  ARITH_TOKEN,
+} from './constants.ts'
 import { ArithError } from './errors.ts'
+import type { ArithResult, ElementOps, ElementWrite } from './types.ts'
+
+type ArithTarget = { kind: 'var'; name: string } | { kind: 'elem'; name: string; sub: string }
 
 type ArithNode =
   | { kind: 'num'; value: bigint }
-  | { kind: 'var'; name: string }
+  | ArithTarget
   | { kind: 'comma'; parts: ArithNode[] }
-  | { kind: 'assign'; name: string; op: string; rhs: ArithNode }
+  | { kind: 'assign'; target: ArithTarget; op: string; rhs: ArithNode }
   | { kind: 'ternary'; cond: ArithNode; then: ArithNode; other: ArithNode }
   | { kind: 'logic'; op: string; left: ArithNode; right: ArithNode }
   | { kind: 'binop'; op: string; left: ArithNode; right: ArithNode }
   | { kind: 'unary'; op: string; operand: ArithNode }
-  | { kind: 'pre'; op: string; name: string }
-  | { kind: 'post'; op: string; name: string }
+  | { kind: 'pre'; op: string; target: ArithTarget }
+  | { kind: 'post'; op: string; target: ArithTarget }
+
+/**
+ * Index of the `]` closing the `[` at `start`, quote-aware. Quotes
+ * matter because an associative key may hold a bracket (`m["a]b"]`);
+ * nesting matters because an indexed subscript may hold another
+ * reference (`a[b[0]]`).
+ */
+function matchingBracket(expr: string, start: number): number {
+  let depth = 0
+  let i = start
+  while (i < expr.length) {
+    const ch = expr[i]
+    if (ch === '"' || ch === "'") {
+      const close = expr.indexOf(ch, i + 1)
+      if (close === -1) break
+      i = close + 1
+      continue
+    }
+    if (ch === '[') depth++
+    else if (ch === ']') {
+      depth--
+      if (depth === 0) return i
+    }
+    i++
+  }
+  throw new ArithError('syntax error: "]" expected')
+}
 
 function tokenize(expr: string): string[] {
   const tokens: string[] = []
-  for (const match of expr.matchAll(ARITH_TOKEN)) {
+  const scanner = new RegExp(ARITH_TOKEN.source, 'y')
+  let pos = 0
+  while (pos < expr.length) {
+    scanner.lastIndex = pos
+    const match = scanner.exec(expr)
+    if (match === null) throw new ArithError(`syntax error: invalid character "${expr[pos] ?? ''}"`)
     const [, num, name, op, ws, bad] = match
+    const end = scanner.lastIndex
+    if (name !== undefined && expr[end] === '[') {
+      // A name adjacent to a bracket is one element reference, so the
+      // subscript rides inside the token: its interior is not
+      // arithmetic (an associative key can be any text at all) and
+      // only the resolver knows which grammar applies.
+      const close = matchingBracket(expr, end)
+      tokens.push(expr.slice(match.index, close + 1))
+      pos = close + 1
+      continue
+    }
+    pos = end
     if (ws !== undefined) continue
     if (bad !== undefined) throw new ArithError(`syntax error: invalid character "${bad}"`)
     const tok = num ?? name ?? op
     if (tok !== undefined) tokens.push(tok)
   }
   return tokens
+}
+
+/** The lvalue node one token spells, or null when it spells none. */
+function targetNode(tok: string): ArithTarget | null {
+  if (ARITH_NAME.test(tok)) return { kind: 'var', name: tok }
+  const elem = ARITH_ELEM.exec(tok)
+  if (elem?.[1] !== undefined && elem[2] !== undefined) {
+    return { kind: 'elem', name: elem[1], sub: elem[2] }
+  }
+  return null
 }
 
 function wrap(value: bigint): bigint {
@@ -127,10 +190,13 @@ class ArithParser {
   private assign(): ArithNode {
     const tok = this.peek()
     const next = this.tokens[this.pos + 1]
-    if (tok !== null && ARITH_NAME.test(tok) && next !== undefined && ARITH_ASSIGN_OPS.has(next)) {
-      const name = this.take()
-      const op = this.take()
-      return { kind: 'assign', name, op, rhs: this.assign() }
+    if (tok !== null && next !== undefined && ARITH_ASSIGN_OPS.has(next)) {
+      const target = targetNode(tok)
+      if (target !== null) {
+        this.take()
+        const op = this.take()
+        return { kind: 'assign', target, op, rhs: this.assign() }
+      }
     }
     return this.ternary()
   }
@@ -254,9 +320,9 @@ class ArithParser {
     }
     if (tok === '++' || tok === '--') {
       this.take()
-      const name = this.take()
-      if (!ARITH_NAME.test(name)) throw new ArithError(`syntax error: "${tok}" requires a variable`)
-      return { kind: 'pre', op: tok, name }
+      const target = targetNode(this.take())
+      if (target === null) throw new ArithError(`syntax error: "${tok}" requires a variable`)
+      return { kind: 'pre', op: tok, target }
     }
     return this.postfix()
   }
@@ -264,9 +330,9 @@ class ArithParser {
   private postfix(): ArithNode {
     const node = this.primary()
     const tok = this.peek()
-    if ((tok === '++' || tok === '--') && node.kind === 'var') {
+    if ((tok === '++' || tok === '--') && (node.kind === 'var' || node.kind === 'elem')) {
       this.take()
-      return { kind: 'post', op: tok, name: node.name }
+      return { kind: 'post', op: tok, target: node }
     }
     return node
   }
@@ -278,7 +344,8 @@ class ArithParser {
       this.expect(')')
       return node
     }
-    if (ARITH_NAME.test(tok)) return { kind: 'var', name: tok }
+    const target = targetNode(tok)
+    if (target !== null) return target
     return { kind: 'num', value: parseLiteral(tok) }
   }
 }
@@ -291,20 +358,59 @@ class ArithEvaluator {
   constructor(
     private readonly env: Readonly<Record<string, string>>,
     private readonly updates: Record<string, string>,
+    private readonly elemUpdates: Map<string, ElementWrite>,
     private readonly depth: number,
+    private readonly elements: ElementOps | null,
   ) {}
 
-  private lookup(name: string): bigint {
-    const raw = (this.updates[name] ?? this.env[name] ?? '').trim()
-    if (raw === '') return 0n
+  private coerce(raw: string | null): bigint {
+    const text = (raw ?? '').trim()
+    if (text === '') return 0n
     try {
-      return parseLiteral(raw)
+      return parseLiteral(text)
     } catch {
       if (this.depth >= ARITH_MAX_DEPTH)
-        throw new ArithError(`expression recursion level exceeded (error token is "${raw}")`)
-      const { value } = evaluateArith(raw, { ...this.env, ...this.updates }, this.depth + 1)
+        throw new ArithError(`expression recursion level exceeded (error token is "${text}")`)
+      const { value } = evaluateArith(
+        text,
+        { ...this.env, ...this.updates },
+        this.depth + 1,
+        this.elements,
+      )
       return value
     }
+  }
+
+  private lookup(name: string): bigint {
+    return this.coerce(this.updates[name] ?? this.env[name] ?? '')
+  }
+
+  private elemKey(name: string, sub: string): string {
+    if (this.elements === null) {
+      throw new ArithError('syntax error: operand expected (error token is "[")')
+    }
+    return this.elements.resolve(name, sub, { ...this.env, ...this.updates })
+  }
+
+  private readTarget(target: ArithTarget): bigint {
+    if (target.kind === 'var') return this.lookup(target.name)
+    const key = this.elemKey(target.name, target.sub)
+    const pending = this.elemUpdates.get(`${target.name} ${key}`)
+    if (pending !== undefined) return this.coerce(pending.value)
+    return this.coerce(this.elements === null ? null : this.elements.read(target.name, key))
+  }
+
+  private writeTarget(target: ArithTarget, value: bigint): void {
+    if (target.kind === 'var') {
+      this.updates[target.name] = value.toString()
+      return
+    }
+    const key = this.elemKey(target.name, target.sub)
+    this.elemUpdates.set(`${target.name} ${key}`, {
+      name: target.name,
+      key,
+      value: value.toString(),
+    })
   }
 
   run(node: ArithNode): bigint {
@@ -312,7 +418,8 @@ class ArithEvaluator {
       case 'num':
         return node.value
       case 'var':
-        return this.lookup(node.name)
+      case 'elem':
+        return this.readTarget(node)
       case 'comma': {
         let value = 0n
         for (const part of node.parts) value = this.run(part)
@@ -323,8 +430,8 @@ class ArithEvaluator {
         const value =
           node.op === '='
             ? rhsVal
-            : this.applyBinop(node.op.slice(0, -1), this.lookup(node.name), rhsVal)
-        this.updates[node.name] = value.toString()
+            : this.applyBinop(node.op.slice(0, -1), this.readTarget(node.target), rhsVal)
+        this.writeTarget(node.target, value)
         return value
       }
       case 'ternary':
@@ -344,13 +451,13 @@ class ArithEvaluator {
         return value
       }
       case 'pre': {
-        const value = wrap(this.lookup(node.name) + (node.op === '++' ? 1n : -1n))
-        this.updates[node.name] = value.toString()
+        const value = wrap(this.readTarget(node.target) + (node.op === '++' ? 1n : -1n))
+        this.writeTarget(node.target, value)
         return value
       }
       case 'post': {
-        const value = this.lookup(node.name)
-        this.updates[node.name] = wrap(value + (node.op === '++' ? 1n : -1n)).toString()
+        const value = this.readTarget(node.target)
+        this.writeTarget(node.target, wrap(value + (node.op === '++' ? 1n : -1n)))
         return value
       }
     }
@@ -411,20 +518,25 @@ class ArithEvaluator {
  * prefix/postfix `++`/`--`. BigInt division/modulo already truncate
  * toward zero like C. A variable whose value is not a plain integer
  * literal is evaluated recursively like bash (`x="1+2"; $((x))` is 3).
- * `base#value` literals are not supported. Returns the value and the
- * assignments made (name to decimal string), for the caller to apply to
- * the session. Throws ArithError on syntax errors, division by zero, or
- * a negative exponent.
+ * `base#value` literals are not supported. Element references (`a[i]`,
+ * `m[key]`) resolve and assign through `elements`; with null every
+ * subscript is a syntax error, which is what an evaluation with no
+ * session behind it can honestly say. Returns the value plus the scalar
+ * and element assignments made, for the caller to apply to the session.
+ * Throws ArithError on syntax errors, division by zero, or a negative
+ * exponent.
  */
 export function evaluateArith(
   expr: string,
   env: Readonly<Record<string, string>>,
   depth = 0,
-): { value: bigint; updates: Record<string, string> } {
+  elements: ElementOps | null = null,
+): ArithResult {
   const tokens = tokenize(expr)
-  if (tokens.length === 0) return { value: 0n, updates: {} }
+  if (tokens.length === 0) return { value: 0n, updates: {}, elementUpdates: [] }
   const node = new ArithParser(tokens).parse()
   const updates: Record<string, string> = {}
-  const value = new ArithEvaluator(env, updates, depth).run(node)
-  return { value, updates }
+  const elemUpdates = new Map<string, ElementWrite>()
+  const value = new ArithEvaluator(env, updates, elemUpdates, depth, elements).run(node)
+  return { value, updates, elementUpdates: [...elemUpdates.values()] }
 }

@@ -354,6 +354,17 @@ export class Session {
     return Object.freeze(out)
   }
 
+  /** The associative arrays, by name. Read-only, like `env`. */
+  get assocs(): Readonly<Record<string, Record<string, string>>> {
+    const out = ownRecord<Record<string, string>>()
+    for (const [name, v] of Object.entries(this.vars)) {
+      if (v.value !== null && typeof v.value === 'object' && !Array.isArray(v.value)) {
+        out[name] = v.value
+      }
+    }
+    return Object.freeze(out)
+  }
+
   /** The names `readonly` has marked. Read-only, like `env`. */
   get readonlyVars(): ReadonlySet<string> {
     const out = new Set<string>()

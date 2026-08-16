@@ -142,6 +142,28 @@ export function visibleArrays(session: Session): Record<string, ShellArray> {
 }
 
 /**
+ * The associative arrays a reader tier should resolve names against.
+ *
+ * The third sibling beside `visibleEnv` and `visibleArrays`, for the
+ * same reason both exist: the embedder can seed a hidden name with any
+ * value shape, so every reader tier filters the same way.
+ */
+export function visibleAssocs(session: Session): Record<string, Record<string, string>> {
+  const out = ownRecord<Record<string, string>>()
+  for (const [name, v] of Object.entries(session.vars)) {
+    if (
+      v.value !== null &&
+      typeof v.value === 'object' &&
+      !Array.isArray(v.value) &&
+      !varHidden(session.hiddenVars, name)
+    ) {
+      out[name] = v.value
+    }
+  }
+  return out
+}
+
+/**
  * Write one variable through the session plane's gate.
  *
  * General over variable shapes: a string stores a scalar, a ShellArray
@@ -180,13 +202,21 @@ async function setVar(
   session: Session,
   policies: Policies | null,
   name: string,
-  value: string | ShellArray,
+  value: ShellValue,
 ): Promise<void> {
   ensureVarVisible(session, name)
   if (envIsReadonly(session, name)) {
     throw new ReadonlyVariableError(name)
   }
-  const rendered = typeof value === 'string' ? value : arrayValues(value).join(' ')
+  const rendered =
+    typeof value === 'string'
+      ? value
+      : Array.isArray(value)
+        ? arrayValues(value).join(' ')
+        : Object.keys(value)
+            .sort(compareCodePoints)
+            .map((k) => value[k])
+            .join(' ')
   await preSessionGate(policies, {
     plane: 'env',
     verb: 'set',

@@ -25,18 +25,19 @@ import { SET_OPTION_DEFAULTS, SET_OPTION_NAMES } from '../../../shell/types.ts'
 import type { Namespace } from '../../mount/namespace/namespace.ts'
 import { PolicyDenied } from '../../../policy/errors.ts'
 import {
-  arrayAppend,
   arrayExtent,
   arrayUnset,
-  makeArray,
+  buildAssocLiteral,
+  buildIndexedLiteral,
   type ShellArray,
 } from '../../../shell/array.ts'
 import { arrayIndex } from '../../expand/variable.ts'
 import { varHidden } from '../../../utils/hidden.ts'
 import { ReadonlyVariableError } from '../../session/errors.ts'
 import { ownRecord, sessionEntry, varsFromEnv } from '../../session/session.ts'
-import type { ShellVar } from '../../../shell/variable.ts'
+import type { ShellValue, ShellVar } from '../../../shell/variable.ts'
 import { attrLetters, VarAttr } from '../../../shell/variable.ts'
+import { assignElement, elementIndex, sessionElements } from '../../session/elements.ts'
 import { setAttr } from '../../session/state.ts'
 import type { Session } from '../../session/session.ts'
 import {
@@ -45,6 +46,7 @@ import {
   exportedNames,
   sessionView,
   visibleArrays,
+  visibleAssocs,
   visibleEnv,
 } from '../../session/state.ts'
 import type { SessionView } from '../../../ops/types.ts'
@@ -115,6 +117,14 @@ function readonlyRefusal(cmd: string, name: string): Result {
  * at top level) `fatal` abandons the rest of the line, while `local`
  * and a function-scoped `declare` refuse in the builtin's voice and the
  * body keeps running (pinned on bash 5.2, debian:stable-slim).
+ *
+ * `assoc` means the declaration carried `-A`, so every literal builds
+ * an associative map; without it a name that already holds one still
+ * builds a map, since a plain `m+=([k]=v)` keeps the variable's own
+ * kind. `errors` is filled with bash-voiced refusal lines for the
+ * plain words a keyed associative literal cannot take; the caller
+ * folds them into its exit status, because GNU stores the valid
+ * elements and still fails the builtin.
  */
 async function storeStagedArrays(
   cmd: string,
@@ -125,6 +135,8 @@ async function storeStagedArrays(
   on = true,
   fatal = false,
   stored: string[] | null = null,
+  assoc = false,
+  errors: string[] | null = null,
 ): Promise<Result | null> {
   for (const { name, append, items } of arrays) {
     if (view.isReadonly(name)) {
@@ -135,18 +147,26 @@ async function storeStagedArrays(
       return readonlyRefusal(cmd, name)
     }
     noteLocalArray(session, name)
-    let base: ShellArray
-    if (append) {
-      const existing = session.arrays[name]
-      if (existing === undefined) {
-        const scalar = session.env[name]
-        base = scalar === undefined ? [] : [scalar]
-      } else {
-        base = [...existing]
+    let base: ShellValue
+    if (assoc || Object.hasOwn(session.assocs, name)) {
+      const { map, badWords } = buildAssocLiteral(session.assocs[name] ?? null, items, append)
+      if (errors !== null) {
+        for (const word of badWords) {
+          errors.push(
+            `bash: ${name}: '${word}': must use subscript when assigning associative array`,
+          )
+        }
       }
-      arrayAppend(base, items)
+      base = map
     } else {
-      base = makeArray(items)
+      let held: ShellArray | null = session.arrays[name] ?? null
+      if (append && held === null) {
+        const scalar = session.env[name]
+        held = scalar === undefined ? null : [scalar]
+      }
+      base = buildIndexedLiteral(held, items, append, (sub) =>
+        elementIndex(sub, visibleEnv(session), sessionElements(session)),
+      )
     }
     try {
       await view.set(name, base)
@@ -261,12 +281,43 @@ function exportLines(session: Session, flags: Set<string>): string[] {
     .filter((line): line is string => line !== null)
 }
 
+const BARE_KEY_RE = /^[A-Za-z0-9_%+,./:=@~-]+$/
+
+/**
+ * One associative key as `declare -p` spells it.
+ *
+ * Bare when every character is one GNU leaves unquoted (pinned by a
+ * character sweep on 5.2.37: alphanumerics and `_ % + , - . / : = @ ~`),
+ * quoted like a value otherwise. A key that *is* `@` or `*` quotes even
+ * though the character is bare mid-key, since the bare spelling would
+ * read back as a splat.
+ */
+function assocKeyText(key: string): string {
+  if (key !== '@' && key !== '*' && BARE_KEY_RE.test(key)) return key
+  return bashDeclareQuote(key)
+}
+
+/**
+ * The `=(...)` tail of an associative `declare` line.
+ *
+ * Sorted keys (mirage's pinned order, where GNU prints hash order) and
+ * GNU's trailing space before the closing paren, which an empty map
+ * does not carry: `m=([a]="1" )` but `m=()`.
+ */
+function assocBody(amap: Readonly<Record<string, string>>): string {
+  const keys = Object.keys(amap).sort(compareCodePoints)
+  if (keys.length === 0) return '=()'
+  const parts = keys.map((k) => `[${assocKeyText(k)}]=${bashDeclareQuote(amap[k] ?? '')}`)
+  return `=(${parts.join(' ')} )`
+}
+
 function readonlyLines(session: Session, flags: Set<string>): string[] {
-  // -a narrows to indexed arrays, as bash does. -f selects functions and -A
-  // associative arrays, neither of which mirage carries a readonly attribute
-  // for, so those forms list nothing.
-  if (flags.has('f') || flags.has('A')) return []
+  // -a narrows to indexed arrays and -A to associative ones, as bash
+  // does. -f selects functions, which mirage carries no readonly
+  // attribute for, so that form lists nothing.
+  if (flags.has('f')) return []
   const arraysOnly = flags.has('a')
+  const assocsOnly = flags.has('A')
   const env = visibleEnv(session)
   const lines: string[] = []
   // A hidden readonly never prints even its bare `declare -r NAME` row.
@@ -274,7 +325,8 @@ function readonlyLines(session: Session, flags: Set<string>): string[] {
     .filter((name) => !varHidden(session.hiddenVars, name))
     .sort(compareCodePoints)) {
     const arr = session.arrays[name]
-    if (arr !== undefined) {
+    const amap = session.assocs[name]
+    if (arr !== undefined && !assocsOnly) {
       const parts: string[] = []
       for (let i = 0; i < arr.length; i++) {
         const v = arr[i]
@@ -285,7 +337,11 @@ function readonlyLines(session: Session, flags: Set<string>): string[] {
       lines.push(`declare -ar ${name}=(${parts.join(' ')})`)
       continue
     }
-    if (arraysOnly) continue
+    if (amap !== undefined && !arraysOnly) {
+      lines.push(`declare -Ar ${name}${assocBody(amap)}`)
+      continue
+    }
+    if (arraysOnly || assocsOnly || arr !== undefined || amap !== undefined) continue
     if (name in env) {
       lines.push(`declare -r ${name}=${bashDeclareQuote(env[name] ?? '')}`)
     } else {
@@ -371,7 +427,7 @@ function declareLine(session: Session, name: string): string | null {
     }
     return `${head} ${name}=(${parts.join(' ')})`
   }
-  if (typeof v.value !== 'string') return null
+  if (typeof v.value !== 'string') return `${head} ${name}${assocBody(v.value)}`
   return `${head} ${name}=${bashDeclareQuote(v.value)}`
 }
 
@@ -496,6 +552,7 @@ export async function handleReadonly(
   state: SessionView | null = null,
   arrays: { name: string; append: boolean; items: string[] }[] | null = null,
   stored: string[] | null = null,
+  assoc = false,
 ): Promise<Result> {
   const { flags, names, bad } = splitDeclFlags(assignments, READONLY_FLAGS)
   if (bad !== null) {
@@ -514,6 +571,7 @@ export async function handleReadonly(
     return [out, new IOResult(), new ExecutionNode({ command: 'readonly', exitCode: 0 })]
   }
   const view = viewOf(session, state)
+  const errors: string[] = []
   if (arrays !== null && arrays.length > 0) {
     const refused = await storeStagedArrays(
       'readonly',
@@ -524,10 +582,11 @@ export async function handleReadonly(
       true,
       true,
       stored,
+      assoc || flags.has('A'),
+      errors,
     )
     if (refused !== null) return refused
   }
-  const errors: string[] = []
   for (const assign of names) {
     const refusal = identifierRefusal('readonly', assign)
     if (refusal !== null) {
@@ -609,6 +668,19 @@ async function unsetElement(
   base: string,
   subscript: string,
 ): Promise<'ok' | 'notarray' | 'subscript'> {
+  const amap = sessionEntry(visibleAssocs(session), base)
+  if (amap !== undefined) {
+    // The subscript is the key, verbatim: `unset "m[1+1]"` removes the
+    // key "1+1", and a key that is not there (GNU pins `unset "m[@]"`
+    // on an associative array as this same no-op) answers quietly
+    // without a write.
+    if (!Object.hasOwn(amap, subscript)) return 'ok'
+    const next = { ...amap }
+    // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
+    delete next[subscript]
+    await view.set(base, next)
+    return 'ok'
+  }
   const arr = sessionEntry(visibleArrays(session), base)
   if (arr === undefined) {
     // Visible reads on purpose: a hidden base answers the unset
@@ -695,7 +767,8 @@ export async function handleUnset(
         new ExecutionNode({ command: 'unset', exitCode: 1, stderr: err }),
       ]
     }
-    const existed = isElement || name in session.env || name in session.arrays
+    const existed =
+      isElement || name in session.env || name in session.arrays || name in session.assocs
     // Both spellings clear the preSession gate for the base name: the
     // whole-variable unset through the view's env half, an element
     // unset inside unsetElement, so `unset 'X[0]'` cannot sidestep a
@@ -949,6 +1022,7 @@ export async function handleLocal(
   arrays: { name: string; append: boolean; items: string[] }[] | null = null,
   cmd = 'local',
   stored: string[] | null = null,
+  assoc = false,
 ): Promise<Result> {
   const locals = session.localVars
   if (cmd === 'local' && locals === null) {
@@ -965,6 +1039,7 @@ export async function handleLocal(
     ]
   }
   const view = viewOf(session, state)
+  const errors: string[] = []
   if (arrays !== null && arrays.length > 0) {
     const refused = await storeStagedArrays(
       cmd,
@@ -975,10 +1050,11 @@ export async function handleLocal(
       true,
       locals === null,
       stored,
+      assoc,
+      errors,
     )
     if (refused !== null) return refused
   }
-  const errors: string[] = []
   for (const assign of assignments) {
     const refusal = identifierRefusal(cmd, assign)
     if (refusal !== null) {
@@ -1003,7 +1079,11 @@ export async function handleLocal(
       if (locals !== null && !locals.has(assign)) {
         locals.set(assign, sessionEntry(session.vars, assign) ?? null)
       }
-      if (envGet(session, assign) === null && !(assign in visibleArrays(session))) {
+      if (
+        envGet(session, assign) === null &&
+        !(assign in visibleArrays(session)) &&
+        !(assign in visibleAssocs(session))
+      ) {
         // A bare declaration of an existing array re-scopes it; a
         // scalar write here would erase it. Visible reads: a hidden
         // name counts as unset, so the write is attempted and the
@@ -1411,13 +1491,8 @@ export async function handleRead(
   const view = viewOf(session, state)
   if (lineBytes === null) {
     for (const v of variables) {
-      if (view.isReadonly(v)) return readonlyRefusal('read', v)
-      try {
-        await view.set(v, '')
-      } catch (err) {
-        if (err instanceof PolicyDenied) return doorRefusal('read', err)
-        throw err
-      }
+      const refused = await readStore(session, view, v, '')
+      if (refused !== null) return refused
     }
     return [
       null,
@@ -1464,15 +1539,64 @@ export async function handleRead(
   for (let i = 0; i < variables.length; i++) {
     const name = variables[i]
     if (name === undefined) continue
-    if (view.isReadonly(name)) return readonlyRefusal('read', name)
+    const refused = await readStore(session, view, name, parts[i] ?? '')
+    if (refused !== null) return refused
+  }
+  return [null, new IOResult(), new ExecutionNode({ command: 'read', exitCode: 0 })]
+}
+
+/**
+ * Store one `read` target, scalar or `name[sub]` element.
+ *
+ * bash accepts a subscripted target (`read "m[k]"`), which is an
+ * element write, not a variable literally named `m[k]`; the readonly
+ * guard resolves the base name first, since that is what `readonly`
+ * records. Returns the refusal result, or null when the write landed.
+ */
+async function readStore(
+  session: Session,
+  view: SessionView,
+  varName: string,
+  value: string,
+): Promise<Result | null> {
+  const match = PRINTF_TARGET_RE.exec(varName)
+  const base = match?.[1] ?? varName
+  const subscript = match?.[2] ?? null
+  if (view.isReadonly(base)) return readonlyRefusal('read', base)
+  if (subscript === null) {
     try {
-      await view.set(name, parts[i] ?? '')
+      await view.set(varName, value)
     } catch (err) {
       if (err instanceof PolicyDenied) return doorRefusal('read', err)
       throw err
     }
+    return null
   }
-  return [null, new IOResult(), new ExecutionNode({ command: 'read', exitCode: 0 })]
+  let status: 'ok' | 'denied' | 'readonly' | 'subscript'
+  try {
+    status = await assignElement(session, view, base, subscript, value)
+  } catch (err) {
+    if (err instanceof PolicyDenied) return doorRefusal('read', err)
+    throw err
+  }
+  if (status === 'readonly') return readonlyRefusal('read', base)
+  if (status === 'denied') {
+    const err = new TextEncoder().encode(`bash: ${base}: permission denied\n`)
+    return [
+      null,
+      new IOResult({ exitCode: 1, stderr: err }),
+      new ExecutionNode({ command: 'read', exitCode: 1, stderr: err }),
+    ]
+  }
+  if (status !== 'ok') {
+    const err = new TextEncoder().encode(`bash: read: ${varName}: bad array subscript\n`)
+    return [
+      null,
+      new IOResult({ exitCode: 1, stderr: err }),
+      new ExecutionNode({ command: 'read', exitCode: 1, stderr: err }),
+    ]
+  }
+  return null
 }
 
 /**

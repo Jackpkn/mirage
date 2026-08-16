@@ -193,6 +193,48 @@ def visible_arrays(session: Session) -> Mapping[str, ShellArray]:
     return _VisibleArrays(session)
 
 
+class _VisibleAssocs(Mapping[str, dict[str, str]]):
+    """A live, read-only view of the associative arrays minus hidden
+    names.
+
+    The third sibling beside ``_VisibleEnv`` and ``_VisibleArrays``,
+    for the same reason both exist: the embedder can seed a hidden name
+    with any value shape, so every reader tier filters the same way.
+    """
+
+    __slots__ = ("_session", )
+
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def __getitem__(self, name: str) -> dict[str, str]:
+        if var_hidden(self._session.hidden_vars, name):
+            raise KeyError(name)
+        var = self._session.vars[name]
+        if not isinstance(var.value, dict):
+            raise KeyError(name)
+        return var.value
+
+    def __iter__(self) -> Iterator[str]:
+        hidden = self._session.hidden_vars
+        for name, var in self._session.vars.items():
+            if isinstance(var.value, dict) and not var_hidden(hidden, name):
+                yield name
+
+    def __len__(self) -> int:
+        return sum(1 for _ in self)
+
+
+def visible_assocs(session: Session) -> Mapping[str, dict[str, str]]:
+    """The associative arrays a reader tier should resolve names
+    against.
+
+    Args:
+        session (Session): the session holding the arrays.
+    """
+    return _VisibleAssocs(session)
+
+
 def ensure_var_visible(session: Session, name: str) -> None:
     """Refuse a write that names a hidden variable.
 
@@ -215,14 +257,15 @@ def ensure_var_visible(session: Session, name: str) -> None:
 
 
 async def set_var(session: Session, policies: Policies | None, name: str,
-                  value: str | ShellArray) -> None:
+                  value: ShellValue) -> None:
     """Write one variable through the session plane's gate.
 
     General over variable shapes: a string stores a scalar, a
-    ShellArray stores a whole array, and the two storages stay
-    exclusive. Semantics live here once — readonly refusal, the
-    ``pre_session`` policy gate (whose context value renders an array
-    as its present elements joined by spaces), then the store — so
+    ShellArray stores an indexed array, a dict stores an associative
+    one, and the storages stay exclusive. Semantics live here once —
+    readonly refusal, the ``pre_session`` policy gate (whose context
+    value renders an array as its present elements joined by spaces,
+    an associative one in sorted-key order), then the store — so
     every writer states them the same way whichever tier or spelling
     asked. Writers with richer mechanics (subscripts, appends, holes)
     compute the resulting value on a copy and hand it here, so a
@@ -233,7 +276,7 @@ async def set_var(session: Session, policies: Policies | None, name: str,
         session (Session): the session being written.
         policies (Policies | None): admission policies the write clears.
         name (str): variable name.
-        value (str | ShellArray): the value to store.
+        value (ShellValue): the value to store.
 
     Raises:
         ReadonlyVariableError: the name is readonly.
@@ -248,8 +291,12 @@ async def set_var(session: Session, policies: Policies | None, name: str,
     # refused a hidden name, so the two answer identically here.
     if env_is_readonly(session, name):
         raise ReadonlyVariableError(name)
-    rendered = value if isinstance(value, str) else " ".join(
-        array_values(value))
+    if isinstance(value, str):
+        rendered = value
+    elif isinstance(value, dict):
+        rendered = " ".join(value[k] for k in sorted(value))
+    else:
+        rendered = " ".join(array_values(value))
     await pre_session_gate(
         policies,
         SessionContext(plane="env",

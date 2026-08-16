@@ -13,6 +13,7 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import asyncio
+import functools
 from functools import partial
 from typing import Any, Callable
 
@@ -23,8 +24,8 @@ from mirage.policy import PolicyDenied
 from mirage.runtime.policy import PolicyDecision
 from mirage.runtime.types import DispatchFn
 from mirage.shell.arith import evaluate_arith
-from mirage.shell.array import (ShellArray, array_append, array_extent,
-                                array_get, array_set, make_array)
+from mirage.shell.array import (array_extent, array_get, array_set,
+                                build_assoc_literal, build_indexed_literal)
 from mirage.shell.barrier import BarrierPolicy, apply_barrier
 from mirage.shell.call_stack import CallStack
 from mirage.shell.console import Channel, JobConsole
@@ -34,7 +35,7 @@ from mirage.shell.node_kind import NodeKind, node_kind
 from mirage.shell.types import ERREXIT_EXEMPT_TYPES
 from mirage.shell.types import NodeType as NT
 from mirage.shell.types import Redirect, RedirectKind
-from mirage.shell.variable import VarAttr
+from mirage.shell.variable import ShellValue, VarAttr
 from mirage.shell.xtrace import trace_assignment
 from mirage.types import word_text
 from mirage.workspace.abort import MirageAbortError
@@ -61,6 +62,8 @@ from mirage.workspace.node.program import execute_program
 from mirage.workspace.node.test_expr import (expand_double_bracket,
                                              expand_test_expr)
 from mirage.workspace.session import Session
+from mirage.workspace.session.elements import (assign_element, element_index,
+                                               session_elements)
 from mirage.workspace.session.state import (ensure_var_visible, seed_var,
                                             session_view, set_attr,
                                             visible_env)
@@ -76,8 +79,7 @@ from mirage.workspace.executor.builtins import (  # isort: skip
     handle_test, handle_unset, note_local_array)
 
 
-async def _assign_var(view: SessionView, key: str,
-                      value: str | ShellArray) -> None:
+async def _assign_var(view: SessionView, key: str, value: ShellValue) -> None:
     """One assignment through the session door; denial is fatal.
 
     Every assignment spelling (scalar, array literal, subscript,
@@ -89,7 +91,7 @@ async def _assign_var(view: SessionView, key: str,
     Args:
         view (SessionView): the session plane's gated door.
         key (str): the variable being written.
-        value (str | ShellArray): the resulting value to store.
+        value (ShellValue): the resulting value to store.
     """
     try:
         await view.set(key, value)
@@ -135,10 +137,14 @@ async def _eval_cfor_expr(
         # Reads resolve against the visible env so a hidden name counts
         # as unset; a hidden write refuses through the session door
         # (ensure_var_visible), caught by the loop beside ReadonlyError.
-        value, updates = evaluate_arith(text, visible_env(session))
+        result = evaluate_arith(text,
+                                visible_env(session),
+                                elements=session_elements(session))
     except ArithError as exc:
         raise ArithError(f"{text}: {exc}") from exc
-    for name in updates:
+    updates = result.updates
+    element_names = [write.name for write in result.element_updates]
+    for name in [*updates, *element_names]:
         ensure_var_visible(session, name)
         if name in session.readonly_vars:
             raise ReadonlyError(name)
@@ -149,7 +155,9 @@ async def _eval_cfor_expr(
             seed_var(session, name, updated)
         else:
             await view.set(name, updated)
-    return int(value)
+    for write in result.element_updates:
+        await assign_element(session, view, write.name, write.key, write.value)
+    return int(result.value)
 
 
 STREAMING_KINDS = frozenset({
@@ -298,6 +306,77 @@ async def _recurse_pipe_stderr(
         io = await io.merge(io2)
         exec_node = exec_node2
     return stdout, io, exec_node
+
+
+_SUBSCRIPT_LITERAL_TYPES = frozenset({NT.WORD, NT.NUMBER, NT.ERROR})
+
+
+async def _subscript_key_text(
+    subscript_node: Any,
+    name: str,
+    session: Session,
+    execute_fn: Callable[..., Any],
+    cs: CallStack | None,
+    view: SessionView | None,
+) -> str:
+    """The expanded subscript text of one ``name[...]=`` assignment.
+
+    A purely literal subscript keeps its raw spelling, spaces included
+    (bash stores ``m[ k ]`` under the key ``" k "``); anything carrying
+    an expansion or quoting expands node by node so ``m[$k]`` and
+    ``m["a b"]`` resolve with quote removal. The associative path uses
+    the result as the key verbatim; the indexed path evaluates it as
+    arithmetic.
+
+    Args:
+        subscript_node (Any): the tree-sitter ``subscript`` node.
+        name (str): the array variable's name, for the raw slice.
+        session (Session): shell session state.
+        execute_fn (Callable): evaluator for command substitutions.
+        cs (CallStack | None): shell call stack.
+        view (SessionView | None): the session plane's gated door.
+    """
+    inner = [
+        sc for sc in subscript_node.named_children
+        if sc.type != NT.VARIABLE_NAME
+    ]
+    raw = get_text(subscript_node)[len(name) + 1:-1]
+    if not inner or all(sc.type in _SUBSCRIPT_LITERAL_TYPES for sc in inner):
+        return raw
+    parts = []
+    for sc in inner:
+        parts.append(await expand_node(sc, session, execute_fn, cs, view=view))
+    return "".join(parts)
+
+
+def _merge_conversion_errors(
+    result: tuple[Any, IOResult, ExecutionNode],
+    errors: list[str],
+) -> tuple[Any, IOResult, ExecutionNode]:
+    """Fold kind-conversion refusals into a declaration's result.
+
+    GNU reports `cannot convert indexed to associative array` per
+    refused name on stderr and fails the builtin with 1 while the other
+    operands still declare, so the refusals ride the handler's own
+    result rather than replacing it.
+
+    Args:
+        result (tuple): the handler's (stream, io, node) answer.
+        errors (list[str]): the refusal lines, in operand order.
+    """
+    if not errors:
+        return result
+    stream, io, node = result
+    extra = ("\n".join(errors) + "\n").encode()
+    prior = io.stderr if isinstance(io.stderr, bytes) else b""
+    merged = prior + extra
+    new_io = IOResult(exit_code=1,
+                      stderr=merged,
+                      reads=io.reads,
+                      writes=io.writes,
+                      cache=io.cache)
+    new_node = ExecutionNode(command=node.command, exit_code=1, stderr=merged)
+    return stream, new_io, new_node
 
 
 async def _stamp_export(
@@ -580,14 +659,18 @@ async def execute_node(
             # Reads resolve against the visible env so a hidden name
             # counts as unset; a hidden write refuses below, in this
             # command's own voice like the readonly refusal.
-            value, updates = evaluate_arith(expr, visible_env(session))
+            arith = evaluate_arith(expr,
+                                   visible_env(session),
+                                   elements=session_elements(session))
         except ArithError as exc:
             err = f"bash: ((: {expr}: {exc}\n".encode()
             return None, IOResult(exit_code=1,
                                   stderr=err), ExecutionNode(command=text,
                                                              exit_code=1,
                                                              stderr=err)
-        for name in updates:
+        updates = arith.updates
+        element_names = [write.name for write in arith.element_updates]
+        for name in [*updates, *element_names]:
             try:
                 ensure_var_visible(session, name)
             except PolicyDenied as exc:
@@ -605,13 +688,16 @@ async def execute_node(
         try:
             for name, updated in updates.items():
                 await view.set(name, updated)
+            for write in arith.element_updates:
+                await assign_element(session, view, write.name, write.key,
+                                     write.value)
         except PolicyDenied as exc:
             err = f"bash: {exc.strerror}\n".encode()
             return None, IOResult(exit_code=1,
                                   stderr=err), ExecutionNode(command=text,
                                                              exit_code=1,
                                                              stderr=err)
-        code = 0 if value != 0 else 1
+        code = 0 if arith.value != 0 else 1
         return None, IOResult(exit_code=code), ExecutionNode(command=text,
                                                              exit_code=code)
 
@@ -783,26 +869,49 @@ async def execute_node(
                 else:
                     assignments.append(expanded)
         is_readonly = keyword == "readonly" or "r" in flag_chars
-        if "a" in flag_chars:
-            # `declare -a NAME` with no value declares an empty array, so
-            # ${#NAME[@]} is 0 and NAME[3]=x leaves index 0 unassigned.
+        cmd_word = "local" if keyword == NT.LOCAL else str(keyword)
+        conversion_errors: list[str] = []
+        if "A" in flag_chars or "a" in flag_chars:
+            # `declare -a NAME` / `declare -A NAME` with no value declare
+            # an empty array of that kind, so ${#NAME[@]} is 0 and an
+            # element write leaves the other slots unassigned. GNU
+            # refuses to convert between the two kinds and says so per
+            # name while the rest of the operands still declare.
+            want_assoc = "A" in flag_chars
             for bare in assignments:
                 if "=" in bare:
                     continue
                 # Both branches below write array storage raw (the
-                # top-level one migrates an existing scalar into
-                # element 0), so a hidden name refuses like any
-                # assignment spelling before either lands.
+                # top-level one migrates an existing scalar), so a
+                # hidden name refuses like any assignment spelling
+                # before either lands.
                 try:
                     ensure_var_visible(session, bare)
                 except PolicyDenied as exc:
                     err = f"{exc.strerror}\n".encode()
                     raise ExitSignal(1, stderr=err, contained_code=1) from exc
+                if want_assoc and bare in session.arrays:
+                    conversion_errors.append(
+                        f"bash: {cmd_word}: {bare}: cannot convert indexed "
+                        "to associative array")
+                    continue
+                if not want_assoc and bare in session.assocs:
+                    conversion_errors.append(
+                        f"bash: {cmd_word}: {bare}: cannot convert "
+                        "associative to indexed array")
+                    continue
                 if note_local_array(session, bare):
                     # Inside a function this shadows whatever the caller
-                    # had with a fresh empty array.
-                    seed_var(session, bare, [])
-                elif bare not in session.arrays:
+                    # had with a fresh empty array of the declared kind.
+                    seed_var(session, bare, {} if want_assoc else [])
+                elif want_assoc and bare not in session.assocs:
+                    # At top level an existing scalar becomes the value
+                    # at the literal key "0" (GNU allows scalar-to-
+                    # associative conversion, unlike indexed).
+                    scalar = session.env.get(bare)
+                    seed_var(session, bare,
+                             {} if scalar is None else {"0": scalar})
+                elif not want_assoc and bare not in session.arrays:
                     # At top level an existing scalar becomes element 0.
                     scalar = session.env.get(bare)
                     seed_var(session, bare, [] if scalar is None else [scalar])
@@ -819,19 +928,23 @@ async def execute_node(
                                                session,
                                                decl_view,
                                                arrays=staged,
-                                               stored=stored)
+                                               stored=stored,
+                                               assoc="A" in flag_chars)
             else:
                 result = await handle_readonly(assignments,
                                                session,
                                                decl_view,
                                                arrays=staged,
-                                               stored=stored)
+                                               stored=stored,
+                                               assoc="A" in flag_chars)
             # `declare -rx X=1` carries both attributes: GNU prints
             # `declare -rx X="1"`. Readonly answers first, so the export
             # stamp has to land here too, or `-r` silently ate the `-x`.
             refused = await _stamp_export(session, decl_view, flag_chars,
                                           assignments, staged, stored)
-            return refused if refused is not None else result
+            if refused is not None:
+                return refused
+            return _merge_conversion_errors(result, conversion_errors)
         # declare/typeset scope like `local` inside a function (bash
         # semantics) and assign globally at top level, which is exactly
         # handle_local's fallback when no function scope is active.
@@ -849,17 +962,21 @@ async def execute_node(
                 arrays=staged,
                 # `declare`/`typeset` share this handler but have to name
                 # themselves in a diagnostic rather than say `local`.
-                cmd="local" if keyword == NT.LOCAL else str(keyword),
-                stored=stored)
+                cmd=cmd_word,
+                stored=stored,
+                assoc="A" in flag_chars)
             refused = await _stamp_export(session, decl_view, flag_chars,
                                           assignments, staged, stored)
-            return refused if refused is not None else result
+            if refused is not None:
+                return refused
+            return _merge_conversion_errors(result, conversion_errors)
         # Pass export flags through so -p / bare print and bad options work.
-        return await handle_export(flag_words + assignments,
-                                   session,
-                                   session_view(session,
-                                                namespace.registry.policies),
-                                   arrays=staged)
+        result = await handle_export(flag_words + assignments,
+                                     session,
+                                     session_view(session,
+                                                  namespace.registry.policies),
+                                     arrays=staged)
+        return _merge_conversion_errors(result, conversion_errors)
 
     # ── unset ───────────────────────────────────
     if kind == NodeKind.UNSET:
@@ -943,18 +1060,35 @@ async def execute_node(
             items = await _expand_array_items(val_nodes[0], session,
                                               execute_fn, registry, namespace,
                                               cs)
-            if append:
-                base = session.arrays.get(key)
-                if base is None:
-                    scalar = session.env.get(key)
-                    base = [] if scalar is None else [scalar]
-                else:
-                    base = list(base)
-                # `arr+=(...)` starts at the extent, so it fills the hole
-                # a trailing `unset arr[last]` left but skips interior ones.
-                array_append(base, items)
-            else:
-                base = make_array(items)
+            amap = session.assocs.get(key)
+            if amap is not None:
+                built, bad_words = build_assoc_literal(amap, items, append)
+                await _assign_var(view, key, built)
+                if bad_words:
+                    err = ("\n".join(
+                        f"bash: {key}: '{word}': must use subscript when "
+                        "assigning associative array"
+                        for word in bad_words) + "\n").encode()
+                    return None, IOResult(
+                        exit_code=1, stderr=err), ExecutionNode(command=text,
+                                                                exit_code=1,
+                                                                stderr=err)
+                code = assignment_status(session, sub_seq)
+                return None, IOResult(exit_code=code), ExecutionNode(
+                    command=text, exit_code=code)
+            held = session.arrays.get(key)
+            if append and held is None:
+                scalar = session.env.get(key)
+                held = None if scalar is None else [scalar]
+            # `arr+=(...)` starts at the extent, so it fills the hole a
+            # trailing `unset arr[last]` left but skips interior ones;
+            # a `[i]=v` element places at i and the next plain word
+            # continues from there.
+            base = build_indexed_literal(
+                held, items, append,
+                functools.partial(element_index,
+                                  env=visible_env(session),
+                                  elements=session_elements(session)))
             await _assign_var(view, key, base)
             code = assignment_status(session, sub_seq)
             return None, IOResult(exit_code=code), ExecutionNode(
@@ -968,23 +1102,44 @@ async def execute_node(
         else:
             val = text.partition("=")[2]
         if subscript_node is not None:
-            idx_text = ""
-            for sc in subscript_node.named_children:
-                if sc.type != NT.VARIABLE_NAME:
-                    idx_text = get_text(sc)
-                    break
+            sub_text = await _subscript_key_text(subscript_node, key, session,
+                                                 execute_fn, cs, view)
+            amap = session.assocs.get(key)
+            raw_sub = get_text(subscript_node)[len(key) + 1:-1]
+            if not raw_sub.strip() or (amap is not None and sub_text == ""):
+                # bash aborts the whole line on a bad assignment
+                # subscript (status 1), naming the raw spelling
+                # (`m[$e]: bad array subscript`). An indexed subscript
+                # that merely *expands* empty stays legal (arithmetic
+                # on nothing is 0), so only the associative kind checks
+                # the expanded text.
+                name_text = text.partition("=")[0].removesuffix("+")
+                raise ExitSignal(1,
+                                 stderr=(f"bash: {name_text}: "
+                                         "bad array subscript\n").encode(),
+                                 contained_code=1)
+            if amap is not None:
+                # The subscript is the key: no arithmetic, `m[1+1]`
+                # writes the key "1+1".
+                new_map = dict(amap)
+                new_map[sub_text] = (amap.get(sub_text, "") +
+                                     val) if append else val
+                await _assign_var(view, key, new_map)
+                code = assignment_status(session, sub_seq)
+                return None, IOResult(exit_code=code), ExecutionNode(
+                    command=text, exit_code=code)
             arr = session.arrays.get(key)
             if arr is None:
                 scalar = session.env.get(key)
                 arr = [] if scalar is None else [scalar]
             else:
                 arr = list(arr)
-            idx = _array_index(idx_text, visible_env(session))
+            idx = _array_index(sub_text, visible_env(session),
+                               session_elements(session))
             if idx < 0:
                 idx += array_extent(arr)
             if idx < 0:
-                # bash aborts the whole line on a bad assignment
-                # subscript (status 1); containment mirrors ${var:?}.
+                # Same fatal shape as the empty subscript above.
                 name_text = text.partition("=")[0].removesuffix("+")
                 raise ExitSignal(1,
                                  stderr=(f"bash: {name_text}: "
@@ -995,11 +1150,20 @@ async def execute_node(
             code = assignment_status(session, sub_seq)
             return None, IOResult(exit_code=code), ExecutionNode(
                 command=text, exit_code=code)
-        arr = session.arrays.get(key) if append else None
-        if append and arr is not None:
-            # `arr+=x` appends to element 0.
-            new_arr = list(arr)
-            array_set(new_arr, 0, array_get(new_arr, 0) + val)
+        held_map = session.assocs.get(key)
+        held_arr = session.arrays.get(key)
+        if held_map is not None:
+            # `m=x` on an associative array writes the literal key "0"
+            # and keeps every other key, as bash does.
+            new_map = dict(held_map)
+            new_map["0"] = (held_map.get("0", "") + val) if append else val
+            await _assign_var(view, key, new_map)
+        elif held_arr is not None:
+            # `a=x` writes element 0 and keeps the rest; `a+=x` appends
+            # onto element 0.
+            new_arr = list(held_arr)
+            array_set(new_arr, 0,
+                      (array_get(new_arr, 0) + val) if append else val)
             await _assign_var(view, key, new_arr)
         else:
             new_val = session.env.get(key, "") + val if append else val

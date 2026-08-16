@@ -12,6 +12,7 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any, TypeAlias
@@ -19,6 +20,62 @@ from typing import Any, TypeAlias
 import tree_sitter
 
 FunctionBody: TypeAlias = list[tree_sitter.Node]
+
+
+@dataclass(frozen=True, slots=True)
+class ElementOps:
+    """Array-element callbacks the arithmetic evaluator resolves through.
+
+    The evaluator owns no session, so a caller that wants ``a[i]`` and
+    ``m[key]`` to mean anything injects these two facts. The split is
+    what keeps subscript semantics out of the evaluator: whether the
+    subscript text is an arithmetic expression (indexed) or a literal
+    key (associative) is the variable's to answer, and only the session
+    knows the variable.
+
+    Args:
+        resolve (Callable[[str, str, Mapping[str, str]], str]): canonical
+            key for one reference: the evaluated index for an indexed
+            name, the literal (quote-stripped) text for an associative
+            one. The mapping is the evaluator's current view, pending
+            assignments included, so ``i=2, a[i]`` reads the new ``i``.
+        read (Callable[[str, str], str | None]): the element's stored
+            text, None when the element is unset.
+    """
+    resolve: Callable[[str, str, Mapping[str, str]], str]
+    read: Callable[[str, str], str | None]
+
+
+@dataclass(frozen=True, slots=True)
+class ElementWrite:
+    """One array-element assignment an arithmetic evaluation produced.
+
+    Args:
+        name (str): the array variable's name.
+        key (str): the canonical subscript ``ElementOps.resolve`` gave.
+        value (str): the stored decimal text.
+    """
+    name: str
+    key: str
+    value: str
+
+
+@dataclass(frozen=True, slots=True)
+class ArithResult:
+    """What one arithmetic evaluation produced.
+
+    Args:
+        value (int): the expression's value.
+        updates (dict[str, str]): scalar assignments made, name to
+            decimal text, for the caller to land through the session
+            door.
+        element_updates (tuple[ElementWrite, ...]): element assignments
+            made, in evaluation order, for the caller to land the same
+            way.
+    """
+    value: int
+    updates: dict[str, str]
+    element_updates: tuple[ElementWrite, ...] = ()
 
 
 class NodeType(StrEnum):

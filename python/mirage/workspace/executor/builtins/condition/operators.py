@@ -21,6 +21,7 @@ from mirage.workspace.executor.builtins.condition.types import (CondContext,
                                                                 CondError)
 from mirage.workspace.executor.builtins.links import resolve_path_stat
 from mirage.workspace.executor.builtins.scope import _scope_path, _to_scope
+from mirage.workspace.session.elements import element_is_set
 
 
 def operand_scope(ctx: CondContext, val: str | PathSpec) -> PathSpec:
@@ -71,6 +72,8 @@ async def apply_unary(ctx: CondContext, op: str, val: str | PathSpec) -> bool:
         return text != ""
     if op == "-z":
         return text == ""
+    if op == "-v":
+        return element_is_set(ctx.session, text)
     if op in ("-L", "-h"):
         resolved = resolve_path(text, ctx.session.cwd)
         return ctx.namespace.is_link(resolved)

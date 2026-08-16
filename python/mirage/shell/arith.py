@@ -15,22 +15,85 @@
 from collections.abc import Mapping
 from typing import Any
 
-from mirage.shell.constants import (ARITH_ASSIGN_OPS, ARITH_MAX_DEPTH,
-                                    ARITH_NAME, ARITH_SIGN, ARITH_TOKEN,
-                                    ARITH_WRAP)
+from mirage.shell.constants import (ARITH_ASSIGN_OPS, ARITH_ELEM,
+                                    ARITH_MAX_DEPTH, ARITH_NAME, ARITH_SIGN,
+                                    ARITH_TOKEN, ARITH_WRAP)
 from mirage.shell.errors import ArithError
+from mirage.shell.types import ArithResult, ElementOps, ElementWrite
+
+
+def _matching_bracket(expr: str, start: int) -> int:
+    """Index of the ``]`` closing the ``[`` at ``start``, quote-aware.
+
+    Quotes matter because an associative key may hold a bracket
+    (``m["a]b"]``); nesting matters because an indexed subscript may
+    hold another reference (``a[b[0]]``).
+
+    Args:
+        expr (str): the whole expression.
+        start (int): index of the opening bracket.
+    """
+    depth = 0
+    i = start
+    n = len(expr)
+    while i < n:
+        ch = expr[i]
+        if ch in "\"'":
+            close = expr.find(ch, i + 1)
+            if close == -1:
+                break
+            i = close + 1
+            continue
+        if ch == "[":
+            depth += 1
+        elif ch == "]":
+            depth -= 1
+            if depth == 0:
+                return i
+        i += 1
+    raise ArithError('syntax error: "]" expected')
 
 
 def _tokenize(expr: str) -> list[str]:
     tokens: list[str] = []
-    for match in ARITH_TOKEN.finditer(expr):
+    pos = 0
+    n = len(expr)
+    while pos < n:
+        match = ARITH_TOKEN.match(expr, pos)
+        if match is None:
+            raise ArithError(f'syntax error: invalid character "{expr[pos]}"')
         kind = match.lastgroup
+        end = match.end()
+        if kind == "name" and end < n and expr[end] == "[":
+            # A name adjacent to a bracket is one element reference, so
+            # the subscript rides inside the token: its interior is not
+            # arithmetic (an associative key can be any text at all) and
+            # only the resolver knows which grammar applies.
+            close = _matching_bracket(expr, end)
+            tokens.append(expr[match.start():close + 1])
+            pos = close + 1
+            continue
+        pos = end
         if kind == "ws":
             continue
         if kind == "bad":
             raise ArithError(f'syntax error: invalid character "{match[0]}"')
         tokens.append(match[0])
     return tokens
+
+
+def _target_node(tok: str) -> tuple[Any, ...] | None:
+    """The lvalue node one token spells, or None when it spells none.
+
+    Args:
+        tok (str): the token to classify.
+    """
+    if ARITH_NAME.fullmatch(tok):
+        return ("var", tok)
+    elem = ARITH_ELEM.fullmatch(tok)
+    if elem is not None:
+        return ("elem", elem.group(1), elem.group(2))
+    return None
 
 
 def _wrap(value: int) -> int:
@@ -136,13 +199,13 @@ class ArithParser:
         return parts[0] if len(parts) == 1 else ("comma", parts)
 
     def assign(self) -> tuple[Any, ...]:
-        if (self.peek() is not None
-                and ARITH_NAME.fullmatch(self.tokens[self.pos])
-                and self.pos + 1 < len(self.tokens)
-                and self.tokens[self.pos + 1] in ARITH_ASSIGN_OPS):
-            name = self.take()
+        tok = self.peek()
+        if (tok is not None and self.pos + 1 < len(self.tokens)
+                and self.tokens[self.pos + 1] in ARITH_ASSIGN_OPS
+                and _target_node(tok) is not None):
+            target = _target_node(self.take())
             op = self.take()
-            return ("assign", name, op, self.assign())
+            return ("assign", target, op, self.assign())
         return self.ternary()
 
     def ternary(self) -> tuple[Any, ...]:
@@ -239,17 +302,17 @@ class ArithParser:
             return ("unary", tok, self.unary())
         if tok in ("++", "--"):
             self.take()
-            name = self.take()
-            if not ARITH_NAME.fullmatch(name):
+            target = _target_node(self.take())
+            if target is None:
                 raise ArithError(f'syntax error: "{tok}" requires a variable')
-            return ("pre", tok, name)
+            return ("pre", tok, target)
         return self.postfix()
 
     def postfix(self) -> tuple[Any, ...]:
         node = self.primary()
-        if self.peek() in ("++", "--") and node[0] == "var":
+        if self.peek() in ("++", "--") and node[0] in ("var", "elem"):
             op = self.take()
-            return ("post", op, node[1])
+            return ("post", op, node)
         return node
 
     def primary(self) -> tuple[Any, ...]:
@@ -258,8 +321,9 @@ class ArithParser:
             node = self.comma()
             self.expect(")")
             return node
-        if ARITH_NAME.fullmatch(tok):
-            return ("var", tok)
+        target = _target_node(tok)
+        if target is not None:
+            return target
         try:
             return ("num", _parse_literal(tok))
         except ValueError:
@@ -271,22 +335,22 @@ class ArithEvaluator:
     """Evaluates the tuple AST against an env, recording assignments.
 
     Reads resolve through ``updates`` first, then ``env``; every write
-    lands in ``updates`` so the caller decides what to apply to the
-    session (bash arithmetic assignments are real assignments).
+    lands in ``updates`` (or ``elem_updates`` for an element lvalue) so
+    the caller decides what to apply to the session (bash arithmetic
+    assignments are real assignments).
     """
 
     def __init__(self, env: Mapping[str, str], updates: dict[str, str],
-                 depth: int) -> None:
+                 elem_updates: dict[tuple[str, str], str], depth: int,
+                 elements: ElementOps | None) -> None:
         self.env = env
         self.updates = updates
+        self.elem_updates = elem_updates
         self.depth = depth
+        self.elements = elements
 
-    def lookup(self, name: str) -> int:
-        raw = self.updates.get(name)
-        if raw is None:
-            value = self.env.get(name, "")
-            raw = value if isinstance(value, str) else str(value)
-        raw = raw.strip()
+    def _coerce(self, raw: str | None) -> int:
+        raw = (raw or "").strip()
         if not raw:
             return 0
         try:
@@ -296,30 +360,61 @@ class ArithEvaluator:
                 raise ArithError(
                     f"expression recursion level exceeded (error token is "
                     f'"{raw}")') from None
-            result, _ = evaluate_arith(raw, {
+            result = evaluate_arith(raw, {
                 **dict(self.env),
                 **self.updates
             },
-                                       depth=self.depth + 1)
-            return result
+                                    depth=self.depth + 1,
+                                    elements=self.elements)
+            return result.value
+
+    def lookup(self, name: str) -> int:
+        raw = self.updates.get(name)
+        if raw is None:
+            value = self.env.get(name, "")
+            raw = value if isinstance(value, str) else str(value)
+        return self._coerce(raw)
+
+    def elem_key(self, name: str, subscript: str) -> str:
+        if self.elements is None:
+            raise ArithError('syntax error: operand expected (error token '
+                             'is "[")')
+        merged = {**dict(self.env), **self.updates}
+        return self.elements.resolve(name, subscript, merged)
+
+    def read_target(self, target: tuple[Any, ...]) -> int:
+        if target[0] == "var":
+            return self.lookup(target[1])
+        key = self.elem_key(target[1], target[2])
+        raw = self.elem_updates.get((target[1], key))
+        if raw is None and self.elements is not None:
+            raw = self.elements.read(target[1], key)
+        return self._coerce(raw)
+
+    def write_target(self, target: tuple[Any, ...], value: int) -> None:
+        if target[0] == "var":
+            self.updates[target[1]] = str(value)
+            return
+        key = self.elem_key(target[1], target[2])
+        self.elem_updates[(target[1], key)] = str(value)
 
     def run(self, node: tuple[Any, ...]) -> int:
         kind = node[0]
         if kind == "num":
             return node[1]
-        if kind == "var":
-            return self.lookup(node[1])
+        if kind in ("var", "elem"):
+            return self.read_target(node)
         if kind == "comma":
             value = 0
             for part in node[1]:
                 value = self.run(part)
             return value
         if kind == "assign":
-            _, name, op, rhs = node
+            _, target, op, rhs = node
             rhs_val = self.run(rhs)
             value = (rhs_val if op == "=" else self.apply_binop(
-                op[:-1], self.lookup(name), rhs_val))
-            self.updates[name] = str(value)
+                op[:-1], self.read_target(target), rhs_val))
+            self.write_target(target, value)
             return value
         if kind == "ternary":
             _, cond, then, other = node
@@ -344,14 +439,14 @@ class ArithEvaluator:
                 return _wrap(-value)
             return value
         if kind == "pre":
-            _, op, name = node
-            value = _wrap(self.lookup(name) + (1 if op == "++" else -1))
-            self.updates[name] = str(value)
+            _, op, target = node
+            value = _wrap(self.read_target(target) + (1 if op == "++" else -1))
+            self.write_target(target, value)
             return value
         if kind == "post":
-            _, op, name = node
-            value = self.lookup(name)
-            self.updates[name] = str(_wrap(value + (1 if op == "++" else -1)))
+            _, op, target = node
+            value = self.read_target(target)
+            self.write_target(target, _wrap(value + (1 if op == "++" else -1)))
             return value
         raise ArithError(f"unsupported node: {kind}")
 
@@ -397,7 +492,8 @@ class ArithEvaluator:
 
 def evaluate_arith(expr: str,
                    env: Mapping[str, str],
-                   depth: int = 0) -> tuple[int, dict[str, str]]:
+                   depth: int = 0,
+                   elements: ElementOps | None = None) -> ArithResult:
     """Evaluate a bash arithmetic expression.
 
     Implements bash's arithmetic grammar over 64-bit wrapping integers:
@@ -410,14 +506,20 @@ def evaluate_arith(expr: str,
     evaluated recursively like bash (``x="1+2"; $((x))`` is 3).
     ``base#value`` literals are not supported.
 
+    Element references (``a[i]``, ``m[key]``) resolve and assign through
+    ``elements``; with None every subscript is a syntax error, which is
+    what an evaluation with no session behind it can honestly say.
+
     Args:
         expr (str): the expression text, already ``$``-expanded.
         env (Mapping[str, str]): variable environment for reads.
         depth (int): recursion depth for variable re-evaluation.
+        elements (ElementOps | None): array-element callbacks; None
+            outside a session.
 
     Returns:
-        tuple[int, dict[str, str]]: the value and the assignments made
-        (name to decimal string), for the caller to apply to the session.
+        ArithResult: the value plus the scalar and element assignments
+        made, for the caller to apply to the session.
 
     Raises:
         ArithError: on syntax errors, division by zero, or a negative
@@ -425,8 +527,14 @@ def evaluate_arith(expr: str,
     """
     tokens = _tokenize(expr)
     if not tokens:
-        return 0, {}
+        return ArithResult(0, {})
     node = ArithParser(tokens).parse()
     updates: dict[str, str] = {}
-    value = ArithEvaluator(env, updates, depth).run(node)
-    return value, updates
+    elem_updates: dict[tuple[str, str], str] = {}
+    value = ArithEvaluator(env, updates, elem_updates, depth,
+                           elements).run(node)
+    return ArithResult(
+        value, updates,
+        tuple(
+            ElementWrite(name, key, text)
+            for (name, key), text in elem_updates.items()))

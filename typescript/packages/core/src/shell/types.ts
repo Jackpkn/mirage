@@ -14,6 +14,42 @@
 
 import { compareCodePoints } from '../utils/sort.ts'
 
+/**
+ * Array-element callbacks the arithmetic evaluator resolves through.
+ *
+ * The evaluator owns no session, so a caller that wants `a[i]` and
+ * `m[key]` to mean anything injects these two facts. The split is what
+ * keeps subscript semantics out of the evaluator: whether the subscript
+ * text is an arithmetic expression (indexed) or a literal key
+ * (associative) is the variable's to answer, and only the session knows
+ * the variable. `resolve` receives the evaluator's current view, pending
+ * assignments included, so `i=2, a[i]` reads the new `i`; `read` answers
+ * the element's stored text, null when unset.
+ */
+export interface ElementOps {
+  resolve(name: string, subscript: string, env: Readonly<Record<string, string>>): string
+  read(name: string, key: string): string | null
+}
+
+/** One array-element assignment an arithmetic evaluation produced. */
+export interface ElementWrite {
+  readonly name: string
+  readonly key: string
+  readonly value: string
+}
+
+/**
+ * What one arithmetic evaluation produced: the value, the scalar
+ * assignments made (name to decimal text), and the element assignments
+ * in evaluation order, both for the caller to land through the session
+ * door.
+ */
+export interface ArithResult {
+  readonly value: bigint
+  readonly updates: Record<string, string>
+  readonly elementUpdates: readonly ElementWrite[]
+}
+
 export const NodeType = Object.freeze({
   COMMAND: 'command',
   PIPELINE: 'pipeline',

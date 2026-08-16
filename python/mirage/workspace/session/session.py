@@ -334,6 +334,14 @@ class Session:
         })
 
     @property
+    def assocs(self) -> Mapping[str, dict[str, str]]:
+        """The associative arrays, by name. Read-only, like `env`."""
+        return MappingProxyType({
+            name: var.value
+            for name, var in self.vars.items() if isinstance(var.value, dict)
+        })
+
+    @property
     def readonly_vars(self) -> frozenset[str]:
         """The names `readonly` has marked. Read-only, like `env`."""
         return frozenset(name for name, var in self.vars.items()

@@ -15,6 +15,7 @@
 import { describe, expect, it } from 'vitest'
 import { evaluateArith } from './arith.ts'
 import { ArithError } from './errors.ts'
+import type { ElementOps } from './types.ts'
 
 describe('evaluateArith', () => {
   it('follows precedence', () => {
@@ -37,23 +38,51 @@ describe('evaluateArith', () => {
   })
 
   it('records assignments as updates', () => {
-    expect(evaluateArith('y = 3, y + 2', {})).toEqual({ value: 5n, updates: { y: '3' } })
-    expect(evaluateArith('v += 9', { v: '1' })).toEqual({ value: 10n, updates: { v: '10' } })
+    expect(evaluateArith('y = 3, y + 2', {})).toEqual({
+      value: 5n,
+      updates: { y: '3' },
+      elementUpdates: [],
+    })
+    expect(evaluateArith('v += 9', { v: '1' })).toEqual({
+      value: 10n,
+      updates: { v: '10' },
+      elementUpdates: [],
+    })
   })
 
   it('handles increments and decrements', () => {
-    expect(evaluateArith('i++', {})).toEqual({ value: 0n, updates: { i: '1' } })
-    expect(evaluateArith('++i', { i: '1' })).toEqual({ value: 2n, updates: { i: '2' } })
-    expect(evaluateArith('i--', { i: '5' })).toEqual({ value: 5n, updates: { i: '4' } })
+    expect(evaluateArith('i++', {})).toEqual({ value: 0n, updates: { i: '1' }, elementUpdates: [] })
+    expect(evaluateArith('++i', { i: '1' })).toEqual({
+      value: 2n,
+      updates: { i: '2' },
+      elementUpdates: [],
+    })
+    expect(evaluateArith('i--', { i: '5' })).toEqual({
+      value: 5n,
+      updates: { i: '4' },
+      elementUpdates: [],
+    })
   })
 
   it('short-circuits side effects', () => {
-    expect(evaluateArith('0 && (q = 7)', {})).toEqual({ value: 0n, updates: {} })
-    expect(evaluateArith('1 || (q = 7)', {})).toEqual({ value: 1n, updates: {} })
+    expect(evaluateArith('0 && (q = 7)', {})).toEqual({
+      value: 0n,
+      updates: {},
+      elementUpdates: [],
+    })
+    expect(evaluateArith('1 || (q = 7)', {})).toEqual({
+      value: 1n,
+      updates: {},
+      elementUpdates: [],
+    })
   })
 
   it('evaluates only the taken ternary arm', () => {
-    expect(evaluateArith('1 ? (w = 4) : (w = 9)', {})).toEqual({ value: 4n, updates: { w: '4' } })
+    expect(evaluateArith('1 ? (w = 4) : (w = 9)', {})).toEqual({
+      value: 4n,
+      updates: { w: '4' },
+      elementUpdates: [],
+    })
     expect(evaluateArith('5 > 3 ? 10 : 20', {}).value).toBe(10n)
   })
 
@@ -106,6 +135,50 @@ describe('evaluateArith', () => {
   })
 
   it('treats an empty expression as zero', () => {
-    expect(evaluateArith('', {})).toEqual({ value: 0n, updates: {} })
+    expect(evaluateArith('', {})).toEqual({ value: 0n, updates: {}, elementUpdates: [] })
+  })
+})
+
+function fakeElements(): ElementOps {
+  const store = new Map([
+    ['m a', '7'],
+    ['arr 1', '20'],
+  ])
+  const ops: ElementOps = {
+    resolve(name, subscript, env) {
+      if (name === 'm') return subscript.replace(/^["']|["']$/g, '')
+      return evaluateArith(subscript, env, 0, ops).value.toString()
+    },
+    read(name, key) {
+      return store.get(`${name} ${key}`) ?? null
+    },
+  }
+  return ops
+}
+
+describe('evaluateArith elements', () => {
+  it('reads and writes element lvalues', () => {
+    const ops = fakeElements()
+    expect(evaluateArith('m[a] + arr[0+1]', {}, 0, ops).value).toBe(27n)
+    const result = evaluateArith('m[k] = 5, m[k] + 1', {}, 0, ops)
+    expect(result.value).toBe(6n)
+    expect(result.elementUpdates).toEqual([{ name: 'm', key: 'k', value: '5' }])
+  })
+
+  it('increments elements and strips quoted keys', () => {
+    const ops = fakeElements()
+    const result = evaluateArith('m[a]++', {}, 0, ops)
+    expect(result.value).toBe(7n)
+    expect(result.elementUpdates[0]?.value).toBe('8')
+    expect(evaluateArith('m["a"] - 1', {}, 0, ops).value).toBe(6n)
+  })
+
+  it('refuses subscripts with no element callbacks', () => {
+    expect(() => evaluateArith('a[0]', {})).toThrow(ArithError)
+  })
+
+  it('tokenizes nested brackets', () => {
+    const ops = fakeElements()
+    expect(evaluateArith('arr[arr[1] - 19]', {}, 0, ops).value).toBe(20n)
   })
 })

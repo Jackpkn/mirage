@@ -25,11 +25,21 @@ import {
 } from '../../shell/array.ts'
 import type { CallStack } from '../../shell/call_stack.ts'
 import { ArithError, ExitSignal } from '../../shell/errors.ts'
-import { NodeType as NT, type TSNodeLike } from '../../shell/types.ts'
+import { NodeType as NT, type ElementOps, type TSNodeLike } from '../../shell/types.ts'
+import type { ShellValue } from '../../shell/variable.ts'
 import { PolicyDenied } from '../../policy/errors.ts'
 import type { SessionView } from '../../ops/types.ts'
-import { type Session, sessionEntry, setSessionEntry } from '../session/session.ts'
-import { ensureVarVisible, visibleArrays, visibleEnv } from '../session/state.ts'
+import { compareCodePoints } from '../../utils/sort.ts'
+import { type Session, sessionEntry } from '../session/session.ts'
+import { assignElement, sessionElements } from '../session/elements.ts'
+import { ReadonlyVariableError } from '../session/errors.ts'
+import {
+  ensureVarVisible,
+  seedVar,
+  visibleArrays,
+  visibleAssocs,
+  visibleEnv,
+} from '../session/state.ts'
 import { homeDir } from '../session/shell_dirs.ts'
 import { decodeAnsiC } from '../../shell/escapes.ts'
 import { fnmatch } from '../../utils/fnmatch.ts'
@@ -188,6 +198,11 @@ export function lookupVar(
   if (fromArray !== undefined) {
     return arrayGet(fromArray, 0)
   }
+  const fromAssoc = visibleAssocs(session)[name]
+  if (fromAssoc !== undefined) {
+    // `$m` on an associative array is `${m["0"]}`, the literal key.
+    return fromAssoc['0'] ?? ''
+  }
   // $PWD is deliberately absent here: `cd` writes it into the env like any
   // exported variable, so it can be assigned, unset and printed by `env`,
   // exactly as bash allows. Resolving it here instead would make `PWD=/x`
@@ -200,6 +215,14 @@ export function lookupVar(
   return env[name] ?? ''
 }
 
+/**
+ * Structural pieces of one `${...}` expansion. `subscript` is the raw
+ * text between the brackets and serves the literal checks (`@`/`*`)
+ * and the arithmetic path, which wants the unexpanded spelling;
+ * `subscriptNodes` are the tree-sitter children behind it, which the
+ * associative path expands properly (`${m[$k]}`, `${m["a b"]}`) since
+ * a key is a word, not an expression.
+ */
 interface BraceParse {
   varName: string | null
   subscript: string | null
@@ -207,6 +230,7 @@ interface BraceParse {
   indirectOp: boolean
   op: string | null
   groups: TSNodeLike[][]
+  subscriptNodes: TSNodeLike[]
 }
 
 function groupSeparator(op: string | null): string | null {
@@ -218,6 +242,7 @@ function groupSeparator(op: string | null): string | null {
 function parseBraces(node: TSNodeLike): BraceParse {
   let varName: string | null = null
   let subscript: string | null = null
+  let subscriptNodes: TSNodeLike[] = []
   let lengthOp = false
   let indirectOp = false
   let op: string | null = null
@@ -240,12 +265,20 @@ function parseBraces(node: TSNodeLike): BraceParse {
       continue
     }
     if (c.type === 'subscript' && !seenVar) {
+      const subNodes: TSNodeLike[] = []
       for (const sc of c.namedChildren) {
         if (sc.type === NT.VARIABLE_NAME && varName === null) {
           varName = sc.text
-        } else if (subscript === null && sc.type !== NT.VARIABLE_NAME) {
-          subscript = sc.text
+        } else {
+          subNodes.push(sc)
         }
+      }
+      subscriptNodes = subNodes
+      if (varName !== null) {
+        // The raw slice, not the first child's text: a subscript
+        // holding several words (`${m[two words]}`) or a quoted key
+        // keeps its whole spelling this way.
+        subscript = c.text.slice(varName.length + 1, -1)
       }
       seenVar = true
       continue
@@ -263,7 +296,7 @@ function parseBraces(node: TSNodeLike): BraceParse {
       groups[groups.length - 1]?.push(c)
     }
   }
-  return { varName, subscript, lengthOp, indirectOp, op, groups }
+  return { varName, subscript, lengthOp, indirectOp, op, groups, subscriptNodes }
 }
 
 // Index of the next unescaped `quote`, -1 when it never closes.
@@ -516,11 +549,16 @@ function caseMod(op: string, val: string, pattern: string): string {
 }
 
 // bash evaluates substring offsets and array subscripts as arithmetic
-// (${v:1+1}, ${a[i+1]}).
-function arithInt(text: string, env: Record<string, string>): number | null {
+// (${v:1+1}, ${a[i+1]}); `elements` lets the operand itself reference
+// an array element (`a[b[0]]`).
+function arithInt(
+  text: string,
+  env: Record<string, string>,
+  elements: ElementOps | null = null,
+): number | null {
   if (/^\s*-?\d+\s*$/.test(text)) return Number.parseInt(text.trim(), 10)
   try {
-    const { value } = evaluateArith(text, env)
+    const { value } = evaluateArith(text, env, 0, elements)
     return Number(value)
   } catch (err) {
     if (err instanceof ArithError) return null
@@ -620,6 +658,19 @@ export async function expandArrayAt(
     arr = p.op === ':' ? [session.argv0, ...params] : params
   } else {
     arr = visibleArrays(session)[p.varName ?? '']
+    if (arr === undefined && p.varName !== null) {
+      const amap = visibleAssocs(session)[p.varName]
+      if (amap !== undefined) {
+        if (p.indirectOp) {
+          // Sorted keys, the same deterministic order every other walk
+          // of an associative array answers in.
+          return Object.keys(amap).sort(compareCodePoints)
+        }
+        arr = Object.keys(amap)
+          .sort(compareCodePoints)
+          .map((k) => amap[k] ?? '')
+      }
+    }
   }
   if (arr === undefined) {
     const scalar = env[p.varName ?? '']
@@ -641,8 +692,32 @@ export async function expandArrayAt(
 // bash evaluates subscripts in arithmetic context (${a[i+1]});
 // unresolvable expressions index element 0, mirroring bash's
 // unset-name-is-zero arithmetic rule.
-export function arrayIndex(idxText: string, env: Record<string, string>): number {
-  return arithInt(idxText, env) ?? 0
+export function arrayIndex(
+  idxText: string,
+  env: Record<string, string>,
+  elements: ElementOps | null = null,
+): number {
+  return arithInt(idxText, env, elements) ?? 0
+}
+
+const SUBSCRIPT_LITERAL_TYPES: ReadonlySet<string> = new Set([NT.WORD, NT.NUMBER, NT.ERROR])
+
+/**
+ * The associative key one subscript spells.
+ *
+ * A purely literal subscript keeps its raw spelling, spaces included,
+ * which is what bash stores for `m[ k ]`; anything carrying an
+ * expansion or quoting expands node by node (`${m[$k]}`, `${m["a b"]}`)
+ * so substitution and quote removal land.
+ */
+async function expandSubscriptKey(p: BraceParse, expandChild: ExpandChild): Promise<string> {
+  const nodes = p.subscriptNodes
+  if (nodes.length === 0 || nodes.every((n) => SUBSCRIPT_LITERAL_TYPES.has(n.type))) {
+    return p.subscript ?? ''
+  }
+  const parts: string[] = []
+  for (const n of nodes) parts.push(await expandChild(n))
+  return parts.join('')
 }
 
 function valueOp(op: string, val: string, groups: string[], env: Record<string, string>): string {
@@ -690,12 +765,16 @@ export async function expansionWrite(
   // A name already holding an array takes the write at element 0 and
   // keeps its other elements, which is bash: `a=(1 2 3)` then
   // `$((a=5))` leaves `5 2 3`. Storing the value as a scalar instead
-  // would discard every element after the first.
+  // would discard every element after the first; the associative twin
+  // writes the literal key "0".
   const held = sessionEntry(session.arrays, name)
-  const stored: string | ShellArray = held === undefined ? value : arrayWith(held, 0, value)
+  const heldMap = sessionEntry(session.assocs, name)
+  let stored: ShellValue
+  if (heldMap !== undefined) stored = { ...heldMap, '0': value }
+  else if (held !== undefined) stored = arrayWith(held, 0, value)
+  else stored = value
   if (view === undefined) {
-    if (typeof stored === 'string') setSessionEntry(session.env, name, stored)
-    else setSessionEntry(session.arrays, name, stored)
+    seedVar(session, name, stored)
     return
   }
   try {
@@ -703,6 +782,42 @@ export async function expansionWrite(
   } catch (err) {
     if (!(err instanceof PolicyDenied)) throw err
     throw new ExitSignal(1, new TextEncoder().encode(`bash: ${err.message}\n`), null, 1)
+  }
+}
+
+/**
+ * One expansion-time element write, through the same door.
+ *
+ * The element sibling of `expansionWrite`, for the assignments an
+ * arithmetic expansion makes to a subscripted lvalue (`$((a[i]=5))`,
+ * `$((m[k]++))`). The key arrives canonical from the evaluator's
+ * resolver, so this only lands it. Throws ExitSignal when the name is
+ * hidden or a preSession rule refuses, ReadonlyVariableError when the
+ * name is readonly — the same refusals the scalar write raises.
+ */
+export async function expansionWriteElement(
+  session: Session,
+  view: SessionView | undefined,
+  name: string,
+  key: string,
+  value: string,
+): Promise<void> {
+  guardExpansionWrite(session, name)
+  let status: string
+  try {
+    status = await assignElement(session, view ?? null, name, key, value)
+  } catch (err) {
+    if (!(err instanceof PolicyDenied)) throw err
+    throw new ExitSignal(1, new TextEncoder().encode(`bash: ${err.message}\n`), null, 1)
+  }
+  if (status === 'readonly') throw new ReadonlyVariableError(name)
+  if (status !== 'ok') {
+    throw new ExitSignal(
+      1,
+      new TextEncoder().encode(`bash: ${name}[${key}]: bad array subscript\n`),
+      null,
+      1,
+    )
   }
 }
 
@@ -740,7 +855,35 @@ export async function expandBraces(
   let val = ''
   let varInEnv = false
 
-  if (p.subscript !== null && p.varName !== null) {
+  const amap = p.varName !== null ? visibleAssocs(session)[p.varName] : undefined
+  if (p.subscript !== null && p.varName !== null && amap !== undefined) {
+    if (p.subscript === '@' || p.subscript === '*') {
+      // Sorted-key order everywhere an associative array is walked:
+      // bash iterates its hash table, whose order is unpredictable,
+      // and a deterministic answer beats reproducing noise.
+      const keys = Object.keys(amap).sort(compareCodePoints)
+      const values = keys.map((k) => amap[k] ?? '')
+      if (p.indirectOp) return keys.join(' ')
+      if (p.lengthOp) return String(values.length)
+      if (p.op === ':') {
+        return sliceArray(values, groups, env).join(' ')
+      }
+      if (p.op !== null && (STRIP_OPS.has(p.op) || REPLACE_OPS.has(p.op) || CASE_OPS.has(p.op))) {
+        const op = p.op
+        return values.map((el) => valueOp(op, el, groups, env)).join(' ')
+      }
+      val = values.join(' ')
+      varInEnv = keys.length > 0
+    } else {
+      // A key, not an expression: `${m[1+1]}` reads the key "1+1",
+      // never element 2. An empty key reads as unset (GNU warns "bad
+      // array subscript" on stderr and expands empty; expansion has no
+      // warning channel, so the empty answer stands alone).
+      const key = await expandSubscriptKey(p, expandChild)
+      val = amap[key] ?? ''
+      varInEnv = amap[key] !== undefined
+    }
+  } else if (p.subscript !== null && p.varName !== null) {
     let arr = arrays[p.varName]
     if (arr === undefined) {
       // A scalar is element 0 of a one-element array, even when empty:
@@ -769,7 +912,8 @@ export async function expandBraces(
       }
       val = values.join(' ')
     } else {
-      let idx = arrayIndex(p.subscript, env)
+      const subText = await expandSubscriptKey(p, expandChild)
+      let idx = arrayIndex(subText, env, sessionElements(session))
       if (idx < 0) idx += arrayExtent(arr)
       val = arrayGet(arr, idx)
       varInEnv = arrayHas(arr, idx)
@@ -785,6 +929,12 @@ export async function expandBraces(
     if (!varInEnv && p.varName in arrays) {
       val = arrayGet(arrays[p.varName] ?? [], 0)
       varInEnv = true
+    }
+    if (!varInEnv && amap !== undefined) {
+      // A bare `$m` on an associative array is `${m["0"]}`, the
+      // literal key, exactly as bash reads it.
+      val = amap['0'] ?? ''
+      varInEnv = amap['0'] !== undefined
     }
     if (!varInEnv && p.varName in env) {
       val = env[p.varName] ?? ''
@@ -813,13 +963,10 @@ export async function expandBraces(
           ? 'parameter not set'
           : 'parameter null or not set'
     // GNU: fatal at top level with status 127; a containing
-    // subshell/pipeline segment reports 1.
-    throw new ExitSignal(
-      127,
-      new TextEncoder().encode(`bash: ${p.varName ?? ''}: ${message}\n`),
-      null,
-      1,
-    )
+    // subshell/pipeline segment reports 1. A subscripted reference is
+    // named whole: `bash: m[zz]: nope`.
+    const ref = p.subscript === null ? (p.varName ?? '') : `${p.varName ?? ''}[${p.subscript}]`
+    throw new ExitSignal(127, new TextEncoder().encode(`bash: ${ref}: ${message}\n`), null, 1)
   }
   if (p.op === '=' || p.op === ':=') {
     const triggered = p.op === '=' ? !varInEnv : val === ''
