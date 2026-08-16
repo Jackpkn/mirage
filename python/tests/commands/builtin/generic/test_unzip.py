@@ -58,11 +58,11 @@ class _Recorder:
     def __init__(self) -> None:
         self.written: dict[str, bytes] = {}
 
-    async def __call__(self, p: PathSpec, content: bytes) -> None:
-        self.written[p.virtual] = content
+    async def __call__(self, p: PathSpec, data: bytes) -> None:
+        self.written[p.virtual] = data
 
 
-async def _no_write(_p: PathSpec, _content: bytes) -> None:
+async def _no_write(_p: PathSpec, data: bytes) -> None:
     raise AssertionError("write_bytes must not be called")
 
 

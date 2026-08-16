@@ -29,7 +29,8 @@ from mirage.shell.variable import ShellVar, VarAttr
 from mirage.shell.xtrace import trace_command
 from mirage.types import PathSpec, Producer, word_text
 from mirage.utils.glob_walk import glob_pattern
-from mirage.utils.path import CycleError
+from mirage.utils.path import CycleError, resolve_path
+from mirage.workspace.executor.builtins.scope import _to_scope
 from mirage.workspace.executor.command import handle_command
 from mirage.workspace.executor.command.routing import (path_flag_scopes,
                                                        positional_scopes)
@@ -51,13 +52,14 @@ from mirage.shell.helpers import (  # isort: skip
     get_process_sub_direction, get_text, split_env_prefix)
 from mirage.workspace.executor.builtins import (  # isort: skip
     accepts_line, follow_paths, handle_bash, handle_cd, handle_chgrp,
-    handle_chmod, handle_chown, handle_command_builtin, handle_df, handle_echo,
-    handle_env, handle_eval, handle_exit, handle_export, handle_getopts,
-    handle_history, handle_ln, handle_local, handle_man, handle_printenv,
-    handle_printf, handle_read, handle_readlink, handle_return, handle_set,
-    handle_shift, handle_sleep, handle_source, handle_test, handle_timeout,
-    handle_touch, handle_trap, handle_type, handle_unset, handle_which,
-    handle_whoami, handle_xargs, link_flags, prepare_mv, strip_link_operands)
+    handle_exec_path, handle_chmod, handle_chown, handle_command_builtin,
+    handle_df, handle_echo, handle_env, handle_eval, handle_exit,
+    handle_export, handle_getopts, handle_history, handle_ln, handle_local,
+    handle_man, handle_printenv, handle_printf, handle_read, handle_readlink,
+    handle_return, handle_set, handle_shift, handle_sleep, handle_source,
+    handle_test, handle_timeout, handle_touch, handle_trap, handle_type,
+    handle_unset, handle_which, handle_whoami, handle_xargs, link_flags,
+    prepare_mv, strip_link_operands)
 
 _CdArgs = list[str | PathSpec]
 
@@ -373,6 +375,12 @@ async def _run_argv(
     if name:
         scopes = [p for p in operands if isinstance(p, PathSpec)]
         scopes.extend(path_flag_scopes(name, args, session.cwd))
+        if "/" in name:
+            # A slash-carrying head word is a file the line executes
+            # (the path-execution branch below), and it lives in
+            # argv[0], not the operands, so a path-pattern guard would
+            # never see it without this row.
+            scopes.insert(0, _to_scope(resolve_path(name, session.cwd)))
         deny = await registry.policies.pre_command(
             CommandContext(command=name,
                            paths=tuple(scopes),
@@ -390,6 +398,15 @@ async def _run_argv(
                                       command=cmd_str,
                                       exit_code=deny.exit_code,
                                       stderr=err)
+
+    # ── path execution ─────────────────────────
+    # bash hands a slash-carrying head word to the loader, never to
+    # command lookup: no builtin, function, or CLI can claim it. After
+    # the admission gate so a policy sees the line like any other.
+    if name and "/" in name:
+        return await handle_exec_path(dispatch, execute_fn, name,
+                                      [word_text(a) for a in args], session,
+                                      stdin)
 
     # ── unsupported bash builtins ──────────────
     # Constructs the parser accepts but the executor cannot honor.

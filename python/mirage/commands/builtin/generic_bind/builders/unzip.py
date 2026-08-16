@@ -15,6 +15,8 @@
 from functools import partial
 
 from mirage.accessor.base import Accessor
+from mirage.commands.builtin.generic.crossmount.utils import \
+    transfer_primitives
 from mirage.commands.builtin.generic.unzip import unzip_generic
 from mirage.commands.builtin.generic_bind.adapter import (Builder, CommandIO,
                                                           Operation, bound_op)
@@ -29,6 +31,19 @@ async def unzip(ops: CommandIO, accessor: Accessor, paths: list[PathSpec],
     if not ops.is_mounted(accessor) or not paths:
         raise ValueError("unzip: missing operand")
     resolved = await ops.resolve_glob(accessor, paths, opts.index)
+    if opts.dispatch is not None:
+        # Extraction writes wherever cwd or -d says, which need not be
+        # this mount, so the doors are dispatch-relayed and each path
+        # routes to the mount that owns it.
+        prim = transfer_primitives(opts.dispatch)
+        return await unzip_generic(resolved,
+                                   list(texts),
+                                   opts,
+                                   prim["read_bytes"],
+                                   prim["write"],
+                                   prim["mkdir"],
+                                   stat=prim["stat"],
+                                   relay=True)
     return await unzip_generic(resolved, list(texts), opts,
                                bound_op(ops.read_bytes, accessor, opts.index),
                                partial(ops.require(Operation.WRITE), accessor),

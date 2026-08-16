@@ -12,17 +12,14 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { seedVar } from '../../session/state.ts'
 import { ECHO_OPTION } from '../../../commands/spec/shell.ts'
 import { IOResult } from '../../../io/types.ts'
-import { arrayExtent, arrayWith, type ShellArray } from '../../../shell/array.ts'
 import { byteChar, encodeText } from '../../../shell/bytes.ts'
-import { arrayIndex } from '../../expand/variable.ts'
-import { sessionEntry } from '../../session/session.ts'
 import { PolicyDenied } from '../../../policy/errors.ts'
+import { ArithError } from '../../../shell/errors.ts'
 import type { Session } from '../../session/session.ts'
 import type { SessionView } from '../../../ops/types.ts'
-import { ensureVarVisible, visibleEnv } from '../../session/state.ts'
+import { assignElement } from '../../session/elements.ts'
 import { ExecutionNode } from '../../types.ts'
 import type { Result } from './shared.ts'
 
@@ -854,6 +851,17 @@ function runPrintf(fmt: string, args: string[]): [string, string[]] {
  * unless the whole assignment succeeds: a readonly name or an
  * out-of-range subscript leaves the variable exactly as it was.
  */
+/**
+ * Assign `value` to a `printf -v` target (scalar or `name[idx]`).
+ *
+ * A delegation to the one element writer: a bare name assigns element 0
+ * when the name already holds an array (indexed or associative),
+ * nothing mutates unless the whole assignment succeeds, and the landing
+ * write goes through the door as the whole variable, so a `preSession`
+ * rule refusing the name sees `printf -v 'AWS_KEY[0]'` as a write to
+ * AWS_KEY. The refusal is thrown, not collapsed into a status, so the
+ * rule's own words reach the user as they do from `export`.
+ */
 async function assignPrintfTarget(
   session: Session,
   view: SessionView | undefined,
@@ -861,46 +869,7 @@ async function assignPrintfTarget(
   subscript: string | undefined,
   value: string,
 ): Promise<'ok' | 'denied' | 'readonly' | 'subscript'> {
-  try {
-    // The hidden half of the session door, in this builtin's
-    // status-string voice: a hidden name is not printf's to write, and
-    // hiding never explains itself.
-    ensureVarVisible(session, name)
-  } catch (err) {
-    if (!(err instanceof PolicyDenied)) throw err
-    return 'denied'
-  }
-  if (session.readonlyVars.has(name)) return 'readonly'
-  const held = sessionEntry(session.arrays, name)
-  let stored: string | ShellArray
-  if (subscript === undefined) {
-    // A bare name over an array is element 0, as bash has it.
-    stored = held === undefined ? value : arrayWith(held, 0, value)
-  } else {
-    let arr = held
-    if (arr === undefined) {
-      // An existing scalar becomes element 0, even when empty: bash
-      // resolves `x[-1]` against the length-1 array that produces.
-      const scalar = sessionEntry(session.env, name)
-      arr = scalar === undefined ? [] : [scalar]
-    }
-    let idx = arrayIndex(subscript, visibleEnv(session))
-    if (idx < 0) idx += arrayExtent(arr)
-    if (idx < 0) return 'subscript'
-    stored = arrayWith(arr, idx, value)
-  }
-  // The gated half. The door speaks in whole variables, so an element write
-  // states itself as the array it produces rather than taking a direct path
-  // around the gate: `printf -v 'AWS_KEY[0]'` is a write to AWS_KEY, and a
-  // preSession rule refusing that name has to see it. The refusal is thrown,
-  // not collapsed into a status, so the rule's own words reach the user as
-  // they do from `export`.
-  if (view !== undefined) {
-    await view.set(name, stored)
-    return 'ok'
-  }
-  seedVar(session, name, stored)
-  return 'ok'
+  return assignElement(session, view ?? null, name, subscript ?? null, value)
 }
 
 /**
@@ -962,6 +931,16 @@ export async function handlePrintf(
     try {
       status = await assignPrintfTarget(session, view, base, parsed[2], output)
     } catch (err) {
+      if (err instanceof ArithError) {
+        // The target carries `-i` and the formatted text does not
+        // evaluate; bash voices the evaluator after the builtin name.
+        const bad = new TextEncoder().encode(errors.join('') + `bash: printf: ${err.message}\n`)
+        return [
+          null,
+          new IOResult({ exitCode: 1, stderr: bad }),
+          new ExecutionNode({ command: 'printf', exitCode: 1, stderr: bad }),
+        ]
+      }
       if (!(err instanceof PolicyDenied)) throw err
       const denied = new TextEncoder().encode(errors.join('') + `bash: ${err.message}\n`)
       return [

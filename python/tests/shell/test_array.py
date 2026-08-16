@@ -1,7 +1,8 @@
 from mirage.shell.array import (array_append, array_count, array_extent,
                                 array_get, array_has, array_indices, array_set,
                                 array_slice, array_unset, array_values,
-                                make_array)
+                                build_assoc_literal, build_indexed_literal,
+                                keyed_word, make_array)
 
 
 def test_make_array_is_dense_from_zero():
@@ -115,3 +116,37 @@ def test_slice_negative_offset_counts_from_the_extent():
     assert array_slice(arr, -20, None) == []
     assert array_slice(make_array(["x", "y", "z"]), -5, None) == []
     assert array_slice(make_array(["x", "y", "z"]), -2, None) == ["y", "z"]
+
+
+def test_keyed_word():
+    assert keyed_word("[a]=1") == ("a", "1")
+    assert keyed_word("[two words]=v x") == ("two words", "v x")
+    assert keyed_word("plain") is None
+    assert keyed_word("[]=x") is None
+    assert keyed_word("[k]=") == ("k", "")
+    # The split lands on the first `]=`, so a value may hold one.
+    assert keyed_word("[a]=x]=y") == ("a", "x]=y")
+
+
+def test_build_indexed_literal_places_and_continues():
+    built = build_indexed_literal(None, ["[3]=x", "y", "[1]=z"], False,
+                                  lambda t: int(t))
+    assert built == [None, "z", None, "x", "y"]
+    # `+=` starts the cursor at the extent; last index wins.
+    appended = build_indexed_literal(["a"], ["b", "[0]=A"], True,
+                                     lambda t: int(t))
+    assert appended == ["A", "b"]
+
+
+def test_build_assoc_literal_modes():
+    keyed, errors = build_assoc_literal(None, ["[a]=1", "b", "[a]=2"], False)
+    assert keyed == {"a": "2"}
+    assert errors == ["b"]
+    pairs, errors = build_assoc_literal(None, ["k1", "v1", "[a]=1"], False)
+    assert pairs == {"k1": "v1", "[a]=1": ""}
+    assert errors == []
+    merged, errors = build_assoc_literal({"a": "1"}, ["[b]=2"], True)
+    assert merged == {"a": "1", "b": "2"}
+    assert errors == []
+    replaced, _ = build_assoc_literal({"a": "1"}, ["[b]=2"], False)
+    assert replaced == {"b": "2"}

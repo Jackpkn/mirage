@@ -132,3 +132,89 @@ export function arrayUnset(arr: ShellArray, idx: number): void {
   arr.splice(idx, 1, null)
   while (arr.length > 0 && arr[arr.length - 1] === null) arr.pop()
 }
+
+/**
+ * Split one `[key]=value` literal element, null for a plain word.
+ *
+ * The split lands on the first `]=`, which is where bash finds it after
+ * quote removal; a key that itself holds `]=` needed quoting in bash too
+ * and is the one spelling this cannot recover.
+ */
+export function keyedWord(word: string): [string, string] | null {
+  if (!word.startsWith('[')) return null
+  const pos = word.indexOf(']=', 1)
+  if (pos <= 1) return null
+  return [word.slice(1, pos), word.slice(pos + 2)]
+}
+
+/**
+ * The indexed array a compound literal produces.
+ *
+ * A `[i]=v` element places at `i` and moves the cursor past it, a plain
+ * word continues from the cursor, and a repeated index keeps the last
+ * value, which is GNU's `([3]=x y [1]=z)` giving
+ * `([1]="z" [3]="x" [4]="y")`. `+=` starts the cursor at the extent
+ * instead of replacing.
+ */
+export function buildIndexedLiteral(
+  base: ShellArray | null,
+  words: readonly string[],
+  append: boolean,
+  indexOf: (subscript: string) => number,
+): ShellArray {
+  const arr: ShellArray = append && base !== null ? [...base] : []
+  let cursor = append ? arrayExtent(arr) : 0
+  for (const word of words) {
+    const keyed = keyedWord(word)
+    if (keyed !== null) {
+      let idx = indexOf(keyed[0])
+      if (idx < 0) idx += arrayExtent(arr)
+      if (idx < 0) continue
+      arraySet(arr, idx, keyed[1])
+      cursor = idx + 1
+    } else {
+      arraySet(arr, cursor, word)
+      cursor++
+    }
+  }
+  return arr
+}
+
+/**
+ * The associative array a compound literal produces.
+ *
+ * The first word picks the grammar, as GNU does: a `[key]=value` first
+ * word makes every plain word an error (reported back for the caller to
+ * render in bash's must-use-subscript voice), while a plain first word
+ * reads the whole list as alternating keys and values, `[a]=1`
+ * spellings included, literally. An odd pair list stores the last key
+ * with an empty value. A repeated key keeps the last value; `+=` merges
+ * over the existing map instead of replacing.
+ */
+export function buildAssocLiteral(
+  base: Readonly<Record<string, string>> | null,
+  words: readonly string[],
+  append: boolean,
+): { map: Record<string, string>; badWords: string[] } {
+  const map: Record<string, string> = append && base !== null ? { ...base } : {}
+  const first = words[0]
+  if (first === undefined) return { map, badWords: [] }
+  if (keyedWord(first) === null) {
+    for (let i = 0; i < words.length; i += 2) {
+      const key = words[i]
+      if (key === undefined) break
+      map[key] = words[i + 1] ?? ''
+    }
+    return { map, badWords: [] }
+  }
+  const badWords: string[] = []
+  for (const word of words) {
+    const keyed = keyedWord(word)
+    if (keyed === null) {
+      badWords.push(word)
+      continue
+    }
+    map[keyed[0]] = keyed[1]
+  }
+  return { map, badWords }
+}

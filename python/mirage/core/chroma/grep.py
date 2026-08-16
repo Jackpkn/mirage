@@ -1,3 +1,4 @@
+from mirage.accessor.chroma import ChromaAccessor
 from mirage.cache.index import NULL_INDEX, IndexCacheStore
 from mirage.commands.builtin.grep_helper import compile_pattern, grep_lines
 from mirage.commands.builtin.utils.lines import split_lines
@@ -9,7 +10,7 @@ from mirage.utils.key_prefix import mount_key, mount_prefix_of, rekey
 
 
 async def grep_bytes(
-    accessor,
+    accessor: ChromaAccessor,
     paths: list[PathSpec],
     pattern: str,
     index: IndexCacheStore = NULL_INDEX,
@@ -80,7 +81,7 @@ async def grep_bytes(
 
 
 async def coarse_filter_slugs(
-    accessor,
+    accessor: ChromaAccessor,
     pattern: str,
     targets: dict[str, str],
     *,
@@ -97,9 +98,11 @@ async def coarse_filter_slugs(
                                 regex=not fixed_string)
 
 
-async def target_slugs(accessor,
-                       paths: list[PathSpec],
-                       index: IndexCacheStore = NULL_INDEX) -> dict[str, str]:
+async def target_slugs(
+    accessor: ChromaAccessor,
+    paths: list[PathSpec],
+    index: IndexCacheStore = NULL_INDEX,
+) -> dict[str, str]:
     targets: dict[str, str] = {}
     for path in paths:
         resolved = await resolve_path(accessor, path, index)

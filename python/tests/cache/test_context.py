@@ -28,35 +28,43 @@ def _run(coro):
 class FakeManager:
 
     def __init__(self) -> None:
-        self.writes: list[str] = []
-        self.unlinks: list[str] = []
+        self.writes: list[PathSpec] = []
+        self.unlinks: list[PathSpec] = []
 
-    async def invalidate_after_write(self, path: str) -> None:
+    async def invalidate_after_write(self, path: PathSpec) -> None:
         self.writes.append(path)
 
-    async def invalidate_after_unlink(self, path: str) -> None:
+    async def invalidate_after_unlink(self, path: PathSpec) -> None:
         self.unlinks.append(path)
+
+
+def _spec(virtual: str) -> PathSpec:
+    return PathSpec(resource_path=virtual.strip("/"),
+                    virtual=virtual,
+                    directory="/",
+                    pattern=None,
+                    resolved=True)
 
 
 async def _delegates() -> FakeManager:
     manager = FakeManager()
     prev = push_cache_manager(manager)
-    await invalidate_after_write("/a.txt")
-    await invalidate_after_unlink("/b.txt")
+    await invalidate_after_write(_spec("/a.txt"))
+    await invalidate_after_unlink(_spec("/b.txt"))
     push_cache_manager(prev)
     return manager
 
 
 def test_delegates_to_active_manager():
     manager = _run(_delegates())
-    assert manager.writes == ["/a.txt"]
-    assert manager.unlinks == ["/b.txt"]
+    assert [p.mount_path for p in manager.writes] == ["/a.txt"]
+    assert [p.mount_path for p in manager.unlinks] == ["/b.txt"]
 
 
 async def _noop_without_manager() -> None:
     push_cache_manager(None)
-    await invalidate_after_write("/a.txt")
-    await invalidate_after_unlink("/b.txt")
+    await invalidate_after_write(_spec("/a.txt"))
+    await invalidate_after_unlink(_spec("/b.txt"))
 
 
 def test_noop_without_active_manager():

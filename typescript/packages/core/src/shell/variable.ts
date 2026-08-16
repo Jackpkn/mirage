@@ -17,6 +17,11 @@ import type { ShellArray } from './array.ts'
 /** What a shell variable can hold. */
 export type ShellValue = string | ShellArray | Record<string, string>
 
+// What one attributed write does to a scalar before it is stored. `-i`
+// needs the arithmetic evaluator, which lives above this module, so the
+// caller injects it rather than this leaf importing upward.
+export type Coercer = (text: string) => string
+
 /**
  * One bash variable attribute, spelled as its `declare` letter.
  *
@@ -127,6 +132,50 @@ export function withAttr(v: ShellVar, attr: VarAttr, on = true): ShellVar {
  * would then read back as an attribute the value already implies, and
  * `attrLetters` itself.
  */
+/**
+ * Apply the value-shaping attributes to one scalar being stored.
+ *
+ * bash applies these at assignment, not at read: `declare -l s; s=ABC`
+ * stores `abc`, and `declare -i n; n=2+2` stores `4`, so `declare -p`
+ * and `$s` agree with no per-read work. Order is integer first, then
+ * case, which only matters for hex digits and is what GNU does
+ * (`declare -il n=0xA` stores `10`). `-l` and `-u` cannot both hold; a
+ * declaration that sets one clears the other, so at most one applies.
+ */
+export function coerceScalar(
+  text: string,
+  attrs: ReadonlySet<VarAttr>,
+  integer: Coercer | null,
+): string {
+  let out = text
+  if (attrs.has(VarAttr.Integer) && integer !== null) out = integer(out)
+  if (attrs.has(VarAttr.Lower)) return out.toLowerCase()
+  if (attrs.has(VarAttr.Upper)) return out.toUpperCase()
+  return out
+}
+
+/**
+ * `coerceScalar` lifted over every value shape. An array applies the
+ * attribute per element, which is GNU's `declare -ai a=(1+1 2*3)` giving
+ * `([0]="2" [1]="6")`.
+ */
+export function coerceValue(
+  value: ShellValue,
+  attrs: ReadonlySet<VarAttr>,
+  integer: Coercer | null,
+): ShellValue {
+  if (!attrs.has(VarAttr.Integer) && !attrs.has(VarAttr.Lower) && !attrs.has(VarAttr.Upper)) {
+    return value
+  }
+  if (typeof value === 'string') return coerceScalar(value, attrs, integer)
+  if (Array.isArray(value)) {
+    return value.map((v) => (v === null ? null : coerceScalar(v, attrs, integer)))
+  }
+  const out: Record<string, string> = {}
+  for (const [k, v] of Object.entries(value)) out[k] = coerceScalar(v, attrs, integer)
+  return out
+}
+
 export function storedAttrs(v: ShellVar): string {
   return ATTR_ORDER.filter((a) => v.attrs.has(a)).join('')
 }

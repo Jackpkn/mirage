@@ -18,7 +18,7 @@ import { concat } from '../../io/cachable_iterator.ts'
 import { CommandTimeoutError } from '../../commands/builtin/utils/limit.ts'
 import type { CallStack } from '../../shell/call_stack.ts'
 import { ExitSignal } from '../../shell/errors.ts'
-import type { Job, JobTable } from '../../shell/job_table/index.ts'
+import { type Job, JobStatus, type JobTable } from '../../shell/job_table/index.ts'
 import { Channel, type JobConsole } from '../../shell/console/index.ts'
 import { runWithSession } from '../../context/session_context.ts'
 import { asyncContextIsolatesTasks } from '../../utils/async_context.ts'
@@ -316,12 +316,79 @@ export async function handleKill(jobTable: JobTable, parts: string[]): Promise<J
   return [null, new IOResult(), new ExecutionNode({ command: cmdStr, exitCode: 0 })]
 }
 
+const JOBS_FLAGS: ReadonlySet<string> = new Set('lnprs')
+const JOBS_USAGE = 'jobs: usage: jobs [-lnprs] [jobspec ...] or jobs -x command [args]'
+
+/**
+ * One `jobs` line in mirage's own row shape. `-l` inserts the id a
+ * second time where GNU prints the process id; mirage jobs have no pid,
+ * so the job id stands in and the row stays parseable.
+ */
+function jobRow(job: Job, long: boolean): string {
+  const id = job.id.toString()
+  return long
+    ? `[${id}] ${id} ${job.status} ${job.command}`
+    : `[${id}] ${job.status} ${job.command}`
+}
+
+/**
+ * List jobs, with bash's flags applied to mirage's row shape.
+ *
+ * Mirage jobs are identified by table id, not pid, and never stop, so
+ * two of GNU's flags map onto that model rather than reproducing it:
+ * `-p` prints the job id (GNU's pid), and `-s` (stopped only) lists
+ * nothing. `-r` keeps the running ones, `-l` adds the id column, and
+ * `-n` lists only the jobs whose status changed since the last `jobs`
+ * (which is every completed one not yet reaped, since reaping is what a
+ * listing does). A jobspec operand (`%2` or `2`) filters to that job;
+ * one that names no job is `no such job`, exit 1. `-x` is not carried,
+ * and an unknown letter is GNU's usage line, exit 2.
+ */
 export function handleJobs(jobTable: JobTable, parts: string[]): JobHandlerResult {
   const cmdStr = parts.join(' ')
-  const lines: string[] = []
-  for (const job of jobTable.listJobs()) {
-    lines.push(`[${job.id.toString()}] ${job.status} ${job.command}`)
+  const flags = new Set<string>()
+  const specs: string[] = []
+  for (const word of parts.slice(1)) {
+    if (word.startsWith('-') && word.length > 1 && specs.length === 0) {
+      if (word === '--') continue
+      const bad = Array.from(word.slice(1)).find((c) => !JOBS_FLAGS.has(c))
+      if (bad !== undefined) {
+        const err = new TextEncoder().encode(`bash: jobs: -${bad}: invalid option\n${JOBS_USAGE}\n`)
+        return [
+          null,
+          new IOResult({ exitCode: 2, stderr: err }),
+          new ExecutionNode({ command: cmdStr, exitCode: 2, stderr: err }),
+        ]
+      }
+      for (const c of word.slice(1)) flags.add(c)
+    } else {
+      specs.push(word)
+    }
   }
+  let jobs = jobTable.listJobs()
+  if (specs.length > 0) {
+    const picked: Job[] = []
+    for (const spec of specs) {
+      const raw = spec.replace(/^%+/, '')
+      const job = /^\d+$/.test(raw) ? jobTable.get(Number(raw)) : null
+      if (job === null) {
+        const err = new TextEncoder().encode(`bash: jobs: ${spec}: no such job\n`)
+        return [
+          null,
+          new IOResult({ exitCode: 1, stderr: err }),
+          new ExecutionNode({ command: cmdStr, exitCode: 1, stderr: err }),
+        ]
+      }
+      picked.push(job)
+    }
+    jobs = picked
+  }
+  if (flags.has('r')) jobs = jobs.filter((j) => j.status === JobStatus.RUNNING)
+  if (flags.has('s')) jobs = []
+  if (flags.has('n')) jobs = jobs.filter((j) => j.status !== JobStatus.RUNNING)
+  const lines = flags.has('p')
+    ? jobs.map((j) => j.id.toString())
+    : jobs.map((j) => jobRow(j, flags.has('l')))
   jobTable.popCompleted()
   const out =
     lines.length > 0 ? new TextEncoder().encode(`${lines.join('\n')}\n`) : new Uint8Array()

@@ -27,10 +27,13 @@ import {
   countExitStream,
   countRecordsHaveMatches,
   exitCodeFor,
+  fileAdmitted,
   grepFilesOnly,
   type GrepFilesOnlyOptions,
   grepLines,
   grepRecursive,
+  type WalkFilters,
+  parseFileGlobs,
   grepStream,
   prefixLines,
   resolvePatternFromFlags,
@@ -45,6 +48,7 @@ type Readdir = (p: PathSpec) => Promise<string[]>
 type Stream = (p: PathSpec) => AsyncIterable<Uint8Array>
 
 interface FlagSet {
+  filters: WalkFilters
   ignoreCase: boolean
   invert: boolean
   lineNumbers: boolean
@@ -67,6 +71,11 @@ function parseFlags(fl: FlagView): FlagSet {
   const bCtx = fl.asInt('B')
   const cCtx = fl.asInt('C')
   return {
+    filters: {
+      fileGlobs: parseFileGlobs(fl),
+      excludeDir: fl.asList('exclude_dir'),
+      text: fl.asBool('text'),
+    },
     ignoreCase: fl.asBool('i'),
     invert: fl.asBool('v'),
     lineNumbers: fl.asBool('n'),
@@ -104,6 +113,7 @@ function makeSpec(path: string, template: PathSpec): PathSpec {
 function filesOnlyOpts(f: FlagSet, recursive: boolean): GrepFilesOnlyOptions {
   return {
     recursive,
+    filters: f.filters,
     ignoreCase: f.ignoreCase,
     invert: f.invert,
     lineNumbers: f.lineNumbers,
@@ -222,6 +232,8 @@ export async function grepGeneric(
             false,
           )
           for (const r of respellRaw(res, p.virtual, p.rawPath)) allResults.push(r)
+        } else if (!fileAdmitted(p.virtual, f.filters)) {
+          continue
         } else {
           const data = splitLinesNoTrailing(DEC.decode(await readBytesFn(p.virtual)))
           const hits = grepLines(p.rawPath, data, pat, f)
@@ -263,6 +275,7 @@ export async function grepGeneric(
           multiWarnings.push(`${name}: ${p.rawPath}: Is a directory`)
           continue
         }
+        if (!fileAdmitted(p.virtual, f.filters)) continue
         const data = splitLinesNoTrailing(DEC.decode(await materialize(stream(p))))
         const hits = grepLines(p.rawPath, data, pat, f)
         const label = f.noFilename ? '' : `${p.rawPath}:`
@@ -319,6 +332,11 @@ export async function grepGeneric(
           stderr: ENC.encode(`${name}: ${first.rawPath}: Is a directory\n`),
         }),
       ]
+    }
+    if (!fileAdmitted(first.virtual, f.filters)) {
+      // GNU passes over a command-line file --include leaves out in
+      // silence: no output, no diagnostic, exit "no match".
+      return [new Uint8Array(0), new IOResult({ exitCode: 1 })]
     }
     const source = stream(first)
     const matched = grepStream(source, pat, f)

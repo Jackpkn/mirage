@@ -15,7 +15,7 @@
 import asyncio
 import logging
 from functools import partial
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from mirage.commands.builtin.utils.limit import (CommandTimeoutError,
                                                  run_with_timeout)
@@ -37,6 +37,9 @@ from mirage.workspace.workspace.failure import failure_result
 from mirage.workspace.workspace.line import run_whole_line
 from mirage.workspace.workspace.utils import command_name, fork_for_call
 
+if TYPE_CHECKING:
+    from mirage.workspace.workspace import Workspace
+
 logger = logging.getLogger(__name__)
 
 
@@ -54,9 +57,13 @@ async def plan_eval_stub(cmd: str, **opts: Any) -> IOResult:
     return IOResult()
 
 
-async def recurse(ws, cancel: asyncio.Event | None,
-                  routing_decision: PolicyDecision | None, cmd: str,
-                  **opts: Any) -> Any:
+async def recurse(
+    ws: "Workspace",
+    cancel: asyncio.Event | None,
+    routing_decision: PolicyDecision | None,
+    cmd: str,
+    **opts: Any,
+) -> Any:
     """The executor's internal eval ($(), source, eval, xargs, ...).
 
     Never a typed line, so it must not record a history entry or open
@@ -78,7 +85,10 @@ async def recurse(ws, cancel: asyncio.Event | None,
                             **opts)
 
 
-def session_cwd(ws, session_id: str) -> str | None:
+def session_cwd(
+    ws: "Workspace",
+    session_id: str,
+) -> str | None:
     """The session's cwd for history, None once the session is gone.
 
     Args:
@@ -104,7 +114,7 @@ def syntax_error_result(offending: str) -> IOResult:
 
 
 async def execute_line(
-    ws,
+    ws: "Workspace",
     command: str,
     session_id: str | None,
     stdin: ByteSource | None,

@@ -20,6 +20,8 @@ import { runDiff } from './diff.ts'
 import { runJoin } from './join.ts'
 import { runMv } from './mv.ts'
 import { runPaste } from './paste.ts'
+import { runTar } from './tar.ts'
+import { runUnzip } from './unzip.ts'
 import { Cmd, type CrossResult, type DispatchFn } from '../types.ts'
 import type { FlagValue } from '../../../../spec/types.ts'
 
@@ -30,6 +32,7 @@ import type { FlagValue } from '../../../../spec/types.ts'
 export async function runRelay(
   cmdName: Cmd,
   scopes: PathSpec[],
+  textArgs: string[],
   flagKwargs: Record<string, FlagValue>,
   dispatch: DispatchFn,
   // Maps an operand to its storage identity, for the transfer commands
@@ -43,5 +46,7 @@ export async function runRelay(
   if (cmdName === Cmd.PASTE) return runPaste(scopes, flagKwargs, dispatch)
   if (cmdName === Cmd.COMM) return runComm(scopes, flagKwargs, dispatch)
   if (cmdName === Cmd.JOIN) return runJoin(scopes, flagKwargs, dispatch)
+  if (cmdName === Cmd.TAR) return runTar(textArgs, flagKwargs, dispatch)
+  if (cmdName === Cmd.UNZIP) return runUnzip(scopes, textArgs, flagKwargs, dispatch)
   return runCmp(scopes, flagKwargs, dispatch)
 }

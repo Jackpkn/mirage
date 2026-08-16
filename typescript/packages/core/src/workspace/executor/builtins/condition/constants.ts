@@ -25,6 +25,9 @@ const STRING_BINARY = new Set(['=', '==', '!='])
 const NUMERIC_BINARY = new Set(INT_COMPARATORS.keys())
 export const FILE_PAIR_BINARY = new Set(['-nt', '-ot', '-ef'])
 const STRING_UNARY = new Set(['-n', '-z'])
+// `-v NAME` asks whether the variable (or the `NAME[sub]` element) is
+// set; it reads session state, not a path.
+const VAR_UNARY = new Set(['-v'])
 export const FILE_UNARY = new Set(['-e', '-f', '-d', '-s', '-r', '-w', '-x', '-L', '-h'])
 // Real GNU operators mirage cannot answer truthfully: the VFS has no
 // FIFO/socket/device node types, no uid/gid ownership or setuid bits,
@@ -44,4 +47,9 @@ export const UNSUPPORTED_UNARY = new Set([
   '-t',
 ])
 export const BINARY_OPS = new Set([...STRING_BINARY, ...NUMERIC_BINARY, ...FILE_PAIR_BINARY])
-export const UNARY_OPS = new Set([...STRING_UNARY, ...FILE_UNARY, ...UNSUPPORTED_UNARY])
+export const UNARY_OPS = new Set([
+  ...STRING_UNARY,
+  ...VAR_UNARY,
+  ...FILE_UNARY,
+  ...UNSUPPORTED_UNARY,
+])

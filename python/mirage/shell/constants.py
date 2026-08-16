@@ -30,6 +30,12 @@ ARITH_TOKEN = re.compile(
 
 ARITH_NAME = re.compile(r"[A-Za-z_]\w*")
 
+# An element reference token the tokenizer stitched: the name adjacent
+# to a bracket-matched subscript, whose interior is resolved by the
+# element callbacks rather than the tokenizer (an associative key can
+# hold characters no arithmetic token may).
+ARITH_ELEM = re.compile(r"([A-Za-z_]\w*)\[(.*)\]\Z", re.DOTALL)
+
 ARITH_ASSIGN_OPS = frozenset(
     {"=", "+=", "-=", "*=", "/=", "%=", "<<=", ">>=", "&=", "^=", "|="})
 

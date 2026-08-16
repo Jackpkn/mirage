@@ -25,6 +25,7 @@ export {
 export { handleDf } from './capacity.ts'
 export { handleChgrp, handleChmod, handleChown, handleTouch } from './metadata.ts'
 export {
+  handleDeclareFunctions,
   handleDeclarePrint,
   handleEnv,
   handleExit,
@@ -44,7 +45,7 @@ export {
 } from './vars.ts'
 export { handleMan } from './man.ts'
 export { handleHistory } from './history.ts'
-export { handleBash, handleEval, handleSleep, handleSource } from './script.ts'
+export { handleBash, handleEval, handleExecPath, handleSleep, handleSource } from './script.ts'
 export { handleTest } from './condition/index.ts'
 export { handleTimeout } from './timeout.ts'
 export { handleXargs } from './xargs.ts'

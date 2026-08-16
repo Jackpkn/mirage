@@ -1,3 +1,4 @@
+from mirage.accessor.chroma import ChromaAccessor
 from mirage.cache.index import NULL_INDEX, IndexCacheStore
 from mirage.core.chroma.path import resolve_path
 from mirage.core.chroma.readdir import readdir
@@ -6,7 +7,7 @@ from mirage.utils.key_prefix import rekey
 
 
 async def walk(
-    accessor,
+    accessor: ChromaAccessor,
     path: PathSpec,
     index: IndexCacheStore = NULL_INDEX,
     *,

@@ -13,8 +13,9 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import shlex
+from collections.abc import Awaitable
 from posixpath import dirname
-from typing import Any, Callable
+from typing import Any, Callable, TypeVar
 
 try:
     from agno.tools import Toolkit
@@ -26,6 +27,8 @@ except ImportError as exc:
 from mirage.agents.io_text import io_to_str
 from mirage.bridge.sync import run_async_from_sync
 from mirage.workspace.workspace import Workspace
+
+T = TypeVar("T")
 
 
 class MirageToolkit(Toolkit):
@@ -55,7 +58,7 @@ class MirageToolkit(Toolkit):
                          async_tools=async_tools,
                          **kwargs)
 
-    def _run(self, coro):
+    def _run(self, coro: Awaitable[T]) -> T:
         return run_async_from_sync(coro)
 
     # -- execute ---------------------------------------------------------

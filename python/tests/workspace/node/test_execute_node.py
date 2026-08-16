@@ -13,6 +13,7 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import asyncio
+from functools import partial
 from unittest.mock import AsyncMock, MagicMock
 
 from mirage.io import IOResult
@@ -42,6 +43,29 @@ def _mock_dispatch():
     d = AsyncMock()
     d.return_value = (b"", IOResult())
     return d
+
+
+async def _answer_script(script: bytes, op: str, *args, **kwargs):
+    if op == "stat":
+        return None, IOResult()
+    if op == "readdir":
+        return [], IOResult()
+    return script, IOResult()
+
+
+def _script_dispatch(script: bytes):
+    """A dispatch serving one script file and nothing else.
+
+    The loader stats a path before it reads it (a directory is EISDIR
+    before any read), so a double answering every op with the script
+    bytes would hand ``stat`` a bytes object. This one answers stat with
+    a miss and readdir with an empty listing, which is what a keyed
+    store says about a plain file's path, and serves the bytes on read.
+
+    Args:
+        script (bytes): the script text a read returns.
+    """
+    return AsyncMock(side_effect=partial(_answer_script, script))
 
 
 async def _no_match_resolve_glob(scopes, prefix=""):
@@ -585,8 +609,7 @@ def test_eval():
 
 
 def test_source():
-    dispatch = _mock_dispatch()
-    dispatch.return_value = (b"export X=1", IOResult())
+    dispatch = _script_dispatch(b"export X=1")
     reg, _ = _mock_registry()
     job_table = JobTable()
     execute_fn = AsyncMock(return_value=IOResult())
@@ -1254,8 +1277,7 @@ def test_cd_concat_expansion():
 
 def test_source_var_expansion():
     """source $SCRIPT → dispatches cat on expanded path."""
-    dispatch = _mock_dispatch()
-    dispatch.return_value = (b"export X=1", IOResult())
+    dispatch = _script_dispatch(b"export X=1")
     reg, _ = _mock_registry()
     job_table = JobTable()
     execute_fn = AsyncMock(return_value=IOResult())

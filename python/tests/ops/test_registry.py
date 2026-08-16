@@ -18,6 +18,15 @@ from mirage import MountMode, Workspace
 from mirage.ops.registry import OpsRegistry, RegisteredOp, op
 from mirage.ops.s3 import OPS as S3_VFS_OPS
 from mirage.resource.ram import RAMResource
+from mirage.types import PathSpec
+
+
+def _spec(virtual: str) -> PathSpec:
+    return PathSpec(resource_path=virtual.strip("/"),
+                    virtual=virtual,
+                    directory="/",
+                    pattern=None,
+                    resolved=True)
 
 
 class TestOpDecorator:
@@ -130,7 +139,7 @@ class TestOpsRegistry:
 
         result = await registry.call("read",
                                      "s3", (None, ),
-                                     "/test.custom",
+                                     _spec("/test.custom"),
                                      filetype=".custom")
         assert result == b"fallback"
 

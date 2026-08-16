@@ -12,6 +12,7 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import functools
 import re
 import shlex
 from collections.abc import Callable
@@ -24,25 +25,28 @@ from mirage.io.stream import async_chain
 from mirage.io.types import ByteSource
 from mirage.ops.types import SessionView
 from mirage.policy import PolicyDenied
-from mirage.shell.array import (array_append, array_extent, array_unset,
-                                make_array)
+from mirage.shell.array import (array_extent, array_unset, build_assoc_literal,
+                                build_indexed_literal)
 from mirage.shell.call_stack import CallStack
-from mirage.shell.errors import ExitSignal
+from mirage.shell.errors import ArithError, ExitSignal
 from mirage.shell.options import parse_option_word
 from mirage.shell.types import SET_OPTION_DEFAULTS, SET_OPTION_NAMES
-from mirage.shell.variable import VarAttr, attr_letters
+from mirage.shell.variable import ShellValue, VarAttr, attr_letters
 from mirage.utils.hidden import var_hidden
 from mirage.workspace.executor.builtins.text import _PRINTF_TARGET_RE
 from mirage.workspace.executor.control import ReturnSignal
 from mirage.workspace.expand.variable import _array_index
 from mirage.workspace.mount.namespace import Namespace
 from mirage.workspace.session import Session
+from mirage.workspace.session.elements import assign_element
 from mirage.workspace.session.errors import ReadonlyVariableError
 from mirage.workspace.session.session import vars_from_env
-from mirage.workspace.session.state import (env_get, env_is_readonly,
-                                            env_snapshot, exported_names,
+from mirage.workspace.session.state import (element_index, env_get,
+                                            env_is_readonly, env_snapshot,
+                                            exported_names, session_elements,
                                             session_view, set_attr,
-                                            visible_arrays, visible_env)
+                                            visible_arrays, visible_assocs,
+                                            visible_env)
 from mirage.workspace.types import ExecutionNode
 
 
@@ -89,6 +93,48 @@ def _readonly_refusal(
                                                                   stderr=err)
 
 
+async def _premark(view: SessionView, name: str,
+                   shaping: frozenset[VarAttr]) -> None:
+    """Put a declaration's value-shaping attributes on a name before its
+    value stores.
+
+    The door coerces on write by reading the record's attributes, so
+    for the declaration's *own* value to coerce (``declare -i n=3+4``
+    stores ``7``), the attribute has to be there first. Gated through
+    ``view.mark`` like every other mark, and a no-op with nothing to
+    shape, so a plain ``declare X=1`` costs no extra gate call.
+
+    Args:
+        view (SessionView): the session plane's gated door.
+        name (str): the variable being declared.
+        shaping (frozenset[VarAttr]): the ``-i -l -u`` attributes set.
+    """
+    for attr in shaping:
+        await view.mark(name, attr, True)
+
+
+def _arith_refusal(
+        cmd: str,
+        exc: ArithError) -> tuple[ByteSource | None, IOResult, ExecutionNode]:
+    """Render the ``-i`` coercion's arithmetic error as bash does.
+
+    GNU voices it as the evaluator's own line, prefixed by the builtin
+    and the offending text (``bash: read: 1+: syntax error: operand
+    expected``), and fails the builtin with 1 while the variable keeps
+    its old value, which is what the door's copy-then-store already
+    guarantees. A plain assignment (``n=1+``) is fatal instead and is
+    voiced by the executor without a builtin name.
+
+    Args:
+        cmd (str): builtin name for the node.
+        exc (ArithError): the evaluator's refusal, text already led.
+    """
+    err = f"bash: {cmd}: {exc}\n".encode()
+    return None, IOResult(exit_code=1, stderr=err), ExecutionNode(command=cmd,
+                                                                  exit_code=1,
+                                                                  stderr=err)
+
+
 async def _store_staged_arrays(
     cmd: str,
     session: Session,
@@ -98,6 +144,9 @@ async def _store_staged_arrays(
     on: bool = True,
     fatal: bool = False,
     stored: list[str] | None = None,
+    assoc: bool = False,
+    errors: list[str] | None = None,
+    shaping: frozenset[VarAttr] = frozenset(),
 ) -> tuple[ByteSource | None, IOResult, ExecutionNode] | None:
     """Store a declaration's array literals through the session door.
 
@@ -134,6 +183,15 @@ async def _store_staged_arrays(
             stored, in order. A declaration keeps its valid operands
             when a sibling refuses, so the caller cannot read "what was
             written" off the aggregate exit status.
+        assoc (bool): the declaration carried ``-A``, so every literal
+            builds an associative map. Without it a name that already
+            holds one still builds a map, since a plain
+            ``m+=([k]=v)`` keeps the variable's own kind.
+        errors (list[str] | None): filled with bash-voiced refusal
+            lines for the plain words a keyed associative literal
+            cannot take; the caller folds them into its exit status,
+            because GNU stores the valid elements and still fails the
+            builtin.
 
     Returns:
         The refusal result, or None when every literal stored.
@@ -148,20 +206,35 @@ async def _store_staged_arrays(
                 raise ExitSignal(1, stderr=err, contained_code=1)
             return _readonly_refusal(cmd, name)
         note_local_array(session, name)
-        if append:
-            base = session.arrays.get(name)
-            if base is None:
-                scalar = session.env.get(name)
-                base = [] if scalar is None else [scalar]
-            else:
-                base = list(base)
-            array_append(base, items)
+        try:
+            await _premark(view, name, shaping)
+        except PolicyDenied as exc:
+            return _refusal(cmd, exc)
+        base: ShellValue
+        if assoc or name in session.assocs:
+            built, bad_words = build_assoc_literal(session.assocs.get(name),
+                                                   items, append)
+            if errors is not None:
+                errors.extend(f"bash: {name}: '{word}': must use subscript "
+                              "when assigning associative array"
+                              for word in bad_words)
+            base = built
         else:
-            base = make_array(items)
+            held = session.arrays.get(name)
+            if append and held is None:
+                scalar = session.env.get(name)
+                held = None if scalar is None else [scalar]
+            base = build_indexed_literal(
+                held, items, append,
+                functools.partial(element_index,
+                                  env=visible_env(session),
+                                  elements=session_elements(session)))
         try:
             await view.set(name, base)
         except PolicyDenied as exc:
             return _refusal(cmd, exc)
+        except ArithError as exc:
+            return _arith_refusal(cmd, exc)
         if stored is not None:
             stored.append(name)
         if mark is not None:
@@ -299,11 +372,11 @@ def _export_lines(session: Session, flags: set[str]) -> list[str]:
 
 
 def _readonly_lines(session: Session, flags: set[str]) -> list[str]:
-    """Build sorted ``declare -r`` / ``declare -ar`` readonly lines.
+    """Build sorted ``declare -r`` family readonly lines.
 
-    ``-a`` narrows the listing to indexed arrays, the way bash does.
-    ``-f`` selects functions and ``-A`` associative arrays, neither of
-    which mirage carries a readonly attribute for, so those forms list
+    ``-a`` narrows the listing to indexed arrays and ``-A`` to
+    associative ones, the way bash does. ``-f`` selects functions,
+    which mirage carries no readonly attribute for, so that form lists
     nothing. Bare and ``-p`` list every readonly name.
 
     Args:
@@ -313,9 +386,10 @@ def _readonly_lines(session: Session, flags: set[str]) -> list[str]:
     Returns:
         list[str]: one declaration line per selected name.
     """
-    if "f" in flags or "A" in flags:
+    if "f" in flags:
         return []
     arrays_only = "a" in flags
+    assocs_only = "A" in flags
     env = visible_env(session)
     lines: list[str] = []
     # env_is_readonly answers False for a hidden name, so a hidden
@@ -323,14 +397,18 @@ def _readonly_lines(session: Session, flags: set[str]) -> list[str]:
     for name in sorted(n for n in session.readonly_vars
                        if env_is_readonly(session, n)):
         arr = session.arrays.get(name)
-        if arr is not None:
+        amap = session.assocs.get(name)
+        if arr is not None and not assocs_only:
             parts = [
                 f"[{i}]={_bash_declare_quote(v)}" for i, v in enumerate(arr)
                 if v is not None
             ]
             lines.append(f"declare -ar {name}=({' '.join(parts)})")
             continue
-        if arrays_only:
+        if amap is not None and not arrays_only:
+            lines.append(f"declare -Ar {name}{_assoc_body(amap)}")
+            continue
+        if arrays_only or assocs_only or arr is not None or amap is not None:
             continue
         if name in env:
             lines.append(f"declare -r {name}={_bash_declare_quote(env[name])}")
@@ -388,6 +466,43 @@ def _identifier_failure(
                                                                   stderr=err)
 
 
+_BARE_KEY_RE = re.compile(r"[A-Za-z0-9_%+,./:=@~-]+\Z")
+
+
+def _assoc_key_text(key: str) -> str:
+    """One associative key as ``declare -p`` spells it.
+
+    Bare when every character is one GNU leaves unquoted (pinned by a
+    character sweep on 5.2.37: alphanumerics and the punctuation
+    ``_ % + , - . / : = @ ~``), quoted like a value otherwise. A key
+    that *is* ``@`` or ``*`` quotes even though the character is bare
+    mid-key, since the bare spelling would read back as a splat.
+
+    Args:
+        key (str): the key to render.
+    """
+    if key not in ("@", "*") and _BARE_KEY_RE.fullmatch(key):
+        return key
+    return _bash_declare_quote(key)
+
+
+def _assoc_body(amap: dict[str, str]) -> str:
+    """The ``=(...)`` tail of an associative ``declare`` line.
+
+    Sorted keys (mirage's pinned order, where GNU prints hash order)
+    and GNU's trailing space before the closing paren, which an empty
+    map does not carry: ``m=([a]="1" )`` but ``m=()``.
+
+    Args:
+        amap (dict[str, str]): the associative array.
+    """
+    if not amap:
+        return "=()"
+    parts = " ".join(f"[{_assoc_key_text(k)}]={_bash_declare_quote(amap[k])}"
+                     for k in sorted(amap))
+    return f"=({parts} )"
+
+
 def _declare_line(session: Session, name: str) -> str | None:
     """The ``declare -p`` line for one name, or None when it has none.
 
@@ -423,10 +538,8 @@ def _declare_line(session: Session, name: str) -> str | None:
             if v is not None
         ]
         return f"{head} {name}=({' '.join(parts)})"
-    if not isinstance(var.value, str):
-        # An associative value; rendering one is the `declare -A` stage's
-        # job, and guessing at it here would print a shape bash does not.
-        return None
+    if isinstance(var.value, dict):
+        return f"{head} {name}{_assoc_body(var.value)}"
     return f"{head} {name}={_bash_declare_quote(var.value)}"
 
 
@@ -541,17 +654,100 @@ async def handle_export(
     return None, IOResult(), ExecutionNode(command="export", exit_code=0)
 
 
+def handle_declare_functions(
+    cmd: str,
+    session: Session,
+    flags: set[str],
+    names: list[str],
+) -> tuple[ByteSource | None, IOResult, ExecutionNode]:
+    """Run the function half of ``declare``: ``-f`` / ``-F`` / ``-rf``.
+
+    ``-F NAME`` prints the name; ``-f NAME`` prints ``declare -f NAME``
+    where GNU prints the reformatted body (mirage carries no
+    pretty-printer, so the name row is the deliberate stand-in, the
+    same shape ``-F`` and ``readonly -f`` list in). A missing name is
+    exit 1 with no message. With ``-r`` the named functions freeze, as
+    ``readonly -f`` does. With no names, ``-F`` lists every function
+    and ``-f`` lists them the same way.
+
+    Args:
+        cmd (str): the builtin's own name for a diagnostic.
+        session (Session): shell session state.
+        flags (set[str]): the declaration's collected flag letters.
+        names (list[str]): the function names, empty to list all.
+    """
+    if "r" in flags:
+        return _readonly_functions(session, names)
+    targets = names or sorted(session.functions)
+    lines: list[str] = []
+    missing = False
+    for name in targets:
+        if name not in session.functions:
+            missing = True
+            continue
+        if "F" in flags:
+            lines.append(name if names else f"declare -f {name}")
+        else:
+            lines.append(f"declare -f {name}")
+    out = (("\n".join(lines) + "\n") if lines else "").encode()
+    code = 1 if missing else 0
+    return out, IOResult(exit_code=code), ExecutionNode(command=cmd,
+                                                        exit_code=code)
+
+
+def _readonly_functions(
+        session: Session,
+        names: list[str]) -> tuple[ByteSource | None, IOResult, ExecutionNode]:
+    """Run ``readonly -f``: freeze the named functions, or list the frozen.
+
+    Args:
+        session (Session): shell session state.
+        names (list[str]): the function names, empty to list.
+    """
+    if not names:
+        lines = [
+            f"declare -fr {name}"
+            for name in sorted(session.readonly_functions)
+            if name in session.functions
+        ]
+        out = (("\n".join(lines) + "\n") if lines else "").encode()
+        return out, IOResult(), ExecutionNode(command="readonly", exit_code=0)
+    errors: list[str] = []
+    for name in names:
+        if name not in session.functions:
+            errors.append(f"bash: readonly: {name}: not a function")
+            continue
+        session.readonly_functions.add(name)
+    if errors:
+        err = ("\n".join(errors) + "\n").encode()
+        return None, IOResult(exit_code=1,
+                              stderr=err), ExecutionNode(command="readonly",
+                                                         exit_code=1,
+                                                         stderr=err)
+    return None, IOResult(), ExecutionNode(command="readonly", exit_code=0)
+
+
 async def handle_readonly(
     assignments: list[str],
     session: Session,
     state: SessionView | None = None,
     arrays: list[tuple[str, bool, list[str]]] | None = None,
     stored: list[str] | None = None,
+    assoc: bool = False,
+    shaping: frozenset[VarAttr] = frozenset(),
 ) -> tuple[ByteSource | None, IOResult, ExecutionNode]:
     """Mark names readonly, or print them (``readonly -p`` / bare form).
 
     With no name operands, prints every readonly name as ``declare -r``
     (or ``declare -ar`` for arrays). Invalid options fail with status 2.
+
+    ``-f`` freezes *functions*: a frozen one refuses redefinition and
+    ``unset -f`` with its own message, exit 1, and the old body stays.
+    A name that is not a function is ``not a function``, exit 1, and
+    the other operands still freeze. With no names, ``-f`` lists the
+    frozen functions as ``declare -fr NAME``; GNU prints each body first
+    through its own pretty-printer, which mirage does not carry, so the
+    body line is the one deliberate omission.
     """
     flags, names, bad = _split_decl_flags(assignments, _READONLY_FLAGS)
     if bad is not None:
@@ -561,12 +757,14 @@ async def handle_readonly(
                               stderr=err), ExecutionNode(command="readonly",
                                                          exit_code=2,
                                                          stderr=err)
+    if "f" in flags:
+        return _readonly_functions(session, names)
     if not names and not arrays:
         lines = _readonly_lines(session, flags)
         out = (("\n".join(lines) + "\n") if lines else "").encode()
         return out, IOResult(), ExecutionNode(command="readonly", exit_code=0)
-    # -a/-A/-f accepted; array shape is applied by the declaration path.
     view = _view(session, state)
+    errors: list[str] = []
     if arrays:
         refused = await _store_staged_arrays("readonly",
                                              session,
@@ -574,10 +772,12 @@ async def handle_readonly(
                                              arrays,
                                              mark=VarAttr.READONLY,
                                              fatal=True,
-                                             stored=stored)
+                                             stored=stored,
+                                             assoc=assoc or "A" in flags,
+                                             errors=errors,
+                                             shaping=shaping)
         if refused is not None:
             return refused
-    errors: list[str] = []
     for assign in names:
         refusal = _identifier_refusal("readonly", assign)
         if refusal is not None:
@@ -588,9 +788,12 @@ async def handle_readonly(
             if view.is_readonly(key):
                 return _readonly_refusal("readonly", key)
             try:
+                await _premark(view, key, shaping)
                 await view.set(key, val)
             except PolicyDenied as exc:
                 return _refusal("readonly", exc)
+            except ArithError as exc:
+                return _arith_refusal("readonly", exc)
             # Ungated: the `view.set` above already put this name
             # through the gate, so the mark rides on that decision.
             set_attr(session, key, VarAttr.READONLY)
@@ -667,6 +870,18 @@ async def _unset_element(session: Session, view: SessionView, base: str,
     Raises:
         PolicyDenied: a pre_session policy refused the write.
     """
+    amap = visible_assocs(session).get(base)
+    if amap is not None:
+        # The subscript is the key, verbatim: `unset "m[1+1]"` removes
+        # the key "1+1", and a key that is not there (GNU pins
+        # `unset "m[@]"` on an associative array as this same no-op)
+        # answers quietly without a write.
+        if subscript not in amap:
+            return "ok"
+        new_map = dict(amap)
+        new_map.pop(subscript)
+        await view.set(base, new_map)
+        return "ok"
     arr = visible_arrays(session).get(base)
     if arr is None:
         # Visible reads on purpose: a hidden base answers the unset
@@ -735,6 +950,11 @@ async def handle_unset(
             # variable this leaves the name untouched.
             continue
         if mode == "f":
+            if name in session.readonly_functions:
+                err = (f"bash: unset: {name}: cannot unset: "
+                       "readonly function\n").encode()
+                return None, IOResult(exit_code=1, stderr=err), ExecutionNode(
+                    command="unset", exit_code=1, stderr=err)
             session.functions.pop(name, None)
             continue
         target = _PRINTF_TARGET_RE.match(name)
@@ -751,7 +971,8 @@ async def handle_unset(
                                   stderr=err), ExecutionNode(command="unset",
                                                              exit_code=1,
                                                              stderr=err)
-        existed = is_element or name in session.env or name in session.arrays
+        existed = (is_element or name in session.env or name in session.arrays
+                   or name in session.assocs)
         # Both spellings clear the pre_session gate for the base name:
         # the whole-variable unset through the view's env half, an
         # element unset inside _unset_element, so `unset 'X[0]'` cannot
@@ -778,6 +999,11 @@ async def handle_unset(
                                                              exit_code=1,
                                                              stderr=err)
         if mode == "auto" and not existed and name in session.functions:
+            if name in session.readonly_functions:
+                err = (f"bash: unset: {name}: cannot unset: "
+                       "readonly function\n").encode()
+                return None, IOResult(exit_code=1, stderr=err), ExecutionNode(
+                    command="unset", exit_code=1, stderr=err)
             session.functions.pop(name, None)
     return None, IOResult(), ExecutionNode(command="unset", exit_code=0)
 
@@ -935,6 +1161,64 @@ async def handle_whoami(
     return out, IOResult(), ExecutionNode(command="whoami", exit_code=0)
 
 
+async def _read_store(
+    session: Session,
+    view: SessionView,
+    var: str,
+    value: str,
+) -> tuple[ByteSource | None, IOResult, ExecutionNode] | None:
+    """Store one ``read`` target, scalar or ``name[sub]`` element.
+
+    bash accepts a subscripted target (``read "m[k]"``), which is an
+    element write, not a variable literally named ``m[k]``; the
+    readonly guard resolves the base name first, since that is what
+    ``readonly`` records.
+
+    Args:
+        session (Session): shell session state.
+        view (SessionView): the session plane's gated door.
+        var (str): the target as the operand spelled it.
+        value (str): the split word to store.
+
+    Returns:
+        The refusal result, or None when the write landed.
+    """
+    target = _PRINTF_TARGET_RE.match(var)
+    base = target.group(1) if target is not None else var
+    subscript = target.group(2) if target is not None else None
+    if view.is_readonly(base):
+        return _readonly_refusal("read", base)
+    if subscript is None:
+        try:
+            await view.set(var, value)
+        except PolicyDenied as exc:
+            return _refusal("read", exc)
+        except ArithError as exc:
+            return _arith_refusal("read", exc)
+        return None
+    try:
+        status = await assign_element(session, view, base, subscript, value)
+    except PolicyDenied as exc:
+        return _refusal("read", exc)
+    except ArithError as exc:
+        return _arith_refusal("read", exc)
+    if status == "readonly":
+        return _readonly_refusal("read", base)
+    if status == "denied":
+        err = f"bash: {base}: permission denied\n".encode()
+        return None, IOResult(exit_code=1,
+                              stderr=err), ExecutionNode(command="read",
+                                                         exit_code=1,
+                                                         stderr=err)
+    if status != "ok":
+        err = f"bash: read: {var}: bad array subscript\n".encode()
+        return None, IOResult(exit_code=1,
+                              stderr=err), ExecutionNode(command="read",
+                                                         exit_code=1,
+                                                         stderr=err)
+    return None
+
+
 async def handle_read(
     args: list[str],
     session: Session,
@@ -981,12 +1265,9 @@ async def handle_read(
     view = _view(session, state)
     if line_bytes is None:
         for var in variables:
-            if view.is_readonly(var):
-                return _readonly_refusal("read", var)
-            try:
-                await view.set(var, "")
-            except PolicyDenied as exc:
-                return _refusal("read", exc)
+            refused = await _read_store(session, view, var, "")
+            if refused is not None:
+                return refused
         return None, IOResult(exit_code=1), ExecutionNode(command="read",
                                                           exit_code=1)
 
@@ -1015,12 +1296,10 @@ async def handle_read(
         out.append("".join(cur))
         parts = out
     for i, var in enumerate(variables):
-        if view.is_readonly(var):
-            return _readonly_refusal("read", var)
-        try:
-            await view.set(var, parts[i] if i < len(parts) else "")
-        except PolicyDenied as exc:
-            return _refusal("read", exc)
+        refused = await _read_store(session, view, var,
+                                    parts[i] if i < len(parts) else "")
+        if refused is not None:
+            return refused
     return None, IOResult(), ExecutionNode(command="read", exit_code=0)
 
 
@@ -1054,6 +1333,8 @@ async def handle_local(
     arrays: list[tuple[str, bool, list[str]]] | None = None,
     cmd: str = "local",
     stored: list[str] | None = None,
+    assoc: bool = False,
+    shaping: frozenset[VarAttr] = frozenset(),
 ) -> tuple[ByteSource | None, IOResult, ExecutionNode]:
     """Declare names in the running function's scope, or globally.
 
@@ -1066,6 +1347,15 @@ async def handle_local(
         cmd (str): the spelling that reached here, for diagnostics.
             ``declare`` and ``typeset`` route through this handler and
             must say their own name, not ``local``.
+        stored (list[str] | None): filled with each name that stored.
+        assoc (bool): the declaration carried ``-A``, so staged
+            literals build associative maps.
+        shaping (frozenset[VarAttr]): the value-shaping attributes
+            (``-i -l -u``) the declaration carries. They are marked on
+            each name *before* its value stores, after the local
+            snapshot, so the declaration's own value coerces exactly as
+            a later write would: GNU stores ``7`` for
+            ``declare -i n=3+4`` and ``hello`` for ``declare -l s=HeLLo``.
     """
     local_vars = session._local_vars
     if cmd == "local" and local_vars is None:
@@ -1080,16 +1370,19 @@ async def handle_local(
                                                          exit_code=1,
                                                          stderr=err)
     view = _view(session, state)
+    errors: list[str] = []
     if arrays:
         refused = await _store_staged_arrays(cmd,
                                              session,
                                              view,
                                              arrays,
                                              fatal=session._local_vars is None,
-                                             stored=stored)
+                                             stored=stored,
+                                             assoc=assoc,
+                                             errors=errors,
+                                             shaping=shaping)
         if refused is not None:
             return refused
-    errors: list[str] = []
     for assign in assignments:
         refusal = _identifier_refusal(cmd, assign)
         if refusal is not None:
@@ -1102,16 +1395,20 @@ async def handle_local(
             if local_vars is not None and key not in local_vars:
                 local_vars[key] = session.vars.get(key)
             try:
+                await _premark(view, key, shaping)
                 await view.set(key, val)
             except PolicyDenied as exc:
                 return _refusal(cmd, exc)
+            except ArithError as exc:
+                return _arith_refusal(cmd, exc)
             if stored is not None:
                 stored.append(key)
         else:
             if local_vars is not None and assign not in local_vars:
                 local_vars[assign] = session.vars.get(assign)
             if (env_get(session, assign) is None
-                    and assign not in visible_arrays(session)):
+                    and assign not in visible_arrays(session)
+                    and assign not in visible_assocs(session)):
                 # A bare declaration of an existing array re-scopes it;
                 # a scalar write here would erase it. Visible reads: a
                 # hidden name counts as unset, so the write is

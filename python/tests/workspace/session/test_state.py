@@ -19,14 +19,16 @@ import pytest
 from mirage.ops.types import SessionView
 from mirage.policy import Action, Deny, Policies, Policy, PolicyDenied
 from mirage.policy.types import SessionContext
+from mirage.shell.errors import ArithError
 from mirage.shell.variable import VarAttr
 from mirage.types import HiddenVars
 from mirage.workspace.session import Session
 from mirage.workspace.session.errors import ReadonlyVariableError
 from mirage.workspace.session.session import vars_from_env
-from mirage.workspace.session.state import (env_snapshot, seed_var,
+from mirage.workspace.session.state import (element_index, env_snapshot,
+                                            seed_var, session_elements,
                                             session_view, set_attr,
-                                            visible_env)
+                                            strip_key_quotes, visible_env)
 
 
 class DenySecrets(Policy):
@@ -241,3 +243,114 @@ def test_visible_env_filters_reads_without_copying():
         env["SLACK_TOKEN"]
     seed_var(session, "NEW", "2")
     assert env["NEW"] == "2"
+
+
+def test_a_shaped_write_gates_the_value_that_lands():
+    # `declare -l role; role=ADMIN` stores `admin`, so a rule refusing
+    # `admin` has to see `admin`, not the raw text: coercion runs
+    # before the gate.
+    seen: list[str | None] = []
+
+    class Capture(Policy):
+
+        async def pre_session(self, ctx: SessionContext) -> Action | None:
+            seen.append(ctx.value)
+            if ctx.value == "admin":
+                return Deny("no admin\n")
+            return None
+
+    async def run():
+        view, session = _view(Policies([Capture()]))
+        seed_var(session, "role", "")
+        set_attr(session, "role", VarAttr.LOWER)
+        with pytest.raises(PolicyDenied):
+            await view.set("role", "ADMIN")
+        assert session.env["role"] == ""
+        seed_var(session, "n", "0")
+        set_attr(session, "n", VarAttr.INTEGER)
+        await view.set("n", "3+4")
+        assert session.env["n"] == "7"
+
+    asyncio.run(run())
+    assert seen == ["admin", "7"]
+
+
+def test_integer_coercion_resolves_elements():
+    # `n=a[1]+1` under `-i` reads the element, as bash does, through
+    # the same resolver every other arithmetic entry point uses.
+    async def run():
+        view, session = _view()
+        seed_var(session, "a", ["1", "2"])
+        seed_var(session, "m", {"x": "4"})
+        seed_var(session, "n", "0")
+        set_attr(session, "n", VarAttr.INTEGER)
+        await view.set("n", "a[1]+1")
+        assert session.env["n"] == "3"
+        await view.set("n", "m[x]+1")
+        assert session.env["n"] == "5"
+        await view.set("n", 'm["x"]+1')
+        assert session.env["n"] == "5"
+        await view.set("n", "a[5]+1")
+        assert session.env["n"] == "1"
+        with pytest.raises(ArithError):
+            await view.set("n", "1+")
+
+    asyncio.run(run())
+
+
+def _element_session() -> Session:
+    session = Session(session_id="s", cwd="/")
+    seed_var(session, "m", {"a": "1", "k5": "9", "0": "z"})
+    seed_var(session, "arr", ["10", "20", "30"])
+    seed_var(session, "s5", "5")
+    seed_var(session, "i", "1")
+    return session
+
+
+def test_strip_key_quotes():
+    assert strip_key_quotes('"x"') == "x"
+    assert strip_key_quotes("'x'") == "x"
+    assert strip_key_quotes("x") == "x"
+    assert strip_key_quotes('"x') == '"x'
+    assert strip_key_quotes('""') == ""
+
+
+def test_element_index_int_arith_and_error():
+    assert element_index("3", {}) == 3
+    assert element_index(" -2 ", {}) == -2
+    assert element_index("i+1", {"i": "1"}) == 2
+    # An unresolvable expression indexes element 0, bash's
+    # unset-name-is-zero arithmetic rule.
+    assert element_index("$bad", {}) == 0
+
+
+def test_resolve_assoc_is_literal():
+    session = _element_session()
+    ops = session_elements(session)
+    assert ops.resolve("m", "a", {}) == "a"
+    assert ops.resolve("m", '"a"', {}) == "a"
+    # A key spelled like arithmetic stays a key.
+    assert ops.resolve("m", "1+1", {}) == "1+1"
+
+
+def test_resolve_indexed_evaluates_and_wraps_negative():
+    session = _element_session()
+    ops = session_elements(session)
+    assert ops.resolve("arr", "1+1", {}) == "2"
+    assert ops.resolve("arr", "i", {"i": "2"}) == "2"
+    assert ops.resolve("arr", "-1", {}) == "2"
+    with pytest.raises(ArithError):
+        ops.resolve("arr", "-9", {})
+
+
+def test_read_by_kind():
+    session = _element_session()
+    ops = session_elements(session)
+    assert ops.read("m", "a") == "1"
+    assert ops.read("m", "zz") is None
+    assert ops.read("arr", "1") == "20"
+    assert ops.read("arr", "9") is None
+    # A scalar answers as element 0 of a one-element array.
+    assert ops.read("s5", "0") == "5"
+    assert ops.read("s5", "1") is None
+    assert ops.read("missing", "0") is None

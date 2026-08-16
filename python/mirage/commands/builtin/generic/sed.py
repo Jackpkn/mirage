@@ -204,8 +204,14 @@ def _positional_as_paths(texts: list[str],
     return out
 
 
-async def sed_generic(paths, texts, opts: CommandOpts, resolve_glob,
-                      read_bytes, write_bytes):
+async def sed_generic(
+    paths: list[PathSpec],
+    texts: list[str],
+    opts: CommandOpts,
+    resolve_glob: Callable[..., Awaitable[list[PathSpec]]],
+    read_bytes: Callable[..., Awaitable[bytes]],
+    write_bytes: Callable[..., Awaitable[None]] | None,
+) -> tuple[ByteSource | None, IOResult]:
     """Run sed over the given operands; mirrors sedGeneric.
 
     The script comes from -e expressions and -f script files (joined

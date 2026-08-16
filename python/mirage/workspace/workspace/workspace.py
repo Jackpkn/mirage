@@ -14,8 +14,9 @@
 
 import asyncio
 import logging
-from collections.abc import AsyncIterator, Iterable, Mapping, Sequence
-from types import TracebackType
+from collections.abc import (AsyncIterator, Callable, Iterable, Mapping,
+                             Sequence)
+from types import ModuleType, TracebackType
 from typing import Any, Literal, overload
 
 from mirage.bridge.sync import run_async_from_sync
@@ -182,6 +183,12 @@ class Workspace:
                         links=self._namespace,
                         dispatch=self._dispatcher.dispatch)
         self._kernel_mounts = KernelMounts(self._ops, self._session_mgr)
+        # Held only while the workspace is a context manager; set by
+        # lifecycle.patch_process. Declared here because the pair was
+        # invented by assignment, so an unpatch without a patch raised
+        # AttributeError instead of restoring nothing.
+        self._original_open: Callable[..., Any] | None = None
+        self._original_os: ModuleType | None = None
 
         self._runtimes, self._policy_router = wire_runtime_world(
             self._registry, self.dispatch,

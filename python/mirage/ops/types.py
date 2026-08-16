@@ -15,8 +15,7 @@
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
-from mirage.shell.array import ShellArray
-from mirage.shell.variable import VarAttr
+from mirage.shell.variable import ShellValue, VarAttr
 from mirage.types import FileStat
 
 StatOverlay = Callable[[str, FileStat], FileStat]
@@ -72,7 +71,7 @@ EnvSnapshot = Callable[[], dict[str, str]]
 # Writers with richer mechanics (subscripts, appends, holes) compute the
 # resulting value on a copy and hand it here, so a denial never leaves a
 # half-applied write.
-EnvSet = Callable[[str, str | ShellArray], Awaitable[None]]
+EnvSet = Callable[[str, ShellValue], Awaitable[None]]
 # Drop one variable through the session plane; a missing name is quiet.
 EnvUnset = Callable[[str], Awaitable[None]]
 # Turn one attribute on or off through the session plane, or with a None

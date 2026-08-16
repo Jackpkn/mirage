@@ -100,7 +100,7 @@ class BaseResource:
         return self._index
 
     async def resolve_glob(self,
-                           paths: list[str | PathSpec],
+                           paths: list[PathSpec],
                            prefix: str = "") -> list[PathSpec]:
         raise NotImplementedError
 

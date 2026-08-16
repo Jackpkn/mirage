@@ -18,11 +18,13 @@ import { mountKey, mountPrefixOf } from '../../utils/key_prefix.ts'
 import { AsyncLineIterator } from '../../io/async_line_iterator.ts'
 import { materialize, type IOResult } from '../../io/types.ts'
 import { type FileStat, FileType, PathSpec } from '../../types.ts'
+import { fnmatch } from '../../utils/fnmatch.ts'
 import { getExtension } from '../resolve.ts'
 import { PatternType } from './constants.ts'
 import { grepContextLines } from './grep_context.ts'
 import type { AsyncReadBytesFn, AsyncReaddirFn, AsyncStatFn } from './utils/types.ts'
-import type { FlagValue } from '../spec/types.ts'
+import type { FlagView } from '../spec/types.ts'
+import { type FlagValue } from '../spec/types.ts'
 
 export const BINARY_EXTENSIONS: ReadonlySet<string> = new Set([
   '.parquet',
@@ -35,6 +37,84 @@ export const BINARY_EXTENSIONS: ReadonlySet<string> = new Set([
 ])
 
 export const NEVER_MATCH = '(?!)'
+
+/**
+ * GNU's file-selection flags, threaded as one value.
+ *
+ * `fileGlobs` holds the --include/--exclude rules in command-line
+ * order (the order decides ties, see `fileAdmitted`), `excludeDir`
+ * prunes directories from the -r walk, and `text` (-a) lets the walk
+ * read the extensions it would otherwise skip as binary. The empty
+ * value admits everything, which is what every caller without the
+ * flags passes.
+ */
+/** One --include/--exclude rule: a basename glob and its verdict. */
+export interface FileGlob {
+  glob: string
+  admit: boolean
+}
+
+export interface WalkFilters {
+  fileGlobs: readonly FileGlob[]
+  excludeDir: readonly string[]
+  text: boolean
+}
+
+export const NO_FILTERS: WalkFilters = { fileGlobs: [], excludeDir: [], text: false }
+
+/**
+ * The --include/--exclude rules a line typed, in line order.
+ *
+ * The bag lists each dest's values in occurrence order and the dests
+ * themselves in first-typed order, so the rebuilt list is exact unless
+ * a line alternates the two kinds three or more times (`--include a
+ * --exclude b --include c`), where each kind's rules stay grouped at
+ * its first position. Deliberate approximation: the bag is the only
+ * channel a generic reads, and it carries no per-occurrence positions
+ * across two dests.
+ */
+export function parseFileGlobs(fl: FlagView): readonly FileGlob[] {
+  const rules: FileGlob[] = []
+  for (const name of fl.typedOrder('include', 'exclude')) {
+    const admit = name === 'include'
+    for (const glob of fl.asList(name)) rules.push({ glob, admit })
+  }
+  return rules
+}
+
+/**
+ * GNU's --include/--exclude gate for one candidate file.
+ *
+ * Globs match the base name with fnmatch wildcards, case sensitively (a
+ * glob carrying a slash therefore matches nothing, which is what GNU
+ * 3.11 answers too). The rules resolve in command-line order, gnulib's
+ * exclude list: the last matching rule decides, and a file matching
+ * none is admitted only when the first rule is an exclude (both pinned
+ * against GNU 3.11, where `--include='*.txt' --exclude='*.txt'` skips a
+ * .txt file and the reversed order searches it). Applies to
+ * command-line files exactly as to walked ones, which is pinned GNU
+ * behavior: an explicit operand --include passes over is silently no
+ * match, not an error.
+ */
+export function fileAdmitted(path: string, filters: WalkFilters): boolean {
+  const rules = filters.fileGlobs
+  const first = rules[0]
+  if (first === undefined) return true
+  const trimmed = path.endsWith('/') ? path.slice(0, -1) : path
+  const base = trimmed.slice(trimmed.lastIndexOf('/') + 1)
+  let verdict = !first.admit
+  for (const rule of rules) {
+    if (fnmatch(base, rule.glob)) verdict = rule.admit
+  }
+  return verdict
+}
+
+/** Whether the -r walk may descend into this directory. */
+export function dirAdmitted(path: string, filters: WalkFilters): boolean {
+  const trimmed = path.endsWith('/') ? path.slice(0, -1) : path
+  const base = trimmed.slice(trimmed.lastIndexOf('/') + 1)
+  return !filters.excludeDir.some((glob) => fnmatch(base, glob))
+}
 
 const DEC = new TextDecoder()
 
@@ -267,7 +347,11 @@ export function hasSearchShapingFlags(flags: Record<string, FlagValue>): boolean
     typeof flags.B === 'string' ||
     typeof flags.C === 'string' ||
     flags.type !== undefined ||
-    flags.glob !== undefined
+    flags.glob !== undefined ||
+    flags.text === true ||
+    flags.include !== undefined ||
+    flags.exclude !== undefined ||
+    flags.exclude_dir !== undefined
   )
 }
 
@@ -450,6 +534,7 @@ export interface GrepFilesOnlyOptions {
   maxCount: number | null
   wholeWord: boolean
   basic: boolean
+  filters?: WalkFilters
 }
 
 export async function grepRecursive(
@@ -488,7 +573,9 @@ export async function grepRecursive(
         warnings.push(`grep: ${entry}: ${err instanceof Error ? err.message : String(err)}`)
       continue
     }
+    const filters = opts.filters ?? NO_FILTERS
     if (s.type === FileType.DIRECTORY) {
+      if (!dirAdmitted(entry, filters)) continue
       const sub = await grepRecursive(
         readdirFn,
         statFn,
@@ -502,7 +589,8 @@ export async function grepRecursive(
       for (const r of sub) results.push(r)
       continue
     }
-    if (BINARY_EXTENSIONS.has(getExtension(entry) ?? '')) continue
+    if (!fileAdmitted(entry, filters)) continue
+    if (!filters.text && BINARY_EXTENSIONS.has(getExtension(entry) ?? '')) continue
     try {
       const lines = new TextDecoder('utf-8', { fatal: false })
         .decode(await readBytesFn(entry))
@@ -608,6 +696,7 @@ export async function grepFilesOnly(
     if (warnings !== null) warnings.push(`grep: ${path}: Is a directory`)
     return []
   }
+  if (!fileAdmitted(path, opts.filters ?? NO_FILTERS)) return []
   let data: Uint8Array
   try {
     data = await readBytesFn(path)

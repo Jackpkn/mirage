@@ -44,6 +44,14 @@ def _mentions_object(node: ast.AST | None) -> bool:
         for child in ast.walk(node))
 
 
+def _target_name(node: ast.AnnAssign) -> str:
+    if isinstance(node.target, ast.Name):
+        return node.target.id
+    if isinstance(node.target, ast.Attribute):
+        return node.target.attr
+    return ast.unparse(node.target)
+
+
 def test_annotations_name_a_real_type():
     """No annotation is `object`; the value's own type has a name.
 
@@ -60,6 +68,16 @@ def test_annotations_name_a_real_type():
         rel = path.relative_to(SOURCE).as_posix()
         tree = ast.parse(path.read_text())
         for node in ast.walk(tree):
+            # Variable and attribute annotations count too. A generic's
+            # type arguments are written there (`Server[object, object]`),
+            # so a signature-only sweep reads as clean while the type the
+            # object actually carries has been discarded.
+            if isinstance(node, ast.AnnAssign):
+                name = _target_name(node)
+                if (rel, name) not in ALLOWED and _mentions_object(
+                        node.annotation):
+                    offenders.append(f"{rel}: {name}")
+                continue
             if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
             if (rel, node.name) in ALLOWED:

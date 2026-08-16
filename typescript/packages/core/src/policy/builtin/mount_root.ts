@@ -14,6 +14,7 @@
 
 import type { Policy } from '../base.ts'
 import type { Action, CommandContext, Deny } from '../types.ts'
+import { isCreateMode } from '../../commands/builtin/generic/tar/mode.ts'
 import type { PathSpec } from '../../types.ts'
 
 /**
@@ -41,32 +42,6 @@ export function hasParentsFlag(argv: readonly string[]): boolean {
   for (const tok of argv) {
     if (tok === '-p' || tok === '--parents') return true
     if (tok.startsWith('-') && !tok.startsWith('--') && tok.includes('p')) return true
-  }
-  return false
-}
-
-/**
- * Whether a tar line reads the filesystem rather than an archive.
- *
- * Only `-c` makes tar's operands source paths. Under `-t` and `-x` they are
- * member selectors matched against names inside the archive, so a selector
- * that happens to spell a mount root is not a mount at all and refusing it
- * would deny an ordinary listing.
- *
- * Scanned raw for the same reason hasSymlinkFlag is: the policy fires before
- * flag parsing. Only the first word may be GNU's dashless option cluster
- * (`tar cf a.tar d`), so a later bare word is an operand and cannot turn the
- * mode on.
- */
-function isCreateMode(argv: readonly string[]): boolean {
-  for (const [i, tok] of argv.entries()) {
-    if (tok === '--create') return true
-    if (tok.startsWith('--')) continue
-    if (tok.startsWith('-')) {
-      if (tok.slice(1).includes('c')) return true
-      continue
-    }
-    if (i === 0 && tok.includes('c')) return true
   }
   return false
 }

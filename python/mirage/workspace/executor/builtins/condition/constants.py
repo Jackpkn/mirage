@@ -28,6 +28,9 @@ STRING_BINARY = frozenset({"=", "==", "!="})
 NUMERIC_BINARY = frozenset(INT_COMPARATORS)
 FILE_PAIR_BINARY = frozenset({"-nt", "-ot", "-ef"})
 STRING_UNARY = frozenset({"-n", "-z"})
+# `-v NAME` asks whether the variable (or the `NAME[sub]` element) is
+# set; it reads session state, not a path.
+VAR_UNARY = frozenset({"-v"})
 FILE_UNARY = frozenset({"-e", "-f", "-d", "-s", "-r", "-w", "-x", "-L", "-h"})
 # Real GNU operators mirage cannot answer truthfully: the VFS has no
 # FIFO/socket/device node types, no uid/gid ownership or setuid bits,
@@ -36,4 +39,4 @@ FILE_UNARY = frozenset({"-e", "-f", "-d", "-s", "-r", "-w", "-x", "-L", "-h"})
 UNSUPPORTED_UNARY = frozenset(
     {"-p", "-S", "-b", "-c", "-g", "-k", "-u", "-O", "-G", "-N", "-t"})
 BINARY_OPS = STRING_BINARY | NUMERIC_BINARY | FILE_PAIR_BINARY
-UNARY_OPS = STRING_UNARY | FILE_UNARY | UNSUPPORTED_UNARY
+UNARY_OPS = STRING_UNARY | VAR_UNARY | FILE_UNARY | UNSUPPORTED_UNARY

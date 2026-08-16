@@ -12,7 +12,7 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from mirage.server.version.errors import NoSuchBranchError
 from mirage.server.version.state_tree import (CONTROL_PREFIX, META_PATH,
@@ -22,6 +22,9 @@ from mirage.server.version.store import VersionStore
 from mirage.types import DriftPolicy, StateKey
 from mirage.workspace.snapshot import (apply_state_dict, install_fingerprints,
                                        to_state_dict)
+
+if TYPE_CHECKING:
+    from mirage.workspace.workspace import Workspace
 
 
 async def snapshot_tree_from_state(store: VersionStore,
@@ -34,10 +37,12 @@ async def snapshot_tree_from_state(store: VersionStore,
     return await store.write_tree(tree_entries)
 
 
-async def commit(store: VersionStore,
-                 ws,
-                 branch: str = "main",
-                 message: str = "") -> bytes:
+async def commit(
+    store: VersionStore,
+    ws: "Workspace",
+    branch: str = 'main',
+    message: str = '',
+) -> bytes:
     return await commit_state(store, await to_state_dict(ws), branch, message)
 
 
@@ -86,10 +91,12 @@ async def resolve_ref(store: VersionStore, ref) -> bytes:
     return ref
 
 
-async def checkout(store: VersionStore,
-                   ws,
-                   ref,
-                   drift_policy: DriftPolicy = DriftPolicy.STRICT) -> None:
+async def checkout(
+    store: VersionStore,
+    ws: "Workspace",
+    ref,
+    drift_policy: DriftPolicy = DriftPolicy.STRICT,
+) -> None:
     version = await resolve_ref(store, ref)
     entries, meta = await read_version(store, version)
     state = to_state(entries, meta)

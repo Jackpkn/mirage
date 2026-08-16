@@ -52,7 +52,12 @@ def parse_flags(flags: Mapping[str, FlagValue]) -> LookFlags:
     return LookFlags(fold_case=fl.as_bool("f"))
 
 
-async def look_generic(paths, texts, opts: CommandOpts, read_bytes):
+async def look_generic(
+    paths: list[PathSpec],
+    texts: list[str],
+    opts: CommandOpts,
+    read_bytes: Callable[..., Awaitable[bytes]],
+) -> tuple[ByteSource | None, IOResult]:
     if not texts:
         raise ValueError("look: missing prefix")
     parsed = parse_flags(opts.flags)
