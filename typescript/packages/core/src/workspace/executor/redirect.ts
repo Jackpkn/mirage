@@ -272,6 +272,13 @@ function redirectFailure(scope: PathSpec, err: unknown): Result {
  * bash stops at the first target it cannot open, so the scan reports one
  * line and stops.
  *
+ * The opens are modelled in the order they were written, because each one
+ * is visible to the next: `set -C; echo x > a > a` creates `a` on the
+ * first redirect and then refuses the second, even though `a` did not
+ * exist when the statement began. Probing every target against one
+ * pre-command snapshot passed both and wrote the output. `>>` and `>|`
+ * never refuse but do create, so they count as opens too.
+ *
  * The whole scan is skipped unless the option is on, so the ordinary
  * redirect path costs no extra round trip. That leaves
  * `> <a directory>` with the option off silently succeeding, which is a
@@ -289,35 +296,71 @@ async function noclobberRefusal(
   redirects: readonly Redirect[],
 ): Promise<Result | null> {
   if (session.shellOptions.noclobber !== true) return null
+  const opened = new Set<string>()
+  const pending: PathSpec[] = []
   for (const r of redirects) {
     if (
       r.kind === RedirectKind.STDIN ||
       r.kind === RedirectKind.HEREDOC ||
       r.kind === RedirectKind.HERESTRING ||
-      r.append ||
-      r.clobber ||
       typeof r.target === 'number'
     ) {
       continue
     }
     const scope = ensureScope(r.target)
-    let stat: unknown
-    try {
-      ;[stat] = await dispatch('stat', scope)
-    } catch (err) {
-      // No target to overwrite is the ordinary case the option allows;
-      // anything that is not a filesystem error is a bug and propagates.
-      if (!isFsError(err)) throw err
-      continue
+    const path = scope.virtual
+    let exists = opened.has(path)
+    let isDir = false
+    if (!exists) {
+      let stat: unknown
+      try {
+        ;[stat] = await dispatch('stat', scope)
+      } catch (err) {
+        // No target to overwrite is the ordinary case the option allows;
+        // anything that is not a filesystem error is a bug and propagates.
+        if (!isFsError(err)) throw err
+        stat = null
+      }
+      exists = stat instanceof FileStat
+      isDir = stat instanceof FileStat && stat.type === FileType.DIRECTORY
     }
-    if (!(stat instanceof FileStat)) continue
-    const detail =
-      stat.type === FileType.DIRECTORY ? 'Is a directory' : 'cannot overwrite existing file'
-    const err = new TextEncoder().encode(`${scope.rawPath}: ${detail}\n`)
-    const io = new IOResult({ exitCode: 1, stderr: err })
-    return [null, io, new ExecutionNode({ command: 'redirect', exitCode: 1 })]
+    if (exists && !r.append && !r.clobber) {
+      await applyPendingOpens(dispatch, pending)
+      const detail = isDir ? 'Is a directory' : 'cannot overwrite existing file'
+      const err = new TextEncoder().encode(`${scope.rawPath}: ${detail}\n`)
+      const io = new IOResult({ exitCode: 1, stderr: err })
+      return [null, io, new ExecutionNode({ command: 'redirect', exitCode: 1 })]
+    }
+    // This open succeeds, so the target exists for every redirect after
+    // it, and a truncating one leaves it empty to be found.
+    opened.add(path)
+    if (!exists || !r.append) pending.push(scope)
   }
   return null
+}
+
+/**
+ * Apply the opens a refused statement already performed.
+ *
+ * bash opens redirects left to right, so the ones before the refused one
+ * have happened by the time it refuses: `set -C; echo x >> a > a` leaves
+ * `a` existing and empty, and `>| a > a` truncates it. Only targets the
+ * scan found absent, or opened for truncation, are listed, so an append
+ * onto an existing file keeps its bytes.
+ *
+ * A write that fails is swallowed rather than raised: the failure belongs
+ * to that earlier redirect, which bash would have reported instead of the
+ * noclobber refusal, and inventing that error here would replace the
+ * refusal the caller is about to return.
+ */
+async function applyPendingOpens(dispatch: DispatchFn, pending: PathSpec[]): Promise<void> {
+  for (const scope of pending) {
+    try {
+      await dispatch('write', scope, [new Uint8Array()])
+    } catch (err) {
+      if (!isFsError(err)) throw err
+    }
+  }
 }
 
 async function readExisting(dispatch: DispatchFn, scope: PathSpec): Promise<Uint8Array> {

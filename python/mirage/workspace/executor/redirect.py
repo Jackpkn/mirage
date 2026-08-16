@@ -282,6 +282,13 @@ async def _noclobber_refusal(
     than the noclobber one. bash stops at the first target it cannot
     open, so the scan reports one line and stops.
 
+    The opens are modelled in the order they were written, because each
+    one is visible to the next: `set -C; echo x > a > a` creates `a` on
+    the first redirect and then refuses the second, even though `a` did
+    not exist when the statement began. Probing every target against one
+    pre-command snapshot passed both and wrote the output. `>>` and `>|`
+    never refuse but do create, so they count as opens too.
+
     The whole scan is skipped unless the option is on, so the ordinary
     redirect path costs no extra round trip. That leaves
     `> <a directory>` with the option off silently succeeding, which is
@@ -304,26 +311,67 @@ async def _noclobber_refusal(
     """
     if not session.shell_options.get("noclobber"):
         return None
+    opened: set[str] = set()
+    pending: list[PathSpec] = []
     for r in redirects:
         if (r.kind in (RedirectKind.STDIN, RedirectKind.HEREDOC,
-                       RedirectKind.HERESTRING) or r.append or r.clobber
-                or isinstance(r.target, int)):
+                       RedirectKind.HERESTRING) or isinstance(r.target, int)):
             continue
         scope = _ensure_scope(r.target)
-        try:
-            stat, _ = await dispatch("stat", scope)
-        except FS_ERRORS as exc:
-            logger.debug("noclobber probe found no target at %s: %s",
-                         scope.raw_path, exc)
-            continue
-        if stat is None:
-            continue
-        detail = ("Is a directory" if stat.type == FileType.DIRECTORY else
-                  "cannot overwrite existing file")
-        err = f"{scope.raw_path}: {detail}\n".encode()
-        io = IOResult(exit_code=1, stderr=err)
-        return None, io, ExecutionNode(command="redirect", exit_code=1)
+        path = scope.virtual
+        is_dir = False
+        if path in opened:
+            exists = True
+        else:
+            try:
+                stat, _ = await dispatch("stat", scope)
+            except FS_ERRORS as exc:
+                logger.debug("noclobber probe found no target at %s: %s",
+                             scope.raw_path, exc)
+                stat = None
+            exists = stat is not None
+            is_dir = stat is not None and stat.type == FileType.DIRECTORY
+        if exists and not r.append and not r.clobber:
+            await _apply_pending_opens(dispatch, pending)
+            detail = ("Is a directory"
+                      if is_dir else "cannot overwrite existing file")
+            err = f"{scope.raw_path}: {detail}\n".encode()
+            io = IOResult(exit_code=1, stderr=err)
+            return None, io, ExecutionNode(command="redirect", exit_code=1)
+        # This open succeeds, so the target exists for every redirect
+        # after it, and a truncating one leaves it empty to be found.
+        opened.add(path)
+        if not exists or not r.append:
+            pending.append(scope)
     return None
+
+
+async def _apply_pending_opens(dispatch: DispatchFn,
+                               pending: list[PathSpec]) -> None:
+    """Apply the opens a refused statement already performed.
+
+    bash opens redirects left to right, so the ones before the refused
+    one have happened by the time it refuses: ``set -C; echo x >> a > a``
+    leaves ``a`` existing and empty, and ``>| a > a`` truncates it. Only
+    targets the scan found absent, or opened for truncation, are listed,
+    so an append onto an existing file keeps its bytes.
+
+    A write that fails is logged rather than raised: the failure belongs
+    to that earlier redirect, which bash would have reported instead of
+    the noclobber refusal, and inventing that error here would replace
+    the refusal the caller is about to return.
+
+    Args:
+        dispatch (DispatchFn): op dispatcher.
+        pending (list[PathSpec]): targets to create or truncate, in the
+            order they were opened.
+    """
+    for scope in pending:
+        try:
+            await dispatch("write", scope, data=b"")
+        except FS_ERRORS as exc:
+            logger.debug("noclobber pre-open write failed for %s: %s",
+                         scope.raw_path, exc)
 
 
 async def _read_existing(dispatch, scope) -> bytes:

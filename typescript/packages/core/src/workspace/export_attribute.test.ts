@@ -169,6 +169,14 @@ describe('an array is exportable like anything else', () => {
     ['ARR=(a b); export ARR; declare -p ARR', 'declare -ax ARR=([0]="a" [1]="b")\n'],
     ["readonly R=1; export R; export -p | grep ' R='", 'declare -rx R="1"\n'],
     ['export ARR=(a b); export -p | grep ARR', 'declare -ax ARR=([0]="a" [1]="b")\n'],
+    // `-n` is the off direction for an array literal too. The store keeps
+    // whatever attributes the name already carried, so an unapplied mark
+    // left the array exported and GNU's `declare -a` came out
+    // `declare -ax`.
+    ['declare -x ARR=(a); export -n ARR=(b); declare -p ARR', 'declare -a ARR=([0]="b")\n'],
+    // Both attributes at once: readonly answers first and still owes the
+    // export mark.
+    ['declare -rx X=1; declare -p X', 'declare -rx X="1"\n'],
   ]
   it.each(CASES)('%s', async (cmd, want) => {
     const { ws } = await makeWorkspace()

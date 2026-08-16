@@ -87,6 +87,35 @@ def test_a_command_cannot_clear_the_way_for_its_own_refused_redirect(shell):
     assert out == "rc=1\none\n"
 
 
+def test_an_earlier_redirect_is_visible_to_a_later_one(shell):
+    # Each open is visible to the next, so the second `>` finds what the
+    # first one created even though the target was absent when the
+    # statement began. Probing every target against one pre-command
+    # snapshot passed both and wrote the output.
+    _, out, err = shell.mirage_result(
+        "set -C; echo x > /data/dup > /data/dup; echo rc=$?;"
+        " cat /data/dup; echo end")
+    assert err == "/data/dup: cannot overwrite existing file\n"
+    # The first redirect still created it, and the command never ran, so
+    # the file is there and empty.
+    assert out == "rc=1\nend\n"
+
+
+def test_append_and_override_opens_count_as_creating(shell):
+    # `>>` and `>|` never refuse, but they do open, so a later `>` onto
+    # the same absent target refuses against what they created.
+    _, out, err = shell.mirage_result(
+        "set -C; echo x >> /data/ap > /data/ap; echo rc=$?; cat /data/ap;"
+        " echo end")
+    assert err == "/data/ap: cannot overwrite existing file\n"
+    assert out == "rc=1\nend\n"
+    _, out2, err2 = shell.mirage_result(
+        "set -C; echo x >| /data/ov > /data/ov; echo rc=$?; cat /data/ov;"
+        " echo end")
+    assert err2 == "/data/ov: cannot overwrite existing file\n"
+    assert out2 == "rc=1\nend\n"
+
+
 def test_noclobber_shows_in_the_option_listing(shell):
     # The fixture reuses one session across calls, so the default is
     # asserted before anything sets the option.

@@ -334,6 +334,37 @@ export interface ExecuteNodeDeps {
   sink?: JobConsole
 }
 
+/**
+ * Mark every name a `-x` declaration stored as exported.
+ *
+ * `declare -x NAME` marks an existing name without touching its value and
+ * `declare -x NAME=v` assigns then marks, so the stamp lands after the
+ * assignment either way. Staged array literals are stamped too, since an
+ * array is as exportable as a scalar: GNU answers `declare -x A=(a b)`
+ * with `declare -ax A=([0]="a" [1]="b")`, and reading only `assignments`
+ * left every `declare -x NAME=(...)` unmarked.
+ *
+ * Shared by the readonly and the plain declaration branch because
+ * `declare -rx X=1` goes down the readonly one and still owes the export
+ * attribute. A non-zero exit means nothing was stored, so nothing is
+ * marked.
+ */
+function stampExport(
+  session: Session,
+  flagChars: Set<string>,
+  assignments: string[],
+  staged: { name: string; append: boolean; items: string[] }[],
+  io: IOResult,
+): void {
+  if (!flagChars.has('x') || io.exitCode !== 0) return
+  const marked = assignments.map((a) => {
+    const eq = a.indexOf('=')
+    return eq >= 0 ? a.slice(0, eq) : a
+  })
+  for (const { name } of staged) marked.push(name)
+  for (const name of marked) setAttr(session, name, VarAttr.Export)
+}
+
 export async function executeNode(
   deps: ExecuteNodeDeps,
   node: TSNodeLike,
@@ -850,15 +881,25 @@ export async function executeNode(
     if (isReadonly) {
       // Only the `readonly` keyword owns -p / illegal-option handling;
       // `declare -r` keeps names only.
-      if (keyword === 'readonly') {
-        return handleReadonly(
-          [...flagWords, ...assignments],
-          session,
-          sessionView(session, registry.policies),
-          staged,
-        )
-      }
-      return handleReadonly(assignments, session, sessionView(session, registry.policies), staged)
+      const result =
+        keyword === 'readonly'
+          ? await handleReadonly(
+              [...flagWords, ...assignments],
+              session,
+              sessionView(session, registry.policies),
+              staged,
+            )
+          : await handleReadonly(
+              assignments,
+              session,
+              sessionView(session, registry.policies),
+              staged,
+            )
+      // `declare -rx X=1` carries both attributes: GNU prints
+      // `declare -rx X="1"`. Readonly answers first, so the export stamp
+      // has to land here too, or `-r` silently ate the `-x`.
+      stampExport(session, flagChars, assignments, staged, result[1])
+      return result
     }
     // declare/typeset scope like `local` inside a function (bash
     // semantics) and assign globally at top level, which is exactly
@@ -887,14 +928,7 @@ export async function executeNode(
       // left every `declare -x NAME=(...)` unmarked. Only on a run that
       // stored something: a refusal returns non-zero and must not leave
       // the attribute behind.
-      if (flagChars.has('x') && result[1].exitCode === 0) {
-        const marked = assignments.map((a) => {
-          const eq = a.indexOf('=')
-          return eq >= 0 ? a.slice(0, eq) : a
-        })
-        for (const { name } of staged) marked.push(name)
-        for (const name of marked) setAttr(session, name, VarAttr.Export)
-      }
+      stampExport(session, flagChars, assignments, staged, result[1])
       return result
     }
     // Pass export flags through so -p / bare print and illegal options work.

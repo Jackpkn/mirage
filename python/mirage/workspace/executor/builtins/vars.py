@@ -95,6 +95,7 @@ async def _store_staged_arrays(
     view: SessionView,
     arrays: list[tuple[str, bool, list[str]]],
     mark: VarAttr | None = None,
+    on: bool = True,
     fatal: bool = False,
 ) -> tuple[ByteSource | None, IOResult, ExecutionNode] | None:
     """Store a declaration's array literals through the session door.
@@ -122,6 +123,10 @@ async def _store_staged_arrays(
             one of them silently dropped the other: ``export ARR=(a b)``
             stored the array and never marked it, so GNU's
             ``declare -ax`` came out ``declare -a``.
+        on (bool): the direction of that mark. ``export -n ARR=(b)``
+            stores the array and takes the attribute *off*, and the
+            store keeps whatever the name already carried, so leaving
+            the mark unapplied left an exported array exported.
         fatal (bool): render a readonly refusal as the fatal
             assignment error instead of a builtin failure.
 
@@ -156,7 +161,7 @@ async def _store_staged_arrays(
             # Ungated on purpose: the `view.set` immediately above put
             # this same name through the gate, so re-asking would show a
             # policy two writes for one operand.
-            set_attr(session, name, mark)
+            set_attr(session, name, mark, on)
     return None
 
 
@@ -488,13 +493,13 @@ async def handle_export(
     if arrays:
         # `export ARR=(a b)` marks the array as surely as it marks a
         # scalar: GNU prints `declare -ax ARR=([0]="a" [1]="b")`.
-        refused = await _store_staged_arrays(
-            "export",
-            session,
-            view,
-            arrays,
-            mark=VarAttr.EXPORT if on else None,
-            fatal=True)
+        refused = await _store_staged_arrays("export",
+                                             session,
+                                             view,
+                                             arrays,
+                                             mark=VarAttr.EXPORT,
+                                             on=on,
+                                             fatal=True)
         if refused is not None:
             return refused
     errors: list[str] = []

@@ -1051,6 +1051,74 @@
         "stdout": "x\nQTK=x\n[unset]\n",
         "stderr": ""
       }
+    },
+    {
+      "id": "declare_rx_carries_both_attributes",
+      "seq": 930431,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "declare -rx QRX=1; declare -p QRX",
+      "expect": {
+        "exit": 0,
+        "stdout": "declare -rx QRX=\"1\"\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "export_n_clears_the_attribute_on_an_array",
+      "seq": 930432,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "declare -x QAX=(a); export -n QAX=(b); declare -p QAX",
+      "expect": {
+        "exit": 0,
+        "stdout": "declare -a QAX=([0]=\"b\")\n",
+        "stderr": ""
+      }
     }
   ]
 }

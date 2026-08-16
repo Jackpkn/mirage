@@ -87,7 +87,12 @@ export async function executeProgram(
     // spanning several lines carries all of them.
     const startRow = child.startPosition?.row ?? 0
     if (startRow > echoedRow) {
-      const first = Math.max(echoedRow + 1, startRow)
+      // From the line after the last one echoed, not from this
+      // statement's own row: the reader consumes comments and blank
+      // lines too, so `# note`, an empty line and `echo ok` all reach
+      // stderr. Clamping to the next executable row dropped everything
+      // that carried no node.
+      const first = echoedRow + 1
       const last = child.endPosition?.row ?? startRow
       if (session.shellOptions.verbose === true && last >= first) {
         const text = sourceLines.slice(first, last + 1).join('\n')

@@ -44,6 +44,13 @@ VERBOSE = [
     # A statement spanning several lines carries all of them.
     ("set -v\nfor i in 1 2; do\n echo $i\ndone", "1\n2\n",
      "for i in 1 2; do\n echo $i\ndone\n"),
+    # The reader consumes every line, not just the ones carrying a
+    # statement, so comments and blank lines between commands are echoed
+    # too. Clamping the range to the next executable row dropped them.
+    ("set -v\n# note\n\necho ok", "ok\n", "# note\n\necho ok\n"),
+    ("set -v\necho a\n\necho b", "a\nb\n", "echo a\n\necho b\n"),
+    # A comment run before the first command is echoed with it.
+    ("set -v\n# one\n# two\necho ok", "ok\n", "# one\n# two\necho ok\n"),
 ]
 
 

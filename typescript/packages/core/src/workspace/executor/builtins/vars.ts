@@ -101,6 +101,11 @@ function readonlyRefusal(cmd: string, name: string): Result {
  * `export ARR=(a b)` stored the array and never marked it, so GNU's
  * `declare -ax` came out `declare -a`.
  *
+ * `on` is the direction of that mark. `export -n ARR=(b)` stores the
+ * array and takes the attribute *off*, and the store keeps whatever the
+ * name already carried, so leaving the mark unapplied left an exported
+ * array exported.
+ *
  * A readonly refusal of an array literal is a variable-assignment error
  * in GNU, not a builtin failure: for `export`/`readonly` (and `declare`
  * at top level) `fatal` abandons the rest of the line, while `local`
@@ -113,6 +118,7 @@ async function storeStagedArrays(
   view: SessionView,
   arrays: { name: string; append: boolean; items: string[] }[],
   mark: VarAttr | null = null,
+  on = true,
   fatal = false,
 ): Promise<Result | null> {
   for (const { name, append, items } of arrays) {
@@ -146,7 +152,7 @@ async function storeStagedArrays(
     // Ungated on purpose: the `view.set` immediately above put this same
     // name through the gate, so re-asking would show a policy two writes
     // for one operand.
-    if (mark !== null) setAttr(session, name, mark)
+    if (mark !== null) setAttr(session, name, mark, on)
   }
   return null
 }
@@ -428,7 +434,8 @@ export async function handleExport(
       session,
       view,
       arrays,
-      on ? VarAttr.Export : null,
+      VarAttr.Export,
+      on,
       true,
     )
     if (refused !== null) return refused
@@ -507,6 +514,7 @@ export async function handleReadonly(
       view,
       arrays,
       VarAttr.Readonly,
+      true,
       true,
     )
     if (refused !== null) return refused
@@ -947,7 +955,7 @@ export async function handleLocal(
   }
   const view = viewOf(session, state)
   if (arrays !== null && arrays.length > 0) {
-    const refused = await storeStagedArrays(cmd, session, view, arrays, null, locals === null)
+    const refused = await storeStagedArrays(cmd, session, view, arrays, null, true, locals === null)
     if (refused !== null) return refused
   }
   const errors: string[] = []

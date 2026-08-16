@@ -107,6 +107,39 @@ describe('set -C noclobber', () => {
     await ws.close()
   })
 
+  it('makes an earlier redirect visible to a later one', async () => {
+    // Each open is visible to the next, so the second `>` finds what the
+    // first one created even though the target was absent when the
+    // statement began. Probing every target against one pre-command
+    // snapshot passed both and wrote the output.
+    const { ws } = await makeWorkspace()
+    const io = await ws.execute(
+      'set -C; echo x > /ram/dup > /ram/dup; echo rc=$?; cat /ram/dup; echo end',
+    )
+    expect(stderrStr(io)).toBe('/ram/dup: cannot overwrite existing file\n')
+    // The first redirect still created it, and the command never ran, so
+    // the file is there and empty.
+    expect(stdoutStr(io)).toBe('rc=1\nend\n')
+    await ws.close()
+  })
+
+  it('counts append and override opens as creating', async () => {
+    // `>>` and `>|` never refuse, but they do open, so a later `>` onto
+    // the same absent target refuses against what they created.
+    const { ws } = await makeWorkspace()
+    const ap = await ws.execute(
+      'set -C; echo x >> /ram/ap > /ram/ap; echo rc=$?; cat /ram/ap; echo end',
+    )
+    expect(stderrStr(ap)).toBe('/ram/ap: cannot overwrite existing file\n')
+    expect(stdoutStr(ap)).toBe('rc=1\nend\n')
+    const ov = await ws.execute(
+      'set -C; echo x >| /ram/ov > /ram/ov; echo rc=$?; cat /ram/ov; echo end',
+    )
+    expect(stderrStr(ov)).toBe('/ram/ov: cannot overwrite existing file\n')
+    expect(stdoutStr(ov)).toBe('rc=1\nend\n')
+    await ws.close()
+  })
+
   it('shows in the option listing', async () => {
     const { ws } = await makeWorkspace()
     // The session is reused across calls, so the default is asserted

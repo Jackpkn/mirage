@@ -73,7 +73,12 @@ async def execute_program(
         # once, when the first statement on it runs, and a statement
         # spanning several lines carries all of them.
         if child.start_point[0] > echoed_row:
-            first = max(echoed_row + 1, child.start_point[0])
+            # From the line after the last one echoed, not from this
+            # statement's own row: the reader consumes comments and
+            # blank lines too, so `# note`, an empty line and `echo ok`
+            # all reach stderr. Clamping to the next executable row
+            # dropped everything that carried no node.
+            first = echoed_row + 1
             last = child.end_point[0]
             if session.shell_options.get("verbose") and last >= first:
                 text = "\n".join(source_lines[first:last + 1])

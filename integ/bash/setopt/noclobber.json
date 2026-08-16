@@ -303,6 +303,40 @@
         "stdout": "rc=1\none\n",
         "stderr": "/data/zqs8.txt: cannot overwrite existing file\n"
       }
+    },
+    {
+      "id": "opt_noclobber_earlier_redirect_visible_to_later",
+      "seq": 502809,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "(set -C; echo x > /data/zqd9 > /data/zqd9); echo rc=$?; cat /data/zqd9; echo end",
+      "expect": {
+        "exit": 0,
+        "stdout": "rc=1\nend\n",
+        "stderr": "/data/zqd9: cannot overwrite existing file\n"
+      }
     }
   ]
 }
