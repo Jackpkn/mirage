@@ -26,7 +26,7 @@ from mirage.workspace.mount.registry import MountRegistry
 from mirage.workspace.session import Session
 
 _BLOCK_SUFFIX = {"K": 1024, "M": 1024**2, "G": 1024**3, "T": 1024**4}
-_SI_UNITS = ("", "K", "M", "G", "T", "P", "E")
+_SI_UNITS = ("", "k", "M", "G", "T", "P", "E")
 
 
 def _parse_block(text: str) -> tuple[int, str] | None:

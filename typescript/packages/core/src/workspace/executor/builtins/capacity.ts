@@ -25,7 +25,7 @@ import type { Session } from '../../session/session.ts'
 import { fail, ok, operandText, splitValueFlags, type Result } from './shared.ts'
 import { compareCodePoints } from '../../../utils/sort.ts'
 
-const SI_UNITS = ['', 'K', 'M', 'G', 'T', 'P', 'E']
+const SI_UNITS = ['', 'k', 'M', 'G', 'T', 'P', 'E']
 const BLOCK_SUFFIX: Record<string, number> = {
   K: 1024,
   M: 1024 ** 2,
