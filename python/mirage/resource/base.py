@@ -24,6 +24,7 @@ from mirage.commands.config import RegisteredCommand
 from mirage.ops.registry import RegisteredOp
 from mirage.resource.secrets import redacted_config_dump
 from mirage.types import CapacityResult, CapacityState, PathSpec
+from mirage.watch.base import DeltaHook
 
 try:
     from mirage.cache.index import RedisIndexCacheStore
@@ -179,6 +180,21 @@ class BaseResource:
 
     def commands(self) -> list[RegisteredCommand]:
         return self._commands
+
+    def delta_hook(self) -> DeltaHook | None:
+        """Hook a consumer's poll loop can pull deltas from, or None.
+
+        None means this backend has no native change detection, which
+        is most of them; a subclass that has one overrides this and
+        narrows the return to ``DeltaHook``.
+
+        Declaring it here rather than behind a capability protocol is
+        deliberate. The protocol only ever answered "does this resource
+        have one", which a None default answers with no ``isinstance``,
+        no import, and no second place to keep in step. TypeScript has
+        always done it this way (``deltaHook?()`` on ``Resource``).
+        """
+        return None
 
     def get_state(self) -> dict[str, Any]:
         return {

@@ -124,6 +124,33 @@ describe('RAMIndexCacheStore', () => {
     expect((await store.listDir('/dir')).status).toBe(LookupStatus.NOT_FOUND)
   })
 
+  it('invalidatePrefix drops nested listings', async () => {
+    const store = new RAMIndexCacheStore()
+    await store.setDir('/chan/day', [['chat.jsonl', mkEntry('1', 'chat.jsonl')]])
+    await store.setDir('/chan/day/files', [['a.png', mkEntry('2', 'a.png')]])
+    await store.invalidatePrefix('/chan/day')
+    expect((await store.listDir('/chan/day')).status).toBe(LookupStatus.NOT_FOUND)
+    expect((await store.listDir('/chan/day/files')).status).toBe(LookupStatus.NOT_FOUND)
+    expect((await store.get('/chan/day/files/a.png')).status).toBe(LookupStatus.NOT_FOUND)
+  })
+
+  it('invalidateDir leaves the nested listing', async () => {
+    const store = new RAMIndexCacheStore()
+    await store.setDir('/chan/day', [['chat.jsonl', mkEntry('1', 'chat.jsonl')]])
+    await store.setDir('/chan/day/files', [['a.png', mkEntry('2', 'a.png')]])
+    await store.invalidateDir('/chan/day')
+    expect((await store.listDir('/chan/day/files')).entries).toEqual(['/chan/day/files/a.png'])
+  })
+
+  it('invalidatePrefix respects the path boundary', async () => {
+    const store = new RAMIndexCacheStore()
+    await store.setDir('/chan/day', [['a', mkEntry('1', 'a')]])
+    await store.setDir('/chan/daytime', [['b', mkEntry('2', 'b')]])
+    await store.invalidatePrefix('/chan/day')
+    expect((await store.listDir('/chan/day')).status).toBe(LookupStatus.NOT_FOUND)
+    expect((await store.listDir('/chan/daytime')).entries).toEqual(['/chan/daytime/b'])
+  })
+
   it('handles root directory path', async () => {
     const store = new RAMIndexCacheStore()
     await store.setDir('/', [['a', mkEntry('1', 'a')]])

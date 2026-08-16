@@ -22,6 +22,9 @@ class FakeCacheManager:
     async def invalidate_after_unlink(self, path):
         self._log.append(f"inv-unlink:{path.virtual}")
 
+    async def invalidate_subtree(self, path):
+        self._log.append(f"inv-subtree:{path.virtual}")
+
 
 class PlainResource:
     name = "ram"
@@ -101,6 +104,30 @@ async def test_notify_delete_routes_to_unlink():
     await w.notify(_change(FileChangeKind.DELETE, "/nc/data/x.txt"))
     await asyncio.wait_for(task, timeout=2)
     assert log == ["inv-unlink:/nc/data/x.txt", "inv:/nc/data"]
+    await agen.aclose()
+    await w.close()
+
+
+@pytest.mark.asyncio
+async def test_notify_unknown_routes_to_subtree():
+    log: list[str] = []
+    w = _watcher(log=log)
+    agen, task = await _start_blocked_watch(w)
+    await w.notify(_change(FileChangeKind.UNKNOWN, "/nc/data/day"))
+    await asyncio.wait_for(task, timeout=2)
+    assert log == ["inv-subtree:/nc/data/day", "inv:/nc/data"]
+    await agen.aclose()
+    await w.close()
+
+
+@pytest.mark.asyncio
+async def test_notify_update_does_not_reach_the_subtree():
+    log: list[str] = []
+    w = _watcher(log=log)
+    agen, task = await _start_blocked_watch(w)
+    await w.notify(_change(FileChangeKind.UPDATE, "/nc/data/day"))
+    await asyncio.wait_for(task, timeout=2)
+    assert log == ["inv:/nc/data/day", "inv:/nc/data"]
     await agen.aclose()
     await w.close()
 

@@ -213,3 +213,31 @@ async def test_key_prefix_isolation():
     await s2.clear()
     await s1.close()
     await s2.close()
+
+
+@pytest.mark.asyncio
+async def test_invalidate_prefix_drops_nested_listings(store, entry):
+    await store.set_dir("/chan/day", [("chat.jsonl", entry)])
+    await store.set_dir("/chan/day/files", [("a.png", entry)])
+    await store.invalidate_prefix("/chan/day")
+    assert (await store.list_dir("/chan/day")).entries is None
+    assert (await store.list_dir("/chan/day/files")).entries is None
+    assert (await store.get("/chan/day/files/a.png")).entry is None
+
+
+@pytest.mark.asyncio
+async def test_invalidate_prefix_respects_path_boundary(store, entry):
+    await store.set_dir("/chan/day", [("a", entry)])
+    await store.set_dir("/chan/daytime", [("b", entry)])
+    await store.invalidate_prefix("/chan/day")
+    assert (await store.list_dir("/chan/day")).entries is None
+    assert (await store.list_dir("/chan/daytime")).entries is not None
+
+
+@pytest.mark.asyncio
+async def test_invalidate_prefix_handles_glob_metacharacters(store, entry):
+    await store.set_dir("/chan/a[1]", [("x", entry)])
+    await store.set_dir("/chan/ab", [("y", entry)])
+    await store.invalidate_prefix("/chan/a[1]")
+    assert (await store.list_dir("/chan/a[1]")).entries is None
+    assert (await store.list_dir("/chan/ab")).entries is not None

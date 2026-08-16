@@ -72,10 +72,20 @@ export class Watcher implements WatchRuntime {
     }
   }
 
-  private async evict(mount: WatchMount, path: PathSpec, unlink: boolean): Promise<void> {
+  /**
+   * Evict one path and every cached ancestor listing above it.
+   *
+   * How far down the eviction reaches is the change's kind. UNKNOWN means
+   * precision was lost and everything under the path must be re-inventoried,
+   * which is what a push notification that can name only a scope reports
+   * (IMAP IDLE says a mailbox changed, not which message), so it takes the
+   * subtree. Every other kind names a path and evicts that path alone.
+   */
+  private async evict(mount: WatchMount, path: PathSpec, kind: FileChangeKind): Promise<void> {
     const manager = mount.cacheManager
     if (manager === null) return
-    if (unlink) await manager.invalidateAfterUnlink(path)
+    if (kind === FileChangeKind.DELETE) await manager.invalidateAfterUnlink(path)
+    else if (kind === FileChangeKind.UNKNOWN) await manager.invalidateSubtree(path)
     else await manager.invalidateAfterWrite(path)
     for (const ancestor of this.ancestors(mount, path.virtual)) {
       await manager.invalidateAfterWrite(ancestor)
@@ -83,10 +93,14 @@ export class Watcher implements WatchRuntime {
   }
 
   private async invalidate(mount: WatchMount, change: FileEvent): Promise<void> {
-    await this.evict(mount, change.path, change.kind === FileChangeKind.DELETE)
+    await this.evict(mount, change.path, change.kind)
     if (change.kind === FileChangeKind.MOVE && change.previousPath !== null) {
       const previousMount = this.registry.mountFor(change.previousPath.virtual)
-      await this.evict(previousMount, this.frame(previousMount, change.previousPath.virtual), true)
+      await this.evict(
+        previousMount,
+        this.frame(previousMount, change.previousPath.virtual),
+        FileChangeKind.DELETE,
+      )
     }
   }
 

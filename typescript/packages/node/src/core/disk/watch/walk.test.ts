@@ -17,8 +17,8 @@ import { chmod, mkdtemp, mkdir, rm, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { DiskAccessor } from '../../accessor/disk.ts'
-import { buildDeltaHook, DiskWalk } from './watch.ts'
+import { DiskAccessor } from '../../../accessor/disk.ts'
+import { buildDeltaHook, DiskWalk } from './walk.ts'
 
 let root: string
 

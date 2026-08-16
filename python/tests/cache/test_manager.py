@@ -245,3 +245,58 @@ def test_invalidate_ancestors_reaches_the_root_listing():
     root, a = _run(_ancestors_root_mount_case())
     assert root is False
     assert a is False
+
+
+async def _subtree_case() -> tuple[bool, bool, bool, bool]:
+    cache, index = _stores()
+    await cache.set("/data/chan/day/chat.jsonl", b"one\n")
+    await cache.set("/data/chan/day/files/a.png", b"png")
+    entry = IndexEntry(id="1", name="f", resource_type="file")
+    await index.set_dir("/data/chan/day", [("chat.jsonl", entry)])
+    await index.set_dir("/data/chan/day/files", [("a.png", entry)])
+    await index.set_dir("/data/chan", [("day", entry)])
+    manager = CacheManager(cache, index, "/data/", True)
+    await manager.invalidate_subtree(PathSpec.from_str_path("/chan/day"))
+    return (
+        await cache.exists("/data/chan/day/files/a.png"),
+        (await index.list_dir("/data/chan/day")).entries is not None,
+        (await index.list_dir("/data/chan/day/files")).entries is not None,
+        (await index.list_dir("/data/chan")).entries is not None,
+    )
+
+
+def test_invalidate_subtree_drops_nested_bodies_and_listings():
+    body, own, nested, parent = _run(_subtree_case())
+    assert body is False
+    assert own is False
+    assert nested is False
+    assert parent is False
+
+
+async def _write_leaves_subtree_case() -> bool:
+    cache, index = _stores()
+    entry = IndexEntry(id="1", name="f", resource_type="file")
+    await index.set_dir("/data/chan/day/files", [("a.png", entry)])
+    manager = CacheManager(cache, index, "/data/", True)
+    await manager.invalidate_after_write(PathSpec.from_str_path("/chan/day"))
+    return (await index.list_dir("/data/chan/day/files")).entries is not None
+
+
+def test_write_does_not_reach_into_the_subtree():
+    assert _run(_write_leaves_subtree_case()) is True
+
+
+async def _prefix_lookalike_case() -> bool:
+    cache, index = _stores()
+    entry = IndexEntry(id="1", name="f", resource_type="file")
+    await index.set_dir("/d/day", [("chat.jsonl", entry)])
+    manager = CacheManager(cache, index, "/d/", True)
+    await manager.invalidate_after_unlink(PathSpec.from_str_path("/day"))
+    return (await index.list_dir("/d/day")).entries is not None
+
+
+def test_a_relative_path_that_looks_prefixed_is_still_prefixed():
+    # "/day" starts with the "/d" prefix as characters while naming
+    # something else; reading it as absolute evicted "/day" and left
+    # "/d/day" cached, which is an eviction that hits no key.
+    assert _run(_prefix_lookalike_case()) is False

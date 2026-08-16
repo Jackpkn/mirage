@@ -101,6 +101,31 @@ def strip_mount(virtual: str, prefix: str) -> str:
     return virtual
 
 
+def under_path(candidate: str, root: str) -> bool:
+    """Whether ``candidate`` is ``root`` itself or sits below it.
+
+    A boundary-aware prefix test, so a sibling that merely shares the
+    string (``/data/xy`` against ``/data/x``) is not counted. Both sides
+    are compared without a trailing slash, because a backend may have
+    keyed a directory either way.
+
+    Args:
+        candidate (str): An absolute virtual path.
+        root (str): The subtree root, absolute.
+
+    Example::
+
+        under_path("/data/x/y", "/data/x")   -> True
+        under_path("/data/x", "/data/x/")    -> True
+        under_path("/data/xy", "/data/x")    -> False
+    """
+    base = root.rstrip("/")
+    if not base:
+        return True
+    stem = candidate.rstrip("/")
+    return stem == base or candidate.startswith(base + "/")
+
+
 def mount_key(virtual: str, prefix: str) -> str:
     """Backend key for a virtual path under a mount prefix.
 

@@ -111,3 +111,34 @@ async def test_locks_cleaned_after_clear(store):
     await store.put("/b", entry)
     await store.clear()
     assert len(store._key_locks) == 0
+
+
+@pytest.mark.asyncio
+async def test_invalidate_prefix_drops_nested_listings(store):
+    entry = IndexEntry(id="1", name="f", resource_type="file")
+    await store.set_dir("/chan/2026-08-15", [("chat.jsonl", entry)])
+    await store.set_dir("/chan/2026-08-15/files", [("a.png", entry)])
+    await store.invalidate_prefix("/chan/2026-08-15")
+    assert "/chan/2026-08-15" not in store._children
+    assert "/chan/2026-08-15/files" not in store._children
+    assert "/chan/2026-08-15/files/a.png" not in store._entries
+
+
+@pytest.mark.asyncio
+async def test_invalidate_dir_leaves_nested_listing(store):
+    entry = IndexEntry(id="1", name="f", resource_type="file")
+    await store.set_dir("/chan/2026-08-15", [("chat.jsonl", entry)])
+    await store.set_dir("/chan/2026-08-15/files", [("a.png", entry)])
+    await store.invalidate_dir("/chan/2026-08-15")
+    assert "/chan/2026-08-15/files" in store._children
+
+
+@pytest.mark.asyncio
+async def test_invalidate_prefix_respects_path_boundary(store):
+    entry = IndexEntry(id="1", name="f", resource_type="file")
+    await store.set_dir("/chan/day", [("a", entry)])
+    await store.set_dir("/chan/daytime", [("b", entry)])
+    await store.invalidate_prefix("/chan/day")
+    assert "/chan/day" not in store._children
+    assert "/chan/daytime" in store._children
+    assert "/chan/daytime/b" in store._entries

@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from mirage.accessor.disk import DiskAccessor
-from mirage.core.disk.watch import DiskWalk, build_delta_hook
+from mirage.core.disk.watch.walk import DiskWalk, build_delta_hook
 from mirage.types import FileChangeKind, PathSpec
 
 

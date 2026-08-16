@@ -63,6 +63,16 @@ class RedisStore:
             weakref.finalize(loop, _purge_client, self._clients, loop_id)
         return client
 
+    @property
+    def key_prefix(self) -> str:
+        """Namespace every key of this store carries.
+
+        Public because a keyspace notification arrives as a raw key
+        and the reader has to strip the same namespace this store
+        stamps on.
+        """
+        return self._prefix
+
     def _fk(self, path: str) -> str:
         return f"{self._prefix}file:{path}"
 

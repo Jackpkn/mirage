@@ -15,6 +15,7 @@
 from mirage.cache.file.mixin import FileCacheMixin
 from mirage.cache.index.store import IndexCacheStore
 from mirage.types import PathSpec
+from mirage.utils.key_prefix import mount_key
 
 
 class CacheManager:
@@ -48,7 +49,7 @@ class CacheManager:
         self._prefix = prefix.rstrip("/")
         self._caches_reads = caches_reads
 
-    async def _evict_dir(self, virtual: str) -> None:
+    async def _evict_dir(self, key: str) -> None:
         """Drop one directory's cached listing.
 
         Both spellings of the directory go, because a backend may have
@@ -56,18 +57,40 @@ class CacheManager:
         hits no key is silent.
 
         Args:
-            virtual (str): Mount-absolute path of the directory.
+            key (str): Cache key of the directory (mount-absolute).
         """
-        await self._index.invalidate_dir(virtual)
-        await self._index.invalidate_dir(virtual + "/")
+        await self._index.invalidate_dir(key)
+        await self._index.invalidate_dir(key + "/")
 
-    def _virtual(self, path: PathSpec) -> str:
-        mount_path = path.mount_path
-        if not mount_path.startswith("/"):
-            mount_path = "/" + mount_path
-        if self._prefix and not mount_path.startswith(self._prefix):
-            return self._prefix + mount_path
-        return mount_path
+    def _cache_key(self, path: PathSpec) -> str:
+        """Cache key for a path, derived rather than inferred.
+
+        Both caches this class evicts from are keyed by the
+        mount-absolute virtual path, so that is what this returns: the
+        mount prefix still attached, not the mount-relative spelling
+        ``mount_key`` produces on the way there.
+
+        Only ``virtual`` is read, and the key is rebuilt against this
+        manager's own prefix, exactly as ``Mount.execute_op`` rebuilds
+        one before handing a path to a backend. The caller's
+        ``resource_path`` is deliberately ignored: it is not a fact
+        this class can trust, because ``PathSpec.from_str_path``
+        fabricates one ("assumed root-mounted") for any caller that
+        does not know its mount, and ~50 sites take that default.
+
+        The earlier version inferred which convention had arrived by
+        comparing the two strings, which cannot be done: under a ``/d``
+        mount a mount-relative ``/d`` and an absolute ``/d`` are the
+        same characters naming different files. Inferring wrong is
+        quiet rather than loud -- a key one level off simply evicts
+        nothing -- which is why it survived. Deriving asks no question
+        that has no answer.
+
+        Args:
+            path (PathSpec): Path to key; only ``virtual`` is read.
+        """
+        key = mount_key(path.virtual, self._prefix)
+        return f"{self._prefix}/{key}" if key else self._prefix or "/"
 
     async def cached_bytes(self, path: PathSpec) -> bytes | None:
         """Return cached bytes for ``path`` if present, else None.
@@ -83,33 +106,58 @@ class CacheManager:
         """
         if not self._caches_reads or self._file_cache is None:
             return None
-        virtual = self._virtual(path)
-        if await self._file_cache.exists(virtual):
-            return await self._file_cache.get(virtual)
+        key = self._cache_key(path)
+        if await self._file_cache.exists(key):
+            return await self._file_cache.get(key)
         return None
 
     async def invalidate_after_write(self, path: PathSpec) -> None:
         """Invalidate caches after a write to ``path``.
 
         Args:
-            path (PathSpec): Resource-relative path that was written.
+            path (PathSpec): Path that was written; only ``virtual`` is
+                read.
         """
-        virtual = self._virtual(path)
+        key = self._cache_key(path)
         if self._caches_reads and self._file_cache is not None:
-            await self._file_cache.remove(virtual)
-        await self._invalidate_parent(virtual)
+            await self._file_cache.remove(key)
+        await self._invalidate_parent(key)
 
     async def invalidate_after_unlink(self, path: PathSpec) -> None:
         """Invalidate caches after a deletion of ``path``.
 
         Args:
-            path (PathSpec): Resource-relative path that was removed.
+            path (PathSpec): Path that was removed; only ``virtual`` is
+                read.
         """
-        virtual = self._virtual(path)
+        key = self._cache_key(path)
         if self._caches_reads and self._file_cache is not None:
-            await self._file_cache.remove(virtual)
-        await self._evict_dir(virtual)
-        await self._invalidate_parent(virtual)
+            await self._file_cache.remove(key)
+        await self._evict_dir(key)
+        await self._invalidate_parent(key)
+
+    async def invalidate_subtree(self, path: PathSpec) -> None:
+        """Drop ``path`` and everything cached beneath it.
+
+        For an observed change that names a scope rather than a file: a
+        push notification often says only which folder moved, and the
+        listings below it were cached independently, so evicting the
+        path and its parent leaves stale entries one level down. The
+        cheaper ``invalidate_after_write`` cannot be widened to do this,
+        because it also runs on every ordinary write, where a file has
+        no subtree to drop.
+
+        Args:
+            path (PathSpec): Root of the stale subtree; only ``virtual``
+                is read.
+        """
+        key = self._cache_key(path)
+        if self._caches_reads and self._file_cache is not None:
+            await self._file_cache.remove(key)
+            await self._file_cache.evict_prefix(key.rstrip("/") + "/")
+        await self._index.invalidate_prefix(key)
+        await self._evict_dir(key)
+        await self._invalidate_parent(key)
 
     async def invalidate_ancestors(self, path: PathSpec) -> None:
         """Evict the listing of every directory above ``path``'s parent.
@@ -122,9 +170,10 @@ class CacheManager:
         is a handful of spare evictions.
 
         Args:
-            path (PathSpec): Resource-relative path that was mutated.
+            path (PathSpec): Path that was mutated; only ``virtual`` is
+                read.
         """
-        parent = self._virtual(path).rsplit("/", 1)[0]
+        parent = self._cache_key(path).rsplit("/", 1)[0]
         while parent and parent != self._prefix:
             parent = parent.rsplit("/", 1)[0]
             await self._evict_dir(parent or "/")
@@ -146,5 +195,5 @@ class CacheManager:
             return
         await self._file_cache.evict_prefix(self._prefix + "/")
 
-    async def _invalidate_parent(self, virtual: str) -> None:
-        await self._evict_dir(virtual.rsplit("/", 1)[0] or "/")
+    async def _invalidate_parent(self, key: str) -> None:
+        await self._evict_dir(key.rsplit("/", 1)[0] or "/")

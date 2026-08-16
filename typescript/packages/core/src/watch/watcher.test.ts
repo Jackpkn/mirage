@@ -17,6 +17,11 @@ class RecordingCache implements CacheInvalidator {
     this.log.push(`unlink:${path.virtual}:${path.resourcePath}`)
     return Promise.resolve()
   }
+
+  invalidateSubtree(path: PathSpec): Promise<void> {
+    this.log.push(`subtree:${path.virtual}:${path.resourcePath}`)
+    return Promise.resolve()
+  }
 }
 
 class FakeRegistry implements WatchRegistry {
@@ -58,6 +63,26 @@ describe('Watcher', () => {
       'write:/nc/data/sub:data/sub',
       'write:/nc/data:data',
     ])
+    await watcher.close()
+  })
+
+  it('takes the subtree for an UNKNOWN change', async () => {
+    const cache = new RecordingCache()
+    const watcher = new Watcher(new FakeRegistry({ prefix: '/nc/', cacheManager: cache }))
+    const pending = await begin(watcher, '/nc')
+    await watcher.notify(change(FileChangeKind.UNKNOWN, '/nc/data/day'))
+    await pending.next
+    expect(cache.log).toEqual(['subtree:/nc/data/day:data/day', 'write:/nc/data:data'])
+    await watcher.close()
+  })
+
+  it('does not reach into the subtree for an UPDATE', async () => {
+    const cache = new RecordingCache()
+    const watcher = new Watcher(new FakeRegistry({ prefix: '/nc/', cacheManager: cache }))
+    const pending = await begin(watcher, '/nc')
+    await watcher.notify(change(FileChangeKind.UPDATE, '/nc/data/day'))
+    await pending.next
+    expect(cache.log).toEqual(['write:/nc/data/day:data/day', 'write:/nc/data:data'])
     await watcher.close()
   })
 
