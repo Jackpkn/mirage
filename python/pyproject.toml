@@ -332,7 +332,7 @@ module = [
     "mirage.cli.workspace",
     "mirage.commands.builtin.dify.cat",
     "mirage.commands.builtin.generic.crossmount.detect",
-    "mirage.commands.builtin.generic.rm_command",
+    "mirage.commands.builtin.generic.rm_cmd",
     "mirage.commands.builtin.generic_bind.archive_io",
     "mirage.commands.builtin.generic_bind.builders.du",
     "mirage.commands.builtin.generic_bind.builders.sed",

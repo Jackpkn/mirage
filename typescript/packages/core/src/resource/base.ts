@@ -17,7 +17,7 @@ import { IndexType, type IndexConfig, type RedisIndexConfig } from '../cache/ind
 import { RAMIndexCacheStore } from '../cache/index/ram.ts'
 import { RedisIndexCacheStore } from '../cache/index/redis.ts'
 import type { IndexCacheStore } from '../cache/index/store.ts'
-import type { PredNode } from '../commands/builtin/findEval.ts'
+import type { PredNode } from '../commands/builtin/find_eval.ts'
 import type { RegisteredCommand } from '../commands/config.ts'
 import type { RegisteredOp } from '../ops/registry.ts'
 import type { CapacityResult, FileStat, PathSpec } from '../types.ts'

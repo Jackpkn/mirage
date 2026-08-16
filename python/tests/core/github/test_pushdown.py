@@ -16,8 +16,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from mirage.core.github.scope import (count_scope_files, is_repo_root,
-                                      scope_relative_key)
+from mirage.core.github.pushdown import (count_scope_files, is_repo_root,
+                                         scope_relative_key)
 from mirage.types import PathSpec
 from mirage.utils.key_prefix import mount_key
 

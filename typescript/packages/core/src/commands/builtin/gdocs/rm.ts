@@ -14,7 +14,7 @@
 
 import { unlink } from '../../../core/gdocs/unlink.ts'
 import { ResourceName } from '../../../types.ts'
-import { makeRm } from '../generic/rm_command.ts'
+import { makeRm } from '../generic/rm_cmd.ts'
 import { GDOCS_IO } from './io.ts'
 
 export const GDOCS_RM = makeRm(ResourceName.GDOCS, GDOCS_IO, unlink)

@@ -2,7 +2,7 @@ from mirage.accessor.sharepoint import SharePointAccessor
 from mirage.cache.index import NULL_INDEX, IndexCacheStore
 from mirage.core.msgraph.drive_ops import stat_item
 from mirage.core.sharepoint._client import split_path
-from mirage.core.sharepoint._resolver import drive_loc, resolve
+from mirage.core.sharepoint.resolve import drive_loc, resolve
 from mirage.types import FileStat, FileType, PathSpec
 from mirage.utils.errors import enoent
 

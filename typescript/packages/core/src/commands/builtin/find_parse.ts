@@ -12,7 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import type { PredNode } from './findEval.ts'
+import type { PredNode } from './find_eval.ts'
 
 const VALUE_PREDICATES = new Set([
   '-name',

@@ -15,7 +15,7 @@
 import pytest
 
 from mirage.cache.index import NULL_INDEX
-from mirage.commands.builtin.generic.rm_command import make_rm
+from mirage.commands.builtin.generic.rm_cmd import make_rm
 from mirage.commands.config import CommandOpts
 from mirage.types import PathSpec
 

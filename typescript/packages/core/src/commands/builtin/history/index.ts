@@ -33,7 +33,7 @@ import { statGeneric } from '../generic/stat.ts'
 import { tailGeneric } from '../generic/tail.ts'
 import { treeGeneric } from '../generic/tree.ts'
 import { wcGeneric } from '../generic/wc.ts'
-import { HISTORY_HISTORY } from './history_cmd.ts'
+import { HISTORY_HISTORY } from './history.ts'
 
 const R = ResourceName.HISTORY
 

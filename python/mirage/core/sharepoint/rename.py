@@ -1,8 +1,8 @@
 from mirage.accessor.sharepoint import SharePointAccessor
 from mirage.cache.context import invalidate_after_unlink
 from mirage.core.msgraph.drive_ops import rename_replace
-from mirage.core.sharepoint._resolver import resolve
 from mirage.core.sharepoint.copy import drive_loc
+from mirage.core.sharepoint.resolve import resolve
 from mirage.types import PathSpec
 from mirage.utils.errors import enoent
 

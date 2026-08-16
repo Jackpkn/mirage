@@ -23,7 +23,7 @@ import { command, type CommandFnResult, type CommandOpts } from '../../config.ts
 import { specOf } from '../../spec/builtins.ts'
 import { patternArg } from '../grep_helper.ts'
 import { rgGeneric } from '../generic/rg.ts'
-import { narrowScope } from './narrow.ts'
+import { narrowScope } from './pushdown.ts'
 import { FlagView } from '../../spec/types.ts'
 
 const ENC = new TextEncoder()

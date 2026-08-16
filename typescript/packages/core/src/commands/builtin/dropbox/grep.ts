@@ -22,7 +22,7 @@ import { command, type CommandFnResult, type CommandOpts } from '../../config.ts
 import { specOf } from '../../spec/builtins.ts'
 import { patternArg } from '../grep_helper.ts'
 import { grepGeneric } from '../generic/grep.ts'
-import { narrowScope } from './narrow.ts'
+import { narrowScope } from './pushdown.ts'
 import { FlagView } from '../../spec/types.ts'
 
 async function grepCommand(

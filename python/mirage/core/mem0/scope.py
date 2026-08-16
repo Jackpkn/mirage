@@ -34,7 +34,7 @@ def _backend_key(path: PathSpec) -> str:
     return path.resource_path.strip("/")
 
 
-def detect(path: PathSpec) -> Mem0Scope:
+def detect_scope(path: PathSpec) -> Mem0Scope:
     """Classify a mem0 virtual path.
 
     Args:

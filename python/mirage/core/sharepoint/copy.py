@@ -4,7 +4,7 @@ from mirage.accessor.sharepoint import SharePointAccessor
 from mirage.core.msgraph.config import MsGraphConfig
 from mirage.core.msgraph.drive_ops import DriveLoc, copy_tree
 from mirage.core.sharepoint._client import drive_ref_path, item_url
-from mirage.core.sharepoint._resolver import ResolvedPath, resolve
+from mirage.core.sharepoint.resolve import ResolvedPath, resolve
 from mirage.types import PathSpec
 from mirage.utils.errors import enoent
 

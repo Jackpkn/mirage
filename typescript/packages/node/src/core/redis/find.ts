@@ -18,8 +18,8 @@ import {
   emitStartPath,
   keep,
   startBasename,
-} from '@struktoai/mirage-core/commands/builtin/findEval'
-import type { PredNode } from '@struktoai/mirage-core/commands/builtin/findEval'
+} from '@struktoai/mirage-core/commands/builtin/find_eval'
+import type { PredNode } from '@struktoai/mirage-core/commands/builtin/find_eval'
 import type { PathSpec } from '@struktoai/mirage-core/types'
 import { rstripSlash } from '@struktoai/mirage-core/utils/slash'
 import { compareCodePoints } from '@struktoai/mirage-core/utils/sort'

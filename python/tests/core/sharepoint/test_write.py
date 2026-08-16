@@ -4,7 +4,7 @@ from aioresponses import CallbackResult, aioresponses
 import mirage.core.msgraph.drive_ops as drive_ops
 import mirage.core.sharepoint.write as write_mod
 from mirage.accessor.sharepoint import SharePointAccessor, SharePointConfig
-from mirage.core.sharepoint._resolver import _drive_cache, _site_cache
+from mirage.core.sharepoint.resolve import _drive_cache, _site_cache
 from mirage.core.sharepoint.write import write_bytes
 from mirage.types import PathSpec
 from mirage.utils.key_prefix import mount_key

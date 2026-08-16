@@ -6,7 +6,7 @@ from mirage.core.msgraph.drive_ops import (SIMPLE_UPLOAD_MAX,
                                            upload_session_write)
 from mirage.core.sharepoint._client import (graph_put_bytes, item_url,
                                             split_path)
-from mirage.core.sharepoint._resolver import resolve
+from mirage.core.sharepoint.resolve import resolve
 from mirage.observe.context import record
 from mirage.types import PathSpec
 from mirage.utils.errors import enoent

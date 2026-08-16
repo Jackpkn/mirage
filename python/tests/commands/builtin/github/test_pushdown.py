@@ -17,7 +17,7 @@ import pytest
 from mirage.accessor.github import GitHubAccessor
 from mirage.commands.builtin.github.du import _du_size
 from mirage.commands.builtin.github.grep import grep
-from mirage.commands.builtin.github.narrow import narrow_scope
+from mirage.commands.builtin.github.pushdown import narrow_scope
 from mirage.commands.builtin.github.rg import rg
 from mirage.commands.config import CommandOpts
 from mirage.core.github.tree_entry import TreeEntry

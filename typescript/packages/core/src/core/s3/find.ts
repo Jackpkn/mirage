@@ -17,7 +17,7 @@ import type { PathSpec } from '../../types.ts'
 import type { S3Accessor } from '../../accessor/s3.ts'
 import { loadS3Module, rawPathOf, s3Prefix, stripKeyPrefix, withClient } from './_client.ts'
 import { rstripSlash } from '../../utils/slash.ts'
-import { buildTree, emitStartPath, keep, startBasename } from '../../commands/builtin/findEval.ts'
+import { buildTree, emitStartPath, keep, startBasename } from '../../commands/builtin/find_eval.ts'
 import { compareCodePoints } from '../../utils/sort.ts'
 
 export async function find(

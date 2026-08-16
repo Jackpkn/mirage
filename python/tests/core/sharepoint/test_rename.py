@@ -3,8 +3,8 @@ from aioresponses import CallbackResult, aioresponses
 
 from mirage.accessor.sharepoint import SharePointAccessor, SharePointConfig
 from mirage.core.sharepoint._client import GraphError
-from mirage.core.sharepoint._resolver import _drive_cache, _site_cache
 from mirage.core.sharepoint.rename import rename
+from mirage.core.sharepoint.resolve import _drive_cache, _site_cache
 from mirage.types import PathSpec
 from mirage.utils.key_prefix import mount_key
 

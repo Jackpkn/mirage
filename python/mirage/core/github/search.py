@@ -17,7 +17,7 @@ from dataclasses import dataclass
 
 from mirage.core.github._client import github_get
 from mirage.core.github.config import GitHubConfig
-from mirage.core.github.scope import scope_relative_key
+from mirage.core.github.pushdown import scope_relative_key
 from mirage.types import PathSpec
 from mirage.utils.key_prefix import mount_key, mount_prefix_of
 

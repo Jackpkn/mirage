@@ -14,7 +14,7 @@
 
 import { unlink } from '../../../core/gsheets/unlink.ts'
 import { ResourceName } from '../../../types.ts'
-import { makeRm } from '../generic/rm_command.ts'
+import { makeRm } from '../generic/rm_cmd.ts'
 import { GSHEETS_IO } from './io.ts'
 
 export const GSHEETS_RM = makeRm(ResourceName.GSHEETS, GSHEETS_IO, unlink)

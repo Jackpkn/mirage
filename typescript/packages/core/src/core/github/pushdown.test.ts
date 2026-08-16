@@ -16,7 +16,7 @@ import { mountKey } from '../../utils/key_prefix.ts'
 import { describe, expect, it } from 'vitest'
 import { PathSpec } from '../../types.ts'
 import type { TreeEntry } from './tree_entry.ts'
-import { countScopeFiles, isRepoRoot, scopeRelativeKey, shouldUseSearch } from './scope.ts'
+import { countScopeFiles, isRepoRoot, scopeRelativeKey, shouldUseSearch } from './pushdown.ts'
 
 const TREE: Record<string, TreeEntry> = {
   docs: { path: 'docs', type: 'tree', sha: 's1', size: null },
