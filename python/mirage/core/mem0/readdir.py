@@ -15,7 +15,7 @@
 from mirage.accessor.mem0 import Mem0Accessor
 from mirage.cache.index import NULL_INDEX, IndexCacheStore, IndexEntry
 from mirage.core.mem0._client import get_all_memories
-from mirage.core.mem0.scope import ScopeLevel, detect
+from mirage.core.mem0.scope import ScopeLevel, detect_scope
 from mirage.core.render.json import json_bytes
 from mirage.types import PathSpec
 from mirage.utils.errors import enoent, enotdir
@@ -33,7 +33,7 @@ async def readdir(
         path (PathSpec): the directory path (only the mount root is a dir).
         index (IndexCacheStore): index cache.
     """
-    scope = detect(path)
+    scope = detect_scope(path)
     if scope.level == ScopeLevel.INVALID:
         raise enoent(path)
     if scope.level != ScopeLevel.ROOT:

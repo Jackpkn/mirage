@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { graphGet, graphList } from './client.ts'
+import { graphGet, graphList } from './_client.ts'
 import { resolveMsGraphConfig } from './config.ts'
 
 afterEach(() => {

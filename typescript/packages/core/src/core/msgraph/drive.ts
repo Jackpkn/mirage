@@ -37,7 +37,7 @@ import {
   graphStream,
   pollMonitor,
   uploadChunk,
-} from './client.ts'
+} from './_client.ts'
 import { compareCodePoints } from '../../utils/sort.ts'
 
 const SIMPLE_UPLOAD_MAX = 4 * 1024 * 1024
