@@ -12,7 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { type PathSpec, type WalkEntry } from '@struktoai/mirage-core/types'
+import type { PathSpec, WalkEntry } from '@struktoai/mirage-core/types'
 import { mountPrefixOf } from '@struktoai/mirage-core/utils/key_prefix'
 import {
   type DeltaHook,
@@ -21,8 +21,8 @@ import {
 } from '@struktoai/mirage-core/watch/index'
 import { lstat, readdir } from 'node:fs/promises'
 import path from 'node:path'
-import type { DiskAccessor } from '../../accessor/disk.ts'
-import { resolveSafe } from './utils.ts'
+import type { DiskAccessor } from '../../../accessor/disk.ts'
+import { resolveSafe } from '../utils.ts'
 
 async function* descend(root: string, full: string): AsyncGenerator<WalkEntry> {
   let listing

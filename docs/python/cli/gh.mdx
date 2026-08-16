@@ -21,7 +21,7 @@ from mirage.core.github.config import GhConfig, GitHubConfig
 from mirage.resource.github import GitHubResource
 
 token = os.environ["GITHUB_TOKEN"]
-repo = await GitHubResource.build(
+repo = GitHubResource(
     config=GitHubConfig(token=token), owner="acme", repo="tools", ref="main")
 
 ws = Workspace({"/repo": repo})

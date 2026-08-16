@@ -141,6 +141,10 @@ async def refresh_access_token(config: GoogleConfig, ) -> tuple[str, int]:
     Returns:
         tuple[str, int]: (access_token, expires_in_seconds)
     """
+    if config.client_id is None or config.refresh_token is None:
+        raise ValueError(
+            "refresh_access_token needs client_id and refresh_token; this "
+            "config authenticates with a pre-minted access_token")
     data = {
         "client_id": config.client_id,
         "refresh_token": reveal_secret(config.refresh_token),
@@ -166,6 +170,15 @@ class TokenManager:
         self._lock = asyncio.Lock()
 
     async def get_token(self) -> str:
+        # A supplied token short-circuits the grant entirely, and is read
+        # every call rather than cached: a provider callable is the
+        # caller's own cache, and caching its answer here would outlive
+        # the refresh it just performed. Mirrors _resolve_token in
+        # core/msgraph/_client.py.
+        supplied = self.config.access_token
+        if supplied is not None:
+            return reveal_secret(
+                supplied() if callable(supplied) else supplied)
         async with self._lock:
             if self._access_token and time.time() < self._expires_at:
                 return self._access_token

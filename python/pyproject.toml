@@ -69,7 +69,11 @@ build-backend = "setuptools.build_meta"
 include = ["mirage*"]
 
 [tool.setuptools.package-data]
-mirage = ["**/*.lua"]
+# py.typed is PEP 561 consent: without the marker a type checker refuses
+# to read an installed package's annotations and every mirage import
+# resolves to Any, so our own gated-at-zero mypy proves nothing to anyone
+# downstream. It caught the 0.0.5 build_resource break in one line.
+mirage = ["**/*.lua", "py.typed"]
 
 [project.optional-dependencies]
 # --- python runtime (sandboxed python3 default) ---

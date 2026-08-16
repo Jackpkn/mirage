@@ -175,7 +175,7 @@ grep -r "mirage" /slack /gmail /github
     from mirage.resource.slack import SlackConfig, SlackResource
 
     slack = SlackResource(SlackConfig(token="xoxb-..."))
-    github = await GitHubResource.build(
+    github = GitHubResource(
         GitHubConfig(token="github_pat_..."),
         owner="strukto-ai",
         repo="mirage",

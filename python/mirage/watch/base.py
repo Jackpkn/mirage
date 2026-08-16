@@ -13,7 +13,7 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 from collections.abc import AsyncIterator, Sequence
-from typing import Protocol, runtime_checkable
+from typing import Protocol
 
 from mirage.types import Delta, FileEvent, PathSpec
 from mirage.watch.queue.base import WatchQueue
@@ -29,6 +29,9 @@ class CacheInvalidator(Protocol):
         ...
 
     async def invalidate_after_unlink(self, path: PathSpec) -> None:
+        ...
+
+    async def invalidate_subtree(self, path: PathSpec) -> None:
         ...
 
 
@@ -78,22 +81,6 @@ class DeltaHook(Protocol):
             checkpoint (str | None): Opaque state returned by the
                 previous pull, or None for a baseline.
         """
-        ...
-
-
-@runtime_checkable
-class SupportsChanges(Protocol):
-    """Optional resource capability: native change detection.
-
-    A resource that implements this returns a hook a consumer's poll
-    loop can pull deltas from (Nextcloud: WebDAV listing walk with
-    ETag fingerprints). Subscribing to changes never requires it;
-    it only powers pull-based detection.
-    """
-
-    def delta_hook(self) -> DeltaHook:
-        """Build the resource's delta hook (stateless; per-watch
-        checkpoints are held by the caller)."""
         ...
 
 

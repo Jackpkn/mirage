@@ -75,24 +75,21 @@ def test_capabilities_match_the_committed_spec_manifest():
                             "scripts/gen_specs.py")
 
 
-@pytest.mark.asyncio
-async def test_build_ram_returns_ram_resource():
+def test_build_ram_returns_ram_resource():
     from mirage.resource.ram import RAMResource
-    p = await build_resource("ram")
+    p = build_resource("ram")
     assert isinstance(p, RAMResource)
 
 
-@pytest.mark.asyncio
-async def test_build_disk_takes_raw_kwargs(tmp_path):
+def test_build_disk_takes_raw_kwargs(tmp_path):
     from mirage.resource.disk import DiskResource
-    p = await build_resource("disk", {"root": str(tmp_path)})
+    p = build_resource("disk", {"root": str(tmp_path)})
     assert isinstance(p, DiskResource)
 
 
-@pytest.mark.asyncio
-async def test_build_s3_uses_config_class():
+def test_build_s3_uses_config_class():
     from mirage.resource.s3 import S3Resource
-    p = await build_resource(
+    p = build_resource(
         "s3", {
             "bucket": "b",
             "region": "us-east-1",
@@ -104,10 +101,9 @@ async def test_build_s3_uses_config_class():
     assert p.config.region == "us-east-1"
 
 
-@pytest.mark.asyncio
-async def test_build_r2_uses_r2_config():
+def test_build_r2_uses_r2_config():
     from mirage.resource.r2 import R2Resource
-    p = await build_resource(
+    p = build_resource(
         "r2", {
             "bucket": "b",
             "account_id": "acct",
@@ -119,20 +115,18 @@ async def test_build_r2_uses_r2_config():
 
 @pytest.mark.skipif(not os.environ.get("REDIS_URL"),
                     reason="REDIS_URL not set")
-@pytest.mark.asyncio
-async def test_build_redis_takes_raw_kwargs():
+def test_build_redis_takes_raw_kwargs():
     from mirage.resource.redis import RedisResource
-    p = await build_resource("redis", {
+    p = build_resource("redis", {
         "url": os.environ["REDIS_URL"],
         "key_prefix": "test:",
     })
     assert isinstance(p, RedisResource)
 
 
-@pytest.mark.asyncio
-async def test_unknown_resource_raises_keyerror():
+def test_unknown_resource_raises_keyerror():
     with pytest.raises(KeyError, match="unknown resource 'nonsense'"):
-        await build_resource("nonsense")
+        build_resource("nonsense")
 
 
 def test_registry_module_import_is_free_of_resource_deps():
@@ -143,9 +137,8 @@ def test_registry_module_import_is_free_of_resource_deps():
     importlib.import_module("mirage.resource.registry")
 
 
-@pytest.mark.asyncio
-async def test_build_hf_buckets_resource():
-    r = await build_resource("hf_buckets", {"bucket": "o/b"})
+def test_build_hf_buckets_resource():
+    r = build_resource("hf_buckets", {"bucket": "o/b"})
     assert isinstance(r, HfBucketsResource)
 
 
@@ -181,26 +174,23 @@ def clean_registry(monkeypatch):
     monkeypatch.setattr(registry, "_entry_points_loaded", False)
 
 
-@pytest.mark.asyncio
-async def test_register_resource_class_and_config(clean_registry):
+def test_register_resource_class_and_config(clean_registry):
     register_resource("fake_custom", FakeCustomResource, FakeCustomConfig)
-    built = await build_resource("fake_custom", {"url": "http://x"})
+    built = build_resource("fake_custom", {"url": "http://x"})
     assert isinstance(built, FakeCustomResource)
     assert built.config.url == "http://x"
 
 
-@pytest.mark.asyncio
-async def test_register_resource_kwargs_config(clean_registry):
+def test_register_resource_kwargs_config(clean_registry):
     register_resource("fake_kwargs", FakeKwargsResource)
-    built = await build_resource("fake_kwargs", {"root": "/data"})
+    built = build_resource("fake_kwargs", {"root": "/data"})
     assert isinstance(built, FakeKwargsResource)
     assert built.root == "/data"
 
 
-@pytest.mark.asyncio
-async def test_register_resource_config_cls_attribute(clean_registry):
+def test_register_resource_config_cls_attribute(clean_registry):
     register_resource("fake_attr", FakeConfigClsResource)
-    built = await build_resource("fake_attr", {"url": "http://y"})
+    built = build_resource("fake_attr", {"url": "http://y"})
     assert built.config.url == "http://y"
 
 
@@ -209,11 +199,10 @@ def test_register_resource_rejects_builtin_shadow(clean_registry):
         register_resource("s3", FakeCustomResource)
 
 
-@pytest.mark.asyncio
-async def test_register_resource_spec_string(clean_registry):
+def test_register_resource_spec_string(clean_registry):
     register_resource("fake_spec",
                       "tests.resource.test_registry:FakeKwargsResource")
-    built = await build_resource("fake_spec", {"root": "/spec"})
+    built = build_resource("fake_spec", {"root": "/spec"})
     assert built.root == "/spec"
 
 
@@ -224,8 +213,7 @@ def test_known_resources_includes_custom(clean_registry):
     assert "s3" in names
 
 
-@pytest.mark.asyncio
-async def test_entry_point_discovery(clean_registry, monkeypatch):
+def test_entry_point_discovery(clean_registry, monkeypatch):
     import importlib.metadata
 
     ep = importlib.metadata.EntryPoint(
@@ -239,14 +227,12 @@ async def test_entry_point_discovery(clean_registry, monkeypatch):
         return [ep]
 
     monkeypatch.setattr(importlib.metadata, "entry_points", fake_entry_points)
-    built = await build_resource("fake_ep", {"root": "/ep"})
+    built = build_resource("fake_ep", {"root": "/ep"})
     assert built.root == "/ep"
     assert "fake_ep" in known_resources()
 
 
-@pytest.mark.asyncio
-async def test_entry_point_does_not_shadow_registered(clean_registry,
-                                                      monkeypatch):
+def test_entry_point_does_not_shadow_registered(clean_registry, monkeypatch):
     import importlib.metadata
 
     ep = importlib.metadata.EntryPoint(
@@ -257,11 +243,10 @@ async def test_entry_point_does_not_shadow_registered(clean_registry,
     monkeypatch.setattr(importlib.metadata, "entry_points",
                         lambda *, group: [ep])
     register_resource("fake_custom", FakeCustomResource, FakeCustomConfig)
-    built = await build_resource("fake_custom", {"url": "http://z"})
+    built = build_resource("fake_custom", {"url": "http://z"})
     assert isinstance(built, FakeCustomResource)
 
 
-@pytest.mark.asyncio
-async def test_unknown_resource_lists_known(clean_registry):
+def test_unknown_resource_lists_known(clean_registry):
     with pytest.raises(KeyError, match="unknown resource"):
-        await build_resource("nope_not_real")
+        build_resource("nope_not_real")

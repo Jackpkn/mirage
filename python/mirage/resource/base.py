@@ -24,6 +24,7 @@ from mirage.commands.config import RegisteredCommand
 from mirage.ops.registry import RegisteredOp
 from mirage.resource.secrets import redacted_config_dump
 from mirage.types import CapacityResult, CapacityState, PathSpec
+from mirage.watch.base import DeltaHook
 
 try:
     from mirage.cache.index import RedisIndexCacheStore
@@ -77,35 +78,6 @@ class BaseResource:
         self._ops_list: list[RegisteredOp] = []
         self._index: IndexCacheStore
         self.set_index(index)
-
-    @classmethod
-    async def build(cls, *args: Any, **kwargs: Any) -> "BaseResource":
-        """Construct a resource, awaiting any setup it needs first.
-
-        The default just calls the constructor: most backends open
-        nothing at build time, so there is nothing to await. A backend
-        whose setup needs I/O overrides this and keeps ``__init__``
-        free of network calls — a constructor cannot await, so doing
-        the I/O there means doing it with a blocking client, which
-        stalls whatever event loop the caller runs on.
-
-        Mirrors the TypeScript ``ResourceFactory``
-        (``node/src/resource/registry.ts``), which is uniformly
-        ``(config) => Promise<Resource>`` for the same reason. Named
-        ``build`` rather than TypeScript's ``create`` because ``create``
-        is already an op name (make an empty file, what ``touch``
-        calls): ops are served by ``__getattr__``, which only runs when
-        normal lookup fails, so a real ``create`` on the class would
-        shadow every backend's create op.
-
-        Args:
-            *args (Any): forwarded to the constructor.
-            **kwargs (Any): forwarded to the constructor.
-
-        Returns:
-            BaseResource: a fresh instance, ready to mount.
-        """
-        return cls(*args, **kwargs)
 
     def set_index(self, config: IndexConfig | None = None) -> None:
         cfg = (config if config is not None else IndexConfig(
@@ -179,6 +151,21 @@ class BaseResource:
 
     def commands(self) -> list[RegisteredCommand]:
         return self._commands
+
+    def delta_hook(self) -> DeltaHook | None:
+        """Hook a consumer's poll loop can pull deltas from, or None.
+
+        None means this backend has no native change detection, which
+        is most of them; a subclass that has one overrides this and
+        narrows the return to ``DeltaHook``.
+
+        Declaring it here rather than behind a capability protocol is
+        deliberate. The protocol only ever answered "does this resource
+        have one", which a None default answers with no ``isinstance``,
+        no import, and no second place to keep in step. TypeScript has
+        always done it this way (``deltaHook?()`` on ``Resource``).
+        """
+        return None
 
     def get_state(self) -> dict[str, Any]:
         return {

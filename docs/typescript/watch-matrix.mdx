@@ -22,13 +22,14 @@ Watching has two independent halves:
 | Dropbox               | ✓ recursive `list_folder`     | `content_hash`    | Dropbox webhooks + cursor delta            |
 | GridFS                | ✓ `fs.files` prefix query     | revision ObjectId | MongoDB change streams                     |
 | Hugging Face          | ✓ recursive tree listing      | Hub ETag          | —                                          |
-| Disk                  | ✓ recursive directory walk    | mtime\|size       | inotify / FSEvents / filesystem watcher    |
+| Disk                  | ✓ recursive directory walk    | mtime\|size       | inotify / FSEvents, `DiskEventHook`        |
 | SSH / SFTP            | ✓ per-directory descent       | mtime\|size       | —                                          |
 | Google Drive          | ✓ per-folder descent          | `modifiedTime`    | `changes.watch` push channels              |
 | OneDrive / SharePoint | ✓ per-folder descent          | `cTag`            | Graph change notifications + delta API     |
 | Box                   | ✓ per-folder descent          | content `sha1`    | Box `/events` long poll                    |
-| Slack                 | planned                       | —                 | Events API (`message`, `file_shared`, ...) |
-| RAM, Redis, others    | —                             | —                 | no external writers to observe             |
+| Slack                 | —                             | —                 | Events API, mapped by `SlackEventHook`     |
+| Redis                 | —                             | —                 | keyspace notifications, `RedisEventHook`   |
+| RAM, others           | —                             | —                 | no external writers to observe             |
 
 The **Fingerprint** column is what decides UPDATE. A content-addressed one
 (GitHub's blob sha, S3's single-part ETag, Dropbox's `content_hash`, Box's

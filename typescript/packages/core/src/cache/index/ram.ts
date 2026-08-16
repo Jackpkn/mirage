@@ -12,6 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import { underPath } from '../../utils/key_prefix.ts'
 import { KeyLock } from '../lock.ts'
 import { LookupStatus, type IndexEntry, type ListResult, type LookupResult } from './config.ts'
 import { IndexCacheStore } from './store.ts'
@@ -80,6 +81,19 @@ export class RAMIndexCacheStore extends IndexCacheStore {
     }
     this.expiry.delete(resourcePath)
     this.children.delete(resourcePath)
+    return Promise.resolve()
+  }
+
+  invalidatePrefix(resourcePath: string): Promise<void> {
+    for (const key of [...this.entries.keys()]) {
+      if (underPath(key, resourcePath)) this.entries.delete(key)
+    }
+    for (const key of [...this.children.keys()]) {
+      if (underPath(key, resourcePath)) this.children.delete(key)
+    }
+    for (const key of [...this.expiry.keys()]) {
+      if (underPath(key, resourcePath)) this.expiry.delete(key)
+    }
     return Promise.resolve()
   }
 

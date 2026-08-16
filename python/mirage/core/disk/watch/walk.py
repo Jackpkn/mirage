@@ -26,14 +26,20 @@ from mirage.watch.base import DeltaHook
 from mirage.watch.delta import ListingDeltaHook
 
 
-def _resolve(root: Path, path: str) -> Path:
+def resolve(root: Path, path: str) -> Path:
+    """Host path for a mount-relative path, refusing an escape.
+
+    Args:
+        root (Path): Mount root on the local filesystem.
+        path (str): Mount-relative path.
+    """
     relative = path.lstrip("/")
     resolved = (root / relative).resolve()
     resolved.relative_to(root)
     return resolved
 
 
-def _reraise(error: OSError) -> None:
+def reraise(error: OSError) -> None:
     """Fail the walk on a directory it could not read.
 
     ``os.walk`` swallows every listing error by default, which for a
@@ -48,8 +54,8 @@ def _reraise(error: OSError) -> None:
     raise error
 
 
-def _walk_sync(root: Path,
-               path: str) -> list[tuple[str, bool, str | None, int | None]]:
+def walk_sync(root: Path,
+              path: str) -> list[tuple[str, bool, str | None, int | None]]:
     """Collect (mount-relative path, is_dir, mtime, size) under a path.
 
     Runs in a worker thread; ``os.walk`` and ``stat`` are blocking.
@@ -60,9 +66,9 @@ def _walk_sync(root: Path,
         root (Path): Mount root on the local filesystem.
         path (str): Mount-relative directory to walk.
     """
-    start = _resolve(root, path)
+    start = resolve(root, path)
     out: list[tuple[str, bool, str | None, int | None]] = []
-    for dirpath, dirnames, filenames in os.walk(start, onerror=_reraise):
+    for dirpath, dirnames, filenames in os.walk(start, onerror=reraise):
         current = Path(dirpath)
         for name in dirnames:
             relative = (current / name).relative_to(root).as_posix()
@@ -107,7 +113,7 @@ class DiskWalk:
         """
         prefix = mount_prefix_of(root.virtual, root.resource_path)
         try:
-            found = await asyncio.to_thread(_walk_sync, self._accessor.root,
+            found = await asyncio.to_thread(walk_sync, self._accessor.root,
                                             root.mount_path)
         except FileNotFoundError:
             return

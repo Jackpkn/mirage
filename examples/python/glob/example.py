@@ -37,11 +37,9 @@ gdrive_config = GoogleDriveConfig(
 )
 github_config = GitHubConfig(token=os.environ["GITHUB_TOKEN"])
 
-# GitHub fetches the repo tree while it builds, so its resource is the
-# one mount here that has to be awaited. Each aiohttp session opens and
-# closes inside that call, so bootstrapping on its own loop is safe.
-github_resource = asyncio.run(
-    GitHubResource.build(github_config, owner="strukto", repo="mirage"))
+# GitHub fetches the repo tree on first read, so building the mount is an
+# ordinary call like every other one here.
+github_resource = GitHubResource(github_config, owner="strukto", repo="mirage")
 
 ws = Workspace(
     {

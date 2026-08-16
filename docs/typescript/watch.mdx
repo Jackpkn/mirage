@@ -91,8 +91,48 @@ this subtree.” Precision degrades, but dirtiness is not lost.
 
 ## Push Mode
 
-Map a provider webhook or queue message to a `FileEvent`, then inject it with
-`ws.notify`:
+Your application hosts the endpoint; mirage opens no socket and runs no
+watcher. What arrives is the provider's own payload, and turning that into a
+path is the only real work. Three backends ship a mapper for it:
+
+```ts
+import { SlackEventHook } from "@struktoai/mirage-core/core/slack/watch/index";
+
+const hook = new SlackEventHook(resource.accessor);
+
+// your Express/Hono/Fastify route:
+const { event } = await request.json();
+for (const change of await hook.toEvents(root, event.type, event)) {
+  await ws.notify(change);
+}
+```
+
+You import the mapper for the backend you mounted rather than asking the
+mount for one, because a push payload has no vendor-neutral shape: the code
+that builds the call already names the backend, so a generic accessor would
+buy nothing.
+
+| Backend | Import | Notification |
+| --- | --- | --- |
+| Slack | `SlackEventHook` (`mirage-core/core/slack/watch/index`) | Events API delivery (inner `event` object) |
+| Disk | `DiskEventHook` (`mirage-node`, `core/disk/watch/hook`) | watchdog-shaped fields (`src_path`, `dest_path`) |
+| Redis | `RedisEventHook` (`mirage-node`, `core/redis/watch/hook`) | keyspace notification (`__keyevent@N__:<verb>`, the key) |
+
+A mapper answers with zero or more `FileEvent`s and never invents a path it
+was not told about. When a notification names only a scope, it returns
+`UNKNOWN` on that directory, which the watcher reads as "re-inventory
+everything below".
+
+Slack is where the mapping earns its place. A message maps to
+`channels/<name>__<CID>/<YYYY-MM-DD>/chat.jsonl`, and the day is bucketed in
+**UTC** while Slack's client shows local time, so a hand-written mapper names
+tomorrow's directory for a fifth of every day and never errors, because
+notifying a path the mount does not serve evicts nothing. A **thread reply**
+is the other trap: `chat.jsonl` renders `conversations.history`, which returns
+parents only, so a reply appears in no day file at all. What changed is the
+parent's `reply_count`, in the parent's day.
+
+For a backend with no mapper, build the `FileEvent` yourself:
 
 ```ts
 import { FileChangeKind, FileEvent, PathSpec } from "@struktoai/mirage-node";

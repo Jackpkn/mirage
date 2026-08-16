@@ -12,13 +12,27 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import { underPath } from '../../utils/key_prefix.ts'
 import { loadOptionalPeer } from '../../utils/optional_peer.ts'
+import { rstripSlash } from '../../utils/slash.ts'
 import { IndexEntry, LookupStatus, type ListResult, type LookupResult } from './config.ts'
 import { IndexCacheStore } from './store.ts'
 
 const ENTRY_PREFIX = 'mirage:idx:entry:'
 const CHILDREN_PREFIX = 'mirage:idx:children:'
 const DEFAULT_KEY_PREFIX = 'mirage:index:'
+
+/**
+ * Escape redis MATCH metacharacters in a literal path.
+ *
+ * A path may legally contain `*?[]`, and SCAN's pattern is a glob, so an
+ * unescaped path would match keys it does not name. The escaping is a
+ * narrowing optimization only; the caller still filters at a path boundary.
+ * Mirrors Python `_glob_escape` (`cache/index/redis.py`).
+ */
+function globEscape(value: string): string {
+  return value.replace(/[*?[\]\\]/g, (char) => `\\${char}`)
+}
 
 interface RedisPipeline {
   set: (key: string, value: string) => RedisPipeline
@@ -168,6 +182,24 @@ export class RedisIndexCacheStore extends IndexCacheStore {
     }
     pipe.del(this.childrenKey(resourcePath))
     await pipe.exec()
+  }
+
+  private async scanDelete(prefix: string, resourcePath: string): Promise<void> {
+    const c = await this.client()
+    const pattern = `${prefix}${globEscape(rstripSlash(resourcePath))}*`
+    const keys: string[] = []
+    for await (const k of c.scanIterator({ MATCH: pattern })) {
+      const batch = Array.isArray(k) ? k : [k]
+      for (const key of batch) {
+        if (underPath(key.slice(prefix.length), resourcePath)) keys.push(key)
+      }
+    }
+    if (keys.length > 0) await c.del(keys)
+  }
+
+  async invalidatePrefix(resourcePath: string): Promise<void> {
+    await this.scanDelete(this.entryPrefix, resourcePath)
+    await this.scanDelete(this.childrenPrefix, resourcePath)
   }
 
   // Clear rather than expire, because redis cannot say "stale" here. The RAM

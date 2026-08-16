@@ -337,7 +337,7 @@ async def test_registry_resource_state_masks_credential(name, config, secret):
     from mirage.resource.registry import build_resource
     from mirage.resource.secrets import has_redacted_secret
 
-    p = await build_resource(name, config)
+    p = build_resource(name, config)
     state = p.get_state()
     assert state["type"] == name
     assert state["config"] is not None

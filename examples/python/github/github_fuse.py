@@ -12,7 +12,6 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import asyncio
 import os
 
 from dotenv import load_dotenv
@@ -24,16 +23,14 @@ load_dotenv(".env.development")
 
 config = GitHubConfig(token=os.environ["GITHUB_TOKEN"])
 
-# Only the repo fetch is async; the rest of this example is deliberately
-# synchronous, because that is the point of a FUSE mount. There is no
-# outer loop here to conflict with.
-resource = asyncio.run(
-    GitHubResource.build(
-        config=config,
-        owner="strukto-ai",
-        repo="mirage",
-        ref="main",
-    ))
+# Nothing here is async: the mount names the repo and fetches its tree on
+# the first read, which is the point of a FUSE mount.
+resource = GitHubResource(
+    config=config,
+    owner="strukto-ai",
+    repo="mirage",
+    ref="main",
+)
 
 with Workspace({
         "/github/":
