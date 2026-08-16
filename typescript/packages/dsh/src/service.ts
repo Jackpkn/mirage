@@ -145,7 +145,7 @@ export class MirageService extends Service {
     if (blocks) {
       this.ready = this.open(config.mounts, options)
     } else {
-      const owned = new Workspace(config.mounts, options)
+      const owned = new Workspace(config.mounts as Record<string, MountSpec | Mount>, options)
       this.built = owned
       this.ready = Promise.resolve(owned)
     }
