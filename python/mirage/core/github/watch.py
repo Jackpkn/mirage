@@ -71,6 +71,7 @@ class GitHubWalk:
         # that reported a CREATE was followed by a find that could not see
         # the file.
         accessor.tree = tree
+        accessor.tree_loaded = True
         stem = root.mount_path.strip("/")
         base = (stem + "/") if stem else ""
         for entry in tree.values():

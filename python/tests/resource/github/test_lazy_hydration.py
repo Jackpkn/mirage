@@ -17,6 +17,7 @@ import pytest
 from mirage.cache.index.ram import RAMIndexCacheStore
 from mirage.core.github.config import GitHubConfig
 from mirage.core.github.readdir import readdir
+from mirage.core.github.tree import ensure_tree
 from mirage.core.github.tree_entry import TreeEntry
 from mirage.resource.github.github import GitHubResource
 from mirage.types import PathSpec
@@ -55,3 +56,32 @@ async def test_first_readdir_costs_one_tree_fetch(tree_calls):
         PathSpec(resource_path="", virtual="/", directory="/"), index)
     assert sorted(entries) == ["/src"]
     assert len(tree_calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_an_empty_repo_hydrates_once(tree_calls, monkeypatch):
+    # Hydration was tracked by whether the tree held anything, so an
+    # empty repository read as "never hydrated" and refetched forever:
+    # twice per call with an index wired, since the refill seeds an empty
+    # root and then the fallback runs anyway.
+    async def _empty(config, owner, repo, ref):
+        tree_calls.append((owner, repo, ref))
+        return {}, False
+
+    monkeypatch.setattr("mirage.core.github.tree.fetch_tree", _empty)
+    resource = GitHubResource(CONFIG, "o", "r", "main")
+    index = RAMIndexCacheStore()
+    for _ in range(3):
+        await ensure_tree(resource.accessor, index, "/gh")
+    assert resource.accessor.tree == {}
+    assert resource.accessor.tree_loaded is True
+    assert len(tree_calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_tree_passed_to_the_constructor_counts_as_hydrated(tree_calls):
+    # A caller holding the answer (a test, a snapshot restore) must not
+    # trigger a fetch on the first direct-tree command.
+    resource = GitHubResource(CONFIG, "o", "r", "main", tree=dict(TREE))
+    await ensure_tree(resource.accessor)
+    assert tree_calls == []

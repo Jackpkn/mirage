@@ -123,7 +123,27 @@ class GitHubResource(BaseResource):
         return await _resolve_glob(self.accessor, paths, self._index)
 
     @property
-    def is_default_branch(self) -> bool:
+    def is_default_branch(self) -> bool | None:
+        """Whether the mount is pinned to the repo's default branch.
+
+        ``None`` means not known yet, not "no": the default branch is
+        fetched on first use, and until something calls
+        :func:`mirage.core.github.repo.ensure_default_branch` there is
+        nothing to compare ``ref`` against. Answering ``False`` there
+        would be a wrong answer rather than an absent one, and an
+        ordinary read hydrates only the tree, so it could stay wrong for
+        the life of the mount.
+
+        Await ``ensure_default_branch(resource.accessor)`` first when a
+        definite answer is needed. Diverges from the TypeScript
+        ``GitHubAccessor.isDefaultBranch``, which is always a bool
+        because construction there fetches the fact.
+
+        Returns:
+            bool | None: the comparison, or None if not yet hydrated.
+        """
+        if self.accessor.default_branch is None:
+            return None
         return self.accessor.ref == self.accessor.default_branch
 
     def get_state(self) -> dict[str, Any]:

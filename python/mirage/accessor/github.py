@@ -49,4 +49,11 @@ class GitHubAccessor(Accessor):
         # index whose keys are the mount's business. Reseated by every
         # refill, so it is as fresh as the last one.
         self.tree: dict[str, TreeEntry] = tree if tree is not None else {}
+        # Whether that tree is an answer or just the empty default, which
+        # is not the same question as whether it holds anything: an empty
+        # repository, or one holding only excluded gitlinks, hydrates to
+        # {}. Reading emptiness as "not hydrated yet" made every
+        # direct-tree command refetch such a repo forever, twice per call
+        # once an index was wired.
+        self.tree_loaded: bool = tree is not None
         self.truncated = truncated

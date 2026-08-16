@@ -126,6 +126,23 @@ def test_is_default_branch_false() -> None:
     assert resource.is_default_branch is False
 
 
+def test_is_default_branch_is_unknown_before_hydration() -> None:
+    # None, not False: the branch is fetched on first use, and a bare
+    # read hydrates only the tree, so False here would be a wrong answer
+    # that could survive the life of the mount.
+    resource = _make_resource(ref="main", default_branch=None)
+    assert resource.is_default_branch is None
+
+
+@pytest.mark.asyncio
+async def test_is_default_branch_answers_once_hydrated() -> None:
+    resource = _make_resource(ref="main", default_branch=None)
+    with patch("mirage.core.github.repo.fetch_default_branch",
+               return_value="main"):
+        await ensure_default_branch(resource.accessor)
+    assert resource.is_default_branch is True
+
+
 @pytest.mark.asyncio
 async def test_stat_returns_sha_fingerprint() -> None:
     tree = {
