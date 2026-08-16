@@ -25,6 +25,9 @@ import {
   arraySlice,
   arrayUnset,
   arrayValues,
+  buildAssocLiteral,
+  buildIndexedLiteral,
+  keyedWord,
   makeArray,
 } from './array.ts'
 
@@ -140,5 +143,40 @@ describe('shell array', () => {
     expect(arrayCount(arr)).toBe(2)
     expect(arrayIndices(arr)).toEqual([0, 1])
     expect(arrayValues(arr)).toEqual(['', 'y'])
+  })
+})
+
+describe('keyedWord', () => {
+  it('splits on the first ]=', () => {
+    expect(keyedWord('[a]=1')).toEqual(['a', '1'])
+    expect(keyedWord('[two words]=v x')).toEqual(['two words', 'v x'])
+    expect(keyedWord('plain')).toBeNull()
+    expect(keyedWord('[]=x')).toBeNull()
+    expect(keyedWord('[k]=')).toEqual(['k', ''])
+    // The split lands on the first `]=`, so a value may hold one.
+    expect(keyedWord('[a]=x]=y')).toEqual(['a', 'x]=y'])
+  })
+})
+
+describe('buildIndexedLiteral', () => {
+  it('places subscripted elements and continues from them', () => {
+    const built = buildIndexedLiteral(null, ['[3]=x', 'y', '[1]=z'], false, (t) => Number(t))
+    expect(built).toEqual([null, 'z', null, 'x', 'y'])
+    // `+=` starts the cursor at the extent; last index wins.
+    const appended = buildIndexedLiteral(['a'], ['b', '[0]=A'], true, (t) => Number(t))
+    expect(appended).toEqual(['A', 'b'])
+  })
+})
+
+describe('buildAssocLiteral', () => {
+  it('keys, pairs, merges, and refuses plain words in keyed form', () => {
+    const keyed = buildAssocLiteral(null, ['[a]=1', 'b', '[a]=2'], false)
+    expect(keyed.map).toEqual({ a: '2' })
+    expect(keyed.badWords).toEqual(['b'])
+    const pairs = buildAssocLiteral(null, ['k1', 'v1', '[a]=1'], false)
+    expect(pairs.map).toEqual({ k1: 'v1', '[a]=1': '' })
+    expect(pairs.badWords).toEqual([])
+    expect(buildAssocLiteral({ a: '1' }, ['[b]=2'], true).map).toEqual({ a: '1', b: '2' })
+    expect(buildAssocLiteral({ a: '1' }, ['[b]=2'], false).map).toEqual({ b: '2' })
   })
 })

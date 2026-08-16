@@ -12,7 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { seedVar } from '../../../session/state.ts'
+import { seedVar, sessionElements } from '../../../session/state.ts'
 import { evaluateArith } from '../../../../shell/arith.ts'
 import { ArithError } from '../../../../shell/errors.ts'
 import { makeArray } from '../../../../shell/array.ts'
@@ -80,8 +80,9 @@ function evalCondBinary(ctx: CondContext, node: Extract<CondNode, { kind: 'binar
     let li: bigint
     let ri: bigint
     try {
-      li = evaluateArith(node.left, visibleEnv(ctx.session)).value
-      ri = evaluateArith(node.right, visibleEnv(ctx.session)).value
+      const elements = sessionElements(ctx.session)
+      li = evaluateArith(node.left, visibleEnv(ctx.session), 0, elements).value
+      ri = evaluateArith(node.right, visibleEnv(ctx.session), 0, elements).value
     } catch (exc) {
       if (!(exc instanceof ArithError)) throw exc
       throw new CondError('mirage: syntax error in conditional expression')

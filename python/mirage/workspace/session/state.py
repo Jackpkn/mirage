@@ -19,9 +19,13 @@ from collections.abc import Iterator, Mapping
 from mirage.ops.types import SessionView
 from mirage.policy import Policies, PolicyDenied, pre_session_gate
 from mirage.policy.types import SessionContext
-from mirage.shell.array import ShellArray, array_values
-from mirage.shell.variable import (ShellValue, ShellVar, VarAttr, with_attr,
-                                   with_value)
+from mirage.shell.arith import evaluate_arith
+from mirage.shell.array import (ShellArray, array_extent, array_get, array_has,
+                                array_values)
+from mirage.shell.errors import ArithError
+from mirage.shell.types import ElementOps
+from mirage.shell.variable import (ShellValue, ShellVar, VarAttr, coerce_value,
+                                   with_attr, with_value)
 from mirage.utils.hidden import var_hidden
 from mirage.workspace.session.errors import ReadonlyVariableError
 from mirage.workspace.session.session import Session
@@ -193,6 +197,186 @@ def visible_arrays(session: Session) -> Mapping[str, ShellArray]:
     return _VisibleArrays(session)
 
 
+class _VisibleAssocs(Mapping[str, dict[str, str]]):
+    """A live, read-only view of the associative arrays minus hidden
+    names.
+
+    The third sibling beside ``_VisibleEnv`` and ``_VisibleArrays``,
+    for the same reason both exist: the embedder can seed a hidden name
+    with any value shape, so every reader tier filters the same way.
+    """
+
+    __slots__ = ("_session", )
+
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def __getitem__(self, name: str) -> dict[str, str]:
+        if var_hidden(self._session.hidden_vars, name):
+            raise KeyError(name)
+        var = self._session.vars[name]
+        if not isinstance(var.value, dict):
+            raise KeyError(name)
+        return var.value
+
+    def __iter__(self) -> Iterator[str]:
+        hidden = self._session.hidden_vars
+        for name, var in self._session.vars.items():
+            if isinstance(var.value, dict) and not var_hidden(hidden, name):
+                yield name
+
+    def __len__(self) -> int:
+        return sum(1 for _ in self)
+
+
+def visible_assocs(session: Session) -> Mapping[str, dict[str, str]]:
+    """The associative arrays a reader tier should resolve names
+    against.
+
+    Args:
+        session (Session): the session holding the arrays.
+    """
+    return _VisibleAssocs(session)
+
+
+def strip_key_quotes(text: str) -> str:
+    """Remove one surrounding quote pair from an associative subscript.
+
+    An arithmetic reference carries its subscript verbatim, so
+    ``m["x"]`` arrives with the quotes bash would have removed; one
+    layer comes off and anything else is the key itself.
+
+    Args:
+        text (str): the raw subscript text.
+    """
+    if len(text) >= 2 and text[0] == text[-1] and text[0] in "\"'":
+        return text[1:-1]
+    return text
+
+
+def element_index(subscript: str,
+                  env: Mapping[str, str],
+                  elements: ElementOps | None = None) -> int:
+    """Resolve an indexed subscript in arithmetic context.
+
+    bash evaluates indexed subscripts as arithmetic (``a[i+1]``); an
+    unresolvable expression indexes element 0, mirroring bash's
+    unset-name-is-zero arithmetic rule.
+
+    Args:
+        subscript (str): the raw subscript text.
+        env (Mapping[str, str]): environment for name resolution.
+        elements (ElementOps | None): element callbacks, so a nested
+            reference (``a[b[0]]``) resolves too.
+    """
+    try:
+        return int(subscript.strip())
+    except ValueError:
+        pass
+    try:
+        return evaluate_arith(subscript, env, elements=elements).value
+    except ArithError:
+        return 0
+
+
+class _SessionElements:
+    """The ``ElementOps`` implementation bound to one session.
+
+    A class rather than closures because the resolver recurses: an
+    indexed subscript is arithmetic and may itself hold an element
+    reference, so ``resolve`` hands the evaluator the same pair of
+    callbacks it is one of. It lives beside the other reader
+    projections because the session door needs it too: the ``-i``
+    coercion evaluates ``n=a[1]+1`` at the write, and a resolver that
+    imported the door would close a cycle.
+    """
+
+    __slots__ = ("_session", )
+
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def resolve(self, name: str, subscript: str, env: Mapping[str,
+                                                              str]) -> str:
+        """Canonical key for one reference.
+
+        Args:
+            name (str): the array variable's name.
+            subscript (str): the raw subscript text.
+            env (Mapping[str, str]): the evaluator's current view,
+                pending assignments included.
+        """
+        if name in visible_assocs(self._session):
+            return strip_key_quotes(subscript)
+        idx = element_index(subscript, env, session_elements(self._session))
+        if idx < 0:
+            arr = visible_arrays(self._session).get(name)
+            if arr is not None:
+                idx += array_extent(arr)
+            elif env_get(self._session, name) is not None:
+                idx += 1
+            if idx < 0:
+                raise ArithError(f"{name}[{subscript}]: bad array subscript")
+        return str(idx)
+
+    def read(self, name: str, key: str) -> str | None:
+        """The element's stored text, None when unset.
+
+        Args:
+            name (str): the array variable's name.
+            key (str): the canonical key ``resolve`` produced.
+        """
+        session = self._session
+        amap = visible_assocs(session).get(name)
+        if amap is not None:
+            return amap.get(key)
+        arr = visible_arrays(session).get(name)
+        idx = int(key)
+        if arr is None:
+            scalar = env_get(session, name)
+            if scalar is None:
+                return None
+            return scalar if idx == 0 else None
+        return array_get(arr, idx) if array_has(arr, idx) else None
+
+
+def session_elements(session: Session) -> ElementOps:
+    """Element callbacks bound to one session, for ``evaluate_arith``.
+
+    Args:
+        session (Session): the session references resolve against.
+    """
+    bound = _SessionElements(session)
+    return ElementOps(resolve=bound.resolve, read=bound.read)
+
+
+def _integer_text(session: Session, text: str) -> str:
+    """The `-i` coercion: evaluate the incoming text as arithmetic.
+
+    Reads resolve against the visible env, so `n=x+1` sees `x`, and
+    element references resolve through the session's resolver, so
+    `n=a[1]+1` and `n=m[k]+1` see the element; an unresolvable name is
+    0 (`n=abc` stores `0`), which is the arithmetic rule, not a
+    refusal. A malformed expression raises ArithError, and the caller
+    decides how to voice it (bash aborts the line with the evaluator's
+    own message).
+
+    Args:
+        session (Session): the session the expression reads.
+        text (str): the incoming value.
+    """
+    try:
+        return str(
+            evaluate_arith(text,
+                           visible_env(session),
+                           elements=session_elements(session)).value)
+    except ArithError as exc:
+        # The offending text leads, which is how every caller voices it
+        # (`bash: 1+: syntax error: operand expected`), so it is spelled
+        # once here rather than at each of the sites that catch it.
+        raise ArithError(f"{text}: {exc}") from exc
+
+
 def ensure_var_visible(session: Session, name: str) -> None:
     """Refuse a write that names a hidden variable.
 
@@ -215,14 +399,15 @@ def ensure_var_visible(session: Session, name: str) -> None:
 
 
 async def set_var(session: Session, policies: Policies | None, name: str,
-                  value: str | ShellArray) -> None:
+                  value: ShellValue) -> None:
     """Write one variable through the session plane's gate.
 
     General over variable shapes: a string stores a scalar, a
-    ShellArray stores a whole array, and the two storages stay
-    exclusive. Semantics live here once — readonly refusal, the
-    ``pre_session`` policy gate (whose context value renders an array
-    as its present elements joined by spaces), then the store — so
+    ShellArray stores an indexed array, a dict stores an associative
+    one, and the storages stay exclusive. Semantics live here once —
+    readonly refusal, the ``pre_session`` policy gate (whose context
+    value renders an array as its present elements joined by spaces,
+    an associative one in sorted-key order), then the store — so
     every writer states them the same way whichever tier or spelling
     asked. Writers with richer mechanics (subscripts, appends, holes)
     compute the resulting value on a copy and hand it here, so a
@@ -233,7 +418,7 @@ async def set_var(session: Session, policies: Policies | None, name: str,
         session (Session): the session being written.
         policies (Policies | None): admission policies the write clears.
         name (str): variable name.
-        value (str | ShellArray): the value to store.
+        value (ShellValue): the value to store.
 
     Raises:
         ReadonlyVariableError: the name is readonly.
@@ -248,8 +433,28 @@ async def set_var(session: Session, policies: Policies | None, name: str,
     # refused a hidden name, so the two answer identically here.
     if env_is_readonly(session, name):
         raise ReadonlyVariableError(name)
-    rendered = value if isinstance(value, str) else " ".join(
-        array_values(value))
+    existing = session.vars.get(name)
+    # Attributes belong to the name, not to the value, so a plain
+    # assignment keeps them: `declare -i n; n=3` stays an integer. The
+    # old two-container store had to remember to evict the name from
+    # whichever container it was not landing in; one record cannot
+    # disagree with itself that way. The value-shaping attributes
+    # (`-i -l -u`) apply here, at the write, which is where bash applies
+    # them: `declare -l s; s=ABC` stores `abc`, so every reader agrees
+    # without per-read work. `-i` evaluates against the visible env,
+    # and a bad expression raises the arithmetic error as bash does.
+    # Coercion runs before the gate so a rule judges the value that
+    # will land: `declare -l role; role=ADMIN` stores `admin`, and a
+    # rule refusing `admin` must see that, not the raw text.
+    if existing is not None and existing.attrs:
+        value = coerce_value(value, existing.attrs,
+                             functools.partial(_integer_text, session))
+    if isinstance(value, str):
+        rendered = value
+    elif isinstance(value, dict):
+        rendered = " ".join(value[k] for k in sorted(value))
+    else:
+        rendered = " ".join(array_values(value))
     await pre_session_gate(
         policies,
         SessionContext(plane="env",
@@ -257,12 +462,6 @@ async def set_var(session: Session, policies: Policies | None, name: str,
                        key=name,
                        value=rendered,
                        session_id=session.session_id))
-    existing = session.vars.get(name)
-    # Attributes belong to the name, not to the value, so a plain
-    # assignment keeps them: `declare -i n; n=3` stays an integer. The
-    # old two-container store had to remember to evict the name from
-    # whichever container it was not landing in; one record cannot
-    # disagree with itself that way.
     stored = ShellVar(value) if existing is None else with_value(
         existing, value)
     # `set -a` marks every name assigned *while it is on*, which is why

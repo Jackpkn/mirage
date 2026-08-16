@@ -28,6 +28,12 @@ export const ARITH_TOKEN = new RegExp(
 
 export const ARITH_NAME = /^[A-Za-z_]\w*$/
 
+// An element reference token the tokenizer stitched: the name adjacent
+// to a bracket-matched subscript, whose interior is resolved by the
+// element callbacks rather than the tokenizer (an associative key can
+// hold characters no arithmetic token may).
+export const ARITH_ELEM = /^([A-Za-z_]\w*)\[([\s\S]*)\]$/
+
 export const ARITH_ASSIGN_OPS = new Set([
   '=',
   '+=',

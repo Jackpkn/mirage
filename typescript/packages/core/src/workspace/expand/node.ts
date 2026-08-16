@@ -17,7 +17,7 @@ import type { CallStack } from '../../shell/call_stack.ts'
 import { NodeType as NT } from '../../shell/types.ts'
 import type { ByteSource, IOResult } from '../../io/types.ts'
 import type { Session } from '../session/session.ts'
-import { visibleEnv } from '../session/state.ts'
+import { sessionElements, visibleEnv } from '../session/state.ts'
 import { markEscapedGlobs, markGlobs, unmarkGlobs } from '../../utils/glob_walk.ts'
 import { expandTilde } from '../../utils/path.ts'
 import { homeDir } from '../session/shell_dirs.ts'
@@ -27,7 +27,7 @@ import { ArithError } from '../../shell/errors.ts'
 import { decodeAnsiC } from '../../shell/escapes.ts'
 import { ARITH_DELIMITERS, ARITH_OPERATORS } from './constants.ts'
 import { expandBraces, expansionWrite, lookupVar } from './variable.ts'
-import type { TSNodeLike } from '../../shell/types.ts'
+import type { ArithResult, TSNodeLike } from '../../shell/types.ts'
 
 export type ExecuteFn = (
   command: string,
@@ -187,6 +187,8 @@ export async function expandArith(
       child.type === NT.POSTFIX_EXPRESSION
     ) {
       parts.push(await expandArith(child, session, executeFn, callStack, view))
+    } else if (child.type === 'subscript') {
+      parts.push(await arithSubscript(child, session, executeFn, callStack, view))
     } else if (ARITH_OPERATORS.has(child.type)) {
       parts.push(child.text)
     } else if (child.type === NT.NUMBER) {
@@ -204,6 +206,54 @@ export async function expandArith(
     }
   }
   return parts.join(' ')
+}
+
+/**
+ * Reconstruct one element reference for the arithmetic tokenizer.
+ *
+ * The subscript's `$`-expansions substitute here, since bash expands
+ * the whole expression text before evaluating it, while a literal
+ * interior rides verbatim: for an associative array the text *is* the
+ * key (`m[k]` reads the key `k` even when a variable `k` exists), and
+ * for an indexed one the evaluator's resolver still gets the
+ * arithmetic spelling.
+ */
+async function arithSubscript(
+  subNode: TSNodeLike,
+  session: Session,
+  executeFn: ExecuteFn,
+  callStack: CallStack | null,
+  view?: SessionView,
+): Promise<string> {
+  let name = ''
+  const inner: TSNodeLike[] = []
+  for (const sc of subNode.namedChildren) {
+    if (sc.type === NT.VARIABLE_NAME && name === '') {
+      name = sc.text
+    } else {
+      inner.push(sc)
+    }
+  }
+  const raw = subNode.text.slice(name.length + 1, -1)
+  if (!/[$'"`]/.test(raw)) return `${name}[${raw}]`
+  const parts: string[] = []
+  for (const sc of inner) {
+    if (
+      sc.type === NT.SIMPLE_EXPANSION ||
+      sc.type === NT.EXPANSION ||
+      sc.type === NT.COMMAND_SUBSTITUTION ||
+      sc.type === NT.STRING ||
+      sc.type === NT.RAW_STRING ||
+      sc.type === NT.ANSI_C_STRING ||
+      sc.type === NT.TRANSLATED_STRING ||
+      sc.type === NT.CONCATENATION
+    ) {
+      parts.push(await expandNode(sc, session, executeFn, callStack, view))
+    } else {
+      parts.push(sc.text)
+    }
+  }
+  return `${name}[${parts.join('')}]`
 }
 
 // Expand a tree-sitter node to the string it stands for.
@@ -284,19 +334,19 @@ export async function expandNodeMarked(
       if (sub.length === 1 && only?.type === NT.SUBSHELL) {
         const parenExpr = await substituteDollarRefs(only, session, executeFn, callStack, view)
         const expr = parenExpr.slice(1, -1)
-        let arith: { value: bigint; updates: Record<string, string> }
+        let arith: ArithResult
         try {
           // Reads resolve against the visible env, so a hidden name
           // counts as unset; the write-back below lands on the raw env
           // (policy-ungated until expansion goes async), with the
           // hidden gate applied inside expansionWrite.
-          arith = evaluateArith(expr, visibleEnv(session))
+          arith = evaluateArith(expr, visibleEnv(session), 0, sessionElements(session))
         } catch (err) {
           if (!(err instanceof ArithError)) throw err
           return prefix + rawSub
         }
-        for (const [name, updated] of Object.entries(arith.updates)) {
-          await expansionWrite(session, view, name, updated)
+        for (const write of arith.writes) {
+          await expansionWrite(session, view, write.name, write.key, write.value)
         }
         return prefix + arith.value.toString()
       }
@@ -320,18 +370,17 @@ export async function expandNodeMarked(
   if (ntype === NT.ARITHMETIC_EXPANSION) {
     const prefix = foldedWhitespace(tsNode)
     const expr = await expandArith(tsNode, session, executeFn, callStack, view)
-    let value: bigint
-    let updates: Record<string, string>
+    let result: ArithResult
     try {
-      ;({ value, updates } = evaluateArith(expr, visibleEnv(session)))
+      result = evaluateArith(expr, visibleEnv(session), 0, sessionElements(session))
     } catch (err) {
       if (err instanceof ArithError) return tsNode.text
       throw err
     }
-    for (const [name, updated] of Object.entries(updates)) {
-      await expansionWrite(session, view, name, updated)
+    for (const write of result.writes) {
+      await expansionWrite(session, view, write.name, write.key, write.value)
     }
-    return prefix + value.toString()
+    return prefix + result.value.toString()
   }
 
   if (ntype === NT.CONCATENATION) {

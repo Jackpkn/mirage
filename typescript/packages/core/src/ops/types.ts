@@ -12,7 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import type { ShellArray } from '../shell/array.ts'
+import type { ShellValue } from '../shell/variable.ts'
 import type { VarAttr } from '../shell/variable.ts'
 import type { FileStat } from '../types.ts'
 
@@ -91,7 +91,7 @@ export interface SessionView {
   // Writers with richer mechanics (subscripts, appends, holes) compute
   // the resulting value on a copy and hand it here, so a denial never
   // leaves a half-applied write.
-  set(name: string, value: string | ShellArray): Promise<void>
+  set(name: string, value: ShellValue): Promise<void>
   // Drop one variable through the session plane; a missing name is quiet.
   unset(name: string): Promise<void>
   // Turn one attribute on or off through the session plane, or with a

@@ -20,11 +20,10 @@ from mirage.io import IOResult
 from mirage.io.types import ByteSource
 from mirage.ops.types import SessionView
 from mirage.policy import PolicyDenied
-from mirage.shell.array import ShellArray, array_extent, array_with
 from mirage.shell.bytes import byte_char, encode_text
-from mirage.workspace.expand.variable import _array_index
-from mirage.workspace.session import Session, ensure_var_visible, visible_env
-from mirage.workspace.session.state import seed_var
+from mirage.shell.errors import ArithError
+from mirage.workspace.session import Session
+from mirage.workspace.session.elements import assign_element
 from mirage.workspace.types import ExecutionNode
 
 # A subscript must be non-empty: bash rejects `a[]` as an invalid
@@ -654,15 +653,19 @@ async def _assign_printf_target(session: Session, view: SessionView | None,
                                 value: str) -> str:
     """Assign ``value`` to a ``printf -v`` target (scalar or ``name[idx]``).
 
-    A bare name assigns element 0 when the name already holds an array,
-    leaving its other elements alone, as bash does. Nothing is mutated
-    unless the whole assignment succeeds: a readonly name or an
-    out-of-range subscript leaves the variable exactly as it was.
+    A delegation to the one element writer: a bare name assigns element
+    0 when the name already holds an array (indexed or associative),
+    nothing mutates unless the whole assignment succeeds, and the
+    landing write goes through the door as the whole variable, so a
+    ``pre_session`` rule refusing the name sees `printf -v 'AWS_KEY[0]'`
+    as a write to AWS_KEY. The refusal is raised, not collapsed into a
+    status, so the rule's own words reach the user as they do from
+    ``export``.
 
     Args:
         session (Session): shell session whose variables are written.
         view (SessionView | None): the session plane's door, which the
-            scalar write clears; None outside a workspace.
+            write clears; None outside a workspace.
         name (str): the target's base variable name.
         subscript (str | None): the ``[...]`` text, or None for a scalar.
         value (str): the formatted text to store.
@@ -674,44 +677,7 @@ async def _assign_printf_target(session: Session, view: SessionView | None,
         PolicyDenied: a pre_session rule refused the write; the caller
             renders the rule's own message.
     """
-    try:
-        # The hidden half of the session door, in this builtin's
-        # status-string voice: a hidden name is not printf's to write,
-        # and hiding never explains itself.
-        ensure_var_visible(session, name)
-    except PolicyDenied:
-        return "denied"
-    if name in session.readonly_vars:
-        return "readonly"
-    arr = session.arrays.get(name)
-    if subscript is None:
-        # A bare name over an array is element 0, as bash has it.
-        stored: str | ShellArray = (value if arr is None else array_with(
-            arr, 0, value))
-    else:
-        if arr is None:
-            scalar = session.env.get(name)
-            # An existing scalar becomes element 0, even when empty:
-            # bash resolves `x[-1]` against the length-1 array that
-            # produces.
-            arr = [] if scalar is None else [scalar]
-        idx = _array_index(subscript, visible_env(session))
-        if idx < 0:
-            idx += array_extent(arr)
-        if idx < 0:
-            return "subscript"
-        stored = array_with(arr, idx, value)
-    # The gated half. The door speaks in whole variables, so an element
-    # write states itself as the array it produces rather than taking a
-    # direct path around the gate: `printf -v 'AWS_KEY[0]'` is a write
-    # to AWS_KEY, and a pre_session rule refusing that name has to see
-    # it. The refusal is raised, not collapsed into a status, so the
-    # rule's own words reach the user as they do from `export`.
-    if view is not None:
-        await view.set(name, stored)
-        return "ok"
-    seed_var(session, name, stored)
-    return "ok"
+    return await assign_element(session, view, name, subscript, value)
 
 
 async def handle_printf(
@@ -773,6 +739,14 @@ async def handle_printf(
                                                  subscript, output)
         except PolicyDenied as exc:
             err_bytes += f"bash: {exc.strerror}\n".encode()
+            return None, IOResult(
+                exit_code=1, stderr=err_bytes), ExecutionNode(command="printf",
+                                                              exit_code=1,
+                                                              stderr=err_bytes)
+        except ArithError as exc:
+            # The target carries `-i` and the formatted text does not
+            # evaluate; bash voices the evaluator after the text.
+            err_bytes += f"bash: printf: {exc}\n".encode()
             return None, IOResult(
                 exit_code=1, stderr=err_bytes), ExecutionNode(command="printf",
                                                               exit_code=1,

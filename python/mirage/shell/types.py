@@ -12,6 +12,7 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any, TypeAlias
@@ -19,6 +20,63 @@ from typing import Any, TypeAlias
 import tree_sitter
 
 FunctionBody: TypeAlias = list[tree_sitter.Node]
+
+
+@dataclass(frozen=True, slots=True)
+class ElementOps:
+    """Array-element callbacks the arithmetic evaluator resolves through.
+
+    The evaluator owns no session, so a caller that wants ``a[i]`` and
+    ``m[key]`` to mean anything injects these two facts. The split is
+    what keeps subscript semantics out of the evaluator: whether the
+    subscript text is an arithmetic expression (indexed) or a literal
+    key (associative) is the variable's to answer, and only the session
+    knows the variable.
+
+    Args:
+        resolve (Callable[[str, str, Mapping[str, str]], str]): canonical
+            key for one reference: the evaluated index for an indexed
+            name, the literal (quote-stripped) text for an associative
+            one. The mapping is the evaluator's current view, pending
+            assignments included, so ``i=2, a[i]`` reads the new ``i``.
+        read (Callable[[str, str], str | None]): the element's stored
+            text, None when the element is unset.
+    """
+    resolve: Callable[[str, str, Mapping[str, str]], str]
+    read: Callable[[str, str], str | None]
+
+
+@dataclass(frozen=True, slots=True)
+class ArithWrite:
+    """One assignment an arithmetic evaluation produced.
+
+    Args:
+        name (str): the variable's name.
+        key (str | None): the canonical subscript ``ElementOps.resolve``
+            gave, or None for a bare name (which lands as element 0 of
+            an array, or the scalar itself).
+        value (str): the stored decimal text.
+    """
+    name: str
+    key: str | None
+    value: str
+
+
+@dataclass(frozen=True, slots=True)
+class ArithResult:
+    """What one arithmetic evaluation produced.
+
+    Args:
+        value (int): the expression's value.
+        writes (tuple[ArithWrite, ...]): the assignments made, one per
+            target, in the order of each target's last write, for the
+            caller to land through the session door. Bare and
+            subscripted targets share the one sequence, because a bare
+            name aliases element 0 and ``((a[0]=1, a=2))`` has to
+            leave 2.
+    """
+    value: int
+    writes: tuple[ArithWrite, ...] = ()
 
 
 class NodeType(StrEnum):
