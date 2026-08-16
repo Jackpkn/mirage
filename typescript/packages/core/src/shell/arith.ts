@@ -20,7 +20,7 @@ import {
   ARITH_TOKEN,
 } from './constants.ts'
 import { ArithError } from './errors.ts'
-import type { ArithResult, ElementOps, ElementWrite } from './types.ts'
+import type { ArithResult, ArithWrite, ElementOps } from './types.ts'
 
 type ArithTarget = { kind: 'var'; name: string } | { kind: 'elem'; name: string; sub: string }
 
@@ -352,13 +352,17 @@ class ArithParser {
 
 // Evaluates the ArithNode tree against an env, recording assignments.
 // Reads resolve through `updates` first, then `env`; every write lands in
-// `updates` so the caller decides what to apply to the session (bash
-// arithmetic assignments are real assignments).
+// `updates` (or `elemUpdates` for an element lvalue) so the caller
+// decides what to apply to the session (bash arithmetic assignments are
+// real assignments). `writes` keeps the one ordered record across both
+// kinds, keyed by target and moved to the end on each write, so the
+// caller lands them in the order the expression made them.
 class ArithEvaluator {
   constructor(
     private readonly env: Readonly<Record<string, string>>,
     private readonly updates: Record<string, string>,
-    private readonly elemUpdates: Map<string, ElementWrite>,
+    private readonly elemUpdates: Map<string, string>,
+    private readonly writes: Map<string, ArithWrite>,
     private readonly depth: number,
     private readonly elements: ElementOps | null,
   ) {}
@@ -382,7 +386,12 @@ class ArithEvaluator {
   }
 
   private lookup(name: string): bigint {
-    return this.coerce(this.updates[name] ?? this.env[name] ?? '')
+    const pending = this.updates[name] ?? this.env[name]
+    if (pending !== undefined) return this.coerce(pending)
+    // A bare array name reads as element 0 (`a=(4 5)` then `$((a))` is
+    // 4); the env holds scalars only, so the element resolver answers
+    // for the arrays.
+    return this.coerce(this.elements === null ? null : this.elements.read(name, '0'))
   }
 
   private elemKey(name: string, sub: string): string {
@@ -396,21 +405,26 @@ class ArithEvaluator {
     if (target.kind === 'var') return this.lookup(target.name)
     const key = this.elemKey(target.name, target.sub)
     const pending = this.elemUpdates.get(`${target.name} ${key}`)
-    if (pending !== undefined) return this.coerce(pending.value)
+    if (pending !== undefined) return this.coerce(pending)
     return this.coerce(this.elements === null ? null : this.elements.read(target.name, key))
   }
 
   private writeTarget(target: ArithTarget, value: bigint): void {
+    const text = value.toString()
     if (target.kind === 'var') {
-      this.updates[target.name] = value.toString()
+      this.updates[target.name] = text
+      this.record(target.name, null, text)
       return
     }
     const key = this.elemKey(target.name, target.sub)
-    this.elemUpdates.set(`${target.name} ${key}`, {
-      name: target.name,
-      key,
-      value: value.toString(),
-    })
+    this.elemUpdates.set(`${target.name} ${key}`, text)
+    this.record(target.name, key, text)
+  }
+
+  private record(name: string, key: string | null, value: string): void {
+    const slot = key === null ? name : `${name} ${key}`
+    this.writes.delete(slot)
+    this.writes.set(slot, { name, key, value })
   }
 
   run(node: ArithNode): bigint {
@@ -533,10 +547,11 @@ export function evaluateArith(
   elements: ElementOps | null = null,
 ): ArithResult {
   const tokens = tokenize(expr)
-  if (tokens.length === 0) return { value: 0n, updates: {}, elementUpdates: [] }
+  if (tokens.length === 0) return { value: 0n, writes: [] }
   const node = new ArithParser(tokens).parse()
   const updates: Record<string, string> = {}
-  const elemUpdates = new Map<string, ElementWrite>()
-  const value = new ArithEvaluator(env, updates, elemUpdates, depth, elements).run(node)
-  return { value, updates, elementUpdates: [...elemUpdates.values()] }
+  const elemUpdates = new Map<string, string>()
+  const writes = new Map<string, ArithWrite>()
+  const value = new ArithEvaluator(env, updates, elemUpdates, writes, depth, elements).run(node)
+  return { value, writes: [...writes.values()] }
 }

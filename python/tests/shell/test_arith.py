@@ -2,6 +2,7 @@ import pytest
 
 from mirage.shell.arith import evaluate_arith
 from mirage.shell.errors import ArithError
+from mirage.shell.types import ArithResult, ElementOps
 
 
 def test_basic_precedence():
@@ -24,41 +25,37 @@ def test_literals():
         evaluate_arith("08", {})
 
 
+def _writes(result: ArithResult) -> list[tuple[str, str | None, str]]:
+    return [(w.name, w.key, w.value) for w in result.writes]
+
+
 def test_assignment_and_updates():
     result = evaluate_arith("y = 3, y + 2", {})
-    value, updates = result.value, result.updates
-    assert value == 5
-    assert updates == {"y": "3"}
+    assert result.value == 5
+    assert _writes(result) == [("y", None, "3")]
     result = evaluate_arith("v += 9", {"v": "1"})
-    value, updates = result.value, result.updates
-    assert (value, updates) == (10, {"v": "10"})
+    assert (result.value, _writes(result)) == (10, [("v", None, "10")])
 
 
 def test_increment_decrement():
     result = evaluate_arith("i++", {})
-    value, updates = result.value, result.updates
-    assert (value, updates) == (0, {"i": "1"})
+    assert (result.value, _writes(result)) == (0, [("i", None, "1")])
     result = evaluate_arith("++i", {"i": "1"})
-    value, updates = result.value, result.updates
-    assert (value, updates) == (2, {"i": "2"})
+    assert (result.value, _writes(result)) == (2, [("i", None, "2")])
     result = evaluate_arith("i--", {"i": "5"})
-    value, updates = result.value, result.updates
-    assert (value, updates) == (5, {"i": "4"})
+    assert (result.value, _writes(result)) == (5, [("i", None, "4")])
 
 
 def test_short_circuit_skips_side_effects():
     result = evaluate_arith("0 && (q = 7)", {})
-    value, updates = result.value, result.updates
-    assert (value, updates) == (0, {})
+    assert (result.value, result.writes) == (0, ())
     result = evaluate_arith("1 || (q = 7)", {})
-    value, updates = result.value, result.updates
-    assert (value, updates) == (1, {})
+    assert (result.value, result.writes) == (1, ())
 
 
 def test_ternary_evaluates_taken_arm_only():
     result = evaluate_arith("1 ? (w = 4) : (w = 9)", {})
-    value, updates = result.value, result.updates
-    assert (value, updates) == (4, {"w": "4"})
+    assert (result.value, _writes(result)) == (4, [("w", None, "4")])
     assert evaluate_arith("5 > 3 ? 10 : 20", {}).value == 10
 
 
@@ -103,7 +100,7 @@ def test_errors():
 
 def test_empty_expression_is_zero():
     result = evaluate_arith("", {})
-    assert (result.value, result.updates) == (0, {})
+    assert (result.value, result.writes) == (0, ())
 
 
 def test_base_literals():
@@ -135,7 +132,6 @@ def _fake_elements():
     def read(name, key):
         return store.get((name, key))
 
-    from mirage.shell.types import ElementOps
     ops = ElementOps(resolve=resolve, read=read)
     cell.append(ops)
     return ops
@@ -147,15 +143,27 @@ def test_element_reads_and_writes():
     assert result.value == 27
     result = evaluate_arith("m[k] = 5, m[k] + 1", {}, elements=ops)
     assert result.value == 6
-    assert [(w.name, w.key, w.value) for w in result.element_updates] \
-        == [("m", "k", "5")]
+    assert _writes(result) == [("m", "k", "5")]
+
+
+def test_writes_keep_evaluation_order_across_kinds():
+    # A bare name aliases element 0, so `a[0]=1, a=2` must land a=2
+    # last and `a=2, a[0]=1` must land a[0]=1 last; a target written
+    # twice is recorded once, at its last write.
+    ops = _fake_elements()
+    result = evaluate_arith("arr[0] = 1, arr = 2", {}, elements=ops)
+    assert _writes(result) == [("arr", "0", "1"), ("arr", None, "2")]
+    result = evaluate_arith("arr = 2, arr[0] = 1", {}, elements=ops)
+    assert _writes(result) == [("arr", None, "2"), ("arr", "0", "1")]
+    result = evaluate_arith("arr = 1, arr[0] = 2, arr = 3", {}, elements=ops)
+    assert _writes(result) == [("arr", "0", "2"), ("arr", None, "3")]
 
 
 def test_element_incr_decr_and_quoted_key():
     ops = _fake_elements()
     result = evaluate_arith("m[a]++", {}, elements=ops)
     assert result.value == 7
-    assert result.element_updates[0].value == "8"
+    assert result.writes[0].value == "8"
     result = evaluate_arith('m["a"] - 1', {}, elements=ops)
     assert result.value == 6
 

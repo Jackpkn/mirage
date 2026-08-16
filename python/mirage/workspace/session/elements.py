@@ -13,130 +13,20 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import re
-from collections.abc import Mapping
 
 from mirage.ops.types import SessionView
 from mirage.policy import PolicyDenied
-from mirage.shell.arith import evaluate_arith
 from mirage.shell.array import (array_count, array_extent, array_get,
                                 array_has, array_with)
-from mirage.shell.errors import ArithError
-from mirage.shell.types import ElementOps
 from mirage.shell.variable import ShellValue
 from mirage.workspace.session.session import Session
-from mirage.workspace.session.state import (ensure_var_visible, env_get,
-                                            seed_var, visible_arrays,
-                                            visible_assocs, visible_env)
+from mirage.workspace.session.state import (element_index, ensure_var_visible,
+                                            env_get, seed_var,
+                                            session_elements, strip_key_quotes,
+                                            visible_arrays, visible_assocs,
+                                            visible_env)
 
 _ELEMENT_REF = re.compile(r"([A-Za-z_]\w*)(?:\[(.+)\])?\Z", re.DOTALL)
-
-
-def strip_key_quotes(text: str) -> str:
-    """Remove one surrounding quote pair from an associative subscript.
-
-    An arithmetic reference carries its subscript verbatim, so
-    ``m["x"]`` arrives with the quotes bash would have removed; one
-    layer comes off and anything else is the key itself.
-
-    Args:
-        text (str): the raw subscript text.
-    """
-    if len(text) >= 2 and text[0] == text[-1] and text[0] in "\"'":
-        return text[1:-1]
-    return text
-
-
-def element_index(subscript: str,
-                  env: Mapping[str, str],
-                  elements: ElementOps | None = None) -> int:
-    """Resolve an indexed subscript in arithmetic context.
-
-    bash evaluates indexed subscripts as arithmetic (``a[i+1]``); an
-    unresolvable expression indexes element 0, mirroring bash's
-    unset-name-is-zero arithmetic rule.
-
-    Args:
-        subscript (str): the raw subscript text.
-        env (Mapping[str, str]): environment for name resolution.
-        elements (ElementOps | None): element callbacks, so a nested
-            reference (``a[b[0]]``) resolves too.
-    """
-    try:
-        return int(subscript.strip())
-    except ValueError:
-        pass
-    try:
-        return evaluate_arith(subscript, env, elements=elements).value
-    except ArithError:
-        return 0
-
-
-class _SessionElements:
-    """The ``ElementOps`` implementation bound to one session.
-
-    A class rather than closures because the resolver recurses: an
-    indexed subscript is arithmetic and may itself hold an element
-    reference, so ``resolve`` hands the evaluator the same pair of
-    callbacks it is one of.
-    """
-
-    __slots__ = ("_session", )
-
-    def __init__(self, session: Session) -> None:
-        self._session = session
-
-    def resolve(self, name: str, subscript: str, env: Mapping[str,
-                                                              str]) -> str:
-        """Canonical key for one reference.
-
-        Args:
-            name (str): the array variable's name.
-            subscript (str): the raw subscript text.
-            env (Mapping[str, str]): the evaluator's current view,
-                pending assignments included.
-        """
-        if name in visible_assocs(self._session):
-            return strip_key_quotes(subscript)
-        idx = element_index(subscript, env, session_elements(self._session))
-        if idx < 0:
-            arr = visible_arrays(self._session).get(name)
-            if arr is not None:
-                idx += array_extent(arr)
-            elif env_get(self._session, name) is not None:
-                idx += 1
-            if idx < 0:
-                raise ArithError(f"{name}[{subscript}]: bad array subscript")
-        return str(idx)
-
-    def read(self, name: str, key: str) -> str | None:
-        """The element's stored text, None when unset.
-
-        Args:
-            name (str): the array variable's name.
-            key (str): the canonical key ``resolve`` produced.
-        """
-        session = self._session
-        amap = visible_assocs(session).get(name)
-        if amap is not None:
-            return amap.get(key)
-        arr = visible_arrays(session).get(name)
-        idx = int(key)
-        if arr is None:
-            scalar = env_get(session, name)
-            if scalar is None:
-                return None
-            return scalar if idx == 0 else None
-        return array_get(arr, idx) if array_has(arr, idx) else None
-
-
-def session_elements(session: Session) -> ElementOps:
-    """Element callbacks bound to one session, for ``evaluate_arith``.
-
-    Args:
-        session (Session): the session references resolve against.
-    """
-    bound = _SessionElements(session)
-    return ElementOps(resolve=bound.resolve, read=bound.read)
 
 
 def element_is_set(session: Session, ref: str) -> bool:
@@ -171,7 +61,10 @@ def element_is_set(session: Session, ref: str) -> bool:
             return array_count(arr) > 0
         return env_get(session, name) is not None
     if amap is not None:
-        return sub in amap
+        # The subscript arrives as the operand spelled it, so
+        # `test -v 'm["x"]'` asks after key `x`, as the resolver reads
+        # it in arithmetic and as bash removes the quotes.
+        return strip_key_quotes(sub) in amap
     scalar = env_get(session, name)
     held: list[str | None]
     if arr is not None:

@@ -12,9 +12,8 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { seedVar } from '../../../session/state.ts'
+import { seedVar, sessionElements } from '../../../session/state.ts'
 import { evaluateArith } from '../../../../shell/arith.ts'
-import { sessionElements } from '../../../session/elements.ts'
 import { ArithError } from '../../../../shell/errors.ts'
 import { makeArray } from '../../../../shell/array.ts'
 import { fnmatch } from '../../../../utils/fnmatch.ts'

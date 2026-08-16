@@ -849,6 +849,142 @@
         "stdout": "qccf\nrc=0\nrc=1\n",
         "stderr": ""
       }
+    },
+    {
+      "id": "param_default_lands_on_named_element",
+      "seq": 930525,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "declare -A qcdm; echo \"${qcdm[k]:=v}\"; declare -p qcdm; qcda=(1 2); echo \"${qcda[3]:=w}\"; declare -p qcda",
+      "expect": {
+        "exit": 0,
+        "stdout": "v\ndeclare -A qcdm=([k]=\"v\" )\nw\ndeclare -a qcda=([0]=\"1\" [1]=\"2\" [3]=\"w\")\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "arith_writes_land_in_evaluation_order",
+      "seq": 930526,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "qcea=(0); ((qcea[0]=1, qcea=2)); declare -p qcea; qceb=(0); ((qceb=2, qceb[0]=1)); declare -p qceb; qcec=(11 2); ((qcec<10)) && echo lt || echo ge",
+      "expect": {
+        "exit": 0,
+        "stdout": "declare -a qcea=([0]=\"2\")\ndeclare -a qceb=([0]=\"1\")\nge\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "integer_attr_resolves_elements",
+      "seq": 930527,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "qcfa=(1 2); declare -A qcfm=([x]=4); declare -i qcfn; qcfn=\"qcfa[1]+1\"; echo $qcfn; qcfn=\"qcfm[x]+1\"; echo $qcfn",
+      "expect": {
+        "exit": 0,
+        "stdout": "3\n5\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "test_v_unquotes_assoc_key",
+      "seq": 930528,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "declare -A qcgm=([x]=1); test -v 'qcgm[\"x\"]' && echo yes || echo no; [[ -v \"qcgm['x']\" ]] && echo yes || echo no",
+      "expect": {
+        "exit": 0,
+        "stdout": "yes\nyes\n",
+        "stderr": ""
+      }
     }
   ]
 }

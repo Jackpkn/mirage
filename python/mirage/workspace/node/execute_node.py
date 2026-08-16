@@ -62,9 +62,9 @@ from mirage.workspace.node.program import execute_program
 from mirage.workspace.node.test_expr import (expand_double_bracket,
                                              expand_test_expr)
 from mirage.workspace.session import Session
-from mirage.workspace.session.elements import (assign_element, element_index,
-                                               session_elements)
-from mirage.workspace.session.state import (ensure_var_visible, seed_var,
+from mirage.workspace.session.elements import assign_element
+from mirage.workspace.session.state import (element_index, ensure_var_visible,
+                                            seed_var, session_elements,
                                             session_view, set_attr,
                                             visible_env)
 from mirage.workspace.types import ExecutionNode
@@ -148,20 +148,14 @@ async def _eval_cfor_expr(
                                 elements=session_elements(session))
     except ArithError as exc:
         raise ArithError(f"{text}: {exc}") from exc
-    updates = result.updates
-    element_names = [write.name for write in result.element_updates]
-    for name in [*updates, *element_names]:
-        ensure_var_visible(session, name)
-        if name in session.readonly_vars:
-            raise ReadonlyError(name)
+    for write in result.writes:
+        ensure_var_visible(session, write.name)
+        if write.name in session.readonly_vars:
+            raise ReadonlyError(write.name)
     # Through the door, so a pre_session rule governs an arithmetic
-    # assignment exactly as it governs `X=1`.
-    for name, updated in updates.items():
-        if view is None:
-            seed_var(session, name, updated)
-        else:
-            await view.set(name, updated)
-    for write in result.element_updates:
+    # assignment exactly as it governs `X=1`; in evaluation order, so
+    # a bare name and its element 0 land as the expression wrote them.
+    for write in result.writes:
         await assign_element(session, view, write.name, write.key, write.value)
     return int(result.value)
 
@@ -850,9 +844,8 @@ async def execute_node(
                                   stderr=err), ExecutionNode(command=text,
                                                              exit_code=1,
                                                              stderr=err)
-        updates = arith.updates
-        element_names = [write.name for write in arith.element_updates]
-        for name in [*updates, *element_names]:
+        for write in arith.writes:
+            name = write.name
             try:
                 ensure_var_visible(session, name)
             except PolicyDenied as exc:
@@ -868,9 +861,7 @@ async def execute_node(
                                                                  exit_code=1,
                                                                  stderr=err)
         try:
-            for name, updated in updates.items():
-                await view.set(name, updated)
-            for write in arith.element_updates:
+            for write in arith.writes:
                 await assign_element(session, view, write.name, write.key,
                                      write.value)
         except PolicyDenied as exc:

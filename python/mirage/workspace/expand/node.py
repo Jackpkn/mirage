@@ -31,11 +31,10 @@ from mirage.utils.glob_walk import mark_escaped_globs, mark_globs, unmark_globs
 from mirage.utils.path import expand_tilde
 from mirage.workspace.expand.constants import ARITH_DELIMITERS, ARITH_OPERATORS
 from mirage.workspace.expand.variable import (_lookup_var, expand_braces,
-                                              expansion_write,
-                                              expansion_write_element)
+                                              expansion_write)
 from mirage.workspace.session import Session, visible_env
-from mirage.workspace.session.elements import session_elements
 from mirage.workspace.session.shell_dirs import home_dir
+from mirage.workspace.session.state import session_elements
 
 
 def _folded_whitespace(node: tree_sitter.Node) -> str:
@@ -387,11 +386,9 @@ async def expand_node_marked(
                                     elements=session_elements(session))
         except ArithError:
             return get_text(ts_node)
-        for name, updated in result.updates.items():
-            await expansion_write(session, view, name, updated)
-        for write in result.element_updates:
-            await expansion_write_element(session, view, write.name, write.key,
-                                          write.value)
+        for write in result.writes:
+            await expansion_write(session, view, write.name, write.key,
+                                  write.value)
         return prefix + str(result.value)
 
     if ntype == NT.CONCATENATION:

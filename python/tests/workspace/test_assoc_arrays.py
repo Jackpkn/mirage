@@ -349,7 +349,76 @@ FUNC_JOB_CASES = [
     ("jobs_lp_combined", "sleep 5 & sleep 5 & jobs -lp", "1\n2\n", "", 0),
 ]
 
-ALL_CASES = CASES + ATTR_CASES + FUNC_JOB_CASES
+# The review round, pinned the same way: a parameter default lands on
+# the element the reference named, arithmetic writes land in
+# evaluation order across bare and subscripted targets (a bare name
+# aliases element 0), a bare array name reads as element 0 in
+# arithmetic, `-i` resolves element references at the write, and
+# `test -v` unquotes an associative subscript. `${a[-5]:=v}` diverges
+# by one line: GNU also warns `a: bad array subscript` for the read,
+# and expansion has no warning channel here.
+REVIEW_CASES = [
+    ('assoc_default_colon',
+     'declare -A m; echo "${m[k]:=v}"; declare -p m; echo "${m[k]:=w}"',
+     'v\ndeclare -A m=([k]="v" )\nv\n', '', 0),
+    ('assoc_default_eq', 'declare -A m; echo "${m[k]=v}"; declare -p m',
+     'v\ndeclare -A m=([k]="v" )\n', '', 0),
+    ('indexed_default_new_index', 'a=(1 2); echo "${a[3]:=v}"; declare -p a',
+     'v\ndeclare -a a=([0]="1" [1]="2" [3]="v")\n', '', 0),
+    ('indexed_default_neg_set', 'a=(1 2); echo "${a[-1]:=v}"; declare -p a',
+     '2\ndeclare -a a=([0]="1" [1]="2")\n', '', 0),
+    ('indexed_default_neg_out', 'a=(1 2); echo "${a[-5]:=v}"; echo after', '',
+     'bash: a[-5]: bad array subscript\n', 1),
+    ('indexed_default_splat',
+     'a=(); echo "${a[@]:=v}"; declare -p a; echo after', '',
+     'bash: a[@]: bad array subscript\n', 1),
+    ('indexed_default_unset', 'unset a; echo "${a[2]:=v}"; declare -p a',
+     'v\ndeclare -a a=([2]="v")\n', '', 0),
+    ('indexed_default_scalar', 'x=s; echo "${x[1]:=v}"; declare -p x',
+     'v\ndeclare -a x=([0]="s" [1]="v")\n', '', 0),
+    ('assoc_default_dollar_key',
+     'declare -A m; k=q; echo "${m[$k]:=v}"; declare -p m',
+     'v\ndeclare -A m=([q]="v" )\n', '', 0),
+    ('arith_order_elem_then_bare', 'a=(0); ((a[0]=1, a=2)); declare -p a',
+     'declare -a a=([0]="2")\n', '', 0),
+    ('arith_order_bare_then_elem', 'a=(0); ((a=2, a[0]=1)); declare -p a',
+     'declare -a a=([0]="1")\n', '', 0),
+    ('arith_bare_keeps_tail', 'a=(1 2 3); ((a=5)); declare -p a',
+     'declare -a a=([0]="5" [1]="2" [2]="3")\n', '', 0),
+    ('arith_expansion_bare_keeps_tail',
+     'a=(1 2 3); echo $((a=7)); declare -p a',
+     '7\ndeclare -a a=([0]="7" [1]="2" [2]="3")\n', '', 0),
+    ('arith_cfor_bare_keeps_tail',
+     'a=(1 2 3); for ((a=9; a<10; a++)); do :; done; declare -p a',
+     'declare -a a=([0]="10" [1]="2" [2]="3")\n', '', 0),
+    ('int_reads_indexed_element', 'a=(1 2); declare -i n; n="a[1]+1"; echo $n',
+     '3\n', '', 0),
+    ('int_reads_assoc_element',
+     'declare -A m=([x]=4); declare -i n; n="m[x]+1"; echo $n', '5\n', '', 0),
+    ('int_reads_quoted_assoc_element',
+     'declare -A m=([x]=4); declare -i n; n=\'m["x"]+1\'; echo $n', '5\n', '',
+     0),
+    ('int_missing_element_is_zero',
+     'a=(1 2); declare -i n; n="a[5]+1"; echo $n', '1\n', '', 0),
+    ('test_v_quoted_assoc_key',
+     'declare -A m=([x]=1); test -v \'m["x"]\' && echo yes || echo no',
+     'yes\n', '', 0),
+    ('cond_v_single_quoted_assoc_key',
+     'declare -A m=([x]=1); [[ -v "m[\'x\']" ]] && echo yes || echo no',
+     'yes\n', '', 0),
+    ('test_v_literal_quote_key',
+     'declare -A m=([\'"x"\']=1); test -v \'m["x"]\' && echo yes || echo no; '
+     'declare -p m', 'no\ndeclare -A m=(["\\"x\\""]="1" )\n', '', 0),
+    ('arith_bare_array_read',
+     'a=(4 5); echo $((a)); a=(11 2); ((a<10)) && echo lt || echo ge',
+     '4\nge\n', '', 0),
+    ('arith_bare_assoc_read', 'declare -A m=([0]=7 [x]=1); echo $((m+1))',
+     '8\n', '', 0),
+    ('int_from_array_name', 'abc=(3 4); declare -i n; n=abc; echo $n', '3\n',
+     '', 0),
+]
+
+ALL_CASES = CASES + ATTR_CASES + FUNC_JOB_CASES + REVIEW_CASES
 
 
 @pytest.mark.parametrize("case_id,cmd,out,err,code",

@@ -15,8 +15,9 @@
 import type { SessionView } from '../../ops/types.ts'
 import { PolicyDenied, preSessionGate, type Policies } from '../../policy/index.ts'
 import { evaluateArith } from '../../shell/arith.ts'
-import { arrayValues, type ShellArray } from '../../shell/array.ts'
+import { arrayExtent, arrayGet, arrayHas, arrayValues, type ShellArray } from '../../shell/array.ts'
 import { ArithError } from '../../shell/errors.ts'
+import type { ElementOps } from '../../shell/types.ts'
 import { varHidden } from '../../utils/hidden.ts'
 import { compareCodePoints } from '../../utils/sort.ts'
 import { ReadonlyVariableError } from './errors.ts'
@@ -195,22 +196,108 @@ export function visibleAssocs(session: Session): Record<string, Record<string, s
  * on a create into hidden path space.
  */
 /**
+ * Remove one surrounding quote pair from an associative subscript.
+ *
+ * An arithmetic reference carries its subscript verbatim, so `m["x"]`
+ * arrives with the quotes bash would have removed; one layer comes off
+ * and anything else is the key itself.
+ */
+export function stripKeyQuotes(text: string): string {
+  const first = text.charAt(0)
+  if (
+    text.length >= 2 &&
+    first === text.charAt(text.length - 1) &&
+    (first === '"' || first === "'")
+  ) {
+    return text.slice(1, -1)
+  }
+  return text
+}
+
+/**
+ * Resolve an indexed subscript in arithmetic context.
+ *
+ * bash evaluates indexed subscripts as arithmetic (`a[i+1]`); an
+ * unresolvable expression indexes element 0, mirroring bash's
+ * unset-name-is-zero arithmetic rule.
+ */
+export function elementIndex(
+  subscript: string,
+  env: Readonly<Record<string, string>>,
+  elements: ElementOps | null = null,
+): number {
+  const trimmed = subscript.trim()
+  if (/^-?\d+$/.test(trimmed)) return Number(trimmed)
+  try {
+    return Number(evaluateArith(subscript, env, 0, elements).value)
+  } catch (error) {
+    if (error instanceof ArithError) return 0
+    throw error
+  }
+}
+
+/**
+ * The `ElementOps` implementation bound to one session.
+ *
+ * A class rather than closures because the resolver recurses: an
+ * indexed subscript is arithmetic and may itself hold an element
+ * reference, so `resolve` hands the evaluator the same pair of
+ * callbacks it is one of. It lives beside the other reader projections
+ * because the session door needs it too: the `-i` coercion evaluates
+ * `n=a[1]+1` at the write, and a resolver that imported the door would
+ * close a cycle.
+ */
+class SessionElements implements ElementOps {
+  constructor(private readonly session: Session) {}
+
+  resolve(name: string, subscript: string, env: Readonly<Record<string, string>>): string {
+    if (visibleAssocs(this.session)[name] !== undefined) {
+      return stripKeyQuotes(subscript)
+    }
+    let idx = elementIndex(subscript, env, sessionElements(this.session))
+    if (idx < 0) {
+      const arr = visibleArrays(this.session)[name]
+      if (arr !== undefined) idx += arrayExtent(arr)
+      else if (envGet(this.session, name) !== null) idx += 1
+      if (idx < 0) throw new ArithError(`${name}[${subscript}]: bad array subscript`)
+    }
+    return String(idx)
+  }
+
+  read(name: string, key: string): string | null {
+    const amap = visibleAssocs(this.session)[name]
+    if (amap !== undefined) return amap[key] ?? null
+    const arr = visibleArrays(this.session)[name]
+    const idx = Number(key)
+    if (arr === undefined) {
+      const scalar = envGet(this.session, name)
+      if (scalar === null) return null
+      return idx === 0 ? scalar : null
+    }
+    return arrayHas(arr, idx) ? arrayGet(arr, idx) : null
+  }
+}
+
+/** Element callbacks bound to one session, for `evaluateArith`. */
+export function sessionElements(session: Session): ElementOps {
+  return new SessionElements(session)
+}
+
+/**
  * The `-i` coercion: evaluate the incoming text as arithmetic.
  *
- * Reads resolve against the visible env, so `n=x+1` sees `x`; an
- * unresolvable name is 0 (`n=abc` stores `0`), which is the arithmetic
- * rule, not a refusal. A malformed expression throws ArithError with the
- * offending text led, which is how every caller voices it (`bash: 1+:
- * syntax error: operand expected`), so it is spelled once here rather
- * than at each of the sites that catch it. Scalars only: an element
- * reference in the text (`n=a[1]+1`) is not resolved here, because the
- * element resolver lives above the door and importing it would close a
- * cycle; that spelling stays a syntax error, which bash also reports for
- * the unresolvable case.
+ * Reads resolve against the visible env, so `n=x+1` sees `x`, and
+ * element references resolve through the session's resolver, so
+ * `n=a[1]+1` and `n=m[k]+1` see the element; an unresolvable name is 0
+ * (`n=abc` stores `0`), which is the arithmetic rule, not a refusal. A
+ * malformed expression throws ArithError with the offending text led,
+ * which is how every caller voices it (`bash: 1+: syntax error: operand
+ * expected`), so it is spelled once here rather than at each of the
+ * sites that catch it.
  */
 function integerText(session: Session, text: string): string {
   try {
-    return evaluateArith(text, visibleEnv(session)).value.toString()
+    return evaluateArith(text, visibleEnv(session), 0, sessionElements(session)).value.toString()
   } catch (err) {
     if (err instanceof ArithError) throw new ArithError(`${text}: ${err.message}`)
     throw err
@@ -233,22 +320,6 @@ async function setVar(
   if (envIsReadonly(session, name)) {
     throw new ReadonlyVariableError(name)
   }
-  const rendered =
-    typeof value === 'string'
-      ? value
-      : Array.isArray(value)
-        ? arrayValues(value).join(' ')
-        : Object.keys(value)
-            .sort(compareCodePoints)
-            .map((k) => value[k])
-            .join(' ')
-  await preSessionGate(policies, {
-    plane: 'env',
-    verb: 'set',
-    key: name,
-    value: rendered,
-    sessionId: session.sessionId,
-  })
   // Attributes belong to the name, not to the value, so a plain
   // assignment keeps them: `declare -i n; n=3` stays an integer. The old
   // two-container store had to remember to evict the name from whichever
@@ -259,11 +330,29 @@ async function setVar(
   // which is where bash applies them: `declare -l s; s=ABC` stores `abc`,
   // so every reader agrees without per-read work. `-i` evaluates against
   // the visible env, and a bad expression throws the arithmetic error
-  // as bash does.
+  // as bash does. Coercion runs before the gate so a rule judges the
+  // value that will land: `declare -l role; role=ADMIN` stores `admin`,
+  // and a rule refusing `admin` must see that, not the raw text.
   const shaped =
     existing !== undefined && existing.attrs.size > 0
       ? coerceValue(value, existing.attrs, (text) => integerText(session, text))
       : value
+  const rendered =
+    typeof shaped === 'string'
+      ? shaped
+      : Array.isArray(shaped)
+        ? arrayValues(shaped).join(' ')
+        : Object.keys(shaped)
+            .sort(compareCodePoints)
+            .map((k) => shaped[k])
+            .join(' ')
+  await preSessionGate(policies, {
+    plane: 'env',
+    verb: 'set',
+    key: name,
+    value: rendered,
+    sessionId: session.sessionId,
+  })
   let stored = existing === undefined ? makeVar(shaped) : withValue(existing, shaped)
   // `set -a` marks every name assigned *while it is on*, which is why
   // it is read here at write time rather than applied to the session in

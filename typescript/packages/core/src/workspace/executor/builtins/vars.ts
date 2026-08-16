@@ -37,8 +37,8 @@ import { ReadonlyVariableError } from '../../session/errors.ts'
 import { ownRecord, sessionEntry, varsFromEnv } from '../../session/session.ts'
 import type { ShellValue, ShellVar } from '../../../shell/variable.ts'
 import { attrLetters, VarAttr } from '../../../shell/variable.ts'
-import { assignElement, elementIndex, sessionElements } from '../../session/elements.ts'
-import { setAttr } from '../../session/state.ts'
+import { assignElement } from '../../session/elements.ts'
+import { elementIndex, sessionElements, setAttr } from '../../session/state.ts'
 import type { Session } from '../../session/session.ts'
 import {
   envGet,

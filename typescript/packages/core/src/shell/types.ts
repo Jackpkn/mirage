@@ -31,23 +31,27 @@ export interface ElementOps {
   read(name: string, key: string): string | null
 }
 
-/** One array-element assignment an arithmetic evaluation produced. */
-export interface ElementWrite {
+/**
+ * One assignment an arithmetic evaluation produced. `key` is the
+ * canonical subscript `ElementOps.resolve` gave, or null for a bare
+ * name (which lands as element 0 of an array, or the scalar itself).
+ */
+export interface ArithWrite {
   readonly name: string
-  readonly key: string
+  readonly key: string | null
   readonly value: string
 }
 
 /**
- * What one arithmetic evaluation produced: the value, the scalar
- * assignments made (name to decimal text), and the element assignments
- * in evaluation order, both for the caller to land through the session
- * door.
+ * What one arithmetic evaluation produced: the value plus the
+ * assignments made, one per target, in the order of each target's last
+ * write, for the caller to land through the session door. Bare and
+ * subscripted targets share the one sequence, because a bare name
+ * aliases element 0 and `((a[0]=1, a=2))` has to leave 2.
  */
 export interface ArithResult {
   readonly value: bigint
-  readonly updates: Record<string, string>
-  readonly elementUpdates: readonly ElementWrite[]
+  readonly writes: readonly ArithWrite[]
 }
 
 export const NodeType = Object.freeze({

@@ -38,12 +38,12 @@ from mirage.workspace.executor.control import ReturnSignal
 from mirage.workspace.expand.variable import _array_index
 from mirage.workspace.mount.namespace import Namespace
 from mirage.workspace.session import Session
-from mirage.workspace.session.elements import (assign_element, element_index,
-                                               session_elements)
+from mirage.workspace.session.elements import assign_element
 from mirage.workspace.session.errors import ReadonlyVariableError
 from mirage.workspace.session.session import vars_from_env
-from mirage.workspace.session.state import (env_get, env_is_readonly,
-                                            env_snapshot, exported_names,
+from mirage.workspace.session.state import (element_index, env_get,
+                                            env_is_readonly, env_snapshot,
+                                            exported_names, session_elements,
                                             session_view, set_attr,
                                             visible_arrays, visible_assocs,
                                             visible_env)

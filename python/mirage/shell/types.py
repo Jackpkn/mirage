@@ -47,16 +47,18 @@ class ElementOps:
 
 
 @dataclass(frozen=True, slots=True)
-class ElementWrite:
-    """One array-element assignment an arithmetic evaluation produced.
+class ArithWrite:
+    """One assignment an arithmetic evaluation produced.
 
     Args:
-        name (str): the array variable's name.
-        key (str): the canonical subscript ``ElementOps.resolve`` gave.
+        name (str): the variable's name.
+        key (str | None): the canonical subscript ``ElementOps.resolve``
+            gave, or None for a bare name (which lands as element 0 of
+            an array, or the scalar itself).
         value (str): the stored decimal text.
     """
     name: str
-    key: str
+    key: str | None
     value: str
 
 
@@ -66,16 +68,15 @@ class ArithResult:
 
     Args:
         value (int): the expression's value.
-        updates (dict[str, str]): scalar assignments made, name to
-            decimal text, for the caller to land through the session
-            door.
-        element_updates (tuple[ElementWrite, ...]): element assignments
-            made, in evaluation order, for the caller to land the same
-            way.
+        writes (tuple[ArithWrite, ...]): the assignments made, one per
+            target, in the order of each target's last write, for the
+            caller to land through the session door. Bare and
+            subscripted targets share the one sequence, because a bare
+            name aliases element 0 and ``((a[0]=1, a=2))`` has to
+            leave 2.
     """
     value: int
-    updates: dict[str, str]
-    element_updates: tuple[ElementWrite, ...] = ()
+    writes: tuple[ArithWrite, ...] = ()
 
 
 class NodeType(StrEnum):

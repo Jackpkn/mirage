@@ -22,8 +22,7 @@ from mirage.ops.types import SessionView
 from mirage.policy import PolicyDenied
 from mirage.shell.arith import evaluate_arith
 from mirage.shell.array import (ShellArray, array_extent, array_get, array_has,
-                                array_indices, array_slice, array_values,
-                                array_with)
+                                array_indices, array_slice, array_values)
 from mirage.shell.call_stack import CallStack
 from mirage.shell.errors import ArithError, ExitSignal
 from mirage.shell.escapes import decode_ansi_c
@@ -34,10 +33,10 @@ from mirage.utils.fnmatch import fnmatch
 from mirage.utils.glob_walk import escape_glob
 from mirage.workspace.session import (Session, ensure_var_visible,
                                       visible_arrays, visible_env)
-from mirage.workspace.session.elements import assign_element, session_elements
+from mirage.workspace.session.elements import assign_element
 from mirage.workspace.session.errors import ReadonlyVariableError
 from mirage.workspace.session.shell_dirs import home_dir
-from mirage.workspace.session.state import seed_var, visible_assocs
+from mirage.workspace.session.state import session_elements, visible_assocs
 
 ExpandChild = Callable[[tree_sitter.Node], Awaitable[str]]
 
@@ -106,13 +105,13 @@ def guard_expansion_write(session: Session, *names: str) -> None:
 
 
 async def expansion_write(session: Session, view: SessionView | None,
-                          name: str, value: str) -> None:
+                          name: str, key: str | None, value: str) -> None:
     """One expansion-time write, through the session plane's door.
 
-    ``${X:=d}`` and ``$((X=5))`` are assignments the shell performs
-    while expanding a word rather than while running a command, and
-    they used to land on the raw session env. That made a
-    ``pre_session`` rule one ``${X:=d}`` away from irrelevant: a
+    ``${X:=d}``, ``${a[i]:=d}`` and ``$((X=5))`` are assignments the
+    shell performs while expanding a word rather than while running a
+    command, and they used to land on the raw session env. That made
+    a ``pre_session`` rule one ``${X:=d}`` away from irrelevant: a
     deployment refusing ``AWS_*`` still had ``${AWS_PROFILE:=prod}``
     write it. They go through the door now, so one rule covers every
     spelling.
@@ -121,40 +120,32 @@ async def expansion_write(session: Session, view: SessionView | None,
     directly, with the hidden half still applied: skipping that would
     let the write-back clobber a value the host's wiring reads.
 
-    A name already holding an array takes the write at element 0 and
-    keeps its other elements, which is bash: ``a=(1 2 3)`` then
-    ``$((a=5))`` leaves ``5 2 3``. Storing the value as a scalar
-    instead would discard every element after the first.
+    The element mechanics are ``assign_element``'s: a bare name over an
+    array takes the write at element 0 and keeps its other elements
+    (``a=(1 2 3)`` then ``$((a=5))`` leaves ``5 2 3``), an associative
+    one writes the literal key ``"0"``, and a subscripted target
+    arrives with its key already canonical.
 
     Args:
         session (Session): shell session the write lands on.
         view (SessionView | None): the session plane's gated door,
             None outside a workspace.
         name (str): the variable being written.
+        key (str | None): the canonical subscript, None for a bare
+            name.
         value (str): the value to store.
 
     Raises:
-        ExitSignal: the name is hidden, or a pre_session rule refused
-            the write; either way the line dies with status 1, the
-            shape ``${var:?}`` uses.
+        ExitSignal: the name is hidden, a pre_session rule refused the
+            write, the subscript is bad, or the name carries ``-i``
+            and the text does not evaluate; either way the line dies
+            with status 1, the shape ``${var:?}`` uses.
+        ReadonlyVariableError: the name is readonly, the same refusal
+            a plain assignment raises through the door.
     """
     guard_expansion_write(session, name)
-    held = session.arrays.get(name)
-    held_map = session.assocs.get(name)
-    stored: str | ShellArray | dict[str, str]
-    if held_map is not None:
-        # The associative twin of the element-0 rule: `$((m=5))` writes
-        # the literal key "0" and keeps every other key.
-        stored = {**held_map, "0": value}
-    elif held is not None:
-        stored = array_with(held, 0, value)
-    else:
-        stored = value
-    if view is None:
-        seed_var(session, name, stored)
-        return
     try:
-        await view.set(name, stored)
+        status = await assign_element(session, view, name, key, value)
     except PolicyDenied as exc:
         raise ExitSignal(1,
                          stderr=f"bash: {exc.strerror}\n".encode(),
@@ -163,38 +154,6 @@ async def expansion_write(session: Session, view: SessionView | None,
         # The name carries `-i` and the text does not evaluate. The
         # line dies as it does for `n=1+`, in the evaluator's voice.
         raise ExitSignal(1, stderr=f"bash: {exc}\n".encode(),
-                         contained_code=1) from exc
-
-
-async def expansion_write_element(session: Session, view: SessionView | None,
-                                  name: str, key: str, value: str) -> None:
-    """One expansion-time element write, through the same door.
-
-    The element sibling of ``expansion_write``, for the assignments an
-    arithmetic expansion makes to a subscripted lvalue
-    (``$((a[i]=5))``, ``$((m[k]++))``). The key arrives canonical from
-    the evaluator's resolver, so this only lands it.
-
-    Args:
-        session (Session): shell session the write lands on.
-        view (SessionView | None): the session plane's gated door,
-            None outside a workspace.
-        name (str): the array variable being written.
-        key (str): the canonical subscript.
-        value (str): the value to store.
-
-    Raises:
-        ExitSignal: the name is hidden, or a pre_session rule refused
-            the write.
-        ReadonlyVariableError: the name is readonly, the same refusal
-            the scalar write raises through the door.
-    """
-    guard_expansion_write(session, name)
-    try:
-        status = await assign_element(session, view, name, key, value)
-    except PolicyDenied as exc:
-        raise ExitSignal(1,
-                         stderr=f"bash: {exc.strerror}\n".encode(),
                          contained_code=1) from exc
     if status == "readonly":
         raise ReadonlyVariableError(name)
@@ -765,6 +724,11 @@ async def expand_braces(node: tree_sitter.Node,
 
     val = ""
     var_in_env = False
+    # The subscript as `:=` would write it: the key itself for an
+    # associative name, the resolved index for an indexed one, None
+    # for `[@]`/`[*]` and a negative index past the front, which bash
+    # refuses to assign through.
+    write_key: str | None = None
     amap = assocs.get(p.var_name) if p.var_name is not None else None
     if p.subscript is not None and p.var_name is not None and amap is not None:
         if p.subscript in ("@", "*"):
@@ -793,6 +757,7 @@ async def expand_braces(node: tree_sitter.Node,
             key = await _expand_subscript_key(p, expand_child)
             val = amap.get(key, "")
             var_in_env = key in amap
+            write_key = key
     elif p.subscript is not None and p.var_name is not None:
         arr = arrays.get(p.var_name)
         if arr is None:
@@ -825,6 +790,8 @@ async def expand_braces(node: tree_sitter.Node,
                 idx += array_extent(arr)
             val = array_get(arr, idx)
             var_in_env = array_has(arr, idx)
+            if idx >= 0:
+                write_key = str(idx)
     elif p.var_name:
         if call_stack:
             local_val = call_stack.get_local(p.var_name)
@@ -880,12 +847,25 @@ async def expand_braces(node: tree_sitter.Node,
         if not triggered:
             return val
         default = groups[0] if groups else ""
-        if p.var_name is not None:
+        if p.var_name is not None and p.subscript is not None:
+            # The default lands on the element the reference named,
+            # never on element 0: `${m[k]:=v}` writes key k and
+            # `${a[3]:=v}` writes index 3, as bash does. `[@]`, `[*]`
+            # and an index before the front are refused in bash's
+            # words.
+            if write_key is None:
+                raise ExitSignal(1,
+                                 stderr=(f"bash: {p.var_name}[{p.subscript}]"
+                                         ": bad array subscript\n").encode(),
+                                 contained_code=1)
+            await expansion_write(session, view, p.var_name, write_key,
+                                  default)
+        elif p.var_name is not None:
             if (call_stack is not None
                     and call_stack.get_local(p.var_name) is not None):
                 call_stack.set_local(p.var_name, default)
             else:
-                await expansion_write(session, view, p.var_name, default)
+                await expansion_write(session, view, p.var_name, None, default)
         return default
     if p.op == ":-":
         return val if val else (groups[0] if groups else "")

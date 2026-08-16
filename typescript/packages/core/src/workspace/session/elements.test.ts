@@ -14,16 +14,9 @@
 
 import { describe, expect, it } from 'vitest'
 
-import { ArithError } from '../../shell/errors.ts'
 import { VarAttr } from '../../shell/variable.ts'
 import { Session } from './session.ts'
-import {
-  assignElement,
-  elementIndex,
-  elementIsSet,
-  sessionElements,
-  stripKeyQuotes,
-} from './elements.ts'
+import { assignElement, elementIsSet } from './elements.ts'
 import { seedVar, setAttr } from './state.ts'
 
 function makeSession(): Session {
@@ -35,56 +28,6 @@ function makeSession(): Session {
   return session
 }
 
-describe('stripKeyQuotes', () => {
-  it('removes one surrounding pair only', () => {
-    expect(stripKeyQuotes('"x"')).toBe('x')
-    expect(stripKeyQuotes("'x'")).toBe('x')
-    expect(stripKeyQuotes('x')).toBe('x')
-    expect(stripKeyQuotes('"x')).toBe('"x')
-    expect(stripKeyQuotes('""')).toBe('')
-  })
-})
-
-describe('elementIndex', () => {
-  it('resolves ints, arithmetic, and errors to zero', () => {
-    expect(elementIndex('3', {})).toBe(3)
-    expect(elementIndex(' -2 ', {})).toBe(-2)
-    expect(elementIndex('i+1', { i: '1' })).toBe(2)
-    // An unresolvable expression indexes element 0, bash's
-    // unset-name-is-zero arithmetic rule.
-    expect(elementIndex('$bad', {})).toBe(0)
-  })
-})
-
-describe('sessionElements', () => {
-  it('resolves associative subscripts literally', () => {
-    const ops = sessionElements(makeSession())
-    expect(ops.resolve('m', 'a', {})).toBe('a')
-    expect(ops.resolve('m', '"a"', {})).toBe('a')
-    // A key spelled like arithmetic stays a key.
-    expect(ops.resolve('m', '1+1', {})).toBe('1+1')
-  })
-
-  it('resolves indexed subscripts as arithmetic with negative wrap', () => {
-    const ops = sessionElements(makeSession())
-    expect(ops.resolve('arr', '1+1', {})).toBe('2')
-    expect(ops.resolve('arr', 'i', { i: '2' })).toBe('2')
-    expect(ops.resolve('arr', '-1', {})).toBe('2')
-    expect(() => ops.resolve('arr', '-9', {})).toThrow(ArithError)
-  })
-
-  it('reads by kind, scalars answering as element 0', () => {
-    const ops = sessionElements(makeSession())
-    expect(ops.read('m', 'a')).toBe('1')
-    expect(ops.read('m', 'zz')).toBeNull()
-    expect(ops.read('arr', '1')).toBe('20')
-    expect(ops.read('arr', '9')).toBeNull()
-    expect(ops.read('s5', '0')).toBe('5')
-    expect(ops.read('s5', '1')).toBeNull()
-    expect(ops.read('missing', '0')).toBeNull()
-  })
-})
-
 describe('elementIsSet', () => {
   it('answers key membership, index presence, and bare element 0', () => {
     const session = makeSession()
@@ -92,6 +35,9 @@ describe('elementIsSet', () => {
     expect(elementIsSet(session, 'm[zz]')).toBe(false)
     // The subscript is the key verbatim, never arithmetic.
     expect(elementIsSet(session, 'm[1+1]')).toBe(false)
+    // A quoted subscript asks after the unquoted key, as bash does.
+    expect(elementIsSet(session, 'm["a"]')).toBe(true)
+    expect(elementIsSet(session, "m['a']")).toBe(true)
     expect(elementIsSet(session, 'm[@]')).toBe(true)
     expect(elementIsSet(session, 'arr[2]')).toBe(true)
     expect(elementIsSet(session, 'arr[9]')).toBe(false)

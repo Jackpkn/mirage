@@ -14,16 +14,10 @@
 
 import asyncio
 
-import pytest
-
-from mirage.shell.errors import ArithError
 from mirage.shell.variable import VarAttr, with_attr
 from mirage.types import HiddenVars
 from mirage.workspace.session import Session
-from mirage.workspace.session.elements import (assign_element, element_index,
-                                               element_is_set,
-                                               session_elements,
-                                               strip_key_quotes)
+from mirage.workspace.session.elements import assign_element, element_is_set
 from mirage.workspace.session.state import seed_var
 
 
@@ -34,55 +28,6 @@ def _session() -> Session:
     seed_var(session, "s5", "5")
     seed_var(session, "i", "1")
     return session
-
-
-def test_strip_key_quotes():
-    assert strip_key_quotes('"x"') == "x"
-    assert strip_key_quotes("'x'") == "x"
-    assert strip_key_quotes("x") == "x"
-    assert strip_key_quotes('"x') == '"x'
-    assert strip_key_quotes('""') == ""
-
-
-def test_element_index_int_arith_and_error():
-    assert element_index("3", {}) == 3
-    assert element_index(" -2 ", {}) == -2
-    assert element_index("i+1", {"i": "1"}) == 2
-    # An unresolvable expression indexes element 0, bash's
-    # unset-name-is-zero arithmetic rule.
-    assert element_index("$bad", {}) == 0
-
-
-def test_resolve_assoc_is_literal():
-    session = _session()
-    ops = session_elements(session)
-    assert ops.resolve("m", "a", {}) == "a"
-    assert ops.resolve("m", '"a"', {}) == "a"
-    # A key spelled like arithmetic stays a key.
-    assert ops.resolve("m", "1+1", {}) == "1+1"
-
-
-def test_resolve_indexed_evaluates_and_wraps_negative():
-    session = _session()
-    ops = session_elements(session)
-    assert ops.resolve("arr", "1+1", {}) == "2"
-    assert ops.resolve("arr", "i", {"i": "2"}) == "2"
-    assert ops.resolve("arr", "-1", {}) == "2"
-    with pytest.raises(ArithError):
-        ops.resolve("arr", "-9", {})
-
-
-def test_read_by_kind():
-    session = _session()
-    ops = session_elements(session)
-    assert ops.read("m", "a") == "1"
-    assert ops.read("m", "zz") is None
-    assert ops.read("arr", "1") == "20"
-    assert ops.read("arr", "9") is None
-    # A scalar answers as element 0 of a one-element array.
-    assert ops.read("s5", "0") == "5"
-    assert ops.read("s5", "1") is None
-    assert ops.read("missing", "0") is None
 
 
 def test_element_is_set():

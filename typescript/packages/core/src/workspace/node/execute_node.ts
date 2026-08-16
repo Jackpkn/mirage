@@ -57,7 +57,7 @@ import {
 import { ArithError, ExitSignal, ReadonlyError } from '../../shell/errors.ts'
 import { expandAndClassify } from '../expand/parts.ts'
 import { arrayIndex } from '../expand/variable.ts'
-import { assignElement, elementIndex, sessionElements } from '../session/elements.ts'
+import { assignElement } from '../session/elements.ts'
 import type { ArithResult, TSNodeLike } from '../../shell/types.ts'
 import { wordText } from '../../types.ts'
 import { compareCodePoints } from '../../utils/sort.ts'
@@ -94,7 +94,14 @@ import { executeProgram } from './program.ts'
 import { executeCommand } from './command_dispatch.ts'
 import { PolicyDenied } from '../../policy/errors.ts'
 import type { SessionView } from '../../ops/types.ts'
-import { ensureVarVisible, sessionView, setAttr, visibleEnv } from '../session/state.ts'
+import {
+  elementIndex,
+  ensureVarVisible,
+  sessionElements,
+  sessionView,
+  setAttr,
+  visibleEnv,
+} from '../session/state.ts'
 import { type ShellValue, VarAttr } from '../../shell/variable.ts'
 import { traceAssignment } from '../../shell/xtrace.ts'
 import { Channel, type JobConsole } from '../../shell/console/index.ts'
@@ -192,19 +199,14 @@ async function evalCforExpr(
     if (!(err instanceof ArithError)) throw err
     throw new ArithError(`${text}: ${err.message}`)
   }
-  const updates = result.updates
-  const elementNames = result.elementUpdates.map((write) => write.name)
-  for (const name of [...Object.keys(updates), ...elementNames]) {
-    ensureVarVisible(session, name)
-    if (session.readonlyVars.has(name)) throw new ReadonlyError(name)
+  for (const write of result.writes) {
+    ensureVarVisible(session, write.name)
+    if (session.readonlyVars.has(write.name)) throw new ReadonlyError(write.name)
   }
   // Through the door, so a preSession rule governs an arithmetic assignment
-  // exactly as it governs `X=1`.
-  for (const [name, updated] of Object.entries(updates)) {
-    if (view === undefined) seedVar(session, name, updated)
-    else await view.set(name, updated)
-  }
-  for (const write of result.elementUpdates) {
+  // exactly as it governs `X=1`; in evaluation order, so a bare name and
+  // its element 0 land as the expression wrote them.
+  for (const write of result.writes) {
     await assignElement(session, view ?? null, write.name, write.key, write.value)
   }
   return Number(result.value)
@@ -862,9 +864,8 @@ export async function executeNode(
         new ExecutionNode({ command: text, exitCode: 1, stderr: errBytes }),
       ]
     }
-    const updates = result.updates
-    const elementNames = result.elementUpdates.map((write) => write.name)
-    for (const name of [...Object.keys(updates), ...elementNames]) {
+    for (const write of result.writes) {
+      const name = write.name
       try {
         ensureVarVisible(session, name)
       } catch (err) {
@@ -886,10 +887,7 @@ export async function executeNode(
       }
     }
     try {
-      for (const [name, updated] of Object.entries(updates)) {
-        await sessionView(session, registry.policies).set(name, updated)
-      }
-      for (const write of result.elementUpdates) {
+      for (const write of result.writes) {
         await assignElement(
           session,
           sessionView(session, registry.policies),

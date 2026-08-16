@@ -17,7 +17,7 @@ import type { CallStack } from '../../shell/call_stack.ts'
 import { NodeType as NT } from '../../shell/types.ts'
 import type { ByteSource, IOResult } from '../../io/types.ts'
 import type { Session } from '../session/session.ts'
-import { visibleEnv } from '../session/state.ts'
+import { sessionElements, visibleEnv } from '../session/state.ts'
 import { markEscapedGlobs, markGlobs, unmarkGlobs } from '../../utils/glob_walk.ts'
 import { expandTilde } from '../../utils/path.ts'
 import { homeDir } from '../session/shell_dirs.ts'
@@ -26,8 +26,7 @@ import { evaluateArith } from '../../shell/arith.ts'
 import { ArithError } from '../../shell/errors.ts'
 import { decodeAnsiC } from '../../shell/escapes.ts'
 import { ARITH_DELIMITERS, ARITH_OPERATORS } from './constants.ts'
-import { expandBraces, expansionWrite, expansionWriteElement, lookupVar } from './variable.ts'
-import { sessionElements } from '../session/elements.ts'
+import { expandBraces, expansionWrite, lookupVar } from './variable.ts'
 import type { ArithResult, TSNodeLike } from '../../shell/types.ts'
 
 export type ExecuteFn = (
@@ -346,11 +345,8 @@ export async function expandNodeMarked(
           if (!(err instanceof ArithError)) throw err
           return prefix + rawSub
         }
-        for (const [name, updated] of Object.entries(arith.updates)) {
-          await expansionWrite(session, view, name, updated)
-        }
-        for (const write of arith.elementUpdates) {
-          await expansionWriteElement(session, view, write.name, write.key, write.value)
+        for (const write of arith.writes) {
+          await expansionWrite(session, view, write.name, write.key, write.value)
         }
         return prefix + arith.value.toString()
       }
@@ -381,11 +377,8 @@ export async function expandNodeMarked(
       if (err instanceof ArithError) return tsNode.text
       throw err
     }
-    for (const [name, updated] of Object.entries(result.updates)) {
-      await expansionWrite(session, view, name, updated)
-    }
-    for (const write of result.elementUpdates) {
-      await expansionWriteElement(session, view, write.name, write.key, write.value)
+    for (const write of result.writes) {
+      await expansionWrite(session, view, write.name, write.key, write.value)
     }
     return prefix + result.value.toString()
   }

@@ -19,7 +19,7 @@ from mirage.shell.constants import (ARITH_ASSIGN_OPS, ARITH_ELEM,
                                     ARITH_MAX_DEPTH, ARITH_NAME, ARITH_SIGN,
                                     ARITH_TOKEN, ARITH_WRAP)
 from mirage.shell.errors import ArithError
-from mirage.shell.types import ArithResult, ElementOps, ElementWrite
+from mirage.shell.types import ArithResult, ArithWrite, ElementOps
 
 
 def _matching_bracket(expr: str, start: int) -> int:
@@ -337,15 +337,21 @@ class ArithEvaluator:
     Reads resolve through ``updates`` first, then ``env``; every write
     lands in ``updates`` (or ``elem_updates`` for an element lvalue) so
     the caller decides what to apply to the session (bash arithmetic
-    assignments are real assignments).
+    assignments are real assignments). ``writes`` keeps the one
+    ordered record across both kinds, keyed by target and moved to the
+    end on each write, so the caller lands them in the order the
+    expression made them.
     """
 
     def __init__(self, env: Mapping[str, str], updates: dict[str, str],
-                 elem_updates: dict[tuple[str, str], str], depth: int,
+                 elem_updates: dict[tuple[str, str],
+                                    str], writes: dict[tuple[str, str | None],
+                                                       str], depth: int,
                  elements: ElementOps | None) -> None:
         self.env = env
         self.updates = updates
         self.elem_updates = elem_updates
+        self.writes = writes
         self.depth = depth
         self.elements = elements
 
@@ -371,8 +377,13 @@ class ArithEvaluator:
     def lookup(self, name: str) -> int:
         raw = self.updates.get(name)
         if raw is None:
-            value = self.env.get(name, "")
-            raw = value if isinstance(value, str) else str(value)
+            value = self.env.get(name)
+            if value is None and self.elements is not None:
+                # A bare array name reads as element 0 (`a=(4 5)` then
+                # `$((a))` is 4); the env holds scalars only, so the
+                # element resolver answers for the arrays.
+                value = self.elements.read(name, "0")
+            raw = "" if value is None else str(value)
         return self._coerce(raw)
 
     def elem_key(self, name: str, subscript: str) -> str:
@@ -392,11 +403,18 @@ class ArithEvaluator:
         return self._coerce(raw)
 
     def write_target(self, target: tuple[Any, ...], value: int) -> None:
+        text = str(value)
         if target[0] == "var":
-            self.updates[target[1]] = str(value)
+            self.updates[target[1]] = text
+            self._record(target[1], None, text)
             return
         key = self.elem_key(target[1], target[2])
-        self.elem_updates[(target[1], key)] = str(value)
+        self.elem_updates[(target[1], key)] = text
+        self._record(target[1], key, text)
+
+    def _record(self, name: str, key: str | None, text: str) -> None:
+        self.writes.pop((name, key), None)
+        self.writes[(name, key)] = text
 
     def run(self, node: tuple[Any, ...]) -> int:
         kind = node[0]
@@ -518,8 +536,8 @@ def evaluate_arith(expr: str,
             outside a session.
 
     Returns:
-        ArithResult: the value plus the scalar and element assignments
-        made, for the caller to apply to the session.
+        ArithResult: the value plus the assignments made, in order, for
+        the caller to apply to the session.
 
     Raises:
         ArithError: on syntax errors, division by zero, or a negative
@@ -527,14 +545,15 @@ def evaluate_arith(expr: str,
     """
     tokens = _tokenize(expr)
     if not tokens:
-        return ArithResult(0, {})
+        return ArithResult(0)
     node = ArithParser(tokens).parse()
     updates: dict[str, str] = {}
     elem_updates: dict[tuple[str, str], str] = {}
-    value = ArithEvaluator(env, updates, elem_updates, depth,
+    writes: dict[tuple[str, str | None], str] = {}
+    value = ArithEvaluator(env, updates, elem_updates, writes, depth,
                            elements).run(node)
     return ArithResult(
-        value, updates,
+        value,
         tuple(
-            ElementWrite(name, key, text)
-            for (name, key), text in elem_updates.items()))
+            ArithWrite(name, key, text)
+            for (name, key), text in writes.items()))

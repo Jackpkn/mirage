@@ -21,21 +21,19 @@ import {
   arrayIndices,
   arraySlice,
   arrayValues,
-  arrayWith,
 } from '../../shell/array.ts'
 import type { CallStack } from '../../shell/call_stack.ts'
 import { ArithError, ExitSignal } from '../../shell/errors.ts'
 import { NodeType as NT, type ElementOps, type TSNodeLike } from '../../shell/types.ts'
-import type { ShellValue } from '../../shell/variable.ts'
 import { PolicyDenied } from '../../policy/errors.ts'
 import type { SessionView } from '../../ops/types.ts'
 import { compareCodePoints } from '../../utils/sort.ts'
-import { type Session, sessionEntry } from '../session/session.ts'
-import { assignElement, sessionElements } from '../session/elements.ts'
+import type { Session } from '../session/session.ts'
+import { assignElement } from '../session/elements.ts'
 import { ReadonlyVariableError } from '../session/errors.ts'
 import {
   ensureVarVisible,
-  seedVar,
+  sessionElements,
   visibleArrays,
   visibleAssocs,
   visibleEnv,
@@ -745,63 +743,32 @@ function valueOp(op: string, val: string, groups: string[], env: Record<string, 
 /**
  * One expansion-time write, through the session plane's door.
  *
- * `${X:=d}` and `$((X=5))` are assignments the shell performs while expanding
- * a word rather than while running a command, and they used to land on the raw
- * session env. That made a `preSession` rule one `${X:=d}` away from
- * irrelevant: a deployment refusing `AWS_*` still had `${AWS_PROFILE:=prod}`
- * write it. They go through the door now, so one rule covers every spelling.
+ * `${X:=d}`, `${a[i]:=d}` and `$((X=5))` are assignments the shell
+ * performs while expanding a word rather than while running a command,
+ * and they used to land on the raw session env. That made a `preSession`
+ * rule one `${X:=d}` away from irrelevant: a deployment refusing `AWS_*`
+ * still had `${AWS_PROFILE:=prod}` write it. They go through the door
+ * now, so one rule covers every spelling.
  *
- * Without a door (a unit test outside a workspace) the write lands directly,
- * with the hidden half still applied: skipping that would let the write-back
- * clobber a value the host's wiring reads.
+ * Without a door (a unit test outside a workspace) the write lands
+ * directly, with the hidden half still applied: skipping that would let
+ * the write-back clobber a value the host's wiring reads.
+ *
+ * The element mechanics are `assignElement`'s: a bare name (null key)
+ * over an array takes the write at element 0 and keeps its other
+ * elements (`a=(1 2 3)` then `$((a=5))` leaves `5 2 3`), an associative
+ * one writes the literal key "0", and a subscripted target arrives with
+ * its key already canonical. Throws ExitSignal when the name is hidden,
+ * a preSession rule refuses, the subscript is bad, or the name carries
+ * `-i` and the text does not evaluate (the line dies with status 1, the
+ * shape `${var:?}` uses); ReadonlyVariableError when the name is
+ * readonly, the same refusal a plain assignment raises through the door.
  */
 export async function expansionWrite(
   session: Session,
   view: SessionView | undefined,
   name: string,
-  value: string,
-): Promise<void> {
-  guardExpansionWrite(session, name)
-  // A name already holding an array takes the write at element 0 and
-  // keeps its other elements, which is bash: `a=(1 2 3)` then
-  // `$((a=5))` leaves `5 2 3`. Storing the value as a scalar instead
-  // would discard every element after the first; the associative twin
-  // writes the literal key "0".
-  const held = sessionEntry(session.arrays, name)
-  const heldMap = sessionEntry(session.assocs, name)
-  let stored: ShellValue
-  if (heldMap !== undefined) stored = { ...heldMap, '0': value }
-  else if (held !== undefined) stored = arrayWith(held, 0, value)
-  else stored = value
-  if (view === undefined) {
-    seedVar(session, name, stored)
-    return
-  }
-  try {
-    await view.set(name, stored)
-  } catch (err) {
-    // A PolicyDenied is the gate; an ArithError is the name carrying
-    // `-i` refusing the text. Both die as `n=1+` does, in that voice.
-    if (!(err instanceof PolicyDenied) && !(err instanceof ArithError)) throw err
-    throw new ExitSignal(1, new TextEncoder().encode(`bash: ${err.message}\n`), null, 1)
-  }
-}
-
-/**
- * One expansion-time element write, through the same door.
- *
- * The element sibling of `expansionWrite`, for the assignments an
- * arithmetic expansion makes to a subscripted lvalue (`$((a[i]=5))`,
- * `$((m[k]++))`). The key arrives canonical from the evaluator's
- * resolver, so this only lands it. Throws ExitSignal when the name is
- * hidden or a preSession rule refuses, ReadonlyVariableError when the
- * name is readonly — the same refusals the scalar write raises.
- */
-export async function expansionWriteElement(
-  session: Session,
-  view: SessionView | undefined,
-  name: string,
-  key: string,
+  key: string | null,
   value: string,
 ): Promise<void> {
   guardExpansionWrite(session, name)
@@ -809,14 +776,16 @@ export async function expansionWriteElement(
   try {
     status = await assignElement(session, view ?? null, name, key, value)
   } catch (err) {
-    if (!(err instanceof PolicyDenied)) throw err
+    // A PolicyDenied is the gate; an ArithError is the name carrying
+    // `-i` refusing the text. Both die as `n=1+` does, in that voice.
+    if (!(err instanceof PolicyDenied) && !(err instanceof ArithError)) throw err
     throw new ExitSignal(1, new TextEncoder().encode(`bash: ${err.message}\n`), null, 1)
   }
   if (status === 'readonly') throw new ReadonlyVariableError(name)
   if (status !== 'ok') {
     throw new ExitSignal(
       1,
-      new TextEncoder().encode(`bash: ${name}[${key}]: bad array subscript\n`),
+      new TextEncoder().encode(`bash: ${name}[${key ?? ''}]: bad array subscript\n`),
       null,
       1,
     )
@@ -856,6 +825,11 @@ export async function expandBraces(
 
   let val = ''
   let varInEnv = false
+  // The subscript as `:=` would write it: the key itself for an
+  // associative name, the resolved index for an indexed one, null for
+  // `[@]`/`[*]` and a negative index past the front, which bash refuses
+  // to assign through.
+  let writeKey: string | null = null
 
   const amap = p.varName !== null ? visibleAssocs(session)[p.varName] : undefined
   if (p.subscript !== null && p.varName !== null && amap !== undefined) {
@@ -884,6 +858,7 @@ export async function expandBraces(
       const key = await expandSubscriptKey(p, expandChild)
       val = amap[key] ?? ''
       varInEnv = amap[key] !== undefined
+      writeKey = key
     }
   } else if (p.subscript !== null && p.varName !== null) {
     let arr = arrays[p.varName]
@@ -919,6 +894,7 @@ export async function expandBraces(
       if (idx < 0) idx += arrayExtent(arr)
       val = arrayGet(arr, idx)
       varInEnv = arrayHas(arr, idx)
+      if (idx >= 0) writeKey = String(idx)
     }
   } else if (p.varName !== null) {
     if (callStack) {
@@ -974,16 +950,24 @@ export async function expandBraces(
     const triggered = p.op === '=' ? !varInEnv : val === ''
     if (!triggered) return val
     const defaultVal = groups[0] ?? ''
-    if (callStack !== null && callStack.getLocal(p.varName ?? '') !== null) {
+    if (p.varName !== null && p.subscript !== null) {
+      // The default lands on the element the reference named, never on
+      // element 0: `${m[k]:=v}` writes key k and `${a[3]:=v}` writes
+      // index 3, as bash does. `[@]`, `[*]` and an index before the
+      // front are refused in bash's words.
+      if (writeKey === null) {
+        throw new ExitSignal(
+          1,
+          new TextEncoder().encode(`bash: ${p.varName}[${p.subscript}]: bad array subscript\n`),
+          null,
+          1,
+        )
+      }
+      await expansionWrite(session, view, p.varName, writeKey, defaultVal)
+    } else if (callStack !== null && callStack.getLocal(p.varName ?? '') !== null) {
       callStack.setLocal(p.varName ?? '', defaultVal)
     } else if (p.varName !== null) {
-      // ${X:=} writes the raw session env, not the visible view (a
-      // filtered copy under hidden vars, where the write would be
-      // silently lost): the known policy-ungated session write, same
-      // as $((X=5)) and printf -v. The hidden gate still applies, or
-      // the write-back would clobber the value the host's wiring
-      // reads.
-      await expansionWrite(session, view, p.varName, defaultVal)
+      await expansionWrite(session, view, p.varName, null, defaultVal)
     }
     return defaultVal
   }

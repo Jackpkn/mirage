@@ -37,51 +37,41 @@ describe('evaluateArith', () => {
     expect(() => evaluateArith('08', {})).toThrow(ArithError)
   })
 
-  it('records assignments as updates', () => {
+  it('records assignments as writes', () => {
     expect(evaluateArith('y = 3, y + 2', {})).toEqual({
       value: 5n,
-      updates: { y: '3' },
-      elementUpdates: [],
+      writes: [{ name: 'y', key: null, value: '3' }],
     })
     expect(evaluateArith('v += 9', { v: '1' })).toEqual({
       value: 10n,
-      updates: { v: '10' },
-      elementUpdates: [],
+      writes: [{ name: 'v', key: null, value: '10' }],
     })
   })
 
   it('handles increments and decrements', () => {
-    expect(evaluateArith('i++', {})).toEqual({ value: 0n, updates: { i: '1' }, elementUpdates: [] })
+    expect(evaluateArith('i++', {})).toEqual({
+      value: 0n,
+      writes: [{ name: 'i', key: null, value: '1' }],
+    })
     expect(evaluateArith('++i', { i: '1' })).toEqual({
       value: 2n,
-      updates: { i: '2' },
-      elementUpdates: [],
+      writes: [{ name: 'i', key: null, value: '2' }],
     })
     expect(evaluateArith('i--', { i: '5' })).toEqual({
       value: 5n,
-      updates: { i: '4' },
-      elementUpdates: [],
+      writes: [{ name: 'i', key: null, value: '4' }],
     })
   })
 
   it('short-circuits side effects', () => {
-    expect(evaluateArith('0 && (q = 7)', {})).toEqual({
-      value: 0n,
-      updates: {},
-      elementUpdates: [],
-    })
-    expect(evaluateArith('1 || (q = 7)', {})).toEqual({
-      value: 1n,
-      updates: {},
-      elementUpdates: [],
-    })
+    expect(evaluateArith('0 && (q = 7)', {})).toEqual({ value: 0n, writes: [] })
+    expect(evaluateArith('1 || (q = 7)', {})).toEqual({ value: 1n, writes: [] })
   })
 
   it('evaluates only the taken ternary arm', () => {
     expect(evaluateArith('1 ? (w = 4) : (w = 9)', {})).toEqual({
       value: 4n,
-      updates: { w: '4' },
-      elementUpdates: [],
+      writes: [{ name: 'w', key: null, value: '4' }],
     })
     expect(evaluateArith('5 > 3 ? 10 : 20', {}).value).toBe(10n)
   })
@@ -135,13 +125,15 @@ describe('evaluateArith', () => {
   })
 
   it('treats an empty expression as zero', () => {
-    expect(evaluateArith('', {})).toEqual({ value: 0n, updates: {}, elementUpdates: [] })
+    expect(evaluateArith('', {})).toEqual({ value: 0n, writes: [] })
   })
 })
 
 function fakeElements(): ElementOps {
   const store = new Map([
     ['m a', '7'],
+    ['m 0', '4'],
+    ['arr 0', '10'],
     ['arr 1', '20'],
   ])
   const ops: ElementOps = {
@@ -162,14 +154,41 @@ describe('evaluateArith elements', () => {
     expect(evaluateArith('m[a] + arr[0+1]', {}, 0, ops).value).toBe(27n)
     const result = evaluateArith('m[k] = 5, m[k] + 1', {}, 0, ops)
     expect(result.value).toBe(6n)
-    expect(result.elementUpdates).toEqual([{ name: 'm', key: 'k', value: '5' }])
+    expect(result.writes).toEqual([{ name: 'm', key: 'k', value: '5' }])
+  })
+
+  it('keeps evaluation order across bare and subscripted targets', () => {
+    // A bare name aliases element 0, so `a[0]=1, a=2` must land a=2
+    // last and `a=2, a[0]=1` must land a[0]=1 last; a target written
+    // twice is recorded once, at its last write.
+    const ops = fakeElements()
+    const writes = (expr: string) =>
+      evaluateArith(expr, {}, 0, ops).writes.map((w) => [w.name, w.key, w.value])
+    expect(writes('arr[0] = 1, arr = 2')).toEqual([
+      ['arr', '0', '1'],
+      ['arr', null, '2'],
+    ])
+    expect(writes('arr = 2, arr[0] = 1')).toEqual([
+      ['arr', null, '2'],
+      ['arr', '0', '1'],
+    ])
+    expect(writes('arr = 1, arr[0] = 2, arr = 3')).toEqual([
+      ['arr', '0', '2'],
+      ['arr', null, '3'],
+    ])
+  })
+
+  it('reads a bare array name as element 0', () => {
+    const ops = fakeElements()
+    expect(evaluateArith('arr + 1', {}, 0, ops).value).toBe(11n)
+    expect(evaluateArith('m + 1', {}, 0, ops).value).toBe(5n)
   })
 
   it('increments elements and strips quoted keys', () => {
     const ops = fakeElements()
     const result = evaluateArith('m[a]++', {}, 0, ops)
     expect(result.value).toBe(7n)
-    expect(result.elementUpdates[0]?.value).toBe('8')
+    expect(result.writes[0]?.value).toBe('8')
     expect(evaluateArith('m["a"] - 1', {}, 0, ops).value).toBe(6n)
   })
 

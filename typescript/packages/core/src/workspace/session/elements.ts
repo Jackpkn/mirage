@@ -14,7 +14,6 @@
 
 import type { SessionView } from '../../ops/types.ts'
 import { PolicyDenied } from '../../policy/index.ts'
-import { evaluateArith } from '../../shell/arith.ts'
 import {
   arrayCount,
   arrayExtent,
@@ -23,105 +22,21 @@ import {
   arrayWith,
   type ShellArray,
 } from '../../shell/array.ts'
-import { ArithError } from '../../shell/errors.ts'
-import type { ElementOps } from '../../shell/types.ts'
 import type { ShellValue } from '../../shell/variable.ts'
 import type { Session } from './session.ts'
 import {
+  elementIndex,
   ensureVarVisible,
   envGet,
   seedVar,
+  sessionElements,
+  stripKeyQuotes,
   visibleArrays,
   visibleAssocs,
   visibleEnv,
 } from './state.ts'
 
 const ELEMENT_REF = /^([A-Za-z_]\w*)(?:\[([\s\S]+)\])?$/
-
-/**
- * Remove one surrounding quote pair from an associative subscript.
- *
- * An arithmetic reference carries its subscript verbatim, so `m["x"]`
- * arrives with the quotes bash would have removed; one layer comes off
- * and anything else is the key itself.
- */
-export function stripKeyQuotes(text: string): string {
-  const first = text.charAt(0)
-  if (
-    text.length >= 2 &&
-    first === text.charAt(text.length - 1) &&
-    (first === '"' || first === "'")
-  ) {
-    return text.slice(1, -1)
-  }
-  return text
-}
-
-/**
- * Resolve an indexed subscript in arithmetic context.
- *
- * bash evaluates indexed subscripts as arithmetic (`a[i+1]`); an
- * unresolvable expression indexes element 0, mirroring bash's
- * unset-name-is-zero arithmetic rule.
- */
-export function elementIndex(
-  subscript: string,
-  env: Readonly<Record<string, string>>,
-  elements: ElementOps | null = null,
-): number {
-  const trimmed = subscript.trim()
-  if (/^-?\d+$/.test(trimmed)) return Number(trimmed)
-  try {
-    return Number(evaluateArith(subscript, env, 0, elements).value)
-  } catch (error) {
-    if (error instanceof ArithError) return 0
-    throw error
-  }
-}
-
-/**
- * The `ElementOps` implementation bound to one session.
- *
- * A class rather than closures because the resolver recurses: an
- * indexed subscript is arithmetic and may itself hold an element
- * reference, so `resolve` hands the evaluator the same pair of
- * callbacks it is one of.
- */
-class SessionElements implements ElementOps {
-  constructor(private readonly session: Session) {}
-
-  resolve(name: string, subscript: string, env: Readonly<Record<string, string>>): string {
-    if (visibleAssocs(this.session)[name] !== undefined) {
-      return stripKeyQuotes(subscript)
-    }
-    let idx = elementIndex(subscript, env, sessionElements(this.session))
-    if (idx < 0) {
-      const arr = visibleArrays(this.session)[name]
-      if (arr !== undefined) idx += arrayExtent(arr)
-      else if (envGet(this.session, name) !== null) idx += 1
-      if (idx < 0) throw new ArithError(`${name}[${subscript}]: bad array subscript`)
-    }
-    return String(idx)
-  }
-
-  read(name: string, key: string): string | null {
-    const amap = visibleAssocs(this.session)[name]
-    if (amap !== undefined) return amap[key] ?? null
-    const arr = visibleArrays(this.session)[name]
-    const idx = Number(key)
-    if (arr === undefined) {
-      const scalar = envGet(this.session, name)
-      if (scalar === null) return null
-      return idx === 0 ? scalar : null
-    }
-    return arrayHas(arr, idx) ? arrayGet(arr, idx) : null
-  }
-}
-
-/** Element callbacks bound to one session, for `evaluateArith`. */
-export function sessionElements(session: Session): ElementOps {
-  return new SessionElements(session)
-}
 
 /**
  * Whether a `name` / `name[sub]` reference names a set value.
@@ -149,7 +64,10 @@ export function elementIsSet(session: Session, ref: string): boolean {
     if (arr !== undefined) return arrayCount(arr) > 0
     return envGet(session, name) !== null
   }
-  if (amap !== undefined) return amap[sub] !== undefined
+  // The subscript arrives as the operand spelled it, so `test -v
+  // 'm["x"]'` asks after key `x`, as the resolver reads it in
+  // arithmetic and as bash removes the quotes.
+  if (amap !== undefined) return amap[stripKeyQuotes(sub)] !== undefined
   const scalar = envGet(session, name)
   let held: ShellArray
   if (arr !== undefined) held = arr
