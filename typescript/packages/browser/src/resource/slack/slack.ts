@@ -22,6 +22,7 @@ import { BrowserSlackTransport } from '@struktoai/mirage-core/core/slack/_client
 import { read as slackRead } from '@struktoai/mirage-core/core/slack/read'
 import { readdir as slackReaddir } from '@struktoai/mirage-core/core/slack/readdir'
 import { stat as slackStat } from '@struktoai/mirage-core/core/slack/stat'
+import { buildEventHook } from '@struktoai/mirage-core/core/slack/watch/index'
 import type { RegisteredOp } from '@struktoai/mirage-core/ops/registry'
 import { SLACK_OPS } from '@struktoai/mirage-core/ops/slack/index'
 import type { Resource } from '@struktoai/mirage-core/resource/base'
@@ -29,6 +30,7 @@ import { SLACK_PROMPT, SLACK_WRITE_PROMPT } from '@struktoai/mirage-core/resourc
 import { PathSpec, ResourceName } from '@struktoai/mirage-core/types'
 import type { FileStat } from '@struktoai/mirage-core/types'
 import { mountKey, mountPrefixOf } from '@struktoai/mirage-core/utils/key_prefix'
+import type { EventHook } from '@struktoai/mirage-core/watch/index'
 import { redactSlackConfig, type SlackConfig, type SlackConfigRedacted } from './config.ts'
 
 const resolveSlackGlob = makeResolveGlob(slackReaddir)
@@ -90,6 +92,10 @@ export class SlackResource implements Resource {
 
   stat(p: PathSpec): Promise<FileStat> {
     return slackStat(this.accessor, p, this.index)
+  }
+
+  eventHook(): EventHook {
+    return buildEventHook(this.accessor)
   }
 
   glob(paths: readonly PathSpec[], prefix = ''): Promise<PathSpec[]> {
