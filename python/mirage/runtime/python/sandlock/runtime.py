@@ -18,56 +18,17 @@ import shutil
 import sys
 import sysconfig
 from collections.abc import Sequence
-from dataclasses import dataclass, field
 from typing import Any, Callable, ClassVar
 
 from mirage.runtime.config import RuntimeConfig
 from mirage.runtime.python.base import PythonRuntime
 from mirage.runtime.python.bootstrap import bootstrap
 from mirage.runtime.python.flags import init_argv
+from mirage.runtime.python.sandlock.config import SandlockConfig
+from mirage.runtime.python.sandlock.constants import (SANDLOCK_CLI_HINT,
+                                                      SANDLOCK_HOME_ENV,
+                                                      SYSTEM_READABLE)
 from mirage.runtime.types import RunArgs, RunResult, RuntimeReach, ScriptSource
-
-SANDLOCK_HOME_ENV = "MIRAGE_SANDLOCK_HOME"
-
-SANDLOCK_CLI_HINT = (
-    "the sandlock runtime needs the sandlock CLI on PATH "
-    "(https://github.com/multikernel/sandlock); Linux only, and the full "
-    "ruleset wants Landlock ABI v6 (Linux 6.12+)")
-
-# What a host CPython needs to open before it can execute anything.
-# Granted read-only and separately from the interpreter's own tree, so
-# a config that lists no paths still boots instead of dying in the
-# dynamic loader with no explanation.
-SYSTEM_READABLE: tuple[str, ...] = ("/usr", "/lib", "/lib64", "/bin", "/etc",
-                                    "/proc", "/dev")
-
-
-@dataclass(frozen=True, slots=True, kw_only=True)
-class SandlockConfig(RuntimeConfig):
-    """What the confined interpreter may reach, and which one runs.
-
-    Args:
-        home (str | None): interpreter path or command name. None
-            reads MIRAGE_SANDLOCK_HOME, then falls back to the
-            interpreter running mirage.
-        fs_readable (tuple[str, ...]): extra paths the code may read,
-            on top of the interpreter's own tree and the system paths
-            CPython needs to start.
-        fs_writable (tuple[str, ...]): paths the code may write. A
-            mirage FUSE mountpoint listed here is how confined code
-            works on workspace files.
-        max_memory (str | None): sandlock's memory cap for the run
-            (its own spelling, e.g. "512M"). None leaves it uncapped.
-        env (dict[str, str]): environment set for the run. Nothing is
-            inherited from the mirage process, so anything the code
-            needs must be named here.
-    """
-
-    home: str | None = None
-    fs_readable: tuple[str, ...] = ()
-    fs_writable: tuple[str, ...] = ()
-    max_memory: str | None = None
-    env: dict[str, str] = field(default_factory=dict)
 
 
 def interpreter_readable(python: str) -> tuple[str, ...]:
