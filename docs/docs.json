@@ -239,6 +239,7 @@
               "python/agents/pydantic-ai",
               "python/agents/camel",
               "python/agents/agno",
+              "python/agents/haystack",
               "python/agents/claude-code",
               "python/agents/claude-agent-sdk",
               "python/agents/codex",
