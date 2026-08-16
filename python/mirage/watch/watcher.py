@@ -126,7 +126,7 @@ class Watcher:
             specs.append(self._frame(entry, current))
 
     async def _evict(self, entry: WatchMount, path: PathSpec,
-                     unlink: bool) -> None:
+                     kind: FileChangeKind) -> None:
         """Evict one path and every cached ancestor listing above it.
 
         The whole ancestor chain is invalidated, not just the path: an
@@ -136,16 +136,25 @@ class Watcher:
         root may be stale (a consumer forwarding only file events from
         a Nextcloud webhook hits exactly this).
 
+        How far down the eviction reaches is the change's kind. UNKNOWN
+        means precision was lost and everything under the path must be
+        re-inventoried, which is what a push notification that can name
+        only a scope reports (IMAP IDLE says a mailbox changed, not
+        which message), so it takes the subtree. Every other kind names
+        a path and evicts that path alone.
+
         Args:
             entry (WatchMount): Mount owning the path.
             path (PathSpec): Framed path that is now stale.
-            unlink (bool): Whether the path itself disappeared.
+            kind (FileChangeKind): What happened, which decides reach.
         """
         manager = entry.cache_manager
         if manager is None:
             return
-        if unlink:
+        if kind is FileChangeKind.DELETE:
             await manager.invalidate_after_unlink(path)
+        elif kind is FileChangeKind.UNKNOWN:
+            await manager.invalidate_subtree(path)
         else:
             await manager.invalidate_after_write(path)
         for ancestor in self._ancestors(entry, path.virtual):
@@ -162,14 +171,14 @@ class Watcher:
             entry (WatchMount): Mount owning the change path.
             change (FileEvent): Change whose path is now stale.
         """
-        await self._evict(entry, change.path, change.kind
-                          is FileChangeKind.DELETE)
+        await self._evict(entry, change.path, change.kind)
         if change.kind is FileChangeKind.MOVE \
                 and change.previous_path is not None:
             prev_virtual = change.previous_path.virtual
             prev_entry = self._registry.mount_for(prev_virtual)
             await self._evict(prev_entry, self._frame(prev_entry,
-                                                      prev_virtual), True)
+                                                      prev_virtual),
+                              FileChangeKind.DELETE)
 
     async def notify(self, change: FileEvent) -> None:
         """Inject one externally observed change.

@@ -22,7 +22,7 @@ import type { RegisteredCommand } from '../commands/config.ts'
 import type { RegisteredOp } from '../ops/registry.ts'
 import type { CapacityResult, FileStat, PathSpec } from '../types.ts'
 import { CapacityState } from '../types.ts'
-import type { DeltaHook } from '../watch/base.ts'
+import type { DeltaHook, EventHook } from '../watch/base.ts'
 
 export interface FindOptions {
   name?: string | null
@@ -149,6 +149,7 @@ export interface Resource {
   // pre-existing behavior; see BaseResource.storageId.
   storageId?(): string
   deltaHook?(): DeltaHook
+  eventHook?(): EventHook
 }
 
 export function cachesReads(resource: Resource): boolean {

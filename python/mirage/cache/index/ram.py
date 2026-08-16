@@ -19,6 +19,7 @@ from mirage.cache.index.config import (IndexEntry, ListResult, LookupResult,
 from mirage.cache.index.store import IndexCacheStore
 from mirage.cache.lock import KeyLockMixin
 from mirage.core.timeutil import to_iso_z
+from mirage.utils.key_prefix import under_path
 
 
 class RAMIndexCacheStore(IndexCacheStore, KeyLockMixin):
@@ -98,6 +99,20 @@ class RAMIndexCacheStore(IndexCacheStore, KeyLockMixin):
             self._entries.pop(child, None)
         self._expiry.pop(resource_path, None)
         self._children.pop(resource_path, None)
+
+    async def invalidate_prefix(self, resource_path: str) -> None:
+        for entry_key in [
+                k for k in self._entries if under_path(k, resource_path)
+        ]:
+            self._entries.pop(entry_key, None)
+        for dir_key in [
+                k for k in self._children if under_path(k, resource_path)
+        ]:
+            self._children.pop(dir_key, None)
+        for exp_key in [
+                k for k in self._expiry if under_path(k, resource_path)
+        ]:
+            self._expiry.pop(exp_key, None)
 
     async def invalidate(self) -> None:
         past = datetime.now(timezone.utc) - timedelta(seconds=1)

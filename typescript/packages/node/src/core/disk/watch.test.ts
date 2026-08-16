@@ -18,7 +18,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { DiskAccessor } from '../../accessor/disk.ts'
-import { buildDeltaHook, DiskWalk } from './watch.ts'
+import { buildDeltaHook, DiskEventHook, DiskWalk } from './watch.ts'
 
 let root: string
 
@@ -150,5 +150,61 @@ describe('unreadable directories', () => {
   it('reports nothing for a root that is simply gone', async () => {
     const entries = await collect(new DiskWalk(new DiskAccessor(root)), spec('/d/gone', 'gone'))
     expect(entries).toEqual([])
+  })
+})
+
+describe('DiskEventHook', () => {
+  function map(eventType: string, payload: unknown) {
+    return new DiskEventHook(new DiskAccessor(root)).toEvents(
+      spec('/d/data', 'data'),
+      eventType,
+      payload as never,
+    )
+  }
+
+  it('maps a create to the virtual path', async () => {
+    const events = await map('created', { path: path.join(root, 'data', 'a.txt') })
+    expect(events).toHaveLength(1)
+    expect(events[0]?.kind).toBe(FileChangeKind.CREATE)
+    expect(events[0]?.path.virtual).toBe('/d/data/a.txt')
+    expect(events[0]?.path.resourcePath).toBe('data/a.txt')
+  })
+
+  it('maps modified and deleted', async () => {
+    const target = path.join(root, 'data', 'a.txt')
+    expect((await map('modified', { path: target }))[0]?.kind).toBe(FileChangeKind.UPDATE)
+    expect((await map('deleted', { path: target }))[0]?.kind).toBe(FileChangeKind.DELETE)
+  })
+
+  it('maps a move to both sides', async () => {
+    const events = await map('moved', {
+      path: path.join(root, 'data', 'old.txt'),
+      dest_path: path.join(root, 'data', 'new.txt'),
+    })
+    expect(events[0]?.kind).toBe(FileChangeKind.MOVE)
+    expect(events[0]?.path.virtual).toBe('/d/data/new.txt')
+    expect(events[0]?.previousPath?.virtual).toBe('/d/data/old.txt')
+  })
+
+  it('reports a move out of the mount as a delete', async () => {
+    const events = await map('moved', {
+      path: path.join(root, 'data', 'old.txt'),
+      dest_path: '/elsewhere/new.txt',
+    })
+    expect(events[0]?.kind).toBe(FileChangeKind.DELETE)
+    expect(events[0]?.path.virtual).toBe('/d/data/old.txt')
+  })
+
+  it('ignores a path outside the mount', async () => {
+    expect(await map('created', { path: '/elsewhere/a.txt' })).toEqual([])
+  })
+
+  it('ignores an unknown event type', async () => {
+    expect(await map('opened', { path: path.join(root, 'data', 'a.txt') })).toEqual([])
+  })
+
+  it('ignores a payload without a path', async () => {
+    expect(await map('created', { nothing: 'here' })).toEqual([])
+    expect(await map('created', 'not-an-object')).toEqual([])
   })
 })

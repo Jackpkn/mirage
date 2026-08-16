@@ -12,12 +12,21 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { type PathSpec, type WalkEntry } from '@struktoai/mirage-core/types'
+import {
+  FileChangeKind,
+  type FileEvent,
+  type JsonValue,
+  type PathSpec,
+  type WalkEntry,
+} from '@struktoai/mirage-core/types'
 import { mountPrefixOf } from '@struktoai/mirage-core/utils/key_prefix'
 import {
   type DeltaHook,
+  eventAt,
+  type EventHook,
   ListingDeltaHook,
   statFingerprint,
+  textField,
 } from '@struktoai/mirage-core/watch/index'
 import { lstat, readdir } from 'node:fs/promises'
 import path from 'node:path'
@@ -103,4 +112,88 @@ export class DiskWalk {
 export function buildDeltaHook(accessor: DiskAccessor): DeltaHook {
   const walk = new DiskWalk(accessor)
   return new ListingDeltaHook(walk.walk.bind(walk))
+}
+
+const DISK_KINDS: Record<string, FileChangeKind> = {
+  created: FileChangeKind.CREATE,
+  modified: FileChangeKind.UPDATE,
+  deleted: FileChangeKind.DELETE,
+}
+
+/**
+ * Map one local filesystem notification onto mount paths.
+ *
+ * Mirage runs no watcher of its own: the consumer owns the inotify / FSEvents
+ * / ReadDirectoryChangesW loop (chokidar, `fs.watch`, or the raw syscall) and
+ * forwards what it saw, which keeps the dependency out of the package and lets
+ * a deployment pick its own mechanism.
+ *
+ * `eventType` is one of `created`, `modified`, `deleted` or `moved`, so a
+ * consumer translates its library's spelling once (chokidar's `add`/`addDir`
+ * are `created`, `unlink`/`unlinkDir` are `deleted`, `change` is `modified`).
+ * Any other name maps to nothing, because a watcher reports events this mount
+ * has no opinion about.
+ *
+ * `payload` carries the host absolute paths the event named:
+ * `{path, dest_path, is_directory}`, matching watchdog's field names so the
+ * two languages take the same body.
+ *
+ * Mirrors Python `DiskEventHook` (`core/disk/watch.py`).
+ */
+export class DiskEventHook {
+  private readonly accessor: DiskAccessor
+
+  constructor(accessor: DiskAccessor) {
+    this.accessor = accessor
+  }
+
+  /**
+   * Mount-relative form of a host path, or null if outside the mount.
+   *
+   * A watcher may be rooted above the mount, so an event for a sibling
+   * directory is not this mount's to report.
+   */
+  private relative(hostPath: string): string | null {
+    const root = path.resolve(this.accessor.root)
+    const resolved = path.resolve(hostPath)
+    if (resolved === root) return '/'
+    if (!resolved.startsWith(root + path.sep)) return null
+    return (
+      '/' +
+      resolved
+        .slice(root.length + 1)
+        .split(path.sep)
+        .join('/')
+    )
+  }
+
+  /**
+   * Map one filesystem notification to the change it implies.
+   *
+   * A directory's own `modified` stays an UPDATE rather than becoming UNKNOWN:
+   * inotify raises it whenever a child appears or vanishes, and it also
+   * delivers that child's own event, so re-inventorying the subtree on every
+   * write inside a directory would throw away the whole cache for nothing.
+   */
+  toEvents(root: PathSpec, eventType: string, payload: JsonValue): Promise<readonly FileEvent[]> {
+    const source = textField(payload, 'path')
+    if (source === undefined) return Promise.resolve([])
+    const relative = this.relative(source)
+    if (relative === null) return Promise.resolve([])
+    if (eventType === 'moved') {
+      const target = textField(payload, 'dest_path')
+      const movedTo = target === undefined ? null : this.relative(target)
+      if (movedTo === null) {
+        return Promise.resolve([eventAt(root, relative, FileChangeKind.DELETE)])
+      }
+      return Promise.resolve([eventAt(root, movedTo, FileChangeKind.MOVE, relative)])
+    }
+    const kind = DISK_KINDS[eventType]
+    if (kind === undefined) return Promise.resolve([])
+    return Promise.resolve([eventAt(root, relative, kind)])
+  }
+}
+
+export function buildEventHook(accessor: DiskAccessor): EventHook {
+  return new DiskEventHook(accessor)
 }

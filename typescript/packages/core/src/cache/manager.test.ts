@@ -119,6 +119,48 @@ describe('CacheManager', () => {
     expect(await cache.exists('/data/arch/h.txt')).toBe(true)
   })
 
+  it('invalidateSubtree drops nested bodies and listings', async () => {
+    const cache = new RAMFileCacheStore()
+    const index = new RAMIndexCacheStore({ ttl: 600 })
+    const entry = new IndexEntry({ id: '1', name: 'f', resourceType: 'file' })
+    await cache.set('/data/chan/day/chat.jsonl', new TextEncoder().encode('one\n'))
+    await cache.set('/data/chan/day/files/a.png', new TextEncoder().encode('png'))
+    await index.setDir('/data/chan/day', [['chat.jsonl', entry]])
+    await index.setDir('/data/chan/day/files', [['a.png', entry]])
+    await index.setDir('/data/chan', [['day', entry]])
+    const manager = new CacheManager(cache, index, '/data/', true)
+    await manager.invalidateSubtree(PathSpec.fromStrPath('/chan/day'))
+    expect(await cache.exists('/data/chan/day/files/a.png')).toBe(false)
+    expect((await index.listDir('/data/chan/day')).entries).toBeUndefined()
+    expect((await index.listDir('/data/chan/day/files')).entries).toBeUndefined()
+    expect((await index.listDir('/data/chan')).entries).toBeUndefined()
+  })
+
+  it('a write does not reach into the subtree', async () => {
+    const cache = new RAMFileCacheStore()
+    const index = new RAMIndexCacheStore({ ttl: 600 })
+    const entry = new IndexEntry({ id: '1', name: 'f', resourceType: 'file' })
+    await index.setDir('/data/chan/day/files', [['a.png', entry]])
+    const manager = new CacheManager(cache, index, '/data/', true)
+    await manager.invalidateAfterWrite(PathSpec.fromStrPath('/chan/day'))
+    expect((await index.listDir('/data/chan/day/files')).entries).toEqual([
+      '/data/chan/day/files/a.png',
+    ])
+  })
+
+  it('a relative path that looks prefixed is still prefixed', async () => {
+    // '/day' starts with the '/d' prefix as characters while naming something
+    // else; reading it as absolute evicted '/day' and left '/d/day' cached,
+    // which is an eviction that hits no key.
+    const cache = new RAMFileCacheStore()
+    const index = new RAMIndexCacheStore({ ttl: 600 })
+    const entry = new IndexEntry({ id: '1', name: 'f', resourceType: 'file' })
+    await index.setDir('/d/day', [['chat.jsonl', entry]])
+    const manager = new CacheManager(cache, index, '/d/', true)
+    await manager.invalidateAfterUnlink(PathSpec.fromStrPath('/day'))
+    expect((await index.listDir('/d/day')).entries).toBeUndefined()
+  })
+
   it('reaches every key on a root mount', async () => {
     // A root mount strips to the empty prefix, so the eviction argument is '/'
     // and matches every key rather than nothing.

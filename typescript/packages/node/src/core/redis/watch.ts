@@ -1,0 +1,92 @@
+// ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+// ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
+
+import {
+  FileChangeKind,
+  type FileEvent,
+  type JsonValue,
+  type PathSpec,
+} from '@struktoai/mirage-core/types'
+import { eventAt, type EventHook } from '@struktoai/mirage-core/watch/index'
+import type { RedisAccessor } from '../../accessor/redis.ts'
+
+const FILE_SEGMENT = 'file:'
+
+const REDIS_KINDS: Record<string, FileChangeKind> = {
+  set: FileChangeKind.UPDATE,
+  setrange: FileChangeKind.UPDATE,
+  append: FileChangeKind.UPDATE,
+  incrby: FileChangeKind.UPDATE,
+  copy_to: FileChangeKind.UPDATE,
+  restore: FileChangeKind.UPDATE,
+  rename_to: FileChangeKind.UPDATE,
+  del: FileChangeKind.DELETE,
+  unlink: FileChangeKind.DELETE,
+  expired: FileChangeKind.DELETE,
+  evicted: FileChangeKind.DELETE,
+  rename_from: FileChangeKind.DELETE,
+}
+
+/**
+ * Map one redis keyspace notification onto mount paths.
+ *
+ * The consumer subscribes to `__keyevent@<db>__:*` (which requires
+ * `notify-keyspace-events` to be configured; it is empty by default) and
+ * forwards the event verb with the key the message carried.
+ *
+ * Two limits are the protocol's, not this hook's, and both are reported
+ * honestly rather than guessed around:
+ *
+ * A `set` on a key that did not exist and one that did produce the same
+ * notification, so a create is reported as an UPDATE. Nothing is lost for a
+ * reader, because the watcher evicts the parent listing for either, but a
+ * consumer that needs the distinction has to pull.
+ *
+ * A rename arrives as two independent messages (`rename_from` with the old
+ * key, `rename_to` with the new), so reconstructing a MOVE would need state
+ * this hook does not keep. They map to a DELETE and an UPDATE, which is what a
+ * poll-diff source reports for a rename too.
+ *
+ * Keys outside the mount's `file:` segment (the `modified:` and `attrs:` side
+ * keys, the `dir` set) name no file and map to nothing.
+ *
+ * Mirrors Python `RedisEventHook` (`core/redis/watch.py`).
+ */
+export class RedisEventHook {
+  private readonly accessor: RedisAccessor
+
+  constructor(accessor: RedisAccessor) {
+    this.accessor = accessor
+  }
+
+  /** Mount-relative path for a redis key, or null if it names no file. */
+  private relative(key: string): string | null {
+    const head = `${this.accessor.store.keyPrefix}${FILE_SEGMENT}`
+    if (!key.startsWith(head)) return null
+    return key.slice(head.length)
+  }
+
+  toEvents(root: PathSpec, eventType: string, payload: JsonValue): Promise<readonly FileEvent[]> {
+    if (typeof payload !== 'string') return Promise.resolve([])
+    const relative = this.relative(payload)
+    if (relative === null) return Promise.resolve([])
+    const kind = REDIS_KINDS[eventType]
+    if (kind === undefined) return Promise.resolve([])
+    return Promise.resolve([eventAt(root, relative, kind)])
+  }
+}
+
+export function buildEventHook(accessor: RedisAccessor): EventHook {
+  return new RedisEventHook(accessor)
+}

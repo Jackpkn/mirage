@@ -14,16 +14,24 @@
 
 import asyncio
 import os
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from pathlib import Path
 
 from mirage.accessor.disk import DiskAccessor
 from mirage.core.timeutil import epoch_to_iso
-from mirage.types import PathSpec, WalkEntry
+from mirage.types import (FileChangeKind, FileEvent, JsonValue, PathSpec,
+                          WalkEntry)
 from mirage.utils.fingerprint import stat_fingerprint
 from mirage.utils.key_prefix import mount_prefix_of
-from mirage.watch.base import DeltaHook
+from mirage.watch.base import DeltaHook, EventHook
 from mirage.watch.delta import ListingDeltaHook
+from mirage.watch.events import event_at, text_field
+
+_DISK_KINDS = {
+    "created": FileChangeKind.CREATE,
+    "modified": FileChangeKind.UPDATE,
+    "deleted": FileChangeKind.DELETE,
+}
 
 
 def _resolve(root: Path, path: str) -> Path:
@@ -130,3 +138,88 @@ def build_delta_hook(accessor: DiskAccessor) -> DeltaHook:
         accessor (DiskAccessor): Backend handle.
     """
     return ListingDeltaHook(DiskWalk(accessor))
+
+
+class DiskEventHook:
+    """Map one local filesystem notification onto mount paths.
+
+    Mirage runs no watcher of its own: the consumer owns the inotify /
+    FSEvents / ReadDirectoryChangesW loop (watchdog, chokidar, or the
+    raw syscall) and forwards what it saw, which keeps the dependency
+    out of the package and lets a deployment pick its own mechanism.
+
+    ``event_type`` is one of ``created``, ``modified``, ``deleted`` or
+    ``moved``, so a consumer translates its library's spelling once
+    (watchdog's ``created``/``modified``/``deleted``/``moved`` already
+    match; chokidar's ``add``/``addDir`` are ``created``, ``unlink``/
+    ``unlinkDir`` are ``deleted``, ``change`` is ``modified``). Any
+    other name maps to nothing, because a watcher reports events this
+    mount has no opinion about.
+
+    ``payload`` carries the host absolute paths the event named:
+    ``{"path": ..., "dest_path": ..., "is_directory": ...}``, matching
+    watchdog's own field names.
+    """
+
+    def __init__(self, accessor: DiskAccessor) -> None:
+        """Args:
+            accessor (DiskAccessor): Backend handle, read for its root.
+        """
+        self._accessor = accessor
+
+    def _relative(self, host_path: str) -> str | None:
+        """Mount-relative form of a host path, or None if outside.
+
+        A watcher may be rooted above the mount, so an event for a
+        sibling directory is not this mount's to report.
+
+        Args:
+            host_path (str): Absolute path on the local filesystem.
+        """
+        try:
+            return "/" + Path(host_path).relative_to(
+                self._accessor.root).as_posix()
+        except ValueError:
+            return None
+
+    async def to_events(self, root: PathSpec, event_type: str,
+                        payload: JsonValue) -> Sequence[FileEvent]:
+        """Map one filesystem notification to the change it implies.
+
+        A directory's own ``modified`` stays an UPDATE rather than
+        becoming UNKNOWN: inotify raises it whenever a child appears or
+        vanishes, and it also delivers that child's own event, so
+        re-inventorying the subtree on every write inside a directory
+        would throw away the whole cache for no new information.
+
+        Args:
+            root (PathSpec): Any path on this mount, read for its prefix.
+            event_type (str): ``created``, ``modified``, ``deleted`` or
+                ``moved``.
+            payload (JsonValue): ``path`` plus, for a move, ``dest_path``.
+        """
+        source = text_field(payload, "path")
+        if source is None:
+            return ()
+        relative = self._relative(source)
+        if relative is None:
+            return ()
+        if event_type == "moved":
+            target = text_field(payload, "dest_path")
+            moved_to = self._relative(target) if target is not None else None
+            if moved_to is None:
+                return (event_at(root, relative, FileChangeKind.DELETE), )
+            return (event_at(root, moved_to, FileChangeKind.MOVE, relative), )
+        kind = _DISK_KINDS.get(event_type)
+        if kind is None:
+            return ()
+        return (event_at(root, relative, kind), )
+
+
+def build_event_hook(accessor: DiskAccessor) -> EventHook:
+    """Build the disk event hook.
+
+    Args:
+        accessor (DiskAccessor): Backend handle.
+    """
+    return DiskEventHook(accessor)

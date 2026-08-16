@@ -13,6 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { PathSpec } from '../types.ts'
+import { mountKey } from '../utils/key_prefix.ts'
 import { rstripSlash } from '../utils/slash.ts'
 import type { FileCache } from './file/mixin.ts'
 import type { IndexCacheStore } from './index/store.ts'
@@ -59,13 +60,29 @@ export class CacheManager {
     await this.index.invalidateDir(virtual + '/')
   }
 
+  /**
+   * Mount-absolute key for a path, derived rather than inferred.
+   *
+   * Only `virtual` is read, and the key is rebuilt against this manager's own
+   * prefix, exactly as `Mount.executeOp` rebuilds one before handing a path to
+   * a backend. The caller's `resourcePath` is deliberately ignored: it is not
+   * a fact this class can trust, because `PathSpec.fromStrPath` fabricates one
+   * ("assumed root-mounted") for any caller that does not know its mount.
+   *
+   * The earlier version inferred which convention had arrived by comparing the
+   * two strings, which cannot be done: under a `/d` mount a mount-relative `/d`
+   * and an absolute `/d` are the same characters naming different files.
+   * Inferring wrong is quiet rather than loud -- a key one level off simply
+   * evicts nothing -- which is why it survived. Deriving asks no question that
+   * has no answer.
+   *
+   * Mirrors Python `CacheManager._virtual`.
+   */
   private virtual(path: string | PathSpec): string {
-    let p = path instanceof PathSpec ? path.mountPath : path
-    if (!p.startsWith('/')) p = '/' + p
-    if (this.prefix !== '' && !p.startsWith(this.prefix)) {
-      return this.prefix + p
-    }
-    return p
+    const virtual = path instanceof PathSpec ? path.virtual : path
+    const key = mountKey(virtual, this.prefix)
+    if (key === '') return this.prefix === '' ? '/' : this.prefix
+    return `${this.prefix}/${key}`
   }
 
   /**
@@ -100,6 +117,29 @@ export class CacheManager {
     if (this.cachesReads && this.fileCache !== null) {
       await this.fileCache.remove(virtual)
     }
+    await this.evictDir(virtual)
+    await this.invalidateParent(virtual)
+  }
+
+  /**
+   * Drop `path` and everything cached beneath it.
+   *
+   * For an observed change that names a scope rather than a file: a push
+   * notification often says only which folder moved, and the listings below it
+   * were cached independently, so evicting the path and its parent leaves
+   * stale entries one level down. The cheaper `invalidateAfterWrite` cannot be
+   * widened to do this, because it also runs on every ordinary write, where a
+   * file has no subtree to drop.
+   *
+   * Mirrors Python `CacheManager.invalidate_subtree`.
+   */
+  async invalidateSubtree(path: string | PathSpec): Promise<void> {
+    const virtual = this.virtual(path)
+    if (this.cachesReads && this.fileCache !== null) {
+      await this.fileCache.remove(virtual)
+      await this.fileCache.evictPrefix(rstripSlash(virtual) + '/')
+    }
+    if (this.index !== null) await this.index.invalidatePrefix(virtual)
     await this.evictDir(virtual)
     await this.invalidateParent(virtual)
   }

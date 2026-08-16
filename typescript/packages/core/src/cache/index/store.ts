@@ -25,6 +25,18 @@ export abstract class IndexCacheStore {
   ): Promise<void>
   abstract invalidateDir(resourcePath: string): Promise<void>
   /**
+   * Drop `resourcePath` and everything cached below it.
+   *
+   * `invalidateDir` drops one directory's listing and its direct children's
+   * entries, which is enough for a mutation that named a path. A push
+   * notification that can only name a scope needs the whole subtree gone,
+   * because the listings further down were cached independently and nothing
+   * above them expires them.
+   *
+   * Mirrors Python `IndexCacheStore.invalidate_prefix`.
+   */
+  abstract invalidatePrefix(resourcePath: string): Promise<void>
+  /**
    * Mark every entry stale without discarding it.
    *
    * The difference from `clear` is what a later lookup can tell. `clear`

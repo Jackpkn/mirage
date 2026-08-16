@@ -15,6 +15,7 @@
 from mirage.cache.file.mixin import FileCacheMixin
 from mirage.cache.index.store import IndexCacheStore
 from mirage.types import PathSpec
+from mirage.utils.key_prefix import mount_key
 
 
 class CacheManager:
@@ -62,12 +63,29 @@ class CacheManager:
         await self._index.invalidate_dir(virtual + "/")
 
     def _virtual(self, path: PathSpec) -> str:
-        mount_path = path.mount_path
-        if not mount_path.startswith("/"):
-            mount_path = "/" + mount_path
-        if self._prefix and not mount_path.startswith(self._prefix):
-            return self._prefix + mount_path
-        return mount_path
+        """Mount-absolute key for a path, derived rather than inferred.
+
+        Only ``virtual`` is read, and the key is rebuilt against this
+        manager's own prefix, exactly as ``Mount.execute_op`` rebuilds
+        one before handing a path to a backend. The caller's
+        ``resource_path`` is deliberately ignored: it is not a fact
+        this class can trust, because ``PathSpec.from_str_path``
+        fabricates one ("assumed root-mounted") for any caller that
+        does not know its mount, and ~50 sites take that default.
+
+        The earlier version inferred which convention had arrived by
+        comparing the two strings, which cannot be done: under a ``/d``
+        mount a mount-relative ``/d`` and an absolute ``/d`` are the
+        same characters naming different files. Inferring wrong is
+        quiet rather than loud -- a key one level off simply evicts
+        nothing -- which is why it survived. Deriving asks no question
+        that has no answer.
+
+        Args:
+            path (PathSpec): Path to key; only ``virtual`` is read.
+        """
+        key = mount_key(path.virtual, self._prefix)
+        return f"{self._prefix}/{key}" if key else self._prefix or "/"
 
     async def cached_bytes(self, path: PathSpec) -> bytes | None:
         """Return cached bytes for ``path`` if present, else None.
@@ -108,6 +126,28 @@ class CacheManager:
         virtual = self._virtual(path)
         if self._caches_reads and self._file_cache is not None:
             await self._file_cache.remove(virtual)
+        await self._evict_dir(virtual)
+        await self._invalidate_parent(virtual)
+
+    async def invalidate_subtree(self, path: PathSpec) -> None:
+        """Drop ``path`` and everything cached beneath it.
+
+        For an observed change that names a scope rather than a file: a
+        push notification often says only which folder moved, and the
+        listings below it were cached independently, so evicting the
+        path and its parent leaves stale entries one level down. The
+        cheaper ``invalidate_after_write`` cannot be widened to do this,
+        because it also runs on every ordinary write, where a file has
+        no subtree to drop.
+
+        Args:
+            path (PathSpec): Resource-relative root of the stale subtree.
+        """
+        virtual = self._virtual(path)
+        if self._caches_reads and self._file_cache is not None:
+            await self._file_cache.remove(virtual)
+            await self._file_cache.evict_prefix(virtual.rstrip("/") + "/")
+        await self._index.invalidate_prefix(virtual)
         await self._evict_dir(virtual)
         await self._invalidate_parent(virtual)
 

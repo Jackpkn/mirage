@@ -26,6 +26,7 @@ from mirage.cache.index.config import (IndexEntry, ListResult, LookupResult,
                                        LookupStatus)
 from mirage.cache.index.store import IndexCacheStore
 from mirage.core.timeutil import to_iso_z
+from mirage.utils.key_prefix import under_path
 
 ENTRY_PREFIX = "mirage:idx:entry:"
 CHILDREN_PREFIX = "mirage:idx:children:"
@@ -33,6 +34,25 @@ CHILDREN_PREFIX = "mirage:idx:children:"
 
 def _text(value: str | bytes) -> str:
     return value.decode() if isinstance(value, bytes) else value
+
+
+def _glob_escape(value: str) -> str:
+    """Escape redis MATCH metacharacters in a literal path.
+
+    A path may legally contain ``*?[]``, and SCAN's pattern is a glob, so
+    an unescaped path would match keys it does not name. The escaping is
+    a narrowing optimization only; the caller still filters the results
+    at a path boundary.
+
+    Args:
+        value (str): A literal path to embed in a MATCH pattern.
+    """
+    out: list[str] = []
+    for char in value:
+        if char in "*?[]\\":
+            out.append("\\")
+        out.append(char)
+    return "".join(out)
 
 
 class RedisIndexCacheStore(IndexCacheStore):
@@ -200,6 +220,33 @@ class RedisIndexCacheStore(IndexCacheStore):
             pipe.delete(self._entry_key(_text(child)))
         pipe.delete(children_key)
         await pipe.execute()
+
+    async def _scan_delete(self, prefix: str, resource_path: str) -> None:
+        """Delete every key under ``prefix`` naming a path in the subtree.
+
+        Args:
+            prefix (str): Key namespace to scan (entries or children).
+            resource_path (str): Mount-absolute root of the subtree.
+        """
+        pattern = f"{prefix}{_glob_escape(resource_path.rstrip('/'))}*"
+        cursor = 0
+        while True:
+            cursor, keys = await self._client.scan(cursor,
+                                                   match=pattern,
+                                                   count=500)
+            doomed = [
+                key for key in keys
+                if under_path(_text(key).removeprefix(prefix), resource_path)
+            ]
+            if doomed:
+                await self._client.delete(*doomed)
+            if cursor == 0:
+                return
+
+    async def invalidate_prefix(self, resource_path: str) -> None:
+        await self._flush_seed()
+        await self._scan_delete(self._entry_prefix, resource_path)
+        await self._scan_delete(self._children_prefix, resource_path)
 
     async def invalidate(self) -> None:
         """Clear rather than expire, because redis cannot say "stale" here.

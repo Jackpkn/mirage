@@ -12,12 +12,13 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import type { Delta, FileEvent, PathSpec } from '../types.ts'
+import type { Delta, FileEvent, JsonValue, PathSpec } from '../types.ts'
 import type { WatchQueue } from './queue/base.ts'
 
 export interface CacheInvalidator {
   invalidateAfterWrite(path: PathSpec): Promise<void>
   invalidateAfterUnlink(path: PathSpec): Promise<void>
+  invalidateSubtree(path: PathSpec): Promise<void>
 }
 
 export interface WatchMount {
@@ -34,6 +35,27 @@ export interface WatchRegistry {
 
 export interface DeltaHook {
   pull(root: PathSpec, checkpoint: string | null): Promise<Delta>
+}
+
+/**
+ * Translation of one service notification into mount paths.
+ *
+ * The push counterpart of `DeltaHook`: where a hook pulls and diffs, this
+ * maps a notification the service already delivered. Mirage owns no transport
+ * either way, so the consumer runs the socket, the webhook receiver or the
+ * change stream and passes what arrived here; only the path arithmetic lives
+ * beside the backend, because the naming rules are the backend's and a
+ * consumer reimplementing them drifts.
+ *
+ * A notification that names only a scope maps to `UNKNOWN` on that directory,
+ * which the watcher reads as "re-inventory everything below". That is the
+ * honest answer when the service cannot say more, so a hook never has to
+ * invent a path it was not told about.
+ *
+ * Mirrors Python `EventHook` (`watch/base.py`).
+ */
+export interface EventHook {
+  toEvents(root: PathSpec, eventType: string, payload: JsonValue): Promise<readonly FileEvent[]>
 }
 
 export interface WatchOptions {

@@ -63,6 +63,25 @@ export function stripMount(virtual: string, prefix: string): string {
 }
 
 /**
+ * Whether `candidate` is `root` itself or sits below it.
+ *
+ * A boundary-aware prefix test, so a sibling that merely shares the string
+ * (`/data/xy` against `/data/x`) is not counted. Both sides are compared
+ * without a trailing slash, because a backend may have keyed a directory
+ * either way. Mirrors Python `under_path` (`utils/key_prefix.py`).
+ *
+ * Example:
+ *   underPath('/data/x/y', '/data/x')  -> true
+ *   underPath('/data/x', '/data/x/')   -> true
+ *   underPath('/data/xy', '/data/x')   -> false
+ */
+export function underPath(candidate: string, root: string): boolean {
+  const base = rstripSlash(root)
+  if (base === '') return true
+  return rstripSlash(candidate) === base || candidate.startsWith(`${base}/`)
+}
+
+/**
  * Backend key for a virtual path under a mount prefix.
  *
  * Example:

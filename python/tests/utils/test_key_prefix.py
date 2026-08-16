@@ -12,7 +12,7 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from mirage.utils.key_prefix import mount_key, rekey, strip_mount
+from mirage.utils.key_prefix import mount_key, rekey, strip_mount, under_path
 
 
 def test_strip_mount_removes_prefix_at_boundary():
@@ -41,6 +41,28 @@ def test_mount_key_at_mount_root_is_empty():
 
 def test_mount_key_without_prefix():
     assert mount_key("/x.txt", "") == "x.txt"
+
+
+def test_under_path_matches_descendant():
+    assert under_path("/data/x/y", "/data/x") is True
+
+
+def test_under_path_matches_root_itself():
+    assert under_path("/data/x", "/data/x") is True
+
+
+def test_under_path_ignores_trailing_slash_on_either_side():
+    assert under_path("/data/x/", "/data/x") is True
+    assert under_path("/data/x", "/data/x/") is True
+
+
+def test_under_path_respects_path_boundary():
+    assert under_path("/data/xy", "/data/x") is False
+
+
+def test_under_path_with_empty_root_matches_everything():
+    assert under_path("/anything", "") is True
+    assert under_path("/anything", "/") is True
 
 
 def test_rekey_child_under_named_mount():

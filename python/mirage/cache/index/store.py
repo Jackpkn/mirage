@@ -56,6 +56,20 @@ class IndexCacheStore:
     async def invalidate_dir(self, resource_path: str) -> None:
         raise NotImplementedError
 
+    async def invalidate_prefix(self, resource_path: str) -> None:
+        """Drop ``resource_path`` and everything cached below it.
+
+        ``invalidate_dir`` drops one directory's listing and its direct
+        children's entries, which is enough for a mutation that named a
+        path. A push notification that can only name a scope needs the
+        whole subtree gone, because the listings further down were
+        cached independently and nothing above them expires them.
+
+        Args:
+            resource_path (str): Mount-absolute root of the subtree.
+        """
+        raise NotImplementedError
+
     async def invalidate(self) -> None:
         """Mark every entry stale without discarding it.
 
