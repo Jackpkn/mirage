@@ -265,7 +265,7 @@
       ],
       "command": "echo a > /data/zqs7.txt; (set -C; touch /data/zqs7m.txt > /data/zqs7.txt); echo rc=$?; ls /data/zqs7m.txt",
       "expect": {
-        "exit": 0,
+        "exit": 2,
         "stdout": "rc=1\n",
         "stderr": "/data/zqs7.txt: cannot overwrite existing file\nls: cannot access '/data/zqs7m.txt': No such file or directory\n"
       }
