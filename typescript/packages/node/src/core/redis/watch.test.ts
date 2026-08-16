@@ -50,7 +50,18 @@ describe('RedisEventHook', () => {
 
   it('maps side keys to nothing', async () => {
     expect(await map('set', 'wt:modified:/day/a.txt')).toEqual([])
-    expect(await map('sadd', 'wt:dir')).toEqual([])
+    expect(await map('set', 'wt:attrs:/day/a.txt')).toEqual([])
+  })
+
+  it('re-inventories the mount on a dir-set change', async () => {
+    const events = await map('sadd', 'wt:dir')
+    expect(events[0]?.kind).toBe(FileChangeKind.UNKNOWN)
+    expect(events[0]?.path.virtual).toBe('/r')
+    expect((await map('srem', 'wt:dir'))[0]?.kind).toBe(FileChangeKind.UNKNOWN)
+  })
+
+  it('maps an unrelated verb on the dir set to nothing', async () => {
+    expect(await map('smembers', 'wt:dir')).toEqual([])
   })
 
   it('maps a key from another namespace to nothing', async () => {

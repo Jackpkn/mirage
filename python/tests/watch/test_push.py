@@ -28,7 +28,7 @@ async def test_mapped_event_makes_the_next_read_fresh(tmp_path):
 
     (tmp_path / "day" / "chat.jsonl").write_text("one\ntwo\n")
     hook = ws.registry.mount_for("/d").resource.event_hook()
-    body = {"path": str(tmp_path / "day" / "chat.jsonl")}
+    body = {"src_path": str(tmp_path / "day" / "chat.jsonl")}
     for change in await hook.to_events(_root(), "modified", body):
         await ws.notify(change)
 
@@ -47,7 +47,7 @@ async def test_mapped_create_appears_in_a_warm_listing(tmp_path):
     (tmp_path / "day" / "b.txt").write_text("b")
     hook = ws.registry.mount_for("/d").resource.event_hook()
     for change in await hook.to_events(
-            _root(), "created", {"path": str(tmp_path / "day" / "b.txt")}):
+            _root(), "created", {"src_path": str(tmp_path / "day" / "b.txt")}):
         await ws.notify(change)
 
     assert "b.txt" in await (await ws.execute("ls /d/day")).stdout_str()
@@ -79,7 +79,7 @@ async def test_a_scoped_event_is_delivered_to_a_matching_watch(tmp_path):
 
     hook = ws.registry.mount_for("/d").resource.event_hook()
     for change in await hook.to_events(
-            _root(), "created", {"path": str(tmp_path / "day" / "c.txt")}):
+            _root(), "created", {"src_path": str(tmp_path / "day" / "c.txt")}):
         await ws.notify(change)
 
     got = await asyncio.wait_for(task, timeout=2)

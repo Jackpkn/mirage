@@ -135,8 +135,9 @@ const DISK_KINDS: Record<string, FileChangeKind> = {
  * has no opinion about.
  *
  * `payload` carries the host absolute paths the event named:
- * `{path, dest_path, is_directory}`, matching watchdog's field names so the
- * two languages take the same body.
+ * `{src_path, dest_path, is_directory}`. Those are watchdog's own field names,
+ * taken verbatim from `FileSystemEvent` so the two languages accept the same
+ * body and a python consumer can forward an event as a dict without renaming.
  *
  * Mirrors Python `DiskEventHook` (`core/disk/watch.py`).
  */
@@ -168,6 +169,30 @@ export class DiskEventHook {
   }
 
   /**
+   * Map a rename, which may cross the mount boundary either way.
+   *
+   * A watcher rooted above the mount sees renames that only half belong here,
+   * and each half has to be reported on its own terms: a move out is a DELETE
+   * of the vacated path, and a move in is a CREATE of the arrival. Reporting
+   * neither (which discarding the event on an out-of-mount source does) leaves
+   * a file sitting in the mount that no listing knows about.
+   */
+  private moved(
+    root: PathSpec,
+    source: string | undefined,
+    target: string | undefined,
+  ): readonly FileEvent[] {
+    const movedFrom = source === undefined ? null : this.relative(source)
+    const movedTo = target === undefined ? null : this.relative(target)
+    if (movedTo === null) {
+      if (movedFrom === null) return []
+      return [eventAt(root, movedFrom, FileChangeKind.DELETE)]
+    }
+    if (movedFrom === null) return [eventAt(root, movedTo, FileChangeKind.CREATE)]
+    return [eventAt(root, movedTo, FileChangeKind.MOVE, movedFrom)]
+  }
+
+  /**
    * Map one filesystem notification to the change it implies.
    *
    * A directory's own `modified` stays an UPDATE rather than becoming UNKNOWN:
@@ -176,18 +201,13 @@ export class DiskEventHook {
    * write inside a directory would throw away the whole cache for nothing.
    */
   toEvents(root: PathSpec, eventType: string, payload: JsonValue): Promise<readonly FileEvent[]> {
-    const source = textField(payload, 'path')
+    const source = textField(payload, 'src_path')
+    if (eventType === 'moved') {
+      return Promise.resolve(this.moved(root, source, textField(payload, 'dest_path')))
+    }
     if (source === undefined) return Promise.resolve([])
     const relative = this.relative(source)
     if (relative === null) return Promise.resolve([])
-    if (eventType === 'moved') {
-      const target = textField(payload, 'dest_path')
-      const movedTo = target === undefined ? null : this.relative(target)
-      if (movedTo === null) {
-        return Promise.resolve([eventAt(root, relative, FileChangeKind.DELETE)])
-      }
-      return Promise.resolve([eventAt(root, movedTo, FileChangeKind.MOVE, relative)])
-    }
     const kind = DISK_KINDS[eventType]
     if (kind === undefined) return Promise.resolve([])
     return Promise.resolve([eventAt(root, relative, kind)])

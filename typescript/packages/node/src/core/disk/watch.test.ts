@@ -163,7 +163,7 @@ describe('DiskEventHook', () => {
   }
 
   it('maps a create to the virtual path', async () => {
-    const events = await map('created', { path: path.join(root, 'data', 'a.txt') })
+    const events = await map('created', { src_path: path.join(root, 'data', 'a.txt') })
     expect(events).toHaveLength(1)
     expect(events[0]?.kind).toBe(FileChangeKind.CREATE)
     expect(events[0]?.path.virtual).toBe('/d/data/a.txt')
@@ -172,13 +172,13 @@ describe('DiskEventHook', () => {
 
   it('maps modified and deleted', async () => {
     const target = path.join(root, 'data', 'a.txt')
-    expect((await map('modified', { path: target }))[0]?.kind).toBe(FileChangeKind.UPDATE)
-    expect((await map('deleted', { path: target }))[0]?.kind).toBe(FileChangeKind.DELETE)
+    expect((await map('modified', { src_path: target }))[0]?.kind).toBe(FileChangeKind.UPDATE)
+    expect((await map('deleted', { src_path: target }))[0]?.kind).toBe(FileChangeKind.DELETE)
   })
 
   it('maps a move to both sides', async () => {
     const events = await map('moved', {
-      path: path.join(root, 'data', 'old.txt'),
+      src_path: path.join(root, 'data', 'old.txt'),
       dest_path: path.join(root, 'data', 'new.txt'),
     })
     expect(events[0]?.kind).toBe(FileChangeKind.MOVE)
@@ -188,7 +188,7 @@ describe('DiskEventHook', () => {
 
   it('reports a move out of the mount as a delete', async () => {
     const events = await map('moved', {
-      path: path.join(root, 'data', 'old.txt'),
+      src_path: path.join(root, 'data', 'old.txt'),
       dest_path: '/elsewhere/new.txt',
     })
     expect(events[0]?.kind).toBe(FileChangeKind.DELETE)
@@ -196,11 +196,33 @@ describe('DiskEventHook', () => {
   })
 
   it('ignores a path outside the mount', async () => {
-    expect(await map('created', { path: '/elsewhere/a.txt' })).toEqual([])
+    expect(await map('created', { src_path: '/elsewhere/a.txt' })).toEqual([])
   })
 
   it('ignores an unknown event type', async () => {
-    expect(await map('opened', { path: path.join(root, 'data', 'a.txt') })).toEqual([])
+    expect(await map('opened', { src_path: path.join(root, 'data', 'a.txt') })).toEqual([])
+  })
+
+  it('reports a move into the mount as a create', async () => {
+    const events = await map('moved', {
+      src_path: '/elsewhere/old.txt',
+      dest_path: path.join(root, 'data', 'new.txt'),
+    })
+    expect(events[0]?.kind).toBe(FileChangeKind.CREATE)
+    expect(events[0]?.path.virtual).toBe('/d/data/new.txt')
+    expect(events[0]?.previousPath).toBeNull()
+  })
+
+  it('ignores a move that touches neither side', async () => {
+    expect(
+      await map('moved', { src_path: '/elsewhere/old.txt', dest_path: '/nowhere/new.txt' }),
+    ).toEqual([])
+  })
+
+  it('normalizes the mount root', async () => {
+    const events = await map('modified', { src_path: root })
+    expect(events[0]?.path.virtual).toBe('/d')
+    expect(events[0]?.path.resourcePath).toBe('')
   })
 
   it('ignores a payload without a path', async () => {

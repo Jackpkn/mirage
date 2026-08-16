@@ -22,6 +22,9 @@ import { eventAt, type EventHook } from '@struktoai/mirage-core/watch/index'
 import type { RedisAccessor } from '../../accessor/redis.ts'
 
 const FILE_SEGMENT = 'file:'
+const DIR_SEGMENT = 'dir'
+
+const DIR_SET_VERBS = new Set(['sadd', 'srem', 'del', 'unlink', 'expired'])
 
 const REDIS_KINDS: Record<string, FileChangeKind> = {
   set: FileChangeKind.UPDATE,
@@ -58,8 +61,16 @@ const REDIS_KINDS: Record<string, FileChangeKind> = {
  * this hook does not keep. They map to a DELETE and an UPDATE, which is what a
  * poll-diff source reports for a rename too.
  *
- * Keys outside the mount's `file:` segment (the `modified:` and `attrs:` side
- * keys, the `dir` set) name no file and map to nothing.
+ * Directories are the third limit, and the coarsest. Every directory on the
+ * mount is one member of a single `<prefix>dir` set, and a keyspace message
+ * carries the key, never the member, so an external `mkdir` or `rmdir` says
+ * only that some directory changed. An empty directory has no `file:` key at
+ * all, so nothing else reports it. That maps to UNKNOWN at the mount root,
+ * which re-inventories the whole mount: expensive, but it is exactly what
+ * UNKNOWN means and the protocol offers nothing narrower.
+ *
+ * Keys outside those two (the `modified:` and `attrs:` side keys) name nothing
+ * this mount serves and map to nothing.
  *
  * Mirrors Python `RedisEventHook` (`core/redis/watch.py`).
  */
@@ -79,6 +90,10 @@ export class RedisEventHook {
 
   toEvents(root: PathSpec, eventType: string, payload: JsonValue): Promise<readonly FileEvent[]> {
     if (typeof payload !== 'string') return Promise.resolve([])
+    if (payload === `${this.accessor.store.keyPrefix}${DIR_SEGMENT}`) {
+      if (!DIR_SET_VERBS.has(eventType)) return Promise.resolve([])
+      return Promise.resolve([eventAt(root, '/', FileChangeKind.UNKNOWN)])
+    }
     const relative = this.relative(payload)
     if (relative === null) return Promise.resolve([])
     const kind = REDIS_KINDS[eventType]

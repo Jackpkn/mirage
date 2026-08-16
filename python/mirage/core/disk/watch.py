@@ -157,8 +157,10 @@ class DiskEventHook:
     mount has no opinion about.
 
     ``payload`` carries the host absolute paths the event named:
-    ``{"path": ..., "dest_path": ..., "is_directory": ...}``, matching
-    watchdog's own field names.
+    ``{"src_path": ..., "dest_path": ..., "is_directory": ...}``. Those
+    are watchdog's own field names, taken verbatim from
+    ``FileSystemEvent`` so a consumer can forward an event as a dict
+    without renaming anything.
     """
 
     def __init__(self, accessor: DiskAccessor) -> None:
@@ -177,10 +179,13 @@ class DiskEventHook:
             host_path (str): Absolute path on the local filesystem.
         """
         try:
-            return "/" + Path(host_path).relative_to(
+            relative = Path(host_path).relative_to(
                 self._accessor.root).as_posix()
         except ValueError:
             return None
+        # `relative_to` spells "the root itself" as ".", which would
+        # render as a fabricated "<mount>/." entry.
+        return "/" if relative == "." else "/" + relative
 
     async def to_events(self, root: PathSpec, event_type: str,
                         payload: JsonValue) -> Sequence[FileEvent]:
@@ -196,24 +201,48 @@ class DiskEventHook:
             root (PathSpec): Any path on this mount, read for its prefix.
             event_type (str): ``created``, ``modified``, ``deleted`` or
                 ``moved``.
-            payload (JsonValue): ``path`` plus, for a move, ``dest_path``.
+            payload (JsonValue): ``src_path`` plus, for a move,
+                ``dest_path``.
         """
-        source = text_field(payload, "path")
+        source = text_field(payload, "src_path")
+        target = text_field(payload, "dest_path")
+        if event_type == "moved":
+            return self._moved(root, source, target)
         if source is None:
             return ()
         relative = self._relative(source)
         if relative is None:
             return ()
-        if event_type == "moved":
-            target = text_field(payload, "dest_path")
-            moved_to = self._relative(target) if target is not None else None
-            if moved_to is None:
-                return (event_at(root, relative, FileChangeKind.DELETE), )
-            return (event_at(root, moved_to, FileChangeKind.MOVE, relative), )
         kind = _DISK_KINDS.get(event_type)
         if kind is None:
             return ()
         return (event_at(root, relative, kind), )
+
+    def _moved(self, root: PathSpec, source: str | None,
+               target: str | None) -> Sequence[FileEvent]:
+        """Map a rename, which may cross the mount boundary either way.
+
+        A watcher rooted above the mount sees renames that only half
+        belong here, and each half has to be reported on its own terms:
+        a move out is a DELETE of the vacated path, and a move in is a
+        CREATE of the arrival. Reporting neither (which discarding the
+        event on an out-of-mount source does) leaves a file sitting in
+        the mount that no listing knows about.
+
+        Args:
+            root (PathSpec): Any path on this mount, read for its prefix.
+            source (str | None): Host path the entry left, if named.
+            target (str | None): Host path the entry arrived at, if named.
+        """
+        moved_from = self._relative(source) if source is not None else None
+        moved_to = self._relative(target) if target is not None else None
+        if moved_to is None:
+            if moved_from is None:
+                return ()
+            return (event_at(root, moved_from, FileChangeKind.DELETE), )
+        if moved_from is None:
+            return (event_at(root, moved_to, FileChangeKind.CREATE), )
+        return (event_at(root, moved_to, FileChangeKind.MOVE, moved_from), )
 
 
 def build_event_hook(accessor: DiskAccessor) -> EventHook:

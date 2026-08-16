@@ -47,7 +47,21 @@ def test_rename_to_maps_to_an_update_on_the_new_key():
 
 def test_side_keys_map_to_nothing():
     assert _map("set", "wt:modified:/day/a.txt") == ()
-    assert _map("sadd", "wt:dir") == ()
+    assert _map("set", "wt:attrs:/day/a.txt") == ()
+
+
+def test_a_dir_set_change_re_inventories_the_mount():
+    # The message names the set, never the member, and an empty
+    # directory has no file: key, so the mount root is the narrowest
+    # honest answer.
+    events = _map("sadd", "wt:dir")
+    assert events[0].kind is FileChangeKind.UNKNOWN
+    assert events[0].path.virtual == "/r"
+    assert _map("srem", "wt:dir")[0].kind is FileChangeKind.UNKNOWN
+
+
+def test_an_unrelated_verb_on_the_dir_set_maps_to_nothing():
+    assert _map("smembers", "wt:dir") == ()
 
 
 def test_a_key_from_another_namespace_maps_to_nothing():
