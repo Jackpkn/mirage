@@ -1,4 +1,5 @@
 import pytest
+import typer.main
 from typer.testing import CliRunner
 
 from mirage.cli.main import app
@@ -23,13 +24,21 @@ def test_mcp_is_registered():
     assert "mcp" in result.stdout
 
 
-def test_mcp_help_describes_stdio(monkeypatch):
-    # Narrow terminals wrap the flag pair out of the rendered help.
-    monkeypatch.setenv("COLUMNS", "120")
-    result = runner.invoke(app, ["mcp", "--help"])
-    assert result.exit_code == 0
-    assert "stdio" in result.stdout
-    assert "--no-stale-write-protection" in result.stdout
+def test_mcp_help_describes_stdio():
+    # Asserted on the declarations rather than the rendered help: the
+    # help box is laid out to the terminal's width, so an assertion
+    # against its text passes or fails on how wide the runner's terminal
+    # happens to be -- CI's is narrower than a local one, and the flag
+    # pair wrapped away there after passing here.
+    mcp = typer.main.get_command(app).commands["mcp"]
+    assert "stdio" in (mcp.help or "")
+    opts = {
+        opt
+        for param in mcp.params
+        for opt in (*param.opts, *param.secondary_opts)
+    }
+    assert "--stale-write-protection" in opts
+    assert "--no-stale-write-protection" in opts
 
 
 def test_missing_config_exits_two(tmp_path, monkeypatch):

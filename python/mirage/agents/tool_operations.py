@@ -221,4 +221,8 @@ class MirageToolOperations:
         """
         io = await self._ws.execute(
             f"grep -rn {shlex.quote(pattern)} {shlex.quote(path)}")
-        return ToolResult(io_to_str(io))
+        # grep exits 1 for "no match", which is a normal empty answer,
+        # and >1 for a real failure (bad regex, unreadable path). Only
+        # the second is a tool error; reporting the first as one would
+        # tell the agent its search broke every time nothing matched.
+        return ToolResult(io_to_str(io), io.exit_code > 1)

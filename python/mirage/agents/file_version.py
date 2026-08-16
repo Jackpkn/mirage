@@ -64,6 +64,23 @@ class FileVersionTracker:
         self._read_versions: dict[str, str] = {}
         self._edit_versions: dict[str, str] = {}
 
+    def _key(self, path: str) -> str:
+        """The stamp key for a path: one key per file, not per spelling.
+
+        `ops.read` and `ops.write` follow the namespace symlink table, so
+        `/alias` and `/target` are the same file. Keying by the caller's
+        spelling would give each its own stamp, and an edit that arrived
+        through the other name would find no prior version and skip the
+        staleness check entirely.
+
+        Args:
+            path (str): Virtual path as the agent spelled it.
+
+        Returns:
+            str: The path with symlink prefixes resolved.
+        """
+        return self._ws.namespace.follow(path)
+
     async def _current_version(self, path: str) -> str | None:
         if not await self._ws.ops.exists(path):
             return None
@@ -73,11 +90,19 @@ class FileVersionTracker:
         if await self._current_version(path) != expected:
             raise StaleMirageFileError(path)
 
-    def _record_write(self, path: str, content: str) -> None:
+    async def _record_write(self, path: str, key: str) -> None:
+        # Stamp what a later read will return, not the bytes handed in.
+        # A mount whose read op renders answers with something other than
+        # what was stored, so stamping the input would make the very next
+        # write or edit look stale with nobody having touched the file.
         if not self._enabled:
             return
-        self._read_versions[path] = fingerprint(content.encode("utf-8"))
-        self._edit_versions.pop(path, None)
+        version = await self._current_version(path)
+        if version is None:
+            self._read_versions.pop(key, None)
+        else:
+            self._read_versions[key] = version
+        self._edit_versions.pop(key, None)
 
     async def read(self, path: str) -> bytes:
         """Read a file and record what the agent was shown.
@@ -90,7 +115,7 @@ class FileVersionTracker:
         """
         content = await self._ws.ops.read(path)
         if self._enabled:
-            self._read_versions[path] = fingerprint(content)
+            self._read_versions[self._key(path)] = fingerprint(content)
         return content
 
     async def read_for_edit(self, path: str) -> bytes:
@@ -108,11 +133,12 @@ class FileVersionTracker:
         content = await self._ws.ops.read(path)
         if not self._enabled:
             return content
+        key = self._key(path)
         version = fingerprint(content)
-        read_version = self._read_versions.get(path)
+        read_version = self._read_versions.get(key)
         if read_version is not None and read_version != version:
             raise StaleMirageFileError(path)
-        self._edit_versions[path] = version
+        self._edit_versions[key] = version
         return content
 
     async def write(self, path: str, content: str) -> None:
@@ -125,12 +151,13 @@ class FileVersionTracker:
         Raises:
             StaleMirageFileError: The file moved since it was last read.
         """
+        key = self._key(path)
         if self._enabled:
-            read_version = self._read_versions.get(path)
+            read_version = self._read_versions.get(key)
             if read_version is not None:
                 await self._assert_version(path, read_version)
         await self._ws.ops.write(path, content.encode("utf-8"))
-        self._record_write(path, content)
+        await self._record_write(path, key)
 
     async def write_edit(self, path: str, content: str) -> None:
         """Write an edit, refusing if it moved since it was read for edit.
@@ -142,9 +169,10 @@ class FileVersionTracker:
         Raises:
             StaleMirageFileError: The file moved since it was read for edit.
         """
+        key = self._key(path)
         if self._enabled:
-            edit_version = self._edit_versions.get(path)
+            edit_version = self._edit_versions.get(key)
             if edit_version is not None:
                 await self._assert_version(path, edit_version)
         await self._ws.ops.write(path, content.encode("utf-8"))
-        self._record_write(path, content)
+        await self._record_write(path, key)

@@ -151,7 +151,11 @@ class MirageMcpServer:
                  name: str = "mirage",
                  version: str = __version__) -> None:
         self._ops = MirageToolOperations(workspace, stale_write_protection)
-        self.server: Server[object, object] = Server(name, version=version)
+        # The SDK's parameters are the lifespan result and the per-request
+        # payload. No lifespan is passed, so the default one runs and
+        # yields an empty dict; nothing here reads a request payload.
+        self.server: Server[dict[str, Any], Any] = Server(name,
+                                                          version=version)
         self.server.list_tools()(self.list_tools)
         self.server.call_tool()(self.call_tool)
 

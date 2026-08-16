@@ -135,6 +135,24 @@ async def test_grep(ops, workspace):
                               b"hello world\ngoodbye world\nhello again\n")
     result = await ops.grep("hello", "/")
     assert "hello" in result.text
+    assert result.is_error is False
+
+
+@pytest.mark.asyncio
+async def test_grep_reports_no_match_as_success(ops, workspace):
+    # grep exits 1 when nothing matched. That is the empty answer, not a
+    # broken search, so the agent must not be told the call failed.
+    await workspace.ops.write("/search.txt", b"hello world\n")
+    result = await ops.grep("nothing-matches-this", "/")
+    assert result.is_error is False
+
+
+@pytest.mark.asyncio
+async def test_grep_reports_a_real_failure_as_an_error(ops):
+    # An unreadable path exits 2. Reported as a success, the diagnostic
+    # would read to the agent like a search that found nothing.
+    result = await ops.grep("hello", "/nope.txt")
+    assert result.is_error is True
 
 
 @pytest.mark.asyncio

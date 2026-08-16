@@ -89,7 +89,7 @@ class RAMResource(BaseResource):
 
     async def resolve_glob(
         self,
-        paths: list[str | PathSpec],
+        paths: list[PathSpec],
         prefix: str = '',
     ) -> list[PathSpec]:
         if prefix:
