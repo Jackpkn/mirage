@@ -26,6 +26,7 @@
  * the layers resolve in.
  */
 export const NameKind = Object.freeze({
+  ALIAS: 'alias',
   KEYWORD: 'keyword',
   FUNCTION: 'function',
   CLI: 'cli',

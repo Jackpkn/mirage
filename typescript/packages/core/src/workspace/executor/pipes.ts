@@ -16,6 +16,8 @@ import { runWithTimeout } from '../../commands/builtin/utils/limit.ts'
 import { asyncChain, closeQuietly, mergeStdoutStderr } from '../../io/stream.ts'
 import type { ByteSource } from '../../io/types.ts'
 import { IOResult, materialize } from '../../io/types.ts'
+import type { DispatchFn } from '../../runtime/types.ts'
+import { divertStatement } from './builtins/exec_cmd.ts'
 import { finishStatement } from './statement.ts'
 import type { CallStack } from '../../shell/call_stack.ts'
 import { ExitSignal } from '../../shell/errors.ts'
@@ -250,6 +252,11 @@ export async function handleSubshell(
   callStack: CallStack | null = null,
   jobTable: JobTable | null = null,
   agentId: string | null = null,
+  // The op door, so a subshell honors an `exec` redirect the way the
+  // program loop does. A subshell is a child shell, so the redirect it
+  // installs is restored with the rest of the snapshot when the body
+  // ends.
+  dispatch?: DispatchFn,
 ): Promise<Result> {
   const saved = session.snapshot()
   try {
@@ -292,7 +299,8 @@ export async function handleSubshell(
       let io: IOResult
       let childExec: ExecutionNode
       try {
-        ;[stdout, io, childExec] = await executeNode(child, session, stdin, callStack)
+        const childStdin = stdin ?? session.execStdin
+        ;[stdout, io, childExec] = await executeNode(child, session, childStdin, callStack)
       } catch (err) {
         if (!(err instanceof ExitSignal)) throw err
         // A subshell is its own shell: exit (or ${var:?}) ends the
@@ -310,6 +318,10 @@ export async function handleSubshell(
         break
       }
       stdout = await finishStatement(stdout, io, session)
+      if (dispatch !== undefined && (session.execStdout !== null || session.execStderr !== null)) {
+        const bytes = stdout === null ? null : await materialize(stdout)
+        stdout = await divertStatement(dispatch, session, bytes, io)
+      }
       if (stdout !== null) allStdout.push(stdout)
       mergedIo = await mergedIo.merge(io)
       lastExec = childExec

@@ -76,16 +76,63 @@ def exported_names(session: Session) -> list[str]:
                   and not var_hidden(session.hidden_vars, name))
 
 
+def nameref_target(session: Session, name: str) -> str | None:
+    """The name a ``declare -n`` reference points at, None otherwise.
+
+    None also for a reference declared but not yet aimed (``declare -n
+    r`` before ``r=v``): bash treats the first assignment to such a
+    reference as naming its target, so until then it stands for nothing.
+
+    Args:
+        session (Session): the session holding the record.
+        name (str): variable name.
+    """
+    var = session.vars.get(name)
+    if var is None or VarAttr.NAMEREF not in var.attrs:
+        return None
+    return var.value if isinstance(var.value, str) and var.value else None
+
+
+def deref(session: Session, name: str) -> str:
+    """The variable a name stands for, following ``declare -n`` chains.
+
+    A name that is not a reference is its own answer, so every reader
+    and writer can resolve unconditionally and a session with no
+    namerefs pays one dict lookup. A chain that comes back to itself
+    (``declare -n a=b; declare -n b=a``) is bash's "circular name
+    reference", which it warns about and reads as unset: that resolves
+    to the empty name, which no record ever has, so a reader sees unset
+    and a writer falls back to the reference's own record. The warning
+    line is the one part not reproduced.
+
+    Args:
+        session (Session): the session holding the records.
+        name (str): the name as spelled.
+    """
+    current = name
+    seen: set[str] = set()
+    while True:
+        target = nameref_target(session, current)
+        if target is None:
+            return current
+        if current in seen:
+            return ""
+        seen.add(current)
+        current = target
+
+
 def env_get(session: Session, name: str) -> str | None:
     """The variable's value, None when unset or hidden.
 
     Sync on purpose: ``$X`` expansion is the hot path, so a read stays
-    a dict lookup plus the hidden check.
+    a dict lookup plus the hidden check. A name reference reads its
+    target.
 
     Args:
         session (Session): the session holding the environment.
         name (str): variable name.
     """
+    name = deref(session, name)
     if var_hidden(session.hidden_vars, name):
         return None
     var = session.vars.get(name)
@@ -104,6 +151,7 @@ def env_is_readonly(session: Session, name: str) -> bool:
         session (Session): the session holding the readonly set.
         name (str): variable name.
     """
+    name = deref(session, name)
     if var_hidden(session.hidden_vars, name):
         return False
     var = session.vars.get(name)
@@ -124,6 +172,7 @@ class _VisibleEnv(Mapping[str, str]):
         self._session = session
 
     def __getitem__(self, name: str) -> str:
+        name = deref(self._session, name)
         if var_hidden(self._session.hidden_vars, name):
             raise KeyError(name)
         var = self._session.vars[name]
@@ -171,6 +220,7 @@ class _VisibleArrays(Mapping[str, ShellArray]):
         self._session = session
 
     def __getitem__(self, name: str) -> ShellArray:
+        name = deref(self._session, name)
         if var_hidden(self._session.hidden_vars, name):
             raise KeyError(name)
         var = self._session.vars[name]
@@ -212,6 +262,7 @@ class _VisibleAssocs(Mapping[str, dict[str, str]]):
         self._session = session
 
     def __getitem__(self, name: str) -> dict[str, str]:
+        name = deref(self._session, name)
         if var_hidden(self._session.hidden_vars, name):
             raise KeyError(name)
         var = self._session.vars[name]
@@ -398,8 +449,11 @@ def ensure_var_visible(session: Session, name: str) -> None:
         raise PolicyDenied(errno.EACCES, f"{name}: permission denied", name)
 
 
-async def set_var(session: Session, policies: Policies | None, name: str,
-                  value: ShellValue) -> None:
+async def set_var(session: Session,
+                  policies: Policies | None,
+                  name: str,
+                  value: ShellValue,
+                  follow_ref: bool = True) -> None:
     """Write one variable through the session plane's gate.
 
     General over variable shapes: a string stores a scalar, a
@@ -419,12 +473,18 @@ async def set_var(session: Session, policies: Policies | None, name: str,
         policies (Policies | None): admission policies the write clears.
         name (str): variable name.
         value (ShellValue): the value to store.
+        follow_ref (bool): resolve a ``declare -n`` reference to its
+            target first, which is what every ordinary assignment does.
+            ``declare -n r=w`` on an existing reference is the one
+            writer that re-aims the reference instead, and passes False.
 
     Raises:
         ReadonlyVariableError: the name is readonly.
         PolicyDenied: the name is hidden for this session, or a
             pre_session policy refused the write.
     """
+    if follow_ref:
+        name = deref(session, name) or name
     ensure_var_visible(session, name)
     # The record, not the `readonly_vars` projection: that property
     # rebuilds a frozenset over every variable in the session, and this
@@ -473,8 +533,10 @@ async def set_var(session: Session, policies: Policies | None, name: str,
     session.vars[name] = stored
 
 
-async def unset_var(session: Session, policies: Policies | None,
-                    name: str) -> None:
+async def unset_var(session: Session,
+                    policies: Policies | None,
+                    name: str,
+                    follow_ref: bool = True) -> None:
     """Drop one variable through the session plane's gate; a missing
     name is quiet.
 
@@ -482,11 +544,16 @@ async def unset_var(session: Session, policies: Policies | None,
         session (Session): the session being written.
         policies (Policies | None): admission policies the write clears.
         name (str): variable name.
+        follow_ref (bool): resolve a ``declare -n`` reference to its
+            target, which is what ``unset r`` does in bash; ``unset -n r``
+            drops the reference itself and passes False.
 
     Raises:
         ReadonlyVariableError: the name is readonly.
         PolicyDenied: a pre_session policy refused the write.
     """
+    if follow_ref:
+        name = deref(session, name) or name
     if var_hidden(session.hidden_vars, name):
         # Hidden reads as unset and bash's unset of a missing name is
         # a quiet no-op; popping the real value would let a session
@@ -603,6 +670,11 @@ async def mark_var(session: Session,
         PolicyDenied: the name is hidden for this session, or a
             pre_session policy refused the mark.
     """
+    # `readonly r` and `export r` on a reference mark what it points at,
+    # as bash does; the nameref attribute itself is the one mark that
+    # belongs to the reference's own record, on and off.
+    if attr is not VarAttr.NAMEREF:
+        name = deref(session, name) or name
     ensure_var_visible(session, name)
     await pre_session_gate(
         policies,

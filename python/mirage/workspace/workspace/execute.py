@@ -26,7 +26,7 @@ from mirage.policy import resolve_limit
 from mirage.provision import ProvisionResult
 from mirage.runtime.policy import PolicyDecision, PolicyDeny, PolicyError
 from mirage.shell.parse import (find_syntax_error, find_unterminated_backtick,
-                                parse)
+                                parse, syntax_error_result)
 from mirage.workspace.abort import MirageAbortError
 from mirage.workspace.node import provision_node, run_command_tree
 from mirage.workspace.session import (get_current_session_for,
@@ -89,18 +89,6 @@ def session_cwd(ws, session_id: str) -> str | None:
         return ws._session_mgr.get(session_id).cwd
     except KeyError:
         return None
-
-
-def syntax_error_result(offending: str) -> IOResult:
-    """Exit 2 with the bash-style diagnostic for an unparsable line.
-
-    Args:
-        offending (str): the span the parser flagged.
-    """
-    snippet = offending.strip()
-    err = (f"mirage: syntax error near {snippet!r}\n".encode()
-           if snippet else b"mirage: syntax error in command\n")
-    return IOResult(exit_code=2, stderr=err)
 
 
 async def execute_line(

@@ -1,0 +1,140 @@
+{
+  "cases": [
+    {
+      "id": "glob_nullglob_drops_zero_match",
+      "seq": 940030,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "mkdir -p gnd && cd gnd && echo pre zz* post; shopt -s nullglob; echo pre zz* post; shopt -u nullglob; cd ..",
+      "expect": {
+        "exit": 0,
+        "stdout": "pre zz* post\npre post\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "glob_failglob_is_fatal",
+      "seq": 940031,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "mkdir -p gfd && cd gfd && shopt -s failglob; echo zz*; echo after",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "bash: no match: zz*\n"
+      }
+    },
+    {
+      "id": "glob_dotglob_reveals_dotfiles",
+      "seq": 940032,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "mkdir -p gdd && touch gdd/.hid gdd/vis.txt; echo gdd/*; shopt -s dotglob; echo gdd/*; shopt -u dotglob",
+      "expect": {
+        "exit": 0,
+        "stdout": "gdd/vis.txt\ngdd/.hid gdd/vis.txt\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "glob_globstar_walks_subtree",
+      "seq": 940033,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "mkdir -p gsd/d/e && touch gsd/f.txt gsd/d/g.txt gsd/d/e/h.txt; echo gsd/**/*.txt; shopt -s globstar; echo gsd/**/*.txt; echo gsd/d/**; shopt -u globstar",
+      "expect": {
+        "exit": 0,
+        "stdout": "gsd/d/g.txt\ngsd/d/e/h.txt gsd/d/g.txt gsd/f.txt\ngsd/d/ gsd/d/e gsd/d/e/h.txt gsd/d/g.txt\n",
+        "stderr": ""
+      }
+    }
+  ]
+}

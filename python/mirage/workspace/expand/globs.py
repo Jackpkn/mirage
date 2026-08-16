@@ -16,14 +16,61 @@ import dataclasses
 
 from mirage.ops.config import NamespaceLinks
 from mirage.ops.namespace_view import child_mount_names, namespace_names
+from mirage.shell.errors import ExitSignal
+from mirage.shell.types import SHOPT_DEFAULTS
 from mirage.types import PathSpec
-from mirage.utils.fnmatch import fnmatch
-from mirage.utils.glob_walk import (glob_pattern, has_glob, literal_word,
-                                    spell_match, unmark_globs)
+from mirage.utils.glob_walk import (glob_name_matches, glob_pattern, has_glob,
+                                    literal_word, spell_match, unmark_globs)
 from mirage.utils.key_prefix import mount_key
 from mirage.utils.path import CycleError
 from mirage.workspace.mount import MountRegistry
 from mirage.workspace.mount.mount import MountEntry
+from mirage.workspace.session import Session
+
+# How deep a `**` descends. bash has no cap, but every level here is one
+# listing per directory, so an accidental `**` over a large tree is
+# bounded rather than open-ended.
+GLOBSTAR_MAX_DEPTH = 32
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class GlobOptions:
+    """The `shopt` options pathname expansion reads.
+
+    `dotglob` is deliberately absent: it is applied inside every
+    backend's `resolve_glob` (`glob_name_matches`), which reads it from
+    the bound session, so it does not have to travel with the word.
+
+    Args:
+        nullglob (bool): a glob that matches nothing expands to nothing.
+        failglob (bool): a glob that matches nothing is a fatal
+            expansion error, `bash: no match: WORD`.
+        globstar (bool): a `**` segment matches zero or more directory
+            levels instead of reading as `*`.
+    """
+    nullglob: bool = False
+    failglob: bool = False
+    globstar: bool = False
+
+    @property
+    def needs_shell(self) -> bool:
+        """Whether a mount command's glob has to expand here rather than
+        be pushed down to the backend, which knows none of these."""
+        return self.nullglob or self.failglob or self.globstar
+
+
+def glob_options(session: Session) -> GlobOptions:
+    """The session's pathname-expansion options.
+
+    Args:
+        session (Session): the session holding the `shopt` table.
+    """
+    return GlobOptions(nullglob=session.shopts.get("nullglob",
+                                                   SHOPT_DEFAULTS["nullglob"]),
+                       failglob=session.shopts.get("failglob",
+                                                   SHOPT_DEFAULTS["failglob"]),
+                       globstar=session.shopts.get("globstar",
+                                                   SHOPT_DEFAULTS["globstar"]))
 
 
 def _namespace_children(registry: MountRegistry, links: NamespaceLinks | None,
@@ -49,7 +96,7 @@ def _namespace_children(registry: MountRegistry, links: NamespaceLinks | None,
     return [
         f"{base}/{name}" for name in namespace_names(
             [m.prefix for m in registry.mounts()], links, directory)
-        if fnmatch(name, matcher)
+        if glob_name_matches(name, matcher)
     ]
 
 
@@ -250,6 +297,112 @@ async def _walk_segments(item: PathSpec, mount: MountEntry, prefix: str,
     return _to_specs(level, item, registry, mount, walked)
 
 
+def _join_spelling(head: str, name: str) -> str:
+    """Append one segment to a typed spelling.
+
+    Args:
+        head (str): the spelling so far; empty for a word with no fixed
+            head, `/` for an absolute one at the root.
+        name (str): the segment to add.
+    """
+    if not head:
+        return name
+    return f"{head.rstrip('/')}/{name}"
+
+
+async def _descend(registry: MountRegistry, mount: MountEntry,
+                   links: NamespaceLinks | None, parent: str, spelled: str,
+                   depth: int) -> list[tuple[str, str]]:
+    """Every entry under a directory, at any depth, with its spelling.
+
+    One listing per directory; a child that cannot be listed (a file)
+    answers nothing and ends the branch, so no stat is spent telling
+    the two apart. The leading-dot rule applies at each level exactly as
+    for `*`, so a hidden directory is entered only under `dotglob`.
+
+    Args:
+        registry (MountRegistry): registry holding the mount table.
+        mount (MountEntry): the mount owning the typed word.
+        links (NamespaceLinks | None): the namespace symlink table.
+        parent (str): the directory to descend from, no trailing slash.
+        spelled (str): its typed spelling.
+        depth (int): levels descended so far.
+    """
+    if depth >= GLOBSTAR_MAX_DEPTH:
+        return []
+    out: list[tuple[str, str]] = []
+    for child in sorted(
+            set(await _level_matches(registry, mount, links, parent + "/",
+                                     "*"))):
+        child_spelled = _join_spelling(spelled, child.rsplit("/", 1)[-1])
+        out.append((child, child_spelled))
+        out.extend(await _descend(registry, mount, links, child, child_spelled,
+                                  depth + 1))
+    return out
+
+
+async def _walk_globstar(item: PathSpec, mount: MountEntry,
+                         registry: MountRegistry,
+                         links: NamespaceLinks | None) -> list[PathSpec]:
+    """Expand a word holding a `**` segment under `shopt -s globstar`.
+
+    A `**` segment matches zero or more directory levels: the parent
+    itself (bash spells that one with a trailing slash when the word has
+    a fixed head, `d/**` -> `d/`, and omits it for a bare `**`) plus
+    every descendant. Any other segment matches one level as usual. The
+    spelling is carried level by level rather than derived from a
+    segment count, because a `**` that matched zero levels leaves the
+    typed word and the match with different depths.
+
+    Args:
+        item (PathSpec): the classify-shaped glob word.
+        mount (MountEntry): the mount owning the word.
+        registry (MountRegistry): registry holding the mount table.
+        links (NamespaceLinks | None): the namespace symlink table.
+    """
+    segments = item.virtual.strip("/").split("/")
+    first = next(i for i, seg in enumerate(segments) if has_glob(seg))
+    raw = unmark_globs(item.raw_path)
+    raw_parts = raw.rstrip("/").split("/")
+    raw_head = "/".join(raw_parts[:len(raw_parts) - (len(segments) - first)])
+    if raw.startswith("/") and not raw_head:
+        raw_head = "/"
+    head = unmark_globs("/" + "/".join(segments[:first])).rstrip("/") or "/"
+    level: list[tuple[str, str, bool]] = [(head, raw_head, False)]
+    for seg in segments[first:]:
+        gathered: list[tuple[str, str, bool]] = []
+        for parent, spelled, _ in level:
+            if seg == "**":
+                gathered.append((parent, spelled, True))
+                gathered.extend((v, sp, False) for v, sp in await _descend(
+                    registry, mount, links, parent, spelled, 0))
+                continue
+            for child in await _level_matches(registry, mount, links,
+                                              parent.rstrip("/") + "/", seg):
+                gathered.append(
+                    (child, _join_spelling(spelled,
+                                           child.rsplit("/", 1)[-1]), False))
+        seen: set[str] = set()
+        level = []
+        for entry in sorted(gathered, key=lambda e: e[0]):
+            if entry[0] in seen:
+                continue
+            seen.add(entry[0])
+            level.append(entry)
+        if not level:
+            return []
+    # A `**` that matched zero levels at the end of the word is the head
+    # itself, which bash spells with a trailing slash (`d/**` -> `d/`)
+    # and leaves out entirely when there is no head (`**` alone).
+    return [
+        dataclasses.replace(PathSpec.from_str_path(
+            v, mount_key(v,
+                         _mount_of(registry, v, mount).prefix.rstrip("/"))),
+                            raw_path=f"{sp.rstrip('/')}/" if is_self else sp)
+        for v, sp, is_self in level if sp or not is_self
+    ]
+
+
 def _to_specs(virtuals: list[str], item: PathSpec, registry: MountRegistry,
               mount: MountEntry, walked: int) -> list[PathSpec]:
     """Key matched virtual paths to their mounts and spell them as typed.
@@ -298,11 +451,21 @@ def _match_raw(item: PathSpec, match: PathSpec) -> PathSpec:
     return dataclasses.replace(match, raw_path=spelled)
 
 
+def _has_globstar_segment(item: PathSpec) -> bool:
+    """Whether a word holds a segment that is exactly `**`.
+
+    Args:
+        item (PathSpec): the glob word.
+    """
+    return "**" in unmark_globs(item.virtual).split("/")
+
+
 async def resolve_globs(
     classified: list[str | PathSpec],
     registry: MountRegistry,
     noglob: bool = False,
     links: NamespaceLinks | None = None,
+    options: GlobOptions | None = None,
 ) -> list[str | PathSpec]:
     """Resolve glob patterns in PathSpec args, preserving PathSpec type.
 
@@ -320,9 +483,13 @@ async def resolve_globs(
         links (NamespaceLinks | None): the namespace symlink table, so a
             glob sees links and nested mount roots the way a listing
             does. None outside a workspace.
+        options (GlobOptions | None): the session's `shopt` glob
+            options; None is bash's defaults (a zero-match glob stays
+            the literal word, `**` reads as `*`).
     """
     if noglob:
         return [literal_word(item) for item in classified]
+    opts = options if options is not None else GlobOptions()
     result: list[str | PathSpec] = []
     for item in classified:
         if isinstance(item, PathSpec) and item.pattern:
@@ -343,7 +510,10 @@ async def resolve_globs(
                 # The parent directory is a real directory to list, so a
                 # glob character quoted inside it is part of its name.
                 directory = unmark_globs(item.directory)
-                if has_glob(item.directory):
+                if opts.globstar and _has_globstar_segment(item):
+                    resolved = await _walk_globstar(item, mount, registry,
+                                                    links)
+                elif has_glob(item.directory):
                     resolved = await _walk_segments(item, mount, prefix,
                                                     registry, links)
                 elif _listing_dir(links, directory) != directory:
@@ -369,10 +539,19 @@ async def resolve_globs(
                         _namespace_children(registry, links, directory,
                                             pattern), directory, prefix,
                         registry, mount)
-                # bash with nullglob off: a zero-match glob stays the
-                # literal word instead of vanishing.
                 if not resolved:
-                    result.append(item)
+                    # bash's three answers to a zero-match glob: the
+                    # literal word (default), nothing at all under
+                    # nullglob, and a fatal expansion error under
+                    # failglob, which ends the line like a bad subscript.
+                    if opts.failglob:
+                        word = unmark_globs(item.raw_path)
+                        raise ExitSignal(
+                            1,
+                            stderr=f"bash: no match: {word}\n".encode(),
+                            contained_code=1)
+                    if not opts.nullglob:
+                        result.append(item)
                     continue
                 for p in resolved:
                     result.append(_match_raw(item, _as_spec(p, prefix)))

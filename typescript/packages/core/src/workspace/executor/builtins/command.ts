@@ -20,6 +20,9 @@ import type { Session } from '../../session/session.ts'
 import { ExecutionNode } from '../../types.ts'
 import { lastOf, scanOptions } from './getopt.ts'
 import { classify, describe } from './lookup/index.ts'
+import { NameKind } from './lookup/types.ts'
+import { quoteAliasValue } from './alias.ts'
+import { sessionEntry } from '../../session/session.ts'
 import type { ExecuteStringFn } from './scope.ts'
 import type { Result } from './shared.ts'
 
@@ -50,7 +53,15 @@ function probe(
       continue
     }
     anyFound = true
-    outLines.push(mode === 'v' ? name : describe(name, kind))
+    // `command -v` prints an alias as its definition, the one form that
+    // is not just the name.
+    const line =
+      mode === 'V'
+        ? describe(name, kind, session)
+        : kind === NameKind.ALIAS
+          ? `alias ${name}=${quoteAliasValue(sessionEntry(session.aliases, name) ?? '')}`
+          : name
+    outLines.push(line)
   }
   const enc = new TextEncoder()
   const out = outLines.length > 0 ? enc.encode(`${outLines.join('\n')}\n`) : null

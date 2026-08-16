@@ -20,11 +20,11 @@ from mirage.shell.array import (array_count, array_extent, array_get,
                                 array_has, array_with)
 from mirage.shell.variable import ShellValue
 from mirage.workspace.session.session import Session
-from mirage.workspace.session.state import (element_index, ensure_var_visible,
-                                            env_get, seed_var,
-                                            session_elements, strip_key_quotes,
-                                            visible_arrays, visible_assocs,
-                                            visible_env)
+from mirage.workspace.session.state import (deref, element_index,
+                                            ensure_var_visible, env_get,
+                                            seed_var, session_elements,
+                                            strip_key_quotes, visible_arrays,
+                                            visible_assocs, visible_env)
 
 _ELEMENT_REF = re.compile(r"([A-Za-z_]\w*)(?:\[(.+)\])?\Z", re.DOTALL)
 
@@ -114,6 +114,10 @@ async def assign_element(session: Session,
         ArithError: the name carries ``-i`` and the text does not
             evaluate; the caller voices it after the offending text.
     """
+    # An element write through a name reference lands on the target,
+    # so it is resolved once here and the raw storage reads below all
+    # look at the variable the write will produce.
+    name = deref(session, name) or name
     try:
         ensure_var_visible(session, name)
     except PolicyDenied:

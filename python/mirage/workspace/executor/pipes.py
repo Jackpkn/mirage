@@ -20,12 +20,14 @@ from mirage.commands.builtin.utils.limit import run_with_timeout
 from mirage.io import IOResult
 from mirage.io.stream import async_chain, close_quietly, merge_stdout_stderr
 from mirage.io.types import ByteSource, materialize
+from mirage.runtime.types import DispatchFn
 from mirage.shell.call_stack import CallStack
 from mirage.shell.errors import ExitSignal
 from mirage.shell.helpers import get_text
 from mirage.shell.job_table import JobTable
 from mirage.shell.types import ERREXIT_EXEMPT_TYPES
 from mirage.shell.types import NodeType as NT
+from mirage.workspace.executor.builtins.exec_cmd import divert_statement
 from mirage.workspace.executor.jobs import handle_background
 from mirage.workspace.executor.statement import finish_statement
 from mirage.workspace.session import Session
@@ -212,6 +214,7 @@ async def handle_subshell(
     call_stack: CallStack | None = None,
     job_table: JobTable | None = None,
     agent_id: str | None = None,
+    dispatch: DispatchFn | None = None,
 ) -> tuple[ByteSource | None, IOResult, ExecutionNode]:
     """Execute body in isolated env.
 
@@ -227,6 +230,10 @@ async def handle_subshell(
         job_table (JobTable | None): the subshell's private job table
             (bash forks: the parent's table never sees these jobs).
         agent_id (str | None): agent identity for job bookkeeping.
+        dispatch (DispatchFn | None): the op door, so a subshell honors
+            an `exec` redirect the way the program loop does. A subshell
+            is a child shell, so the redirect it installs is restored
+            with the rest of the snapshot when the body ends.
     """
     saved = session.snapshot()
     try:
@@ -257,9 +264,12 @@ async def handle_subshell(
                 i += 2
                 continue
             i += 1
+            child_stdin = stdin
+            if child_stdin is None and session.exec_stdin is not None:
+                child_stdin = session.exec_stdin
             try:
                 stdout, io, last_exec = await execute_node(
-                    child, session, stdin, call_stack)
+                    child, session, child_stdin, call_stack)
             except ExitSignal as sig:
                 # A subshell is its own shell: exit (or ${var:?}) ends
                 # the subshell only, becoming its exit status.
@@ -275,6 +285,11 @@ async def handle_subshell(
                                           stderr=sig.stderr)
                 break
             stdout = await finish_statement(stdout, io, session)
+            if dispatch is not None and (session.exec_stdout is not None
+                                         or session.exec_stderr is not None):
+                materialized = await materialize(stdout)
+                stdout = await divert_statement(dispatch, session,
+                                                materialized, io)
             if stdout is not None:
                 all_stdout.append(stdout)
             merged_io = await merged_io.merge(io)

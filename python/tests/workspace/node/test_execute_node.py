@@ -493,7 +493,7 @@ def test_read_from_bytes():
                      "agent-1",
                      node,
                      session,
-                     stdin=b"hello world"))
+                     stdin=b"hello world\n"))
     assert io.exit_code == 0
     assert session.env["VAR"] == "hello world"
 
@@ -1815,7 +1815,7 @@ def test_read_from_bytes_stdin():
                      "a",
                      node,
                      session,
-                     stdin=b"hello world"))
+                     stdin=b"hello world\n"))
     assert io.exit_code == 0
     assert session.env["VAR"] == "hello world"
 
@@ -1829,7 +1829,7 @@ def test_read_from_async_iterator_stdin():
     execute_fn = AsyncMock(return_value=IOResult())
     node = parse("read VAR")
 
-    stdin_stream = _async_iter(b"streamed data")
+    stdin_stream = _async_iter(b"streamed data\n")
     _, io, _ = _run(
         execute_node(dispatch,
                      reg,

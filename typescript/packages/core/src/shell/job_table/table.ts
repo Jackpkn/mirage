@@ -71,6 +71,9 @@ export class JobTable {
   private nextId = 1
   private readonly consoleFactory: ConsoleFactory | null
   private factoryConsoles: JobConsole[] = []
+  // Jobs `disown` removed while still running: the shell forgets them,
+  // the workspace still owns their tasks so teardown can stop them.
+  private disowned: Job[] = []
 
   /**
    * @param consoleFactory builds each new job's console from its job
@@ -172,12 +175,38 @@ export class JobTable {
     return true
   }
 
-  /** Stop every running job, returning the ones that were running. */
+  /**
+   * Drop a job from the table without stopping it (`disown`): the job
+   * keeps running, `jobs` no longer lists it and `wait` no longer knows
+   * it. It stays on a side list so `killAll` at teardown reaches its
+   * task.
+   */
+  disown(jobId: number): boolean {
+    const job = this.jobs.get(jobId)
+    if (job === undefined) return false
+    this.jobs.delete(jobId)
+    if (job.status === JobStatus.RUNNING) this.disowned.push(job)
+    return true
+  }
+
+  /** Stop every running job, returning the ones that were running.
+   * Disowned jobs are stopped too: the shell forgot them, the workspace
+   * did not, and a teardown that left them running would leak tasks. */
   async killAll(): Promise<Job[]> {
     const running = this.runningJobs()
     for (const job of running) {
       await this.kill(job.id)
     }
+    for (const job of this.disowned) {
+      if (job.status === JobStatus.RUNNING) {
+        job.abort?.abort()
+        job.status = JobStatus.KILLED
+        job.exitCode = KILLED_EXIT_CODE
+        await job.console.emit(Channel.STDERR, new TextEncoder().encode('Killed'))
+        await job.console.finish(KILLED_OUTCOME)
+      }
+    }
+    this.disowned = []
     return running
   }
 

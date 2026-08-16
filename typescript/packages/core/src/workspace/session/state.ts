@@ -76,12 +76,46 @@ export function exportedNames(session: Session): string[] {
   return out.sort(compareCodePoints)
 }
 
+/**
+ * The name a `declare -n` reference points at, null otherwise. Null
+ * also for a reference declared but not yet aimed (`declare -n r`
+ * before `r=v`): bash treats the first assignment as naming the target,
+ * so until then it stands for nothing.
+ */
+export function namerefTarget(session: Session, name: string): string | null {
+  const v = sessionEntry(session.vars, name)
+  if (!v?.attrs.has(VarAttr.Nameref)) return null
+  return typeof v.value === 'string' && v.value ? v.value : null
+}
+
+/**
+ * The variable a name stands for, following `declare -n` chains. A name
+ * that is not a reference is its own answer. A chain that comes back to
+ * itself (`declare -n a=b; declare -n b=a`) is bash's circular name
+ * reference, read as unset: it resolves to the empty name, which no
+ * record has, so a reader sees unset and a writer falls back to the
+ * reference's own record. The warning line is the one part not
+ * reproduced.
+ */
+export function deref(session: Session, name: string): string {
+  let current = name
+  const seen = new Set<string>()
+  for (;;) {
+    const target = namerefTarget(session, current)
+    if (target === null) return current
+    if (seen.has(current)) return ''
+    seen.add(current)
+    current = target
+  }
+}
+
 /** The variable's value, null when unset or hidden. Sync on purpose:
  * `$X` expansion is the hot path, so a read stays a record lookup plus
- * the hidden check. */
+ * the hidden check. A name reference reads its target. */
 export function envGet(session: Session, name: string): string | null {
-  if (varHidden(session.hiddenVars, name)) return null
-  const v = sessionEntry(session.vars, name)
+  const resolved = deref(session, name)
+  if (varHidden(session.hiddenVars, resolved)) return null
+  const v = sessionEntry(session.vars, resolved)
   return v !== undefined && typeof v.value === 'string' ? v.value : null
 }
 
@@ -93,8 +127,9 @@ export function envGet(session: Session, name: string): string | null {
  * would leak it.
  */
 function envIsReadonly(session: Session, name: string): boolean {
-  if (varHidden(session.hiddenVars, name)) return false
-  const v = sessionEntry(session.vars, name)
+  const resolved = deref(session, name)
+  if (varHidden(session.hiddenVars, resolved)) return false
+  const v = sessionEntry(session.vars, resolved)
   return v?.attrs.has(VarAttr.Readonly) ?? false
 }
 
@@ -315,7 +350,9 @@ async function setVar(
   policies: Policies | null,
   name: string,
   value: ShellValue,
+  followRef = true,
 ): Promise<void> {
+  if (followRef) name = deref(session, name) || name
   ensureVarVisible(session, name)
   if (envIsReadonly(session, name)) {
     throw new ReadonlyVariableError(name)
@@ -372,7 +409,13 @@ async function setVar(
  * see. Throws ReadonlyVariableError when the name is readonly,
  * PolicyDenied when a preSession policy refuses the write.
  */
-async function unsetVar(session: Session, policies: Policies | null, name: string): Promise<void> {
+async function unsetVar(
+  session: Session,
+  policies: Policies | null,
+  name: string,
+  followRef = true,
+): Promise<void> {
+  if (followRef) name = deref(session, name) || name
   if (varHidden(session.hiddenVars, name)) return
   if (envIsReadonly(session, name)) {
     throw new ReadonlyVariableError(name)
@@ -458,6 +501,9 @@ async function markVar(
   attr: VarAttr | null,
   on: boolean,
 ): Promise<void> {
+  // `readonly r` and `export r` on a reference mark what it points at;
+  // the nameref attribute itself belongs to the reference's own record.
+  if (attr !== VarAttr.Nameref) name = deref(session, name) || name
   ensureVarVisible(session, name)
   await preSessionGate(policies, {
     plane: 'env',
@@ -473,8 +519,8 @@ export function sessionView(session: Session, policies: Policies | null = null):
   return {
     get: (name) => envGet(session, name),
     snapshot: () => envSnapshot(session),
-    set: (name, value) => setVar(session, policies, name, value),
-    unset: (name) => unsetVar(session, policies, name),
+    set: (name, value, followRef = true) => setVar(session, policies, name, value, followRef),
+    unset: (name, followRef = true) => unsetVar(session, policies, name, followRef),
     mark: (name, attr, on) => markVar(session, policies, name, attr, on),
     isReadonly: (name) => envIsReadonly(session, name),
   }

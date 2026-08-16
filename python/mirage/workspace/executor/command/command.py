@@ -44,10 +44,10 @@ from mirage.workspace.executor.command.routing import (CWD_DEFAULT_RAW,
 from mirage.workspace.executor.command.types import ExecuteNodeFn
 from mirage.workspace.executor.fanout import (_fan_out_traversal,
                                               _should_fan_out, run_with_fanout)
-from mirage.workspace.executor.jobs import (handle_fg, handle_jobs,
-                                            handle_kill, handle_ps,
-                                            handle_wait)
-from mirage.workspace.expand.globs import resolve_globs
+from mirage.workspace.executor.jobs import (handle_disown, handle_fg,
+                                            handle_jobs, handle_kill,
+                                            handle_ps, handle_wait)
+from mirage.workspace.expand.globs import glob_options, resolve_globs
 from mirage.workspace.mount import MountCommandUnsupported, MountRegistry
 from mirage.workspace.mount.namespace import Namespace
 from mirage.workspace.mount.storage import make_storage_key
@@ -66,6 +66,7 @@ JOB_HANDLERS = {
     "fg": handle_fg,
     "kill": handle_kill,
     "jobs": handle_jobs,
+    "disown": handle_disown,
     "ps": handle_ps,
 }
 
@@ -99,7 +100,9 @@ async def handle_command(
         text_parts = [
             p.virtual if isinstance(p, PathSpec) else p for p in parts
         ]
-        return await JOB_HANDLERS[cmd_name](job_table, text_parts)
+        return await JOB_HANDLERS[cmd_name](job_table, text_parts, session,
+                                            session_view(
+                                                session, registry.policies))
 
     # Shell functions
     if cmd_name in session.functions:
@@ -225,7 +228,8 @@ async def handle_command(
             # unmatched glob stays the literal word, like bash.
             expanded = await resolve_globs(list(path_scopes),
                                            registry,
-                                           links=namespace)
+                                           links=namespace,
+                                           options=glob_options(session))
             cross_scopes = [p for p in expanded if isinstance(p, PathSpec)]
         run_single = functools.partial(run_on_mount,
                                        registry,

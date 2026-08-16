@@ -17,6 +17,7 @@ from enum import Enum, auto
 
 import tree_sitter
 
+from mirage.context import DEFAULT_UMASK
 from mirage.io import IOResult
 from mirage.io.stream import materialize
 from mirage.io.types import ByteSource
@@ -196,17 +197,64 @@ async def handle_redirect(
         data = bytes(buf)
         scope = file_scopes[path]
         try:
-            await dispatch("write", scope, data=data)
+            created = await _write_target(dispatch, session, scope, data)
         except FS_ERRORS as exc:
             out_stderr += _redirect_error_line(scope, exc)
             io.exit_code = 1
             break
         io.writes[path] = data
+        if created:
+            await _apply_umask(dispatch, session, scope)
 
     result_stdout = bytes(out_stdout)
     io.stderr = bytes(out_stderr) if out_stderr else None
     exec_node = ExecutionNode(command="redirect", exit_code=io.exit_code)
     return result_stdout if result_stdout else None, io, exec_node
+
+
+async def _write_target(dispatch: DispatchFn, session: Session,
+                        scope: PathSpec, data: bytes) -> bool:
+    """Write one redirect target, reporting whether the write created it.
+
+    The existence probe runs only under a non-default umask, because
+    that is the one case the answer changes anything: a fresh file
+    already renders as 644, which is 0666 under bash's default mask.
+
+    Args:
+        dispatch (DispatchFn): op dispatcher.
+        session (Session): the session holding the umask.
+        scope (PathSpec): the target.
+        data (bytes): the bytes to write.
+    """
+    created = False
+    if session.umask != DEFAULT_UMASK:
+        try:
+            await dispatch("stat", scope)
+        except FS_ERRORS:
+            created = True
+    await dispatch("write", scope, data=data)
+    return created
+
+
+async def _apply_umask(dispatch: DispatchFn, session: Session,
+                       scope: PathSpec) -> None:
+    """Give a file a redirect just created its 0666-under-umask mode.
+
+    Args:
+        dispatch (DispatchFn): op dispatcher.
+        session (Session): the session holding the umask.
+        scope (PathSpec): the created target.
+    """
+    try:
+        await dispatch("setattr",
+                       scope,
+                       mode=0o666 & ~session.umask,
+                       uid=None,
+                       gid=None,
+                       atime=None,
+                       mtime=None)
+    except FS_ERRORS as exc:
+        logger.debug("umask mode write failed for %s: %s", scope.raw_path, exc)
 
 
 def _redirect_error_line(scope: PathSpec, exc: OSError) -> bytes:

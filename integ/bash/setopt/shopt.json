@@ -1,0 +1,140 @@
+{
+  "cases": [
+    {
+      "id": "shopt_set_unset_query",
+      "seq": 940020,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "shopt -q nullglob; echo rc=$?; shopt -s nullglob; shopt nullglob; shopt -p nullglob; shopt -u nullglob; shopt nullglob; echo rc=$?",
+      "expect": {
+        "exit": 0,
+        "stdout": "rc=1\nnullglob       \ton\nshopt -s nullglob\nnullglob       \toff\nrc=1\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "shopt_refuses_bad_name_and_conflict",
+      "seq": 940021,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "shopt -s bogus; echo rc=$?; shopt -su nullglob; echo rc=$?; shopt -z; echo rc=$?",
+      "expect": {
+        "exit": 0,
+        "stdout": "rc=1\nrc=1\nrc=2\n",
+        "stderr": "bash: shopt: bogus: invalid shell option name\nbash: shopt: cannot set and unset shell options simultaneously\nbash: shopt: -z: invalid option\nshopt: usage: shopt [-pqsu] [-o] [optname ...]\n"
+      }
+    },
+    {
+      "id": "shopt_o_bridges_set_options",
+      "seq": 940022,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "shopt -so errexit; shopt -o errexit; set +o errexit; shopt -o nullglob; echo rc=$?",
+      "expect": {
+        "exit": 0,
+        "stdout": "errexit        \ton\nrc=1\n",
+        "stderr": "bash: shopt: nullglob: invalid option name\n"
+      }
+    },
+    {
+      "id": "shopt_refuses_extglob",
+      "seq": 940023,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "shopt -s extglob; echo rc=$?; shopt -u extglob; shopt extglob; echo rc=$?",
+      "expect": {
+        "exit": 0,
+        "stdout": "rc=1\nextglob        \toff\nrc=1\n",
+        "stderr": "mirage: shopt: extglob: not supported\n"
+      }
+    }
+  ]
+}

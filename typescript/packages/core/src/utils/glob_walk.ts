@@ -12,7 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { pathAllowed } from '../context/session_context.ts'
+import { dotglobActive, pathAllowed } from '../context/session_context.ts'
 import type { ChildMounts } from '../ops/types.ts'
 import { PathSpec } from '../types.ts'
 import { fnmatch } from './fnmatch.ts'
@@ -248,6 +248,19 @@ export async function resolveGlobWith<A, I>(
 }
 
 /**
+ * Whether one directory entry answers a pathname-expansion segment.
+ * `fnmatch` plus bash's leading-dot rule: a name starting with `.` is
+ * matched only by a pattern that also starts with `.` (so `*`, `?h` and
+ * `[.]h` pass over `.h`), unless the session has `shopt -s dotglob`.
+ * Pathname expansion's rule alone; `find -name` and `case` match through
+ * `fnmatch` directly.
+ */
+export function globNameMatches(name: string, pattern: string): boolean {
+  if (name.startsWith('.') && !pattern.startsWith('.') && !dotglobActive()) return false
+  return fnmatch(name, pattern)
+}
+
+/**
  * Expand a glob PathSpec segment-by-segment via readdir.
  *
  * Mirrors bash globbing: every path component containing a glob character is
@@ -292,14 +305,14 @@ export async function expandPattern<A, I>(
       }
       for (const e of entries) {
         const name = rstripSlash(e).split('/').pop() ?? ''
-        if (fnmatch(name, matcher)) nextLevel.push(e)
+        if (globNameMatches(name, matcher)) nextLevel.push(e)
       }
       if (children !== undefined) {
         // A nested mount root or a link is a real child of this parent
         // whether or not the backend could list it.
         const baseDir = rstripSlash(parent)
         for (const name of children(`${baseDir}/`)) {
-          if (fnmatch(name, matcher)) nextLevel.push(`${baseDir}/${name}`)
+          if (globNameMatches(name, matcher)) nextLevel.push(`${baseDir}/${name}`)
         }
       }
     }

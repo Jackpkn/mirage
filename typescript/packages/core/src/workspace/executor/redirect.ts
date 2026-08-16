@@ -22,6 +22,7 @@ import type { CallStack } from '../../shell/call_stack.ts'
 import { type Redirect, RedirectKind } from '../../shell/types.ts'
 import { FileStat, FileType, PathSpec } from '../../types.ts'
 import type { TSNodeLike } from '../../shell/types.ts'
+import { DEFAULT_UMASK } from '../../context/session_context.ts'
 import type { Session } from '../session/session.ts'
 import { ExecutionNode } from '../types.ts'
 import type { DispatchFn } from '../../runtime/types.ts'
@@ -200,8 +201,27 @@ export async function handleRedirect(
     const scope = fileScopes.get(path)
     if (scope === undefined) continue
     try {
+      // The existence probe runs only under a non-default umask, the one
+      // case the answer changes anything: a fresh file already renders
+      // as 644, which is 0666 under bash's default mask.
+      let created = false
+      if (session.umask !== DEFAULT_UMASK) {
+        try {
+          await dispatch('stat', scope)
+        } catch (statErr) {
+          if (!isFsError(statErr)) throw statErr
+          created = true
+        }
+      }
       await dispatch('write', scope, [data])
       io.writes[path] = data
+      if (created) {
+        try {
+          await dispatch('setattr', scope, [], { mode: 0o666 & ~session.umask })
+        } catch (modeErr) {
+          if (!isFsError(modeErr)) throw modeErr
+        }
+      }
     } catch (err) {
       if (!isFsError(err)) throw err
       outStderr = concat([outStderr, redirectErrorLine(scope, err)])

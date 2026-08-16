@@ -259,6 +259,81 @@ SET_OPTION_NAMES = frozenset({
     "xtrace",
 })
 
+# Every name GNU's `shopt` accepts and what it reads as before anything
+# sets it, pinned from `bash -c shopt` on debian:stable-slim (5.2.37), in
+# the order bash lists them (which is alphabetical except that
+# `assoc_expand_once` follows `autocd`). Kept apart from SET_OPTION_NAMES
+# because bash keeps two vocabularies: `set -o` and `shopt`, with
+# `shopt -o` as the one bridge. mirage acts on the glob ones and on
+# `expand_aliases`, and stores the rest so a listing prints every option
+# bash knows and `shopt -q` answers the same way it would there.
+SHOPT_DEFAULTS: dict[str, bool] = {
+    "autocd": False,
+    "assoc_expand_once": False,
+    "cdable_vars": False,
+    "cdspell": False,
+    "checkhash": False,
+    "checkjobs": False,
+    "checkwinsize": True,
+    "cmdhist": True,
+    "compat31": False,
+    "compat32": False,
+    "compat40": False,
+    "compat41": False,
+    "compat42": False,
+    "compat43": False,
+    "compat44": False,
+    "complete_fullquote": True,
+    "direxpand": False,
+    "dirspell": False,
+    "dotglob": False,
+    "execfail": False,
+    "expand_aliases": False,
+    "extdebug": False,
+    "extglob": False,
+    "extquote": True,
+    "failglob": False,
+    "force_fignore": True,
+    "globasciiranges": True,
+    "globskipdots": True,
+    "globstar": False,
+    "gnu_errfmt": False,
+    "histappend": False,
+    "histreedit": False,
+    "histverify": False,
+    "hostcomplete": True,
+    "huponexit": False,
+    "inherit_errexit": False,
+    "interactive_comments": True,
+    "lastpipe": False,
+    "lithist": False,
+    "localvar_inherit": False,
+    "localvar_unset": False,
+    "login_shell": False,
+    "mailwarn": False,
+    "no_empty_cmd_completion": False,
+    "nocaseglob": False,
+    "nocasematch": False,
+    "noexpand_translation": False,
+    "nullglob": False,
+    "patsub_replacement": True,
+    "progcomp": True,
+    "progcomp_alias": False,
+    "promptvars": True,
+    "restricted_shell": False,
+    "shift_verbose": False,
+    "sourcepath": True,
+    "varredir_close": False,
+    "xpg_echo": False,
+}
+
+# `shopt` names mirage refuses to turn on rather than store: `extglob`
+# changes what the *parser* accepts (`!(a).txt` is a pattern, not a
+# subshell), and mirage's grammar has no such mode, so a stored `on`
+# would promise a syntax that still fails to parse. Refusing is the
+# honest answer until the parser learns it.
+SHOPT_UNSUPPORTED = frozenset({"extglob"})
+
 # What each option reads as before anything sets it, pinned from
 # `bash -c 'set -o'` on debian:stable-slim (5.2.37). Only three are on,
 # and all three are on for a non-interactive shell too, so this is the
@@ -347,9 +422,17 @@ class ShellBuiltin(StrEnum):
     DOT = "."
     EVAL = "eval"
     READ = "read"
+    MAPFILE = "mapfile"
+    READARRAY = "readarray"
     SHIFT = "shift"
     GETOPTS = "getopts"
     TRAP = "trap"
+    SHOPT = "shopt"
+    UMASK = "umask"
+    ALIAS = "alias"
+    UNALIAS = "unalias"
+    LET = "let"
+    EXEC = "exec"
     TEST = "test"
     BRACKET = "["
     DOUBLE_BRACKET = "[["
@@ -358,6 +441,7 @@ class ShellBuiltin(StrEnum):
     FG = "fg"
     KILL = "kill"
     JOBS = "jobs"
+    DISOWN = "disown"
     PS = "ps"
     # output / text processing (no filesystem)
     ECHO = "echo"

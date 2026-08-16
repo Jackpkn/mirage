@@ -34,7 +34,7 @@ import { strategyFor } from '../../commands/builtin/generic/crossmount/detect.ts
 import type { Cmd } from '../../commands/builtin/generic/crossmount/types.ts'
 import { isCreateMode } from '../../commands/builtin/generic/tar/mode.ts'
 import { Strategy } from '../../commands/builtin/generic/crossmount/types.ts'
-import { resolveGlobs } from '../expand/globs.ts'
+import { globOptions, resolveGlobs } from '../expand/globs.ts'
 import type { DispatchFn } from '../../runtime/types.ts'
 import { handleCrossMount, isCrossMount } from './cross_mount.ts'
 import type { RunSingle } from '../../commands/builtin/generic/crossmount/index.ts'
@@ -47,12 +47,13 @@ import {
 import { maybeWithTimeout } from '../../commands/builtin/utils/limit.ts'
 import { resolveProducer, resolveLimit } from '../../policy/index.ts'
 import type { ExecuteNodeFn, JobHandlerResult } from './jobs.ts'
-import { handleFg, handleJobs, handleKill, handlePs, handleWait } from './jobs.ts'
+import { handleDisown, handleFg, handleJobs, handleKill, handlePs, handleWait } from './jobs.ts'
 import { versionRequest } from '../../commands/config.ts'
 
 import { handleCli } from './command/cli.ts'
 import { pathStat } from './builtins/links.ts'
 import { dropServiceCaches, namespaceViewOf } from './command/run.ts'
+import type { SessionView } from '../../ops/types.ts'
 import { sessionView } from '../session/state.ts'
 import { optionError, parseFlags } from './command/flags.ts'
 import { executeShellFunction } from './command/functions.ts'
@@ -71,12 +72,18 @@ export { ReturnSignal } from './control.ts'
 // One handler per JOB_BUILTINS member; route already narrowed the name.
 const JOB_HANDLERS: Record<
   string,
-  (jobTable: JobTable, textParts: string[]) => JobHandlerResult | Promise<JobHandlerResult>
+  (
+    jobTable: JobTable,
+    textParts: string[],
+    session: Session | null,
+    view: SessionView | null,
+  ) => JobHandlerResult | Promise<JobHandlerResult>
 > = {
   wait: handleWait,
   fg: handleFg,
   kill: handleKill,
   jobs: handleJobs,
+  disown: handleDisown,
   ps: handlePs,
 }
 
@@ -108,7 +115,9 @@ export async function handleCommand(
   if (JOB_BUILTINS.has(cmdName) && jobTable !== null) {
     const textParts = parts.map((p) => (typeof p === 'string' ? p : p.virtual))
     const handler = JOB_HANDLERS[cmdName]
-    if (handler !== undefined) return handler(jobTable, textParts)
+    if (handler !== undefined) {
+      return handler(jobTable, textParts, session, sessionView(session, registry.policies))
+    }
   }
 
   const funcBody = session.functions[cmdName]
@@ -249,7 +258,13 @@ export async function handleCommand(
       // expands the operand's glob. RELAY bypasses the mount command
       // wrappers entirely, so its glob operands must expand here; an
       // unmatched glob stays the literal word, like bash.
-      const expanded = await resolveGlobs(pathScopes, registry, false, namespace ?? null)
+      const expanded = await resolveGlobs(
+        pathScopes,
+        registry,
+        false,
+        namespace ?? null,
+        globOptions(session),
+      )
       csScopes = expanded.filter((p): p is PathSpec => typeof p !== 'string')
     }
     const runCtx: RunOnMountCtx = {

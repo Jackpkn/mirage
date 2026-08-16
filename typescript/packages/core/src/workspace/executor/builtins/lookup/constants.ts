@@ -37,6 +37,7 @@ export const KIND_BY_CONSUMER: Readonly<Partial<Record<Consumer, NameKind>>> = O
 })
 
 export const DESCRIPTIONS: Readonly<Record<NameKind, string>> = Object.freeze({
+  [NameKind.ALIAS]: 'an alias',
   [NameKind.KEYWORD]: 'a shell keyword',
   [NameKind.FUNCTION]: 'a function',
   [NameKind.CLI]: 'a mirage CLI',

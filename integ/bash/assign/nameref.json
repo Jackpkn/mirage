@@ -1,0 +1,208 @@
+{
+  "cases": [
+    {
+      "id": "nameref_reads_and_writes_the_target",
+      "seq": 940070,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "nra=real; declare -n nrr=nra; echo $nrr; nrr=2; echo $nra; echo ${!nrr}",
+      "expect": {
+        "exit": 0,
+        "stdout": "real\n2\nnra\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "nameref_reaches_array_elements",
+      "seq": 940071,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "nrb=(1 2); declare -n nrc=nrb; echo ${nrc[1]} ${#nrc[@]}; nrc[2]=3; declare -p nrb",
+      "expect": {
+        "exit": 0,
+        "stdout": "2 2\ndeclare -a nrb=([0]=\"1\" [1]=\"2\" [2]=\"3\")\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "nameref_refuses_bad_targets",
+      "seq": 940072,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "declare -n nrd='a b'; echo rc=$?; declare -n nre=nre; echo rc=$?",
+      "expect": {
+        "exit": 0,
+        "stdout": "rc=1\nrc=1\n",
+        "stderr": "bash: declare: `a b': invalid variable name for name reference\nbash: declare: nre: nameref variable self references not allowed\n"
+      }
+    },
+    {
+      "id": "unset_n_drops_the_reference_not_the_target",
+      "seq": 940073,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "nrf=1; declare -n nrg=nrf; unset -n nrg; echo $nrf",
+      "expect": {
+        "exit": 0,
+        "stdout": "1\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "declare_g_writes_the_global_record",
+      "seq": 940074,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "dga=0; dgf(){ local dga=5; declare -g dga=1; echo in=$dga; }; dgf; echo out=$dga",
+      "expect": {
+        "exit": 0,
+        "stdout": "in=5\nout=1\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "declare_g_reaches_past_a_callers_local",
+      "seq": 940075,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "dgg(){ declare -g dgb=inner; }; dgh(){ local dgb=local; dgg; echo f=$dgb; }; dgh; echo top=$dgb",
+      "expect": {
+        "exit": 0,
+        "stdout": "f=local\ntop=inner\n",
+        "stderr": ""
+      }
+    }
+  ]
+}

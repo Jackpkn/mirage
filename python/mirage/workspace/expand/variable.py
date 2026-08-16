@@ -36,7 +36,8 @@ from mirage.workspace.session import (Session, ensure_var_visible,
 from mirage.workspace.session.elements import assign_element
 from mirage.workspace.session.errors import ReadonlyVariableError
 from mirage.workspace.session.shell_dirs import home_dir
-from mirage.workspace.session.state import session_elements, visible_assocs
+from mirage.workspace.session.state import (nameref_target, session_elements,
+                                            visible_assocs)
 
 ExpandChild = Callable[[tree_sitter.Node], Awaitable[str]]
 
@@ -819,6 +820,12 @@ async def expand_braces(node: tree_sitter.Node,
             var_in_env = val != ""
 
     if p.indirect_op:
+        # `${!r}` on a name reference is the target's *name*, not an
+        # indirection through the value.
+        target = (nameref_target(session, p.var_name)
+                  if p.var_name is not None else None)
+        if target is not None:
+            return target
         return _lookup_var(val, session, call_stack) if val else ""
     if p.length_op:
         return str(len(val))

@@ -17,8 +17,10 @@ from collections.abc import Callable, Sequence
 from typing import Any
 
 from mirage.io.types import ByteSource
+from mirage.workspace.executor.builtins.alias import quote_alias_value
 from mirage.workspace.executor.builtins.getopt import last_of, scan_options
 from mirage.workspace.executor.builtins.lookup import classify, describe
+from mirage.workspace.executor.builtins.lookup.types import NameKind
 from mirage.workspace.executor.builtins.shared import Result, ok, result
 from mirage.workspace.mount import MountRegistry
 from mirage.workspace.session import Session
@@ -54,7 +56,14 @@ def _probe(mode: str, rest: Sequence[str], session: Session,
                 err_lines.append(f"command: {name}: not found\n")
             continue
         any_found = True
-        line = name if mode == "v" else describe(name, kind)
+        if mode == "V":
+            line = describe(name, kind, session)
+        elif kind is NameKind.ALIAS:
+            # `command -v` prints an alias as its definition, the one
+            # form that is not just the name.
+            line = f"alias {name}={quote_alias_value(session.aliases[name])}"
+        else:
+            line = name
         out_lines.append(f"{line}\n")
     out = "".join(out_lines).encode() if out_lines else None
     # The status and the diagnostics are independent: bash prints

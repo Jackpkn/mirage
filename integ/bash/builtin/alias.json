@@ -1,0 +1,174 @@
+{
+  "cases": [
+    {
+      "id": "alias_needs_expand_aliases_and_next_line",
+      "seq": 940040,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "alias axa='echo hi'; axa; echo rc=$?",
+      "expect": {
+        "exit": 0,
+        "stdout": "rc=127\n",
+        "stderr": "axa: command not found\n"
+      }
+    },
+    {
+      "id": "alias_expands_from_the_next_line",
+      "seq": 940041,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "shopt -s expand_aliases\nalias axb='echo hi'\naxb one two",
+      "expect": {
+        "exit": 0,
+        "stdout": "hi one two\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "alias_value_is_reparsed_as_a_line",
+      "seq": 940042,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "shopt -s expand_aliases\nmkdir -p ald && touch ald/foo ald/bar\nalias axc='ls ald | grep'\naxc foo",
+      "expect": {
+        "exit": 0,
+        "stdout": "foo\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "alias_lists_and_type_reports",
+      "seq": 940043,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "alias axd='echo hi'\nalias axd; type -t axd; command -v axd",
+      "expect": {
+        "exit": 0,
+        "stdout": "alias axd='echo hi'\nalias\nalias axd='echo hi'\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "unalias_removes_and_reports",
+      "seq": 940044,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "alias axe=1\nunalias axe; alias axe; echo rc=$?; unalias nope; echo rc=$?",
+      "expect": {
+        "exit": 0,
+        "stdout": "rc=1\nrc=1\n",
+        "stderr": "bash: alias: axe: not found\nbash: unalias: nope: not found\n"
+      }
+    }
+  ]
+}

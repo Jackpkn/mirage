@@ -1,0 +1,174 @@
+{
+  "cases": [
+    {
+      "id": "mapfile_strips_delimiter_with_t",
+      "seq": 940050,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "printf 'a\\nb\\nc\\n' | { mapfile -t mfa; declare -p mfa; }",
+      "expect": {
+        "exit": 0,
+        "stdout": "declare -a mfa=([0]=\"a\" [1]=\"b\" [2]=\"c\")\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "mapfile_keeps_delimiter_by_default",
+      "seq": 940051,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "printf 'a\\nb\\n' | { mapfile mfb; declare -p mfb; }",
+      "expect": {
+        "exit": 0,
+        "stdout": "declare -a mfb=([0]=$'a\\n' [1]=$'b\\n')\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "mapfile_delimiter_count_skip_origin",
+      "seq": 940052,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "printf 'a:b:c' | { mapfile -d : -t mfc; declare -p mfc; }; printf '1\\n2\\n3\\n' | { mapfile -t -n 2 mfd; declare -p mfd; }; printf '1\\n2\\n3\\n' | { mapfile -t -s 1 mfe; declare -p mfe; }",
+      "expect": {
+        "exit": 0,
+        "stdout": "declare -a mfc=([0]=\"a\" [1]=\"b\" [2]=\"c\")\ndeclare -a mfd=([0]=\"1\" [1]=\"2\")\ndeclare -a mfe=([0]=\"2\" [1]=\"3\")\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "readarray_is_the_same_builtin",
+      "seq": 940053,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "readarray -t mff <<< $'x\\ny'; declare -p mff",
+      "expect": {
+        "exit": 0,
+        "stdout": "declare -a mff=([0]=\"x\" [1]=\"y\")\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "mapfile_refuses_bad_name_and_kind",
+      "seq": 940054,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "mapfile 1bad; echo rc=$?; declare -A mfg; printf 'x\\n' | { mapfile -t mfg; }; echo rc=$?",
+      "expect": {
+        "exit": 0,
+        "stdout": "rc=1\nrc=1\n",
+        "stderr": "bash: mapfile: `1bad': not a valid identifier\nbash: mapfile: mfg: not an indexed array\n"
+      }
+    }
+  ]
+}

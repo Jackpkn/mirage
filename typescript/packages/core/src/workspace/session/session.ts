@@ -42,6 +42,15 @@ export interface ChildShellState {
   lastBgJobId: number | null
   getoptsPos: number
   getoptsOptind: number | null
+  shopts: Record<string, boolean>
+  aliases: Record<string, string>
+  umask: number
+  execStdout: string | null
+  execStdoutAppend: boolean
+  execStderr: string | null
+  execStderrAppend: boolean
+  execStdin: Uint8Array | null
+  execOpened: Set<string>
 }
 
 /**
@@ -241,6 +250,30 @@ export class Session {
   // `x=abc` exits 0).
   cmdsubSeq = 0
   cmdsubStatus = 0
+  // `shopt` options, kept apart from `set -o` ones (bash keeps two
+  // vocabularies). Only names set away from their default are stored.
+  shopts: Record<string, boolean> = {}
+  // `alias NAME=VALUE` definitions, plus the parse/row each was defined
+  // at and the stack of aliases being expanded, so a use on the defining
+  // line does not expand and a self-referential value stops.
+  aliases: Record<string, string> = {}
+  aliasMarks = new Map<string, [number, number]>()
+  aliasStack: string[] = []
+  parseSeq = 0
+  parseCurrent = 0
+  // File-creation mask. bash's default for a fresh shell.
+  umask = 0o022
+  // `exec` redirect-only state: where the shell's own stdout, stderr and
+  // stdin point after a bare `exec > file`. Null is the terminal; `""`
+  // is a closed descriptor whose writes drop; `execOpened` names targets
+  // already truncated so a later statement appends.
+  execStdout: string | null = null
+  execStdoutAppend = false
+  execStderr: string | null = null
+  execStderrAppend = false
+  execStdin: Uint8Array | null = null
+  execOpened = new Set<string>()
+  localFrames: Map<string, ShellVar | null>[] = []
   mountModes: ReadonlyMap<string, MountMode> | null
   hiddenPaths: HiddenPaths | null
   hiddenVars: HiddenVars | null
@@ -323,6 +356,16 @@ export class Session {
     forked.abortSignal = this.abortSignal
     forked.cmdsubSeq = this.cmdsubSeq
     forked.cmdsubStatus = this.cmdsubStatus
+    forked.shopts = { ...this.shopts }
+    forked.aliases = { ...this.aliases }
+    forked.aliasMarks = new Map(this.aliasMarks)
+    forked.umask = this.umask
+    forked.execStdout = this.execStdout
+    forked.execStdoutAppend = this.execStdoutAppend
+    forked.execStderr = this.execStderr
+    forked.execStderrAppend = this.execStderrAppend
+    forked.execStdin = this.execStdin
+    forked.execOpened = new Set(this.execOpened)
     return forked
   }
 
@@ -403,6 +446,15 @@ export class Session {
       lastBgJobId: this.lastBgJobId,
       getoptsPos: this.getoptsPos,
       getoptsOptind: this.getoptsOptind,
+      shopts: { ...this.shopts },
+      aliases: { ...this.aliases },
+      umask: this.umask,
+      execStdout: this.execStdout,
+      execStdoutAppend: this.execStdoutAppend,
+      execStderr: this.execStderr,
+      execStderrAppend: this.execStderrAppend,
+      execStdin: this.execStdin,
+      execOpened: new Set(this.execOpened),
     }
   }
 
@@ -420,6 +472,15 @@ export class Session {
     this.lastBgJobId = state.lastBgJobId
     this.getoptsPos = state.getoptsPos
     this.getoptsOptind = state.getoptsOptind
+    this.shopts = state.shopts
+    this.aliases = state.aliases
+    this.umask = state.umask
+    this.execStdout = state.execStdout
+    this.execStdoutAppend = state.execStdoutAppend
+    this.execStderr = state.execStderr
+    this.execStderrAppend = state.execStderrAppend
+    this.execStdin = state.execStdin
+    this.execOpened = state.execOpened
   }
 
   /**

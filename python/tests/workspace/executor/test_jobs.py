@@ -23,9 +23,9 @@ from mirage.shell.console import Channel
 from mirage.shell.job_table import Job, JobStatus, JobTable
 from mirage.types import MountMode
 from mirage.workspace import Workspace
-from mirage.workspace.executor.jobs import (handle_fg, handle_jobs,
-                                            handle_kill, handle_ps,
-                                            handle_wait)
+from mirage.workspace.executor.jobs import (handle_disown, handle_fg,
+                                            handle_jobs, handle_kill,
+                                            handle_ps, handle_wait)
 from mirage.workspace.types import ExecutionNode
 
 
@@ -249,14 +249,14 @@ async def test_wait_without_an_id_waits_for_every_job():
 async def test_wait_rejects_a_non_numeric_job_id():
     _, io, _ = await handle_wait(JobTable(), ["wait", "abc"])
     assert io.exit_code == 1
-    assert b"invalid job id" in io.stderr
+    assert b"not a pid or valid job spec" in io.stderr
 
 
 @pytest.mark.asyncio
 async def test_wait_rejects_an_unknown_job_id():
     _, io, _ = await handle_wait(JobTable(), ["wait", "999"])
-    assert io.exit_code == 1
-    assert b"no such job" in io.stderr
+    assert io.exit_code == 127
+    assert b"not a child of this shell" in io.stderr
 
 
 @pytest.mark.asyncio
@@ -373,3 +373,52 @@ async def test_fg_echoes_the_command_line_then_adopts_the_jobs_result():
     stdout, io, _ = await handle_fg(table, ["fg", str(job.id)])
     assert stdout == b"slow\nbody"
     assert io.exit_code == 7
+
+
+@pytest.mark.asyncio
+async def test_disown_drops_a_job_from_the_table():
+    table = JobTable()
+
+    async def _run(job):
+        await asyncio.sleep(0.05)
+        return IOResult(), ExecutionNode(command="j", exit_code=0)
+
+    table.submit("sleep", _run, cwd="/")
+    _, io, _ = await handle_disown(table, ["disown"])
+    assert io.exit_code == 0
+    assert table.list_jobs() == []
+    await table.kill_all()
+
+
+@pytest.mark.asyncio
+async def test_disown_unknown_job_and_bad_option():
+    _, io, _ = await handle_disown(JobTable(), ["disown", "%9"])
+    assert io.exit_code == 1
+    assert b"no such job" in io.stderr
+    _, io, _ = await handle_disown(JobTable(), ["disown", "-x"])
+    assert io.exit_code == 2
+
+
+@pytest.mark.asyncio
+async def test_wait_n_returns_first_finisher():
+    table = JobTable()
+
+    async def _quick(job):
+        return IOResult(exit_code=3), ExecutionNode(command="q", exit_code=3)
+
+    table.submit("q", _quick, cwd="/")
+    _, io, _ = await handle_wait(table, ["wait", "-n"])
+    assert io.exit_code == 3
+
+
+@pytest.mark.asyncio
+async def test_wait_n_with_no_jobs_is_127():
+    _, io, _ = await handle_wait(JobTable(), ["wait", "-n"])
+    assert io.exit_code == 127
+
+
+@pytest.mark.asyncio
+async def test_wait_bad_option():
+    _, io, _ = await handle_wait(JobTable(), ["wait", "-x"])
+    assert io.exit_code == 2
+    assert b"invalid option" in io.stderr

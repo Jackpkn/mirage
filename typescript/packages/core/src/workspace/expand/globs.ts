@@ -14,13 +14,13 @@
 
 import { childMountNames, namespaceNames } from '../../ops/namespace_view.ts'
 import type { NamespaceLinks } from '../../ops/config.ts'
-import { fnmatch } from '../../utils/fnmatch.ts'
 import { mountKey } from '../../utils/key_prefix.ts'
 import type { Resource } from '../../resource/base.ts'
 import { PathSpec } from '../../types.ts'
 import type { MountEntry } from '../mount/mount.ts'
 import type { MountRegistry } from '../mount/registry.ts'
 import {
+  globNameMatches,
   globPattern,
   hasGlob as hasGlobChars,
   literalWord,
@@ -30,6 +30,37 @@ import {
 import { CycleError } from '../../utils/path.ts'
 import { rstripSlash, stripSlash } from '../../utils/slash.ts'
 import { compareCodePoints } from '../../utils/sort.ts'
+import { ExitSignal } from '../../shell/errors.ts'
+import { SHOPT_DEFAULTS } from '../../shell/types.ts'
+import type { Session } from '../session/session.ts'
+
+// How deep a `**` descends. bash has no cap, but every level here is
+// one listing per directory, so an accidental `**` over a large tree is
+// bounded rather than open-ended.
+const GLOBSTAR_MAX_DEPTH = 32
+
+// The `shopt` options pathname expansion reads. `dotglob` is applied
+// inside the backend glob (`globNameMatches`), so it does not travel
+// here.
+export interface GlobOptions {
+  nullglob: boolean
+  failglob: boolean
+  globstar: boolean
+}
+
+/** Whether a mount command's glob must expand here rather than push
+ * down: the backend knows none of these. */
+export function globNeedsShell(opts: GlobOptions): boolean {
+  return opts.nullglob || opts.failglob || opts.globstar
+}
+
+export function globOptions(session: Session): GlobOptions {
+  return {
+    nullglob: session.shopts.nullglob ?? SHOPT_DEFAULTS.get('nullglob') ?? false,
+    failglob: session.shopts.failglob ?? SHOPT_DEFAULTS.get('failglob') ?? false,
+    globstar: session.shopts.globstar ?? SHOPT_DEFAULTS.get('globstar') ?? false,
+  }
+}
 
 export interface ResourceWithGlob extends Resource {
   glob(paths: readonly PathSpec[], prefix?: string): Promise<PathSpec[]>
@@ -52,7 +83,7 @@ function namespaceChildren(
   const base = rstripSlash(directory)
   const matcher = globPattern(pattern)
   return namespaceNames(registry.mountPrefixes(), links, directory)
-    .filter((name) => fnmatch(name, matcher))
+    .filter((name) => globNameMatches(name, matcher))
     .map((name) => `${base}/${name}`)
 }
 
@@ -250,15 +281,113 @@ function matchRaw(item: PathSpec, match: PathSpec): PathSpec {
   })
 }
 
+function joinSpelling(head: string, name: string): string {
+  if (head === '') return name
+  return `${rstripSlash(head)}/${name}`
+}
+
+async function descend(
+  registry: MountRegistry,
+  mount: MountEntry,
+  links: NamespaceLinks | null,
+  parent: string,
+  spelled: string,
+  depth: number,
+): Promise<[string, string][]> {
+  if (depth >= GLOBSTAR_MAX_DEPTH) return []
+  const out: [string, string][] = []
+  const children = [...new Set(await levelMatches(registry, mount, links, `${parent}/`, '*'))].sort(
+    compareCodePoints,
+  )
+  for (const child of children) {
+    const childSpelled = joinSpelling(spelled, child.split('/').pop() ?? '')
+    out.push([child, childSpelled])
+    out.push(...(await descend(registry, mount, links, child, childSpelled, depth + 1)))
+  }
+  return out
+}
+
+// Expand a word holding a `**` segment under `shopt -s globstar`. A `**`
+// matches zero or more directory levels: the parent itself (spelled with
+// a trailing slash when the word has a fixed head, `d/**` -> `d/`, and
+// omitted for a bare `**`) plus every descendant. The spelling is
+// carried level by level, because a `**` matching zero levels leaves the
+// typed word and the match at different depths.
+async function walkGlobstar(
+  item: PathSpec,
+  mount: MountEntry,
+  registry: MountRegistry,
+  links: NamespaceLinks | null,
+): Promise<PathSpec[]> {
+  const segments = stripSlash(item.virtual).split('/')
+  const first = segments.findIndex((seg) => hasGlobChars(seg))
+  const raw = unmarkGlobs(item.rawPath)
+  const rawParts = rstripSlash(raw).split('/')
+  let rawHead = rawParts.slice(0, rawParts.length - (segments.length - first)).join('/')
+  if (raw.startsWith('/') && rawHead === '') rawHead = '/'
+  let head = rstripSlash(unmarkGlobs('/' + segments.slice(0, first).join('/')))
+  if (head === '') head = '/'
+  let level: [string, string, boolean][] = [[head, rawHead, false]]
+  for (const seg of segments.slice(first)) {
+    const gathered: [string, string, boolean][] = []
+    for (const [parent, spelled] of level) {
+      if (seg === '**') {
+        gathered.push([parent, spelled, true])
+        for (const [v, sp] of await descend(registry, mount, links, parent, spelled, 0)) {
+          gathered.push([v, sp, false])
+        }
+        continue
+      }
+      for (const child of await levelMatches(
+        registry,
+        mount,
+        links,
+        `${rstripSlash(parent)}/`,
+        seg,
+      )) {
+        gathered.push([child, joinSpelling(spelled, child.split('/').pop() ?? ''), false])
+      }
+    }
+    const seen = new Set<string>()
+    level = []
+    for (const entry of gathered.sort((a, b) => compareCodePoints(a[0], b[0]))) {
+      if (seen.has(entry[0])) continue
+      seen.add(entry[0])
+      level.push(entry)
+    }
+    if (level.length === 0) return []
+  }
+  const out: PathSpec[] = []
+  for (const [v, sp, isSelf] of level) {
+    if (isSelf && sp === '') continue
+    const owner = rstripSlash(mountOf(registry, v, mount).prefix)
+    out.push(
+      new PathSpec({
+        virtual: v,
+        directory: v,
+        resourcePath: mountKey(v, owner),
+        rawPath: isSelf ? `${rstripSlash(sp)}/` : sp,
+      }),
+    )
+  }
+  return out
+}
+
+function hasGlobstarSegment(item: PathSpec): boolean {
+  return unmarkGlobs(item.virtual).split('/').includes('**')
+}
+
 export async function resolveGlobs(
   classified: readonly (string | PathSpec)[],
   registry: MountRegistry,
   noglob = false,
   links: NamespaceLinks | null = null,
+  options: GlobOptions | null = null,
 ): Promise<(string | PathSpec)[]> {
   // set -f: skip resolution entirely, so every glob word keeps its
   // literal spelling like a zero-match glob.
   if (noglob) return classified.map((item) => literalWord(item))
+  const opts: GlobOptions = options ?? { nullglob: false, failglob: false, globstar: false }
   const result: (string | PathSpec)[] = []
   for (const item of classified) {
     if (item instanceof PathSpec && item.pattern !== null) {
@@ -296,7 +425,9 @@ export async function resolveGlobs(
       })
       try {
         let resolved: PathSpec[]
-        if (midPath) {
+        if (opts.globstar && hasGlobstarSegment(withPrefix)) {
+          resolved = await walkGlobstar(withPrefix, mount, registry, links)
+        } else if (midPath) {
           resolved = await walkSegments(withPrefix, mount, registry, links)
         } else if (linked) {
           const found = await levelMatches(registry, mount, links, directory, item.pattern)
@@ -320,14 +451,22 @@ export async function resolveGlobs(
               : []
           resolved = mergeNamespace(own, extra, directory, registry, mount)
         }
-        // bash with nullglob off: a zero-match glob stays the literal
-        // word instead of vanishing.
         if (resolved.length === 0) {
-          result.push(withPrefix)
+          // bash's three answers to a zero-match glob: the literal word
+          // (default), nothing at all under nullglob, and a fatal
+          // expansion error under failglob.
+          if (opts.failglob) {
+            const word = unmarkGlobs(withPrefix.rawPath)
+            throw new ExitSignal(1, new TextEncoder().encode(`bash: no match: ${word}\n`), null, 1)
+          }
+          if (!opts.nullglob) result.push(withPrefix)
         } else {
           for (const p of resolved) result.push(matchRaw(withPrefix, p))
         }
-      } catch {
+      } catch (err) {
+        // A failglob refusal is fatal and propagates; an ordinary
+        // resolution failure keeps the literal word.
+        if (err instanceof ExitSignal) throw err
         result.push(withPrefix)
       }
     } else {

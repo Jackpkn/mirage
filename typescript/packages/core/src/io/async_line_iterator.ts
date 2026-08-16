@@ -16,7 +16,7 @@ const NEWLINE = 0x0a
 
 export class AsyncLineIterator implements AsyncIterableIterator<Uint8Array> {
   private readonly source: AsyncIterator<Uint8Array>
-  private buf: Uint8Array = new Uint8Array(0)
+  private buf: Uint8Array<ArrayBuffer> = new Uint8Array(0)
   private exhausted = false
 
   constructor(source: AsyncIterable<Uint8Array> | AsyncIterator<Uint8Array>) {
@@ -60,6 +60,65 @@ export class AsyncLineIterator implements AsyncIterableIterator<Uint8Array> {
     this.buf = this.buf.subarray(idx + 1)
     return line
   }
+
+  /**
+   * Read up to (not including) `delim`, or to EOF. Returns the bytes and
+   * whether the delimiter was found (false means EOF, which `read`/
+   * `mapfile` report as status 1).
+   */
+  async readUntil(delim: number): Promise<[Uint8Array<ArrayBuffer>, boolean]> {
+    while (indexOf(this.buf, delim) < 0) {
+      if (this.exhausted) {
+        const remaining = copyOf(this.buf)
+        this.buf = new Uint8Array(0)
+        return [remaining, false]
+      }
+      const result = await this.source.next()
+      if (result.done === true) {
+        this.exhausted = true
+        continue
+      }
+      this.buf = concat2(this.buf, result.value)
+    }
+    const idx = indexOf(this.buf, delim)
+    const data = copyOf(this.buf.subarray(0, idx))
+    this.buf = this.buf.subarray(idx + 1)
+    return [data, true]
+  }
+
+  /**
+   * Read at most `count` bytes, stopping early at `delim` (null reads
+   * through delimiters). `read -n` is the delimited form, `read -N` the
+   * null one. The delimiter is consumed and not returned. Returns the
+   * bytes and whether the read ended on its own terms rather than EOF.
+   */
+  async readChars(
+    count: number,
+    delim: number | null,
+  ): Promise<[Uint8Array<ArrayBuffer>, boolean]> {
+    let out: Uint8Array<ArrayBuffer> = new Uint8Array(0)
+    while (out.byteLength < count) {
+      if (this.buf.byteLength === 0) {
+        if (this.exhausted) return [copyOf(out), false]
+        const result = await this.source.next()
+        if (result.done === true) this.exhausted = true
+        else this.buf = concat2(this.buf, result.value)
+        continue
+      }
+      const take: Uint8Array<ArrayBuffer> = this.buf.subarray(0, count - out.byteLength)
+      if (delim !== null) {
+        const di = indexOf(take, delim)
+        if (di >= 0) {
+          out = concat2(out, take.subarray(0, di))
+          this.buf = this.buf.subarray(di + 1)
+          return [copyOf(out), true]
+        }
+      }
+      out = concat2(out, take)
+      this.buf = this.buf.subarray(take.byteLength)
+    }
+    return [copyOf(out), true]
+  }
 }
 
 function indexOf(buf: Uint8Array, byte: number): number {
@@ -69,11 +128,17 @@ function indexOf(buf: Uint8Array, byte: number): number {
   return -1
 }
 
-function concat2(a: Uint8Array, b: Uint8Array): Uint8Array {
-  if (a.byteLength === 0) return b
-  if (b.byteLength === 0) return a
+function concat2(a: Uint8Array, b: Uint8Array): Uint8Array<ArrayBuffer> {
+  if (a.byteLength === 0) return copyOf(b)
+  if (b.byteLength === 0) return copyOf(a)
   const out = new Uint8Array(a.byteLength + b.byteLength)
   out.set(a, 0)
   out.set(b, a.byteLength)
+  return out
+}
+
+function copyOf(buf: Uint8Array): Uint8Array<ArrayBuffer> {
+  const out = new Uint8Array(buf.byteLength)
+  out.set(buf, 0)
   return out
 }

@@ -12,11 +12,15 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import asyncio
+import re
+
 import tree_sitter
 
 from mirage.commands.builtin.utils.limit import CommandTimeoutError
 from mirage.io import IOResult
 from mirage.io.types import ByteSource
+from mirage.ops.types import SessionView
 from mirage.shell.console import Channel, JobConsole
 from mirage.shell.errors import ExitSignal
 from mirage.shell.helpers import get_text
@@ -143,18 +147,189 @@ async def handle_background(
                                                  children=children)
 
 
+_WAIT_USAGE = "wait: usage: wait [-fn] [-p var] [id ...]"
+_DISOWN_USAGE = "disown: usage: disown [-h] [-ar] [jobspec ... | pid ...]"
+_IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+
+def _job_result(
+        cmd_str: str, msg: str,
+        code: int) -> tuple[ByteSource | None, IOResult, ExecutionNode]:
+    err = msg.encode()
+    return None, IOResult(exit_code=code,
+                          stderr=err), ExecutionNode(command=cmd_str,
+                                                     exit_code=code,
+                                                     stderr=err)
+
+
+def _resolve_spec(job_table: JobTable, spec: str) -> tuple[Job | None, str]:
+    """The job a `wait`/`disown` operand names, or bash's refusal.
+
+    A `%N` spec that names no job is `no such job`; a bare number is a
+    pid in bash, and mirage's `$!` yields the job id, so a bare number
+    that names no job is bash's `pid N is not a child of this shell`.
+    Anything else is `not a pid or valid job spec`.
+
+    Args:
+        job_table (JobTable): the session's jobs.
+        spec (str): the operand as typed.
+    """
+    if spec.startswith("%"):
+        raw = spec[1:]
+        job = job_table.get(int(raw)) if raw.isdigit() else None
+        return job, "" if job is not None else f"{spec}: no such job"
+    if spec.isdigit():
+        job = job_table.get(int(spec))
+        return job, "" if job is not None else (
+            f"pid {spec} is not a child of this shell")
+    return None, f"`{spec}': not a pid or valid job spec"
+
+
+async def _wait_first(job_table: JobTable, jobs: list[Job]) -> Job:
+    """Block until the first of several jobs ends, and return it.
+
+    Args:
+        job_table (JobTable): the session's jobs.
+        jobs (list[Job]): the candidates, all present in the table.
+    """
+    for job in jobs:
+        if job.status != JobStatus.RUNNING:
+            return await job_table.wait(job.id)
+    tasks = {
+        asyncio.ensure_future(job_table.wait(job.id)): job
+        for job in jobs
+    }
+    done, pending = await asyncio.wait(tasks,
+                                       return_when=asyncio.FIRST_COMPLETED)
+    for task in pending:
+        task.cancel()
+    first = min(done, key=lambda t: tasks[t].id)
+    return tasks[first]
+
+
+async def _adopt(
+        job_table: JobTable, job: Job,
+        cmd_str: str) -> tuple[ByteSource | None, IOResult, ExecutionNode]:
+    """Report one finished job's output and status, and reap it.
+
+    Args:
+        job_table (JobTable): the session's jobs.
+        job (Job): the job, already finished.
+        cmd_str (str): the command line, for the node.
+    """
+    stdout = await job.console.snapshot(Channel.STDOUT)
+    stderr = await job.console.snapshot(Channel.STDERR)
+    # Reaped like GNU bash reaps a job waited on by id, so a later bare
+    # `wait` does not adopt this console a second time.
+    job_table.reap(job.id)
+    return stdout, IOResult(
+        exit_code=job.exit_code,
+        stderr=stderr or None,
+    ), ExecutionNode(command=cmd_str, exit_code=job.exit_code)
+
+
 async def handle_wait(
     job_table: JobTable,
     parts: list[str],
+    session: Session | None = None,
+    view: SessionView | None = None,
 ) -> tuple[ByteSource | None, IOResult, ExecutionNode]:
+    """Wait for background jobs, with bash's option surface.
+
+    Bare `wait` joins every job and adopts each one's output in id
+    order (a real shell has nothing to adopt; mirage jobs print to
+    their console, so the shell has to surface it or it is stranded);
+    `wait ID...` joins those and answers the last one's status; `-n`
+    joins the first of the given jobs (or of all) to finish and answers
+    its status, 127 when there is nothing to wait for; `-p VAR` stores
+    the id of the job whose status is answered, and unsets VAR when
+    none is; `-f` is accepted, since a mirage job cannot stop, only end.
+    A spec naming no job is bash's own message and 127; a word that is
+    neither is `not a pid or valid job spec` and 1.
+
+    Args:
+        job_table (JobTable): the session's jobs.
+        parts (list[str]): the command words, `wait` first.
+        session (Session | None): shell session state, for `-p`.
+        view (SessionView | None): the session plane's gated door.
+    """
     cmd_str = " ".join(parts)
-    if len(parts) <= 1:
-        # Bare `wait` adopts every job's output, the way `wait <id>`
-        # already does for one. A real shell has nothing to adopt: its
-        # jobs share the terminal and have printed already. Mirage jobs
-        # print to their console, so the shell has to surface it or the
-        # output is stranded.
-        #
+    next_job = False
+    var: str | None = None
+    specs: list[str] = []
+    i = 1
+    while i < len(parts):
+        word = parts[i]
+        if specs or not word.startswith("-") or word == "-":
+            specs.append(word)
+            i += 1
+            continue
+        if word == "--":
+            specs.extend(parts[i + 1:])
+            break
+        j = 1
+        while j < len(word):
+            ch = word[j]
+            if ch == "n":
+                next_job = True
+            elif ch == "f":
+                pass
+            elif ch == "p":
+                rest = word[j + 1:]
+                if rest:
+                    var = rest
+                elif i + 1 < len(parts):
+                    i += 1
+                    var = parts[i]
+                else:
+                    return _job_result(
+                        cmd_str, f"bash: wait: -p: option requires an "
+                        f"argument\n{_WAIT_USAGE}\n", 2)
+                break
+            else:
+                return _job_result(
+                    cmd_str,
+                    f"bash: wait: -{ch}: invalid option\n{_WAIT_USAGE}\n", 2)
+            j += 1
+        i += 1
+    if var is not None:
+        if _IDENTIFIER.fullmatch(var) is None:
+            return _job_result(
+                cmd_str, f"bash: wait: `{var}': not a valid identifier\n", 1)
+        if view is not None and view.is_readonly(var):
+            return _job_result(
+                cmd_str,
+                f"bash: wait: {var}: cannot unset: readonly variable\n", 1)
+        if view is not None:
+            await view.unset(var)
+    errors: list[str] = []
+    picked: list[Job] = []
+    for spec in specs:
+        job, refusal = _resolve_spec(job_table, spec)
+        if job is None:
+            errors.append(f"bash: wait: {refusal}")
+            continue
+        picked.append(job)
+    err_text = ("\n".join(errors) + "\n") if errors else ""
+    if next_job:
+        candidates = picked if specs else job_table.list_jobs()
+        if not candidates:
+            # Nothing to wait for: the specs were all bad, or there are
+            # no jobs. bash reports any bad spec and answers 127.
+            code = 127
+            return None, IOResult(exit_code=code,
+                                  stderr=err_text.encode()
+                                  or None), ExecutionNode(command=cmd_str,
+                                                          exit_code=code)
+        job = await _wait_first(job_table, candidates)
+        if var is not None and view is not None:
+            await view.set(var, str(job.id))
+        stdout, io, node = await _adopt(job_table, job, cmd_str)
+        if err_text:
+            prior = io.stderr if isinstance(io.stderr, bytes) else b""
+            io.stderr = err_text.encode() + prior
+        return stdout, io, node
+    if not specs:
         # Every unreaped job, not just the ones still running: a job
         # that finished before this line was reached has output nobody
         # has read, and whether it finished in time is a scheduling
@@ -170,37 +345,113 @@ async def handle_wait(
         job_table.pop_completed()
         return out or None, IOResult(stderr=err or None), ExecutionNode(
             command=cmd_str, exit_code=0)
-    raw = parts[1].lstrip("%")
-    try:
-        job_id = int(raw)
-    except ValueError:
-        err = f"wait: invalid job id: {parts[1]}\n".encode()
-        return None, IOResult(exit_code=1,
-                              stderr=err), ExecutionNode(command=cmd_str,
-                                                         exit_code=1,
-                                                         stderr=err)
-    job = job_table.get(job_id)
-    if job is None:
-        err = f"wait: no such job: {job_id}\n".encode()
-        return None, IOResult(exit_code=1,
-                              stderr=err), ExecutionNode(command=cmd_str,
-                                                         exit_code=1,
-                                                         stderr=err)
-    job = await job_table.wait(job_id)
-    stdout = await job.console.snapshot(Channel.STDOUT)
-    stderr = await job.console.snapshot(Channel.STDERR)
-    # Reaped like GNU bash reaps a job waited on by id, so a later bare
-    # `wait` does not adopt this console a second time.
-    job_table.reap(job_id)
-    return stdout, IOResult(
-        exit_code=job.exit_code,
-        stderr=stderr or None,
-    ), ExecutionNode(command=cmd_str, exit_code=job.exit_code)
+    if not picked:
+        # Every spec was refused: bash answers 127 for a job it cannot
+        # find and 1 for a word that is not a spec at all, the last
+        # refusal deciding.
+        last = errors[-1]
+        code = 1 if last.endswith("not a pid or valid job spec") else 127
+        return _job_result(cmd_str, err_text, code)
+    outs: list[bytes] = []
+    errs: list[bytes] = [err_text.encode()] if err_text else []
+    last_code = 0
+    last_job: Job | None = None
+    for job in picked:
+        finished = await job_table.wait(job.id)
+        stdout, io, _ = await _adopt(job_table, finished, cmd_str)
+        if stdout:
+            outs.append(stdout if isinstance(stdout, bytes) else b"")
+        if io.stderr:
+            errs.append(io.stderr if isinstance(io.stderr, bytes) else b"")
+        last_code = io.exit_code
+        last_job = finished
+    if var is not None and view is not None and last_job is not None and len(
+            picked) == 1:
+        await view.set(var, str(last_job.id))
+    return b"".join(outs) or None, IOResult(exit_code=last_code,
+                                            stderr=b"".join(errs)
+                                            or None), ExecutionNode(
+                                                command=cmd_str,
+                                                exit_code=last_code)
+
+
+async def handle_disown(
+    job_table: JobTable,
+    parts: list[str],
+    session: Session | None = None,
+    view: SessionView | None = None,
+) -> tuple[ByteSource | None, IOResult, ExecutionNode]:
+    """Drop jobs from the table without stopping them.
+
+    bash's grammar: no operand means the current job (the newest), `-a`
+    every job, `-r` the running ones, and `%N`/`N` specs name jobs; `-h`
+    marks a job to survive SIGHUP and otherwise leaves it in the table,
+    which is a no-op here since no hangup is ever delivered. A spec that
+    names no job is `no such job`, exit 1, and the others still drop.
+
+    Args:
+        job_table (JobTable): the session's jobs.
+        parts (list[str]): the command words, `disown` first.
+        session (Session | None): unused; the job-builtin signature.
+        view (SessionView | None): unused; the job-builtin signature.
+    """
+    cmd_str = " ".join(parts)
+    all_jobs = False
+    running_only = False
+    keep = False
+    specs: list[str] = []
+    for word in parts[1:]:
+        if specs or not word.startswith("-") or word == "-":
+            specs.append(word)
+            continue
+        if word == "--":
+            continue
+        for ch in word[1:]:
+            if ch == "a":
+                all_jobs = True
+            elif ch == "r":
+                running_only = True
+            elif ch == "h":
+                keep = True
+            else:
+                return _job_result(
+                    cmd_str,
+                    f"bash: disown: -{ch}: invalid option\n{_DISOWN_USAGE}\n",
+                    2)
+    targets: list[Job] = []
+    errors: list[str] = []
+    if specs:
+        for spec in specs:
+            job, _ = _resolve_spec(job_table, spec)
+            if job is None:
+                errors.append(f"bash: disown: {spec}: no such job")
+                continue
+            targets.append(job)
+    elif all_jobs or running_only:
+        targets = (job_table.running_jobs()
+                   if running_only else job_table.list_jobs())
+    else:
+        jobs = job_table.list_jobs()
+        if not jobs:
+            return _job_result(cmd_str, "bash: disown: current: no such job\n",
+                               1)
+        targets = [jobs[-1]]
+    if not keep:
+        for job in targets:
+            job_table.disown(job.id)
+    err = ("\n".join(errors) + "\n").encode() if errors else None
+    code = 1 if errors else 0
+    return None, IOResult(exit_code=code,
+                          stderr=err), ExecutionNode(command=cmd_str,
+                                                     exit_code=code,
+                                                     stderr=err or b"")
 
 
 async def handle_fg(
     job_table: JobTable,
     parts: list[str],
+    session: Session | None = None,
+    view: SessionView | None = None,
 ) -> tuple[ByteSource | None, IOResult, ExecutionNode]:
     """Foreground a background job: print its command line, then block
     on it and adopt its output and exit code.
@@ -250,6 +501,8 @@ async def handle_fg(
 async def handle_kill(
     job_table: JobTable,
     parts: list[str],
+    session: Session | None = None,
+    view: SessionView | None = None,
 ) -> tuple[ByteSource | None, IOResult, ExecutionNode]:
     cmd_str = " ".join(parts)
     if len(parts) < 2:
@@ -299,6 +552,8 @@ def _job_row(job: Job, long: bool) -> str:
 async def handle_jobs(
     job_table: JobTable,
     parts: list[str],
+    session: Session | None = None,
+    view: SessionView | None = None,
 ) -> tuple[ByteSource | None, IOResult, ExecutionNode]:
     """List jobs, with bash's flags applied to mirage's row shape.
 
@@ -362,6 +617,8 @@ async def handle_jobs(
 async def handle_ps(
     job_table: JobTable,
     parts: list[str],
+    session: Session | None = None,
+    view: SessionView | None = None,
 ) -> tuple[ByteSource | None, IOResult, ExecutionNode]:
     cmd_str = " ".join(parts)
     running = job_table.running_jobs()

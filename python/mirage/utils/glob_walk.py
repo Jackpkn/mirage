@@ -19,7 +19,7 @@ from typing import Any
 
 from mirage.accessor.base import Accessor
 from mirage.cache.index import NULL_INDEX, IndexCacheStore
-from mirage.context import path_allowed
+from mirage.context import dotglob_active, path_allowed
 from mirage.ops.types import ChildMounts
 from mirage.types import PathSpec
 from mirage.utils.fnmatch import fnmatch
@@ -219,6 +219,26 @@ def spell_match(raw: str, virtual: str, walked: int) -> str:
     return "/".join([*head, *tail])
 
 
+def glob_name_matches(name: str, pattern: str) -> bool:
+    """Whether one directory entry answers a pathname-expansion segment.
+
+    `fnmatch` plus bash's leading-dot rule: a name that starts with `.`
+    is matched only by a pattern that starts with `.` (so `*`, `?h` and
+    `[.]h` all pass over `.h`), unless the session has `shopt -s
+    dotglob`. This is pathname expansion's rule alone; `find -name` and
+    `case` patterns match through `fnmatch` directly, and GNU agrees
+    that `find -name '*'` sees dotfiles.
+
+    Args:
+        name (str): the entry's own name, no directory part.
+        pattern (str): the segment, marks already resolved.
+    """
+    if name.startswith(
+            ".") and not pattern.startswith(".") and not dotglob_active():
+        return False
+    return fnmatch(name, pattern)
+
+
 async def expand_pattern(
     readdir: Callable[..., Any],
     accessor: Accessor,
@@ -273,16 +293,15 @@ async def expand_pattern(
             except (FileNotFoundError, NotADirectoryError):
                 entries = []
             pattern = glob_pattern(seg)
-            next_level.extend(
-                e for e in entries
-                if fnmatch(e.rstrip("/").rsplit("/", 1)[-1], pattern))
+            next_level.extend(e for e in entries if glob_name_matches(
+                e.rstrip("/").rsplit("/", 1)[-1], pattern))
             if children is not None:
                 # A nested mount root or a link is a real child of this
                 # parent whether or not the backend could list it.
                 base_dir = parent.rstrip("/")
                 next_level.extend(f"{base_dir}/{name}"
                                   for name in children(f"{base_dir}/")
-                                  if fnmatch(name, pattern))
+                                  if glob_name_matches(name, pattern))
         # bash sorts a pathname expansion, and the two sources are
         # enumerated separately, so the union is ordered here.
         level = sorted(set(next_level))
