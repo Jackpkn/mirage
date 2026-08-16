@@ -26,13 +26,17 @@ import { respellRaw } from '../../../utils/path.ts'
 import { mountKey, mountPrefixOf } from '../../../utils/key_prefix.ts'
 import {
   emitStartPath,
+  expandPrintf,
   hasLinkChildren,
   keep,
   optionsTree,
   prefixPathNodes,
+  printfNeedsStat,
   startBasename,
+  unrespellRaw,
   type FindEntry,
   type PredNode,
+  type PrintfStatFacts,
 } from '../findEval.ts'
 import type { LinkView } from '../../../ops/types.ts'
 import { pathAllowed } from '../../../context/session_context.ts'
@@ -372,6 +376,8 @@ export async function findGeneric(
         }
   const matches: string[] = []
   const missing: string[] = []
+  const printfFmt = expr !== null ? expr.printf : null
+  const printfPairs: [string, PathSpec][] = []
   for (const root of targets) {
     // `-path` matches the display path as printed; stamp the mount
     // prefix onto path nodes before the backend walks mount-relative
@@ -426,7 +432,9 @@ export async function findGeneric(
         // path is the operand, not a key that needs rebasing.
         if (rows.length > 0) {
           const display = root.virtual === '/' ? '/' : rstripSlash(root.virtual)
-          matches.push(...respellRaw([display], root.virtual, root.rawPath))
+          const added = respellRaw([display], root.virtual, root.rawPath)
+          matches.push(...added)
+          for (const r of added) printfPairs.push([r, root])
         }
         continue
       }
@@ -503,7 +511,12 @@ export async function findGeneric(
     // the link merge, so a mount's visibility behavior cannot depend
     // on whether its backend ships a native find op.
     const visibleRows = withLinks.filter((row) => pathAllowed(row))
-    matches.push(...respellRaw(visibleRows, root.virtual, root.rawPath))
+    const added = respellRaw(visibleRows, root.virtual, root.rawPath)
+    matches.push(...added)
+    for (const r of added) printfPairs.push([r, root])
+  }
+  if (printfFmt !== null) {
+    return renderPrintfRows(printfPairs, printfFmt, stat, opts, missing)
   }
   // Start points print in operand order (GNU); each root's rows were
   // sorted above, and a global sort here would interleave them.
@@ -512,4 +525,75 @@ export async function findGeneric(
     return [out, new IOResult({ stderr: ENC.encode(missing.join('\n') + '\n'), exitCode: 1 })]
   }
   return [out, new IOResult()]
+}
+
+async function printfStat(
+  row: string,
+  root: PathSpec,
+  stat: ((spec: PathSpec) => Promise<FileStat>) | undefined,
+  opts: CommandOpts,
+): Promise<PrintfStatFacts | null> {
+  const virtual = unrespellRaw(row, root.virtual, root.rawPath !== '' ? root.rawPath : root.virtual)
+  const links = opts.ns?.links ?? null
+  const linkRow = links?.statAt(virtual)
+  if (linkRow !== undefined && linkRow !== null) {
+    return {
+      size: linkRow.size ?? 0,
+      kind: 'l',
+      mtimeEpoch: modifiedTs(linkRow.modified ?? null) ?? 0,
+    }
+  }
+  let st: FileStat | null = null
+  if (stat !== undefined) {
+    const prefix = mountPrefixOf(root.virtual, root.resourcePath)
+    const spec = new PathSpec({
+      virtual,
+      directory: virtual,
+      resolved: false,
+      resourcePath: mountKey(virtual, prefix),
+    })
+    try {
+      st = await stat(spec)
+    } catch {
+      st = null
+    }
+  } else if (opts.statPath !== undefined) {
+    // The dispatcher probe answers for every backend, including the ones
+    // that wire no cheap local stat (an object store); it is the same
+    // channel the start-point classifier uses.
+    st = await opts.statPath(virtual)
+  }
+  if (st === null) return null
+  const kind = st.type === FileType.DIRECTORY ? 'd' : st.type === FileType.SYMLINK ? 'l' : 'f'
+  return { size: st.size ?? 0, kind, mtimeEpoch: modifiedTs(st.modified ?? null) ?? 0 }
+}
+
+// Render matched rows through a -printf format. Stats are fetched per row
+// only when the format reads one (%s %y %m %M %T), through the same
+// overlay-aware channel the -mtime filter uses, with namespace links
+// answered first since a link row has no backend inode. Warning lines
+// (unrecognized directives) ride stderr without touching the exit code,
+// GNU's behavior; missing start points keep forcing exit 1. Mirrors the
+// Python render_printf_rows.
+async function renderPrintfRows(
+  pairs: [string, PathSpec][],
+  fmt: string,
+  stat: ((spec: PathSpec) => Promise<FileStat>) | undefined,
+  opts: CommandOpts,
+  missing: string[],
+): Promise<CommandFnResult> {
+  const warnings: string[] = []
+  const needs = printfNeedsStat(fmt)
+  const parts: string[] = []
+  for (const [row, root] of pairs) {
+    const st = needs ? await printfStat(row, root, stat, opts) : null
+    const base = root.rawPath !== '' ? root.rawPath : root.virtual
+    parts.push(expandPrintf(fmt, row, base, st, warnings))
+  }
+  const err = [...missing, ...warnings]
+  const io = new IOResult({
+    stderr: err.length > 0 ? ENC.encode(err.join('\n') + '\n') : null,
+    exitCode: missing.length > 0 ? 1 : 0,
+  })
+  return [ENC.encode(parts.join('')), io]
 }

@@ -1139,6 +1139,28 @@ async function appendChildren(
   const parentBlock = await db.notionBlock.findFirst({ where: { workspaceId, id: parentId } })
   if (parentPage === null && parentBlock === null) return notFound('block', parentId)
   let at = await db.notionBlock.count({ where: { workspaceId, parentId } })
+  let anchorPos: number | null = null
+  const after = typeof body.after === 'string' ? body.after : null
+  if (after !== null) {
+    // `after` inserts the new blocks directly behind an existing child;
+    // later siblings shift down. The live API reports a malformed id and
+    // a well-formed one that is not a child of this parent with the SAME
+    // validation message (probed on 2025-09-03).
+    const anchor = await db.notionBlock.findFirst({ where: { workspaceId, id: after } })
+    if (anchor === null || anchor.parentId !== parentId) {
+      return apiError(
+        400,
+        'validation_error',
+        `body failed validation: body.position.after_block.id should be a valid uuid, instead was \`"${after}"\`.`,
+      )
+    }
+    await db.notionBlock.updateMany({
+      where: { workspaceId, parentId, position: { gt: anchor.position } },
+      data: { position: { increment: children.length } },
+    })
+    anchorPos = anchor.position
+    at = anchor.position + 1
+  }
   const created: Json[] = []
   for (const child of children) {
     const spec = asObject(child)
@@ -1171,9 +1193,20 @@ async function appendChildren(
       data: { hasChildren: true },
     })
   }
+  // With `after`, the live API answers with the inserted blocks AND every
+  // sibling behind them, in order (probed); a plain append returns just
+  // the inserted blocks.
+  let results = created
+  if (anchorPos !== null) {
+    const fromAnchor = await db.notionBlock.findMany({
+      where: { workspaceId, parentId, position: { gt: anchorPos } },
+      orderBy: [{ position: 'asc' }, { id: 'asc' }],
+    })
+    results = fromAnchor.map((row) => blockJson(row as BlockRow))
+  }
   return {
     status: 200,
-    json: { object: 'list', results: created, has_more: false, next_cursor: null },
+    json: { object: 'list', results, has_more: false, next_cursor: null },
   }
 }
 

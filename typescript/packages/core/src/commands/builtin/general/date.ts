@@ -15,6 +15,7 @@
 import type { PathSpec } from '../../../types.ts'
 import type { Accessor } from '../../../accessor/base.ts'
 import { IOResult } from '../../../io/types.ts'
+import { parseDateExpr } from '../../../utils/dates.ts'
 import { command, type CommandFnResult, type CommandOpts } from '../../config.ts'
 import { specOf } from '../../spec/builtins.ts'
 import { pureProvision } from '../generic_bind/provision.ts'
@@ -47,6 +48,21 @@ function pad4(n: number): string {
   return String(n).padStart(4, '0')
 }
 
+function dayOfYear(year: number, month: number, day: number): number {
+  return Math.floor((Date.UTC(year, month, day) - Date.UTC(year, 0, 0)) / 86_400_000)
+}
+
+// ISO 8601 week-based year and week number (%G/%g/%V): the week belongs to
+// the year holding its Thursday.
+function isoWeekParts(year: number, month: number, day: number): [number, number] {
+  const dow = new Date(Date.UTC(year, month, day)).getUTCDay()
+  const isoDow = dow === 0 ? 7 : dow
+  const thursday = new Date(Date.UTC(year, month, day + 4 - isoDow))
+  const ty = thursday.getUTCFullYear()
+  const yday = dayOfYear(ty, thursday.getUTCMonth(), thursday.getUTCDate())
+  return [ty, Math.floor((yday - 1) / 7) + 1]
+}
+
 function strftime(dt: Date, fmt: string, utc: boolean): string {
   const year = utc ? dt.getUTCFullYear() : dt.getFullYear()
   const month = utc ? dt.getUTCMonth() : dt.getMonth()
@@ -55,7 +71,7 @@ function strftime(dt: Date, fmt: string, utc: boolean): string {
   const hour = utc ? dt.getUTCHours() : dt.getHours()
   const minute = utc ? dt.getUTCMinutes() : dt.getMinutes()
   const second = utc ? dt.getUTCSeconds() : dt.getSeconds()
-  return fmt.replace(/%([aAbBdDHIMmYypSszZjewuT%])/g, (_m, code: string) => {
+  return fmt.replace(/%([aAbBcCdDeFgGhHIjklMmnpPqrRsStTuUVwWxXYyzZ%])/g, (_m, code: string) => {
     switch (code) {
       case 'a':
         return DAY_NAMES[dow] ?? ''
@@ -82,12 +98,58 @@ function strftime(dt: Date, fmt: string, utc: boolean): string {
         ]
         return full[month] ?? ''
       }
+      case 'c':
+        // C-locale %c (%a %b %e %H:%M:%S %Y), what glibc renders and what
+        // Python's strftime produces under LC_ALL=C.
+        return `${DAY_NAMES[dow] ?? ''} ${MONTH_NAMES[month] ?? ''} ${String(day).padStart(2, ' ')} ${pad2(hour)}:${pad2(minute)}:${pad2(second)} ${pad4(year)}`
+      case 'C':
+        return pad2(Math.floor(year / 100))
       case 'd':
         return pad2(day)
       case 'D':
         return `${pad2(month + 1)}/${pad2(day)}/${pad2(year % 100)}`
+      case 'F':
+        return `${pad4(year)}-${pad2(month + 1)}-${pad2(day)}`
+      case 'g':
+        return pad2(isoWeekParts(year, month, day)[0] % 100)
+      case 'G':
+        return pad4(isoWeekParts(year, month, day)[0])
+      case 'h':
+        return MONTH_NAMES[month] ?? ''
       case 'H':
         return pad2(hour)
+      case 'k':
+        return String(hour).padStart(2, ' ')
+      case 'l': {
+        const h12l = hour % 12 === 0 ? 12 : hour % 12
+        return String(h12l).padStart(2, ' ')
+      }
+      case 'n':
+        return '\n'
+      case 'P':
+        return hour < 12 ? 'am' : 'pm'
+      case 'q':
+        return String(Math.floor(month / 3) + 1)
+      case 'r': {
+        const h12r = hour % 12 === 0 ? 12 : hour % 12
+        return `${pad2(h12r)}:${pad2(minute)}:${pad2(second)} ${hour < 12 ? 'AM' : 'PM'}`
+      }
+      case 'R':
+        return `${pad2(hour)}:${pad2(minute)}`
+      case 't':
+        return '\t'
+      case 'U':
+        // Week of year, Sunday-first, week 00 before the first Sunday.
+        return pad2(Math.floor((dayOfYear(year, month, day) + 6 - dow) / 7))
+      case 'V':
+        return pad2(isoWeekParts(year, month, day)[1])
+      case 'W':
+        // Week of year, Monday-first.
+        return pad2(Math.floor((dayOfYear(year, month, day) + 6 - ((dow + 6) % 7)) / 7))
+      case 'x':
+        return `${pad2(month + 1)}/${pad2(day)}/${pad2(year % 100)}`
+      case 'X':
+        return `${pad2(hour)}:${pad2(minute)}:${pad2(second)}`
       case 'I': {
         const h12 = hour % 12 === 0 ? 12 : hour % 12
         return pad2(h12)
@@ -165,7 +227,21 @@ function dateCommand(
   // (`AMBIGUOUS_NAMES`); a plain `I` key is one the parser never emits.
   const argsI = fl.asBool('args_I')
   const R = fl.asBool('R')
-  const dt = d !== null ? new Date(d) : new Date()
+  let dt: Date
+  if (d !== null) {
+    const parsed = parseDateExpr(d, u)
+    if (parsed === null) {
+      // GNU's refusal, exit 1: a NaN render with exit 0 poisons whatever
+      // consumed it (the 0NaN-NaN-NaN corpus failure).
+      return [
+        null,
+        new IOResult({ exitCode: 1, stderr: ENC.encode(`date: invalid date '${d}'\n`) }),
+      ]
+    }
+    dt = parsed
+  } else {
+    dt = new Date()
+  }
   let fmt: string | null = null
   for (const t of texts) {
     if (t.startsWith('+')) {

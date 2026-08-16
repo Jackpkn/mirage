@@ -152,7 +152,7 @@
       "command": "ntn datasources query d5000000-2222-3333-4444-555566667777",
       "expect": {
         "exit": 0,
-        "stdout": "ffff1111-2222-3333-4444-555566667777\t✓\t2026-02-01\thttps://example.com/spec\tWrite spec\tneeds review\t2\tReview\tinfra, docs\nffff2222-3333-4444-5555-666677778888\t\t\t\tShip beta\t\t1\t\t\n",
+        "stdout": "ffff1111-2222-3333-4444-555566667777\t\u2713\t2026-02-01\thttps://example.com/spec\tWrite spec\tneeds review\t2\tReview\tinfra, docs\nffff2222-3333-4444-5555-666677778888\t\t\t\tShip beta\t\t1\t\t\n",
         "stderr": ""
       }
     },
@@ -400,7 +400,7 @@
       "expect": {
         "exit": 0,
         "stdout": "",
-        "stderr": "✔ Page trashed\n"
+        "stderr": "\u2714 Page trashed\n"
       }
     },
     {
@@ -948,6 +948,45 @@
         "stdout": "block\nchild_page\ntrue\n",
         "stderr": ""
       }
+    },
+    {
+      "id": "ntn_api_append_after_answers_inserted_then_trailing_siblings",
+      "command": "A=$(ntn api v1/blocks/aaaa1111-2222-3333-4444-555566667777/children page_size==1 | jq -r '.results[0].id') && ntn api v1/blocks/aaaa1111-2222-3333-4444-555566667777/children -X PATCH -d \"{\\\"children\\\": [{\\\"object\\\": \\\"block\\\", \\\"type\\\": \\\"paragraph\\\", \\\"paragraph\\\": {\\\"rich_text\\\": [{\\\"type\\\": \\\"text\\\", \\\"text\\\": {\\\"content\\\": \\\"after probe\\\"}}]}}], \\\"after\\\": \\\"$A\\\"}\" | jq -r '.results[0].paragraph.rich_text[0].plain_text, (.results | length > 1)'",
+      "expect": {
+        "exit": 0,
+        "stdout": "after probe\ntrue\n",
+        "stderr": ""
+      },
+      "seq": 566073,
+      "targets": [
+        "cli-ntn"
+      ]
+    },
+    {
+      "id": "ntn_api_append_after_lands_behind_the_anchor",
+      "command": "ntn api v1/blocks/aaaa1111-2222-3333-4444-555566667777/children page_size==2 | jq -r '.results[1].paragraph.rich_text[0].plain_text'",
+      "expect": {
+        "exit": 0,
+        "stdout": "after probe\n",
+        "stderr": ""
+      },
+      "seq": 566074,
+      "targets": [
+        "cli-ntn"
+      ]
+    },
+    {
+      "id": "ntn_api_append_after_unknown_anchor_is_refused",
+      "command": "ntn api v1/blocks/aaaa1111-2222-3333-4444-555566667777/children -X PATCH -d '{\"children\": [{\"object\": \"block\", \"type\": \"paragraph\", \"paragraph\": {\"rich_text\": [{\"type\": \"text\", \"text\": {\"content\": \"never\"}}]}}], \"after\": \"11111111-1111-1111-1111-111111111111\"}'",
+      "expect": {
+        "exit": 5,
+        "stdout": "",
+        "stderr": "error: Public API request failed (400 Bad Request validation_error): body failed validation: body.position.after_block.id should be a valid uuid, instead was `\"11111111-1111-1111-1111-111111111111\"`.\n"
+      },
+      "seq": 566075,
+      "targets": [
+        "cli-ntn"
+      ]
     }
   ]
 }

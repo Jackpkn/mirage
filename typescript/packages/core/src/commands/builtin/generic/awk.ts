@@ -18,7 +18,7 @@ import { mountKey, mountPrefixOf } from '../../../utils/key_prefix.ts'
 import { IOResult, materialize } from '../../../io/types.ts'
 import { PathSpec } from '../../../types.ts'
 import type { CommandFnResult, CommandOpts } from '../../config.ts'
-import { awkStream } from './awk_helper.ts'
+import { awkStream, validateAwkProgram } from './awk_helper.ts'
 import { USAGE, type AwkFlags } from './awk_types.ts'
 import { isMissingPath } from '../../../utils/errors.ts'
 import { resolvePath } from '../../../utils/path.ts'
@@ -77,6 +77,8 @@ export async function awkGeneric(
   } else {
     return [null, new IOResult({ exitCode: 2, stderr: ENC.encode(`${USAGE}\n`) })]
   }
+
+  validateAwkProgram(program)
 
   const variables: Record<string, string> = {}
   for (const assignment of f.assignments) {

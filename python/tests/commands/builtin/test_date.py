@@ -50,3 +50,31 @@ def test_date_utc_format():
     year = _bytes(stdout).strip().decode()
     assert len(year) == 4
     assert year.isdigit()
+
+
+def test_date_relative_from_iso_base():
+    ws, _ = _ws()
+    stdout, io = _run_raw(
+        ws, "date -u -d '2026-08-16 12:00:00 24 hours ago' '+%F %T'")
+    assert _bytes(stdout).decode() == "2026-08-15 12:00:00\n"
+    assert io.exit_code == 0
+
+
+def test_date_epoch_input():
+    ws, _ = _ws()
+    stdout, _ = _run_raw(ws, "date -u -d '@1755300000' '+%F %T'")
+    assert _bytes(stdout).decode() == "2025-08-15 23:20:00\n"
+
+
+def test_date_month_addition_normalizes():
+    ws, _ = _ws()
+    stdout, _ = _run_raw(ws, "date -u -d '2026-01-31 1 month' '+%F'")
+    assert _bytes(stdout).decode() == "2026-03-03\n"
+
+
+def test_date_invalid_date_fails_loud():
+    ws, _ = _ws()
+    stdout, io = _run_raw(ws, "date -d 'not a date'")
+    assert io.exit_code == 1
+    assert b"date: invalid date 'not a date'" in io.stderr
+    assert _bytes(stdout) == b""

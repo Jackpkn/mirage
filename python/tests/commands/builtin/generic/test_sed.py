@@ -424,3 +424,174 @@ async def test_sed_zero_count_rejected():
     rb, wb, _ = _make_backend({})
     with pytest.raises(ValueError, match="may not be zero"):
         await sed([], "s/o/O/0", read_bytes=rb, write_bytes=wb, stdin=b"oo\n")
+
+
+@pytest.mark.asyncio
+async def test_sed_inplace_change_writes_file():
+    rb, wb, store = _make_backend({"/a.txt": b"one\ntwo\n"})
+    output, io = await sed(
+        [_spec("/a.txt")],
+        "c chg",
+        read_bytes=rb,
+        write_bytes=wb,
+        in_place=True,
+    )
+    assert output is None
+    assert store["/a.txt"] == b"chg\nchg\n"
+    assert io.writes == {"/a.txt": b"chg\nchg\n"}
+
+
+@pytest.mark.asyncio
+async def test_sed_inplace_insert_writes_file():
+    rb, wb, store = _make_backend({"/a.txt": b"one\ntwo\nthree\n"})
+    output, _ = await sed(
+        [_spec("/a.txt")],
+        "2i inserted",
+        read_bytes=rb,
+        write_bytes=wb,
+        in_place=True,
+    )
+    assert output is None
+    assert store["/a.txt"] == b"one\ninserted\ntwo\nthree\n"
+
+
+@pytest.mark.asyncio
+async def test_sed_inplace_append_writes_file():
+    rb, wb, store = _make_backend({"/a.txt": b"one\ntwo\n"})
+    output, _ = await sed(
+        [_spec("/a.txt")],
+        "a app",
+        read_bytes=rb,
+        write_bytes=wb,
+        in_place=True,
+    )
+    assert output is None
+    assert store["/a.txt"] == b"one\napp\ntwo\napp\n"
+
+
+@pytest.mark.asyncio
+async def test_sed_inplace_transliterate_writes_file():
+    rb, wb, store = _make_backend({"/a.txt": b"one\ntwo\n"})
+    output, _ = await sed(
+        [_spec("/a.txt")],
+        "y/o/0/",
+        read_bytes=rb,
+        write_bytes=wb,
+        in_place=True,
+    )
+    assert output is None
+    assert store["/a.txt"] == b"0ne\ntw0\n"
+
+
+@pytest.mark.asyncio
+async def test_sed_inplace_print_doubles_lines_in_file():
+    rb, wb, store = _make_backend({"/a.txt": b"one\ntwo\n"})
+    output, _ = await sed(
+        [_spec("/a.txt")],
+        "p",
+        read_bytes=rb,
+        write_bytes=wb,
+        in_place=True,
+    )
+    assert output is None
+    assert store["/a.txt"] == b"one\none\ntwo\ntwo\n"
+
+
+@pytest.mark.asyncio
+async def test_sed_inplace_suppress_print_rewrites_same_content():
+    rb, wb, store = _make_backend({"/a.txt": b"one\ntwo\n"})
+    output, _ = await sed(
+        [_spec("/a.txt")],
+        "p",
+        read_bytes=rb,
+        write_bytes=wb,
+        in_place=True,
+        suppress=True,
+    )
+    assert output is None
+    assert store["/a.txt"] == b"one\ntwo\n"
+
+
+@pytest.mark.asyncio
+async def test_sed_inplace_quit_truncates_file():
+    rb, wb, store = _make_backend({"/a.txt": b"one\ntwo\nthree\n"})
+    output, _ = await sed(
+        [_spec("/a.txt")],
+        "2q",
+        read_bytes=rb,
+        write_bytes=wb,
+        in_place=True,
+    )
+    assert output is None
+    assert store["/a.txt"] == b"one\ntwo\n"
+
+
+@pytest.mark.asyncio
+async def test_sed_address_escaped_delimiter():
+    rb, wb, _ = _make_backend({})
+    output, _ = await sed(
+        [],
+        r"/a\/b/d",
+        read_bytes=rb,
+        write_bytes=wb,
+        stdin=b"x\na/b\ny\n",
+    )
+    assert output == b"x\ny\n"
+
+
+@pytest.mark.asyncio
+async def test_sed_address_custom_delimiter():
+    rb, wb, _ = _make_backend({})
+    output, _ = await sed(
+        [],
+        r"\%a/b%d",
+        read_bytes=rb,
+        write_bytes=wb,
+        stdin=b"a/b\nz\n",
+    )
+    assert output == b"z\n"
+
+
+@pytest.mark.asyncio
+async def test_sed_address_keeps_bre_escapes():
+    rb, wb, _ = _make_backend({})
+    output, _ = await sed(
+        [],
+        r"/a\+b/d",
+        read_bytes=rb,
+        write_bytes=wb,
+        stdin=b"x\na+b\naab\ny\n",
+    )
+    assert output == b"x\na+b\ny\n"
+
+
+@pytest.mark.asyncio
+async def test_sed_address_range_with_escaped_delimiters():
+    rb, wb, _ = _make_backend({})
+    output, _ = await sed(
+        [],
+        r"/a\/b/,/c\/d/d",
+        read_bytes=rb,
+        write_bytes=wb,
+        stdin=b"x\na/b\nmid\nc/d\ny\n",
+    )
+    assert output == b"x\ny\n"
+
+
+@pytest.mark.asyncio
+async def test_sed_unterminated_address_raises():
+    rb, wb, _ = _make_backend({})
+    with pytest.raises(ValueError, match="unterminated address regex"):
+        await sed([], "/a\\/b", read_bytes=rb, write_bytes=wb, stdin=b"x\n")
+
+
+@pytest.mark.asyncio
+async def test_sed_multi_file_output_concatenates_without_separator():
+    rb, wb, _ = _make_backend({"/a.txt": b"A\n", "/b.txt": b"B\n"})
+    output, _ = await sed(
+        [_spec("/a.txt"), _spec("/b.txt")],
+        "p",
+        read_bytes=rb,
+        write_bytes=wb,
+    )
+    assert output == b"A\nA\nB\nB\n"

@@ -60,6 +60,7 @@ export const SPECS: Record<string, CommandSpec> = {
       new Option({ short: '-iname', type: 'str', multiple: true }),
       new Option({ short: '-path', type: 'str', multiple: true }),
       new Option({ short: '-mindepth', type: 'str', multiple: true }),
+      new Option({ short: '-printf', type: 'str', multiple: true }),
       // GNU find's link policy: -P (no follow) is the default, -H
       // follows only the start point, -L follows everything.
       new Option({ short: '-P' }),

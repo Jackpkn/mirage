@@ -89,3 +89,69 @@ describe('sed -f', () => {
     expect(out).toBe('HI world\n')
   })
 })
+
+describe('sed -i beyond s and d', () => {
+  it('c writes the changed text to the file', async () => {
+    const resource = new RAMResource()
+    resource.store.dirs.add('/tmp')
+    resource.store.files.set('/tmp/a.txt', ENC.encode('one\ntwo\n'))
+    const out = await runSed(resource, ['c chg'], [PathSpec.fromStrPath('/tmp/a.txt')], { i: true })
+    expect(out).toBe('')
+    expect(DEC.decode(resource.store.files.get('/tmp/a.txt'))).toBe('chg\nchg\n')
+  })
+
+  it('i writes the inserted line to the file', async () => {
+    const resource = new RAMResource()
+    resource.store.dirs.add('/tmp')
+    resource.store.files.set('/tmp/a.txt', ENC.encode('one\ntwo\nthree\n'))
+    const out = await runSed(resource, ['2i inserted'], [PathSpec.fromStrPath('/tmp/a.txt')], {
+      i: true,
+    })
+    expect(out).toBe('')
+    expect(DEC.decode(resource.store.files.get('/tmp/a.txt'))).toBe('one\ninserted\ntwo\nthree\n')
+  })
+
+  it('p doubles every line in the file', async () => {
+    const resource = new RAMResource()
+    resource.store.dirs.add('/tmp')
+    resource.store.files.set('/tmp/a.txt', ENC.encode('one\ntwo\n'))
+    const out = await runSed(resource, ['p'], [PathSpec.fromStrPath('/tmp/a.txt')], { i: true })
+    expect(out).toBe('')
+    expect(DEC.decode(resource.store.files.get('/tmp/a.txt'))).toBe('one\none\ntwo\ntwo\n')
+  })
+
+  it('q truncates the file at the quit line', async () => {
+    const resource = new RAMResource()
+    resource.store.dirs.add('/tmp')
+    resource.store.files.set('/tmp/a.txt', ENC.encode('one\ntwo\nthree\n'))
+    const out = await runSed(resource, ['2q'], [PathSpec.fromStrPath('/tmp/a.txt')], { i: true })
+    expect(out).toBe('')
+    expect(DEC.decode(resource.store.files.get('/tmp/a.txt'))).toBe('one\ntwo\n')
+  })
+
+  it('y transliterates the file in place', async () => {
+    const resource = new RAMResource()
+    resource.store.dirs.add('/tmp')
+    resource.store.files.set('/tmp/a.txt', ENC.encode('one\ntwo\n'))
+    const out = await runSed(resource, ['y/o/0/'], [PathSpec.fromStrPath('/tmp/a.txt')], {
+      i: true,
+    })
+    expect(out).toBe('')
+    expect(DEC.decode(resource.store.files.get('/tmp/a.txt'))).toBe('0ne\ntw0\n')
+  })
+})
+
+describe('sed multi-file output', () => {
+  it('concatenates per-file output without a separator', async () => {
+    const resource = new RAMResource()
+    resource.store.dirs.add('/tmp')
+    resource.store.files.set('/tmp/a.txt', ENC.encode('A\n'))
+    resource.store.files.set('/tmp/b.txt', ENC.encode('B\n'))
+    const out = await runSed(
+      resource,
+      ['p'],
+      [PathSpec.fromStrPath('/tmp/a.txt'), PathSpec.fromStrPath('/tmp/b.txt')],
+    )
+    expect(out).toBe('A\nA\nB\nB\n')
+  })
+})

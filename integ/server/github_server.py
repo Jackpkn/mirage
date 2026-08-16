@@ -147,6 +147,24 @@ def _commit_files(paths: list[str], status: str = "added") -> list[dict]:
     return [{"filename": path, "status": status} for path in paths]
 
 
+def _commit_json(entry: dict) -> dict:
+    """One stored commit as the list endpoints report it.
+
+    The store keeps a raw `files` list of paths for the single-commit
+    endpoint to expand; GitHub's own commit-list and write-response
+    shapes carry no `files` key at all, so serving the stored dict raw
+    handed clients a list of bare strings where the API contract has
+    objects -- which broke history enumeration after the first write.
+
+    Args:
+        entry (dict): the stored commit.
+
+    Returns:
+        dict: the commit without internal state.
+    """
+    return {k: v for k, v in entry.items() if k != "files"}
+
+
 def _commit_list(repo: "FakeRepo", branch: str = "") -> list[dict]:
     """One branch's commits, newest first, with a synthetic root.
 
@@ -395,8 +413,16 @@ class FakeRepo:
         """
         if not ref or ref == "HEAD":
             return self.default_branch
-        if ref in self.trees_by_branch:
-            return ref
+        # A fully qualified spelling names the same branch: tool schemas
+        # advertise `refs/heads/main` and the live API accepts it on
+        # every ref-taking parameter, so the fake must too.
+        name = ref
+        for qualifier in ("refs/heads/", "heads/"):
+            if name.startswith(qualifier):
+                name = name[len(qualifier):]
+                break
+        if name in self.trees_by_branch:
+            return name
         for branch in self.trees_by_branch:
             if any(c["sha"] == ref for c in _commit_list(self, branch)):
                 return branch
@@ -837,11 +863,11 @@ class GitHubServer:
         repo = self._lookup(request)
         if repo is None:
             return _error(404, "Not Found")
-        return web.json_response(
-            _commit_list(
-                repo,
-                repo.branch_for(request.query.get("sha", ""))
-                or repo.default_branch))
+        history = _commit_list(
+            repo,
+            repo.branch_for(request.query.get("sha", ""))
+            or repo.default_branch)
+        return web.json_response([_commit_json(entry) for entry in history])
 
     async def commit(self, request: web.Request) -> web.Response:
         """One commit by sha or by ref, with the paths it touched.
@@ -870,11 +896,13 @@ class GitHubServer:
         history = [{
             **entry, "files": _commit_files(entry["files"])
         } for entry in history]
-        if ref in (*repo.trees_by_branch, "HEAD"):
-            return web.json_response(history[0])
         for entry in history:
             if entry["sha"] == ref:
                 return web.json_response(entry)
+        # Any spelling branch_for resolves (bare, HEAD, refs/heads/...)
+        # names the branch head.
+        if branch is not None:
+            return web.json_response(history[0])
         return _error(404, "Not Found")
 
     async def contents(self, request: web.Request) -> web.Response:
@@ -955,7 +983,7 @@ class GitHubServer:
         return web.json_response(
             {
                 "content": _content_json(repo, path, files),
-                "commit": commit,
+                "commit": _commit_json(commit),
             },
             status=201 if created else 200)
 
@@ -1255,7 +1283,10 @@ class GitHubServer:
         commit = _record_commit(repo,
                                 str(body.get("message") or f"Delete {path}"),
                                 [path], branch)
-        return web.json_response({"content": None, "commit": commit})
+        return web.json_response({
+            "content": None,
+            "commit": _commit_json(commit)
+        })
 
     async def list_issues(self, request: web.Request) -> web.Response:
         """List issues, newest first, filtered by state.
@@ -1632,7 +1663,7 @@ def _add_routes(app: web.Application, server: "GitHubServer",
         server.branch)
     app.router.add_get(f"{prefix}/repos/{{owner}}/{{repo}}/commits",
                        server.commits)
-    app.router.add_get(f"{prefix}/repos/{{owner}}/{{repo}}/commits/{{ref}}",
+    app.router.add_get(f"{prefix}/repos/{{owner}}/{{repo}}/commits/{{ref:.+}}",
                        server.commit)
     # Both spellings of the repository root: GitHub serves `/contents` as
     # well as `/contents/`, and a caller listing the root picks either.

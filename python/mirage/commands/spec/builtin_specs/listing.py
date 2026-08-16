@@ -63,6 +63,7 @@ SPECS: dict[str, CommandSpec] = {
             Option(short="-iname", type="str", multiple=True),
             Option(short="-path", type="str", multiple=True),
             Option(short="-mindepth", type="str", multiple=True),
+            Option(short="-printf", type="str", multiple=True),
             # GNU find's link policy: -P (no follow) is the default, -H
             # follows only the start point, -L follows everything.
             Option(short="-P"),

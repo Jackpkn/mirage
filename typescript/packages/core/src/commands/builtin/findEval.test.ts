@@ -17,12 +17,15 @@ import {
   buildTree,
   computeNonemptyDirs,
   evalPredicate,
+  expandPrintf,
   type FindEntry,
   keep,
+  printfNeedsStat,
   treeHasType,
   displayPath,
   emitStartPath,
   prefixPathNodes,
+  unrespellRaw,
 } from './findEval.ts'
 
 function entry(over: Partial<FindEntry> = {}): FindEntry {
@@ -216,5 +219,73 @@ describe('emitStartPath size on directories', () => {
       maxSize: 5,
     })
     expect(results).toEqual(['/data'])
+  })
+})
+
+describe('expandPrintf', () => {
+  const stat = { size: 6, kind: 'f' as const, mtimeEpoch: 1786887930 }
+
+  it('expands the path family', () => {
+    const warnings: string[] = []
+    expect(expandPrintf('%p|%P|%f|%h|%d\n', '/data/sub/b.txt', '/data', null, warnings)).toBe(
+      '/data/sub/b.txt|sub/b.txt|b.txt|/data/sub|2\n',
+    )
+    expect(warnings).toEqual([])
+  })
+
+  it('expands the stat family', () => {
+    const warnings: string[] = []
+    expect(expandPrintf('%s %y %m %M\n', '/data/a.txt', '/data', stat, warnings)).toBe(
+      '6 f 644 -rw-r--r--\n',
+    )
+    expect(
+      expandPrintf(
+        '%y %m\n',
+        '/data/sub',
+        '/data',
+        { size: 0, kind: 'd', mtimeEpoch: 0 },
+        warnings,
+      ),
+    ).toBe('d 755\n')
+  })
+
+  it('expands time directives in UTC', () => {
+    const warnings: string[] = []
+    expect(expandPrintf('%TY-%Tm-%Td\n', '/data/a.txt', '/data', stat, warnings)).toBe(
+      '2026-08-16\n',
+    )
+    expect(expandPrintf('%T@\n', '/data/a.txt', '/data', stat, warnings)).toBe(
+      '1786887930.0000000000\n',
+    )
+  })
+
+  it('handles escapes and warns once per unknown directive', () => {
+    const warnings: string[] = []
+    expect(expandPrintf('A\\tB\\n', '/data/a.txt', '/data', null, warnings)).toBe('A\tB\n')
+    expect(expandPrintf('%Q\n', '/data/a.txt', '/data', null, warnings)).toBe('%Q\n')
+    expect(expandPrintf('%Q\n', '/data/a.txt', '/data', null, warnings)).toBe('%Q\n')
+    expect(warnings).toEqual(["find: warning: unrecognized format directive '%Q'"])
+  })
+
+  it('renders the start row at depth 0', () => {
+    const warnings: string[] = []
+    expect(expandPrintf('%P|%d|%f\n', '/data', '/data', null, warnings)).toBe('|0|data\n')
+  })
+})
+
+describe('unrespellRaw', () => {
+  it('inverts respelling', () => {
+    expect(unrespellRaw('./sub/x', '/data', '.')).toBe('/data/sub/x')
+    expect(unrespellRaw('.', '/data', '.')).toBe('/data')
+    expect(unrespellRaw('/data/x', '/data', '/data')).toBe('/data/x')
+  })
+})
+
+describe('printfNeedsStat', () => {
+  it('detects stat directives', () => {
+    expect(printfNeedsStat('%s\n')).toBe(true)
+    expect(printfNeedsStat('%TY\n')).toBe(true)
+    expect(printfNeedsStat('%p %f %h %P %d\n')).toBe(false)
+    expect(printfNeedsStat('100%%score\n')).toBe(false)
   })
 })
