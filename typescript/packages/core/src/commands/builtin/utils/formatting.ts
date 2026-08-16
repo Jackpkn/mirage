@@ -32,21 +32,34 @@ import { DEFAULT_MODES, EPOCH_LS_TIME, MONTHS, NUMERIC_PREFIX, TYPE_CHARS } from
  * @param units suffixes indexed by power; index 0 is unused because a
  *   sub-unit count carries no suffix at all
  */
+function ceilDiv(a: bigint, b: bigint): bigint {
+  return (a + b - 1n) / b
+}
+
 export function humanScaled(n: number, base: number, units: readonly string[]): string {
   if (n < base) return String(n)
+  // BigInt, not number: `n * 10` leaves the safe-integer range a little
+  // under a petabyte, and the product silently rounds down before the
+  // ceiling, which then lands on the wrong tenth -- 1914029841632461
+  // bytes read `1.7P` where GNU and Python say `1.8P`. Python does this
+  // in arbitrary-precision ints, so BigInt is the faithful mirror rather
+  // than a workaround. A count this large is integral; truncating guards
+  // the BigInt conversion against a fractional caller.
+  const value = BigInt(Math.trunc(n))
+  const big = BigInt(base)
   let i = 1
-  let divisor = base
+  let divisor = big
   for (;;) {
-    const tenths = Math.ceil((n * 10) / divisor)
-    if (tenths < 100) {
-      const unit = Math.floor(tenths / 10).toString()
-      const decimal = (tenths % 10).toString()
+    const tenths = ceilDiv(value * 10n, divisor)
+    if (tenths < 100n) {
+      const unit = (tenths / 10n).toString()
+      const decimal = (tenths % 10n).toString()
       return `${unit}.${decimal}${units[i] ?? ''}`
     }
-    const whole = Math.ceil(n / divisor)
-    if (whole < base || i === units.length - 1) return `${whole.toString()}${units[i] ?? ''}`
+    const whole = ceilDiv(value, divisor)
+    if (whole < big || i === units.length - 1) return `${whole.toString()}${units[i] ?? ''}`
     i += 1
-    divisor *= base
+    divisor *= big
   }
 }
 

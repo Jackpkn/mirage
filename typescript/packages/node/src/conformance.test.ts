@@ -116,7 +116,10 @@ function validateMatrix(c: ConformanceCase, specName: string): void {
   // because the side that still lists the backend goes green. Anything
   // genuinely language-specific says so in a `divergence` key, which the
   // README calls the per-backend override.
-  if (c.divergence === undefined) {
+  // A non-empty string, not merely a present key: `"divergence": null`
+  // or `""` would otherwise buy the exemption while explaining nothing,
+  // which is the one thing the key exists to supply.
+  if (typeof c.divergence !== 'string' || c.divergence.trim() === '') {
     const python = new Set(c.matrix.python ?? [])
     const typescript = new Set(c.matrix.typescript ?? [])
     const onlyPython = [...python].filter((b) => !typescript.has(b)).sort()
@@ -301,4 +304,23 @@ describe('command conformance matrix validation', () => {
       validateMatrix(c, 'declared.json')
     }).not.toThrow()
   })
+
+  // The key has to carry the reason, not merely exist. A null or blank
+  // value would buy the exemption while explaining nothing, which is the
+  // one thing it is there to supply.
+  it.each([[null], [''], ['   '], [true], [1], [[]]])(
+    'rejects an empty divergence (%p)',
+    (value) => {
+      const c = {
+        id: 'blank_divergence',
+        cmd: 'true',
+        matrix: { python: ['ram', 'disk', 'redis'], typescript: ['ram'] },
+        divergence: value as unknown as string,
+        expect: { exit: 0, stdout_text: '', stderr_text: '' },
+      }
+      expect(() => {
+        validateMatrix(c, 'blank.json')
+      }).toThrow('asymmetric matrix')
+    },
+  )
 })

@@ -46,6 +46,9 @@ GNU_HUMAN_SIZES = [
     (1048576, "1.0M"),
     (1024 * 1024 + 512 * 1024, "1.5M"),
     (1073741824, "1.0G"),
+    # Past 2**53/10, so a `n * 10` intermediate stops being exact.
+    # GNU says 1.8P; a float product rounds down and yields 1.7P.
+    (1914029841632461, "1.8P"),
 ]
 
 

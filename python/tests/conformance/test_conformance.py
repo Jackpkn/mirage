@@ -80,7 +80,11 @@ def _validate_matrix(case: dict, spec_name: str) -> None:
     # because the side that still lists the backend goes green. Anything
     # genuinely language-specific says so in a `divergence` key, which the
     # README calls the per-backend override.
-    if "divergence" not in case:
+    # A non-empty string, not merely a present key: `"divergence": null`
+    # or `""` would otherwise buy the exemption while explaining nothing,
+    # which is the one thing the key exists to supply.
+    divergence = case.get("divergence")
+    if not (isinstance(divergence, str) and divergence.strip()):
         python_backends = set(matrix.get("python", []))
         typescript_backends = set(matrix.get("typescript", []))
         if python_backends != typescript_backends:
@@ -229,3 +233,23 @@ def test_validate_matrix_allows_an_asymmetric_matrix_that_says_why() -> None:
         "divergence": "TypeScript has no redis-backed foo yet (#1234).",
     }
     _validate_matrix(case, "declared.json")
+
+
+@pytest.mark.parametrize("value", [None, "", "   ", True, 1, []])
+def test_validate_matrix_rejects_an_empty_divergence(value: object) -> None:
+    """The key has to carry the reason, not merely exist.
+
+    A null or blank value would buy the exemption while explaining
+    nothing, which is the one thing it is there to supply -- and it would
+    read as a considered decision in review.
+    """
+    case = {
+        "id": "blank_divergence",
+        "matrix": {
+            "python": ["ram", "disk", "redis"],
+            "typescript": ["ram"],
+        },
+        "divergence": value,
+    }
+    with pytest.raises(ValueError, match="asymmetric matrix"):
+        _validate_matrix(case, "blank.json")
