@@ -12,7 +12,9 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from pydantic import BaseModel, SecretStr
+from collections.abc import Callable
+
+from pydantic import BaseModel, ConfigDict, SecretStr
 
 from mirage.resource.secrets import (REDACTED_SECRET, has_redacted_secret,
                                      redacted_config_dump,
@@ -60,3 +62,35 @@ def test_top_level_secret_fields_still_redact():
     data = redacted_config_dump(Inner(token=SecretStr("s")))
     assert data == {"token": REDACTED_SECRET, "host": "h"}
     assert revealed_config_dump(Inner(token=SecretStr("s")))["token"] == "s"
+
+
+class ProviderConfig(BaseModel):
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    access_token: SecretStr | Callable[[], str | SecretStr] | None = None
+    host: str = "h"
+
+
+def test_a_provider_callable_redacts_instead_of_crashing():
+    # msgraph and google both accept a token provider, and pydantic
+    # cannot serialize a function: dumping the model raised
+    # PydanticSerializationError and took the whole snapshot with it.
+    data = redacted_config_dump(ProviderConfig(access_token=lambda: "tok"))
+    assert data == {"access_token": REDACTED_SECRET, "host": "h"}
+
+
+def test_a_provider_callable_is_never_revealed():
+    # Revealing one would mean calling it and freezing a token that
+    # expires into a snapshot that does not.
+    data = revealed_config_dump(ProviderConfig(access_token=lambda: "tok"))
+    assert data["access_token"] == REDACTED_SECRET
+
+
+def test_a_provider_config_still_reports_a_redacted_secret():
+    # This is what routes the mount down the fresh-resource path at load.
+    assert has_redacted_secret(
+        redacted_config_dump(ProviderConfig(access_token=lambda: "tok")))
+
+
+def test_an_absent_secret_stays_none():
+    assert redacted_config_dump(ProviderConfig())["access_token"] is None
