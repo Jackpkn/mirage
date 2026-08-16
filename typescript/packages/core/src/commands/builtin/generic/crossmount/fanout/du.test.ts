@@ -46,16 +46,18 @@ describe('duTotal', () => {
 
   it('humanizes from exact bytes without rounding twice', () => {
     // runFanout forces -h off on the native runs, so the rows arrive in
-    // bytes: 1500 + 1500 is 2.9K, not the 3.0K that summing two "1.5K"
-    // readings back through parseSize would give.
+    // bytes: 1025 + 1025 is 2.1K, not the 2.2K that summing two "1.1K"
+    // readings back through parseSize would give. 1500 would not show
+    // the difference -- GNU rounds up, so 3000 bytes and two 1.5K
+    // readings both render 3.0K.
     const out = DEC.decode(
-      duTotal([op('1500\t/a/x\n1500\ttotal\n'), op('1500\t/b/z\n1500\ttotal\n')], true),
+      duTotal([op('1025\t/a/x\n1025\ttotal\n'), op('1025\t/b/z\n1025\ttotal\n')], true),
     )
-    expect(out).toBe('1.5K\t/a/x\n1.5K\t/b/z\n2.9K\ttotal\n')
+    expect(out).toBe('1.1K\t/a/x\n1.1K\t/b/z\n2.1K\ttotal\n')
   })
 
   it('leaves a row without a tab alone', () => {
-    expect(DEC.decode(duTotal([op('odd-row\n0\ttotal\n')], true))).toBe('odd-row\n0B\ttotal\n')
+    expect(DEC.decode(duTotal([op('odd-row\n0\ttotal\n')], true))).toBe('odd-row\n0\ttotal\n')
   })
 })
 

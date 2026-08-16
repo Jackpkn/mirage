@@ -24,7 +24,7 @@ import type { EmailAccessor } from '../../../accessor/email.ts'
 import { readdir as emailReaddir } from '../../../core/email/readdir.ts'
 import { stat as emailStat } from '../../../core/email/stat.ts'
 import { EMAIL_IO } from './io.ts'
-import { metadataProvision } from './provision.ts'
+import { metadataProvision } from './_provision.ts'
 
 const resolveGlob = resolveGlobOf(EMAIL_IO)
 

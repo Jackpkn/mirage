@@ -18,7 +18,7 @@ import type { ProvisionFn, RegisteredCommand } from '../../config.ts'
 import { makeGenericCommands } from '../generic_bind/index.ts'
 import { GMAIL_GREP } from './grep.ts'
 import { GMAIL_IO } from './io.ts'
-import { metadataProvision } from './provision.ts'
+import { metadataProvision } from './_provision.ts'
 import { GMAIL_RG } from './rg.ts'
 
 const GMAIL_OVERRIDES = new Set(['grep', 'rg'])

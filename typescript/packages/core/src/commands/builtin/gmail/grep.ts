@@ -28,7 +28,7 @@ import { command, type CommandFnResult, type CommandOpts } from '../../config.ts
 import { specOf } from '../../spec/builtins.ts'
 import { grepGeneric } from '../generic/grep.ts'
 import { patternArg } from '../grep_helper.ts'
-import { fileReadProvision } from './provision.ts'
+import { fileReadProvision } from './_provision.ts'
 import { FlagView } from '../../spec/types.ts'
 
 const resolveGlob = resolveGlobOf(GMAIL_IO)

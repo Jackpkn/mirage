@@ -74,6 +74,26 @@ def _validate_matrix(case: dict, spec_name: str) -> None:
         raise ValueError(
             f"case {case['id']} in {spec_name} applies to no backend")
 
+    # A case is a parity claim, so the two languages have to be asked the
+    # same question. Dropping a backend from one side reads as coverage
+    # while it is really an unexamined divergence -- and it is invisible,
+    # because the side that still lists the backend goes green. Anything
+    # genuinely language-specific says so in a `divergence` key, which the
+    # README calls the per-backend override.
+    if "divergence" not in case:
+        python_backends = set(matrix.get("python", []))
+        typescript_backends = set(matrix.get("typescript", []))
+        if python_backends != typescript_backends:
+            only_python = ", ".join(
+                sorted(python_backends - typescript_backends)) or "none"
+            only_typescript = ", ".join(
+                sorted(typescript_backends - python_backends)) or "none"
+            raise ValueError(
+                f"case {case['id']} in {spec_name} has an asymmetric "
+                f"matrix (python-only: {only_python}; typescript-only: "
+                f"{only_typescript}). Run it on both, or record why it "
+                f"cannot with a `divergence` key.")
+
 
 def _load_cases() -> list[dict]:
     cases = []
@@ -185,3 +205,27 @@ def test_validate_matrix_accepts_supported_targets() -> None:
         },
     }
     _validate_matrix(case, "valid.json")
+
+
+def test_validate_matrix_rejects_an_asymmetric_matrix() -> None:
+    case = {
+        "id": "narrowed_matrix",
+        "matrix": {
+            "python": ["ram", "disk", "redis"],
+            "typescript": ["ram"],
+        },
+    }
+    with pytest.raises(ValueError, match="asymmetric matrix"):
+        _validate_matrix(case, "narrowed.json")
+
+
+def test_validate_matrix_allows_an_asymmetric_matrix_that_says_why() -> None:
+    case = {
+        "id": "declared_divergence",
+        "matrix": {
+            "python": ["ram", "disk", "redis"],
+            "typescript": ["ram"],
+        },
+        "divergence": "TypeScript has no redis-backed foo yet (#1234).",
+    }
+    _validate_matrix(case, "declared.json")

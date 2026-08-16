@@ -12,22 +12,46 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import pytest
+
 from mirage.commands.builtin.utils.formatting import (_human_size,
                                                       format_ls_long)
 from mirage.types import FileStat, FileType
 
+# Read off GNU coreutils 9.7 (`ls -lh` on a file of each size, debian
+# stable-slim). The three rows that matter are the ones a plain
+# divide-and-format gets wrong: no suffix under 1024, rounding *up* to
+# the shown precision (1025 -> 1.1K), and the decimal dropping once the
+# value reaches ten (10240 -> 10K). 1048575 pins the carry: it ceils to
+# 1024K, which GNU re-scales to 1.0M.
+GNU_HUMAN_SIZES = [
+    (0, "0"),
+    (1, "1"),
+    (24, "24"),
+    (500, "500"),
+    (999, "999"),
+    (1000, "1000"),
+    (1023, "1023"),
+    (1024, "1.0K"),
+    (1025, "1.1K"),
+    (1126, "1.1K"),
+    (1127, "1.2K"),
+    (1536, "1.5K"),
+    (2048, "2.0K"),
+    (10188, "10K"),
+    (10240, "10K"),
+    (10241, "11K"),
+    (11263, "11K"),
+    (1048575, "1.0M"),
+    (1048576, "1.0M"),
+    (1024 * 1024 + 512 * 1024, "1.5M"),
+    (1073741824, "1.0G"),
+]
 
-def test_human_size_bytes():
-    assert _human_size(500) == "500B"
 
-
-def test_human_size_kilobytes():
-    assert _human_size(1024) == "1.0K"
-
-
-def test_human_size_fractional_rounds_not_floored():
-    assert _human_size(1536) == "1.5K"
-    assert _human_size(1024 * 1024 + 512 * 1024) == "1.5M"
+@pytest.mark.parametrize(("size", "expected"), GNU_HUMAN_SIZES)
+def test_human_size_matches_gnu(size: int, expected: str):
+    assert _human_size(size) == expected
 
 
 def test_format_ls_long_regular_file():

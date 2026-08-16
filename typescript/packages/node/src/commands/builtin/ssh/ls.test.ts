@@ -15,9 +15,9 @@
 import { describe, expect, it } from 'vitest'
 import { materialize } from '@struktoai/mirage-core/io/types'
 import { PathSpec } from '@struktoai/mirage-core/types'
-import type { SSHAccessor } from '../../../../accessor/ssh.ts'
-import { makeFakeAccessor } from '../../../../core/ssh/_test_utils.ts'
-import { SSH_COMMANDS } from '../index.ts'
+import type { SSHAccessor } from '../../../accessor/ssh.ts'
+import { makeFakeAccessor } from '../../../core/ssh/_test_utils.ts'
+import { SSH_COMMANDS } from './index.ts'
 const SSH_LS = SSH_COMMANDS.filter((c) => c.name === 'ls' && c.filetype == null)
 
 const DEC = new TextDecoder()

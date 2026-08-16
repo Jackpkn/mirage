@@ -12,9 +12,9 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { AsyncLineIterator } from '../../../io/async_line_iterator.ts'
-import { UsageError } from '../../errors.ts'
-import { toNumber } from '../utils/formatting.ts'
+import { AsyncLineIterator } from '../../io/async_line_iterator.ts'
+import { UsageError } from '../errors.ts'
+import { toNumber } from './utils/formatting.ts'
 import {
   AwkBlock,
   AwkBoolOp,
@@ -23,7 +23,7 @@ import {
   CMP_OP_PATTERN,
   FIELD_PREFIX,
   PRINT_STMT,
-} from './awk_types.ts'
+} from './generic/awk_types.ts'
 
 const ENC = new TextEncoder()
 const DEC = new TextDecoder('utf-8', { fatal: false })

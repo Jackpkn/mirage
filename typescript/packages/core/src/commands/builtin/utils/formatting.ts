@@ -15,16 +15,43 @@
 import { FileType, LINK_TARGET_KEY, type FileStat } from '../../../types.ts'
 import { DEFAULT_MODES, EPOCH_LS_TIME, MONTHS, NUMERIC_PREFIX, TYPE_CHARS } from './constants.ts'
 
-export function humanSize(n: number): string {
-  const units = ['B', 'K', 'M', 'G', 'T']
-  let value = n
-  let i = 0
-  while (value >= 1024 && i < units.length - 1) {
-    value /= 1024
+/**
+ * GNU's `human_readable` rounding, shared by `-h` and `-H`.
+ *
+ * Three rules, none of which fall out of a plain divide-and-format.
+ * Below one unit GNU prints the count alone -- `24`, never `24B`. Above
+ * it the value is rounded *up* to the precision shown, so 1025 bytes is
+ * `1.1K` rather than `1.0K`. And the decimal is dropped once the scaled
+ * value reaches ten, giving `10K` rather than `10.0K`. Rounding up can
+ * carry past the base (1048575 bytes ceils to 1024K, which GNU shows as
+ * `1.0M`), so the unit is re-chosen after rounding instead of once up
+ * front.
+ *
+ * @param n byte count
+ * @param base 1024 for `-h`, 1000 for `-H`
+ * @param units suffixes indexed by power; index 0 is unused because a
+ *   sub-unit count carries no suffix at all
+ */
+export function humanScaled(n: number, base: number, units: readonly string[]): string {
+  if (n < base) return String(n)
+  let i = 1
+  let divisor = base
+  for (;;) {
+    const tenths = Math.ceil((n * 10) / divisor)
+    if (tenths < 100) {
+      const unit = Math.floor(tenths / 10).toString()
+      const decimal = (tenths % 10).toString()
+      return `${unit}.${decimal}${units[i] ?? ''}`
+    }
+    const whole = Math.ceil(n / divisor)
+    if (whole < base || i === units.length - 1) return `${whole.toString()}${units[i] ?? ''}`
     i += 1
+    divisor *= base
   }
-  const s = i === 0 ? Math.round(value).toString() : value.toFixed(1)
-  return `${s}${units[i] ?? ''}`
+}
+
+export function humanSize(n: number): string {
+  return humanScaled(n, 1024, ['', 'K', 'M', 'G', 'T', 'P', 'E'])
 }
 
 function permTriplet(bits: number, special?: string): string {
