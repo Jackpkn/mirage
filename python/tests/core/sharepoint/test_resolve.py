@@ -4,7 +4,7 @@ import pytest
 from aioresponses import aioresponses
 
 from mirage.accessor.sharepoint import SharePointAccessor, SharePointConfig
-from mirage.core.sharepoint._resolver import _drive_cache, _site_cache, resolve
+from mirage.core.sharepoint.resolve import _drive_cache, _site_cache, resolve
 from mirage.types import PathSpec
 from mirage.utils.key_prefix import mount_key
 

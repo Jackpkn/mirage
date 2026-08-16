@@ -5,8 +5,8 @@ from aioresponses import aioresponses
 
 from mirage.accessor.sharepoint import SharePointAccessor, SharePointConfig
 from mirage.cache.index import RAMIndexCacheStore
-from mirage.core.sharepoint._resolver import _drive_cache, _site_cache
 from mirage.core.sharepoint.readdir import readdir
+from mirage.core.sharepoint.resolve import _drive_cache, _site_cache
 from mirage.types import PathSpec
 from mirage.utils.key_prefix import mount_key
 

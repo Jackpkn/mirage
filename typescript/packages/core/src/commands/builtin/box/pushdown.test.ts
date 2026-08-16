@@ -32,7 +32,7 @@ import type { BoxTokenManager } from '../../../core/box/_client.ts'
 import * as searchModule from '../../../core/box/search.ts'
 import * as statModule from '../../../core/box/stat.ts'
 import { FileStat, FileType, PathSpec } from '../../../types.ts'
-import { narrowScope } from './narrow.ts'
+import { narrowScope } from './pushdown.ts'
 
 const STUB_TM = {} as BoxTokenManager
 const narrow = vi.mocked(searchModule.narrowPaths)

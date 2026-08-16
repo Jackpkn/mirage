@@ -79,7 +79,7 @@ const EVENTS: Record<string, JsonValue>[] = [
 const listed: [string, string, string][] = []
 const deleted: [string, string][] = []
 
-vi.mock('./client.ts', () => ({
+vi.mock('./_client.ts', () => ({
   listCalendars: (_tm: unknown, minAccessRole?: string) => {
     const all = [PRIMARY, TEAM, SHARED]
     if (minAccessRole === undefined || minAccessRole === '') return Promise.resolve(all)

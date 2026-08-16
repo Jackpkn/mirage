@@ -17,7 +17,11 @@ import type { IndexCacheStore } from '../../../cache/index/store.ts'
 import { SCOPE_WARN } from '../../../core/github/constants.ts'
 import { resolveGlobOf } from '../generic_bind/index.ts'
 import { GITHUB_IO } from './io.ts'
-import { countScopeFiles, scopeRelativeKey, shouldUseSearch } from '../../../core/github/scope.ts'
+import {
+  countScopeFiles,
+  scopeRelativeKey,
+  shouldUseSearch,
+} from '../../../core/github/pushdown.ts'
 import { narrowPaths } from '../../../core/github/search.ts'
 import type { PathSpec } from '../../../types.ts'
 import { isLiteralPattern, searchQuery } from '../grep_helper.ts'

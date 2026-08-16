@@ -6,8 +6,8 @@ from mirage.commands.builtin.find_eval import (FindEntry, PredNode, build_tree,
                                                emit_start_path, keep,
                                                start_basename)
 from mirage.core.msgraph.drive_ops import drive_root_empty, find_items
-from mirage.core.sharepoint._resolver import (ResolvedPath, drive_entries,
-                                              drive_loc, resolve, site_entries)
+from mirage.core.sharepoint.resolve import (ResolvedPath, drive_entries,
+                                            drive_loc, resolve, site_entries)
 from mirage.core.sharepoint.stat import stat
 from mirage.types import FileType, PathSpec
 

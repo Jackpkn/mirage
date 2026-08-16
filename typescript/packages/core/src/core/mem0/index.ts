@@ -12,7 +12,7 @@ const ENCODER = new TextEncoder()
 
 type Mem0Scope = { level: 'root' } | { level: 'memory'; memoryId: string } | { level: 'invalid' }
 
-function detect(path: PathSpec): Mem0Scope {
+function detectScope(path: PathSpec): Mem0Scope {
   const key = stripSlash(path.resourcePath)
   if (key === '') return { level: 'root' }
   const parts = key.split('/')
@@ -41,7 +41,7 @@ async function resolveMemory(
   path: PathSpec,
   index?: IndexCacheStore,
 ): Promise<Record<string, unknown>> {
-  const scope = detect(path)
+  const scope = detectScope(path)
   if (scope.level !== 'memory') throw enoent(path)
   return (await cachedMemory(index, path)) ?? getMemory(accessor, scope.memoryId, path)
 }
@@ -67,7 +67,7 @@ export async function readdir(
   path: PathSpec,
   index?: IndexCacheStore,
 ): Promise<string[]> {
-  const scope = detect(path)
+  const scope = detectScope(path)
   if (scope.level === 'invalid') throw enoent(path)
   if (scope.level !== 'root') throw enotdir(path)
   if (index !== undefined) {
@@ -122,7 +122,7 @@ export async function stat(
   path: PathSpec,
   index?: IndexCacheStore,
 ): Promise<FileStat> {
-  const scope = detect(path)
+  const scope = detectScope(path)
   if (scope.level === 'root') return new FileStat({ name: '/', type: FileType.DIRECTORY })
   if (scope.level !== 'memory') throw enoent(path)
   return fileStat(await resolveMemory(accessor, path, index))

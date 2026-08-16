@@ -43,7 +43,7 @@ import {
   FindParseError,
   findExprTail,
   parseFindExpression,
-} from '../../commands/builtin/findParse.ts'
+} from '../../commands/builtin/find_parse.ts'
 import { maybeWithTimeout } from '../../commands/builtin/utils/limit.ts'
 import { resolveProducer, resolveLimit } from '../../policy/index.ts'
 import type { ExecuteNodeFn, JobHandlerResult } from './jobs.ts'

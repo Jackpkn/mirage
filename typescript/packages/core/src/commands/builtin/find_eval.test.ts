@@ -26,7 +26,7 @@ import {
   emitStartPath,
   prefixPathNodes,
   unrespellRaw,
-} from './findEval.ts'
+} from './find_eval.ts'
 
 function entry(over: Partial<FindEntry> = {}): FindEntry {
   return { key: '/data/a.txt', name: 'a.txt', kind: 'f', depth: 1, ...over }

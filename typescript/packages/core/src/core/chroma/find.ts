@@ -24,7 +24,7 @@ import {
   type PredNode,
   startBasename,
   treeHasType,
-} from '../../commands/builtin/findEval.ts'
+} from '../../commands/builtin/find_eval.ts'
 import { lstripSlash, rstripSlash, stripSlash } from '../../utils/slash.ts'
 import { modifiedTs } from '../generic/find.ts'
 import { resolvePath } from './path.ts'

@@ -16,7 +16,7 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('./narrow.ts', () => ({ narrowScope: vi.fn() }))
+vi.mock('./pushdown.ts', () => ({ narrowScope: vi.fn() }))
 vi.mock('../generic/grep.ts', () => ({ grepGeneric: vi.fn() }))
 
 import { BoxAccessor } from '../../../accessor/box.ts'
@@ -26,7 +26,7 @@ import { PathSpec } from '../../../types.ts'
 import type { CommandFnResult, CommandOpts } from '../../config.ts'
 import { grepGeneric } from '../generic/grep.ts'
 import { BOX_GREP } from './grep.ts'
-import { narrowScope } from './narrow.ts'
+import { narrowScope } from './pushdown.ts'
 
 const STUB_TM = {} as BoxTokenManager
 const narrow = vi.mocked(narrowScope)

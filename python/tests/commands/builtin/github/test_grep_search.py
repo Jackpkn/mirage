@@ -17,7 +17,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from mirage.commands.builtin.github.grep import grep
-from mirage.commands.builtin.github.narrow import narrow_scope
+from mirage.commands.builtin.github.pushdown import narrow_scope
 from mirage.commands.config import CommandOpts
 from mirage.types import PathSpec
 from tests.fixtures.github_mock import MOCK_BLOBS

@@ -32,7 +32,7 @@ import type { DropboxTokenManager } from '../../../core/dropbox/_client.ts'
 import * as searchModule from '../../../core/dropbox/search.ts'
 import * as statModule from '../../../core/dropbox/stat.ts'
 import { FileStat, FileType, PathSpec } from '../../../types.ts'
-import { narrowScope } from './narrow.ts'
+import { narrowScope } from './pushdown.ts'
 
 const STUB_TM = {} as DropboxTokenManager
 const narrow = vi.mocked(searchModule.narrowPaths)

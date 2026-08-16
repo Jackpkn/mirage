@@ -16,7 +16,7 @@ import { mountPrefixOf } from '../../utils/key_prefix.ts'
 import type { GitHubAccessor } from '../../accessor/github.ts'
 import type { FindOptions } from '../../resource/base.ts'
 import type { PathSpec } from '../../types.ts'
-import { buildTree, emitStartPath, keep, startBasename } from '../../commands/builtin/findEval.ts'
+import { buildTree, emitStartPath, keep, startBasename } from '../../commands/builtin/find_eval.ts'
 import { stripSlash } from '../../utils/slash.ts'
 import { compareCodePoints } from '../../utils/sort.ts'
 

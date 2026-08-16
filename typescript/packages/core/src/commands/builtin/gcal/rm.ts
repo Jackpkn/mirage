@@ -14,7 +14,7 @@
 
 import { unlink } from '../../../core/gcal/unlink.ts'
 import { ResourceName } from '../../../types.ts'
-import { makeRm } from '../generic/rm_command.ts'
+import { makeRm } from '../generic/rm_cmd.ts'
 import { GCAL_IO } from './io.ts'
 
 export const GCAL_RM = makeRm(ResourceName.GCAL, GCAL_IO, unlink)

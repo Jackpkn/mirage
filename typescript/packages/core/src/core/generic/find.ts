@@ -23,7 +23,7 @@ import {
   treeHasEmpty,
   type FindEntry,
   keep,
-} from '../../commands/builtin/findEval.ts'
+} from '../../commands/builtin/find_eval.ts'
 import { FileType, PathSpec, type FileStat } from '../../types.ts'
 import type { LinkView } from '../../ops/types.ts'
 import { rstripSlash } from '../../utils/slash.ts'

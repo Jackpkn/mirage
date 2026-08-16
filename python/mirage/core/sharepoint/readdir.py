@@ -2,8 +2,8 @@ from mirage.accessor.sharepoint import SharePointAccessor
 from mirage.cache.index import (NULL_INDEX, IndexCacheStore, IndexEntry,
                                 ResourceType)
 from mirage.core.msgraph.drive_ops import readdir_items
-from mirage.core.sharepoint._resolver import (drive_loc, list_drives,
-                                              list_sites, resolve)
+from mirage.core.sharepoint.resolve import (drive_loc, list_drives, list_sites,
+                                            resolve)
 from mirage.types import PathSpec
 from mirage.utils.key_prefix import mount_prefix_of
 

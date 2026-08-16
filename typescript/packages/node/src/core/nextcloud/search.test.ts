@@ -1,4 +1,4 @@
-import type { PredNode } from '@struktoai/mirage-core/commands/builtin/findEval'
+import type { PredNode } from '@struktoai/mirage-core/commands/builtin/find_eval'
 import { PathSpec } from '@struktoai/mirage-core/types'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { NextcloudAccessor } from '../../accessor/nextcloud.ts'

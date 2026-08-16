@@ -18,7 +18,7 @@ from typing import Any
 from mirage.accessor.mem0 import Mem0Accessor
 from mirage.cache.index import NULL_INDEX, IndexCacheStore
 from mirage.core.mem0._client import get_memory
-from mirage.core.mem0.scope import ScopeLevel, detect
+from mirage.core.mem0.scope import ScopeLevel, detect_scope
 from mirage.core.render.json import json_bytes
 from mirage.types import PathSpec
 from mirage.utils.errors import enoent
@@ -29,7 +29,7 @@ async def _resolve_memory(
     path: PathSpec,
     index: IndexCacheStore,
 ) -> dict[str, Any]:
-    scope = detect(path)
+    scope = detect_scope(path)
     if scope.level != ScopeLevel.MEMORY or scope.memory_id is None:
         raise enoent(path)
     lookup = await index.get(path.virtual)

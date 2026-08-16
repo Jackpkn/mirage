@@ -13,7 +13,7 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 from mirage.commands.builtin.gdocs.io import resolve_glob
-from mirage.commands.builtin.generic.rm_command import make_rm
+from mirage.commands.builtin.generic.rm_cmd import make_rm
 from mirage.core.gdocs.unlink import unlink
 
 rm = make_rm(resource="gdocs", glob_fn=resolve_glob, unlink=unlink)
