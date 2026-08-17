@@ -12,12 +12,16 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from unittest.mock import AsyncMock, MagicMock, patch
-
+import aiohttp
 import pytest
+from aioresponses import aioresponses
+from yarl import URL
 
-from mirage.core.discord._client import discord_get, discord_post
+from mirage.core.discord.client import (discord_delete, discord_get,
+                                        discord_post, discord_put)
 from mirage.core.discord.config import DiscordConfig
+
+BASE = "https://discord.com/api/v10"
 
 
 @pytest.fixture
@@ -27,82 +31,72 @@ def config():
 
 @pytest.mark.asyncio
 async def test_discord_get_success(config):
-    mock_resp = AsyncMock()
-    mock_resp.status = 200
-    mock_resp.json = AsyncMock(return_value=[
-        {
-            "id": "123",
-            "name": "general"
-        },
-    ])
-    mock_resp.raise_for_status = MagicMock()
-    mock_session = AsyncMock()
-    mock_session.get = MagicMock(return_value=AsyncMock(
-        __aenter__=AsyncMock(return_value=mock_resp),
-        __aexit__=AsyncMock(return_value=False),
-    ))
-
-    with patch("mirage.core.discord._client.aiohttp.ClientSession") as mock_cs:
-        mock_cs.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_cs.return_value.__aexit__ = AsyncMock(return_value=False)
-
+    url = f"{BASE}/guilds/123/channels"
+    with aioresponses() as m:
+        m.get(url, payload=[{"id": "123", "name": "general"}])
         result = await discord_get(config, "/guilds/123/channels")
-
+        sent = m.requests[("GET", URL(url))]
     assert result == [{"id": "123", "name": "general"}]
-    mock_session.get.assert_called_once()
-    call_kwargs = mock_session.get.call_args
-    assert call_kwargs.args[0] == \
-        "https://discord.com/api/v10/guilds/123/channels"
-    assert call_kwargs.kwargs["headers"]["Authorization"] == \
-        "Bot test-bot-token"
+    assert len(sent) == 1
+    assert sent[0].kwargs["headers"]["Authorization"] == "Bot test-bot-token"
 
 
 @pytest.mark.asyncio
 async def test_discord_get_rate_limited(config):
-    mock_resp = AsyncMock()
-    mock_resp.status = 429
-    mock_resp.json = AsyncMock(return_value={
-        "retry_after": 5,
-    })
-    mock_session = AsyncMock()
-    mock_session.get = MagicMock(return_value=AsyncMock(
-        __aenter__=AsyncMock(return_value=mock_resp),
-        __aexit__=AsyncMock(return_value=False),
-    ))
-
-    with patch("mirage.core.discord._client.aiohttp.ClientSession") as mock_cs:
-        mock_cs.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_cs.return_value.__aexit__ = AsyncMock(return_value=False)
-
-        with pytest.raises(RuntimeError, match="Rate limited"):
+    url = f"{BASE}/users/@me/guilds"
+    with aioresponses() as m:
+        for _ in range(3):
+            m.get(url, status=429, payload={"retry_after": 0.001})
+        with pytest.raises(RuntimeError, match="Rate limited after 3"):
             await discord_get(config, "/users/@me/guilds")
+        # two waits, three requests, then the error surfaces
+        assert len(m.requests[("GET", URL(url))]) == 3
 
 
 @pytest.mark.asyncio
 async def test_discord_post_success(config):
-    mock_resp = AsyncMock()
-    mock_resp.status = 200
-    mock_resp.json = AsyncMock(return_value={
-        "id": "msg1",
-        "content": "hello",
-    })
-    mock_resp.raise_for_status = MagicMock()
-    mock_session = AsyncMock()
-    mock_session.post = MagicMock(return_value=AsyncMock(
-        __aenter__=AsyncMock(return_value=mock_resp),
-        __aexit__=AsyncMock(return_value=False),
-    ))
-
-    with patch("mirage.core.discord._client.aiohttp.ClientSession") as mock_cs:
-        mock_cs.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_cs.return_value.__aexit__ = AsyncMock(return_value=False)
-
+    url = f"{BASE}/channels/C001/messages"
+    with aioresponses() as m:
+        m.post(url, payload={"id": "msg1", "content": "hello"})
         result = await discord_post(config,
                                     "/channels/C001/messages",
                                     body={"content": "hello"})
-
+        sent = m.requests[("POST", URL(url))]
     assert result["id"] == "msg1"
-    mock_session.post.assert_called_once()
-    call_kwargs = mock_session.post.call_args
-    assert call_kwargs.args[0] == \
-        "https://discord.com/api/v10/channels/C001/messages"
+    assert sent[0].kwargs["json"] == {"content": "hello"}
+
+
+@pytest.mark.asyncio
+async def test_discord_post_rate_limited_raises_without_retrying(config):
+    url = f"{BASE}/channels/C001/messages"
+    with aioresponses() as m:
+        m.post(url, status=429, payload={"retry_after": 2.5})
+        with pytest.raises(RuntimeError, match="retry after 2.5s"):
+            await discord_post(config, "/channels/C001/messages", body={})
+        assert len(m.requests[("POST", URL(url))]) == 1
+
+
+@pytest.mark.asyncio
+async def test_discord_get_error_keeps_the_aiohttp_type(config):
+    # readdir classifies on ClientResponseError.status, so the migration
+    # onto core/api must keep raising the aiohttp type for plain errors.
+    url = f"{BASE}/guilds/999"
+    with aioresponses() as m:
+        m.get(url, status=404, payload={"message": "Unknown Guild"})
+        with pytest.raises(aiohttp.ClientResponseError) as exc:
+            await discord_get(config, "/guilds/999")
+    assert exc.value.status == 404
+
+
+@pytest.mark.asyncio
+async def test_discord_put_and_delete_return_nothing(config):
+    put_url = f"{BASE}/channels/C001/messages/m1/reactions/%F0%9F%91%8D/@me"
+    delete_url = f"{BASE}/channels/C001/messages/m1"
+    with aioresponses() as m:
+        m.put(put_url, status=204)
+        m.delete(delete_url, status=200, payload={"id": "m1"})
+        assert await discord_put(
+            config,
+            "/channels/C001/messages/m1/reactions/%F0%9F%91%8D/@me") is None
+        assert await discord_delete(config,
+                                    "/channels/C001/messages/m1") is None

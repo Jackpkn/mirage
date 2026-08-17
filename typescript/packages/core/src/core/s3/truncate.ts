@@ -23,7 +23,7 @@ import {
   s3Key,
   streamToBuffer,
   withClient,
-} from './_client.ts'
+} from './client.ts'
 
 export async function truncate(
   accessor: S3Accessor,

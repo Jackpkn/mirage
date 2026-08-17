@@ -16,8 +16,8 @@ from mirage.accessor.s3 import S3Accessor
 from mirage.commands.builtin.find_eval import (FindEntry, PredNode, build_tree,
                                                emit_start_path, keep,
                                                start_basename)
-from mirage.core.s3._client import (_client_kwargs, _prefix, _strip_prefix,
-                                    async_session)
+from mirage.core.s3.client import (_client_kwargs, _prefix, _strip_prefix,
+                                   async_session)
 from mirage.types import PathSpec
 
 

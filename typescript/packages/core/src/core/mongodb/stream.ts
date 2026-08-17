@@ -16,7 +16,7 @@ import { stripSlash } from '../../utils/slash.ts'
 import { EJSON } from 'bson'
 import type { MongoDBAccessor } from '../../accessor/mongodb.ts'
 import { PathSpec } from '../../types.ts'
-import { iterDocuments, iterInserts } from './_client.ts'
+import { iterDocuments, iterInserts } from './client.ts'
 import { detectScope } from './scope.ts'
 import { PRIMARY_KEY, ScopeLevel } from './types.ts'
 

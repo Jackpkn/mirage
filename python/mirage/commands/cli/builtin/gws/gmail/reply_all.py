@@ -17,7 +17,7 @@ import json
 from mirage.commands.cli.types import CLIInvocation
 from mirage.commands.spec.types import FlagView
 from mirage.core.gmail.send import reply_all_message
-from mirage.core.google._client import TokenManager
+from mirage.core.google.client import TokenManager
 from mirage.core.google.config import GoogleConfig
 from mirage.io.stream import yield_bytes
 from mirage.io.types import ByteSource, IOResult

@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { describe, expect, it } from 'vitest'
-import type { FetchedMessage } from './_client.ts'
+import type { FetchedMessage } from './client.ts'
 import { messageJsonBytes } from './render.ts'
 
 const MESSAGE: FetchedMessage = {

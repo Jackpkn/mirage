@@ -14,11 +14,11 @@
 
 import { mountKey } from '../../utils/key_prefix.ts'
 import { describe, expect, it, vi } from 'vitest'
-import type * as ClientModule from './_client.ts'
+import type * as ClientModule from './client.ts'
 import type * as ApiModule from './api.ts'
 
-vi.mock('./_client.ts', async () => {
-  const actual = await vi.importActual<typeof ClientModule>('./_client.ts')
+vi.mock('./client.ts', async () => {
+  const actual = await vi.importActual<typeof ClientModule>('./client.ts')
   return { ...actual, dropboxDownload: vi.fn() }
 })
 
@@ -30,8 +30,8 @@ vi.mock('./api.ts', async () => {
 import { DropboxAccessor } from '../../accessor/dropbox.ts'
 import { RAMIndexCacheStore } from '../../cache/index/ram.ts'
 import { PathSpec } from '../../types.ts'
-import * as client from './_client.ts'
-import type { DropboxTokenManager } from './_client.ts'
+import * as client from './client.ts'
+import type { DropboxTokenManager } from './client.ts'
 import * as api from './api.ts'
 import { read } from './read.ts'
 

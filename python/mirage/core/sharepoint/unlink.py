@@ -1,7 +1,7 @@
 from mirage.accessor.sharepoint import SharePointAccessor
 from mirage.cache.context import invalidate_after_unlink
-from mirage.core.sharepoint._client import (GraphError, graph_delete, item_url,
-                                            split_path)
+from mirage.core.sharepoint.client import (GraphError, graph_delete, item_url,
+                                           split_path)
 from mirage.core.sharepoint.resolve import resolve
 from mirage.types import PathSpec
 from mirage.utils.errors import enoent

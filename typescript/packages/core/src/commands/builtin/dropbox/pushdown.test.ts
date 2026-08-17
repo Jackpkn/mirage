@@ -28,7 +28,7 @@ vi.mock('../../../core/dropbox/search.ts', () => ({ narrowPaths: vi.fn() }))
 vi.mock('../../../core/dropbox/stat.ts', () => ({ stat: vi.fn() }))
 
 import { DropboxAccessor } from '../../../accessor/dropbox.ts'
-import type { DropboxTokenManager } from '../../../core/dropbox/_client.ts'
+import type { DropboxTokenManager } from '../../../core/dropbox/client.ts'
 import * as searchModule from '../../../core/dropbox/search.ts'
 import * as statModule from '../../../core/dropbox/stat.ts'
 import { FileStat, FileType, PathSpec } from '../../../types.ts'

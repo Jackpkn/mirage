@@ -29,7 +29,7 @@ import mirage.core.gdrive.truncate as truncate_mod
 import mirage.core.gdrive.unlink as unlink_mod
 import mirage.core.gdrive.write as write_mod
 from mirage.accessor.gdrive import GDriveAccessor
-from mirage.core.google._client import TokenManager
+from mirage.core.google.client import TokenManager
 from mirage.core.google.config import GoogleConfig
 from mirage.core.google.drive import FOLDER_MIME
 

@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { EmailAccessor } from '../../../../accessor/email.ts'
-import { listFolderEntries } from '../../../../core/email/_client.ts'
+import { listFolderEntries } from '../../../../core/email/client.ts'
 import type { ParsedRfc822 } from '../../../../core/email/_parse.ts'
 import type { EmailConfig } from '../../../../core/email/config.ts'
 import { sendRaw } from './smtp.ts'

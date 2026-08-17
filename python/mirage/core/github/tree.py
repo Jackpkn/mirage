@@ -20,7 +20,7 @@ from typing import Any
 from mirage.accessor.github import GitHubAccessor
 from mirage.cache.index import (NULL_INDEX, IndexCacheStore, IndexEntry,
                                 LookupStatus)
-from mirage.core.github._client import github_get
+from mirage.core.github.client import github_get
 from mirage.core.github.config import GitHubConfig
 from mirage.core.github.tree_entry import TreeEntry
 

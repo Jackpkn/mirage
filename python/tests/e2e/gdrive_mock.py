@@ -286,7 +286,7 @@ def patch_gdrive(*pairs) -> ExitStack:
     fakes = _build_fakes(registry)
     stack = ExitStack()
     stack.enter_context(
-        patch("mirage.core.google._client.refresh_access_token",
+        patch("mirage.core.google.client.refresh_access_token",
               new=fakes["refresh"]))
     for name, targets in _PATCH_TARGETS.items():
         for target in targets:

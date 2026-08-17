@@ -14,7 +14,7 @@
 
 import type { CommandFnResult } from '../../../config.ts'
 import { IOResult } from '../../../../io/types.ts'
-import { NotionAPIError } from '../../../../core/notion/_client.ts'
+import { NotionAPIError } from '../../../../core/notion/client.ts'
 import type { CLIInvocation, CLIVerbFn } from '../../types.ts'
 
 const ENC = new TextEncoder()

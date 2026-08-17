@@ -15,7 +15,7 @@
 import { SlackAccessor, type SlackResourceLike } from '../../../accessor/slack.ts'
 import { IndexEntry } from '../../../cache/index/config.ts'
 import type { RAMIndexCacheStore } from '../../../cache/index/ram.ts'
-import type { SlackResponse, SlackTransport } from '../../../core/slack/_client.ts'
+import type { SlackResponse, SlackTransport } from '../../../core/slack/client.ts'
 import type { Resource } from '../../../resource/base.ts'
 
 export interface FakeCall {

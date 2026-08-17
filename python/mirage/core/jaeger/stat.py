@@ -14,7 +14,7 @@
 
 from mirage.accessor.jaeger import JaegerAccessor
 from mirage.cache.index import NULL_INDEX, IndexCacheStore
-from mirage.core.jaeger._client import is_trace_id
+from mirage.core.jaeger.client import is_trace_id
 from mirage.core.jaeger.readdir import assert_service, readdir
 from mirage.core.jaeger.scope import OPERATIONS_FILE, detect_scope
 from mirage.types import FileStat, FileType, PathSpec

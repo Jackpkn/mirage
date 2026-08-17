@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import type { SlackAccessor } from '../../accessor/slack.ts'
-import type { SlackResponse } from './_client.ts'
+import type { SlackResponse } from './client.ts'
 
 export async function addReaction(
   accessor: SlackAccessor,

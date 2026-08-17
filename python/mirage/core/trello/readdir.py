@@ -14,9 +14,9 @@
 
 from mirage.accessor.trello import TrelloAccessor
 from mirage.cache.index import NULL_INDEX, IndexCacheStore, IndexEntry
-from mirage.core.trello._client import (list_board_labels, list_board_lists,
-                                        list_board_members, list_list_cards,
-                                        list_workspace_boards, list_workspaces)
+from mirage.core.trello.client import (list_board_labels, list_board_lists,
+                                       list_board_members, list_list_cards,
+                                       list_workspace_boards, list_workspaces)
 from mirage.core.trello.normalize import (normalize_board, normalize_card,
                                           normalize_label, normalize_list,
                                           normalize_member,

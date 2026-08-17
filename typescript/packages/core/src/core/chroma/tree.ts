@@ -19,7 +19,7 @@ import { decodeBase64 } from '../../utils/base64.ts'
 import { gunzip } from '../../utils/compress.ts'
 import { rstripSlash, stripSlash } from '../../utils/slash.ts'
 import { gnuBasename, parent } from '../../utils/path.ts'
-import { fetchPathTree } from './_client.ts'
+import { fetchPathTree } from './client.ts'
 import { compareCodePoints } from '../../utils/sort.ts'
 
 const DEC = new TextDecoder('utf-8', { fatal: false })

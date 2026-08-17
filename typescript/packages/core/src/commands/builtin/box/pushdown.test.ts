@@ -28,7 +28,7 @@ vi.mock('../../../core/box/search.ts', () => ({ narrowPaths: vi.fn() }))
 vi.mock('../../../core/box/stat.ts', () => ({ stat: vi.fn() }))
 
 import { BoxAccessor } from '../../../accessor/box.ts'
-import type { BoxTokenManager } from '../../../core/box/_client.ts'
+import type { BoxTokenManager } from '../../../core/box/client.ts'
 import * as searchModule from '../../../core/box/search.ts'
 import * as statModule from '../../../core/box/stat.ts'
 import { FileStat, FileType, PathSpec } from '../../../types.ts'

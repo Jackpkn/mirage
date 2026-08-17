@@ -18,7 +18,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from mirage.core.gmail.send import forward_message, reply_message, send_message
-from mirage.core.google._client import TokenManager
+from mirage.core.google.client import TokenManager
 from mirage.core.google.config import GoogleConfig
 
 

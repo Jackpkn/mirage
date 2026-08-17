@@ -15,7 +15,7 @@
 from collections.abc import Awaitable, Callable
 
 from mirage.commands.cli.types import CLIInvocation
-from mirage.core.notion._client import NotionAPIError
+from mirage.core.notion.client import NotionAPIError
 from mirage.core.notion.config import NotionConfig
 from mirage.io.types import ByteSource, IOResult
 

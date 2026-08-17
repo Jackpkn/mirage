@@ -17,7 +17,7 @@ import { JaegerAccessor, type JaegerAccessorConfig } from '../../accessor/jaeger
 import { RAMIndexCacheStore } from '../../cache/index/ram.ts'
 import { PathSpec } from '../../types.ts'
 import { stripSlash } from '../../utils/slash.ts'
-import type { JaegerTransport } from './_client.ts'
+import type { JaegerTransport } from './client.ts'
 
 const TRACE_A = 'a'.repeat(32)
 const TRACE_B = 'b'.repeat(32)

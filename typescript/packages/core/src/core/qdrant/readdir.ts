@@ -15,7 +15,7 @@
 import type { QdrantAccessor } from '../../accessor/qdrant.ts'
 import { IndexEntry } from '../../cache/index/config.ts'
 import type { IndexCacheStore } from '../../cache/index/store.ts'
-import type { QdrantRow } from './_client.ts'
+import type { QdrantRow } from './client.ts'
 import { PathSpec } from '../../types.ts'
 import { enoent } from '../../utils/errors.ts'
 import { rstripSlash } from '../../utils/slash.ts'

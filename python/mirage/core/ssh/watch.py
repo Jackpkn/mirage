@@ -17,7 +17,7 @@ from collections.abc import AsyncIterator
 import asyncssh
 
 from mirage.accessor.ssh import SSHAccessor
-from mirage.core.ssh._client import _abs
+from mirage.core.ssh.client import _abs
 from mirage.core.ssh.config import SSHConfig
 from mirage.core.timeutil import epoch_to_iso
 from mirage.types import PathSpec, WalkEntry

@@ -26,7 +26,7 @@ import {
   listTeamMembers,
   listTeamProjects,
   listTeams,
-} from './_client.ts'
+} from './client.ts'
 import {
   buildProjectIssue,
   normalizeComment,

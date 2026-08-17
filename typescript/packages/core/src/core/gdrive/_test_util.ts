@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { GDriveAccessor } from '../../accessor/gdrive.ts'
-import type { TokenManager } from '../google/_client.ts'
+import type { TokenManager } from '../google/client.ts'
 import type { DriveFile } from '../google/drive.ts'
 
 const FOLDER_MIME = 'application/vnd.google-apps.folder'

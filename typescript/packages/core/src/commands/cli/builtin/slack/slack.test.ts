@@ -14,7 +14,7 @@
 
 import { describe, expect, it, vi } from 'vitest'
 import { SlackAccessor } from '../../../../accessor/slack.ts'
-import type { SlackResponse, SlackTransport } from '../../../../core/slack/_client.ts'
+import type { SlackResponse, SlackTransport } from '../../../../core/slack/client.ts'
 import { cliSpecFor } from '../../specs.ts'
 import type { CommandFnResult } from '../../../config.ts'
 import type { ByteSource, IOResult } from '../../../../io/types.ts'

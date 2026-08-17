@@ -15,7 +15,7 @@
 import math
 
 from mirage.accessor.mem0 import Mem0Accessor
-from mirage.core.mem0._client import search_memories
+from mirage.core.mem0.client import search_memories
 from mirage.utils.score import format_score
 
 

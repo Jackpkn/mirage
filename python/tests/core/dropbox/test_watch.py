@@ -17,7 +17,7 @@ from unittest.mock import patch
 import pytest
 
 from mirage.accessor.dropbox import DropboxAccessor
-from mirage.core.dropbox._client import DropboxTokenManager
+from mirage.core.dropbox.client import DropboxTokenManager
 from mirage.core.dropbox.watch import DropboxWalk
 from mirage.resource.dropbox.config import DropboxConfig
 from mirage.types import PathSpec

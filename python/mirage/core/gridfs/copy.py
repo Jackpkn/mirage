@@ -14,7 +14,7 @@
 
 from mirage.accessor.gridfs import GridFSAccessor
 from mirage.cache.context import invalidate_after_write
-from mirage.core.gridfs._client import _key, bucket, latest_file
+from mirage.core.gridfs.client import _key, bucket, latest_file
 from mirage.types import PathSpec
 from mirage.utils.errors import enoent
 

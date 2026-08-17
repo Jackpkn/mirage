@@ -15,7 +15,7 @@
 from collections.abc import AsyncIterator, Callable
 from typing import Any
 
-from mirage.core.discord._client import discord_get
+from mirage.core.discord.client import discord_get
 from mirage.core.discord.config import DiscordConfig
 
 

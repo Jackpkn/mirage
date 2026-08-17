@@ -15,7 +15,7 @@
 import { mountKey } from '../../utils/key_prefix.ts'
 import { describe, expect, it } from 'vitest'
 import { PathSpec } from '../../types.ts'
-import type { NotionTransport } from './_client.ts'
+import type { NotionTransport } from './client.ts'
 import { read, type NotionReadAccessor } from './read.ts'
 
 class FakeTransport implements NotionTransport {

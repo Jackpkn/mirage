@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { encodeBase64 } from '../../utils/base64.ts'
-import { type TokenManager, gmailBase, googlePost } from '../google/_client.ts'
+import { type TokenManager, gmailBase, googlePost } from '../google/client.ts'
 import { extractHeader, getMessageProcessed, getMessageRaw } from './messages.ts'
 
 const ENC = new TextEncoder()

@@ -18,7 +18,7 @@ from functools import partial
 from mirage.accessor.gslides import GSlidesAccessor
 from mirage.cache.index import NULL_INDEX, IndexCacheStore
 from mirage.cache.index.warm import entry_or_warm
-from mirage.core.gslides._client import TokenManager, google_get, slides_base
+from mirage.core.gslides.client import TokenManager, google_get, slides_base
 from mirage.core.gslides.readdir import readdir
 from mirage.core.render.json import compact_json_bytes
 from mirage.types import PathSpec

@@ -15,7 +15,7 @@
 import { mountPrefixOf } from '../../../utils/key_prefix.ts'
 import type { DiscordAccessor } from '../../../accessor/discord.ts'
 import type { IndexCacheStore } from '../../../cache/index/store.ts'
-import { DiscordApiError } from '../../../core/discord/_client.ts'
+import { DiscordApiError } from '../../../core/discord/client.ts'
 import { listChannels } from '../../../core/discord/channels.ts'
 import { resolveGlobOf } from '../generic_bind/index.ts'
 import { DISCORD_IO } from './io.ts'

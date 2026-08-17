@@ -15,7 +15,7 @@
 import { invalidateAfterUnlink } from '@struktoai/mirage-core/cache/context'
 import type { PathSpec } from '@struktoai/mirage-core/types'
 import type { GridFSAccessor } from '../../accessor/gridfs.ts'
-import { deleteAll, gridfsKey, rawPathOf } from './_client.ts'
+import { deleteAll, gridfsKey, rawPathOf } from './client.ts'
 
 export async function unlink(accessor: GridFSAccessor, path: PathSpec): Promise<void> {
   // Removes every revision of the filename (rm semantics; mirrors S3's

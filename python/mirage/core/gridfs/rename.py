@@ -16,8 +16,8 @@ from typing import Any
 
 from mirage.accessor.gridfs import GridFSAccessor
 from mirage.cache.context import invalidate_after_unlink
-from mirage.core.gridfs._client import (_key, _prefix, delete_all, files_coll,
-                                        latest_file, prefix_query)
+from mirage.core.gridfs.client import (_key, _prefix, delete_all, files_coll,
+                                       latest_file, prefix_query)
 from mirage.types import PathSpec
 from mirage.utils.errors import enoent
 

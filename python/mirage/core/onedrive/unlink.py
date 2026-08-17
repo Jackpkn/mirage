@@ -14,8 +14,8 @@
 
 from mirage.accessor.onedrive import OneDriveAccessor
 from mirage.cache.context import invalidate_after_unlink
-from mirage.core.onedrive._client import (GraphError, graph_delete, item_url,
-                                          split_path)
+from mirage.core.onedrive.client import (GraphError, graph_delete, item_url,
+                                         split_path)
 from mirage.types import PathSpec
 from mirage.utils.errors import enoent
 

@@ -238,7 +238,7 @@ async def test_tail_glob_does_not_query_a_relation_named_star(accessor):
         return b"", IOResult()
 
     with patch(
-            "mirage.commands.builtin.postgres.tail._client.count_rows",
+            "mirage.commands.builtin.postgres.tail.client.count_rows",
             new=AsyncMock(side_effect=AssertionError("pushdown ran on glob")),
     ), patch(
             "mirage.commands.builtin.postgres.tail.resolve_or_empty",

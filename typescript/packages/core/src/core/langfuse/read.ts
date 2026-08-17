@@ -21,7 +21,7 @@ import {
   fetchOrEnoent,
   fetchPrompt,
   fetchTrace,
-} from './_client.ts'
+} from './client.ts'
 import { enoent } from '../../utils/errors.ts'
 import { jsonBytes, jsonlBytes } from '../render/json.ts'
 

@@ -19,7 +19,7 @@ import { entryOrWarm } from '../../cache/index/warm.ts'
 import { FileStat, FileType, PathSpec } from '../../types.ts'
 import { eisdir, enoent } from '../../utils/errors.ts'
 import { mountKey, mountPrefixOf } from '../../utils/key_prefix.ts'
-import type { TokenManager } from './_client.ts'
+import type { TokenManager } from './client.ts'
 import { deleteFile } from './drive.ts'
 
 // The Drive-item backends (gdocs, gsheets, gslides) present the same

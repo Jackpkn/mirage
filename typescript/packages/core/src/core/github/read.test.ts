@@ -18,7 +18,7 @@ import { RAMIndexCacheStore } from '../../cache/index/ram.ts'
 import { PathSpec } from '../../types.ts'
 import { populateIndex } from './tree.ts'
 import { read } from './read.ts'
-import type { GitHubTransport } from './_client.ts'
+import type { GitHubTransport } from './client.ts'
 
 const ENC = new TextEncoder()
 

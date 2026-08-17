@@ -18,7 +18,7 @@ import { CALENDAR_FILE, parseEventFilename } from '../../resource/gcal/event_ent
 import type { PathSpec } from '../../types.ts'
 import { eisdir, enoent } from '../../utils/errors.ts'
 import { dayBounds } from './day.ts'
-import { listEvents } from './_client.ts'
+import { listEvents } from './client.ts'
 import { bucketZone, calendarIndex, calendarPayload, normalize } from './readdir.ts'
 import { compactJsonBytes } from '../render/json.ts'
 

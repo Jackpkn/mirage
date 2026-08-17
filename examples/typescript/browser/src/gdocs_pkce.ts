@@ -15,7 +15,7 @@
 /**
  * End-to-end PKCE smoke test.
  *
- * Verifies the change in `core/src/core/google/_client.ts` (clientSecret
+ * Verifies the change in `core/src/core/google/client.ts` (clientSecret
  * optional) by running the full browser-PKCE dance and then exercising a
  * GDocsResource with `{ clientId, refreshToken }` — no client_secret. If
  * mirage-core's TokenManager can refresh the access token without a secret,

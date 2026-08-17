@@ -17,7 +17,7 @@ import { record } from '@struktoai/mirage-core/observe/context'
 import { ResourceName } from '@struktoai/mirage-core/types'
 import type { PathSpec } from '@struktoai/mirage-core/types'
 import type { GridFSAccessor } from '../../accessor/gridfs.ts'
-import { bucket, gridfsKey, rawPathOf } from './_client.ts'
+import { bucket, gridfsKey, rawPathOf } from './client.ts'
 
 export async function uploadBytes(
   accessor: GridFSAccessor,

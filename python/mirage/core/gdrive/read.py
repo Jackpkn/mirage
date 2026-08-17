@@ -24,7 +24,7 @@ from mirage.core.gdrive import DIRECTORY_RESOURCE_TYPES
 from mirage.core.gdrive.readdir import readdir
 from mirage.core.gdrive.versions import (capture_file_metadata,
                                          download_revision)
-from mirage.core.google._client import TokenManager
+from mirage.core.google.client import TokenManager
 from mirage.core.google.drive import download_file
 from mirage.core.gsheets.read import read_spreadsheet
 from mirage.core.gslides.read import read_presentation

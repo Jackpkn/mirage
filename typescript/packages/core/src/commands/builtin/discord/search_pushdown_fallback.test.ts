@@ -15,7 +15,7 @@
 import { mountKey } from '../../../utils/key_prefix.ts'
 import { describe, expect, it } from 'vitest'
 import { RAMIndexCacheStore } from '../../../cache/index/ram.ts'
-import { DiscordApiError, type DiscordTransport } from '../../../core/discord/_client.ts'
+import { DiscordApiError, type DiscordTransport } from '../../../core/discord/client.ts'
 import { PathSpec } from '../../../types.ts'
 import { DISCORD_GREP } from './grep.ts'
 import { DISCORD_RG } from './rg.ts'

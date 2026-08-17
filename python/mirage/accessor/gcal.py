@@ -16,7 +16,7 @@ from datetime import date, datetime
 
 from mirage.accessor.base import Accessor
 from mirage.core.gcal.day import zone
-from mirage.core.google._client import TokenManager
+from mirage.core.google.client import TokenManager
 from mirage.resource.gcal.config import GCalConfig
 
 

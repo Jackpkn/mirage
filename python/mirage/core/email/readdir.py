@@ -18,8 +18,8 @@ from typing import Any
 
 from mirage.accessor.email import EmailAccessor
 from mirage.cache.index import NULL_INDEX, IndexCacheStore, IndexEntry
-from mirage.core.email._client import (INTERNAL_DATE_KEY, fetch_headers,
-                                       list_message_uids)
+from mirage.core.email.client import (INTERNAL_DATE_KEY, fetch_headers,
+                                      list_message_uids)
 from mirage.core.email.folders import list_folders
 from mirage.core.email.render import message_json_bytes
 from mirage.types import PathSpec

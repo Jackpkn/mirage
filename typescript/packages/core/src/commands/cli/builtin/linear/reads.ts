@@ -25,7 +25,7 @@ import {
   resolveTeam,
   searchIssues,
   type LinearTransport,
-} from '../../../../core/linear/_client.ts'
+} from '../../../../core/linear/client.ts'
 import type { LinearConfig } from '../../../../core/linear/config.ts'
 import {
   buildProjectIssue,

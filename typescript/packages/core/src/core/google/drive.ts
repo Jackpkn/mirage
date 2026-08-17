@@ -22,8 +22,8 @@ import {
   googlePatch,
   googlePost,
   googleSendBytes,
-} from './_client.ts'
-import type { TokenManager } from './_client.ts'
+} from './client.ts'
+import type { TokenManager } from './client.ts'
 import type { ByteWindow } from '../../utils/ranges.ts'
 
 const FIELDS =

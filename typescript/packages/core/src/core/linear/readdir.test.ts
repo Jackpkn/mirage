@@ -17,7 +17,7 @@ import { LinearAccessor } from '../../accessor/linear.ts'
 import { RAMIndexCacheStore } from '../../cache/index/ram.ts'
 import { PathSpec } from '../../types.ts'
 import { mountKey } from '../../utils/key_prefix.ts'
-import type { LinearTransport } from './_client.ts'
+import type { LinearTransport } from './client.ts'
 import { readdir } from './readdir.ts'
 
 class NoopTransport implements LinearTransport {

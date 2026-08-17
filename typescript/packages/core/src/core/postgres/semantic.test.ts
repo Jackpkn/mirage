@@ -14,7 +14,7 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('./_client.ts', () => ({
+vi.mock('./client.ts', () => ({
   fetchColumns: vi.fn(),
   fetchPrimaryKey: vi.fn(),
   fetchForeignKeys: vi.fn(),
@@ -26,8 +26,8 @@ vi.mock('./_client.ts', () => ({
 
 import { PostgresAccessor } from '../../accessor/postgres.ts'
 import { resolvePostgresConfig } from '../../resource/postgres/config.ts'
-import type { ColumnInfo, ForeignKey } from './_client.ts'
-import * as _client from './_client.ts'
+import type { ColumnInfo, ForeignKey } from './client.ts'
+import * as client from './client.ts'
 import type { PgDriver } from './_driver.ts'
 import {
   buildColumnEntry,
@@ -67,17 +67,17 @@ function makeAccessor(): PostgresAccessor {
 }
 
 function primeClient(): void {
-  vi.mocked(_client.fetchColumns).mockResolvedValue(COLUMNS)
-  vi.mocked(_client.fetchPrimaryKey).mockResolvedValue(['order_id'])
-  vi.mocked(_client.fetchForeignKeys).mockResolvedValue(FOREIGN_KEYS)
-  vi.mocked(_client.fetchTableComment).mockResolvedValue('Customer orders.')
-  vi.mocked(_client.fetchColumnComments).mockResolvedValue(
+  vi.mocked(client.fetchColumns).mockResolvedValue(COLUMNS)
+  vi.mocked(client.fetchPrimaryKey).mockResolvedValue(['order_id'])
+  vi.mocked(client.fetchForeignKeys).mockResolvedValue(FOREIGN_KEYS)
+  vi.mocked(client.fetchTableComment).mockResolvedValue('Customer orders.')
+  vi.mocked(client.fetchColumnComments).mockResolvedValue(
     new Map([['total_amount', 'Order total in USD.']]),
   )
-  vi.mocked(_client.fetchEnumColumns).mockResolvedValue(
+  vi.mocked(client.fetchEnumColumns).mockResolvedValue(
     new Map([['status', { type: 'order_status', labels: ['pending', 'shipped', 'cancelled'] }]]),
   )
-  vi.mocked(_client.fetchColumnStats).mockResolvedValue(
+  vi.mocked(client.fetchColumnStats).mockResolvedValue(
     new Map([
       ['channel', { n_distinct: 3, most_common_vals: ['web', 'retail', 'partner'] }],
       ['total_amount', { n_distinct: -1, most_common_vals: [] }],
@@ -218,12 +218,12 @@ describe('buildEntitySemanticJson', () => {
   })
 
   it('omits empty sections', async () => {
-    vi.mocked(_client.fetchColumns).mockResolvedValue([
+    vi.mocked(client.fetchColumns).mockResolvedValue([
       { name: 'note', type: 'text', nullable: true },
     ])
-    vi.mocked(_client.fetchPrimaryKey).mockResolvedValue([])
-    vi.mocked(_client.fetchForeignKeys).mockResolvedValue([])
-    vi.mocked(_client.fetchTableComment).mockResolvedValue(null)
+    vi.mocked(client.fetchPrimaryKey).mockResolvedValue([])
+    vi.mocked(client.fetchForeignKeys).mockResolvedValue([])
+    vi.mocked(client.fetchTableComment).mockResolvedValue(null)
     const doc = await buildEntitySemanticJson(makeAccessor(), 'public', 'notes', 'table')
     expect(doc.facts).toBeUndefined()
     expect(doc.time_dimensions).toBeUndefined()
@@ -233,7 +233,7 @@ describe('buildEntitySemanticJson', () => {
   })
 
   it('survives missing pg_stats', async () => {
-    vi.mocked(_client.fetchColumnStats).mockResolvedValue(new Map())
+    vi.mocked(client.fetchColumnStats).mockResolvedValue(new Map())
     const doc = await buildEntitySemanticJson(makeAccessor(), 'public', 'orders', 'table')
     const channel = doc.dimensions?.find((d) => d.name === 'channel')
     expect(channel?.sample_values).toBeUndefined()

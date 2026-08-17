@@ -15,7 +15,7 @@
 import { describe, expect, it } from 'vitest'
 import { SlackAccessor } from '../../../accessor/slack.ts'
 import { FileChangeKind, PathSpec } from '../../../types.ts'
-import type { SlackResponse, SlackTransport } from '../_client.ts'
+import type { SlackResponse, SlackTransport } from '../client.ts'
 import { SlackEventHook } from './hook.ts'
 
 // 2025-08-15T23:30:00Z is 4:30pm PDT the same day, so client and mount

@@ -20,7 +20,7 @@ vi.mock('./pushdown.ts', () => ({ narrowScope: vi.fn() }))
 vi.mock('../generic/rg.ts', () => ({ rgGeneric: vi.fn() }))
 
 import { BoxAccessor } from '../../../accessor/box.ts'
-import type { BoxTokenManager } from '../../../core/box/_client.ts'
+import type { BoxTokenManager } from '../../../core/box/client.ts'
 import { IOResult } from '../../../io/types.ts'
 import { PathSpec } from '../../../types.ts'
 import type { CommandFnResult, CommandOpts } from '../../config.ts'

@@ -18,7 +18,7 @@ import { TrelloAccessor } from '../../accessor/trello.ts'
 import { IndexEntry } from '../../cache/index/config.ts'
 import { RAMIndexCacheStore } from '../../cache/index/ram.ts'
 import { FileType, PathSpec } from '../../types.ts'
-import type { TrelloTransport } from './_client.ts'
+import type { TrelloTransport } from './client.ts'
 import { stat } from './stat.ts'
 
 class NoopTransport implements TrelloTransport {

@@ -14,7 +14,7 @@
 
 from typing import Any
 
-from mirage.core.slack._client import slack_get
+from mirage.core.slack.client import slack_get
 from mirage.core.slack.config import SlackConfig
 
 

@@ -17,7 +17,7 @@ from typing import Any
 
 from mirage.accessor.box import BoxAccessor
 from mirage.commands.builtin.box import COMMANDS as BOX_COMMANDS
-from mirage.core.box._client import BoxTokenManager
+from mirage.core.box.client import BoxTokenManager
 from mirage.core.box.config import BoxConfig
 from mirage.core.box.readdir import readdir
 from mirage.core.box.watch import build_delta_hook

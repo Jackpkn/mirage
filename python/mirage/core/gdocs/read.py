@@ -18,7 +18,7 @@ from functools import partial
 from mirage.accessor.gdocs import GDocsAccessor
 from mirage.cache.index import NULL_INDEX, IndexCacheStore
 from mirage.cache.index.warm import entry_or_warm
-from mirage.core.gdocs._client import TokenManager, docs_base, google_get
+from mirage.core.gdocs.client import TokenManager, docs_base, google_get
 from mirage.core.gdocs.readdir import readdir
 from mirage.core.render.json import compact_json_bytes
 from mirage.types import PathSpec

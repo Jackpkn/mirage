@@ -16,9 +16,12 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Iterable
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum, StrEnum
-from typing import Annotated, Any, ClassVar, TypeAlias
+from typing import TYPE_CHECKING, Annotated, Any, ClassVar, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field, NonNegativeInt
+
+if TYPE_CHECKING:
+    import aiohttp
 
 
 class Aggr:
@@ -102,6 +105,14 @@ class FileStat(BaseModel):
 # union with it has to be quoted too: `Awaitable["JsonValue | X"]`.
 JsonValue: TypeAlias = ("None | bool | int | float | str | list[JsonValue]"
                         " | dict[str, JsonValue]")
+
+# How a >= 400 API response and its body text become the backend's own
+# exception; core/api/client.py's engine calls it, each backend supplies
+# one. Quoted so importing mirage.types never loads aiohttp at runtime.
+ErrorOf: TypeAlias = "Callable[[aiohttp.ClientResponse, str], Exception]"
+# One page request of a cursor-paginated endpoint: receives the cursor to
+# resume from (None for the first page) and returns the decoded reply.
+PageFetch: TypeAlias = Callable[[str | None], Awaitable[dict[str, Any]]]
 
 ReadBytesFn: TypeAlias = Callable[..., Awaitable[bytes]]
 ReadStreamFn: TypeAlias = Callable[..., AsyncIterator[bytes]]

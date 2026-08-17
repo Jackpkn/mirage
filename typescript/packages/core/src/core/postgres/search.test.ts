@@ -12,11 +12,11 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import type * as _ClientType from './_client.ts'
+import type * as _ClientType from './client.ts'
 import { describe, expect, it, vi } from 'vitest'
 
-vi.mock('./_client.ts', async () => {
-  const actual = await vi.importActual<typeof _ClientType>('./_client.ts')
+vi.mock('./client.ts', async () => {
+  const actual = await vi.importActual<typeof _ClientType>('./client.ts')
   return {
     ...actual,
     listTables: vi.fn(),
@@ -29,7 +29,7 @@ vi.mock('./_client.ts', async () => {
 import { PostgresAccessor } from '../../accessor/postgres.ts'
 import { resolvePostgresConfig } from '../../resource/postgres/config.ts'
 import type { PgDriver } from './_driver.ts'
-import * as _client from './_client.ts'
+import * as client from './client.ts'
 import { formatGrepResults, searchEntity, searchKind } from './search.ts'
 
 function makeAccessor(): { accessor: PostgresAccessor; query: ReturnType<typeof vi.fn> } {
@@ -84,7 +84,7 @@ describe('searchEntity', () => {
 
 describe('searchKind', () => {
   it('walks tables and emits matches per entity', async () => {
-    vi.mocked(_client.listTables).mockResolvedValue(['users', 'orders'])
+    vi.mocked(client.listTables).mockResolvedValue(['users', 'orders'])
     const { accessor, query } = makeAccessor()
     query
       .mockResolvedValueOnce({ rows: [{ column_name: 'name' }], rowCount: 1 })

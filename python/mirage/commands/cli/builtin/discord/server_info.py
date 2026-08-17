@@ -16,7 +16,7 @@ import json
 
 from mirage.commands.cli.types import CLIInvocation
 from mirage.commands.spec.types import FlagView
-from mirage.core.discord._client import discord_get
+from mirage.core.discord.client import discord_get
 from mirage.core.discord.config import DiscordConfig
 from mirage.io.stream import yield_bytes
 from mirage.io.types import ByteSource, IOResult

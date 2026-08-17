@@ -22,7 +22,7 @@ from mirage.cache.index.ram import RAMIndexCacheStore
 from mirage.commands.builtin.gdrive import COMMANDS
 from mirage.commands.config import CommandOpts
 from mirage.core.gdrive.resolve import DriveNode
-from mirage.core.google._client import TokenManager
+from mirage.core.google.client import TokenManager
 from mirage.core.google.config import GoogleConfig
 from mirage.io.stream import materialize
 from mirage.types import PathSpec

@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type * as ClientModule from './_client.ts'
+import type * as ClientModule from './client.ts'
 import type * as StatModule from './stat.ts'
 import type * as WalkModule from './walk.ts'
 
@@ -27,8 +27,8 @@ vi.mock('./stat.ts', async () => {
   return { ...actual, stat: vi.fn() }
 })
 
-vi.mock('./_client.ts', async () => {
-  const actual = await vi.importActual<typeof ClientModule>('./_client.ts')
+vi.mock('./client.ts', async () => {
+  const actual = await vi.importActual<typeof ClientModule>('./client.ts')
   return { ...actual, fetchPathTree: vi.fn() }
 })
 
@@ -36,7 +36,7 @@ import type { ChromaAccessor } from '../../accessor/chroma.ts'
 import type { IndexCacheStore } from '../../cache/index/store.ts'
 import { FileStat, FileType, PathSpec } from '../../types.ts'
 import { RAMIndexCacheStore } from '../../cache/index/ram.ts'
-import * as clientMod from './_client.ts'
+import * as clientMod from './client.ts'
 import { find } from './find.ts'
 import * as statMod from './stat.ts'
 import * as walkMod from './walk.ts'

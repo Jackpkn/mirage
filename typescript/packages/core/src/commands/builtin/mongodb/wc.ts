@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import type { MongoDBAccessor } from '../../../accessor/mongodb.ts'
-import { countDocuments } from '../../../core/mongodb/_client.ts'
+import { countDocuments } from '../../../core/mongodb/client.ts'
 import { resolveGlobOf } from '../generic_bind/index.ts'
 import { MONGODB_IO } from './io.ts'
 import { streamAny } from '../../../core/mongodb/read.ts'

@@ -25,7 +25,7 @@ import {
   listCardComments,
   listWorkspaces,
   type TrelloTransport,
-} from './_client.ts'
+} from './client.ts'
 import {
   normalizeBoard,
   normalizeCard,

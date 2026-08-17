@@ -1,4 +1,4 @@
-from mirage.core.linear._client import LinearAPIError
+from mirage.core.linear.client import LinearAPIError
 
 
 def test_linear_api_error_preserves_explicit_empty_error_list():

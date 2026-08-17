@@ -15,7 +15,7 @@
 import { describe, expect, it } from 'vitest'
 import { listChannels, listDms } from './channels.ts'
 import { SlackAccessor } from '../../accessor/slack.ts'
-import type { SlackResponse, SlackTransport } from './_client.ts'
+import type { SlackResponse, SlackTransport } from './client.ts'
 
 class FakeTransport implements SlackTransport {
   public readonly calls: { endpoint: string; params?: Record<string, string>; body?: unknown }[] =

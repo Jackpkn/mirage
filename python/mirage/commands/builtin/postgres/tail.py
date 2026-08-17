@@ -26,7 +26,7 @@ from mirage.commands.builtin.utils.paths import has_unresolved_glob
 from mirage.commands.config import CommandOpts
 from mirage.commands.registry import command
 from mirage.commands.spec import SPECS
-from mirage.core.postgres import _client
+from mirage.core.postgres import client
 from mirage.core.postgres.read import read as postgres_read
 from mirage.core.postgres.scope import PostgresEntityRowsScope, detect_scope
 from mirage.io.types import ByteSource, IOResult
@@ -53,14 +53,14 @@ async def tail(accessor: PostgresAccessor, paths: list[PathSpec],
             limit = min(counts.lines, accessor.config.default_row_limit)
             pool = await accessor.pool()
             async with pool.acquire() as conn:
-                total = await _client.count_rows(conn, scope.schema,
-                                                 scope.entity)
+                total = await client.count_rows(conn, scope.schema,
+                                                scope.entity)
                 offset = max(0, total - limit)
-                rows = await _client.fetch_rows(conn,
-                                                scope.schema,
-                                                scope.entity,
-                                                limit=limit,
-                                                offset=offset)
+                rows = await client.fetch_rows(conn,
+                                               scope.schema,
+                                               scope.entity,
+                                               limit=limit,
+                                               offset=offset)
             data = b""
             if rows:
                 data = ("\n".join(

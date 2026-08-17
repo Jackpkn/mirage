@@ -22,7 +22,7 @@ import {
   HttpGitHubTransport,
   fetchRepoInfo as fetchGitHubRepoInfo,
   fetchTree as fetchGitHubTree,
-} from '@struktoai/mirage-core/core/github/_client'
+} from '@struktoai/mirage-core/core/github/client'
 import { read as githubRead } from '@struktoai/mirage-core/core/github/read'
 import { readdir as githubReaddir } from '@struktoai/mirage-core/core/github/readdir'
 import { stat as githubStat } from '@struktoai/mirage-core/core/github/stat'

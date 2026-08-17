@@ -30,7 +30,7 @@ vi.mock('./resolve.ts', async () => {
 
 import { BoxAccessor } from '../../accessor/box.ts'
 import { PathSpec } from '../../types.ts'
-import { BoxApiError, type BoxTokenManager } from './_client.ts'
+import { BoxApiError, type BoxTokenManager } from './client.ts'
 import * as api from './api.ts'
 import type { BoxSearchItem } from './api.ts'
 import * as resolve from './resolve.ts'

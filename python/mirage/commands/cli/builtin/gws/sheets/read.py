@@ -14,7 +14,7 @@
 
 from mirage.commands.cli.types import CLIInvocation
 from mirage.commands.spec.types import FlagView
-from mirage.core.google._client import TokenManager
+from mirage.core.google.client import TokenManager
 from mirage.core.google.config import GoogleConfig
 from mirage.core.gsheets.read import read_values
 from mirage.io.stream import yield_bytes

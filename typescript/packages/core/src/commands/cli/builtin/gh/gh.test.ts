@@ -14,7 +14,7 @@
 
 import { describe, expect, it, vi } from 'vitest'
 import type * as AccessorModule from './accessor.ts'
-import type { GitHubTransport } from '../../../../core/github/_client.ts'
+import type { GitHubTransport } from '../../../../core/github/client.ts'
 import { cliSpecFor } from '../../specs.ts'
 import { ResourceName } from '../../../../types.ts'
 import type { CommandFnResult } from '../../../config.ts'

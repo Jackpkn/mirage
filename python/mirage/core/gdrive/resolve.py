@@ -22,7 +22,7 @@ from typing import Any, ParamSpec, TypeVar
 import aiohttp
 
 from mirage.accessor.gdrive import GDriveAccessor
-from mirage.core.google._client import TokenManager
+from mirage.core.google.client import TokenManager
 from mirage.core.google.drive import (FOLDER_MIME, MIME_TO_EXT, get_file,
                                       list_files, list_shared_drives)
 from mirage.types import PathSpec

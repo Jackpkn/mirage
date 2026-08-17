@@ -12,15 +12,11 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import type { NotionTransport } from './_client.ts'
+import type { NotionTransport } from './client.ts'
+import { MAX_PAGE_SIZE } from './constants.ts'
+import { cursorItems } from '../api/paginate.ts'
 
 type Json = Record<string, unknown>
-
-const MAX_PAGE_SIZE = 100
-
-function asArray(value: unknown): unknown[] {
-  return Array.isArray(value) ? value : []
-}
 
 function asObject(value: unknown): Json {
   return value !== null && typeof value === 'object' && !Array.isArray(value) ? (value as Json) : {}
@@ -32,26 +28,15 @@ async function paginateTool(
   baseArgs: Record<string, unknown>,
   maxResults?: number,
 ): Promise<Json[]> {
-  const collected: Json[] = []
-  let cursor: string | null = null
-  for (;;) {
-    const args: Record<string, unknown> =
-      cursor === null ? { ...baseArgs } : { ...baseArgs, start_cursor: cursor }
-    const response = await transport.callTool(toolName, args)
-    const results = asArray(response.results)
-    for (const item of results) {
-      collected.push(asObject(item))
-    }
-    if (maxResults !== undefined && collected.length >= maxResults) {
-      return collected.slice(0, maxResults)
-    }
-    const hasMore = response.has_more === true
-    const next = response.next_cursor
-    if (!hasMore || typeof next !== 'string' || next === '') {
-      return collected
-    }
-    cursor = next
-  }
+  const items = await cursorItems(
+    (cursor) =>
+      transport.callTool(
+        toolName,
+        cursor === null ? { ...baseArgs } : { ...baseArgs, start_cursor: cursor },
+      ),
+    maxResults,
+  )
+  return items.map(asObject)
 }
 
 export async function searchTopLevelPages(transport: NotionTransport): Promise<Json[]> {

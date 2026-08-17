@@ -2,10 +2,10 @@ import pytest
 from aioresponses import aioresponses
 
 from mirage.accessor.sharepoint import SharePointConfig
-from mirage.core.sharepoint._client import (GraphError, drive_ref_path,
-                                            graph_get, graph_get_bytes,
-                                            graph_list, graph_post_monitor,
-                                            headers, item_url)
+from mirage.core.sharepoint.client import (GraphError, drive_ref_path,
+                                           graph_get, graph_get_bytes,
+                                           graph_list, graph_post_monitor,
+                                           headers, item_url)
 
 
 def _cfg(**kw) -> SharePointConfig:

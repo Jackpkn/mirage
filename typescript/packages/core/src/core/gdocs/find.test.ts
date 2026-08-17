@@ -28,7 +28,7 @@ vi.mock('./stat.ts', async () => {
 
 import { GDocsAccessor } from '../../accessor/gdocs.ts'
 import { FileStat, FileType, PathSpec } from '../../types.ts'
-import type { TokenManager } from '../google/_client.ts'
+import type { TokenManager } from '../google/client.ts'
 import type { IndexCacheStore } from '../../cache/index/store.ts'
 import type { FindOptions } from '../../resource/base.ts'
 import { walkFind } from '../generic/find.ts'

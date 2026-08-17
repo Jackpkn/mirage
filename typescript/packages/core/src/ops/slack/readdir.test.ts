@@ -15,7 +15,7 @@
 import { mountKey } from '../../utils/key_prefix.ts'
 import { describe, expect, it } from 'vitest'
 import { SlackAccessor } from '../../accessor/slack.ts'
-import type { SlackResponse, SlackTransport } from '../../core/slack/_client.ts'
+import type { SlackResponse, SlackTransport } from '../../core/slack/client.ts'
 import { PathSpec, ResourceName } from '../../types.ts'
 import { SLACK_OPS } from './index.ts'
 

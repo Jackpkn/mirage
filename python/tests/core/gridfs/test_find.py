@@ -16,7 +16,7 @@ import asyncio
 import re
 
 from mirage.accessor.gridfs import GridFSAccessor, GridFSConfig
-from mirage.core.gridfs._client import prefix_query
+from mirage.core.gridfs.client import prefix_query
 from mirage.core.gridfs.find import build_query, find, glob_regex
 from mirage.types import PathSpec
 

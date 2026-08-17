@@ -17,7 +17,7 @@ from typing import Any
 
 from pymongo import AsyncMongoClient
 
-from mirage.core.mongodb._client import list_collections
+from mirage.core.mongodb.client import list_collections
 from mirage.core.mongodb.stream import render_doc
 from mirage.core.mongodb.types import PRIMARY_KEY, EntityKind
 

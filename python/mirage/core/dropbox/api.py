@@ -14,7 +14,7 @@
 
 from typing import Any
 
-from mirage.core.dropbox._client import DropboxTokenManager, dropbox_rpc
+from mirage.core.dropbox.client import DropboxTokenManager, dropbox_rpc
 
 SEARCH_PAGE = 1000
 # search_v2 + search/continue_v2 serve at most 10,000 matches total; a

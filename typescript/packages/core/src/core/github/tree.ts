@@ -13,11 +13,11 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import type { GitHubAccessor } from '../../accessor/github.ts'
-import { fetchTree } from './_client.ts'
+import { fetchTree } from './client.ts'
 import type { IndexCacheStore } from '../../cache/index/store.ts'
 import { LookupStatus } from '../../cache/index/config.ts'
 import type { IndexEntry } from '../../cache/index/config.ts'
-import type { GitHubTreeItem } from './_client.ts'
+import type { GitHubTreeItem } from './client.ts'
 import { indexEntryFromTree, makeTreeEntry, type TreeEntry } from './tree_entry.ts'
 import { rstripSlash } from '../../utils/slash.ts'
 

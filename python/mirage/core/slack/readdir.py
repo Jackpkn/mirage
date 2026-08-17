@@ -17,8 +17,8 @@ from datetime import datetime, timedelta, timezone
 
 from mirage.accessor.slack import SlackAccessor
 from mirage.cache.index import NULL_INDEX, IndexCacheStore, IndexEntry
-from mirage.core.slack._client import slack_get
 from mirage.core.slack.channels import list_channels, list_dms
+from mirage.core.slack.client import slack_get
 from mirage.core.slack.files import file_blob_name
 from mirage.core.slack.formatters import (channel_dirname, dm_dirname,
                                           user_filename)

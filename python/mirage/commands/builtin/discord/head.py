@@ -25,7 +25,7 @@ from mirage.commands.builtin.generic_bind.builders.common import \
 from mirage.commands.config import CommandOpts
 from mirage.commands.registry import command
 from mirage.commands.spec import SPECS
-from mirage.core.discord._client import discord_get
+from mirage.core.discord.client import discord_get
 from mirage.core.discord.history import date_to_snowflake
 from mirage.core.discord.read import read as discord_read
 from mirage.core.discord.render import history_jsonl_bytes

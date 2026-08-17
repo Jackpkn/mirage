@@ -18,7 +18,7 @@ import type { IndexCacheStore } from '../../cache/index/store.ts'
 import { parseEventFilename } from '../../resource/gcal/event_entry.ts'
 import type { PathSpec } from '../../types.ts'
 import { eacces, eisdir, enoent } from '../../utils/errors.ts'
-import { deleteEvent } from './_client.ts'
+import { deleteEvent } from './client.ts'
 import { calendarIndex, normalize } from './readdir.ts'
 
 const WRITABLE_ROLES = new Set(['owner', 'writer'])

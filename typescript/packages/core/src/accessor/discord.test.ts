@@ -14,7 +14,7 @@
 
 import { describe, expect, it } from 'vitest'
 import { DiscordAccessor } from './discord.ts'
-import type { DiscordMethod, DiscordResponse, DiscordTransport } from '../core/discord/_client.ts'
+import type { DiscordMethod, DiscordResponse, DiscordTransport } from '../core/discord/client.ts'
 
 class FakeDiscordTransport implements DiscordTransport {
   public readonly calls: {

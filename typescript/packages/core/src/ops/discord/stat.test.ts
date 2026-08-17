@@ -17,11 +17,7 @@ import { describe, expect, it } from 'vitest'
 import { DiscordAccessor } from '../../accessor/discord.ts'
 import { IndexEntry } from '../../cache/index/config.ts'
 import { RAMIndexCacheStore } from '../../cache/index/ram.ts'
-import type {
-  DiscordMethod,
-  DiscordResponse,
-  DiscordTransport,
-} from '../../core/discord/_client.ts'
+import type { DiscordMethod, DiscordResponse, DiscordTransport } from '../../core/discord/client.ts'
 import { type FileStat, FileType, PathSpec, ResourceName } from '../../types.ts'
 import { DISCORD_OPS } from './index.ts'
 

@@ -16,8 +16,8 @@ from typing import Any
 
 from mirage.accessor.jaeger import JaegerAccessor
 from mirage.cache.index import NULL_INDEX, IndexCacheStore
-from mirage.core.jaeger._client import (JaegerApiError, fetch_operations,
-                                        fetch_trace, is_trace_id)
+from mirage.core.jaeger.client import (JaegerApiError, fetch_operations,
+                                       fetch_trace, is_trace_id)
 from mirage.core.jaeger.readdir import assert_service
 from mirage.core.jaeger.scope import detect_scope
 from mirage.core.render.json import json_bytes

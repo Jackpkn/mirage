@@ -18,7 +18,7 @@ import pytest
 
 from mirage.accessor.dropbox import DropboxAccessor
 from mirage.cache.index.ram import RAMIndexCacheStore
-from mirage.core.dropbox._client import DropboxApiError, DropboxTokenManager
+from mirage.core.dropbox.client import DropboxApiError, DropboxTokenManager
 from mirage.core.dropbox.read import read
 from mirage.core.dropbox.readdir import readdir
 from mirage.core.dropbox.stat import stat

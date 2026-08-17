@@ -12,7 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { type TokenManager, gmailBase, googleGet } from '../google/_client.ts'
+import { type TokenManager, gmailBase, googleGet } from '../google/client.ts'
 
 export interface GmailLabel {
   id: string

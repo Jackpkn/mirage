@@ -16,7 +16,7 @@ from typing import Any
 
 from mirage.accessor.gslides import GSlidesAccessor
 from mirage.commands.builtin.gslides import COMMANDS
-from mirage.core.google._client import TokenManager
+from mirage.core.google.client import TokenManager
 from mirage.core.gslides.readdir import readdir
 from mirage.ops.gslides import OPS as GSLIDES_VFS_OPS
 from mirage.resource.base import BaseResource

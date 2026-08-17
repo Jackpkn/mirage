@@ -15,7 +15,7 @@
 import type { MongoDBAccessor } from '../../accessor/mongodb.ts'
 import type { IndexCacheStore } from '../../cache/index/store.ts'
 import { PathSpec } from '../../types.ts'
-import { databaseExists, entityExists } from './_client.ts'
+import { databaseExists, entityExists } from './client.ts'
 import { buildCollectionSchemaJson, buildDatabaseJson } from './_schema_json.ts'
 import { detectScope } from './scope.ts'
 import { readStream, stringifyDoc } from './stream.ts'

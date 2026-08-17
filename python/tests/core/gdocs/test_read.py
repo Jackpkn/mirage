@@ -20,7 +20,7 @@ import pytest
 from mirage.accessor.gdocs import GDocsAccessor
 from mirage.cache.index import IndexEntry
 from mirage.cache.index.ram import RAMIndexCacheStore
-from mirage.core.gdocs._client import TokenManager
+from mirage.core.gdocs.client import TokenManager
 from mirage.core.gdocs.read import read, read_doc
 from mirage.resource.gdocs.config import GDocsConfig
 from mirage.types import PathSpec

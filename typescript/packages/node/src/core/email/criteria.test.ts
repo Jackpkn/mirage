@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { describe, expect, it } from 'vitest'
-import { listMessageUids, lockMailbox, parseSearchCriteria } from './_client.ts'
+import { listMessageUids, lockMailbox, parseSearchCriteria } from './client.ts'
 
 // The IMAP criteria string is the cross-language contract: python hands
 // it straight to imaplib, node has to rebuild imapflow's search object

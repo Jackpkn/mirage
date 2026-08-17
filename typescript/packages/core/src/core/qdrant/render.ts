@@ -12,7 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import type { QdrantRow } from './_client.ts'
+import type { QdrantRow } from './client.ts'
 import type { QdrantConfigResolved } from '../../resource/qdrant/config.ts'
 import { decodeBase64 } from '../../utils/base64.ts'
 import { compactJsonText } from '../render/json.ts'

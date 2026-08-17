@@ -14,7 +14,7 @@
 
 import { z } from 'zod'
 import { Accessor } from './base.ts'
-import { graphList } from '../core/msgraph/_client.ts'
+import { graphList } from '../core/msgraph/client.ts'
 import {
   MSGRAPH_CONFIG_SHAPE,
   graphApi,

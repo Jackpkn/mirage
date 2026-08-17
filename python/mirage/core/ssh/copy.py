@@ -16,7 +16,7 @@ import asyncssh
 
 from mirage.accessor.ssh import SSHAccessor
 from mirage.cache.context import invalidate_after_write
-from mirage.core.ssh._client import _abs
+from mirage.core.ssh.client import _abs
 from mirage.types import PathSpec
 
 

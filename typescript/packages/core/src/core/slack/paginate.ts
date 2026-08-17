@@ -12,7 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import type { SlackTransport } from './_client.ts'
+import type { SlackTransport } from './client.ts'
 
 export async function* cursorPages<T = Record<string, unknown>>(
   transport: SlackTransport,

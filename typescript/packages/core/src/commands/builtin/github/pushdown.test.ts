@@ -19,7 +19,7 @@
 
 import { describe, expect, it } from 'vitest'
 import { GitHubAccessor } from '../../../accessor/github.ts'
-import type { GitHubTransport } from '../../../core/github/_client.ts'
+import type { GitHubTransport } from '../../../core/github/client.ts'
 import type { TreeEntry } from '../../../core/github/tree_entry.ts'
 import { PathSpec } from '../../../types.ts'
 import { narrowScope } from './pushdown.ts'

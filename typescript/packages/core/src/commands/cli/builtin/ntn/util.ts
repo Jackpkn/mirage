@@ -12,7 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { HttpNotionTransport } from '../../../../core/notion/_client.ts'
+import { HttpNotionTransport } from '../../../../core/notion/client.ts'
 import type { NotionConfig } from '../../../../core/notion/config.ts'
 import { IOResult, type ByteSource } from '../../../../io/types.ts'
 import { FlagView } from '../../../spec/types.ts'

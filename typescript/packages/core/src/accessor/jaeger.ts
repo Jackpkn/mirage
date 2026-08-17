@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { Accessor } from './base.ts'
-import type { JaegerTransport } from '../core/jaeger/_client.ts'
+import type { JaegerTransport } from '../core/jaeger/client.ts'
 
 export interface JaegerAccessorConfig {
   defaultTraceLimit?: number

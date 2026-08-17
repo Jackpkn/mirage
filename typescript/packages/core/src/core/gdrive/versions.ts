@@ -12,8 +12,8 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import type { TokenManager } from '../google/_client.ts'
-import { driveBase, googleGet, googleGetBytes } from '../google/_client.ts'
+import type { TokenManager } from '../google/client.ts'
+import { driveBase, googleGet, googleGetBytes } from '../google/client.ts'
 import type { ByteWindow } from '../../utils/ranges.ts'
 
 const REVISION_FIELDS = 'nextPageToken,revisions(id,modifiedTime,md5Checksum,size)'

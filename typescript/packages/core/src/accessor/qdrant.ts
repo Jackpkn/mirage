@@ -22,7 +22,7 @@ import {
   SCROLL_BATCH,
   type QdrantPoint,
   type QdrantRow,
-} from '../core/qdrant/_client.ts'
+} from '../core/qdrant/client.ts'
 import type { QdrantConfigResolved } from '../resource/qdrant/config.ts'
 import { compareCodePoints } from '../utils/sort.ts'
 

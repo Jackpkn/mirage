@@ -12,7 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { commentCreate } from '../../../../../core/linear/_client.ts'
+import { commentCreate } from '../../../../../core/linear/client.ts'
 import { normalizeComment, toJsonBytes } from '../../../../../core/linear/normalize.ts'
 import { FlagView } from '../../../../spec/types.ts'
 import { IOResult } from '../../../../../io/types.ts'

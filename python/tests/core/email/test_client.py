@@ -17,10 +17,10 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from mirage.accessor.email import EmailAccessor
-from mirage.core.email._client import (fetch_headers, fetch_message,
-                                       list_folder_entries, list_folders,
-                                       list_message_uids, parse_folder_line,
-                                       quote_mailbox, select_folder)
+from mirage.core.email.client import (fetch_headers, fetch_message,
+                                      list_folder_entries, list_folders,
+                                      list_message_uids, parse_folder_line,
+                                      quote_mailbox, select_folder)
 from mirage.core.email.config import EmailConfig
 
 MESSAGE = (b"From: alice@example.com\r\n"

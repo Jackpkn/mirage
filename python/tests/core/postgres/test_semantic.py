@@ -121,7 +121,7 @@ def client(monkeypatch):
             }),
     }
     for name, fake in fakes.items():
-        monkeypatch.setattr(f"mirage.core.postgres._client.{name}", fake)
+        monkeypatch.setattr(f"mirage.core.postgres.client.{name}", fake)
     return fakes
 
 
@@ -261,17 +261,17 @@ async def test_semantic_json_head_fields(accessor, client):
 async def test_semantic_json_omits_empty_sections(accessor, monkeypatch,
                                                   client):
     monkeypatch.setattr(
-        "mirage.core.postgres._client.fetch_columns",
+        "mirage.core.postgres.client.fetch_columns",
         AsyncMock(return_value=[{
             "name": "note",
             "type": "text",
             "nullable": True
         }]))
-    monkeypatch.setattr("mirage.core.postgres._client.fetch_primary_key",
+    monkeypatch.setattr("mirage.core.postgres.client.fetch_primary_key",
                         AsyncMock(return_value=[]))
-    monkeypatch.setattr("mirage.core.postgres._client.fetch_foreign_keys",
+    monkeypatch.setattr("mirage.core.postgres.client.fetch_foreign_keys",
                         AsyncMock(return_value=[]))
-    monkeypatch.setattr("mirage.core.postgres._client.fetch_table_comment",
+    monkeypatch.setattr("mirage.core.postgres.client.fetch_table_comment",
                         AsyncMock(return_value=None))
     doc = await build_entity_semantic_json(accessor, "public", "notes",
                                            "table")
@@ -285,7 +285,7 @@ async def test_semantic_json_omits_empty_sections(accessor, monkeypatch,
 @pytest.mark.asyncio
 async def test_semantic_json_survives_missing_pg_stats(accessor, monkeypatch,
                                                        client):
-    monkeypatch.setattr("mirage.core.postgres._client.fetch_column_stats",
+    monkeypatch.setattr("mirage.core.postgres.client.fetch_column_stats",
                         AsyncMock(return_value={}))
     doc = await build_entity_semantic_json(accessor, "public", "orders",
                                            "table")

@@ -17,7 +17,7 @@ from collections.abc import AsyncIterator
 from mirage.accessor.onedrive import OneDriveAccessor
 from mirage.cache.index import NULL_INDEX, IndexCacheStore
 from mirage.core.msgraph.drive_ops import stream_item
-from mirage.core.onedrive._client import drive_loc, split_path
+from mirage.core.onedrive.client import drive_loc, split_path
 from mirage.core.onedrive.read import read_bytes
 from mirage.types import PathSpec
 

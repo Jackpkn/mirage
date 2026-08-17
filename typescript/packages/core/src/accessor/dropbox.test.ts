@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { describe, expect, it } from 'vitest'
-import type { DropboxTokenManager } from '../core/dropbox/_client.ts'
+import type { DropboxTokenManager } from '../core/dropbox/client.ts'
 import { DropboxAccessor, normalizeDropboxRootPath } from './dropbox.ts'
 
 const STUB_TM = {} as DropboxTokenManager

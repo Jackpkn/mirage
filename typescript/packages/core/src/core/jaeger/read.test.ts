@@ -17,7 +17,7 @@ import { JaegerAccessor, type JaegerAccessorConfig } from '../../accessor/jaeger
 import { RAMIndexCacheStore } from '../../cache/index/ram.ts'
 import { PathSpec } from '../../types.ts'
 import { stripSlash } from '../../utils/slash.ts'
-import type { JaegerTransport } from './_client.ts'
+import type { JaegerTransport } from './client.ts'
 
 const TRACE_A = 'a'.repeat(32)
 
@@ -47,7 +47,7 @@ function spec(virtual: string): PathSpec {
   return new PathSpec({ virtual, directory: virtual, resourcePath: stripSlash(virtual) })
 }
 
-import { JaegerApiError } from './_client.ts'
+import { JaegerApiError } from './client.ts'
 import { read } from './read.ts'
 
 const DEC = new TextDecoder()

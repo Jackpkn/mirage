@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { Accessor } from './base.ts'
-import type { NotionTransport } from '../core/notion/_client.ts'
+import type { NotionTransport } from '../core/notion/client.ts'
 
 export class NotionAccessor extends Accessor {
   constructor(public readonly transport: NotionTransport) {

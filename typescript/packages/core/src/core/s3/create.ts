@@ -16,7 +16,7 @@ import { ResourceName, type PathSpec } from '../../types.ts'
 import type { S3Accessor } from '../../accessor/s3.ts'
 import { invalidateAfterWrite } from '../../cache/context.ts'
 import { record } from '../../observe/context.ts'
-import { loadS3Module, rawPathOf, s3Key, withClient } from './_client.ts'
+import { loadS3Module, rawPathOf, s3Key, withClient } from './client.ts'
 
 export async function create(accessor: S3Accessor, path: PathSpec): Promise<void> {
   const { PutObjectCommand } = await loadS3Module(accessor.config)

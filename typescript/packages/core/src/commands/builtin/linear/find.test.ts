@@ -18,7 +18,7 @@ import { LinearAccessor } from '../../../accessor/linear.ts'
 import { RAMIndexCacheStore } from '../../../cache/index/ram.ts'
 import { materialize } from '../../../io/types.ts'
 import { PathSpec } from '../../../types.ts'
-import type { LinearTransport } from '../../../core/linear/_client.ts'
+import type { LinearTransport } from '../../../core/linear/client.ts'
 import { stripSlash } from '../../../utils/slash.ts'
 import { LINEAR_COMMANDS } from './index.ts'
 

@@ -15,7 +15,7 @@
 import { mountKey } from '../../utils/key_prefix.ts'
 import { describe, expect, it, vi } from 'vitest'
 
-vi.mock('./_client.ts', () => ({
+vi.mock('./client.ts', () => ({
   fetchColumns: vi.fn(),
   estimatedRowCount: vi.fn(),
   tableSizeBytes: vi.fn(),
@@ -29,7 +29,7 @@ import { PostgresAccessor } from '../../accessor/postgres.ts'
 import { FileType, PathSpec } from '../../types.ts'
 import { resolvePostgresConfig } from '../../resource/postgres/config.ts'
 import type { PgDriver } from './_driver.ts'
-import * as _client from './_client.ts'
+import * as client from './client.ts'
 import { stat } from './stat.ts'
 
 const STUB_DRIVER: PgDriver = {
@@ -79,11 +79,11 @@ describe('stat', () => {
   })
 
   it('marks rows.jsonl as TEXT with null size (storage size in extra) + fingerprint', async () => {
-    vi.mocked(_client.fetchColumns).mockResolvedValue([
+    vi.mocked(client.fetchColumns).mockResolvedValue([
       { name: 'id', type: 'uuid', nullable: false },
     ])
-    vi.mocked(_client.estimatedRowCount).mockResolvedValue(42)
-    vi.mocked(_client.tableSizeBytes).mockResolvedValue(4096)
+    vi.mocked(client.estimatedRowCount).mockResolvedValue(42)
+    vi.mocked(client.tableSizeBytes).mockResolvedValue(4096)
     const r = await stat(
       makeAccessor(),
       new PathSpec({

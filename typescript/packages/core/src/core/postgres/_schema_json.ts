@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import type { PostgresAccessor } from '../../accessor/postgres.ts'
-import type { ColumnInfo, ForeignKey, IndexInfo, Relationship } from './_client.ts'
+import type { ColumnInfo, ForeignKey, IndexInfo, Relationship } from './client.ts'
 import {
   estimatedRowCount,
   fetchAllRelationships,
@@ -26,7 +26,7 @@ import {
   listTables,
   listViews,
   tableSizeBytes,
-} from './_client.ts'
+} from './client.ts'
 import { rstripSlash } from '../../utils/slash.ts'
 
 interface DatabaseTable {

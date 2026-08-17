@@ -17,8 +17,8 @@ from typing import Any
 
 import aiohttp
 
-from mirage.core.gsheets._client import (TokenManager, google_headers,
-                                         sheets_base)
+from mirage.core.gsheets.client import (TokenManager, google_headers,
+                                        sheets_base)
 
 
 async def append_values(

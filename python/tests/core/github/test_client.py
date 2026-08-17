@@ -16,8 +16,8 @@ import pytest
 import pytest_asyncio
 from aiohttp import web
 
-from mirage.core.github._client import (GitHubApiError, github_headers,
-                                        github_request, github_url)
+from mirage.core.github.client import (GitHubApiError, github_headers,
+                                       github_request, github_url)
 from mirage.core.github.config import GitHubConfig
 
 

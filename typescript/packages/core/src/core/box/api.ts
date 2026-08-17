@@ -20,8 +20,8 @@ import {
   boxPostJson,
   boxPutJson,
   boxUploadMultipart,
-} from './_client.ts'
-import type { BoxTokenManager } from './_client.ts'
+} from './client.ts'
+import type { BoxTokenManager } from './client.ts'
 import type { ByteWindow } from '../../utils/ranges.ts'
 
 type BoxItemType = 'file' | 'folder' | 'web_link'

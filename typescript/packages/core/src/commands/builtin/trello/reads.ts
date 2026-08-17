@@ -23,7 +23,7 @@ import {
   listListCards,
   listWorkspaceBoards,
   listWorkspaces,
-} from '../../../core/trello/_client.ts'
+} from '../../../core/trello/client.ts'
 import {
   normalizeBoard,
   normalizeCard,

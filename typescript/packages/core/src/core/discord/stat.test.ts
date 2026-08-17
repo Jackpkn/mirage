@@ -18,7 +18,7 @@ import { DiscordAccessor } from '../../accessor/discord.ts'
 import { IndexEntry } from '../../cache/index/config.ts'
 import { RAMIndexCacheStore } from '../../cache/index/ram.ts'
 import { FileType, PathSpec } from '../../types.ts'
-import type { DiscordMethod, DiscordResponse, DiscordTransport } from './_client.ts'
+import type { DiscordMethod, DiscordResponse, DiscordTransport } from './client.ts'
 import { stat } from './stat.ts'
 
 class FakeDiscordTransport implements DiscordTransport {

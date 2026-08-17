@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { Accessor } from './base.ts'
-import type { DropboxTokenManager } from '../core/dropbox/_client.ts'
+import type { DropboxTokenManager } from '../core/dropbox/client.ts'
 
 /**
  * Normalize a subfolder-mount root to the Dropbox API convention:

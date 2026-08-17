@@ -13,17 +13,18 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 # yapf: disable
-from mirage.core.google._client import (CALENDAR_API_BASE, DOCS_API_BASE,
-                                        DRIVE_API_BASE, DRIVE_UPLOAD_BASE,
-                                        FORMS_API_BASE, GMAIL_API_BASE,
-                                        SHEETS_API_BASE, SLIDES_API_BASE,
-                                        TOKEN_URL, TokenManager, calendar_base,
-                                        docs_base, drive_base,
-                                        drive_upload_base, forms_base,
-                                        gmail_base, google_error_message,
-                                        sheets_base, slides_base, token_url)
+from mirage.core.google.client import (TokenManager, calendar_base, docs_base,
+                                       drive_base, drive_upload_base,
+                                       forms_base, gmail_base,
+                                       google_error_message, sheets_base,
+                                       slides_base, token_url)
 # yapf: enable
 from mirage.core.google.config import GoogleConfig
+from mirage.core.google.constants import (CALENDAR_API_BASE, DOCS_API_BASE,
+                                          DRIVE_API_BASE, DRIVE_UPLOAD_BASE,
+                                          FORMS_API_BASE, GMAIL_API_BASE,
+                                          SHEETS_API_BASE, SLIDES_API_BASE,
+                                          TOKEN_URL)
 
 API_ERROR = ('{"error": {"code": 400, "message": "Unsupported request: '
              'insertDimension", "status": "INVALID_ARGUMENT"}}')

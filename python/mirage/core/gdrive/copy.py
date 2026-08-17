@@ -19,7 +19,7 @@ from mirage.cache.context import invalidate_after_write
 from mirage.core.gdrive.resolve import (DriveNode, drive_target_name,
                                         eacces_on_denied, node_from_item,
                                         resolve_key, resolve_parent)
-from mirage.core.google._client import TokenManager
+from mirage.core.google.client import TokenManager
 from mirage.core.google.drive import (FOLDER_MIME, copy_file, create_folder,
                                       delete_file, list_files)
 from mirage.types import PathSpec

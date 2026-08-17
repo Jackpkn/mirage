@@ -31,14 +31,14 @@ def config():
 
 
 def test_resource_init(config):
-    with patch("mirage.core.google._client.refresh_access_token", ):
+    with patch("mirage.core.google.client.refresh_access_token", ):
         resource = GoogleDriveResource(config)
         assert resource.name == ResourceName.GDRIVE
         assert resource.caches_reads is True
 
 
 def test_resource_accessor(config):
-    with patch("mirage.core.google._client.refresh_access_token", ):
+    with patch("mirage.core.google.client.refresh_access_token", ):
         resource = GoogleDriveResource(config)
         assert resource.accessor is not None
         assert resource.accessor.config is config
@@ -46,6 +46,6 @@ def test_resource_accessor(config):
 
 
 def test_resource_commands_registered(config):
-    with patch("mirage.core.google._client.refresh_access_token", ):
+    with patch("mirage.core.google.client.refresh_access_token", ):
         resource = GoogleDriveResource(config)
         assert len(resource._commands) >= 50

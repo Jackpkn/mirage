@@ -26,7 +26,7 @@ import {
   listTables,
   listViews,
   tableSizeBytes,
-} from './_client.ts'
+} from './client.ts'
 import { detectScope } from './scope.ts'
 import { enoent } from '../../utils/errors.ts'
 

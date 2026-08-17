@@ -37,7 +37,7 @@ import {
   validDay,
   windowBounds,
 } from './day.ts'
-import { listCalendars, listEvents } from './_client.ts'
+import { listCalendars, listEvents } from './client.ts'
 import { compareCodePoints } from '../../utils/sort.ts'
 import { compactJsonBytes } from '../render/json.ts'
 

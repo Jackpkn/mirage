@@ -19,7 +19,7 @@ import {
   fetchPrompts,
   fetchSessions,
   fetchTraces,
-} from '../../../core/langfuse/_client.ts'
+} from '../../../core/langfuse/client.ts'
 import { resolveGlobOf } from '../generic_bind/index.ts'
 import { LANGFUSE_IO } from './io.ts'
 import { read as langfuseRead } from '../../../core/langfuse/read.ts'

@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { FlagView } from '../../../../../commands/spec/types.ts'
-import { TokenManager } from '../../../../../core/google/_client.ts'
+import { TokenManager } from '../../../../../core/google/client.ts'
 import type { GoogleConfig } from '../../../../../core/google/config.ts'
 import { updateValues } from '../../../../../core/gsheets/write.ts'
 import { IOResult, type ByteSource } from '../../../../../io/types.ts'

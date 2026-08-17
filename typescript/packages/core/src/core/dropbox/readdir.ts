@@ -18,7 +18,7 @@ import { IndexEntry } from '../../cache/index/config.ts'
 import type { IndexCacheStore } from '../../cache/index/store.ts'
 import type { PathSpec } from '../../types.ts'
 import { listingError } from '../../utils/errors.ts'
-import { DropboxApiError } from './_client.ts'
+import { DropboxApiError } from './client.ts'
 import { getMetadata, listFolder, type DropboxEntry } from './api.ts'
 import { stripSlash } from '../../utils/slash.ts'
 

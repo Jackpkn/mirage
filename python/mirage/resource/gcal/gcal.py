@@ -17,7 +17,7 @@ from typing import Any
 from mirage.accessor.gcal import GCalAccessor
 from mirage.commands.builtin.gcal import COMMANDS
 from mirage.core.gcal.readdir import readdir
-from mirage.core.google._client import TokenManager
+from mirage.core.google.client import TokenManager
 from mirage.ops.gcal import OPS as GCAL_VFS_OPS
 from mirage.resource.base import BaseResource
 from mirage.resource.gcal.config import GCalConfig

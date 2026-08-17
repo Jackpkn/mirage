@@ -20,7 +20,7 @@ from mirage.core.gmail.messages import (_decode_body, _extract_header,
                                         list_messages)
 from mirage.core.gmail.readdir import _sanitize
 from mirage.core.gmail.scope import GmailScope
-from mirage.core.google._client import TokenManager
+from mirage.core.google.client import TokenManager
 
 EXCERPT_WINDOW = 120
 EXCERPT_MAX = 240

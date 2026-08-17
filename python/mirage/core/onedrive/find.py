@@ -18,7 +18,7 @@ from mirage.accessor.onedrive import OneDriveAccessor
 from mirage.cache.index import NULL_INDEX
 from mirage.commands.builtin.find_eval import PredNode, start_basename
 from mirage.core.msgraph.drive_ops import find_items
-from mirage.core.onedrive._client import drive_loc, split_path
+from mirage.core.onedrive.client import drive_loc, split_path
 from mirage.core.onedrive.stat import stat
 from mirage.types import FileType, PathSpec
 

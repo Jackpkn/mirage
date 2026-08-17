@@ -18,8 +18,8 @@ import {
   listTeams,
   listTeamLabels,
   listTeamProjects,
-} from '../../../../core/linear/_client.ts'
-import type { LinearTransport } from '../../../../core/linear/_client.ts'
+} from '../../../../core/linear/client.ts'
+import type { LinearTransport } from '../../../../core/linear/client.ts'
 import type { LinearConfig } from '../../../../core/linear/config.ts'
 import { materialize, type ByteSource } from '../../../../io/types.ts'
 import { enoent } from '../../../../utils/errors.ts'

@@ -23,7 +23,7 @@ from mirage.commands.builtin.mongodb.io import IO
 from mirage.commands.config import CommandOpts
 from mirage.commands.registry import command
 from mirage.commands.spec import SPECS
-from mirage.core.mongodb._client import count_documents
+from mirage.core.mongodb.client import count_documents
 from mirage.core.mongodb.scope import MongoDBDocumentsScope, detect_scope
 from mirage.io.types import ByteSource, IOResult
 from mirage.types import PathSpec

@@ -19,7 +19,7 @@ import pytest
 from mirage.accessor.gdrive import GDriveAccessor
 from mirage.cache.index.config import IndexEntry
 from mirage.cache.index.ram import RAMIndexCacheStore
-from mirage.core.google._client import TokenManager
+from mirage.core.google.client import TokenManager
 from mirage.core.google.config import GoogleConfig
 from mirage.ops.gdrive import OPS
 from mirage.types import FileType, PathSpec

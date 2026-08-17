@@ -3,10 +3,10 @@ from aioresponses import aioresponses
 from pydantic import ValidationError
 
 from mirage.accessor.onedrive import OneDriveConfig
-from mirage.core.onedrive._client import (GraphError, drive_base,
-                                          drive_ref_path, graph_get,
-                                          graph_get_bytes, graph_list, headers,
-                                          item_url, split_path)
+from mirage.core.onedrive.client import (GraphError, drive_base,
+                                         drive_ref_path, graph_get,
+                                         graph_get_bytes, graph_list, headers,
+                                         item_url, split_path)
 from mirage.types import PathSpec
 from mirage.utils.key_prefix import mount_key
 

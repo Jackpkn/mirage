@@ -16,7 +16,7 @@ import logging
 
 from mirage.accessor.email import EmailAccessor
 from mirage.cache.index import NULL_INDEX, IndexCacheStore
-from mirage.core.email._client import list_folders
+from mirage.core.email.client import list_folders
 from mirage.core.email.readdir import readdir as _readdir
 from mirage.types import FileStat, FileType, PathSpec
 from mirage.utils.errors import enoent

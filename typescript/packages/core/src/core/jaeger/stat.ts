@@ -18,7 +18,7 @@ import { FileStat, FileType, PathSpec } from '../../types.ts'
 import { enoent } from '../../utils/errors.ts'
 import { mountKey, mountPrefixOf } from '../../utils/key_prefix.ts'
 import { rstripSlash } from '../../utils/slash.ts'
-import { isTraceId } from './_client.ts'
+import { isTraceId } from './client.ts'
 import { assertService, readdir } from './readdir.ts'
 import { JAEGER_OPERATIONS_FILE, detectScope } from './scope.ts'
 

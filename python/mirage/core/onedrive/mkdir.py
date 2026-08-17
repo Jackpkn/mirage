@@ -17,7 +17,7 @@ import posixpath
 from mirage.accessor.onedrive import OneDriveAccessor
 from mirage.cache.context import invalidate_after_write, invalidate_ancestors
 from mirage.core.msgraph.drive_ops import create_child_folder
-from mirage.core.onedrive._client import item_url, split_path
+from mirage.core.onedrive.client import item_url, split_path
 from mirage.types import PathSpec
 
 

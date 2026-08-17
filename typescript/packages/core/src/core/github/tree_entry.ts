@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { IndexEntry } from '../../cache/index/config.ts'
-import type { GitHubTreeItem } from './_client.ts'
+import type { GitHubTreeItem } from './client.ts'
 
 export interface TreeEntry {
   path: string

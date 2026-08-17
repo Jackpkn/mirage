@@ -26,10 +26,9 @@ from mirage.commands.cli.builtin.gws.methods import (GWS_METHODS,
 from mirage.commands.cli.types import CLIInvocation, CLISpec
 from mirage.commands.errors import UsageError
 from mirage.commands.spec.types import FlagValue, FlagView, Option
-from mirage.core.google._client import (TokenManager, drive_base,
-                                        google_delete, google_get,
-                                        google_get_bytes, google_patch,
-                                        google_post)
+from mirage.core.google.client import (TokenManager, drive_base, google_delete,
+                                       google_get, google_get_bytes,
+                                       google_patch, google_post)
 from mirage.core.google.config import GoogleConfig
 from mirage.io.stream import yield_bytes
 from mirage.io.types import ByteSource, IOResult

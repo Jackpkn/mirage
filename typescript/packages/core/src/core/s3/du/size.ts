@@ -16,7 +16,7 @@ import type { IndexCacheStore } from '../../../cache/index/store.ts'
 import type { PathSpec } from '../../../types.ts'
 import type { S3Accessor } from '../../../accessor/s3.ts'
 import { rstripSlash } from '../../../utils/slash.ts'
-import { loadS3Module, rawPathOf, s3Key, withClient } from '../_client.ts'
+import { loadS3Module, rawPathOf, s3Key, withClient } from '../client.ts'
 
 // List with the stem prefix (no trailing slash) and count an object only when
 // it is the operand itself or lives under it. A bare prefix would miss a file

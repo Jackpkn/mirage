@@ -1,8 +1,8 @@
 import pytest
 from mem0.exceptions import MemoryNotFoundError, RateLimitError
 
-from mirage.core.mem0._client import (get_all_memories, get_memory,
-                                      search_memories)
+from mirage.core.mem0.client import (get_all_memories, get_memory,
+                                     search_memories)
 from mirage.types import PathSpec
 
 

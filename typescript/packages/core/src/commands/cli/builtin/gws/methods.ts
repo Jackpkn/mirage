@@ -12,7 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import type { TokenManager } from '../../../../core/google/_client.ts'
+import type { TokenManager } from '../../../../core/google/client.ts'
 import {
   calendarBase,
   docsBase,
@@ -21,7 +21,7 @@ import {
   gmailBase,
   sheetsBase,
   slidesBase,
-} from '../../../../core/google/_client.ts'
+} from '../../../../core/google/client.ts'
 
 // The official gws CLI generates one command per Discovery method and
 // speaks raw API resources: `--params` carries path/query parameters,

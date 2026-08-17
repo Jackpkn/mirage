@@ -35,7 +35,7 @@ vi.mock('./labels.ts', async () => {
 import { GmailAccessor } from '../../accessor/gmail.ts'
 import { RAMIndexCacheStore } from '../../cache/index/ram.ts'
 import { PathSpec } from '../../types.ts'
-import type { TokenManager } from '../google/_client.ts'
+import type { TokenManager } from '../google/client.ts'
 import * as labelsMod from './labels.ts'
 import * as messagesMod from './messages.ts'
 import { read } from './read.ts'

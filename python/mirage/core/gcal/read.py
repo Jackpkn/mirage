@@ -16,7 +16,7 @@ import logging
 
 from mirage.accessor.gcal import GCalAccessor
 from mirage.cache.index import NULL_INDEX, IndexCacheStore
-from mirage.core.gcal._client import list_events
+from mirage.core.gcal.client import list_events
 from mirage.core.gcal.day import day_bounds
 from mirage.core.gcal.readdir import (bucket_zone, calendar_index,
                                       calendar_payload, normalize)

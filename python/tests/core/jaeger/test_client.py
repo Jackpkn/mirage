@@ -15,8 +15,7 @@
 import pytest
 
 from mirage.accessor.jaeger import JaegerAccessor
-from mirage.core.jaeger._client import (JaegerApiError, fetch_traces,
-                                        is_trace_id)
+from mirage.core.jaeger.client import JaegerApiError, fetch_traces, is_trace_id
 from mirage.resource.jaeger.config import JaegerConfig
 
 
