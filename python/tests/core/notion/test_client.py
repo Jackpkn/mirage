@@ -15,10 +15,15 @@
 from unittest.mock import patch
 
 import pytest
+from aioresponses import aioresponses
+from yarl import URL
 
-from mirage.core.notion._client import (NotionAPIError, notion_headers,
+from mirage.core.notion._client import (NotionAPIError, notion_get,
+                                        notion_headers, notion_post,
                                         paginate_post)
 from mirage.core.notion.config import NotionConfig
+
+BASE = "https://api.notion.com/v1"
 
 
 def test_notion_headers():
@@ -64,3 +69,55 @@ async def test_paginate_post_stops_at_max_results():
     assert [r["n"] for r in results] == [1, 2, 3]
     assert len(calls) == 2
     assert calls[0]["page_size"] == 100
+
+
+@pytest.mark.asyncio
+async def test_notion_get_returns_the_body_and_sends_the_headers():
+    config = NotionConfig(api_key="ntn_test123")
+    with aioresponses() as m:
+        m.get(f"{BASE}/users/me", payload={"object": "user", "id": "u1"})
+        result = await notion_get(config, "/users/me")
+        sent = m.requests[("GET", URL(f"{BASE}/users/me"))]
+    assert result == {"object": "user", "id": "u1"}
+    headers = sent[0].kwargs["headers"]
+    assert headers["Authorization"] == "Bearer ntn_test123"
+    assert headers["Notion-Version"] == "2025-09-03"
+
+
+@pytest.mark.asyncio
+async def test_notion_get_maps_an_error_body():
+    config = NotionConfig(api_key="ntn_test123")
+    with aioresponses() as m:
+        m.get(f"{BASE}/pages/p1",
+              status=404,
+              payload={
+                  "object": "error",
+                  "message": "Could not find page",
+                  "code": "object_not_found",
+              })
+        with pytest.raises(NotionAPIError) as exc:
+            await notion_get(config, "/pages/p1")
+    assert str(exc.value) == "Could not find page"
+    assert exc.value.status == 404
+    assert exc.value.code == "object_not_found"
+
+
+@pytest.mark.asyncio
+async def test_notion_error_without_a_message_reports_the_status():
+    config = NotionConfig(api_key="ntn_test123")
+    with aioresponses() as m:
+        m.get(f"{BASE}/pages/p1", status=502, body="bad gateway")
+        with pytest.raises(NotionAPIError) as exc:
+            await notion_get(config, "/pages/p1")
+    assert str(exc.value) == "Notion API error: HTTP 502"
+    assert exc.value.code is None
+
+
+@pytest.mark.asyncio
+async def test_notion_post_sends_an_empty_object_for_no_body():
+    config = NotionConfig(api_key="ntn_test123")
+    with aioresponses() as m:
+        m.post(f"{BASE}/search", payload={"results": []})
+        await notion_post(config, "/search")
+        sent = m.requests[("POST", URL(f"{BASE}/search"))]
+    assert sent[0].kwargs["json"] == {}

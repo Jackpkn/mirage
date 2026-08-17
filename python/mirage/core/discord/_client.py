@@ -12,16 +12,23 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import asyncio
+import json
 from typing import Any
 
 import aiohttp
 
+from mirage.core.api.client import RetryPolicy, api_request, status_error
 from mirage.core.discord.config import DiscordConfig
 from mirage.resource.secrets import reveal_secret
 
 DISCORD_API = "https://discord.com/api/v10"
 MAX_RETRIES = 3
+# GET is the only verb that waits out a 429: reads are safe to repeat, and
+# the delay comes from the JSON body's retry_after (Discord's convention).
+# Mutations surface the 429 immediately so the caller decides.
+_RATE_LIMIT_RETRY = RetryPolicy(statuses=frozenset({429}),
+                                max_retries=MAX_RETRIES - 1,
+                                delay_source="body")
 
 
 def discord_headers(config: DiscordConfig) -> dict[str, str]:
@@ -34,28 +41,43 @@ def discord_base(config: DiscordConfig) -> str:
     return (config.base_url or DISCORD_API).rstrip("/")
 
 
+def _retry_after_of(body: str) -> Any:
+    try:
+        data = json.loads(body)
+    except ValueError:
+        return 1
+    if isinstance(data, dict):
+        return data.get("retry_after", 1)
+    return 1
+
+
+def _get_error(resp: aiohttp.ClientResponse, body: str) -> Exception:
+    if resp.status == 429:
+        return RuntimeError(f"Rate limited after {MAX_RETRIES} retries")
+    return status_error(resp)
+
+
+def _mutation_error(resp: aiohttp.ClientResponse, body: str) -> Exception:
+    if resp.status == 429:
+        retry = _retry_after_of(body)
+        return RuntimeError(f"Rate limited, retry after {retry}s")
+    return status_error(resp)
+
+
 async def discord_get(
     config: DiscordConfig,
     endpoint: str,
     params: dict[str, Any] | None = None,
 ) -> dict[str, Any] | list[Any]:
-    url = f"{discord_base(config)}{endpoint}"
-    headers = discord_headers(config)
-    for attempt in range(MAX_RETRIES):
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, headers=headers,
-                                   params=params) as resp:
-                if resp.status == 429:
-                    data = await resp.json()
-                    retry = data.get("retry_after", 1)
-                    if attempt < MAX_RETRIES - 1:
-                        await asyncio.sleep(retry)
-                        continue
-                    raise RuntimeError(
-                        f"Rate limited after {MAX_RETRIES} retries")
-                resp.raise_for_status()
-                return await resp.json()
-    return []
+    data: dict[str, Any] | list[Any] = await api_request(
+        "GET",
+        f"{discord_base(config)}{endpoint}",
+        error_of=_get_error,
+        headers=discord_headers(config),
+        params=params,
+        retry=_RATE_LIMIT_RETRY,
+    )
+    return data
 
 
 async def discord_post(
@@ -63,31 +85,27 @@ async def discord_post(
     endpoint: str,
     body: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    url = f"{discord_base(config)}{endpoint}"
-    headers = discord_headers(config)
-    async with aiohttp.ClientSession() as session:
-        async with session.post(url, headers=headers, json=body or {}) as resp:
-            if resp.status == 429:
-                data = await resp.json()
-                retry = data.get("retry_after", 1)
-                raise RuntimeError(f"Rate limited, retry after {retry}s")
-            resp.raise_for_status()
-            return await resp.json()
+    data: dict[str, Any] = await api_request(
+        "POST",
+        f"{discord_base(config)}{endpoint}",
+        error_of=_mutation_error,
+        headers=discord_headers(config),
+        json_body=body or {},
+    )
+    return data
 
 
 async def discord_put(
     config: DiscordConfig,
     endpoint: str,
 ) -> None:
-    url = f"{discord_base(config)}{endpoint}"
-    headers = discord_headers(config)
-    async with aiohttp.ClientSession() as session:
-        async with session.put(url, headers=headers) as resp:
-            if resp.status == 429:
-                data = await resp.json()
-                retry = data.get("retry_after", 1)
-                raise RuntimeError(f"Rate limited, retry after {retry}s")
-            resp.raise_for_status()
+    await api_request(
+        "PUT",
+        f"{discord_base(config)}{endpoint}",
+        error_of=_mutation_error,
+        headers=discord_headers(config),
+        read="none",
+    )
 
 
 async def discord_patch(
@@ -95,29 +113,24 @@ async def discord_patch(
     endpoint: str,
     body: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    url = f"{discord_base(config)}{endpoint}"
-    headers = discord_headers(config)
-    async with aiohttp.ClientSession() as session:
-        async with session.patch(url, headers=headers, json=body
-                                 or {}) as resp:
-            if resp.status == 429:
-                data = await resp.json()
-                retry = data.get("retry_after", 1)
-                raise RuntimeError(f"Rate limited, retry after {retry}s")
-            resp.raise_for_status()
-            return await resp.json()
+    data: dict[str, Any] = await api_request(
+        "PATCH",
+        f"{discord_base(config)}{endpoint}",
+        error_of=_mutation_error,
+        headers=discord_headers(config),
+        json_body=body or {},
+    )
+    return data
 
 
 async def discord_delete(
     config: DiscordConfig,
     endpoint: str,
 ) -> None:
-    url = f"{discord_base(config)}{endpoint}"
-    headers = discord_headers(config)
-    async with aiohttp.ClientSession() as session:
-        async with session.delete(url, headers=headers) as resp:
-            if resp.status == 429:
-                data = await resp.json()
-                retry = data.get("retry_after", 1)
-                raise RuntimeError(f"Rate limited, retry after {retry}s")
-            resp.raise_for_status()
+    await api_request(
+        "DELETE",
+        f"{discord_base(config)}{endpoint}",
+        error_of=_mutation_error,
+        headers=discord_headers(config),
+        read="none",
+    )

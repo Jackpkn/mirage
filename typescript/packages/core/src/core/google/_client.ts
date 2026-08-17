@@ -13,6 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import type { GoogleConfig } from './config.ts'
+import { TokenManager as OAuthTokenManager } from '../api/oauth.ts'
 import { rangeHeader, windowOf, type ByteWindow } from '../../utils/ranges.ts'
 
 export const TOKEN_URL = 'https://oauth2.googleapis.com/token'
@@ -101,43 +102,20 @@ export async function refreshAccessToken(config: GoogleConfig): Promise<[string,
   return [data.access_token, data.expires_in]
 }
 
-export class TokenManager {
+export class TokenManager extends OAuthTokenManager {
   readonly config: GoogleConfig
-  private accessToken: string | null = null
-  private expiresAt = 0
-  private inflight: Promise<string> | null = null
 
   constructor(config: GoogleConfig) {
+    super(TOKEN_BUFFER_SECONDS)
     this.config = config
   }
 
-  async getToken(): Promise<string> {
-    if (this.accessToken !== null && Date.now() / 1000 < this.expiresAt) {
-      return this.accessToken
-    }
-    if (this.inflight !== null) return this.inflight
-    const p = this.refresh()
-    this.inflight = p
-    try {
-      return await p
-    } finally {
-      this.inflight = null
-    }
-  }
-
-  private async refresh(): Promise<string> {
-    let token: string
-    let expiresIn: number
+  protected async refreshPair(): Promise<[string, number]> {
     if (this.config.refreshFn !== undefined) {
       const result = await this.config.refreshFn(this.config.refreshToken)
-      token = result.accessToken
-      expiresIn = result.expiresIn
-    } else {
-      ;[token, expiresIn] = await refreshAccessToken(this.config)
+      return [result.accessToken, result.expiresIn]
     }
-    this.accessToken = token
-    this.expiresAt = Date.now() / 1000 + expiresIn - TOKEN_BUFFER_SECONDS
-    return token
+    return refreshAccessToken(this.config)
   }
 }
 

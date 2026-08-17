@@ -12,14 +12,13 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import asyncio
 import json
-import time
 from collections.abc import AsyncIterator
 from typing import Any
 
 import aiohttp
 
+from mirage.core.api.oauth import TokenManager as OAuthTokenManager
 from mirage.resource.dropbox.config import DropboxConfig
 from mirage.resource.secrets import reveal_secret
 from mirage.utils.ranges import ByteWindow, range_header, window_of
@@ -76,14 +75,12 @@ async def refresh_access_token(config: DropboxConfig) -> tuple[str, int]:
     return data["access_token"], int(data["expires_in"])
 
 
-class DropboxTokenManager:
+class DropboxTokenManager(OAuthTokenManager):
     """Caches the short-lived access token, refreshing before expiry."""
 
     def __init__(self, config: DropboxConfig) -> None:
+        super().__init__(TOKEN_BUFFER_SECONDS)
         self._config = config
-        self._access_token: str | None = None
-        self._expires_at: float = 0
-        self._lock = asyncio.Lock()
         if config.endpoint:
             base = f"{config.endpoint.rstrip('/')}/2"
             self.api_base = base
@@ -92,15 +89,8 @@ class DropboxTokenManager:
             self.api_base = DROPBOX_API_BASE
             self.content_base = DROPBOX_CONTENT_BASE
 
-    async def get_token(self) -> str:
-        async with self._lock:
-            if self._access_token and time.time() < self._expires_at:
-                return self._access_token
-            token, expires_in = await refresh_access_token(self._config)
-            self._access_token = token
-            self._expires_at = (time.time() + expires_in -
-                                TOKEN_BUFFER_SECONDS)
-            return self._access_token
+    async def refresh_pair(self) -> tuple[str, int]:
+        return await refresh_access_token(self._config)
 
 
 async def dropbox_auth_headers(tm: DropboxTokenManager) -> dict[str, str]:

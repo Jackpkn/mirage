@@ -15,6 +15,7 @@
 import type { OAuthClientProvider } from '@modelcontextprotocol/sdk/client/auth.js'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
+import { apiRequest } from '../api/client.ts'
 
 const DEFAULT_SERVER_URL = 'https://mcp.notion.com/mcp'
 const CLIENT_NAME = 'mirage-notion'
@@ -140,6 +141,24 @@ export class NotionAPIError extends Error {
   }
 }
 
+function notionError(response: Response, body: string): NotionAPIError {
+  let data: Record<string, unknown> = {}
+  try {
+    const parsed: unknown = JSON.parse(body)
+    if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      data = parsed as Record<string, unknown>
+    }
+  } catch {
+    // a non-JSON error body: report the status instead
+  }
+  const message =
+    typeof data.message === 'string' && data.message !== ''
+      ? data.message
+      : `Notion API error: HTTP ${String(response.status)}`
+  const code = typeof data.code === 'string' ? data.code : null
+  return new NotionAPIError(message, response.status, code)
+}
+
 export interface HttpNotionTransportOptions {
   apiKey: string
   baseUrl?: string
@@ -237,37 +256,28 @@ export class HttpNotionTransport implements NotionTransport {
   // through the same door rather than a second client, so a header or an
   // error shape can never differ between a named verb and a raw call.
   async request(call: RestCall): Promise<Record<string, unknown>> {
-    const url = new URL(`${this.baseUrl}${call.path}`)
+    const params: Record<string, string | number | boolean> = {}
     for (const [key, value] of Object.entries(call.query ?? {})) {
       if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
-        url.searchParams.set(key, String(value))
+        params[key] = value
       }
     }
-    const init: RequestInit = {
-      method: call.method,
+    // GET and DELETE carry no body: the only route DELETE exists on is
+    // /v1/blocks/{id}, whose whole payload is the id in the path.
+    const withBody = call.method !== 'GET' && call.method !== 'DELETE'
+    const data = await apiRequest(call.method, `${this.baseUrl}${call.path}`, {
+      fetchFn: this.fetch,
       headers: {
         Authorization: `Bearer ${this.apiKey}`,
         'Notion-Version': this.apiVersion,
         'Content-Type': 'application/json',
         ...(call.headers ?? {}),
       },
-    }
-    // GET and DELETE carry no body: the only route DELETE exists on is
-    // /v1/blocks/{id}, whose whole payload is the id in the path.
-    if (call.method !== 'GET' && call.method !== 'DELETE') {
-      init.body = JSON.stringify(call.body ?? {})
-    }
-    const res = await this.fetch(url, init)
-    const data = (await res.json()) as Record<string, unknown>
-    if (res.status >= 400) {
-      const message =
-        typeof data.message === 'string' && data.message !== ''
-          ? data.message
-          : `Notion API error: HTTP ${String(res.status)}`
-      const code = typeof data.code === 'string' ? data.code : null
-      throw new NotionAPIError(message, res.status, code)
-    }
-    return data
+      params,
+      ...(withBody ? { json: call.body ?? {} } : {}),
+      errorOf: notionError,
+    })
+    return (data ?? {}) as Record<string, unknown>
   }
 
   async callTool(name: string, args: Record<string, unknown>): Promise<Record<string, unknown>> {

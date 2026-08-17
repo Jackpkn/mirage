@@ -12,8 +12,16 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import { NO_RETRY, apiRequest, type RetryPolicy } from '../api/client.ts'
+
 const DISCORD_API = 'https://discord.com/api/v10'
 const MAX_RETRIES = 3
+const RATE_LIMIT_RETRY: RetryPolicy = {
+  ...NO_RETRY,
+  statuses: new Set([429]),
+  maxRetries: MAX_RETRIES - 1,
+  delaySource: 'body',
+}
 
 export type DiscordMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
 export type DiscordResponse = unknown
@@ -28,6 +36,21 @@ export class DiscordApiError extends Error {
     super(`Discord API error (${endpoint}): ${discordError}`)
     this.name = 'DiscordApiError'
   }
+}
+
+function discordError(endpoint: string, response: Response, body: string): DiscordApiError {
+  let parsed: unknown = null
+  try {
+    parsed = body === '' ? null : JSON.parse(body)
+  } catch {
+    // a non-JSON error body: fall through to the bare status code
+  }
+  if (response.status === 429) {
+    return new DiscordApiError(endpoint, 429, 'rate_limited', parsed ?? {})
+  }
+  const message =
+    (parsed as { message?: string } | null)?.message ?? `http_${String(response.status)}`
+  return new DiscordApiError(endpoint, response.status, message, parsed)
 }
 
 export interface DiscordTransport {
@@ -51,41 +74,17 @@ export abstract class HttpDiscordTransport implements DiscordTransport {
     body?: Record<string, unknown>,
   ): Promise<DiscordResponse> {
     const base = this.baseUrl().replace(/\/$/, '')
-    const url = new URL(base + endpoint)
-    if (params !== undefined) {
-      for (const [k, v] of Object.entries(params)) url.searchParams.set(k, String(v))
-    }
     const auth = await this.authHeaders()
     const headers: Record<string, string> = { ...auth }
     if (body !== undefined) headers['content-type'] = 'application/json'
-
-    let last429Payload: unknown = undefined
-    for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-      const init: RequestInit = { method, headers }
-      if (body !== undefined) init.body = JSON.stringify(body)
-      const resp = await this.fetch(url.toString(), init)
-
-      if (resp.status === 429) {
-        const data = (await resp.json().catch(() => ({}))) as { retry_after?: number }
-        last429Payload = data
-        if (attempt < MAX_RETRIES - 1) {
-          await new Promise((r) => setTimeout(r, (data.retry_after ?? 1) * 1000))
-          continue
-        }
-        break
-      }
-
-      if (resp.status === 204) return null
-      const text = await resp.text()
-      const parsed: unknown = text === '' ? null : JSON.parse(text)
-      if (!resp.ok) {
-        const err =
-          (parsed as { message?: string } | null)?.message ?? `http_${String(resp.status)}`
-        throw new DiscordApiError(endpoint, resp.status, err, parsed)
-      }
-      return parsed
-    }
-    throw new DiscordApiError(endpoint, 429, 'rate_limited', last429Payload)
+    return apiRequest(method, base + endpoint, {
+      fetchFn: this.fetch,
+      headers,
+      ...(params !== undefined ? { params } : {}),
+      ...(body !== undefined ? { json: body } : {}),
+      retry: RATE_LIMIT_RETRY,
+      errorOf: (response, text) => discordError(endpoint, response, text),
+    })
   }
 }
 

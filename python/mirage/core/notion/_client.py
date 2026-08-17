@@ -12,11 +12,15 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import json
 from collections.abc import Mapping
+from functools import partial
 from typing import Any
 
 import aiohttp
 
+from mirage.core.api.client import api_request
+from mirage.core.api.paginate import cursor_items
 from mirage.core.notion.config import NotionConfig
 from mirage.resource.secrets import reveal_secret
 from mirage.types import JsonValue
@@ -64,26 +68,32 @@ def notion_headers(config: NotionConfig,
     return headers
 
 
+def _error_of(resp: aiohttp.ClientResponse, body: str) -> Exception:
+    try:
+        data = json.loads(body)
+    except ValueError:
+        data = None
+    payload = data if isinstance(data, dict) else {}
+    message = payload.get("message") or f"Notion API error: HTTP {resp.status}"
+    return NotionAPIError(message,
+                          status=resp.status,
+                          code=payload.get("code"))
+
+
 async def notion_get(
     config: NotionConfig,
     path: str,
     params: dict[str, Any] | None = None,
     extra_headers: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
-    url = f"{config.base_url}{path}"
-    headers = notion_headers(config, extra_headers)
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url, headers=headers, params=params) as resp:
-            data = await resp.json()
-            if resp.status >= 400:
-                message = data.get(
-                    "message") or f"Notion API error: HTTP {resp.status}"
-                raise NotionAPIError(
-                    message,
-                    status=resp.status,
-                    code=data.get("code"),
-                )
-            return data
+    data: dict[str, Any] = await api_request(
+        "GET",
+        f"{config.base_url}{path}",
+        error_of=_error_of,
+        headers=notion_headers(config, extra_headers),
+        params=params,
+    )
+    return data
 
 
 async def notion_post(
@@ -93,25 +103,18 @@ async def notion_post(
     extra_headers: Mapping[str, str] | None = None,
     params: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    url = f"{config.base_url}{path}"
-    headers = notion_headers(config, extra_headers)
-    async with aiohttp.ClientSession() as session:
-        # `body or {}` would rewrite an empty list or a zero into an
-        # object. `ntn api` can be handed any JSON value and sends it
-        # verbatim, so only a genuinely absent body becomes `{}`.
-        sent = body if body is not None else {}
-        async with session.post(url, headers=headers, json=sent,
-                                params=params) as resp:
-            data = await resp.json()
-            if resp.status >= 400:
-                message = data.get(
-                    "message") or f"Notion API error: HTTP {resp.status}"
-                raise NotionAPIError(
-                    message,
-                    status=resp.status,
-                    code=data.get("code"),
-                )
-            return data
+    # `body or {}` would rewrite an empty list or a zero into an object.
+    # `ntn api` can be handed any JSON value and sends it verbatim, so only
+    # a genuinely absent body becomes `{}`.
+    data: dict[str, Any] = await api_request(
+        "POST",
+        f"{config.base_url}{path}",
+        error_of=_error_of,
+        headers=notion_headers(config, extra_headers),
+        params=params,
+        json_body=body if body is not None else {},
+    )
+    return data
 
 
 async def notion_patch(
@@ -121,24 +124,15 @@ async def notion_patch(
     extra_headers: Mapping[str, str] | None = None,
     params: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    url = f"{config.base_url}{path}"
-    headers = notion_headers(config, extra_headers)
-    async with aiohttp.ClientSession() as session:
-        sent = body if body is not None else {}
-        async with session.patch(url,
-                                 headers=headers,
-                                 json=sent,
-                                 params=params) as resp:
-            data = await resp.json()
-            if resp.status >= 400:
-                message = data.get(
-                    "message") or f"Notion API error: HTTP {resp.status}"
-                raise NotionAPIError(
-                    message,
-                    status=resp.status,
-                    code=data.get("code"),
-                )
-            return data
+    data: dict[str, Any] = await api_request(
+        "PATCH",
+        f"{config.base_url}{path}",
+        error_of=_error_of,
+        headers=notion_headers(config, extra_headers),
+        params=params,
+        json_body=body if body is not None else {},
+    )
+    return data
 
 
 async def notion_put(
@@ -148,25 +142,18 @@ async def notion_put(
     extra_headers: Mapping[str, str] | None = None,
     params: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    url = f"{config.base_url}{path}"
-    headers = notion_headers(config, extra_headers)
-    async with aiohttp.ClientSession() as session:
-        sent = body if body is not None else {}
-        async with session.put(url, headers=headers, json=sent,
-                               params=params) as resp:
-            data = await resp.json()
-            if resp.status >= 400:
-                message = data.get(
-                    "message") or f"Notion API error: HTTP {resp.status}"
-                raise NotionAPIError(
-                    message,
-                    status=resp.status,
-                    code=data.get("code"),
-                )
-            return data
+    data: dict[str, Any] = await api_request(
+        "PUT",
+        f"{config.base_url}{path}",
+        error_of=_error_of,
+        headers=notion_headers(config, extra_headers),
+        params=params,
+        json_body=body if body is not None else {},
+    )
+    return data
 
 
-# DELETE carries no body at all, which is why it does not take one: the only
+# DELETE carries no body at all, which is why it does not send one: the only
 # route the public API exposes it on is /v1/blocks/{id}, whose whole payload is
 # the id in the path.
 async def notion_delete(
@@ -176,20 +163,26 @@ async def notion_delete(
     extra_headers: Mapping[str, str] | None = None,
     params: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    url = f"{config.base_url}{path}"
-    headers = notion_headers(config, extra_headers)
-    async with aiohttp.ClientSession() as session:
-        async with session.delete(url, headers=headers, params=params) as resp:
-            data = await resp.json()
-            if resp.status >= 400:
-                message = data.get(
-                    "message") or f"Notion API error: HTTP {resp.status}"
-                raise NotionAPIError(
-                    message,
-                    status=resp.status,
-                    code=data.get("code"),
-                )
-            return data
+    data: dict[str, Any] = await api_request(
+        "DELETE",
+        f"{config.base_url}{path}",
+        error_of=_error_of,
+        headers=notion_headers(config, extra_headers),
+        params=params,
+    )
+    return data
+
+
+async def _list_page(
+    config: NotionConfig,
+    path: str,
+    params: dict[str, Any],
+    cursor: str | None,
+) -> dict[str, Any]:
+    merged = dict(params)
+    if cursor is not None:
+        merged["start_cursor"] = cursor
+    return await notion_get(config, path, params=merged)
 
 
 async def paginate_list(
@@ -200,14 +193,19 @@ async def paginate_list(
 ) -> list[dict[str, Any]]:
     merged = dict(params or {})
     merged["page_size"] = page_size
-    results: list[dict[str, Any]] = []
-    while True:
-        data = await notion_get(config, path, params=merged)
-        results.extend(data.get("results", []))
-        if not data.get("has_more"):
-            break
-        merged["start_cursor"] = data["next_cursor"]
-    return results
+    return await cursor_items(partial(_list_page, config, path, merged))
+
+
+async def _post_page(
+    config: NotionConfig,
+    path: str,
+    body: dict[str, Any],
+    cursor: str | None,
+) -> dict[str, Any]:
+    merged = dict(body)
+    if cursor is not None:
+        merged["start_cursor"] = cursor
+    return await notion_post(config, path, merged)
 
 
 async def paginate_post(
@@ -219,13 +217,5 @@ async def paginate_post(
 ) -> list[dict[str, Any]]:
     merged = dict(body or {})
     merged["page_size"] = min(page_size, MAX_PAGE_SIZE)
-    results: list[dict[str, Any]] = []
-    while True:
-        data = await notion_post(config, path, merged)
-        results.extend(data.get("results", []))
-        if max_results is not None and len(results) >= max_results:
-            return results[:max_results]
-        if not data.get("has_more"):
-            break
-        merged["start_cursor"] = data["next_cursor"]
-    return results
+    return await cursor_items(partial(_post_page, config, path, merged),
+                              max_results)

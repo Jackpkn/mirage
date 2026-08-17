@@ -12,13 +12,12 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import asyncio
 import json
-import time
 from typing import Any
 
 import aiohttp
 
+from mirage.core.api.oauth import TokenManager as OAuthTokenManager
 from mirage.core.google.config import GoogleConfig
 from mirage.resource.secrets import reveal_secret
 from mirage.utils.ranges import ByteWindow, range_header, window_of
@@ -160,14 +159,15 @@ async def refresh_access_token(config: GoogleConfig, ) -> tuple[str, int]:
             return body["access_token"], body["expires_in"]
 
 
-class TokenManager:
+class TokenManager(OAuthTokenManager):
     """Manages OAuth2 access token lifecycle."""
 
     def __init__(self, config: GoogleConfig) -> None:
+        super().__init__(TOKEN_BUFFER_SECONDS)
         self.config = config
-        self._access_token: str | None = None
-        self._expires_at: float = 0
-        self._lock = asyncio.Lock()
+
+    async def refresh_pair(self) -> tuple[str, int]:
+        return await refresh_access_token(self.config)
 
     async def get_token(self) -> str:
         # A supplied token short-circuits the grant entirely, and is read
@@ -179,14 +179,7 @@ class TokenManager:
         if supplied is not None:
             return reveal_secret(
                 supplied() if callable(supplied) else supplied)
-        async with self._lock:
-            if self._access_token and time.time() < self._expires_at:
-                return self._access_token
-            token, expires_in = await refresh_access_token(self.config)
-            self._access_token = token
-            self._expires_at = (time.time() + expires_in -
-                                TOKEN_BUFFER_SECONDS)
-            return self._access_token
+        return await super().get_token()
 
 
 async def google_headers(token_manager: TokenManager, ) -> dict[str, str]:
