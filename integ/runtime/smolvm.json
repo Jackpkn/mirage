@@ -1,5 +1,7 @@
 {
   "suite": "smolvm",
+  "optional": true,
+  "optional_reason": "smolvm needs a hypervisor (/dev/kvm on Linux), which GitHub-hosted runners do not provide, so the machine cannot be created in CI. Run locally or on a bare-metal/nested-virt host with MIRAGE_INTEG_SMOLVM_MACHINE set; drop this flag once the gate has such a host.",
   "requires": [
     "env:MIRAGE_INTEG_SMOLVM_MACHINE"
   ],

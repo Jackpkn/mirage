@@ -1,5 +1,7 @@
 {
   "suite": "sandlock",
+  "optional": true,
+  "optional_reason": "sandlock needs its CLI installed and Landlock ABI v6 (Linux 6.12+); GitHub-hosted runners ship neither, and it has no apt package to add cheaply. Run locally on a Linux host with MIRAGE_INTEG_SANDLOCK set; drop this flag once the gate installs it.",
   "requires": {
     "python": [
       "env:MIRAGE_INTEG_SANDLOCK"
