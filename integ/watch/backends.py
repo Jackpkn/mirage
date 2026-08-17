@@ -25,7 +25,7 @@ import aiohttp
 from pydantic import SecretStr
 
 from mirage import MountMode, Workspace
-from mirage.core.github._client import github_request
+from mirage.core.github.client import github_request
 from mirage.core.github.read import read_bytes
 from mirage.core.github.tree import fetch_tree
 from mirage.core.github.tree_entry import TreeEntry
