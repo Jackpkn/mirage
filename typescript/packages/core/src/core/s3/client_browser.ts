@@ -184,6 +184,22 @@ function keyFromInput(input: Record<string, unknown>): string {
   return typeof k === 'string' ? k : ''
 }
 
+// A presigned URL is signed for a key, not for a version: the provider takes
+// `(path, operation, options)` and has no slot to carry one. Serving the
+// request anyway returns whichever version is current, which is the opposite
+// of what a pinned read asked for and is indistinguishable from a correct
+// answer — so refuse instead. Only fields that change the *answer* belong
+// here; a hint like MaxKeys, whose omission returns more data but the same
+// answer, must keep being ignored or `stat`'s List probe would break.
+function refuseVersionPin(op: string, key: string, input: { VersionId?: unknown }): void {
+  if (input.VersionId === undefined) return
+  throw new Error(
+    `S3 ${op} ${key}: the presigned-fetch client cannot serve a version-pinned ` +
+      'read, so it would silently return the current object; a snapshot-pinned ' +
+      'read needs an SDK-backed config rather than presignedUrlProvider',
+  )
+}
+
 function makeNotFound(path: string): Error & { $metadata: { httpStatusCode: number } } {
   const e = new Error(`S3 object not found: ${path}`) as Error & {
     $metadata: { httpStatusCode: number }
@@ -207,8 +223,9 @@ async function sendBrowserCommand(
   const tag = browserCmd.__mirageTag
   switch (tag) {
     case 'Get': {
-      const input = browserCmd.input as { Key?: unknown; Range?: unknown }
+      const input = browserCmd.input as { Key?: unknown; Range?: unknown; VersionId?: unknown }
       const key = typeof input.Key === 'string' ? input.Key : ''
+      refuseVersionPin('GET', key, input)
       // A presigned GET carries no Range: the header would make the request
       // non-simple and trip a CORS preflight presigned deployments generally
       // do not allow. Serving it anyway would return the whole object as if it
@@ -241,6 +258,7 @@ async function sendBrowserCommand(
     }
     case 'Head': {
       const key = keyFromInput(browserCmd.input)
+      refuseVersionPin('HEAD', key, browserCmd.input)
       const url = await provider(`/${key}`, 'HEAD')
       const resp = await fetch(url, { method: 'HEAD' })
       if (resp.status === 404) throw makeNotFound(key)

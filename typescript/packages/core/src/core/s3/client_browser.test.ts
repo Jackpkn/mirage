@@ -169,6 +169,56 @@ describe('createBrowserS3Client — command dispatch', () => {
     ).rejects.toMatchObject({ $metadata: { httpStatusCode: 404 } })
   })
 
+  // A presigned URL is signed for a key, not a version. Before this refusal the
+  // shim read only Key, so a snapshot-pinned read fetched and returned whichever
+  // version was current -- no error, no log, just the wrong bytes. Asserting
+  // that neither the provider nor fetch ran is what distinguishes refusing from
+  // answering: the old code reached both and resolved.
+  it('GET refuses a version-pinned read instead of returning the current object', async () => {
+    const { provider, calls } = makeProvider(() => 'https://signed/get')
+    fetchHandle = installFetch(() => new Response(new Uint8Array([104, 105]), { status: 200 }))
+    const client = createBrowserS3Client(cfg(provider))
+    const { GetObjectCommand } = BROWSER_S3_MODULE
+    await expect(
+      client.send(new GetObjectCommand({ Bucket: 'b', Key: 'pinned.txt', VersionId: 'v2' })),
+    ).rejects.toThrow(/cannot serve a version-pinned read/)
+    expect(calls).toEqual([])
+    expect(fetchHandle.calls).toEqual([])
+  })
+
+  it('HEAD refuses a version-pinned stat for the same reason', async () => {
+    const { provider, calls } = makeProvider(() => 'https://signed/head')
+    fetchHandle = installFetch(() => new Response('', { status: 200 }))
+    const client = createBrowserS3Client(cfg(provider))
+    const { HeadObjectCommand } = BROWSER_S3_MODULE
+    await expect(
+      client.send(new HeadObjectCommand({ Bucket: 'b', Key: 'pinned.txt', VersionId: 'v2' })),
+    ).rejects.toThrow(/cannot serve a version-pinned read/)
+    expect(calls).toEqual([])
+    expect(fetchHandle.calls).toEqual([])
+  })
+
+  // MaxKeys is the counter-example the refusal must not swallow: `stat`'s
+  // directory probe sends it, the shim ignores it, and ignoring it returns more
+  // data but the same answer. Only fields that change the answer may refuse.
+  it('LIST still ignores a MaxKeys hint rather than refusing it', async () => {
+    const { provider } = makeProvider(() => 'https://signed/list')
+    fetchHandle = installFetch(
+      () =>
+        new Response(
+          '<?xml version="1.0"?><ListBucketResult><Contents><Key>a.txt</Key>' +
+            '<Size>1</Size></Contents></ListBucketResult>',
+          { status: 200 },
+        ),
+    )
+    const client = createBrowserS3Client(cfg(provider))
+    const { ListObjectsV2Command } = BROWSER_S3_MODULE
+    const resp = await client.send(
+      new ListObjectsV2Command({ Bucket: 'b', Prefix: '', Delimiter: '/', MaxKeys: 1 }),
+    )
+    expect((resp.Contents as unknown[]).length).toBe(1)
+  })
+
   it('HEAD returns only metadata (no Body)', async () => {
     const { provider, calls } = makeProvider(() => 'https://signed/head')
     fetchHandle = installFetch(
