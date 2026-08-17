@@ -108,23 +108,6 @@ class Watcher:
         root = root.rstrip("/")
         return virtual == root or virtual.startswith(root + "/")
 
-    def _ancestors(self, entry: WatchMount, virtual: str) -> list[PathSpec]:
-        """Framed ancestor directories of ``virtual`` below the mount
-        root, nearest first.
-
-        Args:
-            entry (WatchMount): Mount owning the path.
-            virtual (str): Workspace-virtual path of the change.
-        """
-        prefix = entry.prefix.rstrip("/")
-        specs: list[PathSpec] = []
-        current = virtual.rstrip("/")
-        while True:
-            current = current.rsplit("/", 1)[0]
-            if len(current) <= len(prefix):
-                return specs
-            specs.append(self._frame(entry, current))
-
     async def _evict(self, entry: WatchMount, path: PathSpec,
                      kind: FileChangeKind) -> None:
         """Evict one path and every cached ancestor listing above it.
@@ -134,7 +117,11 @@ class Watcher:
         nested create/delete implies intermediate directories appeared
         or vanished with it, so every cached listing up to the mount
         root may be stale (a consumer forwarding only file events from
-        a Nextcloud webhook hits exactly this).
+        a Nextcloud webhook hits exactly this). The chain itself is the
+        cache manager's to walk, not this class's: it already walks one
+        for the keyed stores that materialize a missing level on write,
+        and a second walk here would be the same rule kept in two places
+        with two stopping conditions to keep in step.
 
         How far down the eviction reaches is the change's kind. UNKNOWN
         means precision was lost and everything under the path must be
@@ -157,8 +144,7 @@ class Watcher:
             await manager.invalidate_subtree(path)
         else:
             await manager.invalidate_after_write(path)
-        for ancestor in self._ancestors(entry, path.virtual):
-            await manager.invalidate_after_write(ancestor)
+        await manager.invalidate_ancestors(path)
 
     async def _invalidate(self, entry: WatchMount, change: FileEvent) -> None:
         """Evict cache for one change before it is delivered.

@@ -1,4 +1,7 @@
 import { describe, expect, it } from 'vitest'
+import { IndexEntry } from '../cache/index/config.ts'
+import { RAMIndexCacheStore } from '../cache/index/ram.ts'
+import { CacheManager } from '../cache/manager.ts'
 import { FileChangeKind, FileEvent, PathSpec } from '../types.ts'
 import type { CacheInvalidator, WatchMount, WatchRegistry } from './base.ts'
 import { Watcher } from './watcher.ts'
@@ -20,6 +23,11 @@ class RecordingCache implements CacheInvalidator {
 
   invalidateSubtree(path: PathSpec): Promise<void> {
     this.log.push(`subtree:${path.virtual}:${path.resourcePath}`)
+    return Promise.resolve()
+  }
+
+  invalidateAncestors(path: PathSpec): Promise<void> {
+    this.log.push(`ancestors:${path.virtual}:${path.resourcePath}`)
     return Promise.resolve()
   }
 }
@@ -60,9 +68,31 @@ describe('Watcher', () => {
     expect(delivered.value.path.resourcePath).toBe('data/sub/x.txt')
     expect(cache.log).toEqual([
       'write:/nc/data/sub/x.txt:data/sub/x.txt',
-      'write:/nc/data/sub:data/sub',
-      'write:/nc/data:data',
+      'ancestors:/nc/data/sub/x.txt:data/sub/x.txt',
     ])
+    await watcher.close()
+  })
+
+  it('drops every listing up to the mount root for a nested create', async () => {
+    // A nested external create implies intermediate dirs appeared, so every
+    // cached listing up to the mount root must go, not just the file's
+    // immediate parent. Asserted against a real CacheManager rather than the
+    // recorder above, because the walk itself lives there now and a fake would
+    // only prove the call was made.
+    const index = new RAMIndexCacheStore({ ttl: 600 })
+    const levels = ['/nc', '/nc/data', '/nc/data/sub']
+    for (const level of levels) {
+      await index.setDir(level, [
+        ['child', new IndexEntry({ id: '1', name: 'child', resourceType: 'file' })],
+      ])
+    }
+    const manager = new CacheManager(null, index, '/nc/', false)
+    const watcher = new Watcher(new FakeRegistry({ prefix: '/nc/', cacheManager: manager }))
+    await watcher.notify(change(FileChangeKind.CREATE, '/nc/data/sub/deep.txt'))
+    for (const level of levels) {
+      const listing = await index.listDir(level)
+      expect(listing.entries ?? null).toBeNull()
+    }
     await watcher.close()
   })
 
@@ -72,7 +102,7 @@ describe('Watcher', () => {
     const pending = await begin(watcher, '/nc')
     await watcher.notify(change(FileChangeKind.UNKNOWN, '/nc/data/day'))
     await pending.next
-    expect(cache.log).toEqual(['subtree:/nc/data/day:data/day', 'write:/nc/data:data'])
+    expect(cache.log).toEqual(['subtree:/nc/data/day:data/day', 'ancestors:/nc/data/day:data/day'])
     await watcher.close()
   })
 
@@ -82,7 +112,7 @@ describe('Watcher', () => {
     const pending = await begin(watcher, '/nc')
     await watcher.notify(change(FileChangeKind.UPDATE, '/nc/data/day'))
     await pending.next
-    expect(cache.log).toEqual(['write:/nc/data/day:data/day', 'write:/nc/data:data'])
+    expect(cache.log).toEqual(['write:/nc/data/day:data/day', 'ancestors:/nc/data/day:data/day'])
     await watcher.close()
   })
 
@@ -100,7 +130,7 @@ describe('Watcher', () => {
     )
     await pending.next
     expect(cache.log).toContain('unlink:/nc/old/original.txt:old/original.txt')
-    expect(cache.log).toContain('write:/nc/old:old')
+    expect(cache.log).toContain('ancestors:/nc/old/original.txt:old/original.txt')
     await watcher.close()
   })
 
