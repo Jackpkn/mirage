@@ -12,53 +12,27 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { redactConfigWithSchema, secretSchema, z } from '@struktoai/mirage-core/resource/secrets'
+import { z } from '@struktoai/mirage-core/resource/secrets'
 import type { ConfigOf, RedactedConfig } from '@struktoai/mirage-core/resource/secrets'
-import type { S3BrowserPresignedUrlProvider, S3Config } from '../s3/config.ts'
+import { browserAliasSchema, makeBrowserS3Alias } from '../s3_alias.ts'
 
-const OCIConfigSchema = z.object({
-  bucket: z.string(),
-  presignedUrlProvider: secretSchema(
-    z.custom<S3BrowserPresignedUrlProvider>((value) => typeof value === 'function'),
-  ),
-  namespace: z.string().optional(),
-  region: z.string().optional(),
-  endpoint: z.string().optional(),
-  defaultContentType: z.string().optional(),
-  keyPrefix: z.string().optional(),
-})
+const OCIConfigSchema = browserAliasSchema({ namespace: z.string().optional() })
 
 export type OCIConfig = ConfigOf<typeof OCIConfigSchema>
 
 export type OCIConfigRedacted = RedactedConfig<OCIConfig, 'presignedUrlProvider'>
 
-export function resolvedOciEndpoint(config: OCIConfig): string | undefined {
-  if (config.endpoint !== undefined && config.endpoint !== '') return config.endpoint
-  if (
+const alias = makeBrowserS3Alias<OCIConfig, OCIConfigRedacted>({
+  schema: OCIConfigSchema,
+  endpointFor: (config) =>
     config.namespace !== undefined &&
     config.namespace !== '' &&
     config.region !== undefined &&
     config.region !== ''
-  ) {
-    return `https://${config.namespace}.compat.objectstorage.${config.region}.oci.customer-oci.com`
-  }
-  return undefined
-}
+      ? `https://${config.namespace}.compat.objectstorage.${config.region}.oci.customer-oci.com`
+      : undefined,
+})
 
-export function ociToS3Config(config: OCIConfig): S3Config {
-  const endpoint = resolvedOciEndpoint(config)
-  return {
-    bucket: config.bucket,
-    presignedUrlProvider: config.presignedUrlProvider,
-    ...(config.region !== undefined ? { region: config.region } : {}),
-    ...(endpoint !== undefined ? { endpoint } : {}),
-    ...(config.defaultContentType !== undefined
-      ? { defaultContentType: config.defaultContentType }
-      : {}),
-    ...(config.keyPrefix !== undefined ? { keyPrefix: config.keyPrefix } : {}),
-  }
-}
-
-export function redactOciConfig(config: OCIConfig): OCIConfigRedacted {
-  return redactConfigWithSchema(OCIConfigSchema, config) as unknown as OCIConfigRedacted
-}
+export const resolvedOciEndpoint = alias.resolvedEndpoint
+export const ociToS3Config = alias.toS3Config
+export const redactOciConfig = alias.redact

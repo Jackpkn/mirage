@@ -12,38 +12,18 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { redactConfigWithSchema, secretSchema, z } from '@struktoai/mirage-core/resource/secrets'
 import type { ConfigOf, RedactedConfig } from '@struktoai/mirage-core/resource/secrets'
-import type { S3BrowserPresignedUrlProvider, S3Config } from '../s3/config.ts'
+import { browserAliasSchema, makeBrowserS3Alias } from '../s3_alias.ts'
 
-const MinIOConfigSchema = z.object({
-  bucket: z.string(),
-  presignedUrlProvider: secretSchema(
-    z.custom<S3BrowserPresignedUrlProvider>((value) => typeof value === 'function'),
-  ),
-  endpoint: z.string().optional(),
-  region: z.string().optional(),
-  defaultContentType: z.string().optional(),
-  keyPrefix: z.string().optional(),
-})
+const MinIOConfigSchema = browserAliasSchema({})
 
 export type MinIOConfig = ConfigOf<typeof MinIOConfigSchema>
 
 export type MinIOConfigRedacted = RedactedConfig<MinIOConfig, 'presignedUrlProvider'>
 
-export function minioToS3Config(config: MinIOConfig): S3Config {
-  return {
-    bucket: config.bucket,
-    presignedUrlProvider: config.presignedUrlProvider,
-    ...(config.region !== undefined ? { region: config.region } : {}),
-    ...(config.endpoint !== undefined ? { endpoint: config.endpoint } : {}),
-    ...(config.defaultContentType !== undefined
-      ? { defaultContentType: config.defaultContentType }
-      : {}),
-    ...(config.keyPrefix !== undefined ? { keyPrefix: config.keyPrefix } : {}),
-  }
-}
+const alias = makeBrowserS3Alias<MinIOConfig, MinIOConfigRedacted>({
+  schema: MinIOConfigSchema,
+})
 
-export function redactMinIOConfig(config: MinIOConfig): MinIOConfigRedacted {
-  return redactConfigWithSchema(MinIOConfigSchema, config) as unknown as MinIOConfigRedacted
-}
+export const minioToS3Config = alias.toS3Config
+export const redactMinIOConfig = alias.redact

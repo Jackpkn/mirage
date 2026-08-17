@@ -12,44 +12,25 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { redactConfigWithSchema, secretSchema, z } from '@struktoai/mirage-core/resource/secrets'
 import type { ConfigOf, RedactedConfig } from '@struktoai/mirage-core/resource/secrets'
-import type { S3BrowserPresignedUrlProvider, S3Config } from '../s3/config.ts'
+import { browserAliasSchema, makeBrowserS3Alias } from '../s3_alias.ts'
 
-const WasabiConfigSchema = z.object({
-  bucket: z.string(),
-  presignedUrlProvider: secretSchema(
-    z.custom<S3BrowserPresignedUrlProvider>((value) => typeof value === 'function'),
-  ),
-  region: z.string().optional(),
-  endpoint: z.string().optional(),
-  defaultContentType: z.string().optional(),
-  keyPrefix: z.string().optional(),
-})
+const WasabiConfigSchema = browserAliasSchema({})
 
 export type WasabiConfig = ConfigOf<typeof WasabiConfigSchema>
 
 export type WasabiConfigRedacted = RedactedConfig<WasabiConfig, 'presignedUrlProvider'>
 
-export function resolvedWasabiEndpoint(config: WasabiConfig): string {
-  if (config.endpoint !== undefined && config.endpoint !== '') return config.endpoint
-  const region = config.region ?? 'us-east-1'
-  return region === 'us-east-1' ? 'https://s3.wasabisys.com' : `https://s3.${region}.wasabisys.com`
-}
+const alias = makeBrowserS3Alias<WasabiConfig, WasabiConfigRedacted, string>({
+  schema: WasabiConfigSchema,
+  endpointFor: (config) => {
+    const region = config.region ?? 'us-east-1'
+    return region === 'us-east-1'
+      ? 'https://s3.wasabisys.com'
+      : `https://s3.${region}.wasabisys.com`
+  },
+})
 
-export function wasabiToS3Config(config: WasabiConfig): S3Config {
-  return {
-    bucket: config.bucket,
-    presignedUrlProvider: config.presignedUrlProvider,
-    ...(config.region !== undefined ? { region: config.region } : {}),
-    endpoint: resolvedWasabiEndpoint(config),
-    ...(config.defaultContentType !== undefined
-      ? { defaultContentType: config.defaultContentType }
-      : {}),
-    ...(config.keyPrefix !== undefined ? { keyPrefix: config.keyPrefix } : {}),
-  }
-}
-
-export function redactWasabiConfig(config: WasabiConfig): WasabiConfigRedacted {
-  return redactConfigWithSchema(WasabiConfigSchema, config) as unknown as WasabiConfigRedacted
-}
+export const resolvedWasabiEndpoint = alias.resolvedEndpoint
+export const wasabiToS3Config = alias.toS3Config
+export const redactWasabiConfig = alias.redact

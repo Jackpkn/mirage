@@ -12,38 +12,18 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { redactConfigWithSchema, secretSchema, z } from '@struktoai/mirage-core/resource/secrets'
 import type { ConfigOf, RedactedConfig } from '@struktoai/mirage-core/resource/secrets'
-import type { S3BrowserPresignedUrlProvider, S3Config } from '../s3/config.ts'
+import { browserAliasSchema, makeBrowserS3Alias } from '../s3_alias.ts'
 
-const SeaweedFSConfigSchema = z.object({
-  bucket: z.string(),
-  presignedUrlProvider: secretSchema(
-    z.custom<S3BrowserPresignedUrlProvider>((value) => typeof value === 'function'),
-  ),
-  endpoint: z.string().optional(),
-  region: z.string().optional(),
-  defaultContentType: z.string().optional(),
-  keyPrefix: z.string().optional(),
-})
+const SeaweedFSConfigSchema = browserAliasSchema({})
 
 export type SeaweedFSConfig = ConfigOf<typeof SeaweedFSConfigSchema>
 
 export type SeaweedFSConfigRedacted = RedactedConfig<SeaweedFSConfig, 'presignedUrlProvider'>
 
-export function seaweedfsToS3Config(config: SeaweedFSConfig): S3Config {
-  return {
-    bucket: config.bucket,
-    presignedUrlProvider: config.presignedUrlProvider,
-    ...(config.region !== undefined ? { region: config.region } : {}),
-    ...(config.endpoint !== undefined ? { endpoint: config.endpoint } : {}),
-    ...(config.defaultContentType !== undefined
-      ? { defaultContentType: config.defaultContentType }
-      : {}),
-    ...(config.keyPrefix !== undefined ? { keyPrefix: config.keyPrefix } : {}),
-  }
-}
+const alias = makeBrowserS3Alias<SeaweedFSConfig, SeaweedFSConfigRedacted>({
+  schema: SeaweedFSConfigSchema,
+})
 
-export function redactSeaweedFSConfig(config: SeaweedFSConfig): SeaweedFSConfigRedacted {
-  return redactConfigWithSchema(SeaweedFSConfigSchema, config) as unknown as SeaweedFSConfigRedacted
-}
+export const seaweedfsToS3Config = alias.toS3Config
+export const redactSeaweedFSConfig = alias.redact

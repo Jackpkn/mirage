@@ -12,48 +12,20 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { redactConfigWithSchema, secretSchema, z } from '@struktoai/mirage-core/resource/secrets'
 import type { ConfigOf, RedactedConfig } from '@struktoai/mirage-core/resource/secrets'
-import type { S3BrowserPresignedUrlProvider, S3Config } from '../s3/config.ts'
+import { browserAliasSchema, derivedEndpoint, makeBrowserS3Alias } from '../s3_alias.ts'
 
-const ScalewayConfigSchema = z.object({
-  bucket: z.string(),
-  presignedUrlProvider: secretSchema(
-    z.custom<S3BrowserPresignedUrlProvider>((value) => typeof value === 'function'),
-  ),
-  region: z.string().optional(),
-  endpoint: z.string().optional(),
-  defaultContentType: z.string().optional(),
-  keyPrefix: z.string().optional(),
-})
+const ScalewayConfigSchema = browserAliasSchema({})
 
 export type ScalewayConfig = ConfigOf<typeof ScalewayConfigSchema>
 
 export type ScalewayConfigRedacted = RedactedConfig<ScalewayConfig, 'presignedUrlProvider'>
 
-export function resolvedScalewayEndpoint(config: ScalewayConfig): string | undefined {
-  if (config.endpoint !== undefined && config.endpoint !== '') return config.endpoint
-  if (config.region !== undefined && config.region !== '') {
-    const region = config.region
-    return `https://s3.${region}.scw.cloud`
-  }
-  return undefined
-}
+const alias = makeBrowserS3Alias<ScalewayConfig, ScalewayConfigRedacted>({
+  schema: ScalewayConfigSchema,
+  endpointFor: derivedEndpoint('region', (region) => `https://s3.${region}.scw.cloud`),
+})
 
-export function scalewayToS3Config(config: ScalewayConfig): S3Config {
-  const endpoint = resolvedScalewayEndpoint(config)
-  return {
-    bucket: config.bucket,
-    presignedUrlProvider: config.presignedUrlProvider,
-    ...(config.region !== undefined ? { region: config.region } : {}),
-    ...(endpoint !== undefined ? { endpoint } : {}),
-    ...(config.defaultContentType !== undefined
-      ? { defaultContentType: config.defaultContentType }
-      : {}),
-    ...(config.keyPrefix !== undefined ? { keyPrefix: config.keyPrefix } : {}),
-  }
-}
-
-export function redactScalewayConfig(config: ScalewayConfig): ScalewayConfigRedacted {
-  return redactConfigWithSchema(ScalewayConfigSchema, config) as unknown as ScalewayConfigRedacted
-}
+export const resolvedScalewayEndpoint = alias.resolvedEndpoint
+export const scalewayToS3Config = alias.toS3Config
+export const redactScalewayConfig = alias.redact

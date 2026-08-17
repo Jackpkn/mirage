@@ -12,48 +12,25 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { redactConfigWithSchema, secretSchema, z } from '@struktoai/mirage-core/resource/secrets'
+import { z } from '@struktoai/mirage-core/resource/secrets'
 import type { ConfigOf, RedactedConfig } from '@struktoai/mirage-core/resource/secrets'
-import type { S3BrowserPresignedUrlProvider, S3Config } from '../s3/config.ts'
+import { browserAliasSchema, derivedEndpoint, makeBrowserS3Alias } from '../s3_alias.ts'
 
-const R2ConfigSchema = z.object({
-  bucket: z.string(),
-  presignedUrlProvider: secretSchema(
-    z.custom<S3BrowserPresignedUrlProvider>((value) => typeof value === 'function'),
-  ),
-  accountId: z.string().optional(),
-  region: z.string().optional(),
-  endpoint: z.string().optional(),
-  defaultContentType: z.string().optional(),
-  keyPrefix: z.string().optional(),
-})
+const R2ConfigSchema = browserAliasSchema({ accountId: z.string().optional() })
 
 export type R2Config = ConfigOf<typeof R2ConfigSchema>
 
 export type R2ConfigRedacted = RedactedConfig<R2Config, 'presignedUrlProvider'>
 
-export function resolvedR2Endpoint(config: R2Config): string | undefined {
-  if (config.endpoint !== undefined && config.endpoint !== '') return config.endpoint
-  if (config.accountId !== undefined && config.accountId !== '') {
-    return `https://${config.accountId}.r2.cloudflarestorage.com`
-  }
-  return undefined
-}
+const alias = makeBrowserS3Alias<R2Config, R2ConfigRedacted>({
+  schema: R2ConfigSchema,
+  endpointFor: derivedEndpoint(
+    'accountId',
+    (accountId) => `https://${accountId}.r2.cloudflarestorage.com`,
+  ),
+  regionDefault: 'auto',
+})
 
-export function r2ToS3Config(config: R2Config): S3Config {
-  const endpoint = resolvedR2Endpoint(config)
-  return {
-    bucket: config.bucket,
-    presignedUrlProvider: config.presignedUrlProvider,
-    region: config.region ?? 'auto',
-    ...(endpoint !== undefined ? { endpoint } : {}),
-    ...(config.defaultContentType !== undefined
-      ? { defaultContentType: config.defaultContentType }
-      : {}),
-    ...(config.keyPrefix !== undefined ? { keyPrefix: config.keyPrefix } : {}),
-  }
-}
-
-export function redactR2Config(config: R2Config): R2ConfigRedacted {
-  return redactConfigWithSchema(R2ConfigSchema, config) as unknown as R2ConfigRedacted
-}
+export const resolvedR2Endpoint = alias.resolvedEndpoint
+export const r2ToS3Config = alias.toS3Config
+export const redactR2Config = alias.redact
