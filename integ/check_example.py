@@ -37,6 +37,19 @@ Line matchers, in the order of preference an author should reach for:
 differs between the runs becomes a `re` with digit runs generalized, or
 a `volatile` when even that does not hold. Tighten a `volatile` by hand
 into an `re` whenever the line has a stable shape worth pinning.
+
+Both of those runs happen on ONE machine, so `--emit` sees run-to-run
+volatility and is blind to host-to-host volatility: a line that is
+stable on the author's Mac and different on CI's Ubuntu is emitted as a
+literal. Three classes of line have to be widened by hand after an
+emit, all of which reached CI as literals before this was written down:
+
+    a temp root      mkdtemp is /var/folders/... on macOS, /tmp on Linux
+    a checkout mtime actions/checkout stamps the repo files on clone
+    an env value     REDIS_URL is db 1 locally and db 0 on the runners
+
+The rule of thumb: a literal earns its place when the example itself
+determines it, and has to become an `re` when the machine does.
 """
 
 import argparse

@@ -38,7 +38,9 @@
     "  257  1370 15533 /data/example.json",
     "",
     "=== stat /data/example.json ===",
-    "name=example.json size=15533 modified=2026-08-17T03:59:32Z type=json",
+    {
+      "re": "name=example\\.json size=15533 modified=\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z type=json"
+    },
     "",
     "=== tree /data/ ===",
     "/data/",
@@ -134,7 +136,9 @@
     "example.jsonl",
     "example.orc",
     "example.parque…",
-    "  loaded (root=/var/folders/4d/s_lrmhbd7xb9jglnmy13sz_w…) ls: example.feather",
+    {
+      "re": "  loaded \\(root=[^)]+…\\) ls: example\\.feather"
+    },
     "example.h5",
     "example.json",
     "example.jsonl",

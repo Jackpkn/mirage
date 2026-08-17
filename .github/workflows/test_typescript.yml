@@ -92,12 +92,18 @@ jobs:
         run: pnpm test
 
       # Each truth file owns the command it was captured against, so this
-      # list is paths only and cannot drift from what is asserted.
+      # list is paths only and cannot drift from what is asserted. The
+      # runner keeps going after a failure and fails the step at the end,
+      # so one stale truth file reports every other one in the same run
+      # instead of hiding the examples listed below it.
       - name: Examples (output checked against integ/ truth files)
         env:
           REDIS_URL: redis://localhost:6379/0
         run: |
-          run() { python3 integ/check_example.py "$1" --variant typescript; }
+          bad=0
+          run() {
+            python3 integ/check_example.py "$1" --variant typescript || bad=1
+          }
           run integ/truth/typescript/ram.json
           run integ/truth/typescript/ram_vfs.json
           run integ/truth/typescript/disk.json
@@ -115,6 +121,7 @@ jobs:
           run integ/truth/typescript/redis_cache.json
           run integ/truth/typescript/redis_vfs.json
           run integ/truth/version_branching.json
+          exit $bad
 
   python-fs:
     needs: changes
