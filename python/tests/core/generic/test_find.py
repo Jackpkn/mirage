@@ -107,6 +107,34 @@ async def test_a_sizeless_file_counts_as_size_zero():
     assert await find(object(), ROOT, max_size=0) == ["/", "/unsized"]
 
 
+@pytest.mark.asyncio
+async def test_empty_reads_a_directory_off_the_walked_list():
+    # The whole subtree came from one walk, so a directory is empty
+    # exactly when no other walked key sits under it -- no extra readdir.
+    ops = Ops(keys=["/", "/guides", "/api", "/api/reference"])
+    find = build(ops)
+    assert await find(object(), ROOT, empty=True) == ["/guides"]
+
+
+@pytest.mark.asyncio
+async def test_empty_keeps_a_zero_length_file():
+    ops = Ops(keys=["/", "/api", "/api/reference", "/unsized"])
+    find = build(ops)
+    assert await find(object(), ROOT, empty=True) == ["/unsized"]
+
+
+@pytest.mark.asyncio
+async def test_empty_forces_the_kind_lookup_it_branches_on():
+    # -empty asks a different question of directories than of files, so
+    # it has to force the kind lookup the way -type does. Without that
+    # every entry reads as a file and a childless directory gets judged
+    # by a size it does not have.
+    ops = Ops(keys=["/", "/guides", "/api", "/api/reference"])
+    find = build(ops)
+    await find(object(), ROOT, empty=True)
+    assert ops.resolve_calls == 4
+
+
 @pytest.mark.parametrize("item,root,expected", [
     ("/", "/", 0),
     ("/guides", "/", 1),

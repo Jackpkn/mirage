@@ -264,6 +264,7 @@ async function searchMatches<A>(
   tree: PredNode,
   needsKind: boolean,
   startName: string,
+  allItems: readonly string[],
 ): Promise<boolean> {
   const rootNorm = rstripSlash(root) !== '' ? rstripSlash(root) : '/'
   const itemNorm = rstripSlash(item) !== '' ? rstripSlash(item) : '/'
@@ -274,18 +275,34 @@ async function searchMatches<A>(
     const resolved = await deps.resolvePath(accessor, spec, index)
     kind = resolved.isDir ? 'd' : 'f'
   }
+  let itemStat: FileStat | null = null
+  // -empty answers off the walked list, not a readdir: the whole subtree
+  // arrived in one `walk`, so a directory is empty exactly when no other
+  // walked key sits under it. `walkFind` has to ask readdir instead,
+  // because it drives its own traversal.
+  let isEmpty: boolean | null = null
+  if (treeHasEmpty(tree)) {
+    if (kind === 'd') {
+      const childPrefix = rstripSlash(item) + '/'
+      isEmpty = !allItems.some((other) => other !== item && other.startsWith(childPrefix))
+    } else {
+      itemStat = await deps.stat(accessor, spec, index)
+      isEmpty = (itemStat.size ?? 0) === 0
+    }
+  }
   const entry: FindEntry = {
     key: item,
     name: itemName,
     kind,
     depth: searchRelativeDepth(item, root),
+    isEmpty,
   }
   if (!keep(entry, tree, options.minDepth)) return false
   // Directories count as size 0 for -size (deliberate GNU divergence).
   if (options.minSize != null || options.maxSize != null) {
     let size = 0
     if (kind === 'f') {
-      const itemStat = await deps.stat(accessor, spec, index)
+      itemStat ??= await deps.stat(accessor, spec, index)
       // Sizeless rendered files count as size 0, same as dirs and the FUSE
       // view (CLAUDE.md find -size rules); never drop them.
       size = itemStat.size ?? 0
@@ -294,7 +311,7 @@ async function searchMatches<A>(
     if (options.maxSize != null && size > options.maxSize) return false
   }
   if (options.mtimeMin != null || options.mtimeMax != null) {
-    const itemStat = await deps.stat(accessor, spec, index)
+    itemStat ??= await deps.stat(accessor, spec, index)
     const modTs = modifiedTs(itemStat.modified)
     if (modTs === null) return false
     if (options.mtimeMin != null && modTs < options.mtimeMin) return false
@@ -339,8 +356,10 @@ export function makeSearchBackedFind<A>(
         type: options.type,
         nameExclude: options.nameExclude,
         orNames: options.orNames,
+        empty: options.empty,
       })
-    const needsKind = treeHasType(tree) || options.minSize != null || options.maxSize != null
+    const needsKind =
+      treeHasType(tree) || options.minSize != null || options.maxSize != null || treeHasEmpty(tree)
     const startName = startBasename(path.virtual)
     const filtered: string[] = []
     for (const item of results) {
@@ -356,6 +375,7 @@ export function makeSearchBackedFind<A>(
           tree,
           needsKind,
           startName,
+          results,
         )
       ) {
         filtered.push(item)
