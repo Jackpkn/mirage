@@ -48,6 +48,7 @@
       "nanoid@>=3.0.0 <3.3.18": ">=3.3.18 <4",
       "find-my-way@<=9.6.0": ">=9.7.0 <10",
       "postcss@<=8.5.17": ">=8.5.18 <9",
+      "deepmerge-ts@<8.0.0": ">=8.0.0 <9",
       "@deepseek-ai/dsh-invariants": "0.1.0-rc.6",
       "@deepseek-ai/dsh-llm": "0.1.0-rc.6",
       "@deepseek-ai/dsh-sandbox": "0.1.0-rc.6",
