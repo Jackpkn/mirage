@@ -1,6 +1,4 @@
-from typing import Any
-
-import httpx
+import aiohttp
 
 from mirage.accessor.base import Accessor
 from mirage.concurrency import ConcurrencyLimiter
@@ -11,25 +9,18 @@ class DifyAccessor(Accessor):
 
     def __init__(self, config: DifyConfig) -> None:
         self.config = config
-        self._client: httpx.AsyncClient | None = None
+        self._session: aiohttp.ClientSession | None = None
         self._request_limiter = ConcurrencyLimiter(config.max_concurrency)
 
-    def get_client(self) -> httpx.AsyncClient:
-        if self._client is None:
-            self._client = httpx.AsyncClient(
-                base_url=self.config.base_url,
-                headers={"Authorization": f"Bearer {self.config.api_key}"},
-                timeout=self.config.request_timeout,
-            )
-        return self._client
-
-    async def request(self, method: str, endpoint: str,
-                      **kwargs: Any) -> httpx.Response:
-        async with self._request_limiter.acquire():
-            return await self.get_client().request(method, endpoint, **kwargs)
+    def get_session(self) -> aiohttp.ClientSession:
+        if self._session is None:
+            self._session = aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(
+                    total=self.config.request_timeout))
+        return self._session
 
     async def close(self) -> None:
-        if self._client is None:
+        if self._session is None:
             return
-        await self._client.aclose()
-        self._client = None
+        await self._session.close()
+        self._session = None

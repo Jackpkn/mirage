@@ -1,0 +1,32 @@
+{
+  "runs": {
+    "typescript": {
+      "command": [
+        "pnpm",
+        "-C",
+        "examples/typescript",
+        "exec",
+        "tsx",
+        "pyodide/script.ts"
+      ]
+    }
+  },
+  "exit": 0,
+  "lines": [
+    "python3 script file (read from mount) + piped stdin",
+    "",
+    "=== python3 /disk/scripts/summarize.py < stdin (from pipe) ===",
+    "count: 4",
+    "keys:  ['ts', 'type', 'user']",
+    "  - {\"type\": \"login\", \"user\": \"alice\", \"ts\": 1}",
+    "  - {\"type\": \"click\", \"user\": \"alice\", \"ts\": 2}",
+    "  - {\"type\": \"login\", \"user\": \"bob\", \"ts\": 3}",
+    "exit: 0",
+    "",
+    "=== same pipeline with inline -c (one-line style) ===",
+    "alice -> login",
+    "alice -> click",
+    "exit: 0",
+    ""
+  ]
+}

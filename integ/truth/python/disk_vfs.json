@@ -1,0 +1,39 @@
+{
+  "runs": {
+    "python": {
+      "command": [
+        "./python/.venv/bin/python",
+        "examples/python/disk/disk_vfs.py"
+      ]
+    }
+  },
+  "exit": 0,
+  "lines": [
+    "=== VFS MODE ===",
+    "",
+    "--- os.listdir() ---",
+    "  example.feather",
+    "  example.h5",
+    "  example.json",
+    "  example.jsonl",
+    "  example.orc",
+    "  example.parquet",
+    "  example.pdf",
+    "  example.xlsx",
+    "",
+    "--- open() + read ---",
+    {
+      "count": 257,
+      "sha256": "76cf43182cacf906001ecaebd1c31a7a59dc8c44c50cbf61c87be376f752e50a"
+    },
+    "",
+    "--- os.path.exists() ---",
+    "  example.json: True",
+    "  nope.txt: False",
+    "",
+    "--- os.path.isdir() ---",
+    "  /data: True",
+    "",
+    "Stats: 4 ops, 15533 bytes transferred"
+  ]
+}

@@ -13,19 +13,22 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import asyncio
-from typing import Any
+import json
+from collections.abc import AsyncIterator
+from functools import partial
+from typing import Any, Literal
 from urllib.parse import quote
 
 import aiohttp
 
+from mirage.core.api.client import RetryPolicy, api_request, header_delay
 from mirage.core.msgraph.config import MsGraphConfig
+from mirage.core.msgraph.constants import MAX_BACKOFF, RETRY_STATUSES
 from mirage.resource.secrets import reveal_secret
 from mirage.types import PathSpec
 from mirage.utils.key_prefix import mount_prefix_of
-from mirage.utils.ranges import ByteWindow, range_header, window_of
+from mirage.utils.ranges import ByteWindow
 
-RETRY_STATUSES = {429, 503, 504}
-MAX_BACKOFF = 30.0
 # The characters `encodeURIComponent` leaves alone that `quote` would
 # escape. Keeping the two spellings identical matters beyond neatness:
 # a drive id is almost always `b!<base64url>`, and the ref paths built
@@ -68,7 +71,8 @@ class GraphError(RuntimeError):
 def _resolve_token(config: MsGraphConfig) -> str:
     token = config.access_token
     resolved = token() if callable(token) else token
-    return reveal_secret(resolved)
+    revealed: str = reveal_secret(resolved)
+    return revealed
 
 
 def headers(config: MsGraphConfig) -> dict[str, str]:
@@ -86,44 +90,32 @@ def new_session(config: MsGraphConfig) -> aiohttp.ClientSession:
     return aiohttp.ClientSession(timeout=_timeout(config))
 
 
-async def _raise_for_status(method: str, url: str,
-                            resp: aiohttp.ClientResponse) -> None:
-    if resp.status < 400:
-        return
+def _policy(config: MsGraphConfig) -> RetryPolicy:
+    return RetryPolicy(statuses=RETRY_STATUSES,
+                       max_retries=config.max_retries,
+                       max_backoff=MAX_BACKOFF)
+
+
+def _error_of(resp: aiohttp.ClientResponse, text: str, *, method: str,
+              url: str) -> Exception:
     try:
-        data = await resp.json()
+        data = json.loads(text)
         err = data.get("error", {}) if isinstance(data, dict) else {}
-    except (aiohttp.ContentTypeError, ValueError):
+    except ValueError:
         err = {}
-    raise GraphError(resp.status, err.get("code", "unknownError"),
-                     err.get("message", f"{method} {url}"))
+    return GraphError(resp.status, err.get("code", "unknownError"),
+                      err.get("message", f"{method} {url}"))
 
 
-def _retry_delay(resp: aiohttp.ClientResponse, attempt: int) -> float:
-    retry_after = resp.headers.get("Retry-After")
-    if retry_after:
-        try:
-            return float(retry_after)
-        except ValueError:
-            # malformed Retry-After header: fall back to exponential backoff
-            pass
-    return min(2.0**attempt, MAX_BACKOFF)
-
-
-def _should_retry(status: int, attempt: int, config: MsGraphConfig) -> bool:
-    return status in RETRY_STATUSES and attempt < config.max_retries
-
-
-async def _retry_action(resp: aiohttp.ClientResponse, attempt: int,
-                        refreshed: bool, config: MsGraphConfig,
-                        auth: bool) -> str:
-    if _should_retry(resp.status, attempt, config):
-        await asyncio.sleep(_retry_delay(resp, attempt))
-        return "retry"
-    if (resp.status == 401 and auth and not refreshed
-            and callable(config.access_token)):
-        return "refresh"
-    return "ok"
+def _lenient_json(text: str) -> Any:
+    # Graph answers 204 and the odd empty 200 for calls that worked; the
+    # caller gets an empty object rather than a parse error.
+    if not text:
+        return {}
+    try:
+        return json.loads(text)
+    except ValueError:
+        return {}
 
 
 async def _request(config: MsGraphConfig,
@@ -136,48 +128,39 @@ async def _request(config: MsGraphConfig,
                    data: bytes | None = None,
                    extra_headers: dict[str, Any] | None = None,
                    auth: bool = True,
-                   read: str = "json",
-                   window: ByteWindow | None = None):
-    own = session is None
-    sess = (session if session is not None else aiohttp.ClientSession(
-        timeout=_timeout(config)))
-    try:
-        attempt = 0
-        refreshed = False
-        while True:
-            hdrs = headers(config) if auth else {}
-            if extra_headers:
-                hdrs.update(extra_headers)
-            async with sess.request(method,
-                                    url,
-                                    headers=hdrs,
-                                    params=params,
-                                    json=json_body,
-                                    data=data) as resp:
-                action = await _retry_action(resp, attempt, refreshed, config,
-                                             auth)
-                if action == "retry":
-                    attempt += 1
-                    continue
-                if action == "refresh":
-                    refreshed = True
-                    continue
-                await _raise_for_status(method, url, resp)
-                if read == "bytes":
-                    return window_of(await resp.read(), resp.status, window)
-                if read == "none":
-                    return None
-                if read == "location":
-                    return resp.headers.get("Location")
-                if resp.status == 204 or resp.content_length == 0:
-                    return {}
-                try:
-                    return await resp.json()
-                except (aiohttp.ContentTypeError, ValueError):
-                    return {}
-    finally:
-        if own:
-            await sess.close()
+                   read: Literal["json", "bytes", "none", "location"] = "json",
+                   window: ByteWindow | None = None) -> Any:
+    refreshed = False
+    while True:
+        hdrs = headers(config) if auth else {}
+        if extra_headers:
+            hdrs.update(extra_headers)
+        try:
+            result = await api_request(
+                method,
+                url,
+                error_of=partial(_error_of, method=method, url=url),
+                headers=hdrs,
+                params=params,
+                json_body=json_body,
+                data=data,
+                retry=_policy(config),
+                read="text" if read == "json" else read,
+                window=window,
+                session=session,
+                timeout=None if session is not None else _timeout(config),
+            )
+        except GraphError as err:
+            # a 401 under a token provider means the token aged out
+            # mid-flight: mint a fresh one and replay the call once
+            if (err.status == 401 and auth and not refreshed
+                    and callable(config.access_token)):
+                refreshed = True
+                continue
+            raise
+        if read == "json":
+            return _lenient_json(result)
+        return result
 
 
 async def graph_get(
@@ -185,7 +168,12 @@ async def graph_get(
         url: str,
         params: dict[str, Any] | None = None,
         session: aiohttp.ClientSession | None = None) -> dict[str, Any]:
-    return await _request(config, "GET", url, params=params, session=session)
+    data: dict[str, Any] = await _request(config,
+                                          "GET",
+                                          url,
+                                          params=params,
+                                          session=session)
+    return data
 
 
 async def graph_list(
@@ -197,8 +185,7 @@ async def graph_list(
     next_url: str | None = url
     next_params = params
     own = session is None
-    sess = (session if session is not None else aiohttp.ClientSession(
-        timeout=_timeout(config)))
+    sess = session if session is not None else new_session(config)
     try:
         while next_url:
             data = await _request(config,
@@ -220,42 +207,46 @@ async def graph_get_bytes(config: MsGraphConfig,
                           window: ByteWindow | None = None,
                           session: aiohttp.ClientSession | None = None,
                           auth: bool = True) -> bytes:
-    header = None if window is None else range_header(window.offset,
-                                                      window.size)
-    extra = {"Range": header} if header else None
-    return await _request(config,
-                          "GET",
-                          url,
-                          extra_headers=extra,
-                          session=session,
-                          auth=auth,
-                          read="bytes",
-                          window=window)
+    data: bytes = await _request(config,
+                                 "GET",
+                                 url,
+                                 session=session,
+                                 auth=auth,
+                                 read="bytes",
+                                 window=window)
+    return data
 
 
 async def graph_stream(config: MsGraphConfig,
                        url: str,
                        chunk_size: int = 8192,
                        session: aiohttp.ClientSession | None = None,
-                       auth: bool = True):
+                       auth: bool = True) -> AsyncIterator[bytes]:
+    # A chunked generator cannot ride api_request: the body outlives the
+    # call, so the response must stay open while the caller consumes it.
     own = session is None
-    sess = (session if session is not None else aiohttp.ClientSession(
-        timeout=_timeout(config)))
+    sess = session if session is not None else new_session(config)
     try:
         attempt = 0
         refreshed = False
         while True:
             hdrs = headers(config) if auth else {}
             async with sess.get(url, headers=hdrs) as resp:
-                action = await _retry_action(resp, attempt, refreshed, config,
-                                             auth)
-                if action == "retry":
+                if (resp.status in RETRY_STATUSES
+                        and attempt < config.max_retries):
+                    await asyncio.sleep(
+                        header_delay(resp, attempt, _policy(config)))
                     attempt += 1
                     continue
-                if action == "refresh":
+                if (resp.status == 401 and auth and not refreshed
+                        and callable(config.access_token)):
                     refreshed = True
                     continue
-                await _raise_for_status("GET", url, resp)
+                if resp.status >= 400:
+                    raise _error_of(resp,
+                                    await resp.text(),
+                                    method="GET",
+                                    url=url)
                 async for chunk in resp.content.iter_chunked(chunk_size):
                     yield chunk
                 return
@@ -269,11 +260,12 @@ async def graph_post(
         url: str,
         body: dict[str, Any] | None = None,
         session: aiohttp.ClientSession | None = None) -> dict[str, Any]:
-    return await _request(config,
-                          "POST",
-                          url,
-                          json_body=body or {},
-                          session=session)
+    data: dict[str, Any] = await _request(config,
+                                          "POST",
+                                          url,
+                                          json_body=body or {},
+                                          session=session)
+    return data
 
 
 async def graph_post_monitor(
@@ -298,11 +290,12 @@ async def graph_patch(
         url: str,
         body: dict[str, Any],
         session: aiohttp.ClientSession | None = None) -> dict[str, Any]:
-    return await _request(config,
-                          "PATCH",
-                          url,
-                          json_body=body,
-                          session=session)
+    data: dict[str, Any] = await _request(config,
+                                          "PATCH",
+                                          url,
+                                          json_body=body,
+                                          session=session)
+    return data
 
 
 async def graph_delete(config: MsGraphConfig,
@@ -317,24 +310,33 @@ async def graph_put_bytes(
         data: bytes,
         content_type: str = "application/octet-stream",
         session: aiohttp.ClientSession | None = None) -> dict[str, Any]:
-    return await _request(config,
-                          "PUT",
-                          url,
-                          data=data,
-                          extra_headers={"Content-Type": content_type},
-                          session=session)
+    payload: dict[str, Any] = await _request(
+        config,
+        "PUT",
+        url,
+        data=data,
+        extra_headers={"Content-Type": content_type},
+        session=session)
+    return payload
+
+
+def _monitor_error(resp: aiohttp.ClientResponse, text: str, *,
+                   url: str) -> Exception:
+    return GraphError(resp.status, "monitorError", f"GET {url}")
 
 
 async def poll_monitor(url: str,
                        timeout: float,
                        interval: float = 1.0) -> dict[str, Any]:
     waited = 0.0
-    async with aiohttp.ClientSession() as session:
+    session = aiohttp.ClientSession()
+    try:
         while True:
-            async with session.get(url) as resp:
-                if resp.status >= 400:
-                    raise GraphError(resp.status, "monitorError", f"GET {url}")
-                payload = await resp.json()
+            payload = await api_request("GET",
+                                        url,
+                                        error_of=partial(_monitor_error,
+                                                         url=url),
+                                        session=session)
             if not isinstance(payload, dict):
                 raise GraphError(502, "invalidMonitorResponse",
                                  f"GET {url} did not return an object")
@@ -348,25 +350,23 @@ async def poll_monitor(url: str,
                 return payload
             await asyncio.sleep(interval)
             waited += interval
+    finally:
+        await session.close()
 
 
 async def upload_chunk(config: MsGraphConfig, upload_url: str, data: bytes,
                        start: int, total: int) -> dict[str, Any]:
     end = start + len(data) - 1
     hdrs = {"Content-Range": f"bytes {start}-{end}/{total}"}
-    async with aiohttp.ClientSession(timeout=_timeout(config)) as session:
-        attempt = 0
-        while True:
-            async with session.put(upload_url, headers=hdrs,
-                                   data=data) as resp:
-                if _should_retry(resp.status, attempt, config):
-                    await asyncio.sleep(_retry_delay(resp, attempt))
-                    attempt += 1
-                    continue
-                await _raise_for_status("PUT", upload_url, resp)
-                if resp.status == 204 or resp.content_length == 0:
-                    return {}
-                try:
-                    return await resp.json()
-                except (aiohttp.ContentTypeError, ValueError):
-                    return {}
+    text = await api_request("PUT",
+                             upload_url,
+                             error_of=partial(_error_of,
+                                              method="PUT",
+                                              url=upload_url),
+                             headers=hdrs,
+                             data=data,
+                             retry=_policy(config),
+                             read="text",
+                             timeout=_timeout(config))
+    payload: dict[str, Any] = _lenient_json(text)
+    return payload

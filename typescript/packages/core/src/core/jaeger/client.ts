@@ -12,6 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import { apiRequest } from '../api/client.ts'
 import { rstripSlash } from '../../utils/slash.ts'
 
 const TRACE_ID_RE = /^[0-9a-f]{16}$|^[0-9a-f]{32}$/i
@@ -79,6 +80,19 @@ function errorMessage(body: unknown, status: number): string {
   return `Jaeger API error: HTTP ${String(status)}`
 }
 
+// The parse comes before the status check, so a non-JSON error body reports
+// as invalid JSON rather than a bare status, matching the old transport.
+function jaegerError(response: Response, text: string): JaegerApiError {
+  let body: unknown
+  try {
+    body = JSON.parse(text)
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    return new JaegerApiError(`Jaeger API: invalid JSON: ${msg}`, response.status)
+  }
+  return new JaegerApiError(errorMessage(body, response.status), response.status)
+}
+
 export class HttpJaegerTransport implements JaegerTransport {
   protected readonly fetch: typeof fetch = globalThis.fetch.bind(globalThis)
   private readonly host: string
@@ -95,20 +109,19 @@ export class HttpJaegerTransport implements JaegerTransport {
   ): Promise<unknown> {
     // Without a deadline a stalled Jaeger endpoint hangs the command forever;
     // python gets this from the httpx timeout.
-    const res = await this.fetch(buildUrl(this.host, path, query), {
-      method: 'GET',
+    const text = (await apiRequest('GET', buildUrl(this.host, path, query), {
+      fetchFn: this.fetch,
       headers: { Accept: 'application/json' },
-      signal: AbortSignal.timeout(this.timeoutSeconds * 1000),
-    })
-    let body: unknown
+      timeoutSeconds: this.timeoutSeconds,
+      read: 'text',
+      errorOf: jaegerError,
+    })) as string
     try {
-      body = await res.json()
+      return JSON.parse(text) as unknown
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
-      throw new JaegerApiError(`Jaeger API: invalid JSON: ${msg}`, res.status)
+      throw new JaegerApiError(`Jaeger API: invalid JSON: ${msg}`)
     }
-    if (res.status >= 400) throw new JaegerApiError(errorMessage(body, res.status), res.status)
-    return body
   }
 }
 

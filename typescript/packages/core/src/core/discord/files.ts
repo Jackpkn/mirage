@@ -12,8 +12,9 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import { apiRequest } from '../api/client.ts'
 import { pathSafeName } from '../../utils/sanitize.ts'
-import { rangeHeader, windowIfUnranged } from '../../utils/ranges.ts'
+import { windowFor } from '../../utils/ranges.ts'
 
 export interface DiscordAttachment {
   id: string
@@ -37,21 +38,24 @@ export function fileBlobName(att: DiscordAttachment): string {
   return `${pathSafeName(rawName)}__${aid}`
 }
 
-// Takes the window rather than a prepared header so the answer can be checked
+function downloadError(response: Response): Error {
+  return new Error(
+    `discord download_file failed: ${String(response.status)} ${response.statusText}`,
+  )
+}
+
+// Passes the window rather than a prepared header so the answer can be checked
 // against it: a CDN is free to ignore Range and reply 200 with the whole file,
-// which windowIfUnranged then trims.
+// which apiRequest's byte reader then trims.
 export async function downloadFile(
   url: string,
   offset = 0,
   size: number | null = null,
 ): Promise<Uint8Array> {
-  const headers: Record<string, string> = {}
-  const window = rangeHeader(offset, size)
-  if (window !== null) headers.Range = window
-  const resp = await globalThis.fetch(url, { method: 'GET', headers })
-  if (!resp.ok) {
-    throw new Error(`discord download_file failed: ${String(resp.status)} ${resp.statusText}`)
-  }
-  const data = new Uint8Array(await resp.arrayBuffer())
-  return windowIfUnranged(data, resp.status, offset, size)
+  const window = windowFor(offset, size)
+  return (await apiRequest('GET', url, {
+    errorOf: downloadError,
+    read: 'bytes',
+    ...(window !== undefined ? { window } : {}),
+  })) as Uint8Array
 }

@@ -13,7 +13,8 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { BOX_TOKEN_URL, BoxTokenManager, boxGetBytes } from './client.ts'
+import { BoxTokenManager, boxGetBytes } from './client.ts'
+import { BOX_TOKEN_URL } from './constants.ts'
 import type { ByteWindow } from '../../utils/ranges.ts'
 
 const CCG_CONFIG = { clientId: 'cid', clientSecret: 'csec', enterpriseId: '123456' }

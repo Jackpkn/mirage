@@ -45,7 +45,7 @@ describe('HttpSlackTransport', () => {
     let observedUrl = ''
     let observedMethod = ''
     const fakeFetch: typeof fetch = (url, init) => {
-      observedUrl = (url as URL).href
+      observedUrl = url instanceof URL ? url.toString() : typeof url === 'string' ? url : url.url
       observedMethod = init?.method ?? 'GET'
       return Promise.resolve(jsonResponse({ ok: true, members: [] }))
     }

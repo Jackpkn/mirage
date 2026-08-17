@@ -13,6 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import type { PathSpec } from '../../types.ts'
+import { apiRequest } from '../api/client.ts'
 import { enoent } from '../../utils/errors.ts'
 import { rstripSlash } from '../../utils/slash.ts'
 
@@ -77,6 +78,24 @@ function buildUrl(
   return `${trimmed}${cleanPath}${qs}`
 }
 
+// The parse comes before the status check, so a non-JSON error body reports
+// as invalid JSON rather than a bare status, matching the old transport. The
+// status must land on the error either way: fetchOrEnoent keys on it.
+function langfuseError(response: Response, text: string): LangfuseApiError {
+  let body: unknown
+  try {
+    body = JSON.parse(text)
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    return new LangfuseApiError(`Langfuse API: invalid JSON: ${msg}`, [], response.status)
+  }
+  const message =
+    body !== null && typeof body === 'object' && 'message' in body
+      ? String((body as Record<string, unknown>).message)
+      : `Langfuse API error: HTTP ${String(response.status)}`
+  return new LangfuseApiError(message, [], response.status)
+}
+
 export class HttpLangfuseTransport implements LangfuseTransport {
   protected readonly fetch: typeof fetch = globalThis.fetch.bind(globalThis)
   private readonly host: string
@@ -91,29 +110,21 @@ export class HttpLangfuseTransport implements LangfuseTransport {
     path: string,
     query: Record<string, string | number | undefined> = {},
   ): Promise<unknown> {
-    const url = buildUrl(this.host, path, query)
-    const res = await this.fetch(url, {
-      method: 'GET',
+    const text = (await apiRequest('GET', buildUrl(this.host, path, query), {
+      fetchFn: this.fetch,
       headers: {
         Authorization: `Basic ${this.auth}`,
         Accept: 'application/json',
       },
-    })
-    let body: unknown
+      read: 'text',
+      errorOf: langfuseError,
+    })) as string
     try {
-      body = await res.json()
+      return JSON.parse(text) as unknown
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
-      throw new LangfuseApiError(`Langfuse API: invalid JSON: ${msg}`, [], res.status)
+      throw new LangfuseApiError(`Langfuse API: invalid JSON: ${msg}`)
     }
-    if (res.status >= 400) {
-      const message =
-        body !== null && typeof body === 'object' && 'message' in body
-          ? String((body as Record<string, unknown>).message)
-          : `Langfuse API error: HTTP ${String(res.status)}`
-      throw new LangfuseApiError(message, [], res.status)
-    }
-    return body
   }
 }
 

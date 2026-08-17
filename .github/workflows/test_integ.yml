@@ -56,7 +56,6 @@ jobs:
               - 'integ/targets.json'
               - 'integ/runners/**'
               - 'integ/resources/chroma/**'
-              - 'integ/check_lines.sh'
               - 'python/mirage/accessor/mongodb.py'
               - 'python/mirage/core/mongodb/**'
               - 'python/mirage/commands/builtin/mongodb/**'
@@ -107,7 +106,6 @@ jobs:
             fuse:
               - 'integ/fuse/**'
               - 'integ/check_json.py'
-              - 'integ/check_lines.sh'
               - 'integ/package.json'
               - 'python/mirage/fuse/**'
               - 'python/mirage/workspace/fuse.py'
@@ -152,10 +150,10 @@ jobs:
 
       # Snapshot roundtrip and out-of-band-delete GC only: the per-command
       # metadata cases live in integ/unix/meta{,_overlay} now.
-      - name: Run metadata snapshot/GC scenarios and diff against truth
+      - name: Run metadata snapshot/GC scenarios and check against truth
         run: |
-          ./python/.venv/bin/python integ/metadata.py > /tmp/metadata.out
-          diff integ/truth_metadata.txt /tmp/metadata.out
+          ./python/.venv/bin/python integ/metadata.py 2>&1 \
+            | ./python/.venv/bin/python integ/check_json.py integ/truth_metadata.json
 
       - name: Run lancedb integ (embedded, JSON harness)
         env:
@@ -287,11 +285,11 @@ jobs:
 
       # Snapshot roundtrip and out-of-band-delete GC only: the per-command
       # metadata cases live in integ/unix/meta{,_overlay} now.
-      - name: Run metadata snapshot/GC scenarios and diff against truth
+      # check_json.py is stdlib-only, so the runner's preinstalled python3
+      # serves it; this job sets up no venv of its own.
+      - name: Run metadata snapshot/GC scenarios and check against truth
         working-directory: integ
-        run: |
-          pnpm exec tsx metadata.ts > /tmp/ts-metadata.out
-          diff truth_metadata.txt /tmp/ts-metadata.out
+        run: pnpm exec tsx metadata.ts 2>&1 | python3 check_json.py truth_metadata.json
 
       - name: Run cross-mount commands (ram -> ram/s3 via MinIO)
         working-directory: integ

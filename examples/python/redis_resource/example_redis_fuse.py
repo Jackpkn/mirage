@@ -18,7 +18,7 @@ import os
 from mirage import Mount, MountBackend, MountMode, Workspace
 from mirage.resource.redis import RedisResource
 
-REDIS_URL = "redis://localhost:6379/0"
+REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
 KEY_PREFIX = "mirage:fs:"
 
 

@@ -17,8 +17,7 @@ from urllib.parse import quote
 
 from mirage.accessor.onedrive import OneDriveConfig
 # yapf: disable
-from mirage.core.msgraph.client import (MAX_BACKOFF, RETRY_STATUSES,
-                                        GraphError, graph_delete, graph_get,
+from mirage.core.msgraph.client import (GraphError, graph_delete, graph_get,
                                         graph_get_bytes, graph_list,
                                         graph_patch, graph_post,
                                         graph_post_monitor, graph_put_bytes,
@@ -27,6 +26,7 @@ from mirage.core.msgraph.client import (MAX_BACKOFF, RETRY_STATUSES,
                                         upload_chunk)
 # yapf: enable
 from mirage.core.msgraph.config import graph_api
+from mirage.core.msgraph.constants import MAX_BACKOFF, RETRY_STATUSES
 from mirage.core.msgraph.drive_ops import DriveLoc
 from mirage.types import PathSpec
 from mirage.utils.key_prefix import mount_prefix_of

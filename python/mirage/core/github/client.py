@@ -18,11 +18,10 @@ from typing import Any
 import aiohttp
 from pydantic import SecretStr
 
+from mirage.core.api.client import api_request, status_error
+from mirage.core.github.constants import API_BASE, API_VERSION
 from mirage.resource.secrets import reveal_secret
 from mirage.types import JsonValue
-
-API_BASE = "https://api.github.com"
-API_VERSION = "2022-11-28"
 
 
 def github_headers(token: SecretStr) -> dict[str, str]:
@@ -57,11 +56,12 @@ async def github_get(token: SecretStr,
                      base_url: str | None = None,
                      **kwargs: str) -> dict[str, Any]:
     url = github_url(path, base_url, **kwargs)
-    headers = github_headers(token)
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url, headers=headers, params=params) as resp:
-            resp.raise_for_status()
-            return await resp.json()
+    data: dict[str, Any] = await api_request("GET",
+                                             url,
+                                             error_of=status_error,
+                                             headers=github_headers(token),
+                                             params=params)
+    return data
 
 
 async def github_request(token: SecretStr,
@@ -94,22 +94,17 @@ async def github_request(token: SecretStr,
         GitHubApiError: the call answered with a non-2xx status.
     """
     url = (base_url or API_BASE) + path
-    headers = github_headers(token)
-    async with aiohttp.ClientSession() as session:
-        async with session.request(method.upper(),
-                                   url,
-                                   headers=headers,
-                                   params=params,
-                                   json=body) as resp:
-            text = await resp.text()
-            if resp.status >= 400:
-                raise GitHubApiError(_api_message(text, resp.reason),
-                                     resp.status)
-            # 204 and an empty 202 have no body to decode; the caller gets
-            # None rather than a parse error on a call that worked.
-            if not text:
-                return None
-            return json.loads(text)
+    data: JsonValue = await api_request(method.upper(),
+                                        url,
+                                        error_of=_error_of,
+                                        headers=github_headers(token),
+                                        params=params,
+                                        json_body=body)
+    return data
+
+
+def _error_of(resp: aiohttp.ClientResponse, text: str) -> Exception:
+    return GitHubApiError(_api_message(text, resp.reason), resp.status)
 
 
 def _api_message(text: str, reason: str | None) -> str:
@@ -126,6 +121,8 @@ def _api_message(text: str, reason: str | None) -> str:
         payload = json.loads(text)
     except ValueError:
         return reason or text
-    if isinstance(payload, dict) and isinstance(payload.get("message"), str):
-        return payload["message"]
+    if isinstance(payload, dict):
+        message = payload.get("message")
+        if isinstance(message, str):
+            return message
     return reason or text

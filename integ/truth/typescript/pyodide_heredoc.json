@@ -1,0 +1,42 @@
+{
+  "runs": {
+    "typescript": {
+      "command": [
+        "pnpm",
+        "-C",
+        "examples/typescript",
+        "exec",
+        "tsx",
+        "pyodide/heredoc.ts"
+      ]
+    }
+  },
+  "exit": 0,
+  "lines": [
+    "python3 heredoc patterns (commonly emitted by AI agents)",
+    "",
+    "=== python3 << 'PYEOF' — quoted delimiter, $X stays literal ===",
+    "stdout: $X  (expected: '$X')",
+    "",
+    "=== python3 << PYEOF — unquoted delimiter, $X expanded by shell ===",
+    "stdout: shellval  (expected: 'shellval')",
+    "",
+    "=== python3 <<-PYEOF — dash strips leading tabs ===",
+    "stdout:",
+    "item-0",
+    "item-1",
+    "item-2",
+    "",
+    "=== python3 << EOF | grep keep — heredoc feeding a pipeline ===",
+    "stdout:",
+    "keep 1",
+    "keep 3",
+    "",
+    "=== heredoc inside for-loop — body re-fires per iteration ===",
+    "stdout:",
+    "hello, alice!",
+    "hello, bob!",
+    "hello, carol!",
+    ""
+  ]
+}

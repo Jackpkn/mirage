@@ -288,10 +288,56 @@ run_host() {
 
   $cli daemon stop >/dev/null 2>&1 </dev/null || true
   sleep 1
+
+  # Each host runs in its own subshell, so its tally has to leave through
+  # the filesystem: a subshell's variables die with it.
+  printf '%s %s %s\n' "$pass" "$fail" "$skipped" > "$RESULT_DIR/$host.tally"
+  : > "$RESULT_DIR/$host.failures"
+  for line in "${failures[@]:-}"; do
+    [ -n "$line" ] && printf '%s\n' "$line" >> "$RESULT_DIR/$host.failures"
+  done
 }
 
-run_host "$PY_CLI" "python" 8791
-run_host "$TS_CLI" "typescript" 8792
+# The two hosts are independent: separate daemon ports, a MIRAGE_HOME each,
+# and only ram mounts reach the CLI (see cli_expressible), so they share no
+# store. The docker suite is the one thing they do share, and its cases are
+# stateless execs (echo, exit, wc, uname) rather than writes, so two
+# `docker exec` sessions in the one container cannot collide. Running them
+# together halves the longest step in the integ workflow.
+RESULT_DIR="$(mktemp -d "/tmp/rt-cli-results.XXXXXX")"
+
+(run_host "$PY_CLI" "python" 8791) > "$RESULT_DIR/python.log" 2>&1 &
+py_pid=$!
+(run_host "$TS_CLI" "typescript" 8792) > "$RESULT_DIR/typescript.log" 2>&1 &
+ts_pid=$!
+wait "$py_pid"
+wait "$ts_pid"
+
+# Printed per host rather than interleaved, which is what makes a failure
+# readable: the two hosts would otherwise write over each other's lines.
+for host in python typescript; do
+  echo "=== $host ==="
+  cat "$RESULT_DIR/$host.log"
+done
+
+pass=0
+fail=0
+skipped=0
+failures=()
+for host in python typescript; do
+  if [ ! -s "$RESULT_DIR/$host.tally" ]; then
+    failures+=("$host: no tally written (the host died before finishing)")
+    fail=$((fail + 1))
+    continue
+  fi
+  read -r host_pass host_fail host_skipped < "$RESULT_DIR/$host.tally"
+  pass=$((pass + host_pass))
+  fail=$((fail + host_fail))
+  skipped=$((skipped + host_skipped))
+  while IFS= read -r line; do
+    [ -n "$line" ] && failures+=("$line")
+  done < "$RESULT_DIR/$host.failures"
+done
 
 echo ""
 echo "$pass passed, $fail failed, $skipped skipped"

@@ -17,6 +17,7 @@ from typing import Any
 
 import aiohttp
 
+from mirage.core.api.client import api_request
 from mirage.core.api.oauth import TokenManager as OAuthTokenManager
 from mirage.core.google.config import GoogleConfig
 from mirage.core.google.constants import (CALENDAR_API_BASE, DOCS_API_BASE,
@@ -25,7 +26,7 @@ from mirage.core.google.constants import (CALENDAR_API_BASE, DOCS_API_BASE,
                                           SHEETS_API_BASE, SLIDES_API_BASE,
                                           TOKEN_BUFFER_SECONDS, TOKEN_URL)
 from mirage.resource.secrets import reveal_secret
-from mirage.utils.ranges import ByteWindow, range_header, window_of
+from mirage.utils.ranges import ByteWindow
 
 
 def google_error_message(body: str, status: int, reason: str | None) -> str:
@@ -55,28 +56,20 @@ def google_error_message(body: str, status: int, reason: str | None) -> str:
     return body.strip() or reason or f"HTTP {status}"
 
 
-async def raise_for_google_status(resp: aiohttp.ClientResponse) -> None:
-    """Raise with Google's message instead of the bare HTTP reason phrase.
+def _error_of(resp: aiohttp.ClientResponse, text: str) -> Exception:
+    """The error a failed call raises, worded with Google's message.
 
-    ``resp.raise_for_status()`` raises before anything reads the body, so
-    the reason Google gave is discarded and the caller only ever sees
-    "Bad Request". An agent cannot correct an error it cannot read, so the
-    body is read first and its message becomes the exception's. The
-    exception type is unchanged, since callers classify on it (a 403 during
-    a mutation becomes EACCES in ``gdrive/resolve.py``).
-
-    Args:
-        resp (aiohttp.ClientResponse): the response to check.
+    A bare ``raise_for_status()`` would discard the reason Google gave in
+    the body and report only "Bad Request"; an agent cannot correct an
+    error it cannot read. The exception type is the plain aiohttp one,
+    since callers classify on it (a 403 during a mutation becomes EACCES
+    in ``gdrive/resolve.py``).
     """
-    if resp.status < 400:
-        return
-    raw = await resp.read()
-    raise aiohttp.ClientResponseError(
+    return aiohttp.ClientResponseError(
         resp.request_info,
         resp.history,
         status=resp.status,
-        message=google_error_message(raw.decode("utf-8", errors="replace"),
-                                     resp.status, resp.reason),
+        message=google_error_message(text, resp.status, resp.reason),
         headers=resp.headers,
     )
 
@@ -146,11 +139,11 @@ async def refresh_access_token(config: GoogleConfig, ) -> tuple[str, int]:
     client_secret = reveal_secret(config.client_secret)
     if client_secret:
         data["client_secret"] = client_secret
-    async with aiohttp.ClientSession() as session:
-        async with session.post(token_url(config), data=data) as resp:
-            await raise_for_google_status(resp)
-            body = await resp.json()
-            return body["access_token"], body["expires_in"]
+    body = await api_request("POST",
+                             token_url(config),
+                             error_of=_error_of,
+                             data=data)
+    return body["access_token"], body["expires_in"]
 
 
 class TokenManager(OAuthTokenManager):
@@ -171,8 +164,9 @@ class TokenManager(OAuthTokenManager):
         # core/msgraph/client.py.
         supplied = self.config.access_token
         if supplied is not None:
-            return reveal_secret(
+            token: str = reveal_secret(
                 supplied() if callable(supplied) else supplied)
+            return token
         return await super().get_token()
 
 
@@ -186,11 +180,13 @@ async def google_get(
     url: str,
     params: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    headers = await google_headers(token_manager)
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url, headers=headers, params=params) as resp:
-            await raise_for_google_status(resp)
-            return await resp.json()
+    data: dict[str, Any] = await api_request("GET",
+                                             url,
+                                             error_of=_error_of,
+                                             headers=await
+                                             google_headers(token_manager),
+                                             params=params)
+    return data
 
 
 async def google_post(
@@ -198,11 +194,13 @@ async def google_post(
     url: str,
     json: dict[str, Any],
 ) -> dict[str, Any]:
-    headers = await google_headers(token_manager)
-    async with aiohttp.ClientSession() as session:
-        async with session.post(url, headers=headers, json=json) as resp:
-            await raise_for_google_status(resp)
-            return await resp.json()
+    data: dict[str, Any] = await api_request("POST",
+                                             url,
+                                             error_of=_error_of,
+                                             headers=await
+                                             google_headers(token_manager),
+                                             json_body=json)
+    return data
 
 
 async def google_put(
@@ -210,11 +208,13 @@ async def google_put(
     url: str,
     json: dict[str, Any],
 ) -> dict[str, Any]:
-    headers = await google_headers(token_manager)
-    async with aiohttp.ClientSession() as session:
-        async with session.put(url, headers=headers, json=json) as resp:
-            await raise_for_google_status(resp)
-            return await resp.json()
+    data: dict[str, Any] = await api_request("PUT",
+                                             url,
+                                             error_of=_error_of,
+                                             headers=await
+                                             google_headers(token_manager),
+                                             json_body=json)
+    return data
 
 
 async def google_patch(
@@ -223,14 +223,14 @@ async def google_patch(
     json: dict[str, Any],
     params: dict[str, str] | None = None,
 ) -> dict[str, Any]:
-    headers = await google_headers(token_manager)
-    async with aiohttp.ClientSession() as session:
-        async with session.patch(url,
-                                 headers=headers,
-                                 json=json,
-                                 params=params) as resp:
-            await raise_for_google_status(resp)
-            return await resp.json()
+    data: dict[str, Any] = await api_request("PATCH",
+                                             url,
+                                             error_of=_error_of,
+                                             headers=await
+                                             google_headers(token_manager),
+                                             params=params,
+                                             json_body=json)
+    return data
 
 
 async def google_send_bytes(
@@ -253,24 +253,24 @@ async def google_send_bytes(
     """
     headers = await google_headers(token_manager)
     headers["Content-Type"] = content_type
-    async with aiohttp.ClientSession() as session:
-        async with session.request(method,
-                                   url,
-                                   headers=headers,
-                                   data=data,
-                                   params=params) as resp:
-            await raise_for_google_status(resp)
-            return await resp.json()
+    payload: dict[str, Any] = await api_request(method,
+                                                url,
+                                                error_of=_error_of,
+                                                headers=headers,
+                                                params=params,
+                                                data=data)
+    return payload
 
 
 async def google_delete(
     token_manager: TokenManager,
     url: str,
 ) -> None:
-    headers = await google_headers(token_manager)
-    async with aiohttp.ClientSession() as session:
-        async with session.delete(url, headers=headers) as resp:
-            await raise_for_google_status(resp)
+    await api_request("DELETE",
+                      url,
+                      error_of=_error_of,
+                      headers=await google_headers(token_manager),
+                      read="none")
 
 
 async def google_get_bytes(
@@ -286,12 +286,11 @@ async def google_get_bytes(
         window (ByteWindow | None): the byte window, or None for the
             whole body.
     """
-    headers = await google_headers(token_manager)
-    header = None if window is None else range_header(window.offset,
-                                                      window.size)
-    if header:
-        headers["Range"] = header
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url, headers=headers) as resp:
-            await raise_for_google_status(resp)
-            return window_of(await resp.read(), resp.status, window)
+    data: bytes = await api_request("GET",
+                                    url,
+                                    error_of=_error_of,
+                                    headers=await
+                                    google_headers(token_manager),
+                                    read="bytes",
+                                    window=window)
+    return data

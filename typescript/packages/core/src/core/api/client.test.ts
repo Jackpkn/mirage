@@ -139,14 +139,117 @@ describe('apiRequest', () => {
       TypeError,
     )
   })
+
+  it('transport retry replays a rejected attempt', async () => {
+    const retry: RetryPolicy = {
+      ...NO_RETRY,
+      maxRetries: 2,
+      maxBackoff: 0.001,
+      retryTransport: true,
+    }
+    let calls = 0
+    const fakeFetch: typeof fetch = () => {
+      calls += 1
+      if (calls === 1) return Promise.reject(new TypeError('network down'))
+      return Promise.resolve(jsonResponse({ ok: 5 }))
+    }
+    const out = await apiRequest('GET', TARGET, { errorOf, fetchFn: fakeFetch, retry })
+    expect(out).toEqual({ ok: 5 })
+    expect(calls).toBe(2)
+  })
+
+  it('transport retry exhaustion rethrows the transport error', async () => {
+    const retry: RetryPolicy = {
+      ...NO_RETRY,
+      maxRetries: 1,
+      maxBackoff: 0.001,
+      retryTransport: true,
+    }
+    const fakeFetch: typeof fetch = () => Promise.reject(new TypeError('network down'))
+    await expect(
+      apiRequest('GET', TARGET, { errorOf, fetchFn: fakeFetch, retry }),
+    ).rejects.toThrowError(TypeError)
+  })
+
+  it('bytes mode sends the range and trims an ignored one', async () => {
+    // a server may legally answer 200 with the whole body to a Range
+    // request; the window trims it client-side
+    let sentRange: string | null = null
+    const fakeFetch: typeof fetch = (_url, init) => {
+      sentRange = new Headers(init?.headers).get('Range')
+      return Promise.resolve(new Response(new TextEncoder().encode('0123456789'), { status: 200 }))
+    }
+    const out = await apiRequest('GET', TARGET, {
+      errorOf,
+      fetchFn: fakeFetch,
+      read: 'bytes',
+      window: { offset: 2, size: 3 },
+    })
+    expect(out).toEqual(new TextEncoder().encode('234'))
+    expect(sentRange).toBe('bytes=2-4')
+  })
+
+  it('bytes mode trusts a 206 window', async () => {
+    const fakeFetch: typeof fetch = () =>
+      Promise.resolve(new Response(new TextEncoder().encode('234'), { status: 206 }))
+    const out = await apiRequest('GET', TARGET, {
+      errorOf,
+      fetchFn: fakeFetch,
+      read: 'bytes',
+      window: { offset: 2, size: 3 },
+    })
+    expect(out).toEqual(new TextEncoder().encode('234'))
+  })
+
+  it('text mode returns the raw body', async () => {
+    const fakeFetch: typeof fetch = () =>
+      Promise.resolve(new Response('not json at all', { status: 200 }))
+    expect(await apiRequest('GET', TARGET, { errorOf, fetchFn: fakeFetch, read: 'text' })).toBe(
+      'not json at all',
+    )
+  })
+
+  it('location mode returns the header', async () => {
+    const fakeFetch: typeof fetch = () =>
+      Promise.resolve(
+        new Response(null, { status: 202, headers: { Location: 'https://api.test/monitor/1' } }),
+      )
+    expect(
+      await apiRequest('POST', TARGET, { errorOf, fetchFn: fakeFetch, read: 'location' }),
+    ).toBe('https://api.test/monitor/1')
+  })
+
+  it('a raw body is sent as-is', async () => {
+    let sentBody: BodyInit | null | undefined
+    const fakeFetch: typeof fetch = (_url, init) => {
+      sentBody = init?.body
+      return Promise.resolve(jsonResponse({ ok: 4 }))
+    }
+    await apiRequest('PUT', TARGET, { errorOf, fetchFn: fakeFetch, body: 'a=1&b=2' })
+    expect(sentBody).toBe('a=1&b=2')
+  })
+
+  it('timeoutSeconds arms a per-attempt signal', async () => {
+    let sentSignal: AbortSignal | null | undefined
+    const fakeFetch: typeof fetch = (_url, init) => {
+      sentSignal = init?.signal
+      return Promise.resolve(jsonResponse({}))
+    }
+    await apiRequest('GET', TARGET, { errorOf, fetchFn: fakeFetch, timeoutSeconds: 30 })
+    expect(sentSignal).toBeInstanceOf(AbortSignal)
+  })
 })
 
 describe('retry delays', () => {
   const retry: RetryPolicy = { ...NO_RETRY, statuses: new Set([429]), maxBackoff: 4 }
 
-  it('header mode prefers Retry-After and caps only the fallback', () => {
-    const withHeader = new Response(null, { headers: { 'Retry-After': '7.5' } })
-    expect(headerDelay(withHeader, 0, retry)).toBe(7.5)
+  it('header mode prefers Retry-After and caps every wait', () => {
+    const withHeader = new Response(null, { headers: { 'Retry-After': '2.5' } })
+    expect(headerDelay(withHeader, 0, retry)).toBe(2.5)
+    // maxBackoff is the ceiling on server-asked waits too, so a Retry-After
+    // above it cannot stall a command past the configured limit
+    const aboveCap = new Response(null, { headers: { 'Retry-After': '7.5' } })
+    expect(headerDelay(aboveCap, 0, retry)).toBe(4)
     expect(headerDelay(new Response(null), 1, retry)).toBe(2)
     expect(headerDelay(new Response(null), 6, retry)).toBe(4)
   })
@@ -160,12 +263,16 @@ describe('retry delays', () => {
     }
   })
 
-  it('body mode refuses a delay it could never wait out', async () => {
+  it('body mode refuses a delay it could never wait out and caps the rest', async () => {
     // JSON.parse rejects a bare NaN literal but overflows 1e999 to Infinity.
-    expect(await bodyDelay(new Response('{"retry_after": 2.5}'))).toBe(2.5)
-    expect(await bodyDelay(new Response('{"retry_after": 1e999}'))).toBe(1)
-    expect(await bodyDelay(new Response('{"retry_after": -5}'))).toBe(1)
-    expect(await bodyDelay(new Response('{"retry_after": "soon"}'))).toBe(1)
-    expect(await bodyDelay(new Response('not json'))).toBe(1)
+    expect(await bodyDelay(new Response('{"retry_after": 2.5}'), retry)).toBe(2.5)
+    expect(await bodyDelay(new Response('{"retry_after": 7.5}'), retry)).toBe(4)
+    expect(await bodyDelay(new Response('{"retry_after": 1e999}'), retry)).toBe(1)
+    expect(await bodyDelay(new Response('{"retry_after": -5}'), retry)).toBe(1)
+    expect(await bodyDelay(new Response('{"retry_after": "soon"}'), retry)).toBe(1)
+    expect(await bodyDelay(new Response('not json'), retry)).toBe(1)
+    // the 1s fallback bows to a ceiling below it
+    const tight: RetryPolicy = { ...NO_RETRY, statuses: new Set([429]), maxBackoff: 0.5 }
+    expect(await bodyDelay(new Response('not json'), tight)).toBe(0.5)
   })
 })

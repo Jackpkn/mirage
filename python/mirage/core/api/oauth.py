@@ -35,6 +35,18 @@ class TokenManager:
         """Fetch a fresh token as ``(access_token, expires_in_seconds)``."""
         raise NotImplementedError
 
+    def seed(self, token: str, expires_at: float) -> None:
+        """Preload the cache with a token minted outside the refresh flow.
+
+        Args:
+            token (str): the access token to serve.
+            expires_at (float): epoch seconds after which ``get_token``
+                refreshes again; ``float("inf")`` for a token the manager
+                can never replace itself.
+        """
+        self._access_token = token
+        self._expires_at = expires_at
+
     async def get_token(self) -> str:
         async with self._lock:
             if self._access_token and time.time() < self._expires_at:
