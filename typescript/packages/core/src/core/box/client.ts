@@ -13,11 +13,10 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { rstripSlash } from '../../utils/slash.ts'
-import { rangeHeader, windowOf, type ByteWindow } from '../../utils/ranges.ts'
-
-export const BOX_TOKEN_URL = 'https://api.box.com/oauth2/token'
-const BOX_API_BASE = 'https://api.box.com/2.0'
-const TOKEN_BUFFER_SECONDS = 300
+import { type ByteWindow } from '../../utils/ranges.ts'
+import { apiRequest } from '../api/client.ts'
+import { TokenManager as OAuthTokenManager } from '../api/oauth.ts'
+import { BOX_API_BASE, BOX_TOKEN_URL, TOKEN_BUFFER_SECONDS } from './constants.ts'
 
 export interface BoxConfig {
   // API origin override (e.g. an integ fake: http://127.0.0.1:5096). Token
@@ -81,16 +80,12 @@ async function refreshAccessToken(
   if (config.clientSecret !== undefined && config.clientSecret !== '') {
     body.set('client_secret', config.clientSecret)
   }
-  const r = await fetch(tokenUrlOf(config), {
-    method: 'POST',
+  const data = (await apiRequest('POST', tokenUrlOf(config), {
+    errorOf: (r, text) =>
+      new BoxApiError(`Box token refresh → ${String(r.status)} ${text}`, r.status),
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: body.toString(),
-  })
-  if (!r.ok) {
-    const text = await r.text().catch(() => '')
-    throw new BoxApiError(`Box token refresh → ${String(r.status)} ${text}`, r.status)
-  }
-  const data = (await r.json()) as {
+  })) as {
     access_token: string
     refresh_token: string
     expires_in: number
@@ -118,20 +113,15 @@ async function fetchCcgToken(
     box_subject_type: 'enterprise',
     box_subject_id: config.enterpriseId ?? '',
   })
-  const r = await fetch(tokenUrlOf(config), {
-    method: 'POST',
+  const data = (await apiRequest('POST', tokenUrlOf(config), {
+    errorOf: (r, text) => new BoxApiError(`Box CCG token → ${String(r.status)} ${text}`, r.status),
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: body.toString(),
-  })
-  if (!r.ok) {
-    const text = await r.text().catch(() => '')
-    throw new BoxApiError(`Box CCG token → ${String(r.status)} ${text}`, r.status)
-  }
-  const data = (await r.json()) as { access_token: string; expires_in: number }
+  })) as { access_token: string; expires_in: number }
   return { accessToken: data.access_token, expiresIn: data.expires_in }
 }
 
-export class BoxTokenManager {
+export class BoxTokenManager extends OAuthTokenManager {
   // API base for all non-token calls; api.ts reads this instead of the
   // BOX_API_BASE const so a config endpoint override reaches every request.
   readonly apiBase: string
@@ -139,11 +129,9 @@ export class BoxTokenManager {
   private readonly devTokenMode: boolean
   private readonly ccgMode: boolean
   private currentRefreshToken: string
-  private accessToken: string | null = null
-  private expiresAt = 0
-  private inflight: Promise<string> | null = null
 
   constructor(config: BoxConfig) {
+    super(TOKEN_BUFFER_SECONDS)
     this.config = config
     this.apiBase = apiBaseOf(config)
     this.devTokenMode = config.accessToken !== undefined && config.accessToken !== ''
@@ -168,10 +156,9 @@ export class BoxTokenManager {
     }
     this.currentRefreshToken = config.refreshToken ?? ''
     if (this.devTokenMode && config.accessToken !== undefined) {
-      this.accessToken = config.accessToken
       // Mark as never-expires from our side; Box itself will 401 after ~1h and
       // the user has to update the env var manually.
-      this.expiresAt = Number.POSITIVE_INFINITY
+      this.seed(config.accessToken, Number.POSITIVE_INFINITY)
     }
   }
 
@@ -186,34 +173,18 @@ export class BoxTokenManager {
     return this.currentRefreshToken
   }
 
-  async getToken(): Promise<string> {
-    if (this.accessToken !== null && Date.now() / 1000 < this.expiresAt) {
-      return this.accessToken
-    }
+  protected async refreshPair(): Promise<[string, number]> {
     if (this.devTokenMode) {
-      // Should be unreachable since expiresAt is +Infinity in dev-token mode,
-      // but keep the branch honest: a dev token can't be refreshed.
+      // Unreachable while the seeded expiry is +Infinity, but keep the
+      // branch honest: a dev token can't be refreshed.
       throw new BoxApiError(
         'Box developer token expired (~1 hour lifetime). Regenerate it in the app console and update BOX_ACCESS_TOKEN.',
         401,
       )
     }
-    if (this.inflight !== null) return this.inflight
-    const p = this.refresh()
-    this.inflight = p
-    try {
-      return await p
-    } finally {
-      this.inflight = null
-    }
-  }
-
-  private async refresh(): Promise<string> {
     if (this.ccgMode) {
       const ccg = await fetchCcgToken(this.config)
-      this.accessToken = ccg.accessToken
-      this.expiresAt = Date.now() / 1000 + ccg.expiresIn - TOKEN_BUFFER_SECONDS
-      return ccg.accessToken
+      return [ccg.accessToken, ccg.expiresIn]
     }
     let result: { accessToken: string; refreshToken: string; expiresIn: number }
     if (this.config.refreshFn !== undefined) {
@@ -221,15 +192,13 @@ export class BoxTokenManager {
     } else {
       result = await refreshAccessToken(this.config, this.currentRefreshToken)
     }
-    this.accessToken = result.accessToken
-    this.expiresAt = Date.now() / 1000 + result.expiresIn - TOKEN_BUFFER_SECONDS
     if (result.refreshToken !== this.currentRefreshToken) {
       this.currentRefreshToken = result.refreshToken
       if (this.config.onRefreshTokenRotated !== undefined) {
         await this.config.onRefreshTokenRotated(result.refreshToken)
       }
     }
-    return result.accessToken
+    return [result.accessToken, result.expiresIn]
   }
 }
 
@@ -250,13 +219,11 @@ export async function boxGet(
   url: string,
   params?: Record<string, string | number>,
 ): Promise<unknown> {
-  const headers = await boxAuthHeaders(tm)
-  const r = await fetch(buildUrl(url, params), { headers })
-  if (!r.ok) {
-    const text = await r.text().catch(() => '')
-    throw new BoxApiError(`Box GET ${url} → ${String(r.status)} ${text}`, r.status)
-  }
-  return r.json()
+  return apiRequest('GET', url, {
+    errorOf: (r, text) => new BoxApiError(`Box GET ${url} → ${String(r.status)} ${text}`, r.status),
+    headers: await boxAuthHeaders(tm),
+    params,
+  })
 }
 
 export async function boxGetBytes(
@@ -265,16 +232,14 @@ export async function boxGetBytes(
   params?: Record<string, string | number>,
   window?: ByteWindow,
 ): Promise<Uint8Array> {
-  const headers = await boxAuthHeaders(tm)
-  const range = window === undefined ? null : rangeHeader(window.offset, window.size)
-  if (range !== null) headers.Range = range
-  const r = await fetch(buildUrl(url, params), { headers, redirect: 'follow' })
-  if (!r.ok) {
-    const text = await r.text().catch(() => '')
-    throw new BoxApiError(`Box GET ${url} → ${String(r.status)} ${text}`, r.status)
-  }
-  const buf = await r.arrayBuffer()
-  return windowOf(new Uint8Array(buf), r.status, window)
+  const data = await apiRequest('GET', url, {
+    errorOf: (r, text) => new BoxApiError(`Box GET ${url} → ${String(r.status)} ${text}`, r.status),
+    headers: await boxAuthHeaders(tm),
+    params,
+    read: 'bytes',
+    window,
+  })
+  return data as Uint8Array
 }
 
 export async function* boxGetStream(
@@ -302,17 +267,12 @@ export async function boxPostJson(
   url: string,
   body: Record<string, unknown>,
 ): Promise<unknown> {
-  const headers = await boxAuthHeaders(tm)
-  const r = await fetch(url, {
-    method: 'POST',
-    headers: { ...headers, 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
+  return apiRequest('POST', url, {
+    errorOf: (r, text) =>
+      new BoxApiError(`Box POST ${url} → ${String(r.status)} ${text}`, r.status),
+    headers: { ...(await boxAuthHeaders(tm)), 'Content-Type': 'application/json' },
+    json: body,
   })
-  if (!r.ok) {
-    const text = await r.text().catch(() => '')
-    throw new BoxApiError(`Box POST ${url} → ${String(r.status)} ${text}`, r.status)
-  }
-  return r.json()
 }
 
 export async function boxPutJson(
@@ -320,17 +280,11 @@ export async function boxPutJson(
   url: string,
   body: Record<string, unknown>,
 ): Promise<unknown> {
-  const headers = await boxAuthHeaders(tm)
-  const r = await fetch(url, {
-    method: 'PUT',
-    headers: { ...headers, 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
+  return apiRequest('PUT', url, {
+    errorOf: (r, text) => new BoxApiError(`Box PUT ${url} → ${String(r.status)} ${text}`, r.status),
+    headers: { ...(await boxAuthHeaders(tm)), 'Content-Type': 'application/json' },
+    json: body,
   })
-  if (!r.ok) {
-    const text = await r.text().catch(() => '')
-    throw new BoxApiError(`Box PUT ${url} → ${String(r.status)} ${text}`, r.status)
-  }
-  return r.json()
 }
 
 export async function boxDelete(
@@ -338,12 +292,13 @@ export async function boxDelete(
   url: string,
   params?: Record<string, string | number>,
 ): Promise<void> {
-  const headers = await boxAuthHeaders(tm)
-  const r = await fetch(buildUrl(url, params), { method: 'DELETE', headers })
-  if (!r.ok) {
-    const text = await r.text().catch(() => '')
-    throw new BoxApiError(`Box DELETE ${url} → ${String(r.status)} ${text}`, r.status)
-  }
+  await apiRequest('DELETE', url, {
+    errorOf: (r, text) =>
+      new BoxApiError(`Box DELETE ${url} → ${String(r.status)} ${text}`, r.status),
+    headers: await boxAuthHeaders(tm),
+    params,
+    read: 'none',
+  })
 }
 
 export async function boxUploadMultipart(
@@ -353,14 +308,13 @@ export async function boxUploadMultipart(
   filename: string,
   data: Uint8Array,
 ): Promise<unknown> {
-  const headers = await boxAuthHeaders(tm)
   const form = new FormData()
   form.set('attributes', JSON.stringify(attributes))
   form.set('file', new Blob([data as BlobPart]), filename)
-  const r = await fetch(url, { method: 'POST', headers, body: form })
-  if (!r.ok) {
-    const text = await r.text().catch(() => '')
-    throw new BoxApiError(`Box upload ${url} → ${String(r.status)} ${text}`, r.status)
-  }
-  return r.json()
+  return apiRequest('POST', url, {
+    errorOf: (r, text) =>
+      new BoxApiError(`Box upload ${url} → ${String(r.status)} ${text}`, r.status),
+    headers: await boxAuthHeaders(tm),
+    body: form,
+  })
 }

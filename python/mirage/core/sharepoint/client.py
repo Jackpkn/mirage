@@ -1,8 +1,7 @@
 from urllib.parse import quote
 
 # yapf: disable
-from mirage.core.msgraph.client import (MAX_BACKOFF, RETRY_STATUSES,
-                                        GraphError, graph_delete, graph_get,
+from mirage.core.msgraph.client import (GraphError, graph_delete, graph_get,
                                         graph_get_bytes, graph_list,
                                         graph_patch, graph_post,
                                         graph_post_monitor, graph_put_bytes,
@@ -11,6 +10,7 @@ from mirage.core.msgraph.client import (MAX_BACKOFF, RETRY_STATUSES,
                                         upload_chunk)
 # yapf: enable
 from mirage.core.msgraph.config import MsGraphConfig, graph_api
+from mirage.core.msgraph.constants import MAX_BACKOFF, RETRY_STATUSES
 
 __all__ = [
     "graph_api",

@@ -24,6 +24,7 @@ function respond(status: number, body: string): typeof globalThis.fetch {
       status,
       statusText: String(status),
       arrayBuffer: () => Promise.resolve(new TextEncoder().encode(body).buffer),
+      text: () => Promise.resolve(body),
     }),
   ) as unknown as typeof globalThis.fetch
 }

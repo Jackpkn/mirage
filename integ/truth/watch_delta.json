@@ -1,0 +1,32 @@
+{
+  "runs": {
+    "python": {
+      "command": [
+        "./python/.venv/bin/python",
+        "examples/python/disk/watch.py"
+      ]
+    },
+    "typescript": {
+      "command": [
+        "pnpm",
+        "-C",
+        "examples/typescript",
+        "exec",
+        "tsx",
+        "disk/watch.ts"
+      ]
+    }
+  },
+  "exit": 0,
+  "lines": [
+    "baseline: 0 changes",
+    "",
+    "pull: 3 changes",
+    "  update /data/reports/q1.txt",
+    "  delete /data/reports/q2.txt",
+    "  create /data/reports/q3.txt",
+    "",
+    "read after notify: 'first quarter, revised'",
+    "listing: q1.txt q3.txt"
+  ]
+}

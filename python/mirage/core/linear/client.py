@@ -12,10 +12,12 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import json
 from typing import Any
 
 import aiohttp
 
+from mirage.core.api.client import api_request
 from mirage.core.linear.config import LinearConfig
 from mirage.resource.secrets import reveal_secret
 from mirage.types import JsonValue
@@ -49,33 +51,37 @@ def linear_headers(config: LinearConfig) -> dict[str, str]:
     }
 
 
+def _error_of(resp: aiohttp.ClientResponse, text: str) -> Exception:
+    try:
+        data = json.loads(text)
+    except ValueError:
+        data = None
+    errors = data.get("errors") if isinstance(data, dict) else None
+    message = _error_message(errors) or f"Linear API error: HTTP {resp.status}"
+    return LinearAPIError(message, errors=errors, status=resp.status)
+
+
 async def graphql_request(
     config: LinearConfig,
     query: str,
     variables: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    payload = {
+    payload: dict[str, Any] = {
         "query": query,
         "variables": variables or {},
     }
-    async with aiohttp.ClientSession() as session:
-        async with session.post(
-                config.base_url,
-                headers=linear_headers(config),
-                json=payload,
-        ) as resp:
-            data = await resp.json()
-            if resp.status >= 400:
-                errors = data.get("errors") if isinstance(data, dict) else None
-                message = _error_message(
-                    errors) or f"Linear API error: HTTP {resp.status}"
-                raise LinearAPIError(message,
-                                     errors=errors,
-                                     status=resp.status)
-            if data.get("errors"):
-                message = _error_message(data["errors"]) or "Linear API error"
-                raise LinearAPIError(message, errors=data["errors"])
-            return data["data"]
+    data: dict[str, Any] = await api_request("POST",
+                                             config.base_url,
+                                             error_of=_error_of,
+                                             headers=linear_headers(config),
+                                             json_body=payload)
+    # GraphQL reports failures in-band: a 200 whose body carries an
+    # errors array is still a failed call.
+    if data.get("errors"):
+        message = _error_message(data["errors"]) or "Linear API error"
+        raise LinearAPIError(message, errors=data["errors"])
+    result: dict[str, Any] = data["data"]
+    return result
 
 
 def _error_message(errors: list[dict[str, Any]] | None) -> str | None:
@@ -187,7 +193,8 @@ async def resolve_team(config: LinearConfig, key_or_id: str) -> dict[str, Any]:
 
 async def get_issue(config: LinearConfig, issue_id: str) -> dict[str, Any]:
     data = await graphql_request(config, ISSUE_QUERY, {"issueId": issue_id})
-    return data["issue"]
+    issue: dict[str, Any] = data["issue"]
+    return issue
 
 
 async def list_issue_comments(config: LinearConfig,
@@ -220,10 +227,11 @@ async def resolve_issue_id(
             "number": float(number_str),
         },
     )
-    nodes = data["issues"]["nodes"]
+    nodes: list[dict[str, Any]] = data["issues"]["nodes"]
     if not nodes:
         raise FileNotFoundError(issue_key)
-    return nodes[0]["id"]
+    found: str = nodes[0]["id"]
+    return found
 
 
 async def resolve_user_id(
@@ -237,10 +245,11 @@ async def resolve_user_id(
         raise ValueError("assignee id or assignee email is required")
     data = await graphql_request(config, USER_LOOKUP_QUERY,
                                  {"email": assignee_email})
-    nodes = data["users"]["nodes"]
+    nodes: list[dict[str, Any]] = data["users"]["nodes"]
     if not nodes:
         raise FileNotFoundError(assignee_email)
-    return nodes[0]["id"]
+    found: str = nodes[0]["id"]
+    return found
 
 
 async def issue_create(
@@ -338,7 +347,7 @@ async def comment_update(
             }
         },
     )
-    comment = data["commentUpdate"]["comment"]
+    comment: dict[str, Any] = data["commentUpdate"]["comment"]
     issue = comment.get("issue") or {}
     issue_id = issue.get("id")
     if issue_id:
@@ -362,4 +371,5 @@ async def search_issues(
             "first": limit
         },
     )
-    return data.get("searchIssues", {}).get("nodes", [])
+    nodes: list[dict[str, Any]] = data.get("searchIssues", {}).get("nodes", [])
+    return nodes

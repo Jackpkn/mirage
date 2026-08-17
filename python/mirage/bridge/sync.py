@@ -34,21 +34,33 @@ def run_async_from_sync(
 ) -> T:
     """Call from a sync thread to run an async coroutine.
 
+    A shared loop is honored whether or not something is driving it: a
+    running one (FUSE, which serves it from its own thread) takes
+    run_coroutine_threadsafe, an idle one (a ``with ws:`` block, whose
+    caller is the only thread there is) is driven per call. Both keep
+    every call on ONE loop, which is what a resource holding a
+    connection pool needs to still be closable at the end.
+
     Args:
         awaitable (Awaitable[T]): The asynchronous operation to run.
         loop (asyncio.AbstractEventLoop | None): Shared event loop.
-            If provided, uses run_coroutine_threadsafe.
-            If None, creates a new event loop.
+            If omitted, each call gets a throwaway loop.
     """
     try:
         running_loop = asyncio.get_running_loop()
     except RuntimeError:
         running_loop = None
 
-    if loop is not None and loop.is_running() and loop is not running_loop:
-        future = asyncio.run_coroutine_threadsafe(_await_result(awaitable),
-                                                  loop)
-        return future.result()
+    if loop is not None and loop is not running_loop:
+        if loop.is_running():
+            future = asyncio.run_coroutine_threadsafe(_await_result(awaitable),
+                                                      loop)
+            return future.result()
+        if running_loop is None:
+            return loop.run_until_complete(_await_result(awaitable))
+        with concurrent.futures.ThreadPoolExecutor(1) as pool:
+            return pool.submit(loop.run_until_complete,
+                               _await_result(awaitable)).result()
     if running_loop is None:
         return _run_in_new_loop(awaitable)
     with concurrent.futures.ThreadPoolExecutor(1) as pool:

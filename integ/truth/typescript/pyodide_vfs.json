@@ -1,0 +1,30 @@
+{
+  "runs": {
+    "typescript": {
+      "command": [
+        "node",
+        "--import",
+        "tsx/esm",
+        "pyodide/vfs.ts"
+      ],
+      "cwd": "examples/typescript"
+    }
+  },
+  "exit": 0,
+  "lines": [
+    "Mounts: /.bash_history/, /dev/, /ram/, /",
+    "",
+    "--- 1. RAM read+write via Python open() ---",
+    "read: world",
+    "wrote /ram/out.txt",
+    "host sees: written from python",
+    "",
+    "--- 2. Lazy-on-miss: a path the preload never walked ---",
+    "listdir: ['note.md']",
+    "read: lazy demo",
+    "",
+    "--- 6. PIL: save PNG to /ram, host reads bytes ---",
+    "saved /ram/icon.png",
+    "host sees 73 bytes (PNG magic: 89 50 4e 47)"
+  ]
+}

@@ -13,10 +13,9 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import type { MsGraphConfigResolved } from './config.ts'
-import { rangeHeader, windowOf, type ByteWindow } from '../../utils/ranges.ts'
-
-const RETRY_STATUSES: ReadonlySet<number> = new Set([429, 503, 504])
-const MAX_BACKOFF = 30
+import { type ByteWindow } from '../../utils/ranges.ts'
+import { apiRequest, headerDelay, type ApiRequestOptions, type RetryPolicy } from '../api/client.ts'
+import { MAX_BACKOFF, RETRY_STATUSES } from './constants.ts'
 
 export class GraphError extends Error {
   readonly status: number
@@ -29,12 +28,16 @@ export class GraphError extends Error {
   }
 }
 
+type GraphRead = 'json' | 'bytes' | 'none' | 'location'
+
 interface RequestOptions {
   params?: Record<string, string | number | boolean>
   json?: Record<string, unknown>
   data?: Uint8Array
   headers?: Record<string, string>
   auth?: boolean
+  read?: GraphRead
+  window?: ByteWindow | undefined
 }
 
 function sleep(seconds: number): Promise<void> {
@@ -54,20 +57,20 @@ async function graphHeaders(config: MsGraphConfigResolved): Promise<Record<strin
   }
 }
 
-function retryDelay(response: Response, attempt: number): number {
-  const value = response.headers.get('Retry-After')
-  if (value !== null) {
-    const parsed = Number.parseFloat(value)
-    if (Number.isFinite(parsed)) return parsed
+function policy(config: MsGraphConfigResolved): RetryPolicy {
+  return {
+    statuses: RETRY_STATUSES,
+    maxRetries: config.maxRetries,
+    maxBackoff: MAX_BACKOFF,
+    delaySource: 'header',
   }
-  return Math.min(2 ** attempt, MAX_BACKOFF)
 }
 
-async function graphError(response: Response, method: string, url: string): Promise<GraphError> {
+function graphErrorOf(method: string, url: string, response: Response, text: string): GraphError {
   let code = 'unknownError'
   let message = `${method} ${url}`
   try {
-    const payload = (await response.json()) as { error?: { code?: unknown; message?: unknown } }
+    const payload = JSON.parse(text) as { error?: { code?: unknown; message?: unknown } }
     if (typeof payload.error?.code === 'string') code = payload.error.code
     if (typeof payload.error?.message === 'string') message = payload.error.message
   } catch {
@@ -76,56 +79,10 @@ async function graphError(response: Response, method: string, url: string): Prom
   return new GraphError(response.status, code, message)
 }
 
-async function request(
-  config: MsGraphConfigResolved,
-  method: string,
-  rawUrl: string,
-  options: RequestOptions = {},
-): Promise<Response> {
-  const url = new URL(rawUrl)
-  for (const [name, value] of Object.entries(options.params ?? {})) {
-    url.searchParams.set(name, String(value))
-  }
-  let attempt = 0
-  let refreshed = false
-  for (;;) {
-    const headers = options.auth === false ? {} : await graphHeaders(config)
-    Object.assign(headers, options.headers)
-    const controller = new AbortController()
-    const timer = setTimeout(() => {
-      controller.abort()
-    }, config.timeout * 1000)
-    let response: Response
-    try {
-      const init: RequestInit = { method, headers, signal: controller.signal }
-      if (options.data !== undefined) init.body = options.data as BodyInit
-      if (options.json !== undefined) init.body = JSON.stringify(options.json)
-      response = await fetch(url, init)
-    } finally {
-      clearTimeout(timer)
-    }
-    if (RETRY_STATUSES.has(response.status) && attempt < config.maxRetries) {
-      await sleep(retryDelay(response, attempt))
-      attempt += 1
-      continue
-    }
-    if (
-      response.status === 401 &&
-      options.auth !== false &&
-      !refreshed &&
-      typeof config.accessToken === 'function'
-    ) {
-      refreshed = true
-      continue
-    }
-    if (!response.ok) throw await graphError(response, method, url.toString())
-    return response
-  }
-}
-
-async function jsonObject(response: Response): Promise<Record<string, unknown>> {
-  if (response.status === 204) return {}
-  const text = await response.text()
+// Graph answers 204 and the odd empty 200 for calls that worked; the caller
+// gets an empty object rather than a parse error. A non-object body reads as
+// empty too.
+function lenientJson(text: string): Record<string, unknown> {
   if (text === '') return {}
   const value: unknown = JSON.parse(text)
   return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -133,12 +90,62 @@ async function jsonObject(response: Response): Promise<Record<string, unknown>> 
     : {}
 }
 
+async function graphRequest(
+  config: MsGraphConfigResolved,
+  method: string,
+  rawUrl: string,
+  options: RequestOptions = {},
+): Promise<unknown> {
+  const target = new URL(rawUrl)
+  for (const [name, value] of Object.entries(options.params ?? {})) {
+    target.searchParams.set(name, String(value))
+  }
+  const url = target.toString()
+  const read = options.read ?? 'json'
+  let refreshed = false
+  for (;;) {
+    const headers = options.auth === false ? {} : await graphHeaders(config)
+    Object.assign(headers, options.headers)
+    const opts: ApiRequestOptions = {
+      errorOf: (response, text) => graphErrorOf(method, url, response, text),
+      headers,
+      retry: policy(config),
+      read: read === 'json' ? 'text' : read,
+      window: options.window,
+      timeoutSeconds: config.timeout,
+    }
+    if (options.json !== undefined) opts.json = options.json
+    else if (options.data !== undefined) opts.body = options.data as BodyInit
+    try {
+      const result = await apiRequest(method, url, opts)
+      return read === 'json' ? lenientJson(result as string) : result
+    } catch (err) {
+      // a 401 under a token provider means the token aged out mid-flight:
+      // mint a fresh one and replay the call once
+      if (
+        err instanceof GraphError &&
+        err.status === 401 &&
+        options.auth !== false &&
+        !refreshed &&
+        typeof config.accessToken === 'function'
+      ) {
+        refreshed = true
+        continue
+      }
+      throw err
+    }
+  }
+}
+
 export async function graphGet(
   config: MsGraphConfigResolved,
   url: string,
   params?: Record<string, string | number | boolean>,
 ): Promise<Record<string, unknown>> {
-  return jsonObject(await request(config, 'GET', url, params === undefined ? {} : { params }))
+  return (await graphRequest(config, 'GET', url, params === undefined ? {} : { params })) as Record<
+    string,
+    unknown
+  >
 }
 
 export async function graphList(
@@ -170,10 +177,11 @@ export async function graphGetBytes(
   window?: ByteWindow,
   auth = true,
 ): Promise<Uint8Array> {
-  const range = window === undefined ? null : rangeHeader(window.offset, window.size)
-  const headers = range === null ? undefined : { Range: range }
-  const response = await request(config, 'GET', url, { auth, ...(headers ? { headers } : {}) })
-  return windowOf(new Uint8Array(await response.arrayBuffer()), response.status, window)
+  return (await graphRequest(config, 'GET', url, {
+    auth,
+    read: 'bytes',
+    window,
+  })) as Uint8Array
 }
 
 export async function* graphStream(
@@ -181,7 +189,34 @@ export async function* graphStream(
   url: string,
   auth = true,
 ): AsyncIterable<Uint8Array> {
-  const response = await request(config, 'GET', url, { auth })
+  // A chunked generator cannot ride apiRequest: the body outlives the call,
+  // so the response must stay open while the caller consumes it.
+  let attempt = 0
+  let refreshed = false
+  let response: Response
+  for (;;) {
+    const headers = auth ? await graphHeaders(config) : {}
+    const controller = new AbortController()
+    const timer = setTimeout(() => {
+      controller.abort()
+    }, config.timeout * 1000)
+    try {
+      response = await fetch(url, { method: 'GET', headers, signal: controller.signal })
+    } finally {
+      clearTimeout(timer)
+    }
+    if (RETRY_STATUSES.has(response.status) && attempt < config.maxRetries) {
+      await sleep(headerDelay(response, attempt, policy(config)))
+      attempt += 1
+      continue
+    }
+    if (response.status === 401 && auth && !refreshed && typeof config.accessToken === 'function') {
+      refreshed = true
+      continue
+    }
+    if (!response.ok) throw graphErrorOf('GET', url, response, await response.text())
+    break
+  }
   if (response.body === null) return
   const reader = response.body.getReader()
   for (;;) {
@@ -196,7 +231,7 @@ export async function graphPost(
   url: string,
   body: Record<string, unknown> = {},
 ): Promise<Record<string, unknown>> {
-  return jsonObject(await request(config, 'POST', url, { json: body }))
+  return (await graphRequest(config, 'POST', url, { json: body })) as Record<string, unknown>
 }
 
 export async function graphPostMonitor(
@@ -204,9 +239,8 @@ export async function graphPostMonitor(
   url: string,
   body: Record<string, unknown> = {},
 ): Promise<string> {
-  const response = await request(config, 'POST', url, { json: body })
-  const location = response.headers.get('Location')
-  if (location === null || location === '') {
+  const location = await graphRequest(config, 'POST', url, { json: body, read: 'location' })
+  if (typeof location !== 'string' || location === '') {
     throw new GraphError(502, 'missingMonitor', `POST ${url} did not return a Location header`)
   }
   return location
@@ -217,11 +251,11 @@ export async function graphPatch(
   url: string,
   body: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
-  return jsonObject(await request(config, 'PATCH', url, { json: body }))
+  return (await graphRequest(config, 'PATCH', url, { json: body })) as Record<string, unknown>
 }
 
 export async function graphDelete(config: MsGraphConfigResolved, url: string): Promise<void> {
-  await request(config, 'DELETE', url)
+  await graphRequest(config, 'DELETE', url, { read: 'none' })
 }
 
 export async function graphPutBytes(
@@ -229,11 +263,10 @@ export async function graphPutBytes(
   url: string,
   data: Uint8Array,
 ): Promise<Record<string, unknown>> {
-  const response = await request(config, 'PUT', url, {
+  return (await graphRequest(config, 'PUT', url, {
     data,
     headers: { 'Content-Type': 'application/octet-stream' },
-  })
-  return jsonObject(response)
+  })) as Record<string, unknown>
 }
 
 export async function pollMonitor(
@@ -243,9 +276,10 @@ export async function pollMonitor(
 ): Promise<Record<string, unknown>> {
   let waited = 0
   for (;;) {
-    const response = await fetch(url)
-    if (!response.ok) throw new GraphError(response.status, 'monitorError', `GET ${url}`)
-    const payload = (await response.json()) as Record<string, unknown>
+    const raw = await apiRequest('GET', url, {
+      errorOf: (response) => new GraphError(response.status, 'monitorError', `GET ${url}`),
+    })
+    const payload = (raw ?? {}) as Record<string, unknown>
     if (typeof payload.status !== 'string' || payload.status === '') {
       throw new GraphError(502, 'invalidMonitorResponse', `GET ${url} did not return a status`)
     }
@@ -265,10 +299,9 @@ export async function uploadChunk(
   total: number,
 ): Promise<Record<string, unknown>> {
   const end = start + data.length - 1
-  const response = await request(config, 'PUT', uploadUrl, {
+  return (await graphRequest(config, 'PUT', uploadUrl, {
     auth: false,
     data,
     headers: { 'Content-Range': `bytes ${String(start)}-${String(end)}/${String(total)}` },
-  })
-  return jsonObject(response)
+  })) as Record<string, unknown>
 }

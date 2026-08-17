@@ -12,5 +12,7 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+API_BASE = "https://api.github.com"
+API_VERSION = "2022-11-28"
 SCOPE_WARN = 100
 SCOPE_ERROR = 5000

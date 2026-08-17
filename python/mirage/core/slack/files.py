@@ -14,11 +14,10 @@
 
 from typing import Any
 
-import aiohttp
-
+from mirage.core.api.client import api_request, status_error
 from mirage.core.slack.config import SlackConfig
 from mirage.resource.secrets import reveal_secret
-from mirage.utils.ranges import range_header, window_if_unranged
+from mirage.utils.ranges import window_for
 from mirage.utils.sanitize import path_safe_name
 
 
@@ -61,11 +60,10 @@ async def download_file(config: SlackConfig,
         bytes: raw file content.
     """
     headers = {"Authorization": f"Bearer {reveal_secret(config.token)}"}
-    window = range_header(offset, size)
-    if window:
-        headers["Range"] = window
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url, headers=headers) as resp:
-            resp.raise_for_status()
-            data = await resp.read()
-            return window_if_unranged(data, resp.status, offset, size)
+    data: bytes = await api_request("GET",
+                                    url,
+                                    error_of=status_error,
+                                    headers=headers,
+                                    read="bytes",
+                                    window=window_for(offset, size))
+    return data

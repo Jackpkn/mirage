@@ -1,6 +1,0 @@
-VFS MODE (via require
-example.json
-"company": "Strukto"
-example.json: true
-nope.txt: false
-/data: true

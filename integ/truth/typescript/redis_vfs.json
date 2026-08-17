@@ -1,0 +1,37 @@
+{
+  "runs": {
+    "typescript": {
+      "command": [
+        "pnpm",
+        "-C",
+        "examples/typescript",
+        "exec",
+        "tsx",
+        "redis/redis_vfs.ts"
+      ]
+    }
+  },
+  "exit": 0,
+  "lines": [
+    "=== VFS MODE (via require(\"fs\")) ===",
+    "",
+    "--- fs.promises.readdir(\"/data\") ---",
+    "  hello.txt",
+    "  sub",
+    "",
+    "--- fs.promises.readFile(\"/data/hello.txt\", \"utf-8\") ---",
+    "  hello world",
+    "",
+    "--- fs.promises.stat() / exists() ---",
+    "  hello.txt: true",
+    "  nope.txt: false",
+    "",
+    "--- isDir(\"/data/sub\") ---",
+    "  /data/sub: true",
+    "",
+    "--- fs.promises.readdir(\"/data/sub\") ---",
+    "  nested.txt",
+    "",
+    "Stats: 5 ops, 12 bytes transferred"
+  ]
+}

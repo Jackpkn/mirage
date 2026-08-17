@@ -1,3 +1,0 @@
-hello world
-hello.txt: true
-nope.txt: false
