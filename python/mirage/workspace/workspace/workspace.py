@@ -66,6 +66,7 @@ from mirage.workspace.workspace.execute import execute_line
 from mirage.workspace.workspace.guard import reject_config_script
 from mirage.workspace.workspace.kernel_mounts import KernelMounts
 from mirage.workspace.workspace.lifecycle import (close_async, patch_process,
+                                                  stop_vfs_loop,
                                                   unpatch_process)
 from mirage.workspace.workspace.meta import WorkspaceMeta
 from mirage.workspace.workspace.mounts import (install_mounts, kernel_targets,
@@ -189,6 +190,7 @@ class Workspace:
         # AttributeError instead of restoring nothing.
         self._original_open: Callable[..., Any] | None = None
         self._original_os: ModuleType | None = None
+        self._vfs_loop: asyncio.AbstractEventLoop | None = None
 
         self._runtimes, self._policy_router = wire_runtime_world(
             self._registry, self.dispatch,
@@ -375,7 +377,8 @@ class Workspace:
                  exc_value: BaseException | None,
                  traceback: TracebackType | None) -> None:
         unpatch_process(self)
-        run_async_from_sync(self.close())
+        run_async_from_sync(self.close(), self._vfs_loop)
+        stop_vfs_loop(self)
 
     @property
     def registry(self) -> MountRegistry:
