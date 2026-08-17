@@ -13,16 +13,20 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import asyncio
+import os
 import sys
+
+import redis as sync_redis
 
 from mirage import MountMode, Workspace
 from mirage.resource.redis import RedisResource
 
-REDIS_URL = "redis://localhost:6379/0"
+REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
+KEY_PREFIX = "mirage:fs:"
 
 
 async def _seed():
-    resource = RedisResource(url=REDIS_URL)
+    resource = RedisResource(url=REDIS_URL, key_prefix=KEY_PREFIX)
     ws = Workspace({"/data": resource}, mode=MountMode.WRITE)
     await ws.execute('echo "hello world" | tee /data/hello.txt')
     await ws.execute("mkdir /data/sub")
@@ -31,7 +35,7 @@ async def _seed():
 
 asyncio.run(_seed())
 
-resource = RedisResource(url=REDIS_URL)
+resource = RedisResource(url=REDIS_URL, key_prefix=KEY_PREFIX)
 ws = Workspace({"/data": resource}, mode=MountMode.WRITE)
 
 with ws:
@@ -61,3 +65,10 @@ with ws:
     records = ws.ops.records
     total = sum(r.bytes for r in records)
     print(f"\nStats: {len(records)} ops, {total} bytes transferred")
+
+# The seeded files outlive the process and share a namespace with the
+# other redis examples, so drop them rather than leak into the next run.
+sc = sync_redis.Redis.from_url(REDIS_URL)
+for key in sc.scan_iter(f"{KEY_PREFIX}*"):
+    sc.delete(key)
+sc.close()
