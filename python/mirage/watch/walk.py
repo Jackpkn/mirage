@@ -18,8 +18,8 @@ from collections.abc import (AsyncIterator, Awaitable, Callable, Iterable,
 from mirage.cache.index import IndexCacheStore
 from mirage.cache.index.ram import RAMIndexCacheStore
 from mirage.types import FileStat, FileType, PathSpec, WalkEntry
-from mirage.utils.fingerprint import stat_fingerprint
 from mirage.utils.key_prefix import mount_key, mount_prefix_of
+from mirage.watch.fingerprint import stat_fingerprint
 
 ReaddirFn = Callable[[PathSpec, IndexCacheStore], Awaitable[list[str]]]
 StatFn = Callable[[PathSpec, IndexCacheStore], Awaitable[FileStat]]

@@ -17,15 +17,13 @@ import { ScriptSource } from '@struktoai/mirage-core/runtime/policy/index'
 import { RAMNamespaceStore } from '@struktoai/mirage-core/workspace/mount/namespace/ram'
 import { RAMWorkspaceStateStore } from '@struktoai/mirage-core/workspace/store/ram'
 import { buildFileCache } from '@struktoai/mirage-core/workspace/workspace/cache'
-import {
-  DiskNamespaceStore,
-  DiskWorkspaceStateStore,
-  RedisConsoleStore,
-  RedisFileCacheStore,
-  RedisNamespaceStore,
-  RedisWorkspaceStateStore,
-  Workspace,
-} from '@struktoai/mirage-node'
+import { DiskNamespaceStore } from './workspace/namespace/disk.ts'
+import { RedisNamespaceStore } from './workspace/namespace/redis.ts'
+import { DiskWorkspaceStateStore } from './workspace/store/disk.ts'
+import { RedisWorkspaceStateStore } from './workspace/store/redis.ts'
+import { RedisConsoleStore } from './shell/console/redis/index.ts'
+import { RedisFileCacheStore } from './cache/file/redis.ts'
+import { Workspace } from './workspace.ts'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'

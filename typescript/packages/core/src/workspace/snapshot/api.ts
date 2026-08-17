@@ -12,7 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import type { Workspace } from '../workspace.ts'
+import type { Workspace } from '../workspace/workspace.ts'
 import { writeFileBytes } from './fs.ts'
 import { splitManifestAndBlobs } from './manifest.ts'
 import { toStateDict } from './state.ts'

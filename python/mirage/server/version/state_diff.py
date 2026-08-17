@@ -17,7 +17,7 @@ from typing import Any
 from mirage.server.version.api import read_version, resolve_ref, version_diff
 from mirage.server.version.state_tree import to_state
 from mirage.server.version.store import VersionStore
-from mirage.types import SessionKey, StateKey
+from mirage.workspace.snapshot.keys import SessionKey, StateKey
 
 
 def _dict_delta(before: dict[str, Any], after: dict[str,

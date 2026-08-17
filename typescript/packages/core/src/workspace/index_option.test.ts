@@ -16,7 +16,7 @@ import { describe, expect, it } from 'vitest'
 import { IndexType } from '../cache/index/config.ts'
 import { RAMIndexCacheStore } from '../cache/index/ram.ts'
 import { RAMResource } from '../resource/ram/ram.ts'
-import { Workspace } from './workspace.ts'
+import { Workspace } from './workspace/workspace.ts'
 
 describe('Workspace index option', () => {
   it('applies the workspace index config to mounted resources', async () => {

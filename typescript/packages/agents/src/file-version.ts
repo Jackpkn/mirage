@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { createHash } from 'node:crypto'
-import type { Workspace } from '@struktoai/mirage-core/workspace/workspace'
+import type { Workspace } from '@struktoai/mirage-core/workspace/workspace/workspace'
 
 export class StaleMirageFileError extends Error {
   readonly path: string

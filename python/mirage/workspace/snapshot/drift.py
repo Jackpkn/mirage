@@ -16,8 +16,9 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING, Any, Callable
 
-from mirage.types import DriftPolicy, FingerprintKey
+from mirage.types import DriftPolicy
 from mirage.workspace.mount.mount import MountEntry
+from mirage.workspace.snapshot.keys import FingerprintKey
 
 if TYPE_CHECKING:
     from mirage.workspace.workspace import Workspace

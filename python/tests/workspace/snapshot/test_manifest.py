@@ -15,7 +15,7 @@
 import io
 from typing import Any
 
-from mirage.types import CacheKey, JobKey, MountKey, StateKey
+from mirage.workspace.snapshot.keys import CacheKey, JobKey, MountKey, StateKey
 from mirage.workspace.snapshot.manifest import split_manifest_and_blobs
 from mirage.workspace.snapshot.tar_io import read_tar, write_tar
 from mirage.workspace.snapshot.utils import BLOB_REF_KEY

@@ -17,7 +17,7 @@ import { OpsRegistry } from '../ops/registry.ts'
 import { MountMode } from '../types.ts'
 import { RAMResource } from '../resource/ram/ram.ts'
 import { getTestParser } from './fixtures/workspace_fixture.ts'
-import { Workspace } from './workspace.ts'
+import { Workspace } from './workspace/workspace.ts'
 
 // A read-family command with one good and one missing operand keeps the
 // good operand's output, reports each missing operand on stderr, and exits

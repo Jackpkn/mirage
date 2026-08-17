@@ -13,7 +13,7 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 from mirage.provision import Precision, ProvisionResult
-from mirage.workspace.provision.rollup import rollup_list, rollup_pipe
+from mirage.provision.rollup import rollup_list, rollup_pipe
 
 
 def test_rollup_pipe_sums():

@@ -19,7 +19,7 @@ import { IOResult } from '../../io/types.ts'
 import { RAMResource } from '../../resource/ram/ram.ts'
 import { MountMode, ResourceName } from '../../types.ts'
 import { getTestParser, stdoutStr } from '../fixtures/workspace_fixture.ts'
-import { Workspace } from '../workspace.ts'
+import { Workspace } from './workspace.ts'
 
 const ENC = new TextEncoder()
 

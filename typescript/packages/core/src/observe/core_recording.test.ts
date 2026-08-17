@@ -16,7 +16,7 @@ import { describe, expect, it } from 'vitest'
 import { OpsRegistry } from '../ops/registry.ts'
 import { RAMResource } from '../resource/ram/ram.ts'
 import { MountMode, PathSpec, ResourceName } from '../types.ts'
-import { Workspace } from '../workspace/workspace.ts'
+import { Workspace } from '../workspace/workspace/workspace.ts'
 import { runWithRecording } from './context.ts'
 
 function call(

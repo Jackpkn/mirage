@@ -20,7 +20,7 @@ import { RAMResource } from '../../resource/ram/ram.ts'
 import { MountMode } from '../../types.ts'
 import { Consumer, SHELL_CONSUMERS, dereferences, route, routeAll } from './index.ts'
 import { Session } from '../session/session.ts'
-import { Workspace } from '../workspace.ts'
+import { Workspace } from '../workspace/workspace.ts'
 
 function fixture(): { session: Session; ws: Workspace } {
   const ram = new RAMResource()

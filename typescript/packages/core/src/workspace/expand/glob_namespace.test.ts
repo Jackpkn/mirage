@@ -17,7 +17,7 @@ import { OpsRegistry } from '../../ops/registry.ts'
 import { RAMResource } from '../../resource/ram/ram.ts'
 import { MountMode } from '../../types.ts'
 import { getTestParser, stdoutStr } from '../fixtures/workspace_fixture.ts'
-import { Workspace } from '../workspace.ts'
+import { Workspace } from '../workspace/workspace.ts'
 
 // A glob lists what its directory holds, nested mount roots and symlinks
 // included. Pinned against GNU coreutils 9.7 on debian:stable-slim with a

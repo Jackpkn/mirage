@@ -14,7 +14,7 @@
 
 export * from '@struktoai/mirage-core'
 export { Workspace, type NodeWorkspaceOptions } from './workspace.ts'
-export { Mount, type MountSpecOptions } from './workspace/mount_spec.ts'
+export { Mount, type MountSpecOptions } from '@struktoai/mirage-core/workspace/mount/spec'
 export {
   DiskResource,
   type DiskResourceOptions,
@@ -58,7 +58,7 @@ export {
   metadataProvision,
   type RedisResourceLike,
 } from './commands/builtin/redis/_provision.ts'
-export { RedisFileCacheStore, type RedisFileCacheOptions } from './cache/redis/file.ts'
+export { RedisFileCacheStore, type RedisFileCacheOptions } from './cache/file/redis.ts'
 export { FuseManager } from './workspace/fuse.ts'
 export { MirageFS, type MirageFSOptions, type FuseAttr } from './fuse/fs.ts'
 export { MountCore, type MountCoreOptions } from './fuse/core.ts'
@@ -415,3 +415,14 @@ export { MODULE_SUFFIXES, isModulePath, loadAttr, splitRef } from './resource/lo
 export { DISK_COMMANDS } from './commands/builtin/disk/index.ts'
 export { REDIS_COMMANDS } from './commands/builtin/redis/index.ts'
 export { GRIDFS_COMMANDS } from './commands/builtin/gridfs/index.ts'
+export {
+  checkWorkspaceConfig,
+  checkWorkspaceConfigFile,
+  configToWorkspaceArgs,
+  interpolateEnv,
+  loadWorkspaceConfig,
+  loadWorkspaceConfigFile,
+  type MountBlock,
+  type WorkspaceArgs,
+  type WorkspaceConfigRaw,
+} from './config.ts'

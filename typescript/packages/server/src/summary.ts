@@ -15,7 +15,7 @@
 import type { Resource } from '@struktoai/mirage-core/resource/base'
 import { HISTORY_PREFIX } from '@struktoai/mirage-core/resource/history/history'
 import { normMountPrefix } from '@struktoai/mirage-core/workspace/snapshot/utils'
-import type { Workspace } from '@struktoai/mirage-core/workspace/workspace'
+import type { Workspace } from '@struktoai/mirage-core/workspace/workspace/workspace'
 import type { WorkspaceEntry } from './registry.ts'
 import type {
   MountSummary,

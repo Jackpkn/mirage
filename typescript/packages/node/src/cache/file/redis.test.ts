@@ -18,7 +18,7 @@ import { CachableAsyncIterator } from '@struktoai/mirage-core/io/cachable_iterat
 import { IOResult } from '@struktoai/mirage-core/io/types'
 import { OpRecord } from '@struktoai/mirage-core/observe/record'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { RedisFileCacheStore } from './file.ts'
+import { RedisFileCacheStore } from './redis.ts'
 
 const REDIS_URL = process.env.REDIS_URL
 const skip = REDIS_URL === undefined

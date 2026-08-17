@@ -18,8 +18,8 @@ import { RAMResource } from '../resource/ram/ram.ts'
 import { MountMode } from '../types.ts'
 import { Channel, JobConsole } from '../shell/console/index.ts'
 import { getTestParser, stdoutStr } from './fixtures/workspace_fixture.ts'
-import type { ExecuteResult } from './workspace.ts'
-import { Workspace } from './workspace.ts'
+import type { ExecuteResult } from './workspace/workspace.ts'
+import { Workspace } from './workspace/workspace.ts'
 
 const DEC = new TextDecoder()
 

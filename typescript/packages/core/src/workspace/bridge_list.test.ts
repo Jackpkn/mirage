@@ -18,7 +18,7 @@ import { RAMResource } from '../resource/ram/ram.ts'
 import type { BridgeDispatchFn } from '../runtime/types.ts'
 import type { VFSEntry } from '../runtime/vfs.ts'
 import { MountMode } from '../types.ts'
-import { Workspace } from './workspace.ts'
+import { Workspace } from './workspace/workspace.ts'
 
 function bridgeOn(ws: Workspace): BridgeDispatchFn {
   return (ws as unknown as { buildWorkspaceBridge(): BridgeDispatchFn }).buildWorkspaceBridge()

@@ -165,13 +165,14 @@ jobs:
 
       # 24 rather than the 22 the test job uses: this step runs no project
       # code, so it is free to track the newer line the integ workflow is
-      # already on.
+      # already on. No `cache: pnpm` here on purpose: the audit step below
+      # resolves straight from the lockfile and never installs, so the pnpm
+      # store does not exist and the post-run save fails path validation on
+      # every cache miss.
       - name: Set up Node
         uses: actions/setup-node@v7
         with:
           node-version: "24"
-          cache: pnpm
-          cache-dependency-path: typescript/pnpm-lock.yaml
 
       # Advisories read against the resolved lockfile, which is what the 27
       # hand-written pnpm.overrides in typescript/package.json pin. Those

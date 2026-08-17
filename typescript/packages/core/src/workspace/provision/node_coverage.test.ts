@@ -26,8 +26,8 @@ import type { TSNodeLike } from '../../shell/types.ts'
 import { MountRegistry } from '../mount/registry.ts'
 import { provisionNode } from '../node/provision_node.ts'
 import { Session } from '../session/session.ts'
-import type { ExecuteResult } from '../workspace.ts'
-import { Workspace } from '../workspace.ts'
+import type { ExecuteResult } from '../workspace/workspace.ts'
+import { Workspace } from '../workspace/workspace.ts'
 
 const ENC = new TextEncoder()
 const require = createRequire(import.meta.url)

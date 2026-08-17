@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { gnuDirname } from '@struktoai/mirage-core/utils/path'
-import type { ExecuteResult, Workspace } from '@struktoai/mirage-core/workspace/workspace'
+import type { ExecuteResult, Workspace } from '@struktoai/mirage-core/workspace/workspace/workspace'
 import { FileVersionTracker, StaleMirageFileError } from './file-version.ts'
 import { decode, ioToStr } from './io-text.ts'
 

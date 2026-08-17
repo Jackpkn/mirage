@@ -19,9 +19,10 @@ import pytest
 from mirage.resource.ram import RAMResource
 from mirage.server.version.state_tree import (blob_to_meta, meta_to_blob,
                                               to_state, tree_inputs_from_state)
-from mirage.types import (CacheKey, FingerprintKey, MountKey, MountMode,
-                          SessionKey, StateKey)
+from mirage.types import MountMode
 from mirage.workspace import Workspace
+from mirage.workspace.snapshot.keys import (CacheKey, FingerprintKey, MountKey,
+                                            SessionKey, StateKey)
 from mirage.workspace.snapshot.manifest import split_manifest_and_blobs
 from mirage.workspace.snapshot.state import to_state_dict
 from mirage.workspace.snapshot.tar_io import read_tar, write_tar

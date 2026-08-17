@@ -564,33 +564,6 @@ def word_text(word: "str | PathSpec") -> str:
     return word
 
 
-class IndexType(str, Enum):
-    RAM = "ram"
-    REDIS = "redis"
-
-
-class CacheType(str, Enum):
-    RAM = "ram"
-    REDIS = "redis"
-
-
-class StateKey(StrEnum):
-    VERSION = "version"
-    MIRAGE_VERSION = "mirage_version"
-    MOUNTS = "mounts"
-    SESSIONS = "sessions"
-    DEFAULT_SESSION_ID = "default_session_id"
-    DEFAULT_AGENT_ID = "default_agent_id"
-    CURRENT_AGENT_ID = "current_agent_id"
-    CACHE = "cache"
-    HISTORY = "history"
-    JOBS = "jobs"
-    FINGERPRINTS = "fingerprints"
-    LIVE_ONLY_MOUNTS = "live_only_mounts"
-    NODES = "nodes"
-    CLIS = "clis"
-
-
 class FileChangeKind(StrEnum):
     """Kind of an externally observed file change.
 
@@ -685,7 +658,7 @@ class WalkEntry:
         virtual (str): Workspace-virtual path of the entry.
         is_dir (bool): Whether the entry is a directory.
         fingerprint (str | None): Content fingerprint (see
-            ``mirage.utils.fingerprint.stat_fingerprint``). None means
+            ``mirage.watch.fingerprint.stat_fingerprint``). None means
             only create/delete are detectable for this entry.
         size (int | None): Content size in bytes, when the listing
             carries it.
@@ -727,84 +700,3 @@ class DriftPolicy(StrEnum):
     """
     STRICT = "strict"
     OFF = "off"
-
-
-class FingerprintKey(StrEnum):
-    PATH = "path"
-    MOUNT_PREFIX = "mount_prefix"
-    FINGERPRINT = "fingerprint"
-    REVISION = "revision"
-
-
-class MountKey(StrEnum):
-    INDEX = "index"
-    PREFIX = "prefix"
-    MODE = "mode"
-    CONSISTENCY = "consistency"
-    RESOURCE_CLASS = "resource_class"
-    RESOURCE_STATE = "resource_state"
-
-
-class CLIKey(StrEnum):
-    NAME = "name"
-    SPEC = "spec"
-    CONFIG = "config"
-    SCRIPT = "script"
-    RUNTIME = "runtime"
-
-
-class ScriptKey(StrEnum):
-    SOURCE = "source"
-    LANGUAGE = "language"
-    MODULE = "module"
-
-
-class CacheKey(StrEnum):
-    LIMIT = "limit"
-    MAX_DRAIN_BYTES = "max_drain_bytes"
-    ENTRIES = "entries"
-    KEY = "key"
-    DATA = "data"
-    FINGERPRINT = "fingerprint"
-    TTL = "ttl"
-    CACHED_AT = "cached_at"
-    SIZE = "size"
-
-
-class JobKey(StrEnum):
-    ID = "id"
-    COMMAND = "command"
-    CWD = "cwd"
-    STATUS = "status"
-    STDOUT = "stdout"
-    STDERR = "stderr"
-    EXIT_CODE = "exit_code"
-    CREATED_AT = "created_at"
-    AGENT = "agent"
-    SESSION_ID = "session_id"
-
-
-class NodeMetaKey(StrEnum):
-    TARGET = "target"
-    MTIME = "mtime"
-    MODE = "mode"
-    UID = "uid"
-    GID = "gid"
-    ATIME = "atime"
-    OBSERVED_MTIME = "observed_mtime"
-
-
-class SessionKey(StrEnum):
-    SESSION_ID = "session_id"
-    CWD = "cwd"
-    ENV = "env"
-    LAST_EXIT_CODE = "last_exit_code"
-
-
-class ResourceStateKey(StrEnum):
-    TYPE = "type"
-    CONFIG = "config"
-    FILES = "files"
-    DIRS = "dirs"
-    MODIFIED = "modified"
-    KEY_PREFIX = "key_prefix"

@@ -12,7 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import type { ExecuteResult } from '@struktoai/mirage-core/workspace/workspace'
+import type { ExecuteResult } from '@struktoai/mirage-core/workspace/workspace/workspace'
 
 export function decode(value: Uint8Array | null | undefined): string {
   if (value === null || value === undefined) return ''

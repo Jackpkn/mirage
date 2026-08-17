@@ -20,7 +20,7 @@ import { handleTest } from './executor/builtins/condition/index.ts'
 import type { DispatchFn } from './executor/cross_mount.ts'
 import type { Namespace } from './mount/namespace/namespace.ts'
 import type { Session } from './session/session.ts'
-import type { Workspace } from './workspace.ts'
+import type { Workspace } from './workspace/workspace.ts'
 import { makeIntegrationWS, run, runExit, runResult } from './fixtures/integration_fixture.ts'
 
 let ws: Workspace

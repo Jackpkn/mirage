@@ -19,9 +19,10 @@ from mirage.server.version.state_tree import (CONTROL_PREFIX, META_PATH,
                                               blob_to_meta, meta_to_blob,
                                               to_state, tree_inputs_from_state)
 from mirage.server.version.store import VersionStore
-from mirage.types import DriftPolicy, StateKey
+from mirage.types import DriftPolicy
 from mirage.workspace.snapshot import (apply_state_dict, install_fingerprints,
                                        to_state_dict)
+from mirage.workspace.snapshot.keys import StateKey
 
 if TYPE_CHECKING:
     from mirage.workspace.workspace import Workspace

@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { gnuDirname } from '@struktoai/mirage-core/utils/path'
-import type { Workspace } from '@struktoai/mirage-core/workspace/workspace'
+import type { Workspace } from '@struktoai/mirage-core/workspace/workspace/workspace'
 import { applyDiff } from '@openai/agents'
 import type { ApplyPatchOperation, ApplyPatchResult, Editor } from '@openai/agents'
 

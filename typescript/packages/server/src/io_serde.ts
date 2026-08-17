@@ -12,7 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { ExecuteResult } from '@struktoai/mirage-core/workspace/workspace'
+import { ExecuteResult } from '@struktoai/mirage-core/workspace/workspace/workspace'
 
 interface IoResultDict {
   kind: 'io'

@@ -17,7 +17,7 @@ import { RAMResource } from '../resource/ram/ram.ts'
 import { ConsistencyPolicy } from '../types.ts'
 import type { MountEntry } from './mount/mount.ts'
 import { Reconciler } from './reconcile.ts'
-import { Workspace } from './workspace.ts'
+import { Workspace } from './workspace/workspace.ts'
 
 function enoent(path: string): Error {
   return Object.assign(new Error(path), { code: 'ENOENT' })

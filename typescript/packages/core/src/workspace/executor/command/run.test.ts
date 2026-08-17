@@ -18,7 +18,7 @@ import { describe, expect, it } from 'vitest'
 import { RAMResource } from '../../../resource/ram/ram.ts'
 import { createShellParser } from '../../../shell/parse.ts'
 import { ConsistencyPolicy, MountMode, PathSpec, ResourceName } from '../../../types.ts'
-import { Workspace } from '../../workspace.ts'
+import { Workspace } from '../../workspace/workspace.ts'
 import { dropServiceCaches } from './run.ts'
 
 const ENC = new TextEncoder()

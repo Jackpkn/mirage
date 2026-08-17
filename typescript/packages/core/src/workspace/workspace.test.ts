@@ -20,7 +20,7 @@ import { MountMode, ResourceName, type PathSpec } from '../types.ts'
 import { BaseResource, type Resource } from '../resource/base.ts'
 import { RAMResource } from '../resource/ram/ram.ts'
 import { getTestParser } from './fixtures/workspace_fixture.ts'
-import { Workspace } from './workspace.ts'
+import { Workspace } from './workspace/workspace.ts'
 
 class MockResource extends BaseResource implements Resource {
   readonly kind = 'mock'

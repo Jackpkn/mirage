@@ -17,7 +17,7 @@ import { RAMResource } from '../resource/ram/ram.ts'
 import { PathSpec } from '../types.ts'
 import { RAMSessionStore } from './session/ram.ts'
 import { toStateDict } from './snapshot/state.ts'
-import { Workspace } from './workspace.ts'
+import { Workspace } from './workspace/workspace.ts'
 
 class ProbeRAMResource extends RAMResource {
   closeCalls = 0

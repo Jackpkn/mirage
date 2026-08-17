@@ -19,10 +19,10 @@ from mirage.core.s3.client import (_client_kwargs, _key, _strip_prefix,
                                    async_session)
 from mirage.core.timeutil import to_iso_z
 from mirage.types import PathSpec, WalkEntry
-from mirage.utils.fingerprint import stat_fingerprint
 from mirage.utils.key_prefix import mount_prefix_of
 from mirage.watch.base import DeltaHook
 from mirage.watch.delta import ListingDeltaHook
+from mirage.watch.fingerprint import stat_fingerprint
 from mirage.watch.walk import synth_dirs
 
 

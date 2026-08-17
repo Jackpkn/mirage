@@ -36,18 +36,14 @@ import { snakeToCamel } from '@struktoai/mirage-core/utils/normalize'
 import type { WorkspaceStateStore } from '@struktoai/mirage-core/workspace/store/base'
 import { RAMWorkspaceStateStore } from '@struktoai/mirage-core/workspace/store/ram'
 import { S3WorkspaceStateStore } from '@struktoai/mirage-core/workspace/store/s3'
-import type { WorkspaceOptions } from '@struktoai/mirage-core/workspace/workspace'
-import {
-  DiskWorkspaceStateStore,
-  RedisConsoleStore,
-  RedisWorkspaceStateStore,
-  buildResource,
-  isModulePath,
-  loadAttr,
-  normalizeS3Config,
-  splitRef,
-} from '@struktoai/mirage-node'
-import type { S3Config } from '@struktoai/mirage-node'
+import type { WorkspaceOptions } from '@struktoai/mirage-core/workspace/workspace/workspace'
+import { normalizeS3Config } from './resource/s3/config.ts'
+import { isModulePath, loadAttr, splitRef } from './resource/loader.ts'
+import { buildResource } from './resource/registry.ts'
+import { RedisConsoleStore } from './shell/console/redis/index.ts'
+import { DiskWorkspaceStateStore } from './workspace/store/disk.ts'
+import { RedisWorkspaceStateStore } from './workspace/store/redis.ts'
+import type { S3Config } from './resource/s3/config.ts'
 import { JobConsole } from '@struktoai/mirage-core/shell/console/index'
 import type { ConsoleFactory } from '@struktoai/mirage-core/shell/job_table/index'
 import { compareCodePoints } from '@struktoai/mirage-core/utils/sort'

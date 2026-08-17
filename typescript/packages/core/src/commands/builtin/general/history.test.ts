@@ -17,7 +17,7 @@ import { OpsRegistry } from '../../../ops/registry.ts'
 import { RAMResource } from '../../../resource/ram/ram.ts'
 import { MountMode } from '../../../types.ts'
 import { getTestParser } from '../../../workspace/fixtures/workspace_fixture.ts'
-import { Workspace } from '../../../workspace/workspace.ts'
+import { Workspace } from '../../../workspace/workspace/workspace.ts'
 
 async function makeWs(): Promise<Workspace> {
   const parser = await getTestParser()

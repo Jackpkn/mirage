@@ -15,7 +15,8 @@
 import json
 from typing import Any
 
-from mirage.types import CacheKey, MountKey, ResourceStateKey, StateKey
+from mirage.workspace.snapshot.keys import (CacheKey, MountKey,
+                                            ResourceStateKey, StateKey)
 from mirage.workspace.snapshot.tar_io import _json_default
 from mirage.workspace.snapshot.utils import FORMAT_VERSION
 

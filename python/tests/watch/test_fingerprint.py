@@ -1,4 +1,4 @@
-from mirage.utils.fingerprint import stat_fingerprint
+from mirage.watch.fingerprint import stat_fingerprint
 
 
 def test_stat_fingerprint_prefers_etag():

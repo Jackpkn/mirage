@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { VERSION } from '@struktoai/mirage-core/version'
-import type { Workspace } from '@struktoai/mirage-core/workspace/workspace'
+import type { Workspace } from '@struktoai/mirage-core/workspace/workspace/workspace'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod'

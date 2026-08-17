@@ -17,7 +17,7 @@ import { OpsRegistry } from '../ops/registry.ts'
 import { RAMResource } from '../resource/ram/ram.ts'
 import { FileType, MountMode } from '../types.ts'
 import { getTestParser, stderrStr, stdoutStr } from '../workspace/fixtures/workspace_fixture.ts'
-import { Workspace } from '../workspace/workspace.ts'
+import { Workspace } from '../workspace/workspace/workspace.ts'
 import { QuickJsRuntime } from './js/quickjs.ts'
 import { MontyRuntime } from './python/monty/index.ts'
 

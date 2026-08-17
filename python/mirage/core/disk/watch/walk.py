@@ -20,10 +20,10 @@ from pathlib import Path
 from mirage.accessor.disk import DiskAccessor
 from mirage.core.timeutil import epoch_to_iso
 from mirage.types import PathSpec, WalkEntry
-from mirage.utils.fingerprint import stat_fingerprint
 from mirage.utils.key_prefix import mount_prefix_of
 from mirage.watch.base import DeltaHook
 from mirage.watch.delta import ListingDeltaHook
+from mirage.watch.fingerprint import stat_fingerprint
 
 
 def resolve(root: Path, path: str) -> Path:

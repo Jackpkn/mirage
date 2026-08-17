@@ -20,10 +20,10 @@ from opendal.types import Metadata
 
 from mirage.core.opendal.types import OperatorAccessor
 from mirage.types import PathSpec, WalkEntry
-from mirage.utils.fingerprint import stat_fingerprint
 from mirage.utils.key_prefix import mount_prefix_of
 from mirage.watch.base import DeltaHook
 from mirage.watch.delta import ListingDeltaHook
+from mirage.watch.fingerprint import stat_fingerprint
 
 
 class OpendalWalk:

@@ -16,7 +16,7 @@ import { describe, expect, it } from 'vitest'
 import { RAMResource } from '../../resource/ram/ram.ts'
 import { MountMode } from '../../types.ts'
 import { getTestParser, stderrStr } from '../fixtures/workspace_fixture.ts'
-import { Workspace } from '../workspace.ts'
+import { Workspace } from '../workspace/workspace.ts'
 
 async function makeWs(): Promise<Workspace> {
   const parser = await getTestParser()

@@ -17,7 +17,7 @@ import { OpsRegistry } from '../../ops/registry.ts'
 import { RAMResource } from '../../resource/ram/ram.ts'
 import { MountMode } from '../../types.ts'
 import { getTestParser, stderrStr, stdoutStr } from '../fixtures/workspace_fixture.ts'
-import { Workspace } from '../workspace.ts'
+import { Workspace } from '../workspace/workspace.ts'
 
 // Direct port of tests/workspace/executor/builtins/test_exec_path.py: a
 // slash-carrying head word runs the file, bash's loader rule.

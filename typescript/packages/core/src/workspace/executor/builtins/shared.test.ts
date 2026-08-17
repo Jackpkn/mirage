@@ -17,7 +17,7 @@ import { IOResult } from '../../../io/types.ts'
 import { RAMResource } from '../../../resource/ram/ram.ts'
 import { MountMode, PathSpec } from '../../../types.ts'
 import { getTestParser } from '../../fixtures/workspace_fixture.ts'
-import { Workspace } from '../../workspace.ts'
+import { Workspace } from '../../workspace/workspace.ts'
 import {
   absPath,
   expandOperands,

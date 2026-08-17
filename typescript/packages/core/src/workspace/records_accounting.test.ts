@@ -16,7 +16,7 @@ import { describe, expect, it } from 'vitest'
 import { OpRecord } from '../observe/record.ts'
 import { RAMResource } from '../resource/ram/ram.ts'
 import { MountMode, ResourceName } from '../types.ts'
-import { Workspace } from './workspace.ts'
+import { Workspace } from './workspace/workspace.ts'
 
 function record(source: string, bytes: number): OpRecord {
   return new OpRecord({

@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { rstripSlash } from '@struktoai/mirage-core/utils/slash'
-import type { ExecuteResult, Workspace } from '@struktoai/mirage-core/workspace/workspace'
+import type { ExecuteResult, Workspace } from '@struktoai/mirage-core/workspace/workspace/workspace'
 import type {
   BashOperations,
   EditOperations,
