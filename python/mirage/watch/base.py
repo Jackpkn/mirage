@@ -34,6 +34,9 @@ class CacheInvalidator(Protocol):
     async def invalidate_subtree(self, path: PathSpec) -> None:
         ...
 
+    async def invalidate_ancestors(self, path: PathSpec) -> None:
+        ...
+
 
 class WatchMount(Protocol):
     """What the watch runtime needs from one mount entry.

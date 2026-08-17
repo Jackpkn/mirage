@@ -4,6 +4,9 @@ from datetime import datetime, timezone
 
 import pytest
 
+from mirage.cache.index.config import IndexEntry
+from mirage.cache.index.ram import RAMIndexCacheStore
+from mirage.cache.manager import CacheManager
 from mirage.types import FileChangeKind, FileEvent, PathSpec
 from mirage.watch.source import Subscriber
 from mirage.watch.watcher import Watcher
@@ -24,6 +27,9 @@ class FakeCacheManager:
 
     async def invalidate_subtree(self, path):
         self._log.append(f"inv-subtree:{path.virtual}")
+
+    async def invalidate_ancestors(self, path):
+        self._log.append(f"inv-ancestors:{path.virtual}")
 
 
 class PlainResource:
@@ -91,8 +97,34 @@ async def test_notify_invalidate_before_deliver():
     await w.notify(_change(FileChangeKind.CREATE, "/nc/data/x.txt"))
     await asyncio.wait_for(task, timeout=2)
     log.append("deliver")
-    assert log == ["inv:/nc/data/x.txt", "inv:/nc/data", "deliver"]
+    assert log == [
+        "inv:/nc/data/x.txt", "inv-ancestors:/nc/data/x.txt", "deliver"
+    ]
     await agen.aclose()
+    await w.close()
+
+
+@pytest.mark.asyncio
+async def test_a_nested_create_drops_every_listing_to_the_mount_root():
+    # A nested external create implies intermediate dirs appeared, so
+    # every cached listing up to the mount root must go, not just the
+    # file's immediate parent. Asserted against a real CacheManager
+    # rather than the fake above, because the walk itself lives there
+    # now and a fake would only prove the call was made.
+    index = RAMIndexCacheStore()
+    levels = ("/nc", "/nc/data", "/nc/data/sub")
+    for level in levels:
+        await index.set_dir(level, [
+            ("child", IndexEntry(id="1", name="child", resource_type="file"))
+        ])
+    entry = FakeMountEntry(prefix="/nc/",
+                           resource=PlainResource(),
+                           cache_manager=CacheManager(None, index, "/nc/",
+                                                      False))
+    w = Watcher(FakeRegistry(entry))
+    await w.notify(_change(FileChangeKind.CREATE, "/nc/data/sub/deep.txt"))
+    for level in levels:
+        assert (await index.list_dir(level)).entries is None
     await w.close()
 
 
@@ -103,7 +135,7 @@ async def test_notify_delete_routes_to_unlink():
     agen, task = await _start_blocked_watch(w)
     await w.notify(_change(FileChangeKind.DELETE, "/nc/data/x.txt"))
     await asyncio.wait_for(task, timeout=2)
-    assert log == ["inv-unlink:/nc/data/x.txt", "inv:/nc/data"]
+    assert log == ["inv-unlink:/nc/data/x.txt", "inv-ancestors:/nc/data/x.txt"]
     await agen.aclose()
     await w.close()
 
@@ -115,7 +147,7 @@ async def test_notify_unknown_routes_to_subtree():
     agen, task = await _start_blocked_watch(w)
     await w.notify(_change(FileChangeKind.UNKNOWN, "/nc/data/day"))
     await asyncio.wait_for(task, timeout=2)
-    assert log == ["inv-subtree:/nc/data/day", "inv:/nc/data"]
+    assert log == ["inv-subtree:/nc/data/day", "inv-ancestors:/nc/data/day"]
     await agen.aclose()
     await w.close()
 
@@ -127,7 +159,7 @@ async def test_notify_update_does_not_reach_the_subtree():
     agen, task = await _start_blocked_watch(w)
     await w.notify(_change(FileChangeKind.UPDATE, "/nc/data/day"))
     await asyncio.wait_for(task, timeout=2)
-    assert log == ["inv:/nc/data/day", "inv:/nc/data"]
+    assert log == ["inv:/nc/data/day", "inv-ancestors:/nc/data/day"]
     await agen.aclose()
     await w.close()
 
@@ -144,6 +176,9 @@ async def test_notify_reframes_resource_path():
         async def invalidate_after_unlink(self, path):
             seen.append(path.resource_path)
 
+        async def invalidate_ancestors(self, path):
+            return None
+
     entry = FakeMountEntry(prefix="/nc/",
                            resource=PlainResource(),
                            cache_manager=RecordingManager())
@@ -151,34 +186,7 @@ async def test_notify_reframes_resource_path():
     agen, task = await _start_blocked_watch(w)
     await w.notify(_change(FileChangeKind.CREATE, "/nc/data/x.txt"))
     await asyncio.wait_for(task, timeout=2)
-    assert seen == ["data/x.txt", "data"]
-    await agen.aclose()
-    await w.close()
-
-
-@pytest.mark.asyncio
-async def test_notify_invalidates_ancestor_chain():
-    # A nested external create implies intermediate dirs appeared, so
-    # every cached listing up to the mount root must be evicted, not
-    # just the file's immediate parent.
-    seen: list[str] = []
-
-    class RecordingManager:
-
-        async def invalidate_after_write(self, path):
-            seen.append(path.virtual)
-
-        async def invalidate_after_unlink(self, path):
-            seen.append(f"unlink:{path.virtual}")
-
-    entry = FakeMountEntry(prefix="/nc/",
-                           resource=PlainResource(),
-                           cache_manager=RecordingManager())
-    w = Watcher(FakeRegistry(entry))
-    agen, task = await _start_blocked_watch(w)
-    await w.notify(_change(FileChangeKind.CREATE, "/nc/data/sub/deep.txt"))
-    await asyncio.wait_for(task, timeout=2)
-    assert seen == ["/nc/data/sub/deep.txt", "/nc/data/sub", "/nc/data"]
+    assert seen == ["data/x.txt"]
     await agen.aclose()
     await w.close()
 
@@ -199,9 +207,9 @@ async def test_notify_move_evicts_both_sides():
     await asyncio.wait_for(task, timeout=2)
     assert log == [
         "inv:/nc/data/new.txt",
-        "inv:/nc/data",
+        "inv-ancestors:/nc/data/new.txt",
         "inv-unlink:/nc/old/orig.txt",
-        "inv:/nc/old",
+        "inv-ancestors:/nc/old/orig.txt",
     ]
     await agen.aclose()
     await w.close()
