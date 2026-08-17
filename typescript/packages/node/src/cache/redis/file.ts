@@ -12,6 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import { readFileSync } from 'node:fs'
 import { CacheType } from '@struktoai/mirage-core/cache/file/config'
 import { validateMaxDrainBytes } from '@struktoai/mirage-core/cache/file/mixin'
 import type { FileCache } from '@struktoai/mirage-core/cache/file/mixin'
@@ -20,6 +21,14 @@ import type { PathSpec } from '@struktoai/mirage-core/types'
 import { registerFileCacheStore } from '@struktoai/mirage-core/workspace/workspace/cache'
 import type { RedisClientType } from 'redis'
 import { RedisResource, type RedisResourceOptions } from '../../resource/redis/redis.ts'
+
+// Shipped next to this module in src and copied beside the bundle in
+// dist (tsup onSuccess); byte-identical to the Python add.lua.
+const ADD_LUA = readFileSync(new URL('./add.lua', import.meta.url), 'utf8')
+
+function toBuffer(data: Uint8Array): Buffer {
+  return Buffer.from(data.buffer, data.byteOffset, data.byteLength)
+}
 
 export interface RedisFileCacheOptions extends RedisResourceOptions {
   cacheLimit?: string | number
@@ -69,6 +78,14 @@ export class RedisFileCacheStore extends RedisResource implements FileCache {
     return this.store.client()
   }
 
+  private dataKey(key: string): string {
+    return `${this.dataPrefix}${key}`
+  }
+
+  private metaKey(key: string): string {
+    return `${this.metaPrefix}${key}`
+  }
+
   async get(key: string): Promise<Uint8Array | null> {
     const c = await this.cacheClient()
     const mod = await this.module()
@@ -79,7 +96,7 @@ export class RedisFileCacheStore extends RedisResource implements FileCache {
         get: (k: string) => Promise<Buffer | null>
       }
     }
-    const raw = await typed.withTypeMapping(mapping).get(`${this.dataPrefix}${key}`)
+    const raw = await typed.withTypeMapping(mapping).get(this.dataKey(key))
     if (raw === null) return null
     return new Uint8Array(raw.buffer, raw.byteOffset, raw.byteLength)
   }
@@ -91,10 +108,10 @@ export class RedisFileCacheStore extends RedisResource implements FileCache {
   ): Promise<void> {
     const fp = options.fingerprint ?? defaultFingerprint(data)
     const c = await this.cacheClient()
-    const dk = `${this.dataPrefix}${key}`
-    const mk = `${this.metaPrefix}${key}`
+    const dk = this.dataKey(key)
+    const mk = this.metaKey(key)
     const pipe = c.multi()
-    pipe.set(dk, Buffer.from(data.buffer, data.byteOffset, data.byteLength))
+    pipe.set(dk, toBuffer(data))
     pipe.set(mk, fp)
     if (options.ttl !== null && options.ttl !== undefined) {
       pipe.expire(dk, options.ttl)
@@ -109,10 +126,19 @@ export class RedisFileCacheStore extends RedisResource implements FileCache {
     options: { fingerprint?: string | null; ttl?: number | null } = {},
   ): Promise<boolean> {
     const c = await this.cacheClient()
-    const exists = await c.exists(`${this.dataPrefix}${key}`)
-    if (exists) return false
-    await this.set(key, data, options)
-    return true
+    const fp = options.fingerprint ?? defaultFingerprint(data)
+    // A background drain is insert-only: an older drain finishing late must
+    // not overwrite a newer cache fill. add.lua keeps the check, bytes,
+    // fingerprint and TTL in one execution so writers cannot interleave.
+    const inserted = await c.eval(ADD_LUA, {
+      keys: [this.dataKey(key), this.metaKey(key)],
+      arguments: [
+        toBuffer(data),
+        fp,
+        options.ttl === null || options.ttl === undefined ? '' : String(options.ttl),
+      ],
+    })
+    return inserted === 1
   }
 
   async remove(key: string): Promise<void> {
@@ -122,20 +148,20 @@ export class RedisFileCacheStore extends RedisResource implements FileCache {
     this.drainTasks.delete(key)
     const c = await this.cacheClient()
     const pipe = c.multi()
-    pipe.del(`${this.dataPrefix}${key}`)
-    pipe.del(`${this.metaPrefix}${key}`)
+    pipe.del(this.dataKey(key))
+    pipe.del(this.metaKey(key))
     await pipe.exec()
   }
 
   override async exists(key: string | PathSpec): Promise<boolean> {
     const k = typeof key === 'string' ? key : key.mountPath
     const c = await this.cacheClient()
-    return (await c.exists(`${this.dataPrefix}${k}`)) > 0
+    return (await c.exists(this.dataKey(k))) > 0
   }
 
   async isFresh(key: string, remoteFingerprint: string): Promise<boolean> {
     const c = await this.cacheClient()
-    const fp = await c.get(`${this.metaPrefix}${key}`)
+    const fp = await c.get(this.metaKey(key))
     if (fp === null) return false
     return fp === remoteFingerprint
   }

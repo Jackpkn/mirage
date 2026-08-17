@@ -65,6 +65,33 @@ describe.skipIf(skip)('RedisFileCacheStore', () => {
     expect(await cache.add('k', data)).toBe(false)
   })
 
+  it('gives concurrent add calls exactly one winner', async () => {
+    const contenders = Array.from({ length: 32 }, (_, i) => ({
+      data: new TextEncoder().encode(`value-${String(i)}`),
+      fingerprint: `fingerprint-${String(i)}`,
+    }))
+    const inserted = await Promise.all(
+      contenders.map(({ data, fingerprint }) => cache.add('shared', data, { fingerprint })),
+    )
+
+    expect(inserted.filter(Boolean)).toHaveLength(1)
+    const winner = contenders.find((_value, index) => inserted[index])
+    if (winner === undefined) throw new Error('expected one add call to win')
+    expect(await cache.get('shared')).toEqual(winner.data)
+    expect(await cache.isFresh('shared', winner.fingerprint)).toBe(true)
+  })
+
+  it('preserves binary data and applies ttl to data and metadata on add', async () => {
+    const data = new Uint8Array([0x00, 0xff, 0x80, 0x42])
+    expect(await cache.add('binary', data, { fingerprint: 'binary-fp', ttl: 1 })).toBe(true)
+    expect(await cache.get('binary')).toEqual(data)
+    expect(await cache.isFresh('binary', 'binary-fp')).toBe(true)
+
+    await new Promise((resolve) => setTimeout(resolve, 1100))
+    expect(await cache.get('binary')).toBeNull()
+    expect(await cache.isFresh('binary', 'binary-fp')).toBe(false)
+  })
+
   it('remove deletes data and meta', async () => {
     await cache.set('k', new Uint8Array([9]))
     expect(await cache.exists('k')).toBe(true)
