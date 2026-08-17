@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { describe, expect, it, vi } from 'vitest'
-import { NO_RETRY, apiRequest, type RetryPolicy } from './client.ts'
+import { NO_RETRY, apiRequest, bodyDelay, headerDelay, type RetryPolicy } from './client.ts'
 
 const TARGET = 'https://api.test/v1/thing'
 
@@ -138,5 +138,34 @@ describe('apiRequest', () => {
     await expect(apiRequest('GET', TARGET, { errorOf, fetchFn: fakeFetch })).rejects.toThrowError(
       TypeError,
     )
+  })
+})
+
+describe('retry delays', () => {
+  const retry: RetryPolicy = { ...NO_RETRY, statuses: new Set([429]), maxBackoff: 4 }
+
+  it('header mode prefers Retry-After and caps only the fallback', () => {
+    const withHeader = new Response(null, { headers: { 'Retry-After': '7.5' } })
+    expect(headerDelay(withHeader, 0, retry)).toBe(7.5)
+    expect(headerDelay(new Response(null), 1, retry)).toBe(2)
+    expect(headerDelay(new Response(null), 6, retry)).toBe(4)
+  })
+
+  it('header mode refuses a delay it could never wait out', () => {
+    // setTimeout clamps NaN and Infinity to 1ms, so an unguarded value
+    // turns the wait into a hot retry; a negative delay does the same.
+    for (const value of ['soon', 'NaN', 'Infinity', '-Infinity', '-5']) {
+      const response = new Response(null, { headers: { 'Retry-After': value } })
+      expect(headerDelay(response, 0, retry)).toBe(1)
+    }
+  })
+
+  it('body mode refuses a delay it could never wait out', async () => {
+    // JSON.parse rejects a bare NaN literal but overflows 1e999 to Infinity.
+    expect(await bodyDelay(new Response('{"retry_after": 2.5}'))).toBe(2.5)
+    expect(await bodyDelay(new Response('{"retry_after": 1e999}'))).toBe(1)
+    expect(await bodyDelay(new Response('{"retry_after": -5}'))).toBe(1)
+    expect(await bodyDelay(new Response('{"retry_after": "soon"}'))).toBe(1)
+    expect(await bodyDelay(new Response('not json'))).toBe(1)
   })
 })

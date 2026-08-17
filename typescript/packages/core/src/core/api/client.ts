@@ -55,18 +55,32 @@ function sleep(seconds: number): Promise<void> {
   })
 }
 
-function headerDelay(response: Response, attempt: number, retry: RetryPolicy): number {
+/**
+ * Whether a server-supplied delay is one we can actually wait out. NaN and
+ * infinity are unusable (`setTimeout` silently clamps both to 1ms, turning
+ * the wait into a hot retry), and a negative delay is malformed per RFC
+ * 9110, so all three fall back the way an unparseable header does.
+ */
+export function usableDelay(value: number): boolean {
+  return Number.isFinite(value) && value >= 0
+}
+
+export function headerDelay(response: Response, attempt: number, retry: RetryPolicy): number {
   const value = response.headers.get('Retry-After')
   if (value !== null) {
     const parsed = Number.parseFloat(value)
-    if (Number.isFinite(parsed)) return parsed
+    if (usableDelay(parsed)) return parsed
   }
   return Math.min(2 ** attempt, retry.maxBackoff)
 }
 
-async function bodyDelay(response: Response): Promise<number> {
+export async function bodyDelay(response: Response): Promise<number> {
   const data = (await response.json().catch(() => ({}))) as { retry_after?: unknown }
-  return typeof data.retry_after === 'number' ? data.retry_after : 1
+  // JSON.parse rejects a bare NaN literal but overflows 1e999 to Infinity,
+  // so a body delay needs the same guard as a header one.
+  return typeof data.retry_after === 'number' && usableDelay(data.retry_after)
+    ? data.retry_after
+    : 1
 }
 
 async function retryDelay(

@@ -14,6 +14,7 @@
 
 import asyncio
 import json
+import math
 from collections.abc import Mapping
 from dataclasses import dataclass
 from functools import partial
@@ -76,15 +77,30 @@ def status_error(resp: aiohttp.ClientResponse) -> Exception:
                                        headers=resp.headers)
 
 
+def _usable_delay(value: float) -> bool:
+    """Whether a server-supplied delay is one we can actually wait out.
+
+    NaN and infinity both park the retry forever (``asyncio.sleep`` never
+    wakes from either), and a negative delay is malformed per RFC 9110, so
+    all three are as unusable as a header that does not parse at all.
+
+    Args:
+        value (float): the delay the server asked for, in seconds.
+    """
+    return math.isfinite(value) and value >= 0.0
+
+
 def _header_delay(resp: aiohttp.ClientResponse, attempt: int,
                   retry: RetryPolicy) -> float:
     retry_after = resp.headers.get("Retry-After")
     if retry_after:
         try:
-            return float(retry_after)
+            delay = float(retry_after)
         except ValueError:
             # malformed Retry-After header: fall back to exponential backoff
-            pass
+            delay = math.nan
+        if _usable_delay(delay):
+            return delay
     return min(2.0**attempt, retry.max_backoff)
 
 
@@ -95,7 +111,9 @@ def _body_delay(text: str) -> float:
         return 1.0
     if isinstance(data, dict):
         value = data.get("retry_after")
-        if isinstance(value, (int, float)):
+        # json.loads accepts NaN/Infinity literals, and 1e999 overflows to
+        # inf, so a body delay needs the same guard as a header one.
+        if isinstance(value, (int, float)) and _usable_delay(float(value)):
             return float(value)
     return 1.0
 

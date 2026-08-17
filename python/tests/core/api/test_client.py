@@ -173,3 +173,26 @@ def test_body_delay_reads_retry_after_and_falls_back():
     assert _body_delay('{"retry_after": "soon"}') == 1.0
     assert _body_delay("not json") == 1.0
     assert _body_delay("[1, 2]") == 1.0
+
+
+def test_header_delay_refuses_a_delay_it_could_never_wake_from():
+    retry = RetryPolicy(statuses=frozenset({429}),
+                        max_retries=8,
+                        max_backoff=4.0)
+
+    class _Resp:
+        headers: dict[str, str] = {}
+
+    # asyncio.sleep() never wakes from NaN or inf, and a negative delay
+    # retries instantly: all fall back to backoff, as "soon" does.
+    for value in ("NaN", "Infinity", "-Infinity", "-5"):
+        _Resp.headers = {"Retry-After": value}
+        assert _header_delay(_Resp(), 0, retry) == 1.0
+
+
+def test_body_delay_refuses_a_delay_it_could_never_wake_from():
+    # json.loads accepts these literals, and 1e999 overflows to inf.
+    assert _body_delay('{"retry_after": NaN}') == 1.0
+    assert _body_delay('{"retry_after": Infinity}') == 1.0
+    assert _body_delay('{"retry_after": 1e999}') == 1.0
+    assert _body_delay('{"retry_after": -5}') == 1.0
