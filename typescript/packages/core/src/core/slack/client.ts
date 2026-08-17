@@ -12,7 +12,8 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { rangeHeader, windowIfUnranged } from '../../utils/ranges.ts'
+import { windowFor } from '../../utils/ranges.ts'
+import { apiRequest } from '../api/client.ts'
 
 export interface SlackResponse {
   ok: boolean
@@ -46,6 +47,27 @@ function formatSlackErrorMessage(
   return `${base} (needed: ${needed}; provided: ${providedRepr})`
 }
 
+// Slack reports failures as ok:false payloads, usually with a 200; a
+// non-2xx that still carries one keeps Slack's own wording.
+function slackHttpError(endpoint: string, response: Response, text: string): SlackApiError {
+  let data: unknown = null
+  try {
+    data = JSON.parse(text)
+  } catch {
+    data = null
+  }
+  if (data !== null && typeof data === 'object') {
+    const payload = data as SlackResponse
+    return new SlackApiError(
+      endpoint,
+      payload.error ?? 'unknown_error',
+      payload.needed ?? null,
+      payload.provided ?? null,
+    )
+  }
+  return new SlackApiError(endpoint, `HTTP ${String(response.status)}`)
+}
+
 export interface SlackTransport {
   call(endpoint: string, params?: Record<string, string>, body?: unknown): Promise<SlackResponse>
   downloadFile?(url: string, offset?: number, size?: number | null): Promise<Uint8Array>
@@ -66,18 +88,15 @@ export abstract class HttpSlackTransport implements SlackTransport {
     body?: unknown,
   ): Promise<SlackResponse> {
     const base = this.baseUrl().replace(/\/$/, '')
-    const url = new URL(`${base}/${endpoint}`)
-    if (params) {
-      for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v)
-    }
     const auth = await this.authHeaders(endpoint)
-    const init: RequestInit = {
-      method: body === undefined ? 'GET' : 'POST',
+    const raw = await apiRequest(body === undefined ? 'GET' : 'POST', `${base}/${endpoint}`, {
+      errorOf: (response, text) => slackHttpError(endpoint, response, text),
       headers: { 'Content-Type': 'application/json; charset=utf-8', ...auth },
-    }
-    if (body !== undefined) init.body = JSON.stringify(body)
-    const res = await this.fetch(url, init)
-    const data = (await res.json()) as SlackResponse
+      ...(params === undefined ? {} : { params }),
+      ...(body === undefined ? {} : { json: body }),
+      fetchFn: this.fetch,
+    })
+    const data = (raw ?? {}) as SlackResponse
     if (!data.ok) {
       throw new SlackApiError(
         endpoint,
@@ -91,19 +110,20 @@ export abstract class HttpSlackTransport implements SlackTransport {
 
   // Takes the window rather than a prepared header so the answer can be
   // checked against it: Slack serves files from a CDN, and a server is free
-  // to ignore Range and reply 200 with the whole file, which windowIfUnranged
-  // then trims.
+  // to ignore Range and reply 200 with the whole file, which the kit's
+  // window handling then trims.
   async downloadFile(url: string, offset = 0, size: number | null = null): Promise<Uint8Array> {
     const auth = await this.authHeaders()
-    const headers: Record<string, string> = { ...auth }
-    const window = rangeHeader(offset, size)
-    if (window !== null) headers.Range = window
-    const res = await this.fetch(url, { method: 'GET', headers })
-    if (!res.ok) {
-      throw new Error(`slack: download failed (${String(res.status)}): ${url}`)
-    }
-    const buf = await res.arrayBuffer()
-    return windowIfUnranged(new Uint8Array(buf), res.status, offset, size)
+    const window = windowFor(offset, size)
+    const data = await apiRequest('GET', url, {
+      errorOf: (response) =>
+        new Error(`slack: download failed (${String(response.status)}): ${url}`),
+      headers: auth,
+      read: 'bytes',
+      ...(window === undefined ? {} : { window }),
+      fetchFn: this.fetch,
+    })
+    return data as Uint8Array
   }
 }
 

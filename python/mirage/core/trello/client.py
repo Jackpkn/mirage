@@ -12,10 +12,12 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+from functools import partial
 from typing import Any
 
 import aiohttp
 
+from mirage.core.api.client import api_request
 from mirage.resource.secrets import reveal_secret
 from mirage.resource.trello.config import TrelloConfig
 
@@ -39,6 +41,17 @@ def _auth_params(config: TrelloConfig) -> dict[str, str]:
     }
 
 
+def _error_of(resp: aiohttp.ClientResponse, text: str, *,
+              path: str) -> Exception:
+    # The endpoint rides in the message the way TypeScript's
+    # TrelloApiError carries it: an agent reading the failure needs to
+    # know which call 404'd, not just that one did.
+    return TrelloAPIError(
+        f"Trello API error ({path}): HTTP {resp.status}: {text}",
+        status=resp.status,
+    )
+
+
 async def _request(
     config: TrelloConfig,
     method: str,
@@ -49,23 +62,14 @@ async def _request(
 ) -> dict[str, Any] | list[Any]:
     url = f"{config.base_url}{path}"
     merged = {**_auth_params(config), **(params or {})}
-    async with aiohttp.ClientSession() as session:
-        async with session.request(
-                method,
-                url,
-                params=merged,
-                json=json_body,
-        ) as resp:
-            if resp.status >= 400:
-                text = await resp.text()
-                # The endpoint rides in the message the way TypeScript's
-                # TrelloApiError carries it: an agent reading the failure
-                # needs to know which call 404'd, not just that one did.
-                raise TrelloAPIError(
-                    f"Trello API error ({path}): HTTP {resp.status}: {text}",
-                    status=resp.status,
-                )
-            return await resp.json()
+    data: dict[str, Any] | list[Any] = await api_request(method,
+                                                         url,
+                                                         error_of=partial(
+                                                             _error_of,
+                                                             path=path),
+                                                         params=merged,
+                                                         json_body=json_body)
+    return data
 
 
 async def _get(

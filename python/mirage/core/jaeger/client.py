@@ -12,11 +12,15 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import json
 import re
 from datetime import datetime, timezone
 from typing import Any
 
+import aiohttp
+
 from mirage.accessor.jaeger import JaegerAccessor
+from mirage.core.api.client import api_request
 
 TRACE_ID_RE = re.compile(r"^[0-9a-f]{16}$|^[0-9a-f]{32}$", re.IGNORECASE)
 
@@ -68,6 +72,31 @@ def _now_micros() -> int:
     return int(datetime.now(timezone.utc).timestamp() * 1_000_000)
 
 
+def _error_of(resp: aiohttp.ClientResponse, text: str) -> Exception:
+    """Map a Jaeger error response to a JaegerApiError.
+
+    Args:
+        resp (aiohttp.ClientResponse): a response with status >= 400.
+        text (str): the response body.
+
+    Returns:
+        Exception: JaegerApiError carrying the API's message when the body
+            supplies one, the HTTP status otherwise.
+    """
+    message = f"Jaeger API error: HTTP {resp.status}"
+    try:
+        body = json.loads(text)
+    except ValueError:
+        body = None
+    if isinstance(body, dict):
+        errors = body.get("errors")
+        if isinstance(errors, list) and errors:
+            first = errors[0]
+            if isinstance(first, dict) and first.get("msg"):
+                message = str(first["msg"])
+    return JaegerApiError(message, resp.status)
+
+
 async def _get(accessor: JaegerAccessor,
                endpoint: str,
                params: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -84,21 +113,12 @@ async def _get(accessor: JaegerAccessor,
     Raises:
         JaegerApiError: the API reported an error status.
     """
-    response = await accessor.request(endpoint, params)
-    if response.status_code >= 400:
-        message = f"Jaeger API error: HTTP {response.status_code}"
-        try:
-            body = response.json()
-        except ValueError:
-            body = None
-        if isinstance(body, dict):
-            errors = body.get("errors")
-            if isinstance(errors, list) and errors:
-                first = errors[0]
-                if isinstance(first, dict) and first.get("msg"):
-                    message = str(first["msg"])
-        raise JaegerApiError(message, response.status_code)
-    payload = response.json()
+    url = f"{accessor.config.host.rstrip('/')}{endpoint}"
+    payload = await api_request("GET",
+                                url,
+                                error_of=_error_of,
+                                params=params,
+                                session=accessor.get_session())
     if not isinstance(payload, dict):
         raise JaegerApiError("Jaeger response must be a JSON object")
     return payload

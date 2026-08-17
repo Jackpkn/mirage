@@ -16,6 +16,8 @@ import json
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from aioresponses import aioresponses
+from yarl import URL
 
 from mirage.accessor.slack import SlackAccessor
 from mirage.cache.index import IndexEntry, RAMIndexCacheStore
@@ -175,42 +177,16 @@ async def test_read_not_found(accessor, index):
 @pytest.mark.asyncio
 async def test_download_file_uses_bot_token():
     from mirage.core.slack.files import download_file
-    seen: list[dict] = []
-
-    class _Resp:
-        status = 200
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *a):
-            return None
-
-        def raise_for_status(self):
-            return None
-
-        async def read(self):
-            return b"OK"
-
-    class _Sess:
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *a):
-            return None
-
-        def get(self, url, headers=None):
-            seen.append(headers)
-            return _Resp()
-
-    with patch("mirage.core.slack.files.aiohttp.ClientSession", _Sess):
+    with aioresponses() as m:
+        m.get("http://x", body=b"OK")
+        m.get("http://x", body=b"OK")
         await download_file(
             SlackConfig(token="xoxb-bot", search_token="xoxp-user"),
             "http://x")
         await download_file(SlackConfig(token="xoxb-bot"), "http://x")
-    assert seen[0] == {"Authorization": "Bearer xoxb-bot"}
-    assert seen[1] == {"Authorization": "Bearer xoxb-bot"}
+        sent = m.requests[("GET", URL("http://x"))]
+    assert sent[0].kwargs["headers"] == {"Authorization": "Bearer xoxb-bot"}
+    assert sent[1].kwargs["headers"] == {"Authorization": "Bearer xoxb-bot"}
 
 
 @pytest.mark.asyncio

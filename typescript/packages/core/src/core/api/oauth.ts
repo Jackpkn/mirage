@@ -33,6 +33,17 @@ export abstract class TokenManager {
   /** Fetch a fresh token as `[accessToken, expiresInSeconds]`. */
   protected abstract refreshPair(): Promise<[string, number]>
 
+  /**
+   * Preload the cache with a token minted outside the refresh flow.
+   * `expiresAt` is epoch seconds after which `getToken` refreshes again;
+   * pass `Number.POSITIVE_INFINITY` for a token the manager can never
+   * replace itself.
+   */
+  protected seed(token: string, expiresAt: number): void {
+    this.accessToken = token
+    this.expiresAt = expiresAt
+  }
+
   async getToken(): Promise<string> {
     if (this.accessToken !== null && Date.now() / 1000 < this.expiresAt) {
       return this.accessToken

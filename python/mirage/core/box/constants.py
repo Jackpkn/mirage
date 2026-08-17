@@ -12,7 +12,6 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-API_BASE = "https://api.github.com"
-API_VERSION = "2022-11-28"
-SCOPE_WARN = 100
-SCOPE_ERROR = 5000
+BOX_TOKEN_URL = "https://api.box.com/oauth2/token"
+BOX_API_BASE = "https://api.box.com/2.0"
+TOKEN_BUFFER_SECONDS = 300

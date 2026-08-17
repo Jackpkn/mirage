@@ -12,6 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import { apiRequest } from '../api/client.ts'
 import { rstripSlash } from '../../utils/slash.ts'
 
 class TrelloApiError extends Error {
@@ -58,23 +59,15 @@ export class HttpTrelloTransport implements TrelloTransport {
     params?: Record<string, string>,
     body?: unknown,
   ): Promise<unknown> {
-    const url = new URL(`${this.baseUrl}${path}`)
-    url.searchParams.set('key', this.apiKey)
-    url.searchParams.set('token', this.apiToken)
-    if (params) {
-      for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v)
-    }
-    const init: RequestInit = { method, headers: {} }
-    if (body !== undefined) {
-      init.headers = { 'Content-Type': 'application/json; charset=utf-8' }
-      init.body = JSON.stringify(body)
-    }
-    const res = await this.fetch(url, init)
-    if (res.status >= 400) {
-      const text = await res.text()
-      throw new TrelloApiError(path, res.status, text)
-    }
-    return (await res.json()) as unknown
+    // auth first, so a caller's params can overwrite key/token
+    return apiRequest(method, `${this.baseUrl}${path}`, {
+      fetchFn: this.fetch,
+      params: { key: this.apiKey, token: this.apiToken, ...params },
+      ...(body !== undefined
+        ? { json: body, headers: { 'Content-Type': 'application/json; charset=utf-8' } }
+        : {}),
+      errorOf: (response, text) => new TrelloApiError(path, response.status, text),
+    })
   }
 }
 

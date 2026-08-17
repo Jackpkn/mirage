@@ -24,7 +24,7 @@ describe('BrowserSlackTransport', () => {
     let observedUrl = ''
     let observedHeaders: HeadersInit | undefined
     const fakeFetch: typeof fetch = (u, init) => {
-      observedUrl = (u as URL).href
+      observedUrl = u instanceof URL ? u.toString() : typeof u === 'string' ? u : u.url
       observedHeaders = init?.headers
       return Promise.resolve(jsonResponse({ ok: true }))
     }
@@ -56,7 +56,7 @@ describe('BrowserSlackTransport', () => {
   it('strips trailing slash from proxyUrl', async () => {
     let observedUrl = ''
     const fakeFetch: typeof fetch = (u) => {
-      observedUrl = (u as URL).href
+      observedUrl = u instanceof URL ? u.toString() : typeof u === 'string' ? u : u.url
       return Promise.resolve(jsonResponse({ ok: true }))
     }
     const t = new BrowserSlackTransport({ proxyUrl: '/api/slack/' })

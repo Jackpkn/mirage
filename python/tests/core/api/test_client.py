@@ -18,7 +18,8 @@ from aioresponses import aioresponses
 from yarl import URL
 
 from mirage.core.api.client import (NO_RETRY, RetryPolicy, _body_delay,
-                                    _header_delay, api_request, status_error)
+                                    api_request, header_delay, status_error)
+from mirage.utils.ranges import ByteWindow
 
 TARGET = "https://api.test/v1/thing"
 
@@ -33,10 +34,6 @@ class _Boom(RuntimeError):
 
 def _error_of(resp: aiohttp.ClientResponse, body: str) -> Exception:
     return _Boom(resp.status, body)
-
-
-def _status_error_of(resp: aiohttp.ClientResponse, body: str) -> Exception:
-    return status_error(resp)
 
 
 @pytest.mark.asyncio
@@ -73,7 +70,7 @@ async def test_status_error_carries_the_response_status():
     with aioresponses() as m:
         m.get(TARGET, status=500, body="broken")
         with pytest.raises(aiohttp.ClientResponseError) as exc:
-            await api_request("GET", TARGET, error_of=_status_error_of)
+            await api_request("GET", TARGET, error_of=status_error)
     assert exc.value.status == 500
 
 
@@ -153,19 +150,19 @@ def test_header_delay_prefers_the_header_and_caps_the_fallback():
     class _Resp:
         headers = {"Retry-After": "7.5"}
 
-    assert _header_delay(_Resp(), 0, retry) == 7.5
+    assert header_delay(_Resp(), 0, retry) == 7.5
 
     class _Bare:
         headers = {}
 
-    assert _header_delay(_Bare(), 1, retry) == 2.0
-    assert _header_delay(_Bare(), 6, retry) == 4.0
+    assert header_delay(_Bare(), 1, retry) == 2.0
+    assert header_delay(_Bare(), 6, retry) == 4.0
 
     class _Malformed:
         headers = {"Retry-After": "soon"}
 
     # malformed header falls back to exponential backoff
-    assert _header_delay(_Malformed(), 0, retry) == 1.0
+    assert header_delay(_Malformed(), 0, retry) == 1.0
 
 
 def test_body_delay_reads_retry_after_and_falls_back():
@@ -187,7 +184,7 @@ def test_header_delay_refuses_a_delay_it_could_never_wake_from():
     # retries instantly: all fall back to backoff, as "soon" does.
     for value in ("NaN", "Infinity", "-Infinity", "-5"):
         _Resp.headers = {"Retry-After": value}
-        assert _header_delay(_Resp(), 0, retry) == 1.0
+        assert header_delay(_Resp(), 0, retry) == 1.0
 
 
 def test_body_delay_refuses_a_delay_it_could_never_wake_from():
@@ -196,3 +193,129 @@ def test_body_delay_refuses_a_delay_it_could_never_wake_from():
     assert _body_delay('{"retry_after": Infinity}') == 1.0
     assert _body_delay('{"retry_after": 1e999}') == 1.0
     assert _body_delay('{"retry_after": -5}') == 1.0
+
+
+@pytest.mark.asyncio
+async def test_json_read_of_an_empty_body_is_none():
+    with aioresponses() as m:
+        m.get(TARGET, status=200, body="")
+        result = await api_request("GET", TARGET, error_of=_error_of)
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_bytes_read_sends_the_range_and_trims_an_ignored_one():
+    # a server may legally answer 200 with the whole body to a Range
+    # request; the window trims it client-side
+    with aioresponses() as m:
+        m.get(TARGET, status=200, body=b"0123456789")
+        result = await api_request("GET",
+                                   TARGET,
+                                   error_of=_error_of,
+                                   read="bytes",
+                                   window=ByteWindow(2, 3))
+        sent = m.requests[("GET", URL(TARGET))][0].kwargs
+    assert result == b"234"
+    assert sent["headers"]["Range"] == "bytes=2-4"
+
+
+@pytest.mark.asyncio
+async def test_bytes_read_trusts_a_206_window():
+    with aioresponses() as m:
+        m.get(TARGET, status=206, body=b"234")
+        result = await api_request("GET",
+                                   TARGET,
+                                   error_of=_error_of,
+                                   read="bytes",
+                                   window=ByteWindow(2, 3))
+    assert result == b"234"
+
+
+@pytest.mark.asyncio
+async def test_text_read_returns_the_raw_body():
+    with aioresponses() as m:
+        m.get(TARGET, status=200, body="not json at all")
+        result = await api_request("GET",
+                                   TARGET,
+                                   error_of=_error_of,
+                                   read="text")
+    assert result == "not json at all"
+
+
+@pytest.mark.asyncio
+async def test_location_read_returns_the_header():
+    with aioresponses() as m:
+        m.post(TARGET,
+               status=202,
+               headers={"Location": "https://api.test/monitor/1"})
+        result = await api_request("POST",
+                                   TARGET,
+                                   error_of=_error_of,
+                                   json_body={},
+                                   read="location")
+    assert result == "https://api.test/monitor/1"
+
+
+@pytest.mark.asyncio
+async def test_data_sends_a_raw_body():
+    with aioresponses() as m:
+        m.put(TARGET, payload={"ok": 4})
+        result = await api_request("PUT",
+                                   TARGET,
+                                   error_of=_error_of,
+                                   data=b"\x00\x01")
+        sent = m.requests[("PUT", URL(TARGET))][0].kwargs
+    assert result == {"ok": 4}
+    assert sent["data"] == b"\x00\x01"
+
+
+@pytest.mark.asyncio
+async def test_a_supplied_session_is_reused_and_left_open():
+    async with aiohttp.ClientSession() as session:
+        with aioresponses() as m:
+            m.get(TARGET, payload={"n": 1})
+            m.get(TARGET, payload={"n": 2})
+            first = await api_request("GET",
+                                      TARGET,
+                                      error_of=_error_of,
+                                      session=session)
+            second = await api_request("GET",
+                                       TARGET,
+                                       error_of=_error_of,
+                                       session=session)
+        assert not session.closed
+    assert first == {"n": 1}
+    assert second == {"n": 2}
+
+
+@pytest.mark.asyncio
+async def test_transport_errors_retry_only_when_the_policy_says_so():
+    retry = RetryPolicy(statuses=frozenset(),
+                        max_retries=2,
+                        max_backoff=0.001,
+                        retry_transport=True)
+    with aioresponses() as m:
+        m.get(TARGET, exception=aiohttp.ClientConnectionError("refused"))
+        m.get(TARGET, payload={"ok": 5})
+        result = await api_request("GET",
+                                   TARGET,
+                                   error_of=_error_of,
+                                   retry=retry)
+    assert result == {"ok": 5}
+    with aioresponses() as m:
+        m.get(TARGET, exception=aiohttp.ClientConnectionError("refused"))
+        with pytest.raises(aiohttp.ClientConnectionError):
+            await api_request("GET", TARGET, error_of=_error_of)
+
+
+@pytest.mark.asyncio
+async def test_transport_retry_exhaustion_raises_the_transport_error():
+    retry = RetryPolicy(statuses=frozenset(),
+                        max_retries=1,
+                        max_backoff=0.001,
+                        retry_transport=True)
+    with aioresponses() as m:
+        m.get(TARGET, exception=aiohttp.ClientConnectionError("refused"))
+        m.get(TARGET, exception=aiohttp.ClientConnectionError("refused"))
+        with pytest.raises(aiohttp.ClientConnectionError):
+            await api_request("GET", TARGET, error_of=_error_of, retry=retry)
