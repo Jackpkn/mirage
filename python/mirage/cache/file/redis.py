@@ -13,26 +13,17 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import asyncio
-from collections.abc import Awaitable, Iterable
-from typing import Any, cast
+from collections.abc import Iterable
+from importlib.resources import files
+from typing import Any
 
 from mirage.cache.file.mixin import FileCacheMixin, validate_max_drain_bytes
 from mirage.cache.file.utils import (default_fingerprint, glob_escape,
                                      parse_limit)
 from mirage.resource.redis.redis import RedisResource
 
-ADD_SCRIPT = """
-if redis.call('EXISTS', KEYS[1]) ~= 0 then
-    return 0
-end
-redis.call('SET', KEYS[1], ARGV[1])
-redis.call('SET', KEYS[2], ARGV[2])
-if ARGV[3] ~= '' then
-    redis.call('EXPIRE', KEYS[1], ARGV[3])
-    redis.call('EXPIRE', KEYS[2], ARGV[3])
-end
-return 1
-"""
+# Shipped next to this module; byte-identical to the TypeScript add.lua.
+ADD_LUA = (files("mirage.cache.file") / "add.lua").read_text(encoding="utf-8")
 
 
 class RedisFileCacheStore(RedisResource, FileCacheMixin):
@@ -57,9 +48,16 @@ class RedisFileCacheStore(RedisResource, FileCacheMixin):
         self._meta_prefix = f"{key_prefix}meta:"
         self.max_drain_bytes: int | None = max_drain_bytes
         self._drain_tasks: dict[str, asyncio.Task[Any]] = {}
+        self._add = self._cache_client.register_script(ADD_LUA)
+
+    def _data_key(self, key: str) -> str:
+        return f"{self._data_prefix}{key}"
+
+    def _meta_key(self, key: str) -> str:
+        return f"{self._meta_prefix}{key}"
 
     async def get(self, key: str) -> bytes | None:
-        return await self._cache_client.get(f"{self._data_prefix}{key}")
+        return await self._cache_client.get(self._data_key(key))
 
     async def set(
         self,
@@ -71,8 +69,8 @@ class RedisFileCacheStore(RedisResource, FileCacheMixin):
         if fingerprint is None:
             fingerprint = default_fingerprint(data)
         pipe = self._cache_client.pipeline()
-        dk = f"{self._data_prefix}{key}"
-        mk = f"{self._meta_prefix}{key}"
+        dk = self._data_key(key)
+        mk = self._meta_key(key)
         pipe.set(dk, data)
         pipe.set(mk, fingerprint)
         if ttl is not None:
@@ -87,43 +85,33 @@ class RedisFileCacheStore(RedisResource, FileCacheMixin):
         fingerprint: str | None = None,
         ttl: int | None = None,
     ) -> bool:
-        dk = f"{self._data_prefix}{key}"
-        mk = f"{self._meta_prefix}{key}"
         if fingerprint is None:
             fingerprint = default_fingerprint(data)
         # The background drain deliberately uses insert-only semantics: an
         # older drain finishing late must not overwrite a newer cache fill.
-        # Keep the existence check, bytes, fingerprint and TTL in one Redis
-        # execution so shared-cache writers cannot interleave between them.
-        inserted = await cast(
-            Awaitable[int],
-            self._cache_client.eval(
-                ADD_SCRIPT,
-                2,
-                dk,
-                mk,
-                data,
-                fingerprint,
-                "" if ttl is None else str(ttl),
-            ),
+        # add.lua keeps the existence check, bytes, fingerprint and TTL in
+        # one Redis execution so shared-cache writers cannot interleave.
+        inserted = await self._add(
+            keys=[self._data_key(key),
+                  self._meta_key(key)],
+            args=[data, fingerprint, "" if ttl is None else str(ttl)],
         )
-        return inserted == 1
+        return bool(inserted)
 
     async def remove(self, key: str) -> None:
         task = self._drain_tasks.pop(key, None)
         if task:
             task.cancel()
         pipe = self._cache_client.pipeline()
-        pipe.delete(f"{self._data_prefix}{key}")
-        pipe.delete(f"{self._meta_prefix}{key}")
+        pipe.delete(self._data_key(key))
+        pipe.delete(self._meta_key(key))
         await pipe.execute()
 
     async def exists(self, key: str) -> bool:
-        return bool(await
-                    self._cache_client.exists(f"{self._data_prefix}{key}"))
+        return bool(await self._cache_client.exists(self._data_key(key)))
 
     async def is_fresh(self, key: str, remote_fingerprint: str) -> bool:
-        fp = await self._cache_client.get(f"{self._meta_prefix}{key}")
+        fp = await self._cache_client.get(self._meta_key(key))
         if fp is None:
             return False
         if isinstance(fp, bytes):
