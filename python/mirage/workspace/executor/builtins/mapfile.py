@@ -24,6 +24,8 @@ from mirage.io.types import ByteSource
 from mirage.ops.types import SessionView
 from mirage.policy import PolicyDenied
 from mirage.shell.array import ShellArray, array_set
+from mirage.utils.quote import single_quote
+from mirage.workspace.executor.builtins.shared import fail
 from mirage.workspace.session import Session
 from mirage.workspace.session.state import (session_view, visible_arrays,
                                             visible_assocs)
@@ -33,15 +35,6 @@ _USAGE = ("mapfile: usage: mapfile [-d delim] [-n count] [-O origin] "
           "[-s count] [-t] [-u fd] [-C callback] [-c quantum] [array]")
 _IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 _DEFAULT_QUANTUM = 5000
-
-
-def _fail(cmd: str, msg: str,
-          code: int) -> tuple[ByteSource | None, IOResult, ExecutionNode]:
-    err = msg.encode()
-    return None, IOResult(exit_code=code,
-                          stderr=err), ExecutionNode(command=cmd,
-                                                     exit_code=code,
-                                                     stderr=err)
 
 
 def _count(text: str) -> int | None:
@@ -88,10 +81,10 @@ async def handle_mapfile(
     if parse.invalid is not None:
         token = (parse.invalid
                  if parse.invalid.startswith("--") else f"-{parse.invalid}")
-        return _fail(cmd, f"bash: {cmd}: {token}: invalid option\n{_USAGE}\n",
-                     2)
+        return fail(cmd, f"bash: {cmd}: {token}: invalid option\n{_USAGE}\n",
+                    2)
     if parse.needs_value is not None:
-        return _fail(
+        return fail(
             cmd, f"bash: {cmd}: -{parse.needs_value}: option requires an "
             f"argument\n{_USAGE}\n", 2)
     flags = parse.flags
@@ -111,8 +104,8 @@ async def handle_mapfile(
             continue
         value = _count(str(flags[key]))
         if value is None or (key == "c" and value == 0):
-            return _fail(cmd, f"bash: {cmd}: {flags[key]}: invalid {label}\n",
-                         1)
+            return fail(cmd, f"bash: {cmd}: {flags[key]}: invalid {label}\n",
+                        1)
         if target == "limit":
             limit = value
         elif target == "origin":
@@ -122,20 +115,19 @@ async def handle_mapfile(
         else:
             quantum = value
     if "u" in flags and str(flags["u"]) != "0":
-        return _fail(
+        return fail(
             cmd, f"bash: {cmd}: {flags['u']}: invalid file descriptor: "
             "Bad file descriptor\n", 1)
     strip = bool(flags.get("t"))
     callback = str(flags["C"]) if "C" in flags else None
     name = parse.operands[0] if parse.operands else "MAPFILE"
     if _IDENTIFIER.fullmatch(name) is None:
-        return _fail(cmd, f"bash: {cmd}: `{name}': not a valid identifier\n",
-                     1)
+        return fail(cmd, f"bash: {cmd}: `{name}': not a valid identifier\n", 1)
     view = state if state is not None else session_view(session)
     if view.is_readonly(name):
-        return _fail(cmd, f"bash: {name}: readonly variable\n", 1)
+        return fail(cmd, f"bash: {name}: readonly variable\n", 1)
     if name in visible_assocs(session):
-        return _fail(cmd, f"bash: {cmd}: {name}: not an indexed array\n", 1)
+        return fail(cmd, f"bash: {cmd}: {name}: not an indexed array\n", 1)
 
     if stdin is not None and (session._stdin_buffer is None
                               or session._stdin_source is not stdin):
@@ -168,7 +160,11 @@ async def handle_mapfile(
         array_set(arr, index, text)
         stored += 1
         if callback is not None and stored % quantum == 0:
-            io = await execute_fn(f"{callback} {index} {text}",
+            # The record is data, not source: bash builds the callback
+            # line with `sh_single_quote`, so a record reading `x; rm f`
+            # arrives as one argument rather than running a second
+            # command.
+            io = await execute_fn(f"{callback} {index} {single_quote(text)}",
                                   session_id=session.session_id)
             out = await materialize(io.stdout)
             if out:
@@ -182,7 +178,7 @@ async def handle_mapfile(
     try:
         await view.set(name, arr)
     except PolicyDenied as exc:
-        return _fail(cmd, f"{exc.strerror}\n", 1)
+        return fail(cmd, f"{exc.strerror}\n", 1)
     stdout = b"".join(outputs) or None
     stderr = b"".join(errors) or None
     return stdout, IOResult(stderr=stderr), ExecutionNode(command=cmd,

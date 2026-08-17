@@ -20,23 +20,15 @@ import {
   SHOPT_UNSUPPORTED,
 } from '../../../shell/types.ts'
 import type { Session } from '../../session/session.ts'
+import { lastOf, scanOptions } from './getopt.ts'
 import { ExecutionNode } from '../../types.ts'
-import type { Result } from './shared.ts'
+import { fail, type Result } from './shared.ts'
 
 const USAGE = 'shopt: usage: shopt [-pqsu] [-o] [optname ...]'
 
 /** Whether a `shopt` option is on for the session. */
 export function shoptEnabled(session: Session, name: string): boolean {
   return session.shopts[name] ?? SHOPT_DEFAULTS.get(name) ?? false
-}
-
-function fail(msg: string, code: number): Result {
-  const err = new TextEncoder().encode(msg)
-  return [
-    null,
-    new IOResult({ exitCode: code, stderr: err }),
-    new ExecutionNode({ command: 'shopt', exitCode: code, stderr: err }),
-  ]
 }
 
 function row(name: string, on: boolean, reusable: boolean, setO: boolean): string {
@@ -58,36 +50,18 @@ function row(name: string, on: boolean, reusable: boolean, setO: boolean): strin
  * refused: the parser has no such mode.
  */
 export function handleShopt(args: string[], session: Session): Result {
-  let reusable = false
-  let quiet = false
-  let setO = false
-  let setting: boolean | null = null
-  let conflict = false
-  const names: string[] = []
-  for (let idx = 0; idx < args.length; idx++) {
-    const word = args[idx] ?? ''
-    if (names.length > 0 || !word.startsWith('-') || word === '-') {
-      names.push(word)
-      continue
-    }
-    if (word === '--') {
-      names.push(...args.slice(idx + 1))
-      break
-    }
-    for (const ch of word.slice(1)) {
-      if (ch === 'p') reusable = true
-      else if (ch === 'q') quiet = true
-      else if (ch === 'o') setO = true
-      else if (ch === 's' || ch === 'u') {
-        const want = ch === 's'
-        if (setting !== null && setting !== want) conflict = true
-        setting = want
-      } else return fail(`bash: shopt: -${ch}: invalid option\n${USAGE}\n`, 2)
-    }
+  const scan = scanOptions(args, 'pqosu')
+  if (scan.bad !== null)
+    return fail('shopt', `bash: shopt: ${scan.bad}: invalid option\n${USAGE}\n`, 2)
+  if (scan.letters.includes('s') && scan.letters.includes('u')) {
+    return fail('shopt', 'bash: shopt: cannot set and unset shell options simultaneously\n', 1)
   }
-  if (conflict) {
-    return fail('bash: shopt: cannot set and unset shell options simultaneously\n', 1)
-  }
+  const reusable = scan.letters.includes('p')
+  const quiet = scan.letters.includes('q')
+  const setO = scan.letters.includes('o')
+  const chosen = lastOf(scan.letters, 'su')
+  const setting = chosen === null ? null : chosen === 's'
+  const names = scan.operands
   const table = setO ? SET_OPTION_DEFAULTS : SHOPT_DEFAULTS
   const store = setO ? session.shellOptions : session.shopts
   const lines: string[] = []

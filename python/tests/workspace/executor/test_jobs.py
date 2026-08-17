@@ -422,3 +422,25 @@ async def test_wait_bad_option():
     _, io, _ = await handle_wait(JobTable(), ["wait", "-x"])
     assert io.exit_code == 2
     assert b"invalid option" in io.stderr
+
+
+@pytest.mark.asyncio
+async def test_wait_p_names_the_job_whose_status_is_returned():
+    """`wait id1 id2` answers with the last id's status, so `-p` names
+    that job however many ids were waited for."""
+    ws = Workspace({"data": RAMResource()}, mode=MountMode.WRITE)
+    io = await ws.execute("(exit 3) & (exit 5) & wait -p V %1 %2; "
+                          "echo rc=$? V=$V")
+    assert (await io.stdout_str()) == "rc=5 V=2\n"
+    await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_wait_p_with_no_operand_leaves_the_variable_unset():
+    """The no-operand form waits for everything and reports no one job,
+    so bash leaves the variable unset (having cleared it first)."""
+    ws = Workspace({"data": RAMResource()}, mode=MountMode.WRITE)
+    io = await ws.execute("(exit 0) & V=stale; wait -p V; "
+                          "echo \"V=[${V-UNSET}]\"")
+    assert (await io.stdout_str()) == "V=[UNSET]\n"
+    await ws.close()

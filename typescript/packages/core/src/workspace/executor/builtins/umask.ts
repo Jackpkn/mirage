@@ -15,19 +15,11 @@
 import { IOResult } from '../../../io/types.ts'
 import { parseChmod } from '../../../utils/mode.ts'
 import type { Session } from '../../session/session.ts'
+import { scanOptions } from './getopt.ts'
 import { ExecutionNode } from '../../types.ts'
-import type { Result } from './shared.ts'
+import { fail, type Result } from './shared.ts'
 
 const USAGE = 'umask: usage: umask [-p] [-S] [mode]'
-
-function fail(msg: string, code: number): Result {
-  const err = new TextEncoder().encode(msg)
-  return [
-    null,
-    new IOResult({ exitCode: code, stderr: err }),
-    new ExecutionNode({ command: 'umask', exitCode: code, stderr: err }),
-  ]
-}
 
 /** Render a mask the way `umask -S` does: the bits it leaves on. */
 export function symbolicUmask(mask: number): string {
@@ -87,25 +79,12 @@ export function parseUmask(text: string, current: number): number | string {
  * with the mask unchanged.
  */
 export function handleUmask(args: string[], session: Session): Result {
-  let symbolic = false
-  let reusable = false
-  const operands: string[] = []
-  for (let idx = 0; idx < args.length; idx++) {
-    const word = args[idx] ?? ''
-    if (operands.length > 0 || !word.startsWith('-') || word === '-') {
-      operands.push(word)
-      continue
-    }
-    if (word === '--') {
-      operands.push(...args.slice(idx + 1))
-      break
-    }
-    for (const ch of word.slice(1)) {
-      if (ch === 'S') symbolic = true
-      else if (ch === 'p') reusable = true
-      else return fail(`bash: umask: -${ch}: invalid option\n${USAGE}\n`, 2)
-    }
-  }
+  const scan = scanOptions(args, 'Sp')
+  if (scan.bad !== null)
+    return fail('umask', `bash: umask: ${scan.bad}: invalid option\n${USAGE}\n`, 2)
+  const symbolic = scan.letters.includes('S')
+  const reusable = scan.letters.includes('p')
+  const operands = scan.operands
   if (operands.length === 0) {
     let body = symbolic ? symbolicUmask(session.umask) : session.umask.toString(8).padStart(4, '0')
     if (reusable) body = `umask ${symbolic ? '-S ' : ''}${body}`
@@ -116,7 +95,7 @@ export function handleUmask(args: string[], session: Session): Result {
     ]
   }
   const parsed = parseUmask(operands[0] ?? '', session.umask)
-  if (typeof parsed === 'string') return fail(parsed, 1)
+  if (typeof parsed === 'string') return fail('umask', parsed, 1)
   session.umask = parsed
   return [null, new IOResult(), new ExecutionNode({ command: 'umask', exitCode: 0 })]
 }

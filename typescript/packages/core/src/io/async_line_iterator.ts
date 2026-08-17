@@ -87,38 +87,66 @@ export class AsyncLineIterator implements AsyncIterableIterator<Uint8Array> {
   }
 
   /**
-   * Read at most `count` bytes, stopping early at `delim` (null reads
-   * through delimiters). `read -n` is the delimited form, `read -N` the
-   * null one. The delimiter is consumed and not returned. Returns the
-   * bytes and whether the read ended on its own terms rather than EOF.
+   * Read at most `count` characters, stopping early at `delim` (null
+   * reads through delimiters). `read -n` is the delimited form, `read
+   * -N` the null one. The delimiter is consumed and not returned.
+   * Returns the bytes and whether the read ended on its own terms
+   * rather than EOF.
+   *
+   * Characters, not bytes: bash counts them in the shell's locale, so
+   * `read -n 1` on `éx` assigns `é` and leaves `x`. Counting bytes
+   * would hand back half a character and leave the other half to
+   * corrupt the next read.
    */
   async readChars(
     count: number,
     delim: number | null,
   ): Promise<[Uint8Array<ArrayBuffer>, boolean]> {
     let out: Uint8Array<ArrayBuffer> = new Uint8Array(0)
-    while (out.byteLength < count) {
-      if (this.buf.byteLength === 0) {
-        if (this.exhausted) return [copyOf(out), false]
+    let taken = 0
+    while (taken < count) {
+      // One pull can split a character across chunks, so top the buffer
+      // up to the widest one before reading its first byte as a whole.
+      if (this.buf.byteLength < 4 && !this.exhausted) {
         const result = await this.source.next()
         if (result.done === true) this.exhausted = true
         else this.buf = concat2(this.buf, result.value)
         continue
       }
-      const take: Uint8Array<ArrayBuffer> = this.buf.subarray(0, count - out.byteLength)
-      if (delim !== null) {
-        const di = indexOf(take, delim)
-        if (di >= 0) {
-          out = concat2(out, take.subarray(0, di))
-          this.buf = this.buf.subarray(di + 1)
-          return [copyOf(out), true]
-        }
+      if (this.buf.byteLength === 0) return [copyOf(out), false]
+      if (delim !== null && this.buf[0] === delim) {
+        this.buf = this.buf.subarray(1)
+        return [copyOf(out), true]
       }
-      out = concat2(out, take)
-      this.buf = this.buf.subarray(take.byteLength)
+      const width = charWidth(this.buf)
+      out = concat2(out, this.buf.subarray(0, width))
+      this.buf = this.buf.subarray(width)
+      taken++
     }
     return [copyOf(out), true]
   }
+}
+
+/**
+ * How many bytes `data`'s first character spans, decoded as UTF-8.
+ *
+ * Always at least one and never more than what is there, so a caller
+ * stepping by this never splits a character and never stalls. Bytes that
+ * decode to one replacement character answer 1, which is what a
+ * fatal:false TextDecoder makes of them: a stray continuation byte, a
+ * lead the encoding never uses, and a sequence cut short by a byte that
+ * cannot continue it.
+ */
+export function charWidth(data: Uint8Array): number {
+  const lead = data[0] ?? 0
+  if (lead < 0xc2 || lead >= 0xf5) return 1
+  const width = lead < 0xe0 ? 2 : lead < 0xf0 ? 3 : 4
+  const limit = Math.min(width, data.byteLength)
+  for (let i = 1; i < limit; i++) {
+    const byte = data[i] ?? 0
+    if (byte < 0x80 || byte >= 0xc0) return i
+  }
+  return limit
 }
 
 function indexOf(buf: Uint8Array, byte: number): number {

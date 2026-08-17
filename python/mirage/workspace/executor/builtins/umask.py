@@ -15,6 +15,8 @@
 from mirage.io import IOResult
 from mirage.io.types import ByteSource
 from mirage.utils.mode import parse_chmod
+from mirage.workspace.executor.builtins.getopt import scan_options
+from mirage.workspace.executor.builtins.shared import fail
 from mirage.workspace.session import Session
 from mirage.workspace.types import ExecutionNode
 
@@ -35,15 +37,6 @@ def symbolic_umask(mask: int) -> str:
                                                "") + ("x" if bits & 1 else "")
         parts.append(f"{who}={letters}")
     return ",".join(parts)
-
-
-def _fail(msg: str,
-          code: int) -> tuple[ByteSource | None, IOResult, ExecutionNode]:
-    err = msg.encode()
-    return None, IOResult(exit_code=code,
-                          stderr=err), ExecutionNode(command="umask",
-                                                     exit_code=code,
-                                                     stderr=err)
 
 
 def parse_umask(text: str, current: int) -> int | str:
@@ -108,24 +101,13 @@ async def handle_umask(
         args (list[str]): the words after `umask`.
         session (Session): shell session state.
     """
-    symbolic = False
-    reusable = False
-    operands: list[str] = []
-    for word in args:
-        if operands or not word.startswith("-") or word == "-":
-            operands.append(word)
-            continue
-        if word == "--":
-            operands.extend(args[args.index(word) + 1:])
-            break
-        for ch in word[1:]:
-            if ch == "S":
-                symbolic = True
-            elif ch == "p":
-                reusable = True
-            else:
-                return _fail(f"bash: umask: -{ch}: invalid option\n{_USAGE}\n",
-                             2)
+    scan = scan_options(args, "Sp")
+    if scan.bad is not None:
+        return fail("umask",
+                    f"bash: umask: {scan.bad}: invalid option\n{_USAGE}\n", 2)
+    symbolic = "S" in scan.letters
+    reusable = "p" in scan.letters
+    operands = scan.operands
     if not operands:
         body = (symbolic_umask(session.umask)
                 if symbolic else f"{session.umask:04o}")
@@ -135,6 +117,6 @@ async def handle_umask(
             command="umask", exit_code=0)
     parsed = parse_umask(operands[0], session.umask)
     if isinstance(parsed, str):
-        return _fail(parsed, 1)
+        return fail("umask", parsed, 1)
     session.umask = parsed
     return None, IOResult(), ExecutionNode(command="umask", exit_code=0)

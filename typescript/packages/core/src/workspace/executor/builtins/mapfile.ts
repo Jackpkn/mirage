@@ -19,26 +19,18 @@ import { IOResult, materialize } from '../../../io/types.ts'
 import type { ByteSource } from '../../../io/types.ts'
 import { PolicyDenied } from '../../../policy/errors.ts'
 import { arraySet, type ShellArray } from '../../../shell/array.ts'
+import { singleQuote } from '../../../utils/quote.ts'
 import type { SessionView } from '../../../ops/types.ts'
 import type { Session } from '../../session/session.ts'
 import { sessionView, visibleArrays, visibleAssocs } from '../../session/state.ts'
 import { ExecutionNode } from '../../types.ts'
 import type { ExecuteStringFn } from './scope.ts'
-import type { Result } from './shared.ts'
+import { fail, type Result } from './shared.ts'
 
 const USAGE =
   'mapfile: usage: mapfile [-d delim] [-n count] [-O origin] [-s count] [-t] [-u fd] [-C callback] [-c quantum] [array]'
 const IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*$/
 const DEFAULT_QUANTUM = 5000
-
-function fail(cmd: string, msg: string, code: number): Result {
-  const err = new TextEncoder().encode(msg)
-  return [
-    null,
-    new IOResult({ exitCode: code, stderr: err }),
-    new ExecutionNode({ command: cmd, exitCode: code, stderr: err }),
-  ]
-}
 
 function count(text: string): number | null {
   return /^[0-9]+$/.test(text) ? parseInt(text, 10) : null
@@ -130,7 +122,10 @@ export async function handleMapfile(
     arraySet(arr, index, text)
     stored++
     if (callback !== null && stored % quantum === 0) {
-      const io = await executeFn(`${callback} ${String(index)} ${text}`, {
+      // The record is data, not source: bash builds the callback line
+      // with `sh_single_quote`, so a record reading `x; rm f` arrives as
+      // one argument rather than running a second command.
+      const io = await executeFn(`${callback} ${String(index)} ${singleQuote(text)}`, {
         sessionId: session.sessionId,
       })
       const out = await materialize(io.stdout)

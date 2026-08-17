@@ -20,6 +20,7 @@ import { fsStrerror, isFsError } from '../../../utils/errors.ts'
 import type { PathSpec } from '../../../types.ts'
 import type { Session } from '../../session/session.ts'
 import { ExecutionNode } from '../../types.ts'
+import { createFile } from '../create.ts'
 import { toScope } from './scope.ts'
 import type { Result } from './shared.ts'
 
@@ -105,14 +106,11 @@ export async function installExecRedirects(
     if (typeof r.target === 'number') continue
     const scope = scopeOf(r.target)
     const path = scope.virtual
-    if (!r.append) {
-      try {
-        await dispatch('write', scope, [new Uint8Array(0)])
-      } catch (err) {
-        if (!isFsError(err)) throw err
-        return execError(scope.rawPath, err)
-      }
-      session.execOpened.add(path)
+    try {
+      if (await openTarget(dispatch, session, scope, r.append)) session.execOpened.add(path)
+    } catch (err) {
+      if (!isFsError(err)) throw err
+      return execError(scope.rawPath, err)
     }
     const streams =
       r.fd === -1 ? ['stdout', 'stderr'] : r.kind === RedirectKind.STDERR ? ['stderr'] : ['stdout']
@@ -127,6 +125,32 @@ export async function installExecRedirects(
     }
   }
   return [null, new IOResult(), new ExecutionNode({ command: 'exec', exitCode: 0 })]
+}
+
+/**
+ * Open an `exec` redirect target, the way bash does at `exec` time:
+ * truncating creates the file empty, appending creates it only when it
+ * is not already there so an existing one keeps its bytes. Either way
+ * the file exists before the next statement runs, which is what makes
+ * `exec >> new; test -e new` succeed with nothing written. Returns
+ * whether it was written, which is what marks the target opened.
+ */
+async function openTarget(
+  dispatch: DispatchFn,
+  session: Session,
+  scope: PathSpec,
+  append: boolean,
+): Promise<boolean> {
+  if (append) {
+    try {
+      await dispatch('stat', scope)
+      return false
+    } catch (err) {
+      if (!isFsError(err)) throw err
+    }
+  }
+  await createFile(dispatch, session, scope, new Uint8Array(0))
+  return true
 }
 
 /**

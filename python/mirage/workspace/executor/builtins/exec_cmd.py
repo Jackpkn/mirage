@@ -19,8 +19,10 @@ from mirage.io.stream import materialize
 from mirage.io.types import ByteSource
 from mirage.runtime.types import DispatchFn
 from mirage.shell.types import Redirect, RedirectKind
+from mirage.types import PathSpec
 from mirage.utils.errors import FS_ERRORS, fs_strerror
 from mirage.workspace.executor.builtins.scope import _to_scope
+from mirage.workspace.executor.create import create_file
 from mirage.workspace.session import Session
 from mirage.workspace.types import ExecutionNode
 
@@ -118,18 +120,44 @@ async def install_exec_redirects(
             continue
         scope = _to_scope(r.target) if isinstance(r.target, str) else r.target
         path = scope.virtual
-        if not r.append:
-            try:
-                await dispatch("write", scope, data=b"")
-            except FS_ERRORS as exc:
-                return _exec_error(scope.raw_path, exc)
-            session._exec_opened.add(path)
+        try:
+            if await _open_target(dispatch, session, scope, r.append):
+                session._exec_opened.add(path)
+        except FS_ERRORS as exc:
+            return _exec_error(scope.raw_path, exc)
         streams = ((["stderr"] if r.kind == RedirectKind.STDERR else
                     ["stdout"]) if r.fd != -1 else ["stdout", "stderr"])
         for stream in streams:
             setattr(session, f"exec_{stream}", path)
             setattr(session, f"exec_{stream}_append", r.append)
     return None, IOResult(), ExecutionNode(command="exec", exit_code=0)
+
+
+async def _open_target(dispatch: DispatchFn, session: Session, scope: PathSpec,
+                       append: bool) -> bool:
+    """Open an `exec` redirect target, the way bash does at `exec` time.
+
+    Truncating creates the file empty; appending creates it only when it
+    is not already there, so an existing one keeps its bytes. Either way
+    the file exists before the next statement runs, which is what makes
+    `exec >> new; test -e new` succeed with nothing written. Returns
+    whether it was written, which is what marks the target opened.
+
+    Args:
+        dispatch (DispatchFn): op dispatcher.
+        session (Session): the session holding the umask.
+        scope (PathSpec): the target.
+        append (bool): whether the redirect is `>>`.
+    """
+    if append:
+        try:
+            await dispatch("stat", scope)
+            return False
+        except FS_ERRORS as exc:
+            logger.debug("exec append target %s is new: %s", scope.raw_path,
+                         exc)
+    await create_file(dispatch, session, scope, b"")
+    return True
 
 
 def _exec_error(label: str,
@@ -190,9 +218,9 @@ async def _append(dispatch: DispatchFn, session: Session, target: str,
     if target == CLOSED:
         return
     scope = _to_scope(target)
-    # The target exists by now: `exec >` truncated it at install time and
-    # `exec >>` either found it or is creating it here, so every write is
-    # read-then-append. A missing file (a fresh `>>` target) reads empty.
+    # The target exists by now, since `exec` opened it: every write is
+    # read-then-append. A file deleted since then reads empty rather
+    # than failing, which is where the debug line below comes from.
     existing = b""
     try:
         prior, _ = await dispatch("read", scope)

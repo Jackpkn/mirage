@@ -23,7 +23,6 @@ import pytest
 from mirage.resource.ram import RAMResource
 from mirage.types import MountMode
 from mirage.workspace import Workspace
-from mirage.workspace.executor.builtins.alias import quote_alias_value
 
 
 def _ws() -> Workspace:
@@ -107,6 +106,9 @@ async def test_bad_names():
     await ws.close()
 
 
-def test_quote_alias_value():
-    assert quote_alias_value("echo hi") == "'echo hi'"
-    assert quote_alias_value("a'b") == "'a'\\''b'"
+@pytest.mark.asyncio
+async def test_a_value_holding_a_quote_prints_re_readably():
+    ws = _ws()
+    out, _ = await _run(ws, "alias x=\"it's a test\"; alias x")
+    assert out == "alias x='it'\\''s a test'\n"
+    await ws.close()

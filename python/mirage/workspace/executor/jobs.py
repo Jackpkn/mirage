@@ -25,6 +25,7 @@ from mirage.shell.console import Channel, JobConsole
 from mirage.shell.errors import ExitSignal
 from mirage.shell.helpers import get_text
 from mirage.shell.job_table import Job, JobStatus, JobTable
+from mirage.workspace.executor.builtins.getopt import scan_options
 from mirage.workspace.session import (Session, reset_current_session,
                                       set_current_session)
 from mirage.workspace.types import ExecutionNode
@@ -243,7 +244,12 @@ async def handle_wait(
     joins the first of the given jobs (or of all) to finish and answers
     its status, 127 when there is nothing to wait for; `-p VAR` stores
     the id of the job whose status is answered, and unsets VAR when
-    none is; `-f` is accepted, since a mirage job cannot stop, only end.
+    none is (which is the bare form, since it reports no one job);
+    `-f` is accepted, since a mirage job cannot stop, only end.
+
+    Deliberate divergence: bash stores a PID in `-p`'s variable. A
+    mirage job is a coroutine with no OS process, so what goes there is
+    the job id, the same number `%N` and `jobs` already name.
     A spec naming no job is bash's own message and 127; a word that is
     neither is `not a pid or valid job spec` and 1.
 
@@ -365,8 +371,10 @@ async def handle_wait(
             errs.append(io.stderr if isinstance(io.stderr, bytes) else b"")
         last_code = io.exit_code
         last_job = finished
-    if var is not None and view is not None and last_job is not None and len(
-            picked) == 1:
+    # `wait id1 id2` answers with the last id's status, so `-p` names
+    # that same job however many were waited for. Only the no-operand
+    # form leaves the variable unset, since it reports no one job.
+    if var is not None and view is not None and last_job is not None:
         await view.set(var, str(last_job.id))
     return b"".join(outs) or None, IOResult(exit_code=last_code,
                                             stderr=b"".join(errs)
@@ -396,28 +404,15 @@ async def handle_disown(
         view (SessionView | None): unused; the job-builtin signature.
     """
     cmd_str = " ".join(parts)
-    all_jobs = False
-    running_only = False
-    keep = False
-    specs: list[str] = []
-    for word in parts[1:]:
-        if specs or not word.startswith("-") or word == "-":
-            specs.append(word)
-            continue
-        if word == "--":
-            continue
-        for ch in word[1:]:
-            if ch == "a":
-                all_jobs = True
-            elif ch == "r":
-                running_only = True
-            elif ch == "h":
-                keep = True
-            else:
-                return _job_result(
-                    cmd_str,
-                    f"bash: disown: -{ch}: invalid option\n{_DISOWN_USAGE}\n",
-                    2)
+    scan = scan_options(parts[1:], "arh")
+    if scan.bad is not None:
+        return _job_result(
+            cmd_str,
+            f"bash: disown: {scan.bad}: invalid option\n{_DISOWN_USAGE}\n", 2)
+    all_jobs = "a" in scan.letters
+    running_only = "r" in scan.letters
+    keep = "h" in scan.letters
+    specs = scan.operands
     targets: list[Job] = []
     errors: list[str] = []
     if specs:

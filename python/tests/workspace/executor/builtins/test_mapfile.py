@@ -104,3 +104,28 @@ async def test_bad_options():
     _, code = await _run(ws, "mapfile 1bad")
     assert code == 1
     await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_callback_gets_the_record_as_one_argument():
+    """A record is data, not source: bash single-quotes it into the
+    callback line, so shell syntax inside one neither runs nor splits."""
+    ws = _ws()
+    out, _ = await _run(
+        ws, "cb(){ echo \"argc=$# [$2]\"; }; "
+        "printf 'x; touch /data/ran\\nb c\\n' | { mapfile -c 1 -C cb -t A; }; "
+        "test -e /data/ran && echo RAN || echo clean")
+    assert out == ("argc=2 [x; touch /data/ran]\n"
+                   "argc=2 [b c]\n"
+                   "clean\n")
+    await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_callback_survives_a_quote_in_the_record():
+    ws = _ws()
+    out, _ = await _run(
+        ws, "cb(){ echo \"[$2]\"; }; "
+        "printf \"it's here\\n\" | { mapfile -c 1 -C cb -t B; }")
+    assert out == "[it's here]\n"
+    await ws.close()

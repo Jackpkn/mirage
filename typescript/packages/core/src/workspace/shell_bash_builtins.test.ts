@@ -163,6 +163,7 @@ const CASES: [string, string, string, string, number][] = [
   ],
   ['unalias_missing_name', 'unalias nope', '', 'bash: unalias: nope: not found\n', 1],
   ['alias_bad_name', "alias 'a b'=x", '', "bash: alias: `a b': invalid alias name\n", 1],
+  ['alias_value_holding_a_quote', 'alias x="it\'s"; alias x', "alias x='it'\\''s'\n", '', 0],
 
   // ── mapfile / readarray ───────────────────────────────────
   [
@@ -217,6 +218,15 @@ const CASES: [string, string, string, string, number][] = [
   ],
   ['mapfile_bad_name', 'mapfile 1bad', '', "bash: mapfile: `1bad': not a valid identifier\n", 1],
   [
+    'mapfile_callback_gets_one_argument',
+    'cb(){ echo "argc=$# [$2]"; }; ' +
+      "printf 'x; touch /data/ran\\nb c\\n' | { mapfile -c 1 -C cb -t A; }; " +
+      'test -e /data/ran && echo RAN || echo clean',
+    'argc=2 [x; touch /data/ran]\nargc=2 [b c]\nclean\n',
+    '',
+    0,
+  ],
+  [
     'mapfile_refuses_assoc',
     "declare -A M; printf 'x\\n' | { mapfile -t M; }",
     '',
@@ -242,6 +252,13 @@ const CASES: [string, string, string, string, number][] = [
     0,
   ],
   ['read_tty_flags_are_no_ops', 'echo v | { read -p \'P: \' -s V; echo "[$V]"; }', '[v]\n', '', 0],
+  [
+    'read_n_counts_characters_not_bytes',
+    'printf \'\\xc3\\xa9x\' | { read -n 1 a; read -n 1 b; echo "[$a][$b]"; }',
+    '[é][x]\n',
+    '',
+    0,
+  ],
   ['read_bad_timeout', 'read -t x V', '', 'bash: read: x: invalid timeout specification\n', 1],
   [
     'read_bad_descriptor',
@@ -321,6 +338,22 @@ const CASES: [string, string, string, string, number][] = [
     2,
   ],
   ['wait_n_answers_first_finisher', '(exit 3) & wait -n', '', '', 3],
+  // `-p` holds a job id, not bash's pid (a mirage job has no OS
+  // process); the rest of the line is bash's.
+  [
+    'wait_p_names_the_job_reported',
+    '(exit 3) & (exit 5) & wait -p V %1 %2; echo rc=$? V=$V',
+    'rc=5 V=2\n',
+    '',
+    0,
+  ],
+  [
+    'wait_p_with_no_operand_leaves_it_unset',
+    '(exit 0) & V=stale; wait -p V; echo "V=[${V-UNSET}]"',
+    'V=[UNSET]\n',
+    '',
+    0,
+  ],
   ['wait_n_with_no_jobs', 'wait -n', '', '', 127],
   ['wait_bad_spec', 'wait bogus', '', "bash: wait: `bogus': not a pid or valid job spec\n", 1],
   [
@@ -358,6 +391,23 @@ const CASES: [string, string, string, string, number][] = [
     'exec_stdin_feeds_read',
     "printf 'l1\\nl2\\n' > /data/i.txt; ( exec < /data/i.txt; read a; read b; echo $a-$b )",
     'l1-l2\n',
+    '',
+    0,
+  ],
+  [
+    'exec_opens_both_forms_at_exec_time',
+    '( exec > /data/t.txt; ); ( exec >> /data/n.txt; ); ' +
+      'echo old > /data/k.txt; ( exec >> /data/k.txt; ); ' +
+      'test -e /data/t.txt && test -e /data/n.txt && cat /data/k.txt',
+    'old\n',
+    '',
+    0,
+  ],
+  [
+    'exec_opened_targets_take_the_umask_mode',
+    'umask 077; ( exec > /data/m.txt; echo z ); echo z > /data/p.txt; ' +
+      'stat -c "%a %n" /data/m.txt /data/p.txt',
+    '600 /data/m.txt\n600 /data/p.txt\n',
     '',
     0,
   ],

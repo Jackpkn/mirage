@@ -17,6 +17,9 @@ import re
 from mirage.io import IOResult
 from mirage.io.types import ByteSource
 from mirage.shell.types import SHOPT_DEFAULTS
+from mirage.utils.quote import single_quote
+from mirage.workspace.executor.builtins.getopt import scan_options
+from mirage.workspace.executor.builtins.shared import fail
 from mirage.workspace.session import Session
 from mirage.workspace.types import ExecutionNode
 
@@ -31,51 +34,6 @@ _BAD_NAME_CHARS = frozenset(" \t\n/=$`'\"|&;()<>")
 _FIRST_WORD = re.compile(r"\S+")
 
 AliasMark = tuple[int, int]
-
-
-def quote_alias_value(value: str) -> str:
-    """Render a value the way `alias` prints it: single-quoted, with an
-    embedded quote spelled `'\\''`.
-
-    Args:
-        value (str): the alias text.
-    """
-    return "'" + value.replace("'", "'\\''") + "'"
-
-
-def _fail(cmd: str, msg: str,
-          code: int) -> tuple[ByteSource | None, IOResult, ExecutionNode]:
-    err = msg.encode()
-    return None, IOResult(exit_code=code,
-                          stderr=err), ExecutionNode(command=cmd,
-                                                     exit_code=code,
-                                                     stderr=err or b"")
-
-
-def _split_options(cmd: str, args: list[str],
-                   letters: str) -> tuple[set[str], list[str], str | None]:
-    """Leading single-letter options, then operands.
-
-    Args:
-        cmd (str): the builtin, for the refusal.
-        args (list[str]): the words after it.
-        letters (str): the letters the builtin accepts.
-    """
-    flags: set[str] = set()
-    i = 0
-    while i < len(args):
-        word = args[i]
-        if word == "--":
-            i += 1
-            break
-        if not word.startswith("-") or word == "-":
-            break
-        for ch in word[1:]:
-            if ch not in letters:
-                return flags, [], f"-{ch}"
-            flags.add(ch)
-        i += 1
-    return flags, args[i:], None
 
 
 async def handle_alias(
@@ -99,15 +57,16 @@ async def handle_alias(
             sees it (bash expands aliases as it reads a line, so a use
             on the defining line does not).
     """
-    flags, operands, bad = _split_options("alias", args, "p")
-    if bad is not None:
-        return _fail("alias",
-                     f"bash: alias: {bad}: invalid option\n{_ALIAS_USAGE}\n",
-                     2)
+    scan = scan_options(args, "p")
+    if scan.bad is not None:
+        return fail(
+            "alias",
+            f"bash: alias: {scan.bad}: invalid option\n{_ALIAS_USAGE}\n", 2)
+    operands = scan.operands
     lines: list[str] = []
     errors: list[str] = []
-    if not operands or "p" in flags:
-        lines.extend(f"alias {name}={quote_alias_value(session.aliases[name])}"
+    if not operands or "p" in scan.letters:
+        lines.extend(f"alias {name}={single_quote(session.aliases[name])}"
                      for name in sorted(session.aliases))
     for word in operands:
         name, eq, value = word.partition("=")
@@ -127,8 +86,7 @@ async def handle_alias(
             errors.append(f"bash: alias: `{name}': invalid alias name")
             continue
         if name in session.aliases:
-            lines.append(
-                f"alias {name}={quote_alias_value(session.aliases[name])}")
+            lines.append(f"alias {name}={single_quote(session.aliases[name])}")
         else:
             errors.append(f"bash: alias: {name}: not found")
     out = ("\n".join(lines) + "\n").encode() if lines else None
@@ -153,17 +111,19 @@ async def handle_unalias(
         args (list[str]): the words after `unalias`.
         session (Session): shell session state.
     """
-    flags, operands, bad = _split_options("unalias", args, "a")
-    if bad is not None:
-        return _fail(
+    scan = scan_options(args, "a")
+    if scan.bad is not None:
+        return fail(
             "unalias",
-            f"bash: unalias: {bad}: invalid option\n{_UNALIAS_USAGE}\n", 2)
-    if "a" in flags:
+            f"bash: unalias: {scan.bad}: invalid option\n{_UNALIAS_USAGE}\n",
+            2)
+    operands = scan.operands
+    if "a" in scan.letters:
         session.aliases.clear()
         session._alias_marks.clear()
         return None, IOResult(), ExecutionNode(command="unalias", exit_code=0)
     if not operands:
-        return _fail("unalias", f"{_UNALIAS_USAGE}\n", 2)
+        return fail("unalias", f"{_UNALIAS_USAGE}\n", 2)
     errors: list[str] = []
     for name in operands:
         if name in session.aliases:

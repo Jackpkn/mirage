@@ -16,6 +16,8 @@ from mirage.io import IOResult
 from mirage.io.types import ByteSource
 from mirage.shell.types import (SET_OPTION_DEFAULTS, SET_OPTION_NAMES,
                                 SHOPT_DEFAULTS, SHOPT_UNSUPPORTED)
+from mirage.workspace.executor.builtins.getopt import last_of, scan_options
+from mirage.workspace.executor.builtins.shared import fail
 from mirage.workspace.session import Session
 from mirage.workspace.types import ExecutionNode
 
@@ -30,15 +32,6 @@ def shopt_enabled(session: Session, name: str) -> bool:
         name (str): the option's `shopt` spelling.
     """
     return session.shopts.get(name, SHOPT_DEFAULTS[name])
-
-
-def _fail(msg: str,
-          code: int) -> tuple[ByteSource | None, IOResult, ExecutionNode]:
-    err = msg.encode()
-    return None, IOResult(exit_code=code,
-                          stderr=err), ExecutionNode(command="shopt",
-                                                     exit_code=code,
-                                                     stderr=err or b"")
 
 
 def _row(name: str, on: bool, reusable: bool, set_o: bool) -> str:
@@ -87,38 +80,20 @@ async def handle_shopt(
         args (list[str]): the words after `shopt`.
         session (Session): shell session state.
     """
-    reusable = False
-    quiet = False
-    set_o = False
-    setting: bool | None = None
-    conflict = False
-    names: list[str] = []
-    for word in args:
-        if names or not word.startswith("-") or word == "-":
-            names.append(word)
-            continue
-        if word == "--":
-            names.extend(args[args.index(word) + 1:])
-            break
-        for ch in word[1:]:
-            if ch == "p":
-                reusable = True
-            elif ch == "q":
-                quiet = True
-            elif ch == "o":
-                set_o = True
-            elif ch in "su":
-                want = ch == "s"
-                if setting is not None and setting != want:
-                    conflict = True
-                setting = want
-            else:
-                return _fail(f"bash: shopt: -{ch}: invalid option\n{_USAGE}\n",
-                             2)
-    if conflict:
-        return _fail(
-            "bash: shopt: cannot set and unset shell options "
+    scan = scan_options(args, "pqosu")
+    if scan.bad is not None:
+        return fail("shopt",
+                    f"bash: shopt: {scan.bad}: invalid option\n{_USAGE}\n", 2)
+    if "s" in scan.letters and "u" in scan.letters:
+        return fail(
+            "shopt", "bash: shopt: cannot set and unset shell options "
             "simultaneously\n", 1)
+    reusable = "p" in scan.letters
+    quiet = "q" in scan.letters
+    set_o = "o" in scan.letters
+    chosen = last_of(scan.letters, "su")
+    setting = None if chosen is None else chosen == "s"
+    names = scan.operands
     table = SET_OPTION_DEFAULTS if set_o else SHOPT_DEFAULTS
     store = session.shell_options if set_o else session.shopts
     lines: list[str] = []

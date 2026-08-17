@@ -15,13 +15,13 @@
 import { IOResult } from '../../../io/types.ts'
 import type { ByteSource } from '../../../io/types.ts'
 import { shellJoin } from '../../../shell/join.ts'
+import { singleQuote } from '../../../utils/quote.ts'
 import type { MountRegistry } from '../../mount/registry.ts'
 import type { Session } from '../../session/session.ts'
 import { ExecutionNode } from '../../types.ts'
 import { lastOf, scanOptions } from './getopt.ts'
 import { classify, describe } from './lookup/index.ts'
 import { NameKind } from './lookup/types.ts'
-import { quoteAliasValue } from './alias.ts'
 import { sessionEntry } from '../../session/session.ts'
 import type { ExecuteStringFn } from './scope.ts'
 import type { Result } from './shared.ts'
@@ -59,7 +59,7 @@ function probe(
       mode === 'V'
         ? describe(name, kind, session)
         : kind === NameKind.ALIAS
-          ? `alias ${name}=${quoteAliasValue(sessionEntry(session.aliases, name) ?? '')}`
+          ? `alias ${name}=${singleQuote(sessionEntry(session.aliases, name) ?? '')}`
           : name
     outLines.push(line)
   }

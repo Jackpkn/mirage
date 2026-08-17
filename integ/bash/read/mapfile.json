@@ -169,6 +169,40 @@
         "stdout": "rc=1\nrc=1\n",
         "stderr": "bash: mapfile: `1bad': not a valid identifier\nbash: mapfile: mfg: not an indexed array\n"
       }
+    },
+    {
+      "id": "mapfile_callback_gets_one_argument",
+      "seq": 940055,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "mfcb(){ echo \"argc=$# [$2]\"; }; printf 'x; touch mfran\\nb c\\n' | { mapfile -c 1 -C mfcb -t MFA; }; test -e mfran && echo RAN || echo clean",
+      "expect": {
+        "exit": 0,
+        "stdout": "argc=2 [x; touch mfran]\nargc=2 [b c]\nclean\n",
+        "stderr": ""
+      }
     }
   ]
 }

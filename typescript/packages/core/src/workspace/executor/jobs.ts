@@ -25,6 +25,7 @@ import { asyncContextIsolatesTasks } from '../../utils/async_context.ts'
 import { mergeSignals } from '../abort.ts'
 import type { SessionView } from '../../ops/types.ts'
 import type { Session } from '../session/session.ts'
+import { scanOptions } from './builtins/getopt.ts'
 import type { TSNodeLike } from '../../shell/types.ts'
 import { ExecutionNode } from '../types.ts'
 
@@ -240,7 +241,12 @@ async function adopt(jobTable: JobTable, job: Job, cmdStr: string): Promise<JobH
  * answers the last one's status; `-n` joins the first of the given jobs
  * (or of all) to finish, 127 when there is nothing to wait for; `-p VAR`
  * stores the id of the job whose status is answered, unsetting VAR when
- * none is; `-f` is accepted, since a mirage job cannot stop, only end.
+ * none is (which is the bare form, since it reports no one job); `-f` is
+ * accepted, since a mirage job cannot stop, only end.
+ *
+ * Deliberate divergence: bash stores a PID in `-p`'s variable. A mirage
+ * job is a coroutine with no OS process, so what goes there is the job
+ * id, the same number `%N` and `jobs` already name.
  */
 export async function handleWait(
   jobTable: JobTable,
@@ -378,7 +384,10 @@ export async function handleWait(
     lastCode = io.exitCode
     lastJob = finished
   }
-  if (varName !== null && view !== null && lastJob !== null && picked.length === 1) {
+  // `wait id1 id2` answers with the last id's status, so `-p` names that
+  // same job however many were waited for. Only the no-operand form
+  // leaves the variable unset, since it reports no one job.
+  if (varName !== null && view !== null && lastJob !== null) {
     await view.set(varName, String(lastJob.id))
   }
   const out = concat(outs)
@@ -404,23 +413,14 @@ export function handleDisown(
   _view: SessionView | null = null,
 ): JobHandlerResult {
   const cmdStr = parts.join(' ')
-  let allJobs = false
-  let runningOnly = false
-  let keep = false
-  const specs: string[] = []
-  for (const word of parts.slice(1)) {
-    if (specs.length > 0 || !word.startsWith('-') || word === '-') {
-      specs.push(word)
-      continue
-    }
-    if (word === '--') continue
-    for (const ch of word.slice(1)) {
-      if (ch === 'a') allJobs = true
-      else if (ch === 'r') runningOnly = true
-      else if (ch === 'h') keep = true
-      else return jobResult(cmdStr, `bash: disown: -${ch}: invalid option\n${DISOWN_USAGE}\n`, 2)
-    }
+  const scan = scanOptions(parts.slice(1), 'arh')
+  if (scan.bad !== null) {
+    return jobResult(cmdStr, `bash: disown: ${scan.bad}: invalid option\n${DISOWN_USAGE}\n`, 2)
   }
+  const allJobs = scan.letters.includes('a')
+  const runningOnly = scan.letters.includes('r')
+  const keep = scan.letters.includes('h')
+  const specs = scan.operands
   let targets: Job[] = []
   const errors: string[] = []
   if (specs.length > 0) {

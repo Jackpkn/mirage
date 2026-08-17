@@ -16,9 +16,11 @@ import { IOResult } from '../../../io/types.ts'
 import { SHOPT_DEFAULTS } from '../../../shell/types.ts'
 import type { Session } from '../../session/session.ts'
 import { ownRecord, sessionEntry, setSessionEntry } from '../../session/session.ts'
+import { singleQuote } from '../../../utils/quote.ts'
+import { scanOptions } from './getopt.ts'
 import { compareCodePoints } from '../../../utils/sort.ts'
 import { ExecutionNode } from '../../types.ts'
-import type { Result } from './shared.ts'
+import { fail, type Result } from './shared.ts'
 
 const ALIAS_USAGE = 'alias: usage: alias [-p] [name[=value] ... ]'
 const UNALIAS_USAGE = 'unalias: usage: unalias [-a] name [name ...]'
@@ -35,50 +37,17 @@ const FIRST_WORD = /\S+/
 
 export type AliasMark = [number, number]
 
-/** Render a value the way `alias` prints it: single-quoted, an embedded
- * quote spelled `'\''`. */
-export function quoteAliasValue(value: string): string {
-  return "'" + value.replaceAll("'", "'\\''") + "'"
-}
-
-function refuse(cmd: string, msg: string, code: number): Result {
-  const err = new TextEncoder().encode(msg)
-  return [
-    null,
-    new IOResult({ exitCode: code, stderr: err }),
-    new ExecutionNode({ command: cmd, exitCode: code, stderr: err }),
-  ]
-}
-
-function splitOptions(args: string[], letters: string): [Set<string>, string[], string | null] {
-  const flags = new Set<string>()
-  let i = 0
-  while (i < args.length) {
-    const word = args[i] ?? ''
-    if (word === '--') {
-      i++
-      break
-    }
-    if (!word.startsWith('-') || word === '-') break
-    for (const ch of word.slice(1)) {
-      if (!letters.includes(ch)) return [flags, [], `-${ch}`]
-      flags.add(ch)
-    }
-    i++
-  }
-  return [flags, args.slice(i), null]
-}
-
 /** Define or print aliases. */
 export function handleAlias(args: string[], session: Session, mark: AliasMark): Result {
-  const [flags, operands, bad] = splitOptions(args, 'p')
-  if (bad !== null)
-    return refuse('alias', `bash: alias: ${bad}: invalid option\n${ALIAS_USAGE}\n`, 2)
+  const scan = scanOptions(args, 'p')
+  if (scan.bad !== null)
+    return fail('alias', `bash: alias: ${scan.bad}: invalid option\n${ALIAS_USAGE}\n`, 2)
+  const operands = scan.operands
   const lines: string[] = []
   const errors: string[] = []
-  if (operands.length === 0 || flags.has('p')) {
+  if (operands.length === 0 || scan.letters.includes('p')) {
     for (const name of Object.keys(session.aliases).sort(compareCodePoints)) {
-      lines.push(`alias ${name}=${quoteAliasValue(session.aliases[name] ?? '')}`)
+      lines.push(`alias ${name}=${singleQuote(session.aliases[name] ?? '')}`)
     }
   }
   for (const word of operands) {
@@ -102,7 +71,7 @@ export function handleAlias(args: string[], session: Session, mark: AliasMark): 
       continue
     }
     const val = sessionEntry(session.aliases, word)
-    if (val !== undefined) lines.push(`alias ${word}=${quoteAliasValue(val)}`)
+    if (val !== undefined) lines.push(`alias ${word}=${singleQuote(val)}`)
     else errors.push(`bash: alias: ${word}: not found`)
   }
   const out = lines.length > 0 ? new TextEncoder().encode(lines.join('\n') + '\n') : null
@@ -121,15 +90,16 @@ export function handleAlias(args: string[], session: Session, mark: AliasMark): 
 
 /** Remove aliases: the named ones, or all under `-a`. */
 export function handleUnalias(args: string[], session: Session): Result {
-  const [flags, operands, bad] = splitOptions(args, 'a')
-  if (bad !== null)
-    return refuse('unalias', `bash: unalias: ${bad}: invalid option\n${UNALIAS_USAGE}\n`, 2)
-  if (flags.has('a')) {
+  const scan = scanOptions(args, 'a')
+  if (scan.bad !== null)
+    return fail('unalias', `bash: unalias: ${scan.bad}: invalid option\n${UNALIAS_USAGE}\n`, 2)
+  const operands = scan.operands
+  if (scan.letters.includes('a')) {
     session.aliases = ownRecord<string>()
     session.aliasMarks.clear()
     return [null, new IOResult(), new ExecutionNode({ command: 'unalias', exitCode: 0 })]
   }
-  if (operands.length === 0) return refuse('unalias', `${UNALIAS_USAGE}\n`, 2)
+  if (operands.length === 0) return fail('unalias', `${UNALIAS_USAGE}\n`, 2)
   const errors: string[] = []
   for (const name of operands) {
     if (sessionEntry(session.aliases, name) !== undefined) {

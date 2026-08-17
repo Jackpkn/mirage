@@ -99,3 +99,37 @@ async def test_missing_target_leaves_redirect_unchanged():
     io = await ws.execute("exec > /nodir/f; echo after", session_id="reader")
     assert (await io.stdout_str()) == "after\n"
     await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_append_creates_the_target_with_no_output():
+    """bash opens an `exec >>` target as it processes the exec, so the
+    file is there before any statement runs."""
+    ws = _ws()
+    io = await ws.execute("( exec >> /data/new; ); test -e /data/new",
+                          session_id="reader")
+    assert io.exit_code == 0
+    await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_append_open_keeps_existing_bytes():
+    ws = _ws()
+    io = await ws.execute(
+        "echo old > /data/keep; ( exec >> /data/keep; ); cat /data/keep",
+        session_id="reader")
+    assert (await io.stdout_str()) == "old\n"
+    await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_opened_targets_take_the_umask_mode():
+    """The same rule a plain `>` redirect follows, since both open a
+    file: 0666 masked by the session umask."""
+    ws = _ws()
+    io = await ws.execute(
+        "umask 077; ( exec > /data/m; echo z ); ( exec >> /data/a; ); "
+        "stat -c '%a %n' /data/m /data/a",
+        session_id="reader")
+    assert (await io.stdout_str()) == "600 /data/m\n600 /data/a\n"
+    await ws.close()
