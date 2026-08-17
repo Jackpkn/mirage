@@ -1,0 +1,57 @@
+{
+  "runs": {
+    "typescript": {
+      "command": [
+        "pnpm",
+        "-C",
+        "examples/typescript",
+        "exec",
+        "tsx",
+        "redis/redis_cache.ts"
+      ]
+    }
+  },
+  "exit": 0,
+  "lines": [
+    "=== RedisFileCacheStore: FileCache backed by Redis ===",
+    "",
+    "  url: redis://localhost:6379/1",
+    "  keyPrefix: mirage:example:cache:",
+    "  cacheLimit: 67108864 bytes",
+    "",
+    "--- set + get round-trip ---",
+    "  get: hello from redis cache",
+    "",
+    "--- isFresh (fingerprint comparison) ---",
+    "  matches same fp: true",
+    "  matches other fp: false",
+    "",
+    "--- add (no-op if present, true if inserted) ---",
+    "  add existing: false",
+    "  add new: true",
+    "",
+    "--- multiGet ---",
+    "  /data/hello.txt: 22 bytes",
+    "  /data/new.bin: 3 bytes",
+    "  /data/missing: MISS",
+    "",
+    "--- ttl expiry ---",
+    "  immediate: true",
+    "  after 1.1s: false",
+    "",
+    "--- inspect raw keys under prefix ---",
+    "  total keys: 5",
+    "    mirage:example:cache:data:/data/hello.txt",
+    "    mirage:example:cache:data:/data/new.bin",
+    "    mirage:example:cache:dir",
+    "    mirage:example:cache:meta:/data/hello.txt",
+    "    mirage:example:cache:meta:/data/new.bin",
+    "",
+    "--- cross-process persistence ---",
+    "  another RedisFileCacheStore with same keyPrefix sees the same data:",
+    "  cache2.get: hello from redis cache",
+    "",
+    "=== CLEANUP ===",
+    "  wiped cache keys from Redis"
+  ]
+}

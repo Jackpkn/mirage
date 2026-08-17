@@ -1,3 +1,0 @@
-stdout: bar
-wsA:  alice
-wsB:  bob

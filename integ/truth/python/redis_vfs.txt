@@ -1,6 +1,0 @@
-=== VFS MODE ===
-hello world
-hello.txt: True
-nope.txt: False
-/data/sub: True
-nested.txt

@@ -1,0 +1,51 @@
+{
+  "runs": {
+    "typescript": {
+      "command": [
+        "pnpm",
+        "-C",
+        "examples/typescript",
+        "exec",
+        "tsx",
+        "pyodide/ram.ts"
+      ]
+    }
+  },
+  "exit": 0,
+  "lines": [
+    "python3 reads a script file from ANY mount — demo: /ram/",
+    "",
+    "Script path is dispatched through the workspace mount registry,",
+    "so /ram/, /disk/, /s3/, /redis/ — all work the same way.",
+    "",
+    "=== 1. seed /ram/python.py via heredoc ===",
+    "python.py",
+    "",
+    "=== 2. python3 /ram/python.py (no args) ===",
+    "hello, world!",
+    "args: []",
+    "sum(1..10): 55",
+    "exit: 0",
+    "",
+    "=== 3. python3 /ram/python.py alice bob ===",
+    "hello, alice!",
+    "args: ['alice', 'bob']",
+    "sum(1..10): 55",
+    "exit: 0",
+    "",
+    "=== 4. seed /ram/data.jsonl + /ram/count.py ===",
+    "=== 5. cat /ram/data.jsonl | python3 /ram/count.py ===",
+    "alice: 2",
+    "bob: 1",
+    "exit: 0",
+    "",
+    "=== 6. overwrite /ram/python.py and re-run ===",
+    "script was replaced!",
+    "exit: 0",
+    "",
+    "=== 7. python3 /ram/missing.py → \"No such file\", exit 1 ===",
+    "stderr: python3: /ram/missing.py: No such file",
+    "exit: 1",
+    ""
+  ]
+}

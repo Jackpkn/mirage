@@ -1,0 +1,17 @@
+{
+  "runs": {
+    "python": {
+      "command": [
+        "./python/.venv/bin/python",
+        "examples/python/redis_resource/example_redis_cache.py"
+      ]
+    }
+  },
+  "exit": 0,
+  "lines": [
+    "=== RedisFileCacheStore: FileCache backed by Redis ===",
+    "cache.get: hello from redis cache",
+    "cache2.get: hello from redis cache",
+    "wiped cache keys from Redis"
+  ]
+}
