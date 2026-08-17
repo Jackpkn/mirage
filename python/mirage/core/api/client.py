@@ -40,13 +40,14 @@ class RetryPolicy:
     Args:
         statuses (frozenset[int]): response statuses worth retrying.
         max_retries (int): retries allowed after the first attempt.
-        max_backoff (float): cap for the exponential-backoff fallback.
+        max_backoff (float): ceiling on every inter-attempt wait, whether
+            the server asked for it or the exponential fallback chose it.
         delay_source (str): "header" reads Retry-After and falls back to
             exponential backoff (Graph's convention); "body" reads a JSON
             ``retry_after`` field and falls back to 1s (Discord's).
-        retry_transport (bool): also retry connection-level failures, which
-            never carry a response; the wait for those is the exponential
-            backoff.
+        retry_transport (bool): also retry connection-level failures and
+            timeouts, which never carry a response; the wait for those is
+            the exponential backoff.
     """
 
     statuses: frozenset[int] = frozenset()
@@ -123,22 +124,24 @@ def header_delay(resp: aiohttp.ClientResponse, attempt: int,
             # malformed Retry-After header: fall back to exponential backoff
             delay = math.nan
         if _usable_delay(delay):
-            return delay
+            # max_backoff is the policy's ceiling on every inter-attempt
+            # wait, so a server asking for more gets the ceiling
+            return min(delay, retry.max_backoff)
     return min(2.0**attempt, retry.max_backoff)
 
 
-def _body_delay(text: str) -> float:
+def _body_delay(text: str, retry: RetryPolicy) -> float:
     try:
         data = json.loads(text)
     except ValueError:
-        return 1.0
+        return min(1.0, retry.max_backoff)
     if isinstance(data, dict):
         value = data.get("retry_after")
         # json.loads accepts NaN/Infinity literals, and 1e999 overflows to
         # inf, so a body delay needs the same guard as a header one.
         if isinstance(value, (int, float)) and _usable_delay(float(value)):
-            return float(value)
-    return 1.0
+            return min(float(value), retry.max_backoff)
+    return min(1.0, retry.max_backoff)
 
 
 def _retry_delay(retry_state: RetryCallState, retry: RetryPolicy) -> float:
@@ -148,16 +151,18 @@ def _retry_delay(retry_state: RetryCallState, retry: RetryPolicy) -> float:
         # a transport failure carries no response to read a delay from
         return min(2.0**(retry_state.attempt_number - 1), retry.max_backoff)
     if retry.delay_source == "body":
-        return _body_delay(error.text)
+        return _body_delay(error.text, retry)
     return header_delay(error.resp, retry_state.attempt_number - 1, retry)
 
 
 def _retry_condition(retry: RetryPolicy) -> Any:
     if retry.retry_transport:
-        # ClientConnectionError only: response-mapped errors raised by
-        # error_of must never come back for another attempt
+        # Connection failures and timeouts only (a total timeout raises
+        # asyncio.TimeoutError, not a ClientConnectionError): response-mapped
+        # errors raised by error_of must never come back for another attempt
         return retry_if_exception_type(
-            (_RetryableStatus, aiohttp.ClientConnectionError))
+            (_RetryableStatus, aiohttp.ClientConnectionError,
+             asyncio.TimeoutError))
     return retry_if_exception_type(_RetryableStatus)
 
 

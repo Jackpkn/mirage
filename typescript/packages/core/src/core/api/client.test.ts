@@ -243,9 +243,13 @@ describe('apiRequest', () => {
 describe('retry delays', () => {
   const retry: RetryPolicy = { ...NO_RETRY, statuses: new Set([429]), maxBackoff: 4 }
 
-  it('header mode prefers Retry-After and caps only the fallback', () => {
-    const withHeader = new Response(null, { headers: { 'Retry-After': '7.5' } })
-    expect(headerDelay(withHeader, 0, retry)).toBe(7.5)
+  it('header mode prefers Retry-After and caps every wait', () => {
+    const withHeader = new Response(null, { headers: { 'Retry-After': '2.5' } })
+    expect(headerDelay(withHeader, 0, retry)).toBe(2.5)
+    // maxBackoff is the ceiling on server-asked waits too, so a Retry-After
+    // above it cannot stall a command past the configured limit
+    const aboveCap = new Response(null, { headers: { 'Retry-After': '7.5' } })
+    expect(headerDelay(aboveCap, 0, retry)).toBe(4)
     expect(headerDelay(new Response(null), 1, retry)).toBe(2)
     expect(headerDelay(new Response(null), 6, retry)).toBe(4)
   })
@@ -259,12 +263,16 @@ describe('retry delays', () => {
     }
   })
 
-  it('body mode refuses a delay it could never wait out', async () => {
+  it('body mode refuses a delay it could never wait out and caps the rest', async () => {
     // JSON.parse rejects a bare NaN literal but overflows 1e999 to Infinity.
-    expect(await bodyDelay(new Response('{"retry_after": 2.5}'))).toBe(2.5)
-    expect(await bodyDelay(new Response('{"retry_after": 1e999}'))).toBe(1)
-    expect(await bodyDelay(new Response('{"retry_after": -5}'))).toBe(1)
-    expect(await bodyDelay(new Response('{"retry_after": "soon"}'))).toBe(1)
-    expect(await bodyDelay(new Response('not json'))).toBe(1)
+    expect(await bodyDelay(new Response('{"retry_after": 2.5}'), retry)).toBe(2.5)
+    expect(await bodyDelay(new Response('{"retry_after": 7.5}'), retry)).toBe(4)
+    expect(await bodyDelay(new Response('{"retry_after": 1e999}'), retry)).toBe(1)
+    expect(await bodyDelay(new Response('{"retry_after": -5}'), retry)).toBe(1)
+    expect(await bodyDelay(new Response('{"retry_after": "soon"}'), retry)).toBe(1)
+    expect(await bodyDelay(new Response('not json'), retry)).toBe(1)
+    // the 1s fallback bows to a ceiling below it
+    const tight: RetryPolicy = { ...NO_RETRY, statuses: new Set([429]), maxBackoff: 0.5 }
+    expect(await bodyDelay(new Response('not json'), tight)).toBe(0.5)
   })
 })

@@ -20,7 +20,10 @@ export interface RetryPolicy {
   readonly statuses: ReadonlySet<number>
   /** Retries allowed after the first attempt. */
   readonly maxRetries: number
-  /** Cap for the exponential-backoff fallback. */
+  /**
+   * Ceiling on every inter-attempt wait, whether the server asked for it
+   * or the exponential fallback chose it.
+   */
   readonly maxBackoff: number
   /**
    * Where the wait between attempts comes from: 'header' reads Retry-After
@@ -95,18 +98,20 @@ export function headerDelay(response: Response, attempt: number, retry: RetryPol
   const value = response.headers.get('Retry-After')
   if (value !== null) {
     const parsed = Number.parseFloat(value)
-    if (usableDelay(parsed)) return parsed
+    // maxBackoff is the policy's ceiling on every inter-attempt wait, so a
+    // server asking for more gets the ceiling
+    if (usableDelay(parsed)) return Math.min(parsed, retry.maxBackoff)
   }
   return Math.min(2 ** attempt, retry.maxBackoff)
 }
 
-export async function bodyDelay(response: Response): Promise<number> {
+export async function bodyDelay(response: Response, retry: RetryPolicy): Promise<number> {
   const data = (await response.json().catch(() => ({}))) as { retry_after?: unknown }
   // JSON.parse rejects a bare NaN literal but overflows 1e999 to Infinity,
   // so a body delay needs the same guard as a header one.
   return typeof data.retry_after === 'number' && usableDelay(data.retry_after)
-    ? data.retry_after
-    : 1
+    ? Math.min(data.retry_after, retry.maxBackoff)
+    : Math.min(1, retry.maxBackoff)
 }
 
 async function retryDelay(
@@ -114,7 +119,7 @@ async function retryDelay(
   attempt: number,
   retry: RetryPolicy,
 ): Promise<number> {
-  if (retry.delaySource === 'body') return bodyDelay(response)
+  if (retry.delaySource === 'body') return bodyDelay(response, retry)
   return headerDelay(response, attempt, retry)
 }
 

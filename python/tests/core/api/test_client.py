@@ -12,6 +12,8 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import asyncio
+
 import aiohttp
 import pytest
 from aioresponses import aioresponses
@@ -142,15 +144,22 @@ async def test_params_reach_the_query_string():
     assert result == {"ok": 3}
 
 
-def test_header_delay_prefers_the_header_and_caps_the_fallback():
+def test_header_delay_prefers_the_header_and_caps_every_wait():
     retry = RetryPolicy(statuses=frozenset({429}),
                         max_retries=8,
                         max_backoff=4.0)
 
     class _Resp:
+        headers = {"Retry-After": "2.5"}
+
+    assert header_delay(_Resp(), 0, retry) == 2.5
+
+    class _Above:
         headers = {"Retry-After": "7.5"}
 
-    assert header_delay(_Resp(), 0, retry) == 7.5
+    # max_backoff is the ceiling on server-asked waits too, so a Retry-After
+    # above it cannot stall a command past the configured limit
+    assert header_delay(_Above(), 0, retry) == 4.0
 
     class _Bare:
         headers = {}
@@ -166,10 +175,19 @@ def test_header_delay_prefers_the_header_and_caps_the_fallback():
 
 
 def test_body_delay_reads_retry_after_and_falls_back():
-    assert _body_delay('{"retry_after": 2.5}') == 2.5
-    assert _body_delay('{"retry_after": "soon"}') == 1.0
-    assert _body_delay("not json") == 1.0
-    assert _body_delay("[1, 2]") == 1.0
+    retry = RetryPolicy(statuses=frozenset({429}),
+                        max_retries=8,
+                        max_backoff=4.0)
+    assert _body_delay('{"retry_after": 2.5}', retry) == 2.5
+    assert _body_delay('{"retry_after": 7.5}', retry) == 4.0
+    assert _body_delay('{"retry_after": "soon"}', retry) == 1.0
+    assert _body_delay("not json", retry) == 1.0
+    assert _body_delay("[1, 2]", retry) == 1.0
+    # the 1s fallback bows to a ceiling below it
+    tight = RetryPolicy(statuses=frozenset({429}),
+                        max_retries=8,
+                        max_backoff=0.5)
+    assert _body_delay("not json", tight) == 0.5
 
 
 def test_header_delay_refuses_a_delay_it_could_never_wake_from():
@@ -188,11 +206,14 @@ def test_header_delay_refuses_a_delay_it_could_never_wake_from():
 
 
 def test_body_delay_refuses_a_delay_it_could_never_wake_from():
+    retry = RetryPolicy(statuses=frozenset({429}),
+                        max_retries=8,
+                        max_backoff=4.0)
     # json.loads accepts these literals, and 1e999 overflows to inf.
-    assert _body_delay('{"retry_after": NaN}') == 1.0
-    assert _body_delay('{"retry_after": Infinity}') == 1.0
-    assert _body_delay('{"retry_after": 1e999}') == 1.0
-    assert _body_delay('{"retry_after": -5}') == 1.0
+    assert _body_delay('{"retry_after": NaN}', retry) == 1.0
+    assert _body_delay('{"retry_after": Infinity}', retry) == 1.0
+    assert _body_delay('{"retry_after": 1e999}', retry) == 1.0
+    assert _body_delay('{"retry_after": -5}', retry) == 1.0
 
 
 @pytest.mark.asyncio
@@ -319,3 +340,24 @@ async def test_transport_retry_exhaustion_raises_the_transport_error():
         m.get(TARGET, exception=aiohttp.ClientConnectionError("refused"))
         with pytest.raises(aiohttp.ClientConnectionError):
             await api_request("GET", TARGET, error_of=_error_of, retry=retry)
+
+
+@pytest.mark.asyncio
+async def test_transport_retry_covers_timeouts():
+    # a total timeout raises asyncio.TimeoutError, not ClientConnectionError
+    retry = RetryPolicy(statuses=frozenset(),
+                        max_retries=2,
+                        max_backoff=0.001,
+                        retry_transport=True)
+    with aioresponses() as m:
+        m.get(TARGET, exception=asyncio.TimeoutError())
+        m.get(TARGET, payload={"ok": 6})
+        result = await api_request("GET",
+                                   TARGET,
+                                   error_of=_error_of,
+                                   retry=retry)
+    assert result == {"ok": 6}
+    with aioresponses() as m:
+        m.get(TARGET, exception=asyncio.TimeoutError())
+        with pytest.raises(asyncio.TimeoutError):
+            await api_request("GET", TARGET, error_of=_error_of)
