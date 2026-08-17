@@ -28,13 +28,21 @@ if TYPE_CHECKING:
 def patch_process(ws: "Workspace", ) -> None:
     """Point ``open`` and ``os`` at the workspace for a ``with`` block.
 
+    The block gets ONE event loop, driven a call at a time, that every
+    patched call and the closing ``close()`` share. Without it each call
+    reached ``asyncio.run``, so a resource holding a connection pool bound
+    that pool to a loop that was closed before the next call, and the
+    close at the end of the block died with "Event loop is closed" (redis
+    is the one that shows it; any pooled async client would).
+
     Args:
         ws: the workspace entering context-manager scope.
     """
     ws._original_open = builtins.open
     ws._original_os = sys.modules["os"]
-    builtins.open = cast(Any, make_open(ws._ops))
-    sys.modules["os"] = make_os_module(ws._ops)
+    ws._vfs_loop = asyncio.new_event_loop()
+    builtins.open = cast(Any, make_open(ws._ops, ws._vfs_loop))
+    sys.modules["os"] = make_os_module(ws._ops, ws._vfs_loop)
 
 
 def unpatch_process(ws: "Workspace", ) -> None:
@@ -47,6 +55,19 @@ def unpatch_process(ws: "Workspace", ) -> None:
         builtins.open = ws._original_open
     if ws._original_os is not None:
         sys.modules["os"] = ws._original_os
+
+
+def stop_vfs_loop(ws: "Workspace", ) -> None:
+    """Close the loop ``patch_process`` opened, after the workspace close.
+
+    Args:
+        ws: the workspace leaving context-manager scope.
+    """
+    loop = ws._vfs_loop
+    if loop is None:
+        return
+    ws._vfs_loop = None
+    loop.close()
 
 
 def close_sync_parts(ws: "Workspace", ) -> None:

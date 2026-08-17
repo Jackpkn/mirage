@@ -1,0 +1,23 @@
+{
+  "runs": {
+    "python": {
+      "command": [
+        "./python/.venv/bin/python",
+        "examples/python/other/custom_command.py"
+      ]
+    }
+  },
+  "exit": 0,
+  "lines": [
+    "=== decorator-level bindings on greet ===",
+    "  resource='ram'       name='greet'",
+    "  resource='disk'      name='greet'",
+    "",
+    "=== greet on /ram/ (RAMAccessor wins) ===",
+    "hello from RAMAccessor: /ram/note.txt",
+    "",
+    "=== greet on /disk/ (DiskAccessor wins) ===",
+    "hello from DiskAccessor: /disk/note.txt",
+    ""
+  ]
+}

@@ -26,8 +26,9 @@ from mirage.commands.config import CommandOpts
 from mirage.resource.redis import RedisResource
 from mirage.types import PathSpec
 
-REDIS_URL = "redis://localhost:6379/0"
-resource = RedisResource(url=REDIS_URL)
+REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
+KEY_PREFIX = "mirage:fs:"
+resource = RedisResource(url=REDIS_URL, key_prefix=KEY_PREFIX)
 
 
 async def main() -> None:
@@ -260,11 +261,14 @@ async def main() -> None:
                 print(f"  ✓ {op_name} raises: {str(e)[:60]}…")
     finally:
         os.unlink(snap)
-        # Cleanup loaded keys
+        # Cleanup the loaded keys and the files this run seeded. Both
+        # namespaces outlive the process, so leaving either behind makes
+        # the next run open on this run's `ls`.
         import redis as sync_redis
         sc = sync_redis.Redis.from_url(REDIS_URL)
-        for key in sc.scan_iter(f"{dst_prefix}*"):
-            sc.delete(key)
+        for prefix in (dst_prefix, KEY_PREFIX):
+            for key in sc.scan_iter(f"{prefix}*"):
+                sc.delete(key)
         sc.close()
 
 

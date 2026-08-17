@@ -1,4 +1,0 @@
-=== RedisFileCacheStore: FileCache backed by Redis ===
-cache.get: hello from redis cache
-cache2.get: hello from redis cache
-wiped cache keys from Redis

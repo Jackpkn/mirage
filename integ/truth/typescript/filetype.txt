@@ -1,4 +1,0 @@
-alpha 3
-beta 11
-plain text
-largest: beta 11

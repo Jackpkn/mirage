@@ -1,0 +1,21 @@
+{
+  "runs": {
+    "typescript": {
+      "command": [
+        "pnpm",
+        "-C",
+        "examples/typescript",
+        "exec",
+        "tsx",
+        "filetype/filetype.ts"
+      ]
+    }
+  },
+  "exit": 0,
+  "lines": [
+    "alpha 3",
+    "beta 11",
+    "plain text",
+    "largest: beta 11"
+  ]
+}

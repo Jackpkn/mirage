@@ -1,0 +1,21 @@
+{
+  "runs": {
+    "typescript": {
+      "command": [
+        "pnpm",
+        "-C",
+        "examples/typescript",
+        "exec",
+        "tsx",
+        "redis/redis_index.ts"
+      ]
+    }
+  },
+  "exit": 0,
+  "lines": [
+    "index store A is redis-backed: true",
+    "shared index entry: hello.txt",
+    "shared index listing: /data/hello.txt, /data/notes.md",
+    "wiped test keys from Redis"
+  ]
+}

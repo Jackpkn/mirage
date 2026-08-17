@@ -1,0 +1,43 @@
+{
+  "runs": {
+    "typescript": {
+      "command": [
+        "pnpm",
+        "-C",
+        "examples/typescript",
+        "exec",
+        "tsx",
+        "disk/disk_vfs.ts"
+      ]
+    }
+  },
+  "exit": 0,
+  "lines": [
+    "=== VFS MODE (via require(\"fs\")) ===",
+    "",
+    "--- fs.promises.readdir(\"/data\") ---",
+    "  example.feather",
+    "  example.h5",
+    "  example.json",
+    "  example.jsonl",
+    "  example.orc",
+    "  example.parquet",
+    "  example.pdf",
+    "  example.xlsx",
+    "",
+    "--- fs.promises.readFile(\"/data/example.json\", \"utf-8\") ---",
+    {
+      "count": 257,
+      "sha256": "ca04d1f4b6a5f1a774fb076af00a791e7f7ef70958300e314c4eafc563ac3bb9"
+    },
+    "",
+    "--- fs.promises.stat() / exists() ---",
+    "  example.json: true",
+    "  nope.txt: false",
+    "",
+    "--- isDir(\"/data\") ---",
+    "  /data: true",
+    "",
+    "Stats: 4 ops, 15533 bytes transferred"
+  ]
+}
