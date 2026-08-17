@@ -12,6 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import { apiRequest } from '../api/client.ts'
 import { enoent } from '../../utils/errors.ts'
 class LinearApiError extends Error {
   constructor(
@@ -44,6 +45,17 @@ function errorMessage(errors: { message?: string }[] | undefined): string | null
   return first?.message ?? null
 }
 
+function linearError(response: Response, text: string): LinearApiError {
+  let errors: { message?: string }[] = []
+  try {
+    errors = (JSON.parse(text) as GraphQLResponse).errors ?? []
+  } catch {
+    // a non-JSON error body: fall through to the bare status code
+  }
+  const msg = errorMessage(errors) ?? `Linear API error: HTTP ${String(response.status)}`
+  return new LinearApiError(msg, errors, response.status)
+}
+
 export class HttpLinearTransport implements LinearTransport {
   protected readonly fetch: typeof fetch = globalThis.fetch.bind(globalThis)
   private readonly apiKey: string
@@ -58,19 +70,15 @@ export class HttpLinearTransport implements LinearTransport {
     query: string,
     variables: Record<string, unknown> = {},
   ): Promise<Record<string, unknown>> {
-    const res = await this.fetch(this.baseUrl, {
-      method: 'POST',
+    const data = ((await apiRequest('POST', this.baseUrl, {
+      fetchFn: this.fetch,
       headers: { Authorization: this.apiKey, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query, variables }),
-    })
-    const data = (await res.json()) as GraphQLResponse
-    if (res.status >= 400) {
-      const msg = errorMessage(data.errors) ?? `Linear API error: HTTP ${String(res.status)}`
-      throw new LinearApiError(msg, data.errors ?? [], res.status)
-    }
+      json: { query, variables },
+      errorOf: linearError,
+    })) ?? {}) as GraphQLResponse
     if (data.errors !== undefined && data.errors.length > 0) {
       const msg = errorMessage(data.errors) ?? 'Linear API error'
-      throw new LinearApiError(msg, data.errors, res.status)
+      throw new LinearApiError(msg, data.errors)
     }
     return data.data ?? {}
   }

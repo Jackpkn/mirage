@@ -15,8 +15,7 @@
 import json
 from typing import Any
 
-import aiohttp
-
+from mirage.core.api.client import api_request, status_error
 from mirage.core.gsheets.client import (TokenManager, google_headers,
                                         sheets_base)
 
@@ -44,12 +43,13 @@ async def append_values(
         raise ValueError(f"Invalid JSON: {exc}") from exc
     base = f"{sheets_base(token_manager)}/spreadsheets/{spreadsheet_id}"
     url = f"{base}/values/{range_}:append?valueInputOption=USER_ENTERED"
-    headers = await google_headers(token_manager)
-    body = {"values": values}
-    async with aiohttp.ClientSession() as session:
-        async with session.post(url, headers=headers, json=body) as resp:
-            resp.raise_for_status()
-            return await resp.json()
+    data: dict[str, Any] = await api_request("POST",
+                                             url,
+                                             error_of=status_error,
+                                             headers=await
+                                             google_headers(token_manager),
+                                             json_body={"values": values})
+    return data
 
 
 async def update_values(
@@ -75,9 +75,10 @@ async def update_values(
         raise ValueError(f"Invalid JSON: {exc}") from exc
     base = f"{sheets_base(token_manager)}/spreadsheets/{spreadsheet_id}"
     url = f"{base}/values/{range_}?valueInputOption=USER_ENTERED"
-    headers = await google_headers(token_manager)
-    body = {"values": values}
-    async with aiohttp.ClientSession() as session:
-        async with session.put(url, headers=headers, json=body) as resp:
-            resp.raise_for_status()
-            return await resp.json()
+    data: dict[str, Any] = await api_request("PUT",
+                                             url,
+                                             error_of=status_error,
+                                             headers=await
+                                             google_headers(token_manager),
+                                             json_body={"values": values})
+    return data

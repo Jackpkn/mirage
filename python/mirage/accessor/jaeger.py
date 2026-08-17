@@ -12,9 +12,7 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from typing import Any
-
-import httpx
+import aiohttp
 
 from mirage.accessor.base import Accessor
 from mirage.resource.jaeger.config import JaegerConfig
@@ -24,22 +22,16 @@ class JaegerAccessor(Accessor):
 
     def __init__(self, config: JaegerConfig) -> None:
         self.config = config
-        self._client: httpx.AsyncClient | None = None
+        self._session: aiohttp.ClientSession | None = None
 
-    def get_client(self) -> httpx.AsyncClient:
-        if self._client is None:
-            self._client = httpx.AsyncClient(
-                base_url=self.config.host.rstrip("/"),
-                timeout=self.config.request_timeout,
-            )
-        return self._client
-
-    async def request(self,
-                      endpoint: str,
-                      params: dict[str, Any] | None = None) -> httpx.Response:
-        return await self.get_client().get(endpoint, params=params)
+    def get_session(self) -> aiohttp.ClientSession:
+        if self._session is None:
+            self._session = aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(
+                    total=self.config.request_timeout))
+        return self._session
 
     async def close(self) -> None:
-        if self._client is not None:
-            await self._client.aclose()
-            self._client = None
+        if self._session is not None:
+            await self._session.close()
+            self._session = None

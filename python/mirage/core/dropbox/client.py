@@ -14,10 +14,12 @@
 
 import json
 from collections.abc import AsyncIterator
+from functools import partial
 from typing import Any
 
 import aiohttp
 
+from mirage.core.api.client import api_request
 from mirage.core.api.oauth import TokenManager as OAuthTokenManager
 from mirage.core.dropbox.constants import (DROPBOX_API_BASE,
                                            DROPBOX_CONTENT_BASE,
@@ -25,7 +27,7 @@ from mirage.core.dropbox.constants import (DROPBOX_API_BASE,
                                            TOKEN_BUFFER_SECONDS)
 from mirage.resource.dropbox.config import DropboxConfig
 from mirage.resource.secrets import reveal_secret
-from mirage.utils.ranges import ByteWindow, range_header, window_of
+from mirage.utils.ranges import ByteWindow
 
 
 class DropboxApiError(RuntimeError):
@@ -43,15 +45,21 @@ class DropboxApiError(RuntimeError):
 
 def summary_of(text: str) -> str:
     try:
-        return json.loads(text).get("error_summary", "")
+        summary: str = json.loads(text).get("error_summary", "")
     except ValueError:
         return ""
+    return summary
 
 
 def _token_url(config: DropboxConfig) -> str:
     if not config.endpoint:
         return DROPBOX_TOKEN_URL
     return f"{config.endpoint.rstrip('/')}/oauth2/token"
+
+
+def _flow_error(resp: aiohttp.ClientResponse, text: str) -> Exception:
+    return DropboxApiError(f"Dropbox token refresh → {resp.status} {text}",
+                           resp.status)
 
 
 async def refresh_access_token(config: DropboxConfig) -> tuple[str, int]:
@@ -63,14 +71,10 @@ async def refresh_access_token(config: DropboxConfig) -> tuple[str, int]:
     secret = reveal_secret(config.client_secret)
     if secret:
         body["client_secret"] = secret
-    async with aiohttp.ClientSession() as session:
-        async with session.post(_token_url(config), data=body) as resp:
-            text = await resp.text()
-            if resp.status >= 400:
-                raise DropboxApiError(
-                    f"Dropbox token refresh → {resp.status} {text}",
-                    resp.status)
-            data = json.loads(text)
+    data = await api_request("POST",
+                             _token_url(config),
+                             error_of=_flow_error,
+                             data=body)
     return data["access_token"], int(data["expires_in"])
 
 
@@ -97,21 +101,31 @@ async def dropbox_auth_headers(tm: DropboxTokenManager) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
+def _rpc_error(resp: aiohttp.ClientResponse, text: str, *,
+               endpoint: str) -> Exception:
+    return DropboxApiError(f"Dropbox POST {endpoint} → {resp.status} {text}",
+                           resp.status, summary_of(text))
+
+
 async def dropbox_rpc(
     tm: DropboxTokenManager,
     endpoint: str,
     body: dict[str, Any],
 ) -> dict[str, Any]:
-    headers = await dropbox_auth_headers(tm)
-    url = f"{tm.api_base}{endpoint}"
-    async with aiohttp.ClientSession() as session:
-        async with session.post(url, headers=headers, json=body) as resp:
-            text = await resp.text()
-            if resp.status >= 400:
-                raise DropboxApiError(
-                    f"Dropbox POST {endpoint} → {resp.status} {text}",
-                    resp.status, summary_of(text))
-    return json.loads(text)
+    data: dict[str,
+               Any] = await api_request("POST",
+                                        f"{tm.api_base}{endpoint}",
+                                        error_of=partial(_rpc_error,
+                                                         endpoint=endpoint),
+                                        headers=await dropbox_auth_headers(tm),
+                                        json_body=body)
+    return data
+
+
+def _upload_error(resp: aiohttp.ClientResponse, text: str, *,
+                  path: str) -> Exception:
+    return DropboxApiError(f"Dropbox upload {path} → {resp.status} {text}",
+                           resp.status, summary_of(text))
 
 
 async def dropbox_upload(tm: DropboxTokenManager, path: str,
@@ -123,14 +137,18 @@ async def dropbox_upload(tm: DropboxTokenManager, path: str,
         "mute": True,
     })
     headers["Content-Type"] = "application/octet-stream"
-    url = f"{tm.content_base}/files/upload"
-    async with aiohttp.ClientSession() as session:
-        async with session.post(url, headers=headers, data=data) as resp:
-            if resp.status >= 400:
-                text = await resp.text()
-                raise DropboxApiError(
-                    f"Dropbox upload {path} → {resp.status} {text}",
-                    resp.status, summary_of(text))
+    await api_request("POST",
+                      f"{tm.content_base}/files/upload",
+                      error_of=partial(_upload_error, path=path),
+                      headers=headers,
+                      data=data,
+                      read="none")
+
+
+def _download_error(resp: aiohttp.ClientResponse, text: str, *,
+                    path: str) -> Exception:
+    return DropboxApiError(f"Dropbox download {path} → {resp.status} {text}",
+                           resp.status)
 
 
 async def dropbox_download(tm: DropboxTokenManager,
@@ -146,19 +164,14 @@ async def dropbox_download(tm: DropboxTokenManager,
     """
     headers = await dropbox_auth_headers(tm)
     headers["Dropbox-API-Arg"] = json.dumps({"path": path})
-    header = None if window is None else range_header(window.offset,
-                                                      window.size)
-    if header:
-        headers["Range"] = header
-    url = f"{tm.content_base}/files/download"
-    async with aiohttp.ClientSession() as session:
-        async with session.post(url, headers=headers) as resp:
-            if resp.status >= 400:
-                text = await resp.text()
-                raise DropboxApiError(
-                    f"Dropbox download {path} → {resp.status} {text}",
-                    resp.status)
-            return window_of(await resp.read(), resp.status, window)
+    data: bytes = await api_request("POST",
+                                    f"{tm.content_base}/files/download",
+                                    error_of=partial(_download_error,
+                                                     path=path),
+                                    headers=headers,
+                                    read="bytes",
+                                    window=window)
+    return data
 
 
 async def dropbox_download_stream(

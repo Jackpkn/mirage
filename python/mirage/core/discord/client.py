@@ -53,14 +53,14 @@ def _retry_after_of(body: str) -> Any:
 def _get_error(resp: aiohttp.ClientResponse, body: str) -> Exception:
     if resp.status == 429:
         return RuntimeError(f"Rate limited after {MAX_RETRIES} retries")
-    return status_error(resp)
+    return status_error(resp, body)
 
 
 def _mutation_error(resp: aiohttp.ClientResponse, body: str) -> Exception:
     if resp.status == 429:
         retry = _retry_after_of(body)
         return RuntimeError(f"Rate limited, retry after {retry}s")
-    return status_error(resp)
+    return status_error(resp, body)
 
 
 async def discord_get(
