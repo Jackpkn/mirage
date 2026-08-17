@@ -26,7 +26,7 @@ import {
   listTeamProjects,
   listTeams,
   type LinearTransport,
-} from './_client.ts'
+} from './client.ts'
 import {
   buildProjectIssue,
   normalizeComment,

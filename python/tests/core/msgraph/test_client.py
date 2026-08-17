@@ -1,6 +1,6 @@
 import pytest
 
-from mirage.core.msgraph._client import id_segment
+from mirage.core.msgraph.client import id_segment
 
 
 @pytest.mark.parametrize("value,expected", [

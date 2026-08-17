@@ -1,7 +1,7 @@
 import pytest
 
 from mirage.core.dify import tree
-from mirage.core.dify._client import is_visible_document
+from mirage.core.dify.client import is_visible_document
 
 from .conftest import document
 

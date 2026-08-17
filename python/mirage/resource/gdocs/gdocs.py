@@ -16,7 +16,7 @@ from typing import Any
 
 from mirage.accessor.gdocs import GDocsAccessor
 from mirage.core.gdocs.readdir import readdir
-from mirage.core.google._client import TokenManager
+from mirage.core.google.client import TokenManager
 from mirage.resource.base import BaseResource
 from mirage.resource.gdocs.config import GDocsConfig
 from mirage.resource.gdocs.prompt import PROMPT, WRITE_PROMPT

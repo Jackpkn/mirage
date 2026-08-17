@@ -16,7 +16,7 @@ import { invalidateAfterWrite } from '@struktoai/mirage-core/cache/context'
 import type { PathSpec } from '@struktoai/mirage-core/types'
 import { enoent } from '@struktoai/mirage-core/utils/errors'
 import type { GridFSAccessor } from '../../accessor/gridfs.ts'
-import { bucket, gridfsKey, latestFile, rawPathOf } from './_client.ts'
+import { bucket, gridfsKey, latestFile, rawPathOf } from './client.ts'
 
 export async function copy(accessor: GridFSAccessor, src: PathSpec, dst: PathSpec): Promise<void> {
   // Copies the latest revision only (mirrors S3 CopyObject), streamed

@@ -15,7 +15,7 @@
 from typing import Any
 
 from mirage.accessor.gsheets import GSheetsAccessor
-from mirage.core.google._client import TokenManager
+from mirage.core.google.client import TokenManager
 from mirage.core.gsheets.readdir import readdir
 from mirage.resource.base import BaseResource
 from mirage.resource.gsheets.config import GSheetsConfig

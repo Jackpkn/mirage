@@ -18,7 +18,7 @@ from functools import partial
 from mirage.accessor.gsheets import GSheetsAccessor
 from mirage.cache.index import NULL_INDEX, IndexCacheStore
 from mirage.cache.index.warm import entry_or_warm
-from mirage.core.gsheets._client import TokenManager, google_get, sheets_base
+from mirage.core.gsheets.client import TokenManager, google_get, sheets_base
 from mirage.core.gsheets.readdir import readdir
 from mirage.core.render.json import compact_json_bytes
 from mirage.types import PathSpec

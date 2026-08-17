@@ -16,8 +16,8 @@ import base64
 from dataclasses import dataclass
 
 from mirage.accessor.github import GitHubAccessor
-from mirage.core.github._client import (GitHubApiError, github_get,
-                                        github_request)
+from mirage.core.github.client import (GitHubApiError, github_get,
+                                       github_request)
 from mirage.core.github.config import GhConfig, GitHubConfig
 from mirage.types import JsonValue
 

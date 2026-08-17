@@ -14,8 +14,8 @@
 
 from typing import Any
 
-from mirage.core.discord._client import (discord_delete, discord_patch,
-                                         discord_post)
+from mirage.core.discord.client import (discord_delete, discord_patch,
+                                        discord_post)
 from mirage.core.discord.config import DiscordConfig
 
 

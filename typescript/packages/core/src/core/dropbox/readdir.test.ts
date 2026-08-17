@@ -24,7 +24,7 @@ vi.mock('./api.ts', async () => {
 import { DropboxAccessor } from '../../accessor/dropbox.ts'
 import { RAMIndexCacheStore } from '../../cache/index/ram.ts'
 import { PathSpec } from '../../types.ts'
-import { DropboxApiError, type DropboxTokenManager } from './_client.ts'
+import { DropboxApiError, type DropboxTokenManager } from './client.ts'
 import * as api from './api.ts'
 import { readdir } from './readdir.ts'
 

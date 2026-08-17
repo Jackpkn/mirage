@@ -19,8 +19,8 @@ from bson.json_util import RELAXED_JSON_OPTIONS, dumps
 
 from mirage.accessor.mongodb import MongoDBAccessor
 from mirage.cache.index import NULL_INDEX, IndexCacheStore
-from mirage.core.mongodb._client import (find_documents, iter_documents,
-                                         iter_inserts)
+from mirage.core.mongodb.client import (find_documents, iter_documents,
+                                        iter_inserts)
 from mirage.core.mongodb.scope import detect_scope
 from mirage.core.mongodb.types import PRIMARY_KEY, ScopeLevel
 from mirage.types import PathSpec

@@ -14,8 +14,8 @@
 
 from typing import Any
 
-from mirage.core.notion._client import (notion_get, notion_patch, notion_post,
-                                        paginate_list, paginate_post)
+from mirage.core.notion.client import (notion_get, notion_patch, notion_post,
+                                       paginate_list, paginate_post)
 from mirage.core.notion.config import NotionConfig
 
 

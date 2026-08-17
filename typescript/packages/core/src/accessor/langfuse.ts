@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { Accessor } from './base.ts'
-import type { LangfuseTransport } from '../core/langfuse/_client.ts'
+import type { LangfuseTransport } from '../core/langfuse/client.ts'
 
 export interface LangfuseAccessorConfig {
   defaultTraceLimit?: number

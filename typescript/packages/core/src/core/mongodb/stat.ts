@@ -15,7 +15,7 @@
 import type { MongoDBAccessor } from '../../accessor/mongodb.ts'
 import type { IndexCacheStore } from '../../cache/index/store.ts'
 import { FileStat, FileType, PathSpec } from '../../types.ts'
-import { countDocuments, databaseExists, entityExists, isView, listIndexes } from './_client.ts'
+import { countDocuments, databaseExists, entityExists, isView, listIndexes } from './client.ts'
 import { detectScope } from './scope.ts'
 import { EntityKind, KIND_TO_DIR, ScopeLevel } from './types.ts'
 

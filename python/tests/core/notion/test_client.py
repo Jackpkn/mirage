@@ -18,9 +18,9 @@ import pytest
 from aioresponses import aioresponses
 from yarl import URL
 
-from mirage.core.notion._client import (NotionAPIError, notion_get,
-                                        notion_headers, notion_post,
-                                        paginate_post)
+from mirage.core.notion.client import (NotionAPIError, notion_get,
+                                       notion_headers, notion_post,
+                                       paginate_post)
 from mirage.core.notion.config import NotionConfig
 
 BASE = "https://api.notion.com/v1"
@@ -58,7 +58,7 @@ async def test_paginate_post_stops_at_max_results():
         }
 
     config = NotionConfig(api_key="ntn_test123")
-    with patch("mirage.core.notion._client.notion_post", new=fake_notion_post):
+    with patch("mirage.core.notion.client.notion_post", new=fake_notion_post):
         results = await paginate_post(
             config,
             "/search",

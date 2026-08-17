@@ -17,8 +17,8 @@ from typing import Any
 
 from mirage.accessor.dropbox import DropboxAccessor
 from mirage.cache.index import NULL_INDEX, IndexCacheStore
-from mirage.core.dropbox._client import DropboxApiError
 from mirage.core.dropbox.api import get_metadata
+from mirage.core.dropbox.client import DropboxApiError
 from mirage.core.dropbox.paths import dropbox_path_of
 from mirage.core.dropbox.readdir import readdir
 from mirage.types import FileStat, FileType, PathSpec

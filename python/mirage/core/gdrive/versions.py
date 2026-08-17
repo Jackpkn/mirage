@@ -14,8 +14,8 @@
 
 from typing import Any
 
-from mirage.core.google._client import (TokenManager, drive_base, google_get,
-                                        google_get_bytes)
+from mirage.core.google.client import (TokenManager, drive_base, google_get,
+                                       google_get_bytes)
 from mirage.utils.ranges import ByteWindow
 
 REVISION_FIELDS = "nextPageToken,revisions(id,modifiedTime,md5Checksum,size)"

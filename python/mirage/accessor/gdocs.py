@@ -13,7 +13,7 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 from mirage.accessor.base import Accessor
-from mirage.core.google._client import TokenManager
+from mirage.core.google.client import TokenManager
 
 
 class GDocsAccessor(Accessor):

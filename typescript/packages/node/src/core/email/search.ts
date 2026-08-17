@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import type { EmailAccessor } from '../../accessor/email.ts'
-import { fetchMessage, listMessageUids, type FetchedMessage } from './_client.ts'
+import { fetchMessage, listMessageUids, type FetchedMessage } from './client.ts'
 import { dateBucket, sanitize } from './readdir.ts'
 import { messageJsonText } from './render.ts'
 import type { EmailScope } from './scope.ts'

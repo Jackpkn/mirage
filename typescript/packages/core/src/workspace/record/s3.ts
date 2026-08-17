@@ -18,7 +18,7 @@ import {
   loadS3Module,
   streamToBuffer,
   type S3SendClient,
-} from '../../core/s3/_client.ts'
+} from '../../core/s3/client.ts'
 import type { S3Config } from '../../resource/s3/config.ts'
 import { generationOf } from './types.ts'
 

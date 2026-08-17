@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { Accessor } from './base.ts'
-import type { BoxTokenManager } from '../core/box/_client.ts'
+import type { BoxTokenManager } from '../core/box/client.ts'
 
 export class BoxAccessor extends Accessor {
   readonly tokenManager: BoxTokenManager

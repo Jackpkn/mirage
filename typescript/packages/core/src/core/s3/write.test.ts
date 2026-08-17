@@ -13,10 +13,10 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type * as ClientModule from './_client.ts'
+import type * as ClientModule from './client.ts'
 
-vi.mock('./_client.ts', async () => {
-  const actual = await vi.importActual<typeof ClientModule>('./_client.ts')
+vi.mock('./client.ts', async () => {
+  const actual = await vi.importActual<typeof ClientModule>('./client.ts')
   return { ...actual, loadS3Module: vi.fn(), withClient: vi.fn() }
 })
 
@@ -24,7 +24,7 @@ import { S3Accessor } from '../../accessor/s3.ts'
 import { runWithCacheManager } from '../../cache/context.ts'
 import type { S3Config } from '../../resource/s3/config.ts'
 import { PathSpec } from '../../types.ts'
-import * as clientMod from './_client.ts'
+import * as clientMod from './client.ts'
 import { write } from './write.ts'
 
 class FakeManager {

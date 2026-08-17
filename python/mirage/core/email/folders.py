@@ -13,7 +13,7 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 from mirage.accessor.email import EmailAccessor
-from mirage.core.email._client import list_folders as _list_folders
+from mirage.core.email.client import list_folders as _list_folders
 
 
 async def list_folders(accessor: EmailAccessor) -> list[str]:

@@ -16,7 +16,7 @@ from datetime import date, timedelta
 
 from mirage.accessor.gcal import GCalAccessor
 from mirage.cache.index import NULL_INDEX, IndexCacheStore, IndexEntry
-from mirage.core.gcal._client import list_calendars, list_events
+from mirage.core.gcal.client import list_calendars, list_events
 from mirage.core.gcal.day import (WINDOW_AHEAD_DAYS, WINDOW_BACK_DAYS,
                                   clamped_hhmm, day_bounds, days_covered,
                                   event_span, valid_day, window_bounds)

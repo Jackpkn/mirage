@@ -24,7 +24,7 @@ import {
   fetchPrompts,
   fetchSessions,
   fetchTraces,
-} from './_client.ts'
+} from './client.ts'
 import { jsonlBytes } from '../render/json.ts'
 import { stripSlash } from '../../utils/slash.ts'
 import { enoent } from '../../utils/errors.ts'

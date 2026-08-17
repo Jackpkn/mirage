@@ -29,7 +29,7 @@ vi.mock('../stat.ts', async () => {
 
 import { DropboxAccessor } from '../../../accessor/dropbox.ts'
 import { FileStat, FileType, PathSpec } from '../../../types.ts'
-import type { DropboxTokenManager } from '../_client.ts'
+import type { DropboxTokenManager } from '../client.ts'
 import { size, entries } from './index.ts'
 import * as readdirMod from '../readdir.ts'
 import * as statMod from '../stat.ts'

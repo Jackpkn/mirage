@@ -27,7 +27,7 @@ import {
   iterLatest,
   prefixQuery,
   stripKeyPrefix,
-} from './_client.ts'
+} from './client.ts'
 import { SCOPE_ERROR } from './constants.ts'
 
 async function isFile(accessor: GridFSAccessor, key: string): Promise<boolean> {

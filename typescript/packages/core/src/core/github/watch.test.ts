@@ -16,7 +16,7 @@ import { describe, expect, it } from 'vitest'
 import { GitHubAccessor } from '../../accessor/github.ts'
 import { PathSpec, type WalkEntry } from '../../types.ts'
 import { IncompleteWalkError } from '../../watch/errors.ts'
-import type { GitHubTransport } from './_client.ts'
+import type { GitHubTransport } from './client.ts'
 import type { TreeEntry } from './tree_entry.ts'
 import { GitHubWalk } from './watch.ts'
 

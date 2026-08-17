@@ -15,8 +15,8 @@
 from collections.abc import AsyncIterator
 
 from mirage.accessor.gridfs import GridFSAccessor
-from mirage.core.gridfs._client import (_prefix, _strip_prefix, iter_latest,
-                                        prefix_query)
+from mirage.core.gridfs.client import (_prefix, _strip_prefix, iter_latest,
+                                       prefix_query)
 from mirage.core.timeutil import to_iso_z
 from mirage.types import PathSpec, WalkEntry
 from mirage.utils.key_prefix import mount_prefix_of

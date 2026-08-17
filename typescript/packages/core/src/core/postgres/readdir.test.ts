@@ -15,7 +15,7 @@
 import { mountKey } from '../../utils/key_prefix.ts'
 import { describe, expect, it, vi } from 'vitest'
 
-vi.mock('./_client.ts', () => ({
+vi.mock('./client.ts', () => ({
   listSchemas: vi.fn(),
   listTables: vi.fn(),
   listViews: vi.fn(),
@@ -27,7 +27,7 @@ import { RAMIndexCacheStore } from '../../cache/index/ram.ts'
 import { PathSpec } from '../../types.ts'
 import { resolvePostgresConfig } from '../../resource/postgres/config.ts'
 import type { PgDriver } from './_driver.ts'
-import * as _client from './_client.ts'
+import * as client from './client.ts'
 import { readdir } from './readdir.ts'
 
 const STUB_DRIVER: PgDriver = {
@@ -42,7 +42,7 @@ function makeAccessor(): PostgresAccessor {
 
 describe('readdir', () => {
   it('lists root: database.json + schemas with mount prefix', async () => {
-    vi.mocked(_client.listSchemas).mockResolvedValue(['public', 'analytics'])
+    vi.mocked(client.listSchemas).mockResolvedValue(['public', 'analytics'])
     const accessor = makeAccessor()
     const path = new PathSpec({
       virtual: '/pg/',
@@ -66,7 +66,7 @@ describe('readdir', () => {
   })
 
   it('lists kind=tables', async () => {
-    vi.mocked(_client.listTables).mockResolvedValue(['users', 'orders'])
+    vi.mocked(client.listTables).mockResolvedValue(['users', 'orders'])
     const out = await readdir(
       makeAccessor(),
       new PathSpec({
@@ -79,8 +79,8 @@ describe('readdir', () => {
   })
 
   it('lists kind=views: union of views and matviews, sorted', async () => {
-    vi.mocked(_client.listViews).mockResolvedValue(['z_view'])
-    vi.mocked(_client.listMatviews).mockResolvedValue(['a_mview', 'z_view'])
+    vi.mocked(client.listViews).mockResolvedValue(['z_view'])
+    vi.mocked(client.listMatviews).mockResolvedValue(['a_mview', 'z_view'])
     const out = await readdir(
       makeAccessor(),
       new PathSpec({
@@ -109,7 +109,7 @@ describe('readdir', () => {
   })
 
   it('caches root listing in index when provided', async () => {
-    vi.mocked(_client.listSchemas).mockResolvedValue(['public'])
+    vi.mocked(client.listSchemas).mockResolvedValue(['public'])
     const index = new RAMIndexCacheStore()
     const accessor = makeAccessor()
     const path = new PathSpec({
@@ -118,9 +118,9 @@ describe('readdir', () => {
       resourcePath: mountKey('/pg/', '/pg'),
     })
     await readdir(accessor, path, index)
-    vi.mocked(_client.listSchemas).mockClear()
+    vi.mocked(client.listSchemas).mockClear()
     await readdir(accessor, path, index)
-    expect(_client.listSchemas).not.toHaveBeenCalled()
+    expect(client.listSchemas).not.toHaveBeenCalled()
   })
 
   it('throws ENOENT for unsupported scopes', async () => {

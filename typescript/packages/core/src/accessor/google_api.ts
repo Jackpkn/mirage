@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { Accessor } from './base.ts'
-import type { TokenManager } from '../core/google/_client.ts'
+import type { TokenManager } from '../core/google/client.ts'
 
 export class GoogleApiAccessor extends Accessor {
   readonly tokenManager: TokenManager

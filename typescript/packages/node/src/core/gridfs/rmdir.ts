@@ -15,7 +15,7 @@
 import { invalidateAfterUnlink } from '@struktoai/mirage-core/cache/context'
 import type { PathSpec } from '@struktoai/mirage-core/types'
 import type { GridFSAccessor } from '../../accessor/gridfs.ts'
-import { deleteAll, gridfsPrefix, prefixQuery, rawPathOf } from './_client.ts'
+import { deleteAll, gridfsPrefix, prefixQuery, rawPathOf } from './client.ts'
 
 export async function rmdir(accessor: GridFSAccessor, path: PathSpec): Promise<void> {
   const raw = rawPathOf(path)

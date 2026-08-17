@@ -16,7 +16,7 @@ from typing import Any
 
 from mirage.accessor.gmail import GmailAccessor
 from mirage.core.gmail.readdir import readdir
-from mirage.core.google._client import TokenManager
+from mirage.core.google.client import TokenManager
 from mirage.resource.base import BaseResource
 from mirage.resource.gmail.config import GmailConfig
 from mirage.resource.gmail.prompt import PROMPT, WRITE_PROMPT

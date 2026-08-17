@@ -16,7 +16,7 @@ import posixpath
 
 from mirage.accessor.email import EmailAccessor
 from mirage.cache.index import NULL_INDEX, IndexCacheStore
-from mirage.core.email._client import fetch_attachment, fetch_message
+from mirage.core.email.client import fetch_attachment, fetch_message
 from mirage.core.email.render import message_json_bytes
 from mirage.types import PathSpec
 from mirage.utils.errors import enoent

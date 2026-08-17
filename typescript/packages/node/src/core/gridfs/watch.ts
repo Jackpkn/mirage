@@ -17,7 +17,7 @@ import { mountPrefixOf } from '@struktoai/mirage-core/utils/key_prefix'
 import { rstripSlash, stripSlash } from '@struktoai/mirage-core/utils/slash'
 import { type DeltaHook, ListingDeltaHook, synthDirs } from '@struktoai/mirage-core/watch/index'
 import type { GridFSAccessor } from '../../accessor/gridfs.ts'
-import { gridfsPrefix, iterLatest, prefixQuery, rawPathOf, stripKeyPrefix } from './_client.ts'
+import { gridfsPrefix, iterLatest, prefixQuery, rawPathOf, stripKeyPrefix } from './client.ts'
 
 /**
  * One flat `fs.files` aggregation feeding the generic differ.

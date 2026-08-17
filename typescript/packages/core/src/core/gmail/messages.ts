@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { decodeBase64 } from '../../utils/base64.ts'
-import { type TokenManager, gmailBase, googleGet } from '../google/_client.ts'
+import { type TokenManager, gmailBase, googleGet } from '../google/client.ts'
 import { compactJsonBytes } from '../render/json.ts'
 
 export interface GmailHeader {

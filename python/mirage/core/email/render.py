@@ -14,7 +14,7 @@
 
 from typing import Any
 
-from mirage.core.email._client import INTERNAL_DATE_KEY
+from mirage.core.email.client import INTERNAL_DATE_KEY
 from mirage.core.render.json import compact_json_bytes, compact_json_text
 
 

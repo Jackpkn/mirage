@@ -14,9 +14,9 @@
 
 from mirage.accessor.mongodb import MongoDBAccessor
 from mirage.cache.index import NULL_INDEX, IndexCacheStore
-from mirage.core.mongodb._client import database_exists, entity_exists
 from mirage.core.mongodb._schema_json import (build_collection_schema_json,
                                               build_database_json)
+from mirage.core.mongodb.client import database_exists, entity_exists
 from mirage.core.mongodb.scope import detect_scope
 from mirage.core.mongodb.stream import read_stream, render_doc
 from mirage.core.mongodb.types import ScopeLevel

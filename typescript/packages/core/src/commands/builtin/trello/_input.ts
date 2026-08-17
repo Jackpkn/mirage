@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { readBytes } from '../../../core/trello/read.ts'
-import type { TrelloTransport } from '../../../core/trello/_client.ts'
+import type { TrelloTransport } from '../../../core/trello/client.ts'
 import { readStdinAsync } from '../utils/stream.ts'
 import type { CommandOpts } from '../../config.ts'
 import { mountKey } from '../../../utils/key_prefix.ts'

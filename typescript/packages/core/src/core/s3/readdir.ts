@@ -25,7 +25,7 @@ import {
   s3Key,
   s3Prefix,
   type S3Module,
-} from './_client.ts'
+} from './client.ts'
 import { rstripSlash } from '../../utils/slash.ts'
 import { compareCodePoints } from '../../utils/sort.ts'
 import { listingError } from '../../utils/errors.ts'

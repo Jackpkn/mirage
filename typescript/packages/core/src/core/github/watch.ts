@@ -19,7 +19,7 @@ import { rstripSlash, stripSlash } from '../../utils/slash.ts'
 import type { DeltaHook } from '../../watch/base.ts'
 import { ListingDeltaHook } from '../../watch/delta.ts'
 import { IncompleteWalkError } from '../../watch/errors.ts'
-import { fetchTree } from './_client.ts'
+import { fetchTree } from './client.ts'
 import { buildTreeMap } from './tree.ts'
 
 /**

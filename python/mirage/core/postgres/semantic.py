@@ -15,7 +15,7 @@
 from typing import Any
 
 from mirage.accessor.postgres import PostgresAccessor
-from mirage.core.postgres import _client
+from mirage.core.postgres import client
 
 SAMPLE_VALUES_LIMIT = 10
 
@@ -135,13 +135,13 @@ async def build_entity_semantic_json(accessor: PostgresAccessor, schema: str,
     """
     pool = await accessor.pool()
     async with pool.acquire() as conn:
-        columns = await _client.fetch_columns(conn, schema, name)
-        pk = await _client.fetch_primary_key(conn, schema, name)
-        fks = await _client.fetch_foreign_keys(conn, schema, name)
-        table_comment = await _client.fetch_table_comment(conn, schema, name)
-        comments = await _client.fetch_column_comments(conn, schema, name)
-        enums = await _client.fetch_enum_columns(conn, schema, name)
-        stats = await _client.fetch_column_stats(conn, schema, name)
+        columns = await client.fetch_columns(conn, schema, name)
+        pk = await client.fetch_primary_key(conn, schema, name)
+        fks = await client.fetch_foreign_keys(conn, schema, name)
+        table_comment = await client.fetch_table_comment(conn, schema, name)
+        comments = await client.fetch_column_comments(conn, schema, name)
+        enums = await client.fetch_enum_columns(conn, schema, name)
+        stats = await client.fetch_column_stats(conn, schema, name)
 
     key_columns = set(pk)
     for fk in fks:

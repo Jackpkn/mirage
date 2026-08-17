@@ -18,7 +18,7 @@ import { SlackAccessor } from '../../accessor/slack.ts'
 import { IndexEntry } from '../../cache/index/config.ts'
 import { RAMIndexCacheStore } from '../../cache/index/ram.ts'
 import { PathSpec } from '../../types.ts'
-import type { SlackResponse, SlackTransport } from './_client.ts'
+import type { SlackResponse, SlackTransport } from './client.ts'
 import { read } from './read.ts'
 
 interface Call {

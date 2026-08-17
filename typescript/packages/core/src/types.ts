@@ -21,6 +21,16 @@ import { rstripSlash, stripSlash } from './utils/slash.ts'
 // python's mirage.types.JsonValue.
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [k: string]: JsonValue }
 
+// How a >= 400 API response and its body text become the backend's own
+// error; core/api/client.ts's engine calls it, each backend supplies one.
+// The mirror of python's mirage.types.ErrorOf.
+export type ErrorOf = (response: Response, body: string) => Error
+
+// One page request of a cursor-paginated endpoint: receives the cursor to
+// resume from (null for the first page) and returns the decoded reply. The
+// mirror of python's mirage.types.PageFetch.
+export type PageFetch = (cursor: string | null) => Promise<Record<string, unknown>>
+
 export const MountMode = Object.freeze({
   READ: 'read',
   WRITE: 'write',

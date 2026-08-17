@@ -16,7 +16,7 @@ import { mountKey, mountPrefixOf } from '../../utils/key_prefix.ts'
 import type { GitHubAccessor } from '../../accessor/github.ts'
 import { PathSpec } from '../../types.ts'
 import { lstripSlash, stripSlash } from '../../utils/slash.ts'
-import { type GitHubCodeSearchResult, searchCode } from './_client.ts'
+import { type GitHubCodeSearchResult, searchCode } from './client.ts'
 
 async function search(
   accessor: GitHubAccessor,

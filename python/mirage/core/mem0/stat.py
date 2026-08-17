@@ -16,7 +16,7 @@ from typing import Any
 
 from mirage.accessor.mem0 import Mem0Accessor
 from mirage.cache.index import NULL_INDEX, IndexCacheStore
-from mirage.core.mem0._client import get_memory
+from mirage.core.mem0.client import get_memory
 from mirage.core.mem0.scope import ScopeLevel, detect_scope
 from mirage.core.render.json import json_bytes
 from mirage.types import FileStat, FileType, PathSpec

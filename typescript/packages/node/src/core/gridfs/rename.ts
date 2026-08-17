@@ -25,7 +25,7 @@ import {
   latestFile,
   prefixQuery,
   rawPathOf,
-} from './_client.ts'
+} from './client.ts'
 
 // A directory is a filename prefix plus the zero-byte `key/` marker mkdir
 // writes, and the prefix query returns both, so one pass moves the marker

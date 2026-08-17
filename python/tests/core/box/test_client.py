@@ -16,9 +16,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from mirage.core.box._client import (BOX_API_BASE, BOX_TOKEN_URL,
-                                     BoxTokenManager, api_base_of,
-                                     box_get_bytes, token_url_of)
+from mirage.core.box.client import (BOX_API_BASE, BOX_TOKEN_URL,
+                                    BoxTokenManager, api_base_of,
+                                    box_get_bytes, token_url_of)
 from mirage.core.box.config import BoxConfig
 from mirage.utils.ranges import ByteWindow
 
@@ -69,7 +69,7 @@ async def test_refresh_mode_rotates_refresh_token():
                        on_refresh_token_rotated=on_rotated)
     tm = BoxTokenManager(config)
     with patch(
-            "mirage.core.box._client.refresh_access_token",
+            "mirage.core.box.client.refresh_access_token",
             new_callable=AsyncMock,
             return_value=("at-1", "rt-2", 3600),
     ) as mock_refresh:
@@ -102,7 +102,7 @@ async def test_ccg_mode_refetches_via_client_credentials():
                        enterprise_id="eid")
     tm = BoxTokenManager(config)
     with patch(
-            "mirage.core.box._client.fetch_ccg_token",
+            "mirage.core.box.client.fetch_ccg_token",
             new_callable=AsyncMock,
             return_value=("at-ccg", 3600),
     ) as mock_ccg:
@@ -133,10 +133,10 @@ async def _get_bytes(status: int, body: bytes,
                      window: ByteWindow | None) -> tuple[bytes, MagicMock]:
     tm = BoxTokenManager(BoxConfig(access_token="tok"))
     session = _session(status, body)
-    with patch("mirage.core.box._client.box_auth_headers",
+    with patch("mirage.core.box.client.box_auth_headers",
                new_callable=AsyncMock,
                return_value={}):
-        with patch("mirage.core.box._client.aiohttp.ClientSession") as mock_cs:
+        with patch("mirage.core.box.client.aiohttp.ClientSession") as mock_cs:
             mock_cs.return_value.__aenter__ = AsyncMock(return_value=session)
             mock_cs.return_value.__aexit__ = AsyncMock(return_value=False)
             data = await box_get_bytes(tm, "https://api/x", window=window)

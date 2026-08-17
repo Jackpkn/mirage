@@ -15,9 +15,9 @@
 import pytest
 import yarl
 
-import mirage.core.gcal._client as client_mod
-from mirage.core.gcal._client import delete_event, list_events
-from mirage.core.google._client import TokenManager
+import mirage.core.gcal.client as client_mod
+from mirage.core.gcal.client import delete_event, list_events
+from mirage.core.google.client import TokenManager
 from mirage.resource.gcal.config import GCalConfig
 
 pytestmark = pytest.mark.asyncio

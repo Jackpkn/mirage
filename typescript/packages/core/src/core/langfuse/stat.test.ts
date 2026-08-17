@@ -17,7 +17,7 @@ import { LangfuseAccessor } from '../../accessor/langfuse.ts'
 import { RAMIndexCacheStore } from '../../cache/index/ram.ts'
 import { FileType, PathSpec } from '../../types.ts'
 import { stripSlash } from '../../utils/slash.ts'
-import type { LangfuseTransport } from './_client.ts'
+import type { LangfuseTransport } from './client.ts'
 import { stat } from './stat.ts'
 
 class StaticTransport implements LangfuseTransport {

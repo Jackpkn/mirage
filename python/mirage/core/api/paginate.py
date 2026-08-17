@@ -12,10 +12,9 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from collections.abc import Awaitable, Callable
 from typing import Any
 
-PageFetch = Callable[[str | None], Awaitable[dict[str, Any]]]
+from mirage.types import PageFetch
 
 
 async def cursor_items(fetch_page: PageFetch,

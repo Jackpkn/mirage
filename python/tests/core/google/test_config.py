@@ -16,7 +16,7 @@ from unittest.mock import patch
 
 import pytest
 
-from mirage.core.google._client import refresh_access_token
+from mirage.core.google.client import refresh_access_token
 from mirage.core.google.config import GoogleConfig
 from mirage.resource.gdocs.config import GDocsConfig
 from mirage.resource.gdrive.config import GoogleDriveConfig
@@ -78,7 +78,7 @@ async def test_refresh_access_token_omits_client_secret_when_absent():
             captured["data"] = data
             return _FakeResp()
 
-    with patch("mirage.core.google._client.aiohttp.ClientSession",
+    with patch("mirage.core.google.client.aiohttp.ClientSession",
                return_value=_FakeSession()):
         config = GoogleConfig(client_id="id", refresh_token="rt")
         token, expires = await refresh_access_token(config)
@@ -122,7 +122,7 @@ async def test_refresh_access_token_includes_client_secret_when_present():
             captured["data"] = data
             return _FakeResp()
 
-    with patch("mirage.core.google._client.aiohttp.ClientSession",
+    with patch("mirage.core.google.client.aiohttp.ClientSession",
                return_value=_FakeSession()):
         config = GoogleConfig(
             client_id="id",

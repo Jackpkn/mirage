@@ -19,7 +19,7 @@ import type { PathSpec } from '../../types.ts'
 import { enoent } from '../../utils/errors.ts'
 import { mountPrefixOf } from '../../utils/key_prefix.ts'
 import { stripSlash } from '../../utils/slash.ts'
-import { fetchOperations, fetchServices, fetchTraces, isTraceId } from './_client.ts'
+import { fetchOperations, fetchServices, fetchTraces, isTraceId } from './client.ts'
 import { jsonBytes } from '../render/json.ts'
 import { JAEGER_OPERATIONS_FILE, JAEGER_TOP_LEVEL_DIRS, detectScope } from './scope.ts'
 

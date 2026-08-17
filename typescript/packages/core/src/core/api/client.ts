@@ -12,6 +12,8 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import type { ErrorOf } from '../../types.ts'
+
 export interface RetryPolicy {
   /** Response statuses worth retrying. */
   readonly statuses: ReadonlySet<number>
@@ -33,12 +35,6 @@ export const NO_RETRY: RetryPolicy = {
   maxBackoff: 30,
   delaySource: 'header',
 }
-
-/**
- * Maps a >= 400 response and its body text to the backend's own error;
- * the kit never invents an error shape.
- */
-export type ErrorOf = (response: Response, body: string) => Error
 
 export interface ApiRequestOptions {
   errorOf: ErrorOf

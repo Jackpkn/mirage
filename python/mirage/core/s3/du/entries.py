@@ -14,8 +14,8 @@
 
 from mirage.accessor.s3 import S3Accessor
 from mirage.cache.index import NULL_INDEX, IndexCacheStore
-from mirage.core.s3._client import (_client_kwargs, _key, _strip_prefix,
-                                    async_session)
+from mirage.core.s3.client import (_client_kwargs, _key, _strip_prefix,
+                                   async_session)
 from mirage.types import PathSpec
 
 

@@ -15,8 +15,8 @@
 import logging
 
 from mirage.accessor.dropbox import DropboxAccessor
-from mirage.core.dropbox._client import DropboxApiError
 from mirage.core.dropbox.api import search_files
+from mirage.core.dropbox.client import DropboxApiError
 from mirage.core.dropbox.paths import dropbox_path_of
 from mirage.types import PathSpec
 from mirage.utils.key_prefix import mount_key, mount_prefix_of

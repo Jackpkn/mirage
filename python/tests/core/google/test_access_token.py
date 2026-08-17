@@ -15,7 +15,7 @@
 import pytest
 from pydantic import SecretStr, ValidationError
 
-from mirage.core.google._client import TokenManager
+from mirage.core.google.client import TokenManager
 from mirage.core.google.config import GoogleConfig
 
 
@@ -27,7 +27,7 @@ async def test_a_supplied_token_skips_the_refresh_grant(monkeypatch):
     async def _boom(config):
         raise AssertionError("refresh grant must not run")
 
-    monkeypatch.setattr("mirage.core.google._client.refresh_access_token",
+    monkeypatch.setattr("mirage.core.google.client.refresh_access_token",
                         _boom)
     config = GoogleConfig(access_token=SecretStr("sa-token"))
     assert await TokenManager(config).get_token() == "sa-token"

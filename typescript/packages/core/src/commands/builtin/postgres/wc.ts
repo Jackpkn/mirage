@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import type { PostgresAccessor } from '../../../accessor/postgres.ts'
-import { countRows } from '../../../core/postgres/_client.ts'
+import { countRows } from '../../../core/postgres/client.ts'
 import { resolveGlobOf } from '../generic_bind/index.ts'
 import { POSTGRES_IO } from './io.ts'
 import { readStream } from '../../../core/postgres/read.ts'

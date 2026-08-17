@@ -2,7 +2,7 @@ from mirage.accessor.chroma import ChromaAccessor
 from mirage.cache.index import NULL_INDEX, IndexCacheStore
 from mirage.commands.builtin.grep_helper import compile_pattern, grep_lines
 from mirage.commands.builtin.utils.lines import split_lines
-from mirage.core.chroma._client import fetch_page_chunks, query_contains
+from mirage.core.chroma.client import fetch_page_chunks, query_contains
 from mirage.core.chroma.path import resolve_path
 from mirage.core.chroma.walk import walk
 from mirage.types import PathSpec

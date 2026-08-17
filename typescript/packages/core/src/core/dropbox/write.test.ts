@@ -13,11 +13,11 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { describe, expect, it, vi, beforeEach } from 'vitest'
-import type * as ClientModule from './_client.ts'
+import type * as ClientModule from './client.ts'
 import type * as ApiModule from './api.ts'
 
-vi.mock('./_client.ts', async () => {
-  const actual = await vi.importActual<typeof ClientModule>('./_client.ts')
+vi.mock('./client.ts', async () => {
+  const actual = await vi.importActual<typeof ClientModule>('./client.ts')
   return { ...actual, dropboxUpload: vi.fn() }
 })
 
@@ -36,8 +36,8 @@ vi.mock('./api.ts', async () => {
 
 import { DropboxAccessor } from '../../accessor/dropbox.ts'
 import { PathSpec } from '../../types.ts'
-import * as client from './_client.ts'
-import { DropboxApiError, type DropboxTokenManager } from './_client.ts'
+import * as client from './client.ts'
+import { DropboxApiError, type DropboxTokenManager } from './client.ts'
 import * as api from './api.ts'
 import { copy } from './copy.ts'
 import { exists } from './exists.ts'

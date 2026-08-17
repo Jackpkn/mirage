@@ -5,7 +5,7 @@ from typing import Any
 
 from mirage.accessor.chroma import ChromaAccessor
 from mirage.cache.index import NULL_INDEX, IndexCacheStore, IndexEntry
-from mirage.core.chroma._client import fetch_path_tree
+from mirage.core.chroma.client import fetch_path_tree
 from mirage.utils.path import gnu_basename, parent
 
 

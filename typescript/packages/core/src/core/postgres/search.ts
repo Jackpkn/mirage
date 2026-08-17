@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import type { PostgresAccessor } from '../../accessor/postgres.ts'
-import { listMatviews, listSchemas, listTables, listViews, quoteIdent } from './_client.ts'
+import { listMatviews, listSchemas, listTables, listViews, quoteIdent } from './client.ts'
 import { buildEntitySchemaJson } from './_schema_json.ts'
 import { buildEntitySemanticJson } from './semantic.ts'
 import { compareCodePoints } from '../../utils/sort.ts'

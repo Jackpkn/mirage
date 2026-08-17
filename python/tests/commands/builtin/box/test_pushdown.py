@@ -19,7 +19,7 @@ import pytest
 from mirage.accessor.box import BoxAccessor
 from mirage.cache.index.ram import RAMIndexCacheStore
 from mirage.commands.builtin.box.pushdown import narrow_scope
-from mirage.core.box._client import BoxTokenManager
+from mirage.core.box.client import BoxTokenManager
 from mirage.core.box.config import BoxConfig
 from mirage.types import FileStat, FileType, PathSpec
 

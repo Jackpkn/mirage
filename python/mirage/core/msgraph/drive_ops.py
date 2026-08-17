@@ -26,12 +26,12 @@ from mirage.cache.context import invalidate_after_write
 from mirage.cache.index import IndexCacheStore, IndexEntry, ResourceType
 from mirage.commands.builtin.find_eval import (FindEntry, PredNode, build_tree,
                                                emit_start_path, keep)
-from mirage.core.msgraph._client import (GraphError, graph_delete, graph_get,
-                                         graph_get_bytes, graph_list,
-                                         graph_patch, graph_post,
-                                         graph_post_monitor, graph_stream,
-                                         new_session, poll_monitor,
-                                         upload_chunk)
+from mirage.core.msgraph.client import (GraphError, graph_delete, graph_get,
+                                        graph_get_bytes, graph_list,
+                                        graph_patch, graph_post,
+                                        graph_post_monitor, graph_stream,
+                                        new_session, poll_monitor,
+                                        upload_chunk)
 from mirage.core.msgraph.config import MsGraphConfig
 from mirage.observe.context import (active_recorder, record, record_stream,
                                     revision_for)

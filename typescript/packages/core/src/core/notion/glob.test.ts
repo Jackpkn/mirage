@@ -15,7 +15,7 @@
 import { mountKey, mountPrefixOf } from '../../utils/key_prefix.ts'
 import { describe, expect, it } from 'vitest'
 import { PathSpec } from '../../types.ts'
-import type { NotionTransport } from './_client.ts'
+import type { NotionTransport } from './client.ts'
 import { NotionAccessor } from '../../accessor/notion.ts'
 import { resolveGlobOf } from '../../commands/builtin/generic_bind/index.ts'
 import { NOTION_IO } from '../../commands/builtin/notion/io.ts'

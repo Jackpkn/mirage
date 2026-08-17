@@ -17,10 +17,10 @@ from typing import Any
 import orjson
 
 from mirage.accessor.postgres import PostgresAccessor
-from mirage.core.postgres import _client
-from mirage.core.postgres._client import (canonicalize_row, qualified,
-                                          quote_ident)
+from mirage.core.postgres import client
 from mirage.core.postgres._schema_json import build_entity_schema_json
+from mirage.core.postgres.client import (canonicalize_row, qualified,
+                                         quote_ident)
 from mirage.core.postgres.semantic import build_entity_semantic_json
 
 _TEXT_TYPES = (
@@ -186,7 +186,7 @@ async def search_database_metadata(
     """
     pool = await accessor.pool()
     async with pool.acquire() as conn:
-        schemas = await _client.list_schemas(conn, accessor.config.schemas)
+        schemas = await client.list_schemas(conn, accessor.config.schemas)
     lines: list[str] = []
     for s in schemas:
         lines.extend(await
@@ -202,9 +202,9 @@ async def _entity_names(accessor: PostgresAccessor, schema: str,
     pool = await accessor.pool()
     async with pool.acquire() as conn:
         if kind == "tables":
-            return await _client.list_tables(conn, schema)
-        views = await _client.list_views(conn, schema)
-        mviews = await _client.list_matviews(conn, schema)
+            return await client.list_tables(conn, schema)
+        views = await client.list_views(conn, schema)
+        mviews = await client.list_matviews(conn, schema)
         return sorted(set(views) | set(mviews))
 
 
@@ -260,7 +260,7 @@ async def search_database(
 ) -> list[tuple[str, str, str, list[dict[str, Any]]]]:
     pool = await accessor.pool()
     async with pool.acquire() as conn:
-        schemas = await _client.list_schemas(conn, accessor.config.schemas)
+        schemas = await client.list_schemas(conn, accessor.config.schemas)
     out: list[tuple[str, str, str, list[dict[str, Any]]]] = []
     for s in schemas:
         out.extend(await search_schema(accessor,

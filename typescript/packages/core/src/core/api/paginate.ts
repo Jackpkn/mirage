@@ -12,7 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-export type PageFetch = (cursor: string | null) => Promise<Record<string, unknown>>
+import type { PageFetch } from '../../types.ts'
 
 /**
  * Collect every item from a cursor-paginated endpoint.

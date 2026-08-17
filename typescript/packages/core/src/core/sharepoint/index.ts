@@ -34,7 +34,7 @@ import { FileStat, FileType, type PathSpec } from '../../types.ts'
 import { enoent } from '../../utils/errors.ts'
 import { mountPrefixOf } from '../../utils/key_prefix.ts'
 import { stripSlash } from '../../utils/slash.ts'
-import { GraphError, graphDelete } from '../msgraph/_client.ts'
+import { GraphError, graphDelete } from '../msgraph/client.ts'
 import {
   copyTree,
   createChildFolder,

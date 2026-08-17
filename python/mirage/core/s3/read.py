@@ -17,7 +17,7 @@ from typing import Any
 
 from mirage.accessor.s3 import S3Accessor
 from mirage.cache.index import NULL_INDEX, IndexCacheStore
-from mirage.core.s3._client import _client_kwargs, _key, async_session
+from mirage.core.s3.client import _client_kwargs, _key, async_session
 from mirage.observe.context import record, revision_for
 from mirage.types import PathSpec
 from mirage.utils.errors import enoent

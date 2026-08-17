@@ -18,8 +18,8 @@ from functools import partial
 from mirage.accessor.gridfs import GridFSAccessor
 from mirage.cache.index import (NULL_INDEX, IndexCacheStore, IndexEntry,
                                 ResourceType)
-from mirage.core.gridfs._client import (_key, _prefix, _strip_prefix,
-                                        files_coll, iter_latest, prefix_query)
+from mirage.core.gridfs.client import (_key, _prefix, _strip_prefix,
+                                       files_coll, iter_latest, prefix_query)
 from mirage.core.gridfs.constants import SCOPE_ERROR
 from mirage.core.timeutil import to_iso_z
 from mirage.types import PathSpec

@@ -17,7 +17,7 @@ import { describe, expect, it } from 'vitest'
 import { IndexEntry } from '../../cache/index/config.ts'
 import { RAMIndexCacheStore } from '../../cache/index/ram.ts'
 import { FileType, PathSpec } from '../../types.ts'
-import type { NotionTransport } from './_client.ts'
+import type { NotionTransport } from './client.ts'
 import { stat, type NotionStatAccessor } from './stat.ts'
 
 class FakeTransport implements NotionTransport {

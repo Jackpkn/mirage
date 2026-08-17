@@ -41,7 +41,7 @@ def _accessor(dsn: str = "postgres://localhost/acme_prod",
 @pytest.mark.asyncio
 async def test_build_database_json_basic():
     accessor = _accessor()
-    with patch("mirage.core.postgres._schema_json._client") as mc:
+    with patch("mirage.core.postgres._schema_json.client") as mc:
         mc.list_schemas = AsyncMock(return_value=["public"])
         mc.list_tables = AsyncMock(return_value=["users", "orders"])
         mc.list_views = AsyncMock(return_value=["customer_360"])
@@ -99,7 +99,7 @@ async def test_build_database_json_basic():
 @pytest.mark.asyncio
 async def test_build_database_json_empty():
     accessor = _accessor()
-    with patch("mirage.core.postgres._schema_json._client") as mc:
+    with patch("mirage.core.postgres._schema_json.client") as mc:
         mc.list_schemas = AsyncMock(return_value=[])
         mc.fetch_all_relationships = AsyncMock(return_value=[])
         result = await build_database_json(accessor)
@@ -112,7 +112,7 @@ async def test_build_database_json_empty():
 @pytest.mark.asyncio
 async def test_build_entity_schema_json_table_with_pk_and_fk():
     accessor = _accessor()
-    with patch("mirage.core.postgres._schema_json._client") as mc:
+    with patch("mirage.core.postgres._schema_json.client") as mc:
         mc.fetch_columns = AsyncMock(return_value=[
             {
                 "name": "id",
@@ -174,7 +174,7 @@ async def test_build_entity_schema_json_table_with_pk_and_fk():
 @pytest.mark.asyncio
 async def test_build_entity_schema_json_view_kind():
     accessor = _accessor()
-    with patch("mirage.core.postgres._schema_json._client") as mc:
+    with patch("mirage.core.postgres._schema_json.client") as mc:
         mc.fetch_columns = AsyncMock(return_value=[
             {
                 "name": "team",
@@ -201,7 +201,7 @@ async def test_build_entity_schema_json_view_kind():
 @pytest.mark.asyncio
 async def test_build_entity_schema_json_multi_column_fk():
     accessor = _accessor()
-    with patch("mirage.core.postgres._schema_json._client") as mc:
+    with patch("mirage.core.postgres._schema_json.client") as mc:
         mc.fetch_columns = AsyncMock(return_value=[
             {
                 "name": "tenant_id",

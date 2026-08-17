@@ -19,8 +19,8 @@ from typing import Any
 from mirage.accessor.s3 import S3Accessor, S3Config
 from mirage.cache.index import (NULL_INDEX, IndexCacheStore, IndexEntry,
                                 ResourceType)
-from mirage.core.s3._client import (_client_kwargs, _key, _prefix,
-                                    _strip_prefix, async_session, is_not_found)
+from mirage.core.s3.client import (_client_kwargs, _key, _prefix,
+                                   _strip_prefix, async_session, is_not_found)
 from mirage.core.s3.constants import SCOPE_ERROR
 from mirage.core.timeutil import to_iso_z
 from mirage.types import PathSpec

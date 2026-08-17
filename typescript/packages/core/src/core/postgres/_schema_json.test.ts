@@ -14,7 +14,7 @@
 
 import { describe, expect, it, vi } from 'vitest'
 
-vi.mock('./_client.ts', () => ({
+vi.mock('./client.ts', () => ({
   listSchemas: vi.fn(),
   listTables: vi.fn(),
   listViews: vi.fn(),
@@ -31,7 +31,7 @@ vi.mock('./_client.ts', () => ({
 import { PostgresAccessor } from '../../accessor/postgres.ts'
 import { resolvePostgresConfig } from '../../resource/postgres/config.ts'
 import type { PgDriver } from './_driver.ts'
-import * as _client from './_client.ts'
+import * as client from './client.ts'
 import { buildDatabaseJson, buildEntitySchemaJson, databaseNameFromDsn } from './_schema_json.ts'
 
 const STUB_DRIVER: PgDriver = {
@@ -46,13 +46,13 @@ function makeAccessor(dsn = 'postgres://localhost/acme_prod'): PostgresAccessor 
 
 describe('buildDatabaseJson', () => {
   it('aggregates schemas, tables, views, matviews, and relationships', async () => {
-    vi.mocked(_client.listSchemas).mockResolvedValue(['public'])
-    vi.mocked(_client.listTables).mockResolvedValue(['users', 'orders'])
-    vi.mocked(_client.listViews).mockResolvedValue(['customer_360'])
-    vi.mocked(_client.listMatviews).mockResolvedValue(['daily_revenue'])
-    vi.mocked(_client.estimatedRowCount).mockResolvedValueOnce(100).mockResolvedValueOnce(200)
-    vi.mocked(_client.tableSizeBytes).mockResolvedValueOnce(1024).mockResolvedValueOnce(2048)
-    vi.mocked(_client.fetchAllRelationships).mockResolvedValue([
+    vi.mocked(client.listSchemas).mockResolvedValue(['public'])
+    vi.mocked(client.listTables).mockResolvedValue(['users', 'orders'])
+    vi.mocked(client.listViews).mockResolvedValue(['customer_360'])
+    vi.mocked(client.listMatviews).mockResolvedValue(['daily_revenue'])
+    vi.mocked(client.estimatedRowCount).mockResolvedValueOnce(100).mockResolvedValueOnce(200)
+    vi.mocked(client.tableSizeBytes).mockResolvedValueOnce(1024).mockResolvedValueOnce(2048)
+    vi.mocked(client.fetchAllRelationships).mockResolvedValue([
       {
         from: { schema: 'public', table: 'orders', columns: ['user_id'] },
         to: { schema: 'public', table: 'users', columns: ['id'] },
@@ -75,8 +75,8 @@ describe('buildDatabaseJson', () => {
   })
 
   it('handles empty database', async () => {
-    vi.mocked(_client.listSchemas).mockResolvedValue([])
-    vi.mocked(_client.fetchAllRelationships).mockResolvedValue([])
+    vi.mocked(client.listSchemas).mockResolvedValue([])
+    vi.mocked(client.fetchAllRelationships).mockResolvedValue([])
     const result = await buildDatabaseJson(makeAccessor())
     expect(result.schemas).toEqual([])
     expect(result.tables).toEqual([])
@@ -87,23 +87,23 @@ describe('buildDatabaseJson', () => {
 
 describe('buildEntitySchemaJson', () => {
   it('annotates columns with primary_key and references for tables', async () => {
-    vi.mocked(_client.fetchColumns).mockResolvedValue([
+    vi.mocked(client.fetchColumns).mockResolvedValue([
       { name: 'id', type: 'uuid', nullable: false },
       { name: 'team_id', type: 'uuid', nullable: true },
       { name: 'email', type: 'text', nullable: false },
     ])
-    vi.mocked(_client.fetchPrimaryKey).mockResolvedValue(['id'])
-    vi.mocked(_client.fetchForeignKeys).mockResolvedValue([
+    vi.mocked(client.fetchPrimaryKey).mockResolvedValue(['id'])
+    vi.mocked(client.fetchForeignKeys).mockResolvedValue([
       {
         columns: ['team_id'],
         references: { schema: 'public', table: 'teams', columns: ['id'] },
       },
     ])
-    vi.mocked(_client.fetchIndexes).mockResolvedValue([
+    vi.mocked(client.fetchIndexes).mockResolvedValue([
       { name: 'users_email_idx', columns: ['email'], unique: true },
     ])
-    vi.mocked(_client.estimatedRowCount).mockResolvedValue(42)
-    vi.mocked(_client.tableSizeBytes).mockResolvedValue(4096)
+    vi.mocked(client.estimatedRowCount).mockResolvedValue(42)
+    vi.mocked(client.tableSizeBytes).mockResolvedValue(4096)
 
     const result = await buildEntitySchemaJson(makeAccessor(), 'public', 'users', 'table')
     expect(result.schema).toBe('public')
@@ -124,14 +124,14 @@ describe('buildEntitySchemaJson', () => {
   })
 
   it('returns kind=view with empty pk for views', async () => {
-    vi.mocked(_client.fetchColumns).mockResolvedValue([
+    vi.mocked(client.fetchColumns).mockResolvedValue([
       { name: 'team', type: 'text', nullable: true },
     ])
-    vi.mocked(_client.fetchPrimaryKey).mockResolvedValue([])
-    vi.mocked(_client.fetchForeignKeys).mockResolvedValue([])
-    vi.mocked(_client.fetchIndexes).mockResolvedValue([])
-    vi.mocked(_client.estimatedRowCount).mockResolvedValue(0)
-    vi.mocked(_client.tableSizeBytes).mockResolvedValue(0)
+    vi.mocked(client.fetchPrimaryKey).mockResolvedValue([])
+    vi.mocked(client.fetchForeignKeys).mockResolvedValue([])
+    vi.mocked(client.fetchIndexes).mockResolvedValue([])
+    vi.mocked(client.estimatedRowCount).mockResolvedValue(0)
+    vi.mocked(client.tableSizeBytes).mockResolvedValue(0)
 
     const result = await buildEntitySchemaJson(makeAccessor(), 'public', 'user_summary', 'view')
     expect(result.kind).toBe('view')
@@ -140,12 +140,12 @@ describe('buildEntitySchemaJson', () => {
   })
 
   it('maps multi-column FK columns to references one-to-one', async () => {
-    vi.mocked(_client.fetchColumns).mockResolvedValue([
+    vi.mocked(client.fetchColumns).mockResolvedValue([
       { name: 'tenant_id', type: 'uuid', nullable: false },
       { name: 'user_id', type: 'uuid', nullable: false },
     ])
-    vi.mocked(_client.fetchPrimaryKey).mockResolvedValue(['tenant_id', 'user_id'])
-    vi.mocked(_client.fetchForeignKeys).mockResolvedValue([
+    vi.mocked(client.fetchPrimaryKey).mockResolvedValue(['tenant_id', 'user_id'])
+    vi.mocked(client.fetchForeignKeys).mockResolvedValue([
       {
         columns: ['tenant_id', 'user_id'],
         references: {
@@ -155,9 +155,9 @@ describe('buildEntitySchemaJson', () => {
         },
       },
     ])
-    vi.mocked(_client.fetchIndexes).mockResolvedValue([])
-    vi.mocked(_client.estimatedRowCount).mockResolvedValue(0)
-    vi.mocked(_client.tableSizeBytes).mockResolvedValue(0)
+    vi.mocked(client.fetchIndexes).mockResolvedValue([])
+    vi.mocked(client.estimatedRowCount).mockResolvedValue(0)
+    vi.mocked(client.tableSizeBytes).mockResolvedValue(0)
 
     const result = await buildEntitySchemaJson(makeAccessor(), 'public', 'memberships', 'table')
     const byName = Object.fromEntries(result.columns.map((c) => [c.name, c]))

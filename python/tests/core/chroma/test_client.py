@@ -14,9 +14,9 @@
 
 import pytest
 
-from mirage.core.chroma._client import (PAGE_CHUNK_BATCH_SIZE,
-                                        fetch_page_chunks, fetch_path_tree,
-                                        page_chunks, query_contains)
+from mirage.core.chroma.client import (PAGE_CHUNK_BATCH_SIZE,
+                                       fetch_page_chunks, fetch_path_tree,
+                                       page_chunks, query_contains)
 
 
 @pytest.mark.asyncio

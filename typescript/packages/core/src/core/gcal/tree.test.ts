@@ -16,7 +16,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { GCalAccessor } from '../../accessor/gcal.ts'
 import { RAMIndexCacheStore } from '../../cache/index/ram.ts'
 import { FileType, PathSpec, type JsonValue } from '../../types.ts'
-import { TokenManager } from '../google/_client.ts'
+import { TokenManager } from '../google/client.ts'
 import { eventSpan } from './day.ts'
 
 const HK = 'Asia/Hong_Kong'
@@ -79,7 +79,7 @@ const EVENTS: Record<string, JsonValue>[] = [
 const listed: [string, string, string][] = []
 const deleted: [string, string][] = []
 
-vi.mock('./_client.ts', () => ({
+vi.mock('./client.ts', () => ({
   listCalendars: (_tm: unknown, minAccessRole?: string) => {
     const all = [PRIMARY, TEAM, SHARED]
     if (minAccessRole === undefined || minAccessRole === '') return Promise.resolve(all)

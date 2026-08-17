@@ -16,8 +16,8 @@ import logging
 from typing import Any
 
 from mirage.accessor.box import BoxAccessor
-from mirage.core.box._client import BoxApiError
 from mirage.core.box.api import search_content
+from mirage.core.box.client import BoxApiError
 from mirage.core.box.resolve import path_parts, resolve_item, root_id
 from mirage.types import PathSpec
 from mirage.utils.key_prefix import mount_key, mount_prefix_of

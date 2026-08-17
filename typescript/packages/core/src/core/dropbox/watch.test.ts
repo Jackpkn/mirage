@@ -22,7 +22,7 @@ vi.mock('./api.ts', async () => {
 
 import { DropboxAccessor } from '../../accessor/dropbox.ts'
 import { PathSpec, type WalkEntry } from '../../types.ts'
-import type { DropboxTokenManager } from './_client.ts'
+import type { DropboxTokenManager } from './client.ts'
 import * as api from './api.ts'
 import { DropboxWalk } from './watch.ts'
 

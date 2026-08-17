@@ -15,8 +15,8 @@
 from collections.abc import AsyncIterator
 
 from mirage.accessor.dropbox import DropboxAccessor
-from mirage.core.dropbox._client import DropboxApiError
 from mirage.core.dropbox.api import list_folder
+from mirage.core.dropbox.client import DropboxApiError
 from mirage.core.dropbox.paths import dropbox_path_of
 from mirage.types import PathSpec, WalkEntry
 from mirage.utils.fingerprint import stat_fingerprint

@@ -13,10 +13,10 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { describe, expect, it, vi } from 'vitest'
-import type * as ClientModule from '../../../../core/google/_client.ts'
+import type * as ClientModule from '../../../../core/google/client.ts'
 
-vi.mock('../../../../core/google/_client.ts', async () => {
-  const actual = await vi.importActual<typeof ClientModule>('../../../../core/google/_client.ts')
+vi.mock('../../../../core/google/client.ts', async () => {
+  const actual = await vi.importActual<typeof ClientModule>('../../../../core/google/client.ts')
   return {
     ...actual,
     googleGet: vi.fn(),
@@ -27,7 +27,7 @@ vi.mock('../../../../core/google/_client.ts', async () => {
   }
 })
 
-import * as client from '../../../../core/google/_client.ts'
+import * as client from '../../../../core/google/client.ts'
 import type { GoogleConfig } from '../../../../core/google/config.ts'
 import { CLIRegistry } from '../../../../workspace/cli/registry.ts'
 import type { CLIInvocation } from '../../types.ts'

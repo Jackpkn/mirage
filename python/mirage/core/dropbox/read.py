@@ -19,8 +19,8 @@ from functools import partial
 from mirage.accessor.dropbox import DropboxAccessor
 from mirage.cache.index import NULL_INDEX, IndexCacheStore, IndexEntry
 from mirage.cache.index.warm import entry_or_warm
-from mirage.core.dropbox._client import (DropboxApiError, dropbox_download,
-                                         dropbox_download_stream)
+from mirage.core.dropbox.client import (DropboxApiError, dropbox_download,
+                                        dropbox_download_stream)
 from mirage.core.dropbox.readdir import readdir
 from mirage.types import PathSpec
 from mirage.utils.errors import enoent

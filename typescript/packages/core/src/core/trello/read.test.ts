@@ -16,7 +16,7 @@ import { mountKey } from '../../utils/key_prefix.ts'
 import { describe, expect, it } from 'vitest'
 import { TrelloAccessor } from '../../accessor/trello.ts'
 import { PathSpec } from '../../types.ts'
-import type { TrelloTransport } from './_client.ts'
+import type { TrelloTransport } from './client.ts'
 import { read, readBytes } from './read.ts'
 
 class FakeTransport implements TrelloTransport {

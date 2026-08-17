@@ -17,7 +17,7 @@ import { describe, expect, it } from 'vitest'
 import { SlackAccessor } from '../../accessor/slack.ts'
 import { RAMIndexCacheStore } from '../../cache/index/ram.ts'
 import { PathSpec } from '../../types.ts'
-import { SlackApiError, type SlackResponse, type SlackTransport } from './_client.ts'
+import { SlackApiError, type SlackResponse, type SlackTransport } from './client.ts'
 import { latestMessageTs, readdir } from './readdir.ts'
 
 // Mirrors python/tests/core/slack/test_readdir_soft_errors.py — guards the

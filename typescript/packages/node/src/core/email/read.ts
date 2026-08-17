@@ -19,7 +19,7 @@ import { mountPrefixOf } from '@struktoai/mirage-core/utils/key_prefix'
 import { gnuDirname } from '@struktoai/mirage-core/utils/path'
 import { stripSlash } from '@struktoai/mirage-core/utils/slash'
 import type { EmailAccessor } from '../../accessor/email.ts'
-import { fetchAttachment, fetchMessage } from './_client.ts'
+import { fetchAttachment, fetchMessage } from './client.ts'
 import { messageJsonBytes } from './render.ts'
 
 export async function read(

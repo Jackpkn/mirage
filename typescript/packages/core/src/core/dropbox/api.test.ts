@@ -15,15 +15,15 @@
 // Mirror of the search_files cases in python/tests/core/dropbox/test_api.py.
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type * as ClientModule from './_client.ts'
+import type * as ClientModule from './client.ts'
 
-vi.mock('./_client.ts', async () => {
-  const actual = await vi.importActual<typeof ClientModule>('./_client.ts')
+vi.mock('./client.ts', async () => {
+  const actual = await vi.importActual<typeof ClientModule>('./client.ts')
   return { ...actual, dropboxRpc: vi.fn() }
 })
 
-import * as client from './_client.ts'
-import type { DropboxTokenManager } from './_client.ts'
+import * as client from './client.ts'
+import type { DropboxTokenManager } from './client.ts'
 import { MAX_SEARCH_MATCHES, SEARCH_PAGE, searchFiles } from './api.ts'
 
 const TM = {} as DropboxTokenManager

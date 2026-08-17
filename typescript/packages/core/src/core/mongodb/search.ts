@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import type { MongoDBAccessor } from '../../accessor/mongodb.ts'
-import { findDocuments, listCollections } from './_client.ts'
+import { findDocuments, listCollections } from './client.ts'
 import { stringifyDoc } from './stream.ts'
 import { EntityKind, PRIMARY_KEY } from './types.ts'
 import { compareCodePoints } from '../../utils/sort.ts'

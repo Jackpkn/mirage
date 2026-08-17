@@ -16,7 +16,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from mirage.core.slack._client import slack_get, slack_post
+from mirage.core.slack.client import slack_get, slack_post
 from mirage.core.slack.config import SlackConfig
 
 
@@ -38,7 +38,7 @@ async def test_slack_get_success(config):
         __aexit__=AsyncMock(return_value=False),
     ))
 
-    with patch("mirage.core.slack._client.aiohttp.ClientSession") as mock_cs:
+    with patch("mirage.core.slack.client.aiohttp.ClientSession") as mock_cs:
         mock_cs.return_value.__aenter__ = AsyncMock(return_value=mock_session)
         mock_cs.return_value.__aexit__ = AsyncMock(return_value=False)
 
@@ -71,7 +71,7 @@ async def test_slack_get_uses_search_token_for_search_methods():
         __aexit__=AsyncMock(return_value=False),
     ))
 
-    with patch("mirage.core.slack._client.aiohttp.ClientSession") as mock_cs:
+    with patch("mirage.core.slack.client.aiohttp.ClientSession") as mock_cs:
         mock_cs.return_value.__aenter__ = AsyncMock(return_value=mock_session)
         mock_cs.return_value.__aexit__ = AsyncMock(return_value=False)
 
@@ -98,7 +98,7 @@ async def test_slack_get_error(config):
         __aexit__=AsyncMock(return_value=False),
     ))
 
-    with patch("mirage.core.slack._client.aiohttp.ClientSession") as mock_cs:
+    with patch("mirage.core.slack.client.aiohttp.ClientSession") as mock_cs:
         mock_cs.return_value.__aenter__ = AsyncMock(return_value=mock_session)
         mock_cs.return_value.__aexit__ = AsyncMock(return_value=False)
 
@@ -124,7 +124,7 @@ async def test_slack_get_missing_scope_surfaces_scopes(config):
         __aexit__=AsyncMock(return_value=False),
     ))
 
-    with patch("mirage.core.slack._client.aiohttp.ClientSession") as mock_cs:
+    with patch("mirage.core.slack.client.aiohttp.ClientSession") as mock_cs:
         mock_cs.return_value.__aenter__ = AsyncMock(return_value=mock_session)
         mock_cs.return_value.__aexit__ = AsyncMock(return_value=False)
 
@@ -150,7 +150,7 @@ async def test_slack_get_missing_scope_no_needed_falls_back(config):
         __aexit__=AsyncMock(return_value=False),
     ))
 
-    with patch("mirage.core.slack._client.aiohttp.ClientSession") as mock_cs:
+    with patch("mirage.core.slack.client.aiohttp.ClientSession") as mock_cs:
         mock_cs.return_value.__aenter__ = AsyncMock(return_value=mock_session)
         mock_cs.return_value.__aexit__ = AsyncMock(return_value=False)
 
@@ -173,7 +173,7 @@ async def test_slack_post_success(config):
         __aexit__=AsyncMock(return_value=False),
     ))
 
-    with patch("mirage.core.slack._client.aiohttp.ClientSession") as mock_cs:
+    with patch("mirage.core.slack.client.aiohttp.ClientSession") as mock_cs:
         mock_cs.return_value.__aenter__ = AsyncMock(return_value=mock_session)
         mock_cs.return_value.__aexit__ = AsyncMock(return_value=False)
 

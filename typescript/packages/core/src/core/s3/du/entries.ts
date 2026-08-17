@@ -16,7 +16,7 @@ import type { IndexCacheStore } from '../../../cache/index/store.ts'
 import type { PathSpec } from '../../../types.ts'
 import type { S3Accessor } from '../../../accessor/s3.ts'
 import { rstripSlash } from '../../../utils/slash.ts'
-import { loadS3Module, rawPathOf, s3Key, stripKeyPrefix, withClient } from '../_client.ts'
+import { loadS3Module, rawPathOf, s3Key, stripKeyPrefix, withClient } from '../client.ts'
 
 /**
  * Return `[path, size]` pairs for every object under the prefix plus a trailing

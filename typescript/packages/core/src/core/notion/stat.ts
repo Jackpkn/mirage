@@ -14,7 +14,7 @@
 
 import type { IndexCacheStore } from '../../cache/index/store.ts'
 import { FileStat, FileType, PathSpec } from '../../types.ts'
-import type { NotionTransport } from './_client.ts'
+import type { NotionTransport } from './client.ts'
 import { getDataSource, getDatabase } from './pages.ts'
 import { parseSegment } from './pathing.ts'
 import { readdir as coreReaddir } from './readdir.ts'

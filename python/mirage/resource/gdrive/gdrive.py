@@ -17,7 +17,7 @@ from typing import Any
 from mirage.accessor.gdrive import GDriveAccessor
 from mirage.core.gdrive.readdir import readdir
 from mirage.core.gdrive.watch import build_delta_hook
-from mirage.core.google._client import TokenManager
+from mirage.core.google.client import TokenManager
 from mirage.resource.base import BaseResource
 from mirage.resource.gdrive.config import GoogleDriveConfig
 from mirage.resource.gdrive.prompt import PROMPT

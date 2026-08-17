@@ -17,8 +17,8 @@ import pytest
 from aioresponses import aioresponses
 from yarl import URL
 
-from mirage.core.discord._client import (discord_delete, discord_get,
-                                         discord_post, discord_put)
+from mirage.core.discord.client import (discord_delete, discord_get,
+                                        discord_post, discord_put)
 from mirage.core.discord.config import DiscordConfig
 
 BASE = "https://discord.com/api/v10"

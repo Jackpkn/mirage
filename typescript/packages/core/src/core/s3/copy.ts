@@ -16,7 +16,7 @@ import type { PathSpec } from '../../types.ts'
 import type { S3Accessor } from '../../accessor/s3.ts'
 import { invalidateAfterWrite } from '../../cache/context.ts'
 import { enoent } from '../../utils/errors.ts'
-import { loadS3Module, rawPathOf, s3Key, withClient } from './_client.ts'
+import { loadS3Module, rawPathOf, s3Key, withClient } from './client.ts'
 import { exists } from './exists.ts'
 
 export async function copy(accessor: S3Accessor, src: PathSpec, dst: PathSpec): Promise<void> {

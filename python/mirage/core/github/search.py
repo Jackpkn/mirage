@@ -15,7 +15,7 @@
 import logging
 from dataclasses import dataclass
 
-from mirage.core.github._client import github_get
+from mirage.core.github.client import github_get
 from mirage.core.github.config import GitHubConfig
 from mirage.core.github.pushdown import scope_relative_key
 from mirage.types import PathSpec

@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { describe, expect, it } from 'vitest'
-import type { SlackResponse, SlackTransport } from './_client.ts'
+import type { SlackResponse, SlackTransport } from './client.ts'
 import { cursorPages } from './paginate.ts'
 
 class FakeTransport implements SlackTransport {

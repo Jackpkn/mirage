@@ -16,7 +16,7 @@ import { invalidateAfterWrite, invalidateAncestors } from '../../cache/context.t
 import type { DatabricksVolumeAccessor } from '../../accessor/databricks_volume.ts'
 import type { IndexCacheStore } from '../../cache/index/store.ts'
 import { FileType, type PathSpec } from '../../types.ts'
-import { dbxFetch } from './_client.ts'
+import { dbxFetch } from './client.ts'
 import { ensurePathSpec, parentPath } from './_helpers.ts'
 import { alreadyExistsError, isNotFound, notADirectoryError, notFoundError } from './errors.ts'
 import { exists } from './exists.ts'

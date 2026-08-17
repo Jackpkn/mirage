@@ -16,7 +16,7 @@ import time
 
 from mirage.accessor.s3 import S3Accessor
 from mirage.cache.context import invalidate_after_write, invalidate_ancestors
-from mirage.core.s3._client import _client_kwargs, _key, async_session
+from mirage.core.s3.client import _client_kwargs, _key, async_session
 from mirage.observe.context import record
 from mirage.types import PathSpec
 

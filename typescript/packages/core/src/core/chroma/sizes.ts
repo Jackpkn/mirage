@@ -15,7 +15,7 @@
 import type { ChromaAccessor } from '../../accessor/chroma.ts'
 import type { IndexCacheStore } from '../../cache/index/store.ts'
 import type { IndexEntry } from '../../cache/index/config.ts'
-import { metadataString, pagesChunks } from './_client.ts'
+import { metadataString, pagesChunks } from './client.ts'
 import { renderPage } from './render.ts'
 
 /**

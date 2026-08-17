@@ -66,8 +66,8 @@ def _fake_client(mc) -> None:
 
 async def _run(paths: list[PathSpec], *texts: str, **flags) -> list[str]:
     find = _find_command()
-    with patch("mirage.core.postgres.readdir._client") as rd_client, \
-         patch("mirage.core.postgres.stat._client") as st_client:
+    with patch("mirage.core.postgres.readdir.client") as rd_client, \
+         patch("mirage.core.postgres.stat.client") as st_client:
         _fake_client(rd_client)
         _fake_client(st_client)
         stdout, _io = await find(

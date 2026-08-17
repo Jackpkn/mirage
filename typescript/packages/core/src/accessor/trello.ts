@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { Accessor } from './base.ts'
-import type { TrelloTransport } from '../core/trello/_client.ts'
+import type { TrelloTransport } from '../core/trello/client.ts'
 
 export class TrelloAccessor extends Accessor {
   constructor(public readonly transport: TrelloTransport) {

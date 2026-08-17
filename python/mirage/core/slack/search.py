@@ -13,7 +13,7 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 from mirage.core.render.json import compact_json_bytes
-from mirage.core.slack._client import slack_get, slack_search_available
+from mirage.core.slack.client import slack_get, slack_search_available
 from mirage.core.slack.config import SlackConfig
 
 

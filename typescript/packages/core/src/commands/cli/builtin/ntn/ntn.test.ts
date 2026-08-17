@@ -14,7 +14,7 @@
 
 import { describe, expect, it, vi } from 'vitest'
 import type * as UtilModule from './util.ts'
-import type { RestCall } from '../../../../core/notion/_client.ts'
+import type { RestCall } from '../../../../core/notion/client.ts'
 import { cliSpecFor } from '../../specs.ts'
 import type { CommandFnResult } from '../../../config.ts'
 import type { ByteSource, IOResult } from '../../../../io/types.ts'

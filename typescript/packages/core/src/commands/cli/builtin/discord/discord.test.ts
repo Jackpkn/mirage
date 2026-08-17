@@ -18,7 +18,7 @@ import type {
   DiscordMethod,
   DiscordResponse,
   DiscordTransport,
-} from '../../../../core/discord/_client.ts'
+} from '../../../../core/discord/client.ts'
 import { cliSpecFor } from '../../specs.ts'
 import type { CommandFnResult } from '../../../config.ts'
 import type { ByteSource, IOResult } from '../../../../io/types.ts'

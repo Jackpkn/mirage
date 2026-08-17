@@ -37,7 +37,7 @@ vi.mock('../../cache/context.ts', () => {
 import { BoxAccessor } from '../../accessor/box.ts'
 import { invalidateAfterUnlink, invalidateAfterWrite } from '../../cache/context.ts'
 import { PathSpec } from '../../types.ts'
-import type { BoxTokenManager } from './_client.ts'
+import type { BoxTokenManager } from './client.ts'
 import * as api from './api.ts'
 import { copy, mkdir, rename, rmR, rmdir, unlink, write } from './write.ts'
 

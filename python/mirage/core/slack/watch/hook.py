@@ -15,7 +15,7 @@
 from collections.abc import Sequence
 
 from mirage.accessor.slack import SlackAccessor
-from mirage.core.slack._client import slack_get
+from mirage.core.slack.client import slack_get
 from mirage.core.slack.formatters import channel_dirname, dm_dirname
 from mirage.core.slack.watch.constants import (CHANNEL_LIST_EVENTS, CHAT_FILE,
                                                DM_LIST_EVENTS, FILES_DIR,

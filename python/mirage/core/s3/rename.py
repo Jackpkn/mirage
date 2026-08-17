@@ -16,7 +16,7 @@ from typing import Any
 
 from mirage.accessor.s3 import S3Accessor
 from mirage.cache.context import invalidate_after_unlink
-from mirage.core.s3._client import _client_kwargs, _key, _prefix, async_session
+from mirage.core.s3.client import _client_kwargs, _key, _prefix, async_session
 from mirage.core.s3.exists import exists
 from mirage.core.s3.stat import _is_not_found
 from mirage.types import PathSpec

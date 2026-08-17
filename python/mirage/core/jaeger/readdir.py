@@ -14,8 +14,8 @@
 
 from mirage.accessor.jaeger import JaegerAccessor
 from mirage.cache.index import NULL_INDEX, IndexCacheStore, IndexEntry
-from mirage.core.jaeger._client import (fetch_operations, fetch_services,
-                                        fetch_traces, is_trace_id)
+from mirage.core.jaeger.client import (fetch_operations, fetch_services,
+                                       fetch_traces, is_trace_id)
 from mirage.core.jaeger.scope import (OPERATIONS_FILE, TOP_LEVEL_DIRS,
                                       detect_scope)
 from mirage.core.render.json import json_bytes

@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from mirage.core.render.json import jsonl_bytes
-from mirage.core.slack._client import slack_get
+from mirage.core.slack.client import slack_get
 from mirage.core.slack.config import SlackConfig
 from mirage.core.slack.paginate import cursor_pages
 

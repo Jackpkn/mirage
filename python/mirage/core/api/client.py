@@ -14,15 +14,16 @@
 
 import asyncio
 import json
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass
+from functools import partial
 from typing import Any, Literal
 
 import aiohttp
+from tenacity import (AsyncRetrying, RetryCallState, retry_if_exception_type,
+                      stop_after_attempt)
 
-from mirage.types import JsonValue
-
-ErrorOf = Callable[[aiohttp.ClientResponse, str], Exception]
+from mirage.types import ErrorOf, JsonValue
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,6 +46,21 @@ class RetryPolicy:
 
 
 NO_RETRY = RetryPolicy()
+
+
+class _RetryableStatus(Exception):
+    """A response whose status the policy retries, carried to tenacity.
+
+    The body is read inside the attempt because the wait callback is
+    synchronous and cannot await it; the response object stays readable
+    for headers, status and request info after its connection returns to
+    the pool.
+    """
+
+    def __init__(self, resp: aiohttp.ClientResponse, text: str) -> None:
+        super().__init__(f"retryable HTTP {resp.status}")
+        self.resp = resp
+        self.text = text
 
 
 def status_error(resp: aiohttp.ClientResponse) -> Exception:
@@ -84,11 +100,39 @@ def _body_delay(text: str) -> float:
     return 1.0
 
 
-async def _retry_delay(resp: aiohttp.ClientResponse, attempt: int,
-                       retry: RetryPolicy) -> float:
+def _retry_delay(retry_state: RetryCallState, retry: RetryPolicy) -> float:
+    outcome = retry_state.outcome
+    error = outcome.exception() if outcome is not None else None
+    if not isinstance(error, _RetryableStatus):
+        return 1.0
     if retry.delay_source == "body":
-        return _body_delay(await resp.text())
-    return _header_delay(resp, attempt, retry)
+        return _body_delay(error.text)
+    return _header_delay(error.resp, retry_state.attempt_number - 1, retry)
+
+
+async def _attempt(
+    session: aiohttp.ClientSession,
+    method: str,
+    url: str,
+    error_of: ErrorOf,
+    headers: Mapping[str, str] | None,
+    params: Mapping[str, Any] | None,
+    json_body: JsonValue,
+    retry: RetryPolicy,
+    read: Literal["json", "none"],
+) -> Any:
+    async with session.request(method,
+                               url,
+                               headers=headers,
+                               params=params,
+                               json=json_body) as resp:
+        if resp.status in retry.statuses:
+            raise _RetryableStatus(resp, await resp.text())
+        if resp.status >= 400:
+            raise error_of(resp, await resp.text())
+        if read == "none":
+            return None
+        return await resp.json()
 
 
 async def api_request(
@@ -118,22 +162,18 @@ async def api_request(
         retry (RetryPolicy): which statuses to retry and how long to wait.
         read (str): "json" parses the response body; "none" ignores it.
     """
+    retrying = AsyncRetrying(
+        sleep=asyncio.sleep,
+        stop=stop_after_attempt(retry.max_retries + 1),
+        wait=partial(_retry_delay, retry=retry),
+        retry=retry_if_exception_type(_RetryableStatus),
+        reraise=True,
+    )
     async with aiohttp.ClientSession() as session:
-        attempt = 0
-        while True:
-            async with session.request(method,
-                                       url,
-                                       headers=headers,
-                                       params=params,
-                                       json=json_body) as resp:
-                if (resp.status in retry.statuses
-                        and attempt < retry.max_retries):
-                    await asyncio.sleep(await
-                                        _retry_delay(resp, attempt, retry))
-                    attempt += 1
-                    continue
-                if resp.status >= 400:
-                    raise error_of(resp, await resp.text())
-                if read == "none":
-                    return None
-                return await resp.json()
+        try:
+            return await retrying(_attempt, session, method, url, error_of,
+                                  headers, params, json_body, retry, read)
+        except _RetryableStatus as exhausted:
+            # retries ran dry: the final retryable response maps through
+            # the same hook a plain error status does
+            raise error_of(exhausted.resp, exhausted.text) from None

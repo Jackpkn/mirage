@@ -15,7 +15,7 @@
 from typing import Any
 
 from mirage.accessor.dropbox import DropboxAccessor
-from mirage.core.dropbox._client import DropboxTokenManager
+from mirage.core.dropbox.client import DropboxTokenManager
 from mirage.core.dropbox.copy import copy
 from mirage.core.dropbox.mkdir import mkdir
 from mirage.core.dropbox.read import read

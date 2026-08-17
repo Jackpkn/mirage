@@ -14,8 +14,8 @@
 
 from mirage.accessor.mongodb import MongoDBAccessor
 from mirage.cache.index import NULL_INDEX, IndexCacheStore, IndexEntry
-from mirage.core.mongodb._client import (database_exists, entity_exists,
-                                         list_collections, list_databases)
+from mirage.core.mongodb.client import (database_exists, entity_exists,
+                                        list_collections, list_databases)
 from mirage.core.mongodb.scope import detect_scope
 from mirage.core.mongodb.types import (KIND_TO_DIR, KIND_TO_RESOURCE_TYPE,
                                        RESOURCE_TYPE_DATABASE, EntityKind,

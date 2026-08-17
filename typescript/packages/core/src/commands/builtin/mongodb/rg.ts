@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import type { MongoDBAccessor } from '../../../accessor/mongodb.ts'
-import { listDatabases } from '../../../core/mongodb/_client.ts'
+import { listDatabases } from '../../../core/mongodb/client.ts'
 import { resolveGlobOf } from '../generic_bind/index.ts'
 import { hasUnresolvedGlob } from '../utils/operands.ts'
 import { MONGODB_IO } from './io.ts'

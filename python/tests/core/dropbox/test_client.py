@@ -16,10 +16,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from mirage.core.dropbox._client import (DROPBOX_API_BASE,
-                                         DROPBOX_CONTENT_BASE,
-                                         DropboxTokenManager, _token_url,
-                                         dropbox_download)
+from mirage.core.dropbox.client import (DROPBOX_API_BASE, DROPBOX_CONTENT_BASE,
+                                        DropboxTokenManager, _token_url,
+                                        dropbox_download)
 from mirage.resource.dropbox.config import DropboxConfig
 from mirage.utils.ranges import ByteWindow
 
@@ -53,7 +52,7 @@ def test_token_url_defaults_to_production():
 @pytest.mark.asyncio
 async def test_get_token_caches_until_expiry():
     tm = DropboxTokenManager(make_config())
-    with patch("mirage.core.dropbox._client.refresh_access_token",
+    with patch("mirage.core.dropbox.client.refresh_access_token",
                new_callable=AsyncMock,
                return_value=("tok", 14400)) as refresh:
         assert await tm.get_token() == "tok"
@@ -83,11 +82,11 @@ async def _download(status: int, body: bytes,
                     window: ByteWindow | None) -> tuple[bytes, MagicMock]:
     tm = DropboxTokenManager(make_config())
     session = _session(status, body)
-    with patch("mirage.core.dropbox._client.dropbox_auth_headers",
+    with patch("mirage.core.dropbox.client.dropbox_auth_headers",
                new_callable=AsyncMock,
                return_value={}):
-        with patch("mirage.core.dropbox._client.aiohttp.ClientSession"
-                   ) as mock_cs:
+        with patch(
+                "mirage.core.dropbox.client.aiohttp.ClientSession") as mock_cs:
             mock_cs.return_value.__aenter__ = AsyncMock(return_value=session)
             mock_cs.return_value.__aexit__ = AsyncMock(return_value=False)
             data = await dropbox_download(tm, "/a.txt", window)

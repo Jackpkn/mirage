@@ -17,7 +17,7 @@ import { LangfuseAccessor, type LangfuseAccessorConfig } from '../../accessor/la
 import { RAMIndexCacheStore } from '../../cache/index/ram.ts'
 import { PathSpec } from '../../types.ts'
 import { stripSlash } from '../../utils/slash.ts'
-import type { LangfuseTransport } from './_client.ts'
+import type { LangfuseTransport } from './client.ts'
 import { readdir } from './readdir.ts'
 import { jsonlBytes } from '../render/json.ts'
 

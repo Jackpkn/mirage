@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { FlagView } from '../../../../spec/types.ts'
-import { NotionAPIError, type NotionTransport } from '../../../../../core/notion/_client.ts'
+import { NotionAPIError, type NotionTransport } from '../../../../../core/notion/client.ts'
 import { HintedAPIError, sourceHint } from '../failure.ts'
 import {
   getDataSource,

@@ -25,7 +25,7 @@ import {
   foldContentDisposition,
   foldUnstructured,
 } from '@struktoai/mirage-core/utils/mime'
-import type { FetchedMessage } from '../../../../core/email/_client.ts'
+import type { FetchedMessage } from '../../../../core/email/client.ts'
 
 type SourceMode = 'reply' | 'forward'
 export type PostingStyle = 'top' | 'bottom'

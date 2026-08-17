@@ -16,7 +16,7 @@ import time
 
 from mirage.accessor.onedrive import OneDriveAccessor
 from mirage.cache.context import invalidate_after_write
-from mirage.core.onedrive._client import graph_put_bytes, item_url, split_path
+from mirage.core.onedrive.client import graph_put_bytes, item_url, split_path
 from mirage.observe.context import record
 from mirage.types import PathSpec
 

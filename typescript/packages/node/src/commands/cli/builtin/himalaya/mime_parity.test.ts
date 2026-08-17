@@ -16,7 +16,7 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
-import type { FetchedMessage } from '../../../../core/email/_client.ts'
+import type { FetchedMessage } from '../../../../core/email/client.ts'
 import { build, type Attachment, type Compose, type Source } from './builder.ts'
 
 // The fixture is generated from the python builder

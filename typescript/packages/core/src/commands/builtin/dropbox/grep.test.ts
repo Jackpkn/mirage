@@ -20,7 +20,7 @@ vi.mock('./pushdown.ts', () => ({ narrowScope: vi.fn() }))
 vi.mock('../generic/grep.ts', () => ({ grepGeneric: vi.fn() }))
 
 import { DropboxAccessor } from '../../../accessor/dropbox.ts'
-import type { DropboxTokenManager } from '../../../core/dropbox/_client.ts'
+import type { DropboxTokenManager } from '../../../core/dropbox/client.ts'
 import { IOResult } from '../../../io/types.ts'
 import { PathSpec } from '../../../types.ts'
 import type { CommandFnResult, CommandOpts } from '../../config.ts'

@@ -12,7 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { sheetsBase, type TokenManager, googleHeaders } from '../google/_client.ts'
+import { sheetsBase, type TokenManager, googleHeaders } from '../google/client.ts'
 
 class SheetsApiError extends Error {
   readonly status: number

@@ -12,12 +12,11 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import type { NotionTransport } from './_client.ts'
+import type { NotionTransport } from './client.ts'
+import { MAX_PAGE_SIZE } from './constants.ts'
 import { cursorItems } from '../api/paginate.ts'
 
 type Json = Record<string, unknown>
-
-const MAX_PAGE_SIZE = 100
 
 function asObject(value: unknown): Json {
   return value !== null && typeof value === 'object' && !Array.isArray(value) ? (value as Json) : {}

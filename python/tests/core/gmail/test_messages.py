@@ -20,7 +20,7 @@ from mirage.core.gmail.messages import (_decode_body, _extract_header,
                                         _parse_address, _parse_address_list,
                                         get_message_processed, get_message_raw,
                                         list_messages)
-from mirage.core.google._client import TokenManager
+from mirage.core.google.client import TokenManager
 from mirage.core.google.config import GoogleConfig
 
 

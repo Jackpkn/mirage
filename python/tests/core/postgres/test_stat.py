@@ -143,7 +143,7 @@ async def test_stat_entity_schema_json(accessor, index):
 
 @pytest.mark.asyncio
 async def test_stat_entity_rows_jsonl(accessor, index):
-    with patch("mirage.core.postgres.stat._client") as mc:
+    with patch("mirage.core.postgres.stat.client") as mc:
         mc.fetch_columns = AsyncMock(return_value=[
             {
                 "name": "id",
@@ -177,7 +177,7 @@ async def test_stat_entity_rows_jsonl(accessor, index):
 
 @pytest.mark.asyncio
 async def test_stat_view_entity_rows(accessor, index):
-    with patch("mirage.core.postgres.stat._client") as mc:
+    with patch("mirage.core.postgres.stat.client") as mc:
         mc.fetch_columns = AsyncMock(return_value=[
             {
                 "name": "team",
@@ -199,7 +199,7 @@ async def test_stat_view_entity_rows(accessor, index):
 
 @pytest.mark.asyncio
 async def test_stat_fingerprint_changes_with_row_count(accessor, index):
-    with patch("mirage.core.postgres.stat._client") as mc:
+    with patch("mirage.core.postgres.stat.client") as mc:
         mc.fetch_columns = AsyncMock(return_value=[
             {
                 "name": "id",

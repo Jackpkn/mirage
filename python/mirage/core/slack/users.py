@@ -16,7 +16,7 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 from mirage.core.render.json import compact_json_bytes
-from mirage.core.slack._client import slack_get
+from mirage.core.slack.client import slack_get
 from mirage.core.slack.config import SlackConfig
 from mirage.core.slack.paginate import cursor_pages
 

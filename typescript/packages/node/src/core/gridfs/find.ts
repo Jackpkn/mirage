@@ -31,7 +31,7 @@ import {
   prefixQuery,
   rawPathOf,
   stripKeyPrefix,
-} from './_client.ts'
+} from './client.ts'
 
 /**
  * Translate a find -name glob into a regex fragment matching one path

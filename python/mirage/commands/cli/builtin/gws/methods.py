@@ -15,9 +15,9 @@
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from mirage.core.google._client import (TokenManager, calendar_base, docs_base,
-                                        drive_base, forms_base, gmail_base,
-                                        sheets_base, slides_base)
+from mirage.core.google.client import (TokenManager, calendar_base, docs_base,
+                                       drive_base, forms_base, gmail_base,
+                                       sheets_base, slides_base)
 
 # The official gws CLI generates one command per Discovery method and
 # speaks raw API resources: `--params` carries path/query parameters,

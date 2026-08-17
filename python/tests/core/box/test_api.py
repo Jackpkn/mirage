@@ -16,9 +16,9 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from mirage.core.box._client import BoxTokenManager
 from mirage.core.box.api import (SEARCH_FIELDS, list_folder_items,
                                  search_content)
+from mirage.core.box.client import BoxTokenManager
 from mirage.core.box.config import BoxConfig
 
 

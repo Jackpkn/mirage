@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { DiscordAccessor } from '../../../../accessor/discord.ts'
-import { NodeDiscordTransport } from '../../../../core/discord/_client.ts'
+import { NodeDiscordTransport } from '../../../../core/discord/client.ts'
 import type { DiscordConfig } from '../../../../core/discord/config.ts'
 
 export function discordAccessor(config: unknown): DiscordAccessor {

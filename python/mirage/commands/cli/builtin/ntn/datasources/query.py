@@ -21,7 +21,7 @@ from mirage.commands.cli.builtin.ntn.util import (first_text, notion_config,
 from mirage.commands.cli.types import CLIDoors, CLIInvocation
 from mirage.commands.errors import UsageError
 from mirage.commands.spec.types import FlagView
-from mirage.core.notion._client import NotionAPIError
+from mirage.core.notion.client import NotionAPIError
 from mirage.core.notion.config import NotionConfig
 from mirage.core.notion.pages import (get_data_source, get_database,
                                       query_data_source_page)

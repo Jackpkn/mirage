@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { FlagView } from '../../../spec/types.ts'
-import type { RestCall } from '../../../../core/notion/_client.ts'
+import type { RestCall } from '../../../../core/notion/client.ts'
 import { IOResult, materialize } from '../../../../io/types.ts'
 import type { CommandFnResult } from '../../../config.ts'
 import type { CLIInvocation } from '../../types.ts'

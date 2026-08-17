@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 
 from mirage.accessor.dify import DifyAccessor
 from mirage.cache.index import NULL_INDEX, IndexCacheStore
-from mirage.core.dify._client import get_document_detail
+from mirage.core.dify.client import get_document_detail
 from mirage.core.dify.path import resolve_path
 from mirage.core.dify.tree import extract_document_size
 from mirage.types import FileStat, FileType, JsonValue, PathSpec
