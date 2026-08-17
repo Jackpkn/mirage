@@ -237,12 +237,12 @@ async def handle_command(
                                        dispatch,
                                        namespace,
                                        routing_decision=routing_decision)
+        cross_ns = namespace_view_of(registry, namespace, dispatch)
         # A per-operand native run is single-mount by construction, so a
         # traversal operand holding nested mounts has to fan out inside
         # it, exactly as the same operand would on a line of its own.
         run_operand = functools.partial(
-            run_with_fanout, run_single, registry, session.cwd,
-            namespace_view_of(registry, namespace, dispatch),
+            run_with_fanout, run_single, registry, session.cwd, cross_ns,
             functools.partial(path_stat, dispatch)
             if dispatch is not None else None)
         stdout, io = await handle_cross_mount(
@@ -253,7 +253,8 @@ async def handle_command(
             dispatch,
             run_operand,
             stdin=stdin,
-            storage_key=make_storage_key(registry))
+            storage_key=make_storage_key(registry),
+            ns=cross_ns)
         if cross_parsed.warnings:
             warn = "".join(f"{cmd_name}: {w}\n"
                            for w in cross_parsed.warnings).encode()

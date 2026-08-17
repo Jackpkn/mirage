@@ -1,5 +1,6 @@
 from collections.abc import Awaitable, Callable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
+from typing import Any
 
 from mirage.cache.index import NULL_INDEX, IndexCacheStore
 from mirage.commands.builtin.utils.formatting import format_ls_long
@@ -57,6 +58,19 @@ def parse_flags(flags: Mapping[str, FlagValue]) -> LsFlags:
         classify=fl.as_bool("F"),
         deref=fl.as_bool("L"),
     )
+
+
+def ls_options(flags: Mapping[str, FlagValue]) -> dict[str, Any]:
+    """Parsed ls flags as the generic's own keyword arguments.
+
+    ``LsFlags`` names every field after the ``ls`` parameter it feeds,
+    so both entry points -- the single-mount ``ls_generic`` and the
+    cross-mount relay -- share one mapping instead of restating it.
+
+    Args:
+        flags (Mapping[str, FlagValue]): Flags for the shared ls spec.
+    """
+    return asdict(parse_flags(flags))
 
 
 @dataclass(frozen=True, slots=True)
@@ -701,24 +715,14 @@ async def ls_generic(
         readdir (Readdir): Bound readdir called as ``readdir(p, index)``.
         stat (Stat): Bound (overlaid) stat called as ``stat(p, index)``.
     """
-    parsed = parse_flags(opts.flags)
     return await ls(
         paths,
         readdir=readdir,
         stat=stat,
-        long=parsed.long,
-        one_per_line=parsed.one_per_line,
-        all_files=parsed.all_files,
-        human=parsed.human,
-        sort_by=parsed.sort_by,
-        reverse=parsed.reverse,
-        recursive=parsed.recursive,
-        list_dir=parsed.list_dir,
-        classify=parsed.classify,
         index=opts.index,
         links=opts.ns.links if opts.ns is not None else None,
-        deref=parsed.deref,
-        child_mounts=opts.ns.child_mounts if opts.ns is not None else None)
+        child_mounts=opts.ns.child_mounts if opts.ns is not None else None,
+        **ls_options(opts.flags))
 
 
 __all__ = [

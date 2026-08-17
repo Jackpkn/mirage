@@ -278,6 +278,7 @@ export async function handleCommand(
     }
     const runSingle: RunSingle = (name, ps, ts, fk, opts) =>
       runOnMount(runCtx, name, ps, ts, fk, opts ?? {})
+    const csNs = namespaceViewOf(registry, namespace ?? null, dispatch)
     // A per-operand native run is single-mount by construction, so a
     // traversal operand holding nested mounts has to fan out inside it,
     // exactly as the same operand would on a line of its own.
@@ -285,7 +286,7 @@ export async function handleCommand(
       runSingle,
       registry,
       session.cwd,
-      namespaceViewOf(registry, namespace ?? null, dispatch),
+      csNs,
       ensureOpen,
       (path: string) => pathStat(dispatch, path, null),
     )
@@ -299,6 +300,7 @@ export async function handleCommand(
       stdin,
       cmdStr,
       makeStorageKey(registry),
+      csNs,
     )
     if (csParsed.warnings.length > 0) {
       const csWarn = new TextEncoder().encode(
