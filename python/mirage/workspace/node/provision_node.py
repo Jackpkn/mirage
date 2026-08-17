@@ -17,6 +17,7 @@ from functools import partial
 from typing import Any, Callable
 
 from mirage.provision import Precision, ProvisionResult
+from mirage.provision.rollup import rollup_list, rollup_pipe
 from mirage.runtime.types import DispatchFn
 from mirage.shell.node_kind import NodeKind, node_kind
 from mirage.shell.types import FunctionBody
@@ -28,7 +29,6 @@ from mirage.workspace.expand import (classify_parts, expand_and_classify,
                                      expand_parts, expand_redirects)
 from mirage.workspace.mount import MountRegistry
 from mirage.workspace.mount.namespace import Namespace
-from mirage.workspace.provision.builtins import handle_builtin_provision
 from mirage.workspace.provision.command import handle_command_provision
 from mirage.workspace.provision.control import (handle_for_provision,
                                                 handle_function_provision,
@@ -37,7 +37,6 @@ from mirage.workspace.provision.control import (handle_for_provision,
 from mirage.workspace.provision.pipes import (handle_connection_provision,
                                               handle_pipe_provision)
 from mirage.workspace.provision.redirect import handle_redirect_provision
-from mirage.workspace.provision.rollup import rollup_list, rollup_pipe
 from mirage.workspace.session import Session
 
 from mirage.shell.helpers import (  # isort: skip
@@ -90,6 +89,11 @@ class PlanScope:
     """
     functions: dict[str, FunctionBody] = field(default_factory=dict)
     planning: set[str] = field(default_factory=set)
+
+
+async def handle_builtin_provision() -> ProvisionResult:
+    """Plan for shell builtins (cd, export, etc.): zero cost."""
+    return ProvisionResult(precision=Precision.EXACT)
 
 
 async def _provision_redirected(

@@ -21,8 +21,8 @@ import { ProvisionResult } from '../provision/types.ts'
 import { RAMResource } from '../resource/ram/ram.ts'
 import { MountMode, ResourceName } from '../types.ts'
 import { getTestParser, stderrStr } from './fixtures/workspace_fixture.ts'
-import type { ExecuteResult } from './workspace.ts'
-import { Workspace } from './workspace.ts'
+import type { ExecuteResult } from './workspace/workspace.ts'
+import { Workspace } from './workspace/workspace.ts'
 
 const ENC = new TextEncoder()
 const SPEC = new CommandSpec({ rest: new Operand({ type: 'path' }) })

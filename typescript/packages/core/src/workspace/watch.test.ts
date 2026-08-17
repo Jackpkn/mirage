@@ -3,7 +3,7 @@ import { RAMResource } from '../resource/ram/ram.ts'
 import { FileChangeKind, FileEvent, MountMode, PathSpec } from '../types.ts'
 import { RAMWatchQueue } from '../watch/queue/ram.ts'
 import { Watcher } from '../watch/watcher.ts'
-import { Workspace } from './workspace.ts'
+import { Workspace } from './workspace/workspace.ts'
 
 const TIMESTAMP = new Date(0)
 

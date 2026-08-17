@@ -19,7 +19,7 @@ import { cachesReads } from '../resource/base.ts'
 import { RAMResource } from '../resource/ram/ram.ts'
 import { createShellParser } from '../shell/parse.ts'
 import { ConsistencyPolicy, MountMode, PathSpec } from '../types.ts'
-import { Workspace } from './workspace.ts'
+import { Workspace } from './workspace/workspace.ts'
 
 const ENC = new TextEncoder()
 const DEC = new TextDecoder()

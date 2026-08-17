@@ -17,7 +17,7 @@ import { OpsRegistry } from '../ops/registry.ts'
 import { RAMResource } from '../resource/ram/ram.ts'
 import { MountMode } from '../types.ts'
 import { getTestParser, stderrStr, stdoutStr } from '../workspace/fixtures/workspace_fixture.ts'
-import { Workspace } from '../workspace/workspace.ts'
+import { Workspace } from '../workspace/workspace/workspace.ts'
 
 // Direct port of tests/shell/test_quoting_coverage.py.
 // Each test is one realistic agent pattern — failures surface as parser,

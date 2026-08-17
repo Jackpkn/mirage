@@ -27,7 +27,7 @@ import { writeSnapshotTar } from './snapshot/tar_io.ts'
 import { DriftPolicy, FileStat, FileType, MountMode, type PathSpec } from '../types.ts'
 import { ContentDriftError } from './snapshot/drift.ts'
 import { toStateDict } from './snapshot/state.ts'
-import { Workspace } from './workspace.ts'
+import { Workspace } from './workspace/workspace.ts'
 
 const require = createRequire(import.meta.url)
 const engineWasm = readFileSync(require.resolve('web-tree-sitter/web-tree-sitter.wasm'))

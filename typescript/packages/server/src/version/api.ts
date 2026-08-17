@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { applyStateDict } from '@struktoai/mirage-core/workspace/snapshot/state'
-import type { Workspace as CoreWorkspace } from '@struktoai/mirage-core/workspace/workspace'
+import type { Workspace as CoreWorkspace } from '@struktoai/mirage-core/workspace/workspace/workspace'
 import { NoSuchBranchError } from './errors.ts'
 import {
   blobToMeta,

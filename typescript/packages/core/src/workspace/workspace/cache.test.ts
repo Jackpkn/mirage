@@ -15,7 +15,7 @@
 import { describe, expect, it } from 'vitest'
 import { CacheType } from '../../cache/file/config.ts'
 import { RAMFileCacheStore } from '../../cache/file/ram.ts'
-import { Workspace } from '../workspace.ts'
+import { Workspace } from './workspace.ts'
 import { buildFileCache, registerFileCacheStore } from './cache.ts'
 
 describe('buildFileCache', () => {

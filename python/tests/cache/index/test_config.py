@@ -15,7 +15,7 @@
 from mirage.cache.index import (IndexConfig, IndexEntry, ListResult,
                                 LookupResult, LookupStatus, RedisIndexConfig,
                                 ResourceType)
-from mirage.types import IndexType
+from mirage.cache.index.config import IndexType
 
 
 def test_index_entry_defaults():

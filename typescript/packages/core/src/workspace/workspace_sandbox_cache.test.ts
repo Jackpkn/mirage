@@ -16,7 +16,7 @@ import { describe, expect, it } from 'vitest'
 import { RAMResource } from '../resource/ram/ram.ts'
 import { ConsistencyPolicy, MountMode, PathSpec } from '../types.ts'
 import { getTestParser } from './fixtures/workspace_fixture.ts'
-import { Workspace } from './workspace.ts'
+import { Workspace } from './workspace/workspace.ts'
 
 const ENC = new TextEncoder()
 const DEC = new TextDecoder()

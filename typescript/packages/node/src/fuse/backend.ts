@@ -16,7 +16,7 @@ import { posix } from 'node:path'
 import { sizesAlwaysKnown } from '@struktoai/mirage-core/resource/base'
 import { KERNEL_BACKENDS, MountBackend, MountMode } from '@struktoai/mirage-core/types'
 import { rstripSlash } from '@struktoai/mirage-core/utils/slash'
-import type { Workspace } from '@struktoai/mirage-core/workspace/workspace'
+import type { Workspace } from '@struktoai/mirage-core/workspace/workspace/workspace'
 
 /**
  * FSKit mounts only under /Volumes. Anywhere else the mount fails with an

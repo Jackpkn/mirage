@@ -12,6 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import { ConcurrencyLimiter } from '../concurrency/limiter.ts'
 import { Accessor } from './base.ts'
 import type { DifyConfigResolved } from '../resource/dify/config.ts'
 
@@ -20,44 +21,14 @@ export interface DifyRequestOptions {
   json?: unknown
 }
 
-class Semaphore {
-  private available: number
-  private readonly waiters: (() => void)[] = []
-
-  constructor(max: number) {
-    this.available = Math.max(1, max)
-  }
-
-  async acquire(): Promise<() => void> {
-    const release = (): void => {
-      this.release()
-    }
-    if (this.available > 0) {
-      this.available -= 1
-      return release
-    }
-    await new Promise<void>((resolve) => {
-      this.waiters.push(resolve)
-    })
-    this.available -= 1
-    return release
-  }
-
-  private release(): void {
-    this.available += 1
-    const next = this.waiters.shift()
-    if (next !== undefined) next()
-  }
-}
-
 export class DifyAccessor extends Accessor {
   readonly config: DifyConfigResolved
-  private readonly limiter: Semaphore
+  private readonly limiter: ConcurrencyLimiter
 
   constructor(config: DifyConfigResolved) {
     super()
     this.config = config
-    this.limiter = new Semaphore(config.maxConcurrency)
+    this.limiter = new ConcurrencyLimiter(config.maxConcurrency)
   }
 
   async request(

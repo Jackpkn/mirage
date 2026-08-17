@@ -23,10 +23,11 @@ from mirage.server.version.backend import LocalBackend
 from mirage.server.version.errors import NoSuchBranchError
 from mirage.server.version.state_tree import META_PATH
 from mirage.server.version.store import VersionStore
-from mirage.types import CacheKey, MountMode, StateKey
+from mirage.types import MountMode
 from mirage.workspace import Workspace
 from mirage.workspace.session.state import seed_var
 from mirage.workspace.snapshot import to_state_dict
+from mirage.workspace.snapshot.keys import CacheKey, StateKey
 
 
 async def status(store, ws, branch="main"):

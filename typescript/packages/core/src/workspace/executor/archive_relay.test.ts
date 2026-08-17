@@ -19,7 +19,7 @@ import { RAMResource } from '../../resource/ram/ram.ts'
 import { MountMode } from '../../types.ts'
 import { gzip } from '../../utils/compress.ts'
 import { getTestParser, stderrStr, stdoutStr } from '../fixtures/workspace_fixture.ts'
-import { Workspace } from '../workspace.ts'
+import { Workspace } from '../workspace/workspace.ts'
 
 // Direct port of tests/workspace/executor/test_archive_relay.py: member
 // selectors stay off routing, extraction lands in the cwd or -C across

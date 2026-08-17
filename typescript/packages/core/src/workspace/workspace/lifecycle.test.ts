@@ -21,7 +21,7 @@ import type { ShellParser } from '../../shell/parse.ts'
 import { MountMode } from '../../types.ts'
 import { ExecutionNode } from '../types.ts'
 import { getTestParser } from '../fixtures/workspace_fixture.ts'
-import { Workspace } from '../workspace.ts'
+import { Workspace } from './workspace.ts'
 
 let parser: ShellParser
 

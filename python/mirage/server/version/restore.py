@@ -17,10 +17,11 @@ from typing import TYPE_CHECKING, Any
 from mirage.server.version.api import read_version, resolve_ref
 from mirage.server.version.state_tree import CATEGORIES, to_state
 from mirage.server.version.store import VersionStore
-from mirage.types import DriftPolicy, MountKey, ResourceStateKey, StateKey
+from mirage.types import DriftPolicy
 from mirage.utils.path import norm
 from mirage.workspace.snapshot import (apply_state_dict, install_fingerprints,
                                        to_state_dict)
+from mirage.workspace.snapshot.keys import MountKey, ResourceStateKey, StateKey
 
 if TYPE_CHECKING:
     from mirage.workspace.workspace import Workspace

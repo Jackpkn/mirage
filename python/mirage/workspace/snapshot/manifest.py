@@ -14,8 +14,9 @@
 
 from typing import Any
 
-from mirage.types import (CacheKey, JobKey, MountKey, ResourceName,
-                          ResourceStateKey, StateKey)
+from mirage.types import ResourceName
+from mirage.workspace.snapshot.keys import (CacheKey, JobKey, MountKey,
+                                            ResourceStateKey, StateKey)
 from mirage.workspace.snapshot.utils import BLOB_REF_KEY, is_safe_blob_path
 
 

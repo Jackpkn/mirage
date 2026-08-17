@@ -27,7 +27,7 @@ import { createShellParser, type ShellParser } from '../shell/parse.ts'
 import { MountMode } from '../types.ts'
 import { ScriptSource } from '../runtime/policy/types.ts'
 import type { RuntimeLanguage } from '../runtime/types.ts'
-import { Workspace } from './workspace.ts'
+import { Workspace } from './workspace/workspace.ts'
 
 // Mirrors python/tests/e2e/test_cli_dispatch.py.
 

@@ -26,7 +26,7 @@ import { filterUnderPrefixes } from './fanout.ts'
 import { basename } from '../../core/ram/utils.ts'
 import { OpsRegistry } from '../../ops/registry.ts'
 import { getTestParser, stdoutStr } from '../fixtures/workspace_fixture.ts'
-import { Workspace } from '../workspace.ts'
+import { Workspace } from '../workspace/workspace.ts'
 import { specFlagNames } from '../../commands/spec/types.ts'
 import { specOf } from '../../commands/spec/builtins.ts'
 

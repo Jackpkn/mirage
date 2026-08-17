@@ -12,7 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import type { Workspace } from './workspace.ts'
+import type { Workspace } from './workspace/workspace.ts'
 
 /**
  * A {@link Workspace} wrapper that owns its lifecycle and provides a

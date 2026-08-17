@@ -17,7 +17,7 @@ import { RAMResource } from '../../../resource/ram/ram.ts'
 import { CapacityState, MountMode } from '../../../types.ts'
 import type { CapacityResult } from '../../../types.ts'
 import { getTestParser } from '../../fixtures/workspace_fixture.ts'
-import { Workspace } from '../../workspace.ts'
+import { Workspace } from '../../workspace/workspace.ts'
 
 // RAM backend that reports a fixed quota, standing in for a real filesystem
 // / a provider that exposes storage numbers (real disk free space is

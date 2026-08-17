@@ -14,7 +14,7 @@
 
 import { afterEach, describe, expect, it } from 'vitest'
 
-import type { Workspace } from './workspace.ts'
+import type { Workspace } from './workspace/workspace.ts'
 import { makeIntegrationWS, runResult } from './fixtures/integration_fixture.ts'
 
 let ws: Workspace | null = null

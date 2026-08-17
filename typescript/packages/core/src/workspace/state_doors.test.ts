@@ -24,7 +24,7 @@ import type { Action, OpsContext, Policy, SessionContext } from '../policy/index
 import { RAMResource } from '../resource/ram/ram.ts'
 import { MountMode, ResourceName } from '../types.ts'
 import { getTestParser, stderrStr, stdoutStr } from './fixtures/workspace_fixture.ts'
-import { Workspace } from './workspace.ts'
+import { Workspace } from './workspace/workspace.ts'
 
 const ENC = new TextEncoder()
 

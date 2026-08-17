@@ -1,4 +1,4 @@
-import type { Workspace } from '@struktoai/mirage-core/workspace/workspace'
+import type { Workspace } from '@struktoai/mirage-core/workspace/workspace/workspace'
 import {
   tool,
   type ToolOutputFileContent,

@@ -16,7 +16,7 @@ import { describe, expect, it } from 'vitest'
 import { OpsRegistry } from '../../ops/registry.ts'
 import { MountMode, PathSpec, ResourceName } from '../../types.ts'
 import { getTestParser } from '../../workspace/fixtures/workspace_fixture.ts'
-import { Workspace } from '../../workspace/workspace.ts'
+import { Workspace } from '../../workspace/workspace/workspace.ts'
 import { RAMResource } from '../ram/ram.ts'
 import { DevResource } from './dev.ts'
 

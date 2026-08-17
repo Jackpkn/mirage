@@ -15,7 +15,7 @@
 from typing import Any
 
 from mirage.provision import Precision, ProvisionResult
-from mirage.workspace.provision.rollup import rollup_list
+from mirage.provision.rollup import rollup_list
 from mirage.workspace.session import Session
 
 

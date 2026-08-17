@@ -12,8 +12,8 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from mirage.provision import (Precision, ProvisionResult, combine_alternative,
-                              combine_sum)
+from mirage.provision.types import (Precision, ProvisionResult,
+                                    combine_alternative, combine_sum)
 
 
 def rollup_pipe(children: list[ProvisionResult]) -> ProvisionResult:

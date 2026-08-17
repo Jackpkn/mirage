@@ -32,5 +32,5 @@ export default defineConfig({
   onSuccess:
     'cp src/workspace/session/cas.lua dist/cas.lua && ' +
     'cp src/shell/console/redis/append.lua dist/append.lua && ' +
-    'cp src/cache/redis/add.lua dist/add.lua',
+    'cp src/cache/file/add.lua dist/add.lua',
 })

@@ -17,12 +17,15 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from mirage.types import IndexType
-
 
 class ResourceType(str, Enum):
     FILE = "file"
     FOLDER = "folder"
+
+
+class IndexType(str, Enum):
+    RAM = "ram"
+    REDIS = "redis"
 
 
 class LookupStatus(str, Enum):

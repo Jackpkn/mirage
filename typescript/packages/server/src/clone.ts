@@ -16,7 +16,7 @@ import { resourceStateRequiresOverride } from '@struktoai/mirage-core/resource/s
 import { toStateDict } from '@struktoai/mirage-core/workspace/snapshot/state'
 import type { WorkspaceStateDict } from '@struktoai/mirage-core/workspace/snapshot/types'
 import { normMountPrefix } from '@struktoai/mirage-core/workspace/snapshot/utils'
-import type { Workspace as CoreWorkspace } from '@struktoai/mirage-core/workspace/workspace'
+import type { Workspace as CoreWorkspace } from '@struktoai/mirage-core/workspace/workspace/workspace'
 import type { Resource } from '@struktoai/mirage-core/resource/base'
 import { Workspace, buildResource } from '@struktoai/mirage-node'
 

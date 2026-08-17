@@ -60,7 +60,8 @@
     "https-proxy-agent": "^7.0.6",
     "seek-bzip": "^2.0.0",
     "tree-sitter-bash": "^0.25.1",
-    "web-tree-sitter": "^0.26.8"
+    "web-tree-sitter": "^0.26.8",
+    "yaml": "^2.6.0"
   },
   "peerDependencies": {
     "@daytonaio/sdk": "^0.199.0",
