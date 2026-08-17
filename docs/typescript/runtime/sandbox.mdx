@@ -1,23 +1,28 @@
 ---
 title: Sandbox
-description: Run captured lines whole inside a remote sandbox (Docker, Daytona, or e2b) you provision yourself.
+description: Run captured lines whole inside a sandbox (Docker, smolvm, Daytona, or e2b) you provision yourself.
 icon: server
 ---
 
 The `pyodide` and `monty` runtimes run `python3` in-process on your machine.
 A **sandbox runtime** does the opposite: it takes a whole command line and
-runs it inside a remote machine, a local Docker container or a cloud
+runs it inside a separate machine, a local container or microVM or a cloud
 sandbox. Reach for it when a line needs a real OS, heavy packages, or a GPU
 that the in-process interpreters cannot give it.
 
-Three sandbox runtimes ship from `@struktoai/mirage-node`, all with the same
+Four sandbox runtimes ship from `@struktoai/mirage-node`, all with the same
 surface:
 
 | Runtime | Connects to | Config |
 | --- | --- | --- |
 | `docker` | A container you started (`docker run`) | `container` |
+| `smolvm` | <img noZoom src="/images/smolvm-logo.svg" alt="" className="inline-block h-4 align-middle mr-1" />A [smolvm](https://smolmachines.com) microVM you started | `machine` |
 | `daytona` | A [Daytona](https://www.daytona.io) sandbox you created | `sandboxId`, `apiKey` |
 | `e2b` | An [e2b](https://e2b.dev) sandbox you created | `sandboxId`, `apiKey` |
+
+`docker` and `smolvm` run on your own machine, Daytona and e2b in the
+cloud. The isolation differs too: a container shares your kernel, while a
+smolvm microVM boots its own.
 
 ## Routing: what goes to the sandbox
 
@@ -141,6 +146,55 @@ unknown field fails loud. The docker CLI is the transport (Docker Desktop,
 colima, or a podman alias), so there is no SDK and no daemon socket
 wiring; the container gets real stdin and separated stderr. Sizing, GPUs,
 networks, and binds are all yours: pass them to your own `docker run`.
+
+## <img noZoom src="/images/smolvm-logo.svg" alt="" className="inline-block h-5 align-middle mr-2" />smolvm
+
+[smolvm](https://smolmachines.com) boots a hardware-isolated microVM with
+its own guest kernel in under a second, on Hypervisor.framework (macOS),
+KVM (Linux), or WHP (Windows). Create and start the machine yourself,
+provision the workspace inside it, then name it:
+
+```bash
+smolvm machine create --net --name mirage-box --image my-mirage-image
+smolvm machine start --name mirage-box
+smolvm machine exec --name mirage-box -- mirage workspace create /tmp/sandbox.yaml
+```
+
+```ts
+import { MountMode, S3Resource, Workspace } from '@struktoai/mirage-node'
+import { SmolvmRuntime } from '@struktoai/mirage-node'
+
+const runtime = new SmolvmRuntime({
+  captures: ['python3'],
+  config: { machine: 'mirage-box' },
+})
+const ws = new Workspace(
+  { '/data': new S3Resource({ bucket: 'my-bucket' }) },
+  { mode: MountMode.EXEC, runtimes: [runtime, 'vfs'] },
+)
+await ws.execute('python3 job.py', { cwd: '/data' })
+```
+
+The smolvm CLI is the transport, so there is no SDK dependency: the
+machine gets real stdin and separated stderr, exactly as the container
+does. Host directories reach the guest only if you passed them at boot
+(`--volume`), because the guest runs its own kernel and sees nothing of
+your filesystem otherwise.
+
+Mirage never starts the machine for you. `smolvm machine exec` would boot
+a stopped one on its own, so the first captured line probes `machine
+status` instead and refuses anything but `running`, naming the state:
+`stopped` and `created` point you at `machine start`, `unreachable` means
+the VMM is alive but the guest agent stopped answering, and `frozen` means
+the machine is a fork base whose clones copy-on-write from it, so you want
+a clone rather than the base.
+
+<Note>
+  A machine is one guest. Concurrent captured lines pointed at the same
+  `machine` share its filesystem and process table, so the VM boundary
+  isolates the workload from your host, not two workloads from each
+  other. Give each tenant its own machine when that matters.
+</Note>
 
 ## Daytona and e2b
 

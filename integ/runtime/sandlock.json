@@ -1,0 +1,134 @@
+{
+  "suite": "sandlock",
+  "optional": true,
+  "optional_reason": "sandlock needs its CLI installed and Landlock ABI v6 (Linux 6.12+); GitHub-hosted runners ship neither, and it has no apt package to add cheaply. Run locally on a Linux host with MIRAGE_INTEG_SANDLOCK set; drop this flag once the gate installs it.",
+  "requires": {
+    "python": [
+      "env:MIRAGE_INTEG_SANDLOCK"
+    ],
+    "typescript": []
+  },
+  "cases": [
+    {
+      "id": "sys_argv",
+      "hosts": [
+        "python"
+      ],
+      "world": {
+        "runtimes": [
+          "sandlock"
+        ]
+      },
+      "steps": [
+        {
+          "command": "python3 -c \"import sys; print(sys.argv[1:])\" alpha beta",
+          "expect": {
+            "exit": 0,
+            "stdout": "['alpha', 'beta']\n"
+          }
+        }
+      ]
+    },
+    {
+      "id": "real_cpython_not_a_subset",
+      "hosts": [
+        "python"
+      ],
+      "world": {
+        "runtimes": [
+          "sandlock"
+        ]
+      },
+      "steps": [
+        {
+          "command": "python3 -c \"import sqlite3, decimal; print(decimal.Decimal('1.5') * 2)\"",
+          "expect": {
+            "exit": 0,
+            "stdout": "3.0\n"
+          }
+        }
+      ]
+    },
+    {
+      "id": "granted_path_is_writable",
+      "hosts": [
+        "python"
+      ],
+      "world": {
+        "runtimes": [
+          {
+            "name": "sandlock",
+            "config": {
+              "fs_writable": [
+                "/tmp"
+              ]
+            }
+          }
+        ]
+      },
+      "steps": [
+        {
+          "command": "python3 -c \"open('/tmp/.mirage_sandlock_probe','w').write('ok'); print(open('/tmp/.mirage_sandlock_probe').read())\"",
+          "expect": {
+            "exit": 0,
+            "stdout": "ok\n"
+          }
+        }
+      ]
+    },
+    {
+      "id": "ungranted_write_is_refused",
+      "hosts": [
+        "python"
+      ],
+      "world": {
+        "runtimes": [
+          {
+            "name": "sandlock",
+            "config": {
+              "fs_writable": [
+                "/tmp"
+              ]
+            }
+          }
+        ]
+      },
+      "steps": [
+        {
+          "command": "python3 -c \"open('/etc/.mirage_sandlock_probe','w')\"",
+          "expect": {
+            "exit": 1,
+            "stderr_contains": "PermissionError"
+          }
+        }
+      ]
+    },
+    {
+      "id": "mirage_environment_is_not_inherited",
+      "hosts": [
+        "python"
+      ],
+      "world": {
+        "runtimes": [
+          {
+            "name": "sandlock",
+            "config": {
+              "env": {
+                "BOX_MARKER": "from-config"
+              }
+            }
+          }
+        ]
+      },
+      "steps": [
+        {
+          "command": "python3 -c \"import os; print(os.environ.get('BOX_MARKER'), os.environ.get('MIRAGE_INTEG_SANDLOCK'))\"",
+          "expect": {
+            "exit": 0,
+            "stdout": "from-config None\n"
+          }
+        }
+      ]
+    }
+  ]
+}

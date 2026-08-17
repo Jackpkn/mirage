@@ -403,6 +403,8 @@ export { E2BRuntime } from './runtime/sandbox/e2b/runtime.ts'
 export { E2B_CONFIG_KEYS, type E2BConfig } from './runtime/sandbox/e2b/config.ts'
 export { DockerRuntime } from './runtime/sandbox/docker/runtime.ts'
 export { DOCKER_CONFIG_KEYS, type DockerConfig } from './runtime/sandbox/docker/config.ts'
+export { SmolvmRuntime } from './runtime/sandbox/smolvm/runtime.ts'
+export { SMOLVM_CONFIG_KEYS, type SmolvmConfig } from './runtime/sandbox/smolvm/config.ts'
 export {
   buildResource,
   knownResources,

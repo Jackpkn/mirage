@@ -22,14 +22,18 @@ from mirage.runtime.js.quickjs import QuickJsRuntime
 from mirage.runtime.mixin import LineExecutorMixin
 from mirage.runtime.python.local import LocalRuntime
 from mirage.runtime.python.monty import MontyRuntime
+from mirage.runtime.python.sandlock import SandlockRuntime
 from mirage.runtime.python.wasi import WasiRuntime
 from mirage.runtime.types import RuntimeReach, ScriptSource
 
 # One source of truth, preference order (sandboxed first, host last).
 # The command -> runtime mapping is derived from each class's captures,
-# never hand-maintained.
-RUNTIMES: tuple[type[Runtime], ...] = (MontyRuntime, WasiRuntime, LocalRuntime,
-                                       QuickJsRuntime)
+# never hand-maintained. `sandlock` sits between the bridged engines
+# and `local`: it spawns the same host interpreter, but confined, so
+# it is the milder of the two "process" reaches.
+RUNTIMES: tuple[type[Runtime],
+                ...] = (MontyRuntime, WasiRuntime, SandlockRuntime,
+                        LocalRuntime, QuickJsRuntime)
 
 
 class VFSRuntime(Runtime):
@@ -82,6 +86,7 @@ SANDBOX_MODULES: dict[str, str] = {
     "daytona": "mirage.runtime.sandbox.daytona:DaytonaRuntime",
     "docker": "mirage.runtime.sandbox.docker:DockerRuntime",
     "e2b": "mirage.runtime.sandbox.e2b:E2BRuntime",
+    "smolvm": "mirage.runtime.sandbox.smolvm:SmolvmRuntime",
 }
 
 # The python engine a default world registers, named rather than left
@@ -108,8 +113,8 @@ TS_ONLY_HINTS: dict[str, str] = {
     "pyodide": ("runtime 'pyodide' is TypeScript-only (a WASM CPython for "
                 "runtimes without a host Python); Python supports 'monty' "
                 "(sandboxed, default), 'wasi' (sandboxed full CPython), "
-                "'local' (the host CPython), and 'quickjs' (sandboxed "
-                "JavaScript)"),
+                "'sandlock' (the host CPython, confined), 'local' (the host "
+                "CPython), and 'quickjs' (sandboxed JavaScript)"),
 }
 
 
