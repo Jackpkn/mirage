@@ -167,10 +167,14 @@ describe('du walk fallback (no native du op)', () => {
     ).rejects.toThrow('403 Forbidden')
   })
 
+  // GNU prints a count below one unit with no suffix at all, so -h and
+  // the plain form agree on this tree. The scaling and rounding rules
+  // are pinned against GNU in utils/utils.test.ts; here -h only has to
+  // reach the formatter.
   it('-h renders human-readable sizes', async () => {
     expect(await runDu([PathSpec.fromStrPath('/db')], { h: true })).toEqual([
-      '2B\t/db/sub',
-      '5B\t/db',
+      '2\t/db/sub',
+      '5\t/db',
     ])
   })
 })

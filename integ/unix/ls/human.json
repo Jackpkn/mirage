@@ -1,0 +1,80 @@
+{
+  "cases": [
+    {
+      "id": "ls_h_sub_kilobyte_has_no_suffix",
+      "seq": 960090,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "ls -lh /data/a.txt | awk '{print $5}'",
+      "expect": {
+        "exit": 0,
+        "stdout": "24\n",
+        "stderr": ""
+      },
+      "flags": [
+        "l",
+        "h"
+      ]
+    },
+    {
+      "id": "ls_h_matches_plain_size_under_1k",
+      "seq": 960091,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "[ \"$(ls -lh /data/a.txt | awk '{print $5}')\" = \"$(ls -l /data/a.txt | awk '{print $5}')\" ] && echo same",
+      "expect": {
+        "exit": 0,
+        "stdout": "same\n",
+        "stderr": ""
+      },
+      "flags": [
+        "l",
+        "h"
+      ]
+    }
+  ]
+}

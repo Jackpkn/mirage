@@ -326,11 +326,13 @@ def test_du_sc_fanout_prints_one_total():
 
 def test_du_ch_fanout_humanizes_the_total_once():
     # Summing each mount's already-humanized total would round twice and
-    # report 3.0K; the sub-runs render exact bytes and only the merge
-    # humanizes.
-    ws = _shadowed_workspace(top=1500, real=1500)
+    # report 2.2K; the sub-runs render exact bytes and only the merge
+    # humanizes. 1025 bytes rather than 1500 because GNU rounds up: 1500
+    # doubles to 3000, which single- and double-rounding both render
+    # 3.0K, so those sizes could no longer tell the two apart.
+    ws = _shadowed_workspace(top=1025, real=1025)
     io = asyncio.run(ws.execute("du -ch /base"))
-    assert _stdout(io) == "1.5K\t/base/inner\n2.9K\t/base\n2.9K\ttotal\n"
+    assert _stdout(io) == "1.1K\t/base/inner\n2.1K\t/base\n2.1K\ttotal\n"
 
 
 def test_du_max_depth_prunes_printing_not_accounting():

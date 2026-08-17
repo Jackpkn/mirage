@@ -230,7 +230,7 @@
       "command": "du -sh '/discord/Mirage HQ__100000000000000001/channels/general__200000000000000001/2026-06-01/files'",
       "expect": {
         "exit": 0,
-        "stdout": "29B\t/discord/Mirage HQ__100000000000000001/channels/general__200000000000000001/2026-06-01/files\n",
+        "stdout": "29\t/discord/Mirage HQ__100000000000000001/channels/general__200000000000000001/2026-06-01/files\n",
         "stderr": ""
       }
     },

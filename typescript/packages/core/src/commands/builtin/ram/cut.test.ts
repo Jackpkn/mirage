@@ -12,10 +12,10 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { RAM_COMMANDS } from '../index.ts'
+import { RAM_COMMANDS } from './index.ts'
 import { describe, expect, it } from 'vitest'
-import { materialize } from '../../../../io/types.ts'
-import { RAMResource } from '../../../../resource/ram/ram.ts'
+import { materialize } from '../../../io/types.ts'
+import { RAMResource } from '../../../resource/ram/ram.ts'
 const RAM_CUT = RAM_COMMANDS.filter((c) => c.name === 'cut' && c.filetype == null)
 
 const ENC = new TextEncoder()

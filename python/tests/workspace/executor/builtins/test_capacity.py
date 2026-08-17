@@ -88,6 +88,31 @@ async def test_df_quota_backend_reports_real_numbers():
 
 
 @pytest.mark.asyncio
+async def test_df_human_sizes_match_gnu():
+    # GNU coreutils 9.7, `numfmt --to=iec` on the quota's three numbers.
+    # 1024000 is exactly 1000 KiB and GNU keeps `1000K` rather than
+    # rolling to `1.0M`, because the roll happens at 1024, not 1000.
+    ws = _ws()
+    code, out = await _run(ws, "df -h /q")
+    assert code == 0
+    assert out.splitlines()[1].split()[:4] == [
+        "quota", "1000K", "400K", "600K"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_df_si_sizes_match_gnu():
+    # `-H` is powers of 1000, and GNU spells that kilo lowercase: `410k`,
+    # not the `410K` that means 1024. Read off a real `df -H` on a 100 KiB
+    # tmpfs (which prints `103k`) and confirmed with `numfmt --to=si`.
+    # Only kilo differs in case; M and up are capitals in both tables.
+    ws = _ws()
+    code, out = await _run(ws, "df -H /q")
+    assert code == 0
+    assert out.splitlines()[1].split()[:4] == ["quota", "1.1M", "410k", "615k"]
+
+
+@pytest.mark.asyncio
 async def test_df_type_column():
     ws = _ws()
     code, out = await _run(ws, "df -T /q")

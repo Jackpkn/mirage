@@ -1,0 +1,78 @@
+{
+  "cases": [
+    {
+      "id": "ls_d_directory_itself",
+      "seq": 960070,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "ls -d /data/sub",
+      "expect": {
+        "exit": 0,
+        "stdout": "/data/sub\n",
+        "stderr": ""
+      },
+      "flags": [
+        "d"
+      ]
+    },
+    {
+      "id": "ls_d_keeps_the_typed_slash",
+      "seq": 960071,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "ls -d /data/sub/",
+      "expect": {
+        "exit": 0,
+        "stdout": "/data/sub/\n",
+        "stderr": ""
+      },
+      "flags": [
+        "d"
+      ]
+    }
+  ]
+}

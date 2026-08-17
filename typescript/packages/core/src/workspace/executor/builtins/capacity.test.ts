@@ -89,6 +89,29 @@ describe('df', () => {
     await ws.close()
   })
 
+  // GNU coreutils 9.7, `numfmt --to=iec` on the quota's three numbers.
+  // 1024000 is exactly 1000 KiB and GNU keeps `1000K` rather than rolling
+  // to `1.0M`, because the roll happens at 1024, not 1000.
+  it('human sizes match GNU', async () => {
+    const ws = await makeWs()
+    const [code, out] = await run(ws, 'df -h /q')
+    expect(code).toBe(0)
+    expect(cols(out, 1).slice(0, 4)).toEqual(['ram', '1000K', '400K', '600K'])
+    await ws.close()
+  })
+
+  // `-H` is powers of 1000, and GNU spells that kilo lowercase: `410k`,
+  // not the `410K` that means 1024. Read off a real `df -H` on a 100 KiB
+  // tmpfs (which prints `103k`) and confirmed with `numfmt --to=si`. Only
+  // kilo differs in case; M and up are capitals in both tables.
+  it('SI sizes match GNU', async () => {
+    const ws = await makeWs()
+    const [code, out] = await run(ws, 'df -H /q')
+    expect(code).toBe(0)
+    expect(cols(out, 1).slice(0, 4)).toEqual(['ram', '1.1M', '410k', '615k'])
+    await ws.close()
+  })
+
   it('type column', async () => {
     const ws = await makeWs()
     const [, out] = await run(ws, 'df -T /q')

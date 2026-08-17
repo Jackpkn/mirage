@@ -14,7 +14,7 @@
 
 import math
 
-from mirage.commands.builtin.utils.formatting import _human_size
+from mirage.commands.builtin.utils.formatting import _human_size, human_scaled
 from mirage.runtime.types import DispatchFn
 from mirage.types import CapacityResult, CapacityState, PathSpec
 from mirage.utils.path import resolve_path
@@ -26,7 +26,7 @@ from mirage.workspace.mount.registry import MountRegistry
 from mirage.workspace.session import Session
 
 _BLOCK_SUFFIX = {"K": 1024, "M": 1024**2, "G": 1024**3, "T": 1024**4}
-_SI_UNITS = ("B", "K", "M", "G", "T")
+_SI_UNITS = ("", "k", "M", "G", "T", "P", "E")
 
 
 def _parse_block(text: str) -> tuple[int, str] | None:
@@ -87,19 +87,17 @@ def _last_format(args: list[str | PathSpec]) -> str | None:
 
 
 def _human_si(n: int) -> str:
-    """Human-readable size in powers of 1000 (df -H), mirroring the 1024
-    ``_human_size`` shape used by df -h / du -h.
+    """Human-readable size in powers of 1000 (df -H).
+
+    Same rounding as ``-h``; GNU runs both through one ``human_readable``.
 
     Args:
         n (int): byte count.
+
+    Returns:
+        str: the size as GNU would print it.
     """
-    value = float(n)
-    i = 0
-    while value >= 1000 and i < len(_SI_UNITS) - 1:
-        value /= 1000
-        i += 1
-    text = str(round(value)) if i == 0 else f"{value:.1f}"
-    return f"{text}{_SI_UNITS[i]}"
+    return human_scaled(n, 1000, _SI_UNITS)
 
 
 def _scale(nbytes: int, block: int) -> str:

@@ -150,6 +150,38 @@ jobs:
           node --import tsx/esm pyodide/vfs.ts 2>&1 \
             | bash ../../integ/check_lines.sh ../../integ/truth/typescript/pyodide_vfs.txt
 
+  audit:
+    needs: changes
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.outputs.hit == 'true') }}
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v6.0.10
+        with:
+          version: 10.32.1
+
+      # 24 rather than the 22 the test job uses: this step runs no project
+      # code, so it is free to track the newer line the integ workflow is
+      # already on.
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: pnpm
+          cache-dependency-path: typescript/pnpm-lock.yaml
+
+      # Advisories read against the resolved lockfile, which is what the 27
+      # hand-written pnpm.overrides in typescript/package.json pin. Those
+      # pins were the only thing between a published advisory and this
+      # tree, and nothing re-checked them. Informational like the Python
+      # audit: a fresh CVE reports without blocking a merge.
+      - name: Audit dependencies for known vulnerabilities (informational)
+        working-directory: typescript
+        run: pnpm audit --no-color
+
   gate:
     name: test-typescript-gate
     runs-on: ubuntu-latest

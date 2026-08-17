@@ -41,19 +41,21 @@ def testdu_total_strips_per_run_totals_and_sums():
 
 def testdu_total_humanizes_from_exact_bytes_without_rounding_twice():
     # run_fanout forces -h off on the native runs, so the rows arrive in
-    # bytes: 1500 + 1500 is 2.9K, not the 3.0K that summing two "1.5K"
-    # readings back through parse_size would give.
+    # bytes: 1025 + 1025 is 2.1K, not the 2.2K that summing two "1.1K"
+    # readings back through parse_size would give. 1500 would not show
+    # the difference -- GNU rounds up, so 3000 bytes and two 1.5K
+    # readings both render 3.0K.
     runs = [
-        _op(b"1500\t/a/x\n1500\ttotal\n"),
-        _op(b"1500\t/b/z\n1500\ttotal\n"),
+        _op(b"1025\t/a/x\n1025\ttotal\n"),
+        _op(b"1025\t/b/z\n1025\ttotal\n"),
     ]
     out = du_total(runs, human=True).decode()
-    assert out == "1.5K\t/a/x\n1.5K\t/b/z\n2.9K\ttotal\n"
+    assert out == "1.1K\t/a/x\n1.1K\t/b/z\n2.1K\ttotal\n"
 
 
 def testdu_total_leaves_a_row_without_a_tab_alone():
     out = du_total([_op(b"odd-row\n0\ttotal\n")], human=True).decode()
-    assert out == "odd-row\n0B\ttotal\n"
+    assert out == "odd-row\n0\ttotal\n"
 
 
 def testmerge_du_totals_takes_rendered_blocks():

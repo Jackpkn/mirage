@@ -33,7 +33,7 @@ import { stat as emailStat } from '../../../core/email/stat.ts'
 import { detectScope } from '../../../core/email/scope.ts'
 import { searchAndFormat } from '../../../core/email/search.ts'
 import { EMAIL_IO } from './io.ts'
-import { fileReadProvision } from './provision.ts'
+import { fileReadProvision } from './_provision.ts'
 
 const resolveGlob = resolveGlobOf(EMAIL_IO)
 

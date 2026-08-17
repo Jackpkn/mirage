@@ -19,7 +19,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { RedisAccessor } from '../../../accessor/redis.ts'
 import { writeBytes } from '../../../core/redis/write.ts'
 import { RedisStore } from '../../../resource/redis/store.ts'
-import { fileReadProvision, headTailProvision, metadataProvision } from './provision.ts'
+import { fileReadProvision, headTailProvision, metadataProvision } from './_provision.ts'
 
 const REDIS_URL = process.env.REDIS_URL
 const skip = REDIS_URL === undefined

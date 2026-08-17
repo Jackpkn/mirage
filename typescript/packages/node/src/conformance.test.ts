@@ -51,6 +51,7 @@ interface ConformanceCase {
   stdin_text?: string
   stdin_base64?: string
   matrix: Record<string, string[]>
+  divergence?: string
   expect: ConformanceExpect
 }
 
@@ -107,6 +108,30 @@ function validateMatrix(c: ConformanceCase, specName: string): void {
 
   if (!Object.values(c.matrix).some((backends) => backends.length > 0)) {
     throw new Error(`case ${c.id} in ${specName} applies to no backend`)
+  }
+
+  // A case is a parity claim, so the two languages have to be asked the
+  // same question. Dropping a backend from one side reads as coverage
+  // while it is really an unexamined divergence -- and it is invisible,
+  // because the side that still lists the backend goes green. Anything
+  // genuinely language-specific says so in a `divergence` key, which the
+  // README calls the per-backend override.
+  // A non-empty string, not merely a present key: `"divergence": null`
+  // or `""` would otherwise buy the exemption while explaining nothing,
+  // which is the one thing the key exists to supply.
+  if (typeof c.divergence !== 'string' || c.divergence.trim() === '') {
+    const python = new Set(c.matrix.python ?? [])
+    const typescript = new Set(c.matrix.typescript ?? [])
+    const onlyPython = [...python].filter((b) => !typescript.has(b)).sort()
+    const onlyTypescript = [...typescript].filter((b) => !python.has(b)).sort()
+    if (onlyPython.length > 0 || onlyTypescript.length > 0) {
+      throw new Error(
+        `case ${c.id} in ${specName} has an asymmetric matrix ` +
+          `(python-only: ${onlyPython.join(', ') || 'none'}; ` +
+          `typescript-only: ${onlyTypescript.join(', ') || 'none'}). ` +
+          'Run it on both, or record why it cannot with a `divergence` key.',
+      )
+    }
   }
 }
 
@@ -254,4 +279,48 @@ describe('command conformance matrix validation', () => {
       validateMatrix(c, 'valid.json')
     }).not.toThrow()
   })
+
+  it('rejects an asymmetric matrix', () => {
+    const c = {
+      id: 'narrowed_matrix',
+      cmd: 'true',
+      matrix: { python: ['ram', 'disk', 'redis'], typescript: ['ram'] },
+      expect: { exit: 0, stdout_text: '', stderr_text: '' },
+    }
+    expect(() => {
+      validateMatrix(c, 'narrowed.json')
+    }).toThrow('asymmetric matrix')
+  })
+
+  it('allows an asymmetric matrix that says why', () => {
+    const c = {
+      id: 'declared_divergence',
+      cmd: 'true',
+      matrix: { python: ['ram', 'disk', 'redis'], typescript: ['ram'] },
+      divergence: 'TypeScript has no redis-backed foo yet (#1234).',
+      expect: { exit: 0, stdout_text: '', stderr_text: '' },
+    }
+    expect(() => {
+      validateMatrix(c, 'declared.json')
+    }).not.toThrow()
+  })
+
+  // The key has to carry the reason, not merely exist. A null or blank
+  // value would buy the exemption while explaining nothing, which is the
+  // one thing it is there to supply.
+  it.each([[null], [''], ['   '], [true], [1], [[]]])(
+    'rejects an empty divergence (%p)',
+    (value) => {
+      const c = {
+        id: 'blank_divergence',
+        cmd: 'true',
+        matrix: { python: ['ram', 'disk', 'redis'], typescript: ['ram'] },
+        divergence: value as unknown as string,
+        expect: { exit: 0, stdout_text: '', stderr_text: '' },
+      }
+      expect(() => {
+        validateMatrix(c, 'blank.json')
+      }).toThrow('asymmetric matrix')
+    },
+  )
 })

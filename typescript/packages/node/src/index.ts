@@ -57,7 +57,7 @@ export {
   headTailProvision,
   metadataProvision,
   type RedisResourceLike,
-} from './commands/builtin/redis/provision.ts'
+} from './commands/builtin/redis/_provision.ts'
 export { RedisFileCacheStore, type RedisFileCacheOptions } from './cache/redis/file.ts'
 export { FuseManager } from './workspace/fuse.ts'
 export { MirageFS, type MirageFSOptions, type FuseAttr } from './fuse/fs.ts'
