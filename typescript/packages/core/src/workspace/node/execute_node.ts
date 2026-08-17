@@ -12,7 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { seedVar } from '../session/state.ts'
+import { deref, seedVar } from '../session/state.ts'
 import type { Runtime } from '../../runtime/base.ts'
 import type { PolicyDecision } from '../../runtime/policy/index.ts'
 import { asyncChain } from '../../io/stream.ts'
@@ -88,9 +88,10 @@ import type { Namespace } from '../mount/namespace/namespace.ts'
 import type { MountRegistry } from '../mount/registry.ts'
 import type { Session } from '../session/session.ts'
 import { ExecutionNode } from '../types.ts'
-import { resolveGlobs } from '../expand/globs.ts'
+import { globOptions, resolveGlobs } from '../expand/globs.ts'
 import { expandDoubleBracket, expandTestExpr } from './test_expr.ts'
 import { executeProgram } from './program.ts'
+import { installExecRedirects } from '../executor/builtins/exec_cmd.ts'
 import { executeCommand } from './command_dispatch.ts'
 import { PolicyDenied } from '../../policy/errors.ts'
 import type { SessionView } from '../../ops/types.ts'
@@ -237,6 +238,7 @@ async function expandArrayItems(
     registry,
     session.shellOptions.noglob === true,
     namespace,
+    globOptions(session),
   )
   return resolved.map((w) => wordText(w))
 }
@@ -335,6 +337,14 @@ export interface ExecuteNodeDeps {
   runtimeBindings?: Record<string, Runtime>
   routingDecision?: PolicyDecision
   signal?: AbortSignal
+  /**
+   * Parse one line into a tree. Only alias expansion needs it: an alias
+   * rewrites the head word textually and the result is read as a fresh
+   * line, so a value holding a pipe is a pipe. Absent (a unit test
+   * driving the walker directly) means an alias definition is stored and
+   * printed but never expanded.
+   */
+  reparse?: (line: string) => TSNodeLike
   /**
    * Console this node writes its output to as it is produced.
    * When set, the node emits and returns no stdout; when unset
@@ -435,6 +445,8 @@ function mergeConversionErrors(result: Result, errors: readonly string[]): Resul
 // a separate seam through every expansion site, so a name carrying it
 // declares and prints, and nothing more, rather than a partial alias
 // that works in some spellings and not others.
+// `-n` stores the reference and every reader and writer resolves through
+// it (`deref` in `session/state`).
 const DECLARE_LETTERS: ReadonlySet<string> = new Set('aAfFgiIlnprtux')
 const DECLARE_USAGE =
   'declare: usage: declare [-aAfFgiIlnrtux] [name[=value] ...] or declare -p [-aAfFilnrtux] [name ...]'
@@ -624,6 +636,18 @@ async function stampExport(
   return null
 }
 
+/**
+ * Whether a redirected statement's command is a bare `exec`: a command
+ * name and no arguments, so its redirects are the shell's own rather
+ * than one command's. `exec cmd` is not bare and falls through to the
+ * command path, which refuses it.
+ */
+function isBareExec(command: TSNodeLike | null): boolean {
+  if (command?.type !== NT.COMMAND) return false
+  const named = command.namedChildren
+  return named.length === 1 && named[0]?.type === NT.COMMAND_NAME && getText(named[0]) === 'exec'
+}
+
 export async function executeNode(
   deps: ExecuteNodeDeps,
   node: TSNodeLike,
@@ -693,7 +717,7 @@ export async function executeNode(
   }
 
   if (kind === NodeKind.PROGRAM) {
-    return executeProgram(stream, node, session, stdin, callStack, jobTable, agentId)
+    return executeProgram(stream, node, session, stdin, callStack, jobTable, agentId, dispatch)
   }
 
   if (kind === NodeKind.COMMAND) {
@@ -712,6 +736,7 @@ export async function executeNode(
       deps.runtimeBindings,
       deps.routingDecision,
       deps.signal,
+      deps.reparse,
     )
   }
 
@@ -800,6 +825,13 @@ export async function executeNode(
       callStack,
       sessionView(session, registry.policies),
     )
+    // `exec > file` with no command installs the redirects on the shell
+    // for every later statement, rather than applying them to one
+    // command. `exec cmd > file` still has a command and falls through
+    // to the ordinary path, which refuses the command form.
+    if (isBareExec(command)) {
+      return await installExecRedirects(dispatch, session, expandedRedirects)
+    }
     let [stdout, io, execNode] = await handleRedirect(
       recurse,
       dispatch,
@@ -837,7 +869,16 @@ export async function executeNode(
       cs: CallStack | null,
       opts?: ExecuteNodeOpts,
     ): Promise<Result> => executeNode(withOpts(subDeps, opts), n, s, inp, cs)
-    return handleSubshell(subRecurse, node.children, session, stdin, callStack, subTable, agentId)
+    return handleSubshell(
+      subRecurse,
+      node.children,
+      session,
+      stdin,
+      callStack,
+      subTable,
+      agentId,
+      dispatch,
+    )
   }
 
   if (kind === NodeKind.COMPOUND && node.children[0]?.type === NT.ARITH_OPEN) {
@@ -972,6 +1013,7 @@ export async function executeNode(
       registry,
       session.shellOptions.noglob === true,
       deps.namespace,
+      globOptions(session),
     )
     if (kind === NodeKind.SELECT) {
       return handleSelect(
@@ -1188,9 +1230,10 @@ export async function executeNode(
           )
           continue
         }
-        if (noteLocalArray(session, bare)) {
+        if (!flagChars.has('g') && noteLocalArray(session, bare)) {
           // Inside a function this shadows whatever the caller had with
-          // a fresh empty array of the declared kind.
+          // a fresh empty array of the declared kind; `-g` declares at
+          // global scope instead.
           seedVar(session, bare, wantAssoc ? {} : [])
         } else if (wantAssoc && !Object.hasOwn(session.assocs, bare)) {
           // At top level an existing scalar becomes the value at the
@@ -1272,6 +1315,8 @@ export async function executeNode(
         stored2,
         flagChars.has('A'),
         shaping,
+        flagChars.has('n') && !plusChars.has('n'),
+        flagChars.has('g'),
       )
       const plusRefused = plusRefusals(cmdWord, session, declView2, plusChars, assignments, staged)
       if (plusRefused !== null) return plusRefused
@@ -1350,7 +1395,12 @@ export async function executeNode(
     const nameSource = subscriptNode ?? node
     const nameNode = nameSource.namedChildren.find((c) => c.type === NT.VARIABLE_NAME)
     const eq = text.indexOf('=')
-    const key = nameNode !== undefined ? nameNode.text : text.slice(0, eq)
+    const spelled = nameNode !== undefined ? nameNode.text : text.slice(0, eq)
+    // A name reference assigns to its target, whatever the shape of the
+    // assignment; an unaimed one (`declare -n r; r=v`) resolves to itself
+    // and takes the value as the target's name. The spelling is kept for
+    // slicing the subscript out of the source.
+    const key = deref(session, spelled) || spelled
     const append = node.children.some((c) => c.type === '+=')
     if (session.readonlyVars.has(key)) {
       // A bare assignment to a readonly variable is a fatal
@@ -1436,14 +1486,14 @@ export async function executeNode(
     if (subscriptNode !== null) {
       const subText = await subscriptKeyText(
         subscriptNode,
-        key,
+        spelled,
         session,
         executeFn,
         callStack,
         sessionView(session, registry.policies),
       )
       const heldMap = session.assocs[key]
-      const rawSub = subscriptNode.text.slice(key.length + 1, -1)
+      const rawSub = subscriptNode.text.slice(spelled.length + 1, -1)
       if (rawSub.trim() === '' || (heldMap !== undefined && subText === '')) {
         // bash aborts the whole line on a bad assignment subscript
         // (status 1), naming the raw spelling (`m[$e]: bad array

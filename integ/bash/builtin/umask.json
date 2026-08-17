@@ -1,0 +1,106 @@
+{
+  "cases": [
+    {
+      "id": "umask_prints_octal_and_symbolic",
+      "seq": 940010,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "umask; umask -S; umask -p",
+      "expect": {
+        "exit": 0,
+        "stdout": "0022\nu=rwx,g=rx,o=rx\numask 0022\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "umask_sets_octal_and_symbolic",
+      "seq": 940011,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "umask 077; umask; umask -S; umask g+w; umask; umask 022; umask",
+      "expect": {
+        "exit": 0,
+        "stdout": "0077\nu=rwx,g=,o=\n0057\n0022\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "umask_refuses_bad_modes",
+      "seq": 940012,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "umask 999; echo rc=$?; umask; umask -x; echo rc=$?; umask",
+      "expect": {
+        "exit": 0,
+        "stdout": "rc=1\n0022\nrc=2\n0022\n",
+        "stderr": "bash: umask: 999: octal number out of range\nbash: umask: -x: invalid option\numask: usage: umask [-p] [-S] [mode]\n"
+      }
+    }
+  ]
+}

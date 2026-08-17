@@ -23,6 +23,7 @@ from mirage.policy import CommandContext, PolicyDenied, resolve_limit
 from mirage.policy.types import SessionContext
 from mirage.runtime.policy import PolicyDecision
 from mirage.shell.bytes import encode_text
+from mirage.shell.parse import find_syntax_error, parse, syntax_error_result
 from mirage.shell.types import NodeType as NT
 from mirage.shell.types import ShellBuiltin as SB
 from mirage.shell.variable import ShellVar, VarAttr
@@ -30,6 +31,10 @@ from mirage.shell.xtrace import trace_command
 from mirage.types import PathSpec, Producer, word_text
 from mirage.utils.glob_walk import glob_pattern
 from mirage.utils.path import CycleError, resolve_path
+from mirage.workspace.executor.builtins.alias import (alias_command_text,
+                                                      handle_alias,
+                                                      handle_unalias)
+from mirage.workspace.executor.builtins.exec_cmd import handle_exec_command
 from mirage.workspace.executor.builtins.scope import _to_scope
 from mirage.workspace.executor.command import handle_command
 from mirage.workspace.executor.command.routing import (path_flag_scopes,
@@ -50,16 +55,18 @@ from mirage.workspace.types import ExecutionNode
 from mirage.shell.helpers import (  # isort: skip
     ProcessSubDirection, get_command_name, get_parts, get_process_sub_body,
     get_process_sub_direction, get_text, split_env_prefix)
+
 from mirage.workspace.executor.builtins import (  # isort: skip
     accepts_line, follow_paths, handle_bash, handle_cd, handle_chgrp,
     handle_exec_path, handle_chmod, handle_chown, handle_command_builtin,
     handle_df, handle_echo, handle_env, handle_eval, handle_exit,
-    handle_export, handle_getopts, handle_history, handle_ln, handle_local,
-    handle_man, handle_printenv, handle_printf, handle_read, handle_readlink,
-    handle_return, handle_set, handle_shift, handle_sleep, handle_source,
-    handle_test, handle_timeout, handle_touch, handle_trap, handle_type,
-    handle_unset, handle_which, handle_whoami, handle_xargs, link_flags,
-    prepare_mv, strip_link_operands)
+    handle_export, handle_getopts, handle_history, handle_let, handle_ln,
+    handle_local, handle_man, handle_mapfile, handle_printenv, handle_printf,
+    handle_read, handle_readlink, handle_return, handle_set, handle_shift,
+    handle_sleep, handle_source, handle_test, handle_timeout, handle_touch,
+    handle_trap, handle_shopt, handle_type, handle_umask, handle_unset,
+    handle_which, handle_whoami, handle_xargs, link_flags, prepare_mv,
+    strip_link_operands)
 
 _CdArgs = list[str | PathSpec]
 
@@ -140,6 +147,41 @@ async def execute_command(
     """Dispatch a command node by name."""
     name = get_command_name(node)
     assignment_nodes, parts = split_env_prefix(get_parts(node))
+
+    # ── alias expansion ─────────────────────────
+    # bash rewrites the head word of a simple command before any other
+    # expansion, textually, and reads the result as a fresh line: an
+    # alias holding a pipe is a pipe. Only an unquoted plain word
+    # qualifies (`\x` and `'x'` are never aliases), and `alias_value`
+    # applies the rest of bash's rules (expand_aliases, the same-line
+    # mark, the no-second-expansion stack). The rewritten line runs
+    # through the same executor with the same call stack, so `$1`
+    # inside a function still means the function's argument.
+    if (session.aliases and parts and parts[0].type == NT.COMMAND_NAME
+            and parts[0].named_children
+            and parts[0].named_children[0].type == NT.WORD):
+        head_node = parts[0]
+        head = get_text(head_node)
+        mark = (session._parse_current, node.start_point[0])
+        source = get_text(node)
+        base = node.start_byte
+        rest = source[head_node.end_byte - base:]
+        rewritten = alias_command_text(session, head, rest, mark)
+        if rewritten is not None:
+            line = source[:head_node.start_byte - base] + rewritten
+            ast = parse(line)
+            offending = find_syntax_error(ast)
+            if offending is not None:
+                io = syntax_error_result(offending)
+                bad = io.stderr if isinstance(io.stderr, bytes) else b""
+                return None, io, ExecutionNode(command=head,
+                                               exit_code=io.exit_code,
+                                               stderr=bad)
+            session._alias_stack.append(head)
+            try:
+                return await recurse(ast, session, stdin, call_stack)
+            finally:
+                session._alias_stack.pop()
 
     prefix_assignments: list[tuple[str, str]] = []
     for p in assignment_nodes:
@@ -300,9 +342,19 @@ async def _dispatch_command_body(
     # invocations get their real command's policy.
     resolved = resolve_limit(argv.name) if argv.name else None
     timeout = (resolved.timeout_seconds if resolved is not None else None)
-    body = _run_argv(recurse, dispatch, registry, namespace, execute_fn, argv,
-                     session, stdin, call_stack, job_table, cancel,
-                     routing_decision)
+    body = _run_argv(recurse,
+                     dispatch,
+                     registry,
+                     namespace,
+                     execute_fn,
+                     argv,
+                     session,
+                     stdin,
+                     call_stack,
+                     job_table,
+                     cancel,
+                     routing_decision,
+                     row=node.start_point[0])
     # Capture xtrace before the body runs so `set -x` itself is not
     # traced (bash enables tracing only for the following commands).
     xtrace = bool(session.shell_options.get("xtrace"))
@@ -335,8 +387,14 @@ async def _run_argv(
     job_table,
     cancel: asyncio.Event | None = None,
     routing_decision: PolicyDecision | None = None,
+    row: int = 0,
 ) -> tuple[Any, IOResult, ExecutionNode]:
-    """Route one expanded command to its builtin or mount handler."""
+    """Route one expanded command to its builtin or mount handler.
+
+    ``row`` is the command's line within its parse, which only ``alias``
+    reads: a definition remembers where it was made so a use on the
+    same line does not see it, as bash's line reader would not.
+    """
     name = argv.name
 
     # ── boundary globs ──────────────────────────
@@ -557,6 +615,15 @@ async def _run_argv(
             args, session, stdin,
             session_view(session, namespace.registry.policies))
 
+    if name in (SB.MAPFILE, SB.READARRAY):
+        return await handle_mapfile(args,
+                                    session,
+                                    stdin,
+                                    execute_fn,
+                                    session_view(session,
+                                                 namespace.registry.policies),
+                                    cmd=str(name))
+
     if name == SB.SET:
         return await handle_set(args, session, call_stack=call_stack)
 
@@ -570,6 +637,28 @@ async def _run_argv(
 
     if name == SB.TRAP:
         return await handle_trap(session)
+
+    if name == SB.LET:
+        return await handle_let(
+            args, session, session_view(session, namespace.registry.policies))
+
+    if name == SB.UMASK:
+        return await handle_umask(args, session)
+
+    if name == SB.EXEC:
+        # The redirect-only form is intercepted where redirects are
+        # applied; a bare `exec` reaching here has no redirects, and
+        # `exec cmd` is the process-replacement form this refuses.
+        return await handle_exec_command(args, session)
+
+    if name == SB.SHOPT:
+        return await handle_shopt(args, session)
+
+    if name == SB.ALIAS:
+        return await handle_alias(args, session, (session._parse_current, row))
+
+    if name == SB.UNALIAS:
+        return await handle_unalias(args, session)
 
     if name in (SB.TEST, SB.BRACKET, SB.DOUBLE_BRACKET):
         test_args = list(operands)

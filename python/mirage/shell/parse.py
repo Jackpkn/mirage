@@ -15,6 +15,8 @@
 import tree_sitter
 import tree_sitter_bash
 
+from mirage.io import IOResult
+
 BASH_LANGUAGE = tree_sitter.Language(tree_sitter_bash.language())
 TS_PARSER = tree_sitter.Parser(BASH_LANGUAGE)
 
@@ -327,3 +329,15 @@ def find_syntax_error(node: tree_sitter.Node) -> str | None:
         if child.is_named:
             previous = child
     return None
+
+
+def syntax_error_result(offending: str) -> IOResult:
+    """Exit 2 with the bash-style diagnostic for an unparsable line.
+
+    Args:
+        offending (str): the span the parser flagged.
+    """
+    snippet = offending.strip()
+    err = (f"mirage: syntax error near {snippet!r}\n".encode()
+           if snippet else b"mirage: syntax error in command\n")
+    return IOResult(exit_code=2, stderr=err)

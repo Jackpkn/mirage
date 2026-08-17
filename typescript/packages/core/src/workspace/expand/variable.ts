@@ -37,6 +37,8 @@ import {
   visibleArrays,
   visibleAssocs,
   visibleEnv,
+  deref,
+  namerefTarget,
 } from '../session/state.ts'
 import { homeDir } from '../session/shell_dirs.ts'
 import { decodeAnsiC } from '../../shell/escapes.ts'
@@ -192,6 +194,8 @@ export function lookupVar(
     const localVal = callStack.getLocal(name)
     if (localVal !== null) return localVal
   }
+  // A name reference resolves to its target before the store is read.
+  name = deref(session, name) || name
   const fromArray = visibleArrays(session)[name]
   if (fromArray !== undefined) {
     return arrayGet(fromArray, 0)
@@ -655,9 +659,10 @@ export async function expandArrayAt(
     const params = positionalArgs(session, callStack)
     arr = p.op === ':' ? [session.argv0, ...params] : params
   } else {
-    arr = visibleArrays(session)[p.varName ?? '']
+    const arrName = p.varName === null ? '' : deref(session, p.varName) || p.varName
+    arr = visibleArrays(session)[arrName]
     if (arr === undefined && p.varName !== null) {
-      const amap = visibleAssocs(session)[p.varName]
+      const amap = visibleAssocs(session)[arrName]
       if (amap !== undefined) {
         if (p.indirectOp) {
           // Sorted keys, the same deterministic order every other walk
@@ -671,7 +676,8 @@ export async function expandArrayAt(
     }
   }
   if (arr === undefined) {
-    const scalar = env[p.varName ?? '']
+    const scalarName = p.varName === null ? '' : deref(session, p.varName) || p.varName
+    const scalar = env[scalarName]
     arr = scalar === undefined ? [] : [scalar]
   }
   if (p.indirectOp) return arrayIndices(arr).map((i) => String(i))
@@ -831,8 +837,11 @@ export async function expandBraces(
   // to assign through.
   let writeKey: string | null = null
 
-  const amap = p.varName !== null ? visibleAssocs(session)[p.varName] : undefined
-  if (p.subscript !== null && p.varName !== null && amap !== undefined) {
+  // A subscripted reference reads and writes through a name reference
+  // the way a bare one does, so the target is resolved once here.
+  const baseName = p.varName === null ? null : deref(session, p.varName) || p.varName
+  const amap = baseName !== null ? visibleAssocs(session)[baseName] : undefined
+  if (p.subscript !== null && baseName !== null && amap !== undefined) {
     if (p.subscript === '@' || p.subscript === '*') {
       // Sorted-key order everywhere an associative array is walked:
       // bash iterates its hash table, whose order is unpredictable,
@@ -860,15 +869,15 @@ export async function expandBraces(
       varInEnv = amap[key] !== undefined
       writeKey = key
     }
-  } else if (p.subscript !== null && p.varName !== null) {
-    let arr = arrays[p.varName]
+  } else if (p.subscript !== null && baseName !== null) {
+    let arr = arrays[baseName]
     if (arr === undefined) {
       // A scalar is element 0 of a one-element array, even when empty:
       // ${#x[@]} is 1 for x="" but 0 for an unset name.
-      const scalar = env[p.varName]
+      const scalar = env[baseName]
       arr = scalar === undefined ? [] : [scalar]
     }
-    varInEnv = p.varName in arrays || p.varName in env
+    varInEnv = baseName in arrays || baseName in env
     if (p.subscript === '@' || p.subscript === '*') {
       // ${a[@]} and friends see only the assigned elements: a hole left
       // by `unset a[i]` (or skipped by a[9]=v) neither expands nor
@@ -927,6 +936,10 @@ export async function expandBraces(
   }
 
   if (p.indirectOp) {
+    // `${!r}` on a name reference is the target's *name*, not an
+    // indirection through the value.
+    const target = p.varName !== null ? namerefTarget(session, p.varName) : null
+    if (target !== null) return target
     return val !== '' ? lookupVar(val, session, callStack) : ''
   }
   if (p.lengthOp) return String(val.length)

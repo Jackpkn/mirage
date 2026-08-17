@@ -20,6 +20,7 @@ import {
   operandSpelling,
 } from '../../../../utils/errors.ts'
 import { DEFAULT_DIR_MODE, parseChmod } from '../../../../utils/mode.ts'
+import { DEFAULT_UMASK, sessionUmask } from '../../../../context/session_context.ts'
 import { specOf } from '../../../spec/builtins.ts'
 import { FlagView } from '../../../spec/types.ts'
 import { mkdirLinkRefusal } from '../../utils/slash_links.ts'
@@ -50,13 +51,21 @@ export const MKDIR_BUILDER: Builder = {
     }
     let mode: number | null = null
     if (modeText !== null) {
-      // Symbolic clauses build on what mirage renders for a new directory,
-      // since there is no umask to subtract from.
+      // Symbolic clauses build on what mirage renders for a new
+      // directory; `-m` is applied after the create, so the session's
+      // umask does not reach it, which is GNU's rule too.
       mode = parseChmod(modeText, DEFAULT_DIR_MODE)
       if (mode === null) throw new Error(`mkdir: invalid mode '${modeText}'`)
       if (setAttrs === undefined) {
         throw new Error('mkdir: --mode is not supported on this backend')
       }
+    } else if (setAttrs !== undefined) {
+      // A new directory is 0777 masked by the session's umask. Only a
+      // mask away from bash's default costs a setattr, since 755 is what
+      // every backend already renders for a fresh directory; parents
+      // made by `-p` keep that default.
+      const umask = sessionUmask()
+      if (umask !== DEFAULT_UMASK) mode = 0o777 & ~umask
     }
     const resolved = await resolveGlobOf(ops)(accessor, paths, idx)
     const lines: string[] = []

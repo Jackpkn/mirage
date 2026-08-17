@@ -18,7 +18,7 @@ import type { Session } from '../../../session/session.ts'
 import { ExecutionNode } from '../../../types.ts'
 import { lastOf, scanOptions } from '../getopt.ts'
 import type { Result } from '../shared.ts'
-import { describe, locations } from './classify.ts'
+import { classifyAll, describe, locations } from './classify.ts'
 import { TYPE_OPTIONS, TYPE_USAGE, WHICH_OPTIONS, WHICH_USAGE } from './constants.ts'
 import { NameKind } from './types.ts'
 
@@ -66,7 +66,8 @@ export function handleType(
       continue
     }
     if (mode === 't') outLines.push(...kinds.map((kind) => `${kind}\n`))
-    else if (mode === null) outLines.push(...kinds.map((kind) => `${describe(name, kind)}\n`))
+    else if (mode === null)
+      outLines.push(...kinds.map((kind) => `${describe(name, kind, session)}\n`))
   }
   const out = outLines.length > 0 ? enc.encode(outLines.join('')) : null
   const err = enc.encode(errLines.join(''))
@@ -108,7 +109,13 @@ export function handleWhich(
   const outLines: string[] = []
   let allFound = true
   for (const name of scan.operands) {
-    const kinds = locations(name, session, registry, allMode, NameKind.KEYWORD)
+    // `which` is a program, not the shell: it knows neither reserved
+    // words nor aliases, so both layers are dropped before the top is
+    // taken.
+    let kinds = classifyAll(name, session, registry).filter(
+      (kind) => kind !== NameKind.KEYWORD && kind !== NameKind.ALIAS,
+    )
+    if (!allMode) kinds = kinds.slice(0, 1)
     if (kinds.length === 0) {
       allFound = false
       continue

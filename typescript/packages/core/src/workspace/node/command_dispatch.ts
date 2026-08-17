@@ -43,6 +43,14 @@ import type { TSNodeLike } from '../../shell/types.ts'
 import { handleCommand } from '../executor/command.ts'
 import { pathFlagScopes, positionalScopes } from '../executor/command/routing.ts'
 import { toScope } from '../executor/builtins/scope.ts'
+import {
+  type AliasMark,
+  aliasCommandText,
+  handleAlias,
+  handleUnalias,
+} from '../executor/builtins/alias.ts'
+import { handleExecCommand } from '../executor/builtins/exec_cmd.ts'
+import { findSyntaxError } from '../../shell/parse.ts'
 import { resolvePath } from '../../utils/path.ts'
 import { runWithTimeout } from '../../commands/builtin/utils/limit.ts'
 import { PolicyDenied, resolveLimit } from '../../policy/index.ts'
@@ -67,9 +75,11 @@ import {
   handleDf,
   handleChmod,
   handleChown,
+  handleLet,
   handleLn,
   handleLocal,
   handleMan,
+  handleMapfile,
   handlePrintenv,
   handlePrintf,
   handleRead,
@@ -80,11 +90,13 @@ import {
   handleReturn,
   handleSet,
   handleShift,
+  handleShopt,
   handleSleep,
   handleSource,
   handleTest,
   handleTimeout,
   handleTrap,
+  handleUmask,
   handleUnset,
   handleWhoami,
   handleXargs,
@@ -182,9 +194,58 @@ export async function executeCommand(
   runtimeBindings?: Record<string, Runtime>,
   routingDecision?: PolicyDecision,
   signal?: AbortSignal,
+  // Parse one line into a tree; only alias expansion needs it. Absent
+  // means an alias is stored and printed but never expanded.
+  reparse?: (line: string) => TSNodeLike,
 ): Promise<Result> {
   const name = getCommandName(node)
   const [assignmentNodes, nonPrefixParts] = splitEnvPrefix(getParts(node))
+
+  // bash rewrites the head word of a simple command before any other
+  // expansion, textually, and reads the result as a fresh line: an alias
+  // holding a pipe is a pipe. Only an unquoted plain word qualifies, and
+  // `aliasValue` applies the rest of bash's rules (expand_aliases, the
+  // same-line mark, the no-second-expansion stack). The rewritten line
+  // runs through the same executor with the same call stack, so `$1`
+  // inside a function still means the function's argument.
+  const headNode = nonPrefixParts[0]
+  if (
+    reparse !== undefined &&
+    Object.keys(session.aliases).length > 0 &&
+    headNode?.type === NT.COMMAND_NAME &&
+    headNode.namedChildren[0]?.type === NT.WORD
+  ) {
+    const head = getText(headNode)
+    const mark: AliasMark = [session.parseCurrent, node.startPosition?.row ?? 0]
+    const source = getText(node)
+    const base = node.startIndex ?? 0
+    const rest = source.slice((headNode.endIndex ?? 0) - base)
+    const rewritten = aliasCommandText(session, head, rest, mark)
+    if (rewritten !== null) {
+      const line = source.slice(0, (headNode.startIndex ?? 0) - base) + rewritten
+      const ast = reparse(line)
+      const offending = findSyntaxError(ast as Parameters<typeof findSyntaxError>[0])
+      if (offending !== null) {
+        const snippet = offending.trim()
+        const errBytes = new TextEncoder().encode(
+          snippet.length > 0
+            ? `mirage: syntax error near '${snippet}'\n`
+            : 'mirage: syntax error in command\n',
+        )
+        return [
+          null,
+          new IOResult({ exitCode: 2, stderr: errBytes }),
+          new ExecutionNode({ command: head, exitCode: 2, stderr: errBytes }),
+        ]
+      }
+      session.aliasStack.push(head)
+      try {
+        return await recurse(ast, session, stdinIn, callStack)
+      } finally {
+        session.aliasStack.pop()
+      }
+    }
+  }
 
   const prefixAssignments: [string, string][] = []
   for (const p of assignmentNodes) {
@@ -422,6 +483,7 @@ async function runCommandBody(
       runtimeBindings,
       routingDecision,
       signal,
+      node.startPosition?.row ?? 0,
     ),
     timeout,
     argv.name !== '' ? argv.name : '?',
@@ -476,6 +538,10 @@ async function runArgv(
   runtimeBindings?: Record<string, Runtime>,
   routingDecision?: PolicyDecision,
   signal?: AbortSignal,
+  // The command's line within its parse, which only `alias` reads: a
+  // definition remembers where it was made so a use on the same line
+  // does not see it, as bash's line reader would not.
+  row = 0,
 ): Promise<Result> {
   const name = argv.name
 
@@ -724,6 +790,29 @@ async function runArgv(
     return handleGetopts(args, session, callStack, sessionView(session, registry.policies))
   }
   if (name === SB.TRAP) return handleTrap(session)
+  if (name === SB.LET) {
+    return handleLet(args, session, sessionView(session, registry.policies))
+  }
+  if (name === SB.UMASK) return handleUmask(args, session)
+  if (name === SB.SHOPT) return handleShopt(args, session)
+  if (name === SB.ALIAS) return handleAlias(args, session, [session.parseCurrent, row])
+  if (name === SB.UNALIAS) return handleUnalias(args, session)
+  if (name === SB.EXEC) {
+    // The redirect-only form is intercepted where redirects are applied;
+    // a bare `exec` here has none, and `exec cmd` is the
+    // process-replacement form this refuses.
+    return handleExecCommand(args, session)
+  }
+  if (name === SB.MAPFILE || name === SB.READARRAY) {
+    return handleMapfile(
+      args,
+      session,
+      stdin,
+      executeFn,
+      sessionView(session, registry.policies),
+      name,
+    )
+  }
   if (name === SB.TEST || name === SB.BRACKET || name === SB.DOUBLE_BRACKET) {
     let testArgs = [...operands]
     const testName = name === SB.BRACKET ? '[' : 'test'

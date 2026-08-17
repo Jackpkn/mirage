@@ -14,7 +14,7 @@
 
 import pytest
 
-from mirage.io.async_line_iterator import AsyncLineIterator
+from mirage.io.async_line_iterator import AsyncLineIterator, char_width
 
 
 async def _chunks(parts: list[bytes]):
@@ -89,3 +89,52 @@ async def test_early_termination():
             break
     assert len(lines) == 3
     assert pull_count < 10
+
+
+def test_char_width_steps_one_utf8_character_at_a_time():
+    assert char_width(b"a") == 1
+    assert char_width("é".encode()) == 2
+    assert char_width("€".encode()) == 3
+    assert char_width("😀".encode()) == 4
+    # Bytes that decode to one replacement character each: a stray
+    # continuation byte, a lead the encoding never uses, and a sequence
+    # cut short by a byte that cannot continue it.
+    assert char_width(b"\x80") == 1
+    assert char_width(b"\xff") == 1
+    assert char_width(b"\xe0A") == 1
+    assert char_width(b"\xe0\xa0A") == 2
+    # Never past the end of what is there.
+    assert char_width("é".encode()[:1]) == 1
+
+
+@pytest.mark.asyncio
+async def test_read_chars_counts_characters_not_bytes():
+    """`read -n 1` on `éx` takes `é` and leaves `x`, as bash does in a
+    UTF-8 locale; counting bytes would split the character and leave
+    the other half to corrupt the next read."""
+    it = AsyncLineIterator(_chunks(["éx".encode()]))
+    first, complete = await it.read_chars(1, b"\n")
+    assert (first.decode(), complete) == ("é", True)
+    second, complete = await it.read_chars(1, b"\n")
+    assert (second.decode(), complete) == ("x", True)
+
+
+@pytest.mark.asyncio
+async def test_read_chars_spanning_a_chunk_boundary():
+    it = AsyncLineIterator(_chunks([b"\xc3", b"\xa9x"]))
+    data, complete = await it.read_chars(2, None)
+    assert (data.decode(), complete) == ("éx", True)
+
+
+@pytest.mark.asyncio
+async def test_read_chars_stops_at_the_delimiter():
+    it = AsyncLineIterator(_chunks([b"ab:cd"]))
+    data, complete = await it.read_chars(4, b":")
+    assert (data, complete) == (b"ab", True)
+
+
+@pytest.mark.asyncio
+async def test_read_chars_reports_a_short_read_at_eof():
+    it = AsyncLineIterator(_chunks([b"ab"]))
+    data, complete = await it.read_chars(5, None)
+    assert (data, complete) == (b"ab", False)

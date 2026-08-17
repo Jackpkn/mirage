@@ -1,0 +1,208 @@
+{
+  "cases": [
+    {
+      "id": "read_a_stores_every_field",
+      "seq": 940060,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "echo 'p q r' | { read -a rfa; declare -p rfa; }",
+      "expect": {
+        "exit": 0,
+        "stdout": "declare -a rfa=([0]=\"p\" [1]=\"q\" [2]=\"r\")\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "read_d_changes_the_delimiter",
+      "seq": 940061,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "printf 'ab:cd' | { read -d : rfb; echo \"[$rfb]\"; }",
+      "expect": {
+        "exit": 0,
+        "stdout": "[ab]\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "read_n_and_N_bound_the_read",
+      "seq": 940062,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "printf 'wxyz' | { read -n 2 rfc; echo \"[$rfc]\"; }; printf 'a b\\ncd' | { read -N 4 rfd; echo \"[$rfd]\"; }",
+      "expect": {
+        "exit": 0,
+        "stdout": "[wx]\n[a b\n]\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "read_tty_only_flags_are_no_ops",
+      "seq": 940063,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "echo v | { read -p 'P: ' -s rfe; echo \"[$rfe]\"; }; read -t 1 rff </dev/null; echo rc=$?",
+      "expect": {
+        "exit": 0,
+        "stdout": "[v]\nrc=1\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "read_refuses_bad_values",
+      "seq": 940064,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "read -t x rfg; echo rc=$?; read -u 3 rfh; echo rc=$?",
+      "expect": {
+        "exit": 0,
+        "stdout": "rc=1\nrc=1\n",
+        "stderr": "bash: read: x: invalid timeout specification\nbash: read: 3: invalid file descriptor: Bad file descriptor\n"
+      }
+    },
+    {
+      "id": "read_n_counts_characters_not_bytes",
+      "seq": 940065,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "printf '\\xc3\\xa9x' | { read -n 1 RNA; read -n 1 RNB; echo \"[$RNA][$RNB]\"; }",
+      "expect": {
+        "exit": 0,
+        "stdout": "[\u00e9][x]\n",
+        "stderr": ""
+      }
+    }
+  ]
+}

@@ -16,6 +16,7 @@ import re
 from collections.abc import AsyncIterator
 from datetime import datetime, timezone
 
+from mirage.context import DEFAULT_UMASK
 from mirage.io import IOResult
 from mirage.policy import PolicyDenied
 from mirage.runtime.types import DispatchFn
@@ -666,6 +667,16 @@ async def handle_touch(
                     continue
                 await dispatch("write", resolved, data=b"")
                 writes[resolved.virtual] = b""
+                # A file touch creates is 0666 under the session's
+                # umask; only a mask away from bash's default is worth
+                # a mode write, since 644 is what a fresh file renders as.
+                if session.umask != DEFAULT_UMASK:
+                    await _setattr_via(dispatch,
+                                       resolved,
+                                       mode=0o666 & ~session.umask,
+                                       atime=atime,
+                                       mtime=mtime)
+                    continue
             await _setattr_via(dispatch, resolved, atime=atime, mtime=mtime)
         except PermissionError as exc:
             errors.append(_permission_error("touch", namespace, resolved, exc))

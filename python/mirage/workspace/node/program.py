@@ -21,6 +21,7 @@ from mirage.shell.helpers import get_text
 from mirage.shell.types import ERREXIT_EXEMPT_TYPES
 from mirage.shell.types import NodeType as NT
 from mirage.utils.errors import format_fs_error
+from mirage.workspace.executor.builtins.exec_cmd import divert_statement
 from mirage.workspace.executor.control import (BreakSignal, ContinueSignal,
                                                ReturnSignal)
 from mirage.workspace.executor.jobs import handle_background
@@ -35,8 +36,39 @@ async def execute_program(
     call_stack,
     job_table,
     agent_id,
+    dispatch=None,
 ) -> tuple[Any, IOResult, ExecutionNode]:
-    """Execute program node (root / semicolon-separated)."""
+    """Execute program node (root / semicolon-separated).
+
+    ``dispatch`` is the op door, threaded so an active ``exec`` redirect
+    can send each statement's output to its file; None (a nested loop
+    that is not the program root) leaves output undiverted.
+    """
+    # Every program loop is one parse, which is the unit bash's alias
+    # rule counts in: an alias defined on this parse and row is not
+    # expanded by a use on the same parse and row. Restored on the way
+    # out so a nested parse (`eval`, `source`, `bash -c`) does not leave
+    # its id on the enclosing one.
+    session._parse_seq += 1
+    outer_parse = session._parse_current
+    session._parse_current = session._parse_seq
+    try:
+        return await _run_program(recurse, node, session, stdin, call_stack,
+                                  job_table, agent_id, dispatch)
+    finally:
+        session._parse_current = outer_parse
+
+
+async def _run_program(
+    recurse,
+    node,
+    session,
+    stdin,
+    call_stack,
+    job_table,
+    agent_id,
+    dispatch=None,
+) -> tuple[Any, IOResult, ExecutionNode]:
     children = node.children
     all_stdout: list[Any] = []
     merged_io = IOResult()
@@ -102,9 +134,16 @@ async def execute_program(
             session.last_exit_code = io.exit_code
             i += 2
         else:
+            child_stdin = stdin
+            if child_stdin is None and session.exec_stdin is not None:
+                # `exec < file` feeds the shell's stdin: a later `read`
+                # or `while read` sees it. The same bytes reach each
+                # statement, and the identity-keyed line buffer advances
+                # a sequence of reads through it.
+                child_stdin = session.exec_stdin
             try:
-                stdout, io, last_exec = await recurse(child, session, stdin,
-                                                      call_stack)
+                stdout, io, last_exec = await recurse(child, session,
+                                                      child_stdin, call_stack)
             except ExitSignal as sig:
                 # exit (or a fatal expansion error) ends the line: keep
                 # what earlier statements produced, drop the rest.
@@ -168,6 +207,14 @@ async def execute_program(
             session.last_exit_code = io.exit_code
             i += 1
 
+        # An `exec` redirect sends the shell's own output to a file:
+        # every statement after the `exec` diverts here, so nothing
+        # bubbles to the terminal and stderr lands in its own target.
+        if dispatch is not None and (session.exec_stdout is not None
+                                     or session.exec_stderr is not None):
+            materialized = await materialize(stdout)
+            stdout = await divert_statement(dispatch, session, materialized,
+                                            io)
         if stdout is not None:
             all_stdout.append(stdout)
         merged_io = await merged_io.merge(io)

@@ -30,6 +30,8 @@ def classify(name: str, session: Session,
         session (Session): shell session (function table).
         registry (MountRegistry): mount registry.
     """
+    if name in session.aliases:
+        return NameKind.ALIAS
     if name in KEYWORDS:
         return NameKind.KEYWORD
     return KIND_BY_CONSUMER.get(route(name, session, registry))
@@ -56,7 +58,12 @@ def classify_all(name: str, session: Session,
         session (Session): shell session (function table).
         registry (MountRegistry): mount registry.
     """
-    kinds: list[NameKind] = [NameKind.KEYWORD] if name in KEYWORDS else []
+    # An alias is reported first and whether or not `expand_aliases`
+    # is on, as bash does: `type` describes the definition, not
+    # whether the parser is currently applying it.
+    kinds: list[NameKind] = [NameKind.ALIAS] if name in session.aliases else []
+    if name in KEYWORDS:
+        kinds.append(NameKind.KEYWORD)
     for consumer in route_all(name, session, registry):
         kind = KIND_BY_CONSUMER[consumer]
         if kind not in kinds:
@@ -90,11 +97,15 @@ def locations(name: str,
     return kinds if all_mode else kinds[:1]
 
 
-def describe(name: str, kind: NameKind) -> str:
+def describe(name: str, kind: NameKind, session: Session | None = None) -> str:
     """Render the verbose line ``command -V`` and ``type`` print.
 
     Args:
         name (str): the operand word.
         kind (NameKind): the classification.
+        session (Session | None): shell session, needed only to read an
+            alias's value; every other kind renders from the name alone.
     """
+    if kind is NameKind.ALIAS and session is not None:
+        return f"{name} is aliased to `{session.aliases[name]}'"
     return f"{name} is {DESCRIPTIONS[kind]}"

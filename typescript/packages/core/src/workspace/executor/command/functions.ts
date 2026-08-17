@@ -45,7 +45,12 @@ export async function executeShellFunction(
   // One stack: a local shadows the whole record, so the caller's value
   // and attributes are saved and put back together.
   const savedLocals = new Map<string, ShellVar | null>()
+  // The caller's frame is kept and put back: a function that calls
+  // another and then declares a `local` is still inside a function, and
+  // its own shadows must keep being recorded on its own frame.
+  const outerLocals = session.localVars
   session.localVars = savedLocals
+  session.localFrames.push(savedLocals)
   const allStdout: (ByteSource | null)[] = []
   let mergedIo = new IOResult()
   let lastExec = new ExecutionNode({ command: cmdName, exitCode: 0 })
@@ -91,7 +96,8 @@ export async function executeShellFunction(
         setSessionEntry(session.vars, key, old)
       }
     }
-    session.localVars = null
+    session.localFrames.pop()
+    session.localVars = outerLocals
   }
 
   const combined = allStdout.length > 0 ? asyncChain(...allStdout) : null

@@ -25,7 +25,7 @@ from mirage.shell.call_stack import CallStack
 from mirage.types import PathSpec, word_text
 from mirage.utils.glob_walk import literal_word, mark_globs, unmark_globs
 from mirage.workspace.expand.classify import classify_parts
-from mirage.workspace.expand.globs import resolve_globs
+from mirage.workspace.expand.globs import glob_options, resolve_globs
 from mirage.workspace.expand.parts import expand_words
 from mirage.workspace.expand.spec_hints import (spec_for_command,
                                                 spec_word_bases,
@@ -159,8 +159,16 @@ async def expand_argv(
     # WordPolicy.SHELL words get matches here; mount commands keep
     # patterns for backend pushdown; unknown names fail without
     # touching backends.
-    if policy is WordPolicy.SHELL:
-        words = await resolve_globs(classified, registry, links=namespace)
+    glob_opts = glob_options(session)
+    if policy is WordPolicy.SHELL or glob_opts.needs_shell:
+        # A backend's resolve_glob speaks bash's defaults only, so a
+        # session that turned on nullglob, failglob or globstar has its
+        # mount-command globs expanded here too, and the command receives
+        # matches the way it does across a mount boundary.
+        words = await resolve_globs(classified,
+                                    registry,
+                                    links=namespace,
+                                    options=glob_opts)
     else:
         # A pattern still owes its backend a resolution, so it travels
         # marked and the marks come off there; every other word is done

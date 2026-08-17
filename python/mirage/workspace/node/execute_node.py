@@ -39,6 +39,7 @@ from mirage.shell.variable import ShellValue, VarAttr
 from mirage.shell.xtrace import trace_assignment
 from mirage.types import word_text
 from mirage.workspace.abort import MirageAbortError
+from mirage.workspace.executor.builtins.exec_cmd import install_exec_redirects
 from mirage.workspace.executor.control import (handle_case, handle_cfor,
                                                handle_for, handle_if,
                                                handle_select, handle_until,
@@ -51,7 +52,7 @@ from mirage.workspace.executor.statement import (assignment_status,
                                                  finish_statement)
 from mirage.workspace.expand import (expand_and_classify, expand_node,
                                      expand_redirects)
-from mirage.workspace.expand.globs import resolve_globs
+from mirage.workspace.expand.globs import glob_options, resolve_globs
 from mirage.workspace.expand.node import expand_arith
 from mirage.workspace.expand.pattern import expand_pattern
 from mirage.workspace.expand.variable import _array_index
@@ -63,10 +64,10 @@ from mirage.workspace.node.test_expr import (expand_double_bracket,
                                              expand_test_expr)
 from mirage.workspace.session import Session
 from mirage.workspace.session.elements import assign_element
-from mirage.workspace.session.state import (element_index, ensure_var_visible,
-                                            seed_var, session_elements,
-                                            session_view, set_attr,
-                                            visible_env)
+from mirage.workspace.session.state import (deref, element_index,
+                                            ensure_var_visible, seed_var,
+                                            session_elements, session_view,
+                                            set_attr, visible_env)
 from mirage.workspace.types import ExecutionNode
 
 from mirage.shell.helpers import (  # isort: skip
@@ -214,7 +215,8 @@ async def _expand_array_items(
                                    registry,
                                    noglob=bool(
                                        session.shell_options.get("noglob")),
-                                   links=namespace)
+                                   links=namespace,
+                                   options=glob_options(session))
     return [word_text(w) for w in resolved]
 
 
@@ -382,11 +384,8 @@ def _merge_conversion_errors(
 # Every letter GNU's `declare` accepts, so a typo refuses with the usage
 # line instead of being silently dropped. `-a`/`-A` are kinds, not
 # attributes, and are handled by the array branch; `-p`/`-f`/`-F`/`-g`
-# /`-I` are modes the handlers read. `-n` is accepted and stored, but
-# aliasing (reads and writes through the reference) is not wired: it
-# is a separate seam through every expansion site, so a name carrying
-# it declares and prints, and nothing more, rather than a partial
-# alias that works in some spellings and not others.
+# /`-I` are modes the handlers read. `-n` stores the reference and every
+# reader and writer resolves through it (`deref` in `session/state`).
 _DECLARE_LETTERS = frozenset("aAfFgiIlnprtux")
 _DECLARE_USAGE = (
     "declare: usage: declare [-aAfFgiIlnrtux] [name[=value] ...] "
@@ -621,6 +620,24 @@ async def _stamp_export(
     return None
 
 
+def _is_bare_exec(command: Any) -> bool:
+    """Whether a redirected statement's command is a bare `exec`.
+
+    A bare `exec` carries a command name and no arguments, so its
+    redirects are the shell's own rather than one command's. `exec cmd`
+    is not bare and falls through to the command path, which refuses it.
+
+    Args:
+        command (Any): the tree-sitter command node under the redirect,
+            or None for a command-less redirect (`> file`).
+    """
+    if command is None or command.type != NT.COMMAND:
+        return False
+    named = command.named_children
+    return (len(named) == 1 and named[0].type == NT.COMMAND_NAME
+            and get_text(named[0]) == "exec")
+
+
 async def execute_node(
     dispatch: DispatchFn,
     registry: MountRegistry,
@@ -712,7 +729,7 @@ async def execute_node(
     # ── program (root / semicolons) ─────────────
     if kind == NodeKind.PROGRAM:
         return await execute_program(stream, node, session, stdin, cs,
-                                     job_table, agent_id)
+                                     job_table, agent_id, dispatch)
 
     # ── command ─────────────────────────────────
     if kind == NodeKind.COMMAND:
@@ -795,6 +812,13 @@ async def execute_node(
                                                                registry,
                                                                cs,
                                                                view=view)
+        # `exec > file` with no command installs the redirects on the
+        # shell for every later statement, rather than applying them to
+        # one command. `exec cmd > file` still has a command and falls
+        # through to the ordinary path, which refuses the command form.
+        if _is_bare_exec(command):
+            return await install_exec_redirects(dispatch, session,
+                                                expanded_redirects)
         stdout, io, exec_node = await handle_redirect(recurse, dispatch,
                                                       command,
                                                       expanded_redirects,
@@ -824,7 +848,7 @@ async def execute_node(
                               routing_decision=routing_decision,
                               sink=sink)
         return await handle_subshell(sub_recurse, list(node.children), session,
-                                     stdin, cs, sub_table, agent_id)
+                                     stdin, cs, sub_table, agent_id, dispatch)
 
     # ── arithmetic command ((( ... ))) ──────────
     if (kind == NodeKind.COMPOUND and node.children
@@ -929,7 +953,8 @@ async def execute_node(
             classified,
             registry,
             noglob=bool(session.shell_options.get("noglob")),
-            links=namespace)
+            links=namespace,
+            options=glob_options(session))
         if kind == NodeKind.SELECT:
             return await handle_select(stream,
                                        var,
@@ -1108,9 +1133,10 @@ async def execute_node(
                         f"bash: {cmd_word}: {bare}: cannot convert "
                         "associative to indexed array")
                     continue
-                if note_local_array(session, bare):
+                if "g" not in flag_chars and note_local_array(session, bare):
                     # Inside a function this shadows whatever the caller
-                    # had with a fresh empty array of the declared kind.
+                    # had with a fresh empty array of the declared kind;
+                    # `-g` declares at global scope instead.
                     seed_var(session, bare, {} if want_assoc else [])
                 elif want_assoc and bare not in session.assocs:
                     # At top level an existing scalar becomes the value
@@ -1177,7 +1203,9 @@ async def execute_node(
                 cmd=cmd_word,
                 stored=stored,
                 assoc="A" in flag_chars,
-                shaping=shaping)
+                shaping=shaping,
+                nameref="n" in flag_chars and "n" not in plus_chars,
+                global_scope="g" in flag_chars)
             plus_refused = await _plus_refusals(cmd_word, session, decl_view,
                                                 plus_chars, assignments,
                                                 staged)
@@ -1257,8 +1285,13 @@ async def execute_node(
         name_source = subscript_node if subscript_node is not None else node
         name_node = next((c for c in name_source.named_children
                           if c.type == NT.VARIABLE_NAME), None)
-        key = (get_text(name_node)
-               if name_node is not None else text.partition("=")[0])
+        spelled = (get_text(name_node)
+                   if name_node is not None else text.partition("=")[0])
+        # A name reference assigns to its target, whatever the shape of
+        # the assignment; an unaimed one (`declare -n r; r=v`) resolves
+        # to itself and takes the value as the target's name. The
+        # spelling is kept for slicing the subscript out of the source.
+        key = deref(session, spelled) or spelled
         append = any(c.type == "+=" for c in node.children)
         if key in session.readonly_vars:
             # A bare assignment to a readonly variable is a fatal
@@ -1321,10 +1354,10 @@ async def execute_node(
         else:
             val = text.partition("=")[2]
         if subscript_node is not None:
-            sub_text = await _subscript_key_text(subscript_node, key, session,
-                                                 execute_fn, cs, view)
+            sub_text = await _subscript_key_text(subscript_node, spelled,
+                                                 session, execute_fn, cs, view)
             amap = session.assocs.get(key)
-            raw_sub = get_text(subscript_node)[len(key) + 1:-1]
+            raw_sub = get_text(subscript_node)[len(spelled) + 1:-1]
             if not raw_sub.strip() or (amap is not None and sub_text == ""):
                 # bash aborts the whole line on a bad assignment
                 # subscript (status 1), naming the raw spelling

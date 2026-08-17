@@ -34,6 +34,7 @@ import {
   visibleArrays,
   visibleAssocs,
   visibleEnv,
+  deref,
 } from './state.ts'
 
 const ELEMENT_REF = /^([A-Za-z_]\w*)(?:\[([\s\S]+)\])?$/
@@ -50,7 +51,7 @@ const ELEMENT_REF = /^([A-Za-z_]\w*)(?:\[([\s\S]+)\])?$/
 export function elementIsSet(session: Session, ref: string): boolean {
   const match = ELEMENT_REF.exec(ref)
   if (match?.[1] === undefined) return false
-  const name = match[1]
+  const name = deref(session, match[1]) || match[1]
   const sub = match[2]
   const amap = visibleAssocs(session)[name]
   const arr = visibleArrays(session)[name]
@@ -100,6 +101,8 @@ export async function assignElement(
   value: string,
   append = false,
 ): Promise<'ok' | 'denied' | 'readonly' | 'subscript'> {
+  // An element write through a name reference lands on the target.
+  name = deref(session, name) || name
   try {
     ensureVarVisible(session, name)
   } catch (error) {

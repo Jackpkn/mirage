@@ -28,6 +28,7 @@ from mirage.shell.types import Redirect, RedirectKind
 from mirage.types import FileType, PathSpec
 from mirage.utils.errors import FS_ERRORS, fs_strerror
 from mirage.workspace.executor.builtins import _to_scope
+from mirage.workspace.executor.create import create_file
 from mirage.workspace.session import Session
 from mirage.workspace.types import ExecutionNode
 
@@ -196,7 +197,7 @@ async def handle_redirect(
         data = bytes(buf)
         scope = file_scopes[path]
         try:
-            await dispatch("write", scope, data=data)
+            await create_file(dispatch, session, scope, data)
         except FS_ERRORS as exc:
             out_stderr += _redirect_error_line(scope, exc)
             io.exit_code = 1

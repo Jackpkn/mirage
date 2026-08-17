@@ -1,0 +1,208 @@
+{
+  "cases": [
+    {
+      "id": "exec_bare_is_a_noop",
+      "seq": 940100,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "exec; echo ok",
+      "expect": {
+        "exit": 0,
+        "stdout": "ok\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "exec_refuses_process_replacement",
+      "seq": 940101,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "exec echo hi; echo after",
+      "expect": {
+        "exit": 0,
+        "stdout": "after\n",
+        "stderr": "mirage: exec: echo: process replacement is not supported (no OS process to replace)\n"
+      }
+    },
+    {
+      "id": "exec_redirect_diverts_and_restores",
+      "seq": 940102,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "( exec > exr.txt; echo a; echo b ); cat exr.txt",
+      "expect": {
+        "exit": 0,
+        "stdout": "a\nb\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "exec_append_keeps_existing",
+      "seq": 940103,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "echo old > exa.txt; ( exec >> exa.txt; echo new ); cat exa.txt",
+      "expect": {
+        "exit": 0,
+        "stdout": "old\nnew\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "exec_stdin_feeds_read",
+      "seq": 940104,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "printf 'l1\\nl2\\n' > exi.txt; ( exec < exi.txt; read a; read b; echo $a-$b )",
+      "expect": {
+        "exit": 0,
+        "stdout": "l1-l2\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "exec_opens_the_target_at_exec_time",
+      "seq": 940105,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "( exec > exto.txt; ); ( exec >> extn.txt; ); echo old > extk.txt; ( exec >> extk.txt; ); test -e exto.txt && test -e extn.txt && cat extk.txt",
+      "expect": {
+        "exit": 0,
+        "stdout": "old\n",
+        "stderr": ""
+      }
+    }
+  ]
+}

@@ -42,6 +42,9 @@ INHERITED_FIELDS: tuple[str, ...] = (
     "readonly_functions",
     "last_exit_code",
     "shell_options",
+    "shopts",
+    "aliases",
+    "umask",
     "mount_modes",
     "hidden_paths",
     "hidden_vars",
@@ -50,6 +53,12 @@ INHERITED_FIELDS: tuple[str, ...] = (
     "last_bg_job_id",
     "positional_args",
     "script_name",
+    "exec_stdout",
+    "exec_stdout_append",
+    "exec_stderr",
+    "exec_stderr_append",
+    "exec_stdin",
+    "_exec_opened",
     "_getopts_pos",
     "_getopts_optind",
 )
@@ -63,8 +72,13 @@ TRANSIENT_FIELDS: tuple[str, ...] = (
     "_stdin_buffer",
     "_stdin_source",
     "_local_vars",
+    "_local_frames",
     "_cmdsub_seq",
     "_cmdsub_status",
+    "_parse_seq",
+    "_parse_current",
+    "_alias_marks",
+    "_alias_stack",
 )
 
 # What a child shell gets its own copy of, and the parent gets back
@@ -81,9 +95,18 @@ CHILD_SHELL_FIELDS: tuple[str, ...] = (
     "functions",
     "readonly_functions",
     "shell_options",
+    "shopts",
+    "aliases",
+    "umask",
     "positional_args",
     "script_name",
     "last_bg_job_id",
+    "exec_stdout",
+    "exec_stdout_append",
+    "exec_stderr",
+    "exec_stderr_append",
+    "exec_stdin",
+    "_exec_opened",
     "_getopts_pos",
     "_getopts_optind",
 )
@@ -184,6 +207,18 @@ class Session:
     readonly_functions: set[str] = field(default_factory=set)
     last_exit_code: int = 0
     shell_options: dict[str, bool] = field(default_factory=dict)
+    # `shopt` options, kept apart from `set -o` ones because bash keeps
+    # two vocabularies (`shopt -o` is the bridge). Only the names set
+    # away from their default are stored; SHOPT_DEFAULTS supplies the
+    # rest, so a listing prints every option bash knows.
+    shopts: dict[str, bool] = field(default_factory=dict)
+    # `alias NAME=VALUE` definitions. A subshell inherits them like a
+    # forked shell would, and a nested `bash`/`sh` gets a copy that is
+    # put back afterwards, the same rule functions already follow.
+    aliases: dict[str, str] = field(default_factory=dict)
+    # The file-creation mask. bash's default for a fresh shell, and
+    # exactly what mirage's 644/755 defaults for a new entry are.
+    umask: int = 0o022
     mount_modes: dict[str, MountMode] | None = None
     # Per-session visibility narrowing, siblings of mount_modes: None
     # means unrestricted, the doors enforce (data door for paths, the
@@ -213,6 +248,13 @@ class Session:
     # its value and its attributes are saved and restored together.
     _local_vars: (dict[str, ShellVar | None]
                   | None) = field(default=None, repr=False)
+    # Every function frame on the call path, outermost first; the last
+    # is `_local_vars`. `declare -g` inside a nested call needs the
+    # outermost frame that shadows a name, since that frame's saved
+    # record is the global one.
+    _local_frames: list[dict[str,
+                             ShellVar | None]] = field(default_factory=list,
+                                                       repr=False)
     # Hidden `getopts` state: the 1-based char offset within the current
     # word being scanned, plus the OPTIND value that offset belongs to.
     # A caller resetting OPTIND (e.g. to 1) makes the seen value stale,
@@ -227,6 +269,32 @@ class Session:
     # `x=abc` exits 0).
     _cmdsub_seq: int = field(default=0, repr=False)
     _cmdsub_status: int = field(default=0, repr=False)
+    # Alias bookkeeping. bash expands an alias when it *parses* the line
+    # that uses it, so a definition takes effect from the next line read
+    # (`alias x=..; x` on one line finds no `x`; the same two statements
+    # on two lines do). mirage parses a whole program before running any
+    # of it, so the rule is kept as a mark: each program loop entered
+    # gets a parse id, an alias remembers the (parse, row) it was
+    # defined at, and a use on that same parse and row does not expand.
+    # `_alias_stack` names the aliases being expanded, so a value whose
+    # first word is the alias itself (`alias ls='ls -1'`) stops there.
+    # `exec` redirect-only state: where the shell's own stdout, stderr
+    # and stdin point after a bare `exec > file` / `exec 2> file` /
+    # `exec < file`. None is the terminal (the workspace's own output);
+    # `""` is a closed descriptor (`exec >&-`), whose writes are
+    # dropped. `_exec_opened` names the targets already truncated, so a
+    # later statement appends rather than re-truncating.
+    exec_stdout: str | None = None
+    exec_stdout_append: bool = False
+    exec_stderr: str | None = None
+    exec_stderr_append: bool = False
+    exec_stdin: bytes | None = None
+    _exec_opened: set[str] = field(default_factory=set, repr=False)
+    _parse_seq: int = field(default=0, repr=False)
+    _parse_current: int = field(default=0, repr=False)
+    _alias_marks: dict[str, tuple[int, int]] = field(default_factory=dict,
+                                                     repr=False)
+    _alias_stack: list[str] = field(default_factory=list, repr=False)
 
     def to_dict(self) -> dict[str, Any]:
         # `env` is every scalar and `var_attrs` the letters set on the

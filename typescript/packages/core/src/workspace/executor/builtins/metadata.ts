@@ -12,6 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import { DEFAULT_UMASK } from '../../../context/session_context.ts'
 import { IOResult } from '../../../io/types.ts'
 import { PolicyDenied } from '../../../policy/index.ts'
 import type { FileStat } from '../../../types.ts'
@@ -516,6 +517,16 @@ export async function handleTouch(
           continue
         }
         writes[resolved.virtual] = new Uint8Array(0)
+        // A file touch creates is 0666 under the session's umask; only
+        // a mask away from bash's default is worth a mode write, since
+        // 644 is what a fresh file renders as.
+        if (session.umask !== DEFAULT_UMASK) {
+          const fields: SetAttrFields = { mode: 0o666 & ~session.umask }
+          if (setAtime) fields.atime = stamp
+          if (setMtime) fields.mtime = stamp
+          await setattrVia(dispatch, resolved, fields)
+          continue
+        }
       }
       const fields: SetAttrFields = {}
       if (setAtime) fields.atime = stamp

@@ -200,3 +200,21 @@ def shell_quote(name: str) -> str:
     if not needs_shell_quote(name):
         return name
     return shell_quote_always(name)
+
+
+def single_quote(text: str) -> str:
+    """Wrap text so bash reads it back as exactly one word.
+
+    bash's own ``sh_single_quote``: always the ``'text'`` form, with an
+    embedded quote spelled ``'\\''`` and every other character, newlines
+    included, left as itself. This is not
+    :func:`shell_quote_always`, which is GNU's diagnostic rendering and
+    may answer with the ``"text"`` form or a ``$'...'`` group; bash uses
+    this one wherever it builds a command line out of data (``alias``
+    printing a value, ``mapfile -C`` handing a record to a callback), so
+    text that is shell syntax stays a single argument.
+
+    Args:
+        text (str): The text to wrap.
+    """
+    return "'" + text.replace("'", "'\\''") + "'"
