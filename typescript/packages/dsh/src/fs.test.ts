@@ -18,7 +18,7 @@ import { FsError, FsTargetKey, FsVersion } from '@deepseek-ai/dsh-fs'
 import type { FsErrorCode } from '@deepseek-ai/dsh-fs'
 import { RAMResource } from '@struktoai/mirage-core/resource/ram/ram'
 import { MountMode } from '@struktoai/mirage-core/types'
-import { Workspace, registerResourceFactory } from '@struktoai/mirage-node'
+import { LocalRuntime, Workspace, registerResourceFactory } from '@struktoai/mirage-node'
 import { MirageFileSystem } from './fs.ts'
 import type { MirageFsConfig } from './fs.ts'
 import { MirageService } from './service.ts'
@@ -85,6 +85,31 @@ describe('resolve', () => {
     const target = await fs.resolve('a.txt')
     expect(String(target.targetKey)).toBe('/data/a.txt')
     expect(target.displayPath).toBe('/data/a.txt')
+  })
+
+  it('ignores a caller cwd that names nothing in this world', async () => {
+    const { fs } = await makeFs({ 'a.txt': 'hello' }, { cwd: '/data' })
+    const target = await fs.resolve('a.txt', { cwd: '/Users/somebody/host-project' })
+    expect(String(target.targetKey)).toBe('/data/a.txt')
+    expect(await fs.readText(target)).toBe('hello')
+  })
+
+  it('honors a caller cwd that is a real directory here', async () => {
+    const { fs } = await makeFs({ 'sub/b.txt': 'nested' }, { cwd: '/' })
+    const target = await fs.resolve('b.txt', { cwd: '/data/sub' })
+    expect(String(target.targetKey)).toBe('/data/sub/b.txt')
+  })
+
+  it('leaves an absolute path alone whatever the caller cwd says', async () => {
+    const { fs } = await makeFs({ 'a.txt': 'hello' }, { cwd: '/' })
+    const target = await fs.resolve('/data/a.txt', { cwd: '/Users/somebody/host-project' })
+    expect(String(target.targetKey)).toBe('/data/a.txt')
+  })
+
+  it('ignores a host cwd for lstat too', async () => {
+    const { fs } = await makeFs({ 'a.txt': 'hello' }, { cwd: '/data' })
+    const info = await fs.lstat('a.txt', { cwd: '/Users/somebody/host-project' })
+    expect(info?.type).toBe('file')
   })
 
   it('yields one target key for aliased spellings', async () => {
@@ -435,5 +460,86 @@ describe('cancellation across readiness', () => {
     const ws = await ctx.mirage.ready
     expect(await ws.fs.exists('/data/out.txt')).toBe(false)
     await fiber.dispose()
+  })
+})
+
+describe('sandbox policy', () => {
+  const READ_ONLY = { mode: 'read-only', workspaceRoot: '/Users/somebody/host-project' } as const
+  const WORKSPACE_WRITE = { mode: 'workspace-write', workspaceRoot: '/Users/somebody' } as const
+
+  it('reports the same confinement the shell executor does', async () => {
+    const { fs } = await makeFs()
+    expect(fs.sandboxMode).toBe('workspace-write')
+  })
+
+  it('makes no claim once a runtime executes beyond the workspace', async () => {
+    const { fs, ws } = await makeFs()
+    ws.addRuntime(new LocalRuntime({ captures: ['python'] }))
+    expect(fs.sandboxMode).toBeUndefined()
+  })
+
+  it('refuses a write under a read-only policy', async () => {
+    const { fs, ws } = await makeFs()
+    const target = await fs.resolve('/data/new.txt')
+    expect(await errorCode(fs.writeText(target, 'x', undefined, undefined, READ_ONLY))).toBe(
+      'FS_SANDBOX_DENIED',
+    )
+    expect(await ws.fs.exists('/data/new.txt')).toBe(false)
+  })
+
+  it('refuses an edit under a read-only policy', async () => {
+    const { fs, ws } = await makeFs({ 'a.txt': 'one' })
+    const target = await fs.resolve('/data/a.txt')
+    const edit = { oldString: 'one', newString: 'two', replaceAll: false }
+    expect(await errorCode(fs.editText(target, edit, undefined, undefined, READ_ONLY))).toBe(
+      'FS_SANDBOX_DENIED',
+    )
+    expect(await ws.fs.readFileText('/data/a.txt')).toBe('one')
+  })
+
+  it('reads under a read-only policy, since only mutations are fenced', async () => {
+    const { fs } = await makeFs({ 'a.txt': 'visible' })
+    const target = await fs.resolve('/data/a.txt')
+    expect(await fs.readText(target)).toBe('visible')
+  })
+
+  it('allows a write under a workspace-write policy', async () => {
+    const { fs } = await makeFs()
+    const target = await fs.resolve('/data/new.txt')
+    const outcome = await fs.writeText(target, 'x', undefined, undefined, WORKSPACE_WRITE)
+    expect(outcome.operation).toBe('create')
+  })
+
+  it('allows an unguarded write when the caller supplies no policy', async () => {
+    const { fs } = await makeFs()
+    const target = await fs.resolve('/data/new.txt')
+    const outcome = await fs.writeText(target, 'x')
+    expect(outcome.operation).toBe('create')
+  })
+})
+
+describe('listDir cancellation', () => {
+  it('stops walking children once the signal fires', async () => {
+    const { fs, ws } = await makeFs({ 'a.txt': 'x', 'b.txt': 'y', 'c.txt': 'z' })
+    const target = await fs.resolve('/data')
+    const controller = new AbortController()
+    // The walk's per-entry stats are index hits the readdir just warmed,
+    // so the only deterministic window is the moment the listing lands.
+    // Aborting as `readdir` returns puts the signal exactly there: with
+    // the walk unguarded it would classify every child regardless.
+    const ops = ws.fs
+    const inner = ops.readdir.bind(ops)
+    ops.readdir = async (path: string): Promise<string[]> => {
+      const listing = await inner(path)
+      controller.abort()
+      return listing
+    }
+    expect(await errorCode(fs.listDir(target, controller.signal))).toBe('FS_ABORTED')
+  })
+
+  it('lists the whole directory when nothing aborts', async () => {
+    const { fs } = await makeFs({ 'a.txt': 'x', 'b.txt': 'y' })
+    const entries = await fs.listDir(await fs.resolve('/data'), new AbortController().signal)
+    expect(entries.map((e) => e.name)).toEqual(['a.txt', 'b.txt'])
   })
 })

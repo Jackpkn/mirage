@@ -53,6 +53,17 @@ await ctx.plugin(MirageShellExecutor, { sessionId: 'agent-1' }).await()
 
 A bound session keeps its cwd, exports, and functions across calls. It is created on first use (an existing session is adopted as is), and two executors bound to different sessions stay fully apart on one workspace.
 
+dsh sends a working directory and a set of managed `DSH_*` variables with every call, and in Mirage a per-call directory or environment forks a subshell. Taken at face value, a bound session would therefore have nothing left to persist, so both are checked first. The workdir dsh computed on its own machine is not a directory in this world, so it is ignored: the executor's own `workdir` when unbound, the session's cwd when bound, and `ctx.fs` resolves relative paths against the same base. The `DSH_*` variables are set in the session once instead of riding along per call. A workdir that does exist here, or any other per-call variable, still forks a subshell, which is what "only this command" should mean.
+
+```ts
+// dsh sends its own machine's cwd, a path this world does not contain
+const host = '/Users/somebody/host-project'
+
+await shell.run(shell.resolve({ command: 'cd /tmp && export TOKEN=abc', workdir: host }))
+const result = await shell.run(shell.resolve({ command: 'pwd; echo $TOKEN', workdir: host }))
+// result.stdout.text === '/tmp\nabc\n'
+```
+
 ## Run Python with monty
 
 The `runtimes` entry above sets [monty](https://github.com/pydantic/monty), a sandboxed Python interpreter with no host access, up to capture `python` and `python3`; the catch-all `vfs` runtime serving the shell commands is always present and needs no entry. A captured invocation (a script file, inline `-c` code, or code piped on stdin) runs inside the workspace, never on the machine. A script can live on any mount: upload `example.py` to a Slack channel and run it straight off the mount, with the shell's redirection filing its stdout back into Redis:
@@ -91,7 +102,23 @@ The bundle's default world is one RAM scratch mount at `/tmp`. Mount real resour
       - { name: monty, captures: [python, python3] }
 ```
 
-The same blocks work in code, beside live instances, in `MirageService`'s `mounts`. The shell executor reports a `workspace-write` sandbox to dsh whenever every runtime in the world stays inside the VFS (each runtime's `reach` is `vfs`), which is what lets dsh's permission presets compose over it: a command cannot then reach anything but the mounts, under their modes. Adding a host-reaching runtime such as `local` python drops the claim, since a script could act outside the mounts, and dsh is told there is no sandbox rather than a false one.
+The same blocks work in code, beside live instances, in `MirageService`'s `mounts`.
+
+Both seams tell dsh they are a `workspace-write` sandbox, which is what lets dsh's permission presets compose over them. The claim holds only while every runtime stays inside the VFS (each runtime's `reach` is `vfs`). Add a host-reaching one, such as `local` Python, and both seams drop the claim, since a script could then act outside the mounts: dsh is better told there is no sandbox than a false one.
+
+The claim is enforced per call, not merely advertised. dsh resolves a policy for every command and every file edit, and Mirage applies it. Under `read-only` the shell runs in a session where every mount is granted read, and `ctx.fs` refuses a write or an edit with `FS_SANDBOX_DENIED`, the same error dsh's own sandboxed backend raises:
+
+```ts
+const policy = { mode: 'read-only', workspaceRoot: '/Users/somebody/host-project' } as const
+
+const denied = await shell.run(shell.resolve({ command: 'echo hi > /tmp/out.txt', sandboxPolicy: policy }))
+// nonzero exitCode, and denied.sandbox is { mode: 'read-only', denied: true, ... }
+
+await ctx.fs.writeText(await ctx.fs.resolve('/tmp/out.txt'), 'hi', undefined, undefined, policy)
+// throws FsError, code FS_SANDBOX_DENIED
+```
+
+So `DSH_PERMISSION_MODE=read-only` confines a Mirage world, and the result reports the mode the command actually ran under. The `/dev` null sink stays writable, as that mode requires. The policy's `workspaceRoot` is a directory on the host and is deliberately never consulted: here the mounts and their modes are the boundary.
 
 ## Custom backends
 

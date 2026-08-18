@@ -86,15 +86,93 @@ export function applyLiteralEdit(
     : content.replace(oldString, newString)
 }
 
+// The first index at or after `from` that starts a UTF-8 sequence, so a tail
+// taken from there decodes as characters rather than as replacement marks.
+function charBoundary(bytes: Uint8Array, from: number): number {
+  let start = from
+  while (start < bytes.byteLength && ((bytes[start] ?? 0) & 0xc0) === 0x80) start++
+  return start
+}
+
 // Byte-accurate tail cap: keep the LAST maxBytes bytes of the encoded text,
 // re-aligned to a UTF-8 sequence boundary so the kept tail still decodes.
 export function tailCap(text: string, maxBytes: number): { text: string; truncated: boolean } {
   const bytes = new TextEncoder().encode(text)
   if (bytes.byteLength <= maxBytes) return { text, truncated: false }
-  let start = bytes.byteLength - maxBytes
-  while (start < bytes.byteLength && ((bytes[start] ?? 0) & 0xc0) === 0x80) start++
+  const start = charBoundary(bytes, bytes.byteLength - maxBytes)
   return {
     text: new TextDecoder('utf-8', { fatal: false }).decode(bytes.subarray(start)),
     truncated: true,
+  }
+}
+
+/**
+ * A bounded backlog of output bytes: the newest `budget` bytes, with the
+ * oldest dropped as they overflow.
+ *
+ * Held as bytes rather than as a string because the string form had to
+ * re-encode everything already buffered on every append to measure it,
+ * which is quadratic in a command's output and lands on the same event
+ * loop that serves the workspace. Appending here costs the chunk, not
+ * the backlog.
+ */
+export class TailBuffer {
+  private readonly budget: number
+  private parts: Uint8Array[] = []
+  private bytes = 0
+
+  constructor(budget: number) {
+    this.budget = budget
+  }
+
+  /**
+   * Append a chunk, dropping the oldest bytes that no longer fit.
+   *
+   * @param data the bytes to append.
+   * @returns true when bytes were dropped to make room.
+   */
+  append(data: Uint8Array): boolean {
+    this.parts.push(data)
+    this.bytes += data.byteLength
+    if (this.bytes <= this.budget) return false
+    let excess = this.bytes - this.budget
+    while (excess > 0) {
+      const head = this.parts[0]
+      if (head === undefined) break
+      if (head.byteLength <= excess) {
+        this.parts.shift()
+        excess -= head.byteLength
+        this.bytes -= head.byteLength
+      } else {
+        this.parts[0] = head.subarray(excess)
+        this.bytes -= excess
+        excess = 0
+      }
+    }
+    return true
+  }
+
+  /**
+   * Drain everything held, decoded as text.
+   *
+   * The head may sit mid-character, since dropping is byte-exact, so it
+   * is re-aligned before decoding rather than rendered as a replacement
+   * mark.
+   *
+   * @returns the buffered text; the buffer is left empty.
+   */
+  take(): string {
+    if (this.parts.length === 0) return ''
+    const joined = new Uint8Array(this.bytes)
+    let at = 0
+    for (const part of this.parts) {
+      joined.set(part, at)
+      at += part.byteLength
+    }
+    this.parts = []
+    this.bytes = 0
+    return new TextDecoder('utf-8', { fatal: false }).decode(
+      joined.subarray(charBoundary(joined, 0)),
+    )
   }
 }

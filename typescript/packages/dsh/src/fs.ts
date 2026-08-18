@@ -43,6 +43,12 @@ import type {} from './service.ts'
 
 type LinksSeam = NonNullable<Ops['links']>
 
+// Read off the seam's own signature rather than imported: the policy type
+// lives in `@deepseek-ai/dsh-sandbox`, which reaches this package only as a
+// transitive dependency of dsh-fs, and naming a fourth exact-pinned peer to
+// spell one parameter would couple the adapter to a package it never calls.
+type SandboxPolicy = Parameters<FileSystem['writeText']>[4]
+
 const DEFAULT_DIFF_BASIS_MAX_BYTES = 10 * 1024 * 1024
 
 /** Configuration for the mirage filesystem backend. */
@@ -96,6 +102,12 @@ function tooLarge(displayPath: string, maxBytes: number, size?: number): FsError
  * post-write invalidation all fire exactly as they do for a shell command —
  * and `processPath` answers in the same virtual path space the mirage shell
  * executes in, so the two providers share one execution world.
+ *
+ * One limit worth stating: mirage's op facade takes no `AbortSignal`, so
+ * cancellation is honored at this adapter's own boundaries (before a
+ * dispatch, between listing entries) and not inside a single op. A long
+ * read from a remote backend therefore runs to completion after the
+ * signal fires, and the caller learns of the abort when it returns.
  */
 export class MirageFileSystem extends FileSystem {
   static readonly inject = ['mirage']
@@ -132,8 +144,65 @@ export class MirageFileSystem extends FileSystem {
     return this.fsOps.links
   }
 
-  private normalize(path: string, cwd?: string): string {
-    return posix.resolve(cwd ?? this.cwd, path)
+  /**
+   * The same confinement claim `MirageShellExecutor` makes, off the same
+   * fact and for the same reason: with every runtime reaching only the
+   * vfs, a mutation cannot land anywhere but a mount, under its mode.
+   *
+   * The two seams sit over one world, so answering differently here
+   * would let dsh fence a bash write and wave an identical `ctx.fs`
+   * write straight through.
+   */
+  override get sandboxMode(): FileSystem['sandboxMode'] {
+    return this.ctx.mirage.vfsOnly ? 'workspace-write' : undefined
+  }
+
+  /**
+   * Refuse a mutation the call's sandbox policy does not allow.
+   *
+   * `workspaceRoot` is deliberately not consulted: it is a directory on
+   * the harness's own machine, so containment against it says nothing
+   * about this world. The mounts and their modes are the boundary, and
+   * `read-only` is the one mode that narrows them further. Wording and
+   * code mirror `dsh-fs-sandbox`, so the tool layer renders one denial
+   * marker whichever backend refused.
+   *
+   * @param policy the per-call policy, absent for an unguarded mutation.
+   * @param displayPath the path to name in the refusal.
+   */
+  private assertMutable(policy: SandboxPolicy, displayPath: string): void {
+    if (policy?.mode !== 'read-only') return
+    throw new FsError(
+      `cannot write "${displayPath}": file access denied under read-only mode`,
+      'FS_SANDBOX_DENIED',
+    )
+  }
+
+  /**
+   * The base a relative path resolves against.
+   *
+   * dsh hands `ctx.fs` either the calling session's cwd or the sandbox
+   * policy's workspace root, and both are directories on the harness's
+   * own machine that name nothing here. Resolving `notes.txt` against
+   * one yields `/Users/.../notes.txt`, which every read then reports as
+   * absent. So a base that is not a directory in this world falls back
+   * to the configured one, the same rule the shell executor applies to
+   * a workdir.
+   *
+   * An absolute path ignores its base, so it never pays for the probe.
+   *
+   * @param path the path being resolved.
+   * @param cwd the caller's base, if any.
+   * @returns the base to resolve against.
+   */
+  private async resolveBase(path: string, cwd: string | undefined): Promise<string> {
+    if (cwd === undefined || posix.isAbsolute(path)) return this.cwd
+    const ws = await this.ctx.mirage.ready
+    return (await ws.fs.isDir(cwd)) ? cwd : this.cwd
+  }
+
+  private normalize(path: string, base: string): string {
+    return posix.resolve(base, path)
   }
 
   private follow(path: string): string {
@@ -166,7 +235,7 @@ export class MirageFileSystem extends FileSystem {
   async resolve(path: string, opts?: { cwd?: string; signal?: AbortSignal }): Promise<FsTarget> {
     assertNotAborted(opts?.signal, 'resolve')
     await this.ops(opts?.signal, 'resolve')
-    const followed = this.follow(this.normalize(path, opts?.cwd))
+    const followed = this.follow(this.normalize(path, await this.resolveBase(path, opts?.cwd)))
     return { targetKey: FsTargetKey(followed), displayPath: followed }
   }
 
@@ -211,7 +280,7 @@ export class MirageFileSystem extends FileSystem {
   ): Promise<FsPathInfo | undefined> {
     assertNotAborted(signal, 'lstat')
     await this.ops(signal, 'lstat')
-    const normalized = this.normalize(path, opts?.cwd)
+    const normalized = this.normalize(path, await this.resolveBase(path, opts?.cwd))
     // Follow every component except the last: the probe is about the path
     // entry itself, so a link at the leaf must report as one.
     const parentFollowed =
@@ -331,12 +400,20 @@ export class MirageFileSystem extends FileSystem {
     }
     const entries: FsDirEntry[] = []
     for (const name of [...names].sort(compareCodePoints)) {
-      entries.push(await this.dirEntry(key, name))
+      // Per entry, not just at the door: a listing is one classification
+      // round trip per child on a backend the readdir did not warm, and
+      // a caller that gave up should stop paying for them.
+      assertNotAborted(signal, 'list')
+      entries.push(await this.dirEntry(key, name, signal))
     }
     return entries
   }
 
-  private async dirEntry(parentKey: string, name: string): Promise<FsDirEntry> {
+  private async dirEntry(
+    parentKey: string,
+    name: string,
+    signal?: AbortSignal,
+  ): Promise<FsDirEntry> {
     const childPath = parentKey === '/' ? `/${name}` : `${parentKey}/${name}`
     let followed: string
     try {
@@ -353,8 +430,12 @@ export class MirageFileSystem extends FileSystem {
     const target: FsTarget = { targetKey: FsTargetKey(followed), displayPath: childPath }
     let stat: FileStat
     try {
-      stat = await (await this.ops()).stat(followed)
-    } catch {
+      stat = await (await this.ops(signal, 'list')).stat(followed)
+    } catch (err) {
+      // An abort is the caller withdrawing, not a child this listing
+      // failed to classify, so it ends the walk instead of landing as
+      // one more entry of unknown kind.
+      if (err instanceof FsError && err.code === 'FS_ABORTED') throw err
       // A child the listing named but stat cannot classify (a broken link,
       // a race with a delete) still lists, as an entry of unknown kind.
       return { name, type: 'other', target }
@@ -373,9 +454,11 @@ export class MirageFileSystem extends FileSystem {
     content: string,
     expected?: FsWriteIntent,
     signal?: AbortSignal,
+    sandboxPolicy?: SandboxPolicy,
   ): Promise<FsWriteOutcome> {
     return this.withLock(target.targetKey, async () => {
       assertNotAborted(signal, 'write')
+      this.assertMutable(sandboxPolicy, target.displayPath)
       const key = String(target.targetKey)
       const existing = await this.stat(target, signal)
       if (existing !== undefined && existing.type !== 'file') {
@@ -445,9 +528,11 @@ export class MirageFileSystem extends FileSystem {
     edit: FsEditRequest,
     expected?: { version: FsVersion },
     signal?: AbortSignal,
+    sandboxPolicy?: SandboxPolicy,
   ): Promise<FsEditOutcome> {
     return this.withLock(target.targetKey, async () => {
       assertNotAborted(signal, 'edit')
+      this.assertMutable(sandboxPolicy, target.displayPath)
       const key = String(target.targetKey)
       const existing = await this.stat(target, signal)
       // Stale guard before literal matching: an edit based on an old read

@@ -68,6 +68,171 @@ describe('resolve', () => {
   })
 })
 
+describe('workdir', () => {
+  const HOST_WORKDIR = '/Users/somebody/host-project'
+
+  it('ignores a workdir that names nothing in this world', async () => {
+    const { shell } = await makeShell()
+    const result = await shell.run(shell.resolve({ command: 'pwd', workdir: HOST_WORKDIR }))
+    expect(result.stdout.text.trim()).toBe('/')
+  })
+
+  it('leaves relative paths reachable when the harness sends a host workdir', async () => {
+    const { shell } = await makeShell({ 'a.txt': 'x' }, { workdir: '/data' })
+    const result = await shell.run(shell.resolve({ command: 'ls .', workdir: HOST_WORKDIR }))
+    expect(result.exitCode).toBe(0)
+    expect(result.stdout.text.trim()).toBe('a.txt')
+  })
+
+  it('still honors a workdir inside the world', async () => {
+    const { shell } = await makeShell()
+    const result = await shell.run(shell.resolve({ command: 'pwd', workdir: '/data' }))
+    expect(result.stdout.text.trim()).toBe('/data')
+  })
+
+  it('keeps a bound session persistent when the harness sends a host workdir', async () => {
+    const { shell } = await makeShell({}, { sessionId: 'agent', workdir: '/data' })
+    await shell.run(shell.resolve({ command: 'export MARK=one; cd /', workdir: HOST_WORKDIR }))
+    const echoed = await shell.run(
+      shell.resolve({ command: 'echo "[$MARK][$(pwd)]"', workdir: HOST_WORKDIR }),
+    )
+    expect(echoed.stdout.text.trim()).toBe('[one][/]')
+  })
+
+  it('keeps a bound session persistent through the managed env dsh sends every call', async () => {
+    const { shell } = await makeShell({}, { sessionId: 'agent', workdir: '/data' })
+    const dshEnv = { DSH_HOME: '/home/.dsh', DSH_SHELL: '1' } as const
+    await shell.run(shell.resolve({ command: 'export MARK=one; cd /', dshEnv }))
+    const echoed = await shell.run(
+      shell.resolve({ command: 'echo "[$MARK][$(pwd)][$DSH_HOME]"', dshEnv }),
+    )
+    expect(echoed.stdout.text.trim()).toBe('[one][/][/home/.dsh]')
+  })
+
+  it('drops a managed fact the newest snapshot omits', async () => {
+    const { shell } = await makeShell({}, { sessionId: 'agent' })
+    await shell.run(
+      shell.resolve({ command: 'true', dshEnv: { DSH_HOME: '/a', DSH_SESSION_ID: 'x' } }),
+    )
+    const echoed = await shell.run(
+      shell.resolve({ command: 'echo "[$DSH_SESSION_ID][$DSH_HOME]"', dshEnv: { DSH_HOME: '/a' } }),
+    )
+    expect(echoed.stdout.text.trim()).toBe('[][/a]')
+  })
+
+  it('still forks for a per-call env override on a bound session', async () => {
+    const { shell } = await makeShell({}, { sessionId: 'agent' })
+    await shell.run(shell.resolve({ command: 'export KEEP=yes' }))
+    const forked = await shell.run(
+      shell.resolve({ command: 'echo "[$ONCE][$KEEP]"', env: { ONCE: 'x' } }),
+    )
+    expect(forked.stdout.text.trim()).toBe('[x][yes]')
+    const after = await shell.run(shell.resolve({ command: 'echo "[$ONCE]"' }))
+    expect(after.stdout.text.trim()).toBe('[]')
+  })
+
+  it('ignores a host workdir for a background command too', async () => {
+    const { shell } = await makeShell()
+    const proc = shell.start(shell.resolve({ command: 'pwd', workdir: HOST_WORKDIR }))
+    await proc.done
+    expect(proc.readOutput().delta.trim()).toBe('/')
+  })
+})
+
+describe('sandbox policy', () => {
+  const READ_ONLY = { mode: 'read-only', workspaceRoot: '/Users/somebody/host-project' } as const
+  const WORKSPACE_WRITE = { mode: 'workspace-write', workspaceRoot: '/Users/somebody' } as const
+
+  it('refuses a write under a read-only policy', async () => {
+    const { shell, ws } = await makeShell()
+    const result = await shell.run(
+      shell.resolve({ command: 'echo written > /data/x.txt', sandboxPolicy: READ_ONLY }),
+    )
+    expect(result.exitCode).not.toBe(0)
+    expect(result.sandbox?.mode).toBe('read-only')
+    expect(result.sandbox?.denied).toBe(true)
+    expect(await ws.fs.exists('/data/x.txt')).toBe(false)
+  })
+
+  it('refuses a mutating command under a read-only policy', async () => {
+    const { shell } = await makeShell({ 'a.txt': 'seed' })
+    const result = await shell.run(
+      shell.resolve({ command: 'rm /data/a.txt', sandboxPolicy: READ_ONLY }),
+    )
+    expect(result.exitCode).not.toBe(0)
+    expect(result.sandbox?.denied).toBe(true)
+  })
+
+  it('still reads under a read-only policy', async () => {
+    const { shell } = await makeShell({ 'a.txt': 'visible' })
+    const result = await shell.run(
+      shell.resolve({ command: 'cat /data/a.txt', sandboxPolicy: READ_ONLY }),
+    )
+    expect(result.exitCode).toBe(0)
+    expect(result.stdout.text).toBe('visible')
+    expect(result.sandbox?.denied).toBe(false)
+  })
+
+  it('keeps the null sink writable under a read-only policy', async () => {
+    const { shell } = await makeShell()
+    const result = await shell.run(
+      shell.resolve({ command: 'echo noise > /dev/null', sandboxPolicy: READ_ONLY }),
+    )
+    expect(result.exitCode).toBe(0)
+  })
+
+  it('allows a write under a workspace-write policy and stamps that mode', async () => {
+    const { shell } = await makeShell()
+    const result = await shell.run(
+      shell.resolve({
+        command: 'echo written > /data/x.txt && cat /data/x.txt',
+        sandboxPolicy: WORKSPACE_WRITE,
+      }),
+    )
+    expect(result.exitCode).toBe(0)
+    expect(result.stdout.text.trim()).toBe('written')
+    expect(result.sandbox?.mode).toBe('workspace-write')
+  })
+
+  it('stamps the executor default when the caller supplies no policy', async () => {
+    const { shell } = await makeShell()
+    const result = await shell.run(shell.resolve({ command: 'true' }))
+    expect(result.sandbox?.mode).toBe('workspace-write')
+  })
+
+  it('makes no sandbox claim once a runtime executes beyond the workspace', async () => {
+    const { shell, ws } = await makeShell()
+    ws.addRuntime(new LocalRuntime({ captures: ['python'] }))
+    const result = await shell.run(
+      shell.resolve({ command: 'echo written > /data/x.txt', sandboxPolicy: READ_ONLY }),
+    )
+    expect(result.sandbox).toBeUndefined()
+    expect(result.exitCode).toBe(0)
+  })
+
+  it('binds a background command to the policy too', async () => {
+    const { shell, ws } = await makeShell()
+    const proc = shell.start(
+      shell.resolve({ command: 'echo written > /data/bg.txt', sandboxPolicy: READ_ONLY }),
+    )
+    await proc.done
+    expect(proc.exitCode).not.toBe(0)
+    expect(proc.sandbox?.mode).toBe('read-only')
+    expect(await ws.fs.exists('/data/bg.txt')).toBe(false)
+  })
+
+  it('keeps a bound session out of the read-only twin it narrowed into', async () => {
+    const { shell } = await makeShell({}, { sessionId: 'agent' })
+    await shell.run(shell.resolve({ command: 'export MARK=writable' }))
+    const confined = await shell.run(
+      shell.resolve({ command: 'echo "[$MARK]"', sandboxPolicy: READ_ONLY }),
+    )
+    expect(confined.stdout.text.trim()).toBe('[]')
+    const back = await shell.run(shell.resolve({ command: 'echo "[$MARK]"' }))
+    expect(back.stdout.text.trim()).toBe('[writable]')
+  })
+})
+
 describe('run', () => {
   it('executes a command against the mounted workspace', async () => {
     const { shell } = await makeShell({ 'a.txt': 'mounted content' })
@@ -450,5 +615,127 @@ describe('sandbox facts', () => {
       enforcement: 'full',
       runnerFailed: false,
     })
+  })
+})
+
+describe('foreground output fidelity', () => {
+  it('returns the output a timed-out command already produced', async () => {
+    const { shell } = await makeShell()
+    const result = await shell.run(
+      shell.resolve({ command: 'echo early-output; sleep 30', timeoutMs: 300 }),
+    )
+    expect(result.timedOut).toBe(true)
+    expect(result.exitCode).toBeNull()
+    expect(result.stdout.text).toContain('early-output')
+  })
+
+  it('returns the output an aborted command already produced', async () => {
+    const { shell } = await makeShell()
+    const controller = new AbortController()
+    const pending = shell.run(
+      shell.resolve({ command: 'echo before-abort; sleep 30', signal: controller.signal }),
+    )
+    await new Promise((resolve) => setTimeout(resolve, 250))
+    controller.abort()
+    const result = await pending
+    expect(result.aborted).toBe(true)
+    expect(result.stdout.text).toContain('before-abort')
+  })
+
+  it('keeps stderr of a killed command too', async () => {
+    const { shell } = await makeShell()
+    const result = await shell.run(
+      shell.resolve({ command: 'cat /data/nope; sleep 30', timeoutMs: 400 }),
+    )
+    expect(result.timedOut).toBe(true)
+    expect(result.stderr.text).toContain('No such file')
+  })
+
+  it('spills a truncated foreground run to the workspace', async () => {
+    const { shell, ws } = await makeShell({}, { spillDir: '/data/spill' })
+    const result = await shell.run(
+      shell.resolve({ command: 'printf "%s" aaaaabbbbb', stdoutMaxBytes: 5 }),
+    )
+    expect(result.stdout.truncated).toBe(true)
+    expect(result.stdout.text).toBe('bbbbb')
+    const path = result.stdout.spillPath
+    if (path === undefined) throw new Error('expected a spill path')
+    expect(await ws.fs.readFileText(path)).toBe('aaaaabbbbb')
+  })
+
+  it('leaves spillPath unset when nothing was truncated', async () => {
+    const { shell } = await makeShell({}, { spillDir: '/data/spill' })
+    const result = await shell.run(shell.resolve({ command: 'echo small' }))
+    expect(result.stdout.truncated).toBe(false)
+    expect(result.stdout.spillPath).toBeUndefined()
+  })
+
+  it('leaves spillPath unset when no spill directory is configured', async () => {
+    const { shell } = await makeShell()
+    const result = await shell.run(
+      shell.resolve({ command: 'printf "%s" aaaaabbbbb', stdoutMaxBytes: 5 }),
+    )
+    expect(result.stdout.truncated).toBe(true)
+    expect(result.stdout.spillPath).toBeUndefined()
+  })
+
+  it('retains a large configured budget instead of a fixed constant', async () => {
+    const { shell } = await makeShell({}, { stdoutMaxBytes: 2_000_000 })
+    const proc = shell.start(shell.resolve({ command: 'printf "%0.sx" $(seq 1 300000)' }))
+    await proc.done
+    const read = proc.readOutput()
+    expect(read.lossy).toBe(false)
+    expect(read.delta.length).toBe(300_000)
+  })
+})
+
+describe('background delta bounding', () => {
+  it('caps the delta at the budget, keeping the tail', async () => {
+    const { shell } = await makeShell()
+    const proc = shell.start(
+      shell.resolve({ command: 'printf "%s" abcdefghij', stdoutMaxBytes: 4 }),
+    )
+    await proc.done
+    const read = proc.readOutput()
+    expect(read.delta).toBe('ghij')
+    expect(read.lossy).toBe(true)
+  })
+
+  it('never splits a multi-byte character across the cap', async () => {
+    const { shell } = await makeShell()
+    // "aaaé" is five bytes; the last three are "a" plus the two-byte "é",
+    // so the cap lands on a character boundary rather than half of one.
+    const proc = shell.start(shell.resolve({ command: 'printf "%s" aaaé', stdoutMaxBytes: 3 }))
+    await proc.done
+    expect(proc.readOutput().delta).toBe('aé')
+  })
+
+  it('re-aligns when the cap lands mid-character', async () => {
+    const { shell } = await makeShell()
+    // Budget 3 over "aaéé" (six bytes) would start inside the second "é",
+    // so the leading continuation byte is dropped rather than decoded as
+    // a replacement character.
+    const proc = shell.start(shell.resolve({ command: 'printf "%s" aaéé', stdoutMaxBytes: 3 }))
+    await proc.done
+    expect(proc.readOutput().delta).toBe('é')
+  })
+
+  it('marks a stderr run once and keeps both streams in order', async () => {
+    const { shell } = await makeShell()
+    const proc = shell.start(shell.resolve({ command: 'echo out; cat /data/nope; echo out2' }))
+    await proc.done
+    const delta = proc.readOutput().delta
+    expect(delta).toContain('out')
+    expect(delta).toContain('--- stderr ---')
+    expect(delta).toContain('out2')
+    expect(delta.split('--- stderr ---').length - 1).toBe(1)
+  })
+
+  it('drains consuming, so a second read returns nothing new', async () => {
+    const { shell } = await makeShell()
+    const proc = shell.start(shell.resolve({ command: 'echo once' }))
+    await proc.done
+    expect(proc.readOutput().delta.trim()).toBe('once')
+    expect(proc.readOutput().delta).toBe('')
   })
 })
