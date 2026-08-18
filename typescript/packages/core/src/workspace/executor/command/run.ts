@@ -30,7 +30,7 @@ import type {
 import { namespaceNames } from '../../../ops/namespace_view.ts'
 import type { Namespace } from '../../mount/namespace/namespace.ts'
 import { envSnapshot, sessionView } from '../../session/state.ts'
-import { linkTargetStat, pathExists, pathReaddir, pathStat } from '../builtins/links.ts'
+import { linkTargetStat, pathExists, pathReaddir, pathStat } from '../builtins/links/index.ts'
 import { mergeOverlayStat } from '../../mount/namespace/overlay.ts'
 import { MountCommandUnsupported, type MountRegistry } from '../../mount/registry.ts'
 import type { Runtime } from '../../../runtime/base.ts'

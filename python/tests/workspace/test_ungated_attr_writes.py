@@ -28,14 +28,16 @@ SRC = pathlib.Path(__file__).resolve().parents[2] / "mirage"
 # So every call site is written down here with the reason it is allowed.
 # A new one fails this test until someone states which gated write covers
 # it, or routes it through `view.mark` instead.
+_DECLARE = "mirage/workspace/executor/builtins/declare"
+
 ALLOWED = {
-    ("mirage/workspace/executor/builtins/vars.py", "_store_staged_arrays"):
+    (f"{_DECLARE}/declare.py", "store_staged_arrays"):
     "the `await view.set(name, base)` immediately above stores this "
     "same name through the gate",
-    ("mirage/workspace/executor/builtins/vars.py", "handle_export"):
+    (f"{_DECLARE}/export.py", "handle_export"):
     "the `=` branch only; `await view.set(key, val)` runs first and "
     "the bare form uses `view.mark`",
-    ("mirage/workspace/executor/builtins/vars.py", "handle_readonly"):
+    (f"{_DECLARE}/readonly.py", "handle_readonly"):
     "the `=` branch only; `await view.set(key, val)` runs first and "
     "the bare form uses `view.mark`",
     ("mirage/workspace/node/declaration.py", "_stamp_export"):

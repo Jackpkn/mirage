@@ -15,4 +15,4 @@
 // The package's public surface: what other packages consume. Inside
 // the package, and in its tests, the modules are imported directly.
 export { classify, describe } from './classify.ts'
-export { handleType, handleWhich } from './handle.ts'
+export { handleType, handleWhich } from './lookup.ts'

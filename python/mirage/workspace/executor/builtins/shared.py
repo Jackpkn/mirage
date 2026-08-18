@@ -12,14 +12,28 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import re
+
 from mirage.io import IOResult
 from mirage.io.types import ByteSource
+from mirage.ops.types import SessionView
+from mirage.policy import PolicyDenied
+from mirage.shell.errors import ArithError
 from mirage.types import PathSpec, word_text
 from mirage.utils.path import resolve_path
 from mirage.workspace.mount.namespace import Namespace
+from mirage.workspace.session import Session
+from mirage.workspace.session.state import session_view
 from mirage.workspace.types import ExecutionNode
 
 Result = tuple[ByteSource | None, IOResult, ExecutionNode]
+
+IDENTIFIER_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+# An assignment target with an optional subscript (`name` or `name[sub]`).
+# A subscript must be non-empty: bash rejects `a[]` as an invalid
+# identifier, while `a[ ]` is a valid arithmetic 0.
+TARGET_RE = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)(?:\[(.+)\])?\Z")
 
 
 def result(
@@ -201,3 +215,82 @@ async def expand_operands(
             continue
         out.append(spec)
     return out
+
+
+def view_of(session: Session, state: SessionView | None) -> SessionView:
+    """The session view to write through.
+
+    Production callers thread the workspace's gated view; a direct
+    invocation (a unit test) gets an ungated one over the same session.
+
+    Args:
+        session (Session): shell session state.
+        state (SessionView | None): the caller's view, if threaded.
+    """
+    return state if state is not None else session_view(session)
+
+
+def refusal(cmd: str, exc: PolicyDenied) -> Result:
+    """Render a policy denial in the builtin's own voice.
+
+    Args:
+        cmd (str): builtin name for the node.
+        exc (PolicyDenied): the gate's refusal.
+    """
+    err = f"{exc.strerror}\n".encode()
+    return None, IOResult(exit_code=1, stderr=err), ExecutionNode(command=cmd,
+                                                                  exit_code=1,
+                                                                  stderr=err)
+
+
+def readonly_refusal(cmd: str, name: str) -> Result:
+    """Render the shell's own readonly refusal, checked before the door.
+
+    Args:
+        cmd (str): builtin name for the node.
+        name (str): the frozen variable.
+    """
+    err = f"bash: {name}: readonly variable\n".encode()
+    return None, IOResult(exit_code=1, stderr=err), ExecutionNode(command=cmd,
+                                                                  exit_code=1,
+                                                                  stderr=err)
+
+
+def arith_refusal(cmd: str, exc: ArithError) -> Result:
+    """Render the ``-i`` coercion's arithmetic error as bash does.
+
+    GNU voices it as the evaluator's own line, prefixed by the builtin
+    and the offending text (``bash: read: 1+: syntax error: operand
+    expected``), and fails the builtin with 1 while the variable keeps
+    its old value, which is what the door's copy-then-store already
+    guarantees. A plain assignment (``n=1+``) is fatal instead and is
+    voiced by the executor without a builtin name.
+
+    Args:
+        cmd (str): builtin name for the node.
+        exc (ArithError): the evaluator's refusal, text already led.
+    """
+    err = f"bash: {cmd}: {exc}\n".encode()
+    return None, IOResult(exit_code=1, stderr=err), ExecutionNode(command=cmd,
+                                                                  exit_code=1,
+                                                                  stderr=err)
+
+
+def is_valid_name(name: str) -> bool:
+    """Whether the word is a shell identifier.
+
+    Args:
+        name (str): the word to test.
+    """
+    return IDENTIFIER_RE.fullmatch(name) is not None
+
+
+def is_count_word(word: str) -> bool:
+    """Whether the word is an optionally signed run of digits, which is
+    what ``shift``, ``return`` and ``exit`` accept as their argument.
+
+    Args:
+        word (str): the word to test.
+    """
+    body = word[1:] if word[:1] in ("-", "+") else word
+    return body.isdigit()

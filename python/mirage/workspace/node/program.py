@@ -21,7 +21,7 @@ from mirage.shell.helpers import get_text
 from mirage.shell.types import ERREXIT_EXEMPT_TYPES
 from mirage.shell.types import NodeType as NT
 from mirage.utils.errors import format_fs_error
-from mirage.workspace.executor.builtins.exec_cmd import divert_statement
+from mirage.workspace.executor.builtins.exec import divert_statement
 from mirage.workspace.executor.control import (BreakSignal, ContinueSignal,
                                                ReturnSignal)
 from mirage.workspace.executor.jobs import handle_background

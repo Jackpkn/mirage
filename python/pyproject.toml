@@ -490,8 +490,6 @@ module = [
     "mirage.shell.arith",
     "mirage.shell.parse",
     "mirage.workspace.dispatcher.dispatcher",
-    "mirage.workspace.executor.builtins.history",
-    "mirage.workspace.executor.builtins.links",
     "mirage.workspace.executor.builtins.scope",
     "mirage.workspace.executor.control",
     "mirage.workspace.executor.jobs",

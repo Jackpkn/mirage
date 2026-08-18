@@ -34,7 +34,7 @@ from mirage.shell.types import NodeType as NT
 from mirage.shell.types import Redirect, RedirectKind
 from mirage.workspace.abort import MirageAbortError
 from mirage.workspace.executor.builtins import handle_test, handle_unset
-from mirage.workspace.executor.builtins.exec_cmd import install_exec_redirects
+from mirage.workspace.executor.builtins.exec import install_exec_redirects
 from mirage.workspace.executor.control import (handle_case, handle_cfor,
                                                handle_for, handle_if,
                                                handle_select, handle_until,

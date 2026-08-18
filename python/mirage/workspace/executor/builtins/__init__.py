@@ -14,12 +14,18 @@
 
 from mirage.workspace.executor.builtins.alias import (handle_alias,
                                                       handle_unalias)
-from mirage.workspace.executor.builtins.capacity import handle_df
 from mirage.workspace.executor.builtins.command import handle_command_builtin
 from mirage.workspace.executor.builtins.condition import handle_test
+from mirage.workspace.executor.builtins.df import handle_df
 from mirage.workspace.executor.builtins.dirs import handle_cd
-from mirage.workspace.executor.builtins.exec_cmd import handle_exec_command
+from mirage.workspace.executor.builtins.echo import (handle_echo,
+                                                     interpret_escapes)
+from mirage.workspace.executor.builtins.env import handle_env
+from mirage.workspace.executor.builtins.eval import handle_eval
+from mirage.workspace.executor.builtins.exec import handle_exec_command
+from mirage.workspace.executor.builtins.getopts import handle_getopts
 from mirage.workspace.executor.builtins.history import handle_history
+from mirage.workspace.executor.builtins.let import handle_let
 from mirage.workspace.executor.builtins.links import (accepts_line,
                                                       follow_paths, handle_ln,
                                                       handle_readlink,
@@ -35,42 +41,49 @@ from mirage.workspace.executor.builtins.metadata import (handle_chgrp,
                                                          handle_chmod,
                                                          handle_chown,
                                                          handle_touch)
+from mirage.workspace.executor.builtins.printenv import handle_printenv
+from mirage.workspace.executor.builtins.printf import handle_printf
+from mirage.workspace.executor.builtins.read import handle_read
 from mirage.workspace.executor.builtins.scope import _scope_path, _to_scope
 from mirage.workspace.executor.builtins.script import (handle_bash,
-                                                       handle_eval,
                                                        handle_exec_path,
-                                                       handle_sleep,
                                                        handle_source)
+from mirage.workspace.executor.builtins.set import handle_set
+from mirage.workspace.executor.builtins.shift import handle_shift
 from mirage.workspace.executor.builtins.shopt import handle_shopt
-from mirage.workspace.executor.builtins.text import (_interpret_escapes,
-                                                     handle_echo,
-                                                     handle_printf)
+from mirage.workspace.executor.builtins.sleep import handle_sleep
 from mirage.workspace.executor.builtins.timeout import handle_timeout
+from mirage.workspace.executor.builtins.trap import handle_trap
 from mirage.workspace.executor.builtins.umask import handle_umask
+from mirage.workspace.executor.builtins.unset import handle_unset
+from mirage.workspace.executor.builtins.whoami import handle_whoami
 from mirage.workspace.executor.builtins.xargs import handle_xargs
 
-from mirage.workspace.executor.builtins.vars import (  # isort: skip
-    handle_declare_functions, handle_declare_print, handle_env, handle_exit,
-    handle_export, handle_getopts, handle_let, handle_local, handle_printenv,
-    handle_read, handle_readonly, handle_return, handle_set, handle_shift,
-    handle_trap, handle_unset, handle_whoami, note_local_array)
+from mirage.workspace.executor.builtins.control import (  # isort: skip
+    handle_colon, handle_exit, handle_false, handle_return, handle_true,
+    loop_levels)
+
+from mirage.workspace.executor.builtins.declare import (  # isort: skip
+    handle_declare_functions, handle_declare_print, handle_export,
+    handle_local, handle_readonly, note_local_array)
 
 __all__ = [
     '_collect_man_hits',
     'handle_alias',
     'handle_unalias',
-    '_interpret_escapes',
     '_render_man_entry',
     '_render_man_index',
     '_scope_path',
     '_to_scope',
     'handle_bash',
     'handle_cd',
+    'handle_colon',
     'handle_command_builtin',
     'handle_echo',
     'handle_env',
     'handle_eval',
     'handle_exit',
+    'handle_false',
     'handle_exec_command',
     'handle_declare_functions',
     'handle_declare_print',
@@ -107,6 +120,7 @@ __all__ = [
     'handle_test',
     'handle_timeout',
     'handle_trap',
+    'handle_true',
     'handle_unset',
     'handle_type',
     'handle_umask',
@@ -114,4 +128,6 @@ __all__ = [
     'handle_whoami',
     'note_local_array',
     'handle_xargs',
+    'interpret_escapes',
+    'loop_levels',
 ]

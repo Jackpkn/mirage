@@ -12,17 +12,23 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import errno
 from dataclasses import replace
 
 import pytest
 
 from mirage.io import IOResult
+from mirage.policy import PolicyDenied
 from mirage.resource.ram import RAMResource
+from mirage.shell.errors import ArithError
 from mirage.types import MountMode, PathSpec
 from mirage.workspace import Workspace
 from mirage.workspace.executor.builtins.shared import (  # yapf: disable
-    abs_path, expand_operands, fail, finish, ok, operand_text, split_flags,
-    split_value_flags)
+    IDENTIFIER_RE, abs_path, arith_refusal, expand_operands, fail, finish,
+    is_count_word, is_valid_name, ok, operand_text, readonly_refusal, refusal,
+    split_flags, split_value_flags, view_of)
+from mirage.workspace.session import Session
+from mirage.workspace.session.state import session_view
 
 
 def test_ok_triple():
@@ -122,3 +128,53 @@ async def test_expand_operands_globs():
     expanded = await expand_operands(namespace, [glob_spec, "/data/c.md"])
     virtuals = sorted(p.virtual for p in expanded)
     assert virtuals == ["/data/a.txt", "/data/b.txt", "/data/c.md"]
+
+
+def test_view_of_threads_the_callers_view():
+    session = Session(session_id="s1")
+    view = session_view(session)
+    assert view_of(session, view) is view
+    ungated = view_of(session, None)
+    assert isinstance(ungated, type(view))
+
+
+def test_refusal_speaks_in_the_builtins_voice():
+    exc = PolicyDenied(errno.EACCES, "X: refused", "X")
+    out, io, node = refusal("export", exc)
+    assert out is None
+    assert io.exit_code == 1
+    assert io.stderr == f"{exc.strerror}\n".encode()
+    assert node.command == "export"
+    assert node.stderr == io.stderr
+
+
+def test_readonly_refusal_names_the_variable():
+    out, io, node = readonly_refusal("read", "X")
+    assert out is None
+    assert io.exit_code == 1
+    assert io.stderr == b"bash: X: readonly variable\n"
+    assert node.command == "read"
+
+
+def test_arith_refusal_prefixes_the_builtin():
+    out, io, node = arith_refusal("let", ArithError("1+: syntax error"))
+    assert out is None
+    assert io.exit_code == 1
+    assert io.stderr == b"bash: let: 1+: syntax error\n"
+    assert node.command == "let"
+
+
+def test_is_valid_name():
+    assert is_valid_name("_x9")
+    assert not is_valid_name("9x")
+    assert not is_valid_name("a-b")
+    assert not is_valid_name("")
+    assert IDENTIFIER_RE.fullmatch("abc") is not None
+
+
+def test_is_count_word():
+    assert is_count_word("3")
+    assert is_count_word("-3")
+    assert is_count_word("+3")
+    assert not is_count_word("x")
+    assert not is_count_word("-")

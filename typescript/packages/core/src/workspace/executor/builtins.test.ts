@@ -56,7 +56,7 @@ import {
   handleWhoami,
   handleXargs,
 } from './builtins/index.ts'
-import { parseDuration } from './builtins/timeout.ts'
+import { parseDuration } from './builtins/timeout/timeout.ts'
 import { ReturnSignal } from './control.ts'
 
 function wireMount(mount: MountEntry): void {

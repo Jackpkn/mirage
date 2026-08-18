@@ -51,7 +51,7 @@ import { handleDisown, handleFg, handleJobs, handleKill, handlePs, handleWait } 
 import { versionRequest } from '../../commands/config.ts'
 
 import { handleCli } from './command/cli.ts'
-import { pathStat } from './builtins/links.ts'
+import { pathStat } from './builtins/links/index.ts'
 import { dropServiceCaches, namespaceViewOf } from './command/run.ts'
 import type { SessionView } from '../../ops/types.ts'
 import { sessionView } from '../session/state.ts'
