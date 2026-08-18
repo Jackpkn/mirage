@@ -20,7 +20,7 @@ TRACE = "a" * 32
 
 
 @pytest.mark.parametrize(
-    "path,level",
+    "path,kind",
     [
         ("", "root"),
         ("/", "root"),
@@ -29,22 +29,24 @@ TRACE = "a" * 32
         ("services/checkout/operations.json", "operations"),
         ("services/checkout/traces", "traces"),
         (f"services/checkout/traces/{TRACE}.json", "trace"),
-        ("traces", "unknown"),
-        ("services/checkout/traces/deep/nested.json", "unknown"),
-        ("services/checkout/unknown.json", "unknown"),
+        ("traces", "invalid"),
+        ("services/checkout/traces/deep/nested.json", "invalid"),
+        ("services/checkout/unknown.json", "invalid"),
+        # A malformed trace id fails the route's codec, so the path never
+        # classifies as a trace at all.
+        ("services/checkout/traces/nothex.json", "invalid"),
+        ("services/.hidden", "invalid"),
     ],
 )
-def test_detect_scope_levels(path, level):
-    assert detect_scope(path).level == level
+def test_detect_scope_kinds(path, kind):
+    assert detect_scope(path).kind == kind
 
 
 def test_detect_scope_carries_service_and_trace_id():
-    scope = detect_scope(f"services/checkout/traces/{TRACE}.json")
-    assert scope.service == "checkout"
-    assert scope.trace_id == TRACE
+    match = detect_scope(f"services/checkout/traces/{TRACE}.json")
+    assert match.captures == {"service": "checkout", "trace_id": TRACE}
 
 
 def test_detect_scope_service_without_trace():
-    scope = detect_scope("services/checkout/traces")
-    assert scope.service == "checkout"
-    assert scope.trace_id is None
+    match = detect_scope("services/checkout/traces")
+    assert match.captures == {"service": "checkout"}

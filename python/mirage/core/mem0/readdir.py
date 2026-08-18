@@ -13,44 +13,22 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 from mirage.accessor.mem0 import Mem0Accessor
-from mirage.cache.index import NULL_INDEX, IndexCacheStore, IndexEntry
+from mirage.cache.index import IndexEntry
+from mirage.core.hierarchy.readdir import make_readdir
+from mirage.core.hierarchy.scope import RouteMatch
 from mirage.core.mem0.client import get_all_memories
-from mirage.core.mem0.scope import ScopeLevel, detect_scope
+from mirage.core.mem0.scope import detect_scope
 from mirage.core.render.json import json_bytes
-from mirage.types import PathSpec
-from mirage.utils.errors import enoent, enotdir
 
 
-async def readdir(
-    accessor: Mem0Accessor,
-    path: PathSpec,
-    index: IndexCacheStore = NULL_INDEX,
-) -> list[str]:
-    """List the memory files for the configured scope.
-
-    Args:
-        accessor (Mem0Accessor): mem0 accessor.
-        path (PathSpec): the directory path (only the mount root is a dir).
-        index (IndexCacheStore): index cache.
-    """
-    scope = detect_scope(path)
-    if scope.level == ScopeLevel.INVALID:
-        raise enoent(path)
-    if scope.level != ScopeLevel.ROOT:
-        raise enotdir(path)
-
-    dir_key = path.virtual
-    listing = await index.list_dir(dir_key)
-    if listing.entries is not None:
-        return listing.entries
-
+async def _list_memories(accessor: Mem0Accessor,
+                         match: RouteMatch) -> list[tuple[str, IndexEntry]]:
     memories = await get_all_memories(
         accessor.client,
         filters=accessor.config.scope_filter,
         page_size=accessor.config.default_page_size,
     )
     entries: list[tuple[str, IndexEntry]] = []
-    names: list[str] = []
     for m in memories:
         body = json_bytes(m)
         memory_id = str(m["id"])
@@ -65,6 +43,11 @@ async def readdir(
             extra={"memory": m},
         )
         entries.append((filename, entry))
-        names.append(f"{dir_key.rstrip('/')}/{filename}")
-    await index.set_dir(dir_key, entries)
-    return names
+    return entries
+
+
+readdir = make_readdir(
+    detect_scope,
+    listers={"root": _list_memories},
+    leaf_error="enotdir",
+)

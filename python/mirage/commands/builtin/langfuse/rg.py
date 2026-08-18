@@ -30,7 +30,7 @@ from mirage.core.langfuse.client import (fetch_datasets, fetch_prompts,
                                          fetch_sessions, fetch_traces)
 from mirage.core.langfuse.read import read as langfuse_read
 from mirage.core.langfuse.readdir import readdir as _readdir
-from mirage.core.langfuse.scope import detect_scope
+from mirage.core.langfuse.scope import SEARCH_KINDS, detect_scope
 from mirage.core.langfuse.stat import stat as _stat
 from mirage.io.types import ByteSource, IOResult
 from mirage.types import PathSpec
@@ -53,27 +53,27 @@ async def rg(accessor: LangfuseAccessor, paths: list[PathSpec],
     limit = config.default_search_limit
 
     if paths and "\n" not in pattern_str:
-        scope = detect_scope(paths[0])
+        search = SEARCH_KINDS.get(detect_scope(paths[0]).kind)
 
-        if scope.level == "traces" or scope.level == "root":
+        if search == "traces":
             traces = await fetch_traces(
                 accessor.api,
                 limit=limit,
             )
             return _filter_traces(traces, pat)
 
-        if scope.level == "sessions":
+        if search == "sessions":
             sessions = await fetch_sessions(
                 accessor.api,
                 limit=limit,
             )
             return _format_session_results(sessions, pat)
 
-        if scope.level == "prompts":
+        if search == "prompts":
             prompts = await fetch_prompts(accessor.api)
             return _format_prompt_results(prompts, pat)
 
-        if scope.level == "datasets":
+        if search == "datasets":
             datasets = await fetch_datasets(accessor.api)
             return _format_dataset_results(datasets, pat)
 

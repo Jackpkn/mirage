@@ -23,7 +23,7 @@ from mirage.commands.errors import UsageError
 from mirage.commands.registry import command
 from mirage.commands.spec import SPECS
 from mirage.commands.spec.types import FlagView
-from mirage.core.mem0.scope import ScopeLevel, detect_scope
+from mirage.core.mem0.scope import detect_scope
 from mirage.core.mem0.search import search_memories_rendered
 from mirage.io.types import ByteSource, IOResult
 from mirage.types import PathSpec
@@ -57,10 +57,10 @@ def is_mount_root(path: PathSpec) -> bool:
 def memory_ids(paths: list[PathSpec]) -> set[str]:
     ids: set[str] = set()
     for path in paths:
-        scope = detect_scope(path)
-        if scope.level != ScopeLevel.MEMORY or scope.memory_id is None:
+        match = detect_scope(path)
+        if match.kind != "memory":
             raise FileNotFoundError(path.virtual)
-        ids.add(scope.memory_id)
+        ids.add(match.captures["memory_id"])
     return ids
 
 

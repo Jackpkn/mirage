@@ -15,12 +15,14 @@
 from typing import Any
 
 from mirage.accessor.mem0 import Mem0Accessor
-from mirage.cache.index import NULL_INDEX, IndexCacheStore
+from mirage.cache.index import IndexCacheStore
+from mirage.core.hierarchy.scope import RouteMatch
+from mirage.core.hierarchy.stat import make_stat
 from mirage.core.mem0.client import get_memory
-from mirage.core.mem0.scope import ScopeLevel, detect_scope
+from mirage.core.mem0.readdir import readdir
+from mirage.core.mem0.scope import detect_scope
 from mirage.core.render.json import json_bytes
 from mirage.types import FileStat, FileType, PathSpec
-from mirage.utils.errors import enoent
 
 
 def _file_stat(memory: dict[str, Any]) -> FileStat:
@@ -37,27 +39,22 @@ def _file_stat(memory: dict[str, Any]) -> FileStat:
     )
 
 
-async def stat(
-    accessor: Mem0Accessor,
-    path: PathSpec,
-    index: IndexCacheStore = NULL_INDEX,
-) -> FileStat:
-    """Stat a mem0 path.
-
-    Args:
-        accessor (Mem0Accessor): mem0 accessor.
-        path (PathSpec): the path to stat.
-        index (IndexCacheStore): index cache.
-    """
-    scope = detect_scope(path)
-    if scope.level == ScopeLevel.ROOT:
-        return FileStat(name="/", type=FileType.DIRECTORY)
-    if scope.level != ScopeLevel.MEMORY or scope.memory_id is None:
-        raise enoent(path)
+async def _memory_stat(accessor: Mem0Accessor, match: RouteMatch,
+                       path: PathSpec, index: IndexCacheStore) -> FileStat:
+    # The root listing caches each memory's whole payload, so a warm
+    # index answers without a network call.
     lookup = await index.get(path.virtual)
     cached = (lookup.entry.extra.get("memory")
               if lookup.entry is not None else None)
     if isinstance(cached, dict):
         return _file_stat(cached)
-    memory = await get_memory(accessor.client, scope.memory_id, path)
+    memory = await get_memory(accessor.client, match.captures["memory_id"],
+                              path)
     return _file_stat(memory)
+
+
+stat = make_stat(
+    detect_scope,
+    readdir,
+    overrides={"memory": _memory_stat},
+)

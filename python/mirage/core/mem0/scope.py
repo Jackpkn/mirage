@@ -12,42 +12,16 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from dataclasses import dataclass
-from enum import StrEnum
+from mirage.core.hierarchy.codec import JSON_NAME
+from mirage.core.hierarchy.route import Capture, Route
+from mirage.core.hierarchy.scope import make_detect_scope
+from mirage.types import FileType
 
-from mirage.types import PathSpec
+# The mount is one flat directory of memory files; which memories exist
+# is a function of the configured scope filter, not of the path.
+ROUTES = (Route(kind="memory",
+                segments=(Capture("memory_id", JSON_NAME), ),
+                leaf=True,
+                filetype=FileType.JSON), )
 
-
-class ScopeLevel(StrEnum):
-    ROOT = "root"
-    MEMORY = "memory"
-    INVALID = "invalid"
-
-
-@dataclass(frozen=True, slots=True)
-class Mem0Scope:
-    level: ScopeLevel
-    memory_id: str | None = None
-
-
-def _backend_key(path: PathSpec) -> str:
-    return path.resource_path.strip("/")
-
-
-def detect_scope(path: PathSpec) -> Mem0Scope:
-    """Classify a mem0 virtual path.
-
-    Args:
-        path (PathSpec): the virtual path to classify.
-    """
-    key = _backend_key(path)
-    if not key:
-        return Mem0Scope(level=ScopeLevel.ROOT)
-    parts = key.split("/")
-    if any(p.startswith(".") for p in parts):
-        return Mem0Scope(level=ScopeLevel.INVALID)
-    if len(parts) == 1 and len(
-            parts[0]) > len(".json") and parts[0].endswith(".json"):
-        return Mem0Scope(level=ScopeLevel.MEMORY,
-                         memory_id=parts[0][:-len(".json")])
-    return Mem0Scope(level=ScopeLevel.INVALID)
+detect_scope = make_detect_scope(ROUTES)

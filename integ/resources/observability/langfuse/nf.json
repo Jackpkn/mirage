@@ -64,6 +64,32 @@
         "stdout": "",
         "stderr": "cat: /lf/traces/.hidden.json: No such file or directory\n"
       }
+    },
+    {
+      "id": "lf_nf_cat_prompt_version_not_integer",
+      "seq": 600105,
+      "targets": [
+        "langfuse"
+      ],
+      "command": "cat /lf/prompts/greeting/abc.json",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "cat: /lf/prompts/greeting/abc.json: No such file or directory\n"
+      }
+    },
+    {
+      "id": "lf_nf_stat_prompt_version_digit_prefixed",
+      "seq": 600106,
+      "targets": [
+        "langfuse"
+      ],
+      "command": "stat /lf/prompts/greeting/1x.json",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "stat: /lf/prompts/greeting/1x.json: No such file or directory\n"
+      }
     }
   ]
 }

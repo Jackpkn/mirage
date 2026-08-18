@@ -13,78 +13,65 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 from mirage.accessor.langfuse import LangfuseAccessor
-from mirage.cache.index import NULL_INDEX, IndexCacheStore
+from mirage.cache.index import IndexCacheStore
+from mirage.core.hierarchy.read import make_read
+from mirage.core.hierarchy.scope import RouteMatch
 from mirage.core.langfuse.client import (fetch_dataset_items,
                                          fetch_dataset_runs, fetch_or_enoent,
                                          fetch_prompt, fetch_trace)
+from mirage.core.langfuse.scope import detect_scope
 from mirage.core.render.json import json_bytes, jsonl_bytes
 from mirage.types import PathSpec
 from mirage.utils.errors import enoent
-from mirage.utils.key_prefix import mount_prefix_of
 
 
-async def read(
-    accessor: LangfuseAccessor,
-    path: PathSpec,
-    index: IndexCacheStore = NULL_INDEX,
-) -> bytes:
-    """Read a file as bytes.
+async def _read_trace(accessor: LangfuseAccessor, match: RouteMatch,
+                      path: PathSpec, index: IndexCacheStore) -> bytes:
+    data = await fetch_or_enoent(
+        fetch_trace(accessor.api, match.captures["trace_id"]), path.virtual)
+    return json_bytes(data)
 
-    Args:
-        accessor (LangfuseAccessor): langfuse accessor.
-        path (str): resource-relative path.
-        index (IndexCacheStore): index cache.
-        prefix (str): mount prefix for virtual index keys.
-    """
-    virtual = path.virtual
-    mount_prefix_of(path.virtual, path.resource_path)
-    key = path.resource_path
 
-    if any(p.startswith(".") for p in key.split("/")):
-        raise enoent(virtual)
+async def _read_prompt_version(accessor: LangfuseAccessor, match: RouteMatch,
+                               path: PathSpec,
+                               index: IndexCacheStore) -> bytes:
+    # The route's codec only matches plain ASCII integers, so the int()
+    # here cannot raise.
+    data = await fetch_or_enoent(
+        fetch_prompt(accessor.api, match.captures["prompt_name"],
+                     int(match.captures["version"])), path.virtual)
+    return json_bytes(data)
 
-    parts = key.split("/")
 
-    if parts[0] == "traces" and len(parts) == 2 and parts[1].endswith(".json"):
-        trace_id = parts[1].removesuffix(".json")
-        data = await fetch_or_enoent(fetch_trace(accessor.api, trace_id),
-                                     virtual)
-        return json_bytes(data)
+async def _read_dataset_items(accessor: LangfuseAccessor, match: RouteMatch,
+                              path: PathSpec,
+                              index: IndexCacheStore) -> bytes:
+    items = await fetch_or_enoent(
+        fetch_dataset_items(accessor.api, match.captures["dataset_name"]),
+        path.virtual)
+    return jsonl_bytes(items)
 
-    if (parts[0] == "sessions" and len(parts) == 3
-            and parts[2].endswith(".json")):
-        trace_id = parts[2].removesuffix(".json")
-        data = await fetch_or_enoent(fetch_trace(accessor.api, trace_id),
-                                     virtual)
-        return json_bytes(data)
 
-    if (parts[0] == "prompts" and len(parts) == 3
-            and parts[2].endswith(".json")):
-        prompt_name = parts[1]
-        version = int(parts[2].removesuffix(".json"))
-        data = await fetch_or_enoent(
-            fetch_prompt(accessor.api, prompt_name, version), virtual)
-        return json_bytes(data)
+async def _read_dataset_run(accessor: LangfuseAccessor, match: RouteMatch,
+                            path: PathSpec, index: IndexCacheStore) -> bytes:
+    runs = await fetch_or_enoent(
+        fetch_dataset_runs(accessor.api, match.captures["dataset_name"]),
+        path.virtual)
+    run_name = match.captures["run_name"]
+    matched = [r for r in runs if r.get("name") == run_name]
+    if not matched:
+        raise enoent(path.virtual)
+    # A .jsonl path must render as line-delimited JSON, not an indented
+    # document: readers that split on newlines (jq) otherwise choke on
+    # the first bare brace.
+    return jsonl_bytes(matched[:1])
 
-    if (parts[0] == "datasets" and len(parts) == 3
-            and parts[2] == "items.jsonl"):
-        dataset_name = parts[1]
-        items = await fetch_or_enoent(
-            fetch_dataset_items(accessor.api, dataset_name), virtual)
-        return jsonl_bytes(items)
 
-    if (parts[0] == "datasets" and len(parts) == 4 and parts[2] == "runs"
-            and parts[3].endswith(".jsonl")):
-        dataset_name = parts[1]
-        run_name = parts[3].removesuffix(".jsonl")
-        runs = await fetch_or_enoent(
-            fetch_dataset_runs(accessor.api, dataset_name), virtual)
-        matched = [r for r in runs if r.get("name") == run_name]
-        if not matched:
-            raise enoent(virtual)
-        # A .jsonl path must render as line-delimited JSON, not an indented
-        # document: readers that split on newlines (jq) otherwise choke on the
-        # first bare brace.
-        return jsonl_bytes(matched[:1])
-
-    raise enoent(virtual)
+read = make_read(
+    detect_scope, {
+        "trace": _read_trace,
+        "session_trace": _read_trace,
+        "prompt_version": _read_prompt_version,
+        "dataset_items": _read_dataset_items,
+        "dataset_run": _read_dataset_run,
+    })
