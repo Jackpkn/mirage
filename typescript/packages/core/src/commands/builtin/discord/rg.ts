@@ -21,15 +21,16 @@ import { DISCORD_IO } from './io.ts'
 import { read as discordRead } from '../../../core/discord/read.ts'
 import { readdir as discordReaddir } from '../../../core/discord/readdir.ts'
 import { stat as discordStat } from '../../../core/discord/stat.ts'
-import { coalesceScopes, detectScope } from '../../../core/discord/scope.ts'
+import { detectScope } from '../../../core/discord/scope.ts'
 import { listChannels } from '../../../core/discord/channels.ts'
 import { formatGrepResults, searchGuild } from '../../../core/discord/search.ts'
 import { IOResult } from '../../../io/types.ts'
 import { type FileStat, type PathSpec, ResourceName } from '../../../types.ts'
 import { command, type CommandFnResult, type CommandOpts } from '../../config.ts'
 import { specOf } from '../../spec/builtins.ts'
-import { patternArg } from '../grep_helper.ts'
+import { patternArg, pushdownOperand } from '../grep_helper.ts'
 import { rgGeneric } from '../generic/rg.ts'
+import { SEARCH_HONORED, SEARCH_MAX_RESULTS } from './grep.ts'
 import { FlagView } from '../../spec/types.ts'
 
 const resolveDiscordGlob = resolveGlobOf(DISCORD_IO)
@@ -58,54 +59,49 @@ async function rgCommand(
     ]
   }
   const fl = new FlagView(opts.flags, specOf('rg'))
-  const maxCount = fl.asInt('m') ?? null
 
   const pushdownWarnings: string[] = []
-  if (paths.length > 0 && !pattern.includes('\n')) {
-    const firstPath = paths[0]
-    if (firstPath !== undefined) {
-      let scope = detectScope(firstPath)
-      if (scope.level === 'messages') scope = coalesceScopes(paths) ?? scope
-      // Discord search matches whole words while grep matches substrings,
-      // and the native path returns search results verbatim as the output, so
-      // a bare literal would under-report. Only -w makes the two agree.
-      if (scope.useNative && scope.guildId !== undefined && fl.asBool('w')) {
-        try {
-          const count = maxCount ?? 100
-          const raw = await searchGuild(accessor, scope.guildId, pattern, scope.channelId, count)
-          const channelMap = new Map<string, string>()
-          if (scope.channelId === undefined) {
-            for (const ch of await listChannels(accessor, scope.guildId)) {
-              if (ch.name !== undefined) channelMap.set(ch.id, ch.name)
-            }
+  // Same gate as discord grep, from the same table: only a lone concrete
+  // operand with no reshaping flag may be answered by the search API.
+  const operand = pushdownOperand(paths, opts.flags, pattern, SEARCH_HONORED)
+  if (operand !== null && fl.asBool('w')) {
+    const scope = detectScope(operand)
+    if (scope.useNative && scope.guildId !== undefined) {
+      try {
+        const count = SEARCH_MAX_RESULTS
+        const raw = await searchGuild(accessor, scope.guildId, pattern, scope.channelId, count)
+        const channelMap = new Map<string, string>()
+        if (scope.channelId === undefined) {
+          for (const ch of await listChannels(accessor, scope.guildId)) {
+            if (ch.name !== undefined) channelMap.set(ch.id, ch.name)
           }
-          const lines = formatGrepResults(
-            raw,
-            scope,
-            mountPrefixOf(firstPath.virtual, firstPath.resourcePath),
-            channelMap,
-          )
-          if (lines.length === 0) return [new Uint8Array(0), new IOResult({ exitCode: 1 })]
-          return [ENC.encode(lines.join('\n') + '\n'), new IOResult()]
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err)
+        }
+        const lines = formatGrepResults(
+          raw,
+          scope,
+          mountPrefixOf(operand.virtual, operand.resourcePath),
+          channelMap,
+        )
+        if (lines.length === 0) return [new Uint8Array(0), new IOResult({ exitCode: 1 })]
+        return [ENC.encode(lines.join('\n') + '\n'), new IOResult()]
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        pushdownWarnings.push(
+          `discord: native search push-down failed (${msg}); falling back to per-file scan`,
+        )
+        const status = err instanceof DiscordApiError ? err.status : null
+        const lower = msg.toLowerCase()
+        if (
+          status === 403 ||
+          lower.includes('forbidden') ||
+          lower.includes('missing permissions') ||
+          lower.includes('missing access')
+        ) {
           pushdownWarnings.push(
-            `discord: native search push-down failed (${msg}); falling back to per-file scan`,
+            'discord: hint - ensure the bot has the READ_MESSAGE_HISTORY ' +
+              'permission for this guild and the MESSAGE CONTENT privileged ' +
+              'intent enabled',
           )
-          const status = err instanceof DiscordApiError ? err.status : null
-          const lower = msg.toLowerCase()
-          if (
-            status === 403 ||
-            lower.includes('forbidden') ||
-            lower.includes('missing permissions') ||
-            lower.includes('missing access')
-          ) {
-            pushdownWarnings.push(
-              'discord: hint - ensure the bot has the READ_MESSAGE_HISTORY ' +
-                'permission for this guild and the MESSAGE CONTENT privileged ' +
-                'intent enabled',
-            )
-          }
         }
       }
     }

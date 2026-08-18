@@ -34,10 +34,7 @@ def _path(path: str) -> PathSpec:
 async def test_grep_emits_token_hint_on_forbidden():
     accessor = AsyncMock()
     accessor.config = AsyncMock()
-    paths = [
-        _path("/discord/myguild__G1/channels/general__C1/"
-              "2026-01-01/chat.jsonl")
-    ]
+    paths = [_path("/discord/myguild__G1/channels/general__C1")]
     with patch(
             "mirage.commands.builtin.discord.grep.search_guild",
             new=AsyncMock(side_effect=RuntimeError("403 Forbidden")),
@@ -45,13 +42,13 @@ async def test_grep_emits_token_hint_on_forbidden():
             "mirage.commands.builtin.discord.grep.resolve_glob",
             new=AsyncMock(return_value=paths),
     ), patch(
-            "mirage.commands.builtin.discord.grep.discord_read",
-            new=AsyncMock(return_value=b""),
+            "mirage.commands.builtin.discord.grep.generic_grep",
+            new=AsyncMock(return_value=(b"", IOResult(exit_code=1))),
     ):
         _out, io = await grep(accessor, paths, ['hi'],
                               CommandOpts(flags={
                                   'w': True,
-                                  'args_l': True
+                                  'r': True
                               }))
     stderr = (io.stderr or b"").decode()
     assert "push-down failed" in stderr
@@ -62,10 +59,7 @@ async def test_grep_emits_token_hint_on_forbidden():
 async def test_rg_emits_warning_on_rate_limit():
     accessor = AsyncMock()
     accessor.config = AsyncMock()
-    paths = [
-        _path("/discord/myguild__G1/channels/general__C1/"
-              "2026-01-01/chat.jsonl")
-    ]
+    paths = [_path("/discord/myguild__G1/channels/general__C1")]
     with patch(
             "mirage.commands.builtin.discord.rg.search_guild",
             new=AsyncMock(side_effect=RuntimeError("rate limited 429")),

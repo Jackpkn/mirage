@@ -14,7 +14,7 @@
       }
     },
     {
-      "id": "dc_grep_w_day_file_native",
+      "id": "dc_grep_w_day_file_scans_only_that_day",
       "seq": 690201,
       "targets": [
         "discord"
@@ -22,7 +22,7 @@
       "command": "grep -w standup '/discord/Mirage HQ__100000000000000001/channels/general__200000000000000001/2026-06-02/chat.jsonl'",
       "expect": {
         "exit": 0,
-        "stdout": "/discord/Mirage HQ__100000000000000001/channels/general__200000000000000001/2026-06-02/chat.jsonl:[bob] second day standup\n",
+        "stdout": "{\"id\":\"1511278195507200000\",\"channel_id\":\"200000000000000001\",\"author\":{\"id\":\"300000000000000002\",\"username\":\"bob\",\"global_name\":\"Bob\",\"bot\":false},\"content\":\"second day standup\",\"timestamp\":\"2026-06-02T08:00:00.000000+00:00\",\"edited_timestamp\":null,\"tts\":false,\"pinned\":false,\"mention_everyone\":false,\"mentions\":[],\"mention_roles\":[],\"attachments\":[],\"embeds\":[],\"type\":0}\n",
         "stderr": ""
       }
     },
@@ -88,6 +88,45 @@
       "expect": {
         "exit": 0,
         "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "dc_grep_two_channels_cover_the_second",
+      "seq": 690207,
+      "targets": [
+        "discord"
+      ],
+      "command": "grep -rw standup '/discord/Mirage HQ__100000000000000001/channels/releases__200000000000000002' '/discord/Mirage HQ__100000000000000001/channels/general__200000000000000001'",
+      "expect": {
+        "exit": 0,
+        "stdout": "/discord/Mirage HQ__100000000000000001/channels/general__200000000000000001/2026-06-02/chat.jsonl:{\"id\":\"1511278195507200000\",\"channel_id\":\"200000000000000001\",\"author\":{\"id\":\"300000000000000002\",\"username\":\"bob\",\"global_name\":\"Bob\",\"bot\":false},\"content\":\"second day standup\",\"timestamp\":\"2026-06-02T08:00:00.000000+00:00\",\"edited_timestamp\":null,\"tts\":false,\"pinned\":false,\"mention_everyone\":false,\"mentions\":[],\"mention_roles\":[],\"attachments\":[],\"embeds\":[],\"type\":0}\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "dc_grep_w_second_day_file_only",
+      "seq": 690208,
+      "targets": [
+        "discord"
+      ],
+      "command": "grep -w released '/discord/Mirage HQ__100000000000000001/channels/releases__200000000000000002/2026-06-02/chat.jsonl'",
+      "expect": {
+        "exit": 0,
+        "stdout": "{\"id\":\"1511285744391782400\",\"channel_id\":\"200000000000000002\",\"author\":{\"id\":\"900000000000000001\",\"username\":\"mirage-bot\",\"global_name\":null,\"bot\":true},\"content\":\"v1.2.1 hotfix released\",\"timestamp\":\"2026-06-02T09:00:00.000000+00:00\",\"edited_timestamp\":null,\"tts\":false,\"pinned\":false,\"mention_everyone\":false,\"mentions\":[],\"mention_roles\":[],\"attachments\":[],\"embeds\":[],\"type\":0}\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "dc_grep_wn_defers_to_scan",
+      "seq": 690209,
+      "targets": [
+        "discord"
+      ],
+      "command": "grep -rwn green '/discord/Mirage HQ__100000000000000001/channels/general__200000000000000001'",
+      "expect": {
+        "exit": 0,
+        "stdout": "/discord/Mirage HQ__100000000000000001/channels/general__200000000000000001/2026-06-01/chat.jsonl:1:{\"id\":\"1510934682009600000\",\"channel_id\":\"200000000000000001\",\"author\":{\"id\":\"300000000000000001\",\"username\":\"alice\",\"global_name\":\"Alice\",\"bot\":false},\"content\":\"deploy is green\",\"timestamp\":\"2026-06-01T09:15:00.000000+00:00\",\"edited_timestamp\":null,\"tts\":false,\"pinned\":false,\"mention_everyone\":false,\"mentions\":[],\"mention_roles\":[],\"attachments\":[],\"embeds\":[],\"type\":0}\n",
         "stderr": ""
       }
     }

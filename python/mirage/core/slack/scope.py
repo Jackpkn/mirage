@@ -146,30 +146,3 @@ def detect_scope(path: PathSpec) -> SlackScope:
         )
 
     return SlackScope(use_native=False, resource_path=key)
-
-
-def coalesce_scopes(paths: list[PathSpec]) -> SlackScope | None:
-    if not paths:
-        return None
-    scopes = [detect_scope(p) for p in paths]
-    first = scopes[0]
-    container = first.container
-    channel = first.channel_name
-    cid = first.channel_id
-    target = first.target
-    if container is None or channel is None:
-        return None
-    for s in scopes[1:]:
-        if (s.container != container or s.channel_name != channel
-                or s.channel_id != cid or s.target != target):
-            return None
-    resource_path = (f"{container}/{channel}__{cid}"
-                     if cid else f"{container}/{channel}")
-    return SlackScope(
-        use_native=True,
-        container=container,
-        channel_name=channel,
-        channel_id=cid,
-        target=target,
-        resource_path=resource_path,
-    )

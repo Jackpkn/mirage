@@ -20,6 +20,7 @@ from mirage.cache.index.ram import RAMIndexCacheStore
 from mirage.commands.builtin.slack.grep import grep
 from mirage.commands.builtin.slack.rg import rg
 from mirage.commands.config import CommandOpts
+from mirage.io.types import IOResult
 from mirage.types import FileStat, FileType, PathSpec
 from mirage.utils.key_prefix import mount_key
 
@@ -39,47 +40,122 @@ def _concrete_paths(n: int = 7):
 
 
 @pytest.mark.asyncio
-async def test_grep_with_many_concrete_paths_uses_native_search():
+async def test_grep_with_many_concrete_paths_defers_to_scan():
+    # These used to fold into one channel-wide search (`coalesce_scopes`).
+    # That search carries `in:#general` and no date, so seven named days were
+    # answered with every day the channel ever had. The scan reads the seven.
     accessor = AsyncMock()
     accessor.config = AsyncMock()
-    fake_payload = (b'{"messages":{"matches":[{"channel":{"name":"general",'
-                    b'"id":"C1"},"ts":"1700000000.0","text":"hello there"}]}}')
     with patch(
             "mirage.commands.builtin.slack.grep.search_messages",
-            new=AsyncMock(return_value=fake_payload),
-    ) as fake_search:
-        out, io = await grep(
+            new=AsyncMock(),
+    ) as fake_search, patch(
+            "mirage.commands.builtin.slack.grep.resolve_glob",
+            new=AsyncMock(return_value=[]),
+    ), patch(
+            "mirage.commands.builtin.slack.grep.generic_grep",
+            new=AsyncMock(return_value=(b"", IOResult())),
+    ) as generic:
+        await grep(
             accessor, _concrete_paths(7), ['hello'],
             CommandOpts(index=RAMIndexCacheStore(),
                         flags={
                             'w': True,
                             'i': True
                         }))
-    assert fake_search.await_count == 1
-    assert io.exit_code == 0
-    assert b"hello there" in out
+    fake_search.assert_not_awaited()
+    generic.assert_awaited_once()
 
 
 @pytest.mark.asyncio
-async def test_rg_with_many_concrete_paths_uses_native_search():
+async def test_rg_with_many_concrete_paths_defers_to_scan():
     accessor = AsyncMock()
     accessor.config = AsyncMock()
-    fake_payload = (b'{"messages":{"matches":[{"channel":{"name":"general",'
-                    b'"id":"C1"},"ts":"1700000000.0","text":"hello rg"}]}}')
     with patch(
             "mirage.commands.builtin.slack.rg.search_messages",
-            new=AsyncMock(return_value=fake_payload),
-    ) as fake_search:
-        out, io = await rg(
+            new=AsyncMock(),
+    ) as fake_search, patch(
+            "mirage.commands.builtin.slack.rg.resolve_glob",
+            new=AsyncMock(return_value=[]),
+    ), patch(
+            "mirage.commands.builtin.slack.rg.generic_rg",
+            new=AsyncMock(return_value=(b"", IOResult())),
+    ) as generic:
+        await rg(
             accessor, _concrete_paths(7), ['hello'],
             CommandOpts(index=RAMIndexCacheStore(),
                         flags={
                             'w': True,
                             'i': True
                         }))
-    assert fake_search.await_count == 1
-    assert io.exit_code == 0
-    assert b"hello rg" in out
+    fake_search.assert_not_awaited()
+    generic.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_grep_second_channel_operand_defers_to_scan():
+    # Two channels never coalesced at all, so the first operand won and the
+    # second was dropped in silence.
+    accessor = AsyncMock()
+    accessor.config = AsyncMock()
+    channels = [
+        PathSpec(resource_path=mount_key(f"/slack/channels/{name}", "/slack"),
+                 virtual=f"/slack/channels/{name}",
+                 directory=f"/slack/channels/{name}")
+        for name in ("general__C1", "random__C2")
+    ]
+    with patch(
+            "mirage.commands.builtin.slack.grep.search_messages",
+            new=AsyncMock(),
+    ) as fake_search, patch(
+            "mirage.commands.builtin.slack.grep.resolve_glob",
+            new=AsyncMock(return_value=[]),
+    ), patch(
+            "mirage.commands.builtin.slack.grep.generic_grep",
+            new=AsyncMock(return_value=(b"", IOResult())),
+    ) as generic:
+        await grep(
+            accessor, channels, ['hello'],
+            CommandOpts(index=RAMIndexCacheStore(),
+                        flags={
+                            'w': True,
+                            'r': True
+                        }))
+    fake_search.assert_not_awaited()
+    generic.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_grep_shaping_flag_defers_to_scan():
+    # -n reshapes each output line, which a verbatim search answer cannot do.
+    accessor = AsyncMock()
+    accessor.config = AsyncMock()
+    channel = [
+        PathSpec(resource_path=mount_key("/slack/channels/general__C1",
+                                         "/slack"),
+                 virtual="/slack/channels/general__C1",
+                 directory="/slack/channels/general__C1")
+    ]
+    with patch(
+            "mirage.commands.builtin.slack.grep.search_messages",
+            new=AsyncMock(),
+    ) as fake_search, patch(
+            "mirage.commands.builtin.slack.grep.resolve_glob",
+            new=AsyncMock(return_value=[]),
+    ), patch(
+            "mirage.commands.builtin.slack.grep.generic_grep",
+            new=AsyncMock(return_value=(b"", IOResult())),
+    ) as generic:
+        await grep(
+            accessor, channel, ['hello'],
+            CommandOpts(index=RAMIndexCacheStore(),
+                        flags={
+                            'w': True,
+                            'r': True,
+                            'n': True
+                        }))
+    fake_search.assert_not_awaited()
+    generic.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -128,16 +204,24 @@ async def test_grep_falls_back_when_native_search_raises():
 async def test_grep_native_empty_does_not_trigger_fallback():
     accessor = AsyncMock()
     accessor.config = AsyncMock()
-    empty_payload = b'{"messages":{"matches":[]}}'
+    channel = [
+        PathSpec(resource_path=mount_key("/slack/channels/general__C1",
+                                         "/slack"),
+                 virtual="/slack/channels/general__C1",
+                 directory="/slack/channels/general__C1")
+    ]
     with patch(
             "mirage.commands.builtin.slack.grep.search_messages",
-            new=AsyncMock(return_value=empty_payload),
+            new=AsyncMock(return_value=b'{"messages":{"matches":[]}}'),
     ) as fake_search, patch(
+            "mirage.commands.builtin.slack.grep.search_files",
+            new=AsyncMock(return_value=b'{"files":{"matches":[]}}'),
+    ), patch(
             "mirage.commands.builtin.slack.grep.slack_read",
             new=AsyncMock(return_value=b""),
     ) as fake_read:
         out, io = await grep(
-            accessor, _concrete_paths(7), ['missing'],
+            accessor, channel, ['missing'],
             CommandOpts(index=RAMIndexCacheStore(), flags={'w': True}))
     assert fake_search.await_count == 1
     assert fake_read.await_count == 0

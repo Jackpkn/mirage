@@ -267,7 +267,10 @@ _PUSHDOWN_FILTER_STR = ("type", "glob")
 _PUSHDOWN_FILTER_LIST = ("include", "exclude", "exclude_dir")
 
 
-def has_search_shaping_flags(flags: Mapping[str, FlagValue] | None) -> bool:
+def has_search_shaping_flags(
+        flags: Mapping[str, FlagValue] | None,
+        honored: Sequence[str] = (),
+) -> bool:
     """True when a flag alters the match set or output shape of grep/rg.
 
     A search push-down prints each matching record as one whole line, so it
@@ -277,17 +280,31 @@ def has_search_shaping_flags(flags: Mapping[str, FlagValue] | None) -> bool:
     spec-less FlagView so the shared key set works for both the grep and rg
     specs (rg simply never sets the grep-only keys).
 
+    ``honored`` names the flags this particular push-down implements itself,
+    so their presence is not a reason to defer. Two shapes need it. A provider
+    whose search is word-based (gmail, slack, discord) is faithful only *with*
+    ``-w``, so for those the flag in this list is the one that turns the
+    push-down on rather than off. A push-down that uses the search only to
+    pick candidates and then runs the real compiled matcher over each one
+    (email) honors whatever that local scan implements. Everything left out of
+    the list still defers, which is what keeps the exemption honest.
+
     Args:
         flags (Mapping[str, FlagValue] | None): raw flag kwargs.
+        honored (Sequence[str]): dests this push-down reproduces exactly.
     """
     fl = FlagView(flags)
-    if any(fl.as_bool(k) for k in _PUSHDOWN_SHAPING_BOOL):
+    if any(fl.as_bool(k) for k in _PUSHDOWN_SHAPING_BOOL if k not in honored):
         return True
-    if any(fl.as_int(k) is not None for k in _PUSHDOWN_SHAPING_INT):
+    if any(
+            fl.as_int(k) is not None for k in _PUSHDOWN_SHAPING_INT
+            if k not in honored):
         return True
-    if any(fl.as_list(k) for k in _PUSHDOWN_FILTER_LIST):
+    if any(fl.as_list(k) for k in _PUSHDOWN_FILTER_LIST if k not in honored):
         return True
-    return any(fl.as_str(k) is not None for k in _PUSHDOWN_FILTER_STR)
+    return any(
+        fl.as_str(k) is not None for k in _PUSHDOWN_FILTER_STR
+        if k not in honored)
 
 
 def search_pushdown_ok(flags: Mapping[str, FlagValue] | None,
@@ -312,7 +329,7 @@ def search_pushdown_ok(flags: Mapping[str, FlagValue] | None,
             and not has_search_shaping_flags(flags))
 
 
-def _lone_operand(paths: list[PathSpec]) -> PathSpec | None:
+def lone_operand(paths: list[PathSpec]) -> PathSpec | None:
     """The one operand a search push-down may answer for, or None.
 
     A push-down asks the backend a single whole-container question and
@@ -340,9 +357,10 @@ def _lone_operand(paths: list[PathSpec]) -> PathSpec | None:
 
 
 def pushdown_operand(
-    paths: list[PathSpec],
-    flags: Mapping[str, FlagValue] | None,
-    pattern: str | None,
+        paths: list[PathSpec],
+        flags: Mapping[str, FlagValue] | None,
+        pattern: str | None,
+        honored: Sequence[str] = (),
 ) -> PathSpec | None:
     """The operand a regex push-down may answer for, or None.
 
@@ -356,15 +374,17 @@ def pushdown_operand(
         flags (Mapping[str, FlagValue] | None): raw flag kwargs.
         pattern (str | None): the resolved pattern, None when the line
             supplied none.
+        honored (Sequence[str]): dests this push-down reproduces exactly,
+            passed through to ``has_search_shaping_flags``.
 
     Returns:
         PathSpec | None: the operand to push down for, or None to defer.
     """
     if pattern is None or "\n" in pattern:
         return None
-    if has_search_shaping_flags(flags):
+    if has_search_shaping_flags(flags, honored):
         return None
-    return _lone_operand(paths)
+    return lone_operand(paths)
 
 
 def literal_pushdown_operand(
@@ -374,7 +394,7 @@ def literal_pushdown_operand(
 ) -> PathSpec | None:
     """The operand a literal-substring push-down may answer for, or None.
 
-    ``_lone_operand``'s rule plus ``search_pushdown_ok``'s, which is the
+    ``lone_operand``'s rule plus ``search_pushdown_ok``'s, which is the
     stricter flag gate LIKE/ILIKE needs (postgres): a real regex is
     treated literally by LIKE, so only a verbatim pattern may push down.
 
@@ -389,7 +409,7 @@ def literal_pushdown_operand(
     """
     if pattern is None or not search_pushdown_ok(flags, pattern):
         return None
-    return _lone_operand(paths)
+    return lone_operand(paths)
 
 
 def pattern_arg(texts: Sequence[str], flags: FlagView) -> str | None:

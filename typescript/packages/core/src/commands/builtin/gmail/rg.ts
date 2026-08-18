@@ -24,7 +24,8 @@ import { detectScope } from '../../../core/gmail/scope.ts'
 import { formatGrepResults, searchMessages } from '../../../core/gmail/search.ts'
 import { IOResult, type ByteSource } from '../../../io/types.ts'
 import { type FileStat, type PathSpec, ResourceName } from '../../../types.ts'
-import { patternArg } from '../grep_helper.ts'
+import { patternArg, pushdownOperand } from '../grep_helper.ts'
+import { SEARCH_HONORED, SEARCH_MAX_RESULTS } from './grep.ts'
 import { command, type CommandFnResult, type CommandOpts } from '../../config.ts'
 import { specOf } from '../../spec/builtins.ts'
 import { rgGeneric } from '../generic/rg.ts'
@@ -56,36 +57,24 @@ async function rgCommand(
     ]
   }
   const fl = new FlagView(opts.flags, specOf('rg'))
-  const maxCount = fl.asInt('m') ?? null
-  // Output-shaping flags need real per-line matching, which the search-API
-  // push-down cannot emulate; fall through to the generic rg over rendered
-  // files instead.
-  const shaping = ['args_l', 'c', 'n', 'o', 'v'].some((flag) => fl.asBool(flag))
-
-  if (paths.length > 0 && !pattern.includes('\n') && !shaping) {
-    const first = paths[0]
-    if (first !== undefined) {
-      const scope = detectScope(first)
-      // Gmail search matches whole words while grep matches substrings,
-      // and the native path returns search results verbatim as the output, so
-      // a bare literal would under-report. Only -w makes the two agree.
-      if (scope.useNative && fl.asBool('w')) {
-        const filePrefix =
-          mountPrefixOf(first.virtual, first.resourcePath) !== ''
-            ? mountPrefixOf(first.virtual, first.resourcePath)
-            : ''
-        const rows = await searchMessages(
-          accessor.tokenManager,
-          pattern,
-          scope.labelName,
-          scope.dateStr,
-          maxCount ?? 50,
-        )
-        const lines = formatGrepResults(rows, scope, filePrefix, pattern)
-        if (lines.length === 0) return [new Uint8Array(0), new IOResult({ exitCode: 1 })]
-        const out: ByteSource = ENC.encode(lines.join('\n') + '\n')
-        return [out, new IOResult()]
-      }
+  // Same gate as gmail grep, from the same table: only a lone concrete
+  // operand with no reshaping flag may be answered by the search API.
+  const operand = pushdownOperand(paths, opts.flags, pattern, SEARCH_HONORED)
+  if (operand !== null && fl.asBool('w')) {
+    const scope = detectScope(operand)
+    if (scope.useNative) {
+      const filePrefix = mountPrefixOf(operand.virtual, operand.resourcePath)
+      const rows = await searchMessages(
+        accessor.tokenManager,
+        pattern,
+        scope.labelName,
+        scope.dateStr,
+        SEARCH_MAX_RESULTS,
+      )
+      const lines = formatGrepResults(rows, scope, filePrefix, pattern)
+      if (lines.length === 0) return [new Uint8Array(0), new IOResult({ exitCode: 1 })]
+      const out: ByteSource = ENC.encode(lines.join('\n') + '\n')
+      return [out, new IOResult()]
     }
   }
 

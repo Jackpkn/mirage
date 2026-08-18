@@ -15,8 +15,10 @@
 from mirage.accessor.gmail import GmailAccessor
 from mirage.commands.builtin.generic.rg import rg as generic_rg
 from mirage.commands.builtin.generic_bind.adapter import bound_op
+from mirage.commands.builtin.gmail.grep import (SEARCH_HONORED,
+                                                SEARCH_MAX_RESULTS)
 from mirage.commands.builtin.gmail.io import resolve_glob
-from mirage.commands.builtin.grep_helper import pattern_arg
+from mirage.commands.builtin.grep_helper import pattern_arg, pushdown_operand
 from mirage.commands.builtin.utils.output import format_records
 from mirage.commands.config import CommandOpts
 from mirage.commands.errors import UsageError
@@ -40,28 +42,20 @@ async def rg(accessor: GmailAccessor, paths: list[PathSpec], texts: list[str],
     pattern_str = pattern_arg(texts, fl)
     if pattern_str is None:
         raise UsageError("rg: usage: rg [flags] pattern [path]")
-    max_count = fl.as_int("m")
-    # Output-shaping flags need real per-line matching, which the search-API
-    # push-down cannot emulate; fall through to the generic rg over
-    # rendered files instead.
-    shaping = (fl.as_bool("args_l") or fl.as_bool("c") or fl.as_bool("n")
-               or fl.as_bool("o") or fl.as_bool("v"))
-
-    if paths and "\n" not in pattern_str and not shaping:
-        scope = detect_scope(paths[0])
-        # Provider search matches whole words while grep matches
-        # substrings, and the native path returns search results verbatim
-        # as the output, so a bare literal would under-report. Only -w
-        # makes the two agree; otherwise fall through to the scan.
-        if scope.use_native and fl.as_bool("w"):
-            file_prefix = mount_prefix_of(paths[0].virtual,
-                                          paths[0].resource_path) or ""
+    # Same gate as gmail grep, from the same table: only a lone concrete
+    # operand with no reshaping flag may be answered by the search API.
+    operand = pushdown_operand(paths, opts.flags, pattern_str, SEARCH_HONORED)
+    if operand is not None and fl.as_bool("w"):
+        scope = detect_scope(operand)
+        if scope.use_native:
+            file_prefix = mount_prefix_of(operand.virtual,
+                                          operand.resource_path) or ""
             rows = await search_messages(
                 accessor.token_manager,
                 pattern_str,
                 label_name=scope.label_name,
                 date_str=scope.date_str,
-                max_results=max_count or 50,
+                max_results=SEARCH_MAX_RESULTS,
             )
             lines = format_grep_results(rows, scope, file_prefix, pattern_str)
             if not lines:

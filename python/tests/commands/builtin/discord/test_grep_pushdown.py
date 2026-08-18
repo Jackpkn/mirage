@@ -20,7 +20,7 @@ from mirage.commands.builtin.discord.grep import grep
 from mirage.commands.builtin.discord.rg import rg
 from mirage.commands.config import CommandOpts
 from mirage.commands.errors import UsageError
-from mirage.io.types import materialize
+from mirage.io.types import IOResult, materialize
 from mirage.types import FileStat, FileType, PathSpec
 from mirage.utils.key_prefix import mount_key
 
@@ -39,8 +39,15 @@ def _concrete_paths(n: int = 7):
     return paths
 
 
+def _channel_path(name: str = "general__ch_456") -> PathSpec:
+    original = f"/discord/myguild__g_123/channels/{name}"
+    return PathSpec(resource_path=mount_key(original, "/discord"),
+                    virtual=original,
+                    directory=original)
+
+
 @pytest.mark.asyncio
-async def test_discord_grep_with_many_concrete_paths_uses_native_search():
+async def test_discord_grep_channel_dir_uses_native_search():
     accessor = AsyncMock()
     accessor.config = AsyncMock()
     fake_msgs = [{
@@ -60,14 +67,92 @@ async def test_discord_grep_with_many_concrete_paths_uses_native_search():
             "mirage.commands.builtin.discord.grep.list_channels",
             new=AsyncMock(return_value=fake_channels),
     ):
-        out, io = await grep(accessor, _concrete_paths(7), ['hello'],
-                             CommandOpts(flags={'w': True}))
+        out, io = await grep(accessor, [_channel_path()], ['hello'],
+                             CommandOpts(flags={
+                                 'w': True,
+                                 'r': True
+                             }))
     assert fake_search.await_count == 1
     assert io.exit_code == 0
     assert b"hello" in out
     assert out.endswith(b"\n")
     assert (b"/discord/myguild__g_123/channels/general__ch_456/"
             b"2026-01-15/chat.jsonl:") in out
+
+
+@pytest.mark.asyncio
+async def test_discord_grep_with_many_concrete_paths_defers_to_scan():
+    # These used to fold into one channel-wide search (`coalesce_scopes`).
+    # `search_guild` takes a channel but no date, so seven named days were
+    # answered with every day the channel ever had. The scan reads the seven.
+    accessor = AsyncMock()
+    accessor.config = AsyncMock()
+    with patch(
+            "mirage.commands.builtin.discord.grep.search_guild",
+            new=AsyncMock(),
+    ) as fake_search, patch(
+            "mirage.commands.builtin.discord.grep.resolve_glob",
+            new=AsyncMock(return_value=[]),
+    ), patch(
+            "mirage.commands.builtin.discord.grep.generic_grep",
+            new=AsyncMock(return_value=(b"", IOResult())),
+    ) as generic:
+        await grep(accessor, _concrete_paths(7), ['hello'],
+                   CommandOpts(flags={'w': True}))
+    fake_search.assert_not_awaited()
+    generic.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_discord_grep_second_channel_operand_defers_to_scan():
+    # Two channels never coalesced at all, so the first operand won and the
+    # second was dropped in silence.
+    accessor = AsyncMock()
+    accessor.config = AsyncMock()
+    with patch(
+            "mirage.commands.builtin.discord.grep.search_guild",
+            new=AsyncMock(),
+    ) as fake_search, patch(
+            "mirage.commands.builtin.discord.grep.resolve_glob",
+            new=AsyncMock(return_value=[]),
+    ), patch(
+            "mirage.commands.builtin.discord.grep.generic_grep",
+            new=AsyncMock(return_value=(b"", IOResult())),
+    ) as generic:
+        await grep(
+            accessor,
+            [_channel_path(), _channel_path("random__ch_789")], ['hello'],
+            CommandOpts(flags={
+                'w': True,
+                'r': True
+            }))
+    fake_search.assert_not_awaited()
+    generic.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_discord_grep_shaping_flag_defers_to_scan():
+    # -n reshapes each output line, which a verbatim search answer cannot do.
+    accessor = AsyncMock()
+    accessor.config = AsyncMock()
+    with patch(
+            "mirage.commands.builtin.discord.grep.search_guild",
+            new=AsyncMock(),
+    ) as fake_search, patch(
+            "mirage.commands.builtin.discord.grep.resolve_glob",
+            new=AsyncMock(return_value=[]),
+    ), patch(
+            "mirage.commands.builtin.discord.grep.generic_grep",
+            new=AsyncMock(return_value=(b"", IOResult())),
+    ) as generic:
+        await grep(accessor, [_channel_path()], ['hello'],
+                   CommandOpts(flags={
+                       'w': True,
+                       'r': True,
+                       'n': True
+                   }))
+    fake_search.assert_not_awaited()
+    generic.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -170,8 +255,11 @@ async def test_discord_grep_native_empty_does_not_trigger_fallback():
             "mirage.commands.builtin.discord.grep.discord_read",
             new=AsyncMock(return_value=b""),
     ) as fake_read:
-        out, io = await grep(accessor, _concrete_paths(7), ['missing'],
-                             CommandOpts(flags={'w': True}))
+        out, io = await grep(accessor, [_channel_path()], ['missing'],
+                             CommandOpts(flags={
+                                 'w': True,
+                                 'r': True
+                             }))
     assert fake_search.await_count == 1
     assert fake_read.await_count == 0
     assert io.exit_code == 1
@@ -221,7 +309,7 @@ async def test_discord_grep_multi_pattern_skips_native_search():
 
 
 @pytest.mark.asyncio
-async def test_discord_rg_with_many_concrete_paths_uses_native_search():
+async def test_discord_rg_channel_dir_uses_native_search():
     accessor = AsyncMock()
     accessor.config = AsyncMock()
     fake_msgs = [{
@@ -241,7 +329,7 @@ async def test_discord_rg_with_many_concrete_paths_uses_native_search():
             "mirage.commands.builtin.discord.rg.list_channels",
             new=AsyncMock(return_value=fake_channels),
     ):
-        out, io = await rg(accessor, _concrete_paths(7), ['hello'],
+        out, io = await rg(accessor, [_channel_path()], ['hello'],
                            CommandOpts(flags={'w': True}))
     assert fake_search.await_count == 1
     assert io.exit_code == 0

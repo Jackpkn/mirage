@@ -715,3 +715,42 @@ def test_parse_file_globs_reads_dests_in_typed_order():
         grep_helper.FileGlob(glob="*.tex", admit=True),
         grep_helper.FileGlob(glob="notes.*", admit=False),
     )
+
+
+EMAIL_HONORED = ("n", "args_l", "w", "o", "m")
+
+
+def test_has_search_shaping_flags_exempts_only_the_named_dests():
+    # gmail/slack/discord: the provider's search is word-based, so -w is what
+    # makes the push-down faithful rather than what breaks it.
+    assert not grep_helper.has_search_shaping_flags({"w": True}, ("w", ))
+    assert grep_helper.has_search_shaping_flags({
+        "w": True,
+        "n": True
+    }, ("w", ))
+    # email: the local re-scan implements these, so they ride along.
+    assert not grep_helper.has_search_shaping_flags(
+        {
+            "n": True,
+            "o": True,
+            "m": "3"
+        }, EMAIL_HONORED)
+    # ...but never -v or -c, which need messages the search did not return.
+    assert grep_helper.has_search_shaping_flags({"v": True}, EMAIL_HONORED)
+    assert grep_helper.has_search_shaping_flags({"c": True}, EMAIL_HONORED)
+
+
+def test_honored_never_exempts_the_operand_rule():
+    # An exemption is about flags only: two operands still defer.
+    assert grep_helper.pushdown_operand([TRACES, SESSIONS], {"w": True}, "ada",
+                                        ("w", )) is None
+    assert grep_helper.pushdown_operand([TRACES], {"w": True}, "ada",
+                                        ("w", )) is TRACES
+
+
+def test_lone_operand_is_the_operand_rule_on_its_own():
+    # email's find push-down has no grep pattern and no shaping flags.
+    assert grep_helper.lone_operand([TRACES]) is TRACES
+    assert grep_helper.lone_operand([TRACES, SESSIONS]) is None
+    assert grep_helper.lone_operand([]) is None
+    assert grep_helper.lone_operand([_operand("/traces/*", "*")]) is None

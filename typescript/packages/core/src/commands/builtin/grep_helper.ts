@@ -321,39 +321,45 @@ export function isLiteralPattern(pattern: string, fixedString: boolean): boolean
   return pt === PatternType.EXACT || (pt === PatternType.SIMPLE && !pattern.includes('.'))
 }
 
+const PUSHDOWN_SHAPING_BOOL = [
+  'v',
+  'n',
+  'c',
+  'args_l',
+  'w',
+  'o',
+  'q',
+  'H',
+  'h',
+  'args_I',
+  'text',
+] as const
+const PUSHDOWN_SHAPING_INT = ['m', 'A', 'B', 'C'] as const
+const PUSHDOWN_FILTER = ['type', 'glob', 'include', 'exclude', 'exclude_dir'] as const
+
 // True when a flag alters the match set or output shape of grep/rg. A search
 // push-down prints each matching record as one whole line, so it cannot honor
 // -v/-n/-c/-l/-w/-o/-m/-A/-B/-C/-q/-H/-h, rg's -I (no filename), nor rg's
 // file-filtering --glob/--type; the wrapper must defer to the generic scan
 // when any is present.
-export function hasSearchShapingFlags(flags: Record<string, FlagValue>): boolean {
-  if (
-    flags.v === true ||
-    flags.n === true ||
-    flags.c === true ||
-    flags.args_l === true ||
-    flags.l === true ||
-    flags.w === true ||
-    flags.o === true ||
-    flags.q === true ||
-    flags.H === true ||
-    flags.h === true ||
-    flags.args_I === true
-  ) {
+//
+// `honored` names the flags this particular push-down implements itself, so
+// their presence is not a reason to defer. Two shapes need it. A provider
+// whose search is word-based (gmail, slack, discord) is faithful only *with*
+// -w, so for those the flag in this list is the one that turns the push-down
+// on rather than off. A push-down that uses the search only to pick
+// candidates and then runs the real compiled matcher over each one (email)
+// honors whatever that local scan implements. Everything left out of the list
+// still defers, which is what keeps the exemption honest.
+export function hasSearchShapingFlags(
+  flags: Record<string, FlagValue>,
+  honored: readonly string[] = [],
+): boolean {
+  const gated = (name: string): boolean => !honored.includes(name)
+  if (PUSHDOWN_SHAPING_BOOL.some((name) => gated(name) && flags[name] === true)) return true
+  if (PUSHDOWN_SHAPING_INT.some((name) => gated(name) && typeof flags[name] === 'string'))
     return true
-  }
-  return (
-    typeof flags.m === 'string' ||
-    typeof flags.A === 'string' ||
-    typeof flags.B === 'string' ||
-    typeof flags.C === 'string' ||
-    flags.type !== undefined ||
-    flags.glob !== undefined ||
-    flags.text === true ||
-    flags.include !== undefined ||
-    flags.exclude !== undefined ||
-    flags.exclude_dir !== undefined
-  )
+  return PUSHDOWN_FILTER.some((name) => gated(name) && flags[name] !== undefined)
 }
 
 // True when a literal-substring push-down (LIKE/ILIKE) faithfully reproduces
@@ -378,7 +384,7 @@ export function searchPushdownOk(flags: Record<string, FlagValue>, pattern: stri
 // operand in turn the way GNU does. A glob operand defers for the older
 // reason: an unexpanded pattern segment would be read as a literal entity
 // name.
-function loneOperand(paths: PathSpec[]): PathSpec | null {
+export function loneOperand(paths: PathSpec[]): PathSpec | null {
   if (paths.length !== 1 || hasUnresolvedGlob(paths)) return null
   return paths[0] ?? null
 }
@@ -391,9 +397,10 @@ export function pushdownOperand(
   paths: PathSpec[],
   flags: Record<string, FlagValue>,
   pattern: string | null,
+  honored: readonly string[] = [],
 ): PathSpec | null {
   if (pattern === null || pattern.includes('\n')) return null
-  if (hasSearchShapingFlags(flags)) return null
+  if (hasSearchShapingFlags(flags, honored)) return null
   return loneOperand(paths)
 }
 

@@ -12,7 +12,7 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from mirage.core.slack.scope import coalesce_scopes, detect_scope
+from mirage.core.slack.scope import detect_scope
 from mirage.types import PathSpec
 from mirage.utils.key_prefix import mount_key
 
@@ -115,47 +115,6 @@ def _spec(path: str, prefix: str = "/slack") -> PathSpec:
     return PathSpec(resource_path=mount_key(path, prefix),
                     virtual=path,
                     directory=path)
-
-
-def test_coalesce_concrete_jsonl_paths_same_channel():
-    paths = [
-        _spec(f"/slack/channels/general__C1/2026-01-{day:02d}/chat.jsonl")
-        for day in range(1, 8)
-    ]
-    scope = coalesce_scopes(paths)
-    assert scope is not None
-    assert scope.use_native is True
-    assert scope.channel_name == "general"
-    assert scope.channel_id == "C1"
-    assert scope.container == "channels"
-
-
-def test_coalesce_returns_none_for_mixed_channels():
-    paths = [
-        _spec("/slack/channels/general__C1/2026-01-01/chat.jsonl"),
-        _spec("/slack/channels/random__C2/2026-01-01/chat.jsonl"),
-    ]
-    assert coalesce_scopes(paths) is None
-
-
-def test_coalesce_returns_none_for_mixed_containers():
-    paths = [
-        _spec("/slack/channels/general__C1/2026-01-01/chat.jsonl"),
-        _spec("/slack/dms/alice__D1/2026-01-01/chat.jsonl"),
-    ]
-    assert coalesce_scopes(paths) is None
-
-
-def test_coalesce_single_path_delegates_to_detect_scope():
-    p = _spec("/slack/channels/general__C1/2026-01-01/chat.jsonl")
-    scope = coalesce_scopes([p])
-    assert scope is not None
-    assert scope.use_native is True
-    assert scope.channel_name == "general"
-
-
-def test_coalesce_empty_list_returns_none():
-    assert coalesce_scopes([]) is None
 
 
 def test_date_dir():

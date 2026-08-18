@@ -12,7 +12,7 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from mirage.core.discord.scope import coalesce_scopes, detect_scope
+from mirage.core.discord.scope import detect_scope
 from mirage.types import PathSpec
 from mirage.utils.key_prefix import mount_key
 
@@ -201,64 +201,7 @@ def test_glob_non_jsonl():
     assert scope.level != "channel"
 
 
-# ── coalesce ──────────────────────────────────
-
-
 def _spec(path: str, prefix: str = "/discord") -> PathSpec:
     return PathSpec(resource_path=mount_key(path, prefix),
                     virtual=path,
                     directory=path)
-
-
-def test_coalesce_concrete_jsonl_paths_same_channel():
-    paths = [
-        _spec(f"/discord/myserver__G1/channels/general__C1/"
-              f"2026-01-{d:02d}/chat.jsonl") for d in range(1, 8)
-    ]
-    scope = coalesce_scopes(paths)
-    assert scope is not None
-    assert scope.level == "channel"
-    assert scope.use_native is True
-    assert scope.guild_id == "G1"
-    assert scope.channel_id == "C1"
-
-
-def test_coalesce_returns_none_for_mixed_channels():
-    paths = [
-        _spec("/discord/myserver__G1/channels/general__C1/"
-              "2026-01-01/chat.jsonl"),
-        _spec("/discord/myserver__G1/channels/random__C2/"
-              "2026-01-01/chat.jsonl"),
-    ]
-    assert coalesce_scopes(paths) is None
-
-
-def test_coalesce_returns_none_without_ids():
-    paths = [
-        _spec("/discord/myserver/channels/general/2026-01-01/chat.jsonl"),
-    ]
-    assert coalesce_scopes(paths) is None
-
-
-def test_coalesce_empty_list_returns_none():
-    assert coalesce_scopes([]) is None
-
-
-def test_coalesce_returns_none_for_file_blobs():
-    # Guild search answers questions about message content; an attachment
-    # operand must scan its bytes, not widen to a channel message search.
-    paths = [
-        _spec("/discord/myserver__G1/channels/general__C1/2026-01-01/files/"
-              "img__A1.png"),
-    ]
-    assert coalesce_scopes(paths) is None
-
-
-def test_coalesce_returns_none_for_mixed_levels():
-    paths = [
-        _spec("/discord/myserver__G1/channels/general__C1/"
-              "2026-01-01/chat.jsonl"),
-        _spec("/discord/myserver__G1/channels/general__C1/2026-01-01/files/"
-              "img__A1.png"),
-    ]
-    assert coalesce_scopes(paths) is None

@@ -48,12 +48,3 @@ def detect_scope(path: PathSpec) -> EmailScope:
         folder=parts[0],
         resource_path=key,
     )
-
-
-def extract_folder(paths: list[PathSpec]) -> str | None:
-    if not paths:
-        return None
-    p = paths[0]
-    key = p.mount_path.strip("/")
-    parts = [x for x in key.split("/") if x]
-    return parts[0] if parts else None

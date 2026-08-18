@@ -18,7 +18,7 @@ from dataclasses import replace
 from mirage.accessor.slack import SlackAccessor
 from mirage.commands.builtin.generic.grep import grep as generic_grep
 from mirage.commands.builtin.generic_bind.adapter import bound_op
-from mirage.commands.builtin.grep_helper import pattern_arg
+from mirage.commands.builtin.grep_helper import pattern_arg, pushdown_operand
 from mirage.commands.builtin.slack._provision import file_read_provision
 from mirage.commands.builtin.slack.io import resolve_glob
 from mirage.commands.builtin.utils.output import format_records
@@ -31,7 +31,7 @@ from mirage.core.slack.formatters import (build_query,
                                           format_grep_results)
 from mirage.core.slack.read import read as slack_read
 from mirage.core.slack.readdir import readdir as _readdir
-from mirage.core.slack.scope import coalesce_scopes, detect_scope
+from mirage.core.slack.scope import detect_scope
 from mirage.core.slack.search import (search_available, search_files,
                                       search_messages)
 from mirage.core.slack.stat import stat as _stat
@@ -41,6 +41,23 @@ from mirage.types import PathSpec
 from mirage.utils.key_prefix import mount_prefix_of
 
 logger = logging.getLogger(__name__)
+
+# Slack search answers with whole messages and the push-down prints that
+# answer verbatim, so it can stand in for a scan only when the line names one
+# concrete operand and no flag reshapes the output. -w is the exception the
+# provider itself supplies: Slack matches whole words, so a bare literal would
+# under-report and only -w makes the two agree.
+#
+# `coalesce_scopes` used to widen a set of same-channel operands into one
+# channel-wide search, and it is deliberately not consulted here. It cannot
+# answer a line whose operands name two different channels (it returns None
+# and the first operand won anyway), and where it did fold it dropped the
+# date: `build_query` carries only `in:#channel`, so two named days became
+# every day the channel ever had. Reporting messages the line did not ask for
+# is not a better failure than dropping an operand. One operand or the
+# generic scan.
+SEARCH_HONORED = ("w", )
+SEARCH_MAX_RESULTS = 100
 
 
 async def grep_provision(accessor: SlackAccessor, paths: list[PathSpec],
@@ -60,39 +77,36 @@ async def grep(accessor: SlackAccessor, paths: list[PathSpec],
                opts: CommandOpts) -> tuple[ByteSource | None, IOResult]:
     fl = FlagView(opts.flags, spec=SPECS["grep"])
     pattern = pattern_arg(texts, fl)
-    max_count = fl.as_int("m")
 
-    if paths and pattern is not None and "\n" not in pattern:
-        scope = detect_scope(paths[0])
-        if not scope.use_native:
-            scope = coalesce_scopes(paths) or scope
-
-        # Slack search matches whole words while grep matches substrings,
-        # so native results are a strict subset of the real matches for a
-        # bare literal. Only -w makes the two agree; otherwise fall
-        # through to the per-message scan.
-        if (scope.use_native and fl.as_bool("w")
-                and getattr(scope, "target", None) != "files"
+    # Output-shaping flags, a glob operand and a multi-operand line all need
+    # the per-message scan; see SEARCH_HONORED above.
+    operand = pushdown_operand(paths, opts.flags, pattern, SEARCH_HONORED)
+    if pattern is not None and operand is not None and fl.as_bool("w"):
+        scope = detect_scope(operand)
+        if (scope.use_native and scope.target != "files"
                 and search_available(accessor.config)):
-            file_prefix = mount_prefix_of(paths[0].virtual,
-                                          paths[0].resource_path) or ""
+            file_prefix = mount_prefix_of(operand.virtual,
+                                          operand.resource_path) or ""
             query = build_query(pattern, scope)
-            target = getattr(scope, "target", None)
-            do_msgs = target in (None, "date", "messages")
-            do_files = target in (None, "date", "files")
+            # Every scope that reaches here searches messages: the guard
+            # above ruled out the files leaf, and a "messages" target is a
+            # chat.jsonl leaf, which is not use_native. What is left is the
+            # channel, container and root scopes and the date directory --
+            # and those carry files too, so only the files half stays
+            # conditional.
+            do_files = scope.target in (None, "date")
             native_lines: list[str] = []
             err: Exception | None = None
             try:
-                if do_msgs:
-                    raw = await search_messages(accessor.config,
-                                                query,
-                                                count=max_count or 100)
-                    native_lines.extend(
-                        format_grep_results(raw, scope, file_prefix))
+                raw = await search_messages(accessor.config,
+                                            query,
+                                            count=SEARCH_MAX_RESULTS)
+                native_lines.extend(
+                    format_grep_results(raw, scope, file_prefix))
                 if do_files:
                     raw_f = await search_files(accessor.config,
                                                query,
-                                               count=max_count or 100)
+                                               count=SEARCH_MAX_RESULTS)
                     native_lines.extend(
                         format_file_grep_results(raw_f, scope, file_prefix))
             except Exception as exc:

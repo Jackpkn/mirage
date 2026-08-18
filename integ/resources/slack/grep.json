@@ -51,6 +51,32 @@
         "stdout": "/slack/users/alice__U1.json:1:{\"id\":\"U1\",\"name\":\"alice\",\"real_name\":\"Alice Anderson\",\"is_bot\":false,\"deleted\":false,\"profile\":{\"real_name\":\"Alice Anderson\",\"display_name\":\"alice\",\"email\":\"alice@kestrel.example.com\"}}\n",
         "stderr": ""
       }
+    },
+    {
+      "id": "slack_grep_two_channels_cover_the_second",
+      "seq": 520026,
+      "targets": [
+        "slack"
+      ],
+      "command": "grep -rw milestone /slack/channels/general__C1 /slack/channels/product-runtime__C7",
+      "expect": {
+        "exit": 0,
+        "stdout": "/slack/channels/product-runtime__C7/2026-01-08/chat.jsonl:{\"type\":\"message\",\"user\":\"U11\",\"text\":\"quokka milestone 27 is basically done\",\"ts\":\"1767863370.000558\",\"reactions\":[{\"name\":\"thinking_face\",\"users\":[\"U1\",\"U13\",\"U7\"],\"count\":3}]}\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "slack_grep_n_defers_to_scan",
+      "seq": 520027,
+      "targets": [
+        "slack"
+      ],
+      "command": "grep -rwn Quokka /slack/channels/product-runtime__C7",
+      "expect": {
+        "exit": 0,
+        "stdout": "/slack/channels/product-runtime__C7/2026-01-15/files/runtime_spec__F6.md:1:# Kestrel Runtime Spec (Quokka)\n/slack/channels/product-runtime__C7/2026-01-08/chat.jsonl:2:{\"type\":\"message\",\"user\":\"U8\",\"text\":\"kicking off project Quokka, the runtime for building agents over company tools\",\"ts\":\"1767878065.000559\"}\n",
+        "stderr": ""
+      }
     }
   ]
 }
