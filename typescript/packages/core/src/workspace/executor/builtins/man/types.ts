@@ -12,14 +12,13 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import type { RegisteredCommand } from '../../../../commands/config.ts'
-import type { MountEntry } from '../../../mount/mount.ts'
+import type { CommandSpec } from '../../../../commands/spec/types.ts'
 
-// One place a command name resolves to, for the manual renderer: the
-// mount that registers it, the registration, and whether it is the
-// general (every-mount) set.
-export interface ManHit {
-  mount: MountEntry
-  cmd: RegisteredCommand
-  isGeneral: boolean
+// One entry of the manual: a documented word and the spec its page
+// renders from. A name has one spec however many mounts register it, so
+// the entry carries no mount and no resource; which backend serves the
+// word is dispatch's business, not the manual's.
+export interface ManEntry {
+  name: string
+  spec: CommandSpec
 }

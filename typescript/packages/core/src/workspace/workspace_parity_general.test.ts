@@ -424,7 +424,7 @@ describe('workspace: for loop break / continue / test / arith / while', () => {
     const out = stdoutStr(io)
     expect(out).toContain('# bash')
     expect(out).toContain('-c')
-    expect(out).toContain('shell builtin')
+    expect(out).not.toContain('RESOURCES')
     const io2 = await ws.execute('man sh')
     expect(io2.exitCode).toBe(0)
     expect(stdoutStr(io2)).toContain('# sh')

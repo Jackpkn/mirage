@@ -13,4 +13,4 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 export { handleMan } from './man.ts'
-export type { ManHit } from './types.ts'
+export type { ManEntry } from './types.ts'

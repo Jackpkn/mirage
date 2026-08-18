@@ -16,18 +16,22 @@ from collections.abc import Sequence
 
 from mirage.commands.cli.types import CLISpec
 from mirage.commands.cli.walk import find_node, node_help
-from mirage.commands.config import RegisteredCommand
-from mirage.commands.spec import SPECS, CommandSpec
+from mirage.commands.spec import SPECS
+from mirage.commands.spec.types import CommandSpec
 from mirage.io import IOResult
 from mirage.io.types import ByteSource
 from mirage.workspace.cli.types import CLIInstall
-from mirage.workspace.executor.builtins.man.types import ManHit
+from mirage.workspace.executor.builtins.man.types import ManEntry
 from mirage.workspace.executor.builtins.shared import Result
 from mirage.workspace.executor.builtins.types import BuiltinCall
-from mirage.workspace.mount.mount import MountEntry
 from mirage.workspace.mount.registry import DEV_PREFIX, MountRegistry
-from mirage.workspace.session import Session
 from mirage.workspace.types import ExecutionNode
+
+# Shell builtins the manual documents through a spec of another name.
+_SHELL_BUILTIN_MAN: dict[str, str] = {
+    "bash": "bash",
+    "sh": "bash",
+}
 
 
 def _described(text: str | None) -> str:
@@ -39,19 +43,65 @@ def _described(text: str | None) -> str:
     return text if text is not None else "(no description)"
 
 
-def _collect_man_hits(name: str, registry: MountRegistry) -> list[ManHit]:
-    hits: list[ManHit] = []
+def _command_entry(name: str, registry: MountRegistry) -> ManEntry | None:
+    """The entry for a mount command, None when no mount registers it.
+
+    A name has one spec however many mounts register it (spec parity
+    holds every registration of a name to one spec), so the first
+    registration found is the page.
+
+    Args:
+        name (str): the word to document.
+        registry (MountRegistry): registry holding the mounts.
+    """
     for mount in registry.mounts():
         if mount.prefix == DEV_PREFIX:
             continue
         cmd = mount.resolve_command(name)
-        if cmd is None:
+        if cmd is not None:
+            return ManEntry(name=name, spec=cmd.spec)
+    return None
+
+
+def _builtin_entry(name: str) -> ManEntry | None:
+    """The entry for a shell builtin the manual documents, else None.
+
+    Args:
+        name (str): the word to document.
+    """
+    spec_key = _SHELL_BUILTIN_MAN.get(name)
+    spec = SPECS.get(spec_key) if spec_key is not None else None
+    if spec is None:
+        return None
+    return ManEntry(name=name, spec=spec)
+
+
+def _command_entries(registry: MountRegistry) -> list[ManEntry]:
+    """One entry per name registered on any mount, first registration wins.
+
+    Args:
+        registry (MountRegistry): registry holding the mounts.
+    """
+    seen: dict[str, ManEntry] = {}
+    for mount in registry.mounts():
+        if mount.prefix == DEV_PREFIX:
             continue
-        hits.append(
-            ManHit(mount=mount,
-                   cmd=cmd,
-                   is_general=mount.is_general_command(name)))
-    return hits
+        for cmd in mount.all_commands():
+            if cmd.name not in seen:
+                seen[cmd.name] = ManEntry(name=cmd.name, spec=cmd.spec)
+    return list(seen.values())
+
+
+def _cli_entries(registry: MountRegistry) -> list[ManEntry]:
+    """One entry per installed CLI head word.
+
+    Args:
+        registry (MountRegistry): registry holding the installs.
+    """
+    return [
+        ManEntry(name=name, spec=install.spec)
+        for name, install in registry.clis.items().items()
+    ]
 
 
 def _render_options_table(spec: CommandSpec) -> list[str]:
@@ -67,63 +117,37 @@ def _render_options_table(spec: CommandSpec) -> list[str]:
         long = opt.long if opt.long is not None else ""
         desc = opt.description if opt.description is not None else ""
         lines.append(f"| {short} | {long} | {opt.type} | {desc} |")
-    lines.append("")
     return lines
 
 
-def _render_man_entry(name: str, hits: list[ManHit]) -> str:
-    first = hits[0]
-    spec = first.cmd.spec
-    lines: list[str] = []
-    lines.append(f"# {name}")
-    lines.append("")
-    lines.append(_described(spec.description))
-    lines.append("")
-    lines.extend(_render_options_table(spec))
-    lines.append("## RESOURCES")
-    lines.append("")
-    seen: set[str] = set()
-    has_general = False
-    rows: list[str] = []
-    for h in hits:
-        if h.is_general:
-            has_general = True
-            continue
-        kind = h.mount.resource.name
-        filetype = h.cmd.filetype
-        key = f"{kind}\x00{filetype or ''}"
-        if key in seen:
-            continue
-        seen.add(key)
-        if filetype is not None:
-            rows.append(f"- {kind} (filetype: {filetype})")
-        else:
-            rows.append(f"- {kind}")
-    rows.sort()
-    if has_general:
-        lines.append("- general")
-    for r in rows:
-        lines.append(r)
+def _render_page(entry: ManEntry) -> str:
+    """The page for one entry: title, description, options table.
+
+    Args:
+        entry (ManEntry): the word and its spec.
+    """
+    lines = [f"# {entry.name}", "", _described(entry.spec.description)]
+    table = _render_options_table(entry.spec)
+    if table:
+        lines.append("")
+        lines.extend(table)
     return "\n".join(lines) + "\n"
 
 
-_SHELL_BUILTIN_MAN: dict[str, str] = {
-    "bash": "bash",
-    "sh": "bash",
-}
+def _render_section(title: str, entries: Sequence[ManEntry]) -> str:
+    """One section of the bare listing, empty when there is nothing to list.
 
-
-def _render_shell_builtin_man(name: str, spec: CommandSpec) -> str:
-    lines: list[str] = []
-    lines.append(f"# {name}")
-    lines.append("")
-    lines.append(_described(spec.description))
-    lines.append("")
-    lines.extend(_render_options_table(spec))
-    lines.append("## RESOURCES")
-    lines.append("")
-    lines.append("- shell builtin")
-    return "\n".join(lines) + "\n"
+    Args:
+        title (str): the section heading.
+        entries (Sequence[ManEntry]): the words to list, sorted here.
+    """
+    if not entries:
+        return ""
+    lines = [f"# {title}", ""]
+    for entry in sorted(entries, key=lambda e: e.name):
+        desc = _described(entry.spec.description)
+        lines.append(f"- {entry.name} \u2014 {desc}")
+    return "\n".join(lines)
 
 
 def _render_cli_entry(head: str, verbs: Sequence[str],
@@ -151,70 +175,22 @@ def _render_cli_entry(head: str, verbs: Sequence[str],
     return node_help(" ".join((head, ) + path), node, spec.usage_style)
 
 
-def _render_cli_index(registry: MountRegistry) -> list[str]:
-    """The installed-CLI section of the bare ``man`` listing.
+def _render_man_index(registry: MountRegistry) -> str:
+    """The bare ``man`` listing, by kind of word: commands, then CLIs.
+
+    Every name registered on any mount is one row however many mounts
+    register it, and no row says which: the manual documents words, and
+    dispatch by name already picks the mount that serves one.
 
     Args:
-        registry (MountRegistry): registry holding the installs.
+        registry (MountRegistry): registry holding mounts and installs.
     """
-    installs = registry.clis.items()
-    if not installs:
-        return []
-    lines = ["# clis", ""]
-    for name, install in sorted(installs.items()):
-        desc = _described(install.spec.description)
-        lines.append(f"- {name} \u2014 {desc}")
-    lines.append("")
-    return lines
-
-
-def _render_man_index(session: Session, registry: MountRegistry) -> str:
-    by_kind: dict[str, MountEntry] = {}
-    for m in registry.mounts():
-        if m.prefix == DEV_PREFIX:
-            continue
-        if m.resource.name not in by_kind:
-            by_kind[m.resource.name] = m
-    cwd_mount = registry.try_mount_for(session.cwd)
-    cwd_kind: str | None = None
-    if cwd_mount is not None and cwd_mount.prefix != DEV_PREFIX:
-        cwd_kind = cwd_mount.resource.name
-
-    kinds = sorted(by_kind.keys())
-    ordered: list[str] = []
-    if cwd_kind is not None and cwd_kind in by_kind:
-        ordered.append(cwd_kind)
-    for k in kinds:
-        if k == cwd_kind:
-            continue
-        ordered.append(k)
-
-    lines: list[str] = []
-    general_seen: dict[str, RegisteredCommand] = {}
-    for kind in ordered:
-        m = by_kind[kind]
-        lines.append(f"# {kind}")
-        lines.append("")
-        all_cmds = m.all_commands()
-        resource_cmds = sorted(
-            (c for c in all_cmds if not m.is_general_command(c.name)),
-            key=lambda c: c.name,
-        )
-        for cmd in resource_cmds:
-            desc = _described(cmd.spec.description)
-            lines.append(f"- {cmd.name} \u2014 {desc}")
-        for cmd in all_cmds:
-            if (m.is_general_command(cmd.name)
-                    and cmd.name not in general_seen):
-                general_seen[cmd.name] = cmd
-        lines.append("")
-    lines.extend(_render_cli_index(registry))
-    lines.append("# general")
-    lines.append("")
-    for name in sorted(general_seen):
-        desc = _described(general_seen[name].spec.description)
-        lines.append(f"- {name} \u2014 {desc}")
-    return "\n".join(lines) + "\n"
+    sections = [
+        _render_section("commands", _command_entries(registry)),
+        _render_section("clis", _cli_entries(registry)),
+    ]
+    body = "\n\n".join(s for s in sections if s)
+    return body + "\n" if body else ""
 
 
 def _cli_man(
@@ -244,20 +220,19 @@ def _cli_man(
                                                          exit_code=1,
                                                          stderr=err)
     sections = [entry]
-    hits = _collect_man_hits(head, registry) if not verbs else []
-    if hits:
-        sections.append(_render_man_entry(head, hits))
+    command = _command_entry(head, registry) if not verbs else None
+    if command is not None:
+        sections.append(_render_page(command))
     out = "\n".join(sections).encode()
     return out, IOResult(), ExecutionNode(command=cmd_str, exit_code=0)
 
 
 async def handle_man(
     args: list[str],
-    session: Session,
     registry: MountRegistry,
 ) -> tuple[ByteSource | None, IOResult, ExecutionNode]:
     if not args:
-        out = _render_man_index(session, registry).encode()
+        out = _render_man_index(registry).encode()
         return out, IOResult(), ExecutionNode(command="man", exit_code=0)
     name = args[0]
     cmd_str = "man " + " ".join(args)
@@ -267,19 +242,14 @@ async def handle_man(
     install = registry.clis.get(name)
     if install is not None:
         return _cli_man(install, args[1:], cmd_str, registry)
-    hits = _collect_man_hits(name, registry)
-    if not hits:
-        spec_key = _SHELL_BUILTIN_MAN.get(name)
-        spec = SPECS.get(spec_key) if spec_key is not None else None
-        if spec is not None:
-            out = _render_shell_builtin_man(name, spec).encode()
-            return out, IOResult(), ExecutionNode(command=cmd_str, exit_code=0)
+    entry = _command_entry(name, registry) or _builtin_entry(name)
+    if entry is None:
         err = f"man: no entry for {name}\n".encode()
         return None, IOResult(exit_code=1,
                               stderr=err), ExecutionNode(command=cmd_str,
                                                          exit_code=1,
                                                          stderr=err)
-    out = _render_man_entry(name, hits).encode()
+    out = _render_page(entry).encode()
     return out, IOResult(), ExecutionNode(command=cmd_str, exit_code=0)
 
 
@@ -289,4 +259,4 @@ async def man_builtin(call: BuiltinCall) -> Result:
     Args:
         call (BuiltinCall): the invocation.
     """
-    return await handle_man(list(call.argv.args), call.session, call.registry)
+    return await handle_man(list(call.argv.args), call.registry)

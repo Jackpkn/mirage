@@ -19,11 +19,9 @@ from mirage.commands.cli.types import CLISpec
 from mirage.commands.config import RegisteredCommand
 from mirage.commands.spec.types import CommandSpec, Option
 from mirage.workspace.cli.registry import CLIRegistry
-from mirage.workspace.executor.builtins.man import (_collect_man_hits,
-                                                    _render_man_entry,
+from mirage.workspace.executor.builtins.man import (ManEntry, _command_entry,
                                                     _render_man_index,
-                                                    handle_man)
-from mirage.workspace.session import Session
+                                                    _render_page, handle_man)
 
 
 def _mk_cmd(name, spec, filetype=None, resource="ram"):
@@ -51,9 +49,6 @@ def _mk_mount(prefix, kind, cmds=None, general=None):
             return general[name]
         return None
 
-    def _is_general(name):
-        return name in general and name not in cmds
-
     def _all():
         seen = set()
         out = []
@@ -70,44 +65,49 @@ def _mk_mount(prefix, kind, cmds=None, general=None):
         return out
 
     mount.resolve_command = MagicMock(side_effect=_resolve)
-    mount.is_general_command = MagicMock(side_effect=_is_general)
     mount.all_commands = MagicMock(side_effect=_all)
     return mount
 
 
-def _mk_registry(mounts, cwd_mount=None):
+def _mk_registry(mounts):
     reg = MagicMock()
     reg.clis = CLIRegistry()
     reg.mounts = MagicMock(return_value=mounts)
-
-    reg.try_mount_for = MagicMock(return_value=cwd_mount)
     return reg
 
 
-def test_collect_man_hits_skips_dev():
+def test_command_entry_skips_dev():
     spec = CommandSpec(description="x")
     cat_cmd = _mk_cmd("cat", spec)
     mount_dev = _mk_mount("/dev/", "dev", cmds={"cat": cat_cmd})
+    reg = _mk_registry([mount_dev])
+    assert _command_entry("cat", reg) is None
     mount_ram = _mk_mount("/ram/", "ram", cmds={"cat": cat_cmd})
-    reg = _mk_registry([mount_dev, mount_ram])
-    hits = _collect_man_hits("cat", reg)
-    assert len(hits) == 1
-    assert hits[0].mount is mount_ram
+    entry = _command_entry("cat", _mk_registry([mount_dev, mount_ram]))
+    assert entry == ManEntry(name="cat", spec=spec)
 
 
-def test_render_man_entry_no_options():
+def test_command_entry_is_the_first_registration_found():
+    spec = CommandSpec(description="cat")
+    plain = _mk_cmd("cat", spec)
+    parquet = _mk_cmd("cat", spec, filetype=".parquet")
+    m1 = _mk_mount("/a/", "ram", cmds={"cat": plain})
+    m2 = _mk_mount("/b/", "s3", cmds={"cat": parquet})
+    assert _command_entry("cat", _mk_registry([m1,
+                                               m2])) == ManEntry(name="cat",
+                                                                 spec=spec)
+    assert _command_entry("nope", _mk_registry([m1, m2])) is None
+
+
+def test_render_page_no_options():
     spec = CommandSpec(description="Concatenate files.")
-    cat_cmd = _mk_cmd("cat", spec)
-    mount = _mk_mount("/ram/", "ram", cmds={"cat": cat_cmd})
-    hits = _collect_man_hits("cat", _mk_registry([mount]))
-    out = _render_man_entry("cat", hits)
-    assert out.startswith("# cat\n")
-    assert "Concatenate files." in out
+    out = _render_page(ManEntry(name="cat", spec=spec))
+    assert out == "# cat\n\nConcatenate files.\n"
     assert "## OPTIONS" not in out
-    assert "## RESOURCES\n\n- ram\n" in out
+    assert "RESOURCES" not in out
 
 
-def test_render_man_entry_with_options():
+def test_render_page_with_options():
     spec = CommandSpec(
         description="Print a sequence.",
         options=(
@@ -115,76 +115,71 @@ def test_render_man_entry_with_options():
             Option(short="-w", description="zero-pad"),
         ),
     )
-    cmd = _mk_cmd("seq", spec)
-    mount = _mk_mount("/ram/", "ram", cmds={"seq": cmd})
-    hits = _collect_man_hits("seq", _mk_registry([mount]))
-    out = _render_man_entry("seq", hits)
-    assert "## OPTIONS" in out
+    out = _render_page(ManEntry(name="seq", spec=spec))
+    assert out.startswith("# seq\n\nPrint a sequence.\n\n## OPTIONS\n\n")
     assert "| short | long | value | description |" in out
     assert "| -s |  | str | separator |" in out
-    assert "| -w |  | bool | zero-pad |" in out
+    assert out.endswith("| -w |  | bool | zero-pad |\n")
 
 
-def test_render_man_entry_dedupes_by_kind_and_filetype():
-    spec = CommandSpec(description="cat")
-    plain = _mk_cmd("cat", spec)
-    parquet = _mk_cmd("cat", spec, filetype=".parquet")
-    m1 = _mk_mount("/a/", "ram", cmds={"cat": plain})
-    m2 = _mk_mount("/b/", "ram", cmds={"cat": plain})
-    m3 = _mk_mount("/c/", "ram", cmds={"cat": parquet})
-    reg = _mk_registry([m1, m2, m3])
-    hits = _collect_man_hits("cat", reg)
-    out = _render_man_entry("cat", hits)
-    assert out.count("- ram\n") == 1
-    assert "- ram (filetype: .parquet)" in out
-
-
-def test_render_man_entry_general_first():
-    spec = CommandSpec(description="x")
-    cmd = _mk_cmd("bc", spec, resource=None)
-    mount = _mk_mount("/ram/", "ram", general={"bc": cmd})
-    hits = _collect_man_hits("bc", _mk_registry([mount]))
-    out = _render_man_entry("bc", hits)
-    assert out.endswith("- general\n")
+def test_render_page_placeholder_description():
+    out = _render_page(ManEntry(name="bc", spec=CommandSpec()))
+    assert out == "# bc\n\n(no description)\n"
 
 
 def test_handle_man_missing_entry():
     reg = _mk_registry([])
-    out, io, node = asyncio.run(
-        handle_man(["nope"], Session(session_id="t"), reg))
+    out, io, node = asyncio.run(handle_man(["nope"], reg))
     assert out is None
     assert io.exit_code == 1
     assert io.stderr == b"man: no entry for nope\n"
     assert node.exit_code == 1
 
 
-def test_handle_man_index_cwd_first():
-    spec_a = CommandSpec(description="ls files")
-    spec_b = CommandSpec(description="cat files")
-    ls = _mk_cmd("ls", spec_a)
-    cat = _mk_cmd("cat", spec_b)
-    mount_z = _mk_mount("/z/", "zfs", cmds={"ls": ls})
-    mount_r = _mk_mount("/ram/", "ram", cmds={"cat": cat})
-    reg = _mk_registry([mount_z, mount_r], cwd_mount=mount_r)
-    out, io, node = asyncio.run(
-        handle_man([], Session(session_id="t", cwd="/ram/x"), reg))
+def test_handle_man_page_carries_no_resource():
+    spec = CommandSpec(description="cat files")
+    cat = _mk_cmd("cat", spec)
+    m1 = _mk_mount("/a/", "ram", cmds={"cat": cat})
+    m2 = _mk_mount("/b/", "s3", cmds={"cat": cat})
+    out, io, _node = asyncio.run(handle_man(["cat"], _mk_registry([m1, m2])))
+    assert io.exit_code == 0
+    assert out.decode() == "# cat\n\ncat files\n"
+
+
+def test_handle_man_documents_bash_and_sh_from_the_bash_spec():
+    out, io, _node = asyncio.run(handle_man(["bash"], _mk_registry([])))
     assert io.exit_code == 0
     text = out.decode()
-    ram_pos = text.index("# ram")
-    zfs_pos = text.index("# zfs")
-    assert ram_pos < zfs_pos
+    assert text.startswith("# bash\n")
+    assert "-c" in text
+    assert "RESOURCES" not in text
+    sh, io2, _node = asyncio.run(handle_man(["sh"], _mk_registry([])))
+    assert io2.exit_code == 0
+    assert sh.decode().startswith("# sh\n")
 
 
-def test_render_man_index_dedupes_general_across_mounts():
+def test_render_man_index_lists_every_name_once_sorted():
     spec_g = CommandSpec(description="bc desc")
     bc = _mk_cmd("bc", spec_g, resource=None)
     spec_a = CommandSpec(description="ls files")
     ls = _mk_cmd("ls", spec_a)
+    spec_c = CommandSpec(description="cat files")
+    cat = _mk_cmd("cat", spec_c)
     m1 = _mk_mount("/a/", "ram", cmds={"ls": ls}, general={"bc": bc})
-    m2 = _mk_mount("/b/", "s3", cmds={"ls": ls}, general={"bc": bc})
-    reg = _mk_registry([m1, m2])
-    text = _render_man_index(Session(session_id="t"), reg)
-    assert text.count("- bc \u2014 bc desc") == 1
+    m2 = _mk_mount("/b/", "s3", cmds={"cat": cat}, general={"bc": bc})
+    text = _render_man_index(_mk_registry([m1, m2]))
+    assert text == ("# commands\n\n"
+                    "- bc \u2014 bc desc\n"
+                    "- cat \u2014 cat files\n"
+                    "- ls \u2014 ls files\n")
+    assert "ram" not in text and "s3" not in text
+
+
+def test_render_man_index_skips_dev_and_is_empty_with_nothing_to_list():
+    cat = _mk_cmd("cat", CommandSpec(description="x"))
+    dev = _mk_mount("/dev/", "dev", cmds={"cat": cat})
+    assert _render_man_index(_mk_registry([dev])) == ""
+    assert _render_man_index(_mk_registry([])) == ""
 
 
 def _cli_tree() -> CLISpec:
@@ -207,8 +202,7 @@ def _cli_registry(mounts=None):
 
 
 def test_handle_man_renders_an_installed_cli():
-    out, io, _node = asyncio.run(
-        handle_man(["linear"], Session(session_id="t"), _cli_registry()))
+    out, io, _node = asyncio.run(handle_man(["linear"], _cli_registry()))
     assert io.exit_code == 0
     text = out.decode()
     assert "Usage: linear" in text
@@ -217,20 +211,17 @@ def test_handle_man_renders_an_installed_cli():
 
 def test_handle_man_descends_a_verb_path_and_resolves_aliases():
     reg = _cli_registry()
-    text = asyncio.run(
-        handle_man(["linear", "issue", "create"], Session(session_id="t"),
-                   reg))[0].decode()
+    text = asyncio.run(handle_man(["linear", "issue", "create"],
+                                  reg))[0].decode()
     assert "Usage: linear issue create" in text
-    aliased = asyncio.run(
-        handle_man(["linear", "i", "create"], Session(session_id="t"),
-                   reg))[0].decode()
+    aliased = asyncio.run(handle_man(["linear", "i", "create"],
+                                     reg))[0].decode()
     assert aliased == text
 
 
 def test_handle_man_unknown_verb_names_the_whole_line():
     out, io, node = asyncio.run(
-        handle_man(["linear", "bogus"], Session(session_id="t"),
-                   _cli_registry()))
+        handle_man(["linear", "bogus"], _cli_registry()))
     assert out is None
     assert io.exit_code == 1
     assert io.stderr == b"man: no entry for linear bogus\n"
@@ -241,18 +232,17 @@ def test_handle_man_prints_the_cli_before_a_colliding_mount_command():
     spec = CommandSpec(description="mount side")
     mount = _mk_mount("/ram/", "ram", cmds={"linear": _mk_cmd("linear", spec)})
     reg = _cli_registry([mount])
-    text = asyncio.run(handle_man(["linear"], Session(session_id="t"),
-                                  reg))[0].decode()
+    text = asyncio.run(handle_man(["linear"], reg))[0].decode()
     assert text.index("Usage: linear") < text.index("mount side")
 
 
-def test_render_man_index_lists_installed_clis():
-    text = _render_man_index(Session(session_id="t"), _cli_registry())
-    assert "# clis" in text
-    assert "- linear \u2014 Linear API client" in text
-    assert text.index("# clis") < text.index("# general")
+def test_render_man_index_lists_installed_clis_after_commands():
+    cat = _mk_cmd("cat", CommandSpec(description="cat files"))
+    mount = _mk_mount("/ram/", "ram", cmds={"cat": cat})
+    text = _render_man_index(_cli_registry([mount]))
+    assert text == ("# commands\n\n- cat \u2014 cat files\n\n"
+                    "# clis\n\n- linear \u2014 Linear API client\n")
 
 
 def test_render_man_index_omits_the_cli_section_when_none_installed():
-    assert "# clis" not in _render_man_index(Session(session_id="t"),
-                                             _mk_registry([]))
+    assert "# clis" not in _render_man_index(_mk_registry([]))

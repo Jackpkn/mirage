@@ -94,13 +94,14 @@ describe('workspace: whoami', () => {
 })
 
 describe('workspace: man', () => {
-  it('man date renders entry with header and RESOURCES section', async () => {
+  it('man date renders the page with header and options, no resource section', async () => {
     const { ws } = await makeWorkspace()
     const io = await ws.execute('man date')
     expect(io.exitCode).toBe(0)
     const out = stdoutStr(io)
-    expect(out).toContain('# date')
-    expect(out).toContain('## RESOURCES')
+    expect(out.startsWith('# date\n\n')).toBe(true)
+    expect(out).toContain('## OPTIONS')
+    expect(out).not.toContain('RESOURCES')
     await ws.close()
   })
 })

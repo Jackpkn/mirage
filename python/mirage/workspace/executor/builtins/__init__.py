@@ -32,10 +32,9 @@ from mirage.workspace.executor.builtins.links import (accepts_line,
                                                       link_flags, prepare_mv,
                                                       strip_link_operands)
 from mirage.workspace.executor.builtins.lookup import handle_type, handle_which
-from mirage.workspace.executor.builtins.man import (_collect_man_hits,
-                                                    _render_man_entry,
+from mirage.workspace.executor.builtins.man import (_command_entry,
                                                     _render_man_index,
-                                                    handle_man)
+                                                    _render_page, handle_man)
 from mirage.workspace.executor.builtins.mapfile import handle_mapfile
 from mirage.workspace.executor.builtins.metadata import (handle_chgrp,
                                                          handle_chmod,
@@ -68,11 +67,11 @@ from mirage.workspace.executor.builtins.declare import (  # isort: skip
     handle_local, handle_readonly, note_local_array)
 
 __all__ = [
-    '_collect_man_hits',
+    '_command_entry',
     'handle_alias',
     'handle_unalias',
-    '_render_man_entry',
     '_render_man_index',
+    '_render_page',
     '_scope_path',
     '_to_scope',
     'handle_bash',

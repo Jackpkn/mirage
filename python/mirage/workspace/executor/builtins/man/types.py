@@ -14,19 +14,21 @@
 
 from dataclasses import dataclass
 
-from mirage.commands.config import RegisteredCommand
-from mirage.workspace.mount.mount import MountEntry
+from mirage.commands.spec.types import CommandSpec
 
 
-@dataclass
-class ManHit:
-    """One place a command name resolves to, for the manual renderer.
+@dataclass(frozen=True, slots=True)
+class ManEntry:
+    """One entry of the manual: a documented word and the spec its page
+    renders from.
+
+    A name has one spec however many mounts register it, so the entry
+    carries no mount and no resource; which backend serves the word is
+    dispatch's business, not the manual's.
 
     Args:
-        mount (MountEntry): the mount that registers the command.
-        cmd (RegisteredCommand): the registration on that mount.
-        is_general (bool): whether it is the general (every-mount) set.
+        name (str): the word as the manual lists it.
+        spec (CommandSpec): the spec the page renders from.
     """
-    mount: MountEntry
-    cmd: RegisteredCommand
-    is_general: bool
+    name: str
+    spec: CommandSpec

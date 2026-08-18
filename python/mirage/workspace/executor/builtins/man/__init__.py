@@ -12,16 +12,16 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from mirage.workspace.executor.builtins.man.man import (_collect_man_hits,
-                                                        _render_man_entry,
+from mirage.workspace.executor.builtins.man.man import (_command_entry,
                                                         _render_man_index,
+                                                        _render_page,
                                                         handle_man)
-from mirage.workspace.executor.builtins.man.types import ManHit
+from mirage.workspace.executor.builtins.man.types import ManEntry
 
 __all__ = [
-    "ManHit",
-    "_collect_man_hits",
-    "_render_man_entry",
+    "ManEntry",
+    "_command_entry",
     "_render_man_index",
+    "_render_page",
     "handle_man",
 ]
