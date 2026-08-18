@@ -30,8 +30,7 @@ import { type FileStat, ResourceName, type PathSpec } from '../../../types.ts'
 import { command, type CommandFnResult, type CommandOpts } from '../../config.ts'
 import { specOf } from '../../spec/builtins.ts'
 import { rgGeneric } from '../generic/rg.ts'
-import { compilePattern, hasSearchShapingFlags, patternArg } from '../grep_helper.ts'
-import { hasUnresolvedGlob } from '../utils/operands.ts'
+import { compilePattern, patternArg, pushdownOperand } from '../grep_helper.ts'
 import { filterDatasets, filterPrompts, filterSessions, filterTraces } from './grep.ts'
 import { FlagView } from '../../spec/types.ts'
 
@@ -57,16 +56,11 @@ async function rgCommand(
   // The search push-down answers from the list endpoints (one call instead
   // of one read per entry), so it greps listing summaries: a pattern that
   // only occurs in a trace's observation bodies needs a file read to match.
-  // Output/match-shaping flags defer to the generic scan below.
-  const first = paths[0]
-  if (
-    first !== undefined &&
-    !hasUnresolvedGlob(paths) &&
-    pattern !== null &&
-    !pattern.includes('\n') &&
-    !hasSearchShapingFlags(opts.flags)
-  ) {
-    const search = SEARCH_KINDS[detectScope(first).kind]
+  // Output/match-shaping flags and a multi-operand line defer to the generic
+  // scan below.
+  const operand = pushdownOperand(paths, opts.flags, pattern)
+  if (pattern !== null && operand !== null) {
+    const search = SEARCH_KINDS[detectScope(operand).kind]
     const fl = new FlagView(opts.flags, specOf('rg'))
     const pat = compilePattern(pattern, fl.asBool('i'), fl.asBool('F'), fl.asBool('w'))
     if (search === 'traces') {

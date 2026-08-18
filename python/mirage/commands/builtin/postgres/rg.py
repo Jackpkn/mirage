@@ -15,10 +15,10 @@
 from mirage.accessor.postgres import PostgresAccessor
 from mirage.commands.builtin.generic.rg import rg as generic_rg
 from mirage.commands.builtin.generic_bind.adapter import bound_op
-from mirage.commands.builtin.grep_helper import pattern_arg, search_pushdown_ok
+from mirage.commands.builtin.grep_helper import (literal_pushdown_operand,
+                                                 pattern_arg)
 from mirage.commands.builtin.postgres.io import resolve_glob
 from mirage.commands.builtin.utils.output import format_records
-from mirage.commands.builtin.utils.paths import has_unresolved_glob
 from mirage.commands.config import CommandOpts
 from mirage.commands.errors import UsageError
 from mirage.commands.registry import command
@@ -51,11 +51,12 @@ async def rg(accessor: PostgresAccessor, paths: list[PathSpec],
     ci = fl.as_bool("i")
 
     # Native search takes one literal pattern and prints each matching row as
-    # a whole line; a multi -e set (#347), a real regex, or any match/output
-    # shaping flag must fall through to the generic scan below.
-    if (paths and not has_unresolved_glob(paths)
-            and search_pushdown_ok(opts.flags, pattern_str)):
-        scope = detect_scope(paths[0])
+    # a whole line; a multi -e set (#347), a real regex, a multi-operand line,
+    # or any match/output shaping flag must fall through to the generic scan
+    # below.
+    operand = literal_pushdown_operand(paths, opts.flags, pattern_str)
+    if operand is not None:
+        scope = detect_scope(operand)
 
         # Directory scopes cover every file under them, so the rendered
         # schema.json / semantic.json are searched alongside the row

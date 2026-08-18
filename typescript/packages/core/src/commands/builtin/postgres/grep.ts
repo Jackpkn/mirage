@@ -15,7 +15,6 @@
 import type { PostgresAccessor } from '../../../accessor/postgres.ts'
 import type { IndexCacheStore } from '../../../cache/index/store.ts'
 import { resolveGlobOf } from '../generic_bind/index.ts'
-import { hasUnresolvedGlob } from '../utils/operands.ts'
 import { POSTGRES_IO } from './io.ts'
 import { read as postgresRead } from '../../../core/postgres/read.ts'
 import { readdir as postgresReaddir } from '../../../core/postgres/readdir.ts'
@@ -37,7 +36,7 @@ import { type FileStat, type PathSpec, ResourceName } from '../../../types.ts'
 import { command, type CommandFnResult, type CommandOpts } from '../../config.ts'
 import { specOf } from '../../spec/builtins.ts'
 import { grepGeneric } from '../generic/grep.ts'
-import { patternArg, searchPushdownOk } from '../grep_helper.ts'
+import { literalPushdownOperand, patternArg } from '../grep_helper.ts'
 import { formatRecords } from '../utils/output.ts'
 import { FlagView } from '../../spec/types.ts'
 
@@ -61,22 +60,17 @@ async function grepCommand(
   const limit = accessor.config.defaultSearchLimit
 
   // The push-down is a literal-substring search (case-sensitive unless -i)
-  // that prints
-  // each matching row as a whole line; it cannot honor output/match-shaping
-  // flags or a real regex, so those defer to the generic scan below.
-  const first = paths[0]
+  // that prints each matching row as a whole line; it cannot honor
+  // output/match-shaping flags, a real regex, or a multi-operand line, so
+  // those defer to the generic scan below.
   const fl = new FlagView(opts.flags, specOf('grep'))
   const ci = fl.asBool('i')
-  if (
-    first !== undefined &&
-    !hasUnresolvedGlob(paths) &&
-    pattern !== null &&
-    searchPushdownOk(opts.flags, pattern)
-  ) {
-    const scope = detectScope(first)
+  const operand = literalPushdownOperand(paths, opts.flags, pattern)
+  if (pattern !== null && operand !== null) {
+    const scope = detectScope(operand)
 
     if (scope.level !== 'root') {
-      await postgresStat(accessor, first, opts.index ?? undefined)
+      await postgresStat(accessor, operand, opts.index ?? undefined)
     }
 
     // Directory scopes cover every file under them, so the rendered

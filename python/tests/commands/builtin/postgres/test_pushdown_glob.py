@@ -193,6 +193,76 @@ async def test_grep_regex_pattern_skips_pushdown(accessor):
     assert seen["generic"] == [CONCRETE]
 
 
+def _second_path() -> PathSpec:
+    other = "/public/tables/authors/rows.jsonl"
+    return PathSpec(virtual=other,
+                    directory="/public/tables/authors",
+                    resource_path=other.strip("/"))
+
+
+@pytest.mark.asyncio
+async def test_grep_second_operand_skips_pushdown(accessor):
+    # The push-down answers for one operand and printed nothing about the
+    # rest, so a two-operand line silently reported only books.
+    seen: dict[str, object] = {}
+
+    async def fake_resolve(_accessor, _paths, index=None):
+        return [_concrete_path(), _second_path()]
+
+    async def fake_generic(paths, _texts, _flags, **_kwargs):
+        seen["generic"] = [p.virtual for p in paths]
+        return b"", IOResult()
+
+    with patch(
+            "mirage.commands.builtin.postgres.grep.search_entity",
+            new=AsyncMock(side_effect=AssertionError("pushdown ran on 2 ops")),
+    ), patch(
+            "mirage.commands.builtin.postgres.grep._stat",
+            new=AsyncMock(side_effect=AssertionError("stat ran on 2 ops")),
+    ), patch(
+            "mirage.commands.builtin.postgres.grep.resolve_glob",
+            new=fake_resolve,
+    ), patch(
+            "mirage.commands.builtin.postgres.grep.generic_grep",
+            new=fake_generic,
+    ):
+        await grep(accessor,
+                   [_concrete_path(), _second_path()], ['ada'],
+                   CommandOpts(index=NULL_INDEX))
+
+    assert seen["generic"] == [CONCRETE, "/public/tables/authors/rows.jsonl"]
+
+
+@pytest.mark.asyncio
+async def test_rg_second_operand_skips_pushdown(accessor):
+    seen: dict[str, object] = {}
+
+    async def fake_resolve(_accessor, _paths, index=None):
+        return [_concrete_path(), _second_path()]
+
+    async def fake_generic(paths, _texts, _flags, **_kwargs):
+        seen["generic"] = [p.virtual for p in paths]
+        return b"", IOResult()
+
+    with patch(
+            "mirage.commands.builtin.postgres.rg.search_entity",
+            new=AsyncMock(side_effect=AssertionError("pushdown ran on 2 ops")),
+    ), patch(
+            "mirage.commands.builtin.postgres.rg._stat",
+            new=AsyncMock(side_effect=AssertionError("stat ran on 2 ops")),
+    ), patch(
+            "mirage.commands.builtin.postgres.rg.resolve_glob",
+            new=fake_resolve,
+    ), patch(
+            "mirage.commands.builtin.postgres.rg.generic_rg",
+            new=fake_generic,
+    ):
+        await rg(accessor, [_concrete_path(), _second_path()], ['ada'],
+                 CommandOpts(index=NULL_INDEX))
+
+    assert seen["generic"] == [CONCRETE, "/public/tables/authors/rows.jsonl"]
+
+
 @pytest.mark.asyncio
 async def test_rg_glob_skips_pushdown_and_expands(accessor):
     seen: dict[str, object] = {}

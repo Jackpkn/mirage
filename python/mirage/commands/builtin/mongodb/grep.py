@@ -17,11 +17,9 @@ import asyncio
 from mirage.accessor.mongodb import MongoDBAccessor
 from mirage.commands.builtin.generic.grep import grep as generic_grep
 from mirage.commands.builtin.generic_bind.adapter import bound_op
-from mirage.commands.builtin.grep_helper import (has_search_shaping_flags,
-                                                 pattern_arg)
+from mirage.commands.builtin.grep_helper import pattern_arg, pushdown_operand
 from mirage.commands.builtin.mongodb.io import resolve_glob
 from mirage.commands.builtin.utils.output import format_records
-from mirage.commands.builtin.utils.paths import has_unresolved_glob
 from mirage.commands.config import CommandOpts
 from mirage.commands.registry import command
 from mirage.commands.spec import SPECS
@@ -54,15 +52,15 @@ async def grep(accessor: MongoDBAccessor, paths: list[PathSpec],
     limit = config.default_search_limit
 
     # The $regex push-down prints each matching document as a whole line, so
-    # output/match-shaping flags must defer to the generic scan below.
-    if (paths and not has_unresolved_glob(paths) and pattern is not None
-            and "\n" not in pattern
-            and not has_search_shaping_flags(opts.flags)):
-        scope = detect_scope(paths[0])
+    # output/match-shaping flags and a multi-operand line must defer to the
+    # generic scan below.
+    operand = pushdown_operand(paths, opts.flags, pattern)
+    if pattern is not None and operand is not None:
+        scope = detect_scope(operand)
 
         if isinstance(scope, SEARCHABLE_SCOPE_TYPES):
             if not isinstance(scope, MongoDBRootScope):
-                await _stat(accessor, paths[0], index=opts.index)
+                await _stat(accessor, operand, index=opts.index)
             if isinstance(scope, MongoDBEntityScope):
                 docs = await search_collection(
                     accessor.client,

@@ -20,6 +20,7 @@ from dataclasses import dataclass
 
 from mirage.commands.builtin.constants import PatternType
 from mirage.commands.builtin.grep_context import grep_context_lines
+from mirage.commands.builtin.utils.paths import has_unresolved_glob
 from mirage.commands.builtin.utils.types import (_AsyncReadBytes,
                                                  _AsyncReaddir, _AsyncStat)
 from mirage.commands.builtin.utils.wrap import call_read_bytes
@@ -309,6 +310,86 @@ def search_pushdown_ok(flags: Mapping[str, FlagValue] | None,
     fl = FlagView(flags)
     return (is_literal_pattern(pattern, fl.as_bool("F"))
             and not has_search_shaping_flags(flags))
+
+
+def _lone_operand(paths: list[PathSpec]) -> PathSpec | None:
+    """The one operand a search push-down may answer for, or None.
+
+    A push-down asks the backend a single whole-container question and
+    prints its entire answer, so it can only stand in for a line naming
+    exactly one operand. Given two it answered for the first and dropped
+    the rest in silence (``rg pat /lf/traces /lf/sessions`` reported only
+    traces). Running it once per operand is not the fix: several scopes
+    map to the same container search (langfuse routes both ``sessions``
+    and one ``session`` to "search every session"), so two operands in
+    one family would print that container twice. A multi-operand line
+    therefore takes the generic scan, which searches each operand in turn
+    the way GNU does. A glob operand defers for the older reason: an
+    unexpanded pattern segment would be read as a literal entity name.
+
+    Args:
+        paths (list[PathSpec]): operands as parsed.
+
+    Returns:
+        PathSpec | None: the sole concrete operand, or None when the line
+            named none, named several, or still carries a glob.
+    """
+    if len(paths) != 1 or has_unresolved_glob(paths):
+        return None
+    return paths[0]
+
+
+def pushdown_operand(
+    paths: list[PathSpec],
+    flags: Mapping[str, FlagValue] | None,
+    pattern: str | None,
+) -> PathSpec | None:
+    """The operand a regex push-down may answer for, or None.
+
+    For a backend that pushes the real regex down (mongodb, langfuse),
+    which is faithful for any single pattern with no shaping flags. A
+    newline-joined pattern list (-F with several -e) is a set of
+    independent alternatives the push-down cannot express.
+
+    Args:
+        paths (list[PathSpec]): operands as parsed.
+        flags (Mapping[str, FlagValue] | None): raw flag kwargs.
+        pattern (str | None): the resolved pattern, None when the line
+            supplied none.
+
+    Returns:
+        PathSpec | None: the operand to push down for, or None to defer.
+    """
+    if pattern is None or "\n" in pattern:
+        return None
+    if has_search_shaping_flags(flags):
+        return None
+    return _lone_operand(paths)
+
+
+def literal_pushdown_operand(
+    paths: list[PathSpec],
+    flags: Mapping[str, FlagValue] | None,
+    pattern: str | None,
+) -> PathSpec | None:
+    """The operand a literal-substring push-down may answer for, or None.
+
+    ``_lone_operand``'s rule plus ``search_pushdown_ok``'s, which is the
+    stricter flag gate LIKE/ILIKE needs (postgres): a real regex is
+    treated literally by LIKE, so only a verbatim pattern may push down.
+
+    Args:
+        paths (list[PathSpec]): operands as parsed.
+        flags (Mapping[str, FlagValue] | None): raw flag kwargs.
+        pattern (str | None): the resolved pattern, None when the line
+            supplied none.
+
+    Returns:
+        PathSpec | None: the operand to push down for, or None to defer.
+    """
+    if pattern is None or not search_pushdown_ok(flags, pattern):
+        return None
+    return _lone_operand(paths)
 
 
 def pattern_arg(texts: Sequence[str], flags: FlagView) -> str | None:

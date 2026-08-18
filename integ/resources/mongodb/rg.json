@@ -64,6 +64,32 @@
         "stdout": "mirage_integ/collections/authors/documents.jsonl:{\"_id\": 1, \"name\": \"ada\", \"books\": 2}\nmirage_integ/collections/books/documents.jsonl:{\"_id\": 1, \"title\": \"alpha\", \"author\": \"ada\", \"year\": 2020, \"tags\": [\"fiction\", \"classic\"], \"rating\": 4.5}\nmirage_integ/collections/books/documents.jsonl:{\"_id\": 4, \"title\": \"delta\", \"author\": \"ada\", \"year\": 2023, \"tags\": [\"history\"], \"rating\": 4}\n",
         "stderr": ""
       }
+    },
+    {
+      "id": "mdb_rg_two_collections_cover_both",
+      "seq": 620065,
+      "targets": [
+        "mongodb"
+      ],
+      "command": "rg ada /mongodb/mirage_integ/collections/books /mongodb/mirage_integ/collections/authors | cut -d: -f1 | sort -u",
+      "expect": {
+        "exit": 0,
+        "stdout": "/mongodb/mirage_integ/collections/authors/documents.jsonl\n/mongodb/mirage_integ/collections/books/documents.jsonl\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "mdb_rg_lone_collection_uses_pushdown",
+      "seq": 620066,
+      "targets": [
+        "mongodb"
+      ],
+      "command": "rg ada /mongodb/mirage_integ/collections/authors",
+      "expect": {
+        "exit": 0,
+        "stdout": "mirage_integ/collections/authors/documents.jsonl:{\"_id\": 1, \"name\": \"ada\", \"books\": 2}\n",
+        "stderr": ""
+      }
     }
   ]
 }

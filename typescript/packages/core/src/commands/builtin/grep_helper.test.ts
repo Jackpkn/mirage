@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { describe, expect, it } from 'vitest'
-import { FileStat, FileType } from '../../types.ts'
+import { FileStat, FileType, PathSpec } from '../../types.ts'
 import { PatternType } from './constants.ts'
 import {
   classifyPattern,
@@ -25,10 +25,12 @@ import {
   hasSearchShapingFlags,
   isLiteralPattern,
   isRegexPattern,
+  literalPushdownOperand,
   mergePatternList,
   NEVER_MATCH,
   NO_FILTERS,
   parseFileGlobs,
+  pushdownOperand,
   searchPushdownOk,
   searchQuery,
 } from './grep_helper.ts'
@@ -267,6 +269,57 @@ describe('searchPushdownOk', () => {
   it('rejects a regex pattern but allows it under -F', () => {
     expect(searchPushdownOk({}, 'a.b')).toBe(false)
     expect(searchPushdownOk({ F: true }, 'a.b')).toBe(true)
+  })
+})
+
+function operand(virtual: string, pattern: string | null = null): PathSpec {
+  return new PathSpec({
+    virtual,
+    directory: virtual.slice(0, virtual.lastIndexOf('/')) || '/',
+    resourcePath: virtual.replace(/^\/+|\/+$/g, ''),
+    pattern,
+    resolved: pattern === null,
+  })
+}
+
+const TRACES = operand('/traces')
+const SESSIONS = operand('/sessions')
+
+describe('pushdownOperand', () => {
+  it('admits one concrete operand', () => {
+    expect(pushdownOperand([TRACES], {}, 'ada')).toBe(TRACES)
+  })
+
+  it('refuses a second operand', () => {
+    // The bug this gate exists for: the push-down answered for the first
+    // operand and dropped the rest in silence.
+    expect(pushdownOperand([TRACES, SESSIONS], {}, 'ada')).toBe(null)
+    // Two operands in one family, which a per-operand push-down would have
+    // answered twice over.
+    expect(pushdownOperand([TRACES, TRACES], {}, 'ada')).toBe(null)
+  })
+
+  it('refuses no operand', () => {
+    expect(pushdownOperand([], {}, 'ada')).toBe(null)
+  })
+
+  it('refuses a glob, a shaping flag and a pattern list', () => {
+    expect(pushdownOperand([operand('/traces/*', '*')], {}, 'ada')).toBe(null)
+    expect(pushdownOperand([TRACES], { c: true }, 'ada')).toBe(null)
+    expect(pushdownOperand([TRACES], {}, 'ada\nbob')).toBe(null)
+    expect(pushdownOperand([TRACES], {}, null)).toBe(null)
+  })
+})
+
+describe('literalPushdownOperand', () => {
+  it('adds the LIKE pattern rule to the same operand rule', () => {
+    expect(literalPushdownOperand([TRACES], {}, 'ada')).toBe(TRACES)
+    // Everything pushdownOperand refuses, this refuses too.
+    expect(literalPushdownOperand([TRACES, SESSIONS], {}, 'ada')).toBe(null)
+    expect(literalPushdownOperand([TRACES], { c: true }, 'ada')).toBe(null)
+    // Plus the one it adds: LIKE matches a regex literally.
+    expect(literalPushdownOperand([TRACES], {}, 'a.b')).toBe(null)
+    expect(literalPushdownOperand([TRACES], { F: true }, 'a.b')).toBe(TRACES)
   })
 })
 

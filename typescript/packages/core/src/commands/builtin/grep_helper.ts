@@ -22,6 +22,7 @@ import { fnmatch } from '../../utils/fnmatch.ts'
 import { getExtension } from '../resolve.ts'
 import { PatternType } from './constants.ts'
 import { grepContextLines } from './grep_context.ts'
+import { hasUnresolvedGlob } from './utils/operands.ts'
 import type { AsyncReadBytesFn, AsyncReaddirFn, AsyncStatFn } from './utils/types.ts'
 import type { FlagView } from '../spec/types.ts'
 import { type FlagValue } from '../spec/types.ts'
@@ -363,6 +364,50 @@ export function hasSearchShapingFlags(flags: Record<string, FlagValue>): boolean
 export function searchPushdownOk(flags: Record<string, FlagValue>, pattern: string): boolean {
   if (pattern.includes('\n')) return false
   return isLiteralPattern(pattern, flags.F === true) && !hasSearchShapingFlags(flags)
+}
+
+// The one operand a search push-down may answer for, or null. A push-down
+// asks the backend a single whole-container question and prints its entire
+// answer, so it can only stand in for a line naming exactly one operand.
+// Given two it answered for the first and dropped the rest in silence
+// (rg pat /lf/traces /lf/sessions reported only traces). Running it once per
+// operand is not the fix: several scopes map to the same container search
+// (langfuse routes both `sessions` and one `session` to "search every
+// session"), so two operands in one family would print that container twice.
+// A multi-operand line therefore takes the generic scan, which searches each
+// operand in turn the way GNU does. A glob operand defers for the older
+// reason: an unexpanded pattern segment would be read as a literal entity
+// name.
+function loneOperand(paths: PathSpec[]): PathSpec | null {
+  if (paths.length !== 1 || hasUnresolvedGlob(paths)) return null
+  return paths[0] ?? null
+}
+
+// The operand a regex push-down may answer for, or null. For a backend that
+// pushes the real regex down (mongodb, langfuse), which is faithful for any
+// single pattern with no shaping flags. A newline-joined pattern list (-F
+// with several -e) is a set of independent alternatives it cannot express.
+export function pushdownOperand(
+  paths: PathSpec[],
+  flags: Record<string, FlagValue>,
+  pattern: string | null,
+): PathSpec | null {
+  if (pattern === null || pattern.includes('\n')) return null
+  if (hasSearchShapingFlags(flags)) return null
+  return loneOperand(paths)
+}
+
+// The operand a literal-substring push-down may answer for, or null.
+// loneOperand's rule plus searchPushdownOk's, which is the stricter flag gate
+// LIKE/ILIKE needs (postgres): a real regex is treated literally by LIKE, so
+// only a verbatim pattern may push down.
+export function literalPushdownOperand(
+  paths: PathSpec[],
+  flags: Record<string, FlagValue>,
+  pattern: string | null,
+): PathSpec | null {
+  if (pattern === null || !searchPushdownOk(flags, pattern)) return null
+  return loneOperand(paths)
 }
 
 export interface GrepLinesOptions {

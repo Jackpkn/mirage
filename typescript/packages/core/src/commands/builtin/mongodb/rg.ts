@@ -15,7 +15,6 @@
 import type { MongoDBAccessor } from '../../../accessor/mongodb.ts'
 import { listDatabases } from '../../../core/mongodb/client.ts'
 import { resolveGlobOf } from '../generic_bind/index.ts'
-import { hasUnresolvedGlob } from '../utils/operands.ts'
 import { MONGODB_IO } from './io.ts'
 import { streamAny } from '../../../core/mongodb/read.ts'
 import { readdir as mongoReaddir } from '../../../core/mongodb/readdir.ts'
@@ -32,7 +31,7 @@ import { type FileStat, ResourceName, type PathSpec } from '../../../types.ts'
 import { command, type CommandFnResult, type CommandOpts } from '../../config.ts'
 import { specOf } from '../../spec/builtins.ts'
 import { rgGeneric } from '../generic/rg.ts'
-import { hasSearchShapingFlags, patternArg } from '../grep_helper.ts'
+import { patternArg, pushdownOperand } from '../grep_helper.ts'
 import { formatRecords } from '../utils/output.ts'
 
 const resolveGlob = resolveGlobOf(MONGODB_IO)
@@ -47,19 +46,14 @@ async function rgCommand(
   const limit = accessor.config.defaultSearchLimit
 
   // The $regex push-down prints each matching document as a whole line, so
-  // output/match-shaping flags must defer to the generic scan below.
-  const first = paths[0]
-  if (
-    first !== undefined &&
-    !hasUnresolvedGlob(paths) &&
-    pattern !== null &&
-    !pattern.includes('\n') &&
-    !hasSearchShapingFlags(opts.flags)
-  ) {
-    const scope = detectScope(first)
+  // output/match-shaping flags and a multi-operand line must defer to the
+  // generic scan below.
+  const operand = pushdownOperand(paths, opts.flags, pattern)
+  if (pattern !== null && operand !== null) {
+    const scope = detectScope(operand)
 
     if (scope.level !== ScopeLevel.ROOT) {
-      await mongoStat(accessor, first, opts.index ?? undefined)
+      await mongoStat(accessor, operand, opts.index ?? undefined)
     }
 
     if (scope.level === ScopeLevel.ROOT) {

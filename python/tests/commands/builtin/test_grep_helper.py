@@ -28,7 +28,7 @@ from mirage.core.ram.read import read
 from mirage.core.ram.readdir import readdir
 from mirage.core.ram.stat import stat
 from mirage.core.ram.write import write_bytes as _async_write_bytes
-from mirage.types import FileStat, FileType
+from mirage.types import FileStat, FileType, PathSpec
 
 from mirage.commands.builtin.grep_helper import (  # isort: skip
     NEVER_MATCH, classify_pattern, compile_pattern, extract_required_literal,
@@ -272,6 +272,56 @@ def test_search_pushdown_ok_rejects_shaping_flag():
 def test_search_pushdown_ok_rejects_regex_but_allows_fixed_string():
     assert grep_helper.search_pushdown_ok({}, "a.b") is False
     assert grep_helper.search_pushdown_ok({"F": True}, "a.b") is True
+
+
+def _operand(virtual: str, pattern: str | None = None) -> PathSpec:
+    return PathSpec(virtual=virtual,
+                    directory=virtual.rsplit("/", 1)[0] or "/",
+                    resource_path=virtual.strip("/"),
+                    pattern=pattern,
+                    resolved=pattern is None)
+
+
+TRACES = _operand("/traces")
+SESSIONS = _operand("/sessions")
+
+
+def test_pushdown_operand_admits_one_concrete_operand():
+    assert grep_helper.pushdown_operand([TRACES], {}, "ada") is TRACES
+
+
+def test_pushdown_operand_refuses_a_second_operand():
+    # The bug this gate exists for: the push-down answered for the first
+    # operand and dropped the rest in silence.
+    assert grep_helper.pushdown_operand([TRACES, SESSIONS], {}, "ada") is None
+    # Two operands in one family, which a per-operand push-down would have
+    # answered twice over.
+    assert grep_helper.pushdown_operand([TRACES, TRACES], {}, "ada") is None
+
+
+def test_pushdown_operand_refuses_no_operand():
+    assert grep_helper.pushdown_operand([], {}, "ada") is None
+
+
+def test_pushdown_operand_refuses_glob_shaping_and_pattern_list():
+    assert grep_helper.pushdown_operand([_operand("/traces/*", "*")], {},
+                                        "ada") is None
+    assert grep_helper.pushdown_operand([TRACES], {"c": True}, "ada") is None
+    assert grep_helper.pushdown_operand([TRACES], {}, "ada\nbob") is None
+    assert grep_helper.pushdown_operand([TRACES], {}, None) is None
+
+
+def test_literal_pushdown_operand_adds_the_like_pattern_rule():
+    assert grep_helper.literal_pushdown_operand([TRACES], {}, "ada") is TRACES
+    # Everything pushdown_operand refuses, this refuses too.
+    assert grep_helper.literal_pushdown_operand([TRACES, SESSIONS], {},
+                                                "ada") is None
+    assert grep_helper.literal_pushdown_operand([TRACES], {"c": True},
+                                                "ada") is None
+    # Plus the one it adds: LIKE matches a regex literally.
+    assert grep_helper.literal_pushdown_operand([TRACES], {}, "a.b") is None
+    assert grep_helper.literal_pushdown_operand([TRACES], {"F": True},
+                                                "a.b") is TRACES
 
 
 async def _write(backend, path, content):

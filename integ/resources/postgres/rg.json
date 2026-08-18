@@ -77,6 +77,32 @@
         "stdout": "public/tables/books/semantic.json:  \"dimensions\": [\n",
         "stderr": ""
       }
+    },
+    {
+      "id": "pg_rg_two_tables_cover_both",
+      "seq": 610066,
+      "targets": [
+        "postgres"
+      ],
+      "command": "rg ada /pg/public/tables/books /pg/public/tables/authors | cut -d: -f1 | sort -u",
+      "expect": {
+        "exit": 0,
+        "stdout": "/pg/public/tables/authors/rows.jsonl\n/pg/public/tables/books/rows.jsonl\n/pg/public/tables/books/semantic.json\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "pg_rg_lone_table_uses_pushdown",
+      "seq": 610067,
+      "targets": [
+        "postgres"
+      ],
+      "command": "rg ada /pg/public/tables/authors",
+      "expect": {
+        "exit": 0,
+        "stdout": "public/tables/authors/rows.jsonl:{\"id\":1,\"name\":\"ada\",\"books\":2}\n",
+        "stderr": ""
+      }
     }
   ]
 }
