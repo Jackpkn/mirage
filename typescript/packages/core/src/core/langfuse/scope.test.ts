@@ -13,75 +13,145 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { describe, expect, it } from 'vitest'
-import { detectScope } from './scope.ts'
+import { PathSpec } from '../../types.ts'
+import { mountKey } from '../../utils/key_prefix.ts'
+import { SEARCH_KINDS, detectScope } from './scope.ts'
+
+// A mount-relative operand, the way a command hands one to a scope.
+// detectScope declares PathSpec and reads only mountPath; passing the bare
+// string relied on its string fallback, which is the raw-string path
+// CLAUDE.md forbids.
+function spec(path: string): PathSpec {
+  const key = path.replace(/^\/+|\/+$/g, '')
+  return new PathSpec({
+    resourcePath: key,
+    virtual: `/langfuse/${key}`,
+    directory: '/langfuse',
+    pattern: null,
+    resolved: true,
+  })
+}
 
 describe('langfuse detectScope', () => {
-  it('returns root for empty path', () => {
-    const s = detectScope('')
-    expect(s.level).toBe('root')
-    expect(s.resourceType).toBeNull()
-    expect(s.resourceId).toBeNull()
+  it('classifies the root path', () => {
+    expect(detectScope(spec('/')).kind).toBe('root')
   })
 
-  it('returns traces for /traces', () => {
-    const s = detectScope('/traces')
-    expect(s.level).toBe('traces')
-    expect(s.resourceType).toBe('traces')
-    expect(s.resourceId).toBeNull()
+  it('classifies the traces dir', () => {
+    expect(detectScope(spec('/traces')).kind).toBe('traces')
   })
 
-  it('returns file for traces/<id>.json', () => {
-    const s = detectScope('traces/abc123.json')
-    expect(s.level).toBe('file')
-    expect(s.resourceType).toBe('traces')
-    expect(s.resourceId).toBe('abc123')
+  it('classifies a trace file', () => {
+    const match = detectScope(spec('/traces/abc.json'))
+    expect(match.kind).toBe('trace')
+    expect(match.captures).toEqual({ trace_id: 'abc' })
   })
 
-  it('returns sessions level for sessions/<id>', () => {
-    const s = detectScope('sessions/sess1')
-    expect(s.level).toBe('sessions')
-    expect(s.resourceType).toBe('sessions')
-    expect(s.resourceId).toBe('sess1')
+  it('classifies the sessions dir', () => {
+    expect(detectScope(spec('/sessions')).kind).toBe('sessions')
   })
 
-  it('returns file for sessions/<id>/<traceId>.json', () => {
-    const s = detectScope('sessions/sess1/trace1.json')
-    expect(s.level).toBe('file')
-    expect(s.resourceType).toBe('sessions')
-    expect(s.resourceId).toBe('sess1')
-    expect(s.subResource).toBe('trace1.json')
+  it('classifies a session id', () => {
+    const match = detectScope(spec('/sessions/sid1'))
+    expect(match.kind).toBe('session')
+    expect(match.captures).toEqual({ session_id: 'sid1' })
   })
 
-  it('returns file for prompts/<name>/<version>.json', () => {
-    const s = detectScope('prompts/my-prompt/1.json')
-    expect(s.level).toBe('file')
-    expect(s.resourceType).toBe('prompts')
-    expect(s.resourceId).toBe('my-prompt')
-    expect(s.subResource).toBe('1.json')
+  it('classifies a session trace file', () => {
+    const match = detectScope(spec('/sessions/sid1/tid1.json'))
+    expect(match.kind).toBe('session_trace')
+    expect(match.captures).toEqual({ session_id: 'sid1', trace_id: 'tid1' })
   })
 
-  it('returns file for datasets/<name>/items.jsonl', () => {
-    const s = detectScope('datasets/my-dataset/items.jsonl')
-    expect(s.level).toBe('file')
-    expect(s.resourceType).toBe('datasets')
-    expect(s.resourceId).toBe('my-dataset')
-    expect(s.subResource).toBe('items.jsonl')
+  it('classifies the prompts dir', () => {
+    expect(detectScope(spec('/prompts')).kind).toBe('prompts')
   })
 
-  it('returns file for datasets/<name>/runs/<run>.jsonl', () => {
-    const s = detectScope('datasets/my-dataset/runs/run1.jsonl')
-    expect(s.level).toBe('file')
-    expect(s.resourceType).toBe('datasets')
-    expect(s.resourceId).toBe('my-dataset')
-    expect(s.subResource).toBe('run1.jsonl')
+  it('classifies a prompt name', () => {
+    const match = detectScope(spec('/prompts/summarize'))
+    expect(match.kind).toBe('prompt')
+    expect(match.captures).toEqual({ prompt_name: 'summarize' })
+  })
+
+  it('classifies a prompt version file', () => {
+    const match = detectScope(spec('/prompts/summarize/1.json'))
+    expect(match.kind).toBe('prompt_version')
+    expect(match.captures).toEqual({ prompt_name: 'summarize', version: '1' })
+  })
+
+  it('requires a prompt version to be an integer', () => {
+    // int("abc") used to crash the python read path; a non-numeric version
+    // now fails the route match and reads as ENOENT in both languages.
+    expect(detectScope(spec('/prompts/summarize/abc.json')).kind).toBe('invalid')
+  })
+
+  it('classifies the datasets dir', () => {
+    expect(detectScope(spec('/datasets')).kind).toBe('datasets')
+  })
+
+  it('classifies a dataset name', () => {
+    const match = detectScope(spec('/datasets/qa-eval'))
+    expect(match.kind).toBe('dataset')
+    expect(match.captures).toEqual({ dataset_name: 'qa-eval' })
   })
 })
 
-describe('langfuse detectScope fallback', () => {
-  it('classifies an unrecognized path as unknown, not root', () => {
-    // Falling back to 'root' made the grep/rg push-down treat any bogus path
+describe('langfuse detectScope glob specs', () => {
+  it('classifies a glob-scope root', () => {
+    const gs = new PathSpec({
+      resourcePath: mountKey('/langfuse/', '/langfuse'),
+      virtual: '/langfuse/',
+      directory: '/langfuse/',
+      pattern: null,
+      resolved: false,
+    })
+    expect(detectScope(gs).kind).toBe('root')
+  })
+
+  it('classifies a glob-scope traces dir', () => {
+    const gs = new PathSpec({
+      resourcePath: mountKey('/langfuse/traces', '/langfuse'),
+      virtual: '/langfuse/traces',
+      directory: '/langfuse/',
+      pattern: null,
+      resolved: false,
+    })
+    expect(detectScope(gs).kind).toBe('traces')
+  })
+
+  it('classifies a glob-resolved file', () => {
+    const gs = new PathSpec({
+      resourcePath: mountKey('/langfuse/traces/abc.json', '/langfuse'),
+      virtual: '/langfuse/traces/abc.json',
+      directory: '/langfuse/traces/',
+      pattern: '*.json',
+      resolved: true,
+    })
+    const match = detectScope(gs)
+    expect(match.kind).toBe('trace')
+    expect(match.captures).toEqual({ trace_id: 'abc' })
+  })
+})
+
+describe('langfuse search push-down classification', () => {
+  it('classifies an unrecognized path as invalid, not root', () => {
+    // Falling back to "root" made the grep/rg push-down treat any bogus path
     // as "search every trace", answering a missing file with the whole mount.
-    expect(detectScope('__nf_missing__').level).toBe('unknown')
-    expect(detectScope('traces/a/b/c/d').level).toBe('unknown')
+    expect(detectScope(spec('__nf_missing__')).kind).toBe('invalid')
+    expect(detectScope(spec('traces/a/b/c/d')).kind).toBe('invalid')
+    expect(Object.hasOwn(SEARCH_KINDS, 'invalid')).toBe(false)
+  })
+
+  it('lets leaves fall through the search push-down', () => {
+    // A leaf path must reach the generic per-file scan, never a
+    // whole-container search.
+    for (const path of [
+      '/traces/abc.json',
+      '/datasets/qa/items.jsonl',
+      '/datasets/qa/runs',
+      '/datasets/qa/runs/r1.jsonl',
+    ]) {
+      expect(Object.hasOwn(SEARCH_KINDS, detectScope(spec(path)).kind)).toBe(false)
+    }
   })
 })

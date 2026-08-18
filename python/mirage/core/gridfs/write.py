@@ -12,26 +12,7 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import time
+from mirage.core.gridfs.driver import DRIVER
+from mirage.core.object_store.write import make_write_bytes
 
-from mirage.accessor.gridfs import GridFSAccessor
-from mirage.cache.context import invalidate_after_write, invalidate_ancestors
-from mirage.core.gridfs.client import _key, bucket
-from mirage.observe.context import record
-from mirage.types import PathSpec
-
-
-async def write_bytes(accessor: GridFSAccessor, path_spec: PathSpec,
-                      data: bytes) -> None:
-    # Uploads a new revision; older revisions stay in fs.files, so reads
-    # pinned to an old revision _id keep working (GridFS-native versioning).
-    path = path_spec.mount_path
-    config = accessor.config
-    key = _key(path, config)
-    start_ms = int(time.monotonic() * 1000)
-    await bucket(accessor).upload_from_stream(key, data)
-    record("write", path, "gridfs", len(data), start_ms)
-    await invalidate_after_write(path_spec)
-    # An upload materializes every missing level of the key at once, so the
-    # listings above the immediate parent gained entries too.
-    await invalidate_ancestors(path_spec)
+write_bytes = make_write_bytes(DRIVER)

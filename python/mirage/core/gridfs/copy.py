@@ -12,37 +12,8 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from mirage.accessor.gridfs import GridFSAccessor
-from mirage.cache.context import invalidate_after_write
-from mirage.core.gridfs.client import _key, bucket, latest_file
-from mirage.types import PathSpec
-from mirage.utils.errors import enoent
+from mirage.core.gridfs.driver import DRIVER
+from mirage.core.gridfs.exists import exists
+from mirage.core.object_store.copy import make_copy
 
-_COPY_CHUNK = 1024 * 1024
-
-
-async def copy(accessor: GridFSAccessor, src_spec: PathSpec,
-               dst_spec: PathSpec) -> None:
-    # Copies the latest revision only (mirrors S3 copy_object), streamed
-    # chunk-by-chunk so large files never buffer fully in memory.
-    src = src_spec.mount_path
-    dst = dst_spec.mount_path
-    config = accessor.config
-    src_key = _key(src, config)
-    dst_key = _key(dst, config)
-    doc = await latest_file(accessor, src_key)
-    if doc is None:
-        raise enoent(src_spec.virtual)
-    b = bucket(accessor)
-    out = await b.open_download_stream(doc["_id"])
-    grid_in = b.open_upload_stream(dst_key)
-    try:
-        while True:
-            chunk = await out.read(_COPY_CHUNK)
-            if not chunk:
-                break
-            await grid_in.write(chunk)
-    finally:
-        await out.close()
-        await grid_in.close()
-    await invalidate_after_write(dst_spec)
+copy = make_copy(DRIVER, exists)

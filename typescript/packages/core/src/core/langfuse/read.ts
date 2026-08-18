@@ -15,6 +15,10 @@
 import type { LangfuseAccessor } from '../../accessor/langfuse.ts'
 import type { IndexCacheStore } from '../../cache/index/store.ts'
 import type { PathSpec } from '../../types.ts'
+import { enoent } from '../../utils/errors.ts'
+import { makeRead } from '../hierarchy/read.ts'
+import type { RouteMatch } from '../hierarchy/scope.ts'
+import { jsonBytes, jsonlBytes } from '../render/json.ts'
 import {
   fetchDatasetItems,
   fetchDatasetRuns,
@@ -22,65 +26,74 @@ import {
   fetchPrompt,
   fetchTrace,
 } from './client.ts'
-import { enoent } from '../../utils/errors.ts'
-import { jsonBytes, jsonlBytes } from '../render/json.ts'
+import { detectScope } from './scope.ts'
 
-export async function read(
+async function readTrace(
   accessor: LangfuseAccessor,
+  match: RouteMatch,
   path: PathSpec,
   _index?: IndexCacheStore,
 ): Promise<Uint8Array> {
-  const key = path.resourcePath
-  if (key === '') throw enoent(path)
-  const parts = key.split('/')
-  for (const part of parts) {
-    if (part.startsWith('.')) throw enoent(path)
-  }
-
-  if (parts[0] === 'traces' && parts.length === 2 && (parts[1] ?? '').endsWith('.json')) {
-    const traceId = (parts[1] ?? '').slice(0, -'.json'.length)
-    const data = await fetchOrEnoent(fetchTrace(accessor.transport, traceId), path)
-    return jsonBytes(data)
-  }
-
-  if (parts[0] === 'sessions' && parts.length === 3 && (parts[2] ?? '').endsWith('.json')) {
-    const traceId = (parts[2] ?? '').slice(0, -'.json'.length)
-    const data = await fetchOrEnoent(fetchTrace(accessor.transport, traceId), path)
-    return jsonBytes(data)
-  }
-
-  if (parts[0] === 'prompts' && parts.length === 3 && (parts[2] ?? '').endsWith('.json')) {
-    const promptName = parts[1] ?? ''
-    const versionStr = (parts[2] ?? '').slice(0, -'.json'.length)
-    const version = Number.parseInt(versionStr, 10)
-    if (Number.isNaN(version)) throw enoent(path)
-    const data = await fetchOrEnoent(fetchPrompt(accessor.transport, promptName, version), path)
-    return jsonBytes(data)
-  }
-
-  if (parts[0] === 'datasets' && parts.length === 3 && parts[2] === 'items.jsonl') {
-    const datasetName = parts[1] ?? ''
-    const items = await fetchOrEnoent(fetchDatasetItems(accessor.transport, datasetName), path)
-    return jsonlBytes(items)
-  }
-
-  if (
-    parts[0] === 'datasets' &&
-    parts.length === 4 &&
-    parts[2] === 'runs' &&
-    (parts[3] ?? '').endsWith('.jsonl')
-  ) {
-    const datasetName = parts[1] ?? ''
-    const runName = (parts[3] ?? '').slice(0, -'.jsonl'.length)
-    const runs = await fetchOrEnoent(fetchDatasetRuns(accessor.transport, datasetName), path)
-    const matched = runs.filter((r) => r.name === runName)
-    const first = matched[0]
-    if (first === undefined) throw enoent(path)
-    // A .jsonl path must render as line-delimited JSON, not an indented
-    // document: readers that split on newlines (jq) otherwise choke on the
-    // first bare brace.
-    return jsonlBytes([first])
-  }
-
-  throw enoent(path)
+  const data = await fetchOrEnoent(
+    fetchTrace(accessor.transport, match.captures.trace_id ?? ''),
+    path,
+  )
+  return jsonBytes(data)
 }
+
+async function readPromptVersion(
+  accessor: LangfuseAccessor,
+  match: RouteMatch,
+  path: PathSpec,
+  _index?: IndexCacheStore,
+): Promise<Uint8Array> {
+  // The route's codec only matches plain ASCII integers, so the parse here
+  // cannot fail.
+  const version = Number.parseInt(match.captures.version ?? '', 10)
+  const data = await fetchOrEnoent(
+    fetchPrompt(accessor.transport, match.captures.prompt_name ?? '', version),
+    path,
+  )
+  return jsonBytes(data)
+}
+
+async function readDatasetItems(
+  accessor: LangfuseAccessor,
+  match: RouteMatch,
+  path: PathSpec,
+  _index?: IndexCacheStore,
+): Promise<Uint8Array> {
+  const items = await fetchOrEnoent(
+    fetchDatasetItems(accessor.transport, match.captures.dataset_name ?? ''),
+    path,
+  )
+  return jsonlBytes(items)
+}
+
+async function readDatasetRun(
+  accessor: LangfuseAccessor,
+  match: RouteMatch,
+  path: PathSpec,
+  _index?: IndexCacheStore,
+): Promise<Uint8Array> {
+  const runs = await fetchOrEnoent(
+    fetchDatasetRuns(accessor.transport, match.captures.dataset_name ?? ''),
+    path,
+  )
+  const runName = match.captures.run_name ?? ''
+  const matched = runs.filter((r) => r.name === runName)
+  const first = matched[0]
+  if (first === undefined) throw enoent(path)
+  // A .jsonl path must render as line-delimited JSON, not an indented
+  // document: readers that split on newlines (jq) otherwise choke on the
+  // first bare brace.
+  return jsonlBytes([first])
+}
+
+export const read = makeRead(detectScope, {
+  trace: readTrace,
+  session_trace: readTrace,
+  prompt_version: readPromptVersion,
+  dataset_items: readDatasetItems,
+  dataset_run: readDatasetRun,
+})

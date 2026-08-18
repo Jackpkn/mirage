@@ -12,36 +12,7 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from mirage.accessor.gridfs import GridFSAccessor
-from mirage.cache.index import NULL_INDEX, IndexCacheStore
-from mirage.core.gridfs.client import _key, _strip_prefix, iter_latest
-from mirage.core.gridfs.du.query import subtree_query
-from mirage.types import PathSpec
+from mirage.core.gridfs.driver import DRIVER
+from mirage.core.object_store.du import make_du_entries
 
-
-async def entries(
-        accessor: GridFSAccessor,
-        path_spec: PathSpec,
-        index: IndexCacheStore = NULL_INDEX
-) -> tuple[list[tuple[str, int]], int]:
-    """Per-file sizes under a prefix plus their total.
-
-    Filenames are stripped back to mount-relative paths, so a collection
-    mounted at a ``key_prefix`` reports the paths the user typed rather
-    than the raw stored filenames.
-
-    Args:
-        accessor (GridFSAccessor): GridFS accessor.
-        path_spec (PathSpec): target path.
-    """
-    config = accessor.config
-    stem = _key(path_spec.mount_path, config).rstrip("/")
-    found: list[tuple[str, int]] = []
-    total = 0
-    async for doc in iter_latest(accessor, subtree_query(stem)):
-        doc_size = doc["length"]
-        rel = _strip_prefix(doc["filename"], config)
-        found.append(("/" + rel.lstrip("/"), doc_size))
-        total += doc_size
-    found.sort()
-    return found, total
+entries = make_du_entries(DRIVER)

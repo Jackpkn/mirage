@@ -12,17 +12,7 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from mirage.accessor.gridfs import GridFSAccessor
-from mirage.cache.context import invalidate_after_unlink
-from mirage.core.gridfs.client import _key, delete_all
-from mirage.types import PathSpec
+from mirage.core.gridfs.driver import DRIVER
+from mirage.core.object_store.remove import make_unlink
 
-
-async def unlink(accessor: GridFSAccessor, path_spec: PathSpec) -> None:
-    # Removes every revision of the filename (rm semantics; mirrors S3's
-    # delete_object, which also succeeds silently on a missing key).
-    path = path_spec.mount_path
-    config = accessor.config
-    key = _key(path, config)
-    await delete_all(accessor, {"filename": key})
-    await invalidate_after_unlink(path_spec)
+unlink = make_unlink(DRIVER)

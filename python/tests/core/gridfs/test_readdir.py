@@ -63,7 +63,7 @@ async def test_readdir_derives_files_dirs_and_markers(accessor):
         _doc("sub/b.csv", 7),
         _doc("sub/deep/c.txt", 1),
     ]
-    with patch("mirage.core.gridfs.readdir.iter_latest", new=_fake_iter(docs)):
+    with patch("mirage.core.gridfs.driver.iter_latest", new=_fake_iter(docs)):
         entries = await readdir(accessor, _path("/"))
     assert entries == ["/a.txt", "/empty", "/sub"]
 
@@ -76,7 +76,7 @@ async def test_readdir_skips_own_marker_and_dedupes(accessor):
         _doc("sub/deep/c.txt", 1),
         _doc("sub/deep/d.txt", 1),
     ]
-    with patch("mirage.core.gridfs.readdir.iter_latest", new=_fake_iter(docs)):
+    with patch("mirage.core.gridfs.driver.iter_latest", new=_fake_iter(docs)):
         entries = await readdir(accessor, _path("/sub"))
     assert entries == ["/sub/b.csv", "/sub/deep"]
 
@@ -85,7 +85,7 @@ async def test_readdir_skips_own_marker_and_dedupes(accessor):
 async def test_readdir_populates_index(accessor):
     index = RAMIndexCacheStore()
     docs = [_doc("a.txt", 3), _doc("sub/b.csv", 7)]
-    with patch("mirage.core.gridfs.readdir.iter_latest", new=_fake_iter(docs)):
+    with patch("mirage.core.gridfs.driver.iter_latest", new=_fake_iter(docs)):
         await readdir(accessor, _path("/"), index)
     lookup = await index.get("/a.txt")
     assert lookup.entry is not None
@@ -121,11 +121,20 @@ def _fake_prefix_iter(names: list[str]):
     return iter_latest
 
 
+def _latest_of(names: list[str]):
+
+    async def latest_file(accessor, key):
+        return {"_id": ObjectId(), "length": 0} if key in names else None
+
+    return latest_file
+
+
 def _bucket(names: list[str]):
     return patch.multiple(
-        "mirage.core.gridfs.readdir",
+        "mirage.core.gridfs.driver",
         iter_latest=_fake_prefix_iter(names),
         files_coll=lambda accessor: _FakeColl(names),
+        latest_file=_latest_of(names),
     )
 
 

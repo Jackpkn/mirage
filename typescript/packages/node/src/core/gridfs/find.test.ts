@@ -26,7 +26,8 @@ import { GridFSAccessor } from '../../accessor/gridfs.ts'
 import type { GridFSConfig } from '../../resource/gridfs/config.ts'
 import type { GridFSFileDoc } from './client.ts'
 import * as clientMod from './client.ts'
-import { buildQuery, find, globRegex } from './find.ts'
+import { buildQuery, globRegex } from './driver.ts'
+import { find } from './find.ts'
 
 function matches(cond: Record<string, unknown>, value: string): boolean {
   const regex = cond as { $regex: string; $options?: string }

@@ -2,7 +2,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { Mem0Accessor } from '../../accessor/mem0.ts'
 import { PathSpec } from '../../types.ts'
-import { read, readdir, searchRendered, stat } from './index.ts'
+import { read } from './read.ts'
+import { readdir } from './readdir.ts'
+import { detectScope } from './scope.ts'
+import { searchMemoriesRendered } from './search.ts'
+import { stat } from './stat.ts'
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -96,7 +100,7 @@ describe('Mem0 filesystem', () => {
     )
     const accessor = new Mem0Accessor({ apiKey: 'key', agentId: 'agent' })
 
-    const output = await searchRendered(
+    const output = await searchMemoriesRendered(
       accessor,
       'remember',
       '/memories',
@@ -106,5 +110,49 @@ describe('Mem0 filesystem', () => {
     )
 
     expect(new TextDecoder().decode(output)).toBe('/memories/keep.json:0.88\nremember me\n')
+  })
+})
+
+describe('mem0 detectScope', () => {
+  it('classifies the mount root', () => {
+    const match = detectScope(
+      new PathSpec({ virtual: '/mem', directory: '/mem', resourcePath: '' }),
+    )
+    expect(match.kind).toBe('root')
+    expect(match.captures).toEqual({})
+  })
+
+  it('classifies a memory file and carries the id', () => {
+    const p = new PathSpec({
+      virtual: '/mem/abc.json',
+      directory: '/mem',
+      resourcePath: 'abc.json',
+    })
+    const match = detectScope(p)
+    expect(match.kind).toBe('memory')
+    expect(match.captures).toEqual({ memory_id: 'abc' })
+  })
+
+  it('classifies a hidden name as invalid', () => {
+    const p = new PathSpec({
+      virtual: '/mem/.secret',
+      directory: '/mem',
+      resourcePath: '.secret',
+    })
+    expect(detectScope(p).kind).toBe('invalid')
+  })
+
+  it('classifies an empty memory id as invalid', () => {
+    const p = new PathSpec({ virtual: '/mem/.json', directory: '/mem', resourcePath: '.json' })
+    expect(detectScope(p).kind).toBe('invalid')
+  })
+
+  it('classifies a nested path as invalid', () => {
+    const p = new PathSpec({
+      virtual: '/mem/a.json/b',
+      directory: '/mem',
+      resourcePath: 'a.json/b',
+    })
+    expect(detectScope(p).kind).toBe('invalid')
   })
 })

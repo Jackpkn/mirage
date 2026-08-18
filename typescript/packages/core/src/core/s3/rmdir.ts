@@ -12,42 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import type { PathSpec } from '../../types.ts'
-import type { S3Accessor } from '../../accessor/s3.ts'
-import { invalidateAfterUnlink } from '../../cache/context.ts'
-import { loadS3Module, rawPathOf, s3Prefix, withClient } from './client.ts'
+import { makeRemovePrefix } from '../object_store/remove.ts'
+import { DRIVER } from './driver.ts'
 
-export async function rmdir(accessor: S3Accessor, path: PathSpec): Promise<void> {
-  const { DeleteObjectsCommand, ListObjectsV2Command } = await loadS3Module(accessor.config)
-  const raw = rawPathOf(path)
-  const pfx = s3Prefix(raw, accessor.config)
-  await withClient(accessor.config, async (client) => {
-    let continuationToken: string | undefined
-    do {
-      const input: Record<string, unknown> = {
-        Bucket: accessor.config.bucket,
-        Prefix: pfx,
-      }
-      if (continuationToken !== undefined) input.ContinuationToken = continuationToken
-      const resp = (await client.send(new ListObjectsV2Command(input))) as {
-        Contents?: { Key?: string }[]
-        IsTruncated?: boolean
-        NextContinuationToken?: string
-      }
-      const keys = (resp.Contents ?? [])
-        .map((obj) => obj.Key)
-        .filter((k): k is string => k !== undefined)
-        .map((k) => ({ Key: k }))
-      if (keys.length > 0) {
-        await client.send(
-          new DeleteObjectsCommand({
-            Bucket: accessor.config.bucket,
-            Delete: { Objects: keys },
-          }),
-        )
-      }
-      continuationToken = resp.IsTruncated === true ? resp.NextContinuationToken : undefined
-    } while (continuationToken !== undefined)
-  })
-  await invalidateAfterUnlink(path)
-}
+export const rmdir = makeRemovePrefix(DRIVER)

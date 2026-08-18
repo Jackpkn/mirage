@@ -12,15 +12,7 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from mirage.accessor.gridfs import GridFSAccessor
-from mirage.cache.context import invalidate_after_unlink
-from mirage.core.gridfs.client import _prefix, delete_all, prefix_query
-from mirage.types import PathSpec
+from mirage.core.gridfs.driver import DRIVER
+from mirage.core.object_store.remove import make_remove_prefix
 
-
-async def rmdir(accessor: GridFSAccessor, path_spec: PathSpec) -> None:
-    path = path_spec.mount_path
-    config = accessor.config
-    pfx = _prefix(path, config)
-    await delete_all(accessor, prefix_query(pfx))
-    await invalidate_after_unlink(path_spec)
+rmdir = make_remove_prefix(DRIVER)

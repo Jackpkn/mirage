@@ -1,0 +1,84 @@
+{
+  "cases": [
+    {
+      "id": "cache_evict_seed_deep_write",
+      "seq": 941000,
+      "targets": [
+        "s3",
+        "s3-prefix",
+        "gridfs",
+        "gridfs-prefix"
+      ],
+      "command": "printf 'x' > {mount}/inv_dir/a/b/c.txt",
+      "expect": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "cache_evict_warm_ancestor_listing",
+      "seq": 941001,
+      "targets": [
+        "s3",
+        "s3-prefix",
+        "gridfs",
+        "gridfs-prefix"
+      ],
+      "command": "ls {mount}/inv_dir/a",
+      "expect": {
+        "exit": 0,
+        "stdout": "b\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "cache_evict_delete_last_key",
+      "seq": 941002,
+      "targets": [
+        "s3",
+        "s3-prefix",
+        "gridfs",
+        "gridfs-prefix"
+      ],
+      "command": "rm {mount}/inv_dir/a/b/c.txt",
+      "expect": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "cache_evict_ancestor_gone_not_stale",
+      "seq": 941003,
+      "targets": [
+        "s3",
+        "s3-prefix",
+        "gridfs",
+        "gridfs-prefix"
+      ],
+      "command": "ls {mount}/inv_dir/a",
+      "expect": {
+        "exit": 2,
+        "stdout": "",
+        "stderr": "ls: cannot access '{mount}/inv_dir/a': No such file or directory\n"
+      }
+    },
+    {
+      "id": "cache_evict_cleanup",
+      "seq": 941004,
+      "targets": [
+        "s3",
+        "s3-prefix",
+        "gridfs",
+        "gridfs-prefix"
+      ],
+      "command": "rm -rf {mount}/inv_dir",
+      "expect": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    }
+  ]
+}

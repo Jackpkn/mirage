@@ -12,11 +12,11 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { mountPrefixOf } from '../../utils/key_prefix.ts'
 import type { LangfuseAccessor } from '../../accessor/langfuse.ts'
 import { IndexEntry } from '../../cache/index/config.ts'
-import type { IndexCacheStore } from '../../cache/index/store.ts'
-import type { PathSpec } from '../../types.ts'
+import { makeReaddir } from '../hierarchy/readdir.ts'
+import type { RouteMatch } from '../hierarchy/scope.ts'
+import { jsonlBytes } from '../render/json.ts'
 import {
   fetchDatasetItems,
   fetchDatasetRuns,
@@ -25,14 +25,11 @@ import {
   fetchSessions,
   fetchTraces,
 } from './client.ts'
-import { jsonlBytes } from '../render/json.ts'
-import { stripSlash } from '../../utils/slash.ts'
-import { enoent } from '../../utils/errors.ts'
-
-const TOP_LEVEL_DIRS = ['traces', 'sessions', 'prompts', 'datasets'] as const
+import { TOP_LEVEL_DIRS, detectScope } from './scope.ts'
 
 // Mirrors LangfuseConfig.default_trace_limit in python.
 const DEFAULT_TRACE_LIMIT = 100
+
 function pickString(record: Record<string, unknown>, key: string): string {
   const value = record[key]
   return typeof value === 'string' ? value : ''
@@ -49,21 +46,10 @@ function promptVersions(record: Record<string, unknown>): string[] {
   return numbers.sort((a, b) => a - b).map(String)
 }
 
-function makeVirtualKey(prefix: string, key: string): string {
-  if (key === '') return prefix !== '' ? prefix : '/'
-  return `${prefix}/${key}`
-}
-
-async function readdirTraces(
+async function listTraces(
   accessor: LangfuseAccessor,
-  virtualKey: string,
-  index: IndexCacheStore | undefined,
-  prefix: string,
-): Promise<string[]> {
-  if (index !== undefined) {
-    const listing = await index.listDir(virtualKey)
-    if (listing.entries !== undefined && listing.entries !== null) return listing.entries
-  }
+  _match: RouteMatch,
+): Promise<[string, IndexEntry][]> {
   const limit = accessor.config.defaultTraceLimit ?? DEFAULT_TRACE_LIMIT
   // No implicit time window: an unset defaultFromTimestamp lists whatever the
   // project holds, up to defaultTraceLimit. A rolling default would hide
@@ -72,17 +58,15 @@ async function readdirTraces(
   const from = accessor.config.defaultFromTimestamp
   if (from !== undefined && from !== '') opts.fromTimestamp = from
   const traces = await fetchTraces(accessor.transport, opts)
-  // The list endpoint returns trace summaries while a read renders the
-  // full trace with its observations, so a size here would cost one
-  // fetchTrace per entry. Traces and prompts stay size-unknown until a
-  // read hydrates them; the dataset .jsonl files are sized because their
-  // listing already carries every item.
-  const entries: [string, IndexEntry][] = []
-  const names: string[] = []
-  for (const t of traces) {
+  // The list endpoint returns trace summaries while a read renders the full
+  // trace with its observations, so a size here would cost one fetchTrace per
+  // entry. Traces and prompts stay size-unknown until a read hydrates them;
+  // the dataset .jsonl files are sized because their listing already carries
+  // every item.
+  return traces.map((t): [string, IndexEntry] => {
     const traceId = pickString(t, 'id')
     const filename = `${traceId}.json`
-    entries.push([
+    return [
       filename,
       new IndexEntry({
         id: traceId,
@@ -90,29 +74,18 @@ async function readdirTraces(
         resourceType: 'langfuse/trace',
         vfsName: filename,
       }),
-    ])
-    names.push(`${prefix}/traces/${filename}`)
-  }
-  if (index !== undefined) await index.setDir(virtualKey, entries)
-  return names
+    ]
+  })
 }
 
-async function readdirSessions(
+async function listSessions(
   accessor: LangfuseAccessor,
-  virtualKey: string,
-  index: IndexCacheStore | undefined,
-  prefix: string,
-): Promise<string[]> {
-  if (index !== undefined) {
-    const listing = await index.listDir(virtualKey)
-    if (listing.entries !== undefined && listing.entries !== null) return listing.entries
-  }
+  _match: RouteMatch,
+): Promise<[string, IndexEntry][]> {
   const sessions = await fetchSessions(accessor.transport)
-  const entries: [string, IndexEntry][] = []
-  const names: string[] = []
-  for (const s of sessions) {
+  return sessions.map((s): [string, IndexEntry] => {
     const sessionId = pickString(s, 'id')
-    entries.push([
+    return [
       sessionId,
       new IndexEntry({
         id: sessionId,
@@ -120,35 +93,26 @@ async function readdirSessions(
         resourceType: 'langfuse/session',
         vfsName: sessionId,
       }),
-    ])
-    names.push(`${prefix}/sessions/${sessionId}`)
-  }
-  if (index !== undefined) await index.setDir(virtualKey, entries)
-  return names
+    ]
+  })
 }
 
-async function readdirSessionTraces(
+async function listSessionTraces(
   accessor: LangfuseAccessor,
-  sessionId: string,
-  virtualKey: string,
-  index: IndexCacheStore | undefined,
-  prefix: string,
-): Promise<string[]> {
-  if (index !== undefined) {
-    const listing = await index.listDir(virtualKey)
-    if (listing.entries !== undefined && listing.entries !== null) return listing.entries
-  }
+  match: RouteMatch,
+): Promise<[string, IndexEntry][]> {
   const limit = accessor.config.defaultTraceLimit ?? DEFAULT_TRACE_LIMIT
-  const opts: { sessionId: string; limit: number; fromTimestamp?: string } = { sessionId, limit }
+  const opts: { sessionId: string; limit: number; fromTimestamp?: string } = {
+    sessionId: match.captures.session_id ?? '',
+    limit,
+  }
   const from = accessor.config.defaultFromTimestamp
   if (from !== undefined && from !== '') opts.fromTimestamp = from
   const traces = await fetchTraces(accessor.transport, opts)
-  const entries: [string, IndexEntry][] = []
-  const names: string[] = []
-  for (const t of traces) {
+  return traces.map((t): [string, IndexEntry] => {
     const traceId = pickString(t, 'id')
     const filename = `${traceId}.json`
-    entries.push([
+    return [
       filename,
       new IndexEntry({
         id: traceId,
@@ -156,27 +120,17 @@ async function readdirSessionTraces(
         resourceType: 'langfuse/trace',
         vfsName: filename,
       }),
-    ])
-    names.push(`${prefix}/sessions/${sessionId}/${filename}`)
-  }
-  if (index !== undefined) await index.setDir(virtualKey, entries)
-  return names
+    ]
+  })
 }
 
-async function readdirPrompts(
+async function listPrompts(
   accessor: LangfuseAccessor,
-  virtualKey: string,
-  index: IndexCacheStore | undefined,
-  prefix: string,
-): Promise<string[]> {
-  if (index !== undefined) {
-    const listing = await index.listDir(virtualKey)
-    if (listing.entries !== undefined && listing.entries !== null) return listing.entries
-  }
+  _match: RouteMatch,
+): Promise<[string, IndexEntry][]> {
   const prompts = await fetchPrompts(accessor.transport)
   const seen = new Set<string>()
   const entries: [string, IndexEntry][] = []
-  const names: string[] = []
   for (const p of prompts) {
     const promptName = pickString(p, 'name')
     if (seen.has(promptName)) continue
@@ -190,26 +144,17 @@ async function readdirPrompts(
         vfsName: promptName,
       }),
     ])
-    names.push(`${prefix}/prompts/${promptName}`)
   }
-  if (index !== undefined) await index.setDir(virtualKey, entries)
-  return names
+  return entries
 }
 
-async function readdirPromptVersions(
+async function listPromptVersions(
   accessor: LangfuseAccessor,
-  promptName: string,
-  virtualKey: string,
-  index: IndexCacheStore | undefined,
-  prefix: string,
-): Promise<string[]> {
-  if (index !== undefined) {
-    const listing = await index.listDir(virtualKey)
-    if (listing.entries !== undefined && listing.entries !== null) return listing.entries
-  }
+  match: RouteMatch,
+): Promise<[string, IndexEntry][]> {
+  const promptName = match.captures.prompt_name ?? ''
   const prompts = await fetchPrompts(accessor.transport)
   const entries: [string, IndexEntry][] = []
-  const names: string[] = []
   for (const p of prompts) {
     if (pickString(p, 'name') !== promptName) continue
     // The list endpoint returns PromptMeta, which carries every version of a
@@ -225,29 +170,19 @@ async function readdirPromptVersions(
           vfsName: filename,
         }),
       ])
-      names.push(`${prefix}/prompts/${promptName}/${filename}`)
     }
   }
-  if (index !== undefined) await index.setDir(virtualKey, entries)
-  return names
+  return entries
 }
 
-async function readdirDatasets(
+async function listDatasets(
   accessor: LangfuseAccessor,
-  virtualKey: string,
-  index: IndexCacheStore | undefined,
-  prefix: string,
-): Promise<string[]> {
-  if (index !== undefined) {
-    const listing = await index.listDir(virtualKey)
-    if (listing.entries !== undefined && listing.entries !== null) return listing.entries
-  }
+  _match: RouteMatch,
+): Promise<[string, IndexEntry][]> {
   const datasets = await fetchDatasets(accessor.transport)
-  const entries: [string, IndexEntry][] = []
-  const names: string[] = []
-  for (const d of datasets) {
+  return datasets.map((d): [string, IndexEntry] => {
     const datasetName = pickString(d, 'name')
-    entries.push([
+    return [
       datasetName,
       new IndexEntry({
         id: datasetName,
@@ -255,29 +190,20 @@ async function readdirDatasets(
         resourceType: 'langfuse/dataset',
         vfsName: datasetName,
       }),
-    ])
-    names.push(`${prefix}/datasets/${datasetName}`)
-  }
-  if (index !== undefined) await index.setDir(virtualKey, entries)
-  return names
+    ]
+  })
 }
 
-async function readdirDataset(
+async function listDataset(
   accessor: LangfuseAccessor,
-  datasetName: string,
-  virtualKey: string,
-  index: IndexCacheStore | undefined,
-  prefix: string,
-): Promise<string[]> {
-  if (index !== undefined) {
-    const listing = await index.listDir(virtualKey)
-    if (listing.entries !== undefined && listing.entries !== null) return listing.entries
-  }
+  match: RouteMatch,
+): Promise<[string, IndexEntry][]> {
+  const datasetName = match.captures.dataset_name ?? ''
   // One dataset_items call per dataset directory actually entered: the
   // dataset listing carries no item payloads, so items.jsonl can only be
   // sized here, and only for datasets the caller opens.
   const items = await fetchDatasetItems(accessor.transport, datasetName)
-  const entries: [string, IndexEntry][] = [
+  return [
     [
       'items.jsonl',
       new IndexEntry({
@@ -298,30 +224,20 @@ async function readdirDataset(
       }),
     ],
   ]
-  if (index !== undefined) await index.setDir(virtualKey, entries)
-  return entries.map(([name]) => `${prefix}/datasets/${datasetName}/${name}`)
 }
 
-async function readdirDatasetRuns(
+async function listDatasetRuns(
   accessor: LangfuseAccessor,
-  datasetName: string,
-  virtualKey: string,
-  index: IndexCacheStore | undefined,
-  prefix: string,
-): Promise<string[]> {
-  if (index !== undefined) {
-    const listing = await index.listDir(virtualKey)
-    if (listing.entries !== undefined && listing.entries !== null) return listing.entries
-  }
+  match: RouteMatch,
+): Promise<[string, IndexEntry][]> {
+  const datasetName = match.captures.dataset_name ?? ''
   const runs = await fetchDatasetRuns(accessor.transport, datasetName)
-  const entries: [string, IndexEntry][] = []
-  const names: string[] = []
-  for (const r of runs) {
+  return runs.map((r): [string, IndexEntry] => {
     const runName = pickString(r, 'name')
     const filename = `${runName}.jsonl`
     // The listing already carries the run document read() renders, so each
     // run file's exact size is free here.
-    entries.push([
+    return [
       filename,
       new IndexEntry({
         id: runName,
@@ -330,66 +246,20 @@ async function readdirDatasetRuns(
         vfsName: filename,
         size: jsonlBytes([r]).byteLength,
       }),
-    ])
-    names.push(`${prefix}/datasets/${datasetName}/runs/${filename}`)
-  }
-  if (index !== undefined) await index.setDir(virtualKey, entries)
-  return names
+    ]
+  })
 }
 
-export async function readdir(
-  accessor: LangfuseAccessor,
-  path: PathSpec,
-  index?: IndexCacheStore,
-): Promise<string[]> {
-  const prefix = mountPrefixOf(path.virtual, path.resourcePath)
-  let p = path.pattern !== null ? path.directory : path.virtual
-  if (prefix !== '' && p.startsWith(prefix)) {
-    p = p.slice(prefix.length) || '/'
-  }
-  const key = stripSlash(p)
-  for (const part of key.split('/')) {
-    if (key !== '' && part.startsWith('.')) throw enoent(path)
-  }
-  const virtualKey = makeVirtualKey(prefix, key)
-
-  if (key === '') {
-    return TOP_LEVEL_DIRS.map((d) => `${prefix}/${d}`)
-  }
-
-  const parts = key.split('/')
-
-  if (parts[0] === 'traces' && parts.length === 1) {
-    return readdirTraces(accessor, virtualKey, index, prefix)
-  }
-
-  if (parts[0] === 'sessions' && parts.length === 1) {
-    return readdirSessions(accessor, virtualKey, index, prefix)
-  }
-
-  if (parts[0] === 'sessions' && parts.length === 2) {
-    return readdirSessionTraces(accessor, parts[1] ?? '', virtualKey, index, prefix)
-  }
-
-  if (parts[0] === 'prompts' && parts.length === 1) {
-    return readdirPrompts(accessor, virtualKey, index, prefix)
-  }
-
-  if (parts[0] === 'prompts' && parts.length === 2) {
-    return readdirPromptVersions(accessor, parts[1] ?? '', virtualKey, index, prefix)
-  }
-
-  if (parts[0] === 'datasets' && parts.length === 1) {
-    return readdirDatasets(accessor, virtualKey, index, prefix)
-  }
-
-  if (parts[0] === 'datasets' && parts.length === 2) {
-    return readdirDataset(accessor, parts[1] ?? '', virtualKey, index, prefix)
-  }
-
-  if (parts[0] === 'datasets' && parts.length === 3 && parts[2] === 'runs') {
-    return readdirDatasetRuns(accessor, parts[1] ?? '', virtualKey, index, prefix)
-  }
-
-  throw enoent(path)
-}
+export const readdir = makeReaddir<LangfuseAccessor>(detectScope, {
+  listers: {
+    traces: listTraces,
+    sessions: listSessions,
+    session: listSessionTraces,
+    prompts: listPrompts,
+    prompt: listPromptVersions,
+    datasets: listDatasets,
+    dataset: listDataset,
+    runs: listDatasetRuns,
+  },
+  staticRoot: TOP_LEVEL_DIRS,
+})

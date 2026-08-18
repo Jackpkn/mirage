@@ -12,15 +12,7 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from mirage.accessor.gridfs import GridFSAccessor
-from mirage.cache.index import NULL_INDEX
 from mirage.core.gridfs.stat import stat
-from mirage.types import PathSpec
+from mirage.core.object_store.exists import make_exists
 
-
-async def exists(accessor: GridFSAccessor, path: PathSpec) -> bool:
-    try:
-        await stat(accessor, path, index=NULL_INDEX)
-        return True
-    except (FileNotFoundError, ValueError):
-        return False
+exists = make_exists(stat)

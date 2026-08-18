@@ -12,32 +12,7 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import time
+from mirage.core.gridfs.driver import DRIVER
+from mirage.core.object_store.write import make_truncate
 
-from mirage.accessor.gridfs import GridFSAccessor
-from mirage.cache.context import invalidate_after_write
-from mirage.core.gridfs.client import _key, bucket, latest_file
-from mirage.observe.context import record
-from mirage.types import PathSpec
-
-
-async def truncate(accessor: GridFSAccessor, path_spec: PathSpec,
-                   length: int) -> None:
-    path = path_spec.mount_path
-    start_ms = int(time.monotonic() * 1000)
-    config = accessor.config
-    key = _key(path, config)
-    doc = await latest_file(accessor, key)
-    if doc is None:
-        data = b""
-    else:
-        b = bucket(accessor)
-        out = await b.open_download_stream(doc["_id"])
-        try:
-            data = await out.read(-1)
-        finally:
-            await out.close()
-    result = data[:length].ljust(length, b"\0")
-    await bucket(accessor).upload_from_stream(key, result)
-    record("truncate", path, "gridfs", 0, start_ms)
-    await invalidate_after_write(path_spec)
+truncate = make_truncate(DRIVER)

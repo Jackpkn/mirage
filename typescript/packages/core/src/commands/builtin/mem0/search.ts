@@ -1,7 +1,9 @@
 import type { Mem0Accessor } from '../../../accessor/mem0.ts'
-import { searchRendered } from '../../../core/mem0/index.ts'
+import { detectScope } from '../../../core/mem0/scope.ts'
+import { searchMemoriesRendered } from '../../../core/mem0/search.ts'
 import { IOResult } from '../../../io/types.ts'
 import { ResourceName, type PathSpec } from '../../../types.ts'
+import { enoent } from '../../../utils/errors.ts'
 import { mountPrefixOf } from '../../../utils/key_prefix.ts'
 import { rstripSlash } from '../../../utils/slash.ts'
 import { command, type CommandFnResult, type CommandOpts } from '../../config.ts'
@@ -22,7 +24,13 @@ function isMountRoot(path: PathSpec): boolean {
 }
 
 function memoryIds(paths: readonly PathSpec[]): Set<string> {
-  return new Set(paths.map((path) => path.resourcePath.replace(/\.json$/, '')))
+  const ids = new Set<string>()
+  for (const path of paths) {
+    const match = detectScope(path)
+    if (match.kind !== 'memory') throw enoent(path)
+    ids.add(match.captures.memory_id ?? '')
+  }
+  return ids
 }
 
 async function searchCommand(
@@ -53,7 +61,7 @@ async function searchCommand(
       ? undefined
       : memoryIds(await resolveGlob(accessor, targets, opts.index ?? undefined))
     return [
-      await searchRendered(accessor, query, mountPrefix, topK, threshold, ids),
+      await searchMemoriesRendered(accessor, query, mountPrefix, topK, threshold, ids),
       new IOResult(),
     ]
   } catch (error) {

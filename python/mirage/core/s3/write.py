@@ -12,26 +12,7 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import time
+from mirage.core.object_store.write import make_write_bytes
+from mirage.core.s3.driver import DRIVER
 
-from mirage.accessor.s3 import S3Accessor
-from mirage.cache.context import invalidate_after_write, invalidate_ancestors
-from mirage.core.s3.client import _client_kwargs, _key, async_session
-from mirage.observe.context import record
-from mirage.types import PathSpec
-
-
-async def write_bytes(accessor: S3Accessor, path_spec: PathSpec,
-                      data: bytes) -> None:
-    path = path_spec.mount_path
-    config = accessor.config
-    key = _key(path, config)
-    start_ms = int(time.monotonic() * 1000)
-    session = async_session(config)
-    async with session.client(**_client_kwargs(config)) as client:
-        await client.put_object(Bucket=config.bucket, Key=key, Body=data)
-    record("write", path, "s3", len(data), start_ms)
-    await invalidate_after_write(path_spec)
-    # A put materializes every missing level of the key at once, so the
-    # listings above the immediate parent gained entries too.
-    await invalidate_ancestors(path_spec)
+write_bytes = make_write_bytes(DRIVER)

@@ -12,68 +12,35 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from dataclasses import dataclass
-
-from mirage.types import PathSpec
+from mirage.core.hierarchy.codec import Codec
+from mirage.core.hierarchy.route import Capture, Route
+from mirage.core.hierarchy.scope import make_detect_scope
+from mirage.core.jaeger.client import is_trace_id
+from mirage.types import FileType
 
 OPERATIONS_FILE = "operations.json"
 TOP_LEVEL_DIRS = ["services"]
 
+# A malformed id cannot name an existing trace, so it fails the route
+# match outright and reads as ENOENT rather than the API's 400 "invalid
+# length for TraceID".
+TRACE_FILE = Codec(suffix=".json", validate=is_trace_id)
 
-@dataclass
-class JaegerScope:
-    level: str
-    service: str | None = None
-    trace_id: str | None = None
-    resource_path: str = "/"
+# The tree is service-scoped because Jaeger's search API requires a
+# service: there is no endpoint that lists every trace.
+ROUTES = (
+    Route(kind="services", segments=("services", ), probed=False),
+    Route(kind="service", segments=("services", Capture("service"))),
+    Route(kind="operations",
+          segments=("services", Capture("service"), OPERATIONS_FILE),
+          leaf=True,
+          filetype=FileType.JSON),
+    Route(kind="traces", segments=("services", Capture("service"), "traces")),
+    Route(kind="trace",
+          segments=("services", Capture("service"), "traces",
+                    Capture("trace_id", TRACE_FILE)),
+          leaf=True,
+          filetype=FileType.JSON),
+)
 
-
-def detect_scope(path: PathSpec | str) -> JaegerScope:
-    """Classify a resource-relative path into a jaeger tree position.
-
-    The tree is service-scoped because Jaeger's search API requires a service:
-    there is no endpoint that lists every trace.
-
-    Args:
-        path (PathSpec | str): resource-relative path.
-
-    Returns:
-        JaegerScope: the detected position, level "unknown" when unrecognized.
-    """
-    raw = path.mount_path if isinstance(path, PathSpec) else path
-    key = raw.strip("/")
-
-    if not key:
-        return JaegerScope(level="root", resource_path=raw)
-
-    parts = key.split("/")
-
-    if parts[0] != "services":
-        return JaegerScope(level="unknown", resource_path=raw)
-
-    if len(parts) == 1:
-        return JaegerScope(level="services", resource_path=raw)
-
-    service = parts[1]
-
-    if len(parts) == 2:
-        return JaegerScope(level="service", service=service, resource_path=raw)
-
-    if len(parts) == 3 and parts[2] == OPERATIONS_FILE:
-        return JaegerScope(level="operations",
-                           service=service,
-                           resource_path=raw)
-
-    if len(parts) == 3 and parts[2] == "traces":
-        return JaegerScope(level="traces", service=service, resource_path=raw)
-
-    if (len(parts) == 4 and parts[2] == "traces"
-            and parts[3].endswith(".json")):
-        return JaegerScope(
-            level="trace",
-            service=service,
-            trace_id=parts[3].removesuffix(".json"),
-            resource_path=raw,
-        )
-
-    return JaegerScope(level="unknown", resource_path=raw)
+detect_scope = make_detect_scope(ROUTES)

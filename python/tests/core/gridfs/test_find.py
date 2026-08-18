@@ -16,8 +16,10 @@ import asyncio
 import re
 
 from mirage.accessor.gridfs import GridFSAccessor, GridFSConfig
+from mirage.core.gridfs import driver as gridfs_driver
 from mirage.core.gridfs.client import prefix_query
-from mirage.core.gridfs.find import build_query, find, glob_regex
+from mirage.core.gridfs.driver import build_query, glob_regex
+from mirage.core.gridfs.find import find
 from mirage.types import PathSpec
 
 
@@ -117,7 +119,7 @@ def _run_find(monkeypatch, docs, **kwargs):
         "filename": filename,
         "length": length
     } for filename, length in docs])
-    monkeypatch.setitem(find.__globals__, "iter_latest", fake)
+    monkeypatch.setattr(gridfs_driver, "iter_latest", fake)
     accessor = GridFSAccessor(
         GridFSConfig(uri="mongodb://localhost:27017", database="db"))
     spec = PathSpec(virtual="/mnt/data",

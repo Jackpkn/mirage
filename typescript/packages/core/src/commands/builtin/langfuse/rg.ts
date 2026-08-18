@@ -14,15 +14,26 @@
 
 import type { LangfuseAccessor } from '../../../accessor/langfuse.ts'
 import type { IndexCacheStore } from '../../../cache/index/index.ts'
+import {
+  fetchDatasets,
+  fetchPrompts,
+  fetchSessions,
+  fetchTraces,
+} from '../../../core/langfuse/client.ts'
 import { resolveGlobOf } from '../generic_bind/index.ts'
 import { LANGFUSE_IO } from './io.ts'
 import { read as langfuseRead } from '../../../core/langfuse/read.ts'
 import { readdir as langfuseReaddir } from '../../../core/langfuse/readdir.ts'
+import { SEARCH_KINDS, detectScope } from '../../../core/langfuse/scope.ts'
 import { stat as langfuseStat } from '../../../core/langfuse/stat.ts'
 import { type FileStat, ResourceName, type PathSpec } from '../../../types.ts'
 import { command, type CommandFnResult, type CommandOpts } from '../../config.ts'
 import { specOf } from '../../spec/builtins.ts'
 import { rgGeneric } from '../generic/rg.ts'
+import { compilePattern, hasSearchShapingFlags, patternArg } from '../grep_helper.ts'
+import { hasUnresolvedGlob } from '../utils/operands.ts'
+import { filterDatasets, filterPrompts, filterSessions, filterTraces } from './grep.ts'
+import { FlagView } from '../../spec/types.ts'
 
 const resolveLangfuseGlob = resolveGlobOf(LANGFUSE_IO)
 
@@ -40,6 +51,42 @@ async function rgCommand(
   texts: string[],
   opts: CommandOpts,
 ): Promise<CommandFnResult> {
+  const pattern = patternArg(texts, opts.flags)
+  const limit = accessor.config.defaultSearchLimit ?? 50
+
+  // The search push-down answers from the list endpoints (one call instead
+  // of one read per entry), so it greps listing summaries: a pattern that
+  // only occurs in a trace's observation bodies needs a file read to match.
+  // Output/match-shaping flags defer to the generic scan below.
+  const first = paths[0]
+  if (
+    first !== undefined &&
+    !hasUnresolvedGlob(paths) &&
+    pattern !== null &&
+    !pattern.includes('\n') &&
+    !hasSearchShapingFlags(opts.flags)
+  ) {
+    const search = SEARCH_KINDS[detectScope(first).kind]
+    const fl = new FlagView(opts.flags, specOf('rg'))
+    const pat = compilePattern(pattern, fl.asBool('i'), fl.asBool('F'), fl.asBool('w'))
+    if (search === 'traces') {
+      const traces = await fetchTraces(accessor.transport, { limit })
+      return filterTraces(traces, pat)
+    }
+    if (search === 'sessions') {
+      const sessions = await fetchSessions(accessor.transport, { limit })
+      return filterSessions(sessions, pat)
+    }
+    if (search === 'prompts') {
+      const prompts = await fetchPrompts(accessor.transport)
+      return filterPrompts(prompts, pat)
+    }
+    if (search === 'datasets') {
+      const datasets = await fetchDatasets(accessor.transport)
+      return filterDatasets(datasets, pat)
+    }
+  }
+
   const resolved =
     paths.length > 0 ? await resolveLangfuseGlob(accessor, paths, opts.index ?? undefined) : []
   const stat = (p: PathSpec): Promise<FileStat> =>

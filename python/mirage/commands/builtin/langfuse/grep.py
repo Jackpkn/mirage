@@ -20,10 +20,13 @@ from typing import Any
 from mirage.accessor.langfuse import LangfuseAccessor
 from mirage.commands.builtin.generic.grep import grep as generic_grep
 from mirage.commands.builtin.generic_bind.adapter import bound_op
-from mirage.commands.builtin.grep_helper import compile_pattern, pattern_arg
+from mirage.commands.builtin.grep_helper import (compile_pattern,
+                                                 has_search_shaping_flags,
+                                                 pattern_arg)
 from mirage.commands.builtin.langfuse._provision import file_read_provision
 from mirage.commands.builtin.langfuse.io import resolve_glob
 from mirage.commands.builtin.utils.output import format_records
+from mirage.commands.builtin.utils.paths import has_unresolved_glob
 from mirage.commands.config import CommandOpts
 from mirage.commands.registry import command
 from mirage.commands.spec import SPECS
@@ -32,7 +35,7 @@ from mirage.core.langfuse.client import (fetch_datasets, fetch_prompts,
                                          fetch_sessions, fetch_traces)
 from mirage.core.langfuse.read import read as langfuse_read
 from mirage.core.langfuse.readdir import readdir as _readdir
-from mirage.core.langfuse.scope import detect_scope
+from mirage.core.langfuse.scope import SEARCH_KINDS, detect_scope
 from mirage.core.langfuse.stat import stat as _stat
 from mirage.io.types import ByteSource, IOResult
 from mirage.provision.types import ProvisionResult
@@ -131,13 +134,19 @@ async def grep(accessor: LangfuseAccessor, paths: list[PathSpec],
 
     limit = accessor.config.default_search_limit
 
-    if paths and pattern is not None and "\n" not in pattern:
-        scope = detect_scope(paths[0])
+    # The search push-down answers from the list endpoints (one call instead
+    # of one read per entry), so it greps listing summaries: a pattern that
+    # only occurs in a trace's observation bodies needs a file read to match.
+    # Output/match-shaping flags defer to the generic scan below.
+    if (paths and not has_unresolved_glob(paths) and pattern is not None
+            and "\n" not in pattern
+            and not has_search_shaping_flags(opts.flags)):
+        search = SEARCH_KINDS.get(detect_scope(paths[0]).kind)
         ignore_case = fl.as_bool("i")
         fixed_string = fl.as_bool("F")
         whole_word = fl.as_bool("w")
 
-        if scope.level == "traces" or scope.level == "root":
+        if search == "traces":
             traces = await fetch_traces(
                 accessor.api,
                 limit=limit,
@@ -146,7 +155,7 @@ async def grep(accessor: LangfuseAccessor, paths: list[PathSpec],
                                   whole_word)
             return _filter_traces(traces, pat)
 
-        if scope.level == "sessions":
+        if search == "sessions":
             sessions = await fetch_sessions(
                 accessor.api,
                 limit=limit,
@@ -155,13 +164,13 @@ async def grep(accessor: LangfuseAccessor, paths: list[PathSpec],
                                   whole_word)
             return _format_session_results(sessions, pat)
 
-        if scope.level == "prompts":
+        if search == "prompts":
             prompts = await fetch_prompts(accessor.api)
             pat = compile_pattern(pattern, ignore_case, fixed_string,
                                   whole_word)
             return _format_prompt_results(prompts, pat)
 
-        if scope.level == "datasets":
+        if search == "datasets":
             datasets = await fetch_datasets(accessor.api)
             pat = compile_pattern(pattern, ignore_case, fixed_string,
                                   whole_word)

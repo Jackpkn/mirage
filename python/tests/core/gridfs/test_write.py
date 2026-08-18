@@ -16,6 +16,7 @@ import asyncio
 
 from mirage.accessor.gridfs import GridFSAccessor, GridFSConfig
 from mirage.cache.context import push_cache_manager
+from mirage.core.gridfs import driver as gridfs_driver
 from mirage.core.gridfs.write import write_bytes
 from mirage.types import PathSpec
 
@@ -44,7 +45,7 @@ class _FakeBucket:
 
 async def _write(monkeypatch, mount_path: str) -> tuple[_FakeManager, list]:
     uploads: list[tuple[str, bytes]] = []
-    monkeypatch.setitem(write_bytes.__globals__, "bucket",
+    monkeypatch.setattr(gridfs_driver, "bucket",
                         lambda accessor: _FakeBucket(uploads))
     manager = _FakeManager()
     prev = push_cache_manager(manager)

@@ -12,25 +12,7 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from mirage.accessor.gridfs import GridFSAccessor
-from mirage.cache.index import NULL_INDEX, IndexCacheStore
-from mirage.core.gridfs.client import _key, iter_latest
-from mirage.core.gridfs.du.query import subtree_query
-from mirage.types import PathSpec
+from mirage.core.gridfs.driver import DRIVER
+from mirage.core.object_store.du import make_du_size
 
-
-async def size(accessor: GridFSAccessor,
-               path_spec: PathSpec,
-               index: IndexCacheStore = NULL_INDEX) -> int:
-    """Recursive byte size of everything under a prefix.
-
-    Args:
-        accessor (GridFSAccessor): GridFS accessor.
-        path_spec (PathSpec): target path.
-    """
-    config = accessor.config
-    stem = _key(path_spec.mount_path, config).rstrip("/")
-    total = 0
-    async for doc in iter_latest(accessor, subtree_query(stem)):
-        total += doc["length"]
-    return total
+size = make_du_size(DRIVER)

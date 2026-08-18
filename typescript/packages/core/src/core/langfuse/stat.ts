@@ -12,160 +12,27 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import type { LangfuseAccessor } from '../../accessor/langfuse.ts'
-import type { IndexCacheStore } from '../../cache/index/store.ts'
-import { FileStat, FileType, PathSpec } from '../../types.ts'
-import { enoent } from '../../utils/errors.ts'
-import { mountKey, mountPrefixOf } from '../../utils/key_prefix.ts'
-import { rstripSlash } from '../../utils/slash.ts'
+import type { RouteMatch } from '../hierarchy/scope.ts'
+import { makeStat } from '../hierarchy/stat.ts'
 import { readdir } from './readdir.ts'
+import { detectScope } from './scope.ts'
 
-const TOP_LEVEL_DIRS = new Set(['traces', 'sessions', 'prompts', 'datasets'])
-
-function basenameOf(entry: string): string {
-  const trimmed = rstripSlash(entry)
-  return trimmed.slice(trimmed.lastIndexOf('/') + 1)
+function sessionExtra(match: RouteMatch): Record<string, string> {
+  return { session_id: match.captures.session_id ?? '' }
 }
 
-/**
- * Throw ENOENT unless the path appears in its parent's listing.
- *
- * Every path shape langfuse serves is recognizable from the path text alone,
- * but a recognizable shape is not evidence that the trace, prompt, dataset or
- * run behind it exists. The parent listing is index-cached, so validating costs
- * one listing per directory rather than one API call per stat.
- */
-async function assertListed(
-  accessor: LangfuseAccessor,
-  path: PathSpec,
-  prefix: string,
-  index?: IndexCacheStore,
-): Promise<void> {
-  const virtual = rstripSlash(path.virtual)
-  const parentVirtual = virtual.slice(0, virtual.lastIndexOf('/')) || '/'
-  const entries = await readdir(
-    accessor,
-    new PathSpec({
-      virtual: parentVirtual,
-      directory: parentVirtual,
-      resolved: false,
-      resourcePath: mountKey(parentVirtual, prefix),
-    }),
-    index,
-  )
-  const names = new Set(entries.map(basenameOf))
-  if (!names.has(basenameOf(path.resourcePath))) throw enoent(path)
+function promptExtra(match: RouteMatch): Record<string, string> {
+  return { prompt_name: match.captures.prompt_name ?? '' }
 }
 
-/**
- * Return the size the parent listing recorded for this path.
- *
- * assertListed has just populated the parent directory, so any size the
- * listing computed is already in the index.
- */
-async function listedSize(
-  path: PathSpec,
-  prefix: string,
-  index?: IndexCacheStore,
-): Promise<number | null> {
-  if (index === undefined) return null
-  const lookup = await index.get(`${prefix}/${path.resourcePath}`)
-  return lookup.entry?.size ?? null
+function datasetExtra(match: RouteMatch): Record<string, string> {
+  return { dataset_name: match.captures.dataset_name ?? '' }
 }
 
-export async function stat(
-  accessor: LangfuseAccessor,
-  path: PathSpec,
-  index?: IndexCacheStore,
-): Promise<FileStat> {
-  const key = path.resourcePath
-  const prefix = mountPrefixOf(path.virtual, path.resourcePath)
-
-  if (key === '') {
-    return Promise.resolve(new FileStat({ name: '/', type: FileType.DIRECTORY }))
-  }
-
-  const parts = key.split('/')
-
-  for (const part of parts) {
-    if (part.startsWith('.')) throw enoent(path)
-  }
-
-  if (parts.length === 1 && TOP_LEVEL_DIRS.has(parts[0] ?? '')) {
-    return Promise.resolve(new FileStat({ name: parts[0] ?? '', type: FileType.DIRECTORY }))
-  }
-
-  if (parts[0] === 'traces' && parts.length === 2 && (parts[1] ?? '').endsWith('.json')) {
-    await assertListed(accessor, path, prefix, index)
-    return new FileStat({ name: parts[1] ?? '', type: FileType.JSON })
-  }
-
-  if (parts[0] === 'sessions' && parts.length === 2) {
-    await assertListed(accessor, path, prefix, index)
-    return new FileStat({
-      name: parts[1] ?? '',
-      type: FileType.DIRECTORY,
-      extra: { session_id: parts[1] ?? '' },
-    })
-  }
-
-  if (parts[0] === 'sessions' && parts.length === 3 && (parts[2] ?? '').endsWith('.json')) {
-    await assertListed(accessor, path, prefix, index)
-    return new FileStat({ name: parts[2] ?? '', type: FileType.JSON })
-  }
-
-  if (parts[0] === 'prompts' && parts.length === 2) {
-    await assertListed(accessor, path, prefix, index)
-    return new FileStat({
-      name: parts[1] ?? '',
-      type: FileType.DIRECTORY,
-      extra: { prompt_name: parts[1] ?? '' },
-    })
-  }
-
-  if (parts[0] === 'prompts' && parts.length === 3 && (parts[2] ?? '').endsWith('.json')) {
-    await assertListed(accessor, path, prefix, index)
-    return new FileStat({ name: parts[2] ?? '', type: FileType.JSON })
-  }
-
-  if (parts[0] === 'datasets' && parts.length === 2) {
-    await assertListed(accessor, path, prefix, index)
-    return new FileStat({
-      name: parts[1] ?? '',
-      type: FileType.DIRECTORY,
-      extra: { dataset_name: parts[1] ?? '' },
-    })
-  }
-
-  if (parts[0] === 'datasets' && parts.length === 3 && parts[2] === 'items.jsonl') {
-    await assertListed(accessor, path, prefix, index)
-    const size = await listedSize(path, prefix, index)
-    return new FileStat({
-      name: 'items.jsonl',
-      ...(size !== null ? { size } : {}),
-      type: FileType.TEXT,
-    })
-  }
-
-  if (parts[0] === 'datasets' && parts.length === 3 && parts[2] === 'runs') {
-    await assertListed(accessor, path, prefix, index)
-    return new FileStat({ name: 'runs', type: FileType.DIRECTORY })
-  }
-
-  if (
-    parts[0] === 'datasets' &&
-    parts.length === 4 &&
-    parts[2] === 'runs' &&
-    (parts[3] ?? '').endsWith('.jsonl')
-  ) {
-    await assertListed(accessor, path, prefix, index)
-    const size = await listedSize(path, prefix, index)
-    return new FileStat({
-      name: parts[3] ?? '',
-      ...(size !== null ? { size } : {}),
-      type: FileType.TEXT,
-    })
-  }
-
-  throw enoent(path)
-}
+export const stat = makeStat(detectScope, readdir, {
+  extras: {
+    session: sessionExtra,
+    prompt: promptExtra,
+    dataset: datasetExtra,
+  },
+})

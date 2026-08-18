@@ -1,0 +1,54 @@
+// ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+// ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
+
+import type { Mem0Accessor } from '../../accessor/mem0.ts'
+import { formatScore } from '../../utils/score.ts'
+import { rstripSlash } from '../../utils/slash.ts'
+import { searchMemories } from './client.ts'
+
+const ENCODER = new TextEncoder()
+
+function validate(query: string, topK: number, threshold: number): void {
+  if (query === '') throw new Error('search: query is required')
+  if (!Number.isInteger(topK) || topK <= 0) throw new Error('search: top-k must be positive')
+  if (!Number.isFinite(threshold) || threshold < 0 || threshold > 1) {
+    throw new Error('search: threshold must be in [0, 1]')
+  }
+}
+
+/**
+ * Run a semantic search in the scope and render ranked results.
+ *
+ * `memoryIds` is an optional result id allowlist.
+ */
+export async function searchMemoriesRendered(
+  accessor: Mem0Accessor,
+  query: string,
+  mountPrefix: string,
+  topK: number,
+  threshold: number,
+  memoryIds?: ReadonlySet<string>,
+): Promise<Uint8Array> {
+  validate(query, topK, threshold)
+  const lines: string[] = []
+  for (const result of await searchMemories(accessor, query, topK, threshold)) {
+    const id = String(result.id)
+    if (memoryIds !== undefined && !memoryIds.has(id)) continue
+    const path = `${rstripSlash(mountPrefix)}/${id}.json`
+    const score = formatScore(result.score)
+    const memory = typeof result.memory === 'string' ? result.memory : ''
+    lines.push(`${score === null ? path : `${path}:${score}`}\n${memory}`)
+  }
+  return ENCODER.encode(lines.length === 0 ? '' : `${lines.join('\n')}\n`)
+}

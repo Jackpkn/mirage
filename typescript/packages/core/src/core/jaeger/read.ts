@@ -16,9 +16,11 @@ import type { JaegerAccessor } from '../../accessor/jaeger.ts'
 import type { IndexCacheStore } from '../../cache/index/store.ts'
 import type { PathSpec } from '../../types.ts'
 import { enoent } from '../../utils/errors.ts'
-import { JaegerApiError, fetchOperations, fetchTrace, isTraceId } from './client.ts'
-import { assertService } from './readdir.ts'
+import { makeRead } from '../hierarchy/read.ts'
+import type { RouteMatch } from '../hierarchy/scope.ts'
 import { jsonBytes } from '../render/json.ts'
+import { JaegerApiError, fetchOperations, fetchTrace } from './client.ts'
+import { assertService } from './readdir.ts'
 import { detectScope } from './scope.ts'
 
 // Whether any span in the trace was emitted by the service. A trace is fetched
@@ -38,42 +40,40 @@ function hasService(trace: unknown, service: string): boolean {
   )
 }
 
-export async function read(
+async function readOperations(
   accessor: JaegerAccessor,
+  match: RouteMatch,
   path: PathSpec,
   _index?: IndexCacheStore,
 ): Promise<Uint8Array> {
-  const key = path.resourcePath
-  if (key.split('/').some((p) => p.startsWith('.'))) throw enoent(path)
-
-  const scope = detectScope(path)
-
-  if (scope.level === 'operations') {
-    const service = scope.service ?? ''
-    await assertService(accessor, service, path)
-    const operations = await fetchOperations(accessor.transport, service)
-    return jsonBytes(operations)
-  }
-
-  if (scope.level === 'trace') {
-    const service = scope.service ?? ''
-    const traceId = scope.traceId ?? ''
-    // A malformed id cannot name an existing trace, so it is ENOENT rather
-    // than the API's 400 "invalid length for TraceID".
-    if (!isTraceId(traceId)) throw enoent(path)
-    await assertService(accessor, service, path)
-    let trace: unknown
-    try {
-      trace = await fetchTrace(accessor.transport, traceId)
-    } catch (err) {
-      if (err instanceof JaegerApiError && err.status === 404) throw enoent(path)
-      throw err
-    }
-    // Reading by id would otherwise serve any trace through any service
-    // directory, contradicting stat and ls for the same path.
-    if (!hasService(trace, service)) throw enoent(path)
-    return jsonBytes(trace)
-  }
-
-  throw enoent(path)
+  const service = match.captures.service ?? ''
+  await assertService(accessor, service, path.virtual)
+  const operations = await fetchOperations(accessor.transport, service)
+  return jsonBytes(operations)
 }
+
+async function readTrace(
+  accessor: JaegerAccessor,
+  match: RouteMatch,
+  path: PathSpec,
+  _index?: IndexCacheStore,
+): Promise<Uint8Array> {
+  const service = match.captures.service ?? ''
+  await assertService(accessor, service, path.virtual)
+  let trace: unknown
+  try {
+    trace = await fetchTrace(accessor.transport, match.captures.trace_id ?? '')
+  } catch (err) {
+    if (err instanceof JaegerApiError && err.status === 404) throw enoent(path)
+    throw err
+  }
+  // Reading by id would otherwise serve any trace through any service
+  // directory, contradicting stat and ls for the same path.
+  if (!hasService(trace, service)) throw enoent(path)
+  return jsonBytes(trace)
+}
+
+export const read = makeRead(detectScope, {
+  operations: readOperations,
+  trace: readTrace,
+})

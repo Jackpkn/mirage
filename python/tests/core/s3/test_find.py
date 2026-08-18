@@ -16,6 +16,7 @@ import asyncio
 from functools import partial
 
 from mirage.accessor.s3 import S3Accessor, S3Config
+from mirage.core.s3 import driver as s3_driver
 from mirage.core.s3.find import find
 from mirage.types import PathSpec
 
@@ -66,7 +67,7 @@ def _spec(resource_path):
 
 def _run_find(monkeypatch, keys, resource_path="data", **kwargs):
     pages = [{"Contents": [{"Key": key, "Size": size} for key, size in keys]}]
-    monkeypatch.setitem(find.__globals__, "async_session",
+    monkeypatch.setattr(s3_driver, "async_session",
                         partial(_session_for, pages))
     accessor = S3Accessor(S3Config(bucket="b"))
     return asyncio.run(find(accessor, _spec(resource_path), **kwargs))

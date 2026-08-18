@@ -12,47 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import type { IndexCacheStore } from '../../../cache/index/store.ts'
-import type { PathSpec } from '../../../types.ts'
-import type { S3Accessor } from '../../../accessor/s3.ts'
-import { rstripSlash } from '../../../utils/slash.ts'
-import { loadS3Module, rawPathOf, s3Key, withClient } from '../client.ts'
+import { makeDuSize } from '../../object_store/du.ts'
+import { DRIVER } from '../driver.ts'
 
-// List with the stem prefix (no trailing slash) and count an object only when
-// it is the operand itself or lives under it. A bare prefix would miss a file
-// operand entirely (key "a.txt" never matches prefix "a.txt/") and would also
-// catch siblings like "dataother" for a "data" operand; the stem+filter pair
-// handles both file and directory operands, mirroring Python's s3 du.
-export async function size(
-  accessor: S3Accessor,
-  path: PathSpec,
-  _index?: IndexCacheStore,
-): Promise<number> {
-  const { ListObjectsV2Command } = await loadS3Module(accessor.config)
-  const raw = rawPathOf(path)
-  const stem = rstripSlash(s3Key(raw, accessor.config))
-  const base = stem !== '' ? `${stem}/` : ''
-  let total = 0
-  await withClient(accessor.config, async (client) => {
-    let continuationToken: string | undefined
-    do {
-      const input: Record<string, unknown> = {
-        Bucket: accessor.config.bucket,
-        Prefix: stem,
-      }
-      if (continuationToken !== undefined) input.ContinuationToken = continuationToken
-      const resp = (await client.send(new ListObjectsV2Command(input))) as {
-        Contents?: { Key?: string; Size?: number }[]
-        IsTruncated?: boolean
-        NextContinuationToken?: string
-      }
-      for (const obj of resp.Contents ?? []) {
-        const okey = obj.Key
-        if (okey === undefined) continue
-        if (okey === stem || okey.startsWith(base)) total += obj.Size ?? 0
-      }
-      continuationToken = resp.IsTruncated === true ? resp.NextContinuationToken : undefined
-    } while (continuationToken !== undefined)
-  })
-  return total
-}
+export const size = makeDuSize(DRIVER)

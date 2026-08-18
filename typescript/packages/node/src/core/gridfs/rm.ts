@@ -12,15 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { invalidateAfterUnlink } from '@struktoai/mirage-core/cache/context'
-import type { PathSpec } from '@struktoai/mirage-core/types'
-import type { GridFSAccessor } from '../../accessor/gridfs.ts'
-import { deleteAll, gridfsPrefix, prefixQuery, rawPathOf } from './client.ts'
+import { makeRemovePrefix } from '@struktoai/mirage-core/core/object_store/remove'
+import { DRIVER } from './driver.ts'
 
-export async function rmR(accessor: GridFSAccessor, path: PathSpec): Promise<void> {
-  // Recursively delete every file (every revision) under the prefix.
-  const raw = rawPathOf(path)
-  const pfx = gridfsPrefix(raw, accessor.config)
-  await deleteAll(accessor, prefixQuery(pfx))
-  await invalidateAfterUnlink(path)
-}
+export const rmR = makeRemovePrefix(DRIVER)

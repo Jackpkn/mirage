@@ -15,9 +15,11 @@
 from typing import Any
 
 from mirage.accessor.jaeger import JaegerAccessor
-from mirage.cache.index import NULL_INDEX, IndexCacheStore
+from mirage.cache.index import IndexCacheStore
+from mirage.core.hierarchy.read import make_read
+from mirage.core.hierarchy.scope import RouteMatch
 from mirage.core.jaeger.client import (JaegerApiError, fetch_operations,
-                                       fetch_trace, is_trace_id)
+                                       fetch_trace)
 from mirage.core.jaeger.readdir import assert_service
 from mirage.core.jaeger.scope import detect_scope
 from mirage.core.render.json import json_bytes
@@ -28,10 +30,11 @@ from mirage.utils.errors import enoent
 def _has_service(trace: dict[str, Any], service: str) -> bool:
     """Report whether any span in the trace was emitted by the service.
 
-    A trace is fetched by id from the global endpoint, so the id alone does not
-    place it under the service directory it was addressed through. Membership
-    is read from the trace's own process table rather than the service listing,
-    which is windowed and limited and would hide a trace that really belongs.
+    A trace is fetched by id from the global endpoint, so the id alone
+    does not place it under the service directory it was addressed
+    through. Membership is read from the trace's own process table
+    rather than the service listing, which is windowed and limited and
+    would hide a trace that really belongs.
 
     Args:
         trace (dict[str, Any]): trace document from the API.
@@ -48,56 +51,32 @@ def _has_service(trace: dict[str, Any], service: str) -> bool:
         for p in processes.values())
 
 
-async def read(
-    accessor: JaegerAccessor,
-    path: PathSpec,
-    index: IndexCacheStore = NULL_INDEX,
-) -> bytes:
-    """Read a file as bytes.
+async def _read_operations(accessor: JaegerAccessor, match: RouteMatch,
+                           path: PathSpec, index: IndexCacheStore) -> bytes:
+    service = match.captures["service"]
+    await assert_service(accessor, service, path.virtual)
+    operations = await fetch_operations(accessor, service)
+    return json_bytes(operations)
 
-    Args:
-        accessor (JaegerAccessor): jaeger accessor.
-        path (PathSpec): resource-relative path.
-        index (IndexCacheStore): index cache.
 
-    Returns:
-        bytes: rendered file content.
+async def _read_trace(accessor: JaegerAccessor, match: RouteMatch,
+                      path: PathSpec, index: IndexCacheStore) -> bytes:
+    service = match.captures["service"]
+    await assert_service(accessor, service, path.virtual)
+    try:
+        trace = await fetch_trace(accessor, match.captures["trace_id"])
+    except JaegerApiError as exc:
+        if exc.status_code == 404:
+            raise enoent(path.virtual) from exc
+        raise
+    # Reading by id would otherwise serve any trace through any service
+    # directory, contradicting stat and ls for the same path.
+    if not _has_service(trace, service):
+        raise enoent(path.virtual)
+    return json_bytes(trace)
 
-    Raises:
-        FileNotFoundError: the path is not a jaeger file.
-    """
-    virtual = path.virtual
-    key = path.resource_path
 
-    if any(p.startswith(".") for p in key.split("/")):
-        raise enoent(virtual)
-
-    scope = detect_scope(path)
-
-    if scope.level == "operations":
-        assert scope.service is not None
-        await assert_service(accessor, scope.service, virtual)
-        operations = await fetch_operations(accessor, scope.service)
-        return json_bytes(operations)
-
-    if scope.level == "trace":
-        assert scope.service is not None
-        assert scope.trace_id is not None
-        # A malformed id cannot name an existing trace, so it is ENOENT rather
-        # than the API's 400 "invalid length for TraceID".
-        if not is_trace_id(scope.trace_id):
-            raise enoent(virtual)
-        await assert_service(accessor, scope.service, virtual)
-        try:
-            trace = await fetch_trace(accessor, scope.trace_id)
-        except JaegerApiError as exc:
-            if exc.status_code == 404:
-                raise enoent(virtual) from exc
-            raise
-        # Reading by id would otherwise serve any trace through any service
-        # directory, contradicting stat and ls for the same path.
-        if not _has_service(trace, scope.service):
-            raise enoent(virtual)
-        return json_bytes(trace)
-
-    raise enoent(virtual)
+read = make_read(detect_scope, {
+    "operations": _read_operations,
+    "trace": _read_trace,
+})

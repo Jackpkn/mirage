@@ -12,7 +12,7 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from mirage.core.langfuse.scope import detect_scope
+from mirage.core.langfuse.scope import SEARCH_KINDS, detect_scope
 from mirage.types import PathSpec
 from mirage.utils.key_prefix import mount_key
 
@@ -35,74 +35,66 @@ def _spec(path: str) -> PathSpec:
 
 
 def test_root_path():
-    scope = detect_scope(_spec("/"))
-    assert scope.level == "root"
+    assert detect_scope(_spec("/")).kind == "root"
 
 
 def test_traces_dir():
-    scope = detect_scope(_spec("/traces"))
-    assert scope.level == "traces"
-    assert scope.resource_type == "traces"
+    assert detect_scope(_spec("/traces")).kind == "traces"
 
 
 def test_traces_file():
-    scope = detect_scope(_spec("/traces/abc.json"))
-    assert scope.level == "file"
-    assert scope.resource_type == "traces"
-    assert scope.resource_id == "abc"
+    match = detect_scope(_spec("/traces/abc.json"))
+    assert match.kind == "trace"
+    assert match.captures == {"trace_id": "abc"}
 
 
 def test_sessions_dir():
-    scope = detect_scope(_spec("/sessions"))
-    assert scope.level == "sessions"
-    assert scope.resource_type == "sessions"
+    assert detect_scope(_spec("/sessions")).kind == "sessions"
 
 
 def test_sessions_id():
-    scope = detect_scope(_spec("/sessions/sid1"))
-    assert scope.level == "sessions"
-    assert scope.resource_type == "sessions"
-    assert scope.resource_id == "sid1"
+    match = detect_scope(_spec("/sessions/sid1"))
+    assert match.kind == "session"
+    assert match.captures == {"session_id": "sid1"}
 
 
 def test_sessions_trace_file():
-    scope = detect_scope(_spec("/sessions/sid1/tid1.json"))
-    assert scope.level == "file"
-    assert scope.resource_type == "sessions"
-    assert scope.resource_id == "sid1"
+    match = detect_scope(_spec("/sessions/sid1/tid1.json"))
+    assert match.kind == "session_trace"
+    assert match.captures == {"session_id": "sid1", "trace_id": "tid1"}
 
 
 def test_prompts_dir():
-    scope = detect_scope(_spec("/prompts"))
-    assert scope.level == "prompts"
-    assert scope.resource_type == "prompts"
+    assert detect_scope(_spec("/prompts")).kind == "prompts"
 
 
 def test_prompts_name():
-    scope = detect_scope(_spec("/prompts/summarize"))
-    assert scope.level == "prompts"
-    assert scope.resource_type == "prompts"
-    assert scope.resource_id == "summarize"
+    match = detect_scope(_spec("/prompts/summarize"))
+    assert match.kind == "prompt"
+    assert match.captures == {"prompt_name": "summarize"}
 
 
 def test_prompts_version_file():
-    scope = detect_scope(_spec("/prompts/summarize/1.json"))
-    assert scope.level == "file"
-    assert scope.resource_type == "prompts"
-    assert scope.resource_id == "summarize"
+    match = detect_scope(_spec("/prompts/summarize/1.json"))
+    assert match.kind == "prompt_version"
+    assert match.captures == {"prompt_name": "summarize", "version": "1"}
+
+
+def test_prompts_version_must_be_an_integer():
+    # int("abc") used to crash the read path; a non-numeric version now
+    # fails the route match and reads as ENOENT, matching typescript.
+    assert detect_scope(
+        _spec("/prompts/summarize/abc.json")).kind == ("invalid")
 
 
 def test_datasets_dir():
-    scope = detect_scope(_spec("/datasets"))
-    assert scope.level == "datasets"
-    assert scope.resource_type == "datasets"
+    assert detect_scope(_spec("/datasets")).kind == "datasets"
 
 
 def test_datasets_name():
-    scope = detect_scope(_spec("/datasets/qa-eval"))
-    assert scope.level == "datasets"
-    assert scope.resource_type == "datasets"
-    assert scope.resource_id == "qa-eval"
+    match = detect_scope(_spec("/datasets/qa-eval"))
+    assert match.kind == "dataset"
+    assert match.captures == {"dataset_name": "qa-eval"}
 
 
 def test_glob_scope_root():
@@ -113,8 +105,7 @@ def test_glob_scope_root():
         pattern=None,
         resolved=False,
     )
-    scope = detect_scope(gs)
-    assert scope.level == "root"
+    assert detect_scope(gs).kind == "root"
 
 
 def test_glob_scope_traces():
@@ -125,9 +116,7 @@ def test_glob_scope_traces():
         pattern=None,
         resolved=False,
     )
-    scope = detect_scope(gs)
-    assert scope.level == "traces"
-    assert scope.resource_type == "traces"
+    assert detect_scope(gs).kind == "traces"
 
 
 def test_glob_scope_file():
@@ -138,14 +127,22 @@ def test_glob_scope_file():
         pattern="*.json",
         resolved=True,
     )
-    scope = detect_scope(gs)
-    assert scope.level == "file"
-    assert scope.resource_type == "traces"
-    assert scope.resource_id == "abc"
+    match = detect_scope(gs)
+    assert match.kind == "trace"
+    assert match.captures == {"trace_id": "abc"}
 
 
 def test_unrecognized_path_is_not_root():
     # Falling back to "root" made the grep/rg push-down treat any bogus path
     # as "search every trace", answering a missing file with the whole mount.
-    assert detect_scope(_spec("__nf_missing__")).level == "unknown"
-    assert detect_scope(_spec("traces/a/b/c/d")).level == "unknown"
+    assert detect_scope(_spec("__nf_missing__")).kind == "invalid"
+    assert detect_scope(_spec("traces/a/b/c/d")).kind == "invalid"
+    assert "invalid" not in SEARCH_KINDS
+
+
+def test_leaves_fall_through_the_search_pushdown():
+    # A leaf path must reach the generic per-file scan, never a
+    # whole-container search.
+    for path in ("/traces/abc.json", "/datasets/qa/items.jsonl",
+                 "/datasets/qa/runs", "/datasets/qa/runs/r1.jsonl"):
+        assert detect_scope(_spec(path)).kind not in SEARCH_KINDS

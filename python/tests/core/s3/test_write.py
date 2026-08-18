@@ -16,6 +16,7 @@ import asyncio
 
 from mirage.accessor.s3 import S3Accessor, S3Config
 from mirage.cache.context import push_cache_manager
+from mirage.core.s3 import driver as s3_driver
 from mirage.core.s3.write import write_bytes
 from mirage.types import PathSpec
 
@@ -59,7 +60,7 @@ class _FakeSession:
 
 async def _write(monkeypatch, mount_path: str) -> tuple[_FakeManager, list]:
     puts: list[tuple[str, bytes]] = []
-    monkeypatch.setitem(write_bytes.__globals__, "async_session",
+    monkeypatch.setattr(s3_driver, "async_session",
                         lambda config: _FakeSession(puts))
     manager = _FakeManager()
     prev = push_cache_manager(manager)

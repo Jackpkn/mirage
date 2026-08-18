@@ -24,14 +24,15 @@ import { resolveGlobOf } from '../generic_bind/index.ts'
 import { LANGFUSE_IO } from './io.ts'
 import { read as langfuseRead } from '../../../core/langfuse/read.ts'
 import { readdir as langfuseReaddir } from '../../../core/langfuse/readdir.ts'
-import { detectScope } from '../../../core/langfuse/scope.ts'
+import { SEARCH_KINDS, detectScope } from '../../../core/langfuse/scope.ts'
 import { stat as langfuseStat } from '../../../core/langfuse/stat.ts'
 import { IOResult } from '../../../io/types.ts'
 import { type FileStat, type PathSpec, ResourceName } from '../../../types.ts'
 import { command, type CommandFnResult, type CommandOpts } from '../../config.ts'
 import { specOf } from '../../spec/builtins.ts'
 import { grepGeneric } from '../generic/grep.ts'
-import { compilePattern, patternArg } from '../grep_helper.ts'
+import { compilePattern, hasSearchShapingFlags, patternArg } from '../grep_helper.ts'
+import { hasUnresolvedGlob } from '../utils/operands.ts'
 import { formatRecords } from '../utils/output.ts'
 import { fileReadProvision } from './_provision.ts'
 import { FlagView } from '../../spec/types.ts'
@@ -43,7 +44,7 @@ function pickString(record: Record<string, unknown>, key: string): string {
   return typeof value === 'string' ? value : ''
 }
 
-function filterTraces(
+export function filterTraces(
   traces: readonly Record<string, unknown>[],
   pattern: RegExp,
 ): CommandFnResult {
@@ -58,7 +59,7 @@ function filterTraces(
   return [formatRecords(lines), new IOResult()]
 }
 
-function filterSessions(
+export function filterSessions(
   sessions: readonly Record<string, unknown>[],
   pattern: RegExp,
 ): CommandFnResult {
@@ -73,7 +74,7 @@ function filterSessions(
   return [formatRecords(lines), new IOResult()]
 }
 
-function filterPrompts(
+export function filterPrompts(
   prompts: readonly Record<string, unknown>[],
   pattern: RegExp,
 ): CommandFnResult {
@@ -91,7 +92,7 @@ function filterPrompts(
   return [formatRecords(lines), new IOResult()]
 }
 
-function filterDatasets(
+export function filterDatasets(
   datasets: readonly Record<string, unknown>[],
   pattern: RegExp,
 ): CommandFnResult {
@@ -123,27 +124,37 @@ async function grepCommand(
   const pattern = patternArg(texts, opts.flags)
   const limit = accessor.config.defaultSearchLimit ?? 50
 
+  // The search push-down answers from the list endpoints (one call instead
+  // of one read per entry), so it greps listing summaries: a pattern that
+  // only occurs in a trace's observation bodies needs a file read to match.
+  // Output/match-shaping flags defer to the generic scan below.
   const first = paths[0]
-  if (first !== undefined && pattern !== null && !pattern.includes('\n')) {
-    const scope = detectScope(first)
+  if (
+    first !== undefined &&
+    !hasUnresolvedGlob(paths) &&
+    pattern !== null &&
+    !pattern.includes('\n') &&
+    !hasSearchShapingFlags(opts.flags)
+  ) {
+    const search = SEARCH_KINDS[detectScope(first).kind]
     const fl = new FlagView(opts.flags, specOf('grep'))
     const ignoreCase = fl.asBool('i')
     const fixedString = fl.asBool('F')
     const wholeWord = fl.asBool('w')
     const pat = compilePattern(pattern, ignoreCase, fixedString, wholeWord)
-    if (scope.level === 'traces' || scope.level === 'root') {
+    if (search === 'traces') {
       const traces = await fetchTraces(accessor.transport, { limit })
       return filterTraces(traces, pat)
     }
-    if (scope.level === 'sessions') {
+    if (search === 'sessions') {
       const sessions = await fetchSessions(accessor.transport, { limit })
       return filterSessions(sessions, pat)
     }
-    if (scope.level === 'prompts') {
+    if (search === 'prompts') {
       const prompts = await fetchPrompts(accessor.transport)
       return filterPrompts(prompts, pat)
     }
-    if (scope.level === 'datasets') {
+    if (search === 'datasets') {
       const datasets = await fetchDatasets(accessor.transport)
       return filterDatasets(datasets, pat)
     }

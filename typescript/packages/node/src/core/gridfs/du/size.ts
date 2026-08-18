@@ -12,18 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import type { PathSpec } from '@struktoai/mirage-core/types'
-import { rstripSlash } from '@struktoai/mirage-core/utils/slash'
-import type { GridFSAccessor } from '../../../accessor/gridfs.ts'
-import { gridfsKey, iterLatest, rawPathOf } from '../client.ts'
-import { duQuery } from './walk.ts'
+import { makeDuSize } from '@struktoai/mirage-core/core/object_store/du'
+import { DRIVER } from '../driver.ts'
 
-export async function size(accessor: GridFSAccessor, path: PathSpec): Promise<number> {
-  const raw = rawPathOf(path)
-  const stem = rstripSlash(gridfsKey(raw, accessor.config))
-  let total = 0
-  for await (const doc of iterLatest(accessor, duQuery(stem))) {
-    total += doc.length
-  }
-  return total
-}
+export const size = makeDuSize(DRIVER)

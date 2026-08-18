@@ -1,0 +1,95 @@
+{
+  "cases": [
+    {
+      "id": "lf_search_pushdown_grep_records",
+      "seq": 602100,
+      "targets": [
+        "langfuse"
+      ],
+      "command": "grep checkout-flow /lf/traces | cut -d: -f1",
+      "expect": {
+        "exit": 0,
+        "stdout": "traces/trace-alpha.json\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "lf_search_pushdown_rg_records",
+      "seq": 602101,
+      "targets": [
+        "langfuse"
+      ],
+      "command": "rg checkout-flow /lf/traces | cut -d: -f1",
+      "expect": {
+        "exit": 0,
+        "stdout": "traces/trace-alpha.json\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "lf_search_shaping_c_defers_to_generic",
+      "seq": 602102,
+      "targets": [
+        "langfuse"
+      ],
+      "command": "grep -c checkout-flow /lf/traces",
+      "expect": {
+        "exit": 2,
+        "stdout": "",
+        "stderr": "grep: /lf/traces: Is a directory\n"
+      }
+    },
+    {
+      "id": "lf_search_shaping_l_defers_to_generic",
+      "seq": 602103,
+      "targets": [
+        "langfuse"
+      ],
+      "command": "rg -l gpt-4o-mini /lf/traces",
+      "expect": {
+        "exit": 0,
+        "stdout": "/lf/traces/trace-alpha.json\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "lf_search_pushdown_greps_summaries_only",
+      "seq": 602104,
+      "targets": [
+        "langfuse"
+      ],
+      "command": "grep gpt-4o-mini /lf/traces",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "lf_search_shaping_rn_reads_full_traces",
+      "seq": 602105,
+      "targets": [
+        "langfuse"
+      ],
+      "command": "grep -rn gpt-4o-mini /lf/traces | cut -d: -f1 | sort -u",
+      "expect": {
+        "exit": 0,
+        "stdout": "/lf/traces/trace-alpha.json\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "lf_search_pushdown_sessions_by_id",
+      "seq": 602106,
+      "targets": [
+        "langfuse"
+      ],
+      "command": "grep session-one /lf/sessions | cut -d: -f1",
+      "expect": {
+        "exit": 0,
+        "stdout": "sessions/session-one\n",
+        "stderr": ""
+      }
+    }
+  ]
+}
