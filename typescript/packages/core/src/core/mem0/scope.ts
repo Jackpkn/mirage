@@ -12,11 +12,20 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { escapeRegex } from '../client.ts'
+import { FileType } from '../../types.ts'
+import { JSON_NAME } from '../hierarchy/codec.ts'
+import { Capture, Route } from '../hierarchy/route.ts'
+import { makeDetectScope } from '../hierarchy/scope.ts'
 
-export function duQuery(stem: string): Record<string, unknown> {
-  if (stem === '') return {}
-  return {
-    $or: [{ filename: stem }, { filename: { $regex: `^${escapeRegex(stem + '/')}` } }],
-  }
-}
+// The mount is one flat directory of memory files; which memories exist is a
+// function of the configured scope filter, not of the path.
+const ROUTES: readonly Route[] = [
+  new Route({
+    kind: 'memory',
+    segments: [new Capture('memory_id', JSON_NAME)],
+    leaf: true,
+    filetype: FileType.JSON,
+  }),
+]
+
+export const detectScope = makeDetectScope(ROUTES)

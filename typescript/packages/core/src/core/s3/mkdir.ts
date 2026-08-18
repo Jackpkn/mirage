@@ -12,25 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { invalidateAfterWrite, invalidateAncestors } from '../../cache/context.ts'
-import type { PathSpec } from '../../types.ts'
-import type { S3Accessor } from '../../accessor/s3.ts'
-import { loadS3Module, rawPathOf, s3Prefix, withClient } from './client.ts'
+import { makeMkdir } from '../object_store/write.ts'
+import { DRIVER } from './driver.ts'
 
-export async function mkdir(accessor: S3Accessor, path: PathSpec, parents = false): Promise<void> {
-  const { PutObjectCommand } = await loadS3Module(accessor.config)
-  const raw = rawPathOf(path)
-  const pfx = s3Prefix(raw, accessor.config)
-  if (pfx === '') return
-  await withClient(accessor.config, async (client) => {
-    await client.send(
-      new PutObjectCommand({
-        Bucket: accessor.config.bucket,
-        Key: pfx,
-        Body: new Uint8Array(),
-      }),
-    )
-  })
-  await invalidateAfterWrite(path)
-  if (parents) await invalidateAncestors(path)
-}
+export const mkdir = makeMkdir(DRIVER)

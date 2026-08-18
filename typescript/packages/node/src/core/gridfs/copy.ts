@@ -12,29 +12,8 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { invalidateAfterWrite } from '@struktoai/mirage-core/cache/context'
-import type { PathSpec } from '@struktoai/mirage-core/types'
-import { enoent } from '@struktoai/mirage-core/utils/errors'
-import type { GridFSAccessor } from '../../accessor/gridfs.ts'
-import { bucket, gridfsKey, latestFile, rawPathOf } from './client.ts'
+import { makeCopy } from '@struktoai/mirage-core/core/object_store/copy'
+import { DRIVER } from './driver.ts'
+import { exists } from './exists.ts'
 
-export async function copy(accessor: GridFSAccessor, src: PathSpec, dst: PathSpec): Promise<void> {
-  // Copies the latest revision only (mirrors S3 CopyObject), streamed
-  // chunk-by-chunk so large files never buffer fully in memory.
-  const srcKey = gridfsKey(rawPathOf(src), accessor.config)
-  const dstKey = gridfsKey(rawPathOf(dst), accessor.config)
-  const doc = await latestFile(accessor, srcKey)
-  if (doc === null) throw enoent(src)
-  const b = await bucket(accessor)
-  const readable = b.openDownloadStream(doc._id)
-  const upload = b.openUploadStream(dstKey)
-  await new Promise<void>((resolve, reject) => {
-    upload.on('error', reject)
-    readable.on('error', reject)
-    upload.on('finish', () => {
-      resolve()
-    })
-    readable.pipe(upload)
-  })
-  await invalidateAfterWrite(dst)
-}
+export const copy = makeCopy(DRIVER, exists)

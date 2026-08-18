@@ -12,21 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { invalidateAfterUnlink } from '../../cache/context.ts'
-import type { PathSpec } from '../../types.ts'
-import type { S3Accessor } from '../../accessor/s3.ts'
-import { loadS3Module, rawPathOf, s3Key, withClient } from './client.ts'
+import { makeUnlink } from '../object_store/remove.ts'
+import { DRIVER } from './driver.ts'
 
-export async function unlink(accessor: S3Accessor, path: PathSpec): Promise<void> {
-  const { DeleteObjectCommand } = await loadS3Module(accessor.config)
-  const raw = rawPathOf(path)
-  await withClient(accessor.config, async (client) => {
-    await client.send(
-      new DeleteObjectCommand({
-        Bucket: accessor.config.bucket,
-        Key: s3Key(raw, accessor.config),
-      }),
-    )
-  })
-  await invalidateAfterUnlink(path)
-}
+export const unlink = makeUnlink(DRIVER)

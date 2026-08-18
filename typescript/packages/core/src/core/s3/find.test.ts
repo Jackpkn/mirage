@@ -17,7 +17,7 @@ import type * as ClientModule from './client.ts'
 
 vi.mock('./client.ts', async () => {
   const actual = await vi.importActual<typeof ClientModule>('./client.ts')
-  return { ...actual, loadS3Module: vi.fn(), withClient: vi.fn() }
+  return { ...actual, loadS3Module: vi.fn(), createS3Client: vi.fn() }
 })
 
 import type { FindOptions } from '../../resource/base.ts'
@@ -35,16 +35,13 @@ function mockListing(keys: [string, number][]): void {
   vi.mocked(clientMod.loadS3Module).mockResolvedValue({
     ListObjectsV2Command: FakeCommand,
   } as never)
-  vi.mocked(clientMod.withClient).mockImplementation(async (_config, fn) => {
-    const client = {
-      send: () =>
-        Promise.resolve({
-          Contents: keys.map(([key, size]) => ({ Key: key, Size: size })),
-          IsTruncated: false,
-        }),
-    }
-    return (await fn(client as never)) as never
-  })
+  vi.mocked(clientMod.createS3Client).mockResolvedValue({
+    send: () =>
+      Promise.resolve({
+        Contents: keys.map(([key, size]) => ({ Key: key, Size: size })),
+        IsTruncated: false,
+      }),
+  } as never)
 }
 
 function spec(resourcePath: string): PathSpec {
@@ -71,7 +68,7 @@ function runFind(
 describe('s3 core find', () => {
   beforeEach(() => {
     vi.mocked(clientMod.loadS3Module).mockReset()
-    vi.mocked(clientMod.withClient).mockReset()
+    vi.mocked(clientMod.createS3Client).mockReset()
   })
 
   it('synthesizes implicit dirs from key prefixes', async () => {

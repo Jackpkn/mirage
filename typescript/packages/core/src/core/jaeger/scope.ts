@@ -12,55 +12,38 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { PathSpec } from '../../types.ts'
-import { stripSlash } from '../../utils/slash.ts'
+import { FileType } from '../../types.ts'
+import { Codec } from '../hierarchy/codec.ts'
+import { Capture, Route } from '../hierarchy/route.ts'
+import { makeDetectScope } from '../hierarchy/scope.ts'
+import { isTraceId } from './client.ts'
 
-export const JAEGER_OPERATIONS_FILE = 'operations.json'
-export const JAEGER_TOP_LEVEL_DIRS = ['services'] as const
+export const OPERATIONS_FILE = 'operations.json'
+export const TOP_LEVEL_DIRS = ['services']
 
-export interface JaegerScope {
-  level: string
-  service: string | null
-  traceId: string | null
-  resourcePath: string
-}
+// A malformed id cannot name an existing trace, so it fails the route match
+// outright and reads as ENOENT rather than the API's 400 "invalid length for
+// TraceID".
+const TRACE_FILE = new Codec({ suffix: '.json', validate: isTraceId })
 
-function scope(
-  level: string,
-  resourcePath: string,
-  service: string | null = null,
-  traceId: string | null = null,
-): JaegerScope {
-  return { level, service, traceId, resourcePath }
-}
+// The tree is service-scoped because Jaeger's search API requires a service:
+// there is no endpoint that lists every trace.
+const ROUTES: readonly Route[] = [
+  new Route({ kind: 'services', segments: ['services'], probed: false }),
+  new Route({ kind: 'service', segments: ['services', new Capture('service')] }),
+  new Route({
+    kind: 'operations',
+    segments: ['services', new Capture('service'), OPERATIONS_FILE],
+    leaf: true,
+    filetype: FileType.JSON,
+  }),
+  new Route({ kind: 'traces', segments: ['services', new Capture('service'), 'traces'] }),
+  new Route({
+    kind: 'trace',
+    segments: ['services', new Capture('service'), 'traces', new Capture('trace_id', TRACE_FILE)],
+    leaf: true,
+    filetype: FileType.JSON,
+  }),
+]
 
-/**
- * Classify a resource-relative path into a jaeger tree position.
- *
- * The tree is service-scoped because Jaeger's search API requires a service:
- * there is no endpoint that lists every trace.
- */
-export function detectScope(path: PathSpec | string): JaegerScope {
-  const raw = path instanceof PathSpec ? path.mountPath : path
-  const key = stripSlash(raw)
-
-  if (key === '') return scope('root', raw)
-
-  const parts = key.split('/')
-  if (parts[0] !== 'services') return scope('unknown', raw)
-  if (parts.length === 1) return scope('services', raw)
-
-  const service = parts[1] ?? ''
-
-  if (parts.length === 2) return scope('service', raw, service)
-  if (parts.length === 3 && parts[2] === JAEGER_OPERATIONS_FILE) {
-    return scope('operations', raw, service)
-  }
-  if (parts.length === 3 && parts[2] === 'traces') return scope('traces', raw, service)
-  if (parts.length === 4 && parts[2] === 'traces' && (parts[3] ?? '').endsWith('.json')) {
-    const name = parts[3] ?? ''
-    return scope('trace', raw, service, name.slice(0, -'.json'.length))
-  }
-
-  return scope('unknown', raw)
-}
+export const detectScope = makeDetectScope(ROUTES)

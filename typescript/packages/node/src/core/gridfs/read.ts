@@ -59,7 +59,7 @@ function clampWindow(
   return start >= end ? null : { start, end }
 }
 
-export async function downloadBytes(
+async function downloadBytes(
   accessor: GridFSAccessor,
   path: PathSpec,
   fileId: ObjectId,

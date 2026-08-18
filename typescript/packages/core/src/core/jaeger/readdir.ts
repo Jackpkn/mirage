@@ -14,59 +14,70 @@
 
 import type { JaegerAccessor } from '../../accessor/jaeger.ts'
 import { IndexEntry } from '../../cache/index/config.ts'
-import type { IndexCacheStore } from '../../cache/index/store.ts'
-import type { PathSpec } from '../../types.ts'
 import { enoent } from '../../utils/errors.ts'
-import { mountPrefixOf } from '../../utils/key_prefix.ts'
-import { stripSlash } from '../../utils/slash.ts'
-import { fetchOperations, fetchServices, fetchTraces, isTraceId } from './client.ts'
+import { makeReaddir } from '../hierarchy/readdir.ts'
+import type { RouteMatch } from '../hierarchy/scope.ts'
 import { jsonBytes } from '../render/json.ts'
-import { JAEGER_OPERATIONS_FILE, JAEGER_TOP_LEVEL_DIRS, detectScope } from './scope.ts'
-
-function makeVirtualKey(prefix: string, key: string): string {
-  if (key === '') return prefix !== '' ? prefix : '/'
-  return `${prefix}/${key}`
-}
+import { fetchOperations, fetchServices, fetchTraces, isTraceId } from './client.ts'
+import { OPERATIONS_FILE, TOP_LEVEL_DIRS, detectScope } from './scope.ts'
 
 /**
  * Throw ENOENT unless the service is known to Jaeger.
  *
- * The operations endpoint answers 200 with an empty list for a service that was
- * never seen, so an unknown service would otherwise look like an empty
+ * The operations endpoint answers 200 with an empty list for a service that
+ * was never seen, so an unknown service would otherwise look like an empty
  * directory instead of a missing one.
  */
 export async function assertService(
   accessor: JaegerAccessor,
   service: string,
-  path: PathSpec,
+  virtual: string,
 ): Promise<void> {
   const services = await fetchServices(accessor.transport)
-  if (!services.includes(service)) throw enoent(path)
+  if (!services.includes(service)) throw enoent(virtual)
 }
 
-async function readdirService(
+export async function serviceGuard(
   accessor: JaegerAccessor,
-  service: string,
-  virtualKey: string,
-  index: IndexCacheStore | undefined,
-  prefix: string,
-): Promise<string[]> {
-  if (index !== undefined) {
-    const listing = await index.listDir(virtualKey)
-    if (listing.entries !== undefined && listing.entries !== null) return listing.entries
-  }
+  match: RouteMatch,
+  virtual: string,
+): Promise<void> {
+  await assertService(accessor, match.captures.service ?? '', virtual)
+}
+
+async function listServices(
+  accessor: JaegerAccessor,
+  _match: RouteMatch,
+): Promise<[string, IndexEntry][]> {
+  const services = await fetchServices(accessor.transport)
+  return services.map((service): [string, IndexEntry] => [
+    service,
+    new IndexEntry({
+      id: service,
+      name: service,
+      resourceType: 'jaeger/service',
+      vfsName: service,
+    }),
+  ])
+}
+
+async function listService(
+  accessor: JaegerAccessor,
+  match: RouteMatch,
+): Promise<[string, IndexEntry][]> {
+  const service = match.captures.service ?? ''
   // One operations call per service directory actually entered: nothing in
   // the services listing carries operation names, so operations.json can only
   // be sized here, and only for services the caller opens.
   const operations = await fetchOperations(accessor.transport, service)
-  const entries: [string, IndexEntry][] = [
+  return [
     [
-      JAEGER_OPERATIONS_FILE,
+      OPERATIONS_FILE,
       new IndexEntry({
         id: `${service}/operations`,
-        name: JAEGER_OPERATIONS_FILE,
+        name: OPERATIONS_FILE,
         resourceType: 'jaeger/operations',
-        vfsName: JAEGER_OPERATIONS_FILE,
+        vfsName: OPERATIONS_FILE,
         size: jsonBytes(operations).byteLength,
       }),
     ],
@@ -80,50 +91,13 @@ async function readdirService(
       }),
     ],
   ]
-  if (index !== undefined) await index.setDir(virtualKey, entries)
-  return entries.map(([name]) => `${prefix}/services/${service}/${name}`)
 }
 
-async function readdirServices(
+async function listTraces(
   accessor: JaegerAccessor,
-  virtualKey: string,
-  index: IndexCacheStore | undefined,
-  prefix: string,
-): Promise<string[]> {
-  if (index !== undefined) {
-    const listing = await index.listDir(virtualKey)
-    if (listing.entries !== undefined && listing.entries !== null) return listing.entries
-  }
-  const services = await fetchServices(accessor.transport)
-  const entries: [string, IndexEntry][] = []
-  const names: string[] = []
-  for (const service of services) {
-    entries.push([
-      service,
-      new IndexEntry({
-        id: service,
-        name: service,
-        resourceType: 'jaeger/service',
-        vfsName: service,
-      }),
-    ])
-    names.push(`${prefix}/services/${service}`)
-  }
-  if (index !== undefined) await index.setDir(virtualKey, entries)
-  return names
-}
-
-async function readdirTraces(
-  accessor: JaegerAccessor,
-  service: string,
-  virtualKey: string,
-  index: IndexCacheStore | undefined,
-  prefix: string,
-): Promise<string[]> {
-  if (index !== undefined) {
-    const listing = await index.listDir(virtualKey)
-    if (listing.entries !== undefined && listing.entries !== null) return listing.entries
-  }
+  match: RouteMatch,
+): Promise<[string, IndexEntry][]> {
+  const service = match.captures.service ?? ''
   const opts: { limit: number; fromTimestamp?: string; toTimestamp?: string } = {
     limit: accessor.config.defaultTraceLimit ?? 100,
   }
@@ -133,7 +107,6 @@ async function readdirTraces(
   if (to !== undefined && to !== '') opts.toTimestamp = to
   const traces = await fetchTraces(accessor.transport, service, opts)
   const entries: [string, IndexEntry][] = []
-  const names: string[] = []
   for (const trace of traces) {
     const traceId = typeof trace.traceID === 'string' ? trace.traceID : ''
     if (!isTraceId(traceId)) continue
@@ -151,43 +124,19 @@ async function readdirTraces(
         size: jsonBytes(trace).byteLength,
       }),
     ])
-    names.push(`${prefix}/services/${service}/traces/${filename}`)
   }
-  if (index !== undefined) await index.setDir(virtualKey, entries)
-  return names
+  return entries
 }
 
-export async function readdir(
-  accessor: JaegerAccessor,
-  pathSpec: PathSpec,
-  index?: IndexCacheStore,
-): Promise<string[]> {
-  const prefix = mountPrefixOf(pathSpec.virtual, pathSpec.resourcePath)
-  const path = (pathSpec.pattern !== null ? pathSpec.dir : pathSpec).mountPath
-  const key = stripSlash(path)
-
-  if (key !== '' && key.split('/').some((p) => p.startsWith('.'))) throw enoent(pathSpec)
-
-  const virtualKey = makeVirtualKey(prefix, key)
-  const scope = detectScope(path)
-
-  if (scope.level === 'root') return JAEGER_TOP_LEVEL_DIRS.map((d) => `${prefix}/${d}`)
-
-  if (scope.level === 'services') {
-    return readdirServices(accessor, virtualKey, index, prefix)
-  }
-
-  if (scope.level === 'service') {
-    const service = scope.service ?? ''
-    await assertService(accessor, service, pathSpec)
-    return readdirService(accessor, service, virtualKey, index, prefix)
-  }
-
-  if (scope.level === 'traces') {
-    const service = scope.service ?? ''
-    await assertService(accessor, service, pathSpec)
-    return readdirTraces(accessor, service, virtualKey, index, prefix)
-  }
-
-  throw enoent(pathSpec)
-}
+export const readdir = makeReaddir<JaegerAccessor>(detectScope, {
+  listers: {
+    services: listServices,
+    service: listService,
+    traces: listTraces,
+  },
+  staticRoot: TOP_LEVEL_DIRS,
+  guards: {
+    service: serviceGuard,
+    traces: serviceGuard,
+  },
+})

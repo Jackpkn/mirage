@@ -17,27 +17,21 @@ import {
   resolveGlobOf,
   withDefaultProvisions,
 } from '@struktoai/mirage-core/commands/builtin/generic_bind/index'
+import {
+  makeObjectStoreCommands,
+  OBJECT_STORE_OVERRIDES,
+} from '@struktoai/mirage-core/commands/builtin/object_store/index'
 import type { RegisteredCommand } from '@struktoai/mirage-core/commands/config'
 import { ResourceName } from '@struktoai/mirage-core/types'
 import type { GridFSAccessor } from '../../../accessor/gridfs.ts'
 import { GRIDFS_IO } from './io.ts'
-import { GRIDFS_MKDIR } from './mkdir.ts'
-import { GRIDFS_RM } from './rm.ts'
-import { GRIDFS_STAT } from './stat.ts'
-import { GRIDFS_TEE } from './tee.ts'
-import { GRIDFS_TOUCH } from './touch.ts'
-
-// gridfs-specific behaviours kept as overrides: no real directories
-// (mkdir -p, rm not-empty), write-tracking (touch/tee), du_multi
-// aggregation, and the index-threaded, missing-operand stat.
-const GRIDFS_OVERRIDES = new Set(['stat', 'rm', 'mkdir', 'tee', 'touch'])
 
 export const GRIDFS_COMMANDS: readonly RegisteredCommand[] = [
   ...makeGenericCommands<GridFSAccessor>(ResourceName.GRIDFS, GRIDFS_IO, {
-    overrides: GRIDFS_OVERRIDES,
+    overrides: OBJECT_STORE_OVERRIDES,
   }),
   ...withDefaultProvisions(
-    [...GRIDFS_STAT, ...GRIDFS_RM, ...GRIDFS_MKDIR, ...GRIDFS_TEE, ...GRIDFS_TOUCH],
+    makeObjectStoreCommands(ResourceName.GRIDFS, GRIDFS_IO),
     GRIDFS_IO.stat,
     resolveGlobOf(GRIDFS_IO),
     GRIDFS_IO.readdir,

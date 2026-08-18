@@ -12,18 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { invalidateAfterWrite } from '@struktoai/mirage-core/cache/context'
-import { record } from '@struktoai/mirage-core/observe/context'
-import { ResourceName } from '@struktoai/mirage-core/types'
-import type { PathSpec } from '@struktoai/mirage-core/types'
-import type { GridFSAccessor } from '../../accessor/gridfs.ts'
-import { gridfsKey, rawPathOf } from './client.ts'
-import { uploadBytes } from './write.ts'
+import { makeCreate } from '@struktoai/mirage-core/core/object_store/write'
+import { DRIVER } from './driver.ts'
 
-export async function create(accessor: GridFSAccessor, path: PathSpec): Promise<void> {
-  const raw = rawPathOf(path)
-  const startMs = performance.now()
-  await uploadBytes(accessor, gridfsKey(raw, accessor.config), new Uint8Array(0))
-  record('create', path.virtual, ResourceName.GRIDFS, 0, startMs)
-  await invalidateAfterWrite(path)
-}
+export const create = makeCreate(DRIVER)

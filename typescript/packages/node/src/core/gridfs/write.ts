@@ -12,43 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { invalidateAfterWrite, invalidateAncestors } from '@struktoai/mirage-core/cache/context'
-import { record } from '@struktoai/mirage-core/observe/context'
-import { ResourceName } from '@struktoai/mirage-core/types'
-import type { PathSpec } from '@struktoai/mirage-core/types'
-import type { GridFSAccessor } from '../../accessor/gridfs.ts'
-import { bucket, gridfsKey, rawPathOf } from './client.ts'
+import { makeWriteBytes } from '@struktoai/mirage-core/core/object_store/write'
+import { DRIVER } from './driver.ts'
 
-export async function uploadBytes(
-  accessor: GridFSAccessor,
-  key: string,
-  data: Uint8Array,
-): Promise<void> {
-  const b = await bucket(accessor)
-  const upload = b.openUploadStream(key)
-  await new Promise<void>((resolve, reject) => {
-    upload.on('error', reject)
-    upload.on('finish', () => {
-      resolve()
-    })
-    upload.end(data)
-  })
-}
-
-export async function write(
-  accessor: GridFSAccessor,
-  path: PathSpec,
-  data: Uint8Array,
-): Promise<void> {
-  // Uploads a new revision; older revisions stay in fs.files, so reads
-  // pinned to an old revision _id keep working (GridFS-native versioning).
-  const raw = rawPathOf(path)
-  const key = gridfsKey(raw, accessor.config)
-  const startMs = performance.now()
-  await uploadBytes(accessor, key, data)
-  record('write', path.virtual, ResourceName.GRIDFS, data.byteLength, startMs)
-  await invalidateAfterWrite(path)
-  // An upload materializes every missing level of the key at once, so the
-  // listings above the immediate parent gained entries too.
-  await invalidateAncestors(path)
-}
+export const write = makeWriteBytes(DRIVER)

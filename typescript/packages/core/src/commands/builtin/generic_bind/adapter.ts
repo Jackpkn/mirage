@@ -425,6 +425,18 @@ export function overlaidStat(
   return async (p) => overlay(p.virtual, await stat(p))
 }
 
+// Return an optional backend op, throwing if the backend omits it.
+// Mirrors Python's `CommandIO.require`: factories wire write-side ops
+// (write/mkdir/unlink/...) that are absent on read-only backends into
+// commands that require them, and this surfaces the missing capability
+// as a clear error instead of an `undefined is not a function` crash.
+export function requireOp<T>(op: T | undefined, name: string): T {
+  if (op === undefined) {
+    throw new Error(`operation '${name}' is not supported on this backend`)
+  }
+  return op
+}
+
 async function* streamRefusingDirs<A extends Accessor>(
   ops: CommandIO<A>,
   accessor: A,

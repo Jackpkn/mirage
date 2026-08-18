@@ -12,98 +12,77 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { PathSpec } from '../../types.ts'
-import { stripSlash } from '../../utils/slash.ts'
+import { FileType } from '../../types.ts'
+import { INT_JSON, JSON_NAME, JSONL_NAME } from '../hierarchy/codec.ts'
+import { Capture, Route } from '../hierarchy/route.ts'
+import { makeDetectScope } from '../hierarchy/scope.ts'
 
-export interface LangfuseScope {
-  level: string
-  resourceType: string | null
-  resourceId: string | null
-  subResource: string | null
-  resourcePath: string
-}
+export const TOP_LEVEL_DIRS = ['traces', 'sessions', 'prompts', 'datasets']
 
-const TOP_LEVEL = new Set(['traces', 'sessions', 'prompts', 'datasets'])
+// One description of the tree: readdir, stat, read AND the grep/rg search
+// push-down all classify through it, so the file surface and the search
+// surface cannot disagree about what a path means (they used to be two
+// hand-maintained dispatch ladders).
+export const ROUTES: readonly Route[] = [
+  new Route({ kind: 'traces', segments: ['traces'], probed: false }),
+  new Route({
+    kind: 'trace',
+    segments: ['traces', new Capture('trace_id', JSON_NAME)],
+    leaf: true,
+    filetype: FileType.JSON,
+  }),
+  new Route({ kind: 'sessions', segments: ['sessions'], probed: false }),
+  new Route({ kind: 'session', segments: ['sessions', new Capture('session_id')] }),
+  new Route({
+    kind: 'session_trace',
+    segments: ['sessions', new Capture('session_id'), new Capture('trace_id', JSON_NAME)],
+    leaf: true,
+    filetype: FileType.JSON,
+  }),
+  new Route({ kind: 'prompts', segments: ['prompts'], probed: false }),
+  new Route({ kind: 'prompt', segments: ['prompts', new Capture('prompt_name')] }),
+  // A version that is not a plain ASCII integer cannot name a prompt version,
+  // so it fails the route match and reads as ENOENT instead of an int() crash
+  // (python) or a digit-prefix guess (typescript).
+  new Route({
+    kind: 'prompt_version',
+    segments: ['prompts', new Capture('prompt_name'), new Capture('version', INT_JSON)],
+    leaf: true,
+    filetype: FileType.JSON,
+  }),
+  new Route({ kind: 'datasets', segments: ['datasets'], probed: false }),
+  new Route({ kind: 'dataset', segments: ['datasets', new Capture('dataset_name')] }),
+  new Route({
+    kind: 'dataset_items',
+    segments: ['datasets', new Capture('dataset_name'), 'items.jsonl'],
+    leaf: true,
+    filetype: FileType.TEXT,
+  }),
+  new Route({ kind: 'runs', segments: ['datasets', new Capture('dataset_name'), 'runs'] }),
+  new Route({
+    kind: 'dataset_run',
+    segments: [
+      'datasets',
+      new Capture('dataset_name'),
+      'runs',
+      new Capture('run_name', JSONL_NAME),
+    ],
+    leaf: true,
+    filetype: FileType.TEXT,
+  }),
+]
 
-function stripIdSuffix(name: string): string {
-  const dot = name.indexOf('.')
-  return dot === -1 ? name : name.slice(0, dot)
-}
+export const detectScope = makeDetectScope(ROUTES)
 
-export function detectScope(path: PathSpec | string): LangfuseScope {
-  const raw = path instanceof PathSpec ? path.mountPath : path
-  const key = stripSlash(raw)
-
-  if (key === '') {
-    return {
-      level: 'root',
-      resourceType: null,
-      resourceId: null,
-      subResource: null,
-      resourcePath: '/',
-    }
-  }
-
-  const parts = key.split('/')
-  const head = parts[0] ?? ''
-
-  if (TOP_LEVEL.has(head)) {
-    if (parts.length === 1) {
-      return {
-        level: head,
-        resourceType: head,
-        resourceId: null,
-        subResource: null,
-        resourcePath: raw,
-      }
-    }
-    if (parts.length === 2) {
-      const second = parts[1] ?? ''
-      if (second.endsWith('.json') || second.endsWith('.jsonl')) {
-        return {
-          level: 'file',
-          resourceType: head,
-          resourceId: stripIdSuffix(second),
-          subResource: null,
-          resourcePath: raw,
-        }
-      }
-      return {
-        level: head,
-        resourceType: head,
-        resourceId: second,
-        subResource: null,
-        resourcePath: raw,
-      }
-    }
-    if (parts.length === 3) {
-      return {
-        level: 'file',
-        resourceType: head,
-        resourceId: parts[1] ?? '',
-        subResource: parts[2] ?? '',
-        resourcePath: raw,
-      }
-    }
-    if (parts.length === 4) {
-      return {
-        level: 'file',
-        resourceType: head,
-        resourceId: parts[1] ?? '',
-        subResource: parts[3] ?? '',
-        resourcePath: raw,
-      }
-    }
-  }
-
-  // An unrecognized path is not the mount root: falling back to 'root' made the
-  // grep/rg search push-down treat any bogus path as "search every trace",
-  // answering a missing file with the whole mount and exit 0.
-  return {
-    level: 'unknown',
-    resourceType: null,
-    resourceId: null,
-    subResource: null,
-    resourcePath: raw,
-  }
+// The kinds the grep/rg push-down may answer with a whole-container search;
+// leaves and unrecognized paths fall through to the generic per-file scan.
+export const SEARCH_KINDS: Readonly<Record<string, string>> = {
+  root: 'traces',
+  traces: 'traces',
+  sessions: 'sessions',
+  session: 'sessions',
+  prompts: 'prompts',
+  prompt: 'prompts',
+  datasets: 'datasets',
+  dataset: 'datasets',
 }

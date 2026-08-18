@@ -15,24 +15,18 @@
 import type { S3Accessor } from '../../../accessor/s3.ts'
 import { ResourceName } from '../../../types.ts'
 import type { RegisteredCommand } from '../../config.ts'
-import { makeGenericCommands } from '../generic_bind/index.ts'
-import { S3_MKDIR } from './mkdir.ts'
-import { S3_RM } from './rm.ts'
-import { S3_STAT } from './stat.ts'
-import { S3_TEE } from './tee.ts'
-import { S3_TOUCH } from './touch.ts'
-import { S3_IO } from './io.ts'
-import { withDefaultProvisions } from '../generic_bind/provision.ts'
 import { resolveGlobOf } from '../generic_bind/adapter.ts'
-
-const S3_OVERRIDES = new Set(['stat', 'rm', 'mkdir', 'tee', 'touch'])
+import { makeGenericCommands } from '../generic_bind/index.ts'
+import { withDefaultProvisions } from '../generic_bind/provision.ts'
+import { makeObjectStoreCommands, OBJECT_STORE_OVERRIDES } from '../object_store/index.ts'
+import { S3_IO } from './io.ts'
 
 export const S3_COMMANDS: readonly RegisteredCommand[] = [
   ...makeGenericCommands<S3Accessor>(ResourceName.S3, S3_IO, {
-    overrides: S3_OVERRIDES,
+    overrides: OBJECT_STORE_OVERRIDES,
   }),
   ...withDefaultProvisions(
-    [...S3_STAT, ...S3_RM, ...S3_MKDIR, ...S3_TEE, ...S3_TOUCH],
+    makeObjectStoreCommands(ResourceName.S3, S3_IO),
     S3_IO.stat,
     resolveGlobOf(S3_IO),
     S3_IO.readdir,

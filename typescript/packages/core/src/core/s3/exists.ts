@@ -12,16 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import type { PathSpec } from '../../types.ts'
-import type { S3Accessor } from '../../accessor/s3.ts'
+import { makeExists } from '../object_store/exists.ts'
 import { stat } from './stat.ts'
 
-export async function exists(accessor: S3Accessor, path: PathSpec): Promise<boolean> {
-  try {
-    await stat(accessor, path)
-    return true
-  } catch (err) {
-    if ((err as { code?: string } | null)?.code === 'ENOENT') return false
-    throw err
-  }
-}
+export const exists = makeExists(stat)

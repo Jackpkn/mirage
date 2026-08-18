@@ -12,28 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import type { PathSpec } from '@struktoai/mirage-core/types'
-import { rstripSlash } from '@struktoai/mirage-core/utils/slash'
-import type { GridFSAccessor } from '../../../accessor/gridfs.ts'
-import { gridfsKey, iterLatest, rawPathOf, stripKeyPrefix } from '../client.ts'
-import { duQuery } from './walk.ts'
+import { makeDuEntries } from '@struktoai/mirage-core/core/object_store/du'
+import { DRIVER } from '../driver.ts'
 
-/**
- * Return `[path, size]` pairs for every file under the prefix plus the
- * total. Mirrors Python's `du.entries`.
- */
-export async function entries(
-  accessor: GridFSAccessor,
-  path: PathSpec,
-): Promise<[[string, number][], number]> {
-  const raw = rawPathOf(path)
-  const stem = rstripSlash(gridfsKey(raw, accessor.config))
-  const entries: [string, number][] = []
-  let total = 0
-  for await (const doc of iterLatest(accessor, duQuery(stem))) {
-    const entry = '/' + stripKeyPrefix(doc.filename, accessor.config)
-    entries.push([entry, doc.length])
-    total += doc.length
-  }
-  return [entries, total]
-}
+export const entries = makeDuEntries(DRIVER)

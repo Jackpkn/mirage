@@ -26,22 +26,24 @@ describe('jaeger detectScope', () => {
     ['services/checkout/operations.json', 'operations'],
     ['services/checkout/traces', 'traces'],
     [`services/checkout/traces/${TRACE}.json`, 'trace'],
-    ['traces', 'unknown'],
-    ['services/checkout/traces/deep/nested.json', 'unknown'],
-    ['services/checkout/unknown.json', 'unknown'],
-  ])('classifies %s as %s', (path, level) => {
-    expect(detectScope(path).level).toBe(level)
+    ['traces', 'invalid'],
+    ['services/checkout/traces/deep/nested.json', 'invalid'],
+    ['services/checkout/unknown.json', 'invalid'],
+    // A malformed trace id fails the route's codec, so the path never
+    // classifies as a trace at all.
+    ['services/checkout/traces/nothex.json', 'invalid'],
+    ['services/.hidden', 'invalid'],
+  ])('classifies %s as %s', (path, kind) => {
+    expect(detectScope(path).kind).toBe(kind)
   })
 
   it('carries service and trace id', () => {
-    const scope = detectScope(`services/checkout/traces/${TRACE}.json`)
-    expect(scope.service).toBe('checkout')
-    expect(scope.traceId).toBe(TRACE)
+    const match = detectScope(`services/checkout/traces/${TRACE}.json`)
+    expect(match.captures).toEqual({ service: 'checkout', trace_id: TRACE })
   })
 
-  it('leaves trace id null for a traces directory', () => {
-    const scope = detectScope('services/checkout/traces')
-    expect(scope.service).toBe('checkout')
-    expect(scope.traceId).toBeNull()
+  it('carries the service without a trace', () => {
+    const match = detectScope('services/checkout/traces')
+    expect(match.captures).toEqual({ service: 'checkout' })
   })
 })

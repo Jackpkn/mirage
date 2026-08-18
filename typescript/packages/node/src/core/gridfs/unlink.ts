@@ -12,16 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { invalidateAfterUnlink } from '@struktoai/mirage-core/cache/context'
-import type { PathSpec } from '@struktoai/mirage-core/types'
-import type { GridFSAccessor } from '../../accessor/gridfs.ts'
-import { deleteAll, gridfsKey, rawPathOf } from './client.ts'
+import { makeUnlink } from '@struktoai/mirage-core/core/object_store/remove'
+import { DRIVER } from './driver.ts'
 
-export async function unlink(accessor: GridFSAccessor, path: PathSpec): Promise<void> {
-  // Removes every revision of the filename (rm semantics; mirrors S3's
-  // DeleteObject, which also succeeds silently on a missing key).
-  const raw = rawPathOf(path)
-  const key = gridfsKey(raw, accessor.config)
-  await deleteAll(accessor, { filename: key })
-  await invalidateAfterUnlink(path)
-}
+export const unlink = makeUnlink(DRIVER)
