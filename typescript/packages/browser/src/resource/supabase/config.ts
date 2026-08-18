@@ -12,49 +12,25 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { redactConfigWithSchema, secretSchema, z } from '@struktoai/mirage-core/resource/secrets'
+import { z } from '@struktoai/mirage-core/resource/secrets'
 import type { ConfigOf, RedactedConfig } from '@struktoai/mirage-core/resource/secrets'
-import type { S3BrowserPresignedUrlProvider, S3Config } from '../s3/config.ts'
+import { browserAliasSchema, derivedEndpoint, makeBrowserS3Alias } from '../s3_alias.ts'
 
-const SupabaseConfigSchema = z.object({
-  bucket: z.string(),
-  presignedUrlProvider: secretSchema(
-    z.custom<S3BrowserPresignedUrlProvider>((value) => typeof value === 'function'),
-  ),
-  projectRef: z.string().optional(),
-  region: z.string().optional(),
-  endpoint: z.string().optional(),
-  defaultContentType: z.string().optional(),
-  keyPrefix: z.string().optional(),
-})
+const SupabaseConfigSchema = browserAliasSchema({ projectRef: z.string().optional() })
 
 export type SupabaseConfig = ConfigOf<typeof SupabaseConfigSchema>
 
 export type SupabaseConfigRedacted = RedactedConfig<SupabaseConfig, 'presignedUrlProvider'>
 
-export function resolvedSupabaseEndpoint(config: SupabaseConfig): string | undefined {
-  if (config.endpoint !== undefined && config.endpoint !== '') return config.endpoint
-  if (config.projectRef !== undefined && config.projectRef !== '') {
-    return `https://${config.projectRef}.storage.supabase.co/storage/v1/s3`
-  }
-  return undefined
-}
+const alias = makeBrowserS3Alias<SupabaseConfig, SupabaseConfigRedacted>({
+  schema: SupabaseConfigSchema,
+  endpointFor: derivedEndpoint(
+    'projectRef',
+    (projectRef) => `https://${projectRef}.storage.supabase.co/storage/v1/s3`,
+  ),
+  forcePathStyle: true,
+})
 
-export function supabaseToS3Config(config: SupabaseConfig): S3Config {
-  const endpoint = resolvedSupabaseEndpoint(config)
-  return {
-    bucket: config.bucket,
-    presignedUrlProvider: config.presignedUrlProvider,
-    ...(config.region !== undefined ? { region: config.region } : {}),
-    ...(endpoint !== undefined ? { endpoint } : {}),
-    forcePathStyle: true,
-    ...(config.defaultContentType !== undefined
-      ? { defaultContentType: config.defaultContentType }
-      : {}),
-    ...(config.keyPrefix !== undefined ? { keyPrefix: config.keyPrefix } : {}),
-  }
-}
-
-export function redactSupabaseConfig(config: SupabaseConfig): SupabaseConfigRedacted {
-  return redactConfigWithSchema(SupabaseConfigSchema, config) as unknown as SupabaseConfigRedacted
-}
+export const resolvedSupabaseEndpoint = alias.resolvedEndpoint
+export const supabaseToS3Config = alias.toS3Config
+export const redactSupabaseConfig = alias.redact

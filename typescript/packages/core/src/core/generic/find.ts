@@ -17,16 +17,20 @@ import { mountKey, mountPrefixOf } from '../../utils/key_prefix.ts'
 import type { IndexCacheStore } from '../../cache/index/store.ts'
 import type { FindOptions } from '../../resource/base.ts'
 import {
+  buildTree,
   hasLinkChildren,
   optionsTree,
   prefixPathNodes,
+  startBasename,
   treeHasEmpty,
+  treeHasType,
   type FindEntry,
+  type PredNode,
   keep,
 } from '../../commands/builtin/find_eval.ts'
 import { FileType, PathSpec, type FileStat } from '../../types.ts'
 import type { LinkView } from '../../ops/types.ts'
-import { rstripSlash } from '../../utils/slash.ts'
+import { lstripSlash, rstripSlash, stripSlash } from '../../utils/slash.ts'
 import { compareCodePoints } from '../../utils/sort.ts'
 
 export interface WalkFindDeps {
@@ -221,4 +225,162 @@ export async function walkFind(
     results.push(key)
   }
   return results
+}
+
+export interface SearchFindDeps<A> {
+  resolvePath: (accessor: A, path: PathSpec, index?: IndexCacheStore) => Promise<{ isDir: boolean }>
+  stat: (accessor: A, path: PathSpec, index?: IndexCacheStore) => Promise<FileStat>
+  walk: (
+    accessor: A,
+    path: PathSpec,
+    index?: IndexCacheStore,
+    options?: { includeRoot?: boolean; maxDepth?: number | null; stripPrefix?: boolean },
+  ) => Promise<string[]>
+}
+
+function searchRelativeDepth(item: string, root: string): number {
+  const rootNorm = rstripSlash(root) !== '' ? rstripSlash(root) : '/'
+  const itemNorm = rstripSlash(item) !== '' ? rstripSlash(item) : '/'
+  if (itemNorm === rootNorm) return 0
+  let relative: string
+  if (rootNorm === '/') {
+    relative = stripSlash(itemNorm)
+  } else {
+    relative = itemNorm.startsWith(rootNorm) ? itemNorm.slice(rootNorm.length) : itemNorm
+    relative = lstripSlash(relative)
+  }
+  if (relative === '') return 0
+  return relative.split('/').length
+}
+
+async function searchMatches<A>(
+  deps: SearchFindDeps<A>,
+  accessor: A,
+  item: string,
+  prefix: string,
+  index: IndexCacheStore | undefined,
+  root: string,
+  options: FindOptions,
+  tree: PredNode,
+  needsKind: boolean,
+  startName: string,
+  allItems: readonly string[],
+): Promise<boolean> {
+  const rootNorm = rstripSlash(root) !== '' ? rstripSlash(root) : '/'
+  const itemNorm = rstripSlash(item) !== '' ? rstripSlash(item) : '/'
+  const itemName = itemNorm === rootNorm ? startName : (rstripSlash(item).split('/').pop() ?? '')
+  const spec = PathSpec.fromStrPath(item, mountKey(item, prefix))
+  let kind: 'd' | 'f' = 'f'
+  if (needsKind) {
+    const resolved = await deps.resolvePath(accessor, spec, index)
+    kind = resolved.isDir ? 'd' : 'f'
+  }
+  let itemStat: FileStat | null = null
+  // -empty answers off the walked list, not a readdir: the whole subtree
+  // arrived in one `walk`, so a directory is empty exactly when no other
+  // walked key sits under it. `walkFind` has to ask readdir instead,
+  // because it drives its own traversal.
+  let isEmpty: boolean | null = null
+  if (treeHasEmpty(tree)) {
+    if (kind === 'd') {
+      const childPrefix = rstripSlash(item) + '/'
+      isEmpty = !allItems.some((other) => other !== item && other.startsWith(childPrefix))
+    } else {
+      itemStat = await deps.stat(accessor, spec, index)
+      isEmpty = (itemStat.size ?? 0) === 0
+    }
+  }
+  const entry: FindEntry = {
+    key: item,
+    name: itemName,
+    kind,
+    depth: searchRelativeDepth(item, root),
+    isEmpty,
+  }
+  if (!keep(entry, tree, options.minDepth)) return false
+  // Directories count as size 0 for -size (deliberate GNU divergence).
+  if (options.minSize != null || options.maxSize != null) {
+    let size = 0
+    if (kind === 'f') {
+      itemStat ??= await deps.stat(accessor, spec, index)
+      // Sizeless rendered files count as size 0, same as dirs and the FUSE
+      // view (CLAUDE.md find -size rules); never drop them.
+      size = itemStat.size ?? 0
+    }
+    if (options.minSize != null && size < options.minSize) return false
+    if (options.maxSize != null && size > options.maxSize) return false
+  }
+  if (options.mtimeMin != null || options.mtimeMax != null) {
+    itemStat ??= await deps.stat(accessor, spec, index)
+    const modTs = modifiedTs(itemStat.modified)
+    if (modTs === null) return false
+    if (options.mtimeMin != null && modTs < options.mtimeMin) return false
+    if (options.mtimeMax != null && modTs > options.mtimeMax) return false
+  }
+  return true
+}
+
+/**
+ * Build `find` for a backend whose walk comes from a search index.
+ *
+ * The search-backed backends (chroma, dify) get the whole subtree from
+ * one `walk` call and then filter it, where the API backends drive the
+ * traversal themselves through `walkFind`'s `readdir`. That is the only
+ * difference between them, so everything after the walk lives here once
+ * rather than once per backend. Mirrors python's
+ * `mirage/core/generic/find.py`.
+ */
+export function makeSearchBackedFind<A>(
+  deps: SearchFindDeps<A>,
+): (
+  accessor: A,
+  path: PathSpec,
+  options?: FindOptions,
+  index?: IndexCacheStore,
+) => Promise<string[]> {
+  return async (accessor, path, options = {}, index) => {
+    if (index === undefined) {
+      throw new Error('find: missing index')
+    }
+    const results = await deps.walk(accessor, path, index, {
+      includeRoot: true,
+      maxDepth: options.maxDepth ?? null,
+      stripPrefix: true,
+    })
+    const tree =
+      options.tree ??
+      buildTree({
+        name: options.name,
+        iname: options.iname,
+        pathPattern: options.pathPattern,
+        type: options.type,
+        nameExclude: options.nameExclude,
+        orNames: options.orNames,
+        empty: options.empty,
+      })
+    const needsKind =
+      treeHasType(tree) || options.minSize != null || options.maxSize != null || treeHasEmpty(tree)
+    const startName = startBasename(path.virtual)
+    const filtered: string[] = []
+    for (const item of results) {
+      if (
+        await searchMatches(
+          deps,
+          accessor,
+          item,
+          mountPrefixOf(path.virtual, path.resourcePath),
+          index,
+          path.mountPath,
+          options,
+          tree,
+          needsKind,
+          startName,
+          results,
+        )
+      ) {
+        filtered.push(item)
+      }
+    }
+    return filtered.sort(compareCodePoints)
+  }
 }

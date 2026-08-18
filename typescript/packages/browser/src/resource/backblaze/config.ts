@@ -12,48 +12,20 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { redactConfigWithSchema, secretSchema, z } from '@struktoai/mirage-core/resource/secrets'
 import type { ConfigOf, RedactedConfig } from '@struktoai/mirage-core/resource/secrets'
-import type { S3BrowserPresignedUrlProvider, S3Config } from '../s3/config.ts'
+import { browserAliasSchema, derivedEndpoint, makeBrowserS3Alias } from '../s3_alias.ts'
 
-const BackblazeConfigSchema = z.object({
-  bucket: z.string(),
-  presignedUrlProvider: secretSchema(
-    z.custom<S3BrowserPresignedUrlProvider>((value) => typeof value === 'function'),
-  ),
-  region: z.string().optional(),
-  endpoint: z.string().optional(),
-  defaultContentType: z.string().optional(),
-  keyPrefix: z.string().optional(),
-})
+const BackblazeConfigSchema = browserAliasSchema({})
 
 export type BackblazeConfig = ConfigOf<typeof BackblazeConfigSchema>
 
 export type BackblazeConfigRedacted = RedactedConfig<BackblazeConfig, 'presignedUrlProvider'>
 
-export function resolvedBackblazeEndpoint(config: BackblazeConfig): string | undefined {
-  if (config.endpoint !== undefined && config.endpoint !== '') return config.endpoint
-  if (config.region !== undefined && config.region !== '') {
-    const region = config.region
-    return `https://s3.${region}.backblazeb2.com`
-  }
-  return undefined
-}
+const alias = makeBrowserS3Alias<BackblazeConfig, BackblazeConfigRedacted>({
+  schema: BackblazeConfigSchema,
+  endpointFor: derivedEndpoint('region', (region) => `https://s3.${region}.backblazeb2.com`),
+})
 
-export function backblazeToS3Config(config: BackblazeConfig): S3Config {
-  const endpoint = resolvedBackblazeEndpoint(config)
-  return {
-    bucket: config.bucket,
-    presignedUrlProvider: config.presignedUrlProvider,
-    ...(config.region !== undefined ? { region: config.region } : {}),
-    ...(endpoint !== undefined ? { endpoint } : {}),
-    ...(config.defaultContentType !== undefined
-      ? { defaultContentType: config.defaultContentType }
-      : {}),
-    ...(config.keyPrefix !== undefined ? { keyPrefix: config.keyPrefix } : {}),
-  }
-}
-
-export function redactBackblazeConfig(config: BackblazeConfig): BackblazeConfigRedacted {
-  return redactConfigWithSchema(BackblazeConfigSchema, config) as unknown as BackblazeConfigRedacted
-}
+export const resolvedBackblazeEndpoint = alias.resolvedEndpoint
+export const backblazeToS3Config = alias.toS3Config
+export const redactBackblazeConfig = alias.redact

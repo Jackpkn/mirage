@@ -12,48 +12,20 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { redactConfigWithSchema, secretSchema, z } from '@struktoai/mirage-core/resource/secrets'
 import type { ConfigOf, RedactedConfig } from '@struktoai/mirage-core/resource/secrets'
-import type { S3BrowserPresignedUrlProvider, S3Config } from '../s3/config.ts'
+import { browserAliasSchema, derivedEndpoint, makeBrowserS3Alias } from '../s3_alias.ts'
 
-const TencentConfigSchema = z.object({
-  bucket: z.string(),
-  presignedUrlProvider: secretSchema(
-    z.custom<S3BrowserPresignedUrlProvider>((value) => typeof value === 'function'),
-  ),
-  region: z.string().optional(),
-  endpoint: z.string().optional(),
-  defaultContentType: z.string().optional(),
-  keyPrefix: z.string().optional(),
-})
+const TencentConfigSchema = browserAliasSchema({})
 
 export type TencentConfig = ConfigOf<typeof TencentConfigSchema>
 
 export type TencentConfigRedacted = RedactedConfig<TencentConfig, 'presignedUrlProvider'>
 
-export function resolvedTencentEndpoint(config: TencentConfig): string | undefined {
-  if (config.endpoint !== undefined && config.endpoint !== '') return config.endpoint
-  if (config.region !== undefined && config.region !== '') {
-    const region = config.region
-    return `https://cos.${region}.myqcloud.com`
-  }
-  return undefined
-}
+const alias = makeBrowserS3Alias<TencentConfig, TencentConfigRedacted>({
+  schema: TencentConfigSchema,
+  endpointFor: derivedEndpoint('region', (region) => `https://cos.${region}.myqcloud.com`),
+})
 
-export function tencentToS3Config(config: TencentConfig): S3Config {
-  const endpoint = resolvedTencentEndpoint(config)
-  return {
-    bucket: config.bucket,
-    presignedUrlProvider: config.presignedUrlProvider,
-    ...(config.region !== undefined ? { region: config.region } : {}),
-    ...(endpoint !== undefined ? { endpoint } : {}),
-    ...(config.defaultContentType !== undefined
-      ? { defaultContentType: config.defaultContentType }
-      : {}),
-    ...(config.keyPrefix !== undefined ? { keyPrefix: config.keyPrefix } : {}),
-  }
-}
-
-export function redactTencentConfig(config: TencentConfig): TencentConfigRedacted {
-  return redactConfigWithSchema(TencentConfigSchema, config) as unknown as TencentConfigRedacted
-}
+export const resolvedTencentEndpoint = alias.resolvedEndpoint
+export const tencentToS3Config = alias.toS3Config
+export const redactTencentConfig = alias.redact

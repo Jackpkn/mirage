@@ -15,8 +15,16 @@
 import { mountKey } from '../../utils/key_prefix.ts'
 import { describe, expect, it } from 'vitest'
 import { FileStat, FileType, PathSpec } from '../../types.ts'
-import { modifiedTs, walkFind, type WalkFindDeps } from './find.ts'
+import {
+  makeSearchBackedFind,
+  modifiedTs,
+  walkFind,
+  type SearchFindDeps,
+  type WalkFindDeps,
+} from './find.ts'
 import { isEnoent } from '../../utils/errors.ts'
+import { RAMIndexCacheStore } from '../../cache/index/ram.ts'
+import { rstripSlash } from '../../utils/slash.ts'
 
 function enoent(p: string): Error {
   const e = new Error(`ENOENT: ${p}`) as Error & { code: string }
@@ -218,5 +226,55 @@ describe('isEnoent', () => {
     expect(isEnoent(new Error('ENOENT: /x'))).toBe(false)
     expect(isEnoent('ENOENT')).toBe(false)
     expect(isEnoent(null)).toBe(false)
+  })
+})
+
+// Mirrors python/tests/core/generic/test_find.py's -empty cases. The
+// search-backed backends (chroma, dify) get the whole subtree from one
+// walk, so -empty has to answer off that list rather than a readdir.
+const SEARCH_DIRS = new Set(['/', '/guides', '/api'])
+const SEARCH_SIZES: Record<string, number> = { '/api/reference': 900 }
+
+function makeSearchDeps(keys: string[]): SearchFindDeps<unknown> & { resolveCalls: number } {
+  const deps = {
+    resolveCalls: 0,
+    walk: () => Promise.resolve([...keys]),
+    resolvePath: (_a: unknown, spec: PathSpec) => {
+      deps.resolveCalls += 1
+      return Promise.resolve({ isDir: SEARCH_DIRS.has(rstripSlash(spec.mountPath) || '/') })
+    },
+    stat: (_a: unknown, spec: PathSpec) =>
+      Promise.resolve(
+        new FileStat({
+          name: spec.mountPath.split('/').pop() ?? '',
+          size: SEARCH_SIZES[spec.mountPath] ?? null,
+        }),
+      ),
+  }
+  return deps
+}
+
+describe('makeSearchBackedFind — -empty', () => {
+  it('reads a directory off the walked list', async () => {
+    const deps = makeSearchDeps(['/', '/guides', '/api', '/api/reference'])
+    const find = makeSearchBackedFind(deps)
+    expect(await find({}, ROOT, { empty: true }, new RAMIndexCacheStore())).toEqual(['/guides'])
+  })
+
+  it('keeps a zero-length file', async () => {
+    const deps = makeSearchDeps(['/', '/api', '/api/reference', '/unsized'])
+    const find = makeSearchBackedFind(deps)
+    expect(await find({}, ROOT, { empty: true }, new RAMIndexCacheStore())).toEqual(['/unsized'])
+  })
+
+  it('forces the kind lookup it branches on', async () => {
+    // -empty asks a different question of directories than of files, so
+    // it has to force the kind lookup the way -type does. Without that
+    // every entry reads as a file and a childless directory gets judged
+    // by a size it does not have.
+    const deps = makeSearchDeps(['/', '/guides', '/api', '/api/reference'])
+    const find = makeSearchBackedFind(deps)
+    await find({}, ROOT, { empty: true }, new RAMIndexCacheStore())
+    expect(deps.resolveCalls).toBe(4)
   })
 })
