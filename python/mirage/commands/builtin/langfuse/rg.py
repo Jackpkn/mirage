@@ -15,12 +15,15 @@
 from mirage.accessor.langfuse import LangfuseAccessor
 from mirage.commands.builtin.generic.rg import rg as generic_rg
 from mirage.commands.builtin.generic_bind.adapter import bound_op
-from mirage.commands.builtin.grep_helper import compile_pattern, pattern_arg
+from mirage.commands.builtin.grep_helper import (compile_pattern,
+                                                 has_search_shaping_flags,
+                                                 pattern_arg)
 from mirage.commands.builtin.langfuse.grep import (_filter_traces,
                                                    _format_dataset_results,
                                                    _format_prompt_results,
                                                    _format_session_results)
 from mirage.commands.builtin.langfuse.io import resolve_glob
+from mirage.commands.builtin.utils.paths import has_unresolved_glob
 from mirage.commands.config import CommandOpts
 from mirage.commands.errors import UsageError
 from mirage.commands.registry import command
@@ -52,7 +55,12 @@ async def rg(accessor: LangfuseAccessor, paths: list[PathSpec],
     config = accessor.config
     limit = config.default_search_limit
 
-    if paths and "\n" not in pattern_str:
+    # The search push-down answers from the list endpoints (one call instead
+    # of one read per entry), so it greps listing summaries: a pattern that
+    # only occurs in a trace's observation bodies needs a file read to match.
+    # Output/match-shaping flags defer to the generic scan below.
+    if (paths and not has_unresolved_glob(paths) and "\n" not in pattern_str
+            and not has_search_shaping_flags(opts.flags)):
         search = SEARCH_KINDS.get(detect_scope(paths[0]).kind)
 
         if search == "traces":

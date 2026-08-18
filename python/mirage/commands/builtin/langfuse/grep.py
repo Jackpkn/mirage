@@ -20,10 +20,13 @@ from typing import Any
 from mirage.accessor.langfuse import LangfuseAccessor
 from mirage.commands.builtin.generic.grep import grep as generic_grep
 from mirage.commands.builtin.generic_bind.adapter import bound_op
-from mirage.commands.builtin.grep_helper import compile_pattern, pattern_arg
+from mirage.commands.builtin.grep_helper import (compile_pattern,
+                                                 has_search_shaping_flags,
+                                                 pattern_arg)
 from mirage.commands.builtin.langfuse._provision import file_read_provision
 from mirage.commands.builtin.langfuse.io import resolve_glob
 from mirage.commands.builtin.utils.output import format_records
+from mirage.commands.builtin.utils.paths import has_unresolved_glob
 from mirage.commands.config import CommandOpts
 from mirage.commands.registry import command
 from mirage.commands.spec import SPECS
@@ -131,7 +134,13 @@ async def grep(accessor: LangfuseAccessor, paths: list[PathSpec],
 
     limit = accessor.config.default_search_limit
 
-    if paths and pattern is not None and "\n" not in pattern:
+    # The search push-down answers from the list endpoints (one call instead
+    # of one read per entry), so it greps listing summaries: a pattern that
+    # only occurs in a trace's observation bodies needs a file read to match.
+    # Output/match-shaping flags defer to the generic scan below.
+    if (paths and not has_unresolved_glob(paths) and pattern is not None
+            and "\n" not in pattern
+            and not has_search_shaping_flags(opts.flags)):
         search = SEARCH_KINDS.get(detect_scope(paths[0]).kind)
         ignore_case = fl.as_bool("i")
         fixed_string = fl.as_bool("F")
