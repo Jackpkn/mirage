@@ -629,6 +629,71 @@
         "stdout": "Q2 Budget Review\n",
         "stderr": ""
       }
+    },
+    {
+      "id": "em_grep_two_folders_cover_the_second",
+      "seq": 540207,
+      "targets": [
+        "email"
+      ],
+      "command": "grep -rw parser /mail/Sent /mail/INBOX",
+      "expect": {
+        "exit": 0,
+        "stdout": "/mail/INBOX/2026-01-05/Standup_notes__2.email.json:{\"from\":{\"name\":\"\",\"email\":\"marcus@example.com\"},\"reply_to\":[],\"to\":[{\"name\":\"\",\"email\":\"integ@example.com\"}],\"cc\":[],\"subject\":\"Standup notes\",\"date\":\"Mon, 05 Jan 2026 14:00:00 +0000\",\"body_text\":\"yesterday shipped the parser\\ntoday reviewing the budget forecast\",\"body_html\":\"\",\"snippet\":\"yesterday shipped the parser\\ntoday reviewing the budget forecast\",\"message_id\":\"\",\"in_reply_to\":null,\"references\":[],\"has_attachments\":false,\"attachments\":[],\"uid\":\"2\",\"flags\":[\"\\\\Seen\"]}\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "em_rg_root_scans_instead_of_no_match",
+      "seq": 540208,
+      "targets": [
+        "email"
+      ],
+      "command": "rg -w parser /mail",
+      "expect": {
+        "exit": 0,
+        "stdout": "/mail/INBOX/2026-01-05/Standup_notes__2.email.json:{\"from\":{\"name\":\"\",\"email\":\"marcus@example.com\"},\"reply_to\":[],\"to\":[{\"name\":\"\",\"email\":\"integ@example.com\"}],\"cc\":[],\"subject\":\"Standup notes\",\"date\":\"Mon, 05 Jan 2026 14:00:00 +0000\",\"body_text\":\"yesterday shipped the parser\\ntoday reviewing the budget forecast\",\"body_html\":\"\",\"snippet\":\"yesterday shipped the parser\\ntoday reviewing the budget forecast\",\"message_id\":\"\",\"in_reply_to\":null,\"references\":[],\"has_attachments\":false,\"attachments\":[],\"uid\":\"2\",\"flags\":[\"\\\\Seen\"]}\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "em_grep_c_defers_to_scan",
+      "seq": 540209,
+      "targets": [
+        "email"
+      ],
+      "command": "grep -rc parser /mail/INBOX/2026-01-05",
+      "expect": {
+        "exit": 0,
+        "stdout": "/mail/INBOX/2026-01-05/Q2_Budget_Review__1.email.json:0\n/mail/INBOX/2026-01-05/Q2_Budget_Review__1/budget.csv:0\n/mail/INBOX/2026-01-05/Q2_Budget_Review__1/notes.txt:0\n/mail/INBOX/2026-01-05/Standup_notes__2.email.json:1\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "em_find_two_folders_cover_the_second",
+      "seq": 540210,
+      "targets": [
+        "email"
+      ],
+      "command": "find /mail/Sent /mail/INBOX -name 'Standup*'",
+      "expect": {
+        "exit": 0,
+        "stdout": "/mail/INBOX/2026-01-05/Standup_notes__2.email.json\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "em_find_root_name_walks",
+      "seq": 540211,
+      "targets": [
+        "email"
+      ],
+      "command": "find /mail -name 'Standup*'",
+      "expect": {
+        "exit": 0,
+        "stdout": "/mail/INBOX/2026-01-05/Standup_notes__2.email.json\n",
+        "stderr": ""
+      }
     }
   ]
 }

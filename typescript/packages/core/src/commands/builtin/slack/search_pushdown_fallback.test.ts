@@ -34,7 +34,7 @@ async function runGrep(
   const resource = makeFakeResource(options.transport)
   const result = await cmd.fn(resource.accessor, paths, texts, {
     stdin: null,
-    flags: { args_l: true, w: true },
+    flags: { w: true },
     filetypeFns: null,
     cwd: '/',
     index: options.index,
@@ -65,7 +65,7 @@ async function runRg(
   const resource = makeFakeResource(options.transport)
   const result = await cmd.fn(resource.accessor, paths, texts, {
     stdin: null,
-    flags: { args_l: true, w: true },
+    flags: { w: true },
     filetypeFns: null,
     cwd: '/',
     index: options.index,

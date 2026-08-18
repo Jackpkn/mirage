@@ -21,7 +21,7 @@ import { resolveGlobOf } from '../generic_bind/index.ts'
 import { DISCORD_IO } from './io.ts'
 import { read as discordRead } from '../../../core/discord/read.ts'
 import { readdir as discordReaddir } from '../../../core/discord/readdir.ts'
-import { coalesceScopes, detectScope } from '../../../core/discord/scope.ts'
+import { detectScope } from '../../../core/discord/scope.ts'
 import { formatGrepResults, searchGuild } from '../../../core/discord/search.ts'
 import { stat as discordStat } from '../../../core/discord/stat.ts'
 import { IOResult } from '../../../io/types.ts'
@@ -29,7 +29,7 @@ import { type FileStat, type PathSpec, ResourceName } from '../../../types.ts'
 import { command, type CommandFnResult, type CommandOpts } from '../../config.ts'
 import { specOf } from '../../spec/builtins.ts'
 import { grepGeneric } from '../generic/grep.ts'
-import { patternArg } from '../grep_helper.ts'
+import { patternArg, pushdownOperand } from '../grep_helper.ts'
 import { prependStderr } from '../utils/output.ts'
 import { fileReadProvision } from './_provision.ts'
 import { FlagView } from '../../spec/types.ts'
@@ -37,6 +37,21 @@ import { FlagView } from '../../spec/types.ts'
 const resolveDiscordGlob = resolveGlobOf(DISCORD_IO)
 
 const ENC = new TextEncoder()
+
+// Discord guild search answers with whole messages and the push-down prints
+// that answer verbatim, so it can stand in for a scan only when the line
+// names one concrete operand and no flag reshapes the output. -w is the
+// exception the provider itself supplies: the search matches whole words, so
+// a bare literal would under-report and only -w makes the two agree.
+//
+// `coalesceScopes` used to widen a set of same-channel chat.jsonl operands
+// into one channel-wide search, and it is gone. `searchGuild` takes a channel
+// but no date, so folding two named days returned every day the channel ever
+// had — and a single chat.jsonl operand was widened the same way. Reporting
+// messages the line did not ask for is not a better failure than dropping an
+// operand. One operand or the generic scan.
+export const SEARCH_HONORED = ['w'] as const
+export const SEARCH_MAX_RESULTS = 100
 
 async function* discordStream(
   accessor: DiscordAccessor,
@@ -54,19 +69,16 @@ async function grepCommand(
 ): Promise<CommandFnResult> {
   const pattern = patternArg(texts, opts.flags)
   const fl = new FlagView(opts.flags, specOf('grep'))
-  const maxCount = fl.asInt('m') ?? null
 
   const pushdownWarnings: string[] = []
-  const firstPath = paths[0]
-  if (firstPath !== undefined && pattern !== null && !pattern.includes('\n')) {
-    let scope = detectScope(firstPath)
-    if (scope.level === 'messages') scope = coalesceScopes(paths) ?? scope
-    // Discord search matches whole words while grep matches substrings,
-    // and the native path returns search results verbatim as the output, so
-    // a bare literal would under-report. Only -w makes the two agree.
-    if (scope.useNative && scope.guildId !== undefined && fl.asBool('w')) {
+  // Output-shaping flags, a glob operand and a multi-operand line all need
+  // the generic scan; see SEARCH_HONORED above.
+  const operand = pushdownOperand(paths, opts.flags, pattern, SEARCH_HONORED)
+  if (pattern !== null && operand !== null && fl.asBool('w')) {
+    const scope = detectScope(operand)
+    if (scope.useNative && scope.guildId !== undefined) {
       try {
-        const count = maxCount ?? 100
+        const count = SEARCH_MAX_RESULTS
         const raw = await searchGuild(accessor, scope.guildId, pattern, scope.channelId, count)
         const channelMap = new Map<string, string>()
         if (scope.channelId === undefined) {
@@ -77,7 +89,7 @@ async function grepCommand(
         const lines = formatGrepResults(
           raw,
           scope,
-          mountPrefixOf(firstPath.virtual, firstPath.resourcePath),
+          mountPrefixOf(operand.virtual, operand.resourcePath),
           channelMap,
         )
         if (lines.length === 0) return [new Uint8Array(0), new IOResult({ exitCode: 1 })]

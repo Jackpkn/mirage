@@ -132,26 +132,18 @@ describe('discord grep', () => {
     }
   })
 
-  it('coalesces concrete chat.jsonl paths into one channel-wide native search', async () => {
-    const transport = new FakeDiscordTransport((_method, endpoint) => {
-      if (endpoint === '/guilds/G1/messages/search') {
-        return {
-          total_results: 1,
-          messages: [
-            [
-              {
-                id: '175928847299117056',
-                content: 'hello world',
-                channel_id: 'C1',
-                timestamp: '2016-04-30T12:00:00.000+00:00',
-                author: { username: 'alice' },
-              },
-            ],
-          ],
-        }
-      }
-      return null
+  it('two chat.jsonl operands take the scan rather than one widened search', async () => {
+    // They used to coalesce into one channel-wide search, which answered for
+    // every day the channel ever had — `searchGuild` takes a channel but no
+    // date. The scan reads exactly the two days the line named.
+    const idx = new RAMIndexCacheStore()
+    await seedGuild(idx, '/mnt/discord', 'My Server__G1', 'G1')
+    await seedChannel(idx, '/mnt/discord', 'My Server__G1', 'general__C1', 'C1', {
+      dates: ['2016-04-29', '2016-04-30'],
     })
+    const transport = new FakeDiscordTransport((_method, endpoint) =>
+      endpoint === '/channels/C1/messages' ? [] : null,
+    )
     const mk = (date: string): PathSpec =>
       new PathSpec({
         virtual: `/mnt/discord/My Server__G1/channels/general__C1/${date}/chat.jsonl`,
@@ -162,19 +154,52 @@ describe('discord grep', () => {
           '/mnt/discord',
         ),
       })
-    const out = await runGrep(
+    await runGrep(
       [mk('2016-04-29'), mk('2016-04-30')],
       ['hello'],
       { w: true },
-      { transport },
+      {
+        index: idx,
+        transport,
+      },
     )
-    expect(transport.calls[0]?.endpoint).toBe('/guilds/G1/messages/search')
-    expect(transport.calls[0]?.params?.channel_id).toBe('C1')
-    const lines = out.stdout.split('\n').filter((l) => l !== '')
-    expect(lines).toHaveLength(1)
-    expect(lines[0]).toContain(
-      '/mnt/discord/My Server__G1/channels/general__C1/2016-04-30/chat.jsonl:',
+    const searches = transport.calls.filter((c) => c.endpoint.includes('/messages/search'))
+    expect(searches).toHaveLength(0)
+  })
+
+  it('a second operand defers the whole line to the scan', async () => {
+    // The push-down answers for one channel, so the second operand used to be
+    // dropped in silence: this line reported general and never mentioned
+    // random at all.
+    const idx = new RAMIndexCacheStore()
+    await seedGuild(idx, '/mnt/discord', 'My Server__G1', 'G1')
+    await seedChannel(idx, '/mnt/discord', 'My Server__G1', 'general__C1', 'C1', {
+      dates: ['2016-04-30'],
+    })
+    await seedChannel(idx, '/mnt/discord', 'My Server__G1', 'random__C2', 'C2', {
+      dates: ['2016-04-30'],
+    })
+    const transport = new FakeDiscordTransport((_method, endpoint) =>
+      endpoint.endsWith('/messages') ? [] : null,
     )
+    const dir = (name: string): PathSpec =>
+      new PathSpec({
+        virtual: `/mnt/discord/My Server__G1/channels/${name}`,
+        directory: `/mnt/discord/My Server__G1/channels/${name}`,
+        resolved: false,
+        resourcePath: mountKey(`/mnt/discord/My Server__G1/channels/${name}`, '/mnt/discord'),
+      })
+    await runGrep(
+      [dir('general__C1'), dir('random__C2')],
+      ['hello'],
+      { w: true, r: true },
+      {
+        index: idx,
+        transport,
+      },
+    )
+    const searches = transport.calls.filter((c) => c.endpoint.includes('/messages/search'))
+    expect(searches).toHaveLength(0)
   })
 
   it('scans attachment blobs instead of widening to a message search', async () => {

@@ -71,6 +71,12 @@ function slackHttpError(endpoint: string, response: Response, text: string): Sla
 export interface SlackTransport {
   call(endpoint: string, params?: Record<string, string>, body?: unknown): Promise<SlackResponse>
   downloadFile?(url: string, offset?: number, size?: number | null): Promise<Uint8Array>
+  // Whether this transport's credentials can reach search.* at all. Slack
+  // rejects a bot token there, so a doomed call is worth not making; the
+  // python twin is `search_available(config)`. A transport that cannot tell
+  // (the browser one holds no token, the proxy does) leaves it unimplemented
+  // and callers read that as "try it".
+  searchAvailable?(): boolean
 }
 
 export abstract class HttpSlackTransport implements SlackTransport {
@@ -148,5 +154,9 @@ export class NodeSlackTransport extends HttpSlackTransport {
         ? this.searchToken
         : this.token
     return { Authorization: `Bearer ${token}` }
+  }
+  searchAvailable(): boolean {
+    if (this.searchToken !== undefined && this.searchToken !== '') return true
+    return this.token.startsWith('xoxp-')
   }
 }

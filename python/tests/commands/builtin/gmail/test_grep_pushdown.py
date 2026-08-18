@@ -21,6 +21,7 @@ from mirage.commands.builtin.gmail.grep import grep
 from mirage.commands.builtin.gmail.rg import rg
 from mirage.commands.config import CommandOpts
 from mirage.commands.errors import UsageError
+from mirage.io.types import IOResult
 from mirage.types import PathSpec
 from mirage.utils.key_prefix import mount_key
 
@@ -92,3 +93,112 @@ async def test_rg_without_word_flag_skips_native_search():
             await rg(accessor, [_label_scope()], ['hello'],
                      CommandOpts(index=RAMIndexCacheStore()))
     spy.assert_not_awaited()
+
+
+def _glob_scope() -> PathSpec:
+    # A glob whose directory IS searchable, so only the glob half of the gate
+    # can defer it.
+    original = "/gmail/INBOX/2026-01-01/*.gmail.json"
+    return PathSpec(resource_path=mount_key(original, "/gmail"),
+                    virtual=original,
+                    directory="/gmail/INBOX/2026-01-01",
+                    pattern="*.gmail.json",
+                    resolved=False)
+
+
+@pytest.mark.asyncio
+async def test_grep_second_operand_defers_to_generic():
+    # The push-down answers for one label, so a second operand used to be
+    # dropped in silence: this line reported INBOX and never mentioned Sent.
+    accessor = AsyncMock()
+    sent = PathSpec(resource_path=mount_key("/gmail/Sent", "/gmail"),
+                    virtual="/gmail/Sent",
+                    directory="/gmail/Sent")
+    with patch("mirage.commands.builtin.gmail.grep.search_messages",
+               new=AsyncMock(return_value=ROWS)) as spy, \
+            patch("mirage.commands.builtin.gmail.grep.resolve_glob",
+                  new=AsyncMock(return_value=[])), \
+            patch("mirage.commands.builtin.gmail.grep.generic_grep",
+                  new=AsyncMock(return_value=(b"", IOResult()))) as generic:
+        await grep(accessor, [_label_scope(), sent], ['hello'],
+                   CommandOpts(index=RAMIndexCacheStore(), flags={'w': True}))
+    spy.assert_not_awaited()
+    generic.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_rg_second_operand_defers_to_generic():
+    accessor = AsyncMock()
+    sent = PathSpec(resource_path=mount_key("/gmail/Sent", "/gmail"),
+                    virtual="/gmail/Sent",
+                    directory="/gmail/Sent")
+    with patch("mirage.commands.builtin.gmail.rg.search_messages",
+               new=AsyncMock(return_value=ROWS)) as spy, \
+            patch("mirage.commands.builtin.gmail.rg.resolve_glob",
+                  new=AsyncMock(return_value=[])), \
+            patch("mirage.commands.builtin.gmail.rg.generic_rg",
+                  new=AsyncMock(return_value=(b"", IOResult()))) as generic:
+        await rg(accessor, [_label_scope(), sent], ['hello'],
+                 CommandOpts(index=RAMIndexCacheStore(), flags={'w': True}))
+    spy.assert_not_awaited()
+    generic.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_grep_unresolved_glob_defers_to_generic():
+    # There was no glob check at all: the unexpanded `*.gmail.json` segment
+    # reached the native search, which reads it as a literal.
+    accessor = AsyncMock()
+    with patch("mirage.commands.builtin.gmail.grep.search_messages",
+               new=AsyncMock(return_value=ROWS)) as spy, \
+            patch("mirage.commands.builtin.gmail.grep.resolve_glob",
+                  new=AsyncMock(return_value=[])), \
+            patch("mirage.commands.builtin.gmail.grep.generic_grep",
+                  new=AsyncMock(return_value=(b"", IOResult()))) as generic:
+        await grep(accessor, [_glob_scope()], ['hello'],
+                   CommandOpts(index=RAMIndexCacheStore(), flags={'w': True}))
+    spy.assert_not_awaited()
+    generic.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_grep_context_flag_defers_to_generic():
+    # -A was not in the open-coded shaping list, so the push-down ran and the
+    # context lines were dropped without a word.
+    accessor = AsyncMock()
+    with patch("mirage.commands.builtin.gmail.grep.search_messages",
+               new=AsyncMock(return_value=ROWS)) as spy, \
+            patch("mirage.commands.builtin.gmail.grep.resolve_glob",
+                  new=AsyncMock(return_value=[])), \
+            patch("mirage.commands.builtin.gmail.grep.generic_grep",
+                  new=AsyncMock(return_value=(b"", IOResult()))) as generic:
+        await grep(
+            accessor, [_label_scope()], ['hello'],
+            CommandOpts(index=RAMIndexCacheStore(),
+                        flags={
+                            'w': True,
+                            'A': "2"
+                        }))
+    spy.assert_not_awaited()
+    generic.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_rg_quiet_flag_defers_to_generic():
+    # py grep checked -q and py rg did not; both read the one shared table.
+    accessor = AsyncMock()
+    with patch("mirage.commands.builtin.gmail.rg.search_messages",
+               new=AsyncMock(return_value=ROWS)) as spy, \
+            patch("mirage.commands.builtin.gmail.rg.resolve_glob",
+                  new=AsyncMock(return_value=[])), \
+            patch("mirage.commands.builtin.gmail.rg.generic_rg",
+                  new=AsyncMock(return_value=(b"", IOResult()))) as generic:
+        await rg(
+            accessor, [_label_scope()], ['hello'],
+            CommandOpts(index=RAMIndexCacheStore(),
+                        flags={
+                            'w': True,
+                            'q': True
+                        }))
+    spy.assert_not_awaited()
+    generic.assert_awaited_once()

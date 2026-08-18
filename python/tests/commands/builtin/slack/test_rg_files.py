@@ -37,14 +37,21 @@ def index():
 
 
 @pytest.mark.asyncio
-async def test_rg_messages_only_when_chat_jsonl(accessor, index):
-    msgs_payload = b'{"messages":{"matches":[]}}'
+async def test_rg_chat_jsonl_scans_the_named_day(accessor, index):
+    # One day's chat.jsonl used to be widened to a channel-wide search
+    # (`coalesce_scopes`), which answered with every day the channel ever
+    # had. It is one file: read it and grep it.
     with (
             patch("mirage.commands.builtin.slack.rg.search_messages",
-                  new_callable=AsyncMock,
-                  return_value=msgs_payload) as mock_msgs,
+                  new_callable=AsyncMock) as mock_msgs,
             patch("mirage.commands.builtin.slack.rg.search_files",
                   new_callable=AsyncMock) as mock_files,
+            patch("mirage.commands.builtin.slack.rg.resolve_glob",
+                  new_callable=AsyncMock,
+                  return_value=[]),
+            patch("mirage.commands.builtin.slack.rg.generic_rg",
+                  new_callable=AsyncMock,
+                  return_value=(b"", None)) as mock_generic,
     ):
         await rg(accessor, [
             PathSpec(resource_path=mount_key(
@@ -52,8 +59,9 @@ async def test_rg_messages_only_when_chat_jsonl(accessor, index):
                      virtual='/channels/general__C001/2026-04-10/chat.jsonl',
                      directory='/channels/general__C001/2026-04-10/chat.jsonl')
         ], ['foo'], CommandOpts(index=index, flags={'w': True}))
-    assert mock_msgs.await_count == 1
+    assert mock_msgs.await_count == 0
     assert mock_files.await_count == 0
+    assert mock_generic.await_count == 1
 
 
 @pytest.mark.asyncio
@@ -101,14 +109,18 @@ async def test_rg_both_when_channel_or_day_root(accessor, index):
 
 
 @pytest.mark.asyncio
-async def test_grep_messages_only_when_chat_jsonl(accessor, index):
-    msgs_payload = b'{"messages":{"matches":[]}}'
+async def test_grep_chat_jsonl_scans_the_named_day(accessor, index):
     with (
             patch("mirage.commands.builtin.slack.grep.search_messages",
-                  new_callable=AsyncMock,
-                  return_value=msgs_payload) as mock_msgs,
+                  new_callable=AsyncMock) as mock_msgs,
             patch("mirage.commands.builtin.slack.grep.search_files",
                   new_callable=AsyncMock) as mock_files,
+            patch("mirage.commands.builtin.slack.grep.resolve_glob",
+                  new_callable=AsyncMock,
+                  return_value=[]),
+            patch("mirage.commands.builtin.slack.grep.generic_grep",
+                  new_callable=AsyncMock,
+                  return_value=(b"", None)) as mock_generic,
     ):
         from mirage.commands.builtin.slack.grep import grep
         await grep(accessor, [
@@ -117,7 +129,9 @@ async def test_grep_messages_only_when_chat_jsonl(accessor, index):
                      virtual='/channels/general__C001/2026-04-10/chat.jsonl',
                      directory='/channels/general__C001/2026-04-10/chat.jsonl')
         ], ['foo'], CommandOpts(index=index, flags={'w': True}))
-    assert mock_msgs.await_count == 1
+    assert mock_msgs.await_count == 0
+    assert mock_files.await_count == 0
+    assert mock_generic.await_count == 1
     assert mock_files.await_count == 0
 
 

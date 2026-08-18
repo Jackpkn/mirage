@@ -246,34 +246,3 @@ def detect_scope(path: PathSpec) -> DiscordScope:
         )
 
     return DiscordScope(level="guild", use_native=False, resource_path=key)
-
-
-def coalesce_scopes(paths: list[PathSpec]) -> DiscordScope | None:
-    """Fold same-channel chat.jsonl operands into one channel scope.
-
-    Only message files coalesce: guild search answers questions about
-    message content, so widening any other leaf (an attachment blob, a
-    member JSON) to a channel-wide message search would return hits that
-    say nothing about the requested bytes.
-    """
-    if not paths:
-        return None
-    scopes = [detect_scope(p) for p in paths]
-    first = scopes[0]
-    if (first.level != "messages" or first.guild_id is None
-            or first.channel_id is None):
-        return None
-    for s in scopes[1:]:
-        if (s.level != "messages" or s.guild_id != first.guild_id
-                or s.channel_id != first.channel_id):
-            return None
-    return DiscordScope(
-        level="channel",
-        use_native=True,
-        guild_name=first.guild_name,
-        guild_id=first.guild_id,
-        channel_name=first.channel_name,
-        channel_id=first.channel_id,
-        container="channels",
-        resource_path=first.resource_path.rsplit("/", 1)[0],
-    )

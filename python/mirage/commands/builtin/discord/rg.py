@@ -15,10 +15,12 @@
 import logging
 
 from mirage.accessor.discord import DiscordAccessor
+from mirage.commands.builtin.discord.grep import (SEARCH_HONORED,
+                                                  SEARCH_MAX_RESULTS)
 from mirage.commands.builtin.discord.io import resolve_glob
 from mirage.commands.builtin.generic.rg import rg as generic_rg
 from mirage.commands.builtin.generic_bind.adapter import bound_op
-from mirage.commands.builtin.grep_helper import pattern_arg
+from mirage.commands.builtin.grep_helper import pattern_arg, pushdown_operand
 from mirage.commands.builtin.utils.output import format_records
 from mirage.commands.config import CommandOpts
 from mirage.commands.errors import UsageError
@@ -30,7 +32,7 @@ from mirage.core.discord.entry import channel_dirname
 from mirage.core.discord.formatters import format_grep_results
 from mirage.core.discord.read import read as discord_read
 from mirage.core.discord.readdir import readdir as _readdir
-from mirage.core.discord.scope import coalesce_scopes, detect_scope
+from mirage.core.discord.scope import detect_scope
 from mirage.core.discord.search import search_guild
 from mirage.core.discord.stat import stat as _stat
 from mirage.io.types import ByteSource, IOResult
@@ -48,30 +50,24 @@ async def rg(accessor: DiscordAccessor, paths: list[PathSpec],
     pattern_str = pattern_arg(texts, fl)
     if pattern_str is None:
         raise UsageError("rg: usage: rg [flags] pattern [path]")
-    max_count = fl.as_int("m")
 
     pushdown_warnings: list[str] = []
-    if paths and "\n" not in pattern_str:
-        scope = detect_scope(paths[0])
-        if scope.level == "messages":
-            scope = coalesce_scopes(paths) or scope
-
-        # Provider search matches whole words while grep matches
-        # substrings, and the native path returns search results verbatim
-        # as the output, so a bare literal would under-report. Only -w
-        # makes the two agree; otherwise fall through to the scan.
-        if (scope.use_native and scope.guild_id is not None
-                and fl.as_bool("w")):
+    # Output-shaping flags, a glob operand and a multi-operand line all need
+    # the generic scan; see SEARCH_HONORED above.
+    operand = pushdown_operand(paths, opts.flags, pattern_str, SEARCH_HONORED)
+    if operand is not None and fl.as_bool("w"):
+        scope = detect_scope(operand)
+        if scope.use_native and scope.guild_id is not None:
             try:
                 msgs = await search_guild(
                     accessor.config,
                     scope.guild_id,
                     pattern_str,
                     channel_id=scope.channel_id,
-                    limit=max_count or 100,
+                    limit=SEARCH_MAX_RESULTS,
                 )
-                file_prefix = mount_prefix_of(paths[0].virtual,
-                                              paths[0].resource_path) or ""
+                file_prefix = mount_prefix_of(operand.virtual,
+                                              operand.resource_path) or ""
                 resource_first = scope.resource_path.split("/", 1)[0]
                 channels = await list_channels(accessor.config, scope.guild_id)
                 channel_map = {c["id"]: channel_dirname(c) for c in channels}

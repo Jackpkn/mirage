@@ -32,7 +32,7 @@ import { type FileStat, type PathSpec, ResourceName } from '../../../types.ts'
 import { command, type CommandFnResult, type CommandOpts } from '../../config.ts'
 import { specOf } from '../../spec/builtins.ts'
 import { grepGeneric } from '../generic/grep.ts'
-import { patternArg } from '../grep_helper.ts'
+import { patternArg, pushdownOperand } from '../grep_helper.ts'
 import { prependStderr } from '../utils/output.ts'
 import { fileReadProvision } from './_provision.ts'
 import { FlagView } from '../../spec/types.ts'
@@ -40,6 +40,21 @@ import { FlagView } from '../../spec/types.ts'
 const resolveSlackGlob = resolveGlobOf(SLACK_IO)
 
 const ENC = new TextEncoder()
+
+// Slack search answers with whole messages and the push-down prints that
+// answer verbatim, so it can stand in for a scan only when the line names one
+// concrete operand and no flag reshapes the output. -w is the exception the
+// provider itself supplies: Slack matches whole words, so a bare literal
+// would under-report and only -w makes the two agree.
+//
+// Python's twin used to widen a set of same-channel operands into one
+// channel-wide search (`coalesce_scopes`); this side never had it and now
+// neither does. It cannot answer a line naming two different channels, and
+// where it did fold it dropped the date — `buildQuery` carries only
+// `in:#channel`, so two named days became every day the channel ever had.
+// One operand or the generic scan.
+export const SEARCH_HONORED = ['w'] as const
+export const SEARCH_MAX_RESULTS = 100
 
 async function* slackStream(
   accessor: SlackAccessor,
@@ -57,28 +72,30 @@ async function grepCommand(
 ): Promise<CommandFnResult> {
   const pattern = patternArg(texts, opts.flags)
   const fl = new FlagView(opts.flags, specOf('grep'))
-  const maxCount = fl.asInt('m') ?? null
 
   const pushdownWarnings: string[] = []
-  const firstPath = paths[0]
-  if (firstPath !== undefined && pattern !== null && !pattern.includes('\n')) {
-    const scope = detectScope(firstPath)
-    // Slack search matches whole words while grep matches substrings, and
-    // the native path returns search results verbatim as the output, so a
-    // bare literal would under-report. Only -w makes the two agree.
-    if (scope.useNative && fl.asBool('w')) {
-      const filePrefix = mountPrefixOf(firstPath.virtual, firstPath.resourcePath)
+  // Output-shaping flags, a glob operand and a multi-operand line all need
+  // the per-message scan; see SEARCH_HONORED above.
+  const operand = pushdownOperand(paths, opts.flags, pattern, SEARCH_HONORED)
+  if (pattern !== null && operand !== null && fl.asBool('w')) {
+    const scope = detectScope(operand)
+    if (
+      scope.useNative &&
+      scope.target !== 'files' &&
+      (accessor.transport.searchAvailable?.() ?? true)
+    ) {
+      const filePrefix = mountPrefixOf(operand.virtual, operand.resourcePath)
       const query = buildQuery(pattern, scope)
-      const count = maxCount ?? 100
-      const target = scope.target
-      const doMessages = target === undefined || target === 'date' || target === 'messages'
-      const doFiles = target === undefined || target === 'date' || target === 'files'
+      const count = SEARCH_MAX_RESULTS
+      // Every scope that reaches here searches messages: the guard above
+      // ruled out the files leaf, and a 'messages' target is a chat.jsonl
+      // leaf, which is not useNative. What is left is the channel, container
+      // and root scopes and the date directory — and those carry files too,
+      // so only the files half stays conditional.
+      const doFiles = scope.target === undefined || scope.target === 'date'
       try {
-        const nativeLines: string[] = []
-        if (doMessages) {
-          const raw = await searchMessages(accessor, query, count)
-          nativeLines.push(...formatGrepResults(raw, scope, filePrefix))
-        }
+        const raw = await searchMessages(accessor, query, count)
+        const nativeLines: string[] = [...formatGrepResults(raw, scope, filePrefix)]
         if (doFiles) {
           const rawF = await searchFiles(accessor, query, count)
           nativeLines.push(...formatFileGrepResults(rawF, scope, filePrefix))

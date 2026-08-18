@@ -16,11 +16,16 @@ import type { IndexCacheStore } from '@struktoai/mirage-core/cache/index/store'
 import { prefixAggregate } from '@struktoai/mirage-core/commands/builtin/aggregators'
 import { grepGeneric } from '@struktoai/mirage-core/commands/builtin/generic/grep'
 import { resolveGlobOf } from '@struktoai/mirage-core/commands/builtin/generic_bind/index'
-import { compilePattern, grepLines } from '@struktoai/mirage-core/commands/builtin/grep_helper'
+import {
+  compilePattern,
+  grepLines,
+  patternArg,
+  pushdownOperand,
+} from '@struktoai/mirage-core/commands/builtin/grep_helper'
+import type { GrepLinesOptions } from '@struktoai/mirage-core/commands/builtin/grep_helper'
+import { FlagView, specOf } from '@struktoai/mirage-core/commands/spec/index'
 import { command } from '@struktoai/mirage-core/commands/config'
 import type { CommandFnResult, CommandOpts } from '@struktoai/mirage-core/commands/config'
-import { specOf } from '@struktoai/mirage-core/commands/spec/index'
-import type { FlagValue } from '@struktoai/mirage-core/commands/spec/index'
 import { IOResult } from '@struktoai/mirage-core/io/types'
 import type { ByteSource } from '@struktoai/mirage-core/io/types'
 import { ResourceName } from '@struktoai/mirage-core/types'
@@ -39,6 +44,26 @@ const resolveGlob = resolveGlobOf(EMAIL_IO)
 
 const ENC = new TextEncoder()
 
+// The email push-down is not a "print the provider's answer" push-down: IMAP
+// search only picks the candidate messages, and `grepLines` then runs the
+// real compiled pattern over each one. So the rule for honoring a flag is
+// whether it can make a message the search did NOT return contribute output.
+// -n/-l/-w/-o/-m cannot: each only narrows within a message already listed,
+// and -m is per-file here, which is GNU's own reading of it. -v and -c both
+// can, and were wrong before this: -v reports the lines that do not match, so
+// it needs every message rather than the ones containing the pattern, and
+// GNU's -c prints a `path:0` row for the files with no match at all. They
+// defer now, along with -q, -H/-h, -A/-B/-C, rg's -I and the file filters.
+export const SEARCH_HONORED = ['n', 'args_l', 'w', 'o', 'm'] as const
+
+// Messages are greped line by line, as python's `splitlines()` does; passing
+// the whole message as one line made -n report 1 for every hit and printed
+// the entire message as the matching line.
+export function messageLines(text: string): string[] {
+  const stripped = text.endsWith('\n') ? text.slice(0, -1) : text
+  return stripped === '' ? [] : stripped.split('\n')
+}
+
 async function* emailStream(
   accessor: EmailAccessor,
   p: PathSpec,
@@ -47,88 +72,53 @@ async function* emailStream(
   yield await emailRead(accessor, p, index)
 }
 
-interface FlagSet {
-  ignoreCase: boolean
-  invert: boolean
-  lineNumbers: boolean
-  countOnly: boolean
-  filesOnly: boolean
-  wholeWord: boolean
-  fixedString: boolean
-  onlyMatching: boolean
-  maxCount: number | null
-  quiet: boolean
-  afterContext: number
-  beforeContext: number
-}
-
-function parseFlags(flags: Record<string, FlagValue>): FlagSet {
-  const toInt = (v: string | boolean | number | string[] | undefined): number | null =>
-    typeof v === 'string' ? Number.parseInt(v, 10) : null
-  const aCtx = toInt(flags.A)
-  const bCtx = toInt(flags.B)
-  const cCtx = toInt(flags.C)
-  return {
-    ignoreCase: flags.i === true,
-    invert: flags.v === true,
-    lineNumbers: flags.n === true,
-    countOnly: flags.c === true,
-    filesOnly: flags.args_l === true || flags.l === true,
-    wholeWord: flags.w === true,
-    fixedString: flags.F === true,
-    onlyMatching: flags.o === true,
-    maxCount: toInt(flags.m),
-    quiet: flags.q === true,
-    afterContext: aCtx ?? cCtx ?? 0,
-    beforeContext: bCtx ?? cCtx ?? 0,
-  }
-}
-
-function getPattern(texts: readonly string[], flags: Record<string, FlagValue>): string {
-  if (typeof flags.e === 'string') return flags.e
-  if (texts.length > 0 && texts[0] !== undefined) return texts[0]
-  throw new Error('grep: usage: grep [flags] pattern [path]')
-}
-
 async function grepCommand(
   accessor: EmailAccessor,
   paths: PathSpec[],
   texts: string[],
   opts: CommandOpts,
 ): Promise<CommandFnResult> {
-  let pattern: string
-  try {
-    pattern = getPattern(texts, opts.flags)
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err)
-    return [null, new IOResult({ exitCode: 2, stderr: ENC.encode(`${msg}\n`) })]
-  }
-  const f = parseFlags(opts.flags)
+  const pattern = patternArg(texts, opts.flags)
+  const fl = new FlagView(opts.flags, specOf('grep'))
 
-  if (paths.length > 0) {
-    const first = paths[0]
-    if (first !== undefined) {
-      const scope = detectScope(first)
-      if (scope.useNative && !pattern.includes('\n')) {
-        const filePrefix =
-          mountPrefixOf(first.virtual, first.resourcePath) !== ''
-            ? mountPrefixOf(first.virtual, first.resourcePath)
-            : ''
-        const pairs = await searchAndFormat(accessor, scope, pattern, filePrefix, f.maxCount ?? 50)
-        const lines: string[] = []
-        for (const [vfsPath, msgText] of pairs) {
-          const matched = grepLines(
-            vfsPath,
-            [msgText],
-            compilePattern(pattern, f.ignoreCase, f.fixedString, f.wholeWord),
-            f,
-          )
-          for (const line of matched) lines.push(`${vfsPath}:${line}`)
-        }
-        if (lines.length === 0) return [new Uint8Array(0), new IOResult({ exitCode: 1 })]
-        const out: ByteSource = ENC.encode(lines.join('\n') + '\n')
-        return [out, new IOResult()]
+  // A directory operand is only searched at all under -r/-R, so the push-down
+  // waits for it too; every other reason to defer is the shared gate's. A
+  // scope that names no folder falls through to the generic scan rather than
+  // answering, which is what the mount root does.
+  const operand = pushdownOperand(paths, opts.flags, pattern, SEARCH_HONORED)
+  if (pattern !== null && operand !== null && (fl.asBool('r') || fl.asBool('R'))) {
+    const scope = detectScope(operand)
+    if (scope.useNative && scope.folder !== null && scope.folder !== '') {
+      const filePrefix = mountPrefixOf(operand.virtual, operand.resourcePath)
+      const pairs = await searchAndFormat(
+        accessor,
+        scope,
+        pattern,
+        filePrefix,
+        accessor.config.maxMessages,
+      )
+      const pat = compilePattern(pattern, fl.asBool('i'), fl.asBool('F'), fl.asBool('w'))
+      const lineOpts: GrepLinesOptions = {
+        invert: false,
+        lineNumbers: fl.asBool('n'),
+        countOnly: false,
+        filesOnly: fl.asBool('args_l'),
+        onlyMatching: fl.asBool('o'),
+        maxCount: fl.asInt('m') ?? null,
       }
+      const lines: string[] = []
+      for (const [vfsPath, msgText] of pairs) {
+        const matched = grepLines(vfsPath, messageLines(msgText), pat, lineOpts)
+        if (matched.length === 0) continue
+        if (lineOpts.filesOnly) {
+          lines.push(vfsPath)
+          continue
+        }
+        for (const line of matched) lines.push(`${vfsPath}:${line}`)
+      }
+      if (lines.length === 0) return [new Uint8Array(0), new IOResult({ exitCode: 1 })]
+      const out: ByteSource = ENC.encode(lines.join('\n') + '\n')
+      return [out, new IOResult()]
     }
   }
 

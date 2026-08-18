@@ -617,6 +617,32 @@
         "stdout": "Q2 Budget Review\n",
         "stderr": ""
       }
+    },
+    {
+      "id": "gm_grep_two_labels_cover_the_second",
+      "seq": 530205,
+      "targets": [
+        "gmail"
+      ],
+      "command": "grep -rw handbook /mail/INBOX /mail/SENT",
+      "expect": {
+        "exit": 0,
+        "stdout": "/mail/SENT/2026-01-06/Re_onboarding__msg0004.gmail.json:{\"id\":\"msg0004\",\"thread_id\":\"msg0004\",\"from\":{\"name\":\"\",\"email\":\"integ@example.com\"},\"to\":[{\"name\":\"\",\"email\":\"lila@example.com\"}],\"cc\":[],\"subject\":\"Re: onboarding\",\"date\":\"Tue, 06 Jan 2026 11:00:00 +0000\",\"body_text\":\"welcome aboard, the handbook is on its way\",\"snippet\":\"welcome aboard, the handbook is on its way\",\"labels\":[\"SENT\"],\"attachments\":[]}\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "gm_grep_glob_operand_scans",
+      "seq": 530206,
+      "targets": [
+        "gmail"
+      ],
+      "command": "grep -w budget /mail/INBOX/2026-01-05/*.gmail.json",
+      "expect": {
+        "exit": 0,
+        "stdout": "/mail/INBOX/2026-01-05/Q2_Budget_Review__msg0001.gmail.json:{\"id\":\"msg0001\",\"thread_id\":\"msg0001\",\"from\":{\"name\":\"\",\"email\":\"lila@example.com\"},\"to\":[{\"name\":\"\",\"email\":\"integ@example.com\"}],\"cc\":[],\"subject\":\"Q2 Budget Review\",\"date\":\"Mon, 05 Jan 2026 09:30:00 +0000\",\"body_text\":\"please find the budget attached\\nfinal numbers due friday\",\"snippet\":\"please find the budget attached final numbers due friday\",\"labels\":[\"INBOX\",\"UNREAD\"],\"attachments\":[{\"id\":\"att0001\",\"filename\":\"budget.csv\",\"path\":\"attachments/att0001_budget.csv\",\"mime_type\":\"text/plain\",\"size\":36},{\"id\":\"att0002\",\"filename\":\"notes.txt\",\"path\":\"attachments/att0002_notes.txt\",\"mime_type\":\"text/plain\",\"size\":37}]}\n/mail/INBOX/2026-01-05/Standup_notes__msg0002.gmail.json:{\"id\":\"msg0002\",\"thread_id\":\"msg0002\",\"from\":{\"name\":\"\",\"email\":\"marcus@example.com\"},\"to\":[{\"name\":\"\",\"email\":\"integ@example.com\"}],\"cc\":[],\"subject\":\"Standup notes\",\"date\":\"Mon, 05 Jan 2026 14:00:00 +0000\",\"body_text\":\"yesterday shipped the parser\\ntoday reviewing the budget forecast\",\"snippet\":\"yesterday shipped the parser today reviewing the budget forecast\",\"labels\":[\"INBOX\"],\"attachments\":[]}\n",
+        "stderr": ""
+      }
     }
   ]
 }

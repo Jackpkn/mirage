@@ -31,8 +31,9 @@ import { IOResult } from '../../../io/types.ts'
 import { type FileStat, type PathSpec, ResourceName } from '../../../types.ts'
 import { command, type CommandFnResult, type CommandOpts } from '../../config.ts'
 import { specOf } from '../../spec/builtins.ts'
-import { patternArg } from '../grep_helper.ts'
+import { patternArg, pushdownOperand } from '../grep_helper.ts'
 import { rgGeneric } from '../generic/rg.ts'
+import { SEARCH_HONORED, SEARCH_MAX_RESULTS } from './grep.ts'
 import { FlagView } from '../../spec/types.ts'
 
 const resolveSlackGlob = resolveGlobOf(SLACK_IO)
@@ -61,45 +62,45 @@ async function rgCommand(
     ]
   }
   const fl = new FlagView(opts.flags, specOf('rg'))
-  const maxCount = fl.asInt('m') ?? null
 
   const pushdownWarnings: string[] = []
-  if (paths.length > 0 && !pattern.includes('\n')) {
-    const firstPath = paths[0]
-    if (firstPath !== undefined) {
-      const scope = detectScope(firstPath)
-      // Slack search matches whole words while grep matches substrings, and
-      // the native path returns search results verbatim as the output, so a
-      // bare literal would under-report. Only -w makes the two agree.
-      if (scope.useNative && fl.asBool('w')) {
-        const filePrefix = mountPrefixOf(firstPath.virtual, firstPath.resourcePath)
-        const query = buildQuery(pattern, scope)
-        const count = maxCount ?? 100
-        const target = scope.target
-        const doMessages = target === undefined || target === 'date' || target === 'messages'
-        const doFiles = target === undefined || target === 'date' || target === 'files'
-        try {
-          const nativeLines: string[] = []
-          if (doMessages) {
-            const raw = await searchMessages(accessor, query, count)
-            nativeLines.push(...formatGrepResults(raw, scope, filePrefix))
-          }
-          if (doFiles) {
-            const rawF = await searchFiles(accessor, query, count)
-            nativeLines.push(...formatFileGrepResults(rawF, scope, filePrefix))
-          }
-          if (nativeLines.length === 0) return [new Uint8Array(0), new IOResult({ exitCode: 1 })]
-          return [ENC.encode(nativeLines.join('\n') + '\n'), new IOResult()]
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err)
+  // Same gate as slack grep, from the same table: only a lone concrete
+  // operand with no reshaping flag may be answered by the search API.
+  const operand = pushdownOperand(paths, opts.flags, pattern, SEARCH_HONORED)
+  if (operand !== null && fl.asBool('w')) {
+    const scope = detectScope(operand)
+    if (
+      scope.useNative &&
+      scope.target !== 'files' &&
+      (accessor.transport.searchAvailable?.() ?? true)
+    ) {
+      const filePrefix = mountPrefixOf(operand.virtual, operand.resourcePath)
+      const query = buildQuery(pattern, scope)
+      const count = SEARCH_MAX_RESULTS
+      // Every scope that reaches here searches messages: the guard above
+      // ruled out the files leaf, and a 'messages' target is a chat.jsonl
+      // leaf, which is not useNative. What is left is the channel, container
+      // and root scopes and the date directory — and those carry files too,
+      // so only the files half stays conditional.
+      const doFiles = scope.target === undefined || scope.target === 'date'
+      try {
+        const raw = await searchMessages(accessor, query, count)
+        const nativeLines: string[] = [...formatGrepResults(raw, scope, filePrefix)]
+        if (doFiles) {
+          const rawF = await searchFiles(accessor, query, count)
+          nativeLines.push(...formatFileGrepResults(rawF, scope, filePrefix))
+        }
+        if (nativeLines.length === 0) return [new Uint8Array(0), new IOResult({ exitCode: 1 })]
+        return [ENC.encode(nativeLines.join('\n') + '\n'), new IOResult()]
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        pushdownWarnings.push(
+          `slack: native search push-down failed (${msg}); falling back to per-file scan`,
+        )
+        if (msg.includes('not_allowed_token_type') || msg.includes('missing_scope')) {
           pushdownWarnings.push(
-            `slack: native search push-down failed (${msg}); falling back to per-file scan`,
+            'slack: hint - set SLACK_USER_TOKEN (xoxp-) with search:read scope to enable workspace search',
           )
-          if (msg.includes('not_allowed_token_type') || msg.includes('missing_scope')) {
-            pushdownWarnings.push(
-              'slack: hint - set SLACK_USER_TOKEN (xoxp-) with search:read scope to enable workspace search',
-            )
-          }
         }
       }
     }

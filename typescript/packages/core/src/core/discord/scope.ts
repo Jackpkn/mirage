@@ -263,36 +263,3 @@ export function detectScope(path: PathSpec): DiscordScope {
 
   return { level: 'guild', useNative: false, resourcePath: key }
 }
-
-/**
- * Fold same-channel chat.jsonl operands into one channel scope.
- *
- * Only message files coalesce: guild search answers questions about message
- * content, so widening any other leaf (an attachment blob, a member JSON) to
- * a channel-wide message search would return hits that say nothing about the
- * requested bytes.
- */
-export function coalesceScopes(paths: readonly PathSpec[]): DiscordScope | null {
-  if (paths.length === 0) return null
-  const scopes = paths.map((p) => detectScope(p))
-  const first = scopes[0]
-  if (first?.guildId === undefined || first.channelId === undefined || first.level !== 'messages') {
-    return null
-  }
-  for (const s of scopes.slice(1)) {
-    if (s.level !== 'messages' || s.guildId !== first.guildId || s.channelId !== first.channelId) {
-      return null
-    }
-  }
-  const cut = first.resourcePath.lastIndexOf('/')
-  return {
-    level: 'channel',
-    useNative: true,
-    ...(first.guildName !== undefined ? { guildName: first.guildName } : {}),
-    guildId: first.guildId,
-    ...(first.channelName !== undefined ? { channelName: first.channelName } : {}),
-    channelId: first.channelId,
-    container: 'channels',
-    resourcePath: cut !== -1 ? first.resourcePath.slice(0, cut) : first.resourcePath,
-  }
-}

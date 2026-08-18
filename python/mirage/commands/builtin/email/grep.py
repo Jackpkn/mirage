@@ -20,9 +20,8 @@ from mirage.commands.builtin.email._provision import file_read_provision
 from mirage.commands.builtin.email.io import resolve_glob
 from mirage.commands.builtin.generic.grep import grep as generic_grep
 from mirage.commands.builtin.generic_bind.adapter import bound_op
-from mirage.commands.builtin.grep_helper import (compile_pattern,
-                                                 grep_count_has_matches,
-                                                 grep_lines, pattern_arg)
+from mirage.commands.builtin.grep_helper import (compile_pattern, grep_lines,
+                                                 pattern_arg, pushdown_operand)
 from mirage.commands.builtin.utils.output import format_records
 from mirage.commands.config import CommandOpts
 from mirage.commands.registry import command
@@ -37,6 +36,19 @@ from mirage.io.types import ByteSource, IOResult
 from mirage.provision.types import ProvisionResult
 from mirage.types import PathSpec
 from mirage.utils.key_prefix import mount_prefix_of
+
+# The email push-down is not a "print the provider's answer" push-down: IMAP
+# search only picks the candidate messages, and `grep_lines` then runs the
+# real compiled pattern over each one. So the rule for honoring a flag is
+# whether it can make a message the search did NOT return contribute output.
+# -n/-l/-w/-o/-m cannot: each only narrows within a message already listed,
+# and -m is per-file here, which is GNU's own reading of it. -v and -c both
+# can, and were wrong before this: -v reports the lines that do not match, so
+# it needs every message rather than the ones containing the pattern, and
+# GNU's -c prints a `path:0` row for the files with no match at all. They
+# defer now, along with -q, -H/-h, -A/-B/-C, rg's -I and the file filters,
+# which the open-coded version ignored outright.
+SEARCH_HONORED = ("n", "args_l", "w", "o", "m")
 
 
 async def grep_provision(accessor: EmailAccessor, paths: list[PathSpec],
@@ -58,18 +70,21 @@ async def grep(accessor: EmailAccessor, paths: list[PathSpec],
     fl = FlagView(opts.flags, spec=SPECS["grep"])
     pattern = pattern_arg(texts, fl)
 
-    if paths and pattern is not None and "\n" not in pattern and (
-            fl.as_bool("r") or fl.as_bool("R")):
-        scope = detect_scope(paths[0])
+    # A directory operand is only searched at all under -r/-R, so the
+    # push-down waits for it too; every other reason to defer is the shared
+    # gate's. A scope that names no folder falls through to the generic scan
+    # rather than answering, which is what the mount root does.
+    operand = pushdown_operand(paths, opts.flags, pattern, SEARCH_HONORED)
+    if (pattern is not None and operand is not None
+            and (fl.as_bool("r") or fl.as_bool("R"))):
+        scope = detect_scope(operand)
         if scope.use_native and scope.folder:
             return await _grep_server_side(accessor,
                                            scope.folder,
                                            pattern,
-                                           paths,
+                                           operand,
                                            i=fl.as_bool("i"),
-                                           v=fl.as_bool("v"),
                                            n=fl.as_bool("n"),
-                                           c=fl.as_bool("c"),
                                            args_l=fl.as_bool("args_l"),
                                            w=fl.as_bool("w"),
                                            F=fl.as_bool("F"),
@@ -93,19 +108,16 @@ async def _grep_server_side(
     accessor: EmailAccessor,
     folder: str,
     pattern: str,
-    paths: list[PathSpec],
+    operand: PathSpec,
     i: bool = False,
-    v: bool = False,
     n: bool = False,
-    c: bool = False,
     args_l: bool = False,
     w: bool = False,
     F: bool = False,
     o: bool = False,
     max_count: int | None = None,
 ) -> tuple[ByteSource | None, IOResult]:
-    file_prefix = mount_prefix_of(paths[0].virtual,
-                                  paths[0].resource_path) if paths else ""
+    file_prefix = mount_prefix_of(operand.virtual, operand.resource_path)
     pairs = await search_and_format(
         accessor,
         EmailScope(use_native=True, folder=folder),
@@ -124,17 +136,12 @@ async def _grep_server_side(
         matched = grep_lines(vfs_path,
                              lines,
                              pat,
-                             invert=v,
+                             invert=False,
                              line_numbers=n,
-                             count_only=c,
+                             count_only=False,
                              files_only=args_l,
                              only_matching=o,
                              max_count=max_count)
-        if c:
-            all_results.append(f"{vfs_path}:{matched[0]}")
-            if grep_count_has_matches(matched):
-                any_match = True
-            continue
         if not matched:
             continue
         any_match = True

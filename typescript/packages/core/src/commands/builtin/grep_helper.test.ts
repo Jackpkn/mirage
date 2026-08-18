@@ -26,6 +26,7 @@ import {
   isLiteralPattern,
   isRegexPattern,
   literalPushdownOperand,
+  loneOperand,
   mergePatternList,
   NEVER_MATCH,
   NO_FILTERS,
@@ -238,7 +239,9 @@ describe('hasSearchShapingFlags', () => {
     [{ n: true }, true],
     [{ c: true }, true],
     [{ args_l: true }, true],
-    [{ l: true }, true],
+    // A bare `l` key is one the parser never emits: -l is short-only, so
+    // it lands on the disambiguated `args_l` dest (`AMBIGUOUS_NAMES`).
+    [{ l: true }, false],
     [{ w: true }, true],
     [{ o: true }, true],
     [{ q: true }, true],
@@ -282,6 +285,8 @@ function operand(virtual: string, pattern: string | null = null): PathSpec {
   })
 }
 
+const EMAIL_HONORED = ['n', 'args_l', 'w', 'o', 'm']
+
 const TRACES = operand('/traces')
 const SESSIONS = operand('/sessions')
 
@@ -308,6 +313,36 @@ describe('pushdownOperand', () => {
     expect(pushdownOperand([TRACES], { c: true }, 'ada')).toBe(null)
     expect(pushdownOperand([TRACES], {}, 'ada\nbob')).toBe(null)
     expect(pushdownOperand([TRACES], {}, null)).toBe(null)
+  })
+})
+
+describe('hasSearchShapingFlags honored', () => {
+  it('exempts only the named dests', () => {
+    // gmail/slack/discord: the provider's search is word-based, so -w is what
+    // makes the push-down faithful rather than what breaks it.
+    expect(hasSearchShapingFlags({ w: true }, ['w'])).toBe(false)
+    expect(hasSearchShapingFlags({ w: true, n: true }, ['w'])).toBe(true)
+    // email: the local re-scan implements these, so they ride along.
+    expect(hasSearchShapingFlags({ n: true, o: true, m: '3' }, EMAIL_HONORED)).toBe(false)
+    // ...but never -v or -c, which need messages the search did not return.
+    expect(hasSearchShapingFlags({ v: true }, EMAIL_HONORED)).toBe(true)
+    expect(hasSearchShapingFlags({ c: true }, EMAIL_HONORED)).toBe(true)
+  })
+
+  it('never exempts the operand rule', () => {
+    // An exemption is about flags only: two operands still defer.
+    expect(pushdownOperand([TRACES, SESSIONS], { w: true }, 'ada', ['w'])).toBe(null)
+    expect(pushdownOperand([TRACES], { w: true }, 'ada', ['w'])).toBe(TRACES)
+  })
+})
+
+describe('loneOperand', () => {
+  it('is the operand rule on its own, for a caller with no pattern', () => {
+    // email's find push-down has no grep pattern and no shaping flags.
+    expect(loneOperand([TRACES])).toBe(TRACES)
+    expect(loneOperand([TRACES, SESSIONS])).toBe(null)
+    expect(loneOperand([])).toBe(null)
+    expect(loneOperand([operand('/traces/*', '*')])).toBe(null)
   })
 })
 

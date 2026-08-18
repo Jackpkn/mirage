@@ -20,6 +20,7 @@ from mirage.commands.builtin.email._provision import metadata_provision
 from mirage.commands.builtin.email.io import resolve_glob
 from mirage.commands.builtin.generic.find import (is_link, parse_find_args,
                                                   resolve_start, walk_find)
+from mirage.commands.builtin.grep_helper import lone_operand
 from mirage.commands.builtin.utils.output import format_records
 from mirage.commands.config import CommandOpts
 from mirage.commands.registry import command
@@ -28,7 +29,6 @@ from mirage.commands.spec.types import FlagView
 from mirage.core.email.client import fetch_headers
 from mirage.core.email.readdir import _date_bucket, _sanitize
 from mirage.core.email.readdir import readdir as _readdir
-from mirage.core.email.scope import extract_folder
 from mirage.core.email.search import search_messages
 from mirage.core.email.stat import stat as _stat
 from mirage.io.types import ByteSource, IOResult
@@ -38,12 +38,30 @@ from mirage.utils.fnmatch import fnmatch
 from mirage.utils.key_prefix import mount_prefix_of
 
 
-def _is_folder_level(paths: list[PathSpec]) -> bool:
-    if not paths:
-        return False
-    key = paths[0].mount_path.strip("/")
-    parts = [x for x in key.split("/") if x]
-    return len(parts) <= 1
+def _folder_operand(paths: list[PathSpec]) -> PathSpec | None:
+    """The one folder operand the IMAP subject search may answer for.
+
+    Shares ``lone_operand``'s rule with the grep/rg push-downs, for the
+    same reason: the search answers one whole-folder question and prints
+    its entire answer, so a second operand was dropped in silence
+    (``find /mail/INBOX /mail/Sent -name '*x*'`` searched INBOX only).
+    On top of that the operand must name exactly one path segment, the
+    folder. The mount root used to reach here too and then answer with
+    an empty result and exit 0, reporting "nothing matched" for a search
+    it never ran; it now takes the walk below like any other path the
+    push-down cannot serve.
+
+    Args:
+        paths (list[PathSpec]): operands, already glob-resolved.
+
+    Returns:
+        PathSpec | None: the sole folder-level operand, or None to walk.
+    """
+    operand = lone_operand(paths)
+    if operand is None:
+        return None
+    parts = [x for x in operand.mount_path.strip("/").split("/") if x]
+    return operand if len(parts) == 1 else None
 
 
 async def find_provision(accessor: EmailAccessor, paths: list[PathSpec],
@@ -80,10 +98,11 @@ async def find(
     # falls through to the local walk so nothing is silently dropped.
     name_only = not (texts or size or mtime or type or iname or path
                      or mindepth or maxdepth or empty)
-    if name and name_only and _is_folder_level(paths):
-        p0 = paths[0]
-        search_prefix = mount_prefix_of(p0.virtual, p0.resource_path)
-        return await _find_server_side(accessor, paths, name, search_prefix)
+    if name and name_only:
+        operand = _folder_operand(paths)
+        if operand is not None:
+            prefix = mount_prefix_of(operand.virtual, operand.resource_path)
+            return await _find_server_side(accessor, operand, name, prefix)
 
     args = parse_find_args(tuple(texts),
                            name=name,
@@ -122,14 +141,12 @@ async def find(
 
 async def _find_server_side(
     accessor: EmailAccessor,
-    paths: list[PathSpec],
+    operand: PathSpec,
     name_pattern: str,
     prefix: str,
 ) -> tuple[ByteSource | None, IOResult]:
-    folder = extract_folder(paths)
-    if not folder:
-        return b"", IOResult()
-
+    # One non-empty segment, guaranteed by _folder_operand.
+    folder = operand.mount_path.strip("/")
     subject_query = name_pattern.replace("*", "").replace("?", "").replace(
         ".email.json", "").replace("__", " ").strip("_")
     if not subject_query:
