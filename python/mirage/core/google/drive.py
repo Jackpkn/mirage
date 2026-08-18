@@ -72,6 +72,7 @@ async def list_files(
     modified_after: str | None = None,
     modified_before: str | None = None,
     name: str | None = None,
+    limit: int | None = None,
 ) -> list[dict[str, Any]]:
     """List files via Drive API.
 
@@ -88,6 +89,11 @@ async def list_files(
         modified_before (str | None): RFC3339 timestamp; include only files
             with modifiedTime < this.
         name (str | None): exact file name filter.
+        limit (int | None): stop once this many files are in hand and do
+            not request another page. An emptiness probe wants one
+            entry, and ``page_size`` alone cannot express that: it caps
+            the page, not the walk, so a small page turned a listing of
+            a large folder into many requests instead of fewer.
 
     Returns:
         list[dict]: file metadata dicts.
@@ -110,7 +116,7 @@ async def list_files(
         params: dict[str, str | int] = {
             "q": q,
             "fields": FIELDS,
-            "pageSize": page_size,
+            "pageSize": page_size if limit is None else min(page_size, limit),
             "orderBy": "modifiedTime desc",
         }
         if drive_id:
@@ -123,6 +129,8 @@ async def list_files(
         url = f"{drive_base(token_manager)}/files"
         data = await google_get(token_manager, url, params=params)
         files.extend(data.get("files", []))
+        if limit is not None and len(files) >= limit:
+            break
         page_token = data.get("nextPageToken")
         if not page_token:
             break

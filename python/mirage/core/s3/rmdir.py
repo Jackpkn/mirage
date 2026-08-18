@@ -12,7 +12,7 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from mirage.core.object_store.remove import make_remove_prefix
+from mirage.core.object_store.remove import make_rmdir
 from mirage.core.s3.driver import DRIVER
 
-rmdir = make_remove_prefix(DRIVER)
+rmdir = make_rmdir(DRIVER)

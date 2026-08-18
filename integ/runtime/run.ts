@@ -477,6 +477,21 @@ async function runFacade(ws: Workspace, expect: Expect, spec: FacadeSpec): Promi
   if (method === undefined) return [`facade has no method ${spec.method}`];
   const args: unknown[] = [spec.path];
   if (spec.data !== undefined) args.push(ENC.encode(spec.data));
+  if (expect.errno !== undefined) {
+    // The cross-language error assertion. `throws_contains` reads the
+    // message, which the two languages word differently for the same
+    // condition (python's OSError renders the strerror, the TypeScript
+    // FsError carries only the path), so an errno case must name the
+    // condition instead.
+    let name = "NONE";
+    try {
+      await method.apply(ws.fs, args);
+    } catch (err) {
+      name = (err as { code?: string }).code ?? (err as Error).constructor.name;
+    }
+    if (name !== expect.errno) return [`facade errno ${name}, expected ${expect.errno}`];
+    return [];
+  }
   if (expect.throws_contains !== undefined) {
     try {
       await method.apply(ws.fs, args);

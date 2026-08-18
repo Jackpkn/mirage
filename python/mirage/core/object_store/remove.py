@@ -16,6 +16,7 @@ from mirage.cache.context import invalidate_after_unlink, invalidate_ancestors
 from mirage.core.object_store.driver import A, C, ObjectStoreDriver, PathFn
 from mirage.types import PathSpec
 from mirage.utils import key_prefix as kp
+from mirage.utils.errors import enoent, enotempty
 
 
 def make_unlink(driver: ObjectStoreDriver[A, C]) -> PathFn[A]:
@@ -61,3 +62,55 @@ def make_remove_prefix(driver: ObjectStoreDriver[A, C]) -> PathFn[A]:
         await invalidate_ancestors(path_spec)
 
     return remove_prefix
+
+
+def make_rmdir(driver: ObjectStoreDriver[A, C]) -> PathFn[A]:
+    """Build POSIX ``rmdir`` over one driver: refuse a non-empty prefix.
+
+    Not ``make_remove_prefix``. On a keyed store an empty directory is
+    its zero-byte marker object, so a prefix delete removes an empty
+    directory correctly and a *non-empty* one recursively, which is
+    ``rm -r``, not ``rmdir``. Sharing one function between the two slots
+    made ``rmdir`` destroy a whole subtree for every caller that does
+    not pre-check emptiness itself, and the command builders are the
+    only callers that do: FUSE, ``ws.ops`` and the sandbox runtimes all
+    reach the op directly.
+
+    The listing is the same one ``readdir`` reads, so the two agree on
+    what a child is: a ``marker`` entry is the prefix's own marker (or a
+    key the delimiter listing could not classify) and proves only that
+    the directory exists, while any ``f`` or ``d`` entry is a child and
+    makes this ENOTEMPTY. The walk stops at the first child rather than
+    listing the whole directory to answer a yes/no question.
+
+    A prefix holding no key at all -- not even the marker -- is a
+    directory the store does not have, and rmdir(2) reports ENOENT for
+    it. ``make_remove_prefix`` stays silent there on purpose, because
+    ``rm -r`` owns that refusal through its own ``-f`` handling.
+
+    Args:
+        driver (ObjectStoreDriver): the store's native surface.
+    """
+
+    async def rmdir(accessor: A, path_spec: PathSpec) -> None:
+        path = path_spec.mount_path
+        pfx = kp.apply_dir(driver.key_prefix_of(accessor), path)
+        is_root = not path.strip("/")
+        saw_key = False
+        has_child = False
+        async with driver.connect(accessor) as conn:
+            async for child in driver.list_children(conn, pfx):
+                saw_key = True
+                if child.kind != "marker":
+                    has_child = True
+                    break
+            if not has_child and (saw_key or is_root):
+                await driver.delete_prefix(conn, pfx)
+        if has_child:
+            raise enotempty(path_spec)
+        if not saw_key and not is_root:
+            raise enoent(path_spec)
+        await invalidate_after_unlink(path_spec)
+        await invalidate_ancestors(path_spec)
+
+    return rmdir

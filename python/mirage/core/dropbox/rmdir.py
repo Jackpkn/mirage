@@ -12,8 +12,6 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import errno
-import os
 import time
 
 from mirage.accessor.dropbox import DropboxAccessor
@@ -23,7 +21,7 @@ from mirage.core.dropbox.client import DropboxApiError
 from mirage.core.dropbox.paths import dropbox_path_of
 from mirage.observe.context import record
 from mirage.types import PathSpec
-from mirage.utils.errors import enoent, enotdir
+from mirage.utils.errors import enoent, enotdir, enotempty
 
 
 async def rmdir(accessor: DropboxAccessor, path: PathSpec) -> None:
@@ -48,8 +46,7 @@ async def rmdir(accessor: DropboxAccessor, path: PathSpec) -> None:
         raise enotdir(path.virtual)
     children = await list_folder(accessor.token_manager, api_path, limit=1)
     if children:
-        raise OSError(errno.ENOTEMPTY, os.strerror(errno.ENOTEMPTY),
-                      path.virtual)
+        raise enotempty(path)
     start_ms = int(time.monotonic() * 1000)
     await delete_path(accessor.token_manager, api_path)
     record("rmdir", path.virtual, "dropbox", 0, start_ms)

@@ -15,16 +15,33 @@
 import type { GDriveAccessor } from '../../accessor/gdrive.ts'
 import { invalidateAfterUnlink } from '../../cache/context.ts'
 import type { PathSpec } from '../../types.ts'
-import { enoent, enotdir } from '../../utils/errors.ts'
-import { deleteFile } from '../google/drive.ts'
+import { enoent, enotdir, enotempty } from '../../utils/errors.ts'
+import { deleteFile, listFiles } from '../google/drive.ts'
 import { eaccesOnDenied, isFolder, resolveKey } from './resolve.ts'
 
+/**
+ * Remove an empty folder.
+ *
+ * A Drive `files.delete` on a folder removes every descendant with it, so
+ * this is the same request `rmR` sends and the emptiness check is the only
+ * thing separating them. Without it `rmdir` destroyed the whole subtree for
+ * every caller that does not pre-check emptiness itself, and the command
+ * builders are the only callers that do: FUSE, `ws.ops` and the sandbox
+ * runtimes all reach the op directly. The probe is the one `rename` already
+ * makes before it overwrites a directory, bounded to a single entry.
+ */
 async function rmdirImpl(accessor: GDriveAccessor, path: PathSpec): Promise<void> {
   const key = path.resourcePath
   if (key === '') return
   const node = await resolveKey(accessor, key)
   if (node === null) throw enoent(path)
   if (!isFolder(node)) throw enotdir(path)
+  const children = await listFiles(accessor.tokenManager, {
+    folderId: node.id,
+    driveId: node.driveId,
+    limit: 1,
+  })
+  if (children.length > 0) throw enotempty(path)
   await deleteFile(accessor.tokenManager, node.id)
   await invalidateAfterUnlink(path)
 }

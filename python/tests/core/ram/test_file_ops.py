@@ -12,6 +12,8 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import errno
+
 import pytest
 
 from mirage.accessor.ram import RAMAccessor
@@ -142,10 +144,11 @@ async def test_rmdir_empty():
 
 @pytest.mark.asyncio
 async def test_rmdir_not_empty(store):
-    with pytest.raises(OSError, match="directory not empty"):
+    with pytest.raises(OSError) as excinfo:
         await rmdir(
             store,
             PathSpec(resource_path="dir", virtual="/dir", directory="/dir"))
+    assert excinfo.value.errno == errno.ENOTEMPTY
 
 
 @pytest.mark.asyncio

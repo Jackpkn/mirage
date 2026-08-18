@@ -411,20 +411,11 @@ export class MountCore {
     }
   }
 
+  // No emptiness pre-check here, matching the python MountCore. Every
+  // backend's rmdir op refuses a non-empty directory itself, so a listing
+  // first was one extra round trip per call on an API-backed mount, and the
+  // catch that wrapped it swallowed whatever readdir raised.
   async rmdir(path: string): Promise<void> {
-    // Detect non-empty directories up front so we can signal ENOTEMPTY
-    // cleanly. Message-string sniffing alone is unreliable across backends;
-    // check contents first.
-    try {
-      const entries = await this.ops.readdir(this.resolve(path))
-      if (entries.length > 0) {
-        throw errnoError('ENOTEMPTY', `directory not empty: ${path}`)
-      }
-    } catch (err) {
-      if ((err as { code?: string }).code === 'ENOTEMPTY') throw err
-      // readdir failure — fall through to rmdir and let it raise the real
-      // error (e.g. ENOENT for missing path).
-    }
     await this.ops.rmdir(this.resolve(path))
     this.xattrs.delete(path)
   }

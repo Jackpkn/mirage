@@ -14,8 +14,8 @@
 
 import { describe, expect, it } from 'vitest'
 import { runWithCacheManager } from '../../cache/context.ts'
-import { FakeAccessor, FakeManager, FakeStore, makeDriver, spec } from './fakes.ts'
-import { makeRemovePrefix, makeUnlink } from './remove.ts'
+import { codeOf, FakeAccessor, FakeManager, FakeStore, makeDriver, spec } from './fakes.ts'
+import { makeRemovePrefix, makeRmdir, makeUnlink } from './remove.ts'
 
 const accessor = new FakeAccessor()
 
@@ -42,5 +42,58 @@ describe('object_store remove', () => {
     expect(store.contents()).toEqual({})
     expect(manager.unlinks).toEqual(['/a/b'])
     expect(manager.writes).toEqual(['/a'])
+  })
+
+  // rmdir is not removePrefix. On a keyed store an empty directory is its
+  // marker object, so a prefix delete removes an empty directory correctly
+  // and a non-empty one recursively -- which is `rm -r`. The two slots
+  // shared one function, so every caller that does not pre-check emptiness
+  // itself (FUSE, `ws.ops`, the sandbox runtimes) destroyed the subtree.
+  it('rmdir refuses a non-empty prefix and keeps every key', async () => {
+    const store = new FakeStore({ 'a/b/': '', 'a/b/c.txt': 'hi', 'a/b/d/e.txt': 'x' })
+    const code = await codeOf(makeRmdir(makeDriver(store))(accessor, spec('/a/b')))
+    expect(code).toBe('ENOTEMPTY')
+    expect(store.contents()).toEqual({ 'a/b/': '', 'a/b/c.txt': 'hi', 'a/b/d/e.txt': 'x' })
+  })
+
+  it('rmdir refuses a prefix whose only child is a subdirectory', async () => {
+    const store = new FakeStore({ 'a/b/': '', 'a/b/d/': '' })
+    const code = await codeOf(makeRmdir(makeDriver(store))(accessor, spec('/a/b')))
+    expect(code).toBe('ENOTEMPTY')
+    expect(store.contents()).toEqual({ 'a/b/': '', 'a/b/d/': '' })
+  })
+
+  it('rmdir removes the marker of an empty prefix', async () => {
+    const store = new FakeStore({ 'a/b/': '', 'keep.txt': 'k' })
+    const manager = await managed(() => makeRmdir(makeDriver(store))(accessor, spec('/a/b')))
+    expect(store.contents()).toEqual({ 'keep.txt': 'k' })
+    expect(manager.unlinks).toEqual(['/a/b'])
+    expect(manager.writes).toEqual(['/a'])
+  })
+
+  it('rmdir reports ENOENT for a prefix holding no key', async () => {
+    const store = new FakeStore({ 'keep.txt': 'k' })
+    const code = await codeOf(makeRmdir(makeDriver(store))(accessor, spec('/a/b')))
+    expect(code).toBe('ENOENT')
+    expect(store.contents()).toEqual({ 'keep.txt': 'k' })
+  })
+
+  // The whole-store case, which the shared prefix delete got wrong. A mount
+  // root resolves to the bare key prefix, so `makeRemovePrefix` in this slot
+  // emptied the entire store. MountRootPolicy refuses a mount root as an
+  // operand with EBUSY, but only on the command path; FUSE and `ws.ops`
+  // reach the op. The root is also the one path that cannot report ENOENT --
+  // it exists because it is mounted -- so an empty root is a no-op.
+  it('rmdir on a populated mount root destroys nothing', async () => {
+    const store = new FakeStore({ 'a.txt': 'x', 'd/f.txt': 'y' })
+    const code = await codeOf(makeRmdir(makeDriver(store))(accessor, spec('/')))
+    expect(code).toBe('ENOTEMPTY')
+    expect(store.contents()).toEqual({ 'a.txt': 'x', 'd/f.txt': 'y' })
+  })
+
+  it('rmdir on an empty mount root is a no-op', async () => {
+    const store = new FakeStore({})
+    await managed(() => makeRmdir(makeDriver(store))(accessor, spec('/')))
+    expect(store.contents()).toEqual({})
   })
 })

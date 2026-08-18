@@ -42,6 +42,10 @@ const DIRECTORY_METADATA: FakeMetadata = {
 
 export class FakeNextcloudOperator {
   readonly files = new Map<string, Buffer>()
+  // Collections that hold no key of their own. WebDAV can represent one and
+  // the python fake tracks the same set; without it the mock could not model
+  // an empty directory at all, so nothing that removes one was testable.
+  readonly directories = new Set<string>()
 
   constructor(initial: Record<string, string | Buffer> = {}) {
     for (const [key, value] of Object.entries(initial)) {
@@ -49,9 +53,36 @@ export class FakeNextcloudOperator {
     }
   }
 
+  createDir(key: string): Promise<void> {
+    this.directories.add(`${rstripSlash(key)}/`)
+    return Promise.resolve()
+  }
+
+  // MKCOL creates missing parents, so the fake records them too.
+  delete(key: string): Promise<void> {
+    if (key.endsWith('/')) {
+      this.directories.delete(key)
+      return Promise.resolve()
+    }
+    this.files.delete(key)
+    return Promise.resolve()
+  }
+
+  removeAll(prefix: string): Promise<void> {
+    const stem = rstripSlash(prefix)
+    for (const key of [...this.files.keys()]) {
+      if (key === stem || key.startsWith(`${stem}/`)) this.files.delete(key)
+    }
+    for (const key of [...this.directories]) {
+      if (key === `${stem}/` || key.startsWith(`${stem}/`)) this.directories.delete(key)
+    }
+    return Promise.resolve()
+  }
+
   private hasDirectory(key: string): boolean {
     const prefix = key === '' ? '' : key.endsWith('/') ? key : `${key}/`
-    return prefix === '' || [...this.files.keys()].some((path) => path.startsWith(prefix))
+    if (prefix === '' || this.directories.has(prefix)) return true
+    return [...this.files.keys()].some((path) => path.startsWith(prefix))
   }
 
   stat(key: string): Promise<FakeMetadata> {

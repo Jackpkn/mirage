@@ -495,6 +495,104 @@
           "expect": { "exit": 0, "stdout": "seed\nmore\n" }
         }
       ]
+    },
+    {
+      "note": "rmdir(2) refuses a non-empty directory, and the refusal has to come from the op, not from the command builder. The shell battery cannot see this: `rmdir` the builtin checks emptiness itself before it calls the op, so it passes on a backend whose op deletes the whole subtree. The facade is the surface FUSE, ws.ops and the sandbox runtimes share, and it calls the op directly.",
+      "id": "facade_rmdir_refuses_a_nonempty_directory",
+      "world": {
+        "mounts": { "/data": { "resource": "ram", "files": { "seed.txt": "seed\n" } } }
+      },
+      "steps": [
+        {
+          "command": "mkdir -p /data/qrmdop && echo keep > /data/qrmdop/keep.txt",
+          "expect": { "exit": 0, "stdout": "", "stderr": "" }
+        },
+        {
+          "facade": { "method": "rmdir", "path": "/data/qrmdop" },
+          "expect": { "errno": "ENOTEMPTY" }
+        },
+        {
+          "command": "cat /data/qrmdop/keep.txt",
+          "expect": { "exit": 0, "stdout": "keep\n" }
+        }
+      ]
+    },
+    {
+      "id": "facade_rmdir_removes_an_empty_directory",
+      "world": {
+        "mounts": { "/data": { "resource": "ram", "files": { "seed.txt": "seed\n" } } }
+      },
+      "steps": [
+        {
+          "command": "mkdir -p /data/qrmdhollow",
+          "expect": { "exit": 0, "stdout": "", "stderr": "" }
+        },
+        {
+          "facade": { "method": "rmdir", "path": "/data/qrmdhollow" },
+          "expect": {}
+        },
+        {
+          "facade": { "method": "is_dir", "path": "/data/qrmdhollow" },
+          "expect": { "value": false }
+        }
+      ]
+    },
+    {
+      "id": "facade_rmdir_on_a_missing_directory_is_enoent",
+      "world": {
+        "mounts": { "/data": { "resource": "ram", "files": { "seed.txt": "seed\n" } } }
+      },
+      "steps": [
+        {
+          "facade": { "method": "rmdir", "path": "/data/qrmdnever" },
+          "expect": { "errno": "ENOENT" }
+        }
+      ]
+    },
+    {
+      "note": "A guest calling os.rmdir reaches the same op through the runtime VFS, so the refusal has to survive that path too -- and the errno the guest sees is the one the backend stamped.",
+      "id": "monty_rmdir_refuses_a_nonempty_directory",
+      "hosts": ["python"],
+      "world": {
+        "runtimes": ["monty", "vfs"],
+        "mounts": { "/data": { "resource": "ram", "files": { "seed.txt": "seed\n" } } }
+      },
+      "steps": [
+        {
+          "command": "mkdir -p /data/qrmdguest && echo keep > /data/qrmdguest/keep.txt",
+          "expect": { "exit": 0, "stdout": "", "stderr": "" }
+        },
+        {
+          "command": "python3 -c \"from pathlib import Path; Path('/data/qrmdguest').rmdir()\"",
+          "expect": { "exit": 1, "stderr_contains": "Directory not empty" }
+        },
+        {
+          "command": "cat /data/qrmdguest/keep.txt",
+          "expect": { "exit": 0, "stdout": "keep\n" }
+        }
+      ]
+    },
+    {
+      "id": "qjs_rmdir_refuses_a_nonempty_directory",
+      "hosts": ["typescript"],
+      "world": {
+        "runtimes": ["quickjs", "vfs"],
+        "mounts": { "/data": { "resource": "ram", "files": { "seed.txt": "seed\n" } } }
+      },
+      "steps": [
+        {
+          "command": "mkdir -p /data/qrmdguest && echo keep > /data/qrmdguest/keep.txt",
+          "expect": { "exit": 0, "stdout": "", "stderr": "" }
+        },
+        {
+          "command": "js -e \"console.log(os.remove('/data/qrmdguest') !== 0)\"",
+          "expect": { "exit": 0, "stdout": "true\n" }
+        },
+        {
+          "command": "cat /data/qrmdguest/keep.txt",
+          "expect": { "exit": 0, "stdout": "keep\n" }
+        }
+      ]
     }
   ]
 }

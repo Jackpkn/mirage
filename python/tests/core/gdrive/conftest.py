@@ -80,7 +80,8 @@ class FakeDrive:
                          page_size: int = 1000,
                          modified_after: str | None = None,
                          modified_before: str | None = None,
-                         name: str | None = None) -> list[dict]:
+                         name: str | None = None,
+                         limit: int | None = None) -> list[dict]:
         out = []
         for item in self.items.values():
             if folder_id not in item["parents"]:
@@ -90,6 +91,8 @@ class FakeDrive:
             if mime_type and item["mimeType"] != mime_type:
                 continue
             out.append(self.public(item["id"]))
+            if limit is not None and len(out) >= limit:
+                break
         return out
 
     async def list_shared_drives(self,
@@ -169,7 +172,7 @@ _PATCH_TARGETS = {
     write_mod: ("update_file_content", "upload_file"),
     mkdir_mod: ("create_folder", ),
     unlink_mod: ("delete_file", ),
-    rmdir_mod: ("delete_file", ),
+    rmdir_mod: ("delete_file", "list_files"),
     rm_mod: ("delete_file", ),
     rename_mod: ("delete_file", "list_files", "patch_file"),
     tree_mod: ("list_files", ),

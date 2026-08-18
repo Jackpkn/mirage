@@ -58,6 +58,7 @@ async def test_unlink_deletes_item():
 @pytest.mark.asyncio
 async def test_rmdir_deletes_folder():
     with aioresponses() as m:
+        m.get(_BASE + "/root:/docs:/children", payload={"value": []})
         m.delete(_BASE + "/root:/docs", status=204)
         await rmdir(_accessor(), PathSpec.from_str_path("/docs"))
 

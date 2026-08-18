@@ -15,9 +15,10 @@
 from mirage.accessor.box import BoxAccessor
 from mirage.cache.context import invalidate_after_unlink
 from mirage.core.box.api import delete_file, delete_folder
+from mirage.core.box.client import BoxApiError
 from mirage.core.box.resolve import path_parts, resolve_item
 from mirage.types import PathSpec
-from mirage.utils.errors import enoent
+from mirage.utils.errors import enoent, enotdir, enotempty
 
 
 async def rmdir(accessor: BoxAccessor, path: PathSpec) -> None:
@@ -26,9 +27,20 @@ async def rmdir(accessor: BoxAccessor, path: PathSpec) -> None:
     if item is None:
         raise enoent(path.virtual)
     if item.get("type") != "folder":
-        raise NotADirectoryError(path.virtual)
+        raise enotdir(path.virtual)
     # recursive=false: Box 409s on a non-empty folder, matching POSIX rmdir.
-    await delete_folder(accessor.token_manager, item["id"], recursive=False)
+    # The refusal is the service's, but naming it is ours: BoxApiError is a
+    # bare RuntimeError, so an unmapped 409 reached the caller as a condition
+    # `classify` could not name -- EIO over FUSE, no errno at all for
+    # `ws.ops` and the sandbox runtimes.
+    try:
+        await delete_folder(accessor.token_manager,
+                            item["id"],
+                            recursive=False)
+    except BoxApiError as exc:
+        if exc.status == 409:
+            raise enotempty(path) from exc
+        raise
     await invalidate_after_unlink(path)
 
 

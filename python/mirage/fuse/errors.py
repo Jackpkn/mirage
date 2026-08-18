@@ -19,8 +19,13 @@ from mirage.errors import FsCondition, classify, posix_errno
 # "attribute not found" errno: ENOATTR on macOS, ENODATA on Linux.
 NO_XATTR = posix_errno(FsCondition.NO_XATTR)
 
-# Genuine last resort, for a bare OSError whose only signal is its
-# message (ram/redis rmdir raise OSError("directory not empty: ...")).
+# Genuine last resort, for an error whose only signal is its message.
+# The repo's own backends no longer need it -- every rmdir refusal is
+# raised through mirage.utils.errors, which stamps the errno -- but a
+# third-party client can still hand up an untyped failure that carries
+# nothing else: SFTP 3 reports a non-empty directory as asyncssh's
+# SFTPFailure, which is not an OSError and has no code of its own, so
+# only the wording separates it from any other server-side failure.
 # The needles that duplicated a typed arm are gone: "read-only" and
 # "not allowed to access mount" arrive as PermissionError, "no mount"
 # as ValueError, and classify names all three.

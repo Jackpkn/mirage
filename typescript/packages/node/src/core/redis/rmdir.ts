@@ -14,25 +14,31 @@
 
 import { invalidateAfterUnlink } from '@struktoai/mirage-core/cache/context'
 import type { PathSpec } from '@struktoai/mirage-core/types'
+import { enoent, enotempty } from '@struktoai/mirage-core/utils/errors'
 import { rstripSlash } from '@struktoai/mirage-core/utils/slash'
 import type { RedisAccessor } from '../../accessor/redis.ts'
 import { norm } from './utils.ts'
 
+/**
+ * Remove an empty directory, mirroring the python backend.
+ *
+ * Both refusals go through the shared error helpers so they carry an
+ * errno. They used to be bare `Error`s whose only signal was the wording,
+ * which left the FUSE adapter sniffing message text to recover ENOTEMPTY
+ * and left every other caller -- `ws.ops`, the sandbox runtimes -- with an
+ * error `classify` could not name at all. A missing directory is ENOENT,
+ * not ENOTDIR: the path resolves to nothing, which is also what python
+ * reports here.
+ */
 export async function rmdir(accessor: RedisAccessor, path: PathSpec): Promise<void> {
   const p = norm(path.mountPath)
   const store = accessor.store
-  if (!(await store.hasDir(p))) {
-    throw new Error(`not a directory: ${p}`)
-  }
-  const prefix = rstripSlash(p) + '/'
+  if (!(await store.hasDir(p))) throw enoent(path)
+  const prefix = `${rstripSlash(p)}/`
   const files = await store.listFiles()
   const dirs = await store.listDirs()
   const candidates = [...files, ...dirs]
-  for (const k of candidates) {
-    if (k !== p && k.startsWith(prefix)) {
-      throw new Error(`directory not empty: ${p}`)
-    }
-  }
+  if (candidates.some((k) => k !== p && k.startsWith(prefix))) throw enotempty(path)
   await store.removeDir(p)
   await invalidateAfterUnlink(path)
 }

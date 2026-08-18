@@ -13,6 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import type { PathSpec } from '@struktoai/mirage-core/types'
+import { enotempty } from '@struktoai/mirage-core/utils/errors'
 import type { OPFSAccessor } from '../../accessor/opfs.ts'
 import { isNotFound, resolveParentDirHandle } from './utils.ts'
 
@@ -32,6 +33,13 @@ export async function rmdir(accessor: OPFSAccessor, path: PathSpec): Promise<voi
     await parentDir.removeEntry(name, { recursive: false })
   } catch (err) {
     if (isNotFound(err)) return
+    // OPFS enforces the emptiness itself under `recursive: false`, but names
+    // its refusal InvalidModificationError. Rethrown raw it reached the
+    // caller as an untyped DOMException that `classify` could not name, so
+    // FUSE reported EIO and the sandbox runtimes saw no errno at all.
+    if (err instanceof DOMException && err.name === 'InvalidModificationError') {
+      throw enotempty(path)
+    }
     throw err
   }
 }

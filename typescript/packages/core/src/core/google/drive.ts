@@ -99,6 +99,14 @@ export async function listFiles(
     modifiedAfter?: string | null
     modifiedBefore?: string | null
     name?: string | null
+    /**
+     * Stop once this many files are in hand and do not request another
+     * page. An emptiness probe wants one entry, and `pageSize` alone
+     * cannot express that: it caps the page, not the walk, so a small
+     * page turned a listing of a large folder into many requests
+     * instead of fewer.
+     */
+    limit?: number | null
   } = {},
 ): Promise<DriveFile[]> {
   const folderId = opts.folderId ?? 'root'
@@ -109,6 +117,7 @@ export async function listFiles(
   const modifiedAfter = opts.modifiedAfter ?? null
   const modifiedBefore = opts.modifiedBefore ?? null
   const name = opts.name ?? null
+  const limit = opts.limit ?? null
   const parts: string[] = [`'${folderId}' in parents`]
   if (name !== null) parts.push(`name='${escapeQueryValue(name)}'`)
   if (mimeType !== null) parts.push(`mimeType='${mimeType}'`)
@@ -122,7 +131,7 @@ export async function listFiles(
     const params: Record<string, string | number> = {
       q,
       fields: FIELDS,
-      pageSize,
+      pageSize: limit === null ? pageSize : Math.min(pageSize, limit),
       orderBy: 'modifiedTime desc',
     }
     if (driveId !== null) {
@@ -135,6 +144,7 @@ export async function listFiles(
     const url = `${driveBase(tm)}/files`
     const data = (await googleGet(tm, url, params)) as ListResponse
     if (data.files !== undefined) files.push(...data.files)
+    if (limit !== null && files.length >= limit) break
     pageToken = data.nextPageToken ?? null
     if (pageToken === null) break
   }

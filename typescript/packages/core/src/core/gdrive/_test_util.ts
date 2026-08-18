@@ -82,7 +82,12 @@ export class FakeDrive {
 
   listFiles(
     _tm: TokenManager,
-    opts: { folderId?: string; mimeType?: string | null; name?: string | null } = {},
+    opts: {
+      folderId?: string
+      mimeType?: string | null
+      name?: string | null
+      limit?: number | null
+    } = {},
   ): Promise<DriveFile[]> {
     const folderId = opts.folderId ?? 'root'
     const out: DriveFile[] = []
@@ -91,6 +96,7 @@ export class FakeDrive {
       if (opts.name != null && item.name !== opts.name) continue
       if (opts.mimeType != null && item.mimeType !== opts.mimeType) continue
       out.push(this.public(item.id))
+      if (opts.limit != null && out.length >= opts.limit) break
     }
     return Promise.resolve(out)
   }

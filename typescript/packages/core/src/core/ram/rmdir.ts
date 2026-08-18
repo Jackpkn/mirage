@@ -12,15 +12,30 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import { invalidateAfterUnlink } from '../../cache/context.ts'
 import type { RAMAccessor } from '../../accessor/ram.ts'
 import type { PathSpec } from '../../types.ts'
+import { enoent, enotempty } from '../../utils/errors.ts'
+import { rstripSlash } from '../../utils/slash.ts'
 import { norm } from './utils.ts'
-import { invalidateAfterUnlink } from '../../cache/context.ts'
 
+/**
+ * Remove an empty directory, mirroring the python backend.
+ *
+ * The store is flat, so dropping the directory key is not the whole of
+ * rmdir: the children are keyed independently and survive it. Without the
+ * two checks below, `rmdir` on a populated directory reported success and
+ * left every child addressable but unreachable -- `readdir` then raised,
+ * because the directory they hang off had been erased.
+ */
 export async function rmdir(accessor: RAMAccessor, path: PathSpec): Promise<void> {
   const p = norm(path.mountPath)
-  accessor.store.dirs.delete(p)
-  accessor.store.modified.delete(p)
+  const store = accessor.store
+  if (!store.dirs.has(p)) throw enoent(path)
+  const prefix = `${rstripSlash(p)}/`
+  const keys = [...store.files.keys(), ...store.dirs]
+  if (keys.some((k) => k !== p && k.startsWith(prefix))) throw enotempty(path)
+  store.dirs.delete(p)
+  store.modified.delete(p)
   await invalidateAfterUnlink(path)
-  return Promise.resolve()
 }
