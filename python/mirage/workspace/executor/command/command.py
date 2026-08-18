@@ -20,6 +20,7 @@ from mirage.commands.builtin.generic.crossmount import (handle_cross_mount,
                                                         is_cross_mount)
 from mirage.commands.builtin.generic.crossmount.detect import strategy_for
 from mirage.commands.builtin.generic.crossmount.types import Strategy
+from mirage.commands.builtin.generic.tar.mode import is_create_mode
 from mirage.commands.builtin.utils.limit import maybe_with_timeout
 from mirage.commands.config import version_request
 from mirage.commands.spec import SPECS
@@ -43,10 +44,10 @@ from mirage.workspace.executor.command.routing import (CWD_DEFAULT_RAW,
 from mirage.workspace.executor.command.types import ExecuteNodeFn
 from mirage.workspace.executor.fanout import (_fan_out_traversal,
                                               _should_fan_out, run_with_fanout)
-from mirage.workspace.executor.jobs import (handle_fg, handle_jobs,
-                                            handle_kill, handle_ps,
-                                            handle_wait)
-from mirage.workspace.expand.globs import resolve_globs
+from mirage.workspace.executor.jobs import (handle_disown, handle_fg,
+                                            handle_jobs, handle_kill,
+                                            handle_ps, handle_wait)
+from mirage.workspace.expand.globs import glob_options, resolve_globs
 from mirage.workspace.mount import MountCommandUnsupported, MountRegistry
 from mirage.workspace.mount.namespace import Namespace
 from mirage.workspace.mount.storage import make_storage_key
@@ -65,6 +66,7 @@ JOB_HANDLERS = {
     "fg": handle_fg,
     "kill": handle_kill,
     "jobs": handle_jobs,
+    "disown": handle_disown,
     "ps": handle_ps,
 }
 
@@ -98,7 +100,9 @@ async def handle_command(
         text_parts = [
             p.virtual if isinstance(p, PathSpec) else p for p in parts
         ]
-        return await JOB_HANDLERS[cmd_name](job_table, text_parts)
+        return await JOB_HANDLERS[cmd_name](job_table, text_parts, session,
+                                            session_view(
+                                                session, registry.policies))
 
     # Shell functions
     if cmd_name in session.functions:
@@ -190,8 +194,13 @@ async def handle_command(
                                       stderr=msg.encode())
 
     # Path-valued flags count: `cp -t /other/mount/dir src` spans mounts
-    # exactly like a positional destination would.
-    if is_cross_mount(cmd_name, routing_scopes, registry):
+    # exactly like a positional destination would. A create-mode tar is
+    # the one relay member kept out: its planner walks a single
+    # backend's tree, so a span there falls through to the refusal
+    # below instead of a relay run that would cross nested mounts.
+    if is_cross_mount(
+            cmd_name, routing_scopes,
+            registry) and not (cmd_name == "tar" and is_create_mode(raw_argv)):
         # Cross-mount execution bypasses a resource command handler. Parse
         # against the shared spec so flags and text operands do not depend on
         # the source mount. The bound single-mount runner lets the strategy
@@ -219,7 +228,8 @@ async def handle_command(
             # unmatched glob stays the literal word, like bash.
             expanded = await resolve_globs(list(path_scopes),
                                            registry,
-                                           links=namespace)
+                                           links=namespace,
+                                           options=glob_options(session))
             cross_scopes = [p for p in expanded if isinstance(p, PathSpec)]
         run_single = functools.partial(run_on_mount,
                                        registry,
@@ -227,12 +237,12 @@ async def handle_command(
                                        dispatch,
                                        namespace,
                                        routing_decision=routing_decision)
+        cross_ns = namespace_view_of(registry, namespace, dispatch)
         # A per-operand native run is single-mount by construction, so a
         # traversal operand holding nested mounts has to fan out inside
         # it, exactly as the same operand would on a line of its own.
         run_operand = functools.partial(
-            run_with_fanout, run_single, registry, session.cwd,
-            namespace_view_of(registry, namespace, dispatch),
+            run_with_fanout, run_single, registry, session.cwd, cross_ns,
             functools.partial(path_stat, dispatch)
             if dispatch is not None else None)
         stdout, io = await handle_cross_mount(
@@ -243,7 +253,8 @@ async def handle_command(
             dispatch,
             run_operand,
             stdin=stdin,
-            storage_key=make_storage_key(registry))
+            storage_key=make_storage_key(registry),
+            ns=cross_ns)
         if cross_parsed.warnings:
             warn = "".join(f"{cmd_name}: {w}\n"
                            for w in cross_parsed.warnings).encode()

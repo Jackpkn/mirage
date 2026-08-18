@@ -16,7 +16,7 @@ import { mkdirSync, readFileSync, statSync } from 'node:fs'
 import { dirname, resolve, sep } from 'node:path'
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import type { Limit } from '@struktoai/mirage-core/types'
-import type { MountSpec } from '@struktoai/mirage-core/workspace/workspace'
+import type { MountSpec } from '@struktoai/mirage-core/workspace/workspace/workspace'
 import type { Resource } from '@struktoai/mirage-core/resource/base'
 import { DiskWorkspaceStateStore, Workspace } from '@struktoai/mirage-node'
 import { newWorkspaceId } from '@struktoai/mirage-core/utils/ids'
@@ -27,7 +27,7 @@ import {
   loadWorkspaceConfig,
   type WorkspaceArgs,
   type WorkspaceConfigRaw,
-} from '../config.ts'
+} from '@struktoai/mirage-node'
 import { makeBrief, makeDetail } from '../summary.ts'
 
 export interface WorkspaceRoutesDeps {

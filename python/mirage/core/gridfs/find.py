@@ -19,8 +19,8 @@ from mirage.accessor.gridfs import GridFSAccessor
 from mirage.commands.builtin.find_eval import (FindEntry, PredNode, build_tree,
                                                emit_start_path, keep,
                                                start_basename)
-from mirage.core.gridfs._client import (_prefix, _strip_prefix, files_coll,
-                                        iter_latest, prefix_query)
+from mirage.core.gridfs.client import (_prefix, _strip_prefix, files_coll,
+                                       iter_latest, prefix_query)
 from mirage.types import PathSpec
 
 

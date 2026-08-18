@@ -61,19 +61,13 @@ export class Watcher implements WatchRuntime {
     return subscriber.roots.some((root) => this.inScope(root, change.path.virtual))
   }
 
-  private ancestors(mount: WatchMount, virtual: string): PathSpec[] {
-    const prefix = rstripSlash(mount.prefix)
-    const ancestors: PathSpec[] = []
-    let current = rstripSlash(virtual)
-    for (;;) {
-      current = current.slice(0, current.lastIndexOf('/'))
-      if (current.length <= prefix.length) return ancestors
-      ancestors.push(this.frame(mount, current))
-    }
-  }
-
   /**
    * Evict one path and every cached ancestor listing above it.
+   *
+   * The chain itself is the cache manager's to walk, not this class's: it
+   * already walks one for the keyed stores that materialize a missing level on
+   * write, and a second walk here would be the same rule kept in two places
+   * with two stopping conditions to keep in step.
    *
    * How far down the eviction reaches is the change's kind. UNKNOWN means
    * precision was lost and everything under the path must be re-inventoried,
@@ -87,9 +81,7 @@ export class Watcher implements WatchRuntime {
     if (kind === FileChangeKind.DELETE) await manager.invalidateAfterUnlink(path)
     else if (kind === FileChangeKind.UNKNOWN) await manager.invalidateSubtree(path)
     else await manager.invalidateAfterWrite(path)
-    for (const ancestor of this.ancestors(mount, path.virtual)) {
-      await manager.invalidateAfterWrite(ancestor)
-    }
+    await manager.invalidateAncestors(path)
   }
 
   private async invalidate(mount: WatchMount, change: FileEvent): Promise<void> {

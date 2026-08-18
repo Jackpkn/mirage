@@ -14,7 +14,7 @@
 
 from typing import Any
 
-from mirage.core.google._client import TokenManager, gmail_base, google_get
+from mirage.core.google.client import TokenManager, gmail_base, google_get
 
 
 async def list_labels(token_manager: TokenManager) -> list[dict[str, Any]]:

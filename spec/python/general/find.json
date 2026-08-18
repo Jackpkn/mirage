@@ -308,6 +308,11 @@
       "type": "str"
     },
     {
+      "multiple": true,
+      "short": "-printf",
+      "type": "str"
+    },
+    {
       "short": "-P",
       "type": "bool"
     },

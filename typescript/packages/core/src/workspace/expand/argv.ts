@@ -21,7 +21,7 @@ import { WordPolicy, endOptionsAfterProgram, route, wordPolicy } from '../route/
 import type { Session } from '../session/session.ts'
 import { classifyParts } from './classify/index.ts'
 import type { NamespaceLinks } from '../../ops/config.ts'
-import { resolveGlobs } from './globs.ts'
+import { globNeedsShell, globOptions, resolveGlobs } from './globs.ts'
 import { type ExecuteFn } from './node.ts'
 import { expandWords } from './parts.ts'
 import { type ValueType } from '../../commands/spec/types.ts'
@@ -127,9 +127,10 @@ export async function expandArgv(
   // WordPolicy.SHELL words get matches here; mount commands keep
   // patterns for backend pushdown; unknown names fail without
   // touching backends.
+  const globOpts = globOptions(session)
   const words =
-    policy === WordPolicy.SHELL
-      ? await resolveGlobs(classified, registry, false, namespace)
+    policy === WordPolicy.SHELL || globNeedsShell(globOpts)
+      ? await resolveGlobs(classified, registry, false, namespace, globOpts)
       : // A pattern still owes its backend a resolution, so it travels
         // marked and the marks come off there; every other word is done
         // with its quoting and reads literally from here on.

@@ -13,6 +13,8 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import shlex
+from collections.abc import Awaitable
+from typing import TypeVar
 
 from pydantic_ai_backends.protocol import SandboxProtocol
 from pydantic_ai_backends.types import (EditResult, ExecuteResponse, FileInfo,
@@ -24,6 +26,8 @@ from mirage.agents.pydantic_ai._convert import (io_to_execute_response,
 from mirage.bridge.sync import run_async_from_sync
 from mirage.io.types import IOResult
 from mirage.workspace.workspace import Workspace
+
+T = TypeVar("T")
 
 
 class PydanticAIWorkspace(SandboxProtocol):
@@ -44,7 +48,7 @@ class PydanticAIWorkspace(SandboxProtocol):
         self._id = sandbox_id
         self._session_id = session_id
 
-    def _run(self, coro):
+    def _run(self, coro: Awaitable[T]) -> T:
         return run_async_from_sync(coro)
 
     @property

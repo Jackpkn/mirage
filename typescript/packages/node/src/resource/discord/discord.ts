@@ -16,7 +16,7 @@ import { DiscordAccessor } from '@struktoai/mirage-core/accessor/discord'
 import { DISCORD_COMMANDS } from '@struktoai/mirage-core/commands/builtin/discord/index'
 import { makeResolveGlob } from '@struktoai/mirage-core/commands/builtin/generic_bind/index'
 import type { RegisteredCommand } from '@struktoai/mirage-core/commands/config'
-import { NodeDiscordTransport } from '@struktoai/mirage-core/core/discord/_client'
+import { NodeDiscordTransport } from '@struktoai/mirage-core/core/discord/client'
 import { redactDiscordConfig } from '@struktoai/mirage-core/core/discord/config'
 import type {
   DiscordConfig,

@@ -2,7 +2,7 @@ import pytest
 from aioresponses import CallbackResult, aioresponses
 
 from mirage.accessor.onedrive import OneDriveAccessor, OneDriveConfig
-from mirage.core.onedrive._client import GraphError
+from mirage.core.onedrive.client import GraphError
 from mirage.core.onedrive.mkdir import mkdir
 from mirage.types import PathSpec
 

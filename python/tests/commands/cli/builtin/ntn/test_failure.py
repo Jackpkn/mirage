@@ -21,7 +21,7 @@ from mirage.commands.cli.builtin.ntn.failure import (HintedAPIError,
                                                      api_failure, guarded,
                                                      source_hint)
 from mirage.commands.cli.types import CLISpec
-from mirage.core.notion._client import NotionAPIError
+from mirage.core.notion.client import NotionAPIError
 from mirage.io.types import IOResult
 
 # Every line here was printed by ntn 0.21.9 against a server returning that

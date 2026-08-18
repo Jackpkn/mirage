@@ -1,6 +1,7 @@
 from dataclasses import replace
 from functools import partial
 
+from mirage.accessor.chroma import ChromaAccessor
 from mirage.commands.builtin.chroma.io import resolve_glob
 from mirage.commands.builtin.generic.find import find_generic
 from mirage.commands.builtin.utils.output import format_records
@@ -52,7 +53,7 @@ async def _normalize_find_output(
 
 @command("find", resource="chroma", spec=SPECS["find"])
 async def find(
-    accessor,
+    accessor: ChromaAccessor,
     paths: list[PathSpec],
     texts: list[str],
     opts: CommandOpts,

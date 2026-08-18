@@ -17,7 +17,7 @@ from mirage.commands.cli.builtin.himalaya.builder import Source
 from mirage.commands.cli.builtin.himalaya.util import first_text, route
 from mirage.commands.cli.types import CLIInvocation
 from mirage.commands.spec.types import FlagView
-from mirage.core.email._client import fetch_message
+from mirage.core.email.client import fetch_message
 from mirage.core.email.config import EmailConfig
 from mirage.io.types import ByteSource, IOResult
 

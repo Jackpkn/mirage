@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { Accessor } from './base.ts'
-import type { GitHubTransport } from '../core/github/_client.ts'
+import type { GitHubTransport } from '../core/github/client.ts'
 import type { TreeEntry } from '../core/github/tree_entry.ts'
 
 export class GitHubAccessor extends Accessor {

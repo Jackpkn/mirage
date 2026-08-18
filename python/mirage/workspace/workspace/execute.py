@@ -15,7 +15,7 @@
 import asyncio
 import logging
 from functools import partial
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from mirage.commands.builtin.utils.limit import (CommandTimeoutError,
                                                  run_with_timeout)
@@ -26,7 +26,7 @@ from mirage.policy import resolve_limit
 from mirage.provision import ProvisionResult
 from mirage.runtime.policy import PolicyDecision, PolicyDeny, PolicyError
 from mirage.shell.parse import (find_syntax_error, find_unterminated_backtick,
-                                parse)
+                                parse, syntax_error_result)
 from mirage.workspace.abort import MirageAbortError
 from mirage.workspace.node import provision_node, run_command_tree
 from mirage.workspace.session import (get_current_session_for,
@@ -36,6 +36,9 @@ from mirage.workspace.snapshot import ContentDriftError
 from mirage.workspace.workspace.failure import failure_result
 from mirage.workspace.workspace.line import run_whole_line
 from mirage.workspace.workspace.utils import command_name, fork_for_call
+
+if TYPE_CHECKING:
+    from mirage.workspace.workspace import Workspace
 
 logger = logging.getLogger(__name__)
 
@@ -54,9 +57,13 @@ async def plan_eval_stub(cmd: str, **opts: Any) -> IOResult:
     return IOResult()
 
 
-async def recurse(ws, cancel: asyncio.Event | None,
-                  routing_decision: PolicyDecision | None, cmd: str,
-                  **opts: Any) -> Any:
+async def recurse(
+    ws: "Workspace",
+    cancel: asyncio.Event | None,
+    routing_decision: PolicyDecision | None,
+    cmd: str,
+    **opts: Any,
+) -> Any:
     """The executor's internal eval ($(), source, eval, xargs, ...).
 
     Never a typed line, so it must not record a history entry or open
@@ -78,7 +85,10 @@ async def recurse(ws, cancel: asyncio.Event | None,
                             **opts)
 
 
-def session_cwd(ws, session_id: str) -> str | None:
+def session_cwd(
+    ws: "Workspace",
+    session_id: str,
+) -> str | None:
     """The session's cwd for history, None once the session is gone.
 
     Args:
@@ -91,20 +101,8 @@ def session_cwd(ws, session_id: str) -> str | None:
         return None
 
 
-def syntax_error_result(offending: str) -> IOResult:
-    """Exit 2 with the bash-style diagnostic for an unparsable line.
-
-    Args:
-        offending (str): the span the parser flagged.
-    """
-    snippet = offending.strip()
-    err = (f"mirage: syntax error near {snippet!r}\n".encode()
-           if snippet else b"mirage: syntax error in command\n")
-    return IOResult(exit_code=2, stderr=err)
-
-
 async def execute_line(
-    ws,
+    ws: "Workspace",
     command: str,
     session_id: str | None,
     stdin: ByteSource | None,

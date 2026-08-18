@@ -57,13 +57,21 @@ CI runs it as the `integ-shared-parity` job.
 - `matrix` is explicit: a case runs only on the listed backends. Listing a
   backend is a claim of support — a missing command there is a failure, not a
   skip. A case whose matrix is empty is a load-time error in both runners.
+- The two languages must list the same backends. A case is a parity claim, so
+  narrowing one side reads as coverage while it is really an unexamined
+  divergence — and it goes unnoticed, because the side that still lists the
+  backend passes. Both runners reject an asymmetric matrix at load time.
+- `divergence` is the override: a string saying why one language cannot run
+  the case everywhere the other does. Setting it permits an asymmetric matrix,
+  and it is the only thing that does.
 
 ## Policy
 
 - One expected value per case. If a backend or language legitimately diverges,
   that divergence is triaged first: either it is a bug (fix the
-  implementation) or it is intended semantics (document it and add an explicit
-  per-backend override mechanism — not yet needed).
+  implementation) or it is intended semantics, recorded in the case's
+  `divergence` key so the narrowing is stated rather than inferred from a
+  short matrix.
 - This spec is an acceptance/parity net, not a replacement for backend tests.
   API call counts, pushdown/fallback, cache invalidation, error injection, and
   concurrency stay in hand-written per-backend tests.

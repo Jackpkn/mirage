@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { describe, expect, it } from 'vitest'
-import { ExecuteResult } from '@struktoai/mirage-core/workspace/workspace'
+import { ExecuteResult } from '@struktoai/mirage-core/workspace/workspace/workspace'
 import { decode, ioToStr } from './io-text.ts'
 
 const enc = (s: string): Uint8Array => new TextEncoder().encode(s)

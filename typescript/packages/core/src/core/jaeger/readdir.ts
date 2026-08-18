@@ -19,8 +19,8 @@ import type { PathSpec } from '../../types.ts'
 import { enoent } from '../../utils/errors.ts'
 import { mountPrefixOf } from '../../utils/key_prefix.ts'
 import { stripSlash } from '../../utils/slash.ts'
-import { fetchOperations, fetchServices, fetchTraces, isTraceId } from './_client.ts'
-import { jaegerJsonBytes } from './render.ts'
+import { fetchOperations, fetchServices, fetchTraces, isTraceId } from './client.ts'
+import { jsonBytes } from '../render/json.ts'
 import { JAEGER_OPERATIONS_FILE, JAEGER_TOP_LEVEL_DIRS, detectScope } from './scope.ts'
 
 function makeVirtualKey(prefix: string, key: string): string {
@@ -67,7 +67,7 @@ async function readdirService(
         name: JAEGER_OPERATIONS_FILE,
         resourceType: 'jaeger/operations',
         vfsName: JAEGER_OPERATIONS_FILE,
-        size: jaegerJsonBytes(operations).byteLength,
+        size: jsonBytes(operations).byteLength,
       }),
     ],
     [
@@ -148,7 +148,7 @@ async function readdirTraces(
         name: traceId,
         resourceType: 'jaeger/trace',
         vfsName: filename,
-        size: jaegerJsonBytes(trace).byteLength,
+        size: jsonBytes(trace).byteLength,
       }),
     ])
     names.push(`${prefix}/services/${service}/traces/${filename}`)

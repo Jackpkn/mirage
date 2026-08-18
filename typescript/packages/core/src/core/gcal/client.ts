@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import type { JsonValue } from '../../types.ts'
-import { calendarBase, googleDelete, googleGet, type TokenManager } from '../google/_client.ts'
+import { calendarBase, googleDelete, googleGet, type TokenManager } from '../google/client.ts'
 
 const MAX_PAGES = 50
 

@@ -15,12 +15,12 @@
 from typing import Any
 
 from mirage.accessor.gsheets import GSheetsAccessor
-from mirage.core.google._client import TokenManager
+from mirage.core.google.client import TokenManager
 from mirage.core.gsheets.readdir import readdir
 from mirage.resource.base import BaseResource
 from mirage.resource.gsheets.config import GSheetsConfig
 from mirage.resource.gsheets.prompt import PROMPT, WRITE_PROMPT
-from mirage.types import ResourceName
+from mirage.types import PathSpec, ResourceName
 from mirage.utils.glob_walk import make_resolve_glob
 
 _resolve_glob = make_resolve_glob(readdir)
@@ -51,7 +51,11 @@ class GSheetsResource(BaseResource):
         for fn in GSHEETS_VFS_OPS:
             self.register_op(fn)
 
-    async def resolve_glob(self, paths, prefix: str = ""):
+    async def resolve_glob(
+        self,
+        paths: list[PathSpec],
+        prefix: str = '',
+    ) -> list[PathSpec]:
         return await _resolve_glob(self.accessor, paths, index=self._index)
 
     def get_state(self) -> dict[str, Any]:

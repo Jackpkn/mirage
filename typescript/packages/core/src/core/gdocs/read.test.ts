@@ -15,24 +15,24 @@
 import { mountKey } from '../../utils/key_prefix.ts'
 import { describe, expect, it, vi } from 'vitest'
 import type * as DriveModule from '../google/drive.ts'
-import type * as ClientModule from '../google/_client.ts'
+import type * as ClientModule from '../google/client.ts'
 
 vi.mock('../google/drive.ts', async () => {
   const actual = await vi.importActual<typeof DriveModule>('../google/drive.ts')
   return { ...actual, listAllFiles: vi.fn() }
 })
 
-vi.mock('../google/_client.ts', async () => {
-  const actual = await vi.importActual<typeof ClientModule>('../google/_client.ts')
+vi.mock('../google/client.ts', async () => {
+  const actual = await vi.importActual<typeof ClientModule>('../google/client.ts')
   return { ...actual, googleGet: vi.fn() }
 })
 
 import { GDocsAccessor } from '../../accessor/gdocs.ts'
 import { RAMIndexCacheStore } from '../../cache/index/ram.ts'
 import { PathSpec } from '../../types.ts'
-import type { TokenManager } from '../google/_client.ts'
+import type { TokenManager } from '../google/client.ts'
 import * as drive from '../google/drive.ts'
-import * as client from '../google/_client.ts'
+import * as client from '../google/client.ts'
 import { read } from './read.ts'
 
 const STUB_TOKEN_MANAGER = {

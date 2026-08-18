@@ -14,7 +14,7 @@
 
 export * from '@struktoai/mirage-core'
 export { Workspace, type NodeWorkspaceOptions } from './workspace.ts'
-export { Mount, type MountSpecOptions } from './workspace/mount_spec.ts'
+export { Mount, type MountSpecOptions } from '@struktoai/mirage-core/workspace/mount/spec'
 export {
   DiskResource,
   type DiskResourceOptions,
@@ -57,8 +57,8 @@ export {
   headTailProvision,
   metadataProvision,
   type RedisResourceLike,
-} from './commands/builtin/redis/provision.ts'
-export { RedisFileCacheStore, type RedisFileCacheOptions } from './cache/redis/file.ts'
+} from './commands/builtin/redis/_provision.ts'
+export { RedisFileCacheStore, type RedisFileCacheOptions } from './cache/file/redis.ts'
 export { FuseManager } from './workspace/fuse.ts'
 export { MirageFS, type MirageFSOptions, type FuseAttr } from './fuse/fs.ts'
 export { MountCore, type MountCoreOptions } from './fuse/core.ts'
@@ -403,6 +403,8 @@ export { E2BRuntime } from './runtime/sandbox/e2b/runtime.ts'
 export { E2B_CONFIG_KEYS, type E2BConfig } from './runtime/sandbox/e2b/config.ts'
 export { DockerRuntime } from './runtime/sandbox/docker/runtime.ts'
 export { DOCKER_CONFIG_KEYS, type DockerConfig } from './runtime/sandbox/docker/config.ts'
+export { SmolvmRuntime } from './runtime/sandbox/smolvm/runtime.ts'
+export { SMOLVM_CONFIG_KEYS, type SmolvmConfig } from './runtime/sandbox/smolvm/config.ts'
 export {
   buildResource,
   knownResources,
@@ -413,3 +415,14 @@ export { MODULE_SUFFIXES, isModulePath, loadAttr, splitRef } from './resource/lo
 export { DISK_COMMANDS } from './commands/builtin/disk/index.ts'
 export { REDIS_COMMANDS } from './commands/builtin/redis/index.ts'
 export { GRIDFS_COMMANDS } from './commands/builtin/gridfs/index.ts'
+export {
+  checkWorkspaceConfig,
+  checkWorkspaceConfigFile,
+  configToWorkspaceArgs,
+  interpolateEnv,
+  loadWorkspaceConfig,
+  loadWorkspaceConfigFile,
+  type MountBlock,
+  type WorkspaceArgs,
+  type WorkspaceConfigRaw,
+} from './config.ts'

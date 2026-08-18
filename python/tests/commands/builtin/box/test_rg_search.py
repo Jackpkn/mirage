@@ -20,7 +20,7 @@ from mirage.accessor.box import BoxAccessor
 from mirage.cache.index.ram import RAMIndexCacheStore
 from mirage.commands.builtin.box.rg import _keep_visible, rg
 from mirage.commands.config import CommandOpts
-from mirage.core.box._client import BoxTokenManager
+from mirage.core.box.client import BoxTokenManager
 from mirage.core.box.config import BoxConfig
 from mirage.io.types import IOResult
 from mirage.types import PathSpec

@@ -12,15 +12,15 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import json
 import logging
 
 from mirage.accessor.gcal import GCalAccessor
 from mirage.cache.index import NULL_INDEX, IndexCacheStore
-from mirage.core.gcal._client import list_events
+from mirage.core.gcal.client import list_events
 from mirage.core.gcal.day import day_bounds
 from mirage.core.gcal.readdir import (bucket_zone, calendar_index,
                                       calendar_payload, normalize)
+from mirage.core.render.json import compact_json_bytes
 from mirage.resource.gcal.event_entry import parse_event_filename
 from mirage.types import PathSpec
 from mirage.utils.errors import enoent
@@ -72,6 +72,5 @@ async def read(
     for event in await list_events(accessor.token_manager, cal_id, time_min,
                                    time_max, tz):
         if event.get("id") == event_id:
-            return json.dumps(event, ensure_ascii=False,
-                              separators=(",", ":")).encode()
+            return compact_json_bytes(event)
     raise enoent(path.virtual)

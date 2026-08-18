@@ -60,14 +60,14 @@ describe('handleWait', () => {
     const jt = new JobTable()
     const [, io] = await handleWait(jt, ['wait', 'abc'])
     expect(io.exitCode).toBe(1)
-    expect(decode(io.stderr as Uint8Array)).toMatch(/invalid job id/)
+    expect(decode(io.stderr as Uint8Array)).toMatch(/not a pid or valid job spec/)
   })
 
   it('rejects unknown job id', async () => {
     const jt = new JobTable()
     const [, io] = await handleWait(jt, ['wait', '999'])
-    expect(io.exitCode).toBe(1)
-    expect(decode(io.stderr as Uint8Array)).toMatch(/no such job/)
+    expect(io.exitCode).toBe(127)
+    expect(decode(io.stderr as Uint8Array)).toMatch(/not a child of this shell/)
   })
 
   it('awaits a specific job and returns its output and exit code', async () => {

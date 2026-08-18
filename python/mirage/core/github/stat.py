@@ -14,6 +14,7 @@
 
 import logging
 
+from mirage.accessor.github import GitHubAccessor
 from mirage.cache.index import NULL_INDEX, IndexCacheStore
 from mirage.core.github.readdir import readdir as _readdir
 from mirage.types import FileStat, FileType, PathSpec
@@ -24,9 +25,11 @@ from mirage.utils.key_prefix import mount_key, mount_prefix_of
 logger = logging.getLogger(__name__)
 
 
-async def stat(accessor,
-               path_spec: PathSpec,
-               index: IndexCacheStore = NULL_INDEX) -> FileStat:
+async def stat(
+    accessor: GitHubAccessor,
+    path_spec: PathSpec,
+    index: IndexCacheStore = NULL_INDEX,
+) -> FileStat:
     virtual = path_spec.virtual
     prefix = mount_prefix_of(path_spec.virtual, path_spec.resource_path)
     rel = path_spec.mount_path.strip("/")

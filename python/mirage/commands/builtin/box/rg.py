@@ -15,7 +15,7 @@
 from collections.abc import Mapping
 
 from mirage.accessor.box import BoxAccessor
-from mirage.commands.builtin.box.narrow import narrow_scope
+from mirage.commands.builtin.box.pushdown import narrow_scope
 from mirage.commands.builtin.generic.rg import rg as generic_rg
 from mirage.commands.builtin.generic_bind.adapter import bound_op
 from mirage.commands.builtin.grep_helper import pattern_arg

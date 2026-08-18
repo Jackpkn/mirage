@@ -14,7 +14,7 @@
 
 from mirage.accessor.gridfs import GridFSAccessor
 from mirage.cache.context import invalidate_after_unlink
-from mirage.core.gridfs._client import _key, delete_all
+from mirage.core.gridfs.client import _key, delete_all
 from mirage.types import PathSpec
 
 

@@ -18,7 +18,7 @@ from typing import Any
 
 from mirage.core.gmail.messages import (_extract_header, get_message_processed,
                                         get_message_raw)
-from mirage.core.google._client import TokenManager, gmail_base, google_post
+from mirage.core.google.client import TokenManager, gmail_base, google_post
 
 
 async def send_message(

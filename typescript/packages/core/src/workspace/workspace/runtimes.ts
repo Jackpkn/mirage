@@ -13,7 +13,8 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { parsedCommands, type PolicyDecision } from '../../runtime/policy/index.ts'
-import { scriptStringError, type Runtime, type RuntimeEntry } from '../../runtime/base.ts'
+import type { Runtime, RuntimeEntry } from '../../runtime/base.ts'
+import { rejectConfigScript } from './guard.ts'
 import { LanguageRuntime } from '../../runtime/language.ts'
 import { isLineExecutor, type LineExecutor } from '../../runtime/mixin.ts'
 import {
@@ -82,8 +83,7 @@ export class Runtimes {
     // goes stale (Python re-assigns per add instead).
     init.registry.runtimeEntries = this.entries
     for (const entry of this.entries) {
-      if (typeof entry.script === 'string')
-        throw scriptStringError(`runtime '${entry.name}' script`)
+      rejectConfigScript(`runtime '${entry.name}' script`, entry.script)
       if (entry instanceof LanguageRuntime) entry.attach(this.bridge(), this.resolver)
       this.registerCloser(() => entry.close())
     }
@@ -100,7 +100,7 @@ export class Runtimes {
    */
   add(runtime: RuntimeEntry): Runtime {
     const entry: Runtime = typeof runtime === 'string' ? buildRuntime(runtime) : runtime
-    if (typeof entry.script === 'string') throw scriptStringError(`runtime '${entry.name}' script`)
+    rejectConfigScript(`runtime '${entry.name}' script`, entry.script)
     const candidate = [...this.entries, entry]
     const bindings = bindCommands(candidate)
     if (entry instanceof LanguageRuntime) entry.attach(this.bridge(), this.resolver)

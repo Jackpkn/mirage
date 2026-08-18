@@ -19,6 +19,7 @@ from mirage.commands.builtin.utils.slash_links import mkdir_link_refusal
 from mirage.commands.config import CommandOpts
 from mirage.commands.spec import SPECS
 from mirage.commands.spec.types import FlagView
+from mirage.context import DEFAULT_UMASK, session_umask
 from mirage.io.types import ByteSource, IOResult
 from mirage.types import PathSpec
 from mirage.utils.errors import (FS_ERRORS, error_path, fs_strerror,
@@ -38,13 +39,24 @@ async def mkdir(ops: CommandIO, accessor: Accessor, paths: list[PathSpec],
     mode: int | None = None
     if mode_text is not None:
         # Symbolic clauses build on what mirage renders for a new
-        # directory, since there is no umask to subtract from.
+        # directory; `-m` is applied after the create, so the session's
+        # umask does not reach it, which is GNU's rule too.
         mode = parse_chmod(mode_text, DEFAULT_DIR_MODE)
         if mode is None:
             raise ValueError(f"mkdir: invalid mode '{mode_text}'")
         if ops.set_attrs is None:
             raise NotImplementedError(
                 "mkdir: --mode is not supported on this backend")
+    elif ops.set_attrs is not None:
+        # A new directory is 0777 masked by the session's umask. Only a
+        # mask away from bash's default costs a setattr, because 755 is
+        # what every backend already renders for a fresh directory;
+        # parents made by `-p` keep that default (GNU gives them
+        # `u+wx` on top of the mask, which the one backend op cannot
+        # tell apart from the named directory).
+        umask = session_umask()
+        if umask != DEFAULT_UMASK:
+            mode = 0o777 & ~umask
     mkdir_fn = ops.require(Operation.MKDIR)
     paths = await ops.resolve_glob(accessor, paths, opts.index)
     lines: list[str] = []

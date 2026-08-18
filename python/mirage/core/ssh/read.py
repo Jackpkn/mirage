@@ -18,7 +18,7 @@ import asyncssh
 
 from mirage.accessor.ssh import SSHAccessor
 from mirage.cache.index import NULL_INDEX, IndexCacheStore
-from mirage.core.ssh._client import _abs
+from mirage.core.ssh.client import _abs
 from mirage.observe.context import record
 from mirage.types import PathSpec
 from mirage.utils.errors import enoent

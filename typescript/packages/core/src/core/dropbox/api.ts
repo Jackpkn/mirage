@@ -12,8 +12,8 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { dropboxRpc } from './_client.ts'
-import type { DropboxTokenManager } from './_client.ts'
+import { dropboxRpc } from './client.ts'
+import type { DropboxTokenManager } from './client.ts'
 
 type DropboxEntryTag = 'file' | 'folder' | 'deleted'
 

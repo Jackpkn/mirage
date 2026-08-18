@@ -106,10 +106,8 @@ async def run_fanout(cmd_name: str,
         body = du_total(results, du_human)
     elif cmd_name == Cmd.TEE:
         body = stdin_bytes or b""
-    elif (cmd_name in (Cmd.HEAD, Cmd.TAIL)
-          and FlagView(flags, spec=SPECS[cmd_name]).as_bool(verbose_key)) or (
-              cmd_name == Cmd.LS
-              and FlagView(flags, spec=SPECS[Cmd.LS]).as_bool("R")):
+    elif cmd_name in (Cmd.HEAD, Cmd.TAIL) and FlagView(
+            flags, spec=SPECS[cmd_name]).as_bool(verbose_key):
         # Blank line between per-operand blocks, like one native run
         # separates its own file blocks.
         body = b"\n".join(r.data for r in results if r.data)

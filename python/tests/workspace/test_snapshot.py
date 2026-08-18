@@ -28,9 +28,10 @@ from mirage.resource.ram import RAMResource
 from mirage.resource.s3 import S3Config, S3Resource
 from mirage.resource.secrets import REDACTED_SECRET
 from mirage.runtime.types import ScriptSource
-from mirage.types import CLIKey, MountMode, ScriptKey, StateKey
+from mirage.types import MountMode
 from mirage.workspace import Workspace
 from mirage.workspace.snapshot import to_state_dict
+from mirage.workspace.snapshot.keys import CLIKey, ScriptKey, StateKey
 from mirage.workspace.snapshot.utils import FORMAT_VERSION
 
 

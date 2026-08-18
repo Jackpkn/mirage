@@ -12,7 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { escapeRegex } from '../_client.ts'
+import { escapeRegex } from '../client.ts'
 
 export function duQuery(stem: string): Record<string, unknown> {
   if (stem === '') return {}

@@ -16,7 +16,7 @@ from mirage.accessor.email import EmailAccessor
 from mirage.commands.cli.builtin.himalaya.util import first_text
 from mirage.commands.cli.types import CLIInvocation
 from mirage.commands.spec.types import FlagView
-from mirage.core.email._client import fetch_message, fetch_raw_message
+from mirage.core.email.client import fetch_message, fetch_raw_message
 from mirage.core.email.config import EmailConfig
 from mirage.core.email.render import message_json_bytes
 from mirage.io.stream import yield_bytes

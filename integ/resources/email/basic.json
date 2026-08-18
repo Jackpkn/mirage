@@ -522,7 +522,7 @@
       "command": "du -h /mail/INBOX/2026-01-05/Q2_Budget_Review__1/budget.csv",
       "expect": {
         "exit": 0,
-        "stdout": "36B\t/mail/INBOX/2026-01-05/Q2_Budget_Review__1/budget.csv\n",
+        "stdout": "36\t/mail/INBOX/2026-01-05/Q2_Budget_Review__1/budget.csv\n",
         "stderr": ""
       }
     },

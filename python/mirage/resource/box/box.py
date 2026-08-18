@@ -17,7 +17,7 @@ from typing import Any
 
 from mirage.accessor.box import BoxAccessor
 from mirage.commands.builtin.box import COMMANDS as BOX_COMMANDS
-from mirage.core.box._client import BoxTokenManager
+from mirage.core.box.client import BoxTokenManager
 from mirage.core.box.config import BoxConfig
 from mirage.core.box.readdir import readdir
 from mirage.core.box.watch import build_delta_hook
@@ -56,7 +56,11 @@ class BoxResource(BaseResource):
     def delta_hook(self) -> DeltaHook:
         return build_delta_hook(self.accessor)
 
-    async def resolve_glob(self, paths, prefix: str = ""):
+    async def resolve_glob(
+        self,
+        paths: list[PathSpec],
+        prefix: str = '',
+    ) -> list[PathSpec]:
         if prefix:
             paths = [
                 dataclasses.replace(p,

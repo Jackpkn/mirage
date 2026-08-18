@@ -14,7 +14,7 @@
 
 import type { QdrantAccessor } from '../../accessor/qdrant.ts'
 import type { IndexCacheStore } from '../../cache/index/store.ts'
-import type { QdrantRow } from './_client.ts'
+import type { QdrantRow } from './client.ts'
 import { PathSpec } from '../../types.ts'
 import { enoent } from '../../utils/errors.ts'
 import { blobBytes, renderJson, renderText } from './render.ts'

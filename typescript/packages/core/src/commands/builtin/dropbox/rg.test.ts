@@ -16,16 +16,16 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('./narrow.ts', () => ({ narrowScope: vi.fn() }))
+vi.mock('./pushdown.ts', () => ({ narrowScope: vi.fn() }))
 vi.mock('../generic/rg.ts', () => ({ rgGeneric: vi.fn() }))
 
 import { DropboxAccessor } from '../../../accessor/dropbox.ts'
-import type { DropboxTokenManager } from '../../../core/dropbox/_client.ts'
+import type { DropboxTokenManager } from '../../../core/dropbox/client.ts'
 import { IOResult } from '../../../io/types.ts'
 import { PathSpec } from '../../../types.ts'
 import type { CommandFnResult, CommandOpts } from '../../config.ts'
 import { rgGeneric } from '../generic/rg.ts'
-import { narrowScope } from './narrow.ts'
+import { narrowScope } from './pushdown.ts'
 import { DROPBOX_RG, keepVisible } from './rg.ts'
 
 const STUB_TM = {} as DropboxTokenManager

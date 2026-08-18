@@ -22,7 +22,7 @@ import { OpsRegistry } from '../ops/registry.ts'
 import { RAMResource } from '../resource/ram/ram.ts'
 import { createShellParser, type ShellParser } from '../shell/parse.ts'
 import { Limit, MountMode } from '../types.ts'
-import { Workspace } from './workspace.ts'
+import { Workspace } from './workspace/workspace.ts'
 
 class SignalProbeRuntime extends LanguageRuntime {
   readonly language = 'python'

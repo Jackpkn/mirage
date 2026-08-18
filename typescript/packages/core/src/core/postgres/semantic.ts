@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import type { PostgresAccessor } from '../../accessor/postgres.ts'
-import type { ColumnInfo, ColumnStats, EnumInfo, ForeignKey } from './_client.ts'
+import type { ColumnInfo, ColumnStats, EnumInfo, ForeignKey } from './client.ts'
 import {
   fetchColumnComments,
   fetchColumns,
@@ -22,7 +22,7 @@ import {
   fetchForeignKeys,
   fetchPrimaryKey,
   fetchTableComment,
-} from './_client.ts'
+} from './client.ts'
 
 const SAMPLE_VALUES_LIMIT = 10
 

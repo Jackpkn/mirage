@@ -341,7 +341,7 @@ async def test_datasources_query_reports_the_next_cursor(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_datasources_query_follows_a_database_id(monkeypatch):
-    from mirage.core.notion._client import NotionAPIError
+    from mirage.core.notion.client import NotionAPIError
 
     seen = []
 

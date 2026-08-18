@@ -17,7 +17,7 @@ import { describe, expect, it } from 'vitest'
 import { TrelloAccessor } from '../../accessor/trello.ts'
 import { RAMIndexCacheStore } from '../../cache/index/ram.ts'
 import { PathSpec } from '../../types.ts'
-import type { TrelloTransport } from './_client.ts'
+import type { TrelloTransport } from './client.ts'
 import { normalizeWorkspace, toJsonBytes } from './normalize.ts'
 import { readdir } from './readdir.ts'
 

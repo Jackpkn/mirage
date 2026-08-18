@@ -83,7 +83,11 @@ class HfBucketsResource(BaseResource):
     def delta_hook(self) -> DeltaHook:
         return build_delta_hook(self.accessor)
 
-    async def resolve_glob(self, paths, prefix: str = ""):
+    async def resolve_glob(
+        self,
+        paths: list[PathSpec],
+        prefix: str = '',
+    ) -> list[PathSpec]:
         if prefix:
             paths = [
                 dataclasses.replace(p,

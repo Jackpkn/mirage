@@ -14,7 +14,7 @@
 
 import { encodeBase64 } from '@struktoai/mirage-core/utils/base64'
 import { gnuDirname } from '@struktoai/mirage-core/utils/path'
-import type { Workspace } from '@struktoai/mirage-core/workspace/workspace'
+import type { Workspace } from '@struktoai/mirage-core/workspace/workspace/workspace'
 import { tool, type ToolSet } from 'ai'
 import { z } from 'zod'
 import { readWorkspaceFile } from '../read-file.ts'

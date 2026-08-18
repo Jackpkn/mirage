@@ -23,7 +23,9 @@ import type { TSNodeLike } from '../../shell/types.ts'
 import { errorVirtualPath, gnuStrerror } from '../../utils/errors.ts'
 import { ReturnSignal } from '../executor/command.ts'
 import { BreakSignal, ContinueSignal } from '../executor/control.ts'
+import { divertStatement } from '../executor/builtins/exec_cmd.ts'
 import { handleBackground } from '../executor/jobs.ts'
+import type { DispatchFn } from '../../runtime/types.ts'
 import type { Session } from '../session/session.ts'
 import { ExecutionNode } from '../types.ts'
 
@@ -42,6 +44,39 @@ export async function executeProgram(
   callStack: CallStack | null,
   jobTable: JobTable,
   agentId: string,
+  // The op door, threaded so an active `exec` redirect can send each
+  // statement's output to its file; undefined (a nested loop that is not
+  // the program root) leaves output undiverted.
+  dispatch?: DispatchFn,
+): Promise<Result> {
+  // Every program loop is one parse, which is the unit bash's alias rule
+  // counts in: an alias defined on this parse and row is not expanded by
+  // a use on the same parse and row. Restored on the way out so a nested
+  // parse (`eval`, `source`, `bash -c`) does not leave its id behind.
+  session.parseSeq += 1
+  const outerParse = session.parseCurrent
+  session.parseCurrent = session.parseSeq
+  try {
+    return await runProgram(recurse, node, session, stdin, callStack, jobTable, agentId, dispatch)
+  } finally {
+    session.parseCurrent = outerParse
+  }
+}
+
+async function runProgram(
+  recurse: (
+    n: TSNodeLike,
+    s: Session,
+    i: ByteSource | null,
+    cs: CallStack | null,
+  ) => Promise<Result>,
+  node: TSNodeLike,
+  session: Session,
+  stdin: ByteSource | null,
+  callStack: CallStack | null,
+  jobTable: JobTable,
+  agentId: string,
+  dispatch?: DispatchFn,
 ): Promise<Result> {
   const children = node.children
   const allStdout: ByteSource[] = []
@@ -134,7 +169,12 @@ export async function executeProgram(
       let ioResult: IOResult
       let execNode: ExecutionNode
       try {
-        ;[s, ioResult, execNode] = await recurse(child, session, stdin, callStack)
+        // `exec < file` feeds the shell's stdin: a later `read` or
+        // `while read` sees it. The same bytes reach each statement, and
+        // the identity-keyed line buffer advances a sequence of reads
+        // through them.
+        const childStdin = stdin ?? session.execStdin
+        ;[s, ioResult, execNode] = await recurse(child, session, childStdin, callStack)
       } catch (err) {
         if (err instanceof ExitSignal) {
           // exit (or a fatal expansion error) ends the line: keep
@@ -212,6 +252,13 @@ export async function executeProgram(
       i += 1
     }
 
+    // An `exec` redirect sends the shell's own output to a file: every
+    // statement after the `exec` diverts here, so nothing bubbles to the
+    // terminal and stderr lands in its own target.
+    if (dispatch !== undefined && (session.execStdout !== null || session.execStderr !== null)) {
+      const bytes = stdout === null ? null : await materialize(stdout)
+      stdout = await divertStatement(dispatch, session, bytes, io)
+    }
     if (stdout !== null) allStdout.push(stdout)
     mergedIo = await mergedIo.merge(io)
 

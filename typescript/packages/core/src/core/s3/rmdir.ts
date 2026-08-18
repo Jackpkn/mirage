@@ -15,7 +15,7 @@
 import type { PathSpec } from '../../types.ts'
 import type { S3Accessor } from '../../accessor/s3.ts'
 import { invalidateAfterUnlink } from '../../cache/context.ts'
-import { loadS3Module, rawPathOf, s3Prefix, withClient } from './_client.ts'
+import { loadS3Module, rawPathOf, s3Prefix, withClient } from './client.ts'
 
 export async function rmdir(accessor: S3Accessor, path: PathSpec): Promise<void> {
   const { DeleteObjectsCommand, ListObjectsV2Command } = await loadS3Module(accessor.config)

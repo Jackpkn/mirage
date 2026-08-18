@@ -17,7 +17,7 @@ import { OpsRegistry } from '../../ops/registry.ts'
 import { RAMResource } from '../../resource/ram/ram.ts'
 import { MountMode } from '../../types.ts'
 import { ancestors } from '../../utils/path.ts'
-import { Workspace } from '../workspace.ts'
+import { Workspace } from '../workspace/workspace.ts'
 import { getTestParser } from './workspace_fixture.ts'
 
 const ENC = new TextEncoder()

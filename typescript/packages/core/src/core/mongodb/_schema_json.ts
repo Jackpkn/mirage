@@ -20,7 +20,7 @@ import {
   isView,
   listCollections,
   listIndexes,
-} from './_client.ts'
+} from './client.ts'
 import { sampleFieldTypes, type SampledField } from './_sampler.ts'
 import { EntityKind, IndexType, PRIMARY_KEY } from './types.ts'
 

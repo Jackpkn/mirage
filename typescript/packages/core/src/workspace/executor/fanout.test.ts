@@ -26,7 +26,7 @@ import { filterUnderPrefixes } from './fanout.ts'
 import { basename } from '../../core/ram/utils.ts'
 import { OpsRegistry } from '../../ops/registry.ts'
 import { getTestParser, stdoutStr } from '../fixtures/workspace_fixture.ts'
-import { Workspace } from '../workspace.ts'
+import { Workspace } from '../workspace/workspace.ts'
 import { specFlagNames } from '../../commands/spec/types.ts'
 import { specOf } from '../../commands/spec/builtins.ts'
 
@@ -318,11 +318,13 @@ describe('fanOutTraversal du at a descendant mount boundary', () => {
   })
 
   // Summing each mount's already-humanized total would round twice and
-  // report 3.0K; the sub-runs render exact bytes and only the merge
-  // humanizes.
+  // report 2.2K; the sub-runs render exact bytes and only the merge
+  // humanizes. 1025 bytes rather than 1500 because GNU rounds up: 1500
+  // doubles to 3000, which single- and double-rounding both render 3.0K,
+  // so those sizes could no longer tell the two apart.
   it('humanizes the total once under -ch', async () => {
-    expect(await runLines(['du -ch /base'], 1500, 1500)).toBe(
-      '1.5K\t/base/inner\n2.9K\t/base\n2.9K\ttotal\n',
+    expect(await runLines(['du -ch /base'], 1025, 1025)).toBe(
+      '1.1K\t/base/inner\n2.1K\t/base\n2.1K\ttotal\n',
     )
   })
 

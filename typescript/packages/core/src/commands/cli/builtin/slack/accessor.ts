@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { SlackAccessor } from '../../../../accessor/slack.ts'
-import { NodeSlackTransport } from '../../../../core/slack/_client.ts'
+import { NodeSlackTransport } from '../../../../core/slack/client.ts'
 import type { SlackConfig } from '../../../../core/slack/config.ts'
 
 export function slackAccessor(config: unknown): SlackAccessor {

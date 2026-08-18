@@ -26,7 +26,7 @@ import {
   PathSpec,
 } from '../../../types.ts'
 import { getTestParser } from '../../../workspace/fixtures/workspace_fixture.ts'
-import { Workspace } from '../../../workspace/workspace.ts'
+import { Workspace } from '../../../workspace/workspace/workspace.ts'
 import { statGeneric } from './stat.ts'
 
 const MTIME = '2026-01-02T15:30:45Z'

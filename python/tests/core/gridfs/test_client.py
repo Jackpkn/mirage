@@ -15,8 +15,8 @@
 import re
 
 from mirage.accessor.gridfs import GridFSConfig
-from mirage.core.gridfs._client import (_key, _prefix, _strip_prefix,
-                                        prefix_query)
+from mirage.core.gridfs.client import (_key, _prefix, _strip_prefix,
+                                       prefix_query)
 
 
 def _config(key_prefix: str | None = None) -> GridFSConfig:

@@ -18,7 +18,7 @@ import orjson
 
 from mirage.accessor.postgres import PostgresAccessor
 from mirage.cache.index import NULL_INDEX, IndexCacheStore
-from mirage.core.postgres import _client
+from mirage.core.postgres import client
 from mirage.core.postgres.scope import detect_scope
 from mirage.types import FileStat, FileType, PathSpec
 from mirage.utils.errors import enoent
@@ -109,7 +109,7 @@ async def stat(accessor: PostgresAccessor,
 async def _schema_exists(accessor: PostgresAccessor, schema: str) -> bool:
     pool = await accessor.pool()
     async with pool.acquire() as conn:
-        schemas = await _client.list_schemas(conn, accessor.config.schemas)
+        schemas = await client.list_schemas(conn, accessor.config.schemas)
     return schema in schemas
 
 
@@ -118,10 +118,10 @@ async def _entity_exists(accessor: PostgresAccessor, schema: str, kind: str,
     pool = await accessor.pool()
     async with pool.acquire() as conn:
         if kind == "tables":
-            names = await _client.list_tables(conn, schema)
+            names = await client.list_tables(conn, schema)
         else:
-            views = await _client.list_views(conn, schema)
-            mviews = await _client.list_matviews(conn, schema)
+            views = await client.list_views(conn, schema)
+            mviews = await client.list_matviews(conn, schema)
             names = sorted(set(views) | set(mviews))
     return entity in names
 
@@ -130,9 +130,9 @@ async def _rows_stat(accessor: PostgresAccessor, schema: str, kind: str,
                      entity: str) -> FileStat:
     pool = await accessor.pool()
     async with pool.acquire() as conn:
-        cols = await _client.fetch_columns(conn, schema, entity)
-        rows = await _client.estimated_row_count(conn, schema, entity)
-        size = await _client.table_size_bytes(conn, schema, entity)
+        cols = await client.fetch_columns(conn, schema, entity)
+        rows = await client.estimated_row_count(conn, schema, entity)
+        size = await client.table_size_bytes(conn, schema, entity)
     fp_payload = orjson.dumps({"columns": cols, "rows": rows})
     fingerprint = hashlib.sha256(fp_payload).hexdigest()
     # size stays None: table_size_bytes is the on-disk storage size, not the

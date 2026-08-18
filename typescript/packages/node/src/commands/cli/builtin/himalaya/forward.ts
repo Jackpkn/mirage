@@ -16,7 +16,7 @@ import type { CLIInvocation } from '@struktoai/mirage-core/commands/cli/types'
 import type { CommandFnResult } from '@struktoai/mirage-core/commands/config'
 import { FlagView } from '@struktoai/mirage-core/commands/spec/index'
 import { EmailAccessor } from '../../../../accessor/email.ts'
-import { fetchMessage } from '../../../../core/email/_client.ts'
+import { fetchMessage } from '../../../../core/email/client.ts'
 import type { EmailConfig } from '../../../../core/email/config.ts'
 import { firstText, route } from './util.ts'
 

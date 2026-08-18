@@ -28,9 +28,7 @@ from mirage.runtime.types import Language, ScriptSource
 from mirage.shell.console import (KILLED_OUTCOME, Channel, ConsoleChunk,
                                   JobConsole, RAMConsoleStore, exit_outcome)
 from mirage.shell.job_table import Job, JobStatus
-from mirage.types import (CacheKey, CLIKey, ConsistencyPolicy, JobKey,
-                          JsonValue, MountKey, MountMode, ResourceName,
-                          ResourceStateKey, ScriptKey, SessionKey, StateKey)
+from mirage.types import ConsistencyPolicy, JsonValue, MountMode, ResourceName
 from mirage.version import __version__
 from mirage.workspace.mount.namespace import NodeMeta
 from mirage.workspace.session.session import Session
@@ -38,6 +36,9 @@ from mirage.workspace.session.shell_dirs import set_cwd
 from mirage.workspace.snapshot.config import MountArgs
 from mirage.workspace.snapshot.drift import (capture_fingerprints,
                                              live_only_mount_prefixes)
+from mirage.workspace.snapshot.keys import (CacheKey, CLIKey, JobKey, MountKey,
+                                            ResourceStateKey, ScriptKey,
+                                            SessionKey, StateKey)
 from mirage.workspace.snapshot.utils import FORMAT_VERSION, norm_mount_prefix
 
 # A per-name override for restoring installed CLIs: a plain mapping is a

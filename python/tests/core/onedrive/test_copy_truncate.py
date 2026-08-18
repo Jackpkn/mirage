@@ -5,7 +5,7 @@ from mirage.accessor.onedrive import OneDriveAccessor, OneDriveConfig
 from mirage.cache.index import NULL_INDEX
 from mirage.commands.builtin.onedrive import COMMANDS
 from mirage.commands.config import CommandOpts
-from mirage.core.onedrive._client import GraphError
+from mirage.core.onedrive.client import GraphError
 from mirage.core.onedrive.copy import copy
 from mirage.core.onedrive.truncate import truncate
 from mirage.types import PathSpec

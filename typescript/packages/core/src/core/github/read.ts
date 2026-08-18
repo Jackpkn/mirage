@@ -18,7 +18,7 @@ import type { GitHubAccessor } from '../../accessor/github.ts'
 import type { IndexCacheStore } from '../../cache/index/store.ts'
 import type { PathSpec } from '../../types.ts'
 import { ensureLiveIndex, refillIndex } from './tree.ts'
-import { fetchBlob } from './_client.ts'
+import { fetchBlob } from './client.ts'
 import { rstripSlash, stripSlash } from '../../utils/slash.ts'
 import { eisdir, enoent } from '../../utils/errors.ts'
 

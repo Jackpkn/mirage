@@ -23,8 +23,6 @@ from mirage.shell.types import ShellBuiltin
 # still route to the shell layer so the error names a capability gap.
 UNSUPPORTED_BUILTINS = frozenset({
     "bg",
-    "disown",
-    "exec",
     "complete",
     "compgen",
     "ulimit",
@@ -63,7 +61,7 @@ KEYWORDS = frozenset({
 })
 
 # ShellBuiltin subset handled through the job table in the executor.
-JOB_BUILTINS = frozenset({"wait", "fg", "kill", "jobs", "ps"})
+JOB_BUILTINS = frozenset({"wait", "fg", "kill", "jobs", "disown", "ps"})
 
 # Commands with lstat semantics: they act on the symlink entry itself,
 # so dispatch must not rewrite their operands through the link table.

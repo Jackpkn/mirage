@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { gnuDirname } from '@struktoai/mirage-core/utils/path'
-import type { ExecuteResult, Workspace } from '@struktoai/mirage-core/workspace/workspace'
+import type { ExecuteResult, Workspace } from '@struktoai/mirage-core/workspace/workspace/workspace'
 import { FileVersionTracker, StaleMirageFileError } from './file-version.ts'
 import { decode, ioToStr } from './io-text.ts'
 
@@ -143,6 +143,12 @@ export class MirageToolOperations {
 
   async grep(pattern: string, path: string): Promise<ToolResult> {
     const io = await this.ws.execute(`grep -rn ${shQuote(pattern)} ${shQuote(path)}`)
-    return textResult(ioToStr(io))
+    // grep exits 1 for "no match", which is a normal empty answer, and
+    // >1 for a real failure (bad regex, unreadable path). Only the
+    // second is a tool error; reporting the first as one would tell the
+    // agent its search broke every time nothing matched.
+    const result = textResult(ioToStr(io))
+    if (io.exitCode > 1) result.isError = true
+    return result
   }
 }

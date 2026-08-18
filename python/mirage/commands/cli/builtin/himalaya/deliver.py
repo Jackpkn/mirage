@@ -17,7 +17,7 @@ from email.message import Message
 
 from mirage.accessor.email import EmailAccessor
 from mirage.commands.cli.builtin.himalaya.smtp import send_raw
-from mirage.core.email._client import list_folder_entries, quote_mailbox
+from mirage.core.email.client import list_folder_entries, quote_mailbox
 from mirage.core.email.config import EmailConfig
 
 logger = logging.getLogger(__name__)

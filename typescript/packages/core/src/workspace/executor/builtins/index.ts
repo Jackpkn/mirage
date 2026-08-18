@@ -25,11 +25,13 @@ export {
 export { handleDf } from './capacity.ts'
 export { handleChgrp, handleChmod, handleChown, handleTouch } from './metadata.ts'
 export {
+  handleDeclareFunctions,
   handleDeclarePrint,
   handleEnv,
   handleExit,
   handleExport,
   handleGetopts,
+  handleLet,
   handleLocal,
   handlePrintenv,
   handleRead,
@@ -43,8 +45,13 @@ export {
   noteLocalArray,
 } from './vars.ts'
 export { handleMan } from './man.ts'
+export { handleMapfile } from './mapfile.ts'
+export { handleShopt } from './shopt.ts'
+export { handleUmask } from './umask.ts'
+export { handleAlias, handleUnalias } from './alias.ts'
+export { divertStatement, handleExecCommand, installExecRedirects } from './exec_cmd.ts'
 export { handleHistory } from './history.ts'
-export { handleBash, handleEval, handleSleep, handleSource } from './script.ts'
+export { handleBash, handleEval, handleExecPath, handleSleep, handleSource } from './script.ts'
 export { handleTest } from './condition/index.ts'
 export { handleTimeout } from './timeout.ts'
 export { handleXargs } from './xargs.ts'

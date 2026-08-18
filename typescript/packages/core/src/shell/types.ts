@@ -14,6 +14,46 @@
 
 import { compareCodePoints } from '../utils/sort.ts'
 
+/**
+ * Array-element callbacks the arithmetic evaluator resolves through.
+ *
+ * The evaluator owns no session, so a caller that wants `a[i]` and
+ * `m[key]` to mean anything injects these two facts. The split is what
+ * keeps subscript semantics out of the evaluator: whether the subscript
+ * text is an arithmetic expression (indexed) or a literal key
+ * (associative) is the variable's to answer, and only the session knows
+ * the variable. `resolve` receives the evaluator's current view, pending
+ * assignments included, so `i=2, a[i]` reads the new `i`; `read` answers
+ * the element's stored text, null when unset.
+ */
+export interface ElementOps {
+  resolve(name: string, subscript: string, env: Readonly<Record<string, string>>): string
+  read(name: string, key: string): string | null
+}
+
+/**
+ * One assignment an arithmetic evaluation produced. `key` is the
+ * canonical subscript `ElementOps.resolve` gave, or null for a bare
+ * name (which lands as element 0 of an array, or the scalar itself).
+ */
+export interface ArithWrite {
+  readonly name: string
+  readonly key: string | null
+  readonly value: string
+}
+
+/**
+ * What one arithmetic evaluation produced: the value plus the
+ * assignments made, one per target, in the order of each target's last
+ * write, for the caller to land through the session door. Bare and
+ * subscripted targets share the one sequence, because a bare name
+ * aliases element 0 and `((a[0]=1, a=2))` has to leave 2.
+ */
+export interface ArithResult {
+  readonly value: bigint
+  readonly writes: readonly ArithWrite[]
+}
+
 export const NodeType = Object.freeze({
   COMMAND: 'command',
   PIPELINE: 'pipeline',
@@ -203,6 +243,77 @@ export const SET_OPTION_DEFAULTS: ReadonlyMap<string, boolean> = new Map(
   [...SET_OPTION_NAMES].sort(compareCodePoints).map((name) => [name, DEFAULT_ON.has(name)]),
 )
 
+// Every name GNU's `shopt` accepts and what it reads as before anything
+// sets it, pinned from `bash -c shopt` on debian:stable-slim (5.2.37),
+// in bash's own listing order. Kept apart from SET_OPTION_NAMES because
+// bash keeps two vocabularies, `set -o` and `shopt`, with `shopt -o` as
+// the one bridge.
+export const SHOPT_DEFAULTS: ReadonlyMap<string, boolean> = new Map([
+  ['autocd', false],
+  ['assoc_expand_once', false],
+  ['cdable_vars', false],
+  ['cdspell', false],
+  ['checkhash', false],
+  ['checkjobs', false],
+  ['checkwinsize', true],
+  ['cmdhist', true],
+  ['compat31', false],
+  ['compat32', false],
+  ['compat40', false],
+  ['compat41', false],
+  ['compat42', false],
+  ['compat43', false],
+  ['compat44', false],
+  ['complete_fullquote', true],
+  ['direxpand', false],
+  ['dirspell', false],
+  ['dotglob', false],
+  ['execfail', false],
+  ['expand_aliases', false],
+  ['extdebug', false],
+  ['extglob', false],
+  ['extquote', true],
+  ['failglob', false],
+  ['force_fignore', true],
+  ['globasciiranges', true],
+  ['globskipdots', true],
+  ['globstar', false],
+  ['gnu_errfmt', false],
+  ['histappend', false],
+  ['histreedit', false],
+  ['histverify', false],
+  ['hostcomplete', true],
+  ['huponexit', false],
+  ['inherit_errexit', false],
+  ['interactive_comments', true],
+  ['lastpipe', false],
+  ['lithist', false],
+  ['localvar_inherit', false],
+  ['localvar_unset', false],
+  ['login_shell', false],
+  ['mailwarn', false],
+  ['no_empty_cmd_completion', false],
+  ['nocaseglob', false],
+  ['nocasematch', false],
+  ['noexpand_translation', false],
+  ['nullglob', false],
+  ['patsub_replacement', true],
+  ['progcomp', true],
+  ['progcomp_alias', false],
+  ['promptvars', true],
+  ['restricted_shell', false],
+  ['shift_verbose', false],
+  ['sourcepath', true],
+  ['varredir_close', false],
+  ['xpg_echo', false],
+])
+
+// `shopt` names mirage refuses to turn on rather than store: `extglob`
+// changes what the parser accepts, and mirage's grammar has no such
+// mode, so a stored `on` would promise a syntax that still fails to
+// parse. Refusing is the honest answer until the parser learns it.
+export const SHOPT_UNSUPPORTED: ReadonlySet<string> = new Set(['extglob'])
+
 export interface OptionWord {
   // Shell options the word turns on or off, in the order written.
   settings: [string, boolean][]
@@ -286,9 +397,17 @@ export const ShellBuiltin = Object.freeze({
   DOT: '.',
   EVAL: 'eval',
   READ: 'read',
+  MAPFILE: 'mapfile',
+  READARRAY: 'readarray',
   SHIFT: 'shift',
   GETOPTS: 'getopts',
   TRAP: 'trap',
+  SHOPT: 'shopt',
+  UMASK: 'umask',
+  ALIAS: 'alias',
+  UNALIAS: 'unalias',
+  LET: 'let',
+  EXEC: 'exec',
   TEST: 'test',
   BRACKET: '[',
   DOUBLE_BRACKET: '[[',
@@ -296,6 +415,7 @@ export const ShellBuiltin = Object.freeze({
   FG: 'fg',
   KILL: 'kill',
   JOBS: 'jobs',
+  DISOWN: 'disown',
   PS: 'ps',
   ECHO: 'echo',
   PRINTF: 'printf',

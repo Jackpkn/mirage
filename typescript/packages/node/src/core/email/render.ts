@@ -12,7 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import type { FetchedMessage } from './_client.ts'
+import type { FetchedMessage } from './client.ts'
 
 const encoder = new TextEncoder()
 

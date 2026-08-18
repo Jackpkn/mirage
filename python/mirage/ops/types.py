@@ -14,9 +14,9 @@
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from typing import Protocol
 
-from mirage.shell.array import ShellArray
-from mirage.shell.variable import VarAttr
+from mirage.shell.variable import ShellValue, VarAttr
 from mirage.types import FileStat
 
 StatOverlay = Callable[[str, FileStat], FileStat]
@@ -71,10 +71,29 @@ EnvSnapshot = Callable[[], dict[str, str]]
 # stores a whole array, and the door keeps the two storages exclusive.
 # Writers with richer mechanics (subscripts, appends, holes) compute the
 # resulting value on a copy and hand it here, so a denial never leaves a
-# half-applied write.
-EnvSet = Callable[[str, str | ShellArray], Awaitable[None]]
-# Drop one variable through the session plane; a missing name is quiet.
-EnvUnset = Callable[[str], Awaitable[None]]
+# half-applied write. A Protocol rather than a Callable alias so the
+# optional keyword is part of the type: `follow_ref` is how `declare -n`
+# and `unset -n` reach the reference's own record.
+
+
+class EnvSet(Protocol):
+    """Store one variable through the session plane."""
+
+    def __call__(self,
+                 name: str,
+                 value: ShellValue,
+                 follow_ref: bool = True) -> Awaitable[None]:
+        ...
+
+
+class EnvUnset(Protocol):
+    """Drop one variable through the session plane; a missing name is
+    quiet."""
+
+    def __call__(self, name: str, follow_ref: bool = True) -> Awaitable[None]:
+        ...
+
+
 # Turn one attribute on or off through the session plane, or with a None
 # attribute declare the name and change nothing. Separate from `EnvSet`
 # because it writes no value: `export NAME`, `readonly NAME` and a bare

@@ -17,7 +17,7 @@ import { ResourceName } from '../../../types.ts'
 import type { ProvisionFn, RegisteredCommand } from '../../config.ts'
 import { makeGenericCommands } from '../generic_bind/index.ts'
 import { GSHEETS_IO } from './io.ts'
-import { fileReadProvision } from './provision.ts'
+import { fileReadProvision } from './_provision.ts'
 import { GSHEETS_RM } from './rm.ts'
 
 // Sheets verbs and API passthroughs live in the gws CLI

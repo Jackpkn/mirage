@@ -12,7 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import type { Workspace } from '@struktoai/mirage-core/workspace/workspace'
+import type { Workspace } from '@struktoai/mirage-core/workspace/workspace/workspace'
 
 export const MIRAGE_SYSTEM_PROMPT = `Your filesystem is powered by Mirage — a virtual filesystem that mounts cloud storage, local files, and in-memory data as a unified file tree.
 

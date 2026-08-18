@@ -105,6 +105,12 @@ const PYTHON_ONLY_HINTS: Record<string, string> = {
     'import that package to register it. Browser worlds support ' +
     "'pyodide' (WASM CPython, default), 'monty' (sandboxed), and " +
     "'quickjs' (sandboxed JavaScript)",
+  sandlock:
+    "runtime 'sandlock' (the host python3 confined by Landlock and seccomp) " +
+    "is Python-only and Linux-only; TypeScript supports 'smolvm' for a " +
+    "hardware-isolated microVM, 'docker' for a container, 'pyodide' (WASM " +
+    "CPython, default), 'monty' (sandboxed), and 'quickjs' (sandboxed " +
+    'JavaScript)',
 }
 
 /** The runtime classes that capture a command, preference order. */

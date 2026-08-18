@@ -23,9 +23,76 @@ import { readTar, writeTar, type TarEntry } from '../tar_helper.ts'
 import { rstripSlash } from '../../../utils/slash.ts'
 import { COMPRESSION_SIGNATURES } from './tar/constants.ts'
 import { planCreate, type DirProbe, type StatFn, type WalkFn } from './tar/create.ts'
+import { ensureDir, extractDest } from './archive/extract.ts'
 import type { Compression, CompressionKind, CreateResult } from './tar/types.ts'
 
 const ENC = new TextEncoder()
+
+export const MISS_TRAILER = 'tar: Exiting with failure status due to previous errors'
+const DOTDOT_NOTICE = "tar: Removing leading `../' from member names"
+
+/**
+ * Whether one -t/-x member selector keeps an archive member.
+ *
+ * GNU matches the stored spelling exactly (`memory/x` does not find
+ * `./memory/x`), and a selector naming a directory takes its whole
+ * subtree, with or without the trailing slash.
+ */
+function matchesSelector(name: string, selector: string): boolean {
+  const base = rstripSlash(selector)
+  const trimmed = rstripSlash(name)
+  return trimmed === base || trimmed.startsWith(`${base}/`)
+}
+
+/**
+ * Member indices the selectors keep, and the misses they report.
+ *
+ * No selector keeps everything. A selector that matches nothing is
+ * GNU's per-operand diagnostic, reported in operand order; the caller
+ * appends the one failure trailer.
+ */
+function selectedMembers(
+  names: readonly string[],
+  selectors: readonly string[],
+): { keep: Set<number>; misses: string[] } {
+  if (selectors.length === 0) {
+    return { keep: new Set(names.map((_, index) => index)), misses: [] }
+  }
+  const keep = new Set<number>()
+  const misses: string[] = []
+  for (const selector of selectors) {
+    let hit = false
+    for (const [index, name] of names.entries()) {
+      if (matchesSelector(name, selector)) {
+        keep.add(index)
+        hit = true
+      }
+    }
+    if (!hit) misses.push(`tar: ${selector}: Not found in archive`)
+  }
+  return { keep, misses }
+}
+
+/**
+ * The destination-relative components one member extracts to.
+ *
+ * GNU strips --strip-components off the stored spelling first, in which
+ * a leading `.` counts as a component (--strip-components=1 turns
+ * `./a/b` into `a/b`). Only then is the remainder cleaned for the
+ * filesystem: `.` components vanish (a real OS resolves them; a virtual
+ * path must not keep a literal `.` directory) and a leading `..` is
+ * removed with GNU's one notice per run.
+ */
+function outParts(name: string, stripN: number, notices: string[]): string[] {
+  let parts = rstripSlash(name).split('/')
+  if (stripN > 0) parts = parts.slice(stripN)
+  parts = parts.filter((part) => part !== '' && part !== '.')
+  while (parts.length > 0 && parts[0] === '..') {
+    if (!notices.includes(DOTDOT_NOTICE)) notices.push(DOTDOT_NOTICE)
+    parts.shift()
+  }
+  return parts
+}
 
 // What tar needs from the mount it runs on. `stat` and `walk` are what
 // make a directory operand archivable at all; `isDir` answers on two
@@ -141,8 +208,10 @@ async function writeArchive(
 
 export async function tarGeneric(
   paths: PathSpec[],
+  texts: readonly string[],
   opts: CommandOpts,
   deps: TarDeps,
+  relay = false,
 ): Promise<CommandFnResult> {
   const fl = new FlagView(opts.flags, specOf('tar'))
   const create = fl.asBool('c')
@@ -163,9 +232,11 @@ export async function tarGeneric(
   const CFlag = CFlags.length > 0 ? (CFlags[CFlags.length - 1] ?? null) : null
   const stripN = fl.asInt('strip_components') ?? 0
   const exclude = fl.asStr('exclude') ?? null
-  const mountPrefix = opts.mountPrefix ?? ''
+  const toStdout = fl.asBool('to_stdout')
+  const mountPrefix = relay ? '' : (opts.mountPrefix ?? '')
   const archivePath = fFlag
-  const destPath = CFlag ?? '/'
+  const destPath = extractDest(CFlag, opts.cwd)
+  const selectors = [...texts]
   const verboseLines: string[] = []
 
   if (create) {
@@ -203,9 +274,20 @@ export async function tarGeneric(
     const raw = await materialize(deps.stream(makePathSpec(archivePath, mountPrefix)))
     const data = await decompress(raw, compression)
     const entries = await readTar(data)
-    const out: ByteSource = ENC.encode(
-      entries.map((e) => (e.isDir === true ? `${rstripSlash(e.name)}/` : e.name)).join('\n') + '\n',
-    )
+    const names = entries.map((e) => (e.isDir === true ? `${rstripSlash(e.name)}/` : e.name))
+    const { keep, misses } = selectedMembers(names, selectors)
+    const shown = names.filter((_, index) => keep.has(index))
+    const out: ByteSource | null = shown.length > 0 ? ENC.encode(shown.join('\n') + '\n') : null
+    if (misses.length > 0) {
+      const missStderr = stderrOf([...misses, MISS_TRAILER])
+      return [
+        out,
+        new IOResult({
+          exitCode: 2,
+          ...(missStderr !== null ? { stderr: missStderr } : {}),
+        }),
+      ]
+    }
     return [out, new IOResult()]
   }
 
@@ -216,33 +298,89 @@ export async function tarGeneric(
     const raw = await materialize(deps.stream(makePathSpec(archivePath, mountPrefix)))
     const data = await decompress(raw, compression)
     const writes: Record<string, Uint8Array> = {}
-    for (const entry of await readTar(data)) {
+    const entries = await readTar(data)
+    const listed = entries.map((e) => (e.isDir === true ? `${rstripSlash(e.name)}/` : e.name))
+    const { keep, misses } = selectedMembers(listed, selectors)
+    const notices: string[] = []
+    const made = new Set<string>()
+    const chunks: Uint8Array[] = []
+    const toSpec = (virtual: string): PathSpec => makePathSpec(virtual, mountPrefix)
+    for (const [index, entry] of entries.entries()) {
+      if (!keep.has(index)) continue
       // A symlink member has no bytes to write and no namespace to write
       // into from here (links are workspace state, not the backend's),
       // so extraction skips it rather than dropping an empty file where
       // a link belongs.
       const isDir = entry.isDir === true
       if (!entry.isFile && !isDir) continue
-      const nameParts = rstripSlash(entry.name).split('/')
-      const stripped = stripN > 0 ? nameParts.slice(stripN) : nameParts
-      if (stripped.length === 0 || (stripped.length === 1 && stripped[0] === '')) continue
-      const outPath = `${rstripSlash(destPath)}/${stripped.join('/')}`
       if (isDir) {
-        // A directory member is the only record an empty directory
-        // leaves, so it has to be recreated even though nothing is
-        // written inside it.
-        await deps.mkdir(makePathSpec(outPath, mountPrefix), true)
-        if (verbose) verboseLines.push(`${rstripSlash(entry.name)}/`)
+        if (!toStdout) {
+          // A directory member is the only record an empty directory
+          // leaves, so it has to be recreated even though nothing is
+          // written inside it. Under -O nothing reaches the
+          // filesystem at all.
+          const parts = outParts(entry.name, stripN, notices)
+          if (parts.length > 0) {
+            const outDir = `${rstripSlash(destPath)}/${parts.join('/')}`
+            await ensureDir(outDir, toSpec, deps.mkdir, deps.stat, made)
+            if (verbose) verboseLines.push(`${rstripSlash(entry.name)}/`)
+          }
+        }
         continue
       }
+      if (toStdout) {
+        chunks.push(entry.data)
+        if (verbose) verboseLines.push(entry.name)
+        continue
+      }
+      const parts = outParts(entry.name, stripN, notices)
+      if (parts.length === 0) continue
+      const outPath = `${rstripSlash(destPath)}/${parts.join('/')}`
       const parent = outPath.slice(0, outPath.lastIndexOf('/')) || '/'
-      if (parent !== '/') await deps.mkdir(makePathSpec(parent, mountPrefix), true)
+      if (parent !== '/') await ensureDir(parent, toSpec, deps.mkdir, deps.stat, made)
       await deps.write(makePathSpec(outPath, mountPrefix), entry.data)
-      writes[outPath] = entry.data
+      // Relay writes land on whichever mount owns each path and
+      // invalidate through the dispatcher; keying them here would have
+      // the runner prefix them onto this mount.
+      if (!relay) writes[outPath] = entry.data
       if (verbose) verboseLines.push(entry.name)
     }
-    const stdout = verbose ? ENC.encode(verboseLines.join('\n') + '\n') : null
-    return [stdout, new IOResult({ writes })]
+    if (toStdout) {
+      // GNU moves the verbose listing to stderr when stdout carries the
+      // member bytes.
+      const total = chunks.reduce((sum, chunk) => sum + chunk.byteLength, 0)
+      const merged = new Uint8Array(total)
+      let offset = 0
+      for (const chunk of chunks) {
+        merged.set(chunk, offset)
+        offset += chunk.byteLength
+      }
+      const errLines = [
+        ...notices,
+        ...(verbose ? verboseLines : []),
+        ...(misses.length > 0 ? [...misses, MISS_TRAILER] : []),
+      ]
+      const stderr = stderrOf(errLines)
+      return [
+        merged.byteLength > 0 ? merged : null,
+        new IOResult({
+          exitCode: misses.length > 0 ? 2 : 0,
+          ...(stderr !== null ? { stderr } : {}),
+        }),
+      ]
+    }
+    const stdout =
+      verbose && verboseLines.length > 0 ? ENC.encode(verboseLines.join('\n') + '\n') : null
+    const errLines = [...notices, ...(misses.length > 0 ? [...misses, MISS_TRAILER] : [])]
+    const stderr = stderrOf(errLines)
+    return [
+      stdout,
+      new IOResult({
+        writes,
+        exitCode: misses.length > 0 ? 2 : 0,
+        ...(stderr !== null ? { stderr } : {}),
+      }),
+    ]
   }
 
   return [

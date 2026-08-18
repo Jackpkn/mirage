@@ -16,7 +16,7 @@ import type { DropboxAccessor } from '../../accessor/dropbox.ts'
 import { invalidateAfterWrite } from '../../cache/context.ts'
 import { record } from '../../observe/context.ts'
 import type { PathSpec } from '../../types.ts'
-import { dropboxUpload } from './_client.ts'
+import { dropboxUpload } from './client.ts'
 import { invalidateAncestors } from '../../cache/context.ts'
 import { dropboxPathOf } from './paths.ts'
 

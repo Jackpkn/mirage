@@ -3,8 +3,8 @@ import posixpath
 from mirage.accessor.sharepoint import SharePointAccessor
 from mirage.cache.context import invalidate_after_write, invalidate_ancestors
 from mirage.core.msgraph.drive_ops import create_child_folder
-from mirage.core.sharepoint._client import item_url, split_path
-from mirage.core.sharepoint._resolver import resolve
+from mirage.core.sharepoint.client import item_url, split_path
+from mirage.core.sharepoint.resolve import resolve
 from mirage.types import PathSpec
 from mirage.utils.errors import enoent
 

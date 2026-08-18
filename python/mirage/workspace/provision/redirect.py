@@ -15,12 +15,12 @@
 from typing import Any
 
 from mirage.provision import Precision, ProvisionResult
+from mirage.provision.rollup import rollup_list
 from mirage.shell.types import RedirectKind
 from mirage.types import PathSpec
 from mirage.workspace.mount import MountRegistry
 from mirage.workspace.mount.namespace import Namespace
 from mirage.workspace.provision.command import handle_command_provision
-from mirage.workspace.provision.rollup import rollup_list
 from mirage.workspace.session import Session
 
 

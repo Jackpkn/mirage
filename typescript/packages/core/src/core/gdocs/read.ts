@@ -17,17 +17,16 @@ import type { GDocsAccessor } from '../../accessor/gdocs.ts'
 import type { IndexCacheStore } from '../../cache/index/store.ts'
 import { entryOrWarm } from '../../cache/index/warm.ts'
 import { PathSpec } from '../../types.ts'
-import { docsBase, type TokenManager, googleGet } from '../google/_client.ts'
+import { docsBase, type TokenManager, googleGet } from '../google/client.ts'
 import { readdir } from './readdir.ts'
 import { rstripSlash } from '../../utils/slash.ts'
 import { eisdir, enoent } from '../../utils/errors.ts'
-
-const ENC = new TextEncoder()
+import { compactJsonBytes } from '../render/json.ts'
 
 export async function readDoc(tm: TokenManager, docId: string): Promise<Uint8Array> {
   const url = `${docsBase(tm)}/documents/${docId}`
   const data = await googleGet(tm, url)
-  return ENC.encode(JSON.stringify(data))
+  return compactJsonBytes(data)
 }
 
 export async function read(

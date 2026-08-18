@@ -12,6 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import { jsonBytes } from '../render/json.ts'
 import { formatSegment, stripDashes } from './pathing.ts'
 import { blocksToMarkdown } from './render.ts'
 
@@ -226,5 +227,5 @@ export function normalizeDataSource(dataSource: Json): NormalizedDataSource {
 }
 
 export function toJsonBytes(value: unknown): Uint8Array {
-  return new TextEncoder().encode(JSON.stringify(value, null, 2))
+  return jsonBytes(value)
 }

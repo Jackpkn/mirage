@@ -1,0 +1,140 @@
+{
+  "cases": [
+    {
+      "id": "let_assigns_and_status",
+      "seq": 940001,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "let lav=1+2; echo $lav; let laz=0; echo rc=$?",
+      "expect": {
+        "exit": 0,
+        "stdout": "3\nrc=1\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "let_last_expression_decides_status",
+      "seq": 940002,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "let lba=1 lbb=0; echo rc=$?; let lbc=0 lbd=1; echo rc=$?",
+      "expect": {
+        "exit": 0,
+        "stdout": "rc=1\nrc=0\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "let_no_operand_and_bad_expression",
+      "seq": 940003,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "let; echo rc=$?; let 'lca=1+'; echo rc=$?",
+      "expect": {
+        "exit": 0,
+        "stdout": "rc=1\nrc=1\n",
+        "stderr": "bash: let: expression expected\nbash: let: lca=1+: syntax error: operand expected\n"
+      }
+    },
+    {
+      "id": "let_array_element_and_increment",
+      "seq": 940004,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "lda=(1 2); let 'lda[1]+=5'; declare -p lda; ldx=3; let ldx++; echo $ldx",
+      "expect": {
+        "exit": 0,
+        "stdout": "declare -a lda=([0]=\"1\" [1]=\"7\")\n4\n",
+        "stderr": ""
+      }
+    }
+  ]
+}

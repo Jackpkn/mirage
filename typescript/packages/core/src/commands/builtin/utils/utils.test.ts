@@ -25,20 +25,42 @@ function decode(bytes: Uint8Array): string {
   return new TextDecoder().decode(bytes)
 }
 
+// Read off GNU coreutils 9.7 (`ls -lh` on a file of each size, debian
+// stable-slim). The three rows that matter are the ones a plain
+// divide-and-format gets wrong: no suffix under 1024, rounding *up* to
+// the shown precision (1025 -> 1.1K), and the decimal dropping once the
+// value reaches ten (10240 -> 10K). 1048575 pins the carry: it ceils to
+// 1024K, which GNU re-scales to 1.0M.
+const GNU_HUMAN_SIZES: readonly (readonly [number, string])[] = [
+  [0, '0'],
+  [1, '1'],
+  [24, '24'],
+  [500, '500'],
+  [999, '999'],
+  [1000, '1000'],
+  [1023, '1023'],
+  [1024, '1.0K'],
+  [1025, '1.1K'],
+  [1126, '1.1K'],
+  [1127, '1.2K'],
+  [1536, '1.5K'],
+  [2048, '2.0K'],
+  [10188, '10K'],
+  [10240, '10K'],
+  [10241, '11K'],
+  [11263, '11K'],
+  [1048575, '1.0M'],
+  [1048576, '1.0M'],
+  [1024 * 1024 + 512 * 1024, '1.5M'],
+  [1073741824, '1.0G'],
+  // Past 2**53/10, so a `n * 10` intermediate stops being exact.
+  // GNU says 1.8P; a float product rounds down and yields 1.7P.
+  [1914029841632461, '1.8P'],
+]
+
 describe('humanSize', () => {
-  it('bytes below 1K', () => {
-    expect(humanSize(500)).toBe('500B')
-  })
-
-  it('K/M/G units', () => {
-    expect(humanSize(1024)).toBe('1.0K')
-    expect(humanSize(1024 * 1024)).toBe('1.0M')
-    expect(humanSize(1024 * 1024 * 1024)).toBe('1.0G')
-  })
-
-  it('fractional sizes round to one decimal (GNU, not floored)', () => {
-    expect(humanSize(1536)).toBe('1.5K')
-    expect(humanSize(1024 * 1024 + 512 * 1024)).toBe('1.5M')
+  it.each(GNU_HUMAN_SIZES)('formats %i as GNU does', (size, expected) => {
+    expect(humanSize(size)).toBe(expected)
   })
 })
 

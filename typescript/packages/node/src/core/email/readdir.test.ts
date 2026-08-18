@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type * as ClientModule from './_client.ts'
+import type * as ClientModule from './client.ts'
 import type * as FoldersModule from './folders.ts'
 
 function message(overrides: Partial<ClientModule.FetchedMessage>): ClientModule.FetchedMessage {
@@ -43,8 +43,8 @@ const HEADERS = [message({})]
 const NO_DATE_HEADERS = [message({ date: '', internalDate: '2026-08-07T20:54:05.000Z' })]
 let headersList = HEADERS
 
-vi.mock('./_client.ts', async () => {
-  const actual = await vi.importActual<typeof ClientModule>('./_client.ts')
+vi.mock('./client.ts', async () => {
+  const actual = await vi.importActual<typeof ClientModule>('./client.ts')
   return {
     ...actual,
     listMessageUids: vi.fn(() => Promise.resolve(['101'])),

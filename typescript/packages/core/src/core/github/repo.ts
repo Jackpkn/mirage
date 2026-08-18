@@ -12,7 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { GitHubApiError, type GitHubTransport } from './_client.ts'
+import { GitHubApiError, type GitHubTransport } from './client.ts'
 import { decodeBase64 } from '../../utils/base64.ts'
 
 export interface RepoRef {

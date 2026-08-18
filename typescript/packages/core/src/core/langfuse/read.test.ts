@@ -17,7 +17,7 @@ import { LangfuseAccessor } from '../../accessor/langfuse.ts'
 import { RAMIndexCacheStore } from '../../cache/index/ram.ts'
 import { PathSpec } from '../../types.ts'
 import { stripSlash } from '../../utils/slash.ts'
-import { LangfuseApiError, type LangfuseTransport } from './_client.ts'
+import { LangfuseApiError, type LangfuseTransport } from './client.ts'
 import { read } from './read.ts'
 
 const DEC = new TextDecoder()

@@ -14,7 +14,7 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('./_client.ts', () => ({
+vi.mock('./client.ts', () => ({
   listCollections: vi.fn(),
   listIndexes: vi.fn(),
   findDocuments: vi.fn(),
@@ -22,7 +22,7 @@ vi.mock('./_client.ts', () => ({
 
 import { MongoDBAccessor } from '../../accessor/mongodb.ts'
 import { resolveMongoDBConfig } from '../../resource/mongodb/config.ts'
-import * as _client from './_client.ts'
+import * as client from './client.ts'
 import { arrayIter, stubMongoDriver } from './_test_util.ts'
 import { formatGrepResults, searchCollection, searchDatabase } from './search.ts'
 
@@ -34,9 +34,9 @@ function accessorWith(iterDocs: readonly Record<string, unknown>[] = []): MongoD
 }
 
 beforeEach(() => {
-  vi.mocked(_client.findDocuments).mockReset()
-  vi.mocked(_client.listIndexes).mockReset()
-  vi.mocked(_client.listCollections).mockReset()
+  vi.mocked(client.findDocuments).mockReset()
+  vi.mocked(client.listIndexes).mockReset()
+  vi.mocked(client.listCollections).mockReset()
 })
 
 describe('searchCollection', () => {
@@ -44,22 +44,22 @@ describe('searchCollection', () => {
     // $text matches whole words and stems them while grep matches substrings,
     // and these rows are the grep output with no local re-scan, so the text
     // index is never used.
-    vi.mocked(_client.listIndexes).mockResolvedValue([{ name: 'body_text', textIndexVersion: 3 }])
-    vi.mocked(_client.findDocuments).mockResolvedValue([{ _id: '1', name: 'a' }])
+    vi.mocked(client.listIndexes).mockResolvedValue([{ name: 'body_text', textIndexVersion: 3 }])
+    vi.mocked(client.findDocuments).mockResolvedValue([{ _id: '1', name: 'a' }])
     const acc = accessorWith([{ _id: '1', name: 'x' }])
     const out = await searchCollection(acc, 'app', 'users', 'foo', 5)
     expect(out).toEqual([{ _id: '1', name: 'a' }])
-    const call = vi.mocked(_client.findDocuments).mock.calls[0]
+    const call = vi.mocked(client.findDocuments).mock.calls[0]
     expect(call?.[3]).toEqual({ $or: [{ name: { $regex: 'foo', $options: 'i' } }] })
   })
 
   it('falls back to $or of $regex over sampled string fields', async () => {
-    vi.mocked(_client.listIndexes).mockResolvedValue([{ name: '_id_', key: { _id: 1 } }])
-    vi.mocked(_client.findDocuments).mockResolvedValue([{ _id: '1', name: 'foobar' }])
+    vi.mocked(client.listIndexes).mockResolvedValue([{ name: '_id_', key: { _id: 1 } }])
+    vi.mocked(client.findDocuments).mockResolvedValue([{ _id: '1', name: 'foobar' }])
     const acc = accessorWith([{ _id: '1', name: 'x', email: 'y', age: 7 }])
     const out = await searchCollection(acc, 'app', 'users', 'foo', 5)
     expect(out).toEqual([{ _id: '1', name: 'foobar' }])
-    const call = vi.mocked(_client.findDocuments).mock.calls[0]
+    const call = vi.mocked(client.findDocuments).mock.calls[0]
     expect(call?.[3]).toEqual({
       $or: [
         { email: { $regex: 'foo', $options: 'i' } },
@@ -69,19 +69,19 @@ describe('searchCollection', () => {
   })
 
   it('returns no results when sampled docs have no string fields', async () => {
-    vi.mocked(_client.listIndexes).mockResolvedValue([{ name: '_id_', key: { _id: 1 } }])
+    vi.mocked(client.listIndexes).mockResolvedValue([{ name: '_id_', key: { _id: 1 } }])
     const acc = accessorWith([{ _id: '1', i: 0, v: 0 }])
     const out = await searchCollection(acc, 'app', 'numbers', 'foo', 5)
     expect(out).toEqual([])
-    expect(_client.findDocuments).not.toHaveBeenCalled()
+    expect(client.findDocuments).not.toHaveBeenCalled()
   })
 })
 
 describe('searchDatabase', () => {
   it('walks collections and emits matches', async () => {
-    vi.mocked(_client.listCollections).mockResolvedValue(['users', 'orders'])
-    vi.mocked(_client.listIndexes).mockResolvedValue([{ name: 'body_text', textIndexVersion: 3 }])
-    vi.mocked(_client.findDocuments)
+    vi.mocked(client.listCollections).mockResolvedValue(['users', 'orders'])
+    vi.mocked(client.listIndexes).mockResolvedValue([{ name: 'body_text', textIndexVersion: 3 }])
+    vi.mocked(client.findDocuments)
       .mockResolvedValueOnce([{ _id: '1' }])
       .mockResolvedValueOnce([])
     const out = await searchDatabase(accessorWith([{ _id: '1', name: 'x' }]), 'app', 'foo', 5)

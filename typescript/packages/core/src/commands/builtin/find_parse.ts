@@ -1,0 +1,272 @@
+// ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+// ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
+
+import type { PredNode } from './find_eval.ts'
+
+const VALUE_PREDICATES = new Set([
+  '-name',
+  '-iname',
+  '-path',
+  '-type',
+  '-size',
+  '-mtime',
+  '-maxdepth',
+  '-mindepth',
+  '-printf',
+])
+
+const BARE_PREDICATES = new Set(['-empty', '-print', '-print0', '-delete', '-ls', '-depth'])
+
+const OPERATORS = new Set(['-not', '!', '-o', '-or', '-a', '-and', '(', ')'])
+
+function isExpressionToken(tok: string): boolean {
+  return VALUE_PREDICATES.has(tok) || BARE_PREDICATES.has(tok) || OPERATORS.has(tok)
+}
+
+const VALID_TYPES = new Set(['b', 'c', 'd', 'p', 'f', 'l', 's'])
+
+const MAX_DEPTH = 100
+
+export class FindParseError extends Error {}
+
+export interface FindExpr {
+  tree: PredNode
+  maxDepth: number | null
+  minDepth: number | null
+  minSize: number | null
+  maxSize: number | null
+  mtimeMin: number | null
+  mtimeMax: number | null
+  usesEmpty: boolean
+  printf: string | null
+}
+
+// GNU rounds the file size up to whole units before comparing, and
+// +N / -N are strict: +N keeps ceil(size/unit) > N, -N keeps
+// ceil(size/unit) < N, N alone keeps ceil(size/unit) === N. Expressed
+// as inclusive byte bounds: +N -> [N*unit + 1, inf), -N ->
+// [0, (N-1)*unit], N -> [(N-1)*unit + 1, N*unit].
+export function parseSize(spec: string): [number | null, number | null] {
+  const suffixes: Record<string, number> = { c: 1, k: 1024, M: 1024 ** 2, G: 1024 ** 3 }
+  const raw = spec.startsWith('+') || spec.startsWith('-') ? spec.slice(1) : spec
+  const last = raw[raw.length - 1] ?? ''
+  const mult = suffixes[last] ?? 1
+  const n = Number.parseInt(raw.replace(/[ckMG]$/, ''), 10)
+  if (spec.startsWith('+')) return [n * mult + 1, null]
+  if (spec.startsWith('-')) return [null, (n - 1) * mult]
+  return [(n - 1) * mult + 1, n * mult]
+}
+
+function parseMtime(spec: string): [number | null, number | null] {
+  const day = 86400
+  const now = Date.now() / 1000
+  const n = Number.parseInt(spec.replace(/^[+-]/, ''), 10)
+  if (spec.startsWith('+')) return [null, now - n * day]
+  if (spec.startsWith('-')) return [now - n * day, null]
+  return [now - (n + 1) * day, now - n * day]
+}
+
+function typeNode(value: string): PredNode {
+  if (value === 'f' || value === 'file') return { op: 'type', kind: 'f' }
+  if (value === 'd' || value === 'directory') return { op: 'type', kind: 'd' }
+  if (VALID_TYPES.has(value)) return { op: 'type', kind: value }
+  throw new FindParseError(`find: Unknown argument to -type: ${value}`)
+}
+
+function intArg(value: string, flag: string): number {
+  const n = Number.parseInt(value, 10)
+  if (Number.isNaN(n)) throw new FindParseError(`find: invalid argument '${value}' to '${flag}'`)
+  return n
+}
+
+function sizeArg(value: string): [number | null, number | null] {
+  const [lo, hi] = parseSize(value)
+  if ((lo !== null && Number.isNaN(lo)) || (hi !== null && Number.isNaN(hi)))
+    throw new FindParseError(`find: invalid argument '${value}' to '-size'`)
+  return [lo, hi]
+}
+
+function mtimeArg(value: string): [number | null, number | null] {
+  const [lo, hi] = parseMtime(value)
+  if ((lo !== null && Number.isNaN(lo)) || (hi !== null && Number.isNaN(hi)))
+    throw new FindParseError(`find: invalid argument '${value}' to '-mtime'`)
+  return [lo, hi]
+}
+
+// GNU find's link-policy options are leading options, not predicates:
+// they may only appear before the start points, and never take part in
+// the expression. Without this the tail scan would treat `-L` as the
+// start of the expression and swallow the paths after it.
+const LINK_OPTIONS = new Set(['-P', '-H', '-L'])
+
+export function findExprTail(rawArgv: string[]): string[] {
+  let start = 0
+  while (start < rawArgv.length && LINK_OPTIONS.has(rawArgv[start] ?? '')) start++
+  for (let i = start; i < rawArgv.length; i++) {
+    const tok = rawArgv[i]
+    if (tok === undefined) continue
+    if (isExpressionToken(tok) || (tok.startsWith('-') && tok.length > 1)) {
+      return rawArgv.slice(i)
+    }
+  }
+  return []
+}
+
+export function parseFindExpression(tokens: string[]): FindExpr {
+  const g = {
+    maxDepth: null as number | null,
+    minDepth: null as number | null,
+    minSize: null as number | null,
+    maxSize: null as number | null,
+    mtimeMin: null as number | null,
+    mtimeMax: null as number | null,
+    usesEmpty: false,
+    printf: null as string | null,
+  }
+  let pos = 0
+  let depth = 0
+  let mtimeSeen = false
+  const peek = (): string | undefined => (pos < tokens.length ? tokens[pos] : undefined)
+  const advance = (): string | undefined => {
+    const t = peek()
+    if (t !== undefined) pos += 1
+    return t
+  }
+  // Refuse an operator the line left without a right-hand side. GNU words
+  // the empty slot two ways and both name the operator, which is why this
+  // runs where the operator was just consumed rather than in primary(): by
+  // the time the recursion reaches a primary the token that needed an
+  // operand is gone.
+  const afterOperator = (op: string): void => {
+    const tok = peek()
+    if (tok === undefined) throw new FindParseError(`find: expected an expression after '${op}'`)
+    if (tok === ')')
+      throw new FindParseError(`find: expected an expression between '${op}' and ')'`)
+  }
+
+  function primary(): PredNode {
+    const tok = advance()
+    if (tok === undefined) throw new FindParseError('find: expected predicate')
+    if (VALUE_PREDICATES.has(tok)) {
+      const value = advance()
+      if (value === undefined) throw new FindParseError(`find: missing argument to '${tok}'`)
+      if (tok === '-name') return { op: 'name', pattern: value, icase: false }
+      if (tok === '-iname') return { op: 'name', pattern: value, icase: true }
+      if (tok === '-path') return { op: 'path', pattern: value }
+      if (tok === '-type') return typeNode(value)
+      if (tok === '-printf') {
+        // An action, not a test: it always matches, replaces the default
+        // -print rendering, and one format applies to every row (GNU
+        // evaluates actions per expression position, which the flat
+        // window cannot express; a single trailing -printf, the way
+        // agents write it, renders identically).
+        g.printf = value
+        return { op: 'true' }
+      }
+      if (tok === '-maxdepth') {
+        g.maxDepth = intArg(value, '-maxdepth')
+        return { op: 'true' }
+      }
+      if (tok === '-mindepth') {
+        g.minDepth = intArg(value, '-mindepth')
+        return { op: 'true' }
+      }
+      if (tok === '-size') {
+        ;[g.minSize, g.maxSize] = sizeArg(value)
+        return { op: 'true' }
+      }
+      // The flat window cannot evaluate -mtime per predicate node, so
+      // repeated -mtime flatten to the union of their windows: the
+      // tautology `-mtime +0 -o -mtime -1` imposes no bounds instead of
+      // last-wins dropping everything. An AND of disjoint windows
+      // over-matches (documented divergence from GNU).
+      const [mtLo, mtHi] = mtimeArg(value)
+      if (!mtimeSeen) {
+        ;[g.mtimeMin, g.mtimeMax] = [mtLo, mtHi]
+        mtimeSeen = true
+      } else {
+        g.mtimeMin = g.mtimeMin === null || mtLo === null ? null : Math.min(g.mtimeMin, mtLo)
+        g.mtimeMax = g.mtimeMax === null || mtHi === null ? null : Math.max(g.mtimeMax, mtHi)
+      }
+      return { op: 'true' }
+    }
+    if (tok === '-empty') {
+      g.usesEmpty = true
+      return { op: 'empty' }
+    }
+    if (BARE_PREDICATES.has(tok)) return { op: 'true' }
+    throw new FindParseError(`find: unknown predicate '${tok}'`)
+  }
+
+  function factor(): PredNode {
+    depth += 1
+    if (depth > MAX_DEPTH) throw new FindParseError('find: expression too deeply nested')
+    try {
+      const tok = peek()
+      if (tok === '-not' || tok === '!') {
+        advance()
+        afterOperator(tok)
+        return { op: 'not', kid: factor() }
+      }
+      if (tok === '(') {
+        advance()
+        const node = orExpr()
+        if (peek() !== ')') throw new FindParseError('find: unbalanced parentheses')
+        advance()
+        return node
+      }
+      return primary()
+    } finally {
+      depth -= 1
+    }
+  }
+
+  function andExpr(): PredNode {
+    const factors = [factor()]
+    for (;;) {
+      const tok = peek()
+      if (tok === '-a' || tok === '-and') {
+        advance()
+        afterOperator(tok)
+        factors.push(factor())
+        continue
+      }
+      if (tok === undefined || tok === '-o' || tok === '-or' || tok === ')') break
+      factors.push(factor())
+    }
+    const [firstFactor, ...restFactors] = factors
+    if (firstFactor === undefined) return { op: 'true' }
+    return restFactors.length === 0 ? firstFactor : { op: 'and', kids: factors }
+  }
+
+  function orExpr(): PredNode {
+    const terms = [andExpr()]
+    for (;;) {
+      const tok = peek()
+      if (tok !== '-o' && tok !== '-or') break
+      advance()
+      afterOperator(tok)
+      terms.push(andExpr())
+    }
+    const [firstTerm, ...restTerms] = terms
+    if (firstTerm === undefined) return { op: 'true' }
+    return restTerms.length === 0 ? firstTerm : { op: 'or', kids: terms }
+  }
+
+  if (tokens.length === 0) return { tree: { op: 'true' }, ...g }
+  const tree = orExpr()
+  const trailing = peek()
+  if (trailing !== undefined) throw new FindParseError(`find: unexpected token '${trailing}'`)
+  return { tree, ...g }
+}

@@ -16,7 +16,7 @@ import base64
 
 from mirage.accessor.github import GitHubAccessor
 from mirage.cache.index import NULL_INDEX, IndexCacheStore, LookupStatus
-from mirage.core.github._client import github_get
+from mirage.core.github.client import github_get
 from mirage.core.github.config import GitHubConfig
 from mirage.core.github.tree import ensure_live_index, refill_index
 from mirage.types import PathSpec

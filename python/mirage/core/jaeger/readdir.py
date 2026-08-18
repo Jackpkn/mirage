@@ -14,11 +14,11 @@
 
 from mirage.accessor.jaeger import JaegerAccessor
 from mirage.cache.index import NULL_INDEX, IndexCacheStore, IndexEntry
-from mirage.core.jaeger._client import (fetch_operations, fetch_services,
-                                        fetch_traces, is_trace_id)
-from mirage.core.jaeger.render import jaeger_json_bytes
+from mirage.core.jaeger.client import (fetch_operations, fetch_services,
+                                       fetch_traces, is_trace_id)
 from mirage.core.jaeger.scope import (OPERATIONS_FILE, TOP_LEVEL_DIRS,
                                       detect_scope)
+from mirage.core.render.json import json_bytes
 from mirage.types import PathSpec
 from mirage.utils.errors import enoent
 from mirage.utils.key_prefix import mount_prefix_of
@@ -116,7 +116,7 @@ async def _readdir_service(
              name=OPERATIONS_FILE,
              resource_type="jaeger/operations",
              vfs_name=OPERATIONS_FILE,
-             size=len(jaeger_json_bytes(operations)),
+             size=len(json_bytes(operations)),
          )),
         ("traces",
          IndexEntry(
@@ -187,7 +187,7 @@ async def _readdir_traces(
             name=trace_id,
             resource_type="jaeger/trace",
             vfs_name=filename,
-            size=len(jaeger_json_bytes(trace)),
+            size=len(json_bytes(trace)),
         )
         entries.append((filename, entry))
         names.append(f"{prefix}/services/{service}/traces/{filename}")

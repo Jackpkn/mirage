@@ -12,48 +12,20 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { redactConfigWithSchema, secretSchema, z } from '@struktoai/mirage-core/resource/secrets'
 import type { ConfigOf, RedactedConfig } from '@struktoai/mirage-core/resource/secrets'
-import type { S3BrowserPresignedUrlProvider, S3Config } from '../s3/config.ts'
+import { browserAliasSchema, derivedEndpoint, makeBrowserS3Alias } from '../s3_alias.ts'
 
-const QingStorConfigSchema = z.object({
-  bucket: z.string(),
-  presignedUrlProvider: secretSchema(
-    z.custom<S3BrowserPresignedUrlProvider>((value) => typeof value === 'function'),
-  ),
-  region: z.string().optional(),
-  endpoint: z.string().optional(),
-  defaultContentType: z.string().optional(),
-  keyPrefix: z.string().optional(),
-})
+const QingStorConfigSchema = browserAliasSchema({})
 
 export type QingStorConfig = ConfigOf<typeof QingStorConfigSchema>
 
 export type QingStorConfigRedacted = RedactedConfig<QingStorConfig, 'presignedUrlProvider'>
 
-export function resolvedQingStorEndpoint(config: QingStorConfig): string | undefined {
-  if (config.endpoint !== undefined && config.endpoint !== '') return config.endpoint
-  if (config.region !== undefined && config.region !== '') {
-    const region = config.region
-    return `https://s3.${region}.qingstor.com`
-  }
-  return undefined
-}
+const alias = makeBrowserS3Alias<QingStorConfig, QingStorConfigRedacted>({
+  schema: QingStorConfigSchema,
+  endpointFor: derivedEndpoint('region', (region) => `https://s3.${region}.qingstor.com`),
+})
 
-export function qingStorToS3Config(config: QingStorConfig): S3Config {
-  const endpoint = resolvedQingStorEndpoint(config)
-  return {
-    bucket: config.bucket,
-    presignedUrlProvider: config.presignedUrlProvider,
-    ...(config.region !== undefined ? { region: config.region } : {}),
-    ...(endpoint !== undefined ? { endpoint } : {}),
-    ...(config.defaultContentType !== undefined
-      ? { defaultContentType: config.defaultContentType }
-      : {}),
-    ...(config.keyPrefix !== undefined ? { keyPrefix: config.keyPrefix } : {}),
-  }
-}
-
-export function redactQingStorConfig(config: QingStorConfig): QingStorConfigRedacted {
-  return redactConfigWithSchema(QingStorConfigSchema, config) as unknown as QingStorConfigRedacted
-}
+export const resolvedQingStorEndpoint = alias.resolvedEndpoint
+export const qingStorToS3Config = alias.toS3Config
+export const redactQingStorConfig = alias.redact

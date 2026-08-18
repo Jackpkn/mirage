@@ -20,7 +20,7 @@ import { GITHUB_DU } from './du.ts'
 import { GITHUB_FIND } from './find.ts'
 import { GITHUB_GREP } from './grep.ts'
 import { GITHUB_IO } from './io.ts'
-import { metadataProvision } from './provision.ts'
+import { metadataProvision } from './_provision.ts'
 import { GITHUB_RG } from './rg.ts'
 
 const GITHUB_OVERRIDES = new Set(['du', 'find', 'grep', 'rg'])

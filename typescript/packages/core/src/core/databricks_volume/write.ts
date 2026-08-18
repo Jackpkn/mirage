@@ -17,7 +17,7 @@ import type { DatabricksVolumeAccessor } from '../../accessor/databricks_volume.
 import type { IndexCacheStore } from '../../cache/index/store.ts'
 import { record } from '../../observe/context.ts'
 import { ResourceName, type PathSpec } from '../../types.ts'
-import { dbxFetch } from './_client.ts'
+import { dbxFetch } from './client.ts'
 import { ensurePathSpec, parentPath } from './_helpers.ts'
 import { isNotFound, notADirectoryError, notFoundError } from './errors.ts'
 import { backendPath } from './path.ts'

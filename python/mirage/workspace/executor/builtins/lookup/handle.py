@@ -13,7 +13,8 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 from mirage.workspace.executor.builtins.getopt import last_of, scan_options
-from mirage.workspace.executor.builtins.lookup.classify import (describe,
+from mirage.workspace.executor.builtins.lookup.classify import (classify_all,
+                                                                describe,
                                                                 locations)
 from mirage.workspace.executor.builtins.lookup.constants import (TYPE_OPTIONS,
                                                                  TYPE_USAGE,
@@ -68,7 +69,8 @@ def handle_type(
         if mode == "t":
             out_lines.extend(f"{kind.value}\n" for kind in kinds)
         elif mode is None:
-            out_lines.extend(f"{describe(name, kind)}\n" for kind in kinds)
+            out_lines.extend(f"{describe(name, kind, session)}\n"
+                             for kind in kinds)
     out = "".join(out_lines).encode() if out_lines else None
     # One call, so the diagnostics never ride on the status: a partial
     # miss both warns and reports through the exit code.
@@ -114,7 +116,15 @@ def handle_which(
     out_lines: list[str] = []
     all_found = True
     for name in scan.operands:
-        kinds = locations(name, session, registry, all_mode, NameKind.KEYWORD)
+        # `which` is a program, not the shell: it knows neither reserved
+        # words nor aliases, so both layers are dropped before the top
+        # is taken.
+        kinds = [
+            kind for kind in classify_all(name, session, registry)
+            if kind not in (NameKind.KEYWORD, NameKind.ALIAS)
+        ]
+        if not all_mode:
+            kinds = kinds[:1]
         if not kinds:
             all_found = False
             continue

@@ -9,7 +9,7 @@ from mirage.ops.chroma import OPS as CHROMA_VFS_OPS
 from mirage.resource.base import BaseResource
 from mirage.resource.chroma.config import ChromaConfig
 from mirage.resource.chroma.prompt import PROMPT
-from mirage.types import ResourceName
+from mirage.types import PathSpec, ResourceName
 from mirage.utils.glob_walk import make_resolve_glob
 
 _resolve_glob = make_resolve_glob(readdir)
@@ -45,7 +45,11 @@ class ChromaResource(BaseResource):
         for fn in CHROMA_VFS_OPS:
             self.register_op(fn)
 
-    async def resolve_glob(self, paths, prefix: str = ""):
+    async def resolve_glob(
+        self,
+        paths: list[PathSpec],
+        prefix: str = '',
+    ) -> list[PathSpec]:
         return await _resolve_glob(self.accessor, paths, index=self._index)
 
     def get_state(self) -> dict[str, Any]:

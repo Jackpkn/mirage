@@ -23,7 +23,7 @@ vi.mock('../google/drive.ts', async () => {
 import { GDriveAccessor } from '../../accessor/gdrive.ts'
 import { RAMIndexCacheStore } from '../../cache/index/ram.ts'
 import { PathSpec } from '../../types.ts'
-import type { TokenManager } from '../google/_client.ts'
+import type { TokenManager } from '../google/client.ts'
 import * as drive from '../google/drive.ts'
 import { readdir } from './readdir.ts'
 

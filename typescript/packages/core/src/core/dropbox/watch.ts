@@ -19,7 +19,7 @@ import { stripSlash } from '../../utils/slash.ts'
 import type { DeltaHook } from '../../watch/base.ts'
 import { ListingDeltaHook } from '../../watch/delta.ts'
 import { statFingerprint } from '../../watch/fingerprint.ts'
-import { DropboxApiError } from './_client.ts'
+import { DropboxApiError } from './client.ts'
 import { listFolder } from './api.ts'
 import { dropboxPathOf } from './paths.ts'
 

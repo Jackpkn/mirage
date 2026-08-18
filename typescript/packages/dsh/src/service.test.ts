@@ -130,4 +130,42 @@ describe('MirageService', () => {
     await expect(ctx.plugin(MirageService, {}).await()).rejects.toThrow('required')
     await ws.close()
   })
+  it('does not emit an unhandled rejection when a mount fails to build', async () => {
+    const seen: unknown[] = []
+    const onUnhandled = (err: unknown): void => {
+      seen.push(err)
+    }
+    process.on('unhandledRejection', onUnhandled)
+    const ctx = new Context()
+    const fiber = ctx.plugin(MirageService, {
+      mounts: { '/x': { resource: 'no-such-resource-xyz' } },
+    })
+    await new Promise((resolve) => setTimeout(resolve, 200))
+    process.off('unhandledRejection', onUnhandled)
+    expect(seen).toEqual([])
+    await expect(ctx.mirage.ready).rejects.toThrow(/unknown resource/)
+    await fiber.dispose()
+  })
+
+  it('still rejects `ready` for a caller that awaits it', async () => {
+    const ctx = new Context()
+    const fiber = ctx.plugin(MirageService, {
+      mounts: { '/x': { resource: 'no-such-resource-xyz' } },
+    })
+    await fiber.await()
+    await expect(ctx.mirage.ready).rejects.toThrow(/unknown resource/)
+    await fiber.dispose()
+  })
+
+  it('refuses runtimes or workspace options beside an adopted workspace', async () => {
+    const ws = new Workspace({ '/data': [new RAMResource(), MountMode.WRITE] })
+    const ctx = new Context()
+    await expect(
+      ctx.plugin(MirageService, { workspace: ws, runtimes: ['monty'] }).await(),
+    ).rejects.toThrow(/adopted workspace/)
+    await expect(
+      ctx.plugin(MirageService, { workspace: ws, workspaceOptions: {} }).await(),
+    ).rejects.toThrow(/adopted workspace/)
+    await ws.close()
+  })
 })

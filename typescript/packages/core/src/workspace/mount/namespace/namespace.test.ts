@@ -15,7 +15,7 @@
 import { describe, expect, it } from 'vitest'
 import { RAMResource } from '../../../resource/ram/ram.ts'
 import { CycleError } from '../../../utils/path.ts'
-import { Workspace } from '../../workspace.ts'
+import { Workspace } from '../../workspace/workspace.ts'
 import { RAMNamespaceStore } from './ram.ts'
 
 describe('Namespace facade (addressing)', () => {

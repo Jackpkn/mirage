@@ -15,7 +15,7 @@
 import { RAMResource } from '@struktoai/mirage-core/resource/ram/ram'
 import { MountBackend, MountMode } from '@struktoai/mirage-core/types'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { Mount } from './workspace/mount_spec.ts'
+import { Mount } from '@struktoai/mirage-core/workspace/mount/spec'
 import { Workspace } from './workspace.ts'
 
 const mocks = vi.hoisted(() => ({

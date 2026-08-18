@@ -21,8 +21,6 @@ import type { PathSpec } from '../../types.ts'
 // still route to the shell layer so the error names a capability gap.
 export const UNSUPPORTED_BUILTINS: ReadonlySet<string> = new Set([
   'bg',
-  'disown',
-  'exec',
   'complete',
   'compgen',
   'ulimit',
@@ -61,7 +59,14 @@ export const KEYWORDS: ReadonlySet<string> = new Set([
 ])
 
 // ShellBuiltin subset handled through the job table in the executor.
-export const JOB_BUILTINS: ReadonlySet<string> = new Set(['wait', 'fg', 'kill', 'jobs', 'ps'])
+export const JOB_BUILTINS: ReadonlySet<string> = new Set([
+  'wait',
+  'fg',
+  'kill',
+  'jobs',
+  'disown',
+  'ps',
+])
 
 // Commands with lstat semantics: they act on the symlink entry itself,
 // so dispatch must not rewrite their operands through the link table.

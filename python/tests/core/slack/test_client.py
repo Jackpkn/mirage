@@ -12,12 +12,14 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from unittest.mock import AsyncMock, MagicMock, patch
-
 import pytest
+from aioresponses import aioresponses
+from yarl import URL
 
-from mirage.core.slack._client import slack_get, slack_post
+from mirage.core.slack.client import slack_get, slack_post
 from mirage.core.slack.config import SlackConfig
+
+BASE = "https://slack.com/api"
 
 
 @pytest.fixture
@@ -27,81 +29,39 @@ def config():
 
 @pytest.mark.asyncio
 async def test_slack_get_success(config):
-    mock_resp = AsyncMock()
-    mock_resp.json = AsyncMock(return_value={
-        "ok": True,
-        "channels": [],
-    })
-    mock_session = AsyncMock()
-    mock_session.get = MagicMock(return_value=AsyncMock(
-        __aenter__=AsyncMock(return_value=mock_resp),
-        __aexit__=AsyncMock(return_value=False),
-    ))
-
-    with patch("mirage.core.slack._client.aiohttp.ClientSession") as mock_cs:
-        mock_cs.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_cs.return_value.__aexit__ = AsyncMock(return_value=False)
-
+    url = f"{BASE}/conversations.list?limit=10"
+    with aioresponses() as m:
+        m.get(url, payload={"ok": True, "channels": []})
         result = await slack_get(config,
                                  "conversations.list",
                                  params={"limit": 10})
-
+        sent = m.requests[("GET", URL(url))]
     assert result["ok"] is True
-    mock_session.get.assert_called_once()
-    call_kwargs = mock_session.get.call_args
-    assert "https://slack.com/api/conversations.list" in call_kwargs.args \
-        or call_kwargs.args[0] == "https://slack.com/api/conversations.list"
-    assert call_kwargs.kwargs["headers"]["Authorization"] == \
+    assert len(sent) == 1
+    assert sent[0].kwargs["headers"]["Authorization"] == \
         "Bearer xoxb-test-token"
 
 
 @pytest.mark.asyncio
 async def test_slack_get_uses_search_token_for_search_methods():
     config = SlackConfig(token="xoxb-bot", search_token="xoxp-user")
-    mock_resp = AsyncMock()
-    mock_resp.json = AsyncMock(return_value={
-        "ok": True,
-        "messages": {
-            "matches": [],
-        },
-    })
-    mock_session = AsyncMock()
-    mock_session.get = MagicMock(return_value=AsyncMock(
-        __aenter__=AsyncMock(return_value=mock_resp),
-        __aexit__=AsyncMock(return_value=False),
-    ))
-
-    with patch("mirage.core.slack._client.aiohttp.ClientSession") as mock_cs:
-        mock_cs.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_cs.return_value.__aexit__ = AsyncMock(return_value=False)
-
+    url = f"{BASE}/search.messages?query=hello"
+    with aioresponses() as m:
+        m.get(url, payload={"ok": True, "messages": {"matches": []}})
         result = await slack_get(config,
                                  "search.messages",
                                  params={"query": "hello"})
-
+        sent = m.requests[("GET", URL(url))]
     assert result["ok"] is True
-    call_kwargs = mock_session.get.call_args
-    assert call_kwargs.kwargs["headers"]["Authorization"] == \
-        "Bearer xoxp-user"
+    assert sent[0].kwargs["headers"]["Authorization"] == "Bearer xoxp-user"
 
 
 @pytest.mark.asyncio
 async def test_slack_get_error(config):
-    mock_resp = AsyncMock()
-    mock_resp.json = AsyncMock(return_value={
-        "ok": False,
-        "error": "channel_not_found",
-    })
-    mock_session = AsyncMock()
-    mock_session.get = MagicMock(return_value=AsyncMock(
-        __aenter__=AsyncMock(return_value=mock_resp),
-        __aexit__=AsyncMock(return_value=False),
-    ))
-
-    with patch("mirage.core.slack._client.aiohttp.ClientSession") as mock_cs:
-        mock_cs.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_cs.return_value.__aexit__ = AsyncMock(return_value=False)
-
+    # Slack reports failures in-band: HTTP 200 with ok:false.
+    url = f"{BASE}/conversations.info"
+    with aioresponses() as m:
+        m.get(url, payload={"ok": False, "error": "channel_not_found"})
         with pytest.raises(
                 RuntimeError,
                 match=r"\(conversations\.info\): channel_not_found"):
@@ -109,25 +69,41 @@ async def test_slack_get_error(config):
 
 
 @pytest.mark.asyncio
-async def test_slack_get_missing_scope_surfaces_scopes(config):
-    mock_resp = AsyncMock()
-    mock_resp.json = AsyncMock(
-        return_value={
+async def test_slack_get_http_error_keeps_slack_wording(config):
+    # A non-2xx that still carries Slack's envelope keeps Slack's own
+    # error string rather than a bare status line.
+    url = f"{BASE}/conversations.info"
+    with aioresponses() as m:
+        m.get(url, status=429, payload={
             "ok": False,
-            "error": "missing_scope",
-            "needed": "im:read,mpim:read",
-            "provided": "channels:read,users:read",
+            "error": "ratelimited",
         })
-    mock_session = AsyncMock()
-    mock_session.get = MagicMock(return_value=AsyncMock(
-        __aenter__=AsyncMock(return_value=mock_resp),
-        __aexit__=AsyncMock(return_value=False),
-    ))
+        with pytest.raises(RuntimeError,
+                           match=r"\(conversations\.info\): ratelimited"):
+            await slack_get(config, "conversations.info")
 
-    with patch("mirage.core.slack._client.aiohttp.ClientSession") as mock_cs:
-        mock_cs.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_cs.return_value.__aexit__ = AsyncMock(return_value=False)
 
+@pytest.mark.asyncio
+async def test_slack_get_http_error_without_envelope_reports_status(config):
+    url = f"{BASE}/conversations.info"
+    with aioresponses() as m:
+        m.get(url, status=502, body="<html>gateway</html>")
+        with pytest.raises(RuntimeError,
+                           match=r"\(conversations\.info\): HTTP 502"):
+            await slack_get(config, "conversations.info")
+
+
+@pytest.mark.asyncio
+async def test_slack_get_missing_scope_surfaces_scopes(config):
+    url = f"{BASE}/conversations.list"
+    with aioresponses() as m:
+        m.get(url,
+              payload={
+                  "ok": False,
+                  "error": "missing_scope",
+                  "needed": "im:read,mpim:read",
+                  "provided": "channels:read,users:read",
+              })
         with pytest.raises(
                 RuntimeError,
                 match=(r"\(conversations\.list\): missing_scope "
@@ -139,21 +115,9 @@ async def test_slack_get_missing_scope_surfaces_scopes(config):
 
 @pytest.mark.asyncio
 async def test_slack_get_missing_scope_no_needed_falls_back(config):
-    mock_resp = AsyncMock()
-    mock_resp.json = AsyncMock(return_value={
-        "ok": False,
-        "error": "missing_scope",
-    })
-    mock_session = AsyncMock()
-    mock_session.get = MagicMock(return_value=AsyncMock(
-        __aenter__=AsyncMock(return_value=mock_resp),
-        __aexit__=AsyncMock(return_value=False),
-    ))
-
-    with patch("mirage.core.slack._client.aiohttp.ClientSession") as mock_cs:
-        mock_cs.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_cs.return_value.__aexit__ = AsyncMock(return_value=False)
-
+    url = f"{BASE}/conversations.list"
+    with aioresponses() as m:
+        m.get(url, payload={"ok": False, "error": "missing_scope"})
         with pytest.raises(RuntimeError) as ei:
             await slack_get(config, "conversations.list")
         assert str(ei.value).endswith(
@@ -162,30 +126,17 @@ async def test_slack_get_missing_scope_no_needed_falls_back(config):
 
 @pytest.mark.asyncio
 async def test_slack_post_success(config):
-    mock_resp = AsyncMock()
-    mock_resp.json = AsyncMock(return_value={
-        "ok": True,
-        "ts": "1234567890.123456",
-    })
-    mock_session = AsyncMock()
-    mock_session.post = MagicMock(return_value=AsyncMock(
-        __aenter__=AsyncMock(return_value=mock_resp),
-        __aexit__=AsyncMock(return_value=False),
-    ))
-
-    with patch("mirage.core.slack._client.aiohttp.ClientSession") as mock_cs:
-        mock_cs.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_cs.return_value.__aexit__ = AsyncMock(return_value=False)
-
+    url = f"{BASE}/chat.postMessage"
+    with aioresponses() as m:
+        m.post(url, payload={"ok": True, "ts": "1234567890.123456"})
         result = await slack_post(config,
                                   "chat.postMessage",
                                   body={
                                       "channel": "C123",
                                       "text": "hello",
                                   })
-
+        sent = m.requests[("POST", URL(url))]
     assert result["ok"] is True
     assert result["ts"] == "1234567890.123456"
-    mock_session.post.assert_called_once()
-    call_kwargs = mock_session.post.call_args
-    assert call_kwargs.args[0] == "https://slack.com/api/chat.postMessage"
+    assert len(sent) == 1
+    assert sent[0].kwargs["json"] == {"channel": "C123", "text": "hello"}

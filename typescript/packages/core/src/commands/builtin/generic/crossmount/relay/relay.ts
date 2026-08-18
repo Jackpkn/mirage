@@ -18,30 +18,41 @@ import { runComm } from './comm.ts'
 import { runCp } from './cp.ts'
 import { runDiff } from './diff.ts'
 import { runJoin } from './join.ts'
+import { runLs } from './ls.ts'
 import { runMv } from './mv.ts'
 import { runPaste } from './paste.ts'
+import { runTar } from './tar.ts'
+import { runUnzip } from './unzip.ts'
 import { Cmd, type CrossResult, type DispatchFn } from '../types.ts'
 import type { FlagValue } from '../../../../spec/types.ts'
+import type { NamespaceView } from '../../../../../ops/types.ts'
 
-// Run a command whose data must colocate across mounts. Pure wiring: every
-// operand is read or written through dispatch primitives on its owning
+// Run a command whose work must see every operand at once. Pure wiring:
+// every operand is read or written through dispatch primitives on its owning
 // mount, and the shared generic does the work in its primitive mode, so
 // output matches the single-mount commands.
 export async function runRelay(
   cmdName: Cmd,
   scopes: PathSpec[],
+  textArgs: string[],
   flagKwargs: Record<string, FlagValue>,
   dispatch: DispatchFn,
   // Maps an operand to its storage identity, for the transfer commands
   // that must tell a real move from one whose two prefixes address a
   // single store.
   storageKey?: (path: PathSpec) => string,
+  // Name-plane facts for the generics that render them (ls: links, attr
+  // overlay, child mounts).
+  ns?: NamespaceView,
 ): Promise<CrossResult> {
+  if (cmdName === Cmd.LS) return runLs(scopes, flagKwargs, dispatch, ns)
   if (cmdName === Cmd.CP) return runCp(scopes, flagKwargs, dispatch, storageKey)
   if (cmdName === Cmd.MV) return runMv(scopes, flagKwargs, dispatch, storageKey)
   if (cmdName === Cmd.DIFF) return runDiff(scopes, flagKwargs, dispatch)
   if (cmdName === Cmd.PASTE) return runPaste(scopes, flagKwargs, dispatch)
   if (cmdName === Cmd.COMM) return runComm(scopes, flagKwargs, dispatch)
   if (cmdName === Cmd.JOIN) return runJoin(scopes, flagKwargs, dispatch)
+  if (cmdName === Cmd.TAR) return runTar(textArgs, flagKwargs, dispatch)
+  if (cmdName === Cmd.UNZIP) return runUnzip(scopes, textArgs, flagKwargs, dispatch)
   return runCmp(scopes, flagKwargs, dispatch)
 }

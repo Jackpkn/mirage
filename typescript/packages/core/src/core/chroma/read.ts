@@ -16,7 +16,7 @@ import type { ChromaAccessor } from '../../accessor/chroma.ts'
 import { eisdir } from '../../utils/errors.ts'
 import type { IndexCacheStore } from '../../cache/index/store.ts'
 import { PathSpec } from '../../types.ts'
-import { iterPageChunks, metadataString, pageChunks } from './_client.ts'
+import { iterPageChunks, metadataString, pageChunks } from './client.ts'
 import { renderPage } from './render.ts'
 import { resolvePath, type ResolvedChromaPath } from './path.ts'
 

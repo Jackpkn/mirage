@@ -25,6 +25,7 @@ import type { TSNodeLike } from '../../shell/types.ts'
 import type { Session } from '../session/session.ts'
 import { ExecutionNode } from '../types.ts'
 import type { DispatchFn } from '../../runtime/types.ts'
+import { createFile } from './create.ts'
 import type { ExecuteNodeFn } from './jobs.ts'
 
 type Result = [ByteSource | null, IOResult, ExecutionNode]
@@ -200,7 +201,7 @@ export async function handleRedirect(
     const scope = fileScopes.get(path)
     if (scope === undefined) continue
     try {
-      await dispatch('write', scope, [data])
+      await createFile(dispatch, session, scope, data)
       io.writes[path] = data
     } catch (err) {
       if (!isFsError(err)) throw err

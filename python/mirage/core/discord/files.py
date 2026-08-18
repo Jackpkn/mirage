@@ -14,9 +14,8 @@
 
 from typing import Any
 
-import aiohttp
-
-from mirage.utils.ranges import range_header, window_if_unranged
+from mirage.core.api.client import api_request, status_error
+from mirage.utils.ranges import window_for
 from mirage.utils.sanitize import path_safe_name
 
 
@@ -59,10 +58,9 @@ async def download_file(url: str,
     Returns:
         bytes: raw file content.
     """
-    window = range_header(offset, size)
-    headers = {"Range": window} if window else None
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url, headers=headers) as resp:
-            resp.raise_for_status()
-            data = await resp.read()
-            return window_if_unranged(data, resp.status, offset, size)
+    data: bytes = await api_request("GET",
+                                    url,
+                                    error_of=status_error,
+                                    read="bytes",
+                                    window=window_for(offset, size))
+    return data

@@ -1,0 +1,72 @@
+{
+  "cases": [
+    {
+      "id": "sed_address_escaped_delimiter",
+      "seq": 962320,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "mkdir -p /data/sa && printf 'x\\na/b\\ny\\n' > /data/sa/f && sed '/a\\/b/d' /data/sa/f && rm -r /data/sa",
+      "expect": {
+        "exit": 0,
+        "stdout": "x\ny\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "sed_address_custom_delimiter",
+      "seq": 962321,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "mkdir -p /data/sa2 && printf 'a/b\\nz\\n' > /data/sa2/f && sed '\\%a/b%d' /data/sa2/f && rm -r /data/sa2",
+      "expect": {
+        "exit": 0,
+        "stdout": "z\n",
+        "stderr": ""
+      }
+    }
+  ]
+}

@@ -14,7 +14,7 @@
 
 from mirage.accessor.gridfs import GridFSAccessor
 from mirage.cache.index import NULL_INDEX, IndexCacheStore
-from mirage.core.gridfs._client import _key, _strip_prefix, iter_latest
+from mirage.core.gridfs.client import _key, _strip_prefix, iter_latest
 from mirage.core.gridfs.du.query import subtree_query
 from mirage.types import PathSpec
 

@@ -24,7 +24,7 @@ import {
   listListCards,
   listWorkspaceBoards,
   listWorkspaces,
-} from './_client.ts'
+} from './client.ts'
 import {
   normalizeBoard,
   normalizeCard,

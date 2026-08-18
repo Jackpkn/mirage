@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { describe, expect, it } from 'vitest'
-import { NotionAPIError } from '../../../../core/notion/_client.ts'
+import { NotionAPIError } from '../../../../core/notion/client.ts'
 import { IOResult } from '../../../../io/types.ts'
 import type { CLISpec } from '../../types.ts'
 import { NTN } from './index.ts'

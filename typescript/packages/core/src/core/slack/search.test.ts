@@ -14,7 +14,7 @@
 
 import { describe, expect, it } from 'vitest'
 import { SlackAccessor } from '../../accessor/slack.ts'
-import { NodeSlackTransport, type SlackResponse, type SlackTransport } from './_client.ts'
+import { NodeSlackTransport, type SlackResponse, type SlackTransport } from './client.ts'
 import { searchFiles, searchMessages } from './search.ts'
 
 const DEC = new TextDecoder()

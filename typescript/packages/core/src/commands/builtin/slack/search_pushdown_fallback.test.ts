@@ -15,7 +15,7 @@
 import { mountKey } from '../../../utils/key_prefix.ts'
 import { describe, expect, it } from 'vitest'
 import { RAMIndexCacheStore } from '../../../cache/index/ram.ts'
-import { SlackApiError, type SlackResponse } from '../../../core/slack/_client.ts'
+import { SlackApiError, type SlackResponse } from '../../../core/slack/client.ts'
 import { materialize } from '../../../io/types.ts'
 import { PathSpec } from '../../../types.ts'
 import { FakeSlackTransport, makeFakeResource, seedChannel } from './_test_util.ts'

@@ -39,6 +39,7 @@ import {
 } from './day.ts'
 import { listCalendars, listEvents } from './client.ts'
 import { compareCodePoints } from '../../utils/sort.ts'
+import { compactJsonBytes } from '../render/json.ts'
 
 const CALENDAR_DIR = 'gcal/calendar_dir'
 export const CALENDAR_JSON = 'gcal/calendar_json'
@@ -46,24 +47,20 @@ const DAY_DIR = 'gcal/day_dir'
 export const EVENT = 'gcal/event'
 const FREE_BUSY_ROLE = 'freeBusyReader'
 
-const ENC = new TextEncoder()
-
 export type CalendarEntryRow = Record<string, JsonValue>
 
 /** Render the per-calendar metadata file. */
 export function calendarPayload(entry: CalendarEntryRow, tz: string): Uint8Array {
-  return ENC.encode(
-    JSON.stringify({
-      id: entry.id ?? null,
-      summary: entry.summary ?? null,
-      accessRole: entry.accessRole ?? null,
-      primary: entry.primary === true,
-      calendarTimeZone: entry.timeZone ?? null,
-      // The zone the day directories are bucketed in, which is mount-wide
-      // and therefore not always this calendar's own.
-      bucketTimeZone: tz,
-    }),
-  )
+  return compactJsonBytes({
+    id: entry.id ?? null,
+    summary: entry.summary ?? null,
+    accessRole: entry.accessRole ?? null,
+    primary: entry.primary === true,
+    calendarTimeZone: entry.timeZone ?? null,
+    // The zone the day directories are bucketed in, which is mount-wide
+    // and therefore not always this calendar's own.
+    bucketTimeZone: tz,
+  })
 }
 
 /** Split a path into `[mount prefix, mount-relative key, virtual key]`. */
@@ -166,7 +163,7 @@ function eventEntries(
         resourceType: EVENT,
         remoteTime: typeof updated === 'string' ? updated : '',
         vfsName: name,
-        size: ENC.encode(JSON.stringify(event)).length,
+        size: compactJsonBytes(event).length,
       }),
     ])
   }

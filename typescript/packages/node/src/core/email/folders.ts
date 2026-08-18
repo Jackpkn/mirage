@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import type { EmailAccessor } from '../../accessor/email.ts'
-import { listFolders as clientListFolders } from './_client.ts'
+import { listFolders as clientListFolders } from './client.ts'
 
 export async function listFolders(accessor: EmailAccessor): Promise<string[]> {
   return clientListFolders(accessor)

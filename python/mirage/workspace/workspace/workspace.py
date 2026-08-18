@@ -14,8 +14,9 @@
 
 import asyncio
 import logging
-from collections.abc import AsyncIterator, Iterable, Mapping, Sequence
-from types import TracebackType
+from collections.abc import (AsyncIterator, Callable, Iterable, Mapping,
+                             Sequence)
+from types import ModuleType, TracebackType
 from typing import Any, Literal, overload
 
 from mirage.bridge.sync import run_async_from_sync
@@ -39,7 +40,7 @@ from mirage.runtime.resolver import PrefixResolver
 from mirage.shell.job_table import ConsoleFactory, JobTable
 from mirage.types import (ConsistencyPolicy, DriftPolicy, FileEvent, FileStat,
                           JsonValue, MountBackend, MountMode, PathSpec,
-                          StateKey, parse_mount_mode)
+                          parse_mount_mode)
 from mirage.utils.ids import new_session_id, new_workspace_id
 from mirage.workspace.cli import CLIInstall
 from mirage.workspace.dispatcher import Dispatcher
@@ -55,6 +56,7 @@ from mirage.workspace.snapshot import (DriftQueue, apply_state_dict,
                                        read_tar)
 from mirage.workspace.snapshot import snapshot as _write_snapshot
 from mirage.workspace.snapshot import to_state_dict
+from mirage.workspace.snapshot.keys import StateKey
 from mirage.workspace.snapshot.state import (CLIOverrides, reusable_clis,
                                              reusable_resources)
 from mirage.workspace.store import WorkspaceStateStore
@@ -65,6 +67,7 @@ from mirage.workspace.workspace.execute import execute_line
 from mirage.workspace.workspace.guard import reject_config_script
 from mirage.workspace.workspace.kernel_mounts import KernelMounts
 from mirage.workspace.workspace.lifecycle import (close_async, patch_process,
+                                                  stop_vfs_loop,
                                                   unpatch_process)
 from mirage.workspace.workspace.meta import WorkspaceMeta
 from mirage.workspace.workspace.mounts import (install_mounts, kernel_targets,
@@ -182,6 +185,13 @@ class Workspace:
                         links=self._namespace,
                         dispatch=self._dispatcher.dispatch)
         self._kernel_mounts = KernelMounts(self._ops, self._session_mgr)
+        # Held only while the workspace is a context manager; set by
+        # lifecycle.patch_process. Declared here because the pair was
+        # invented by assignment, so an unpatch without a patch raised
+        # AttributeError instead of restoring nothing.
+        self._original_open: Callable[..., Any] | None = None
+        self._original_os: ModuleType | None = None
+        self._vfs_loop: asyncio.AbstractEventLoop | None = None
 
         self._runtimes, self._policy_router = wire_runtime_world(
             self._registry, self.dispatch,
@@ -368,7 +378,8 @@ class Workspace:
                  exc_value: BaseException | None,
                  traceback: TracebackType | None) -> None:
         unpatch_process(self)
-        run_async_from_sync(self.close())
+        run_async_from_sync(self.close(), self._vfs_loop)
+        stop_vfs_loop(self)
 
     @property
     def registry(self) -> MountRegistry:

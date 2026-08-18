@@ -19,7 +19,7 @@ import type {
   DiscordMethod,
   DiscordResponse,
   DiscordTransport,
-} from '../../../core/discord/_client.ts'
+} from '../../../core/discord/client.ts'
 import type { Resource } from '../../../resource/base.ts'
 
 export interface FakeCall {

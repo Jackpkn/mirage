@@ -1,0 +1,72 @@
+{
+  "cases": [
+    {
+      "id": "disown_drops_the_job_from_the_table",
+      "seq": 940080,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "sleep 5 & disown; echo rc=$?; jobs; echo j=$?",
+      "expect": {
+        "exit": 0,
+        "stdout": "rc=0\nj=0\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "disown_reports_an_unknown_job",
+      "seq": 940081,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "disown %9; echo rc=$?; disown -x; echo rc=$?",
+      "expect": {
+        "exit": 0,
+        "stdout": "rc=1\nrc=2\n",
+        "stderr": "bash: disown: %9: no such job\nbash: disown: -x: invalid option\ndisown: usage: disown [-h] [-ar] [jobspec ... | pid ...]\n"
+      }
+    }
+  ]
+}

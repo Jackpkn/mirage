@@ -12,11 +12,11 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import json
 from collections.abc import AsyncIterator
 from typing import Any
 
-from mirage.core.slack._client import slack_get
+from mirage.core.render.json import compact_json_bytes
+from mirage.core.slack.client import slack_get
 from mirage.core.slack.config import SlackConfig
 from mirage.core.slack.paginate import cursor_pages
 
@@ -87,7 +87,7 @@ def user_json_bytes(user: dict[str, Any]) -> bytes:
     Returns:
         bytes: compact JSON encoding.
     """
-    return json.dumps(user, ensure_ascii=False, separators=(",", ":")).encode()
+    return compact_json_bytes(user)
 
 
 async def get_user_profile(

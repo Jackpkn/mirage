@@ -18,7 +18,7 @@ import { IndexEntry } from '../../cache/index/config.ts'
 import { RAMIndexCacheStore } from '../../cache/index/ram.ts'
 import { FileType, PathSpec } from '../../types.ts'
 import { enoent } from '../../utils/errors.ts'
-import type { TokenManager } from './_client.ts'
+import type { TokenManager } from './client.ts'
 import { makeStat, makeUnlink } from './tree_ops.ts'
 
 // The three Drive-item backends share one synthetic owned/shared tree and

@@ -48,14 +48,191 @@ def _parse_program(program: str) -> tuple[str, str]:
     return program, ""
 
 
+_IDENT_RE = re.compile(r"[A-Za-z_]\w*\Z")
+_NUMBER_RE = re.compile(r"-?(?:\d+\.?\d*|\.\d+)\Z")
+
+
+def _is_simple_operand(tok: str) -> bool:
+    """Whether the scraper can evaluate this token as a value.
+
+    The supported grammar is deliberately small: a double-quoted string
+    with no embedded quote, a numeric literal, a plain identifier, or a
+    ``$`` field naming a number or an identifier. Anything else (function
+    calls, arithmetic, concatenation) has no evaluator here and must be
+    refused rather than echoed as its own source text.
+
+    Args:
+        tok (str): the token as written in the program.
+    """
+    if not tok:
+        return False
+    if len(tok) >= 2 and tok.startswith('"') and tok.endswith('"'):
+        return '"' not in tok[1:-1]
+    if tok.startswith(FIELD_PREFIX):
+        inner = tok[1:]
+        return inner.isdigit() or bool(_IDENT_RE.match(inner))
+    return bool(_IDENT_RE.match(tok) or _NUMBER_RE.match(tok))
+
+
+def _reject(construct: str) -> None:
+    raise UsageError(f"awk: unsupported construct: '{construct}'")
+
+
+def _split_statements(action: str) -> list[str]:
+    """Split an action into its leaf statements.
+
+    Splits on ``;`` at brace depth zero and outside double quotes. A
+    compound statement (``{ stmts }``, legal wherever a statement is)
+    contributes its inner statements in place, so ``{{print $1}}`` runs
+    ``print $1`` the way gawk does rather than reading as one unknown
+    statement. Validator and evaluator both iterate this list, so they
+    cannot disagree about where a statement ends.
+
+    Args:
+        action (str): the action block's source text, braces stripped.
+    """
+    pieces: list[str] = []
+    depth = 0
+    quoted = False
+    start = 0
+    for i, ch in enumerate(action):
+        if ch == '"':
+            quoted = not quoted
+        elif quoted:
+            continue
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth = max(depth - 1, 0)
+        elif ch == ";" and depth == 0:
+            pieces.append(action[start:i])
+            start = i + 1
+    pieces.append(action[start:])
+    stmts: list[str] = []
+    for piece in pieces:
+        stmt = piece.strip()
+        if not stmt:
+            continue
+        if stmt.startswith("{") and stmt.endswith("}"):
+            stmts.extend(_split_statements(stmt[1:-1]))
+        else:
+            stmts.append(stmt)
+    return stmts
+
+
+def _validate_print_args(args: str, stmt: str) -> None:
+    for tok in re.split(r",\s*", args):
+        if not _is_simple_operand(tok.strip()):
+            _reject(stmt)
+
+
+def _validate_action(action: str) -> None:
+    """Refuse any statement the streamer would silently drop or mangle.
+
+    ``_eval_statements`` executes ``print``, ``var = value`` and
+    ``var += value``; every other statement used to vanish (and
+    ``printf`` ran as a mangled ``print``), so an agent's script exited 0
+    having done nothing. Shares the statement split with the evaluator.
+
+    Args:
+        action (str): the action block's source text.
+    """
+    for stmt in _split_statements(action):
+        m = re.match(r"\w+\s*\+=\s*(.+)\Z", stmt)
+        if m:
+            if not _is_simple_operand(m.group(1).strip()):
+                _reject(stmt)
+            continue
+        if not re.match(rf"{PRINT_STMT}\b", stmt):
+            m_set = _ASSIGN_RE.match(stmt)
+            if m_set:
+                if not _is_simple_operand(m_set.group(2).strip()):
+                    _reject(stmt)
+                continue
+        if stmt == PRINT_STMT:
+            continue
+        if re.match(rf"{PRINT_STMT}\b", stmt):
+            args = stmt[len(PRINT_STMT):].strip()
+            if args:
+                _validate_print_args(args, stmt)
+            continue
+        _reject(stmt)
+
+
+def _validate_simple(expr: str) -> None:
+    expr = expr.strip()
+    m = re.match(rf"(.+?)\s*({CMP_OP_PATTERN})\s*(.+)", expr)
+    if not m:
+        if len(expr) >= 2 and expr.startswith("/") and expr.endswith("/"):
+            return
+        if not _is_simple_operand(expr):
+            _reject(expr)
+        return
+    lhs = m.group(1).strip()
+    rhs = m.group(3).strip()
+    if not _is_simple_operand(lhs):
+        _reject(expr)
+    if rhs.startswith('"') or rhs.startswith(FIELD_PREFIX):
+        if not _is_simple_operand(rhs):
+            _reject(expr)
+        return
+    # A bare right-hand side compares as a literal in this dialect, so any
+    # word is fine; structural characters mean an expression nothing here
+    # evaluates (`length(x)`, `a[1]`).
+    if any(ch in rhs for ch in "(){}["):
+        _reject(expr)
+
+
+def _validate_condition(condition: str) -> None:
+    """Refuse any pattern ``_eval_condition`` cannot actually decide.
+
+    Mirrors its decomposition exactly (``||`` first, then ``&&``, then one
+    simple comparison / regex / truthiness probe), so everything the
+    evaluator runs is accepted and everything it would misread (`~`,
+    arithmetic, parenthesized groups) is refused up front.
+
+    Args:
+        condition (str): the pattern's source text.
+    """
+    condition = condition.strip()
+    if not condition or condition in (AwkBlock.BEGIN, AwkBlock.END):
+        return
+    if AwkBoolOp.OR in condition:
+        for part in condition.split(AwkBoolOp.OR):
+            _validate_condition(part)
+        return
+    if AwkBoolOp.AND in condition:
+        for part in condition.split(AwkBoolOp.AND):
+            _validate_condition(part)
+        return
+    _validate_simple(condition)
+
+
+def _validate_program(program: str) -> None:
+    begin, main, end = _parse_blocks(program)
+    condition, action = _parse_program(main) if main else ("", "")
+    if begin:
+        _validate_action(begin)
+    if end:
+        _validate_action(end)
+    _validate_condition(condition)
+    if action:
+        _validate_action(action)
+
+
 def _resolve_token(tok: str, field_map: Mapping[str, str]) -> str:
     if tok.startswith(FIELD_PREFIX):
         inner = tok[1:]
         if inner in field_map:
             ref = field_map[inner]
             return field_map.get(f"{FIELD_PREFIX}{ref}", "")
-        return field_map.get(tok, tok)
-    return field_map.get(tok, tok)
+        # An out-of-range field is empty in awk, never its own spelling.
+        return field_map.get(tok, "")
+    if tok in field_map:
+        return field_map[tok]
+    # An unset variable reads as the empty string, not its own name; a
+    # numeric literal is its own value.
+    return "" if _IDENT_RE.match(tok) else tok
 
 
 def _eval_simple(expr: str, field_map: Mapping[str, str]) -> bool:
@@ -108,15 +285,51 @@ def _eval_condition(condition: str, field_map: Mapping[str, str]) -> bool:
     return _eval_simple(condition, field_map)
 
 
-def _eval_action(action: str, field_map: Mapping[str, str]) -> str | None:
+_ASSIGN_RE = re.compile(r"([A-Za-z_]\w*)\s*=(?!=)\s*(.+)\Z")
+
+
+def _eval_statements(action: str, field_map: dict[str, str],
+                     accum: dict[str, float],
+                     variables: dict[str, str]) -> str | None:
+    """Run an action's statements in written order.
+
+    Three statement forms exist in this dialect: `var += value`
+    accumulates, `var = value` assigns (persisting across records via
+    ``variables``, which is how ``BEGIN {OFS=":"}`` reaches every print),
+    and `print` emits its arguments joined with OFS. One sequential pass,
+    so `x = 1; print x` sees the assignment.
+
+    Args:
+        action (str): the action block's source text.
+        field_map (dict[str, str]): the record's fields and variables.
+        accum (dict[str, float]): running `+=` totals.
+        variables (dict[str, str]): the program's global variables.
+    """
     parts: list[str] = []
     printed = False
-    for stmt in action.split(";"):
-        stmt = stmt.strip()
+    for stmt in _split_statements(action):
+        m_add = re.match(r"(\w+)\s*\+=\s*(.+)", stmt)
+        if m_add:
+            var, expr = m_add.group(1), m_add.group(2).strip()
+            val = field_map.get(expr, expr)
+            accum[var] = accum.get(var, 0.0) + to_number(val)
+            continue
+        if not stmt.startswith(PRINT_STMT):
+            m_set = _ASSIGN_RE.match(stmt)
+            if m_set:
+                var, raw = m_set.group(1), m_set.group(2).strip()
+                if raw.startswith('"') and raw.endswith('"') and len(raw) >= 2:
+                    val = raw[1:-1]
+                else:
+                    val = _resolve_token(raw, field_map)
+                variables[var] = val
+                field_map[var] = val
+                continue
         if not stmt.startswith(PRINT_STMT):
             continue
         printed = True
         args = stmt[len(PRINT_STMT):].strip()
+        ofs = field_map.get("OFS", " ")
         if not args:
             parts.append(field_map.get(AwkBuiltin.REC, ""))
             continue
@@ -128,7 +341,7 @@ def _eval_action(action: str, field_map: Mapping[str, str]) -> str | None:
                 vals.append(tok[1:-1])
             else:
                 vals.append(_resolve_token(tok, field_map))
-        parts.append(" ".join(vals))
+        parts.append(ofs.join(vals))
     return "\n".join(parts) if printed else None
 
 
@@ -174,16 +387,6 @@ def _parse_blocks(program: str) -> tuple[str, str, str]:
     return begin, main, end
 
 
-def _eval_accumulator(action: str, field_map: Mapping[str, str],
-                      accum: dict[str, float]) -> None:
-    for stmt in action.split(";"):
-        m = re.match(r"(\w+)\s*\+=\s*(.+)", stmt.strip())
-        if m:
-            var, expr = m.group(1), m.group(2).strip()
-            val = field_map.get(expr, expr)
-            accum[var] = accum.get(var, 0.0) + to_number(val)
-
-
 async def _awk_stream(
     sources: Sequence[AsyncIterator[bytes]],
     program: str,
@@ -201,7 +404,7 @@ async def _awk_stream(
             AwkBuiltin.NR: "0",
             AwkBuiltin.NF: "0",
         } | variables
-        result = _eval_action(begin, begin_map)
+        result = _eval_statements(begin, begin_map, accum, variables)
         if result is not None:
             yield (result + "\n").encode()
 
@@ -214,8 +417,8 @@ async def _awk_stream(
             field_map = _build_field_map(line, fs, nr, variables)
             if condition and not _eval_condition(condition, field_map):
                 continue
-            _eval_accumulator(action, field_map, accum)
-            result = _eval_action(action, field_map) if action else line
+            result = (_eval_statements(action, field_map, accum, variables)
+                      if action else line)
             if result is not None:
                 yield (result + "\n").encode()
 
@@ -227,7 +430,7 @@ async def _awk_stream(
         } | variables
         for k, v in accum.items():
             end_map[k] = format_number(v)
-        result = _eval_action(end, end_map)
+        result = _eval_statements(end, end_map, accum, variables)
         if result is not None:
             yield (result + "\n").encode()
 
@@ -280,6 +483,8 @@ async def awk(
         program = texts[0]
     else:
         raise UsageError(USAGE)
+
+    _validate_program(program)
 
     variables: dict[str, str] = {}
     for assignment in f.assignments:

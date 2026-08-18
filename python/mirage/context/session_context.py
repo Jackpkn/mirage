@@ -122,6 +122,41 @@ def hidden_paths_active() -> bool:
     return sess is not None and sess.hidden_paths is not None
 
 
+DEFAULT_UMASK = 0o022
+
+
+def session_umask() -> int:
+    """The file-creation mask of the session bound to this context.
+
+    Read by the creators that run inside a command handler (`mkdir`,
+    which cannot be handed the session) the way `path_allowed` reads
+    the hidden-paths spec: bash's default when no session is bound,
+    which is also what mirage's own 644/755 defaults for a new entry
+    already assume.
+
+    Args:
+        None
+    """
+    sess = get_current_session()
+    return DEFAULT_UMASK if sess is None else sess.umask
+
+
+def dotglob_active() -> bool:
+    """Whether the bound session's `shopt -s dotglob` is on.
+
+    Read inside pathname expansion, which runs in every backend's
+    `resolve_glob` and so cannot be handed the session: bash's rule is
+    that a name starting with `.` is matched only by a pattern that
+    starts with `.`, and `dotglob` is the one thing that relaxes it.
+    False when no session is bound, which is bash's default.
+
+    Args:
+        None
+    """
+    sess = get_current_session()
+    return sess is not None and bool(sess.shopts.get("dotglob"))
+
+
 def path_allowed(virtual: str) -> bool:
     """Whether the current session's hidden-paths spec leaves this
     path visible.

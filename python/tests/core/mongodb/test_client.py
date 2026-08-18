@@ -16,9 +16,9 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from mirage.core.mongodb._client import (get_index_stats, get_indexes,
-                                         get_validator, is_view,
-                                         iter_documents, iter_inserts)
+from mirage.core.mongodb.client import (get_index_stats, get_indexes,
+                                        get_validator, is_view, iter_documents,
+                                        iter_inserts)
 
 
 class _AsyncIter:

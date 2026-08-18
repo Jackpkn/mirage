@@ -12,9 +12,10 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import type { QdrantRow } from './_client.ts'
+import type { QdrantRow } from './client.ts'
 import type { QdrantConfigResolved } from '../../resource/qdrant/config.ts'
 import { decodeBase64 } from '../../utils/base64.ts'
+import { compactJsonText } from '../render/json.ts'
 
 const ENC = new TextEncoder()
 const SKIP_KEYS = new Set(['_score', '_rowid', '_distance'])
@@ -32,7 +33,7 @@ export function renderJson(row: QdrantRow, config: QdrantConfigResolved): Uint8A
     if (key === config.vectorField || key === config.blobField) continue
     data[key] = value
   }
-  return ENC.encode(JSON.stringify(data) + '\n')
+  return ENC.encode(compactJsonText(data) + '\n')
 }
 
 export function renderText(row: QdrantRow, config: QdrantConfigResolved): Uint8Array {

@@ -12,7 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import type { ShellArray } from '../shell/array.ts'
+import type { ShellValue } from '../shell/variable.ts'
 import type { VarAttr } from '../shell/variable.ts'
 import type { FileStat } from '../types.ts'
 
@@ -91,9 +91,15 @@ export interface SessionView {
   // Writers with richer mechanics (subscripts, appends, holes) compute
   // the resulting value on a copy and hand it here, so a denial never
   // leaves a half-applied write.
-  set(name: string, value: string | ShellArray): Promise<void>
+  // `followRef` (default true) resolves a `declare -n` reference to its
+  // target first, which is what every ordinary assignment does;
+  // `declare -n r=w` on an existing reference re-aims it and passes
+  // false.
+  set(name: string, value: ShellValue, followRef?: boolean): Promise<void>
   // Drop one variable through the session plane; a missing name is quiet.
-  unset(name: string): Promise<void>
+  // `followRef` (default true) resolves a reference to its target;
+  // `unset -n r` drops the reference itself and passes false.
+  unset(name: string, followRef?: boolean): Promise<void>
   // Turn one attribute on or off through the session plane, or with a
   // null attribute declare the name and change nothing. Separate from
   // `set` because it writes no value: `export NAME`, `readonly NAME`

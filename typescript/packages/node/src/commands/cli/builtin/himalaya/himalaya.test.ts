@@ -47,7 +47,7 @@ const appendMock = vi.hoisted(() => vi.fn())
 
 vi.mock('./smtp.ts', () => ({ sendRaw: sendRawMock }))
 
-vi.mock('../../../../core/email/_client.ts', () => ({
+vi.mock('../../../../core/email/client.ts', () => ({
   listFolderEntries: listFolderEntriesMock,
   fetchRawMessage: vi.fn(() => Promise.resolve(new TextEncoder().encode('From: a@x\r\n\r\nbody'))),
   fetchMessage: vi.fn(() => Promise.resolve(ORIGINAL)),

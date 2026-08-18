@@ -1,4 +1,0 @@
-host sees: written from python
-listdir: ['note.md']
-read: lazy demo
-PNG magic: 89 50 4e 47

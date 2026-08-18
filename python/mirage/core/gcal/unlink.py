@@ -15,7 +15,7 @@
 from mirage.accessor.gcal import GCalAccessor
 from mirage.cache.context import invalidate_after_unlink
 from mirage.cache.index import NULL_INDEX, IndexCacheStore
-from mirage.core.gcal._client import delete_event
+from mirage.core.gcal.client import delete_event
 from mirage.core.gcal.readdir import calendar_index, normalize
 from mirage.resource.gcal.event_entry import parse_event_filename
 from mirage.types import PathSpec

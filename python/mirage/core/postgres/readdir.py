@@ -14,7 +14,7 @@
 
 from mirage.accessor.postgres import PostgresAccessor
 from mirage.cache.index import NULL_INDEX, IndexCacheStore, IndexEntry
-from mirage.core.postgres import _client
+from mirage.core.postgres import client
 from mirage.core.postgres.scope import ENTITY_FILES, detect_scope
 from mirage.types import PathSpec
 from mirage.utils.errors import enoent
@@ -57,7 +57,7 @@ async def _list_root(accessor: PostgresAccessor, virtual_key: str,
         return listing.entries
     pool = await accessor.pool()
     async with pool.acquire() as conn:
-        schemas = await _client.list_schemas(conn, accessor.config.schemas)
+        schemas = await client.list_schemas(conn, accessor.config.schemas)
     entries: list[tuple[str, IndexEntry]] = [(
         "database.json",
         IndexEntry(id="database.json",
@@ -84,10 +84,10 @@ async def _list_entities(accessor: PostgresAccessor, schema: str, kind: str,
     pool = await accessor.pool()
     async with pool.acquire() as conn:
         if kind == "tables":
-            names = await _client.list_tables(conn, schema)
+            names = await client.list_tables(conn, schema)
         else:
-            views = await _client.list_views(conn, schema)
-            mviews = await _client.list_matviews(conn, schema)
+            views = await client.list_views(conn, schema)
+            mviews = await client.list_matviews(conn, schema)
             names = sorted(set(views) | set(mviews))
     entries: list[tuple[str, IndexEntry]] = []
     for n in names:

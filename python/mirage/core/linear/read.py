@@ -14,10 +14,10 @@
 
 from mirage.accessor.linear import LinearAccessor
 from mirage.cache.index import NULL_INDEX, IndexCacheStore
-from mirage.core.linear._client import (get_issue, list_issue_comments,
-                                        list_team_cycles, list_team_documents,
-                                        list_team_issues, list_team_members,
-                                        list_team_projects, list_teams)
+from mirage.core.linear.client import (get_issue, list_issue_comments,
+                                       list_team_cycles, list_team_documents,
+                                       list_team_issues, list_team_members,
+                                       list_team_projects, list_teams)
 from mirage.core.linear.config import LinearConfig
 from mirage.core.linear.normalize import (normalize_comment, normalize_cycle,
                                           normalize_document, normalize_issue,

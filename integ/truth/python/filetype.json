@@ -1,0 +1,17 @@
+{
+  "runs": {
+    "python": {
+      "command": [
+        "./python/.venv/bin/python",
+        "examples/python/filetype/filetype.py"
+      ]
+    }
+  },
+  "exit": 0,
+  "lines": [
+    "alpha 3",
+    "beta 11",
+    "plain text",
+    "largest: beta 11"
+  ]
+}

@@ -12,7 +12,7 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from mirage.core.ssh._client import _abs, _connect_kwargs, _key
+from mirage.core.ssh.client import _abs, _connect_kwargs, _key
 from mirage.resource.ssh.ssh import SSHConfig
 
 

@@ -14,12 +14,12 @@
 
 import dataclasses
 import logging
-from collections.abc import Callable
-from typing import Any
+from collections.abc import Awaitable, Callable, Sequence
+from typing import Any, Protocol
 
 from mirage.accessor.base import Accessor
 from mirage.cache.index import NULL_INDEX, IndexCacheStore
-from mirage.context import path_allowed
+from mirage.context import dotglob_active, path_allowed
 from mirage.ops.types import ChildMounts
 from mirage.types import PathSpec
 from mirage.utils.fnmatch import fnmatch
@@ -219,6 +219,26 @@ def spell_match(raw: str, virtual: str, walked: int) -> str:
     return "/".join([*head, *tail])
 
 
+def glob_name_matches(name: str, pattern: str) -> bool:
+    """Whether one directory entry answers a pathname-expansion segment.
+
+    `fnmatch` plus bash's leading-dot rule: a name that starts with `.`
+    is matched only by a pattern that starts with `.` (so `*`, `?h` and
+    `[.]h` all pass over `.h`), unless the session has `shopt -s
+    dotglob`. This is pathname expansion's rule alone; `find -name` and
+    `case` patterns match through `fnmatch` directly, and GNU agrees
+    that `find -name '*'` sees dotfiles.
+
+    Args:
+        name (str): the entry's own name, no directory part.
+        pattern (str): the segment, marks already resolved.
+    """
+    if name.startswith(
+            ".") and not pattern.startswith(".") and not dotglob_active():
+        return False
+    return fnmatch(name, pattern)
+
+
 async def expand_pattern(
     readdir: Callable[..., Any],
     accessor: Accessor,
@@ -273,16 +293,15 @@ async def expand_pattern(
             except (FileNotFoundError, NotADirectoryError):
                 entries = []
             pattern = glob_pattern(seg)
-            next_level.extend(
-                e for e in entries
-                if fnmatch(e.rstrip("/").rsplit("/", 1)[-1], pattern))
+            next_level.extend(e for e in entries if glob_name_matches(
+                e.rstrip("/").rsplit("/", 1)[-1], pattern))
             if children is not None:
                 # A nested mount root or a link is a real child of this
                 # parent whether or not the backend could list it.
                 base_dir = parent.rstrip("/")
                 next_level.extend(f"{base_dir}/{name}"
                                   for name in children(f"{base_dir}/")
-                                  if fnmatch(name, pattern))
+                                  if glob_name_matches(name, pattern))
         # bash sorts a pathname expansion, and the two sources are
         # enumerated separately, so the union is ordered here.
         level = sorted(set(next_level))
@@ -305,11 +324,29 @@ async def expand_pattern(
     ]
 
 
+class ResolveGlobFn(Protocol):
+    """One backend's glob resolver, bound to its own readdir.
+
+    Named rather than left as `Callable[..., Any]`, because that erasure
+    is what let the resource base declare a wider parameter than any
+    implementation accepts. `ResolveGlobOp` in the generic_bind adapter
+    is the consumer-side twin; mypy checks the two agree where the
+    adapter hands this function out, which is the check that was missing.
+    """
+
+    def __call__(self,
+                 accessor: Any,
+                 paths: Sequence[PathSpec],
+                 /,
+                 index: IndexCacheStore = ...) -> Awaitable[list[PathSpec]]:
+        ...
+
+
 def make_resolve_glob(
     readdir: Callable[..., Any],
     max_glob_matches: int | None = DEFAULT_MAX_GLOB_MATCHES,
     children: ChildMounts | None = None,
-) -> Callable[..., Any]:
+) -> ResolveGlobFn:
     """Build a resolve_glob generic over a backend's readdir.
 
     Args:
@@ -322,7 +359,8 @@ def make_resolve_glob(
 
     async def resolve_glob(
         accessor: Accessor,
-        paths: list[PathSpec],
+        paths: Sequence[PathSpec],
+        /,
         index: IndexCacheStore = NULL_INDEX,
     ) -> list[PathSpec]:
         return await resolve_glob_with(readdir, accessor, paths, index,
@@ -334,7 +372,7 @@ def make_resolve_glob(
 async def resolve_glob_with(
     readdir: Callable[..., Any],
     accessor: Accessor,
-    paths: list[PathSpec],
+    paths: Sequence[PathSpec],
     index: IndexCacheStore,
     cap: int | None = None,
     children: ChildMounts | None = None,
@@ -360,7 +398,7 @@ async def resolve_glob_with(
         readdir (Callable): backend readdir ``(accessor, path, index)``
             returning absolute virtual paths.
         accessor (Accessor): backend handle passed through to readdir.
-        paths (list[PathSpec]): specs to resolve.
+        paths (Sequence[PathSpec]): specs to resolve.
         index (IndexCacheStore): the per-call cache index.
         cap (int | None): cap on matches per pattern before truncation.
         children (ChildMounts | None): child names the namespace owes a

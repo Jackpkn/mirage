@@ -18,6 +18,7 @@ import {
   type RunSingle,
 } from '../../commands/builtin/generic/crossmount/index.ts'
 import { materialize, type ByteSource, type IOResult } from '../../io/types.ts'
+import type { NamespaceView } from '../../ops/types.ts'
 import type { PathSpec } from '../../types.ts'
 import { ExecutionNode } from '../types.ts'
 import type { FlagValue } from '../../commands/spec/types.ts'
@@ -42,6 +43,7 @@ export async function handleCrossMount(
   stdin: ByteSource | null,
   cmdStr: string,
   storageKey?: (path: PathSpec) => string,
+  ns?: NamespaceView,
 ): Promise<Result> {
   const [stdout, io] = await routeCrossMount(
     cmdName,
@@ -52,6 +54,7 @@ export async function handleCrossMount(
     runSingle,
     stdin,
     storageKey,
+    ns,
   )
   const stderrBytes = await materialize(io.stderr)
   const exec = new ExecutionNode({ command: cmdStr, stderr: stderrBytes, exitCode: io.exitCode })

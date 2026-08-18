@@ -15,7 +15,7 @@
 import pytest
 from pydantic import ValidationError
 
-from mirage.core.s3._client import _client_kwargs
+from mirage.core.s3.client import _client_kwargs
 from mirage.resource.s3 import S3Config
 from mirage.resource.secrets import reveal_secret
 from mirage.resource.supabase import SupabaseConfig, SupabaseResource

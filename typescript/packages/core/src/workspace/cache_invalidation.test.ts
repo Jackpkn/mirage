@@ -24,7 +24,7 @@ import { describe, expect, it } from 'vitest'
 import { RAMResource } from '../resource/ram/ram.ts'
 import { createShellParser } from '../shell/parse.ts'
 import { MountMode } from '../types.ts'
-import { Workspace } from './workspace.ts'
+import { Workspace } from './workspace/workspace.ts'
 
 const DEC = new TextDecoder()
 const require = createRequire(import.meta.url)

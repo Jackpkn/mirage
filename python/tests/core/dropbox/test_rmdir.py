@@ -18,7 +18,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from mirage.accessor.dropbox import DropboxAccessor
-from mirage.core.dropbox._client import DropboxTokenManager
+from mirage.core.dropbox.client import DropboxTokenManager
 from mirage.core.dropbox.rmdir import rmdir
 from mirage.resource.dropbox.config import DropboxConfig
 from mirage.types import PathSpec

@@ -1,0 +1,106 @@
+{
+  "cases": [
+    {
+      "id": "awk_simple_assignment_executes",
+      "seq": 962340,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "printf 'line\\n' | awk '{x = 1; print x}'",
+      "expect": {
+        "exit": 0,
+        "stdout": "1\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "awk_rejects_function_call",
+      "seq": 962341,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "printf 'line\\n' | awk '{print toupper($1)}'",
+      "expect": {
+        "exit": 2,
+        "stdout": "",
+        "stderr": "awk: unsupported construct: 'print toupper($1)'\n"
+      }
+    },
+    {
+      "id": "awk_rejects_arithmetic_assignment",
+      "seq": 962342,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "printf 'line\\n' | awk '{x = y + 1; print x}'",
+      "expect": {
+        "exit": 2,
+        "stdout": "",
+        "stderr": "awk: unsupported construct: 'x = y + 1'\n"
+      }
+    }
+  ]
+}

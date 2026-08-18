@@ -12,10 +12,10 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import json
 from typing import Any
 
-from mirage.core.email._client import INTERNAL_DATE_KEY
+from mirage.core.email.client import INTERNAL_DATE_KEY
+from mirage.core.render.json import compact_json_bytes, compact_json_text
 
 
 def _message_document(message: dict[str, Any]) -> dict[str, Any]:
@@ -42,9 +42,7 @@ def message_json_text(message: dict[str, Any]) -> str:
     Args:
         message (dict): parsed message dict from ``parse_rfc822``.
     """
-    return json.dumps(_message_document(message),
-                      ensure_ascii=False,
-                      separators=(",", ":"))
+    return compact_json_text(_message_document(message))
 
 
 def message_json_bytes(message: dict[str, Any]) -> bytes:
@@ -67,6 +65,4 @@ def messages_json_bytes(messages: list[dict[str, Any]]) -> bytes:
     Args:
         messages (list[dict]): fetched messages, in output order.
     """
-    return json.dumps([_message_document(m) for m in messages],
-                      ensure_ascii=False,
-                      separators=(",", ":")).encode()
+    return compact_json_bytes([_message_document(m) for m in messages])

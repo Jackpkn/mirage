@@ -18,26 +18,35 @@ import { asyncChain } from '../../../io/stream.ts'
 import { IOResult } from '../../../io/types.ts'
 import type { ByteSource } from '../../../io/types.ts'
 import type { CallStack } from '../../../shell/call_stack.ts'
-import { ExitSignal } from '../../../shell/errors.ts'
+import { ArithError, ExitSignal } from '../../../shell/errors.ts'
+import { evaluateArith } from '../../../shell/arith.ts'
 import { shellJoin } from '../../../shell/join.ts'
 import { parseOptionWord } from '../../../shell/options.ts'
 import { SET_OPTION_DEFAULTS, SET_OPTION_NAMES } from '../../../shell/types.ts'
+import type { ArithResult } from '../../../shell/types.ts'
 import type { Namespace } from '../../mount/namespace/namespace.ts'
 import { PolicyDenied } from '../../../policy/errors.ts'
 import {
-  arrayAppend,
   arrayExtent,
   arrayUnset,
-  makeArray,
+  buildAssocLiteral,
+  buildIndexedLiteral,
   type ShellArray,
 } from '../../../shell/array.ts'
 import { arrayIndex } from '../../expand/variable.ts'
 import { varHidden } from '../../../utils/hidden.ts'
 import { ReadonlyVariableError } from '../../session/errors.ts'
-import { ownRecord, sessionEntry, varsFromEnv } from '../../session/session.ts'
-import type { ShellVar } from '../../../shell/variable.ts'
+import { ownRecord, sessionEntry, setSessionEntry, varsFromEnv } from '../../session/session.ts'
+import type { ShellValue, ShellVar } from '../../../shell/variable.ts'
 import { attrLetters, VarAttr } from '../../../shell/variable.ts'
-import { setAttr } from '../../session/state.ts'
+import { assignElement } from '../../session/elements.ts'
+import {
+  deref,
+  elementIndex,
+  ensureVarVisible,
+  sessionElements,
+  setAttr,
+} from '../../session/state.ts'
 import type { Session } from '../../session/session.ts'
 import {
   envGet,
@@ -45,6 +54,7 @@ import {
   exportedNames,
   sessionView,
   visibleArrays,
+  visibleAssocs,
   visibleEnv,
 } from '../../session/state.ts'
 import type { SessionView } from '../../../ops/types.ts'
@@ -85,6 +95,43 @@ function readonlyRefusal(cmd: string, name: string): Result {
 }
 
 /**
+ * Put a declaration's value-shaping attributes on a name before its
+ * value stores.
+ *
+ * The door coerces on write by reading the record's attributes, so for
+ * the declaration's *own* value to coerce (`declare -i n=3+4` stores
+ * `7`), the attribute has to be there first. Gated through `view.mark`
+ * like every other mark, and a no-op with nothing to shape, so a plain
+ * `declare X=1` costs no extra gate call.
+ */
+async function premark(
+  view: SessionView,
+  name: string,
+  shaping: ReadonlySet<VarAttr>,
+): Promise<void> {
+  for (const attr of shaping) await view.mark(name, attr, true)
+}
+
+/**
+ * Render the `-i` coercion's arithmetic error as bash does.
+ *
+ * GNU voices it as the evaluator's own line, prefixed by the builtin and
+ * the offending text (`bash: read: 1+: syntax error: operand expected`),
+ * and fails the builtin with 1 while the variable keeps its old value,
+ * which is what the door's copy-then-store already guarantees. A plain
+ * assignment (`n=1+`) is fatal instead and is voiced by the executor
+ * without a builtin name.
+ */
+function arithRefusal(cmd: string, err: ArithError): Result {
+  const encoded = new TextEncoder().encode(`bash: ${cmd}: ${err.message}\n`)
+  return [
+    null,
+    new IOResult({ exitCode: 1, stderr: encoded }),
+    new ExecutionNode({ command: cmd, exitCode: 1, stderr: encoded }),
+  ]
+}
+
+/**
  * Store a declaration's array literals through the session door.
  *
  * The builtin owns the store so a refusal speaks in its own voice:
@@ -115,6 +162,14 @@ function readonlyRefusal(cmd: string, name: string): Result {
  * at top level) `fatal` abandons the rest of the line, while `local`
  * and a function-scoped `declare` refuse in the builtin's voice and the
  * body keeps running (pinned on bash 5.2, debian:stable-slim).
+ *
+ * `assoc` means the declaration carried `-A`, so every literal builds
+ * an associative map; without it a name that already holds one still
+ * builds a map, since a plain `m+=([k]=v)` keeps the variable's own
+ * kind. `errors` is filled with bash-voiced refusal lines for the
+ * plain words a keyed associative literal cannot take; the caller
+ * folds them into its exit status, because GNU stores the valid
+ * elements and still fails the builtin.
  */
 async function storeStagedArrays(
   cmd: string,
@@ -125,6 +180,10 @@ async function storeStagedArrays(
   on = true,
   fatal = false,
   stored: string[] | null = null,
+  assoc = false,
+  errors: string[] | null = null,
+  shaping: ReadonlySet<VarAttr> = new Set(),
+  globalScope = false,
 ): Promise<Result | null> {
   for (const { name, append, items } of arrays) {
     if (view.isReadonly(name)) {
@@ -134,24 +193,40 @@ async function storeStagedArrays(
       }
       return readonlyRefusal(cmd, name)
     }
-    noteLocalArray(session, name)
-    let base: ShellArray
-    if (append) {
-      const existing = session.arrays[name]
-      if (existing === undefined) {
-        const scalar = session.env[name]
-        base = scalar === undefined ? [] : [scalar]
-      } else {
-        base = [...existing]
-      }
-      arrayAppend(base, items)
-    } else {
-      base = makeArray(items)
-    }
+    if (!globalScope) noteLocalArray(session, name)
     try {
-      await view.set(name, base)
+      await premark(view, name, shaping)
     } catch (err) {
       if (err instanceof PolicyDenied) return doorRefusal(cmd, err)
+      throw err
+    }
+    let base: ShellValue
+    if (assoc || Object.hasOwn(session.assocs, name)) {
+      const { map, badWords } = buildAssocLiteral(session.assocs[name] ?? null, items, append)
+      if (errors !== null) {
+        for (const word of badWords) {
+          errors.push(
+            `bash: ${name}: '${word}': must use subscript when assigning associative array`,
+          )
+        }
+      }
+      base = map
+    } else {
+      let held: ShellArray | null = session.arrays[name] ?? null
+      if (append && held === null) {
+        const scalar = session.env[name]
+        held = scalar === undefined ? null : [scalar]
+      }
+      base = buildIndexedLiteral(held, items, append, (sub) =>
+        elementIndex(sub, visibleEnv(session), sessionElements(session)),
+      )
+    }
+    try {
+      if (globalScope) await writeGlobal(session, view, name, base)
+      else await view.set(name, base)
+    } catch (err) {
+      if (err instanceof PolicyDenied) return doorRefusal(cmd, err)
+      if (err instanceof ArithError) return arithRefusal(cmd, err)
       throw err
     }
     if (stored !== null) stored.push(name)
@@ -261,12 +336,43 @@ function exportLines(session: Session, flags: Set<string>): string[] {
     .filter((line): line is string => line !== null)
 }
 
+const BARE_KEY_RE = /^[A-Za-z0-9_%+,./:=@~-]+$/
+
+/**
+ * One associative key as `declare -p` spells it.
+ *
+ * Bare when every character is one GNU leaves unquoted (pinned by a
+ * character sweep on 5.2.37: alphanumerics and `_ % + , - . / : = @ ~`),
+ * quoted like a value otherwise. A key that *is* `@` or `*` quotes even
+ * though the character is bare mid-key, since the bare spelling would
+ * read back as a splat.
+ */
+function assocKeyText(key: string): string {
+  if (key !== '@' && key !== '*' && BARE_KEY_RE.test(key)) return key
+  return bashDeclareQuote(key)
+}
+
+/**
+ * The `=(...)` tail of an associative `declare` line.
+ *
+ * Sorted keys (mirage's pinned order, where GNU prints hash order) and
+ * GNU's trailing space before the closing paren, which an empty map
+ * does not carry: `m=([a]="1" )` but `m=()`.
+ */
+function assocBody(amap: Readonly<Record<string, string>>): string {
+  const keys = Object.keys(amap).sort(compareCodePoints)
+  if (keys.length === 0) return '=()'
+  const parts = keys.map((k) => `[${assocKeyText(k)}]=${bashDeclareQuote(amap[k] ?? '')}`)
+  return `=(${parts.join(' ')} )`
+}
+
 function readonlyLines(session: Session, flags: Set<string>): string[] {
-  // -a narrows to indexed arrays, as bash does. -f selects functions and -A
-  // associative arrays, neither of which mirage carries a readonly attribute
-  // for, so those forms list nothing.
-  if (flags.has('f') || flags.has('A')) return []
+  // -a narrows to indexed arrays and -A to associative ones, as bash
+  // does. -f selects functions, which mirage carries no readonly
+  // attribute for, so that form lists nothing.
+  if (flags.has('f')) return []
   const arraysOnly = flags.has('a')
+  const assocsOnly = flags.has('A')
   const env = visibleEnv(session)
   const lines: string[] = []
   // A hidden readonly never prints even its bare `declare -r NAME` row.
@@ -274,7 +380,8 @@ function readonlyLines(session: Session, flags: Set<string>): string[] {
     .filter((name) => !varHidden(session.hiddenVars, name))
     .sort(compareCodePoints)) {
     const arr = session.arrays[name]
-    if (arr !== undefined) {
+    const amap = session.assocs[name]
+    if (arr !== undefined && !assocsOnly) {
       const parts: string[] = []
       for (let i = 0; i < arr.length; i++) {
         const v = arr[i]
@@ -285,7 +392,11 @@ function readonlyLines(session: Session, flags: Set<string>): string[] {
       lines.push(`declare -ar ${name}=(${parts.join(' ')})`)
       continue
     }
-    if (arraysOnly) continue
+    if (amap !== undefined && !arraysOnly) {
+      lines.push(`declare -Ar ${name}${assocBody(amap)}`)
+      continue
+    }
+    if (arraysOnly || assocsOnly || arr !== undefined || amap !== undefined) continue
     if (name in env) {
       lines.push(`declare -r ${name}=${bashDeclareQuote(env[name] ?? '')}`)
     } else {
@@ -371,7 +482,7 @@ function declareLine(session: Session, name: string): string | null {
     }
     return `${head} ${name}=(${parts.join(' ')})`
   }
-  if (typeof v.value !== 'string') return null
+  if (typeof v.value !== 'string') return `${head} ${name}${assocBody(v.value)}`
   return `${head} ${name}=${bashDeclareQuote(v.value)}`
 }
 
@@ -484,6 +595,92 @@ export async function handleExport(
   return [null, new IOResult(), new ExecutionNode({ command: 'export', exitCode: 0 })]
 }
 
+/** The `unset` refusal for a function `readonly -f` froze. */
+function readonlyFunctionUnset(name: string): Result {
+  const err = new TextEncoder().encode(`bash: unset: ${name}: cannot unset: readonly function\n`)
+  return [
+    null,
+    new IOResult({ exitCode: 1, stderr: err }),
+    new ExecutionNode({ command: 'unset', exitCode: 1, stderr: err }),
+  ]
+}
+
+/**
+ * Run `readonly -f`: freeze the named functions, or list the frozen.
+ *
+ * A frozen function refuses redefinition and `unset -f` with its own
+ * message, exit 1, and the old body stays. A name that is not a
+ * function is `not a function`, exit 1, and the other operands still
+ * freeze. With no names, lists the frozen functions as `declare -fr
+ * NAME`; GNU prints each body first through its own pretty-printer,
+ * which mirage does not carry, so the body line is the one deliberate
+ * omission.
+ */
+function readonlyFunctions(session: Session, names: readonly string[]): Result {
+  if (names.length === 0) {
+    const lines = [...session.readonlyFunctions]
+      .filter((name) => name in session.functions)
+      .sort(compareCodePoints)
+      .map((name) => `declare -fr ${name}`)
+    const out = new TextEncoder().encode(lines.length > 0 ? `${lines.join('\n')}\n` : '')
+    return [out, new IOResult(), new ExecutionNode({ command: 'readonly', exitCode: 0 })]
+  }
+  const errors: string[] = []
+  for (const name of names) {
+    if (!(name in session.functions)) {
+      errors.push(`bash: readonly: ${name}: not a function`)
+      continue
+    }
+    session.readonlyFunctions.add(name)
+  }
+  if (errors.length > 0) {
+    const err = new TextEncoder().encode(`${errors.join('\n')}\n`)
+    return [
+      null,
+      new IOResult({ exitCode: 1, stderr: err }),
+      new ExecutionNode({ command: 'readonly', exitCode: 1, stderr: err }),
+    ]
+  }
+  return [null, new IOResult(), new ExecutionNode({ command: 'readonly', exitCode: 0 })]
+}
+
+/**
+ * Run the function half of `declare`: `-f` / `-F` / `-rf`.
+ *
+ * `-F NAME` prints the name; `-f NAME` prints `declare -f NAME` where
+ * GNU prints the reformatted body (mirage carries no pretty-printer, so
+ * the name row is the deliberate stand-in, the same shape `-F` and
+ * `readonly -f` list in). A missing name is exit 1 with no message.
+ * With `-r` the named functions freeze, as `readonly -f` does. With no
+ * names, `-F` lists every function and `-f` lists them the same way.
+ */
+export function handleDeclareFunctions(
+  cmd: string,
+  session: Session,
+  flags: ReadonlySet<string>,
+  names: readonly string[],
+): Result {
+  if (flags.has('r')) return readonlyFunctions(session, names)
+  const targets = names.length > 0 ? names : Object.keys(session.functions).sort(compareCodePoints)
+  const lines: string[] = []
+  let missing = false
+  for (const name of targets) {
+    if (!(name in session.functions)) {
+      missing = true
+      continue
+    }
+    if (flags.has('F')) lines.push(names.length > 0 ? name : `declare -f ${name}`)
+    else lines.push(`declare -f ${name}`)
+  }
+  const out = new TextEncoder().encode(lines.length > 0 ? `${lines.join('\n')}\n` : '')
+  const code = missing ? 1 : 0
+  return [
+    out,
+    new IOResult({ exitCode: code }),
+    new ExecutionNode({ command: cmd, exitCode: code }),
+  ]
+}
+
 /**
  * Mark names readonly, or print them (`readonly -p` / bare `readonly`).
  *
@@ -496,6 +693,8 @@ export async function handleReadonly(
   state: SessionView | null = null,
   arrays: { name: string; append: boolean; items: string[] }[] | null = null,
   stored: string[] | null = null,
+  assoc = false,
+  shaping: ReadonlySet<VarAttr> = new Set(),
 ): Promise<Result> {
   const { flags, names, bad } = splitDeclFlags(assignments, READONLY_FLAGS)
   if (bad !== null) {
@@ -508,12 +707,14 @@ export async function handleReadonly(
       new ExecutionNode({ command: 'readonly', exitCode: 2, stderr: err }),
     ]
   }
+  if (flags.has('f')) return readonlyFunctions(session, names)
   if (names.length === 0 && (arrays === null || arrays.length === 0)) {
     const lines = readonlyLines(session, flags)
     const out = new TextEncoder().encode(lines.length > 0 ? `${lines.join('\n')}\n` : '')
     return [out, new IOResult(), new ExecutionNode({ command: 'readonly', exitCode: 0 })]
   }
   const view = viewOf(session, state)
+  const errors: string[] = []
   if (arrays !== null && arrays.length > 0) {
     const refused = await storeStagedArrays(
       'readonly',
@@ -524,10 +725,12 @@ export async function handleReadonly(
       true,
       true,
       stored,
+      assoc || flags.has('A'),
+      errors,
+      shaping,
     )
     if (refused !== null) return refused
   }
-  const errors: string[] = []
   for (const assign of names) {
     const refusal = identifierRefusal('readonly', assign)
     if (refusal !== null) {
@@ -539,9 +742,11 @@ export async function handleReadonly(
       const key = assign.slice(0, eq)
       if (view.isReadonly(key)) return readonlyRefusal('readonly', key)
       try {
+        await premark(view, key, shaping)
         await view.set(key, assign.slice(eq + 1))
       } catch (err) {
         if (err instanceof PolicyDenied) return doorRefusal('readonly', err)
+        if (err instanceof ArithError) return arithRefusal('readonly', err)
         throw err
       }
       // Ungated: the `view.set` above already put this name through the
@@ -609,6 +814,19 @@ async function unsetElement(
   base: string,
   subscript: string,
 ): Promise<'ok' | 'notarray' | 'subscript'> {
+  const amap = sessionEntry(visibleAssocs(session), base)
+  if (amap !== undefined) {
+    // The subscript is the key, verbatim: `unset "m[1+1]"` removes the
+    // key "1+1", and a key that is not there (GNU pins `unset "m[@]"`
+    // on an associative array as this same no-op) answers quietly
+    // without a write.
+    if (!Object.hasOwn(amap, subscript)) return 'ok'
+    const next = { ...amap }
+    // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
+    delete next[subscript]
+    await view.set(base, next)
+    return 'ok'
+  }
   const arr = sessionEntry(visibleArrays(session), base)
   if (arr === undefined) {
     // Visible reads on purpose: a hidden base answers the unset
@@ -669,11 +887,18 @@ export async function handleUnset(
   }
   for (const name of args.slice(i)) {
     if (mode === 'n') {
-      // No nameref attribute exists, so this leaves the name untouched,
-      // matching bash on a plain variable.
+      // `unset -n` drops the reference itself rather than its target;
+      // on a plain variable bash unsets it. Ungated-by-target unset.
+      try {
+        await viewOf(session, state).unset(name, false)
+      } catch (err) {
+        if (err instanceof PolicyDenied) return doorRefusal('unset', err)
+        throw err
+      }
       continue
     }
     if (mode === 'f') {
+      if (session.readonlyFunctions.has(name)) return readonlyFunctionUnset(name)
       // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
       delete session.functions[name]
       continue
@@ -695,7 +920,8 @@ export async function handleUnset(
         new ExecutionNode({ command: 'unset', exitCode: 1, stderr: err }),
       ]
     }
-    const existed = isElement || name in session.env || name in session.arrays
+    const existed =
+      isElement || name in session.env || name in session.arrays || name in session.assocs
     // Both spellings clear the preSession gate for the base name: the
     // whole-variable unset through the view's env half, an element
     // unset inside unsetElement, so `unset 'X[0]'` cannot sidestep a
@@ -706,7 +932,7 @@ export async function handleUnset(
         status = await unsetElement(session, viewOf(session, state), base, subscript)
       } else {
         await viewOf(session, state).unset(name)
-        unsetVariable(session, name)
+        unsetVariable(session, deref(session, name) || name)
         status = 'ok'
       }
     } catch (err) {
@@ -728,6 +954,7 @@ export async function handleUnset(
       ]
     }
     if (mode === 'auto' && !existed && name in session.functions) {
+      if (session.readonlyFunctions.has(name)) return readonlyFunctionUnset(name)
       // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
       delete session.functions[name]
     }
@@ -942,6 +1169,64 @@ export function noteLocalArray(session: Session, name: string): boolean {
  * through this handler and must say their own name in a diagnostic, not
  * `local`.
  */
+/**
+ * The line `declare -n NAME=TARGET` earns when TARGET is unusable: bash
+ * refuses a target that is not a variable name, a self reference, and
+ * (mirage-only) a target spelled as an array element, since the resolver
+ * maps names to names.
+ */
+function namerefRefusal(cmd: string, name: string, target: string): string | null {
+  if (SUBSCRIPT_RE.test(target)) {
+    return `mirage: ${cmd}: ${target}: name reference to an array element is not supported`
+  }
+  if (!isValidName(target)) {
+    return `bash: ${cmd}: \`${target}': invalid variable name for name reference`
+  }
+  if (target === name) {
+    return `bash: ${cmd}: ${name}: nameref variable self references not allowed`
+  }
+  return null
+}
+
+/**
+ * Store a `declare -g` value on the global record. Outside a function,
+ * or for a name no frame on the call path shadows, an ordinary write;
+ * otherwise the running locals live in `session.vars` and the global
+ * record is what the outermost shadowing frame saved, so the write goes
+ * through the door with the two swapped for its duration.
+ */
+async function writeGlobal(
+  session: Session,
+  view: SessionView,
+  key: string,
+  value: ShellValue,
+): Promise<void> {
+  const outer = session.localFrames.find((frame) => frame.has(key))
+  if (outer === undefined) {
+    await view.set(key, value)
+    return
+  }
+  const shadowing = sessionEntry(session.vars, key)
+  const saved = outer.get(key) ?? null
+  if (saved === null) {
+    // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
+    delete session.vars[key]
+  } else {
+    setSessionEntry(session.vars, key, saved)
+  }
+  try {
+    await view.set(key, value)
+    outer.set(key, sessionEntry(session.vars, key) ?? null)
+  } finally {
+    if (shadowing === undefined) {
+      // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
+      delete session.vars[key]
+    } else {
+      setSessionEntry(session.vars, key, shadowing)
+    }
+  }
+}
+
 export async function handleLocal(
   assignments: string[],
   session: Session,
@@ -949,9 +1234,13 @@ export async function handleLocal(
   arrays: { name: string; append: boolean; items: string[] }[] | null = null,
   cmd = 'local',
   stored: string[] | null = null,
+  assoc = false,
+  shaping: ReadonlySet<VarAttr> = new Set(),
+  nameref = false,
+  globalScope = false,
 ): Promise<Result> {
-  const locals = session.localVars
-  if (cmd === 'local' && locals === null) {
+  const locals = globalScope ? null : session.localVars
+  if (cmd === 'local' && session.localVars === null) {
     // `local` is the one spelling that needs a function scope;
     // `declare`/`typeset` share this handler and are legal at top level.
     // Without the check the builtin took its operands, stored them
@@ -965,6 +1254,7 @@ export async function handleLocal(
     ]
   }
   const view = viewOf(session, state)
+  const errors: string[] = []
   if (arrays !== null && arrays.length > 0) {
     const refused = await storeStagedArrays(
       cmd,
@@ -975,10 +1265,13 @@ export async function handleLocal(
       true,
       locals === null,
       stored,
+      assoc,
+      errors,
+      shaping,
+      globalScope,
     )
     if (refused !== null) return refused
   }
-  const errors: string[] = []
   for (const assign of assignments) {
     const refusal = identifierRefusal(cmd, assign)
     if (refusal !== null) {
@@ -988,14 +1281,25 @@ export async function handleLocal(
     const eq = assign.indexOf('=')
     if (eq >= 0) {
       const key = assign.slice(0, eq)
+      const val = assign.slice(eq + 1)
+      if (nameref) {
+        const refusal = namerefRefusal(cmd, key, val)
+        if (refusal !== null) {
+          errors.push(refusal)
+          continue
+        }
+      }
       if (view.isReadonly(key)) return readonlyRefusal(cmd, key)
       if (locals !== null && !locals.has(key)) {
         locals.set(key, sessionEntry(session.vars, key) ?? null)
       }
       try {
-        await view.set(key, assign.slice(eq + 1))
+        await premark(view, key, shaping)
+        if (globalScope) await writeGlobal(session, view, key, val)
+        else await view.set(key, val, !nameref)
       } catch (err) {
         if (err instanceof PolicyDenied) return doorRefusal(cmd, err)
+        if (err instanceof ArithError) return arithRefusal(cmd, err)
         throw err
       }
       if (stored !== null) stored.push(key)
@@ -1003,7 +1307,11 @@ export async function handleLocal(
       if (locals !== null && !locals.has(assign)) {
         locals.set(assign, sessionEntry(session.vars, assign) ?? null)
       }
-      if (envGet(session, assign) === null && !(assign in visibleArrays(session))) {
+      if (
+        envGet(session, assign) === null &&
+        !(assign in visibleArrays(session)) &&
+        !(assign in visibleAssocs(session))
+      ) {
         // A bare declaration of an existing array re-scopes it; a
         // scalar write here would erase it. Visible reads: a hidden
         // name counts as unset, so the write is attempted and the
@@ -1026,6 +1334,67 @@ export async function handleLocal(
   }
   if (errors.length > 0) return identifierFailure(cmd, errors)
   return [null, new IOResult(), new ExecutionNode({ command: cmd, exitCode: 0 })]
+}
+
+/**
+ * `(( ))` as a builtin: every operand is one expression, the writes land
+ * in order, and the status is 1 when the last expression evaluated to 0.
+ * No operand is `expression expected`, exit 1; a malformed one aborts
+ * the builtin at that word.
+ */
+export async function handleLet(
+  args: string[],
+  session: Session,
+  state: SessionView | null = null,
+): Promise<Result> {
+  if (args.length === 0) {
+    const err = new TextEncoder().encode('bash: let: expression expected\n')
+    return [
+      null,
+      new IOResult({ exitCode: 1, stderr: err }),
+      new ExecutionNode({ command: 'let', exitCode: 1, stderr: err }),
+    ]
+  }
+  const view = viewOf(session, state)
+  let value = 0n
+  for (const expr of args) {
+    let result: ArithResult
+    try {
+      result = evaluateArith(expr, visibleEnv(session), 0, sessionElements(session))
+    } catch (err) {
+      if (!(err instanceof ArithError)) throw err
+      const errBytes = new TextEncoder().encode(`bash: let: ${expr}: ${err.message}\n`)
+      return [
+        null,
+        new IOResult({ exitCode: 1, stderr: errBytes }),
+        new ExecutionNode({ command: 'let', exitCode: 1, stderr: errBytes }),
+      ]
+    }
+    for (const write of result.writes) {
+      try {
+        ensureVarVisible(session, write.name)
+      } catch (err) {
+        if (err instanceof PolicyDenied) return doorRefusal('let', err)
+        throw err
+      }
+      if (view.isReadonly(write.name)) return readonlyRefusal('let', write.name)
+    }
+    try {
+      for (const write of result.writes) {
+        await assignElement(session, view, write.name, write.key, write.value)
+      }
+    } catch (err) {
+      if (err instanceof PolicyDenied) return doorRefusal('let', err)
+      throw err
+    }
+    value = result.value
+  }
+  const code = value !== 0n ? 0 : 1
+  return [
+    null,
+    new IOResult({ exitCode: code }),
+    new ExecutionNode({ command: 'let', exitCode: code }),
+  ]
 }
 
 function isShiftCount(word: string): boolean {
@@ -1368,12 +1737,145 @@ function splitOnWhitespace(text: string, maxsplit: number): string[] {
   return out
 }
 
+const READ_VALUE_LETTERS = new Set(['a', 'd', 'n', 'N', 't', 'p', 'i', 'u'])
+
+function readRefusal(msg: string): Result {
+  const err = new TextEncoder().encode(msg)
+  return [
+    null,
+    new IOResult({ exitCode: 1, stderr: err }),
+    new ExecutionNode({ command: 'read', exitCode: 1, stderr: err }),
+  ]
+}
+
+function readCount(text: string): number | null {
+  return /^[0-9]+$/.test(text) ? parseInt(text, 10) : null
+}
+
+function readTimeout(text: string): number | null {
+  const value = Number(text)
+  return Number.isFinite(value) && value >= 0 ? value : null
+}
+
+/** Which of `-n`/`-N` was written last, since bash keeps only one. */
+function lastCountFlag(args: string[]): string | null {
+  let which: string | null = null
+  let i = 0
+  while (i < args.length) {
+    const tok = args[i] ?? ''
+    if (tok === '--' || !tok.startsWith('-') || tok === '-') break
+    let j = 1
+    while (j < tok.length) {
+      const ch = tok[j] ?? ''
+      if (ch === 'n' || ch === 'N') which = ch
+      if (READ_VALUE_LETTERS.has(ch)) {
+        if (j === tok.length - 1) i++
+        break
+      }
+      j++
+    }
+    i++
+  }
+  return which
+}
+
+function splitReadLine(line: string, ifs: string, slots: number): string[] {
+  if (ifs === ' \t\n') {
+    const trimmed = line.replace(/^[ \t\n]+|[ \t\n]+$/g, '')
+    if (slots === 0) return trimmed === '' ? [] : trimmed.split(/[ \t\n]+/)
+    return splitOnWhitespace(trimmed, slots - 1)
+  }
+  if (ifs === '') return [line]
+  const ifsWs = new Set<string>(ifs.split('').filter((c) => c === ' ' || c === '\t' || c === '\n'))
+  let start = 0
+  let end = line.length
+  while (start < end && ifsWs.has(line[start] ?? '')) start++
+  while (end > start && ifsWs.has(line[end - 1] ?? '')) end--
+  const work = line.slice(start, end)
+  const nSplits = slots === 0 ? work.length : Math.max(0, slots - 1)
+  const chars = new Set(ifs.split(''))
+  const out: string[] = []
+  let cur = ''
+  for (const ch of work) {
+    if (chars.has(ch) && out.length < nSplits) {
+      out.push(cur)
+      cur = ''
+      continue
+    }
+    cur += ch
+  }
+  out.push(cur)
+  return out
+}
+
+/** read's default backslash handling: a backslash quotes the next
+ * character and a backslash-newline pair is a line continuation. */
+function unescapeRead(text: string): string {
+  let out = ''
+  let i = 0
+  while (i < text.length) {
+    const ch = text.charAt(i)
+    if (ch === '\\' && i + 1 < text.length) {
+      const nxt = text.charAt(i + 1)
+      if (nxt !== '\n') out += nxt
+      i += 2
+      continue
+    }
+    out += ch
+    i++
+  }
+  return out
+}
+
+async function readRaw(
+  buffer: AsyncLineIterator,
+  raw: boolean,
+  delim: number,
+  nchars: number | null,
+  exact: number | null,
+): Promise<[string, boolean]> {
+  const dec = new TextDecoder()
+  if (exact !== null) {
+    const [data, complete] = await buffer.readChars(exact, null)
+    return [dec.decode(data), complete]
+  }
+  if (nchars !== null) {
+    let [data, complete] = await buffer.readChars(nchars, delim)
+    let text = dec.decode(data)
+    while (
+      !raw &&
+      complete &&
+      text.endsWith('\\') &&
+      (text.length - text.replace(/\\+$/, '').length) % 2 === 1 &&
+      text.length < nchars
+    ) {
+      ;[data, complete] = await buffer.readChars(nchars - text.length, delim)
+      text += dec.decode(data)
+    }
+    return [text, complete]
+  }
+  let [data, complete] = await buffer.readUntil(delim)
+  let text = dec.decode(data)
+  while (
+    !raw &&
+    complete &&
+    delim === 10 &&
+    (text.length - text.replace(/\\+$/, '').length) % 2 === 1
+  ) {
+    ;[data, complete] = await buffer.readUntil(delim)
+    text += '\n' + dec.decode(data)
+  }
+  return [text, complete]
+}
+
 /**
- * Read one line into variables, with bash's option handling.
- *
- * Only -r is accepted (our read is already raw, so it is consumed with
- * no effect); anything else errors like bash instead of being treated
- * as a variable name.
+ * Read one line (or delimited record, or character count) into
+ * variables, with bash's option surface. `-r` turns off backslash
+ * processing; `-d C` reads to `C`; `-n N`/`-N N` bound the read; `-a
+ * NAME` stores fields in an array; `-t` accepts a timeout (0 answers
+ * whether a source is present); `-p -s -e -i` are non-tty no-ops; `-u
+ * 0` is this shell's input and any other descriptor is refused. The
+ * status is 1 when end of input ended the read.
  */
 export async function handleRead(
   args: string[],
@@ -1391,11 +1893,47 @@ export async function handleRead(
       new ExecutionNode({ command: 'read', exitCode: 2 }),
     ]
   }
+  if (parse.needsValue !== null) {
+    const err = new TextEncoder().encode(
+      `read: -${parse.needsValue}: option requires an argument\n`,
+    )
+    return [
+      null,
+      new IOResult({ exitCode: 2, stderr: err }),
+      new ExecutionNode({ command: 'read', exitCode: 2 }),
+    ]
+  }
+  const flags = parse.flags
+  const raw = flags.r === true
+  let delim = 10
+  if (typeof flags.d === 'string') {
+    delim = flags.d.length > 0 ? flags.d.charCodeAt(0) : 0
+  }
+  for (const key of ['n', 'N'] as const) {
+    if (typeof flags[key] === 'string' && readCount(flags[key]) === null) {
+      return readRefusal(`bash: read: ${flags[key]}: invalid number\n`)
+    }
+  }
+  let nchars: number | null = null
+  let exact: number | null = null
+  const which = lastCountFlag(args)
+  if (which === 'N') exact = readCount(String(flags.N))
+  else if (which === 'n') nchars = readCount(String(flags.n))
+  let timeout: number | null = null
+  if (typeof flags.t === 'string') {
+    timeout = readTimeout(flags.t)
+    if (timeout === null) {
+      return readRefusal(`bash: read: ${flags.t}: invalid timeout specification\n`)
+    }
+  }
+  if (typeof flags.u === 'string' && flags.u !== '0') {
+    return readRefusal(`bash: read: ${flags.u}: invalid file descriptor: Bad file descriptor\n`)
+  }
+  const arrayName = typeof flags.a === 'string' ? flags.a : null
+  if (arrayName !== null && !isValidName(arrayName)) {
+    return readRefusal(`bash: read: \`${arrayName}': not a valid identifier\n`)
+  }
   const variables = parse.operands.length > 0 ? parse.operands : ['REPLY']
-  // A NEW stdin source replaces any leftover buffer (a previous
-  // command's exhausted herestring/pipe must not shadow this one); the
-  // SAME source object reuses the buffer so sequential reads advance
-  // through its lines.
   if (stdin !== null && (session.stdinBuffer === null || session.stdinSource !== stdin)) {
     if (stdin instanceof Uint8Array) {
       session.stdinBuffer = new AsyncLineIterator(asyncChain(stdin))
@@ -1404,75 +1942,108 @@ export async function handleRead(
     }
     session.stdinSource = stdin
   }
-  let lineBytes: Uint8Array | null = null
-  if (session.stdinBuffer !== null) {
-    lineBytes = await session.stdinBuffer.readline()
-  }
   const view = viewOf(session, state)
-  if (lineBytes === null) {
-    for (const v of variables) {
-      if (view.isReadonly(v)) return readonlyRefusal('read', v)
-      try {
-        await view.set(v, '')
-      } catch (err) {
-        if (err instanceof PolicyDenied) return doorRefusal('read', err)
-        throw err
-      }
-    }
+  const buffer = session.stdinBuffer
+  if (timeout === 0) {
+    const code = buffer !== null ? 0 : 1
     return [
       null,
-      new IOResult({ exitCode: 1 }),
-      new ExecutionNode({ command: 'read', exitCode: 1 }),
+      new IOResult({ exitCode: code }),
+      new ExecutionNode({ command: 'read', exitCode: code }),
     ]
   }
-  const decodedLine = new TextDecoder().decode(lineBytes)
-  let lineEnd = decodedLine.length
-  while (lineEnd > 0 && decodedLine.charCodeAt(lineEnd - 1) === 10) lineEnd--
-  const line = decodedLine.slice(0, lineEnd)
-  const ifs = visibleEnv(session).IFS ?? ' \t\n'
-  let parts: string[]
-  if (ifs === ' \t\n') {
-    // GNU trims IFS whitespace from both ends before splitting; the
-    // remainder assigned to the last variable keeps inner whitespace.
-    parts = splitOnWhitespace(line.replace(/^[ \t\n]+|[ \t\n]+$/g, ''), variables.length - 1)
-  } else if (ifs === '') {
-    parts = [line]
-  } else {
-    const ifsWs = new Set<string>(
-      ifs.split('').filter((c) => c === ' ' || c === '\t' || c === '\n'),
-    )
-    let start = 0
-    let end = line.length
-    while (start < end && ifsWs.has(line[start] ?? '')) start++
-    while (end > start && ifsWs.has(line[end - 1] ?? '')) end--
-    const work = line.slice(start, end)
-    const nSplits = Math.max(0, variables.length - 1)
-    const chars = new Set(ifs.split(''))
-    const out: string[] = []
-    let cur = ''
-    for (const ch of work) {
-      if (chars.has(ch) && out.length < nSplits) {
-        out.push(cur)
-        cur = ''
-        continue
-      }
-      cur += ch
-    }
-    out.push(cur)
-    parts = out
+  let complete = false
+  let line = ''
+  if (buffer !== null) {
+    ;[line, complete] = await readRaw(buffer, raw, delim, nchars, exact)
   }
-  for (let i = 0; i < variables.length; i++) {
-    const name = variables[i]
-    if (name === undefined) continue
-    if (view.isReadonly(name)) return readonlyRefusal('read', name)
+  if (!raw) line = unescapeRead(line)
+  const ifs = visibleEnv(session).IFS ?? ' \t\n'
+  if (arrayName !== null) {
+    const parts = exact !== null ? (line !== '' ? [line] : []) : splitReadLine(line, ifs, 0)
+    if (view.isReadonly(arrayName)) return readonlyRefusal('read', arrayName)
     try {
-      await view.set(name, parts[i] ?? '')
+      await view.set(arrayName, [...parts])
     } catch (err) {
       if (err instanceof PolicyDenied) return doorRefusal('read', err)
       throw err
     }
+    const code = complete ? 0 : 1
+    return [
+      null,
+      new IOResult({ exitCode: code }),
+      new ExecutionNode({ command: 'read', exitCode: code }),
+    ]
   }
-  return [null, new IOResult(), new ExecutionNode({ command: 'read', exitCode: 0 })]
+  const parts = exact !== null ? [line] : splitReadLine(line, ifs, variables.length)
+  for (let i = 0; i < variables.length; i++) {
+    const name = variables[i]
+    if (name === undefined) continue
+    const refused = await readStore(session, view, name, parts[i] ?? '')
+    if (refused !== null) return refused
+  }
+  const code = complete ? 0 : 1
+  return [
+    null,
+    new IOResult({ exitCode: code }),
+    new ExecutionNode({ command: 'read', exitCode: code }),
+  ]
+}
+
+/**
+ * Store one `read` target, scalar or `name[sub]` element.
+ *
+ * bash accepts a subscripted target (`read "m[k]"`), which is an
+ * element write, not a variable literally named `m[k]`; the readonly
+ * guard resolves the base name first, since that is what `readonly`
+ * records. Returns the refusal result, or null when the write landed.
+ */
+async function readStore(
+  session: Session,
+  view: SessionView,
+  varName: string,
+  value: string,
+): Promise<Result | null> {
+  const match = PRINTF_TARGET_RE.exec(varName)
+  const base = match?.[1] ?? varName
+  const subscript = match?.[2] ?? null
+  if (view.isReadonly(base)) return readonlyRefusal('read', base)
+  if (subscript === null) {
+    try {
+      await view.set(varName, value)
+    } catch (err) {
+      if (err instanceof PolicyDenied) return doorRefusal('read', err)
+      if (err instanceof ArithError) return arithRefusal('read', err)
+      throw err
+    }
+    return null
+  }
+  let status: 'ok' | 'denied' | 'readonly' | 'subscript'
+  try {
+    status = await assignElement(session, view, base, subscript, value)
+  } catch (err) {
+    if (err instanceof PolicyDenied) return doorRefusal('read', err)
+    if (err instanceof ArithError) return arithRefusal('read', err)
+    throw err
+  }
+  if (status === 'readonly') return readonlyRefusal('read', base)
+  if (status === 'denied') {
+    const err = new TextEncoder().encode(`bash: ${base}: permission denied\n`)
+    return [
+      null,
+      new IOResult({ exitCode: 1, stderr: err }),
+      new ExecutionNode({ command: 'read', exitCode: 1, stderr: err }),
+    ]
+  }
+  if (status !== 'ok') {
+    const err = new TextEncoder().encode(`bash: read: ${varName}: bad array subscript\n`)
+    return [
+      null,
+      new IOResult({ exitCode: 1, stderr: err }),
+      new ExecutionNode({ command: 'read', exitCode: 1, stderr: err }),
+    ]
+  }
+  return null
 }
 
 /**

@@ -19,7 +19,7 @@ import { ResourceName } from '@struktoai/mirage-core/types'
 import type { PathSpec } from '@struktoai/mirage-core/types'
 import { enoent } from '@struktoai/mirage-core/utils/errors'
 import type { GridFSAccessor } from '../../accessor/gridfs.ts'
-import { bucket, fileById, gridfsKey, latestFile, loadGridFSModule, rawPathOf } from './_client.ts'
+import { bucket, fileById, gridfsKey, latestFile, loadGridFSModule, rawPathOf } from './client.ts'
 
 export interface GridFSReadOptions {
   offset?: number

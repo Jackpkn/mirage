@@ -14,7 +14,7 @@
 
 import type { MongoDBAccessor } from '../../../accessor/mongodb.ts'
 import type { IndexCacheStore } from '../../../cache/index/store.ts'
-import { findDocuments } from '../../../core/mongodb/_client.ts'
+import { findDocuments } from '../../../core/mongodb/client.ts'
 import { resolveGlobOf } from '../generic_bind/index.ts'
 import { MONGODB_IO } from './io.ts'
 import { streamAny } from '../../../core/mongodb/read.ts'

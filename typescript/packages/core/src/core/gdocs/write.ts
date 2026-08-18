@@ -12,7 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { docsBase, type TokenManager, googlePost } from '../google/_client.ts'
+import { docsBase, type TokenManager, googlePost } from '../google/client.ts'
 
 export async function appendText(tm: TokenManager, docId: string, text: string): Promise<unknown> {
   const payload = {

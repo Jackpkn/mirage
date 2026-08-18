@@ -12,7 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import type { TokenManager } from '../google/_client.ts'
+import type { TokenManager } from '../google/client.ts'
 import { decodeBody, extractHeader, getMessageRaw, listMessages } from './messages.ts'
 import { sanitize } from './readdir.ts'
 import type { GmailScope } from './scope.ts'

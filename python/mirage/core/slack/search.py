@@ -12,9 +12,8 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import json
-
-from mirage.core.slack._client import slack_get, slack_search_available
+from mirage.core.render.json import compact_json_bytes
+from mirage.core.slack.client import slack_get, slack_search_available
 from mirage.core.slack.config import SlackConfig
 
 
@@ -50,7 +49,7 @@ async def search_messages(
         "search.messages",
         params=params,
     )
-    return json.dumps(data, ensure_ascii=False, separators=(",", ":")).encode()
+    return compact_json_bytes(data)
 
 
 async def search_files(
@@ -81,4 +80,4 @@ async def search_files(
         "search.files",
         params=params,
     )
-    return json.dumps(data, ensure_ascii=False, separators=(",", ":")).encode()
+    return compact_json_bytes(data)

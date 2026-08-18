@@ -1,0 +1,33 @@
+{
+  "runs": {
+    "python": {
+      "command": [
+        "./python/.venv/bin/python",
+        "examples/python/redis_resource/example_redis_vfs.py"
+      ]
+    }
+  },
+  "exit": 0,
+  "lines": [
+    "=== VFS MODE ===",
+    "",
+    "--- os.listdir() ---",
+    "  hello.txt",
+    "  sub",
+    "",
+    "--- open() + read ---",
+    "  hello world",
+    "",
+    "--- os.path.exists() ---",
+    "  hello.txt: True",
+    "  nope.txt: False",
+    "",
+    "--- os.path.isdir() ---",
+    "  /data/sub: True",
+    "",
+    "--- os.listdir() sub ---",
+    "  nested.txt",
+    "",
+    "Stats: 5 ops, 12 bytes transferred"
+  ]
+}

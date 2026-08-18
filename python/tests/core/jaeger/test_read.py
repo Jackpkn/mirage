@@ -19,7 +19,7 @@ import pytest
 
 from mirage.accessor.jaeger import JaegerAccessor
 from mirage.cache.index.ram import RAMIndexCacheStore
-from mirage.core.jaeger._client import JaegerApiError
+from mirage.core.jaeger.client import JaegerApiError
 from mirage.core.jaeger.read import read
 from mirage.resource.jaeger.config import JaegerConfig
 from mirage.types import PathSpec

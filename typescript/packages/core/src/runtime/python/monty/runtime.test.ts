@@ -20,7 +20,7 @@ import { buildRuntime } from '../../table.ts'
 import { getTestParser } from '../../../workspace/fixtures/workspace_fixture.ts'
 import { RAMResource } from '../../../resource/ram/ram.ts'
 import { MountMode } from '../../../types.ts'
-import { Workspace } from '../../../workspace/workspace.ts'
+import { Workspace } from '../../../workspace/workspace/workspace.ts'
 import { PrefixResolver } from '../../resolver.ts'
 
 function makeBridge(seed: Record<string, Uint8Array>): {

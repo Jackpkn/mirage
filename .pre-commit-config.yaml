@@ -160,5 +160,11 @@ repos:
         name: Type check (mypy)
         entry: bash -c 'cd python && uv run mypy'
         language: system
-        files: ^python/(mirage/.*\.py|pyproject\.toml)$
+        files: ^python/(mirage/.*\.py|tests/.*\.py|pyproject\.toml)$
+        pass_filenames: false
+      - id: py-test-pathspec
+        name: PathSpec discipline (tests)
+        entry: python3 scripts/check_test_pathspec.py
+        language: system
+        files: ^python/(mirage/.*\.py|tests/.*\.py)$
         pass_filenames: false

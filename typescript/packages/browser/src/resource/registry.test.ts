@@ -14,8 +14,8 @@
 
 import type { OAuthClientMetadata } from '@modelcontextprotocol/sdk/shared/auth.js'
 import { describe, expect, it } from 'vitest'
-import { tokenUrl } from '@struktoai/mirage-core/core/google/_client'
-import type { TokenManager } from '@struktoai/mirage-core/core/google/_client'
+import { tokenUrl } from '@struktoai/mirage-core/core/google/client'
+import type { TokenManager } from '@struktoai/mirage-core/core/google/client'
 import { buildResource, knownResources, register } from './registry.ts'
 
 describe('browser resource registry', () => {

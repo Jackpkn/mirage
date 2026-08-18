@@ -16,7 +16,7 @@ import pytest
 
 from mirage.accessor.dropbox import (DropboxAccessor,
                                      normalize_dropbox_root_path)
-from mirage.core.dropbox._client import DropboxTokenManager
+from mirage.core.dropbox.client import DropboxTokenManager
 from mirage.resource.dropbox.config import DropboxConfig
 
 

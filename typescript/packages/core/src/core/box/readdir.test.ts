@@ -24,7 +24,7 @@ vi.mock('./api.ts', async () => {
 import { BoxAccessor } from '../../accessor/box.ts'
 import { RAMIndexCacheStore } from '../../cache/index/ram.ts'
 import { PathSpec } from '../../types.ts'
-import type { BoxTokenManager } from './_client.ts'
+import type { BoxTokenManager } from './client.ts'
 import * as api from './api.ts'
 import { readdir } from './readdir.ts'
 

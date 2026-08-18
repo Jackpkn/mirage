@@ -134,6 +134,10 @@ class JobTable:
         self._next_id: int = 1
         self._console_factory = console_factory
         self._factory_consoles: list[JobConsole] = []
+        # Jobs `disown` removed from the table while they still run. The
+        # shell no longer lists, waits for or reports them, but the
+        # workspace still owns their tasks, so teardown can stop them.
+        self._disowned: list[Job] = []
 
     def submit(
         self,
@@ -235,11 +239,41 @@ class JobTable:
         await job.console.finish(KILLED_OUTCOME)
         return True
 
+    def disown(self, job_id: int) -> bool:
+        """Drop a job from the table without stopping it.
+
+        What `disown` does in bash: the job keeps running, `jobs` no
+        longer lists it and `wait` no longer knows it. The job stays on a
+        side list so `kill_all` at teardown still reaches its task.
+
+        Args:
+            job_id (int): the job to drop.
+        """
+        job = self._jobs.pop(job_id, None)
+        if job is None:
+            return False
+        if job.status == JobStatus.RUNNING:
+            self._disowned.append(job)
+        return True
+
     async def kill_all(self) -> list[Job]:
-        """Stop every running job, returning the ones that were running."""
+        """Stop every running job, returning the ones that were running.
+
+        Disowned jobs are stopped too: the shell forgot them, the
+        workspace did not, and a teardown that left them running would
+        leak their tasks.
+        """
         running = self.running_jobs()
         for job in running:
             await self.kill(job.id)
+        for job in self._disowned:
+            if job.status == JobStatus.RUNNING and job.task is not None:
+                cancel_job(job)
+                job.status = JobStatus.KILLED
+                job.exit_code = KILLED_EXIT_CODE
+                await job.console.emit(Channel.STDERR, b"Killed")
+                await job.console.finish(KILLED_OUTCOME)
+        self._disowned = []
         return running
 
     async def close_consoles(self) -> None:

@@ -15,10 +15,10 @@
 from collections.abc import AsyncIterator
 from typing import Any
 
-from mirage.core.box._client import (BoxTokenManager, box_delete, box_get,
-                                     box_get_bytes, box_get_stream,
-                                     box_post_json, box_put_json,
-                                     box_upload_multipart)
+from mirage.core.box.client import (BoxTokenManager, box_delete, box_get,
+                                    box_get_bytes, box_get_stream,
+                                    box_post_json, box_put_json,
+                                    box_upload_multipart)
 from mirage.utils.ranges import ByteWindow
 
 LIST_FIELDS = "id,name,type,size,modified_at,etag,sha1,parent"

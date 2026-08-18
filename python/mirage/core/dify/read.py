@@ -4,7 +4,7 @@ from typing import Any
 
 from mirage.accessor.dify import DifyAccessor
 from mirage.cache.index import NULL_INDEX, IndexCacheStore
-from mirage.core.dify._client import get_document_segments, iter_segment_pages
+from mirage.core.dify.client import get_document_segments, iter_segment_pages
 from mirage.core.dify.path import resolve_path
 from mirage.types import PathSpec
 from mirage.utils.ranges import slice_window

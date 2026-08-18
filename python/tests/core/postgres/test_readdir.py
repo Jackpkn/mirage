@@ -50,7 +50,7 @@ def accessor():
 
 @pytest.mark.asyncio
 async def test_readdir_root_lists_database_json_and_schemas(accessor, index):
-    with patch("mirage.core.postgres.readdir._client") as mc:
+    with patch("mirage.core.postgres.readdir.client") as mc:
         mc.list_schemas = AsyncMock(return_value=["public", "analytics"])
         result = await readdir(
             accessor, PathSpec(resource_path="", virtual="/", directory="/"),
@@ -72,7 +72,7 @@ async def test_readdir_schema_lists_kinds(accessor, index):
 
 @pytest.mark.asyncio
 async def test_readdir_tables_kind_lists_tables(accessor, index):
-    with patch("mirage.core.postgres.readdir._client") as mc:
+    with patch("mirage.core.postgres.readdir.client") as mc:
         mc.list_tables = AsyncMock(return_value=["users", "orders"])
         result = await readdir(
             accessor,
@@ -85,7 +85,7 @@ async def test_readdir_tables_kind_lists_tables(accessor, index):
 
 @pytest.mark.asyncio
 async def test_readdir_views_kind_unions_views_and_matviews(accessor, index):
-    with patch("mirage.core.postgres.readdir._client") as mc:
+    with patch("mirage.core.postgres.readdir.client") as mc:
         mc.list_views = AsyncMock(return_value=["customer_360"])
         mc.list_matviews = AsyncMock(return_value=["daily_revenue"])
         result = await readdir(
@@ -138,7 +138,7 @@ async def test_readdir_invalid_path_raises(accessor, index):
 @pytest.mark.asyncio
 async def test_readdir_caches_root_listing(accessor, index):
     mock_list_schemas = AsyncMock(return_value=["public"])
-    with patch("mirage.core.postgres.readdir._client") as mc:
+    with patch("mirage.core.postgres.readdir.client") as mc:
         mc.list_schemas = mock_list_schemas
         first = await readdir(
             accessor, PathSpec(resource_path="", virtual="/", directory="/"),

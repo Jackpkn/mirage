@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { createHash } from 'node:crypto'
-import type { Workspace } from '@struktoai/mirage-core/workspace/workspace'
+import type { Workspace } from '@struktoai/mirage-core/workspace/workspace/workspace'
 
 export class StaleMirageFileError extends Error {
   readonly path: string
@@ -43,6 +43,16 @@ export class FileVersionTracker {
     private readonly enabled = true,
   ) {}
 
+  // The stamp key for a path: one key per file, not per spelling.
+  // readFile and writeFile follow the namespace symlink table, so
+  // `/alias` and `/target` are the same file. Keying by the caller's
+  // spelling would give each its own stamp, and an edit that arrived
+  // through the other name would find no prior version and skip the
+  // staleness check entirely.
+  private key(path: string): string {
+    return this.ws.namespace.follow(path)
+  }
+
   private async currentVersion(path: string): Promise<string | null> {
     if (!(await this.ws.fs.exists(path))) return null
     return fingerprint(await readBuffer(this.ws, path))
@@ -54,45 +64,54 @@ export class FileVersionTracker {
     }
   }
 
-  private recordWrite(path: string, content: string): void {
+  // Stamp what a later read will return, not the bytes handed in. A
+  // mount that does not store writes verbatim answers with something
+  // else, so stamping the input would make the very next write or edit
+  // look stale with nobody having touched the file.
+  private async recordWrite(path: string, key: string): Promise<void> {
     if (!this.enabled) return
-    this.readVersions.set(path, fingerprint(content))
-    this.editVersions.delete(path)
+    const version = await this.currentVersion(path)
+    if (version === null) this.readVersions.delete(key)
+    else this.readVersions.set(key, version)
+    this.editVersions.delete(key)
   }
 
   async read(path: string): Promise<Buffer> {
     const content = await readBuffer(this.ws, path)
-    if (this.enabled) this.readVersions.set(path, fingerprint(content))
+    if (this.enabled) this.readVersions.set(this.key(path), fingerprint(content))
     return content
   }
 
   async readForEdit(path: string): Promise<Buffer> {
     const content = await readBuffer(this.ws, path)
     if (!this.enabled) return content
+    const key = this.key(path)
     const version = fingerprint(content)
-    const readVersion = this.readVersions.get(path)
+    const readVersion = this.readVersions.get(key)
     if (readVersion !== undefined && readVersion !== version) {
       throw new StaleMirageFileError(path)
     }
-    this.editVersions.set(path, version)
+    this.editVersions.set(key, version)
     return content
   }
 
   async write(path: string, content: string): Promise<void> {
+    const key = this.key(path)
     if (this.enabled) {
-      const readVersion = this.readVersions.get(path)
+      const readVersion = this.readVersions.get(key)
       if (readVersion !== undefined) await this.assertVersion(path, readVersion)
     }
     await this.ws.fs.writeFile(path, content)
-    this.recordWrite(path, content)
+    await this.recordWrite(path, key)
   }
 
   async writeEdit(path: string, content: string): Promise<void> {
+    const key = this.key(path)
     if (this.enabled) {
-      const editVersion = this.editVersions.get(path)
+      const editVersion = this.editVersions.get(key)
       if (editVersion !== undefined) await this.assertVersion(path, editVersion)
     }
     await this.ws.fs.writeFile(path, content)
-    this.recordWrite(path, content)
+    await this.recordWrite(path, key)
   }
 }

@@ -15,16 +15,26 @@
 import asyncio
 from collections.abc import Iterable
 from dataclasses import dataclass
+from enum import StrEnum
 
 from mirage.core.timeutil import epoch_to_iso
 from mirage.resource.base import BaseResource
-from mirage.types import (LINK_TARGET_KEY, FileStat, FileType, MountMode,
-                          NodeMetaKey)
+from mirage.types import LINK_TARGET_KEY, FileStat, FileType, MountMode
 from mirage.utils.path import glob_prefix_match, resolve_symlinks
 from mirage.workspace.mount.mount import MountEntry
 from mirage.workspace.mount.namespace.ram import RAMNamespaceStore
 from mirage.workspace.mount.namespace.store import NamespaceStore, NodeFields
 from mirage.workspace.mount.registry import MountRegistry
+
+
+class NodeMetaKey(StrEnum):
+    TARGET = "target"
+    MTIME = "mtime"
+    MODE = "mode"
+    UID = "uid"
+    GID = "gid"
+    ATIME = "atime"
+    OBSERVED_MTIME = "observed_mtime"
 
 
 @dataclass(slots=True)

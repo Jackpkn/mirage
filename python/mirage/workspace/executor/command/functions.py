@@ -61,7 +61,12 @@ async def run_shell_function(
     # One stack: a local shadows the whole record, so the caller's
     # value and attributes are saved and put back together.
     saved_locals: dict[str, ShellVar | None] = {}
+    # The caller's frame is kept and put back: a function that calls
+    # another and then declares a `local` is still inside a function,
+    # and its own shadows must keep being recorded on its own frame.
+    outer_locals = session._local_vars
     session._local_vars = saved_locals
+    session._local_frames.append(saved_locals)
     try:
         all_stdout: list[Any] = []
         merged_io = IOResult()
@@ -97,4 +102,5 @@ async def run_shell_function(
                 session.vars.pop(key, None)
             else:
                 session.vars[key] = old
-        session._local_vars = None
+        session._local_frames.pop()
+        session._local_vars = outer_locals

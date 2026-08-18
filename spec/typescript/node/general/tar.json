@@ -164,6 +164,11 @@
       "type": "bool"
     },
     {
+      "long": "--to-stdout",
+      "short": "-O",
+      "type": "bool"
+    },
+    {
       "short": "-f",
       "type": "path"
     },
@@ -182,6 +187,10 @@
     }
   ],
   "rest": {
+    "text_when": [
+      "-x",
+      "-t"
+    ],
     "type": "path"
   }
 }

@@ -12,19 +12,19 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import json
 from typing import Any
 
 from mirage.accessor.mem0 import Mem0Accessor
 from mirage.cache.index import NULL_INDEX, IndexCacheStore
-from mirage.core.mem0._client import get_memory
-from mirage.core.mem0.scope import ScopeLevel, detect
+from mirage.core.mem0.client import get_memory
+from mirage.core.mem0.scope import ScopeLevel, detect_scope
+from mirage.core.render.json import json_bytes
 from mirage.types import FileStat, FileType, PathSpec
 from mirage.utils.errors import enoent
 
 
 def _file_stat(memory: dict[str, Any]) -> FileStat:
-    body = json.dumps(memory, ensure_ascii=False, indent=2).encode()
+    body = json_bytes(memory)
     return FileStat(
         name=f"{memory['id']}.json",
         type=FileType.JSON,
@@ -49,7 +49,7 @@ async def stat(
         path (PathSpec): the path to stat.
         index (IndexCacheStore): index cache.
     """
-    scope = detect(path)
+    scope = detect_scope(path)
     if scope.level == ScopeLevel.ROOT:
         return FileStat(name="/", type=FileType.DIRECTORY)
     if scope.level != ScopeLevel.MEMORY or scope.memory_id is None:

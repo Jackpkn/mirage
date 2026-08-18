@@ -19,7 +19,7 @@ import pytest
 from mirage.accessor.gcal import GCalAccessor
 from mirage.cache.index.ram import RAMIndexCacheStore
 from mirage.core.gcal.day import event_span
-from mirage.core.google._client import TokenManager
+from mirage.core.google.client import TokenManager
 from mirage.resource.gcal.config import GCalConfig
 
 HK = "Asia/Hong_Kong"

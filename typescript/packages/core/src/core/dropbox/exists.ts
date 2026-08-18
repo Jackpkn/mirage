@@ -14,7 +14,7 @@
 
 import type { DropboxAccessor } from '../../accessor/dropbox.ts'
 import type { PathSpec } from '../../types.ts'
-import { DropboxApiError } from './_client.ts'
+import { DropboxApiError } from './client.ts'
 import { getMetadata } from './api.ts'
 import { dropboxPathOf } from './paths.ts'
 

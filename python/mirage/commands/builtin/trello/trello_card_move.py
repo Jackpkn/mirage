@@ -18,7 +18,7 @@ from mirage.accessor.trello import TrelloAccessor
 from mirage.commands.config import CommandOpts
 from mirage.commands.registry import command
 from mirage.commands.spec.types import CommandSpec, FlagView, Option
-from mirage.core.trello._client import card_move
+from mirage.core.trello.client import card_move
 from mirage.core.trello.normalize import normalize_card
 from mirage.io.stream import yield_bytes
 from mirage.io.types import ByteSource, IOResult

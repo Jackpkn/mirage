@@ -12,7 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { humanSize } from '../../../commands/builtin/utils/formatting.ts'
+import { humanScaled, humanSize } from '../../../commands/builtin/utils/formatting.ts'
 import { CapacityState, FileStat, PathSpec } from '../../../types.ts'
 import type { CapacityResult } from '../../../types.ts'
 import { isMissingPath } from '../../../utils/errors.ts'
@@ -25,7 +25,7 @@ import type { Session } from '../../session/session.ts'
 import { fail, ok, operandText, splitValueFlags, type Result } from './shared.ts'
 import { compareCodePoints } from '../../../utils/sort.ts'
 
-const SI_UNITS = ['B', 'K', 'M', 'G', 'T']
+const SI_UNITS = ['', 'k', 'M', 'G', 'T', 'P', 'E']
 const BLOCK_SUFFIX: Record<string, number> = {
   K: 1024,
   M: 1024 ** 2,
@@ -94,17 +94,10 @@ async function pathExists(dispatch: DispatchFn, spec: PathSpec): Promise<boolean
   }
 }
 
-// Human-readable size in powers of 1000 (df -H), mirroring the 1024
-// `humanSize` shape used by df -h / du -h.
+// Human-readable size in powers of 1000 (df -H). Same rounding as -h;
+// GNU runs both through one `human_readable`.
 function humanSi(n: number): string {
-  let value = n
-  let i = 0
-  while (value >= 1000 && i < SI_UNITS.length - 1) {
-    value /= 1000
-    i += 1
-  }
-  const text = i === 0 ? String(Math.round(value)) : value.toFixed(1)
-  return `${text}${SI_UNITS[i] ?? ''}`
+  return humanScaled(n, 1000, SI_UNITS)
 }
 
 // Bytes as a count of `block`-byte units, rounded up like GNU df.

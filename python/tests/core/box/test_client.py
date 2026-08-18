@@ -12,14 +12,16 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
+from aioresponses import aioresponses
+from yarl import URL
 
-from mirage.core.box._client import (BOX_API_BASE, BOX_TOKEN_URL,
-                                     BoxTokenManager, api_base_of,
-                                     box_get_bytes, token_url_of)
+from mirage.core.box.client import (BoxTokenManager, api_base_of,
+                                    box_get_bytes, token_url_of)
 from mirage.core.box.config import BoxConfig
+from mirage.core.box.constants import BOX_API_BASE, BOX_TOKEN_URL
 from mirage.utils.ranges import ByteWindow
 
 
@@ -69,7 +71,7 @@ async def test_refresh_mode_rotates_refresh_token():
                        on_refresh_token_rotated=on_rotated)
     tm = BoxTokenManager(config)
     with patch(
-            "mirage.core.box._client.refresh_access_token",
+            "mirage.core.box.client.refresh_access_token",
             new_callable=AsyncMock,
             return_value=("at-1", "rt-2", 3600),
     ) as mock_refresh:
@@ -102,7 +104,7 @@ async def test_ccg_mode_refetches_via_client_credentials():
                        enterprise_id="eid")
     tm = BoxTokenManager(config)
     with patch(
-            "mirage.core.box._client.fetch_ccg_token",
+            "mirage.core.box.client.fetch_ccg_token",
             new_callable=AsyncMock,
             return_value=("at-ccg", 3600),
     ) as mock_ccg:
@@ -111,43 +113,24 @@ async def test_ccg_mode_refetches_via_client_credentials():
     assert tm.get_refresh_token() == ""
 
 
-def _session(status: int, body: bytes) -> MagicMock:
-    """An aiohttp session whose one response carries `status` and `body`.
-
-    Args:
-        status (int): the response status to report.
-        body (bytes): the body to return from ``read``.
-    """
-    resp = AsyncMock()
-    resp.status = status
-    resp.read = AsyncMock(return_value=body)
-    session = AsyncMock()
-    session.get = MagicMock(return_value=AsyncMock(
-        __aenter__=AsyncMock(return_value=resp),
-        __aexit__=AsyncMock(return_value=False),
-    ))
-    return session
+GET_URL = "https://api.example/x"
 
 
 async def _get_bytes(status: int, body: bytes,
-                     window: ByteWindow | None) -> tuple[bytes, MagicMock]:
+                     window: ByteWindow | None) -> tuple[bytes, dict]:
     tm = BoxTokenManager(BoxConfig(access_token="tok"))
-    session = _session(status, body)
-    with patch("mirage.core.box._client.box_auth_headers",
-               new_callable=AsyncMock,
-               return_value={}):
-        with patch("mirage.core.box._client.aiohttp.ClientSession") as mock_cs:
-            mock_cs.return_value.__aenter__ = AsyncMock(return_value=session)
-            mock_cs.return_value.__aexit__ = AsyncMock(return_value=False)
-            data = await box_get_bytes(tm, "https://api/x", window=window)
-    return data, session
+    with aioresponses() as m:
+        m.get(GET_URL, status=status, body=body)
+        data = await box_get_bytes(tm, GET_URL, window=window)
+        sent = m.requests[("GET", URL(GET_URL))][0].kwargs
+    return data, sent
 
 
 @pytest.mark.asyncio
 async def test_a_window_is_sent_as_a_range_header():
-    _, session = await _get_bytes(206, b"234", ByteWindow(2, 3))
+    _, sent = await _get_bytes(206, b"234", ByteWindow(2, 3))
 
-    assert session.get.call_args.kwargs["headers"]["Range"] == "bytes=2-4"
+    assert sent["headers"]["Range"] == "bytes=2-4"
 
 
 @pytest.mark.asyncio
@@ -169,7 +152,7 @@ async def test_a_200_is_sliced_because_the_server_ignored_the_range():
 
 @pytest.mark.asyncio
 async def test_no_window_sends_no_header_and_reads_whole():
-    data, session = await _get_bytes(200, b"0123456789", None)
+    data, sent = await _get_bytes(200, b"0123456789", None)
 
     assert data == b"0123456789"
-    assert "Range" not in session.get.call_args.kwargs["headers"]
+    assert "Range" not in sent["headers"]

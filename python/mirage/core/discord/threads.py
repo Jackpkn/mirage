@@ -14,7 +14,7 @@
 
 from typing import Any
 
-from mirage.core.discord._client import discord_post
+from mirage.core.discord.client import discord_post
 from mirage.core.discord.config import DiscordConfig
 
 

@@ -13,10 +13,10 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { describe, expect, it, vi } from 'vitest'
-import type * as ClientModule from './_client.ts'
+import type * as ClientModule from './client.ts'
 
-vi.mock('./_client.ts', async () => {
-  const actual = await vi.importActual<typeof ClientModule>('./_client.ts')
+vi.mock('./client.ts', async () => {
+  const actual = await vi.importActual<typeof ClientModule>('./client.ts')
   return { ...actual, bucket: vi.fn() }
 })
 
@@ -24,7 +24,7 @@ import { runWithCacheManager } from '@struktoai/mirage-core/cache/context'
 import { PathSpec } from '@struktoai/mirage-core/types'
 import { GridFSAccessor } from '../../accessor/gridfs.ts'
 import type { GridFSConfig } from '../../resource/gridfs/config.ts'
-import * as clientMod from './_client.ts'
+import * as clientMod from './client.ts'
 import { write } from './write.ts'
 
 class FakeManager {

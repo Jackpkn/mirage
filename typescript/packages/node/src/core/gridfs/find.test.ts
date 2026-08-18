@@ -13,10 +13,10 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type * as ClientModule from './_client.ts'
+import type * as ClientModule from './client.ts'
 
-vi.mock('./_client.ts', async () => {
-  const actual = await vi.importActual<typeof ClientModule>('./_client.ts')
+vi.mock('./client.ts', async () => {
+  const actual = await vi.importActual<typeof ClientModule>('./client.ts')
   return { ...actual, iterLatest: vi.fn() }
 })
 
@@ -24,8 +24,8 @@ import type { FindOptions } from '@struktoai/mirage-core/resource/base'
 import { PathSpec } from '@struktoai/mirage-core/types'
 import { GridFSAccessor } from '../../accessor/gridfs.ts'
 import type { GridFSConfig } from '../../resource/gridfs/config.ts'
-import type { GridFSFileDoc } from './_client.ts'
-import * as clientMod from './_client.ts'
+import type { GridFSFileDoc } from './client.ts'
+import * as clientMod from './client.ts'
 import { buildQuery, find, globRegex } from './find.ts'
 
 function matches(cond: Record<string, unknown>, value: string): boolean {

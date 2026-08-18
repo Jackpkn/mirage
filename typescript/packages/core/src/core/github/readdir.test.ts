@@ -18,7 +18,7 @@ import { RAMIndexCacheStore } from '../../cache/index/ram.ts'
 import { PathSpec } from '../../types.ts'
 import { populateIndex } from './tree.ts'
 import { readdir } from './readdir.ts'
-import type { GitHubTransport } from './_client.ts'
+import type { GitHubTransport } from './client.ts'
 
 const TREE = [
   { path: 'README.md', type: 'blob' as const, sha: 'eee', size: 50 },

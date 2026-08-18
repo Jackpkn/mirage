@@ -201,3 +201,18 @@ def test_operator_closed_by_paren_names_both(tokens, op):
             FindParseError,
             match=f"^find: expected an expression between '{op}' and '\\)'$"):
         parse_find_expression(tokens)
+
+
+def test_printf_stores_format():
+    expr = parse_find_expression(["-printf", "%p\\n"])
+    assert expr.printf == "%p\\n"
+
+
+def test_printf_missing_argument():
+    with pytest.raises(FindParseError, match="missing argument to '-printf'"):
+        parse_find_expression(["-printf"])
+
+
+def test_printf_combines_with_tests():
+    expr = parse_find_expression(["-name", "*.txt", "-printf", "%f\\n"])
+    assert expr.printf == "%f\\n"

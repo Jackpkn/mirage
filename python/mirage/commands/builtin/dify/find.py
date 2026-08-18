@@ -1,6 +1,7 @@
 from dataclasses import replace
 from functools import partial
 
+from mirage.accessor.dify import DifyAccessor
 from mirage.commands.builtin.dify.io import resolve_glob
 from mirage.commands.builtin.generic.find import find_generic
 from mirage.commands.builtin.utils.output import format_records
@@ -51,8 +52,12 @@ async def _normalize_find_output(
 
 
 @command("find", resource="dify", spec=SPECS["find"])
-async def find(accessor, paths: list[PathSpec], texts: list[str],
-               opts: CommandOpts) -> tuple[ByteSource | None, IOResult]:
+async def find(
+    accessor: DifyAccessor,
+    paths: list[PathSpec],
+    texts: list[str],
+    opts: CommandOpts,
+) -> tuple[ByteSource | None, IOResult]:
     paths = default_paths(paths, opts.cwd)
     paths = await resolve_glob(accessor, paths, opts.index)
     search_path = paths[0]

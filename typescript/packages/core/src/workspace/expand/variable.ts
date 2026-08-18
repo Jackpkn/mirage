@@ -21,15 +21,25 @@ import {
   arrayIndices,
   arraySlice,
   arrayValues,
-  arrayWith,
 } from '../../shell/array.ts'
 import type { CallStack } from '../../shell/call_stack.ts'
 import { ArithError, ExitSignal } from '../../shell/errors.ts'
-import { NodeType as NT, type TSNodeLike } from '../../shell/types.ts'
+import { NodeType as NT, type ElementOps, type TSNodeLike } from '../../shell/types.ts'
 import { PolicyDenied } from '../../policy/errors.ts'
 import type { SessionView } from '../../ops/types.ts'
-import { type Session, sessionEntry, setSessionEntry } from '../session/session.ts'
-import { ensureVarVisible, visibleArrays, visibleEnv } from '../session/state.ts'
+import { compareCodePoints } from '../../utils/sort.ts'
+import type { Session } from '../session/session.ts'
+import { assignElement } from '../session/elements.ts'
+import { ReadonlyVariableError } from '../session/errors.ts'
+import {
+  ensureVarVisible,
+  sessionElements,
+  visibleArrays,
+  visibleAssocs,
+  visibleEnv,
+  deref,
+  namerefTarget,
+} from '../session/state.ts'
 import { homeDir } from '../session/shell_dirs.ts'
 import { decodeAnsiC } from '../../shell/escapes.ts'
 import { fnmatch } from '../../utils/fnmatch.ts'
@@ -184,9 +194,16 @@ export function lookupVar(
     const localVal = callStack.getLocal(name)
     if (localVal !== null) return localVal
   }
+  // A name reference resolves to its target before the store is read.
+  name = deref(session, name) || name
   const fromArray = visibleArrays(session)[name]
   if (fromArray !== undefined) {
     return arrayGet(fromArray, 0)
+  }
+  const fromAssoc = visibleAssocs(session)[name]
+  if (fromAssoc !== undefined) {
+    // `$m` on an associative array is `${m["0"]}`, the literal key.
+    return fromAssoc['0'] ?? ''
   }
   // $PWD is deliberately absent here: `cd` writes it into the env like any
   // exported variable, so it can be assigned, unset and printed by `env`,
@@ -200,6 +217,14 @@ export function lookupVar(
   return env[name] ?? ''
 }
 
+/**
+ * Structural pieces of one `${...}` expansion. `subscript` is the raw
+ * text between the brackets and serves the literal checks (`@`/`*`)
+ * and the arithmetic path, which wants the unexpanded spelling;
+ * `subscriptNodes` are the tree-sitter children behind it, which the
+ * associative path expands properly (`${m[$k]}`, `${m["a b"]}`) since
+ * a key is a word, not an expression.
+ */
 interface BraceParse {
   varName: string | null
   subscript: string | null
@@ -207,6 +232,7 @@ interface BraceParse {
   indirectOp: boolean
   op: string | null
   groups: TSNodeLike[][]
+  subscriptNodes: TSNodeLike[]
 }
 
 function groupSeparator(op: string | null): string | null {
@@ -218,6 +244,7 @@ function groupSeparator(op: string | null): string | null {
 function parseBraces(node: TSNodeLike): BraceParse {
   let varName: string | null = null
   let subscript: string | null = null
+  let subscriptNodes: TSNodeLike[] = []
   let lengthOp = false
   let indirectOp = false
   let op: string | null = null
@@ -240,12 +267,20 @@ function parseBraces(node: TSNodeLike): BraceParse {
       continue
     }
     if (c.type === 'subscript' && !seenVar) {
+      const subNodes: TSNodeLike[] = []
       for (const sc of c.namedChildren) {
         if (sc.type === NT.VARIABLE_NAME && varName === null) {
           varName = sc.text
-        } else if (subscript === null && sc.type !== NT.VARIABLE_NAME) {
-          subscript = sc.text
+        } else {
+          subNodes.push(sc)
         }
+      }
+      subscriptNodes = subNodes
+      if (varName !== null) {
+        // The raw slice, not the first child's text: a subscript
+        // holding several words (`${m[two words]}`) or a quoted key
+        // keeps its whole spelling this way.
+        subscript = c.text.slice(varName.length + 1, -1)
       }
       seenVar = true
       continue
@@ -263,7 +298,7 @@ function parseBraces(node: TSNodeLike): BraceParse {
       groups[groups.length - 1]?.push(c)
     }
   }
-  return { varName, subscript, lengthOp, indirectOp, op, groups }
+  return { varName, subscript, lengthOp, indirectOp, op, groups, subscriptNodes }
 }
 
 // Index of the next unescaped `quote`, -1 when it never closes.
@@ -516,11 +551,16 @@ function caseMod(op: string, val: string, pattern: string): string {
 }
 
 // bash evaluates substring offsets and array subscripts as arithmetic
-// (${v:1+1}, ${a[i+1]}).
-function arithInt(text: string, env: Record<string, string>): number | null {
+// (${v:1+1}, ${a[i+1]}); `elements` lets the operand itself reference
+// an array element (`a[b[0]]`).
+function arithInt(
+  text: string,
+  env: Record<string, string>,
+  elements: ElementOps | null = null,
+): number | null {
   if (/^\s*-?\d+\s*$/.test(text)) return Number.parseInt(text.trim(), 10)
   try {
-    const { value } = evaluateArith(text, env)
+    const { value } = evaluateArith(text, env, 0, elements)
     return Number(value)
   } catch (err) {
     if (err instanceof ArithError) return null
@@ -619,10 +659,25 @@ export async function expandArrayAt(
     const params = positionalArgs(session, callStack)
     arr = p.op === ':' ? [session.argv0, ...params] : params
   } else {
-    arr = visibleArrays(session)[p.varName ?? '']
+    const arrName = p.varName === null ? '' : deref(session, p.varName) || p.varName
+    arr = visibleArrays(session)[arrName]
+    if (arr === undefined && p.varName !== null) {
+      const amap = visibleAssocs(session)[arrName]
+      if (amap !== undefined) {
+        if (p.indirectOp) {
+          // Sorted keys, the same deterministic order every other walk
+          // of an associative array answers in.
+          return Object.keys(amap).sort(compareCodePoints)
+        }
+        arr = Object.keys(amap)
+          .sort(compareCodePoints)
+          .map((k) => amap[k] ?? '')
+      }
+    }
   }
   if (arr === undefined) {
-    const scalar = env[p.varName ?? '']
+    const scalarName = p.varName === null ? '' : deref(session, p.varName) || p.varName
+    const scalar = env[scalarName]
     arr = scalar === undefined ? [] : [scalar]
   }
   if (p.indirectOp) return arrayIndices(arr).map((i) => String(i))
@@ -641,8 +696,32 @@ export async function expandArrayAt(
 // bash evaluates subscripts in arithmetic context (${a[i+1]});
 // unresolvable expressions index element 0, mirroring bash's
 // unset-name-is-zero arithmetic rule.
-export function arrayIndex(idxText: string, env: Record<string, string>): number {
-  return arithInt(idxText, env) ?? 0
+export function arrayIndex(
+  idxText: string,
+  env: Record<string, string>,
+  elements: ElementOps | null = null,
+): number {
+  return arithInt(idxText, env, elements) ?? 0
+}
+
+const SUBSCRIPT_LITERAL_TYPES: ReadonlySet<string> = new Set([NT.WORD, NT.NUMBER, NT.ERROR])
+
+/**
+ * The associative key one subscript spells.
+ *
+ * A purely literal subscript keeps its raw spelling, spaces included,
+ * which is what bash stores for `m[ k ]`; anything carrying an
+ * expansion or quoting expands node by node (`${m[$k]}`, `${m["a b"]}`)
+ * so substitution and quote removal land.
+ */
+async function expandSubscriptKey(p: BraceParse, expandChild: ExpandChild): Promise<string> {
+  const nodes = p.subscriptNodes
+  if (nodes.length === 0 || nodes.every((n) => SUBSCRIPT_LITERAL_TYPES.has(n.type))) {
+    return p.subscript ?? ''
+  }
+  const parts: string[] = []
+  for (const n of nodes) parts.push(await expandChild(n))
+  return parts.join('')
 }
 
 function valueOp(op: string, val: string, groups: string[], env: Record<string, string>): string {
@@ -670,39 +749,52 @@ function valueOp(op: string, val: string, groups: string[], env: Record<string, 
 /**
  * One expansion-time write, through the session plane's door.
  *
- * `${X:=d}` and `$((X=5))` are assignments the shell performs while expanding
- * a word rather than while running a command, and they used to land on the raw
- * session env. That made a `preSession` rule one `${X:=d}` away from
- * irrelevant: a deployment refusing `AWS_*` still had `${AWS_PROFILE:=prod}`
- * write it. They go through the door now, so one rule covers every spelling.
+ * `${X:=d}`, `${a[i]:=d}` and `$((X=5))` are assignments the shell
+ * performs while expanding a word rather than while running a command,
+ * and they used to land on the raw session env. That made a `preSession`
+ * rule one `${X:=d}` away from irrelevant: a deployment refusing `AWS_*`
+ * still had `${AWS_PROFILE:=prod}` write it. They go through the door
+ * now, so one rule covers every spelling.
  *
- * Without a door (a unit test outside a workspace) the write lands directly,
- * with the hidden half still applied: skipping that would let the write-back
- * clobber a value the host's wiring reads.
+ * Without a door (a unit test outside a workspace) the write lands
+ * directly, with the hidden half still applied: skipping that would let
+ * the write-back clobber a value the host's wiring reads.
+ *
+ * The element mechanics are `assignElement`'s: a bare name (null key)
+ * over an array takes the write at element 0 and keeps its other
+ * elements (`a=(1 2 3)` then `$((a=5))` leaves `5 2 3`), an associative
+ * one writes the literal key "0", and a subscripted target arrives with
+ * its key already canonical. Throws ExitSignal when the name is hidden,
+ * a preSession rule refuses, the subscript is bad, or the name carries
+ * `-i` and the text does not evaluate (the line dies with status 1, the
+ * shape `${var:?}` uses); ReadonlyVariableError when the name is
+ * readonly, the same refusal a plain assignment raises through the door.
  */
 export async function expansionWrite(
   session: Session,
   view: SessionView | undefined,
   name: string,
+  key: string | null,
   value: string,
 ): Promise<void> {
   guardExpansionWrite(session, name)
-  // A name already holding an array takes the write at element 0 and
-  // keeps its other elements, which is bash: `a=(1 2 3)` then
-  // `$((a=5))` leaves `5 2 3`. Storing the value as a scalar instead
-  // would discard every element after the first.
-  const held = sessionEntry(session.arrays, name)
-  const stored: string | ShellArray = held === undefined ? value : arrayWith(held, 0, value)
-  if (view === undefined) {
-    if (typeof stored === 'string') setSessionEntry(session.env, name, stored)
-    else setSessionEntry(session.arrays, name, stored)
-    return
-  }
+  let status: string
   try {
-    await view.set(name, stored)
+    status = await assignElement(session, view ?? null, name, key, value)
   } catch (err) {
-    if (!(err instanceof PolicyDenied)) throw err
+    // A PolicyDenied is the gate; an ArithError is the name carrying
+    // `-i` refusing the text. Both die as `n=1+` does, in that voice.
+    if (!(err instanceof PolicyDenied) && !(err instanceof ArithError)) throw err
     throw new ExitSignal(1, new TextEncoder().encode(`bash: ${err.message}\n`), null, 1)
+  }
+  if (status === 'readonly') throw new ReadonlyVariableError(name)
+  if (status !== 'ok') {
+    throw new ExitSignal(
+      1,
+      new TextEncoder().encode(`bash: ${name}[${key ?? ''}]: bad array subscript\n`),
+      null,
+      1,
+    )
   }
 }
 
@@ -739,16 +831,53 @@ export async function expandBraces(
 
   let val = ''
   let varInEnv = false
+  // The subscript as `:=` would write it: the key itself for an
+  // associative name, the resolved index for an indexed one, null for
+  // `[@]`/`[*]` and a negative index past the front, which bash refuses
+  // to assign through.
+  let writeKey: string | null = null
 
-  if (p.subscript !== null && p.varName !== null) {
-    let arr = arrays[p.varName]
+  // A subscripted reference reads and writes through a name reference
+  // the way a bare one does, so the target is resolved once here.
+  const baseName = p.varName === null ? null : deref(session, p.varName) || p.varName
+  const amap = baseName !== null ? visibleAssocs(session)[baseName] : undefined
+  if (p.subscript !== null && baseName !== null && amap !== undefined) {
+    if (p.subscript === '@' || p.subscript === '*') {
+      // Sorted-key order everywhere an associative array is walked:
+      // bash iterates its hash table, whose order is unpredictable,
+      // and a deterministic answer beats reproducing noise.
+      const keys = Object.keys(amap).sort(compareCodePoints)
+      const values = keys.map((k) => amap[k] ?? '')
+      if (p.indirectOp) return keys.join(' ')
+      if (p.lengthOp) return String(values.length)
+      if (p.op === ':') {
+        return sliceArray(values, groups, env).join(' ')
+      }
+      if (p.op !== null && (STRIP_OPS.has(p.op) || REPLACE_OPS.has(p.op) || CASE_OPS.has(p.op))) {
+        const op = p.op
+        return values.map((el) => valueOp(op, el, groups, env)).join(' ')
+      }
+      val = values.join(' ')
+      varInEnv = keys.length > 0
+    } else {
+      // A key, not an expression: `${m[1+1]}` reads the key "1+1",
+      // never element 2. An empty key reads as unset (GNU warns "bad
+      // array subscript" on stderr and expands empty; expansion has no
+      // warning channel, so the empty answer stands alone).
+      const key = await expandSubscriptKey(p, expandChild)
+      val = amap[key] ?? ''
+      varInEnv = amap[key] !== undefined
+      writeKey = key
+    }
+  } else if (p.subscript !== null && baseName !== null) {
+    let arr = arrays[baseName]
     if (arr === undefined) {
       // A scalar is element 0 of a one-element array, even when empty:
       // ${#x[@]} is 1 for x="" but 0 for an unset name.
-      const scalar = env[p.varName]
+      const scalar = env[baseName]
       arr = scalar === undefined ? [] : [scalar]
     }
-    varInEnv = p.varName in arrays || p.varName in env
+    varInEnv = baseName in arrays || baseName in env
     if (p.subscript === '@' || p.subscript === '*') {
       // ${a[@]} and friends see only the assigned elements: a hole left
       // by `unset a[i]` (or skipped by a[9]=v) neither expands nor
@@ -769,10 +898,12 @@ export async function expandBraces(
       }
       val = values.join(' ')
     } else {
-      let idx = arrayIndex(p.subscript, env)
+      const subText = await expandSubscriptKey(p, expandChild)
+      let idx = arrayIndex(subText, env, sessionElements(session))
       if (idx < 0) idx += arrayExtent(arr)
       val = arrayGet(arr, idx)
       varInEnv = arrayHas(arr, idx)
+      if (idx >= 0) writeKey = String(idx)
     }
   } else if (p.varName !== null) {
     if (callStack) {
@@ -785,6 +916,12 @@ export async function expandBraces(
     if (!varInEnv && p.varName in arrays) {
       val = arrayGet(arrays[p.varName] ?? [], 0)
       varInEnv = true
+    }
+    if (!varInEnv && amap !== undefined) {
+      // A bare `$m` on an associative array is `${m["0"]}`, the
+      // literal key, exactly as bash reads it.
+      val = amap['0'] ?? ''
+      varInEnv = amap['0'] !== undefined
     }
     if (!varInEnv && p.varName in env) {
       val = env[p.varName] ?? ''
@@ -799,6 +936,10 @@ export async function expandBraces(
   }
 
   if (p.indirectOp) {
+    // `${!r}` on a name reference is the target's *name*, not an
+    // indirection through the value.
+    const target = p.varName !== null ? namerefTarget(session, p.varName) : null
+    if (target !== null) return target
     return val !== '' ? lookupVar(val, session, callStack) : ''
   }
   if (p.lengthOp) return String(val.length)
@@ -813,28 +954,33 @@ export async function expandBraces(
           ? 'parameter not set'
           : 'parameter null or not set'
     // GNU: fatal at top level with status 127; a containing
-    // subshell/pipeline segment reports 1.
-    throw new ExitSignal(
-      127,
-      new TextEncoder().encode(`bash: ${p.varName ?? ''}: ${message}\n`),
-      null,
-      1,
-    )
+    // subshell/pipeline segment reports 1. A subscripted reference is
+    // named whole: `bash: m[zz]: nope`.
+    const ref = p.subscript === null ? (p.varName ?? '') : `${p.varName ?? ''}[${p.subscript}]`
+    throw new ExitSignal(127, new TextEncoder().encode(`bash: ${ref}: ${message}\n`), null, 1)
   }
   if (p.op === '=' || p.op === ':=') {
     const triggered = p.op === '=' ? !varInEnv : val === ''
     if (!triggered) return val
     const defaultVal = groups[0] ?? ''
-    if (callStack !== null && callStack.getLocal(p.varName ?? '') !== null) {
+    if (p.varName !== null && p.subscript !== null) {
+      // The default lands on the element the reference named, never on
+      // element 0: `${m[k]:=v}` writes key k and `${a[3]:=v}` writes
+      // index 3, as bash does. `[@]`, `[*]` and an index before the
+      // front are refused in bash's words.
+      if (writeKey === null) {
+        throw new ExitSignal(
+          1,
+          new TextEncoder().encode(`bash: ${p.varName}[${p.subscript}]: bad array subscript\n`),
+          null,
+          1,
+        )
+      }
+      await expansionWrite(session, view, p.varName, writeKey, defaultVal)
+    } else if (callStack !== null && callStack.getLocal(p.varName ?? '') !== null) {
       callStack.setLocal(p.varName ?? '', defaultVal)
     } else if (p.varName !== null) {
-      // ${X:=} writes the raw session env, not the visible view (a
-      // filtered copy under hidden vars, where the write would be
-      // silently lost): the known policy-ungated session write, same
-      // as $((X=5)) and printf -v. The hidden gate still applies, or
-      // the write-back would clobber the value the host's wiring
-      // reads.
-      await expansionWrite(session, view, p.varName, defaultVal)
+      await expansionWrite(session, view, p.varName, null, defaultVal)
     }
     return defaultVal
   }

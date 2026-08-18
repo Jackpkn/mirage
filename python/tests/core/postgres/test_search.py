@@ -134,7 +134,7 @@ async def test_search_entity_case_insensitive_uses_ilike_and_escapes():
 @pytest.mark.asyncio
 async def test_search_kind_iterates_tables():
     accessor = _accessor()
-    with patch("mirage.core.postgres.search._client") as mc, \
+    with patch("mirage.core.postgres.search.client") as mc, \
          patch("mirage.core.postgres.search.search_entity",
                new_callable=AsyncMock) as mock_entity:
         mc.list_tables = AsyncMock(return_value=["t1", "t2", "t3"])
@@ -156,7 +156,7 @@ async def test_search_kind_iterates_tables():
 @pytest.mark.asyncio
 async def test_search_kind_views_unions_views_and_matviews():
     accessor = _accessor()
-    with patch("mirage.core.postgres.search._client") as mc, \
+    with patch("mirage.core.postgres.search.client") as mc, \
          patch("mirage.core.postgres.search.search_entity",
                new_callable=AsyncMock, return_value=[]) as mock_entity:
         mc.list_views = AsyncMock(return_value=["v1"])
@@ -190,7 +190,7 @@ async def test_search_schema_visits_both_kinds():
 @pytest.mark.asyncio
 async def test_search_database_iterates_schemas():
     accessor = _accessor()
-    with patch("mirage.core.postgres.search._client") as mc, \
+    with patch("mirage.core.postgres.search.client") as mc, \
          patch("mirage.core.postgres.search.search_schema",
                new_callable=AsyncMock,
                side_effect=[

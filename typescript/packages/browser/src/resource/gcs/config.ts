@@ -12,40 +12,20 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { redactConfigWithSchema, secretSchema, z } from '@struktoai/mirage-core/resource/secrets'
 import type { ConfigOf, RedactedConfig } from '@struktoai/mirage-core/resource/secrets'
-import type { S3BrowserPresignedUrlProvider, S3Config } from '../s3/config.ts'
+import { browserAliasSchema, makeBrowserS3Alias } from '../s3_alias.ts'
 
-const GCSConfigSchema = z.object({
-  bucket: z.string(),
-  presignedUrlProvider: secretSchema(
-    z.custom<S3BrowserPresignedUrlProvider>((value) => typeof value === 'function'),
-  ),
-  region: z.string().optional(),
-  endpoint: z.string().optional(),
-  defaultContentType: z.string().optional(),
-  keyPrefix: z.string().optional(),
-})
+const GCSConfigSchema = browserAliasSchema({})
 
 export type GCSConfig = ConfigOf<typeof GCSConfigSchema>
 
 export type GCSConfigRedacted = RedactedConfig<GCSConfig, 'presignedUrlProvider'>
 
-export function gcsToS3Config(config: GCSConfig): S3Config {
-  return {
-    bucket: config.bucket,
-    presignedUrlProvider: config.presignedUrlProvider,
-    ...(config.region !== undefined ? { region: config.region } : { region: 'auto' }),
-    ...(config.endpoint !== undefined
-      ? { endpoint: config.endpoint }
-      : { endpoint: 'https://storage.googleapis.com' }),
-    ...(config.defaultContentType !== undefined
-      ? { defaultContentType: config.defaultContentType }
-      : {}),
-    ...(config.keyPrefix !== undefined ? { keyPrefix: config.keyPrefix } : {}),
-  }
-}
+const alias = makeBrowserS3Alias<GCSConfig, GCSConfigRedacted, string>({
+  schema: GCSConfigSchema,
+  endpointFor: () => 'https://storage.googleapis.com',
+  regionDefault: 'auto',
+})
 
-export function redactGcsConfig(config: GCSConfig): GCSConfigRedacted {
-  return redactConfigWithSchema(GCSConfigSchema, config) as unknown as GCSConfigRedacted
-}
+export const gcsToS3Config = alias.toS3Config
+export const redactGcsConfig = alias.redact

@@ -140,6 +140,29 @@ export function hiddenPathsActive(): boolean {
  * leaks the name. True when no session is bound or the session hides
  * nothing.
  */
+export const DEFAULT_UMASK = 0o022
+
+/**
+ * The file-creation mask of the session bound to this context, read by
+ * the creators that run inside a command handler (`mkdir`, which cannot
+ * be handed the session) the way `pathAllowed` reads the hidden-paths
+ * spec. bash's default when no session is bound.
+ */
+export function sessionUmask(): number {
+  return getCurrentSession()?.umask ?? DEFAULT_UMASK
+}
+
+/**
+ * Whether the bound session's `shopt -s dotglob` is on. Read inside
+ * pathname expansion, which runs in every backend's resolveGlob and so
+ * cannot be handed the session: a name starting with `.` is matched
+ * only by a pattern that also starts with `.`, unless dotglob relaxes
+ * it. False when no session is bound (bash's default).
+ */
+export function dotglobActive(): boolean {
+  return getCurrentSession()?.shopts.dotglob === true
+}
+
 export function pathAllowed(virtual: string): boolean {
   const sess = getCurrentSession()
   if (sess?.hiddenPaths == null) return true

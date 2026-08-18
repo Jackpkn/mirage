@@ -14,7 +14,7 @@
 
 import { describe, expect, it } from 'vitest'
 import { DiscordAccessor } from '../../accessor/discord.ts'
-import type { DiscordMethod, DiscordResponse, DiscordTransport } from './_client.ts'
+import type { DiscordMethod, DiscordResponse, DiscordTransport } from './client.ts'
 import { dateToSnowflake, DISCORD_EPOCH, fetchRecentMessages, getHistoryJsonl } from './history.ts'
 
 interface RecordedCall {

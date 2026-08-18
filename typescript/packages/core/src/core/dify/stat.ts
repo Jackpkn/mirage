@@ -17,7 +17,7 @@ import type { IndexCacheStore } from '../../cache/index/store.ts'
 import { FileStat, FileType, PathSpec } from '../../types.ts'
 import { enoent } from '../../utils/errors.ts'
 import { rstripSlash } from '../../utils/slash.ts'
-import { getDocumentDetail } from './_client.ts'
+import { getDocumentDetail } from './client.ts'
 import { extractDocumentSize } from './tree.ts'
 import { resolvePath } from './path.ts'
 

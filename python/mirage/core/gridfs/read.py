@@ -19,7 +19,7 @@ from gridfs.errors import NoFile
 
 from mirage.accessor.gridfs import GridFSAccessor
 from mirage.cache.index import NULL_INDEX, IndexCacheStore
-from mirage.core.gridfs._client import _key, bucket, latest_file
+from mirage.core.gridfs.client import _key, bucket, latest_file
 from mirage.observe.context import record, revision_for
 from mirage.types import PathSpec
 from mirage.utils.errors import enoent

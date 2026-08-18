@@ -18,9 +18,11 @@ import { route, routeAll } from '../../../route/route.ts'
 import type { Session } from '../../../session/session.ts'
 import { DESCRIPTIONS, KIND_BY_CONSUMER } from './constants.ts'
 import { NameKind } from './types.ts'
+import { sessionEntry } from '../../../session/session.ts'
 
 /** Classify the name as the layer that would run it, null if none does. */
 export function classify(name: string, session: Session, registry: MountRegistry): NameKind | null {
+  if (sessionEntry(session.aliases, name) !== undefined) return NameKind.ALIAS
   if (KEYWORDS.has(name)) return NameKind.KEYWORD
   return KIND_BY_CONSUMER[route(name, session, registry)] ?? null
 }
@@ -41,7 +43,12 @@ export function classify(name: string, session: Session, registry: MountRegistry
  * line, not two identical ones.
  */
 export function classifyAll(name: string, session: Session, registry: MountRegistry): NameKind[] {
-  const kinds: NameKind[] = KEYWORDS.has(name) ? [NameKind.KEYWORD] : []
+  // An alias is reported first and whether or not `expand_aliases` is
+  // on, as bash does: `type` describes the definition, not whether the
+  // parser is currently applying it.
+  const kinds: NameKind[] =
+    sessionEntry(session.aliases, name) !== undefined ? [NameKind.ALIAS] : []
+  if (KEYWORDS.has(name)) kinds.push(NameKind.KEYWORD)
   for (const consumer of routeAll(name, session, registry)) {
     const kind = KIND_BY_CONSUMER[consumer]
     if (kind !== undefined && !kinds.includes(kind)) kinds.push(kind)
@@ -70,7 +77,12 @@ export function locations(
   return allMode ? kinds : kinds.slice(0, 1)
 }
 
-/** Render the verbose line `command -V` and `type` print. */
-export function describe(name: string, kind: NameKind): string {
+/** Render the verbose line `command -V` and `type` print. `session` is
+ * needed only to read an alias's value; every other kind renders from
+ * the name alone. */
+export function describe(name: string, kind: NameKind, session?: Session): string {
+  if (kind === NameKind.ALIAS && session !== undefined) {
+    return `${name} is aliased to \`${sessionEntry(session.aliases, name) ?? ''}'`
+  }
   return `${name} is ${DESCRIPTIONS[kind]}`
 }

@@ -13,18 +13,22 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 from mirage.context.session_context import (  # isort: skip
-    assert_mount_allowed, effective_mount_mode, get_current_session,
-    get_current_session_for, hidden_paths_active, mount_allowed, path_allowed,
-    reset_current_session, set_current_session)
+    DEFAULT_UMASK, assert_mount_allowed, dotglob_active, effective_mount_mode,
+    get_current_session, get_current_session_for, hidden_paths_active,
+    mount_allowed, path_allowed, reset_current_session, session_umask,
+    set_current_session)
 
 __all__ = [
+    "DEFAULT_UMASK",
     "assert_mount_allowed",
+    "dotglob_active",
     "effective_mount_mode",
     "get_current_session",
     "get_current_session_for",
     "hidden_paths_active",
     "mount_allowed",
     "path_allowed",
+    "session_umask",
     "reset_current_session",
     "set_current_session",
 ]

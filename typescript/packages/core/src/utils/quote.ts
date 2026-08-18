@@ -192,3 +192,15 @@ export function shellQuote(name: string): string {
   if (!needsShellQuote(name)) return name
   return shellQuoteAlways(name)
 }
+
+// Wrap text so bash reads it back as exactly one word: bash's own
+// sh_single_quote, always the 'text' form, with an embedded quote spelled
+// '\'' and every other character, newlines included, left as itself. This
+// is not shellQuoteAlways, which is GNU's diagnostic rendering and may
+// answer with the "text" form or a $'...' group; bash uses this one
+// wherever it builds a command line out of data (`alias` printing a
+// value, `mapfile -C` handing a record to a callback), so text that is
+// shell syntax stays a single argument.
+export function singleQuote(text: string): string {
+  return `'${text.replaceAll("'", "'\\''")}'`
+}

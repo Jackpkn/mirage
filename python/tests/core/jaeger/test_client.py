@@ -12,35 +12,23 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import re
+
+import aiohttp
 import pytest
+from aioresponses import aioresponses
 
 from mirage.accessor.jaeger import JaegerAccessor
-from mirage.core.jaeger._client import (JaegerApiError, fetch_traces,
-                                        is_trace_id)
+from mirage.core.jaeger.client import JaegerApiError, fetch_traces, is_trace_id
 from mirage.resource.jaeger.config import JaegerConfig
 
-
-class FakeResponse:
-
-    def __init__(self, payload, status_code: int = 200) -> None:
-        self._payload = payload
-        self.status_code = status_code
-
-    def json(self):
-        return self._payload
+TRACES_URL = re.compile(r"^http://localhost:16686/api/traces\?.*$")
 
 
-class RecordingAccessor(JaegerAccessor):
-
-    def __init__(self, config: JaegerConfig, payload, status_code=200) -> None:
-        super().__init__(config)
-        self.calls: list[tuple[str, dict | None]] = []
-        self._payload = payload
-        self._status = status_code
-
-    async def request(self, endpoint, params=None):
-        self.calls.append((endpoint, params))
-        return FakeResponse(self._payload, self._status)
+def sent_params(m: aioresponses) -> dict:
+    ((_key, calls), ) = m.requests.items()
+    assert len(calls) == 1
+    return calls[0].kwargs["params"]
 
 
 @pytest.mark.parametrize("value,valid", [
@@ -57,13 +45,32 @@ def test_is_trace_id(value, valid):
 
 
 @pytest.mark.asyncio
+async def test_accessor_reuses_session_and_closes_it():
+    accessor = JaegerAccessor(JaegerConfig(request_timeout=12))
+    first = accessor.get_session()
+    second = accessor.get_session()
+
+    assert first is second
+    assert first.timeout == aiohttp.ClientTimeout(total=12)
+
+    await accessor.close()
+
+    assert first.closed is True
+    assert accessor._session is None
+
+
+@pytest.mark.asyncio
 async def test_fetch_traces_sends_explicit_microsecond_window():
     # Jaeger ignores `lookback`, so an explicit start/end must always be sent
     # or the search silently returns nothing.
-    accessor = RecordingAccessor(JaegerConfig(), {"data": []})
-    await fetch_traces(accessor, "checkout", limit=7)
-    endpoint, params = accessor.calls[0]
-    assert endpoint == "/api/traces"
+    accessor = JaegerAccessor(JaegerConfig())
+    with aioresponses() as m:
+        m.get(TRACES_URL, payload={"data": []})
+        try:
+            await fetch_traces(accessor, "checkout", limit=7)
+        finally:
+            await accessor.close()
+        params = sent_params(m)
     assert params["service"] == "checkout"
     assert params["limit"] == 7
     assert params["start"] == 0
@@ -72,29 +79,66 @@ async def test_fetch_traces_sends_explicit_microsecond_window():
 
 @pytest.mark.asyncio
 async def test_fetch_traces_converts_iso_window_to_micros():
-    accessor = RecordingAccessor(JaegerConfig(), {"data": []})
-    await fetch_traces(
-        accessor,
-        "checkout",
-        from_timestamp="2026-01-01T00:00:00Z",
-        to_timestamp="2026-01-02T00:00:00Z",
-    )
-    _endpoint, params = accessor.calls[0]
+    accessor = JaegerAccessor(JaegerConfig())
+    with aioresponses() as m:
+        m.get(TRACES_URL, payload={"data": []})
+        try:
+            await fetch_traces(
+                accessor,
+                "checkout",
+                from_timestamp="2026-01-01T00:00:00Z",
+                to_timestamp="2026-01-02T00:00:00Z",
+            )
+        finally:
+            await accessor.close()
+        params = sent_params(m)
     assert params["start"] == 1767225600000000
     assert params["end"] == 1767312000000000
 
 
 @pytest.mark.asyncio
 async def test_fetch_traces_surfaces_api_error_message():
-    accessor = RecordingAccessor(
-        JaegerConfig(),
-        {"errors": [{
-            "code": 400,
-            "msg": "parameter 'service' is required"
-        }]},
-        status_code=400,
-    )
-    with pytest.raises(JaegerApiError) as excinfo:
-        await fetch_traces(accessor, "checkout")
+    accessor = JaegerAccessor(JaegerConfig())
+    with aioresponses() as m:
+        m.get(TRACES_URL,
+              status=400,
+              payload={
+                  "errors": [{
+                      "code": 400,
+                      "msg": "parameter 'service' is required"
+                  }]
+              })
+        try:
+            with pytest.raises(JaegerApiError) as excinfo:
+                await fetch_traces(accessor, "checkout")
+        finally:
+            await accessor.close()
     assert excinfo.value.status_code == 400
     assert "service" in str(excinfo.value)
+
+
+@pytest.mark.asyncio
+async def test_fetch_traces_reports_status_without_body_message():
+    accessor = JaegerAccessor(JaegerConfig())
+    with aioresponses() as m:
+        m.get(TRACES_URL, status=503, body="upstream unavailable")
+        try:
+            with pytest.raises(JaegerApiError) as excinfo:
+                await fetch_traces(accessor, "checkout")
+        finally:
+            await accessor.close()
+    assert excinfo.value.status_code == 503
+    assert str(excinfo.value) == "Jaeger API error: HTTP 503"
+
+
+@pytest.mark.asyncio
+async def test_fetch_traces_rejects_non_object_payload():
+    accessor = JaegerAccessor(JaegerConfig())
+    with aioresponses() as m:
+        m.get(TRACES_URL, payload=["not", "an", "object"])
+        try:
+            with pytest.raises(JaegerApiError) as excinfo:
+                await fetch_traces(accessor, "checkout")
+        finally:
+            await accessor.close()
+    assert "JSON object" in str(excinfo.value)

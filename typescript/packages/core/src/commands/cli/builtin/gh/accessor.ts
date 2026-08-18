@@ -12,7 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { HttpGitHubTransport, type GitHubTransport } from '../../../../core/github/_client.ts'
+import { HttpGitHubTransport, type GitHubTransport } from '../../../../core/github/client.ts'
 import type { GhConfig } from '../../../../core/github/config.ts'
 import { parseRepo, type RepoRef } from '../../../../core/github/repo.ts'
 import { IOResult, type ByteSource } from '../../../../io/types.ts'

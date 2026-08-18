@@ -18,7 +18,7 @@ from mirage.accessor.ssh import SSHAccessor
 from mirage.commands.builtin.find_eval import (FindEntry, PredNode, build_tree,
                                                emit_start_path, keep,
                                                start_basename)
-from mirage.core.ssh._client import _abs
+from mirage.core.ssh.client import _abs
 from mirage.core.ssh.config import SSHConfig
 from mirage.types import PathSpec
 from mirage.utils.dates import in_mtime_window

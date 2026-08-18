@@ -12,51 +12,20 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { redactConfigWithSchema, secretSchema, z } from '@struktoai/mirage-core/resource/secrets'
 import type { ConfigOf, RedactedConfig } from '@struktoai/mirage-core/resource/secrets'
-import type { S3BrowserPresignedUrlProvider, S3Config } from '../s3/config.ts'
+import { browserAliasSchema, derivedEndpoint, makeBrowserS3Alias } from '../s3_alias.ts'
 
-const DigitalOceanConfigSchema = z.object({
-  bucket: z.string(),
-  presignedUrlProvider: secretSchema(
-    z.custom<S3BrowserPresignedUrlProvider>((value) => typeof value === 'function'),
-  ),
-  region: z.string().optional(),
-  endpoint: z.string().optional(),
-  defaultContentType: z.string().optional(),
-  keyPrefix: z.string().optional(),
-})
+const DigitalOceanConfigSchema = browserAliasSchema({})
 
 export type DigitalOceanConfig = ConfigOf<typeof DigitalOceanConfigSchema>
 
 export type DigitalOceanConfigRedacted = RedactedConfig<DigitalOceanConfig, 'presignedUrlProvider'>
 
-export function resolvedDigitalOceanEndpoint(config: DigitalOceanConfig): string | undefined {
-  if (config.endpoint !== undefined && config.endpoint !== '') return config.endpoint
-  if (config.region !== undefined && config.region !== '') {
-    const region = config.region
-    return `https://${region}.digitaloceanspaces.com`
-  }
-  return undefined
-}
+const alias = makeBrowserS3Alias<DigitalOceanConfig, DigitalOceanConfigRedacted>({
+  schema: DigitalOceanConfigSchema,
+  endpointFor: derivedEndpoint('region', (region) => `https://${region}.digitaloceanspaces.com`),
+})
 
-export function digitalOceanToS3Config(config: DigitalOceanConfig): S3Config {
-  const endpoint = resolvedDigitalOceanEndpoint(config)
-  return {
-    bucket: config.bucket,
-    presignedUrlProvider: config.presignedUrlProvider,
-    ...(config.region !== undefined ? { region: config.region } : {}),
-    ...(endpoint !== undefined ? { endpoint } : {}),
-    ...(config.defaultContentType !== undefined
-      ? { defaultContentType: config.defaultContentType }
-      : {}),
-    ...(config.keyPrefix !== undefined ? { keyPrefix: config.keyPrefix } : {}),
-  }
-}
-
-export function redactDigitalOceanConfig(config: DigitalOceanConfig): DigitalOceanConfigRedacted {
-  return redactConfigWithSchema(
-    DigitalOceanConfigSchema,
-    config,
-  ) as unknown as DigitalOceanConfigRedacted
-}
+export const resolvedDigitalOceanEndpoint = alias.resolvedEndpoint
+export const digitalOceanToS3Config = alias.toS3Config
+export const redactDigitalOceanConfig = alias.redact

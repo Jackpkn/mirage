@@ -50,7 +50,7 @@ from mirage.commands.cli.types import CLISpec
 from mirage.core.databricks_volume.path import configured_root
 from mirage.core.discord.config import DiscordConfig
 from mirage.core.email.config import EmailConfig
-from mirage.core.sharepoint import _resolver as sharepoint_resolver
+from mirage.core.sharepoint import resolve as sharepoint_resolver
 from mirage.resource.aliyun import AliyunConfig, AliyunResource
 from mirage.resource.backblaze import BackblazeConfig, BackblazeResource
 from mirage.resource.box import BoxConfig, BoxResource

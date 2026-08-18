@@ -96,24 +96,33 @@ jobs:
           MONGODB_URI: mongodb://localhost:27017
         run: uv run pytest --ignore=tests/agents/camel
 
+      # Each truth file owns the command it was captured against, so this
+      # list is paths only and cannot drift from what is asserted. The
+      # runner keeps going after a failure and fails the step at the end,
+      # so one stale truth file reports every other one in the same run
+      # instead of hiding the examples listed below it.
       - name: Examples (output checked against integ/ truth files)
         env:
           REDIS_URL: redis://localhost:6379/0
         run: |
-          run() { echo "## $1"; ./python/.venv/bin/python "$1" 2>&1 | bash integ/check_lines.sh "$2"; }
-          run examples/python/ram/ram.py integ/truth/python/ram.txt
-          run examples/python/ram/ram_vfs.py integ/truth/python/ram_vfs.txt
-          run examples/python/ram/ram_python.py integ/truth/python/ram_python.txt
-          run examples/python/disk/disk.py integ/truth/python/disk.txt
-          run examples/python/disk/disk_vfs.py integ/truth/python/disk_vfs.txt
-          run examples/python/disk/watch.py integ/truth/watch_delta.txt
-          run examples/python/other/custom_command.py integ/truth/python/custom_command.txt
-          run examples/python/filetype/filetype.py integ/truth/python/filetype.txt
-          run examples/python/redis_resource/example_redis.py integ/truth/python/redis.txt
-          run examples/python/redis_resource/example_redis_index.py integ/truth/python/redis_index.txt
-          run examples/python/redis_resource/example_redis_cache.py integ/truth/python/redis_cache.txt
-          run examples/python/redis_resource/example_redis_vfs.py integ/truth/python/redis_vfs.txt
-          run examples/python/version/branching.py integ/truth/version_branching.txt
+          bad=0
+          run() {
+            python3 integ/check_example.py "$1" --variant python || bad=1
+          }
+          run integ/truth/python/ram.json
+          run integ/truth/python/ram_vfs.json
+          run integ/truth/python/ram_python.json
+          run integ/truth/python/disk.json
+          run integ/truth/python/disk_vfs.json
+          run integ/truth/watch_delta.json
+          run integ/truth/python/custom_command.json
+          run integ/truth/python/filetype.json
+          run integ/truth/python/redis.json
+          run integ/truth/python/redis_index.json
+          run integ/truth/python/redis_cache.json
+          run integ/truth/python/redis_vfs.json
+          run integ/truth/version_branching.json
+          exit $bad
 
       - name: Sync Python dependencies for camel
         working-directory: python

@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING
 from mirage.accessor.base import Accessor
 
 if TYPE_CHECKING:
-    from mirage.core.dropbox._client import DropboxTokenManager
+    from mirage.core.dropbox.client import DropboxTokenManager
     from mirage.resource.dropbox.config import DropboxConfig
 
 

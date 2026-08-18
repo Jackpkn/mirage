@@ -1,0 +1,207 @@
+from dataclasses import dataclass
+from functools import partial
+from typing import Any, Literal
+
+from mirage.accessor.sharepoint import SharePointAccessor
+from mirage.core.msgraph.config import MsGraphConfig
+from mirage.core.msgraph.drive_ops import DriveLoc
+from mirage.core.sharepoint.client import (drive_ref_path, graph_api,
+                                           graph_list, id_segment, item_url)
+from mirage.types import PathSpec
+from mirage.utils.key_prefix import mount_prefix_of
+
+
+@dataclass(frozen=True, slots=True)
+class ResolvedPath:
+    level: Literal["root", "site", "drive", "item"]
+    site_id: str | None = None
+    drive_id: str | None = None
+    item_path: str | None = None
+
+
+_site_cache: dict[str, str] = {}
+_drive_cache: dict[tuple[str, str], str] = {}
+
+
+def _scoped_item_path(key_prefix: str | None, raw: str) -> str:
+    prefix = (key_prefix or "").strip("/")
+    if prefix and raw:
+        return f"{prefix}/{raw}"
+    return prefix or raw
+
+
+async def _list_sites(accessor: SharePointAccessor) -> list[dict[str, Any]]:
+    config = accessor.config
+    search = config.site_filter or "*"
+    url = f"{graph_api(config)}/sites"
+    params = {"search": search, "$select": "id,displayName,name"}
+    return await graph_list(config, url, params=params)
+
+
+async def _list_drives(accessor: SharePointAccessor,
+                       site_id: str) -> list[dict[str, Any]]:
+    url = f"{graph_api(accessor.config)}/sites/{id_segment(site_id)}/drives"
+    params = {"$select": "id,name"}
+    return await graph_list(accessor.config, url, params=params)
+
+
+async def _resolve_site_id(accessor: SharePointAccessor,
+                           site_name: str) -> str | None:
+    if site_name in _site_cache:
+        return _site_cache[site_name]
+    sites = await _list_sites(accessor)
+    for s in sites:
+        display = s.get("displayName", "")
+        name = s.get("name", "")
+        _site_cache[display] = s["id"]
+        _site_cache[name] = s["id"]
+    return _site_cache.get(site_name)
+
+
+async def _resolve_drive_id(accessor: SharePointAccessor, site_id: str,
+                            drive_name: str) -> str | None:
+    key = (site_id, drive_name)
+    if key in _drive_cache:
+        return _drive_cache[key]
+    drives = await _list_drives(accessor, site_id)
+    for d in drives:
+        _drive_cache[(site_id, d.get("name", ""))] = d["id"]
+    return _drive_cache.get(key)
+
+
+async def resolve(accessor: SharePointAccessor,
+                  path: PathSpec) -> ResolvedPath:
+    """Resolve a virtual path to (site_id, drive_id, item_path).
+
+    Args:
+        accessor (SharePointAccessor): The accessor with config.
+        path (PathSpec): Virtual path to resolve.
+
+    Returns:
+        ResolvedPath: Resolved components.
+    """
+    prefix = mount_prefix_of(path.virtual, path.resource_path) or ""
+    raw = path.virtual
+    if prefix and raw.startswith(prefix):
+        rest = raw[len(prefix):]
+        if prefix.endswith("/") or rest == "" or rest.startswith("/"):
+            raw = rest or "/"
+    raw = raw.strip("/")
+
+    config = accessor.config
+    if config.site is not None and config.drive is not None:
+        # Scoped mount: the whole mount lives inside one drive, so paths
+        # are drive-relative and the site/drive namespace levels vanish.
+        site_id = await _resolve_site_id(accessor, config.site)
+        if site_id is None:
+            return ResolvedPath(level="site", site_id=None)
+        drive_id = await _resolve_drive_id(accessor, site_id, config.drive)
+        if drive_id is None:
+            return ResolvedPath(level="drive", site_id=site_id, drive_id=None)
+        item_path = _scoped_item_path(config.key_prefix, raw)
+        if not item_path:
+            return ResolvedPath(level="drive",
+                                site_id=site_id,
+                                drive_id=drive_id)
+        return ResolvedPath(level="item",
+                            site_id=site_id,
+                            drive_id=drive_id,
+                            item_path=item_path)
+
+    if not raw:
+        return ResolvedPath(level="root")
+
+    parts = raw.split("/", 2)
+
+    site_name = parts[0]
+    site_id = await _resolve_site_id(accessor, site_name)
+    if site_id is None:
+        return ResolvedPath(level="site", site_id=None)
+
+    if len(parts) == 1:
+        return ResolvedPath(level="site", site_id=site_id)
+
+    drive_name = parts[1]
+    drive_id = await _resolve_drive_id(accessor, site_id, drive_name)
+    if drive_id is None:
+        return ResolvedPath(level="drive", site_id=site_id, drive_id=None)
+
+    if len(parts) == 2:
+        return ResolvedPath(level="drive", site_id=site_id, drive_id=drive_id)
+
+    item_path = parts[2]
+    return ResolvedPath(level="item",
+                        site_id=site_id,
+                        drive_id=drive_id,
+                        item_path=item_path)
+
+
+async def site_entries(accessor: SharePointAccessor) -> list[tuple[str, str]]:
+    """Return (display name, id) for all accessible sites.
+
+    Args:
+        accessor (SharePointAccessor): The accessor.
+
+    Returns:
+        list[tuple[str, str]]: Sorted (display name, site id) pairs.
+    """
+    entries: list[tuple[str, str]] = []
+    for s in await _list_sites(accessor):
+        display = s.get("displayName", s.get("name", ""))
+        entries.append((display, s["id"]))
+        _site_cache[display] = s["id"]
+    return sorted(entries)
+
+
+async def list_sites(accessor: SharePointAccessor) -> list[str]:
+    """Return display names of all accessible sites.
+
+    Args:
+        accessor (SharePointAccessor): The accessor.
+
+    Returns:
+        list[str]: Site display names.
+    """
+    return [name for name, _ in await site_entries(accessor)]
+
+
+async def drive_entries(accessor: SharePointAccessor,
+                        site_id: str) -> list[tuple[str, str]]:
+    """Return (drive name, id) for a site.
+
+    Args:
+        accessor (SharePointAccessor): The accessor.
+        site_id (str): Site ID.
+
+    Returns:
+        list[tuple[str, str]]: Sorted (drive name, drive id) pairs.
+    """
+    entries: list[tuple[str, str]] = []
+    for d in await _list_drives(accessor, site_id):
+        name = d.get("name", "")
+        entries.append((name, d["id"]))
+        _drive_cache[(site_id, name)] = d["id"]
+    return sorted(entries)
+
+
+async def list_drives(accessor: SharePointAccessor, site_id: str) -> list[str]:
+    """Return drive names for a site.
+
+    Args:
+        accessor (SharePointAccessor): The accessor.
+        site_id (str): Site ID.
+
+    Returns:
+        list[str]: Drive names.
+    """
+    return [name for name, _ in await drive_entries(accessor, site_id)]
+
+
+def drive_loc(config: MsGraphConfig, resolved: ResolvedPath,
+              virt: str) -> DriveLoc:
+    assert resolved.drive_id is not None
+    return DriveLoc(drive=resolved.drive_id,
+                    path=resolved.item_path or "",
+                    virt=virt.strip("/"),
+                    url=partial(item_url, config, resolved.drive_id),
+                    ref=partial(drive_ref_path, resolved.drive_id))

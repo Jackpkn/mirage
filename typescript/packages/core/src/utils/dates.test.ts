@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { describe, expect, it } from 'vitest'
-import { epochToIso, isoToEpoch, utcDateFolder } from './dates.ts'
+import { epochToIso, isoToEpoch, parseDateExpr, utcDateFolder } from './dates.ts'
 
 describe('epochToIso', () => {
   it('formats whole seconds as second-precision ISO-Z', () => {
@@ -45,5 +45,67 @@ describe('isoToEpoch', () => {
 describe('utcDateFolder', () => {
   it('returns YYYY-MM-DD for a timestamp', () => {
     expect(utcDateFolder(1609459200000)).toBe('2021-01-01')
+  })
+})
+
+describe('parseDateExpr', () => {
+  const NOW = new Date(Date.UTC(2026, 7, 16, 13, 45, 30))
+
+  it('parses relative displacements', () => {
+    expect(parseDateExpr('24 hours ago', true, NOW)).toEqual(
+      new Date(Date.UTC(2026, 7, 15, 13, 45, 30)),
+    )
+    expect(parseDateExpr('3 days', true, NOW)).toEqual(new Date(Date.UTC(2026, 7, 19, 13, 45, 30)))
+    expect(parseDateExpr('-2 weeks', true, NOW)).toEqual(new Date(Date.UTC(2026, 7, 2, 13, 45, 30)))
+    expect(parseDateExpr('2days', true, NOW)).toEqual(new Date(Date.UTC(2026, 7, 18, 13, 45, 30)))
+  })
+
+  it('parses word displacements', () => {
+    expect(parseDateExpr('yesterday', true, NOW)).toEqual(
+      new Date(Date.UTC(2026, 7, 15, 13, 45, 30)),
+    )
+    expect(parseDateExpr('tomorrow', true, NOW)).toEqual(
+      new Date(Date.UTC(2026, 7, 17, 13, 45, 30)),
+    )
+    expect(parseDateExpr('now', true, NOW)).toEqual(NOW)
+    expect(parseDateExpr('last year', true, NOW)).toEqual(
+      new Date(Date.UTC(2025, 7, 16, 13, 45, 30)),
+    )
+    expect(parseDateExpr('next month', true, NOW)).toEqual(
+      new Date(Date.UTC(2026, 8, 16, 13, 45, 30)),
+    )
+  })
+
+  it('normalizes month overflow through the calendar like GNU', () => {
+    expect(parseDateExpr('2026-01-31 1 month', true, NOW)).toEqual(new Date(Date.UTC(2026, 2, 3)))
+  })
+
+  it('parses an ISO base with a relative tail', () => {
+    expect(parseDateExpr('2026-08-16 12:00:00 24 hours ago', true, NOW)).toEqual(
+      new Date(Date.UTC(2026, 7, 15, 12, 0, 0)),
+    )
+  })
+
+  it('parses @epoch and zone offsets', () => {
+    expect(parseDateExpr('@1755300000', true)).toEqual(new Date(1755300000 * 1000))
+    expect(parseDateExpr('2026-08-16T10:00:00+02:00', true)).toEqual(
+      new Date(Date.UTC(2026, 7, 16, 8, 0, 0)),
+    )
+  })
+
+  it('truncates fractional seconds instead of rounding into the next second', () => {
+    expect(parseDateExpr('2026-01-01T00:00:00.9999Z', true)).toEqual(
+      new Date(Date.UTC(2026, 0, 1, 0, 0, 0, 999)),
+    )
+    expect(parseDateExpr('2026-01-01T00:00:00.5Z', true)).toEqual(
+      new Date(Date.UTC(2026, 0, 1, 0, 0, 0, 500)),
+    )
+  })
+
+  it('returns null for anything it cannot parse', () => {
+    expect(parseDateExpr('not a date', true, NOW)).toBeNull()
+    expect(parseDateExpr('24 hours agoo', true, NOW)).toBeNull()
+    expect(parseDateExpr('', true, NOW)).toBeNull()
+    expect(parseDateExpr('@abc', true, NOW)).toBeNull()
   })
 })

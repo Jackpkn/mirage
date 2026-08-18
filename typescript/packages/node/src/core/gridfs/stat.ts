@@ -21,7 +21,7 @@ import { mountPrefixOf } from '@struktoai/mirage-core/utils/key_prefix'
 import { gnuBasename } from '@struktoai/mirage-core/utils/path'
 import { rstripSlash, stripSlash } from '@struktoai/mirage-core/utils/slash'
 import type { GridFSAccessor } from '../../accessor/gridfs.ts'
-import { escapeRegex, filesColl, gridfsKey, latestFile } from './_client.ts'
+import { escapeRegex, filesColl, gridfsKey, latestFile } from './client.ts'
 
 export async function stat(
   accessor: GridFSAccessor,

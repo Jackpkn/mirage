@@ -74,6 +74,30 @@ def _validate_matrix(case: dict, spec_name: str) -> None:
         raise ValueError(
             f"case {case['id']} in {spec_name} applies to no backend")
 
+    # A case is a parity claim, so the two languages have to be asked the
+    # same question. Dropping a backend from one side reads as coverage
+    # while it is really an unexamined divergence -- and it is invisible,
+    # because the side that still lists the backend goes green. Anything
+    # genuinely language-specific says so in a `divergence` key, which the
+    # README calls the per-backend override.
+    # A non-empty string, not merely a present key: `"divergence": null`
+    # or `""` would otherwise buy the exemption while explaining nothing,
+    # which is the one thing the key exists to supply.
+    divergence = case.get("divergence")
+    if not (isinstance(divergence, str) and divergence.strip()):
+        python_backends = set(matrix.get("python", []))
+        typescript_backends = set(matrix.get("typescript", []))
+        if python_backends != typescript_backends:
+            only_python = ", ".join(
+                sorted(python_backends - typescript_backends)) or "none"
+            only_typescript = ", ".join(
+                sorted(typescript_backends - python_backends)) or "none"
+            raise ValueError(
+                f"case {case['id']} in {spec_name} has an asymmetric "
+                f"matrix (python-only: {only_python}; typescript-only: "
+                f"{only_typescript}). Run it on both, or record why it "
+                f"cannot with a `divergence` key.")
+
 
 def _load_cases() -> list[dict]:
     cases = []
@@ -185,3 +209,47 @@ def test_validate_matrix_accepts_supported_targets() -> None:
         },
     }
     _validate_matrix(case, "valid.json")
+
+
+def test_validate_matrix_rejects_an_asymmetric_matrix() -> None:
+    case = {
+        "id": "narrowed_matrix",
+        "matrix": {
+            "python": ["ram", "disk", "redis"],
+            "typescript": ["ram"],
+        },
+    }
+    with pytest.raises(ValueError, match="asymmetric matrix"):
+        _validate_matrix(case, "narrowed.json")
+
+
+def test_validate_matrix_allows_an_asymmetric_matrix_that_says_why() -> None:
+    case = {
+        "id": "declared_divergence",
+        "matrix": {
+            "python": ["ram", "disk", "redis"],
+            "typescript": ["ram"],
+        },
+        "divergence": "TypeScript has no redis-backed foo yet (#1234).",
+    }
+    _validate_matrix(case, "declared.json")
+
+
+@pytest.mark.parametrize("value", [None, "", "   ", True, 1, []])
+def test_validate_matrix_rejects_an_empty_divergence(value: object) -> None:
+    """The key has to carry the reason, not merely exist.
+
+    A null or blank value would buy the exemption while explaining
+    nothing, which is the one thing it is there to supply -- and it would
+    read as a considered decision in review.
+    """
+    case = {
+        "id": "blank_divergence",
+        "matrix": {
+            "python": ["ram", "disk", "redis"],
+            "typescript": ["ram"],
+        },
+        "divergence": value,
+    }
+    with pytest.raises(ValueError, match="asymmetric matrix"):
+        _validate_matrix(case, "blank.json")

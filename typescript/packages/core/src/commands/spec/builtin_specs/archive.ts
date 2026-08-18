@@ -53,6 +53,7 @@ export const SPECS: Record<string, CommandSpec> = {
       new Option({ short: '-v' }),
       // -h archives what a symlink points at instead of the link.
       new Option({ short: '-h' }),
+      new Option({ short: '-O', long: '--to-stdout' }),
       new Option({ short: '-f', type: 'path' }),
       // Every occurrence is kept, in order: GNU chdirs at each one and
       // fails at the first it cannot enter, so the planner has to see
@@ -61,7 +62,12 @@ export const SPECS: Record<string, CommandSpec> = {
       new Option({ long: '--strip-components', type: 'str' }),
       new Option({ long: '--exclude', type: 'str' }),
     ],
-    rest: new Operand({ type: 'path' }),
+    // Only -c reads the rest operands from the filesystem. Under -t
+    // and -x each one is a member selector matched against names
+    // inside the archive (the same mode split MountRootPolicy keys
+    // on), so those lines keep them textual, exactly as unzip's
+    // member patterns are.
+    rest: new Operand({ type: 'path', textWhen: ['-x', '-t'] }),
     // `tar xzf a.tgz` is the spelling everyone types.
     oldOptionStyle: true,
     // -C is a chdir for the operands after it, not a flag the command

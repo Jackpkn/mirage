@@ -17,7 +17,7 @@ import { ResourceName } from '../../../types.ts'
 import type { ProvisionFn, RegisteredCommand } from '../../config.ts'
 import { makeGenericCommands } from '../generic_bind/index.ts'
 import { GDOCS_IO } from './io.ts'
-import { fileReadProvision } from './provision.ts'
+import { fileReadProvision } from './_provision.ts'
 import { GDOCS_RM } from './rm.ts'
 
 // Docs verbs and API passthroughs live in the gws CLI

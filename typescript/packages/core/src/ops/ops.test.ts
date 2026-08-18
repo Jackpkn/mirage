@@ -22,7 +22,7 @@ import type { Action, OpsContext, OpsResultContext } from '../policy/types.ts'
 import { RAMResource } from '../resource/ram/ram.ts'
 import { FileType, Limit, MountMode, OnExceed } from '../types.ts'
 import { enotdir } from '../utils/errors.ts'
-import { Workspace } from '../workspace/workspace.ts'
+import { Workspace } from '../workspace/workspace/workspace.ts'
 
 const DEC = new TextDecoder()
 

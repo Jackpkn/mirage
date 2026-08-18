@@ -12,12 +12,18 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
 
 from mirage.shell.array import ShellArray
 
 ShellValue = str | ShellArray | dict[str, str]
+
+# What one attributed write does to a scalar before it is stored.
+# `-i` needs the arithmetic evaluator, which lives above this module,
+# so the caller injects it rather than this leaf importing upward.
+Coercer = Callable[[str], str]
 
 
 class VarAttr(StrEnum):
@@ -116,6 +122,57 @@ def with_attr(var: ShellVar, attr: VarAttr, on: bool = True) -> ShellVar:
     """
     attrs = var.attrs | {attr} if on else var.attrs - {attr}
     return replace(var, attrs=frozenset(attrs))
+
+
+def coerce_scalar(text: str, attrs: frozenset[VarAttr],
+                  integer: Coercer | None) -> str:
+    """Apply the value-shaping attributes to one scalar being stored.
+
+    bash applies these at assignment, not at read: `declare -l s; s=ABC`
+    stores `abc`, and `declare -i n; n=2+2` stores `4`, so `declare -p`
+    and `$s` agree with no per-read work. Order is integer first, then
+    case, which only matters for hex digits and is what GNU does
+    (`declare -il n=0xA` stores `10`).
+
+    `-l` and `-u` cannot both hold; a declaration that sets one clears
+    the other, so at most one applies here.
+
+    Args:
+        text (str): the incoming value.
+        attrs (frozenset[VarAttr]): the attributes on the name.
+        integer (Coercer | None): the arithmetic evaluation `-i` runs,
+            None when the caller has no evaluator (a bare test).
+    """
+    if VarAttr.INTEGER in attrs and integer is not None:
+        text = integer(text)
+    if VarAttr.LOWER in attrs:
+        return text.lower()
+    if VarAttr.UPPER in attrs:
+        return text.upper()
+    return text
+
+
+def coerce_value(value: ShellValue, attrs: frozenset[VarAttr],
+                 integer: Coercer | None) -> ShellValue:
+    """`coerce_scalar` lifted over every value shape.
+
+    An array applies the attribute per element, which is GNU's
+    `declare -ai a=(1+1 2*3)` giving `([0]="2" [1]="6")`.
+
+    Args:
+        value (ShellValue): the incoming value.
+        attrs (frozenset[VarAttr]): the attributes on the name.
+        integer (Coercer | None): the arithmetic evaluation `-i` runs.
+    """
+    if not (attrs & {VarAttr.INTEGER, VarAttr.LOWER, VarAttr.UPPER}):
+        return value
+    if isinstance(value, str):
+        return coerce_scalar(value, attrs, integer)
+    if isinstance(value, dict):
+        return {k: coerce_scalar(v, attrs, integer) for k, v in value.items()}
+    return [
+        None if v is None else coerce_scalar(v, attrs, integer) for v in value
+    ]
 
 
 def stored_attrs(var: ShellVar) -> str:

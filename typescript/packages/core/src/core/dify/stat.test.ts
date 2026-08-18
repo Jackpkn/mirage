@@ -13,10 +13,10 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type * as ClientModule from './_client.ts'
+import type * as ClientModule from './client.ts'
 
-vi.mock('./_client.ts', async () => {
-  const actual = await vi.importActual<typeof ClientModule>('./_client.ts')
+vi.mock('./client.ts', async () => {
+  const actual = await vi.importActual<typeof ClientModule>('./client.ts')
   return { ...actual, listAllDocuments: vi.fn(), getDocumentDetail: vi.fn() }
 })
 
@@ -24,7 +24,7 @@ import type { DifyAccessor } from '../../accessor/dify.ts'
 import { RAMIndexCacheStore } from '../../cache/index/ram.ts'
 import { FileType, PathSpec } from '../../types.ts'
 import { mountKey } from '../../utils/key_prefix.ts'
-import * as clientMod from './_client.ts'
+import * as clientMod from './client.ts'
 import { stat, statLight } from './stat.ts'
 
 const ACCESSOR = { config: { slugMetadataName: 'slug' } } as DifyAccessor

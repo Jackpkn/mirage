@@ -12,9 +12,14 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+from enum import Enum
+
 from pydantic import BaseModel
 
-from mirage.types import CacheType
+
+class CacheType(str, Enum):
+    RAM = "ram"
+    REDIS = "redis"
 
 
 class CacheConfig(BaseModel):

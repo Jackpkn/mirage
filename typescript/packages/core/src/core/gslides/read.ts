@@ -17,12 +17,11 @@ import type { GSlidesAccessor } from '../../accessor/gslides.ts'
 import type { IndexCacheStore } from '../../cache/index/store.ts'
 import { entryOrWarm } from '../../cache/index/warm.ts'
 import { PathSpec } from '../../types.ts'
-import { slidesBase, type TokenManager, googleGet } from '../google/_client.ts'
+import { slidesBase, type TokenManager, googleGet } from '../google/client.ts'
 import { readdir } from './readdir.ts'
 import { rstripSlash } from '../../utils/slash.ts'
 import { eisdir, enoent } from '../../utils/errors.ts'
-
-const ENC = new TextEncoder()
+import { compactJsonBytes } from '../render/json.ts'
 
 export async function readPresentation(
   tm: TokenManager,
@@ -30,7 +29,7 @@ export async function readPresentation(
 ): Promise<Uint8Array> {
   const url = `${slidesBase(tm)}/presentations/${presentationId}`
   const data = await googleGet(tm, url)
-  return ENC.encode(JSON.stringify(data))
+  return compactJsonBytes(data)
 }
 
 export async function read(

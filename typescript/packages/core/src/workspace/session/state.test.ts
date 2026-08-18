@@ -14,6 +14,7 @@
 
 import { varsFromEnv } from '../../workspace/session/session.ts'
 import { setAttr } from '../../workspace/session/state.ts'
+import { ArithError } from '../../shell/errors.ts'
 import { VarAttr } from '../../shell/variable.ts'
 import { describe, expect, it } from 'vitest'
 import type { SessionView } from '../../ops/types.ts'
@@ -22,7 +23,15 @@ import { Policies } from '../../policy/policies.ts'
 import type { Action, SessionContext } from '../../policy/types.ts'
 import { ReadonlyVariableError } from './errors.ts'
 import { Session } from './session.ts'
-import { envSnapshot, sessionView, visibleEnv } from './state.ts'
+import {
+  elementIndex,
+  envSnapshot,
+  seedVar,
+  sessionElements,
+  sessionView,
+  stripKeyQuotes,
+  visibleEnv,
+} from './state.ts'
 
 class DenySecrets {
   preSession(ctx: SessionContext): Action | null {
@@ -87,6 +96,51 @@ describe('sessionView', () => {
     const [view] = makeView(policies)
     await view.set('A', ['x', null, 'y'])
     expect(seen).toEqual(['x y'])
+  })
+
+  it('a shaped write gates the value that lands', async () => {
+    // `declare -l role; role=ADMIN` stores `admin`, so a rule refusing
+    // `admin` has to see `admin`, not the raw text: coercion runs
+    // before the gate.
+    const seen: (string | null)[] = []
+    class Capture {
+      preSession(ctx: SessionContext): Action | null {
+        seen.push(ctx.value)
+        if (ctx.value === 'admin') return { kind: 'deny', message: 'no admin\n' }
+        return null
+      }
+    }
+    const policies = new Policies()
+    policies.add(new Capture())
+    const [view, session] = makeView(policies)
+    seedVar(session, 'role', '')
+    setAttr(session, 'role', VarAttr.Lower)
+    await expect(view.set('role', 'ADMIN')).rejects.toBeInstanceOf(PolicyDenied)
+    expect(session.env.role).toBe('')
+    seedVar(session, 'n', '0')
+    setAttr(session, 'n', VarAttr.Integer)
+    await view.set('n', '3+4')
+    expect(session.env.n).toBe('7')
+    expect(seen).toEqual(['admin', '7'])
+  })
+
+  it('integer coercion resolves elements', async () => {
+    // `n=a[1]+1` under `-i` reads the element, as bash does, through
+    // the same resolver every other arithmetic entry point uses.
+    const [view, session] = makeView()
+    seedVar(session, 'a', ['1', '2'])
+    seedVar(session, 'm', { x: '4' })
+    seedVar(session, 'n', '0')
+    setAttr(session, 'n', VarAttr.Integer)
+    await view.set('n', 'a[1]+1')
+    expect(session.env.n).toBe('3')
+    await view.set('n', 'm[x]+1')
+    expect(session.env.n).toBe('5')
+    await view.set('n', 'm["x"]+1')
+    expect(session.env.n).toBe('5')
+    await view.set('n', 'a[5]+1')
+    expect(session.env.n).toBe('1')
+    await expect(view.set('n', '1+')).rejects.toBeInstanceOf(ArithError)
   })
 
   it('the gate learns which session asked', async () => {
@@ -209,5 +263,64 @@ describe('hidden vars in the session door', () => {
     expect('AWS_SECRET_KEY' in env).toBe(false)
     expect(env.PUBLIC).toBe('1')
     expect(Object.keys(env).sort()).toEqual(['PUBLIC', 'PWD'])
+  })
+})
+
+function elementSession(): Session {
+  const session = new Session({ sessionId: 's', cwd: '/' })
+  seedVar(session, 'm', { a: '1', k5: '9', '0': 'z' })
+  seedVar(session, 'arr', ['10', '20', '30'])
+  seedVar(session, 's5', '5')
+  seedVar(session, 'i', '1')
+  return session
+}
+
+describe('stripKeyQuotes', () => {
+  it('removes one surrounding pair only', () => {
+    expect(stripKeyQuotes('"x"')).toBe('x')
+    expect(stripKeyQuotes("'x'")).toBe('x')
+    expect(stripKeyQuotes('x')).toBe('x')
+    expect(stripKeyQuotes('"x')).toBe('"x')
+    expect(stripKeyQuotes('""')).toBe('')
+  })
+})
+
+describe('elementIndex', () => {
+  it('resolves ints, arithmetic, and errors to zero', () => {
+    expect(elementIndex('3', {})).toBe(3)
+    expect(elementIndex(' -2 ', {})).toBe(-2)
+    expect(elementIndex('i+1', { i: '1' })).toBe(2)
+    // An unresolvable expression indexes element 0, bash's
+    // unset-name-is-zero arithmetic rule.
+    expect(elementIndex('$bad', {})).toBe(0)
+  })
+})
+
+describe('sessionElements', () => {
+  it('resolves associative subscripts literally', () => {
+    const ops = sessionElements(elementSession())
+    expect(ops.resolve('m', 'a', {})).toBe('a')
+    expect(ops.resolve('m', '"a"', {})).toBe('a')
+    // A key spelled like arithmetic stays a key.
+    expect(ops.resolve('m', '1+1', {})).toBe('1+1')
+  })
+
+  it('resolves indexed subscripts as arithmetic with negative wrap', () => {
+    const ops = sessionElements(elementSession())
+    expect(ops.resolve('arr', '1+1', {})).toBe('2')
+    expect(ops.resolve('arr', 'i', { i: '2' })).toBe('2')
+    expect(ops.resolve('arr', '-1', {})).toBe('2')
+    expect(() => ops.resolve('arr', '-9', {})).toThrow(ArithError)
+  })
+
+  it('reads by kind, scalars answering as element 0', () => {
+    const ops = sessionElements(elementSession())
+    expect(ops.read('m', 'a')).toBe('1')
+    expect(ops.read('m', 'zz')).toBeNull()
+    expect(ops.read('arr', '1')).toBe('20')
+    expect(ops.read('arr', '9')).toBeNull()
+    expect(ops.read('s5', '0')).toBe('5')
+    expect(ops.read('s5', '1')).toBeNull()
+    expect(ops.read('missing', '0')).toBeNull()
   })
 })

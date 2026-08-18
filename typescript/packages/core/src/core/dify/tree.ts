@@ -17,7 +17,7 @@ import { IndexEntry } from '../../cache/index/config.ts'
 import type { IndexCacheStore } from '../../cache/index/store.ts'
 import { gnuBasename, parent } from '../../utils/path.ts'
 import { rstripSlash, stripSlash } from '../../utils/slash.ts'
-import { listAllDocuments } from './_client.ts'
+import { listAllDocuments } from './client.ts'
 import { compareCodePoints } from '../../utils/sort.ts'
 
 interface CollectedFiles {

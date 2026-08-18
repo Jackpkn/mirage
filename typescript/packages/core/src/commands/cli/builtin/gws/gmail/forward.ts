@@ -14,7 +14,7 @@
 
 import { FlagView } from '../../../../../commands/spec/types.ts'
 import { forwardMessage } from '../../../../../core/gmail/send.ts'
-import { TokenManager } from '../../../../../core/google/_client.ts'
+import { TokenManager } from '../../../../../core/google/client.ts'
 import type { GoogleConfig } from '../../../../../core/google/config.ts'
 import { IOResult, type ByteSource } from '../../../../../io/types.ts'
 import type { CommandFnResult } from '../../../../../commands/config.ts'

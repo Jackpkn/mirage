@@ -15,7 +15,7 @@
 import asyncssh
 
 from mirage.accessor.base import Accessor
-from mirage.core.ssh._client import _connect_kwargs
+from mirage.core.ssh.client import _connect_kwargs
 from mirage.core.ssh.config import SSHConfig
 
 

@@ -17,11 +17,11 @@ import uuid
 from enum import Enum
 from typing import Any
 
-from mirage.core.google._client import (TokenManager, drive_base,
-                                        drive_upload_base, google_delete,
-                                        google_get, google_get_bytes,
-                                        google_patch, google_post,
-                                        google_send_bytes)
+from mirage.core.google.client import (TokenManager, drive_base,
+                                       drive_upload_base, google_delete,
+                                       google_get, google_get_bytes,
+                                       google_patch, google_post,
+                                       google_send_bytes)
 from mirage.utils.ranges import ByteWindow
 
 

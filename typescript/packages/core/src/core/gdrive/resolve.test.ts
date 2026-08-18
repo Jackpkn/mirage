@@ -29,7 +29,7 @@ import {
   resetFakeDrive,
 } from './_test_util.ts'
 import { PathSpec } from '../../types.ts'
-import { GoogleApiError } from '../google/_client.ts'
+import { GoogleApiError } from '../google/client.ts'
 import {
   driveTargetName,
   eaccesOnDenied,

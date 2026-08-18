@@ -14,7 +14,7 @@
 
 import { Accessor } from './base.ts'
 import type { Resource } from '../resource/base.ts'
-import type { SlackTransport } from '../core/slack/_client.ts'
+import type { SlackTransport } from '../core/slack/client.ts'
 
 export class SlackAccessor extends Accessor {
   constructor(public readonly transport: SlackTransport) {

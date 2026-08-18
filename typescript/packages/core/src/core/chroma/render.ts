@@ -12,7 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import type { ChromaChunk } from './_client.ts'
+import type { ChromaChunk } from './client.ts'
 
 const encoder = new TextEncoder()
 

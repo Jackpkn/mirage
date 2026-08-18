@@ -1,10 +1,11 @@
+from mirage.accessor.chroma import ChromaAccessor
 from mirage.cache.index import NULL_INDEX, IndexCacheStore, IndexEntry
-from mirage.core.chroma._client import pages_chunks
+from mirage.core.chroma.client import pages_chunks
 from mirage.core.chroma.render import render_page
 
 
 async def ensure_dir_sizes(
-    accessor,
+    accessor: ChromaAccessor,
     directory: str,
     index: IndexCacheStore = NULL_INDEX,
 ) -> None:

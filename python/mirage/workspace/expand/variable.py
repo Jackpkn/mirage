@@ -22,19 +22,22 @@ from mirage.ops.types import SessionView
 from mirage.policy import PolicyDenied
 from mirage.shell.arith import evaluate_arith
 from mirage.shell.array import (ShellArray, array_extent, array_get, array_has,
-                                array_indices, array_slice, array_values,
-                                array_with)
+                                array_indices, array_slice, array_values)
 from mirage.shell.call_stack import CallStack
 from mirage.shell.errors import ArithError, ExitSignal
 from mirage.shell.escapes import decode_ansi_c
 from mirage.shell.helpers import get_text
+from mirage.shell.types import ElementOps
 from mirage.shell.types import NodeType as NT
 from mirage.utils.fnmatch import fnmatch
 from mirage.utils.glob_walk import escape_glob
 from mirage.workspace.session import (Session, ensure_var_visible,
                                       visible_arrays, visible_env)
+from mirage.workspace.session.elements import assign_element
+from mirage.workspace.session.errors import ReadonlyVariableError
 from mirage.workspace.session.shell_dirs import home_dir
-from mirage.workspace.session.state import seed_var
+from mirage.workspace.session.state import (nameref_target, session_elements,
+                                            visible_assocs)
 
 ExpandChild = Callable[[tree_sitter.Node], Awaitable[str]]
 
@@ -103,13 +106,13 @@ def guard_expansion_write(session: Session, *names: str) -> None:
 
 
 async def expansion_write(session: Session, view: SessionView | None,
-                          name: str, value: str) -> None:
+                          name: str, key: str | None, value: str) -> None:
     """One expansion-time write, through the session plane's door.
 
-    ``${X:=d}`` and ``$((X=5))`` are assignments the shell performs
-    while expanding a word rather than while running a command, and
-    they used to land on the raw session env. That made a
-    ``pre_session`` rule one ``${X:=d}`` away from irrelevant: a
+    ``${X:=d}``, ``${a[i]:=d}`` and ``$((X=5))`` are assignments the
+    shell performs while expanding a word rather than while running a
+    command, and they used to land on the raw session env. That made
+    a ``pre_session`` rule one ``${X:=d}`` away from irrelevant: a
     deployment refusing ``AWS_*`` still had ``${AWS_PROFILE:=prod}``
     write it. They go through the door now, so one rule covers every
     spelling.
@@ -118,36 +121,48 @@ async def expansion_write(session: Session, view: SessionView | None,
     directly, with the hidden half still applied: skipping that would
     let the write-back clobber a value the host's wiring reads.
 
-    A name already holding an array takes the write at element 0 and
-    keeps its other elements, which is bash: ``a=(1 2 3)`` then
-    ``$((a=5))`` leaves ``5 2 3``. Storing the value as a scalar
-    instead would discard every element after the first.
+    The element mechanics are ``assign_element``'s: a bare name over an
+    array takes the write at element 0 and keeps its other elements
+    (``a=(1 2 3)`` then ``$((a=5))`` leaves ``5 2 3``), an associative
+    one writes the literal key ``"0"``, and a subscripted target
+    arrives with its key already canonical.
 
     Args:
         session (Session): shell session the write lands on.
         view (SessionView | None): the session plane's gated door,
             None outside a workspace.
         name (str): the variable being written.
+        key (str | None): the canonical subscript, None for a bare
+            name.
         value (str): the value to store.
 
     Raises:
-        ExitSignal: the name is hidden, or a pre_session rule refused
-            the write; either way the line dies with status 1, the
-            shape ``${var:?}`` uses.
+        ExitSignal: the name is hidden, a pre_session rule refused the
+            write, the subscript is bad, or the name carries ``-i``
+            and the text does not evaluate; either way the line dies
+            with status 1, the shape ``${var:?}`` uses.
+        ReadonlyVariableError: the name is readonly, the same refusal
+            a plain assignment raises through the door.
     """
     guard_expansion_write(session, name)
-    held = session.arrays.get(name)
-    stored: str | ShellArray = (value if held is None else array_with(
-        held, 0, value))
-    if view is None:
-        seed_var(session, name, stored)
-        return
     try:
-        await view.set(name, stored)
+        status = await assign_element(session, view, name, key, value)
     except PolicyDenied as exc:
         raise ExitSignal(1,
                          stderr=f"bash: {exc.strerror}\n".encode(),
                          contained_code=1) from exc
+    except ArithError as exc:
+        # The name carries `-i` and the text does not evaluate. The
+        # line dies as it does for `n=1+`, in the evaluator's voice.
+        raise ExitSignal(1, stderr=f"bash: {exc}\n".encode(),
+                         contained_code=1) from exc
+    if status == "readonly":
+        raise ReadonlyVariableError(name)
+    if status != "ok":
+        raise ExitSignal(1,
+                         stderr=(f"bash: {name}[{key}]: "
+                                 "bad array subscript\n").encode(),
+                         contained_code=1)
 
 
 def _lookup_var(var: str,
@@ -208,6 +223,10 @@ def _lookup_var(var: str,
     arrays = visible_arrays(session)
     if var in arrays:
         return array_get(arrays[var], 0)
+    assocs = visible_assocs(session)
+    if var in assocs:
+        # `$m` on an associative array is `${m["0"]}`, the literal key.
+        return assocs[var].get("0", "")
     # `$PWD` is deliberately absent here: `cd` writes it into the env like
     # any exported variable, so it can be assigned, unset and printed by
     # `env`, exactly as bash allows. Resolving it here instead would make
@@ -223,13 +242,22 @@ def _lookup_var(var: str,
 
 @dataclass(frozen=True, slots=True)
 class _BraceParse:
-    """Structural pieces of one ``${...}`` expansion."""
+    """Structural pieces of one ``${...}`` expansion.
+
+    ``subscript`` is the raw text between the brackets and serves the
+    literal checks (``@``/``*``) and the arithmetic path, which wants
+    the unexpanded spelling; ``subscript_nodes`` are the tree-sitter
+    children behind it, which the associative path expands properly
+    (``${m[$k]}``, ``${m["a b"]}``) since a key is a word, not an
+    expression.
+    """
     var_name: str | None
     subscript: str | None
     length_op: bool
     indirect_op: bool
     op: str | None
     groups: tuple[tuple[tree_sitter.Node, ...], ...]
+    subscript_nodes: tuple[tree_sitter.Node, ...] = ()
 
 
 def _group_separator(op: str | None) -> str | None:
@@ -243,6 +271,7 @@ def _group_separator(op: str | None) -> str | None:
 def _parse_braces(node: tree_sitter.Node) -> _BraceParse:
     var_name = None
     subscript = None
+    subscript_nodes: tuple[tree_sitter.Node, ...] = ()
     length_op = False
     indirect_op = False
     op = None
@@ -263,11 +292,19 @@ def _parse_braces(node: tree_sitter.Node) -> _BraceParse:
             seen_var = True
             continue
         if c.type == "subscript" and not seen_var:
+            sub_nodes: list[tree_sitter.Node] = []
             for sc in c.named_children:
                 if sc.type == NT.VARIABLE_NAME and var_name is None:
                     var_name = get_text(sc)
-                elif subscript is None:
-                    subscript = get_text(sc)
+                else:
+                    sub_nodes.append(sc)
+            subscript_nodes = tuple(sub_nodes)
+            if var_name is not None:
+                # The raw slice, not the first child's text: a subscript
+                # holding several words (`${m[two words]}`) or a quoted
+                # key keeps its whole spelling this way.
+                sub_text = get_text(c)
+                subscript = sub_text[len(var_name) + 1:-1]
             seen_var = True
             continue
         if c.type in _PARAM_OPS and op is None:
@@ -285,7 +322,8 @@ def _parse_braces(node: tree_sitter.Node) -> _BraceParse:
                        length_op=length_op,
                        indirect_op=indirect_op,
                        op=op,
-                       groups=tuple(tuple(g) for g in groups))
+                       groups=tuple(tuple(g) for g in groups),
+                       subscript_nodes=subscript_nodes)
 
 
 def _escaped_find(text: str, start: int, quote: str) -> int:
@@ -544,7 +582,9 @@ def _case_mod(op: str, val: str, pattern: str) -> str:
     return "".join(chars)
 
 
-def _arith_int(text: str, env: Mapping[str, str]) -> int | None:
+def _arith_int(text: str,
+               env: Mapping[str, str],
+               elements: ElementOps | None = None) -> int | None:
     """Resolve an arithmetic-context operand (offsets, subscripts).
 
     bash evaluates substring offsets and array subscripts as
@@ -553,13 +593,15 @@ def _arith_int(text: str, env: Mapping[str, str]) -> int | None:
     Args:
         text (str): the raw operand text.
         env (Mapping[str, str]): session environment for name resolution.
+        elements (ElementOps | None): element callbacks, so the operand
+            may itself reference an array element.
     """
     try:
         return int(text.strip())
     except ValueError:
         pass
     try:
-        value, _ = evaluate_arith(text, env)
+        value = evaluate_arith(text, env, elements=elements).value
     except ArithError:
         return None
     try:
@@ -588,7 +630,9 @@ def _substring(val: str, groups: list[str], env: Mapping[str, str]) -> str:
     return val[offset:offset + length]
 
 
-def _array_index(idx_text: str, env: Mapping[str, str]) -> int:
+def _array_index(idx_text: str,
+                 env: Mapping[str, str],
+                 elements: ElementOps | None = None) -> int:
     """Resolve a numeric or arithmetic array subscript.
 
     bash evaluates subscripts in arithmetic context (``${a[i+1]}``);
@@ -598,9 +642,34 @@ def _array_index(idx_text: str, env: Mapping[str, str]) -> int:
     Args:
         idx_text (str): the raw subscript text.
         env (Mapping[str, str]): session environment for name resolution.
+        elements (ElementOps | None): element callbacks, so a nested
+            reference (``a[b[0]]``) resolves too.
     """
-    resolved = _arith_int(idx_text, env)
+    resolved = _arith_int(idx_text, env, elements)
     return resolved if resolved is not None else 0
+
+
+_SUBSCRIPT_LITERAL_TYPES = frozenset({NT.WORD, NT.NUMBER, NT.ERROR})
+
+
+async def _expand_subscript_key(p: _BraceParse,
+                                expand_child: ExpandChild) -> str:
+    """The associative key one subscript spells.
+
+    A purely literal subscript keeps its raw spelling, spaces included,
+    which is what bash stores for ``m[ k ]``; anything carrying an
+    expansion or quoting expands node by node (``${m[$k]}``,
+    ``${m["a b"]}``) so substitution and quote removal land.
+
+    Args:
+        p (_BraceParse): the parsed expansion.
+        expand_child (ExpandChild): nested-node expander.
+    """
+    nodes = p.subscript_nodes
+    if not nodes or all(n.type in _SUBSCRIPT_LITERAL_TYPES for n in nodes):
+        return p.subscript or ""
+    parts = [await expand_child(n) for n in nodes]
+    return "".join(parts)
 
 
 def _value_op(op: str, val: str, groups: list[str], env: Mapping[str,
@@ -646,6 +715,7 @@ async def expand_braces(node: tree_sitter.Node,
         raise ExitSignal(2, stderr=msg.encode(), contained_code=2)
     env = visible_env(session)
     arrays = visible_arrays(session)
+    assocs = visible_assocs(session)
 
     groups: list[str] = []
     for gi, group in enumerate(p.groups):
@@ -655,7 +725,41 @@ async def expand_braces(node: tree_sitter.Node,
 
     val = ""
     var_in_env = False
-    if p.subscript is not None and p.var_name is not None:
+    # The subscript as `:=` would write it: the key itself for an
+    # associative name, the resolved index for an indexed one, None
+    # for `[@]`/`[*]` and a negative index past the front, which bash
+    # refuses to assign through.
+    write_key: str | None = None
+    amap = assocs.get(p.var_name) if p.var_name is not None else None
+    if p.subscript is not None and p.var_name is not None and amap is not None:
+        if p.subscript in ("@", "*"):
+            # Sorted-key order everywhere an associative array is
+            # walked: bash iterates its hash table, whose order is
+            # unpredictable, and a deterministic answer beats
+            # reproducing noise.
+            values = [amap[k] for k in sorted(amap)]
+            if p.indirect_op:
+                return " ".join(sorted(amap))
+            if p.length_op:
+                return str(len(values))
+            if p.op == ":":
+                return " ".join(_slice_array(list(values), groups, env))
+            if p.op in _STRIP_OPS | _REPLACE_OPS | _CASE_OPS:
+                return " ".join(
+                    _value_op(p.op, el, groups, env) for el in values)
+            val = " ".join(values)
+            var_in_env = bool(amap)
+        else:
+            # A key, not an expression: `${m[1+1]}` reads the key
+            # "1+1", never element 2. An empty key reads as unset
+            # (GNU warns "bad array subscript" on stderr and expands
+            # empty; expansion has no warning channel, so the empty
+            # answer stands alone).
+            key = await _expand_subscript_key(p, expand_child)
+            val = amap.get(key, "")
+            var_in_env = key in amap
+            write_key = key
+    elif p.subscript is not None and p.var_name is not None:
         arr = arrays.get(p.var_name)
         if arr is None:
             # A scalar is element 0 of a one-element array, even when
@@ -679,11 +783,16 @@ async def expand_braces(node: tree_sitter.Node,
                     _value_op(p.op, el, groups, env) for el in values)
             val = " ".join(values)
         else:
-            idx = _array_index(p.subscript, env)
+            # Expanded first (`${a[$k]}` resolves $k, `${a[i+1]}` stays
+            # arithmetic), then evaluated as an index.
+            sub_text = await _expand_subscript_key(p, expand_child)
+            idx = _array_index(sub_text, env, session_elements(session))
             if idx < 0:
                 idx += array_extent(arr)
             val = array_get(arr, idx)
             var_in_env = array_has(arr, idx)
+            if idx >= 0:
+                write_key = str(idx)
     elif p.var_name:
         if call_stack:
             local_val = call_stack.get_local(p.var_name)
@@ -693,6 +802,11 @@ async def expand_braces(node: tree_sitter.Node,
         if not var_in_env and p.var_name in arrays:
             val = array_get(arrays[p.var_name], 0)
             var_in_env = True
+        if not var_in_env and amap is not None:
+            # A bare `$m` on an associative array is `${m["0"]}`, the
+            # literal key, exactly as bash reads it.
+            val = amap.get("0", "")
+            var_in_env = "0" in amap
         if not var_in_env and p.var_name in env:
             val = env[p.var_name]
             var_in_env = True
@@ -706,6 +820,12 @@ async def expand_braces(node: tree_sitter.Node,
             var_in_env = val != ""
 
     if p.indirect_op:
+        # `${!r}` on a name reference is the target's *name*, not an
+        # indirection through the value.
+        target = (nameref_target(session, p.var_name)
+                  if p.var_name is not None else None)
+        if target is not None:
+            return target
         return _lookup_var(val, session, call_stack) if val else ""
     if p.length_op:
         return str(len(val))
@@ -722,21 +842,37 @@ async def expand_braces(node: tree_sitter.Node,
         else:
             message = "parameter null or not set"
         # GNU: fatal at top level with status 127; a containing
-        # subshell/pipeline segment reports 1.
+        # subshell/pipeline segment reports 1. A subscripted reference
+        # is named whole: `bash: m[zz]: nope`.
+        ref = (p.var_name
+               if p.subscript is None else f"{p.var_name}[{p.subscript}]")
         raise ExitSignal(127,
-                         stderr=f"bash: {p.var_name}: {message}\n".encode(),
+                         stderr=f"bash: {ref}: {message}\n".encode(),
                          contained_code=1)
     if p.op in ("=", ":="):
         triggered = (not var_in_env) if p.op == "=" else (not val)
         if not triggered:
             return val
         default = groups[0] if groups else ""
-        if p.var_name is not None:
+        if p.var_name is not None and p.subscript is not None:
+            # The default lands on the element the reference named,
+            # never on element 0: `${m[k]:=v}` writes key k and
+            # `${a[3]:=v}` writes index 3, as bash does. `[@]`, `[*]`
+            # and an index before the front are refused in bash's
+            # words.
+            if write_key is None:
+                raise ExitSignal(1,
+                                 stderr=(f"bash: {p.var_name}[{p.subscript}]"
+                                         ": bad array subscript\n").encode(),
+                                 contained_code=1)
+            await expansion_write(session, view, p.var_name, write_key,
+                                  default)
+        elif p.var_name is not None:
             if (call_stack is not None
                     and call_stack.get_local(p.var_name) is not None):
                 call_stack.set_local(p.var_name, default)
             else:
-                await expansion_write(session, view, p.var_name, default)
+                await expansion_write(session, view, p.var_name, None, default)
         return default
     if p.op == ":-":
         return val if val else (groups[0] if groups else "")
@@ -860,6 +996,14 @@ async def expand_array_at(node: tree_sitter.Node, session: Session,
     else:
         arrays = visible_arrays(session)
         arr = arrays.get(p.var_name) if p.var_name else None
+        amap = (visible_assocs(session).get(p.var_name)
+                if p.var_name and arr is None else None)
+        if amap is not None:
+            if p.indirect_op:
+                # Sorted keys, the same deterministic order every other
+                # walk of an associative array answers in.
+                return sorted(amap)
+            arr = [amap[k] for k in sorted(amap)]
     env = visible_env(session)
     if arr is None:
         name = p.var_name or ""

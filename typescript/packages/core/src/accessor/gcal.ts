@@ -14,7 +14,7 @@
 
 import { localDate } from '../core/gcal/day.ts'
 import type { GoogleConfig } from '../core/google/config.ts'
-import type { TokenManager } from '../core/google/_client.ts'
+import type { TokenManager } from '../core/google/client.ts'
 import { GoogleApiAccessor } from './google_api.ts'
 
 export class GCalAccessor extends GoogleApiAccessor {

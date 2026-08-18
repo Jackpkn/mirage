@@ -14,7 +14,7 @@
 
 import { describe, expect, it } from 'vitest'
 import { SlackAccessor } from '../../accessor/slack.ts'
-import type { SlackResponse, SlackTransport } from './_client.ts'
+import type { SlackResponse, SlackTransport } from './client.ts'
 import { addReaction, getReactions } from './react.ts'
 
 class FakeTransport implements SlackTransport {

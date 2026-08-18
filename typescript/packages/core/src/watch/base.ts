@@ -19,6 +19,7 @@ export interface CacheInvalidator {
   invalidateAfterWrite(path: PathSpec): Promise<void>
   invalidateAfterUnlink(path: PathSpec): Promise<void>
   invalidateSubtree(path: PathSpec): Promise<void>
+  invalidateAncestors(path: PathSpec): Promise<void>
 }
 
 export interface WatchMount {

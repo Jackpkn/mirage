@@ -31,9 +31,11 @@ class Strategy(Enum):
     FANOUT: output is per-operand (filename-keyed lines or blocks), so the
     command runs natively once per operand on its owning mount and the
     outputs combine in operand order.
-    RELAY: data from several mounts must colocate (copy targets, diff
-    sides), so per-file primitives relay through the dispatcher and the
-    shared generic does the work.
+    RELAY: one run has to see every operand at once -- because their
+    data must colocate (copy targets, diff sides), or because the layout
+    is decided across the whole line (ls sorts and heads its operands
+    together) -- so per-path primitives relay through the dispatcher and
+    the shared generic does the work.
     """
     STREAM = "stream"
     FANOUT = "fanout"
@@ -85,6 +87,8 @@ class Cmd(StrEnum):
     PASTE = "paste"
     COMM = "comm"
     JOIN = "join"
+    TAR = "tar"
+    UNZIP = "unzip"
 
 
 CrossResult = tuple[ByteSource | None, IOResult]

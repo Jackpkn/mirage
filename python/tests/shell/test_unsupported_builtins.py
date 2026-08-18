@@ -23,8 +23,6 @@ from mirage.workspace import Workspace
 
 @pytest.mark.parametrize("name", [
     "bg",
-    "disown",
-    "exec",
     "complete",
     "compgen",
     "ulimit",

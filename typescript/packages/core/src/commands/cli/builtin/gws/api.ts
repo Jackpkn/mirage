@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { invalidateAfterWrite } from '../../../../cache/context.ts'
-import { TokenManager } from '../../../../core/google/_client.ts'
+import { TokenManager } from '../../../../core/google/client.ts'
 import {
   driveBase,
   googleDelete,
@@ -21,7 +21,7 @@ import {
   googleGetBytes,
   googlePatch,
   googlePost,
-} from '../../../../core/google/_client.ts'
+} from '../../../../core/google/client.ts'
 import type { GoogleConfig } from '../../../../core/google/config.ts'
 import { IOResult } from '../../../../io/types.ts'
 import { PathSpec } from '../../../../types.ts'

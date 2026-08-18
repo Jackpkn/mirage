@@ -4,7 +4,7 @@ from typing import Any
 
 from mirage.accessor.dify import DifyAccessor
 from mirage.cache.index import NULL_INDEX, IndexCacheStore, IndexEntry
-from mirage.core.dify._client import list_all_documents
+from mirage.core.dify.client import list_all_documents
 from mirage.types import JsonValue
 from mirage.utils.path import gnu_basename, parent
 

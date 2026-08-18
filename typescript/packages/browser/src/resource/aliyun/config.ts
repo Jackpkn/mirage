@@ -12,48 +12,20 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { redactConfigWithSchema, secretSchema, z } from '@struktoai/mirage-core/resource/secrets'
 import type { ConfigOf, RedactedConfig } from '@struktoai/mirage-core/resource/secrets'
-import type { S3BrowserPresignedUrlProvider, S3Config } from '../s3/config.ts'
+import { browserAliasSchema, derivedEndpoint, makeBrowserS3Alias } from '../s3_alias.ts'
 
-const AliyunConfigSchema = z.object({
-  bucket: z.string(),
-  presignedUrlProvider: secretSchema(
-    z.custom<S3BrowserPresignedUrlProvider>((value) => typeof value === 'function'),
-  ),
-  region: z.string().optional(),
-  endpoint: z.string().optional(),
-  defaultContentType: z.string().optional(),
-  keyPrefix: z.string().optional(),
-})
+const AliyunConfigSchema = browserAliasSchema({})
 
 export type AliyunConfig = ConfigOf<typeof AliyunConfigSchema>
 
 export type AliyunConfigRedacted = RedactedConfig<AliyunConfig, 'presignedUrlProvider'>
 
-export function resolvedAliyunEndpoint(config: AliyunConfig): string | undefined {
-  if (config.endpoint !== undefined && config.endpoint !== '') return config.endpoint
-  if (config.region !== undefined && config.region !== '') {
-    const region = config.region
-    return `https://s3.oss-${region}.aliyuncs.com`
-  }
-  return undefined
-}
+const alias = makeBrowserS3Alias<AliyunConfig, AliyunConfigRedacted>({
+  schema: AliyunConfigSchema,
+  endpointFor: derivedEndpoint('region', (region) => `https://s3.oss-${region}.aliyuncs.com`),
+})
 
-export function aliyunToS3Config(config: AliyunConfig): S3Config {
-  const endpoint = resolvedAliyunEndpoint(config)
-  return {
-    bucket: config.bucket,
-    presignedUrlProvider: config.presignedUrlProvider,
-    ...(config.region !== undefined ? { region: config.region } : {}),
-    ...(endpoint !== undefined ? { endpoint } : {}),
-    ...(config.defaultContentType !== undefined
-      ? { defaultContentType: config.defaultContentType }
-      : {}),
-    ...(config.keyPrefix !== undefined ? { keyPrefix: config.keyPrefix } : {}),
-  }
-}
-
-export function redactAliyunConfig(config: AliyunConfig): AliyunConfigRedacted {
-  return redactConfigWithSchema(AliyunConfigSchema, config) as unknown as AliyunConfigRedacted
-}
+export const resolvedAliyunEndpoint = alias.resolvedEndpoint
+export const aliyunToS3Config = alias.toS3Config
+export const redactAliyunConfig = alias.redact

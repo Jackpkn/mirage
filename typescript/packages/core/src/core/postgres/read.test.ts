@@ -15,7 +15,7 @@
 import { mountKey } from '../../utils/key_prefix.ts'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('./_client.ts', () => ({
+vi.mock('./client.ts', () => ({
   estimateSize: vi.fn(),
   fetchRows: vi.fn(),
 }))
@@ -29,7 +29,7 @@ import { PostgresAccessor } from '../../accessor/postgres.ts'
 import { PathSpec } from '../../types.ts'
 import { resolvePostgresConfig } from '../../resource/postgres/config.ts'
 import type { PgDriver } from './_driver.ts'
-import * as _client from './_client.ts'
+import * as client from './client.ts'
 import * as _schema from './_schema_json.ts'
 import { read } from './read.ts'
 
@@ -51,8 +51,8 @@ function decode(bytes: Uint8Array): string {
 
 describe('read', () => {
   beforeEach(() => {
-    vi.mocked(_client.estimateSize).mockReset()
-    vi.mocked(_client.fetchRows).mockReset()
+    vi.mocked(client.estimateSize).mockReset()
+    vi.mocked(client.fetchRows).mockReset()
     vi.mocked(_schema.buildDatabaseJson).mockReset()
     vi.mocked(_schema.buildEntitySchemaJson).mockReset()
   })
@@ -107,7 +107,7 @@ describe('read', () => {
   })
 
   it('throws size-guard error when EXPLAIN exceeds rows threshold', async () => {
-    vi.mocked(_client.estimateSize).mockResolvedValue([20_000, 100])
+    vi.mocked(client.estimateSize).mockResolvedValue([20_000, 100])
     await expect(
       read(
         makeAccessor({ dsn: 'postgres://h/db', maxReadRows: 10_000, maxReadBytes: 1_000_000 }),
@@ -121,8 +121,8 @@ describe('read', () => {
   })
 
   it('returns JSONL bytes when row count under threshold', async () => {
-    vi.mocked(_client.estimateSize).mockResolvedValue([2, 64])
-    vi.mocked(_client.fetchRows).mockResolvedValue([
+    vi.mocked(client.estimateSize).mockResolvedValue([2, 64])
+    vi.mocked(client.fetchRows).mockResolvedValue([
       { id: 1, name: 'a' },
       { id: 2, name: 'b' },
     ])
@@ -138,7 +138,7 @@ describe('read', () => {
   })
 
   it('honors explicit limit/offset and bypasses size guard', async () => {
-    vi.mocked(_client.fetchRows).mockResolvedValue([{ id: 99 }])
+    vi.mocked(client.fetchRows).mockResolvedValue([{ id: 99 }])
     await read(
       makeAccessor(),
       new PathSpec({
@@ -149,16 +149,16 @@ describe('read', () => {
       undefined,
       { limit: 10, offset: 5 },
     )
-    expect(_client.fetchRows).toHaveBeenCalledWith(expect.anything(), 'public', 'users', {
+    expect(client.fetchRows).toHaveBeenCalledWith(expect.anything(), 'public', 'users', {
       limit: 10,
       offset: 5,
     })
-    expect(_client.estimateSize).not.toHaveBeenCalled()
+    expect(client.estimateSize).not.toHaveBeenCalled()
   })
 
   it('serializes Date values as ISO strings', async () => {
-    vi.mocked(_client.estimateSize).mockResolvedValue([1, 64])
-    vi.mocked(_client.fetchRows).mockResolvedValue([{ ts: new Date('2026-04-30T00:00:00.000Z') }])
+    vi.mocked(client.estimateSize).mockResolvedValue([1, 64])
+    vi.mocked(client.fetchRows).mockResolvedValue([{ ts: new Date('2026-04-30T00:00:00.000Z') }])
     const out = await read(
       makeAccessor(),
       new PathSpec({

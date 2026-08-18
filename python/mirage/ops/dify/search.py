@@ -1,3 +1,4 @@
+from mirage.accessor.dify import DifyAccessor
 from mirage.core.dify import search as search_core
 from mirage.ops.registry import op
 from mirage.types import PathSpec
@@ -5,8 +6,14 @@ from mirage.utils.key_prefix import mount_prefix_of
 
 
 @op("search", resource="dify")
-async def search(accessor, paths: list[PathSpec], query: str, *, index,
-                 **kwargs) -> bytes:
+async def search(
+    accessor: DifyAccessor,
+    paths: list[PathSpec],
+    query: str,
+    *,
+    index,
+    **kwargs,
+) -> bytes:
     explicit_prefix = kwargs.pop("mount_prefix", "")
     mount_prefix = mount_prefix_of(
         paths[0].virtual, paths[0].resource_path) if paths else explicit_prefix

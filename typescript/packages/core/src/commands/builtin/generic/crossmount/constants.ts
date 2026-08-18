@@ -40,7 +40,6 @@ const FANOUT_COMMANDS: ReadonlySet<string> = new Set([
   Cmd.STAT,
   Cmd.STRINGS,
   Cmd.TAC,
-  Cmd.LS,
   Cmd.FIND,
   Cmd.RM,
   Cmd.RMDIR,
@@ -57,6 +56,9 @@ export const RELAY_COMMANDS: ReadonlySet<string> = new Set([
   Cmd.PASTE,
   Cmd.COMM,
   Cmd.JOIN,
+  Cmd.TAR,
+  Cmd.UNZIP,
+  Cmd.LS,
 ])
 export const CROSS_MOUNT_COMMANDS: ReadonlySet<string> = new Set([
   ...STREAM_COMMANDS,

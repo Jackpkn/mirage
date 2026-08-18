@@ -19,15 +19,15 @@ import { createShellParser } from '@struktoai/mirage-core/shell/parse'
 import type { ShellParser } from '@struktoai/mirage-core/shell/parse'
 import { KERNEL_BACKENDS, MountBackend } from '@struktoai/mirage-core/types'
 import type { Limit } from '@struktoai/mirage-core/types'
-import { Workspace as CoreWorkspace } from '@struktoai/mirage-core/workspace/workspace'
+import { Workspace as CoreWorkspace } from '@struktoai/mirage-core/workspace/workspace/workspace'
 import type {
   ExecuteOptions,
   ExecuteResult,
   MountSpec,
   WorkspaceOptions,
-} from '@struktoai/mirage-core/workspace/workspace'
-import { FuseManager } from './workspace/fuse.ts'
-import { Mount } from './workspace/mount_spec.ts'
+} from '@struktoai/mirage-core/workspace/workspace/workspace'
+import { KernelMounts } from './workspace/workspace/kernel_mounts.ts'
+import { Mount } from '@struktoai/mirage-core/workspace/mount/spec'
 import './compression_codecs.ts'
 import './runtime/sandbox/daytona/runtime.ts'
 
@@ -50,8 +50,7 @@ export type NodeWorkspaceOptions = WorkspaceOptions
 
 export class Workspace extends CoreWorkspace {
   private fuseSetupPromise: Promise<void> | null = null
-  private readonly fuseMountpointsMap = new Map<string, string>()
-  private readonly fuseManagers = new Map<string, FuseManager>()
+  private readonly kernelMounts = new KernelMounts(this)
 
   constructor(resources: Record<string, MountSpec | Mount>, options: NodeWorkspaceOptions = {}) {
     const specs: Record<string, MountSpec> = {}
@@ -102,75 +101,36 @@ export class Workspace extends CoreWorkspace {
     }
   }
 
-  private registerFuseMount(prefix: string, mountpoint: string): void {
-    for (const [otherPrefix, otherMp] of this.fuseMountpointsMap) {
-      if (otherMp === mountpoint && otherPrefix !== prefix) {
-        throw new Error(
-          `FUSE mountpoint ${mountpoint} already used by prefix ${otherPrefix}; mounts need distinct paths`,
-        )
-      }
-    }
-    this.fuseMountpointsMap.set(prefix, mountpoint)
-  }
-
   /**
    * Mount a workspace subtree under FUSE and own its lifecycle. Each mount gets
-   * its own {@link FuseManager}, so a workspace can expose any number of FUSE
-   * subtrees at once. A pinned mountpoint is collision-checked BEFORE mounting,
-   * so a clash never leaves a partial kernel mount.
+   * its own FuseManager, so a workspace can expose any number of FUSE subtrees
+   * at once. A pinned mountpoint is collision-checked BEFORE mounting, so a
+   * clash never leaves a partial kernel mount.
    *
    * A session-bound mount (`sessionId` given) runs every op under that
    * session's mount grants (the kernel-tier primitive: bind-mount the tree
    * into a container and the narrowing travels with it); it is keyed
    * separately so the same prefix can also be exposed unbound.
    */
-  async addFuseMount(
+  addFuseMount(
     prefix: string,
     mountpoint?: string,
     sessionId?: string,
     backend?: MountBackend,
   ): Promise<string> {
-    const session = sessionId !== undefined ? this.getSession(sessionId) : undefined
-    const key = sessionId === undefined ? prefix : `${prefix}@${sessionId}`
-    if (mountpoint !== undefined) this.registerFuseMount(key, mountpoint)
-    const fm = new FuseManager()
-    this.fuseManagers.set(key, fm)
-    try {
-      const mp = await fm.setup(this, {
-        rootPrefix: prefix,
-        ...(mountpoint !== undefined ? { mountpoint } : {}),
-        ...(session !== undefined ? { session } : {}),
-        ...(backend !== undefined ? { backend } : {}),
-      })
-      if (mountpoint === undefined) this.registerFuseMount(key, mp)
-      return mp
-    } catch (err) {
-      // The mount never came up; drop the manager and any registered path so
-      // fuseMountpoints does not misreport it as live.
-      this.fuseManagers.delete(key)
-      this.fuseMountpointsMap.delete(key)
-      throw err
-    }
+    return this.kernelMounts.add(prefix, mountpoint, sessionId, backend)
   }
 
-  async removeFuseMount(prefix: string, sessionId?: string): Promise<void> {
-    const key = sessionId === undefined ? prefix : `${prefix}@${sessionId}`
-    const fm = this.fuseManagers.get(key)
-    this.fuseManagers.delete(key)
-    if (fm !== undefined) await fm.unmount()
-    this.fuseMountpointsMap.delete(key)
+  removeFuseMount(prefix: string, sessionId?: string): Promise<void> {
+    return this.kernelMounts.remove(prefix, sessionId)
   }
 
   get fuseMountpoints(): Record<string, string> {
-    return Object.fromEntries(this.fuseMountpointsMap)
+    return this.kernelMounts.mountpoints
   }
 
   get fuseMountpoint(): string | null {
-    if (this.fuseMountpointsMap.size === 0) return null
-    if (this.fuseMountpointsMap.size > 1) {
-      throw new Error('multiple FUSE mounts active; use fuseMountpoints to select one by prefix')
-    }
-    return this.fuseMountpointsMap.values().next().value ?? null
+    return this.kernelMounts.mountpoint
   }
 
   /** Await the eager per-mount fuse mounts started in the constructor. */
@@ -203,9 +163,7 @@ export class Workspace extends CoreWorkspace {
 
   override async close(): Promise<void> {
     await this.fuseReady().catch(() => undefined)
-    for (const fm of this.fuseManagers.values()) await fm.unmount()
-    this.fuseManagers.clear()
-    this.fuseMountpointsMap.clear()
+    await this.kernelMounts.close()
     await super.close()
   }
 }

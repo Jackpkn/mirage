@@ -35,12 +35,22 @@ export interface ChildShellState {
   sourceDepth: number
   vars: Record<string, ShellVar>
   functions: Record<string, unknown>
+  readonlyFunctions: Set<string>
   shellOptions: Record<string, boolean>
   positionalArgs: string[]
   scriptName: string | null
   lastBgJobId: number | null
   getoptsPos: number
   getoptsOptind: number | null
+  shopts: Record<string, boolean>
+  aliases: Record<string, string>
+  umask: number
+  execStdout: string | null
+  execStdoutAppend: boolean
+  execStderr: string | null
+  execStderrAppend: boolean
+  execStdin: Uint8Array | null
+  execOpened: Set<string>
 }
 
 /**
@@ -89,6 +99,7 @@ export interface SessionInit {
   vars?: Record<string, ShellVar>
   createdAt?: number
   functions?: Record<string, unknown>
+  readonlyFunctions?: Set<string>
   lastExitCode?: number
   positionalArgs?: string[]
   scriptName?: string | null
@@ -191,6 +202,12 @@ export class Session {
   vars: Record<string, ShellVar>
   createdAt: number
   functions: Record<string, unknown>
+  // The functions `readonly -f` has frozen. A set beside `functions`
+  // rather than a flag on the body, because the readonly fact is the
+  // session's, not the definition's. Kept apart from the readonly
+  // *variable* set: `readonly -f f` and `readonly f` are two different
+  // frozen things in bash, and each refuses in its own voice.
+  readonlyFunctions: Set<string>
   lastExitCode: number
   positionalArgs: string[]
   // What `$0` expands to. Null is the shell itself; a nested `bash`/`sh`
@@ -233,6 +250,30 @@ export class Session {
   // `x=abc` exits 0).
   cmdsubSeq = 0
   cmdsubStatus = 0
+  // `shopt` options, kept apart from `set -o` ones (bash keeps two
+  // vocabularies). Only names set away from their default are stored.
+  shopts: Record<string, boolean> = {}
+  // `alias NAME=VALUE` definitions, plus the parse/row each was defined
+  // at and the stack of aliases being expanded, so a use on the defining
+  // line does not expand and a self-referential value stops.
+  aliases: Record<string, string> = {}
+  aliasMarks = new Map<string, [number, number]>()
+  aliasStack: string[] = []
+  parseSeq = 0
+  parseCurrent = 0
+  // File-creation mask. bash's default for a fresh shell.
+  umask = 0o022
+  // `exec` redirect-only state: where the shell's own stdout, stderr and
+  // stdin point after a bare `exec > file`. Null is the terminal; `""`
+  // is a closed descriptor whose writes drop; `execOpened` names targets
+  // already truncated so a later statement appends.
+  execStdout: string | null = null
+  execStdoutAppend = false
+  execStderr: string | null = null
+  execStderrAppend = false
+  execStdin: Uint8Array | null = null
+  execOpened = new Set<string>()
+  localFrames: Map<string, ShellVar | null>[] = []
   mountModes: ReadonlyMap<string, MountMode> | null
   hiddenPaths: HiddenPaths | null
   hiddenVars: HiddenVars | null
@@ -248,6 +289,7 @@ export class Session {
     this.vars = ownRecord(init.vars)
     this.createdAt = init.createdAt ?? Date.now() / 1000
     this.functions = ownRecord(init.functions)
+    this.readonlyFunctions = new Set(init.readonlyFunctions ?? [])
     this.lastExitCode = init.lastExitCode ?? 0
     this.positionalArgs = init.positionalArgs ?? []
     this.scriptName = init.scriptName ?? null
@@ -297,6 +339,7 @@ export class Session {
       vars,
       createdAt: overrides.createdAt ?? this.createdAt,
       functions: overrides.functions ?? { ...this.functions },
+      readonlyFunctions: overrides.readonlyFunctions ?? new Set(this.readonlyFunctions),
       lastExitCode: overrides.lastExitCode ?? this.lastExitCode,
       positionalArgs: overrides.positionalArgs ?? [...this.positionalArgs],
       scriptName: overrides.scriptName ?? this.scriptName,
@@ -313,6 +356,16 @@ export class Session {
     forked.abortSignal = this.abortSignal
     forked.cmdsubSeq = this.cmdsubSeq
     forked.cmdsubStatus = this.cmdsubStatus
+    forked.shopts = { ...this.shopts }
+    forked.aliases = { ...this.aliases }
+    forked.aliasMarks = new Map(this.aliasMarks)
+    forked.umask = this.umask
+    forked.execStdout = this.execStdout
+    forked.execStdoutAppend = this.execStdoutAppend
+    forked.execStderr = this.execStderr
+    forked.execStderrAppend = this.execStderrAppend
+    forked.execStdin = this.execStdin
+    forked.execOpened = new Set(this.execOpened)
     return forked
   }
 
@@ -354,6 +407,17 @@ export class Session {
     return Object.freeze(out)
   }
 
+  /** The associative arrays, by name. Read-only, like `env`. */
+  get assocs(): Readonly<Record<string, Record<string, string>>> {
+    const out = ownRecord<Record<string, string>>()
+    for (const [name, v] of Object.entries(this.vars)) {
+      if (v.value !== null && typeof v.value === 'object' && !Array.isArray(v.value)) {
+        out[name] = v.value
+      }
+    }
+    return Object.freeze(out)
+  }
+
   /** The names `readonly` has marked. Read-only, like `env`. */
   get readonlyVars(): ReadonlySet<string> {
     const out = new Set<string>()
@@ -375,12 +439,22 @@ export class Session {
       sourceDepth: this.sourceDepth,
       vars: copyVars(this.vars),
       functions: ownRecord(this.functions),
+      readonlyFunctions: new Set(this.readonlyFunctions),
       shellOptions: { ...this.shellOptions },
       positionalArgs: [...this.positionalArgs],
       scriptName: this.scriptName,
       lastBgJobId: this.lastBgJobId,
       getoptsPos: this.getoptsPos,
       getoptsOptind: this.getoptsOptind,
+      shopts: { ...this.shopts },
+      aliases: { ...this.aliases },
+      umask: this.umask,
+      execStdout: this.execStdout,
+      execStdoutAppend: this.execStdoutAppend,
+      execStderr: this.execStderr,
+      execStderrAppend: this.execStderrAppend,
+      execStdin: this.execStdin,
+      execOpened: new Set(this.execOpened),
     }
   }
 
@@ -391,12 +465,22 @@ export class Session {
     this.sourceDepth = state.sourceDepth
     this.vars = state.vars
     this.functions = state.functions
+    this.readonlyFunctions = state.readonlyFunctions
     this.shellOptions = state.shellOptions
     this.positionalArgs = state.positionalArgs
     this.scriptName = state.scriptName
     this.lastBgJobId = state.lastBgJobId
     this.getoptsPos = state.getoptsPos
     this.getoptsOptind = state.getoptsOptind
+    this.shopts = state.shopts
+    this.aliases = state.aliases
+    this.umask = state.umask
+    this.execStdout = state.execStdout
+    this.execStdoutAppend = state.execStdoutAppend
+    this.execStderr = state.execStderr
+    this.execStderrAppend = state.execStderrAppend
+    this.execStdin = state.execStdin
+    this.execOpened = state.execOpened
   }
 
   /**

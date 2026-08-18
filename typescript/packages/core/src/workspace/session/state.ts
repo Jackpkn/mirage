@@ -14,13 +14,16 @@
 
 import type { SessionView } from '../../ops/types.ts'
 import { PolicyDenied, preSessionGate, type Policies } from '../../policy/index.ts'
-import { arrayValues, type ShellArray } from '../../shell/array.ts'
+import { evaluateArith } from '../../shell/arith.ts'
+import { arrayExtent, arrayGet, arrayHas, arrayValues, type ShellArray } from '../../shell/array.ts'
+import { ArithError } from '../../shell/errors.ts'
+import type { ElementOps } from '../../shell/types.ts'
 import { varHidden } from '../../utils/hidden.ts'
 import { compareCodePoints } from '../../utils/sort.ts'
 import { ReadonlyVariableError } from './errors.ts'
 import { ownRecord, sessionEntry, setSessionEntry } from './session.ts'
 import type { ShellValue } from '../../shell/variable.ts'
-import { makeVar, VarAttr, withAttr, withValue } from '../../shell/variable.ts'
+import { coerceValue, makeVar, VarAttr, withAttr, withValue } from '../../shell/variable.ts'
 import type { Session } from './session.ts'
 
 /**
@@ -73,12 +76,46 @@ export function exportedNames(session: Session): string[] {
   return out.sort(compareCodePoints)
 }
 
+/**
+ * The name a `declare -n` reference points at, null otherwise. Null
+ * also for a reference declared but not yet aimed (`declare -n r`
+ * before `r=v`): bash treats the first assignment as naming the target,
+ * so until then it stands for nothing.
+ */
+export function namerefTarget(session: Session, name: string): string | null {
+  const v = sessionEntry(session.vars, name)
+  if (!v?.attrs.has(VarAttr.Nameref)) return null
+  return typeof v.value === 'string' && v.value ? v.value : null
+}
+
+/**
+ * The variable a name stands for, following `declare -n` chains. A name
+ * that is not a reference is its own answer. A chain that comes back to
+ * itself (`declare -n a=b; declare -n b=a`) is bash's circular name
+ * reference, read as unset: it resolves to the empty name, which no
+ * record has, so a reader sees unset and a writer falls back to the
+ * reference's own record. The warning line is the one part not
+ * reproduced.
+ */
+export function deref(session: Session, name: string): string {
+  let current = name
+  const seen = new Set<string>()
+  for (;;) {
+    const target = namerefTarget(session, current)
+    if (target === null) return current
+    if (seen.has(current)) return ''
+    seen.add(current)
+    current = target
+  }
+}
+
 /** The variable's value, null when unset or hidden. Sync on purpose:
  * `$X` expansion is the hot path, so a read stays a record lookup plus
- * the hidden check. */
+ * the hidden check. A name reference reads its target. */
 export function envGet(session: Session, name: string): string | null {
-  if (varHidden(session.hiddenVars, name)) return null
-  const v = sessionEntry(session.vars, name)
+  const resolved = deref(session, name)
+  if (varHidden(session.hiddenVars, resolved)) return null
+  const v = sessionEntry(session.vars, resolved)
   return v !== undefined && typeof v.value === 'string' ? v.value : null
 }
 
@@ -90,8 +127,9 @@ export function envGet(session: Session, name: string): string | null {
  * would leak it.
  */
 function envIsReadonly(session: Session, name: string): boolean {
-  if (varHidden(session.hiddenVars, name)) return false
-  const v = sessionEntry(session.vars, name)
+  const resolved = deref(session, name)
+  if (varHidden(session.hiddenVars, resolved)) return false
+  const v = sessionEntry(session.vars, resolved)
   return v?.attrs.has(VarAttr.Readonly) ?? false
 }
 
@@ -142,6 +180,28 @@ export function visibleArrays(session: Session): Record<string, ShellArray> {
 }
 
 /**
+ * The associative arrays a reader tier should resolve names against.
+ *
+ * The third sibling beside `visibleEnv` and `visibleArrays`, for the
+ * same reason both exist: the embedder can seed a hidden name with any
+ * value shape, so every reader tier filters the same way.
+ */
+export function visibleAssocs(session: Session): Record<string, Record<string, string>> {
+  const out = ownRecord<Record<string, string>>()
+  for (const [name, v] of Object.entries(session.vars)) {
+    if (
+      v.value !== null &&
+      typeof v.value === 'object' &&
+      !Array.isArray(v.value) &&
+      !varHidden(session.hiddenVars, name)
+    ) {
+      out[name] = v.value
+    }
+  }
+  return out
+}
+
+/**
  * Write one variable through the session plane's gate.
  *
  * General over variable shapes: a string stores a scalar, a ShellArray
@@ -170,6 +230,115 @@ export function visibleArrays(session: Session): Record<string, ShellArray> {
  * gaslight the writer; refuse loudly instead, the vars twin of EACCES
  * on a create into hidden path space.
  */
+/**
+ * Remove one surrounding quote pair from an associative subscript.
+ *
+ * An arithmetic reference carries its subscript verbatim, so `m["x"]`
+ * arrives with the quotes bash would have removed; one layer comes off
+ * and anything else is the key itself.
+ */
+export function stripKeyQuotes(text: string): string {
+  const first = text.charAt(0)
+  if (
+    text.length >= 2 &&
+    first === text.charAt(text.length - 1) &&
+    (first === '"' || first === "'")
+  ) {
+    return text.slice(1, -1)
+  }
+  return text
+}
+
+/**
+ * Resolve an indexed subscript in arithmetic context.
+ *
+ * bash evaluates indexed subscripts as arithmetic (`a[i+1]`); an
+ * unresolvable expression indexes element 0, mirroring bash's
+ * unset-name-is-zero arithmetic rule.
+ */
+export function elementIndex(
+  subscript: string,
+  env: Readonly<Record<string, string>>,
+  elements: ElementOps | null = null,
+): number {
+  const trimmed = subscript.trim()
+  if (/^-?\d+$/.test(trimmed)) return Number(trimmed)
+  try {
+    return Number(evaluateArith(subscript, env, 0, elements).value)
+  } catch (error) {
+    if (error instanceof ArithError) return 0
+    throw error
+  }
+}
+
+/**
+ * The `ElementOps` implementation bound to one session.
+ *
+ * A class rather than closures because the resolver recurses: an
+ * indexed subscript is arithmetic and may itself hold an element
+ * reference, so `resolve` hands the evaluator the same pair of
+ * callbacks it is one of. It lives beside the other reader projections
+ * because the session door needs it too: the `-i` coercion evaluates
+ * `n=a[1]+1` at the write, and a resolver that imported the door would
+ * close a cycle.
+ */
+class SessionElements implements ElementOps {
+  constructor(private readonly session: Session) {}
+
+  resolve(name: string, subscript: string, env: Readonly<Record<string, string>>): string {
+    if (visibleAssocs(this.session)[name] !== undefined) {
+      return stripKeyQuotes(subscript)
+    }
+    let idx = elementIndex(subscript, env, sessionElements(this.session))
+    if (idx < 0) {
+      const arr = visibleArrays(this.session)[name]
+      if (arr !== undefined) idx += arrayExtent(arr)
+      else if (envGet(this.session, name) !== null) idx += 1
+      if (idx < 0) throw new ArithError(`${name}[${subscript}]: bad array subscript`)
+    }
+    return String(idx)
+  }
+
+  read(name: string, key: string): string | null {
+    const amap = visibleAssocs(this.session)[name]
+    if (amap !== undefined) return amap[key] ?? null
+    const arr = visibleArrays(this.session)[name]
+    const idx = Number(key)
+    if (arr === undefined) {
+      const scalar = envGet(this.session, name)
+      if (scalar === null) return null
+      return idx === 0 ? scalar : null
+    }
+    return arrayHas(arr, idx) ? arrayGet(arr, idx) : null
+  }
+}
+
+/** Element callbacks bound to one session, for `evaluateArith`. */
+export function sessionElements(session: Session): ElementOps {
+  return new SessionElements(session)
+}
+
+/**
+ * The `-i` coercion: evaluate the incoming text as arithmetic.
+ *
+ * Reads resolve against the visible env, so `n=x+1` sees `x`, and
+ * element references resolve through the session's resolver, so
+ * `n=a[1]+1` and `n=m[k]+1` see the element; an unresolvable name is 0
+ * (`n=abc` stores `0`), which is the arithmetic rule, not a refusal. A
+ * malformed expression throws ArithError with the offending text led,
+ * which is how every caller voices it (`bash: 1+: syntax error: operand
+ * expected`), so it is spelled once here rather than at each of the
+ * sites that catch it.
+ */
+function integerText(session: Session, text: string): string {
+  try {
+    return evaluateArith(text, visibleEnv(session), 0, sessionElements(session)).value.toString()
+  } catch (err) {
+    if (err instanceof ArithError) throw new ArithError(`${text}: ${err.message}`)
+    throw err
+  }
+}
+
 export function ensureVarVisible(session: Session, name: string): void {
   if (varHidden(session.hiddenVars, name)) {
     throw new PolicyDenied(`${name}: permission denied`, name)
@@ -180,13 +349,40 @@ async function setVar(
   session: Session,
   policies: Policies | null,
   name: string,
-  value: string | ShellArray,
+  value: ShellValue,
+  followRef = true,
 ): Promise<void> {
+  if (followRef) name = deref(session, name) || name
   ensureVarVisible(session, name)
   if (envIsReadonly(session, name)) {
     throw new ReadonlyVariableError(name)
   }
-  const rendered = typeof value === 'string' ? value : arrayValues(value).join(' ')
+  // Attributes belong to the name, not to the value, so a plain
+  // assignment keeps them: `declare -i n; n=3` stays an integer. The old
+  // two-container store had to remember to evict the name from whichever
+  // container it was not landing in; one record cannot disagree with
+  // itself that way.
+  const existing = sessionEntry(session.vars, name)
+  // The value-shaping attributes (`-i -l -u`) apply here, at the write,
+  // which is where bash applies them: `declare -l s; s=ABC` stores `abc`,
+  // so every reader agrees without per-read work. `-i` evaluates against
+  // the visible env, and a bad expression throws the arithmetic error
+  // as bash does. Coercion runs before the gate so a rule judges the
+  // value that will land: `declare -l role; role=ADMIN` stores `admin`,
+  // and a rule refusing `admin` must see that, not the raw text.
+  const shaped =
+    existing !== undefined && existing.attrs.size > 0
+      ? coerceValue(value, existing.attrs, (text) => integerText(session, text))
+      : value
+  const rendered =
+    typeof shaped === 'string'
+      ? shaped
+      : Array.isArray(shaped)
+        ? arrayValues(shaped).join(' ')
+        : Object.keys(shaped)
+            .sort(compareCodePoints)
+            .map((k) => shaped[k])
+            .join(' ')
   await preSessionGate(policies, {
     plane: 'env',
     verb: 'set',
@@ -194,13 +390,7 @@ async function setVar(
     value: rendered,
     sessionId: session.sessionId,
   })
-  // Attributes belong to the name, not to the value, so a plain
-  // assignment keeps them: `declare -i n; n=3` stays an integer. The old
-  // two-container store had to remember to evict the name from whichever
-  // container it was not landing in; one record cannot disagree with
-  // itself that way.
-  const existing = sessionEntry(session.vars, name)
-  let stored = existing === undefined ? makeVar(value) : withValue(existing, value)
+  let stored = existing === undefined ? makeVar(shaped) : withValue(existing, shaped)
   // `set -a` marks every name assigned *while it is on*, which is why
   // it is read here at write time rather than applied to the session in
   // bulk when the option flips: `B=1; set -a; C=2; set +a; D=3` exports
@@ -219,7 +409,13 @@ async function setVar(
  * see. Throws ReadonlyVariableError when the name is readonly,
  * PolicyDenied when a preSession policy refuses the write.
  */
-async function unsetVar(session: Session, policies: Policies | null, name: string): Promise<void> {
+async function unsetVar(
+  session: Session,
+  policies: Policies | null,
+  name: string,
+  followRef = true,
+): Promise<void> {
+  if (followRef) name = deref(session, name) || name
   if (varHidden(session.hiddenVars, name)) return
   if (envIsReadonly(session, name)) {
     throw new ReadonlyVariableError(name)
@@ -305,6 +501,9 @@ async function markVar(
   attr: VarAttr | null,
   on: boolean,
 ): Promise<void> {
+  // `readonly r` and `export r` on a reference mark what it points at;
+  // the nameref attribute itself belongs to the reference's own record.
+  if (attr !== VarAttr.Nameref) name = deref(session, name) || name
   ensureVarVisible(session, name)
   await preSessionGate(policies, {
     plane: 'env',
@@ -320,8 +519,8 @@ export function sessionView(session: Session, policies: Policies | null = null):
   return {
     get: (name) => envGet(session, name),
     snapshot: () => envSnapshot(session),
-    set: (name, value) => setVar(session, policies, name, value),
-    unset: (name) => unsetVar(session, policies, name),
+    set: (name, value, followRef = true) => setVar(session, policies, name, value, followRef),
+    unset: (name, followRef = true) => unsetVar(session, policies, name, followRef),
     mark: (name, attr, on) => markVar(session, policies, name, attr, on),
     isReadonly: (name) => envIsReadonly(session, name),
   }

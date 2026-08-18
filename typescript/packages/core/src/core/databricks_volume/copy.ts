@@ -17,7 +17,7 @@ import { invalidateAfterUnlink, invalidateAncestors } from '../../cache/context.
 import type { IndexCacheStore } from '../../cache/index/store.ts'
 import { FileType, type PathSpec } from '../../types.ts'
 import { rstripSlash } from '../../utils/slash.ts'
-import { dbxFetch } from './_client.ts'
+import { dbxFetch } from './client.ts'
 import { ensurePathSpec } from './_helpers.ts'
 import { isADirectoryError } from './errors.ts'
 import { backendPath } from './path.ts'

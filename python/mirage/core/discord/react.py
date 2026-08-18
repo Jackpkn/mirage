@@ -14,7 +14,7 @@
 
 from urllib.parse import quote
 
-from mirage.core.discord._client import discord_put
+from mirage.core.discord.client import discord_put
 from mirage.core.discord.config import DiscordConfig
 
 

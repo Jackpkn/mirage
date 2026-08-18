@@ -22,8 +22,8 @@ from mirage.commands.cli.builtin.ntn.util import (compact_json, first_text,
 from mirage.commands.cli.types import CLIInvocation
 from mirage.commands.errors import UsageError
 from mirage.commands.spec.types import FlagView
-from mirage.core.notion._client import (notion_delete, notion_get,
-                                        notion_patch, notion_post, notion_put)
+from mirage.core.notion.client import (notion_delete, notion_get, notion_patch,
+                                       notion_post, notion_put)
 from mirage.core.notion.config import NotionConfig
 from mirage.io.stream import yield_bytes
 from mirage.io.types import ByteSource, IOResult, materialize

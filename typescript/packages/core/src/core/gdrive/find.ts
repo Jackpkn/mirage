@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import type { GDriveAccessor } from '../../accessor/gdrive.ts'
-import { buildTree, emitStartPath, keep, startBasename } from '../../commands/builtin/findEval.ts'
+import { buildTree, emitStartPath, keep, startBasename } from '../../commands/builtin/find_eval.ts'
 import type { FindOptions } from '../../resource/base.ts'
 import type { PathSpec } from '../../types.ts'
 import { isFolder, resolveKey } from './resolve.ts'

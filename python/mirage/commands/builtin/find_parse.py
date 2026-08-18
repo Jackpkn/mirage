@@ -28,6 +28,7 @@ _VALUE_PREDICATES = frozenset({
     "-mtime",
     "-maxdepth",
     "-mindepth",
+    "-printf",
 })
 
 _BARE_PREDICATES = frozenset({
@@ -67,6 +68,7 @@ class FindExpr:
     mtime_min: float | None = None
     mtime_max: float | None = None
     uses_empty: bool = False
+    printf: str | None = None
 
 
 @dataclass
@@ -159,6 +161,14 @@ def _parse_primary(state: _State) -> PredNode:
             return Path(value)
         if tok == "-type":
             return _type_node(value)
+        if tok == "-printf":
+            # An action, not a test: it always matches, replaces the
+            # default -print rendering, and one format applies to every
+            # row (GNU evaluates actions per expression position, which
+            # the flat window cannot express; a single trailing -printf,
+            # the way agents write it, renders identically).
+            state.expr.printf = value
+            return TrueNode()
         if tok == "-maxdepth":
             state.expr.maxdepth = _int_arg(value, "-maxdepth")
             return TrueNode()

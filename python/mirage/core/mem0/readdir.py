@@ -12,19 +12,13 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import json
-from typing import Any
-
 from mirage.accessor.mem0 import Mem0Accessor
 from mirage.cache.index import NULL_INDEX, IndexCacheStore, IndexEntry
-from mirage.core.mem0._client import get_all_memories
-from mirage.core.mem0.scope import ScopeLevel, detect
+from mirage.core.mem0.client import get_all_memories
+from mirage.core.mem0.scope import ScopeLevel, detect_scope
+from mirage.core.render.json import json_bytes
 from mirage.types import PathSpec
 from mirage.utils.errors import enoent, enotdir
-
-
-def _json_bytes(data: dict[str, Any]) -> bytes:
-    return json.dumps(data, ensure_ascii=False, indent=2).encode()
 
 
 async def readdir(
@@ -39,7 +33,7 @@ async def readdir(
         path (PathSpec): the directory path (only the mount root is a dir).
         index (IndexCacheStore): index cache.
     """
-    scope = detect(path)
+    scope = detect_scope(path)
     if scope.level == ScopeLevel.INVALID:
         raise enoent(path)
     if scope.level != ScopeLevel.ROOT:
@@ -58,7 +52,7 @@ async def readdir(
     entries: list[tuple[str, IndexEntry]] = []
     names: list[str] = []
     for m in memories:
-        body = _json_bytes(m)
+        body = json_bytes(m)
         memory_id = str(m["id"])
         filename = f"{memory_id}.json"
         entry = IndexEntry(

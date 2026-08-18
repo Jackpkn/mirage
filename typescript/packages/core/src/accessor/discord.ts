@@ -14,7 +14,7 @@
 
 import { Accessor } from './base.ts'
 import type { Resource } from '../resource/base.ts'
-import type { DiscordTransport } from '../core/discord/_client.ts'
+import type { DiscordTransport } from '../core/discord/client.ts'
 
 export class DiscordAccessor extends Accessor {
   constructor(public readonly transport: DiscordTransport) {

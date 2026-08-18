@@ -18,7 +18,7 @@ import { DiscordAccessor } from '../../accessor/discord.ts'
 import { IndexEntry } from '../../cache/index/config.ts'
 import { RAMIndexCacheStore } from '../../cache/index/ram.ts'
 import { PathSpec } from '../../types.ts'
-import type { DiscordMethod, DiscordResponse, DiscordTransport } from './_client.ts'
+import type { DiscordMethod, DiscordResponse, DiscordTransport } from './client.ts'
 import { dateRangeDescending, readdir, snowflakeToDate } from './readdir.ts'
 import { historyJsonlBytes, memberJsonBytes } from './render.ts'
 

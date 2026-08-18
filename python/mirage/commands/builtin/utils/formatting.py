@@ -21,15 +21,43 @@ from mirage.commands.builtin.utils.constants import (DEFAULT_MODES,
 from mirage.types import LINK_TARGET_KEY, FileStat, FileType
 
 
-def _human_size(n: int) -> str:
-    units = ("B", "K", "M", "G", "T")
-    value = float(n)
-    i = 0
-    while value >= 1024 and i < len(units) - 1:
-        value /= 1024
+def human_scaled(n: int, base: int, units: tuple[str, ...]) -> str:
+    """GNU's ``human_readable`` rounding, shared by ``-h`` and ``-H``.
+
+    Three rules, none of which fall out of a plain divide-and-format.
+    Below one unit GNU prints the count alone -- ``24``, never ``24B``.
+    Above it the value is rounded *up* to the precision shown, so 1025
+    bytes is ``1.1K`` rather than ``1.0K``. And the decimal is dropped
+    once the scaled value reaches ten, giving ``10K`` rather than
+    ``10.0K``. Rounding up can carry past the base (1048575 bytes ceils
+    to 1024K, which GNU shows as ``1.0M``), so the unit is re-chosen
+    after rounding instead of once up front.
+
+    Args:
+        n (int): byte count.
+        base (int): 1024 for ``-h``, 1000 for ``-H``.
+        units (tuple[str, ...]): suffixes indexed by power; index 0 is
+            unused because a sub-unit count carries no suffix at all.
+
+    Returns:
+        str: the size as GNU would print it.
+    """
+    if n < base:
+        return str(n)
+    i, divisor = 1, base
+    while True:
+        tenths = -(-n * 10 // divisor)
+        if tenths < 100:
+            return f"{tenths // 10}.{tenths % 10}{units[i]}"
+        whole = -(-n // divisor)
+        if whole < base or i == len(units) - 1:
+            return f"{whole}{units[i]}"
         i += 1
-    text = str(round(value)) if i == 0 else f"{value:.1f}"
-    return f"{text}{units[i]}"
+        divisor *= base
+
+
+def _human_size(n: int) -> str:
+    return human_scaled(n, 1024, ("", "K", "M", "G", "T", "P", "E"))
 
 
 def _perm_triplet(bits: int, special: str | None = None) -> str:

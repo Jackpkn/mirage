@@ -16,7 +16,7 @@ import { describe, expect, it } from 'vitest'
 import { OpsRegistry } from '@struktoai/mirage-core/ops/registry'
 import { RAMResource } from '@struktoai/mirage-core/resource/ram/ram'
 import { MountMode } from '@struktoai/mirage-core/types'
-import { Workspace } from '@struktoai/mirage-core/workspace/workspace'
+import { Workspace } from '@struktoai/mirage-core/workspace/workspace/workspace'
 import { MIRAGE_SYSTEM_PROMPT, buildSystemPrompt } from './prompt.ts'
 
 function mkWs(): Workspace {

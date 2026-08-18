@@ -18,7 +18,7 @@ import type { QdrantAccessor } from '../../accessor/qdrant.ts'
 import { RAMIndexCacheStore } from '../../cache/index/ram.ts'
 import { resolveQdrantConfig } from '../../resource/qdrant/config.ts'
 import { PathSpec } from '../../types.ts'
-import type { QdrantRow } from './_client.ts'
+import type { QdrantRow } from './client.ts'
 import { readdir } from './readdir.ts'
 import { blobBytes, renderJson, renderText } from './render.ts'
 

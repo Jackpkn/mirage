@@ -16,7 +16,7 @@ import re
 
 from mirage.accessor.gridfs import GridFSAccessor
 from mirage.cache.index import NULL_INDEX, IndexCacheStore, ResourceType
-from mirage.core.gridfs._client import _key, files_coll, latest_file
+from mirage.core.gridfs.client import _key, files_coll, latest_file
 from mirage.core.timeutil import to_iso_z
 from mirage.types import FileStat, FileType, PathSpec
 from mirage.utils.errors import enoent

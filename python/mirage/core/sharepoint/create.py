@@ -2,9 +2,8 @@ import time
 
 from mirage.accessor.sharepoint import SharePointAccessor
 from mirage.cache.context import invalidate_after_write
-from mirage.core.sharepoint._client import (graph_put_bytes, item_url,
-                                            split_path)
-from mirage.core.sharepoint._resolver import resolve
+from mirage.core.sharepoint.client import graph_put_bytes, item_url, split_path
+from mirage.core.sharepoint.resolve import resolve
 from mirage.observe.context import record
 from mirage.types import PathSpec
 from mirage.utils.errors import enoent

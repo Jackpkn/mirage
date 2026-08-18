@@ -17,7 +17,7 @@ import type { IndexCacheStore } from '../../cache/index/store.ts'
 import { PathSpec } from '../../types.ts'
 import { eisdir } from '../../utils/errors.ts'
 import { sliceWindow } from '../../utils/ranges.ts'
-import { getDocumentSegments, iterSegmentPages } from './_client.ts'
+import { getDocumentSegments, iterSegmentPages } from './client.ts'
 import { resolvePath, type ResolvedDifyPath } from './path.ts'
 
 const ENC = new TextEncoder()

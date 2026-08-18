@@ -14,7 +14,7 @@
 
 import type { IndexCacheStore } from '../../cache/index/store.ts'
 import type { PathSpec } from '../../types.ts'
-import type { NotionTransport } from './_client.ts'
+import type { NotionTransport } from './client.ts'
 import { normalizeDataSource, normalizeDatabase, normalizePage, toJsonBytes } from './normalize.ts'
 import { getBlockTree, getDataSource, getDatabase, getPage } from './pages.ts'
 import { parseSegment } from './pathing.ts'

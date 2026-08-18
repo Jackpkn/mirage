@@ -12,6 +12,7 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any, TypeAlias
@@ -19,6 +20,63 @@ from typing import Any, TypeAlias
 import tree_sitter
 
 FunctionBody: TypeAlias = list[tree_sitter.Node]
+
+
+@dataclass(frozen=True, slots=True)
+class ElementOps:
+    """Array-element callbacks the arithmetic evaluator resolves through.
+
+    The evaluator owns no session, so a caller that wants ``a[i]`` and
+    ``m[key]`` to mean anything injects these two facts. The split is
+    what keeps subscript semantics out of the evaluator: whether the
+    subscript text is an arithmetic expression (indexed) or a literal
+    key (associative) is the variable's to answer, and only the session
+    knows the variable.
+
+    Args:
+        resolve (Callable[[str, str, Mapping[str, str]], str]): canonical
+            key for one reference: the evaluated index for an indexed
+            name, the literal (quote-stripped) text for an associative
+            one. The mapping is the evaluator's current view, pending
+            assignments included, so ``i=2, a[i]`` reads the new ``i``.
+        read (Callable[[str, str], str | None]): the element's stored
+            text, None when the element is unset.
+    """
+    resolve: Callable[[str, str, Mapping[str, str]], str]
+    read: Callable[[str, str], str | None]
+
+
+@dataclass(frozen=True, slots=True)
+class ArithWrite:
+    """One assignment an arithmetic evaluation produced.
+
+    Args:
+        name (str): the variable's name.
+        key (str | None): the canonical subscript ``ElementOps.resolve``
+            gave, or None for a bare name (which lands as element 0 of
+            an array, or the scalar itself).
+        value (str): the stored decimal text.
+    """
+    name: str
+    key: str | None
+    value: str
+
+
+@dataclass(frozen=True, slots=True)
+class ArithResult:
+    """What one arithmetic evaluation produced.
+
+    Args:
+        value (int): the expression's value.
+        writes (tuple[ArithWrite, ...]): the assignments made, one per
+            target, in the order of each target's last write, for the
+            caller to land through the session door. Bare and
+            subscripted targets share the one sequence, because a bare
+            name aliases element 0 and ``((a[0]=1, a=2))`` has to
+            leave 2.
+    """
+    value: int
+    writes: tuple[ArithWrite, ...] = ()
 
 
 class NodeType(StrEnum):
@@ -201,6 +259,81 @@ SET_OPTION_NAMES = frozenset({
     "xtrace",
 })
 
+# Every name GNU's `shopt` accepts and what it reads as before anything
+# sets it, pinned from `bash -c shopt` on debian:stable-slim (5.2.37), in
+# the order bash lists them (which is alphabetical except that
+# `assoc_expand_once` follows `autocd`). Kept apart from SET_OPTION_NAMES
+# because bash keeps two vocabularies: `set -o` and `shopt`, with
+# `shopt -o` as the one bridge. mirage acts on the glob ones and on
+# `expand_aliases`, and stores the rest so a listing prints every option
+# bash knows and `shopt -q` answers the same way it would there.
+SHOPT_DEFAULTS: dict[str, bool] = {
+    "autocd": False,
+    "assoc_expand_once": False,
+    "cdable_vars": False,
+    "cdspell": False,
+    "checkhash": False,
+    "checkjobs": False,
+    "checkwinsize": True,
+    "cmdhist": True,
+    "compat31": False,
+    "compat32": False,
+    "compat40": False,
+    "compat41": False,
+    "compat42": False,
+    "compat43": False,
+    "compat44": False,
+    "complete_fullquote": True,
+    "direxpand": False,
+    "dirspell": False,
+    "dotglob": False,
+    "execfail": False,
+    "expand_aliases": False,
+    "extdebug": False,
+    "extglob": False,
+    "extquote": True,
+    "failglob": False,
+    "force_fignore": True,
+    "globasciiranges": True,
+    "globskipdots": True,
+    "globstar": False,
+    "gnu_errfmt": False,
+    "histappend": False,
+    "histreedit": False,
+    "histverify": False,
+    "hostcomplete": True,
+    "huponexit": False,
+    "inherit_errexit": False,
+    "interactive_comments": True,
+    "lastpipe": False,
+    "lithist": False,
+    "localvar_inherit": False,
+    "localvar_unset": False,
+    "login_shell": False,
+    "mailwarn": False,
+    "no_empty_cmd_completion": False,
+    "nocaseglob": False,
+    "nocasematch": False,
+    "noexpand_translation": False,
+    "nullglob": False,
+    "patsub_replacement": True,
+    "progcomp": True,
+    "progcomp_alias": False,
+    "promptvars": True,
+    "restricted_shell": False,
+    "shift_verbose": False,
+    "sourcepath": True,
+    "varredir_close": False,
+    "xpg_echo": False,
+}
+
+# `shopt` names mirage refuses to turn on rather than store: `extglob`
+# changes what the *parser* accepts (`!(a).txt` is a pattern, not a
+# subshell), and mirage's grammar has no such mode, so a stored `on`
+# would promise a syntax that still fails to parse. Refusing is the
+# honest answer until the parser learns it.
+SHOPT_UNSUPPORTED = frozenset({"extglob"})
+
 # What each option reads as before anything sets it, pinned from
 # `bash -c 'set -o'` on debian:stable-slim (5.2.37). Only three are on,
 # and all three are on for a non-interactive shell too, so this is the
@@ -289,9 +422,17 @@ class ShellBuiltin(StrEnum):
     DOT = "."
     EVAL = "eval"
     READ = "read"
+    MAPFILE = "mapfile"
+    READARRAY = "readarray"
     SHIFT = "shift"
     GETOPTS = "getopts"
     TRAP = "trap"
+    SHOPT = "shopt"
+    UMASK = "umask"
+    ALIAS = "alias"
+    UNALIAS = "unalias"
+    LET = "let"
+    EXEC = "exec"
     TEST = "test"
     BRACKET = "["
     DOUBLE_BRACKET = "[["
@@ -300,6 +441,7 @@ class ShellBuiltin(StrEnum):
     FG = "fg"
     KILL = "kill"
     JOBS = "jobs"
+    DISOWN = "disown"
     PS = "ps"
     # output / text processing (no filesystem)
     ECHO = "echo"

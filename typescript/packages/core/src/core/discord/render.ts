@@ -12,17 +12,12 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-const encoder = new TextEncoder()
+import { compactJsonBytes, jsonlBytes } from '../render/json.ts'
 
 export function historyJsonlBytes(messages: unknown[]): Uint8Array {
-  // Single renderer for a channel-day: read() and the readdir-time sizing
-  // must produce the same bytes for the same messages, so the advertised
-  // size is exact by construction.
-  if (messages.length === 0) return new Uint8Array()
-  const lines = messages.map((m) => JSON.stringify(m))
-  return encoder.encode(lines.join('\n') + '\n')
+  return jsonlBytes(messages)
 }
 
 export function memberJsonBytes(member: unknown): Uint8Array {
-  return encoder.encode(JSON.stringify(member))
+  return compactJsonBytes(member)
 }

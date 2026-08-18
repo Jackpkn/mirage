@@ -24,7 +24,7 @@ import {
   s3Prefix,
   withClient,
   type S3SendClient,
-} from './_client.ts'
+} from './client.ts'
 import { exists } from './exists.ts'
 
 const DELETE_BATCH = 1000

@@ -16,7 +16,7 @@ import orjson
 
 from mirage.accessor.postgres import PostgresAccessor
 from mirage.cache.index import NULL_INDEX, IndexCacheStore
-from mirage.core.postgres import _client
+from mirage.core.postgres import client
 from mirage.core.postgres._schema_json import (build_database_json,
                                                build_entity_schema_json)
 from mirage.core.postgres.scope import detect_scope
@@ -77,7 +77,7 @@ async def _read_rows(accessor: PostgresAccessor, schema: str, entity: str, *,
     if limit is None and offset is None:
         pool = await accessor.pool()
         async with pool.acquire() as conn:
-            rows, width = await _client.estimate_size(conn, schema, entity)
+            rows, width = await client.estimate_size(conn, schema, entity)
         if (rows > cfg.max_read_rows
                 or rows * max(width, 1) > cfg.max_read_bytes):
             raise ValueError(
@@ -94,11 +94,11 @@ async def _read_rows(accessor: PostgresAccessor, schema: str, entity: str, *,
 
     pool = await accessor.pool()
     async with pool.acquire() as conn:
-        data = await _client.fetch_rows(conn,
-                                        schema,
-                                        entity,
-                                        limit=effective_limit,
-                                        offset=effective_offset)
+        data = await client.fetch_rows(conn,
+                                       schema,
+                                       entity,
+                                       limit=effective_limit,
+                                       offset=effective_offset)
     if not data:
         return b""
     lines = [orjson.dumps(r, default=str).decode() for r in data]

@@ -13,15 +13,15 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { describe, expect, it, vi } from 'vitest'
-import type * as ClientModule from '../google/_client.ts'
+import type * as ClientModule from '../google/client.ts'
 
-vi.mock('../google/_client.ts', async () => {
-  const actual = await vi.importActual<typeof ClientModule>('../google/_client.ts')
+vi.mock('../google/client.ts', async () => {
+  const actual = await vi.importActual<typeof ClientModule>('../google/client.ts')
   return { ...actual, googleGet: vi.fn(), googleGetBytes: vi.fn() }
 })
 
-import type { TokenManager } from '../google/_client.ts'
-import { googleGet, googleGetBytes } from '../google/_client.ts'
+import type { TokenManager } from '../google/client.ts'
+import { googleGet, googleGetBytes } from '../google/client.ts'
 import { captureFileMetadata, downloadRevision, listRevisions } from './versions.ts'
 
 const TM = { config: { clientId: 'cid', refreshToken: 'rt' } } as TokenManager

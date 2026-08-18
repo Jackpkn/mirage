@@ -1,0 +1,140 @@
+{
+  "cases": [
+    {
+      "id": "sed_inplace_change",
+      "seq": 962310,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "mkdir -p /data/si && printf 'one\\ntwo\\n' > /data/si/f && sed -i 'c chg' /data/si/f && cat /data/si/f && rm -r /data/si",
+      "expect": {
+        "exit": 0,
+        "stdout": "chg\nchg\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "sed_inplace_insert",
+      "seq": 962311,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "mkdir -p /data/si2 && printf 'one\\ntwo\\nthree\\n' > /data/si2/f && sed -i '2i inserted' /data/si2/f && cat /data/si2/f && rm -r /data/si2",
+      "expect": {
+        "exit": 0,
+        "stdout": "one\ninserted\ntwo\nthree\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "sed_inplace_print_doubles",
+      "seq": 962312,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "mkdir -p /data/si3 && printf 'one\\ntwo\\n' > /data/si3/f && sed -i p /data/si3/f && cat /data/si3/f && rm -r /data/si3",
+      "expect": {
+        "exit": 0,
+        "stdout": "one\none\ntwo\ntwo\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "sed_inplace_quit_truncates",
+      "seq": 962313,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "mkdir -p /data/si4 && printf 'one\\ntwo\\nthree\\n' > /data/si4/f && sed -i 2q /data/si4/f && cat /data/si4/f && rm -r /data/si4",
+      "expect": {
+        "exit": 0,
+        "stdout": "one\ntwo\n",
+        "stderr": ""
+      }
+    }
+  ]
+}

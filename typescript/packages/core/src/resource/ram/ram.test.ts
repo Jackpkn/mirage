@@ -17,7 +17,7 @@ import type { Accessor } from '../../accessor/base.ts'
 import { mkdir as coreMkdir } from '../../core/ram/mkdir.ts'
 import { OpsRegistry } from '../../ops/registry.ts'
 import { FileType, MountMode, PathSpec, ResourceName } from '../../types.ts'
-import { Workspace } from '../../workspace/workspace.ts'
+import { Workspace } from '../../workspace/workspace/workspace.ts'
 import { RAMResource } from './ram.ts'
 
 function setup(): { ram: RAMResource; registry: OpsRegistry; ws: Workspace } {

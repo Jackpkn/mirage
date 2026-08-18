@@ -17,7 +17,7 @@ import {
   emitStartPath,
   keep,
   startBasename,
-} from '@struktoai/mirage-core/commands/builtin/findEval'
+} from '@struktoai/mirage-core/commands/builtin/find_eval'
 import type { FindOptions } from '@struktoai/mirage-core/resource/base'
 import type { PathSpec } from '@struktoai/mirage-core/types'
 import { rstripSlash } from '@struktoai/mirage-core/utils/slash'
@@ -31,7 +31,7 @@ import {
   prefixQuery,
   rawPathOf,
   stripKeyPrefix,
-} from './_client.ts'
+} from './client.ts'
 
 /**
  * Translate a find -name glob into a regex fragment matching one path

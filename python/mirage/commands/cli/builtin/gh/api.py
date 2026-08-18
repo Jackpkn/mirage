@@ -18,7 +18,7 @@ import re
 from mirage.commands.cli.builtin.gh.accessor import json_out, text_out
 from mirage.commands.cli.types import CLIInvocation
 from mirage.commands.spec.types import FlagView
-from mirage.core.github._client import github_request
+from mirage.core.github.client import github_request
 from mirage.core.github.config import GhConfig
 from mirage.core.github.placeholder import expand
 from mirage.core.jq import jq_eval

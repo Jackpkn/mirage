@@ -12,7 +12,8 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { sheetsBase, type TokenManager, googleHeaders } from '../google/_client.ts'
+import { apiRequest } from '../api/client.ts'
+import { sheetsBase, type TokenManager, googleHeaders } from '../google/client.ts'
 
 class SheetsApiError extends Error {
   readonly status: number
@@ -23,31 +24,35 @@ class SheetsApiError extends Error {
   }
 }
 
+function parseValues(valuesJson: string): unknown {
+  try {
+    return JSON.parse(valuesJson)
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    throw new Error(`Invalid JSON: ${msg}`)
+  }
+}
+
+function sheetsError(verb: string, url: string, response: Response, text: string): SheetsApiError {
+  return new SheetsApiError(
+    `Sheets ${verb} ${url} → ${String(response.status)} ${text}`,
+    response.status,
+  )
+}
+
 export async function appendValues(
   tm: TokenManager,
   spreadsheetId: string,
   range: string,
   valuesJson: string,
 ): Promise<unknown> {
-  let values: unknown
-  try {
-    values = JSON.parse(valuesJson)
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err)
-    throw new Error(`Invalid JSON: ${msg}`)
-  }
+  const values = parseValues(valuesJson)
   const url = `${sheetsBase(tm)}/spreadsheets/${spreadsheetId}/values/${range}:append?valueInputOption=USER_ENTERED`
-  const headers = await googleHeaders(tm)
-  const r = await fetch(url, {
-    method: 'POST',
-    headers: { ...headers, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ values }),
+  return apiRequest('POST', url, {
+    headers: { ...(await googleHeaders(tm)), 'Content-Type': 'application/json' },
+    json: { values },
+    errorOf: (response, text) => sheetsError('POST', url, response, text),
   })
-  if (!r.ok) {
-    const text = await r.text().catch(() => '')
-    throw new SheetsApiError(`Sheets POST ${url} → ${String(r.status)} ${text}`, r.status)
-  }
-  return r.json()
 }
 
 export async function updateValues(
@@ -56,23 +61,11 @@ export async function updateValues(
   range: string,
   valuesJson: string,
 ): Promise<unknown> {
-  let values: unknown
-  try {
-    values = JSON.parse(valuesJson)
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err)
-    throw new Error(`Invalid JSON: ${msg}`)
-  }
+  const values = parseValues(valuesJson)
   const url = `${sheetsBase(tm)}/spreadsheets/${spreadsheetId}/values/${range}?valueInputOption=USER_ENTERED`
-  const headers = await googleHeaders(tm)
-  const r = await fetch(url, {
-    method: 'PUT',
-    headers: { ...headers, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ values }),
+  return apiRequest('PUT', url, {
+    headers: { ...(await googleHeaders(tm)), 'Content-Type': 'application/json' },
+    json: { values },
+    errorOf: (response, text) => sheetsError('PUT', url, response, text),
   })
-  if (!r.ok) {
-    const text = await r.text().catch(() => '')
-    throw new SheetsApiError(`Sheets PUT ${url} → ${String(r.status)} ${text}`, r.status)
-  }
-  return r.json()
 }

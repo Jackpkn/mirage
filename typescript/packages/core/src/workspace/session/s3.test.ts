@@ -13,13 +13,13 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type * as s3ClientModule from '../../core/s3/_client.ts'
+import type * as s3ClientModule from '../../core/s3/client.ts'
 import type { S3Config } from '../../resource/s3/config.ts'
 import { FakeConditionalS3Client, currentFakeS3, installFakeS3 } from '../fixtures/s3_fake.ts'
 import { S3SessionStore } from './s3.ts'
 import type { SessionFields } from './store.ts'
 
-vi.mock('../../core/s3/_client.ts', async (importOriginal) => {
+vi.mock('../../core/s3/client.ts', async (importOriginal) => {
   const original = await importOriginal<typeof s3ClientModule>()
   const fake = await import('../fixtures/s3_fake.ts')
   return {

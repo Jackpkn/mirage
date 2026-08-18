@@ -1,3 +1,4 @@
+from mirage.accessor.dify import DifyAccessor
 from mirage.commands.builtin.dify.io import resolve_glob
 from mirage.commands.builtin.utils.paths import default_paths
 from mirage.commands.config import CommandOpts
@@ -18,7 +19,7 @@ def is_mount_root(path: PathSpec) -> bool:
 
 @command("search", resource="dify", spec=SPECS["search"])
 async def search(
-    accessor,
+    accessor: DifyAccessor,
     paths: list[PathSpec],
     texts: list[str],
     opts: CommandOpts,

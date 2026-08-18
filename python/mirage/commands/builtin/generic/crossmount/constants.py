@@ -19,9 +19,11 @@ STREAM_COMMANDS = frozenset(
 FANOUT_COMMANDS = frozenset({
     Cmd.GREP, Cmd.RG, Cmd.HEAD, Cmd.TAIL, Cmd.WC, Cmd.DU, Cmd.FILE, Cmd.MD5,
     Cmd.MD5SUM, Cmd.SHA1SUM, Cmd.SHA256SUM, Cmd.SHA384SUM, Cmd.SHA512SUM,
-    Cmd.STAT, Cmd.STRINGS, Cmd.TAC, Cmd.LS, Cmd.FIND, Cmd.RM, Cmd.RMDIR,
-    Cmd.UNLINK, Cmd.TOUCH, Cmd.MKDIR, Cmd.TEE
+    Cmd.STAT, Cmd.STRINGS, Cmd.TAC, Cmd.FIND, Cmd.RM, Cmd.RMDIR, Cmd.UNLINK,
+    Cmd.TOUCH, Cmd.MKDIR, Cmd.TEE
 })
-RELAY_COMMANDS = frozenset(
-    {Cmd.CP, Cmd.MV, Cmd.DIFF, Cmd.CMP, Cmd.PASTE, Cmd.COMM, Cmd.JOIN})
+RELAY_COMMANDS = frozenset({
+    Cmd.CP, Cmd.MV, Cmd.DIFF, Cmd.CMP, Cmd.PASTE, Cmd.COMM, Cmd.JOIN, Cmd.TAR,
+    Cmd.UNZIP, Cmd.LS
+})
 CROSS_MOUNT_COMMANDS = STREAM_COMMANDS | FANOUT_COMMANDS | RELAY_COMMANDS

@@ -12,15 +12,19 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from mirage.server.version.api import read_version, resolve_ref
 from mirage.server.version.state_tree import CATEGORIES, to_state
 from mirage.server.version.store import VersionStore
-from mirage.types import DriftPolicy, MountKey, ResourceStateKey, StateKey
+from mirage.types import DriftPolicy
 from mirage.utils.path import norm
 from mirage.workspace.snapshot import (apply_state_dict, install_fingerprints,
                                        to_state_dict)
+from mirage.workspace.snapshot.keys import MountKey, ResourceStateKey, StateKey
+
+if TYPE_CHECKING:
+    from mirage.workspace.workspace import Workspace
 
 
 def _selected_file(path: str, wanted: list[str]) -> bool:
@@ -52,13 +56,14 @@ def _merge_mount_files(live_mount: dict[str, Any], target_mount: dict[str,
 
 
 async def restore(
-        store: VersionStore,
-        ws,
-        ref,
-        *,
-        paths: list[str] | None = None,
-        categories: list[str] | None = None,
-        drift_policy: DriftPolicy = DriftPolicy.STRICT) -> dict[str, Any]:
+    store: VersionStore,
+    ws: "Workspace",
+    ref,
+    *,
+    paths: list[str] | None = None,
+    categories: list[str] | None = None,
+    drift_policy: DriftPolicy = DriftPolicy.STRICT,
+) -> dict[str, Any]:
     """Surgical restore: whole world, chosen categories, or chosen paths.
 
     Scope rules: no arguments = the whole world (checkout semantics);

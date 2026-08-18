@@ -189,10 +189,17 @@ class DuEntriesOp(Protocol):
 
 
 class ResolveGlobOp(Protocol):
+    """Glob resolution as the builders consume it.
+
+    Paths only, no text words: the dispatcher has split the command line
+    before a builder runs, and every backend resolver takes PathSpec.
+    The union this used to carry is the argv type (workspace/expand),
+    where a word really can be either, leaking one layer down.
+    """
 
     def __call__(self,
                  accessor: Any,
-                 paths: Sequence[str | PathSpec],
+                 paths: Sequence[PathSpec],
                  /,
                  index: IndexCacheStore = ...) -> Awaitable[list[PathSpec]]:
         ...

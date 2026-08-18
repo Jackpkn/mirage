@@ -18,7 +18,7 @@ import { describe, expect, it } from 'vitest'
 import { createShellParser } from '../shell/parse.ts'
 import { MountMode } from '../types.ts'
 import { RAMResource } from '../resource/ram/ram.ts'
-import { Workspace } from './workspace.ts'
+import { Workspace } from './workspace/workspace.ts'
 import { WorkspaceRunner } from './runner.ts'
 
 const require = createRequire(import.meta.url)

@@ -107,7 +107,7 @@ async def test_read_entity_schema_json_view_kind():
 async def test_read_rows_returns_jsonl():
     accessor = _accessor()
     rows = [{"id": 1, "name": "a"}, {"id": 2, "name": "b"}]
-    with patch("mirage.core.postgres.read._client") as mc:
+    with patch("mirage.core.postgres.read.client") as mc:
         mc.estimate_size = AsyncMock(return_value=(2, 80))
         mc.fetch_rows = AsyncMock(return_value=rows)
         out = await read(
@@ -123,7 +123,7 @@ async def test_read_rows_returns_jsonl():
 @pytest.mark.asyncio
 async def test_read_rows_too_many_rows_raises():
     accessor = _accessor(max_read_rows=100)
-    with patch("mirage.core.postgres.read._client") as mc:
+    with patch("mirage.core.postgres.read.client") as mc:
         mc.estimate_size = AsyncMock(return_value=(1_000_000, 50))
         with pytest.raises(ValueError, match="too large"):
             await read(
@@ -136,7 +136,7 @@ async def test_read_rows_too_many_rows_raises():
 @pytest.mark.asyncio
 async def test_read_rows_too_many_bytes_raises():
     accessor = _accessor(max_read_rows=10_000_000, max_read_bytes=1024)
-    with patch("mirage.core.postgres.read._client") as mc:
+    with patch("mirage.core.postgres.read.client") as mc:
         mc.estimate_size = AsyncMock(return_value=(100, 100))
         with pytest.raises(ValueError, match="too large"):
             await read(
@@ -150,7 +150,7 @@ async def test_read_rows_too_many_bytes_raises():
 async def test_read_rows_with_explicit_limit_bypasses_guard():
     accessor = _accessor(max_read_rows=10)
     rows = [{"id": i} for i in range(5)]
-    with patch("mirage.core.postgres.read._client") as mc:
+    with patch("mirage.core.postgres.read.client") as mc:
         mc.fetch_rows = AsyncMock(return_value=rows)
         out = await read(accessor,
                          PathSpec(
@@ -168,7 +168,7 @@ async def test_read_rows_with_explicit_limit_bypasses_guard():
 async def test_read_rows_with_only_offset_bypasses_guard():
     accessor = _accessor(max_read_rows=10)
     rows = [{"id": i} for i in range(3)]
-    with patch("mirage.core.postgres.read._client") as mc:
+    with patch("mirage.core.postgres.read.client") as mc:
         mc.fetch_rows = AsyncMock(return_value=rows)
         await read(accessor,
                    PathSpec(resource_path="public/tables/users/rows.jsonl",
@@ -181,7 +181,7 @@ async def test_read_rows_with_only_offset_bypasses_guard():
 @pytest.mark.asyncio
 async def test_read_rows_empty_returns_empty_bytes():
     accessor = _accessor()
-    with patch("mirage.core.postgres.read._client") as mc:
+    with patch("mirage.core.postgres.read.client") as mc:
         mc.estimate_size = AsyncMock(return_value=(0, 50))
         mc.fetch_rows = AsyncMock(return_value=[])
         out = await read(
@@ -207,7 +207,7 @@ async def test_read_invalid_path_raises():
 async def test_read_view_rows_uses_view_kind_in_error():
     """Error message references views/, not tables/, for a view path."""
     accessor = _accessor(max_read_rows=10)
-    with patch("mirage.core.postgres.read._client") as mc:
+    with patch("mirage.core.postgres.read.client") as mc:
         mc.estimate_size = AsyncMock(return_value=(10000, 100))
         with pytest.raises(ValueError, match="views/v1"):
             await read(
