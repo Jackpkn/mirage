@@ -141,3 +141,47 @@ describe('ensureDirPath', () => {
     await expect(ensureDirPath(dirs, '/data/spill')).rejects.toThrow('read-only mount')
   })
 })
+
+describe('SpillSink failure reporting', () => {
+  it('reports the failure that disabled it instead of swallowing it', async () => {
+    const seen: unknown[] = []
+    const sink = new SpillSink(
+      {
+        ensureDir: () => Promise.reject(new Error('no writable mount at /nope')),
+        write: () => Promise.resolve(),
+        append: () => Promise.resolve(),
+      },
+      '/nope',
+      'job-1',
+      (err) => seen.push(err),
+    )
+    await sink.ingest(Channel.STDOUT, new TextEncoder().encode('data'))
+    await sink.begin()
+    expect(seen).toHaveLength(1)
+    expect((seen[0] as Error).message).toContain('no writable mount')
+    expect(sink.stdoutPath).toBeUndefined()
+  })
+
+  it('stays quiet when the spill succeeds', async () => {
+    const seen: unknown[] = []
+    const written = new Map<string, Uint8Array>()
+    const sink = new SpillSink(
+      {
+        ensureDir: () => Promise.resolve(),
+        write: (path, bytes) => {
+          written.set(path, bytes)
+          return Promise.resolve()
+        },
+        append: () => Promise.resolve(),
+      },
+      '/tmp',
+      'job-2',
+      (err) => seen.push(err),
+    )
+    await sink.ingest(Channel.STDOUT, new TextEncoder().encode('data'))
+    await sink.begin()
+    expect(seen).toHaveLength(0)
+    expect(sink.stdoutPath).toBe('/tmp/job-2.stdout')
+    expect(written.get('/tmp/job-2.stdout')).toEqual(new TextEncoder().encode('data'))
+  })
+})

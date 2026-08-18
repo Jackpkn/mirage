@@ -49,7 +49,11 @@ function codeFor(err: unknown): FsErrorCode {
 
 export function mapMirageError(err: unknown, operation: string, displayPath: string): FsError {
   if (err instanceof FsError) return err
-  if (err instanceof DOMException && err.name === 'AbortError') {
+  // Matched by name, not by class: mirage's own executor throws a
+  // `DOMException`, but an aborted fetch or a backend SDK may throw a
+  // plain `Error` named the same, and reporting that as FS_IO_ERROR
+  // would tell the caller its own cancellation was a backend failure.
+  if (err instanceof Error && err.name === 'AbortError') {
     return new FsError(`${operation} aborted`, 'FS_ABORTED', { cause: err })
   }
   const message = err instanceof Error ? err.message : String(err)

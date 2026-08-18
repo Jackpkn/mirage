@@ -19,6 +19,22 @@
 #           config: { token: !!js process.env.SLACK_BOT_TOKEN }
 #       runtimes:
 #         - { name: monty, captures: [python, python3] }
+#
+# Two facts about how the mirage providers read the surrounding dsh
+# composition, neither of which needs a row here:
+#
+#   * The standing file policy is enforced, not merely reported. Both
+#     seams narrow every mount grant to read for a `read-only` call
+#     (leaving the null sink writable, as that mode's definition
+#     requires), so dsh-base's `DSH_PERMISSION_MODE=read-only` now
+#     actually confines a mirage world instead of being ignored. The
+#     policy's `workspaceRoot` is a directory on the host and is never
+#     consulted: the mounts and their modes are the boundary here.
+#
+#   * A workdir dsh resolved on its own machine (an unspecified one
+#     comes from the calling session's cwd) names nothing in this world,
+#     so it is ignored in favour of the workspace default rather than
+#     run in a directory the agent cannot reach.
 
 # The host filesystem and bash providers step aside; mirage provides the
 # same ctx.fs and ctx.shell seams over the workspace.

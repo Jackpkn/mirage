@@ -125,6 +125,15 @@ export class MirageService extends Service {
       throw new Error('mirage: pass either workspace or mounts, not both')
     }
     if (config.workspace !== undefined) {
+      // An adopted workspace is already built, so runtimes and constructor
+      // options can no longer reach it. Saying so beats accepting a config
+      // whose runtimes silently never load, which is what the workspace and
+      // mounts pair above already refuses to do.
+      if (config.runtimes !== undefined || config.workspaceOptions !== undefined) {
+        throw new Error(
+          'mirage: runtimes and workspaceOptions configure a service-owned workspace, not an adopted workspace',
+        )
+      }
       this.built = config.workspace
       this.ready = Promise.resolve(config.workspace)
       return
@@ -144,6 +153,13 @@ export class MirageService extends Service {
     const blocks = Object.values(config.mounts).some(isMountBlock)
     if (blocks) {
       this.ready = this.open(config.mounts, options)
+      // A declarative mount resolves asynchronously and nothing awaits
+      // `ready` until a provider's first call, so a failure here would
+      // reach the process as an unhandled rejection and take the whole
+      // harness down over a typo in a patch file. This only marks the
+      // rejection observed; `ready` still rejects for every real caller,
+      // and the disposer below still sees it.
+      void this.ready.catch(() => undefined)
     } else {
       const owned = new Workspace(config.mounts as Record<string, MountSpec | Mount>, options)
       this.built = owned
