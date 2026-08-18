@@ -14,11 +14,141 @@
 
 import asyncio
 
+import pytest
+from pydantic import ValidationError
+
+from mirage.policy.types import DEFAULT_DENY_REASON, CommandRule
 from mirage.resource.ram import RAMResource
 from mirage.types import HiddenPaths, HiddenVars, MountMode
 from mirage.workspace import Workspace
 from mirage.workspace.session import SessionProfile
+from mirage.workspace.session.profile import (CommandsBlock, MountPermissions,
+                                              PathsBlock, VarsBlock,
+                                              WorkspacePermissions)
 from mirage.workspace.session.state import seed_var
+
+
+def test_profile_from_dict_regroups_paths_and_vars():
+    p = SessionProfile.model_validate({
+        "extends": "default",
+        "cwd": "/scratch",
+        "env": {
+            "PAGER": "cat"
+        },
+        "mounts": {
+            "/repo": "r",
+            "scratch/": "rwx"
+        },
+        "paths": {
+            "hide": ["/repo/.env", "*.pem"]
+        },
+        "vars": {
+            "hide": ["AWS_*"]
+        },
+    })
+    assert p.extends == "default"
+    assert p.cwd == "/scratch"
+    assert p.env == {"PAGER": "cat"}
+    assert p.mounts == {"/repo": MountMode.READ, "/scratch": MountMode.EXEC}
+    assert p.paths == PathsBlock(hide=("/repo/.env", "*.pem"))
+    assert p.vars == VarsBlock(hide=("AWS_*", ))
+
+
+def test_profile_unsaid_fields_are_none_so_inheritance_can_tell():
+    p = SessionProfile()
+    assert (p.extends, p.cwd, p.env, p.mounts, p.paths, p.vars) == (None, ) * 6
+
+
+def test_profile_mounts_list_form_keeps_each_mounts_own_mode():
+    assert SessionProfile(mounts=["/repo", "scratch"]).mounts == ("/repo",
+                                                                  "/scratch")
+    assert SessionProfile(mounts="/repo").mounts == ("/repo", )
+
+
+def test_profile_rejects_unknown_and_unshipped_fields():
+    for bad in ({
+            "hidden_paths": {}
+    }, {
+            "hidden_vars": {}
+    }, {
+            "commands": {
+                "deny": []
+            }
+    }, {
+            "paths": {
+                "show": {}
+            }
+    }, {
+            "vars": {
+                "mask": []
+            }
+    }):
+        with pytest.raises(ValidationError):
+            SessionProfile.model_validate(bad)
+
+
+def test_profile_is_frozen():
+    p = SessionProfile(cwd="/x")
+    with pytest.raises(ValidationError):
+        p.cwd = "/y"  # type: ignore[misc]
+
+
+def test_workspace_permissions_deny_accepts_rules_and_bare_names():
+    w = WorkspacePermissions.model_validate({
+        "commands": {
+            "deny": [{
+                "reason": "no deletes",
+                "commands": ["rm"],
+                "paths": ["/repo/*"]
+            }, "python3", {
+                "commands": ["shred"]
+            }]
+        },
+        "paths": {
+            "hide": ["/shared/finance"]
+        },
+    })
+    assert w.commands == CommandsBlock(deny=(
+        CommandRule(
+            reason="no deletes", commands=("rm", ), paths=("/repo/*", )),
+        CommandRule(reason=DEFAULT_DENY_REASON, commands=("python3", )),
+        CommandRule(reason=DEFAULT_DENY_REASON, commands=("shred", )),
+    ))
+    assert w.paths == PathsBlock(hide=("/shared/finance", ))
+    assert WorkspacePermissions() == WorkspacePermissions(
+        commands=CommandsBlock(), paths=PathsBlock())
+
+
+def test_workspace_permissions_rejects_profile_only_and_unknown_fields():
+    for bad in ({
+            "mounts": {
+                "/a": "r"
+            }
+    }, {
+            "commands": {
+                "allow": ["ls"]
+            }
+    }, {
+            "commands": {
+                "deny": [{
+                    "reason": "x",
+                    "command": ["rm"]
+                }]
+            }
+    }, {
+            "vars": {
+                "hide": ["X"]
+            }
+    }):
+        with pytest.raises(ValidationError):
+            WorkspacePermissions.model_validate(bad)
+
+
+def test_mount_permissions_is_paths_only_in_this_rung():
+    m = MountPermissions.model_validate({"paths": {"hide": ["*.pem", ".env"]}})
+    assert m.paths == PathsBlock(hide=("*.pem", ".env"))
+    with pytest.raises(ValidationError):
+        MountPermissions.model_validate({"commands": {"deny": ["rm"]}})
 
 
 def _ws() -> Workspace:
@@ -36,8 +166,8 @@ def _ws() -> Workspace:
 
 
 ANALYST = SessionProfile(mounts={"/a": "write"},
-                         hidden_paths=HiddenPaths(paths=("/a/secrets", )),
-                         hidden_vars=HiddenVars(names=("SLACK_TOKEN", )),
+                         paths=PathsBlock(hide=("/a/secrets", )),
+                         vars=VarsBlock(hide=("SLACK_TOKEN", )),
                          env={"ROLE": "analyst"})
 
 
@@ -47,8 +177,8 @@ def test_profile_applies_every_narrowing_field():
     assert sess.mount_modes is not None
     assert sess.mount_modes["/a"] == MountMode.WRITE
     assert "/b" not in sess.mount_modes
-    assert sess.hidden_paths == ANALYST.hidden_paths
-    assert sess.hidden_vars == ANALYST.hidden_vars
+    assert sess.hidden_paths == HiddenPaths(paths=("/a/secrets", ))
+    assert sess.hidden_vars == HiddenVars(names=("SLACK_TOKEN", ))
     assert sess.env["ROLE"] == "analyst"
 
 
@@ -58,18 +188,26 @@ def test_one_profile_serves_many_sessions():
     ws = _ws()
     s1 = ws.create_session("agent1", profile=ANALYST)
     s2 = ws.create_session("agent2", profile=ANALYST)
-    assert s1.hidden_paths is s2.hidden_paths
+    assert s1.hidden_paths == s2.hidden_paths
     seed_var(s1, "ROLE", "changed")
     assert s2.env["ROLE"] == "analyst"
 
 
-def test_explicit_mounts_override_the_profile():
+def test_explicit_mounts_tighten_the_profile_never_widen_it():
+    # Inline narrowing intersects the profile (design 3.4): a mount the
+    # profile never granted stays ungranted, and a granted one keeps the
+    # weaker of the two modes.
     ws = _ws()
-    sess = ws.create_session("agent", mounts={"/b": "read"}, profile=ANALYST)
+    sess = ws.create_session("agent",
+                             mounts={
+                                 "/a": "read",
+                                 "/b": "read"
+                             },
+                             profile=ANALYST)
     assert sess.mount_modes is not None
-    assert "/b" in sess.mount_modes
-    assert "/a" not in sess.mount_modes
-    assert sess.hidden_paths == ANALYST.hidden_paths
+    assert sess.mount_modes["/a"] == MountMode.READ
+    assert "/b" not in sess.mount_modes
+    assert sess.hidden_paths == HiddenPaths(paths=("/a/secrets", ))
 
 
 def test_profiled_session_is_narrowed_end_to_end():
@@ -103,3 +241,101 @@ def test_profile_env_reaches_the_process_view():
         return await listed.stdout_str()
 
     assert "ROLE=analyst\n" in asyncio.run(run())
+
+
+PROFILES = {
+    "default":
+    SessionProfile(cwd="/b",
+                   env={"PAGER": "cat"},
+                   mounts={
+                       "/a": "rw",
+                       "/b": "rwx"
+                   }),
+    "reviewer":
+    SessionProfile(extends="default",
+                   mounts={
+                       "/a": "r",
+                       "/b": "rwx"
+                   },
+                   paths=PathsBlock(hide=("/a/secrets", ))),
+}
+
+
+def _profiled_ws() -> Workspace:
+    a = RAMResource()
+    a._store.files["/x.txt"] = b"public\n"
+    a._store.files["/secrets/token.txt"] = b"s3cr3t\n"
+    a._store.dirs.add("/secrets")
+    return Workspace(
+        {
+            "/a": (a, MountMode.WRITE),
+            "/b": (RAMResource(), MountMode.WRITE)
+        },
+        mode=MountMode.WRITE,
+        profiles=PROFILES,
+    )
+
+
+def test_create_session_by_profile_name_resolves_the_chain():
+    ws = _profiled_ws()
+    sess = ws.create_session("agent", profile="reviewer")
+    assert sess.mount_modes is not None
+    assert sess.mount_modes["/a"] == MountMode.READ
+    assert sess.hidden_paths == HiddenPaths(paths=("/a/secrets", ))
+    assert sess.cwd == "/b"
+    assert sess.env["PAGER"] == "cat"
+
+
+def test_create_session_without_a_profile_takes_the_default_one():
+    ws = _profiled_ws()
+    sess = ws.create_session("agent")
+    assert sess.mount_modes is not None
+    assert sess.mount_modes["/a"] == MountMode.WRITE
+    assert sess.hidden_paths is None
+    assert sess.cwd == "/b"
+    # A workspace with no default profile leaves the session unrestricted.
+    plain = _ws().create_session("free")
+    assert plain.mount_modes is None and plain.cwd == "/"
+
+
+def test_create_session_rejects_an_unknown_profile_name():
+    from mirage.policy.errors import PolicyError
+    ws = _profiled_ws()
+    with pytest.raises(PolicyError, match="unknown profile 'nope'"):
+        ws.create_session("agent", profile="nope")
+
+
+def test_workspace_rejects_a_broken_profile_chain_at_construction():
+    from mirage.policy.errors import PolicyError
+    with pytest.raises(PolicyError, match="extends unknown profile 'gone'"):
+        Workspace({"/a": (RAMResource(), MountMode.WRITE)},
+                  profiles={"orphan": SessionProfile(extends="gone")})
+
+
+def test_inline_permissions_tighten_the_named_profile():
+    ws = _profiled_ws()
+    sess = ws.create_session("agent",
+                             profile="reviewer",
+                             permissions=SessionProfile(
+                                 cwd="/a",
+                                 mounts={"/a": "rw"},
+                                 paths=PathsBlock(hide=("*.key", )),
+                                 vars=VarsBlock(hide=("AWS_*", ))))
+    assert sess.mount_modes is not None
+    assert sess.mount_modes["/a"] == MountMode.READ
+    assert "/b" not in sess.mount_modes
+    assert sess.hidden_paths == HiddenPaths(paths=("/a/secrets", ),
+                                            patterns=("*.key", ))
+    assert sess.hidden_vars == HiddenVars(patterns=("AWS_*", ))
+    assert sess.cwd == "/a"
+
+
+def test_profile_cwd_is_where_the_session_starts():
+    ws = _profiled_ws()
+    ws.create_session("agent", profile="reviewer")
+
+    async def run():
+        out = await ws.execute("pwd", session_id="agent")
+        return await out.stdout_str()
+
+    assert asyncio.run(run()) == "/b\n"

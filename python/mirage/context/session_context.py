@@ -110,7 +110,8 @@ def _session_mode(mount_prefix: str) -> "MountMode | None":
 
 
 def hidden_paths_active() -> bool:
-    """Whether the current session hides any paths at all.
+    """Whether the current session hides any paths at all, its own or
+    the workspace-bound ones every session carries.
 
     For a summarizing fast path (du -s asks the backend for one total)
     that must not be trusted when hidden leaves could be inside it.
@@ -119,7 +120,8 @@ def hidden_paths_active() -> bool:
         None
     """
     sess = get_current_session()
-    return sess is not None and sess.hidden_paths is not None
+    return sess is not None and (sess.hidden_paths is not None
+                                 or sess.bound_hidden is not None)
 
 
 DEFAULT_UMASK = 0o022
@@ -158,8 +160,8 @@ def dotglob_active() -> bool:
 
 
 def path_allowed(virtual: str) -> bool:
-    """Whether the current session's hidden-paths spec leaves this
-    path visible.
+    """Whether the current session's hidden-paths specs, its own and
+    the workspace-bound one, leave this path visible.
 
     The path twin of ``mount_allowed``: enumeration surfaces filter
     names through it and the doors answer ENOENT (EACCES for creates)
@@ -171,9 +173,13 @@ def path_allowed(virtual: str) -> bool:
         virtual (str): absolute virtual path.
     """
     sess = get_current_session()
-    if sess is None or sess.hidden_paths is None:
+    if sess is None:
         return True
-    return not path_hidden(sess.hidden_paths, virtual)
+    if sess.hidden_paths is not None and path_hidden(sess.hidden_paths,
+                                                     virtual):
+        return False
+    return not (sess.bound_hidden is not None
+                and path_hidden(sess.bound_hidden, virtual))
 
 
 def mount_allowed(mount_prefix: str) -> bool:

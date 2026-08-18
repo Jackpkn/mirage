@@ -23,9 +23,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import adapters  # noqa: E402
 import harness  # noqa: E402
 
-from mirage.types import HiddenPaths  # noqa: E402
-from mirage.types import ConsistencyPolicy, HiddenVars  # noqa: E402
+from mirage.types import ConsistencyPolicy  # noqa: E402
 from mirage.workspace.session import SessionProfile  # noqa: E402
+
+PROFILE_KEYS = frozenset({"extends", "cwd", "env", "mounts", "paths", "vars"})
 
 HOST = "python"
 
@@ -81,29 +82,15 @@ async def run_target(target: dict, cases: list[dict], root: Path,
                 await harness.seed_mount_root(ws, mount["path"])
         # Sessions a case can name via its "session" field. Mount grants take
         # either the mapping form ({"/data": "read"}) or the list form
-        # (["/data"], which inherits the mount's own mode). A profile form
-        # ({"mounts": ..., "hidden_paths": ..., "hidden_vars": ..., "env":
-        # ...}) narrows visibility too; it is told apart by its keys, which
-        # never start with "/".
+        # (["/data"], which inherits the mount's own mode). A profile form is
+        # the permissions document itself ({"mounts": ..., "paths": {"hide":
+        # ...}, "vars": {"hide": ...}, "env": ..., "cwd": ...}), validated by
+        # the same model the YAML door uses; it is told apart by its keys,
+        # which never start with "/".
         for session_id, spec in (target.get("sessions") or {}).items():
-            if isinstance(spec, dict) and (
-                    set(spec)
-                    & {"mounts", "hidden_paths", "hidden_vars", "env"}):
-                hp = spec.get("hidden_paths")
-                hv = spec.get("hidden_vars")
-                ws.create_session(
-                    session_id,
-                    profile=SessionProfile(
-                        mounts=spec.get("mounts"),
-                        hidden_paths=(HiddenPaths(
-                            paths=tuple(hp.get("paths", ())),
-                            patterns=tuple(hp.get("patterns", ())))
-                                      if hp is not None else None),
-                        hidden_vars=(HiddenVars(
-                            names=tuple(hv.get("names", ())),
-                            patterns=tuple(hv.get("patterns", ())))
-                                     if hv is not None else None),
-                        env=spec.get("env")))
+            if isinstance(spec, dict) and (set(spec) & PROFILE_KEYS):
+                ws.create_session(session_id,
+                                  profile=SessionProfile.model_validate(spec))
             else:
                 ws.create_session(session_id, mounts=spec)
         primary = target["mounts"][0]["path"]

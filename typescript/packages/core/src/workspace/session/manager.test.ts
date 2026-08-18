@@ -254,3 +254,43 @@ describe('SessionManager dirty flush + CAS', () => {
     expect((await store.load()).get('s2')?.generation).toBe(4)
   })
 })
+
+describe('SessionManager bound hides', () => {
+  it('stamps live, created and forked sessions', () => {
+    const m = new SessionManager('def')
+    const early = m.create('early')
+    const bound = { paths: ['/shared/finance'] }
+    m.boundHidden = bound
+    expect(m.boundHidden).toBe(bound)
+    expect(m.get('def').boundHidden).toBe(bound)
+    expect(early.boundHidden).toBe(bound)
+    const late = m.create('late', { mountModes: new Map([['/a', MountMode.READ]]) })
+    expect(late.boundHidden).toBe(bound)
+    expect(late.fork().boundHidden).toBe(bound)
+    expect(late.hiddenPaths).toBeNull()
+  })
+
+  it('ride hydration but never the store', async () => {
+    const store = new RAMSessionStore()
+    await store.set('restored', {
+      session_id: 'restored',
+      cwd: '/w',
+      env: {},
+      created_at: 1.0,
+      hidden_paths: { paths: ['/own'], patterns: [] },
+    })
+    const m = new SessionManager('def', store)
+    const bound = { paths: ['/shared/finance'] }
+    m.boundHidden = bound
+    await m.ensureLoaded()
+    const restored = m.get('restored')
+    expect(restored.boundHidden).toBe(bound)
+    expect(restored.hiddenPaths).toEqual({ paths: ['/own'], patterns: [] })
+    expect(m.get('def').boundHidden).toBe(bound)
+    expect('boundHidden' in restored.toJSON()).toBe(false)
+    expect('bound_hidden' in restored.toJSON()).toBe(false)
+    await m.flush()
+    const stored = await store.load()
+    expect(JSON.stringify([...stored.entries()])).not.toContain('bound')
+  })
+})

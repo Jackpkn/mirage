@@ -23,10 +23,11 @@ import type { Resource } from '../../resource/base.ts'
 import type { ConsoleFactory } from '../../shell/job_table/index.ts'
 import type { ShellParser } from '../../shell/parse.ts'
 import type { Limit, ConsistencyPolicy, DriftPolicy, MountMode } from '../../types.ts'
-import type { GuardSpec, Policy } from '../../policy/index.ts'
+import type { Policy } from '../../policy/index.ts'
 import type { PolicyDecision, PolicyFn } from '../../runtime/policy/index.ts'
 import type { RuntimeEntry } from '../../runtime/base.ts'
 import type { NamespaceStore } from '../mount/namespace/store.ts'
+import type { MountPermissions, SessionProfile, WorkspacePermissions } from '../session/profile.ts'
 import type { SessionStore } from '../session/store.ts'
 import type { WorkspaceStateStore } from '../store/base.ts'
 
@@ -114,18 +115,33 @@ export interface WorkspaceOptions {
    */
   policy?: PolicyFn
   /**
-   * Declarative admission guards, compiled to policies and checked
-   * after the built-in POSIX mount-root rules: refuse a classified
-   * command by name and path before flag parsing, mount resolution,
-   * runtime placement, and backend I/O.
+   * The permissions document, workspace tier (`permissions:` in YAML):
+   * deny rules and hides that bind every session, absolute paths. The
+   * deny rules compile to policies checked after the built-in POSIX
+   * mount-root rules, before flag parsing, mount resolution, runtime
+   * placement and backend I/O; the hides join every session's own.
    */
-  guards?: readonly GuardSpec[]
+  permissions?: WorkspacePermissions | null
   /**
-   * Admission policies registered after `guards`. Each defines only
-   * the lifecycle hooks it cares about; on a pre hook the first Deny
-   * wins and adding a policy can only tighten the workspace.
+   * Named session profiles (`profiles:` in YAML), the templates
+   * `createSession` picks by name; `default` applies when none is
+   * named. Every `extends` chain resolves at construction, so an
+   * unknown parent or a cycle fails here, not at the first session.
    */
-  policies?: readonly (Policy | GuardSpec)[]
+  profiles?: Readonly<Record<string, SessionProfile>> | null
+  /**
+   * Mount-owned permissions by mount prefix (`mounts.<p>.permissions`
+   * in YAML): relative to the mount root, rebased here, binding every
+   * session. The node Workspace fills it from `Mount(permissions)`.
+   */
+  mountPermissions?: Readonly<Record<string, MountPermissions | null>>
+  /**
+   * Admission policies registered after the document's deny rules.
+   * Code only: each defines the lifecycle hooks it cares about; on a
+   * pre hook the first Deny wins and adding a policy can only tighten
+   * the workspace.
+   */
+  policies?: readonly Policy[]
   /**
    * Installed CLIs, fully separate from mounts: key = installed head
    * word, value = a registered CLISpec name (the YAML `cli:` key) or a

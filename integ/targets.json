@@ -82,12 +82,11 @@
             "/res": "read",
             "/ro": "read"
           },
-          "hidden_paths": {
-            "paths": ["/data/sessvis/vault"],
-            "patterns": ["*.key"]
+          "paths": {
+            "hide": ["/data/sessvis/vault", "*.key"]
           },
-          "hidden_vars": {
-            "names": ["SLACK_TOKEN"]
+          "vars": {
+            "hide": ["SLACK_TOKEN"]
           },
           "env": {
             "SLACK_TOKEN": "xoxb-integ",
@@ -258,12 +257,11 @@
             "/res": "read",
             "/ro": "read"
           },
-          "hidden_paths": {
-            "paths": ["/data/sessvis/vault"],
-            "patterns": ["*.key"]
+          "paths": {
+            "hide": ["/data/sessvis/vault", "*.key"]
           },
-          "hidden_vars": {
-            "names": ["SLACK_TOKEN"]
+          "vars": {
+            "hide": ["SLACK_TOKEN"]
           },
           "env": {
             "SLACK_TOKEN": "xoxb-integ",
@@ -305,12 +303,11 @@
             "/data2": "write",
             "/res": "read"
           },
-          "hidden_paths": {
-            "paths": ["/data/sessvis/vault"],
-            "patterns": ["*.key"]
+          "paths": {
+            "hide": ["/data/sessvis/vault", "*.key"]
           },
-          "hidden_vars": {
-            "names": ["SLACK_TOKEN"]
+          "vars": {
+            "hide": ["SLACK_TOKEN"]
           },
           "env": {
             "SLACK_TOKEN": "xoxb-integ",
@@ -403,12 +400,11 @@
             "/data2": "write",
             "/res": "read"
           },
-          "hidden_paths": {
-            "paths": ["/data/sessvis/vault"],
-            "patterns": ["*.key"]
+          "paths": {
+            "hide": ["/data/sessvis/vault", "*.key"]
           },
-          "hidden_vars": {
-            "names": ["SLACK_TOKEN"]
+          "vars": {
+            "hide": ["SLACK_TOKEN"]
           },
           "env": {
             "SLACK_TOKEN": "xoxb-integ",
@@ -456,12 +452,11 @@
             "/data2": "write",
             "/res": "read"
           },
-          "hidden_paths": {
-            "paths": ["/data/sessvis/vault"],
-            "patterns": ["*.key"]
+          "paths": {
+            "hide": ["/data/sessvis/vault", "*.key"]
           },
-          "hidden_vars": {
-            "names": ["SLACK_TOKEN"]
+          "vars": {
+            "hide": ["SLACK_TOKEN"]
           },
           "env": {
             "SLACK_TOKEN": "xoxb-integ",
@@ -627,12 +622,11 @@
             "/data2": "write",
             "/res": "read"
           },
-          "hidden_paths": {
-            "paths": ["/data/sessvis/vault"],
-            "patterns": ["*.key"]
+          "paths": {
+            "hide": ["/data/sessvis/vault", "*.key"]
           },
-          "hidden_vars": {
-            "names": ["SLACK_TOKEN"]
+          "vars": {
+            "hide": ["SLACK_TOKEN"]
           },
           "env": {
             "SLACK_TOKEN": "xoxb-integ",

@@ -26,11 +26,12 @@ import type { Policy } from './base.ts'
 import { MountRootPolicy } from './builtin/mount_root.ts'
 import { PolicyDenied } from './errors.ts'
 import { Policies, postExecuteGate, postOpsGate, preOpsGate } from './policies.ts'
+import { SpecPolicy } from './spec.ts'
 import type {
   Action,
   CommandContext,
   ExecuteResultContext,
-  GuardSpec,
+  CommandRule,
   OpsContext,
   OpsResultContext,
 } from './types.ts'
@@ -120,7 +121,7 @@ function ctx(command: string, paths: PathSpec[] = [], reg?: MountRegistry): Comm
 }
 
 function executableWorkspace(
-  guards?: readonly GuardSpec[],
+  deny?: readonly CommandRule[],
   policies?: readonly Policy[],
 ): Workspace {
   const ram = new RAMResource()
@@ -132,7 +133,7 @@ function executableWorkspace(
       mode: MountMode.WRITE,
       ops,
       shellParser: parser,
-      ...(guards ? { guards } : {}),
+      ...(deny ? { permissions: { commands: { deny }, paths: { hide: [] } } } : {}),
       ...(policies ? { policies } : {}),
     },
   )
@@ -151,7 +152,7 @@ describe('Policies', () => {
 
   it('builtin runs first, then user policies in order', async () => {
     const policies = new Policies([new MountRootPolicy()])
-    policies.add({ reason: 'user rule', commands: ['rm'] })
+    policies.add(new SpecPolicy({ reason: 'user rule', commands: ['rm'] }))
     // Both match `rm /data`; the built-in GNU message wins by order.
     let deny = await policies.preCommand(ctx('rm', [path('/data')]))
     expect(deny?.message).toContain('Device or resource busy')
@@ -227,15 +228,14 @@ describe('Policies', () => {
     ).rejects.toThrow(/result too large/)
   })
 
-  it('an entry with a hook is a policy even if it carries reason', async () => {
+  it('add takes code only: a policy that also carries a reason field is just a policy', async () => {
     const policies = new Policies()
     const entry: Policy & { reason: string } = {
-      reason: 'looks like a spec',
+      reason: 'looks like a rule',
       preCommand: (c: CommandContext) =>
         c.command === 'weird' ? { kind: 'deny', message: 'nope\n', exitCode: 1 } : null,
     }
     policies.add(entry)
-    // Misread as a GuardSpec this would deny EVERY command.
     expect(await policies.preCommand(ctx('ls'))).toBeNull()
     expect((await policies.preCommand(ctx('weird')))?.message).toBe('nope\n')
   })

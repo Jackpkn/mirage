@@ -20,20 +20,20 @@ from mirage.policy.builtin import (DEFAULT_COMMAND_LIMITS, FALLBACK_LIMIT,
 from mirage.policy.errors import PolicyDenied, PolicyError
 from mirage.policy.policies import (Policies, post_execute_gate, post_ops_gate,
                                     pre_ops_gate, pre_session_gate)
-from mirage.policy.spec import SpecPolicy, wildcard_regex
-from mirage.policy.types import (VALIDITY, Action, CommandContext, Deny,
-                                 ExecuteResultContext, GuardSpec, Limit,
-                                 MountRootQuery, OpsContext, OpsResultContext,
-                                 SessionContext)
+from mirage.policy.types import (DEFAULT_DENY_REASON, VALIDITY, Action,
+                                 CommandContext, CommandRule, Deny,
+                                 ExecuteResultContext, Limit, MountRootQuery,
+                                 OpsContext, OpsResultContext, SessionContext)
 
 __all__ = [
     "Action",
     "CommandContext",
+    "CommandRule",
     "DEFAULT_COMMAND_LIMITS",
+    "DEFAULT_DENY_REASON",
     "Deny",
     "ExecuteResultContext",
     "FALLBACK_LIMIT",
-    "GuardSpec",
     "Limit",
     "MountRootPolicy",
     "MountRootQuery",
@@ -44,7 +44,6 @@ __all__ = [
     "Policy",
     "PolicyDenied",
     "PolicyError",
-    "SpecPolicy",
     "SessionContext",
     "VALIDITY",
     "post_execute_gate",
@@ -54,5 +53,4 @@ __all__ = [
     "resolve_across_mounts",
     "resolve_producer",
     "resolve_limit",
-    "wildcard_regex",
 ]

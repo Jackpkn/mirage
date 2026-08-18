@@ -17,7 +17,7 @@ import { describe, expect, it } from 'vitest'
 import { RAMResource } from '../resource/ram/ram.ts'
 import { MountMode, PathSpec } from '../types.ts'
 import { MountRegistry } from '../workspace/mount/registry.ts'
-import { SpecPolicy, wildcardRegex } from './spec.ts'
+import { SpecPolicy } from './spec.ts'
 import type { OpsContext } from './types.ts'
 import type { CommandContext } from './types.ts'
 
@@ -36,12 +36,37 @@ function ctx(command: string, paths: PathSpec[]): CommandContext {
   return { command, paths, argv: [], cwd: '/', registry }
 }
 
-describe('wildcardRegex', () => {
-  it('star crosses slashes and question is one char', () => {
-    expect(wildcardRegex('/data/prod/*').test('/data/prod/a/b/c.txt')).toBe(true)
-    expect(wildcardRegex('/data/?.txt').test('/data/a.txt')).toBe(true)
-    expect(wildcardRegex('/data/?.txt').test('/data/ab.txt')).toBe(false)
-    expect(wildcardRegex('/data/prod/*').test('/data/dev/x')).toBe(false)
+describe('SpecPolicy grammar', () => {
+  it('a plain path denies the whole subtree and nothing beside it', () => {
+    // The document's one grammar: a plain entry is an exact path and its
+    // subtree, so `/data/prod` covers `/data/prod/x` but not
+    // `/data/production`; the old `*`/`?`-only dialect needed
+    // `/data/prod/*` and then missed the directory itself.
+    const policy = new SpecPolicy({ reason: 'prod', commands: ['rm'], paths: ['/data/prod'] })
+    expect(policy.preCommand(ctx('rm', [path('/data/prod')]))).not.toBeNull()
+    expect(policy.preCommand(ctx('rm', [path('/data/prod/x')]))).not.toBeNull()
+    expect(policy.preCommand(ctx('rm', [path('/data/production')]))).toBeNull()
+  })
+
+  it('a slashless glob matches any name component', () => {
+    const policy = new SpecPolicy({ reason: 'keys', paths: ['*.key'] })
+    expect(policy.preCommand(ctx('cat', [path('/a/b.key/c')]))).toEqual({
+      kind: 'deny',
+      message: 'cat: /a/b.key/c: keys\n',
+      exitCode: 1,
+    })
+    expect(policy.preCommand(ctx('cat', [path('/a/b.keyx')]))).toBeNull()
+    const op: OpsContext = { op: 'read', path: path('/x/y.key'), write: false, prefix: '/x/' }
+    expect(policy.preOps(op)).toEqual({ kind: 'deny', message: 'keys\n', exitCode: 1 })
+  })
+
+  it('question mark and a class are patterns too', () => {
+    const one = new SpecPolicy({ reason: 'one', paths: ['/data/?.txt'] })
+    expect(one.preCommand(ctx('cat', [path('/data/a.txt')]))).not.toBeNull()
+    expect(one.preCommand(ctx('cat', [path('/data/ab.txt')]))).toBeNull()
+    const classed = new SpecPolicy({ reason: 'cls', paths: ['/data/[ab].txt'] })
+    expect(classed.preCommand(ctx('cat', [path('/data/b.txt')]))).not.toBeNull()
+    expect(classed.preCommand(ctx('cat', [path('/data/c.txt')]))).toBeNull()
   })
 })
 

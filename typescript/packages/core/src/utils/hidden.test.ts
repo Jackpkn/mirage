@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { describe, expect, it } from 'vitest'
-import { pathHidden, varHidden } from './hidden.ts'
+import { classifyPaths, classifyVars, isGlob, pathHidden, varHidden } from './hidden.ts'
 
 describe('pathHidden', () => {
   it('null and empty specs hide nothing', () => {
@@ -87,5 +87,37 @@ describe('varHidden', () => {
     expect(varHidden(h, 'AWS_ACCESS_KEY_ID')).toBe(true)
     expect(varHidden(h, 'DB_SECRET')).toBe(true)
     expect(varHidden(h, 'HOME')).toBe(false)
+  })
+})
+
+describe('classifyPaths / classifyVars', () => {
+  it('splits globs from exact subtrees, in the order written', () => {
+    expect(classifyPaths(['/repo/.env', '*.pem', '/repo/docs/*', 'secrets'])).toEqual({
+      paths: ['/repo/.env', 'secrets'],
+      patterns: ['*.pem', '/repo/docs/*'],
+    })
+    expect(isGlob('/a/b[1]')).toBe(true)
+    expect(isGlob('/a/?')).toBe(true)
+    expect(isGlob('/a/b')).toBe(false)
+  })
+
+  it('empty is unrestricted', () => {
+    expect(classifyPaths([])).toBeNull()
+    expect(classifyVars([])).toBeNull()
+  })
+
+  it('splits variable globs from names', () => {
+    expect(classifyVars(['SLACK_TOKEN', 'AWS_*'])).toEqual({
+      names: ['SLACK_TOKEN'],
+      patterns: ['AWS_*'],
+    })
+  })
+
+  it('classified entries match like a hand-built spec', () => {
+    const spec = classifyPaths(['/s3/secrets', '*.key', '/repo/docs/*'])
+    expect(pathHidden(spec, '/s3/secrets/deep/b')).toBe(true)
+    expect(pathHidden(spec, '/a/b.key/c')).toBe(true)
+    expect(pathHidden(spec, '/repo/docs/x/y')).toBe(true)
+    expect(pathHidden(spec, '/repo/docsx')).toBe(false)
   })
 })

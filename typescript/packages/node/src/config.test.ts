@@ -14,6 +14,7 @@
 
 import { CLISpec } from '@struktoai/mirage-core/commands/cli/types'
 import { ScriptSource } from '@struktoai/mirage-core/runtime/policy/index'
+import { MountMode } from '@struktoai/mirage-core/types'
 import { RAMNamespaceStore } from '@struktoai/mirage-core/workspace/mount/namespace/ram'
 import { RAMWorkspaceStateStore } from '@struktoai/mirage-core/workspace/store/ram'
 import { buildFileCache } from '@struktoai/mirage-core/workspace/workspace/cache'
@@ -484,47 +485,109 @@ describe('configToWorkspaceArgs', () => {
     })
   })
 
-  it('guards block compiles to guard specs', async () => {
+  it('the permissions document maps to workspace args', async () => {
     const cfg = loadWorkspaceConfig({
-      mounts: { '/data': { resource: 'ram' } },
-      guards: [
-        {
-          reason: 'production data is protected',
-          commands: ['rm', 'mv'],
-          paths: ['/data/prod/*'],
+      mounts: {
+        '/repo': { resource: 'ram', permissions: { paths: { hide: ['*.pem', '.env'] } } },
+        '/scratch': { resource: 'ram', mode: 'rwx' },
+      },
+      permissions: {
+        commands: {
+          deny: [
+            {
+              reason: 'production data is protected',
+              commands: ['rm', 'mv'],
+              paths: ['/repo/prod/*'],
+            },
+            'python3',
+          ],
         },
-        { reason: 'interpreters are off', commands: ['python3'] },
-      ],
+        paths: { hide: ['/scratch/finance'] },
+      },
+      profiles: {
+        default: {
+          cwd: '/scratch',
+          env: { PAGER: 'cat' },
+          mounts: { '/repo': 'r', '/scratch': 'rwx' },
+        },
+        reviewer: {
+          extends: 'default',
+          paths: { hide: ['/repo/docs/internal'] },
+          vars: { hide: ['AWS_*', 'SLACK_TOKEN'] },
+        },
+      },
     })
     const args = await configToWorkspaceArgs(cfg)
-    expect(args.options.guards).toEqual([
-      {
-        reason: 'production data is protected',
-        commands: ['rm', 'mv'],
-        paths: ['/data/prod/*'],
+    expect(args.options.permissions).toEqual({
+      commands: {
+        deny: [
+          {
+            reason: 'production data is protected',
+            commands: ['rm', 'mv'],
+            paths: ['/repo/prod/*'],
+          },
+          { reason: 'denied by policy', commands: ['python3'] },
+        ],
       },
-      { reason: 'interpreters are off', commands: ['python3'] },
-    ])
-  })
-
-  it('a guard without a reason fails loud', async () => {
-    const cfg = loadWorkspaceConfig({
-      mounts: { '/data': { resource: 'ram' } },
-      guards: [{ commands: ['rm'] }],
+      paths: { hide: ['/scratch/finance'] },
     })
-    await expect(configToWorkspaceArgs(cfg)).rejects.toThrow(/reason/)
+    expect(args.options.profiles).toEqual({
+      default: {
+        cwd: '/scratch',
+        env: { PAGER: 'cat' },
+        mounts: new Map([
+          ['/repo', MountMode.READ],
+          ['/scratch', MountMode.EXEC],
+        ]),
+      },
+      reviewer: {
+        extends: 'default',
+        paths: { hide: ['/repo/docs/internal'] },
+        vars: { hide: ['AWS_*', 'SLACK_TOKEN'] },
+      },
+    })
+    expect(args.options.mountPermissions).toEqual({
+      '/repo': { paths: { hide: ['*.pem', '.env'] } },
+    })
+    expect(args.resources['/scratch']?.[1]).toBe(MountMode.EXEC)
   })
 
-  it('a guard with an unknown key fails loud', () => {
-    // A typo like `path:` would otherwise widen the guard into an
+  it('a deny rule with an unknown key fails at load', () => {
+    // A typo like `path:` would otherwise widen the rule into an
     // unconditional denial (mirrors Python's extra="forbid"), and like
     // Python it must fail at load, not when the args are built.
     expect(() =>
       loadWorkspaceConfig({
         mounts: { '/data': { resource: 'ram' } },
-        guards: [{ reason: 'x', path: ['/data/prod/*'] }],
+        permissions: { commands: { deny: [{ reason: 'x', path: ['/data/prod/*'] }] } },
       }),
-    ).toThrow(/unknown guard key/)
+    ).toThrow(/deny\[0\]: unknown field `path`/)
+  })
+
+  it('guards is gone, unshipped fields and a broken profile chain fail at load', () => {
+    expect(() =>
+      loadWorkspaceConfig({
+        mounts: { '/data': { resource: 'ram' } },
+        guards: [{ reason: 'x', commands: ['rm'] }],
+      }),
+    ).toThrow(/unknown config key `guards`/)
+    expect(() =>
+      loadWorkspaceConfig({
+        mounts: { '/data': { resource: 'ram' } },
+        profiles: { a: { hidden_paths: { paths: ['/x'] } } },
+      }),
+    ).toThrow(/unknown field `hidden_paths`/)
+    expect(() =>
+      loadWorkspaceConfig({
+        mounts: { '/data': { resource: 'ram', permissions: { commands: { deny: ['rm'] } } } },
+      }),
+    ).toThrow(/unknown field `commands`/)
+    expect(() =>
+      loadWorkspaceConfig({
+        mounts: { '/data': { resource: 'ram' } },
+        profiles: { orphan: { extends: 'gone' } },
+      }),
+    ).toThrow(/extends unknown profile 'gone'/)
   })
 
   it('console redis block builds a factory that mints fresh keys', async () => {

@@ -45,15 +45,21 @@ export interface Deny {
  */
 export type Action = Deny | Limit
 
+/** The reason a bare command name under `commands.deny` carries. */
+export const DEFAULT_DENY_REASON = 'denied by policy'
+
 /**
- * A declarative guard: refuse matching commands on matching paths.
- * The YAML `guards:` block and `Workspace({guards: [...]})` accept
- * this shape; `Policies.add` compiles it to a SpecPolicy. Patterns
- * match the absolute virtual path with `*` (any run, including `/`)
- * and `?` (any one character). Empty `commands` means every command;
- * empty `paths` refuses the command regardless of its operands.
+ * One admission rule of the permissions document: refuse matching
+ * commands on matching paths. It is the element type of `commands.deny`
+ * and reaches the workspace only inside that document; the internal
+ * SpecPolicy is what evaluates it. Path entries use the document's one
+ * grammar: an entry with `*`, `?` or `[` is a pattern (repo fnmatch
+ * dialect, `*` crossing `/`, a slashless pattern matching any name
+ * component), anything else is an exact path and its subtree. Empty
+ * `commands` means every command; empty `paths` refuses the command
+ * regardless of its operands.
  */
-export interface GuardSpec {
+export interface CommandRule {
   reason: string
   commands?: readonly string[]
   paths?: readonly string[]

@@ -16,7 +16,7 @@ import { Session, varsFromEnv } from './session.ts'
 import { setCwd } from './shell_dirs.ts'
 import { RAMSessionStore } from './ram.ts'
 import { CAS_MAX_RETRIES, generationOf, type SessionFields, type SessionStore } from './store.ts'
-import type { MountMode } from '../../types.ts'
+import type { HiddenPaths, MountMode } from '../../types.ts'
 
 type StoredSession = Parameters<typeof Session.fromJSON>[0]
 
@@ -42,10 +42,28 @@ export class SessionManager {
   // cannot alias the live session (Python needs a deep copy instead).
   private readonly persisted = new Map<string, string>()
 
+  private boundHiddenInternal: HiddenPaths | null = null
+
   constructor(defaultSessionId: string, store?: SessionStore) {
     this.defaultIdInternal = defaultSessionId
     this.sessionStore = store ?? new RAMSessionStore()
     this.sessions.set(defaultSessionId, new Session({ sessionId: defaultSessionId }))
+  }
+
+  /** What the workspace and its mounts hide from every session. */
+  get boundHidden(): HiddenPaths | null {
+    return this.boundHiddenInternal
+  }
+
+  /**
+   * Stamp the workspace-bound hides onto every live session. Set once
+   * by the workspace after its mounts are installed, and applied again
+   * to every session created or hydrated later, so the fact rides the
+   * session object without ever being persisted.
+   */
+  set boundHidden(spec: HiddenPaths | null) {
+    this.boundHiddenInternal = spec
+    for (const session of this.sessions.values()) session.boundHidden = spec
   }
 
   get store(): SessionStore {
@@ -133,6 +151,7 @@ export class SessionManager {
         continue
       }
       if (this.sessions.has(sid)) continue
+      stored.boundHidden = this.boundHiddenInternal
       this.sessions.set(sid, stored)
       this.persisted.set(sid, JSON.stringify(stored.toJSON()))
     }
@@ -197,6 +216,7 @@ export class SessionManager {
       sessionId,
       mountModes: options.mountModes ?? null,
     })
+    session.boundHidden = this.boundHiddenInternal
     this.sessions.set(sessionId, session)
     return session
   }

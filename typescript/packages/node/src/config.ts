@@ -19,7 +19,6 @@ import { parse as parseYaml } from 'yaml'
 import type { CacheConfig } from '@struktoai/mirage-core/cache/file/config'
 import type { IndexConfig, RedisIndexConfig } from '@struktoai/mirage-core/cache/index/config'
 import { CLISpec } from '@struktoai/mirage-core/commands/cli/types'
-import type { GuardSpec } from '@struktoai/mirage-core/policy/index'
 import type { Resource } from '@struktoai/mirage-core/resource/base'
 import type { RuntimeEntry } from '@struktoai/mirage-core/runtime/base'
 import { ScriptSource } from '@struktoai/mirage-core/runtime/policy/index'
@@ -31,8 +30,17 @@ import {
   MountBackend,
   MountMode,
   OnExceed,
+  parseMountMode,
 } from '@struktoai/mirage-core/types'
 import { snakeToCamel } from '@struktoai/mirage-core/utils/normalize'
+import {
+  parseMountPermissions,
+  parseSessionProfile,
+  parseWorkspacePermissions,
+  type MountPermissions,
+  type SessionProfile,
+} from '@struktoai/mirage-core/workspace/session/profile'
+import { inherit } from '@struktoai/mirage-core/workspace/session/resolve'
 import type { WorkspaceStateStore } from '@struktoai/mirage-core/workspace/store/base'
 import { RAMWorkspaceStateStore } from '@struktoai/mirage-core/workspace/store/ram'
 import { S3WorkspaceStateStore } from '@struktoai/mirage-core/workspace/store/s3'
@@ -48,13 +56,9 @@ import { JobConsole } from '@struktoai/mirage-core/shell/console/index'
 import type { ConsoleFactory } from '@struktoai/mirage-core/shell/job_table/index'
 import { compareCodePoints } from '@struktoai/mirage-core/utils/sort'
 
-const VALID_MODES = new Set<string>([MountMode.READ, MountMode.WRITE, MountMode.EXEC])
-
 function coerceMountMode(value: string | undefined, fallback: MountMode): MountMode {
   if (value === undefined) return fallback
-  const lower = value.toLowerCase()
-  if (!VALID_MODES.has(lower)) throw new Error(`invalid mount mode: ${value}`)
-  return lower as MountMode
+  return parseMountMode(value.toLowerCase())
 }
 
 const VALID_CONSISTENCY = new Set<string>([ConsistencyPolicy.LAZY, ConsistencyPolicy.ALWAYS])
@@ -147,7 +151,8 @@ const TOP_LEVEL_KEYS = [
   'clis',
   'runtimes',
   'policy',
-  'guards',
+  'permissions',
+  'profiles',
   'mode',
   'consistency',
   'default_session_id',
@@ -165,6 +170,7 @@ const MOUNT_KEYS = [
   'command_limits',
   'backend',
   'mountpoint',
+  'permissions',
 ] as const
 const CACHE_KEYS: Record<string, readonly string[]> = {
   ram: ['type', 'limit', 'max_drain_bytes'],
@@ -213,7 +219,6 @@ const PLAIN_STORE_GROUP_KEYS: Record<string, readonly string[]> = Object.fromEnt
   Object.entries(STORE_GROUP_KEYS).filter(([type]) => type !== 's3'),
 )
 const CLI_KEYS: readonly string[] = ['cli', 'script', 'runtime', 'config']
-const GUARD_KEYS = ['reason', 'commands', 'paths'] as const
 
 // A store group whose `type` names a backend carries that backend's own
 // spellings: `aws_access_key_id` is `accessKeyId`, not `awsAccessKeyId`,
@@ -328,6 +333,9 @@ function validateConfigKeys(raw: Record<string, unknown>): void {
     for (const [prefix, block] of Object.entries(raw.mounts)) {
       if (!isPlainObject(block)) throw new Error(`mount \`${prefix}\` must be a mapping`)
       rejectUnknownKeys(block, MOUNT_KEYS, `mount \`${prefix}\``)
+      if (block.permissions !== undefined && block.permissions !== null) {
+        parseMountPermissions(block.permissions, `mount \`${prefix}\` permissions`)
+      }
     }
   }
   if (isPlainObject(raw.clis)) {
@@ -336,14 +344,14 @@ function validateConfigKeys(raw: Record<string, unknown>): void {
       rejectUnknownKeys(block, CLI_KEYS, `cli \`${name}\``)
     }
   }
-  if (raw.guards !== undefined && raw.guards !== null) {
-    if (!Array.isArray(raw.guards)) throw new Error('config `guards` must be a list')
-    for (const entry of raw.guards) {
-      if (!isPlainObject(entry)) throw new Error('each guard must be a mapping with a `reason`')
-      // A typo like `path:` would widen the guard into an
-      // unconditional denial rather than fail.
-      rejectUnknownKeys(entry, GUARD_KEYS, 'guard')
-    }
+  // The permissions document validates through the core's own
+  // validators (the same shape the SDK and REST take), so a typo like
+  // `path:` on a deny rule fails here rather than widening the rule.
+  if (raw.permissions !== undefined && raw.permissions !== null) {
+    parseWorkspacePermissions(raw.permissions, 'permissions')
+  }
+  if (raw.profiles !== undefined && raw.profiles !== null) {
+    parseProfiles(raw.profiles)
   }
   validateTypedBlock(raw.cache, CACHE_KEYS, 'cache')
   validateTypedBlock(raw.index, INDEX_KEYS, 'index')
@@ -410,39 +418,19 @@ function parseLimits(
   return out
 }
 
-// Mirrors Python's GuardBlock: reason is required, commands/paths are
-// optional string lists. Compiled by the workspace into declarative
-// admission policies (see core policy/spec.ts).
-function parseGuards(entries: unknown): GuardSpec[] {
-  if (!Array.isArray(entries)) throw new Error('config `guards` must be a list')
-  return entries.map((entry) => {
-    if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) {
-      throw new Error('each guard must be a mapping with a `reason`')
-    }
-    const block = entry as Record<string, unknown>
-    // Mirror Python's extra="forbid": a typo like `path:` silently
-    // widening the guard into an unconditional denial must fail loud.
-    for (const key of Object.keys(block)) {
-      if (key !== 'reason' && key !== 'commands' && key !== 'paths') {
-        throw new Error(`unknown guard key \`${key}\` (allowed: reason, commands, paths)`)
-      }
-    }
-    const reason = block.reason
-    if (typeof reason !== 'string' || reason === '') {
-      throw new Error('each guard needs a non-empty string `reason`')
-    }
-    for (const key of ['commands', 'paths']) {
-      const v = block[key]
-      if (v !== undefined && (!Array.isArray(v) || v.some((s) => typeof s !== 'string'))) {
-        throw new Error(`guard \`${key}\` must be a list of strings`)
-      }
-    }
-    return {
-      reason,
-      ...(block.commands !== undefined ? { commands: block.commands as string[] } : {}),
-      ...(block.paths !== undefined ? { paths: block.paths as string[] } : {}),
-    }
-  })
+/**
+ * Validate the `profiles:` block: every entry through the core profile
+ * validator, then every `extends` chain resolved once, so an unknown
+ * parent or a cycle is a load error rather than a first-session one.
+ */
+function parseProfiles(raw: unknown): Record<string, SessionProfile> {
+  if (!isPlainObject(raw)) throw new Error('config `profiles` must be a mapping')
+  const out: Record<string, SessionProfile> = {}
+  for (const [name, block] of Object.entries(raw)) {
+    out[name] = parseSessionProfile(block, `profile \`${name}\``)
+  }
+  for (const name of Object.keys(out)) inherit(out, name)
+  return out
 }
 
 const VAR_RE = /\$\{([A-Z_][A-Z0-9_]*)\}/g
@@ -496,6 +484,8 @@ export interface MountBlock {
   /** vfs (default), fuse, or fskit. Mirrors Python's MountBlock.backend. */
   backend?: string
   mountpoint?: string
+  /** The mount-owned permissions block, validated by the core's parseMountPermissions. */
+  permissions?: unknown
 }
 
 interface RamIndexBlock {
@@ -594,7 +584,10 @@ export interface WorkspaceConfigRaw {
   clis?: Record<string, CLIBlock> | null
   runtimes?: (string | Record<string, unknown>)[] | null
   policy?: string | null
-  guards?: unknown[] | null
+  /** The workspace-tier permissions document; validated by the core's parseWorkspacePermissions. */
+  permissions?: unknown
+  /** Named session profiles; validated by parseProfiles. */
+  profiles?: unknown
   mode?: string
   consistency?: string
   defaultSessionId?: string
@@ -747,7 +740,7 @@ export interface WorkspaceArgs {
   /**
    * Exactly what `new Workspace` takes, minus the two the loader always
    * resolves. Spelling the fields out here instead is what once dropped
-   * `clis` and `guards` on the way to the daemon: a config knob was
+   * `clis` and the deny rules on the way to the daemon: a config knob was
    * parsed and validated, then discarded by a list nobody remembered to
    * extend.
    */
@@ -852,12 +845,19 @@ export async function configToWorkspaceArgs(cfg: WorkspaceConfigRaw): Promise<Wo
   const consistency = coerceConsistency(cfg.consistency)
   const resources: Record<string, [Resource, MountMode, Record<string, Limit>]> = {}
   const kernelMounts: Record<string, [MountBackend, string | undefined]> = {}
+  const mountPermissions: Record<string, MountPermissions> = {}
   for (const [prefix, block] of Object.entries(cfg.mounts)) {
     const r = await buildResource(block.resource, block.config ?? {})
     const m = coerceMountMode(block.mode, wsMode)
     resources[prefix] = [r, m, parseLimits(block.command_limits)]
     const backend = (block.backend ?? MountBackend.VFS) as MountBackend
     if (KERNEL_BACKENDS.includes(backend)) kernelMounts[prefix] = [backend, block.mountpoint]
+    if (block.permissions !== undefined && block.permissions !== null) {
+      mountPermissions[prefix] = parseMountPermissions(
+        block.permissions,
+        `mount \`${prefix}\` permissions`,
+      )
+    }
   }
   const index = buildIndex(cfg.index)
   const stateStore = buildStateStore(cfg.store)
@@ -886,9 +886,13 @@ export async function configToWorkspaceArgs(cfg: WorkspaceConfigRaw): Promise<Wo
       ...(cfg.policy !== undefined && cfg.policy !== null
         ? { policy: loadScriptSource(cfg.policy) }
         : {}),
-      ...(cfg.guards !== undefined && cfg.guards !== null
-        ? { guards: parseGuards(cfg.guards) }
+      ...(cfg.permissions !== undefined && cfg.permissions !== null
+        ? { permissions: parseWorkspacePermissions(cfg.permissions, 'permissions') }
         : {}),
+      ...(cfg.profiles !== undefined && cfg.profiles !== null
+        ? { profiles: parseProfiles(cfg.profiles) }
+        : {}),
+      ...(Object.keys(mountPermissions).length > 0 ? { mountPermissions } : {}),
       ...(cliEntries !== undefined ? { clis: cliEntries } : {}),
     },
     kernelMounts,

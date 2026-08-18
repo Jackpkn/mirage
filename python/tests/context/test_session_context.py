@@ -133,3 +133,44 @@ def test_an_unowned_binding_answers_nobody():
         assert get_current_session_for(SessionManager("default")) is None
     finally:
         reset_current_session(token)
+
+
+def test_bound_hides_join_the_sessions_own_in_the_predicate():
+    from mirage.context import hidden_paths_active, path_allowed
+    from mirage.types import HiddenPaths
+    own = HiddenPaths(paths=("/a/secrets", ))
+    bound = HiddenPaths(paths=("/shared/finance", ),
+                        patterns=("/repo/*.pem", ))
+    sess = Session(session_id="agent", hidden_paths=own, bound_hidden=bound)
+    token = set_current_session(sess)
+    try:
+        assert hidden_paths_active()
+        assert not path_allowed("/a/secrets/x")
+        assert not path_allowed("/shared/finance/q1.csv")
+        assert not path_allowed("/repo/certs/k.pem")
+        assert path_allowed("/repo/README")
+        assert path_allowed("/shared/public")
+    finally:
+        reset_current_session(token)
+
+
+def test_bound_hides_alone_activate_the_gate():
+    from mirage.context import hidden_paths_active, path_allowed
+    from mirage.types import HiddenPaths
+    sess = Session(session_id="agent",
+                   bound_hidden=HiddenPaths(paths=("/repo/.env", )))
+    token = set_current_session(sess)
+    try:
+        assert sess.hidden_paths is None
+        assert hidden_paths_active()
+        assert not path_allowed("/repo/.env")
+        assert path_allowed("/repo/.envrc")
+    finally:
+        reset_current_session(token)
+    free = Session(session_id="free")
+    token = set_current_session(free)
+    try:
+        assert not hidden_paths_active()
+        assert path_allowed("/repo/.env")
+    finally:
+        reset_current_session(token)

@@ -31,7 +31,8 @@ from mirage.observe.observer import Observer
 from mirage.observe.record import OpRecord
 from mirage.observe.store import ObserverStore
 from mirage.ops import Ops
-from mirage.policy import GuardSpec, Policies, Policy
+from mirage.policy import Policies, Policy
+from mirage.policy.spec import SpecPolicy
 from mirage.provision import ProvisionResult
 from mirage.resource.history import HISTORY_PREFIX, HistoryViewResource
 from mirage.runtime.base import Runtime
@@ -39,8 +40,7 @@ from mirage.runtime.policy import PolicyDecision, PolicyFn
 from mirage.runtime.resolver import PrefixResolver
 from mirage.shell.job_table import ConsoleFactory, JobTable
 from mirage.types import (ConsistencyPolicy, DriftPolicy, FileEvent, FileStat,
-                          JsonValue, MountBackend, MountMode, PathSpec,
-                          parse_mount_mode)
+                          JsonValue, MountBackend, MountMode, PathSpec)
 from mirage.utils.ids import new_session_id, new_workspace_id
 from mirage.workspace.cli import CLIInstall
 from mirage.workspace.dispatcher import Dispatcher
@@ -49,8 +49,12 @@ from mirage.workspace.mount import MountEntry, MountRegistry
 from mirage.workspace.mount.namespace import Namespace
 from mirage.workspace.mount.namespace.store import NamespaceStore
 from mirage.workspace.session import (Session, SessionManager, SessionProfile,
-                                      SessionStore)
+                                      SessionStore, WorkspacePermissions)
+from mirage.workspace.session.resolve import (bound_hidden, compile_profile,
+                                              inherit, resolve_profile,
+                                              tighten)
 from mirage.workspace.session.session import vars_from_env
+from mirage.workspace.session.shell_dirs import set_cwd
 from mirage.workspace.snapshot import (DriftQueue, apply_state_dict,
                                        build_mount_args, install_fingerprints,
                                        read_tar)
@@ -106,19 +110,31 @@ class Workspace:
         console_factory: ConsoleFactory | None = None,
         runtimes: list[Runtime | str] | None = None,
         policy: PolicyFn | None = None,
-        guards: list[GuardSpec] | None = None,
-        policies: list[Policy | GuardSpec] | None = None,
+        permissions: WorkspacePermissions | None = None,
+        profiles: Mapping[str, SessionProfile] | None = None,
+        policies: list[Policy] | None = None,
         clis: dict[str, tuple[str | CLISpec, dict[str, Any] | None]]
         | None = None,
     ) -> None:
         self._registry = MountRegistry()
+        # The permissions document, workspace tier: `permissions` binds
+        # every session, `profiles` are the named templates a session is
+        # created from. Every named profile resolves once here so an
+        # unknown `extends` or a cycle fails at construction, not at the
+        # first create_session.
+        self._permissions = permissions
+        self._profiles: dict[str, SessionProfile] = dict(profiles or {})
+        for name in self._profiles:
+            inherit(self._profiles, name)
         # Admission policies, consulted in registration order after the
-        # built-ins the registry seeds: declarative guards first, then
-        # Policy instances, then anything added later through
-        # ws.policies.add(). The runtime policy (policy=) is the
-        # line-level counterpart until it is absorbed as a hook.
-        for spec in guards or []:
-            self._registry.policies.add(spec)
+        # built-ins the registry seeds: the document's deny rules first
+        # (compiled by the internal SpecPolicy), then Policy instances,
+        # then anything added later through ws.policies.add(). The
+        # runtime policy (policy=) is the line-level counterpart until it
+        # is absorbed as a hook.
+        if permissions is not None:
+            for rule in permissions.commands.deny:
+                self._registry.policies.add(SpecPolicy(rule))
         for entry in policies or []:
             self._registry.policies.add(entry)
         # One provider scopes every control-plane store by workspace id;
@@ -170,6 +186,12 @@ class Workspace:
         specs = normalize_resources(resources, mode)
         self._implicit_root = install_mounts(self._registry, specs, index,
                                              mode)
+        # What the workspace and its mounts hide from every session,
+        # stamped onto the default session now and onto every session
+        # created or hydrated later.
+        self._session_mgr.bound_hidden = bound_hidden(
+            permissions, {spec.prefix: spec.permissions
+                          for spec in specs})
 
         self.observer = Observer(store=stores.observe)
         self._registry.mount(HISTORY_PREFIX,
@@ -619,50 +641,55 @@ class Workspace:
         session_id: str,
         mounts: Mapping[str, MountMode | str] | Iterable[str] | None = None,
         *,
-        profile: SessionProfile | None = None,
+        profile: str | SessionProfile | None = None,
+        permissions: SessionProfile | None = None,
     ) -> Session:
-        """Create a session, optionally restricted to per-mount modes.
+        """Create a session from a profile, optionally tightened inline.
+
+        The profile is a name from the workspace's ``profiles`` (or the
+        ``default`` one when none is named and one exists), or a
+        SessionProfile object; ``permissions`` and ``mounts`` narrow it
+        further (mounts intersect at the weaker mode, hides union;
+        design 3.4). Nothing here can widen what the profile grants.
 
         Args:
             session_id (str): unique id for the session.
             mounts (Mapping[str, MountMode | str] | Iterable[str] | None):
-                per-mount modes. A mapping assigns each prefix a mode
-                ceiling ("read", "write", "exec", or the filesystem
-                aliases "r", "rw", "rwx"); a plain iterable of
-                prefixes keeps each mount at its own configured mode (the
-                previous allowlist behavior). ``None`` leaves the
-                session unrestricted.
-            profile (SessionProfile | None): a role's narrowing bundle;
-                its fields unpack onto the session, with an explicit
-                ``mounts`` argument overriding the profile's.
+                sugar for ``permissions.mounts``: a mapping assigns each
+                prefix a mode ceiling ("read", "write", "exec", or the
+                filesystem aliases "r", "rw", "rwx"); a plain iterable
+                of prefixes keeps each mount at its own configured mode.
+            profile (str | SessionProfile | None): the role to create
+                the session from.
+            permissions (SessionProfile | None): an inline document that
+                tightens the profile.
+
+        Raises:
+            PolicyError: an unknown profile name or a broken chain.
         """
-        if profile is not None and mounts is None:
-            mounts = profile.mounts
-        modes: dict[str, MountMode] | None = None
+        base = resolve_profile(self._profiles, profile)
+        inline = permissions
         if mounts is not None:
-            if isinstance(mounts, str):
-                mounts = [mounts]
-            if isinstance(mounts, Mapping):
-                modes = {
-                    ("/" + p.strip("/")): parse_mount_mode(m)
-                    for p, m in mounts.items()
-                }
-            else:
-                modes = {("/" + p.strip("/")): MountMode.EXEC for p in mounts}
+            inline = tighten(inline,
+                             SessionProfile.model_validate({"mounts": mounts}))
+        compiled = compile_profile(tighten(base, inline))
+        modes = compiled.mount_modes
+        if modes is not None:
             for prefix in infrastructure_prefixes(self._implicit_root):
                 modes.setdefault(prefix, MountMode.EXEC)
         session = self._session_mgr.create(session_id, mount_modes=modes)
-        if profile is not None:
-            session.hidden_paths = profile.hidden_paths
-            session.hidden_vars = profile.hidden_vars
-            if profile.env:
-                # A profile's env is a *process* environment, the same
-                # shape `ws.env = {...}` speaks, so every name in it is
-                # exported. Seeding them plain left `$TOKEN` expanding
-                # while every command, CLI and guest runtime in the
-                # profiled session saw nothing, since all three read
-                # `env_snapshot` and that is the exported set.
-                session.vars.update(vars_from_env(profile.env))
+        session.hidden_paths = compiled.hidden_paths
+        session.hidden_vars = compiled.hidden_vars
+        if compiled.env:
+            # A profile's env is a *process* environment, the same
+            # shape `ws.env = {...}` speaks, so every name in it is
+            # exported. Seeding them plain left `$TOKEN` expanding
+            # while every command, CLI and guest runtime in the
+            # profiled session saw nothing, since all three read
+            # `env_snapshot` and that is the exported set.
+            session.vars.update(vars_from_env(compiled.env))
+        if compiled.cwd is not None:
+            set_cwd(session, compiled.cwd)
         return session
 
     def get_session(self, session_id: str) -> Session:

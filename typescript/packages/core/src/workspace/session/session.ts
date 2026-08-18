@@ -242,6 +242,15 @@ export class Session {
   // one channel. Python needs no equivalent: kill cancels the asyncio
   // task and cancellation is ambient.
   abortSignal: AbortSignal | null = null
+  // What the workspace and its mounts hide from every session
+  // (`permissions.paths.hide`, `mounts.<p>.permissions.paths.hide`),
+  // stamped by the SessionManager on create and hydrate and joined with
+  // hiddenPaths in the predicate. Deliberately NOT part of SessionInit
+  // and never persisted: it derives from the workspace's own
+  // configuration, so a restart or a config change never leaves a
+  // stale fold in the store. fork() carries it (a fork binds the same
+  // workspace).
+  boundHidden: HiddenPaths | null = null
   // Command-substitution tracking for assignment statements: how many
   // substitutions have run in this session, and the status of the
   // most recent one. An assignment statement snapshots the count
@@ -354,6 +363,7 @@ export class Session {
     forked.getoptsPos = this.getoptsPos
     forked.getoptsOptind = this.getoptsOptind
     forked.abortSignal = this.abortSignal
+    forked.boundHidden = this.boundHidden
     forked.cmdsubSeq = this.cmdsubSeq
     forked.cmdsubStatus = this.cmdsubStatus
     forked.shopts = { ...this.shopts }

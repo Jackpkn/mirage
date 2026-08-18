@@ -18,6 +18,7 @@ from typing import TypeAlias
 from mirage.resource.base import BaseResource
 from mirage.types import Limit, MountBackend, MountMode
 from mirage.workspace.mount.spec import Mount
+from mirage.workspace.session.profile import MountPermissions
 
 ResourceMount: TypeAlias = (BaseResource | Mount
                             | tuple[BaseResource, MountMode]
@@ -39,3 +40,4 @@ class MountSpec:
     backend: MountBackend = MountBackend.VFS
     mountpoint: str | None = None
     command_limits: dict[str, Limit] = field(default_factory=dict)
+    permissions: MountPermissions | None = None

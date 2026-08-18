@@ -30,6 +30,7 @@ import type { CLISpec } from '../../commands/cli/types.ts'
 import { runWithTimeout } from '../../commands/builtin/utils/limit.ts'
 import type { CLIInstall } from '../cli/types.ts'
 import { resolveLimit } from '../../policy/index.ts'
+import { SpecPolicy } from '../../policy/spec.ts'
 import { JobTable } from '../../shell/job_table/index.ts'
 import type { ShellParser } from '../../shell/parse.ts'
 import { buildFileCache } from './cache.ts'
@@ -46,7 +47,7 @@ import {
 import { readSnapshotTar } from '../snapshot/tar_io.ts'
 import type { WorkspaceStateDict } from '../snapshot/types.ts'
 import type { FileEvent, FileStat } from '../../types.ts'
-import { ConsistencyPolicy, DriftPolicy, MountMode, parseMountMode, PathSpec } from '../../types.ts'
+import { ConsistencyPolicy, DriftPolicy, MountMode, PathSpec } from '../../types.ts'
 import type { Policies } from '../../policy/index.ts'
 import type { PolicyFn } from '../../runtime/policy/index.ts'
 import type { TSNodeLike } from '../../shell/types.ts'
@@ -71,9 +72,16 @@ import { SessionManager } from '../session/manager.ts'
 import type { WorkspaceFields, WorkspaceStateStore } from '../store/base.ts'
 import type { Session } from '../session/session.ts'
 import { varsFromEnv } from '../session/session.ts'
-import type { SessionProfile } from '../session/profile.ts'
+import type { SessionProfile, WorkspacePermissions } from '../session/profile.ts'
+import {
+  boundHidden,
+  compileProfile,
+  inherit,
+  resolveProfile,
+  tighten,
+} from '../session/resolve.ts'
+import { setCwd } from '../session/shell_dirs.ts'
 import { newSessionId, newWorkspaceId } from '../../utils/ids.ts'
-import { stripSlash } from '../../utils/slash.ts'
 import type { WatchRuntime } from '../../watch/base.ts'
 import { resolveControlStores } from './build.ts'
 import { executeLine, type ExecuteEnv } from './execute.ts'
@@ -117,6 +125,8 @@ export class Workspace {
   private readonly runtimes: Runtimes
   private readonly policyRouter: PolicyRouter
   private readonly policy: PolicyFn | null
+  private readonly permissions: WorkspacePermissions | null
+  private readonly profiles: Record<string, SessionProfile>
   // True when the workspace auto-added an empty `/` anchor (no user `/` mount).
   // The anchor is internal and is not forwarded into the Pyodide filesystem.
   private syntheticRootAnchor = false
@@ -171,12 +181,30 @@ export class Workspace {
     })
     rejectConfigScript('policy', options.policy)
     this.policy = options.policy ?? null
+    // The permissions document, workspace tier: `permissions` binds
+    // every session, `profiles` are the named templates a session is
+    // created from. Every named profile resolves once here so an
+    // unknown `extends` or a cycle fails at construction, not at the
+    // first createSession.
+    this.permissions = options.permissions ?? null
+    this.profiles = { ...(options.profiles ?? {}) }
+    for (const name of Object.keys(this.profiles)) inherit(this.profiles, name)
+    // What the workspace and its mounts hide from every session,
+    // stamped onto the default session now and onto every session
+    // created or hydrated later.
+    this.sessionManager.boundHidden = boundHidden(
+      this.permissions,
+      new Map(Object.entries(options.mountPermissions ?? {})),
+    )
     // Admission policies, consulted in registration order after the
-    // built-ins the registry seeds: declarative guards first, then
-    // Policy instances, then anything added later through
-    // ws.policies.add(). The runtime policy (policy option) is the
-    // line-level counterpart until it is absorbed as a hook.
-    for (const guard of options.guards ?? []) this.registry.policies.add(guard)
+    // built-ins the registry seeds: the document's deny rules first
+    // (compiled by the internal SpecPolicy), then Policy instances,
+    // then anything added later through ws.policies.add(). The
+    // runtime policy (policy option) is the line-level counterpart
+    // until it is absorbed as a hook.
+    for (const rule of this.permissions?.commands.deny ?? []) {
+      this.registry.policies.add(new SpecPolicy(rule))
+    }
     for (const entry of options.policies ?? []) this.registry.policies.add(entry)
     // Installed CLIs, fully separate from mounts: a spec name resolves
     // against the named registry and every entry installs through the
@@ -473,60 +501,50 @@ export class Workspace {
   }
 
   /**
-   * Create a session, optionally restricted to per-mount modes.
+   * Create a session from a profile, optionally tightened inline.
    *
-   * `mounts` as a map assigns each prefix a mode ceiling ('read',
-   * 'write', 'exec', or the filesystem aliases 'r', 'rw', 'rwx'); an
-   * array of prefixes keeps each mount at its own configured mode (the
-   * previous allowlist behavior). Omitting it leaves the session
-   * unrestricted.
+   * The profile is a name from the workspace's `profiles` (or the
+   * `default` one when none is named and one exists), or a
+   * SessionProfile object; `permissions` and `mounts` narrow it further
+   * (mounts intersect at the weaker mode, hides union; design 3.4).
+   * Nothing here can widen what the profile grants. `mounts` is sugar
+   * for `permissions.mounts`: a map assigns each prefix a mode ceiling
+   * ('read', 'write', 'exec', or the filesystem aliases 'r', 'rw',
+   * 'rwx'); an array of prefixes keeps each mount at its own configured
+   * mode. Throws PolicyError on an unknown profile name or a broken
+   * chain.
    */
   createSession(
     sessionId: string,
     options: {
       mounts?: ReadonlyMap<string, string> | Record<string, string> | readonly string[] | null
-      /**
-       * A role's narrowing bundle; its fields unpack onto the session,
-       * with an explicit `mounts` option overriding the profile's.
-       */
-      profile?: SessionProfile | null
+      profile?: string | SessionProfile | null
+      permissions?: SessionProfile | null
     } = {},
   ): Session {
-    const profile = options.profile ?? null
-    const mounts = options.mounts ?? profile?.mounts ?? null
+    const base = resolveProfile(this.profiles, options.profile)
+    let inline: SessionProfile | null = options.permissions ?? null
+    if (options.mounts != null) inline = tighten(inline, { mounts: options.mounts })
+    const compiled = compileProfile(tighten(base, inline))
     let modes: Map<string, MountMode> | null = null
-    if (mounts !== null) {
-      modes = new Map<string, MountMode>()
-      if (Array.isArray(mounts)) {
-        for (const p of mounts as readonly string[]) {
-          modes.set('/' + stripSlash(p), MountMode.EXEC)
-        }
-      } else {
-        const entries: [string, string][] =
-          mounts instanceof Map
-            ? [...(mounts as ReadonlyMap<string, string>).entries()]
-            : Object.entries(mounts as Record<string, string>)
-        for (const [p, mode] of entries) {
-          modes.set('/' + stripSlash(p), parseMountMode(mode))
-        }
-      }
+    if (compiled.mountModes !== null) {
+      modes = new Map(compiled.mountModes)
       for (const p of infrastructurePrefixes(this.syntheticRootAnchor)) {
         if (!modes.has(p)) modes.set(p, MountMode.EXEC)
       }
     }
     const session = this.sessionManager.create(sessionId, { mountModes: modes })
-    if (profile !== null) {
-      session.hiddenPaths = profile.hiddenPaths ?? null
-      session.hiddenVars = profile.hiddenVars ?? null
-      if (profile.env != null) {
-        // A profile's env is a *process* environment, the same shape
-        // `ws.env = {...}` speaks, so every name in it is exported.
-        // Seeding them plain left `$TOKEN` expanding while every command,
-        // CLI and guest runtime in the profiled session saw nothing,
-        // since all three read `envSnapshot` and that is the exported set.
-        Object.assign(session.vars, varsFromEnv(profile.env))
-      }
+    session.hiddenPaths = compiled.hiddenPaths
+    session.hiddenVars = compiled.hiddenVars
+    if (compiled.env != null) {
+      // A profile's env is a *process* environment, the same shape
+      // `ws.env = {...}` speaks, so every name in it is exported.
+      // Seeding them plain left `$TOKEN` expanding while every command,
+      // CLI and guest runtime in the profiled session saw nothing,
+      // since all three read `envSnapshot` and that is the exported set.
+      Object.assign(session.vars, varsFromEnv(compiled.env))
     }
+    if (compiled.cwd !== null) setCwd(session, compiled.cwd)
     return session
   }
 

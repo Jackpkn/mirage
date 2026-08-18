@@ -15,13 +15,11 @@
 import { Limit, type PathSpec } from '../types.ts'
 import type { Policy } from './base.ts'
 import { PolicyDenied, PolicyError } from './errors.ts'
-import { SpecPolicy } from './spec.ts'
 import {
   VALIDITY,
   type CommandContext,
   type Deny,
   type ExecuteResultContext,
-  type GuardSpec,
   type OpsContext,
   type OpsResultContext,
   type SessionContext,
@@ -106,9 +104,10 @@ export async function preSessionGate(
  * Ordered policies; on a pre hook the first Deny wins.
  *
  * Built-ins are seeded first (MountRegistry registers
- * MountRootPolicy), then user policies in registration order:
- * `Workspace({guards, policies})`, then anything added later through
- * `add`. There is no allow arm, so adding a policy can only tighten
+ * MountRootPolicy), then the document's deny rules compiled by the
+ * workspace, then user policies in registration order
+ * (`Workspace({policies})`, then anything added later through
+ * `add`). There is no allow arm, so adding a policy can only tighten
  * the workspace, never loosen it; order decides which refusal message
  * is shown, never whether a refusal holds.
  *
@@ -143,25 +142,12 @@ export class Policies {
   }
 
   /**
-   * Register a policy (or a declarative spec) after the existing ones.
-   * The discriminator is the hook surface, not the `reason` field: an
-   * entry defining any hook is a Policy even if it also carries a
-   * `reason` property (Python distinguishes with isinstance; this is
-   * the structural equivalent).
+   * Register a policy after the existing ones. Code only: a
+   * declarative rule belongs in the permissions document
+   * (`commands.deny`), which the workspace compiles.
    */
-  add(entry: Policy | GuardSpec): void {
-    const candidate = entry as Policy
-    const hooked =
-      typeof candidate.preCommand === 'function' ||
-      typeof candidate.preOps === 'function' ||
-      typeof candidate.postOps === 'function' ||
-      typeof candidate.postExecute === 'function' ||
-      typeof candidate.preSession === 'function'
-    if (!hooked && 'reason' in entry) {
-      this.policies.push(new SpecPolicy(entry))
-    } else {
-      this.policies.push(entry as Policy)
-    }
+  add(entry: Policy): void {
+    this.policies.push(entry)
     this.rescan()
   }
 

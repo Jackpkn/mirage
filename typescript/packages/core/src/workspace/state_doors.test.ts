@@ -870,19 +870,123 @@ describe('session profiles', () => {
     open.push(ws)
     const analyst = {
       mounts: { '/a': 'write' },
-      hiddenPaths: { paths: ['/a/secrets'] },
-      hiddenVars: { names: ['SLACK_TOKEN'] },
+      paths: { hide: ['/a/secrets'] },
+      vars: { hide: ['SLACK_TOKEN'] },
       env: { ROLE: 'analyst' },
     }
     const s1 = ws.createSession('agent1', { profile: analyst })
     const s2 = ws.createSession('agent2', { profile: analyst })
     expect(s1.mountModes?.get('/a')).toBe(MountMode.WRITE)
-    expect(s1.hiddenPaths).toBe(analyst.hiddenPaths)
-    expect(s2.hiddenPaths).toBe(analyst.hiddenPaths)
+    expect(s1.hiddenPaths).toEqual({ paths: ['/a/secrets'], patterns: [] })
+    expect(s2.hiddenPaths).toEqual(s1.hiddenPaths)
+    expect(s1.hiddenVars).toEqual({ names: ['SLACK_TOKEN'], patterns: [] })
     expect(s1.env.ROLE).toBe('analyst')
     const listing = await ws.execute('ls /a', { sessionId: 'agent1' })
     expect(stdoutStr(listing)).not.toContain('secrets')
     const role = await ws.execute('echo "$ROLE"', { sessionId: 'agent1' })
     expect(stdoutStr(role)).toBe('analyst\n')
+  })
+
+  it('explicit mounts tighten the profile, never widen it', async () => {
+    const parser = await getTestParser()
+    const ws = new Workspace(
+      { '/a': new RAMResource(), '/b': new RAMResource() },
+      { mode: MountMode.WRITE, shellParser: parser },
+    )
+    open.push(ws)
+    const sess = ws.createSession('agent', {
+      mounts: { '/a': 'read', '/b': 'read' },
+      profile: { mounts: { '/a': 'write' }, paths: { hide: ['/a/secrets'] } },
+    })
+    expect(sess.mountModes?.get('/a')).toBe(MountMode.READ)
+    expect(sess.mountModes?.has('/b')).toBe(false)
+    expect(sess.hiddenPaths).toEqual({ paths: ['/a/secrets'], patterns: [] })
+  })
+
+  it('a named profile resolves its chain, default applies unnamed, unknown throws', async () => {
+    const parser = await getTestParser()
+    const ws = new Workspace(
+      { '/a': new RAMResource(), '/b': new RAMResource() },
+      {
+        mode: MountMode.WRITE,
+        shellParser: parser,
+        profiles: {
+          default: { cwd: '/b', env: { PAGER: 'cat' }, mounts: { '/a': 'rw', '/b': 'rwx' } },
+          reviewer: {
+            extends: 'default',
+            mounts: { '/a': 'r', '/b': 'rwx' },
+            paths: { hide: ['/a/secrets'] },
+          },
+        },
+      },
+    )
+    open.push(ws)
+    const reviewer = ws.createSession('r', { profile: 'reviewer' })
+    expect(reviewer.mountModes?.get('/a')).toBe(MountMode.READ)
+    expect(reviewer.hiddenPaths).toEqual({ paths: ['/a/secrets'], patterns: [] })
+    expect(reviewer.cwd).toBe('/b')
+    expect(reviewer.env.PAGER).toBe('cat')
+    const dflt = ws.createSession('d')
+    expect(dflt.mountModes?.get('/a')).toBe(MountMode.WRITE)
+    expect(dflt.hiddenPaths).toBeNull()
+    expect(dflt.cwd).toBe('/b')
+    expect(() => ws.createSession('x', { profile: 'nope' })).toThrow("unknown profile 'nope'")
+    const inline = ws.createSession('i', {
+      profile: 'reviewer',
+      permissions: {
+        cwd: '/a',
+        mounts: { '/a': 'rw' },
+        paths: { hide: ['*.key'] },
+        vars: { hide: ['AWS_*'] },
+      },
+    })
+    expect(inline.mountModes?.get('/a')).toBe(MountMode.READ)
+    expect(inline.mountModes?.has('/b')).toBe(false)
+    expect(inline.hiddenPaths).toEqual({ paths: ['/a/secrets'], patterns: ['*.key'] })
+    expect(inline.hiddenVars).toEqual({ names: [], patterns: ['AWS_*'] })
+    expect(inline.cwd).toBe('/a')
+    const pwd = await ws.execute('pwd', { sessionId: 'r' })
+    expect(stdoutStr(pwd)).toBe('/b\n')
+  })
+
+  it('a broken profile chain fails at construction', () => {
+    expect(
+      () =>
+        new Workspace({ '/a': new RAMResource() }, { profiles: { orphan: { extends: 'gone' } } }),
+    ).toThrow("extends unknown profile 'gone'")
+  })
+
+  it('workspace and mount-owned hides bind every session, the default included', async () => {
+    const parser = await getTestParser()
+    const repo = new RAMResource()
+    const ws = new Workspace(
+      { '/repo': repo, '/other': new RAMResource() },
+      {
+        mode: MountMode.WRITE,
+        shellParser: parser,
+        permissions: { commands: { deny: [] }, paths: { hide: ['/other/finance', '*.key'] } },
+        mountPermissions: { '/repo': { paths: { hide: ['.env', '*.pem'] } } },
+      },
+    )
+    open.push(ws)
+    await ws.execute('mkdir -p /repo/certs /other/finance /other/pub')
+    await ws.execute(
+      "printf 'S=1\\n' > /repo/.env; printf p > /repo/certs/k.pem; printf r > /repo/README",
+    )
+    await ws.execute('printf v > /other/.env; printf v > /other/x.pem; printf k > /other/pub/b.key')
+    const listing = stdoutStr(await ws.execute('ls -a /repo /repo/certs /other /other/pub'))
+    expect(listing).toContain('README')
+    expect(listing).not.toContain('k.pem')
+    expect(listing).not.toContain('finance')
+    expect(listing).not.toContain('b.key')
+    expect(listing).toContain('x.pem')
+    const repoPart = listing.split('/other:')[0]
+    expect(repoPart).not.toContain('.env')
+    expect(listing.split('/other:')[1]).toContain('.env')
+    expect((await ws.execute('cat /repo/.env')).exitCode).not.toBe(0)
+    expect(stdoutStr(await ws.execute('cat /other/.env'))).toBe('v')
+    ws.createSession('late')
+    expect((await ws.execute('cat /other/pub/b.key', { sessionId: 'late' })).exitCode).not.toBe(0)
+    expect(ws.getSession('late').hiddenPaths).toBeNull()
   })
 })

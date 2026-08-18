@@ -48,6 +48,7 @@ INHERITED_FIELDS: tuple[str, ...] = (
     "mount_modes",
     "hidden_paths",
     "hidden_vars",
+    "bound_hidden",
     "generation",
     "pipeline_timeout_seconds",
     "last_bg_job_id",
@@ -225,6 +226,13 @@ class Session:
     # session door for vars), fork carries them, to_dict serializes.
     hidden_paths: HiddenPaths | None = None
     hidden_vars: HiddenVars | None = None
+    # What the workspace and its mounts hide from every session
+    # (`permissions.paths.hide`, `mounts.<p>.permissions.paths.hide`),
+    # stamped by the SessionManager on create and hydrate and joined
+    # with hidden_paths in the predicate. Deliberately NOT persisted:
+    # it derives from the workspace's own configuration, so a restart
+    # or a config change never leaves a stale fold in the store.
+    bound_hidden: HiddenPaths | None = None
     generation: int = 0
     pipeline_timeout_seconds: float | None = None
     last_bg_job_id: int | None = None

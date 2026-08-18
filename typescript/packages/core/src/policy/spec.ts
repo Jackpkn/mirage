@@ -13,49 +13,41 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import type { Policy } from './base.ts'
-import type { Action, CommandContext, GuardSpec, OpsContext } from './types.ts'
+import type { Action, CommandContext, CommandRule, OpsContext } from './types.ts'
+import type { HiddenPaths } from '../types.ts'
+import { classifyPaths, pathHidden } from '../utils/hidden.ts'
 
 /**
- * Compile a `*`/`?` wildcard into an anchored regex. Deliberately not
- * a full glob: both languages support exactly these two
- * metacharacters, so a pattern means the same thing in Python and
- * TypeScript.
+ * A CommandRule compiled to a policy.
+ *
+ * Internal: the workspace builds one per rule of the document's
+ * `commands.deny`; nothing outside the package constructs it. The
+ * rule's paths compile through the same classifier as `paths.hide` and
+ * match through the same matcher, so a deny scope and a hide read one
+ * grammar.
  */
-export function wildcardRegex(pattern: string): RegExp {
-  let out = '^'
-  for (const ch of pattern) {
-    if (ch === '*') out += '.*'
-    else if (ch === '?') out += '.'
-    else out += ch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  }
-  return new RegExp(out + '$')
-}
-
-/** A GuardSpec compiled to a policy. */
 export class SpecPolicy implements Policy {
-  readonly spec: GuardSpec
-  private readonly patterns: RegExp[]
+  readonly rule: CommandRule
+  private readonly scope: HiddenPaths | null
 
-  constructor(spec: GuardSpec) {
-    this.spec = spec
-    this.patterns = (spec.paths ?? []).map(wildcardRegex)
+  constructor(rule: CommandRule) {
+    this.rule = rule
+    this.scope = classifyPaths(rule.paths ?? [])
   }
 
   preCommand(ctx: CommandContext): Action | null {
-    const commands = this.spec.commands ?? []
+    const commands = this.rule.commands ?? []
     if (commands.length > 0 && !commands.includes(ctx.command)) return null
-    if (this.patterns.length === 0) {
-      return { kind: 'deny', message: `${ctx.command}: ${this.spec.reason}\n`, exitCode: 1 }
+    if (this.scope === null) {
+      return { kind: 'deny', message: `${ctx.command}: ${this.rule.reason}\n`, exitCode: 1 }
     }
     for (const p of ctx.paths) {
-      for (const pattern of this.patterns) {
-        if (pattern.test(p.virtual)) {
-          const display = p.rawPath || p.virtual
-          return {
-            kind: 'deny',
-            message: `${ctx.command}: ${display}: ${this.spec.reason}\n`,
-            exitCode: 1,
-          }
+      if (pathHidden(this.scope, p.virtual)) {
+        const display = p.rawPath || p.virtual
+        return {
+          kind: 'deny',
+          message: `${ctx.command}: ${display}: ${this.rule.reason}\n`,
+          exitCode: 1,
         }
       }
     }
@@ -65,14 +57,12 @@ export class SpecPolicy implements Policy {
   preOps(ctx: OpsContext): Action | null {
     // The op-layer twin: pure path protection (no command scope) also
     // holds at the op door, so FUSE, programmatic ops, and the warm
-    // cache cannot bypass it. Command-scoped specs stay command-layer:
+    // cache cannot bypass it. Command-scoped rules stay command-layer:
     // an op does not know which command issued it.
-    const commands = this.spec.commands ?? []
-    if (commands.length > 0 || this.patterns.length === 0) return null
-    for (const pattern of this.patterns) {
-      if (pattern.test(ctx.path.virtual)) {
-        return { kind: 'deny', message: `${this.spec.reason}\n`, exitCode: 1 }
-      }
+    const commands = this.rule.commands ?? []
+    if (commands.length > 0 || this.scope === null) return null
+    if (pathHidden(this.scope, ctx.path.virtual)) {
+      return { kind: 'deny', message: `${this.rule.reason}\n`, exitCode: 1 }
     }
     return null
   }

@@ -81,6 +81,7 @@ def normalize_resources(resources: dict[str, ResourceMount],
                     backend=value.backend,
                     mountpoint=value.mountpoint,
                     command_limits=dict(value.command_limits or {}),
+                    permissions=value.permissions,
                 ))
         elif isinstance(value, tuple):
             if len(value) not in (2, 3):

@@ -12,67 +12,49 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import re
-
 from mirage.policy.base import Policy
-from mirage.policy.types import (Action, CommandContext, Deny, GuardSpec,
+from mirage.policy.types import (Action, CommandContext, CommandRule, Deny,
                                  OpsContext)
-
-
-def wildcard_regex(pattern: str) -> re.Pattern[str]:
-    """Compile a ``*``/``?`` wildcard into an anchored regex.
-
-    Deliberately not fnmatch: both languages support exactly these two
-    metacharacters, so a pattern means the same thing in Python and
-    TypeScript.
-
-    Args:
-        pattern (str): the wildcard pattern.
-    """
-    parts = []
-    for ch in pattern:
-        if ch == "*":
-            parts.append(".*")
-        elif ch == "?":
-            parts.append(".")
-        else:
-            parts.append(re.escape(ch))
-    return re.compile("^" + "".join(parts) + "$")
+from mirage.utils.hidden import classify_paths, path_hidden
 
 
 class SpecPolicy(Policy):
-    """A GuardSpec compiled to a policy.
+    """A CommandRule compiled to a policy.
+
+    Internal: the workspace builds one per rule of the document's
+    ``commands.deny``; nothing outside the package constructs it. The
+    rule's paths compile through the same classifier as ``paths.hide``
+    and match through the same matcher, so a deny scope and a hide
+    read one grammar.
 
     Args:
-        spec (GuardSpec): the declarative rule.
+        rule (CommandRule): the declarative rule.
     """
 
-    def __init__(self, spec: GuardSpec) -> None:
-        self.spec = spec
-        self._patterns = [wildcard_regex(p) for p in spec.paths]
+    def __init__(self, rule: CommandRule) -> None:
+        self.rule = rule
+        self._scope = classify_paths(rule.paths)
 
     async def pre_command(self, ctx: CommandContext) -> Action | None:
-        spec = self.spec
-        if spec.commands and ctx.command not in spec.commands:
+        rule = self.rule
+        if rule.commands and ctx.command not in rule.commands:
             return None
-        if not self._patterns:
-            return Deny(f"{ctx.command}: {spec.reason}\n")
+        if self._scope is None:
+            return Deny(f"{ctx.command}: {rule.reason}\n")
         for p in ctx.paths:
-            for pattern in self._patterns:
-                if pattern.match(p.virtual):
-                    display = p.raw_path or p.virtual
-                    return Deny(f"{ctx.command}: {display}: {spec.reason}\n")
+            if path_hidden(self._scope, p.virtual):
+                display = p.raw_path or p.virtual
+                return Deny(f"{ctx.command}: {display}: {rule.reason}\n")
         return None
 
     async def pre_ops(self, ctx: OpsContext) -> Action | None:
         # The op-layer twin: pure path protection (no command scope)
         # also holds at the op doors, so FUSE, programmatic ops, and
-        # the warm cache cannot bypass it. Command-scoped specs stay
+        # the warm cache cannot bypass it. Command-scoped rules stay
         # command-layer: an op does not know which command issued it.
-        spec = self.spec
-        if spec.commands or not self._patterns:
+        rule = self.rule
+        if rule.commands or self._scope is None:
             return None
-        for pattern in self._patterns:
-            if pattern.match(ctx.path.virtual):
-                return Deny(f"{spec.reason}\n")
+        if path_hidden(self._scope, ctx.path.virtual):
+            return Deny(f"{rule.reason}\n")
         return None

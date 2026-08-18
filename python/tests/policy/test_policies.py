@@ -16,10 +16,11 @@ import errno
 
 import pytest
 
-from mirage.policy import (Action, CommandContext, Deny, ExecuteResultContext,
-                           GuardSpec, MountRootPolicy, OpsContext,
+from mirage.policy import (Action, CommandContext, CommandRule, Deny,
+                           ExecuteResultContext, MountRootPolicy, OpsContext,
                            OpsResultContext, Policies, Policy, PolicyError,
                            post_execute_gate, post_ops_gate, pre_ops_gate)
+from mirage.policy.spec import SpecPolicy
 from mirage.resource.ram import RAMResource
 from mirage.types import Limit, MountMode, PathSpec, Producer
 from mirage.workspace.mount import MountRegistry
@@ -90,7 +91,8 @@ async def test_registry_seeds_the_mount_root_policy():
 @pytest.mark.asyncio
 async def test_builtin_runs_first_then_user_policies_in_order():
     policies = Policies([MountRootPolicy()])
-    policies.add(GuardSpec(reason="user rule", commands=("rm", )))
+    policies.add(SpecPolicy(CommandRule(reason="user rule",
+                                        commands=("rm", ))))
     # Both match `rm /data`; the built-in GNU message wins by order.
     deny = await policies.pre_command(_ctx("rm", [_path("/data")]))
     assert deny is not None

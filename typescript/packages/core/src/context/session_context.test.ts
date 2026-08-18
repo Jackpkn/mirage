@@ -18,7 +18,9 @@ import {
   effectiveMountMode,
   getCurrentSession,
   getCurrentSessionFor,
+  hiddenPathsActive,
   MountNotAllowedError,
+  pathAllowed,
   runWithSession,
 } from './session_context.ts'
 import { asyncContextIsolatesTasks } from '../utils/async_context.ts'
@@ -165,5 +167,38 @@ describe('a binding belongs to the workspace that published it', () => {
     // seeing it; the browser fallback storage cannot, and jobs.ts
     // reads this to decide.
     expect(asyncContextIsolatesTasks).toBe(true)
+  })
+})
+
+describe('bound hides', () => {
+  it("join the session's own hides in the predicate", async () => {
+    const sess = new Session({ sessionId: 'agent', hiddenPaths: { paths: ['/a/secrets'] } })
+    sess.boundHidden = { paths: ['/shared/finance'], patterns: ['/repo/*.pem'] }
+    await runWithSession(sess, () => {
+      expect(hiddenPathsActive()).toBe(true)
+      expect(pathAllowed('/a/secrets/x')).toBe(false)
+      expect(pathAllowed('/shared/finance/q1.csv')).toBe(false)
+      expect(pathAllowed('/repo/certs/k.pem')).toBe(false)
+      expect(pathAllowed('/repo/README')).toBe(true)
+      expect(pathAllowed('/shared/public')).toBe(true)
+      return Promise.resolve()
+    })
+  })
+
+  it('alone activate the gate', async () => {
+    const sess = new Session({ sessionId: 'agent' })
+    sess.boundHidden = { paths: ['/repo/.env'] }
+    await runWithSession(sess, () => {
+      expect(sess.hiddenPaths).toBeNull()
+      expect(hiddenPathsActive()).toBe(true)
+      expect(pathAllowed('/repo/.env')).toBe(false)
+      expect(pathAllowed('/repo/.envrc')).toBe(true)
+      return Promise.resolve()
+    })
+    await runWithSession(new Session({ sessionId: 'free' }), () => {
+      expect(hiddenPathsActive()).toBe(false)
+      expect(pathAllowed('/repo/.env')).toBe(true)
+      return Promise.resolve()
+    })
   })
 })

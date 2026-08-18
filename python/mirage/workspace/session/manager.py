@@ -16,7 +16,7 @@ import asyncio
 import copy
 from collections.abc import Mapping
 
-from mirage.types import MountMode
+from mirage.types import HiddenPaths, MountMode
 from mirage.workspace.record.types import CAS_MAX_RETRIES, generation_of
 from mirage.workspace.session.ram import RAMSessionStore
 from mirage.workspace.session.session import Session, vars_from_env
@@ -51,6 +51,27 @@ class SessionManager:
         self._locks[default_session_id] = asyncio.Lock()
         self._loaded = False
         self._load_lock = asyncio.Lock()
+        self._bound_hidden: HiddenPaths | None = None
+
+    @property
+    def bound_hidden(self) -> HiddenPaths | None:
+        """What the workspace and its mounts hide from every session."""
+        return self._bound_hidden
+
+    @bound_hidden.setter
+    def bound_hidden(self, spec: HiddenPaths | None) -> None:
+        """Stamp the workspace-bound hides onto every live session.
+
+        Set once by the workspace after its mounts are installed, and
+        applied again to every session created or hydrated later, so
+        the fact rides the session object without ever being persisted.
+
+        Args:
+            spec (HiddenPaths | None): the compiled bound hides.
+        """
+        self._bound_hidden = spec
+        for session in self._sessions.values():
+            session.bound_hidden = spec
 
     @property
     def default_id(self) -> str:
@@ -139,6 +160,7 @@ class SessionManager:
                 if sid in self._sessions:
                     continue
                 session = Session.from_dict(fields)
+                session.bound_hidden = self._bound_hidden
                 self._sessions[sid] = session
                 self._locks[sid] = asyncio.Lock()
                 self._persisted[sid] = copy.deepcopy(session.to_dict())
@@ -192,7 +214,9 @@ class SessionManager:
                mount_modes: dict[str, MountMode] | None = None) -> Session:
         if session_id in self._sessions:
             raise ValueError(f"Session {session_id!r} already exists")
-        session = Session(session_id=session_id, mount_modes=mount_modes)
+        session = Session(session_id=session_id,
+                          mount_modes=mount_modes,
+                          bound_hidden=self._bound_hidden)
         self._sessions[session_id] = session
         self._locks[session_id] = asyncio.Lock()
         return session

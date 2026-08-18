@@ -14,6 +14,7 @@
 
 import { writeFileSync } from 'node:fs'
 import { ConsistencyPolicy } from '@struktoai/mirage-node'
+import { parseSessionProfile } from '@struktoai/mirage-core/workspace/session/profile'
 import { ADAPTERS, openConsistency } from './adapters.ts'
 import type { Case, Target } from './harness.ts'
 import {
@@ -33,6 +34,7 @@ import {
 } from './harness.ts'
 
 const TS_HOSTS = ['typescript-node', 'typescript-browser']
+const PROFILE_KEYS = ['extends', 'cwd', 'env', 'mounts', 'paths', 'vars']
 
 interface EmitRow {
   target: string
@@ -96,36 +98,18 @@ async function runTarget(
     }
     // Sessions a case can name via its `session` field. Mount grants take
     // either the mapping form ({ '/data': 'read' }) or the list form
-    // (['/data'], which inherits the mount's own mode). A profile form
-    // ({ mounts, hidden_paths, hidden_vars, env }) narrows visibility
-    // too; it is told apart by its keys, which never start with '/'.
+    // (['/data'], which inherits the mount's own mode). A profile form is
+    // the permissions document itself ({ mounts, paths: { hide }, vars:
+    // { hide }, env, cwd }), validated by the same parser the YAML door
+    // uses; it is told apart by its keys, which never start with '/'.
     for (const [sessionId, spec] of Object.entries(target.sessions ?? {})) {
       const profileShaped =
         spec !== null &&
         typeof spec === 'object' &&
         !Array.isArray(spec) &&
-        ['mounts', 'hidden_paths', 'hidden_vars', 'env'].some((k) => k in spec)
+        PROFILE_KEYS.some((k) => k in spec)
       if (profileShaped) {
-        const p = spec as {
-          mounts?: Record<string, string> | string[]
-          hidden_paths?: { paths?: string[]; patterns?: string[] }
-          hidden_vars?: { names?: string[]; patterns?: string[] }
-          env?: Record<string, string>
-        }
-        ws.createSession(sessionId, {
-          profile: {
-            mounts: p.mounts ?? null,
-            hiddenPaths:
-              p.hidden_paths !== undefined
-                ? { paths: p.hidden_paths.paths ?? [], patterns: p.hidden_paths.patterns ?? [] }
-                : null,
-            hiddenVars:
-              p.hidden_vars !== undefined
-                ? { names: p.hidden_vars.names ?? [], patterns: p.hidden_vars.patterns ?? [] }
-                : null,
-            env: p.env ?? null,
-          },
-        })
+        ws.createSession(sessionId, { profile: parseSessionProfile(spec, `session ${sessionId}`) })
       } else {
         ws.createSession(sessionId, { mounts: spec as Record<string, string> | string[] })
       }

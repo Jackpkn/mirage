@@ -346,3 +346,45 @@ def test_hydrated_sessions_start_clean():
     _run(mgr.flush())
     entries = _run(store.load())
     assert entries["s2"]["generation"] == 4
+
+
+def test_manager_stamps_bound_hides_on_live_created_and_forked_sessions():
+    mgr = SessionManager("default")
+    early = mgr.create("early")
+    bound = HiddenPaths(paths=("/shared/finance", ))
+    mgr.bound_hidden = bound
+    assert mgr.bound_hidden is bound
+    assert mgr.get("default").bound_hidden is bound
+    assert early.bound_hidden is bound
+    late = mgr.create("late", mount_modes={"/a": MountMode.READ})
+    assert late.bound_hidden is bound
+    assert late.fork().bound_hidden is bound
+    assert late.hidden_paths is None
+
+
+@pytest.mark.asyncio
+async def test_manager_bound_hides_ride_hydration_but_never_the_store():
+    store = RAMSessionStore()
+    await store.set(
+        "restored", {
+            "session_id": "restored",
+            "cwd": "/w",
+            "env": {},
+            "created_at": 1.0,
+            "hidden_paths": {
+                "paths": ["/own"],
+                "patterns": []
+            },
+        })
+    mgr = SessionManager("default", store=store)
+    bound = HiddenPaths(paths=("/shared/finance", ))
+    mgr.bound_hidden = bound
+    await mgr.ensure_loaded()
+    restored = mgr.get("restored")
+    assert restored.bound_hidden is bound
+    assert restored.hidden_paths == HiddenPaths(paths=("/own", ))
+    assert mgr.get("default").bound_hidden is bound
+    assert "bound_hidden" not in restored.to_dict()
+    await mgr.flush()
+    stored = await store.load()
+    assert "bound_hidden" not in stored["restored"]

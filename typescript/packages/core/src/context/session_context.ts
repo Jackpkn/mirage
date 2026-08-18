@@ -120,19 +120,20 @@ export function mountAllowed(mountPrefix: string): boolean {
 }
 
 /**
- * Whether the current session hides any paths at all.
+ * Whether the current session hides any paths at all, its own or the
+ * workspace-bound ones every session carries.
  *
  * For a summarizing fast path (du -s asks the backend for one total)
  * that must not be trusted when hidden leaves could be inside it.
  */
 export function hiddenPathsActive(): boolean {
   const sess = getCurrentSession()
-  return sess?.hiddenPaths != null
+  return sess?.hiddenPaths != null || sess?.boundHidden != null
 }
 
 /**
- * Whether the current session's hidden-paths spec leaves this path
- * visible.
+ * Whether the current session's hidden-paths specs, its own and the
+ * workspace-bound one, leave this path visible.
  *
  * The path twin of `mountAllowed`: enumeration surfaces filter names
  * through it and the doors answer ENOENT (EACCES for creates) when it
@@ -165,8 +166,9 @@ export function dotglobActive(): boolean {
 
 export function pathAllowed(virtual: string): boolean {
   const sess = getCurrentSession()
-  if (sess?.hiddenPaths == null) return true
-  return !pathHidden(sess.hiddenPaths, virtual)
+  if (sess == null) return true
+  if (sess.hiddenPaths != null && pathHidden(sess.hiddenPaths, virtual)) return false
+  return !(sess.boundHidden != null && pathHidden(sess.boundHidden, virtual))
 }
 
 /**

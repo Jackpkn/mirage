@@ -17,6 +17,7 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } 
 import { tmpdir } from 'node:os'
 import { dirname, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import type { SessionProfile } from '@struktoai/mirage-core/workspace/session/profile'
 
 // integ/runtime holds the runtime suite (its own schema and runners,
 // integ/runtime/run.{py,ts} + cli.sh), not battery cases; keep it out.
@@ -163,7 +164,10 @@ export interface ExecWorkspace {
   dispatch(opName: string, path: string, args?: readonly unknown[], kwargs?: Record<string, unknown>): Promise<unknown>
   cache: { clear(): Promise<void> }
   mounts(): readonly { resource: { index?: { clear(): Promise<void> } } }[]
-  createSession(sessionId: string, options: { mounts: Record<string, string> | string[] }): unknown
+  createSession(
+    sessionId: string,
+    options: { mounts?: Record<string, string> | string[]; profile?: SessionProfile },
+  ): unknown
   env: Record<string, string>
   close(): Promise<void>
 }
