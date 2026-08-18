@@ -16,6 +16,44 @@ import type { HiddenPaths, HiddenVars } from '../types.ts'
 import { fnmatch } from './fnmatch.ts'
 import { stripSlash } from './slash.ts'
 
+/**
+ * The characters that make a document entry a pattern rather than an
+ * exact name; the permissions document has one grammar for every path
+ * list, and this is the whole classification rule.
+ */
+const GLOB_CHARS = new Set(['*', '?', '['])
+
+/** Whether a document entry is a pattern (any of `*`, `?`, `[`). */
+export function isGlob(entry: string): boolean {
+  for (const ch of entry) if (GLOB_CHARS.has(ch)) return true
+  return false
+}
+
+/**
+ * Compile document path entries into the matcher's shape: glob =
+ * pattern, plain = exact subtree, in the order written. The same split
+ * serves `paths.hide` and a `CommandRule`'s `paths`, so both planes
+ * match through `pathHidden`. Null when there is nothing to match,
+ * which is what "unrestricted" reads as.
+ */
+export function classifyPaths(entries: readonly string[]): HiddenPaths | null {
+  const paths = entries.filter((e) => !isGlob(e))
+  const patterns = entries.filter((e) => isGlob(e))
+  if (paths.length === 0 && patterns.length === 0) return null
+  return { paths, patterns }
+}
+
+/**
+ * Compile document variable entries into the matcher's shape: glob =
+ * pattern over names, plain = exact name. Null when empty.
+ */
+export function classifyVars(entries: readonly string[]): HiddenVars | null {
+  const names = entries.filter((e) => !isGlob(e))
+  const patterns = entries.filter((e) => isGlob(e))
+  if (names.length === 0 && patterns.length === 0) return null
+  return { names, patterns }
+}
+
 function normAbs(path: string): string {
   const stripped = stripSlash(path)
   return stripped === '' ? '/' : '/' + stripped

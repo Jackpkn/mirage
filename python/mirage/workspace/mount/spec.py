@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 
 from mirage.resource.base import BaseResource
 from mirage.types import Limit, MountBackend, MountMode
+from mirage.workspace.session.permissions import MountPermissions
 
 
 @dataclass(frozen=True)
@@ -29,3 +30,6 @@ class Mount:
     # directory appropriate for the backend. Ignored when backend is VFS.
     mountpoint: str | None = None
     command_limits: dict[str, Limit] = field(default_factory=dict)
+    # The mount-owned permissions block (`mounts.<p>.permissions` in
+    # YAML): relative to the mount root, binding every session.
+    permissions: MountPermissions | None = None

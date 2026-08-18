@@ -18,9 +18,8 @@ from typing import Any
 
 from mirage.policy.base import Policy
 from mirage.policy.errors import PolicyDenied, PolicyError
-from mirage.policy.spec import SpecPolicy
 from mirage.policy.types import (VALIDITY, CommandContext, Deny,
-                                 ExecuteResultContext, GuardSpec, OpsContext,
+                                 ExecuteResultContext, OpsContext,
                                  OpsResultContext, SessionContext)
 from mirage.types import Limit, PathSpec
 
@@ -130,9 +129,10 @@ class Policies:
     """Ordered policies; on a pre hook the first Deny wins.
 
     Built-ins are seeded first (MountRegistry registers
-    MountRootPolicy), then user policies in registration order:
-    ``Workspace(guards=..., policies=...)``, then anything added later
-    through ``add``. There is no allow arm, so adding a policy can only
+    MountRootPolicy), then the document's deny rules compiled by the
+    workspace, then user policies in registration order
+    (``Workspace(policies=...)``, then anything added later through
+    ``add``). There is no allow arm, so adding a policy can only
     tighten the workspace, never loosen it; order decides which refusal
     message is shown, never whether a refusal holds.
 
@@ -151,15 +151,16 @@ class Policies:
         self._wanted: frozenset[str] = frozenset()
         self._rescan()
 
-    def add(self, policy: Policy | GuardSpec) -> None:
+    def add(self, policy: Policy) -> None:
         """Register a policy after the existing ones.
 
+        Code only: a declarative rule belongs in the permissions
+        document (``commands.deny``), which the workspace compiles.
+
         Args:
-            policy (Policy | GuardSpec): a Policy instance, or a
-                declarative spec compiled on registration.
+            policy (Policy): the policy to consult after the rest.
         """
-        self._policies.append(
-            SpecPolicy(policy) if isinstance(policy, GuardSpec) else policy)
+        self._policies.append(policy)
         self._rescan()
 
     def wants(self, hook: str) -> bool:

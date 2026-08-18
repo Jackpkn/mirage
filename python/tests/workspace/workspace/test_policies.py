@@ -16,13 +16,17 @@ import errno
 
 import pytest
 
-from mirage import Action, CommandContext, Deny, GuardSpec, Policy, Workspace
+from mirage import Action, CommandContext, Deny, Policy, Workspace
 from mirage.commands.builtin.utils.limit import LimitExceededError
 from mirage.io import IOResult
-from mirage.policy import (ExecuteResultContext, OpsContext, OpsResultContext,
-                           PolicyError)
+from mirage.policy import (CommandRule, ExecuteResultContext, OpsContext,
+                           OpsResultContext, PolicyError)
 from mirage.resource.ram import RAMResource
 from mirage.types import Limit, MountMode, OnExceed
+from mirage.workspace.mount.spec import Mount
+
+from mirage.workspace.session.permissions import (  # isort: skip
+    CommandsBlock, MountPermissions, PathsBlock, WorkspacePermissions)
 
 
 class NoInterpreters(Policy):
@@ -35,13 +39,14 @@ class NoInterpreters(Policy):
 
 @pytest.mark.asyncio
 async def test_workspace_guards_refuse_before_backend_io():
-    ws = Workspace({"/data/": RAMResource()},
-                   mode=MountMode.WRITE,
-                   guards=[
-                       GuardSpec(reason="production data is protected",
-                                 commands=("rm", ),
-                                 paths=("/data/prod/*", ))
-                   ])
+    ws = Workspace(
+        {"/data/": RAMResource()},
+        mode=MountMode.WRITE,
+        permissions=WorkspacePermissions(commands=CommandsBlock(
+            deny=(CommandRule(reason="production data is protected",
+                              commands=("rm", ),
+                              paths=("/data/prod/*", )), ))),
+    )
     try:
         await ws.execute("mkdir -p /data/prod")
         await ws.ops.write("/data/prod/x.txt", b"keep\n")
@@ -90,14 +95,16 @@ async def test_guards_cover_shell_builtins_and_namespace_routes():
     # source is a dispatch-level shell builtin and touch is
     # namespace-routed; neither reaches handle_command, so this pins
     # the hook at the dispatch chokepoint.
-    ws = Workspace({"/data/": RAMResource()},
-                   mode=MountMode.WRITE,
-                   guards=[
-                       GuardSpec(reason="disabled", commands=("source", )),
-                       GuardSpec(reason="frozen",
-                                 commands=("touch", ),
-                                 paths=("/data/prod/*", )),
-                   ])
+    ws = Workspace(
+        {"/data/": RAMResource()},
+        mode=MountMode.WRITE,
+        permissions=WorkspacePermissions(commands=CommandsBlock(deny=(
+            CommandRule(reason="disabled", commands=("source", )),
+            CommandRule(reason="frozen",
+                        commands=("touch", ),
+                        paths=("/data/prod/*", )),
+        ))),
+    )
     try:
         result = await ws.execute("source /data/setup.sh")
         assert result.exit_code == 1
@@ -115,13 +122,14 @@ async def test_guards_cover_shell_builtins_and_namespace_routes():
 async def test_guards_cover_path_valued_flags():
     # shuf discovers its output path from -o, not a positional operand;
     # the policy context must include flag-valued paths.
-    ws = Workspace({"/data/": RAMResource()},
-                   mode=MountMode.WRITE,
-                   guards=[
-                       GuardSpec(reason="prod is protected",
-                                 commands=("shuf", ),
-                                 paths=("/data/prod/*", ))
-                   ])
+    ws = Workspace(
+        {"/data/": RAMResource()},
+        mode=MountMode.WRITE,
+        permissions=WorkspacePermissions(commands=CommandsBlock(
+            deny=(CommandRule(reason="prod is protected",
+                              commands=("shuf", ),
+                              paths=("/data/prod/*", )), ))),
+    )
     try:
         await ws.execute("mkdir -p /data/prod")
         result = await ws.execute("shuf -e a -o /data/prod/out")
@@ -145,12 +153,13 @@ class ReadOnlyProd(Policy):
 async def test_path_guards_hold_at_the_programmatic_door():
     # ws.ops is the same seam FUSE comes through; a path-only guard
     # must refuse it, not just shell commands (#675).
-    ws = Workspace({"/data/": RAMResource()},
-                   mode=MountMode.WRITE,
-                   guards=[
-                       GuardSpec(reason="prod is protected",
-                                 paths=("/data/prod/*", ))
-                   ])
+    ws = Workspace(
+        {"/data/": RAMResource()},
+        mode=MountMode.WRITE,
+        permissions=WorkspacePermissions(commands=CommandsBlock(deny=(
+            CommandRule(reason="prod is protected", paths=(
+                "/data/prod/*", )), ))),
+    )
     try:
         await ws.execute("mkdir -p /data/other")
         await ws.ops.write("/data/other/ok.txt", b"fine\n")
@@ -547,5 +556,83 @@ async def test_post_execute_sees_the_rightmost_producer():
         await ws.execute("echo hi")
         await ws.execute("cat /data/f.txt ; echo done")
         assert spy.seen == ["wc", "head", "cat", "echo", "echo"]
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_workspace_hides_bind_every_session_including_the_default():
+    ram = RAMResource()
+    ws = Workspace({"/data/": ram},
+                   mode=MountMode.WRITE,
+                   permissions=WorkspacePermissions(paths=PathsBlock(
+                       hide=("/data/finance", "*.key"))))
+    try:
+        await ws.execute("mkdir -p /data/finance /data/pub")
+        await ws.ops.write("/data/pub/a.txt", b"a\n")
+        await ws.ops.write("/data/pub/b.key", b"k\n")
+        # The default session cannot see the bound hides ...
+        listing = await ws.execute("ls /data /data/pub")
+        assert b"finance" not in listing.stdout
+        assert b"b.key" not in listing.stdout
+        assert b"a.txt" in listing.stdout
+        # ... and neither can one created later, with or without a profile.
+        ws.create_session("late")
+        gone = await ws.execute("cat /data/pub/b.key", session_id="late")
+        assert gone.exit_code != 0
+        assert ws.get_session("late").hidden_paths is None
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_mount_owned_hides_are_rebased_under_the_mount():
+    repo = RAMResource()
+    other = RAMResource()
+    ws = Workspace(
+        {
+            "/repo/":
+            Mount(repo,
+                  MountMode.WRITE,
+                  permissions=MountPermissions(paths=PathsBlock(
+                      hide=(".env", "*.pem")))),
+            "/other/": (other, MountMode.WRITE),
+        },
+        mode=MountMode.WRITE)
+    try:
+        await ws.execute("mkdir -p /repo/certs /other")
+        await ws.ops.write("/repo/.env", b"S=1\n")
+        await ws.ops.write("/repo/certs/k.pem", b"pem\n")
+        await ws.ops.write("/repo/README", b"r\n")
+        await ws.ops.write("/other/.env", b"visible\n")
+        await ws.ops.write("/other/x.pem", b"visible\n")
+        listing = await ws.execute("ls -a /repo /repo/certs /other")
+        out = listing.stdout.decode()
+        assert ".env" in out.split("/other:")[1]
+        assert "x.pem" in out
+        assert "k.pem" not in out
+        assert "README" in out
+        repo_part = out.split("/other:")[0]
+        assert ".env" not in repo_part.replace("/repo/certs:", "")
+        hidden = await ws.execute("cat /repo/.env")
+        assert hidden.exit_code != 0
+        shown = await ws.execute("cat /other/.env")
+        assert shown.stdout == b"visible\n"
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_a_bare_name_under_deny_refuses_with_the_default_reason():
+    # The document's deny rules compile at construction; a bare string
+    # is one command name with the default reason.
+    ws = Workspace({"/data/": RAMResource()},
+                   mode=MountMode.WRITE,
+                   permissions=WorkspacePermissions(commands=CommandsBlock(
+                       deny=("shred", ))))
+    try:
+        result = await ws.execute("shred /data/x")
+        assert result.exit_code == 1
+        assert result.stderr == b"shred: denied by policy\n"
     finally:
         await ws.close()

@@ -154,6 +154,47 @@ describe('SessionManager with a SessionStore', () => {
     expect(dflt.hiddenVars).toEqual({ names: ['SLACK_TOKEN'], patterns: [] })
   })
 
+  it('defaultProfile shapes the default session and outranks a stale record', async () => {
+    // A record written before the profile existed (or under an older
+    // one) must not wake the primary agent unrestricted: the document
+    // wins the narrowing fields after hydration, the record keeps the
+    // scratch state (cwd, env), and the next flush rewrites the record.
+    const store = new RAMSessionStore()
+    await store.set('def', {
+      session_id: 'def',
+      cwd: '/w',
+      env: { A: '1' },
+      mount_modes: { '/s3': 'write', '/other': 'write' },
+    })
+    const m = new SessionManager('def', store)
+    m.defaultProfile = {
+      mountModes: new Map([['/s3', MountMode.READ]]),
+      hiddenPaths: { paths: ['/s3/secrets'], patterns: [] },
+      hiddenVars: { names: ['SLACK_TOKEN'], patterns: [] },
+      env: { PAGER: 'cat' },
+      cwd: '/s3',
+    }
+    const dflt = m.get('def')
+    expect(dflt.cwd).toBe('/s3')
+    expect(dflt.env.PAGER).toBe('cat')
+    expect(dflt.hiddenVars).toEqual({ names: ['SLACK_TOKEN'], patterns: [] })
+    await m.ensureLoaded()
+    expect(dflt.cwd).toBe('/w')
+    expect(dflt.env.A).toBe('1')
+    expect(dflt.mountModes).toEqual(new Map([['/s3', MountMode.READ]]))
+    expect(dflt.hiddenPaths).toEqual({ paths: ['/s3/secrets'], patterns: [] })
+    await m.flush()
+    const stored = (await store.load()).get('def') as {
+      mount_modes: Record<string, string>
+      hidden_paths: { paths: string[] }
+    }
+    expect(stored.mount_modes).toEqual({ '/s3': 'read' })
+    expect(stored.hidden_paths.paths).toEqual(['/s3/secrets'])
+    // null is "no default profile", not "clear the session".
+    m.defaultProfile = null
+    expect(dflt.mountModes).toEqual(new Map([['/s3', MountMode.READ]]))
+  })
+
   it('flush writes every session through', async () => {
     const store = new RAMSessionStore()
     const m = new SessionManager('def', store)
@@ -252,5 +293,45 @@ describe('SessionManager dirty flush + CAS', () => {
     seedVar(m.get('s2'), 'K', 'v')
     await m.flush()
     expect((await store.load()).get('s2')?.generation).toBe(4)
+  })
+})
+
+describe('SessionManager bound hides', () => {
+  it('stamps live, created and forked sessions', () => {
+    const m = new SessionManager('def')
+    const early = m.create('early')
+    const bound = { paths: ['/shared/finance'] }
+    m.boundHidden = bound
+    expect(m.boundHidden).toBe(bound)
+    expect(m.get('def').boundHidden).toBe(bound)
+    expect(early.boundHidden).toBe(bound)
+    const late = m.create('late', { mountModes: new Map([['/a', MountMode.READ]]) })
+    expect(late.boundHidden).toBe(bound)
+    expect(late.fork().boundHidden).toBe(bound)
+    expect(late.hiddenPaths).toBeNull()
+  })
+
+  it('ride hydration but never the store', async () => {
+    const store = new RAMSessionStore()
+    await store.set('restored', {
+      session_id: 'restored',
+      cwd: '/w',
+      env: {},
+      created_at: 1.0,
+      hidden_paths: { paths: ['/own'], patterns: [] },
+    })
+    const m = new SessionManager('def', store)
+    const bound = { paths: ['/shared/finance'] }
+    m.boundHidden = bound
+    await m.ensureLoaded()
+    const restored = m.get('restored')
+    expect(restored.boundHidden).toBe(bound)
+    expect(restored.hiddenPaths).toEqual({ paths: ['/own'], patterns: [] })
+    expect(m.get('def').boundHidden).toBe(bound)
+    expect('boundHidden' in restored.toJSON()).toBe(false)
+    expect('bound_hidden' in restored.toJSON()).toBe(false)
+    await m.flush()
+    const stored = await store.load()
+    expect(JSON.stringify([...stored.entries()])).not.toContain('bound')
   })
 })

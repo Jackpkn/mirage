@@ -27,7 +27,7 @@ from mirage.accessor.s3 import S3Config
 from mirage.cache.file.config import CacheConfig, RedisCacheConfig
 from mirage.cache.index.config import IndexConfig, RedisIndexConfig
 from mirage.commands.cli.types import CLISpec
-from mirage.policy import GuardSpec
+from mirage.policy.errors import PolicyError
 from mirage.resource.registry import build_resource
 from mirage.runtime.base import Runtime
 from mirage.runtime.table import build_runtime
@@ -35,8 +35,12 @@ from mirage.runtime.types import Language, ScriptSource
 from mirage.shell.console import JobConsole
 from mirage.shell.job_table import ConsoleFactory
 from mirage.types import (KERNEL_BACKENDS, ConsistencyPolicy, Limit,
-                          MountBackend, MountMode)
+                          MountBackend, MountMode, parse_mount_mode)
 from mirage.workspace.mount.spec import Mount
+from mirage.workspace.session.permissions import (MountPermissions,
+                                                  SessionProfile,
+                                                  WorkspacePermissions)
+from mirage.workspace.session.resolve import inherit
 from mirage.workspace.store import (DEFAULT_STATE_ROOT,
                                     DiskWorkspaceStateStore,
                                     RAMWorkspaceStateStore,
@@ -62,7 +66,7 @@ def _coerce_mount_mode(value):
     if isinstance(value, MountMode):
         return value
     if isinstance(value, str):
-        return MountMode(value.lower())
+        return parse_mount_mode(value.lower())
     return value
 
 
@@ -280,21 +284,6 @@ class StoreBlock(BaseModel):
         return self
 
 
-class GuardBlock(BaseModel):
-    """One declarative command guard (the yaml ``guards:`` entries).
-
-    Compiled to a GuardSpec: refuse the named commands (all commands
-    when empty) whenever an operand matches one of the ``*``/``?``
-    path patterns (regardless of operands when empty).
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    reason: str
-    commands: list[str] = Field(default_factory=list)
-    paths: list[str] = Field(default_factory=list)
-
-
 class CLIBlock(BaseModel):
     """One ``clis:`` entry: install a named CLISpec with its own config.
 
@@ -336,6 +325,9 @@ class MountBlock(BaseModel):
     # fuse, or fskit. mountpoint is honored by the kernel backends.
     backend: MountBackend = MountBackend.VFS
     mountpoint: str | None = None
+    # The mount-owned permissions block: relative to the mount root,
+    # binding every session.
+    permissions: MountPermissions | None = None
 
     @field_validator("mode", mode="before")
     @classmethod
@@ -520,10 +512,16 @@ class WorkspaceConfig(BaseModel):
     # load. Its last expression names the runtime for the line, or
     # None to fall to entry scripts.
     policy: str | None = None
-    # Declarative command guards, checked after the built-in POSIX
-    # mount-root rules; the policy script is the line-level
-    # counterpart.
-    guards: list[GuardBlock] | None = None
+    # The permissions document, workspace tier: deny rules and hides
+    # that bind every session (absolute paths), checked after the
+    # built-in POSIX mount-root rules; the policy script is the
+    # line-level counterpart.
+    permissions: WorkspacePermissions | None = None
+    # Named session profiles, the templates create_session picks by
+    # name; `default` applies when none is named. Every `extends`
+    # chain is resolved at load so an unknown parent or a cycle fails
+    # here, not at the first session.
+    profiles: dict[str, SessionProfile] | None = None
     mode: MountMode = MountMode.WRITE
     consistency: ConsistencyPolicy = ConsistencyPolicy.LAZY
     default_session_id: str | None = None
@@ -546,6 +544,18 @@ class WorkspaceConfig(BaseModel):
     @classmethod
     def _v_cons(cls, v):
         return _coerce_consistency(v)
+
+    @model_validator(mode="after")
+    def _v_profiles(self) -> "WorkspaceConfig":
+        # Every chain resolves at load; the loader's contract is a
+        # ValueError (pydantic's ValidationError) for a bad document,
+        # so the resolver's PolicyError is re-raised as one.
+        for name in self.profiles or {}:
+            try:
+                inherit(self.profiles or {}, name)
+            except PolicyError as exc:
+                raise ValueError(str(exc)) from exc
+        return self
 
     def to_workspace_kwargs(self) -> dict[str, Any]:
         """Produce kwargs ready to splat into ``Workspace(**kwargs)``.
@@ -570,6 +580,7 @@ class WorkspaceConfig(BaseModel):
                 resource=prov,
                 mode=mode,
                 command_limits=block.command_limits,
+                permissions=block.permissions,
             )
         kwargs: dict[str, Any] = {
             "resources": resources,
@@ -593,12 +604,10 @@ class WorkspaceConfig(BaseModel):
             kwargs["runtimes"] = _build_runtime_entries(self.runtimes)
         if self.policy is not None:
             kwargs["policy"] = _load_script_source(self.policy)
-        if self.guards is not None:
-            kwargs["guards"] = [
-                GuardSpec(reason=g.reason,
-                          commands=tuple(g.commands),
-                          paths=tuple(g.paths)) for g in self.guards
-            ]
+        if self.permissions is not None:
+            kwargs["permissions"] = self.permissions
+        if self.profiles is not None:
+            kwargs["profiles"] = dict(self.profiles)
 
         if self.clis is not None:
             kwargs["clis"] = {

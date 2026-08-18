@@ -52,21 +52,28 @@ class Deny:
 # Each hook accepts a fixed set of kinds (VALIDITY), enforced loud.
 Action = Deny | Limit
 
+# The reason a bare command name under ``commands.deny`` carries.
+DEFAULT_DENY_REASON = "denied by policy"
+
 
 @dataclass(frozen=True, slots=True)
-class GuardSpec:
-    """A declarative guard: refuse matching commands on matching paths.
+class CommandRule:
+    """One admission rule of the permissions document: refuse matching
+    commands on matching paths.
 
-    The YAML ``guards:`` block and ``Workspace(guards=[...])`` accept
-    this shape; ``Policies.add`` compiles it to a SpecPolicy. Patterns
-    match the absolute virtual path with ``*`` (any run, including
-    ``/``) and ``?`` (any one character).
+    It is the element type of ``commands.deny`` (workspace tier today,
+    mount and profile tiers with their enforcement) and reaches the
+    workspace only inside that document; the internal RulePolicy is
+    what evaluates it. Path entries use the document's one grammar:
+    an entry with ``*``, ``?`` or ``[`` is a pattern (repo fnmatch
+    dialect, ``*`` crossing ``/``, a slashless pattern matching any
+    name component), anything else is an exact path and its subtree.
 
     Args:
         reason (str): why the command is refused, shown on stderr.
-        commands (tuple[str, ...]): command names the guard applies to;
+        commands (tuple[str, ...]): command names the rule applies to;
             empty means every command.
-        paths (tuple[str, ...]): path patterns; empty refuses the
+        paths (tuple[str, ...]): path entries; empty refuses the
             command regardless of its operands.
     """
 

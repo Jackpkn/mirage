@@ -72,10 +72,51 @@
       "config": { "mounts": { "/d": { "resource": "ram" } }, "store": { "type": "s3" } }
     },
     {
-      "name": "guard entry: path for paths",
+      "name": "deny rule: path for paths",
       "config": {
         "mounts": { "/d": { "resource": "ram" } },
-        "guards": [{ "reason": "no", "path": ["/x"] }]
+        "permissions": { "commands": { "deny": [{ "reason": "no", "path": ["/x"] }] } }
+      }
+    },
+    {
+      "name": "deny rule: commands is a list, not a scalar",
+      "config": {
+        "mounts": { "/d": { "resource": "ram" } },
+        "permissions": { "commands": { "deny": [{ "reason": "no", "commands": "rm" }] } }
+      }
+    },
+    {
+      "name": "profile: the old hidden_paths spelling",
+      "config": {
+        "mounts": { "/d": { "resource": "ram" } },
+        "profiles": { "a": { "hidden_paths": { "paths": ["/x"] } } }
+      }
+    },
+    {
+      "name": "profile: commands are not a profile field yet",
+      "config": {
+        "mounts": { "/d": { "resource": "ram" } },
+        "profiles": { "a": { "commands": { "deny": ["rm"] } } }
+      }
+    },
+    {
+      "name": "permissions: allow is not shipped yet",
+      "config": {
+        "mounts": { "/d": { "resource": "ram" } },
+        "permissions": { "commands": { "allow": ["ls"] } }
+      }
+    },
+    {
+      "name": "mount permissions: paths only in this rung",
+      "config": {
+        "mounts": { "/d": { "resource": "ram", "permissions": { "commands": { "deny": ["rm"] } } } }
+      }
+    },
+    {
+      "name": "profile: extends an unknown profile",
+      "config": {
+        "mounts": { "/d": { "resource": "ram" } },
+        "profiles": { "a": { "extends": "gone" } }
       }
     },
     {

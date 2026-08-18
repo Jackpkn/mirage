@@ -138,7 +138,12 @@ describe('direct path execution', () => {
         mode: MountMode.WRITE,
         ops,
         shellParser: parser,
-        guards: [{ reason: 'production scripts are sealed', paths: ['/data/prod/*'] }],
+        permissions: {
+          commands: {
+            deny: [{ reason: 'production scripts are sealed', paths: ['/data/prod/*'] }],
+          },
+          paths: { hide: [] },
+        },
       },
     )
     const refused = await ws.execute('/data/prod/run.sh')

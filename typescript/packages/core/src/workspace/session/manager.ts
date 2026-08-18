@@ -14,9 +14,11 @@
 
 import { Session, varsFromEnv } from './session.ts'
 import { setCwd } from './shell_dirs.ts'
+import type { CompiledProfile } from './permissions.ts'
 import { RAMSessionStore } from './ram.ts'
+import { applyProfile, narrow } from './resolve.ts'
 import { CAS_MAX_RETRIES, generationOf, type SessionFields, type SessionStore } from './store.ts'
-import type { MountMode } from '../../types.ts'
+import type { HiddenPaths, MountMode } from '../../types.ts'
 
 type StoredSession = Parameters<typeof Session.fromJSON>[0]
 
@@ -42,10 +44,50 @@ export class SessionManager {
   // cannot alias the live session (Python needs a deep copy instead).
   private readonly persisted = new Map<string, string>()
 
+  private boundHiddenInternal: HiddenPaths | null = null
+  private defaultProfileInternal: CompiledProfile | null = null
+
   constructor(defaultSessionId: string, store?: SessionStore) {
     this.defaultIdInternal = defaultSessionId
     this.sessionStore = store ?? new RAMSessionStore()
     this.sessions.set(defaultSessionId, new Session({ sessionId: defaultSessionId }))
+  }
+
+  /** The document's default profile, as compiled for this workspace. */
+  get defaultProfile(): CompiledProfile | null {
+    return this.defaultProfileInternal
+  }
+
+  /**
+   * Shape the default session by the document's default profile. The
+   * workspace's own session is a session created without a name, so
+   * `profiles.default` reaches it the way it reaches `createSession(id)`:
+   * applied in full now (ceilings, hides, exported env, cwd), and its
+   * narrowing stamped again after hydration, where a record from before
+   * the profile existed would otherwise wake the primary agent
+   * unrestricted. null (no default profile) leaves the session, and
+   * hydration, as they were. Infrastructure prefixes are already folded
+   * into `mountModes` by the caller.
+   */
+  set defaultProfile(compiled: CompiledProfile | null) {
+    this.defaultProfileInternal = compiled
+    if (compiled !== null) applyProfile(this.defaultSession(), compiled)
+  }
+
+  /** What the workspace and its mounts hide from every session. */
+  get boundHidden(): HiddenPaths | null {
+    return this.boundHiddenInternal
+  }
+
+  /**
+   * Stamp the workspace-bound hides onto every live session. Set once
+   * by the workspace after its mounts are installed, and applied again
+   * to every session created or hydrated later, so the fact rides the
+   * session object without ever being persisted.
+   */
+  set boundHidden(spec: HiddenPaths | null) {
+    this.boundHiddenInternal = spec
+    for (const session of this.sessions.values()) session.boundHidden = spec
   }
 
   get store(): SessionStore {
@@ -130,9 +172,14 @@ export class SessionManager {
         // Hydrated sessions start clean: baseline what the store
         // holds so the next flush skips them.
         this.persisted.set(sid, JSON.stringify(dflt.toJSON()))
+        // The document outranks the record for the fields no line can
+        // edit; stamped after the baseline so a stale record is
+        // rewritten on the next flush.
+        if (this.defaultProfileInternal !== null) narrow(dflt, this.defaultProfileInternal)
         continue
       }
       if (this.sessions.has(sid)) continue
+      stored.boundHidden = this.boundHiddenInternal
       this.sessions.set(sid, stored)
       this.persisted.set(sid, JSON.stringify(stored.toJSON()))
     }
@@ -197,6 +244,7 @@ export class SessionManager {
       sessionId,
       mountModes: options.mountModes ?? null,
     })
+    session.boundHidden = this.boundHiddenInternal
     this.sessions.set(sessionId, session)
     return session
   }

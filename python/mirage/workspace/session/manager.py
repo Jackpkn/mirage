@@ -16,9 +16,11 @@ import asyncio
 import copy
 from collections.abc import Mapping
 
-from mirage.types import MountMode
+from mirage.types import HiddenPaths, MountMode
 from mirage.workspace.record.types import CAS_MAX_RETRIES, generation_of
+from mirage.workspace.session.permissions import CompiledProfile
 from mirage.workspace.session.ram import RAMSessionStore
+from mirage.workspace.session.resolve import apply_profile, narrow
 from mirage.workspace.session.session import Session, vars_from_env
 from mirage.workspace.session.shell_dirs import set_cwd
 from mirage.workspace.session.store import SessionFields, SessionStore
@@ -51,6 +53,53 @@ class SessionManager:
         self._locks[default_session_id] = asyncio.Lock()
         self._loaded = False
         self._load_lock = asyncio.Lock()
+        self._bound_hidden: HiddenPaths | None = None
+        self._default_profile: CompiledProfile | None = None
+
+    @property
+    def default_profile(self) -> CompiledProfile | None:
+        """The document's default profile, as compiled for this workspace."""
+        return self._default_profile
+
+    @default_profile.setter
+    def default_profile(self, compiled: CompiledProfile | None) -> None:
+        """Shape the default session by the document's default profile.
+
+        The workspace's own session is a session created without a
+        name, so ``profiles.default`` reaches it the way it reaches
+        ``create_session(id)``: applied in full now (ceilings, hides,
+        exported env, cwd), and its narrowing stamped again after
+        hydration, where a record from before the profile existed would
+        otherwise wake the primary agent unrestricted. None (no default
+        profile) leaves the session, and hydration, as they were.
+
+        Args:
+            compiled (CompiledProfile | None): the compiled default
+                profile, infrastructure prefixes already folded in.
+        """
+        self._default_profile = compiled
+        if compiled is not None:
+            apply_profile(self._sessions[self._default_id], compiled)
+
+    @property
+    def bound_hidden(self) -> HiddenPaths | None:
+        """What the workspace and its mounts hide from every session."""
+        return self._bound_hidden
+
+    @bound_hidden.setter
+    def bound_hidden(self, spec: HiddenPaths | None) -> None:
+        """Stamp the workspace-bound hides onto every live session.
+
+        Set once by the workspace after its mounts are installed, and
+        applied again to every session created or hydrated later, so
+        the fact rides the session object without ever being persisted.
+
+        Args:
+            spec (HiddenPaths | None): the compiled bound hides.
+        """
+        self._bound_hidden = spec
+        for session in self._sessions.values():
+            session.bound_hidden = spec
 
     @property
     def default_id(self) -> str:
@@ -135,10 +184,16 @@ class SessionManager:
                     # Hydrated sessions start clean: baseline what the
                     # store holds so the next flush skips them.
                     self._persisted[sid] = copy.deepcopy(default.to_dict())
+                    # The document outranks the record for the fields
+                    # no line can edit; stamped after the baseline so a
+                    # stale record is rewritten on the next flush.
+                    if self._default_profile is not None:
+                        narrow(default, self._default_profile)
                     continue
                 if sid in self._sessions:
                     continue
                 session = Session.from_dict(fields)
+                session.bound_hidden = self._bound_hidden
                 self._sessions[sid] = session
                 self._locks[sid] = asyncio.Lock()
                 self._persisted[sid] = copy.deepcopy(session.to_dict())
@@ -192,7 +247,9 @@ class SessionManager:
                mount_modes: dict[str, MountMode] | None = None) -> Session:
         if session_id in self._sessions:
             raise ValueError(f"Session {session_id!r} already exists")
-        session = Session(session_id=session_id, mount_modes=mount_modes)
+        session = Session(session_id=session_id,
+                          mount_modes=mount_modes,
+                          bound_hidden=self._bound_hidden)
         self._sessions[session_id] = session
         self._locks[session_id] = asyncio.Lock()
         return session

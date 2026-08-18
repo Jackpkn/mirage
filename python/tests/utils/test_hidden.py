@@ -97,3 +97,36 @@ def test_var_patterns_are_globs_over_names():
     assert var_hidden(h, "AWS_ACCESS_KEY_ID")
     assert var_hidden(h, "DB_SECRET")
     assert not var_hidden(h, "HOME")
+
+
+def test_classify_paths_splits_globs_from_exact_subtrees():
+    from mirage.utils.hidden import classify_paths
+    assert classify_paths(["/repo/.env", "*.pem", "/repo/docs/*", "secrets"
+                           ]) == HiddenPaths(paths=("/repo/.env", "secrets"),
+                                             patterns=("*.pem",
+                                                       "/repo/docs/*"))
+    assert classify_paths(["/a/b[1]"]) == HiddenPaths(patterns=("/a/b[1]", ))
+    assert classify_paths(["/a/?"]) == HiddenPaths(patterns=("/a/?", ))
+
+
+def test_classify_paths_empty_is_unrestricted():
+    from mirage.utils.hidden import classify_paths
+    assert classify_paths([]) is None
+    assert classify_paths(()) is None
+
+
+def test_classify_vars_splits_globs_from_names():
+    from mirage.utils.hidden import classify_vars
+    assert classify_vars(["SLACK_TOKEN",
+                          "AWS_*"]) == HiddenVars(names=("SLACK_TOKEN", ),
+                                                  patterns=("AWS_*", ))
+    assert classify_vars([]) is None
+
+
+def test_classified_entries_match_like_the_hand_built_spec():
+    from mirage.utils.hidden import classify_paths
+    spec = classify_paths(["/s3/secrets", "*.key", "/repo/docs/*"])
+    assert path_hidden(spec, "/s3/secrets/deep/b")
+    assert path_hidden(spec, "/a/b.key/c")
+    assert path_hidden(spec, "/repo/docs/x/y")
+    assert not path_hidden(spec, "/repo/docsx")

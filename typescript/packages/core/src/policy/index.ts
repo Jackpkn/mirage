@@ -17,11 +17,12 @@ export { PolicyDenied } from './errors.ts'
 export { MountRootPolicy } from './builtin/mount_root.ts'
 export { OutputCapPolicy, resolveProducer, resolveLimit } from './builtin/output_cap.ts'
 export { Policies, postExecuteGate, postOpsGate, preOpsGate, preSessionGate } from './policies.ts'
+export { DEFAULT_DENY_REASON } from './types.ts'
 export {
   type Action,
   type CommandContext,
   type ExecuteResultContext,
-  type GuardSpec,
+  type CommandRule,
   type OpsContext,
   type OpsResultContext,
   type SessionContext,

@@ -16,11 +16,13 @@ import asyncio
 
 import pytest
 
-from mirage import GuardSpec
+from mirage.policy import CommandRule
 from mirage.resource import RAMResource
 from mirage.types import MountMode
 from mirage.workspace import Workspace
 from mirage.workspace.executor.builtins.script import shebang_words
+from mirage.workspace.session.permissions import (CommandsBlock,
+                                                  WorkspacePermissions)
 
 
 @pytest.fixture()
@@ -121,14 +123,14 @@ def test_path_guard_sees_the_executed_file():
     _run(seed, "mkdir -p /data/prod")
     asyncio.run(seed.ops.write("/data/prod/run.sh", b"echo leaked\n"))
     asyncio.run(seed.ops.write("/data/ok.sh", b"echo fine\n"))
-    ws = Workspace(resources={
-        "/": (RAMResource(), MountMode.WRITE),
-        "/data/": (prod, MountMode.WRITE),
-    },
-                   guards=[
-                       GuardSpec(reason="production scripts are sealed",
-                                 paths=("/data/prod/*", ))
-                   ])
+    ws = Workspace(
+        resources={
+            "/": (RAMResource(), MountMode.WRITE),
+            "/data/": (prod, MountMode.WRITE),
+        },
+        permissions=WorkspacePermissions(commands=CommandsBlock(
+            deny=(CommandRule(reason="production scripts are sealed",
+                              paths=("/data/prod/*", )), ))))
     result = _run(ws, "/data/prod/run.sh")
     assert result.exit_code == 1
     assert b"production scripts are sealed" in result.stderr

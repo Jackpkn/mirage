@@ -14,6 +14,7 @@
 
 import type { Resource } from '../../resource/base.ts'
 import type { Limit, MountBackend, MountMode } from '../../types.ts'
+import type { MountPermissions } from '../session/permissions.ts'
 
 export interface MountSpecOptions {
   /** Per-mount mode override; falls back to the workspace default when unset. */
@@ -29,6 +30,11 @@ export interface MountSpecOptions {
    */
   mountpoint?: string
   commandLimits?: Record<string, Limit>
+  /**
+   * The mount-owned permissions block (`mounts.<p>.permissions` in
+   * YAML): relative to the mount root, binding every session.
+   */
+  permissions?: MountPermissions | null
 }
 
 export class Mount {

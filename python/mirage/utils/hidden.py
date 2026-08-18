@@ -12,8 +12,59 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+from collections.abc import Iterable
+
 from mirage.types import HiddenPaths, HiddenVars
 from mirage.utils.fnmatch import fnmatch
+
+# The characters that make a document entry a pattern rather than an
+# exact name; the permissions document has one grammar for every path
+# list (design 3.6), and this is the whole classification rule.
+GLOB_CHARS = frozenset("*?[")
+
+
+def is_glob(entry: str) -> bool:
+    """Whether a document entry is a pattern (any of ``*``, ``?``, ``[``).
+
+    Args:
+        entry (str): one entry of a ``hide`` list or a rule's ``paths``.
+    """
+    return any(ch in GLOB_CHARS for ch in entry)
+
+
+def classify_paths(entries: Iterable[str]) -> HiddenPaths | None:
+    """Compile document path entries into the matcher's shape.
+
+    Glob = pattern, plain = exact subtree, in the order written; the
+    same split serves ``paths.hide`` and a ``CommandRule``'s ``paths``
+    so both planes match through :func:`path_hidden`. None when there
+    is nothing to match, which is what "unrestricted" reads as.
+
+    Args:
+        entries (Iterable[str]): the document's entries.
+    """
+    listed = tuple(entries)
+    paths = tuple(e for e in listed if not is_glob(e))
+    patterns = tuple(e for e in listed if is_glob(e))
+    if not paths and not patterns:
+        return None
+    return HiddenPaths(paths=paths, patterns=patterns)
+
+
+def classify_vars(entries: Iterable[str]) -> HiddenVars | None:
+    """Compile document variable entries into the matcher's shape.
+
+    Glob = pattern over names, plain = exact name. None when empty.
+
+    Args:
+        entries (Iterable[str]): the document's ``vars.hide`` entries.
+    """
+    listed = tuple(entries)
+    names = tuple(e for e in listed if not is_glob(e))
+    patterns = tuple(e for e in listed if is_glob(e))
+    if not names and not patterns:
+        return None
+    return HiddenVars(names=names, patterns=patterns)
 
 
 def _norm_abs(path: str) -> str:

@@ -96,7 +96,7 @@ class MountRegistry:
         # mechanism; the registry seeds the POSIX mount-root rule
         # (mount-root semantics are mount semantics) and the built-in
         # output cap (fed the per-mount overrides), and user policies
-        # follow them (Workspace guards= / policies= / yaml guards:).
+        # follow them (the document's deny rules, then Workspace policies=).
         # Registry-hosted like runtime_bindings so the executor reaches
         # them without new parameter threading.
         self.policies = Policies(

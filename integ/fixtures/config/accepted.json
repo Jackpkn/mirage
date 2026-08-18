@@ -8,7 +8,14 @@
         "clis": { "sl": { "cli": "slack" } },
         "runtimes": ["node"],
         "policy": "policy.py",
-        "guards": [{ "reason": "no rm here", "commands": ["rm"], "paths": ["/d/*"] }],
+        "permissions": {
+          "commands": { "deny": [{ "reason": "no rm here", "commands": ["rm"], "paths": ["/d/*"] }, "shred"] },
+          "paths": { "hide": ["/d/finance", "*.key"] }
+        },
+        "profiles": {
+          "default": { "cwd": "/d", "env": { "PAGER": "cat" }, "mounts": { "/d": "rw" } },
+          "reviewer": { "extends": "default", "mounts": ["/d"], "paths": { "hide": ["/d/docs"] }, "vars": { "hide": ["AWS_*"] } }
+        },
         "mode": "write",
         "consistency": "lazy",
         "default_session_id": "s1",
@@ -29,7 +36,8 @@
             "config": { "root": "/tmp/x" },
             "command_limits": { "cat": { "max_bytes": 1024, "on_exceed": "error" } },
             "backend": "vfs",
-            "mountpoint": "/mnt/d"
+            "mountpoint": "/mnt/d",
+            "permissions": { "paths": { "hide": [".env", "*.pem"] } }
           }
         }
       }

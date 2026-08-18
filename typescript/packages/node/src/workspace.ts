@@ -28,6 +28,7 @@ import type {
 } from '@struktoai/mirage-core/workspace/workspace/workspace'
 import { KernelMounts } from './workspace/workspace/kernel_mounts.ts'
 import { Mount } from '@struktoai/mirage-core/workspace/mount/spec'
+import type { MountPermissions } from '@struktoai/mirage-core/workspace/session/permissions'
 import './compression_codecs.ts'
 import './runtime/sandbox/daytona/runtime.ts'
 
@@ -57,6 +58,9 @@ export class Workspace extends CoreWorkspace {
     const commandLimits: Record<string, Record<string, Limit>> = {
       ...(options.commandLimits ?? {}),
     }
+    const mountPermissions: Record<string, MountPermissions | null> = {
+      ...(options.mountPermissions ?? {}),
+    }
     const mountTargets: [string, MountBackend, string | undefined][] = []
     for (const [prefix, value] of Object.entries(resources)) {
       if (value instanceof Mount) {
@@ -64,6 +68,7 @@ export class Workspace extends CoreWorkspace {
           value.options.mode !== undefined ? [value.resource, value.options.mode] : value.resource
         if (value.options.commandLimits !== undefined)
           commandLimits[prefix] = value.options.commandLimits
+        if (value.options.permissions != null) mountPermissions[prefix] = value.options.permissions
         const backend = value.options.backend ?? MountBackend.VFS
         if (KERNEL_BACKENDS.includes(backend))
           mountTargets.push([prefix, backend, value.options.mountpoint])
@@ -74,6 +79,7 @@ export class Workspace extends CoreWorkspace {
     super(specs, {
       ...options,
       ...(Object.keys(commandLimits).length > 0 ? { commandLimits } : {}),
+      ...(Object.keys(mountPermissions).length > 0 ? { mountPermissions } : {}),
       shellParserFactory: options.shellParserFactory ?? loadShellParser,
     })
     if (mountTargets.length > 0) {

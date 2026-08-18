@@ -17,11 +17,12 @@ from pathlib import Path
 
 import pytest
 
-from mirage import GuardSpec, MountBackend, MountMode, Workspace
+from mirage import MountBackend, MountMode, Workspace
 from mirage.cache.file.config import CacheConfig, RedisCacheConfig
 from mirage.config import (DiskStoreBlock, RamCacheBlock, RedisCacheBlock,
                            RedisStoreBlock, S3StoreBlock, WorkspaceConfig,
                            load_config)
+from mirage.policy import DEFAULT_DENY_REASON, CommandRule
 from mirage.resource.ram import RAMResource
 from mirage.resource.s3 import S3Resource
 from mirage.runtime.types import ScriptSource
@@ -35,6 +36,10 @@ from mirage.workspace.session.disk import DiskSessionStore
 from mirage.workspace.store import (DiskWorkspaceStateStore,
                                     RAMWorkspaceStateStore,
                                     RedisWorkspaceStateStore)
+
+from mirage.workspace.session.permissions import (  # isort: skip
+    CommandsBlock, MountPermissions, PathsBlock, SessionProfile, VarsBlock,
+    WorkspacePermissions)
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -382,28 +387,154 @@ policy: policy.js
     assert kwargs["policy"].language == "js"
 
 
-@pytest.mark.asyncio
-async def test_guards_block_compiles_to_guard_specs(tmp_path):
+def test_permissions_document_maps_to_workspace_kwargs(tmp_path):
     cfg_file = tmp_path / "ws.yaml"
     cfg_file.write_text("""\
 mounts:
-  /data:
+  /repo:
     resource: ram
-guards:
-  - reason: production data is protected
-    commands: [rm, mv]
-    paths: ["/data/prod/*"]
-  - reason: interpreters are off
-    commands: [python3]
+    permissions:
+      paths:
+        hide: ["*.pem", ".env"]
+  /scratch:
+    resource: ram
+    mode: rwx
+permissions:
+  commands:
+    deny:
+      - reason: production data is protected
+        commands: [rm, mv]
+        paths: ["/repo/prod/*"]
+      - python3
+  paths:
+    hide: ["/scratch/finance"]
+profiles:
+  default:
+    cwd: /scratch
+    env: {PAGER: cat}
+    mounts: {/repo: r, /scratch: rwx}
+  reviewer:
+    extends: default
+    paths:
+      hide: ["/repo/docs/internal"]
+    vars:
+      hide: ["AWS_*", SLACK_TOKEN]
 """)
     cfg = load_config(cfg_file)
     kwargs = cfg.to_workspace_kwargs()
-    assert kwargs["guards"] == [
-        GuardSpec(reason="production data is protected",
-                  commands=("rm", "mv"),
-                  paths=("/data/prod/*", )),
-        GuardSpec(reason="interpreters are off", commands=("python3", )),
-    ]
+    assert kwargs["permissions"] == WorkspacePermissions(
+        commands=CommandsBlock(deny=(
+            CommandRule(reason="production data is protected",
+                        commands=("rm", "mv"),
+                        paths=("/repo/prod/*", )),
+            CommandRule(reason=DEFAULT_DENY_REASON, commands=("python3", )),
+        )),
+        paths=PathsBlock(hide=("/scratch/finance", )),
+    )
+    assert kwargs["profiles"] == {
+        "default":
+        SessionProfile(cwd="/scratch",
+                       env={"PAGER": "cat"},
+                       mounts={
+                           "/repo": MountMode.READ,
+                           "/scratch": MountMode.EXEC
+                       }),
+        "reviewer":
+        SessionProfile(extends="default",
+                       paths=PathsBlock(hide=("/repo/docs/internal", )),
+                       vars=VarsBlock(hide=("AWS_*", "SLACK_TOKEN"))),
+    }
+    assert kwargs["resources"]["/repo"].permissions == MountPermissions(
+        paths=PathsBlock(hide=("*.pem", ".env")))
+    assert kwargs["resources"]["/scratch"].permissions is None
+
+
+def test_permissions_document_end_to_end_from_yaml(tmp_path):
+    import asyncio
+    cfg_file = tmp_path / "ws.yaml"
+    cfg_file.write_text("""\
+mounts:
+  /repo:
+    resource: ram
+    mode: rwx
+    permissions:
+      paths:
+        hide: [".env"]
+permissions:
+  commands:
+    deny:
+      - reason: no deletes in the repo
+        commands: [rm]
+        paths: ["/repo"]
+profiles:
+  reviewer:
+    cwd: /repo
+    mounts: {/repo: r}
+""")
+    ws = Workspace(**load_config(cfg_file).to_workspace_kwargs())
+
+    async def run():
+        await ws.execute("printf S=1 > /repo/.env; printf x > /repo/f")
+        hidden = await ws.execute("cat /repo/.env")
+        refused = await ws.execute("rm /repo/f")
+        ws.create_session("r", profile="reviewer")
+        where = await ws.execute("pwd", session_id="r")
+        readonly = await ws.execute("printf y > /repo/g", session_id="r")
+        return hidden, refused, await where.stdout_str(), readonly
+
+    hidden, refused, where, readonly = asyncio.run(run())
+    assert hidden.exit_code != 0
+    assert refused.exit_code == 1
+    assert refused.stderr == b"rm: /repo/f: no deletes in the repo\n"
+    assert where == "/repo\n"
+    assert readonly.exit_code != 0
+
+
+def test_unknown_profile_fields_fail_loud(tmp_path):
+    with pytest.raises(ValueError):
+        load_config({
+            "mounts": {
+                "/data": {
+                    "resource": "ram"
+                }
+            },
+            "profiles": {
+                "a": {
+                    "hidden_paths": {
+                        "paths": ["/x"]
+                    }
+                }
+            },
+        })
+    with pytest.raises(ValueError):
+        load_config({
+            "mounts": {
+                "/data": {
+                    "resource": "ram",
+                    "permissions": {
+                        "commands": {
+                            "deny": ["rm"]
+                        }
+                    }
+                }
+            },
+        })
+
+
+def test_profile_chain_is_resolved_at_load(tmp_path):
+    with pytest.raises(ValueError, match="extends unknown profile 'gone'"):
+        load_config({
+            "mounts": {
+                "/data": {
+                    "resource": "ram"
+                }
+            },
+            "profiles": {
+                "orphan": {
+                    "extends": "gone"
+                }
+            },
+        })
 
 
 @pytest.mark.asyncio

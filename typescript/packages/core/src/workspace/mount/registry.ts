@@ -81,8 +81,9 @@ export class MountRegistry {
   runtimeEntries: readonly Runtime[] = []
   // Command admission policies. Policies itself is a bare mechanism;
   // the registry seeds the POSIX mount-root rule (mount-root semantics
-  // are mount semantics) and user policies follow it (Workspace
-  // guards/policies options). Registry-hosted like vfsRuntime so the
+  // are mount semantics) and the document's deny rules, then user
+  // policies (Workspace policies option), follow it. Registry-hosted
+  // like vfsRuntime so the
   // executor reaches them without new threading.
   readonly policies = new Policies([
     new MountRootPolicy(),
