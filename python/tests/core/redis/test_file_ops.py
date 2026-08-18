@@ -12,6 +12,7 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import errno
 import os
 
 import pytest
@@ -163,10 +164,13 @@ async def test_rmdir_empty(mk_store):
 
 @pytest.mark.asyncio
 async def test_rmdir_not_empty(accessor):
-    with pytest.raises(OSError, match="directory not empty"):
+    # The condition, not the wording: this raised a bare OSError whose
+    # only signal was its message, which `classify` cannot name at all.
+    with pytest.raises(OSError) as excinfo:
         await rmdir(
             accessor,
             PathSpec(resource_path="dir", virtual="/dir", directory="/dir"))
+    assert excinfo.value.errno == errno.ENOTEMPTY
 
 
 @pytest.mark.asyncio

@@ -70,6 +70,10 @@ describe('gdrive rename', () => {
     await expect(rename(accessor, spec('/src.txt'), spec('/d'))).rejects.toMatchObject({
       code: 'ENOTEMPTY',
     })
+    // The conflict probe is bounded, not a full listing: listFiles follows
+    // every nextPageToken, so asking it with a small `pageSize` made one
+    // request per child to answer a yes/no.
+    expect(fake.listLimits).toContain(1)
   })
 
   it('replaces an empty dir', async () => {

@@ -22,7 +22,7 @@ from mirage.core.databricks_volume.errors import is_not_found
 from mirage.core.databricks_volume.path import backend_path
 from mirage.core.databricks_volume.stat import stat
 from mirage.types import FileType, PathSpec
-from mirage.utils.errors import enoent, enotdir
+from mirage.utils.errors import enoent, enotdir, enotempty
 
 
 def _list_directory_sync(
@@ -56,7 +56,7 @@ async def rmdir(
             raise enoent(path) from exc
         raise
     if entries:
-        raise OSError(f"directory not empty: {path.virtual}")
+        raise enotempty(path)
     try:
         await asyncio.to_thread(_delete_directory_sync, accessor, remote_path)
     except Exception as exc:

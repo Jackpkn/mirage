@@ -12,6 +12,8 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import errno
+
 import pytest
 
 from mirage.core.gdrive.rmdir import rmdir
@@ -40,3 +42,27 @@ async def test_rmdir_file_raises(fake_drive, gdrive_accessor):
     fake_drive.add("f.txt", content=b"x")
     with pytest.raises(NotADirectoryError):
         await rmdir(gdrive_accessor, spec("/f.txt"))
+
+
+@pytest.mark.asyncio
+async def test_rmdir_refuses_a_folder_holding_a_file(fake_drive,
+                                                     gdrive_accessor):
+    folder = fake_drive.folder("d")
+    fake_drive.add("a.txt", parent=folder, content=b"a")
+    with pytest.raises(OSError) as excinfo:
+        await rmdir(gdrive_accessor, spec("/d"))
+    assert excinfo.value.errno == errno.ENOTEMPTY
+    assert fake_drive.find("d") is not None
+    assert fake_drive.find("a.txt") is not None
+
+
+@pytest.mark.asyncio
+async def test_rmdir_refuses_a_folder_holding_a_subfolder(
+        fake_drive, gdrive_accessor):
+    folder = fake_drive.folder("d")
+    fake_drive.folder("sub", parent=folder)
+    with pytest.raises(OSError) as excinfo:
+        await rmdir(gdrive_accessor, spec("/d"))
+    assert excinfo.value.errno == errno.ENOTEMPTY
+    assert fake_drive.find("d") is not None
+    assert fake_drive.find("sub") is not None

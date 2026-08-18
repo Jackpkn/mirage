@@ -53,4 +53,20 @@ describe('gdrive rmdir', () => {
     fake.add('f.txt', 'root', undefined, ENC.encode('x'))
     await expect(rmdir(accessor, spec('/f.txt'))).rejects.toMatchObject({ code: 'ENOTDIR' })
   })
+
+  it('refuses a folder holding a file and keeps both', async () => {
+    const folder = fake.folder('d')
+    fake.add('a.txt', folder, undefined, ENC.encode('a'))
+    await expect(rmdir(accessor, spec('/d'))).rejects.toMatchObject({ code: 'ENOTEMPTY' })
+    expect(fake.find('d')).not.toBeNull()
+    expect(fake.find('a.txt')).not.toBeNull()
+  })
+
+  it('refuses a folder holding a subfolder', async () => {
+    const folder = fake.folder('d')
+    fake.folder('sub', folder)
+    await expect(rmdir(accessor, spec('/d'))).rejects.toMatchObject({ code: 'ENOTEMPTY' })
+    expect(fake.find('d')).not.toBeNull()
+    expect(fake.find('sub')).not.toBeNull()
+  })
 })

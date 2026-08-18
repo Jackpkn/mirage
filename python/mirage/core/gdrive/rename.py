@@ -12,8 +12,6 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import errno
-import os
 import posixpath
 
 from mirage.accessor.gdrive import GDriveAccessor
@@ -22,7 +20,7 @@ from mirage.core.gdrive.resolve import (drive_target_name, eacces_on_denied,
                                         resolve_key, resolve_parent)
 from mirage.core.google.drive import delete_file, list_files, patch_file
 from mirage.types import PathSpec
-from mirage.utils.errors import enoent
+from mirage.utils.errors import enoent, enotempty
 
 
 @eacces_on_denied
@@ -41,10 +39,9 @@ async def rename(accessor: GDriveAccessor, src: PathSpec,
             children = await list_files(token_manager,
                                         folder_id=dst_node.id,
                                         drive_id=dst_node.drive_id,
-                                        page_size=1)
+                                        limit=1)
             if children:
-                raise OSError(errno.ENOTEMPTY, os.strerror(errno.ENOTEMPTY),
-                              dst.virtual)
+                raise enotempty(dst)
         await delete_file(token_manager, dst_node.id)
     src_parent_id, _ = await resolve_parent(accessor, src)
     dst_parent_id, _ = await resolve_parent(accessor, dst)

@@ -31,7 +31,7 @@ import {
 import { record } from '../../observe/context.ts'
 import type { FindOptions } from '../../resource/base.ts'
 import { FileStat, FileType, type PathSpec } from '../../types.ts'
-import { enoent } from '../../utils/errors.ts'
+import { enoent, enotempty } from '../../utils/errors.ts'
 import { mountPrefixOf } from '../../utils/key_prefix.ts'
 import { stripSlash } from '../../utils/slash.ts'
 import { GraphError, graphDelete } from '../msgraph/client.ts'
@@ -290,8 +290,25 @@ export async function rmR(accessor: SharePointAccessor, path: PathSpec): Promise
   await invalidateAfterUnlink(path)
 }
 
+/**
+ * Remove an empty folder.
+ *
+ * A Graph `DELETE /drives/{id}/items/{item}` removes a folder and
+ * everything under it, so this is the same request `rmR` sends and the
+ * emptiness check is the only thing separating them. Aliasing the two --
+ * which this was -- destroyed the whole subtree for every caller that does
+ * not pre-check emptiness itself, and the command builders are the only
+ * callers that do: FUSE, `ws.ops` and the sandbox runtimes all reach the op
+ * directly.
+ */
 export async function rmdir(accessor: SharePointAccessor, path: PathSpec): Promise<void> {
-  await rmR(accessor, path)
+  if (path.resourcePath === '') return
+  const resolved = await accessor.resolve(path.resourcePath)
+  if (resolved.driveId === null || resolved.itemPath === null) return
+  const loc = accessor.loc(resolved, path.resourcePath)
+  if (!(await driveRootEmpty(accessor.config, loc))) throw enotempty(path)
+  await graphDelete(accessor.config, loc.item())
+  await invalidateAfterUnlink(path)
 }
 
 export async function exists(accessor: SharePointAccessor, path: PathSpec): Promise<boolean> {

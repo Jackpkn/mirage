@@ -12,7 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { makeRemovePrefix } from '@struktoai/mirage-core/core/object_store/remove'
+import { makeRmdir } from '@struktoai/mirage-core/core/object_store/remove'
 import { DRIVER } from './driver.ts'
 
-export const rmdir = makeRemovePrefix(DRIVER)
+export const rmdir = makeRmdir(DRIVER)

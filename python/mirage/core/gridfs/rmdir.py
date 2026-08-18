@@ -13,6 +13,6 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 from mirage.core.gridfs.driver import DRIVER
-from mirage.core.object_store.remove import make_remove_prefix
+from mirage.core.object_store.remove import make_rmdir
 
-rmdir = make_remove_prefix(DRIVER)
+rmdir = make_rmdir(DRIVER)

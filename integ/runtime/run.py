@@ -28,6 +28,7 @@ from typing import Any  # noqa: E402
 
 from mirage import MountMode, Workspace  # noqa: E402
 from mirage.commands.cli.types import CLISpec  # noqa: E402
+from mirage.errors import classify  # noqa: E402
 from mirage.policy import Policy  # noqa: E402
 from mirage.policy.types import CommandContext  # noqa: E402
 from mirage.policy.types import Deny  # noqa: E402
@@ -407,6 +408,22 @@ async def _run_facade(ws: Workspace, expect: dict[str, Any],
     args: list[Any] = [spec["path"]]
     if "data" in spec:
         args.append(spec["data"].encode())
+    if "errno" in expect:
+        # The cross-language error assertion. `throws_contains` reads the
+        # message, which the two languages word differently for the same
+        # condition (python's OSError renders the strerror, the TypeScript
+        # FsError carries only the path), so an errno case must name the
+        # condition instead.
+        try:
+            await method(*args)
+            name = "NONE"
+        except Exception as exc:
+            condition = classify(exc)
+            name = (condition.name
+                    if condition is not None else type(exc).__name__)
+        if name != expect["errno"]:
+            return [f"facade errno {name}, expected {expect['errno']}"]
+        return []
     if "throws_contains" in expect:
         try:
             await method(*args)

@@ -146,14 +146,16 @@ describe.skipIf(skip)('core/redis ops', () => {
   it('rmdir refuses non-empty and removes empty', async () => {
     await mkdir(acc, spec('/dir'))
     await writeBytes(acc, spec('/dir/f'), ENC.encode('.'))
-    await expect(rmdir(acc, spec('/dir'))).rejects.toThrow(/directory not empty/)
+    await expect(rmdir(acc, spec('/dir'))).rejects.toMatchObject({ code: 'ENOTEMPTY' })
+    // The refusal must leave the child addressable, not orphan it.
+    expect(await exists(acc, spec('/dir/f'))).toBe(true)
     await unlink(acc, spec('/dir/f'))
     await rmdir(acc, spec('/dir'))
     expect(await exists(acc, spec('/dir'))).toBe(false)
   })
 
   it('rmdir fails on missing dir', async () => {
-    await expect(rmdir(acc, spec('/ghost'))).rejects.toThrow(/not a directory/)
+    await expect(rmdir(acc, spec('/ghost'))).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
   it('unlink removes files', async () => {

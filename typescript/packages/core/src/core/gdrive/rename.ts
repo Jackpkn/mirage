@@ -32,7 +32,7 @@ async function renameImpl(accessor: GDriveAccessor, src: PathSpec, dst: PathSpec
       const children = await listFiles(tm, {
         folderId: dstNode.id,
         driveId: dstNode.driveId,
-        pageSize: 1,
+        limit: 1,
       })
       if (children.length > 0) throw enotempty(dst)
     }

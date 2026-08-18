@@ -513,11 +513,18 @@ export async function findItems(
   return results.sort(compareCodePoints)
 }
 
+// One bounded page, not graphList: the answer is a yes/no, and graphList
+// follows every @odata.nextLink, so asking it made a large folder download
+// its whole listing to produce one boolean. $top through that helper is
+// worse rather than better -- it only shrinks each page, so the walk pages
+// more times, not fewer -- which is why this sends the request itself.
+// $select drops a driveItem payload this never reads.
 export async function driveRootEmpty(
   config: MsGraphConfigResolved,
   loc: DriveLoc,
 ): Promise<boolean> {
-  return (await graphList(config, loc.item('/children'))).length === 0
+  const page = await graphGet(config, loc.item('/children'), { $top: 1, $select: 'id' })
+  return !(Array.isArray(page.value) && page.value.length > 0)
 }
 
 async function itemOrNull(

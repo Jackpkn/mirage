@@ -34,6 +34,11 @@ export interface FakeItem {
 // ../google/drive.ts and delegate its functions to the current instance.
 export class FakeDrive {
   items = new Map<string, FakeItem>()
+  // Every `limit` a caller asked for, so a test can pin that an emptiness
+  // probe is bounded. `pageSize` cannot express that: it caps the page, not
+  // the walk, so a small page turns a listing of a large folder into more
+  // requests rather than fewer.
+  listLimits: (number | null | undefined)[] = []
   private counter = 0
 
   add(
@@ -82,8 +87,14 @@ export class FakeDrive {
 
   listFiles(
     _tm: TokenManager,
-    opts: { folderId?: string; mimeType?: string | null; name?: string | null } = {},
+    opts: {
+      folderId?: string
+      mimeType?: string | null
+      name?: string | null
+      limit?: number | null
+    } = {},
   ): Promise<DriveFile[]> {
+    this.listLimits.push(opts.limit)
     const folderId = opts.folderId ?? 'root'
     const out: DriveFile[] = []
     for (const item of this.items.values()) {
@@ -91,6 +102,7 @@ export class FakeDrive {
       if (opts.name != null && item.name !== opts.name) continue
       if (opts.mimeType != null && item.mimeType !== opts.mimeType) continue
       out.push(this.public(item.id))
+      if (opts.limit != null && out.length >= opts.limit) break
     }
     return Promise.resolve(out)
   }

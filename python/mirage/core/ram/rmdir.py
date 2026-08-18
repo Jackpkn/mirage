@@ -15,6 +15,7 @@
 from mirage.accessor.ram import RAMAccessor
 from mirage.cache.context import invalidate_after_unlink
 from mirage.types import PathSpec
+from mirage.utils.errors import enotempty
 from mirage.utils.path import norm
 
 
@@ -30,6 +31,6 @@ async def rmdir(accessor: RAMAccessor, path_spec: PathSpec) -> None:
         if k.startswith(prefix) and k != p
     ]
     if children:
-        raise OSError(f"directory not empty: {p}")
+        raise enotempty(path_spec)
     store.dirs.discard(p)
     await invalidate_after_unlink(path_spec)

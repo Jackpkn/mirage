@@ -16,7 +16,8 @@ import { mountKey, mountPrefixOf } from '../../utils/key_prefix.ts'
 import type { BoxAccessor } from '../../accessor/box.ts'
 import { invalidateAfterUnlink, invalidateAfterWrite } from '../../cache/context.ts'
 import { PathSpec } from '../../types.ts'
-import { eisdir, enoent, enotdir } from '../../utils/errors.ts'
+import { eisdir, enoent, enotdir, enotempty } from '../../utils/errors.ts'
+import { BoxApiError } from './client.ts'
 import {
   copyFile,
   copyFolder,
@@ -113,7 +114,16 @@ export async function rmdir(accessor: BoxAccessor, path: PathSpec): Promise<void
   if (item === null) throw enoent(path.virtual)
   if (item.type !== 'folder') throw enotdir(path.virtual)
   // recursive=false: Box 409s on a non-empty folder, matching POSIX rmdir.
-  await deleteFolder(accessor.tokenManager, item.id, false)
+  // The refusal is the service's, but naming it is ours: BoxApiError is a
+  // bare Error with no code, so an unmapped 409 reached the caller as a
+  // condition `classify` could not name -- EIO over FUSE, no code at all for
+  // `ws.ops` and the sandbox runtimes.
+  try {
+    await deleteFolder(accessor.tokenManager, item.id, false)
+  } catch (error) {
+    if (error instanceof BoxApiError && error.status === 409) throw enotempty(path)
+    throw error
+  }
   await invalidateAfterUnlink(path)
 }
 

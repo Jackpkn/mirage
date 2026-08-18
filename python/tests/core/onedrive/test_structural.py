@@ -11,6 +11,11 @@ from mirage.core.onedrive.rmdir import rmdir
 from mirage.core.onedrive.unlink import unlink
 from mirage.types import PathSpec
 
+# The emptiness probe is one bounded page, not a full listing walk, so the
+# query is part of the URL the stub has to match; a regression to
+# `graph_list` stops matching it.
+_PROBE = "?$top=1&$select=id"
+
 
 def _accessor(**kw) -> OneDriveAccessor:
     return OneDriveAccessor(OneDriveConfig(access_token="tok", **kw))
@@ -58,6 +63,7 @@ async def test_unlink_deletes_item():
 @pytest.mark.asyncio
 async def test_rmdir_deletes_folder():
     with aioresponses() as m:
+        m.get(_BASE + "/root:/docs:/children" + _PROBE, payload={"value": []})
         m.delete(_BASE + "/root:/docs", status=204)
         await rmdir(_accessor(), PathSpec.from_str_path("/docs"))
 

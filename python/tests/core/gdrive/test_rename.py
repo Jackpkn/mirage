@@ -63,6 +63,10 @@ async def test_rename_over_nonempty_dir_raises(fake_drive, gdrive_accessor):
     with pytest.raises(OSError) as exc_info:
         await rename(gdrive_accessor, spec("/src.txt"), spec("/d"))
     assert exc_info.value.errno == errno.ENOTEMPTY
+    # The conflict probe is bounded, not a full listing: `list_files`
+    # follows every page token, so asking it with a small `page_size`
+    # made one request per child to answer a yes/no.
+    assert 1 in fake_drive.list_limits
 
 
 @pytest.mark.asyncio

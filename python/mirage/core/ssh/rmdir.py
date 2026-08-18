@@ -18,13 +18,31 @@ from mirage.accessor.ssh import SSHAccessor
 from mirage.cache.context import invalidate_after_unlink
 from mirage.core.ssh.client import _abs
 from mirage.types import PathSpec
+from mirage.utils.errors import enoent, enotdir, enotempty
 
 
 async def rmdir(accessor: SSHAccessor, path: PathSpec) -> None:
+    """Remove an empty directory over SFTP.
+
+    The server enforces emptiness, so the work here is naming its
+    refusal in the same vocabulary every other backend uses. SFTP 3 has
+    one code for it (``SFTPFailure``, carrying only the server's message
+    string), and later protocol versions split ``SFTPDirNotEmpty`` out;
+    only the typed one can be mapped, so a version-3 server still
+    reaches the caller as itself.
+
+    Args:
+        accessor (SSHAccessor): SSH accessor.
+        path (PathSpec): directory to remove.
+    """
     config = accessor.config
     sftp = await accessor.sftp()
     try:
         await sftp.rmdir(_abs(config, path.mount_path))
-    except asyncssh.SFTPNoSuchFile:
-        raise FileNotFoundError(path)
+    except asyncssh.SFTPNoSuchFile as exc:
+        raise enoent(path) from exc
+    except asyncssh.SFTPDirNotEmpty as exc:
+        raise enotempty(path) from exc
+    except asyncssh.SFTPNotADirectory as exc:
+        raise enotdir(path) from exc
     await invalidate_after_unlink(path)
