@@ -11,11 +11,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
-"""Top-level assignment spellings, pinned against bash 5.2.37.
-
-Scalar, array literal, subscript and append all compute their result
-with bash's own mechanics and store through the one session door.
-"""
 import pytest
 
 from mirage.resource.ram import RAMResource

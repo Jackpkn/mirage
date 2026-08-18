@@ -11,12 +11,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
-"""export/local/declare/readonly, pinned against bash 5.2.37.
-
-The executor only reads the operands -- option letters, plain names and
-staged array literals -- and the keyword's handler owns the storing;
-the attribute letters are stamped afterwards through the same door.
-"""
 import pytest
 
 from mirage.resource.ram import RAMResource

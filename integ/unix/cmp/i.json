@@ -163,7 +163,7 @@
       "command": "cmp -i abc /data/qcmpi/i1 /data/qcmpi/i2 2>&1; echo rc=$?",
       "expect": {
         "exit": 0,
-        "stdout": "cmp: invalid --ignore-initial value 'abc'\nTry 'cmp --help' for more information.\nrc=2\n",
+        "stdout": "cmp: invalid --ignore-initial value 'abc'\ncmp: Try 'cmp --help' for more information.\nrc=2\n",
         "stderr": ""
       },
       "flags": [

@@ -47,3 +47,16 @@ export function sizeSuffixes(letters: string): Record<string, number> {
   }
   return table
 }
+
+/**
+ * The digits of an xstrtoumax operand, read at GNU's base 0: `0x…` is
+ * hex, a bare leading zero is octal, anything else decimal.
+ *
+ * A bigint, because the callers' ceilings (2**63 - 1, 2**64 - 1) are
+ * boundaries a double cannot hold.
+ */
+export function parseBase0(digits: string): bigint {
+  if (digits.slice(0, 2).toLowerCase() === '0x') return BigInt(digits)
+  if (digits.startsWith('0') && digits.length > 1) return BigInt(`0o${digits.slice(1)}`)
+  return BigInt(digits)
+}

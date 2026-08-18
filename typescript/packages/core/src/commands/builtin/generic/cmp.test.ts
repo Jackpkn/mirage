@@ -55,13 +55,27 @@ describe('parseCount', () => {
   it('takes digits and GNU size suffixes', () => {
     expect(parseCount('4', '--bytes')).toBe(4)
     expect(parseCount('1K', '--bytes')).toBe(1024)
+    expect(parseCount('1k', '--bytes')).toBe(1024)
     expect(parseCount('1kB', '--bytes')).toBe(1000)
-    expect(parseCount('1b', '--bytes')).toBe(512)
+    expect(parseCount('1kiB', '--bytes')).toBe(1024)
+    expect(parseCount('1M', '--bytes')).toBe(1024 * 1024)
   })
+
+  it.each(['1b', '1B', '1c', '1w', '1m', '1g', '1t'])(
+    'rejects %s, a letter od takes and cmp does not',
+    (raw) => {
+      // diffutils 3.10 lists only kB/K/MB/M/... : no block or char
+      // suffixes, and lowercase only as far as k. `cmp -n 1b` is exit 2,
+      // where od would read it as 512 bytes.
+      expect(() => parseCount(raw, '--bytes')).toThrow(UsageError)
+    },
+  )
 
   it('names the long option it was given', () => {
     // GNU says `invalid --bytes value` for -n and `invalid
-    // --ignore-initial value` for -i, with the Try-help line, exit 2.
+    // --ignore-initial value` for -i, exit 2. diffutils routes the
+    // Try-help line through error(), so it carries the `cmp: ` prefix
+    // that coreutils' bare hint does not.
     let caught: unknown
     try {
       parseCount('abc', '--bytes')
@@ -70,19 +84,69 @@ describe('parseCount', () => {
     }
     expect(caught).toBeInstanceOf(UsageError)
     expect((caught as UsageError).message).toBe(
-      "cmp: invalid --bytes value 'abc'\nTry 'cmp --help' for more information.",
+      "cmp: invalid --bytes value 'abc'\ncmp: Try 'cmp --help' for more information.",
     )
     expect((caught as UsageError).exitCode).toBe(2)
   })
 
   it('rejects an unknown suffix', () => {
+    // Q and R postdate the gnulib diffutils 3.10 was built against, so
+    // they are invalid values rather than overflowing ones: `0Q` fails
+    // where `0Z` is a valid zero.
     expect(() => parseCount('1Q', '--bytes')).toThrow(UsageError)
+    expect(() => parseCount('0Q', '--bytes')).toThrow(UsageError)
+    expect(parseCount('0Z', '--bytes')).toBe(0)
+  })
+
+  it('reads the digits at base zero', () => {
+    // xstrtoumax's base 0: a bare leading zero is octal and 0x is hex,
+    // neither of which BigInt() would read on its own.
+    expect(parseCount('010', '--bytes')).toBe(8)
+    expect(parseCount('0x400', '--bytes')).toBe(1024)
+    expect(parseCount('+1010', '--bytes')).toBe(1010)
+    expect(parseCount(' 1', '--bytes')).toBe(1)
+    expect(() => parseCount('1 ', '--bytes')).toThrow(UsageError)
+    expect(() => parseCount('-1', '--bytes')).toThrow(UsageError)
+  })
+
+  it('rejects a product past INTMAX', () => {
+    // The ceiling is INTMAX, not UINTMAX, and overflow reports as the
+    // same invalid-value error as a bad suffix -- not od's "too large".
+    expect(parseCount('7E', '--bytes')).toBe(7 * 1024 ** 6)
+    for (const raw of ['9223372036854775808', '8E', '1Z', '1Y']) {
+      expect(() => parseCount(raw, '--bytes')).toThrow(UsageError)
+    }
   })
 })
 
 describe('parseSkip', () => {
   it('takes one count for both files', () => {
     expect(parseSkip('3')).toEqual([3, 3])
+  })
+
+  it.each([
+    ['1b:1', '1b:1'],
+    ['1:1b', '1b'],
+    ['1:abc', 'abc'],
+    ['abc:1', 'abc:1'],
+    ['1:2:3', '2:3'],
+    ['1:', ''],
+    [':1', ':1'],
+    [':', ':'],
+  ])('names the operand from where it stopped: %s', (raw, named) => {
+    // GNU prints the operand from the position xstrtoumax was reading,
+    // so a bad SKIP1 names the whole pair and a bad SKIP2 names only
+    // itself. A colon is the one character the first count may stop on.
+    let caught: unknown
+    try {
+      parseSkip(raw)
+    } catch (err) {
+      caught = err
+    }
+    expect(caught).toBeInstanceOf(UsageError)
+    expect((caught as UsageError).message.split('\n')[0]).toBe(
+      `cmp: invalid --ignore-initial value '${named}'`,
+    )
   })
 
   it('takes a colon pair for one each', () => {

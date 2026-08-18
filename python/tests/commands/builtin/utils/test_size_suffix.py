@@ -14,7 +14,8 @@
 
 import pytest
 
-from mirage.commands.builtin.utils.size_suffix import size_suffixes
+from mirage.commands.builtin.utils.size_suffix import (parse_base0,
+                                                       size_suffixes)
 
 
 def test_letter_is_binary_power():
@@ -44,3 +45,12 @@ def test_case_is_preserved_not_folded():
 def test_unknown_letter_raises():
     with pytest.raises(KeyError):
         size_suffixes("w")
+
+
+def test_parse_base0_reads_hex_octal_and_decimal():
+    assert parse_base0("0x400") == 1024
+    assert parse_base0("0X10") == 16
+    assert parse_base0("010") == 8
+    assert parse_base0("007") == 7
+    assert parse_base0("1010") == 1010
+    assert parse_base0("0") == 0

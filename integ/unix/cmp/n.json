@@ -92,10 +92,10 @@
         "gdrive-folder",
         "box"
       ],
-      "command": "cmp -n 1K /data/qcmpn/n1 /data/qcmpn/n2; echo rc=$?",
+      "command": "cmp -n 1K /data/qcmpn/n1 /data/qcmpn/n2; echo rc=$?; cmp -n 03 /data/qcmpn/n1 /data/qcmpn/n2; echo rc=$?; cmp -n 010 /data/qcmpn/n1 /data/qcmpn/n2; echo rc=$?",
       "expect": {
         "exit": 0,
-        "stdout": "/data/qcmpn/n1 /data/qcmpn/n2 differ: char 4, line 1\nrc=1\n",
+        "stdout": "/data/qcmpn/n1 /data/qcmpn/n2 differ: char 4, line 1\nrc=1\nrc=0\n/data/qcmpn/n1 /data/qcmpn/n2 differ: char 4, line 1\nrc=1\n",
         "stderr": ""
       },
       "flags": [
@@ -126,10 +126,10 @@
         "gdrive-folder",
         "box"
       ],
-      "command": "cmp -n abc /data/qcmpn/n1 /data/qcmpn/n2 2>&1; echo rc=$?",
+      "command": "cmp -n 1b /data/qcmpn/n1 /data/qcmpn/n2 2>&1; echo rc=$?; cmp -n abc /data/qcmpn/n1 /data/qcmpn/n2 2>&1; echo rc=$?",
       "expect": {
         "exit": 0,
-        "stdout": "cmp: invalid --bytes value 'abc'\nTry 'cmp --help' for more information.\nrc=2\n",
+        "stdout": "cmp: invalid --bytes value '1b'\ncmp: Try 'cmp --help' for more information.\nrc=2\ncmp: invalid --bytes value 'abc'\ncmp: Try 'cmp --help' for more information.\nrc=2\n",
         "stderr": ""
       },
       "flags": [

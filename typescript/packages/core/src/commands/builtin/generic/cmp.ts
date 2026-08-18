@@ -18,37 +18,50 @@ import { IOResult, materialize, type ByteSource } from '../../../io/types.ts'
 import type { PathSpec } from '../../../types.ts'
 import type { CommandOpts } from '../../config.ts'
 import { formatFsError, isFsError } from '../../../utils/errors.ts'
+import { CMP_SIZE_UNITS, INTMAX, XSTRTOUMAX_PATTERN } from '../constants.ts'
 import { formatRecords } from '../utils/output.ts'
-import { sizeSuffixes } from '../utils/size_suffix.ts'
-import { extraOperandError } from '../../spec/usage.ts'
+import { parseBase0 } from '../utils/size_suffix.ts'
+import { extraOperandError, usageHint } from '../../spec/usage.ts'
 import { CommandName } from '../../spec/types.ts'
 import { UsageError } from '../../errors.ts'
 
 const ENC = new TextEncoder()
 
-const UNITS = sizeSuffixes('bkKMGTPEZY')
-const TRY_HELP = "\nTry 'cmp --help' for more information."
-const COUNT = /^([0-9]+)([A-Za-z]*)$/
+const TRY_HELP = `\n${usageHint(CommandName.CMP)}`
+const NEWLINE = 0x0a
 
 function octal(n: number, width = 0): string {
   return n.toString(8).padStart(width)
 }
 
 /**
- * One GNU `cmp` byte count: digits and an optional size suffix.
+ * One GNU `cmp` byte count read the way xstrtoumax reads it.
  *
- * GNU reads `-n`/`-i` operands through xstrtoumax, so `1K` and `1kB`
- * are accepted and anything else is a usage error naming the long
- * option, not a crash.
+ * Base 0, so `010` is 8 and `0x400` is 1024; one leading `+` and
+ * leading whitespace are allowed; the remainder is a size suffix from
+ * cmp's own letter set. Every rejection -- unparsable digits, unknown
+ * suffix, or a product past INTMAX -- is the same usage error naming
+ * the long option, not a crash and not od's "too large".
+ *
+ * `shown` overrides the spelling named in the diagnostic: GNU prints
+ * the operand from the position it was reading, so a bad `SKIP1` names
+ * the whole `SKIP1:SKIP2` pair while a bad `SKIP2` names only itself.
+ *
+ * The accept/reject boundary is computed in BigInt and so is exact, but
+ * the returned count is a double like od's: above 2**53 it is the
+ * nearest representable value, not python's exact integer. The count is
+ * only ever a slice bound, and no file reaches an exabyte, so the two
+ * runtimes still compare the same bytes.
  */
-export function parseCount(raw: string, option: string): number {
-  const match = COUNT.exec(raw)
+export function parseCount(raw: string, option: string, shown?: string): number {
+  const error = new UsageError(`cmp: invalid ${option} value '${shown ?? raw}'${TRY_HELP}`)
+  const match = XSTRTOUMAX_PATTERN.exec(raw)
   const suffix = match?.[2] ?? ''
-  const unit = suffix === '' ? 1 : UNITS[suffix]
-  if (match === null || unit === undefined) {
-    throw new UsageError(`cmp: invalid ${option} value '${raw}'${TRY_HELP}`)
-  }
-  return Number(match[1]) * unit
+  const unit = suffix === '' ? 1 : CMP_SIZE_UNITS[suffix]
+  if (match === null || unit === undefined) throw error
+  const count = parseBase0(match[1] ?? '') * BigInt(unit)
+  if (count > INTMAX) throw error
+  return Number(count)
 }
 
 /**
@@ -56,7 +69,9 @@ export function parseCount(raw: string, option: string): number {
  *
  * GNU takes `SKIP` for both files or `SKIP1:SKIP2` for one each, so
  * `-i 0:3` compares all of the first file against the fourth byte
- * onward of the second.
+ * onward of the second. A colon is the only place the first count may
+ * stop, which is why `1b:1` is rejected naming the whole pair while
+ * `1:1b` is rejected naming just `1b`.
  */
 export function parseSkip(raw: string): [number, number] {
   const cut = raw.indexOf(':')
@@ -65,7 +80,7 @@ export function parseSkip(raw: string): [number, number] {
     return [both, both]
   }
   return [
-    parseCount(raw.slice(0, cut), '--ignore-initial'),
+    parseCount(raw.slice(0, cut), '--ignore-initial', raw),
     parseCount(raw.slice(cut + 1), '--ignore-initial'),
   ]
 }
@@ -129,7 +144,7 @@ function eofError(
   let msg = `cmp: EOF on ${shorter?.virtual ?? ''} after byte ${String(held.byteLength)}`
   if (!verbose) {
     let lines = 1
-    for (const byte of held) if (byte === 0x0a) lines += 1
+    for (const byte of held) if (byte === NEWLINE) lines += 1
     msg += `, in line ${String(lines)}`
   }
   return ENC.encode(`${msg}\n`)
@@ -191,7 +206,7 @@ export async function cmpGeneric(
     const b = data2[idx] ?? 0
     if (a === b) continue
     let line = 1
-    for (let k = 0; k < idx; k++) if (data1[k] === 0x0a) line += 1
+    for (let k = 0; k < idx; k++) if (data1[k] === NEWLINE) line += 1
     // GNU counts in `byte` under -b and in `char` otherwise, on the
     // same offset -- the word tracks the flag, not a unit.
     const unit = parsed.printBytes ? 'byte' : 'char'

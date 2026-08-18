@@ -1,12 +1,13 @@
 import { IOResult, materialize } from '../../../io/types.ts'
 import type { CommandFnResult } from '../../config.ts'
 import { UsageError } from '../../errors.ts'
-import { OD_COUNT_PATTERN, OD_OVERFLOW_UNITS, OD_SIZE_UNITS, UINTMAX } from '../constants.ts'
+import { OD_OVERFLOW_UNITS, OD_SIZE_UNITS, UINTMAX, XSTRTOUMAX_PATTERN } from '../constants.ts'
+import { parseBase0 } from '../utils/size_suffix.ts'
 
 const ENC = new TextEncoder()
 
 export function parseCount(value: string, flag: string): number {
-  const match = OD_COUNT_PATTERN.exec(value)
+  const match = XSTRTOUMAX_PATTERN.exec(value)
   if (match === null) throw new UsageError(`od: invalid ${flag} argument '${value}'`, 1)
   const number = match[1] ?? ''
   const suffix = match[2] ?? ''
@@ -14,18 +15,9 @@ export function parseCount(value: string, flag: string): number {
   if (suffix !== '' && multiplier === undefined) {
     throw new UsageError(`od: invalid suffix in ${flag} argument '${value}'`, 1)
   }
-  const base =
-    number.slice(0, 2).toLowerCase() === '0x'
-      ? 16
-      : number.startsWith('0') && number.length > 1
-        ? 8
-        : 10
-  const digits = base === 16 ? number.slice(2) : number
   // The too-large check compares in BigInt: 2**64 - 1 is valid and 2**64
   // is not, a boundary doubles cannot hold.
-  const magnitude =
-    (base === 16 ? BigInt(`0x${digits}`) : base === 8 ? BigInt(`0o${digits}`) : BigInt(digits)) *
-    BigInt(multiplier ?? 1)
+  const magnitude = parseBase0(number) * BigInt(multiplier ?? 1)
   if (magnitude > UINTMAX) throw new UsageError(`od: ${flag} argument '${value}' too large`, 1)
   return Number(magnitude)
 }
