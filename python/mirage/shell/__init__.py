@@ -13,12 +13,16 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 from mirage.shell.parse import parse
-from mirage.shell.types import (GRAMMAR_BUILTINS, TOOL_BUILTINS, BuiltinTier,
+from mirage.shell.types import (BUILTIN_GROUP, GRAMMAR_BUILTINS, GROUP_TIER,
+                                TOOL_BUILTINS, BuiltinGroup, BuiltinTier,
                                 NodeType, RedirectKind, ShellBuiltin)
 
 __all__ = [
+    "BUILTIN_GROUP",
+    "BuiltinGroup",
     "BuiltinTier",
     "GRAMMAR_BUILTINS",
+    "GROUP_TIER",
     "NodeType",
     "RedirectKind",
     "ShellBuiltin",

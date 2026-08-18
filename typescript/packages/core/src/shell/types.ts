@@ -380,8 +380,7 @@ export class Redirect {
 
 // Shell builtin command names: commands that don't touch the
 // filesystem, handled by the executor and never dispatched to a mount.
-// Listed by tier; GRAMMAR_BUILTINS / TOOL_BUILTINS below are the source
-// of truth.
+// Listed by tier and group; BUILTIN_GROUP below is the source of truth.
 export const ShellBuiltin = Object.freeze({
   // grammar: the shell's own language
   // -- working directory
@@ -475,69 +474,126 @@ export const BuiltinTier = Object.freeze({
 
 export type BuiltinTier = (typeof BuiltinTier)[keyof typeof BuiltinTier]
 
-// Every ShellBuiltin sits in exactly one tier; shell/types.test.ts pins
-// the partition, so a new member has to be filed here on purpose.
-export const GRAMMAR_BUILTINS: ReadonlySet<ShellBuiltin> = new Set<ShellBuiltin>([
-  ShellBuiltin.PWD,
-  ShellBuiltin.CD,
-  ShellBuiltin.EXPORT,
-  ShellBuiltin.UNSET,
-  ShellBuiltin.LOCAL,
-  ShellBuiltin.SET,
-  ShellBuiltin.READ,
-  ShellBuiltin.MAPFILE,
-  ShellBuiltin.READARRAY,
-  ShellBuiltin.SHIFT,
-  ShellBuiltin.GETOPTS,
-  ShellBuiltin.LET,
-  ShellBuiltin.TRAP,
-  ShellBuiltin.SHOPT,
-  ShellBuiltin.UMASK,
-  ShellBuiltin.ALIAS,
-  ShellBuiltin.UNALIAS,
-  ShellBuiltin.EXEC,
-  ShellBuiltin.TEST,
-  ShellBuiltin.BRACKET,
-  ShellBuiltin.DOUBLE_BRACKET,
-  ShellBuiltin.ECHO,
-  ShellBuiltin.PRINTF,
-  ShellBuiltin.SOURCE,
-  ShellBuiltin.DOT,
-  ShellBuiltin.EVAL,
-  ShellBuiltin.COMMAND,
-  ShellBuiltin.TYPE,
-  ShellBuiltin.WHICH,
-  ShellBuiltin.TRUE,
-  ShellBuiltin.FALSE,
-  ShellBuiltin.COLON,
-  ShellBuiltin.BREAK,
-  ShellBuiltin.CONTINUE,
-  ShellBuiltin.RETURN,
-  ShellBuiltin.EXIT,
+// The family a shell builtin belongs to, one level below the tier.
+// Every group sits in exactly one tier (GROUP_TIER), so filing a word in
+// a group also files its tier; BUILTIN_GROUP is the one row per word. A
+// listing (bare `man`) or a rule can name a group where it would
+// otherwise have to spell out the words.
+export const BuiltinGroup = Object.freeze({
+  // grammar
+  WORKING_DIRECTORY: 'working-directory',
+  VARIABLES: 'variables',
+  SHELL_STATE: 'shell-state',
+  CONDITIONS: 'conditions',
+  OUTPUT: 'output',
+  RUNNING_LINES: 'running-lines',
+  NAME_LOOKUP: 'name-lookup',
+  CONTROL_FLOW: 'control-flow',
+  // tools
+  ENVIRONMENT: 'environment',
+  MANUALS_AND_HISTORY: 'manuals-and-history',
+  JOB_CONTROL: 'job-control',
+  CLOCK: 'clock',
+  NESTED_SHELLS: 'nested-shells',
+  INTERPRETERS: 'interpreters',
+  COMMAND_RUNNERS: 'command-runners',
+} as const)
+
+export type BuiltinGroup = (typeof BuiltinGroup)[keyof typeof BuiltinGroup]
+
+export const GROUP_TIER: ReadonlyMap<BuiltinGroup, BuiltinTier> = new Map<
+  BuiltinGroup,
+  BuiltinTier
+>([
+  [BuiltinGroup.WORKING_DIRECTORY, BuiltinTier.GRAMMAR],
+  [BuiltinGroup.VARIABLES, BuiltinTier.GRAMMAR],
+  [BuiltinGroup.SHELL_STATE, BuiltinTier.GRAMMAR],
+  [BuiltinGroup.CONDITIONS, BuiltinTier.GRAMMAR],
+  [BuiltinGroup.OUTPUT, BuiltinTier.GRAMMAR],
+  [BuiltinGroup.RUNNING_LINES, BuiltinTier.GRAMMAR],
+  [BuiltinGroup.NAME_LOOKUP, BuiltinTier.GRAMMAR],
+  [BuiltinGroup.CONTROL_FLOW, BuiltinTier.GRAMMAR],
+  [BuiltinGroup.ENVIRONMENT, BuiltinTier.TOOL],
+  [BuiltinGroup.MANUALS_AND_HISTORY, BuiltinTier.TOOL],
+  [BuiltinGroup.JOB_CONTROL, BuiltinTier.TOOL],
+  [BuiltinGroup.CLOCK, BuiltinTier.TOOL],
+  [BuiltinGroup.NESTED_SHELLS, BuiltinTier.TOOL],
+  [BuiltinGroup.INTERPRETERS, BuiltinTier.TOOL],
+  [BuiltinGroup.COMMAND_RUNNERS, BuiltinTier.TOOL],
 ])
 
-export const TOOL_BUILTINS: ReadonlySet<ShellBuiltin> = new Set<ShellBuiltin>([
-  ShellBuiltin.PRINTENV,
-  ShellBuiltin.ENV,
-  ShellBuiltin.WHOAMI,
-  ShellBuiltin.MAN,
-  ShellBuiltin.HISTORY,
-  ShellBuiltin.WAIT,
-  ShellBuiltin.FG,
-  ShellBuiltin.KILL,
-  ShellBuiltin.JOBS,
-  ShellBuiltin.DISOWN,
-  ShellBuiltin.PS,
-  ShellBuiltin.SLEEP,
-  ShellBuiltin.BASH,
-  ShellBuiltin.SH,
-  ShellBuiltin.PYTHON,
-  ShellBuiltin.PYTHON3,
-  ShellBuiltin.NODE,
-  ShellBuiltin.JS,
-  ShellBuiltin.XARGS,
-  ShellBuiltin.TIMEOUT,
+// One row per ShellBuiltin. shell/types.test.ts pins that the rows cover
+// the enum, that every group is used, and that the tier sets below are
+// the rows' partition, so a new member has to be filed here on purpose.
+export const BUILTIN_GROUP: ReadonlyMap<ShellBuiltin, BuiltinGroup> = new Map<
+  ShellBuiltin,
+  BuiltinGroup
+>([
+  [ShellBuiltin.PWD, BuiltinGroup.WORKING_DIRECTORY],
+  [ShellBuiltin.CD, BuiltinGroup.WORKING_DIRECTORY],
+  [ShellBuiltin.EXPORT, BuiltinGroup.VARIABLES],
+  [ShellBuiltin.UNSET, BuiltinGroup.VARIABLES],
+  [ShellBuiltin.LOCAL, BuiltinGroup.VARIABLES],
+  [ShellBuiltin.SET, BuiltinGroup.VARIABLES],
+  [ShellBuiltin.READ, BuiltinGroup.VARIABLES],
+  [ShellBuiltin.MAPFILE, BuiltinGroup.VARIABLES],
+  [ShellBuiltin.READARRAY, BuiltinGroup.VARIABLES],
+  [ShellBuiltin.SHIFT, BuiltinGroup.VARIABLES],
+  [ShellBuiltin.GETOPTS, BuiltinGroup.VARIABLES],
+  [ShellBuiltin.LET, BuiltinGroup.VARIABLES],
+  [ShellBuiltin.TRAP, BuiltinGroup.SHELL_STATE],
+  [ShellBuiltin.SHOPT, BuiltinGroup.SHELL_STATE],
+  [ShellBuiltin.UMASK, BuiltinGroup.SHELL_STATE],
+  [ShellBuiltin.ALIAS, BuiltinGroup.SHELL_STATE],
+  [ShellBuiltin.UNALIAS, BuiltinGroup.SHELL_STATE],
+  [ShellBuiltin.EXEC, BuiltinGroup.SHELL_STATE],
+  [ShellBuiltin.TEST, BuiltinGroup.CONDITIONS],
+  [ShellBuiltin.BRACKET, BuiltinGroup.CONDITIONS],
+  [ShellBuiltin.DOUBLE_BRACKET, BuiltinGroup.CONDITIONS],
+  [ShellBuiltin.ECHO, BuiltinGroup.OUTPUT],
+  [ShellBuiltin.PRINTF, BuiltinGroup.OUTPUT],
+  [ShellBuiltin.SOURCE, BuiltinGroup.RUNNING_LINES],
+  [ShellBuiltin.DOT, BuiltinGroup.RUNNING_LINES],
+  [ShellBuiltin.EVAL, BuiltinGroup.RUNNING_LINES],
+  [ShellBuiltin.COMMAND, BuiltinGroup.RUNNING_LINES],
+  [ShellBuiltin.TYPE, BuiltinGroup.NAME_LOOKUP],
+  [ShellBuiltin.WHICH, BuiltinGroup.NAME_LOOKUP],
+  [ShellBuiltin.TRUE, BuiltinGroup.CONTROL_FLOW],
+  [ShellBuiltin.FALSE, BuiltinGroup.CONTROL_FLOW],
+  [ShellBuiltin.COLON, BuiltinGroup.CONTROL_FLOW],
+  [ShellBuiltin.BREAK, BuiltinGroup.CONTROL_FLOW],
+  [ShellBuiltin.CONTINUE, BuiltinGroup.CONTROL_FLOW],
+  [ShellBuiltin.RETURN, BuiltinGroup.CONTROL_FLOW],
+  [ShellBuiltin.EXIT, BuiltinGroup.CONTROL_FLOW],
+  [ShellBuiltin.PRINTENV, BuiltinGroup.ENVIRONMENT],
+  [ShellBuiltin.ENV, BuiltinGroup.ENVIRONMENT],
+  [ShellBuiltin.WHOAMI, BuiltinGroup.ENVIRONMENT],
+  [ShellBuiltin.MAN, BuiltinGroup.MANUALS_AND_HISTORY],
+  [ShellBuiltin.HISTORY, BuiltinGroup.MANUALS_AND_HISTORY],
+  [ShellBuiltin.WAIT, BuiltinGroup.JOB_CONTROL],
+  [ShellBuiltin.FG, BuiltinGroup.JOB_CONTROL],
+  [ShellBuiltin.KILL, BuiltinGroup.JOB_CONTROL],
+  [ShellBuiltin.JOBS, BuiltinGroup.JOB_CONTROL],
+  [ShellBuiltin.DISOWN, BuiltinGroup.JOB_CONTROL],
+  [ShellBuiltin.PS, BuiltinGroup.JOB_CONTROL],
+  [ShellBuiltin.SLEEP, BuiltinGroup.CLOCK],
+  [ShellBuiltin.BASH, BuiltinGroup.NESTED_SHELLS],
+  [ShellBuiltin.SH, BuiltinGroup.NESTED_SHELLS],
+  [ShellBuiltin.PYTHON, BuiltinGroup.INTERPRETERS],
+  [ShellBuiltin.PYTHON3, BuiltinGroup.INTERPRETERS],
+  [ShellBuiltin.NODE, BuiltinGroup.INTERPRETERS],
+  [ShellBuiltin.JS, BuiltinGroup.INTERPRETERS],
+  [ShellBuiltin.XARGS, BuiltinGroup.COMMAND_RUNNERS],
+  [ShellBuiltin.TIMEOUT, BuiltinGroup.COMMAND_RUNNERS],
 ])
+
+export const GRAMMAR_BUILTINS: ReadonlySet<ShellBuiltin> = new Set<ShellBuiltin>(
+  [...BUILTIN_GROUP].filter(([, g]) => GROUP_TIER.get(g) === BuiltinTier.GRAMMAR).map(([b]) => b),
+)
+
+export const TOOL_BUILTINS: ReadonlySet<ShellBuiltin> = new Set<ShellBuiltin>(
+  [...BUILTIN_GROUP].filter(([, g]) => GROUP_TIER.get(g) === BuiltinTier.TOOL).map(([b]) => b),
+)
 
 /**
  * The structural shape of a tree-sitter syntax node, so consumers can
