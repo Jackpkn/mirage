@@ -16,7 +16,7 @@ import asyncio
 import errno
 
 from mirage.commands.builtin.generic.crossmount.relay.ls import run_ls
-from mirage.ops.types import NamespaceView
+from mirage.ops.types import MountView, NamespaceView
 from mirage.types import FileStat, FileType, PathSpec
 
 # Two mounts, /a/ and /b/, as a plain virtual-path tree. The relayed
@@ -153,6 +153,26 @@ def test_a_nested_mount_root_keeps_the_name_its_parent_lists_it_by():
     nested = frozenset({"/a/one"})
     assert run(["/a", "/b"], roots=nested)[0] == run(["/a", "/b"])[0]
     out, _, _ = run(["/a", "/b"], flags={"R": True}, roots=nested)
+    assert out == ("/a:\none\nz.txt\n\n/a/one:\nx.txt\n\n"
+                   "/b:\ntwo\n\n/b/two:\ny.txt\n")
+
+
+def test_a_full_namespace_does_not_stop_the_relay_at_a_mount_root():
+    """The mount table names the boundaries a walk's readdir cannot
+    cross, and a relayed one crosses them: readdir and stat route per
+    path. Handed the whole namespace -- which is what the workspace
+    offers -- the relay must still descend `/a/one` and render its
+    group, because nothing runs behind a relay to contribute it the way
+    the fan-out does for a single-mount run.
+    """
+    nested = frozenset({"/a/one"})
+    ns = NamespaceView(mounts=MountView(
+        descendants=lambda p: [],
+        is_root=lambda p: p.rstrip("/") in nested,
+        root_of=lambda p: "/"),
+                       child_mounts=lambda p: ["one"] if p == "/a" else [])
+    out, io, _ = run(["/a", "/b"], flags={"R": True}, ns=ns, roots=nested)
+    assert io.exit_code == 0
     assert out == ("/a:\none\nz.txt\n\n/a/one:\nx.txt\n\n"
                    "/b:\ntwo\n\n/b/two:\ny.txt\n")
 

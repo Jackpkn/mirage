@@ -81,6 +81,37 @@ async def _mount_dirs(descendants: Sequence[MountEntry],
     return out
 
 
+async def _ls_block_mounts(descendants: Sequence[MountEntry],
+                           stat_path: StatPath | None) -> list[MountEntry]:
+    """The descendants `ls -R` should render a block for.
+
+    A mount root is not always a directory (`/.bash_history` is a whole
+    mount serving one file), and GNU lists a file that happens to be a
+    mountpoint as an ordinary row of its parent with no block of its own
+    -- pinned on coreutils 9.7 over a `mount --bind` of one file onto
+    another. The parent's listing already carries that row, because ls
+    stats every child mount through this same dispatcher, so a sub-run
+    would print the name a second time.
+
+    Only a *confirmed* non-directory is dropped: a root the dispatcher
+    cannot stat keeps its block rather than vanishing on a failed probe,
+    and without a dispatcher at all the question cannot be asked and
+    every descendant stands.
+
+    Args:
+        descendants (Sequence[MountEntry]): the mounts under the operand.
+        stat_path (StatPath | None): dispatcher-backed stat.
+    """
+    if stat_path is None:
+        return list(descendants)
+    kept: list[MountEntry] = []
+    for m in descendants:
+        stat = await stat_path(m.prefix.rstrip("/") or "/")
+        if stat is None or stat.type is FileType.DIRECTORY:
+            kept.append(m)
+    return kept
+
+
 def _allowed_descendants(registry: MountRegistry,
                          path: str) -> list[MountEntry]:
     """Descendant mounts the current session may see.
@@ -412,6 +443,8 @@ async def _fan_out_traversal(
     """
     target_path = paths[0].virtual
     descendants = _allowed_descendants(registry, target_path)
+    if cmd_name == "ls":
+        descendants = await _ls_block_mounts(descendants, stat_path)
     # The shadow filter keeps the raw list on purpose: a mount the
     # session cannot see still shadows the primary backend's keys under
     # its prefix, the walk just never descends into it.

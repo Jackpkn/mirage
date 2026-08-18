@@ -39,6 +39,15 @@ function namedByPath(stat: (p: PathSpec) => Promise<FileStat>) {
   }
 }
 
+// The name-plane facts minus the mount boundaries; see `runLs`.
+function crossingNs(ns: NamespaceView): NamespaceView {
+  return {
+    ...(ns.links !== undefined ? { links: ns.links } : {}),
+    ...(ns.statOverlay !== undefined ? { statOverlay: ns.statOverlay } : {}),
+    ...(ns.childMounts !== undefined ? { childMounts: ns.childMounts } : {}),
+  }
+}
+
 // List operands spanning mounts through the shared generic ls. ls relays
 // rather than fans out because its layout is decided across all operands at
 // once: GNU prints non-directory operands first as one globally sorted
@@ -50,6 +59,14 @@ function namedByPath(stat: (p: PathSpec) => Promise<FileStat>) {
 // `ns` carries the name-plane facts no backend can see. The attr overlay
 // matters most here: without it a relayed row would report the raw backend
 // mode and silently lose a chmod the namespace holds.
+//
+// Every fact but `mounts`, which names the boundaries a walk's readdir
+// cannot cross. This one's does cross them -- readdir and stat route per
+// path -- so the relay descends a nested mount itself, and it has to:
+// nothing runs behind a relay to contribute that group the way the
+// fan-out does for a single-mount run. Handing it the boundaries would
+// stop the descent and drop the group. Python says the same thing by
+// omission, calling the generic with explicit keywords.
 export async function runLs(
   scopes: PathSpec[],
   flagKwargs: Record<string, FlagValue>,
@@ -58,7 +75,7 @@ export async function runLs(
 ): Promise<CrossResult> {
   const opts: CommandOpts = {
     ...crossOpts(flagKwargs),
-    ...(ns !== undefined ? { ns } : {}),
+    ...(ns !== undefined ? { ns: crossingNs(ns) } : {}),
   }
   const result = await lsGeneric(
     flatten(scopes),

@@ -89,7 +89,12 @@ async def run_ls(scopes: list[PathSpec], flag_kwargs: dict[str, FlagValue],
         ns (NamespaceView | None): Name-plane facts no backend can see.
             The attr overlay matters most here: without it a relayed row
             would report the raw backend mode and silently lose a chmod
-            the namespace holds.
+            the namespace holds. Every fact but ``mounts``, which names
+            the boundaries a walk's readdir cannot cross: this one's
+            does cross them, so the relay descends a nested mount
+            itself, and it has to, because nothing runs behind a relay
+            to contribute that group the way the fan-out does for a
+            single-mount run.
     """
     p = functools.partial
     stat_fn: Stat = p(relayed_stat, dispatch)

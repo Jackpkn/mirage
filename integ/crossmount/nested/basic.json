@@ -67,6 +67,7 @@
     },
     {
       "id": "nest_ls_recursive_renders_both_groups",
+      "note": "A mount root is an ordinary directory entry of its parent, so `inner` is a row of `/data` as well as a group of its own. Pinned on coreutils 9.7 over a tmpfs mounted at `base/nested`: `ls -R base` prints `nested` then `top.txt`, then the mounted directory under its own header. `-R` used to withhold the namespace merge and leave the whole nested mount to the cross-mount fan-out, which contributes the group but not the parent's row, so the row went missing here where `/data`'s backend holds no `inner` key. Non-recursive `ls /data` (seq 950002) always listed it.",
       "seq": 950006,
       "targets": [
         "ram-nested"
@@ -74,7 +75,7 @@
       "command": "ls -R /data",
       "expect": {
         "exit": 0,
-        "stdout": "/data:\ntop.txt\n\n/data/inner:\nleaf.txt\n",
+        "stdout": "/data:\ninner\ntop.txt\n\n/data/inner:\nleaf.txt\n",
         "stderr": ""
       }
     },

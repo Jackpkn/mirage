@@ -10,7 +10,7 @@ from mirage.commands.config import CommandOpts
 from mirage.commands.spec import SPECS
 from mirage.commands.spec.types import FlagValue, FlagView
 from mirage.io.types import IOResult
-from mirage.ops.types import ChildMounts, LinkView
+from mirage.ops.types import ChildMounts, LinkView, MountView, StatPath
 from mirage.types import FileStat, FileType, LsSortBy, PathSpec
 from mirage.utils.errors import fs_strerror
 from mirage.utils.key_prefix import rekey
@@ -272,6 +272,40 @@ def _child_spec(path: PathSpec, name: str) -> PathSpec:
                                         child))
 
 
+async def _mount_row(
+    directory: PathSpec,
+    name: str,
+    stat_path: StatPath | None,
+) -> FileStat:
+    """The row for a child mount, carrying its real type.
+
+    No backend can supply it: the parent's cannot see into the child
+    mount, and the child's own answers its root with that mount's name
+    for itself (``/``), which is why the row is renamed here the way the
+    relay renames one. So the fact comes through the dispatcher, which
+    routes to whichever mount owns the path.
+
+    A mount root is not always a directory -- every workspace mounts
+    ``/.bash_history`` as a whole mount serving one file -- and calling
+    one a directory suffixes it with ``/`` under ``-F``, renders it
+    ``drwxr-xr-x`` under ``-l``, and offers it to ``-R`` as something to
+    descend. GNU lists a file that happens to be a mountpoint as an
+    ordinary file row (pinned on coreutils 9.7 over a ``mount --bind``
+    of one file onto another). Directory is the fallback for a caller
+    with no dispatcher, which is the only thing that absence can mean.
+
+    Args:
+        directory (PathSpec): the directory being listed.
+        name (str): the child's own name.
+        stat_path (StatPath | None): dispatcher-backed stat of one path.
+    """
+    if stat_path is not None:
+        row = await stat_path(directory.child(name))
+        if row is not None:
+            return row.model_copy(update={"name": name})
+    return FileStat(name=name, type=FileType.DIRECTORY)
+
+
 async def _stat_entries(
     path: PathSpec,
     names: list[str],
@@ -282,6 +316,7 @@ async def _stat_entries(
     links: LinkView | None = None,
     deref: bool = False,
     child_mounts: ChildMounts | None = None,
+    stat_path: StatPath | None = None,
 ) -> tuple[list[FileStat], list[LsWarning]]:
     """Stat every name in a directory, plus the symlinks living there.
 
@@ -302,7 +337,13 @@ async def _stat_entries(
         child_mounts (ChildMounts | None): session-filtered child-mount
             names under a directory. A nested mount is namespace
             structure the backend readdir cannot name, merged here like
-            a link row.
+            a link row. GNU lists a mountpoint as an ordinary entry of
+            its parent, so the merge is unconditional: withholding it
+            under ``-R`` dropped the row whenever the parent's backend
+            held no key of that name.
+        stat_path (StatPath | None): dispatcher-backed stat, which is
+            the only way to learn a child mount's real type. See
+            ``_mount_row``.
     """
     stats: list[FileStat] = []
     warnings: list[LsWarning] = []
@@ -342,7 +383,7 @@ async def _stat_entries(
         if not all_files and name.startswith("."):
             continue
         seen.add(name)
-        stats.append(FileStat(name=name, type=FileType.DIRECTORY))
+        stats.append(await _mount_row(path, name, stat_path))
     return stats, warnings
 
 
@@ -360,6 +401,8 @@ async def probe_operand(
     links: LinkView | None = None,
     deref: bool = False,
     child_mounts: ChildMounts | None = None,
+    mounts: MountView | None = None,
+    stat_path: StatPath | None = None,
 ) -> tuple[Operand, list[LsWarning]]:
     """List one operand and report whether it turned out to be a directory.
 
@@ -376,11 +419,18 @@ async def probe_operand(
         index (IndexCacheStore): listing cache.
         links (LinkView | None): the namespace's symlink facts.
         child_mounts (ChildMounts | None): session-filtered child-mount
-            names. Under ``-R`` a backend-served listing withholds the
-            merge and a child-mount root is never descended (the walk
-            cannot read another mount's backend, so the cross-mount
-            fan-out assembles those groups); a directory only the
-            namespace serves still renders its own group from it.
+            names, merged into every listing: a mountpoint is an
+            ordinary directory entry of its parent, ``-R`` or not.
+        mounts (MountView | None): the mount boundaries this walk's
+            ``readdir`` cannot cross. Under ``-R`` such a root is listed
+            but never descended, because that listing is another
+            backend's and the cross-mount fan-out assembles the group;
+            a namespace-only directory *above* one is descended, since
+            no other run renders it. None for a walk that can cross --
+            the relay's readdir routes per path, so it descends a
+            nested mount itself.
+        stat_path (StatPath | None): dispatcher-backed stat, for the
+            child-mount rows no backend can supply.
     """
     warnings: list[LsWarning] = []
     structure_only = False
@@ -402,10 +452,7 @@ async def probe_operand(
         # No backend serves it, but the namespace owes it children (a
         # nested mount, a link's ancestors), so the door lists it as a
         # directory and ls must agree: the merge below renders those
-        # rows from an empty backend listing. Under -R this group still
-        # renders; only descent into a child-mount root is withheld,
-        # because that listing is another backend's and the cross-mount
-        # fan-out assembles it.
+        # rows from an empty backend listing.
         names = []
         structure_only = True
 
@@ -420,16 +467,15 @@ async def probe_operand(
         if link_row is not None:
             return Operand(path, link_row, []), warnings
 
-    entries, entry_ws = await _stat_entries(
-        path,
-        names,
-        stat=stat,
-        all_files=all_files,
-        index=index,
-        links=links,
-        deref=deref,
-        child_mounts=child_mounts if structure_only else
-        (None if recursive else child_mounts))
+    entries, entry_ws = await _stat_entries(path,
+                                            names,
+                                            stat=stat,
+                                            all_files=all_files,
+                                            index=index,
+                                            links=links,
+                                            deref=deref,
+                                            child_mounts=child_mounts,
+                                            stat_path=stat_path)
     warnings.extend(entry_ws)
     entries = sort_stats(entries, sort_by, reverse)
     groups: list[tuple[PathSpec, list[FileStat]]] = [(path, entries)]
@@ -438,10 +484,10 @@ async def probe_operand(
             if entry.type != FileType.DIRECTORY:
                 continue
             child_path = _child_spec(path, entry.name)
-            if structure_only and (child_mounts is None
-                                   or not child_mounts(child_path.virtual)):
-                # A child-mount root: its listing is another backend's,
-                # so the cross-mount fan-out renders that group.
+            if mounts is not None and mounts.is_root(child_path.virtual):
+                # A nested mount's root. Its row belongs here, but its
+                # listing is another backend's, which this walk cannot
+                # read: the cross-mount fan-out renders that group.
                 continue
             child, child_ws = await probe_operand(child_path,
                                                   readdir=readdir,
@@ -454,7 +500,9 @@ async def probe_operand(
                                                   index=index,
                                                   links=links,
                                                   deref=deref,
-                                                  child_mounts=child_mounts)
+                                                  child_mounts=child_mounts,
+                                                  mounts=mounts,
+                                                  stat_path=stat_path)
             groups.extend(child.groups)
             warnings.extend(child_ws)
     return Operand(path, None, groups), warnings
@@ -475,6 +523,8 @@ async def walk(
     links: LinkView | None = None,
     deref: bool = False,
     child_mounts: ChildMounts | None = None,
+    mounts: MountView | None = None,
+    stat_path: StatPath | None = None,
 ) -> WalkResult:
     """Flat listing for one operand: a directory's entries, or the operand
     itself when it is not one. ``recursive`` flattens the whole subtree in
@@ -495,6 +545,11 @@ async def walk(
         links (LinkView | None): the namespace's symlink facts.
         child_mounts (ChildMounts | None): session-filtered child-mount
             names to merge into a directory listing.
+        mounts (MountView | None): the boundaries this walk's readdir
+            cannot cross, so ``-R`` lists a nested mount's root without
+            descending it.
+        stat_path (StatPath | None): dispatcher-backed stat, for the
+            child-mount rows no backend can supply.
     """
     if list_dir:
         link_row = _link_row(path, links)
@@ -529,7 +584,9 @@ async def walk(
                                             index=index,
                                             links=links,
                                             deref=deref,
-                                            child_mounts=child_mounts)
+                                            child_mounts=child_mounts,
+                                            mounts=mounts,
+                                            stat_path=stat_path)
     if operand.row is not None:
         return WalkResult([operand.row], warnings)
     entries = [e for _, group in operand.groups for e in group]
@@ -612,6 +669,8 @@ async def ls(
     links: LinkView | None = None,
     deref: bool = False,
     child_mounts: ChildMounts | None = None,
+    mounts: MountView | None = None,
+    stat_path: StatPath | None = None,
 ) -> tuple[bytes, IOResult]:
     results: list[str] = []
     warnings: list[LsWarning] = []
@@ -628,7 +687,9 @@ async def ls(
                                 index=index,
                                 links=links,
                                 deref=deref,
-                                child_mounts=child_mounts)
+                                child_mounts=child_mounts,
+                                mounts=mounts,
+                                stat_path=stat_path)
             rows.extend(result.entries)
             warnings.extend(result.warnings)
         if len(rows) > 1:
@@ -653,7 +714,9 @@ async def ls(
                                             index=index,
                                             links=links,
                                             deref=deref,
-                                            child_mounts=child_mounts)
+                                            child_mounts=child_mounts,
+                                            mounts=mounts,
+                                            stat_path=stat_path)
         warnings.extend(p_ws)
         operands.append(operand)
     if len(operands) > 1:
@@ -722,6 +785,8 @@ async def ls_generic(
         index=opts.index,
         links=opts.ns.links if opts.ns is not None else None,
         child_mounts=opts.ns.child_mounts if opts.ns is not None else None,
+        mounts=opts.ns.mounts if opts.ns is not None else None,
+        stat_path=opts.stat_path,
         **ls_options(opts.flags))
 
 

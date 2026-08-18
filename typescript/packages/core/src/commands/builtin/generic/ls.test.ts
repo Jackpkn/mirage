@@ -15,7 +15,7 @@
 import { mountKey } from '../../../utils/key_prefix.ts'
 import { describe, expect, it } from 'vitest'
 import { FileStat, FileType, LINK_TARGET_KEY, PathSpec } from '../../../types.ts'
-import type { LinkView } from '../../../ops/types.ts'
+import type { LinkView, MountView } from '../../../ops/types.ts'
 import { rstripSlash } from '../../../utils/slash.ts'
 import type { CommandOpts } from '../../config.ts'
 import { LS_FAILURE, LS_MINOR_PROBLEM, LS_OK, exitStatusFor, lsGeneric } from './ls.ts'
@@ -423,6 +423,14 @@ describe('structure-only directories', () => {
     return Promise.reject(err)
   }
   const childMounts = (parent: string): string[] => (parent === '/ghost' ? ['deep'] : [])
+  // Only `isRoot` is exercised: it is what tells a nested mount's root
+  // (whose listing belongs to another backend) from a directory the
+  // namespace merely owes children, which -R must still descend.
+  const mountsAt = (...roots: string[]): MountView => ({
+    descendants: (p) => roots.filter((r) => r.startsWith(`${rstripSlash(p)}/`)),
+    isRoot: (p) => roots.includes(rstripSlash(p)),
+    rootOf: () => '/',
+  })
 
   // A directory no backend serves still lists when the namespace owes it
   // children (a nested mount, a link's ancestors): the door already names
@@ -440,12 +448,16 @@ describe('structure-only directories', () => {
   })
 
   // Under -R the group still renders from the namespace fact; only
-  // descent into the child-mount root is withheld, because that listing
-  // is another backend's and the cross-mount fan-out assembles it.
+  // descent into the mount root is withheld, because that listing is
+  // another backend's and the cross-mount fan-out assembles it.
   it('-R renders the namespace-only group and leaves descent to fan-out', async () => {
     const result = await lsGeneric(
       [PathSpec.fromStrPath('/ghost')],
-      { flags: { R: true }, cwd: '/', ns: { childMounts } } as never,
+      {
+        flags: { R: true },
+        cwd: '/',
+        ns: { childMounts, mounts: mountsAt('/ghost/deep') },
+      } as never,
       missing,
       missing,
     )
@@ -454,18 +466,121 @@ describe('structure-only directories', () => {
   })
 
   // A structure chain (a link's ancestors) continues below the first
-  // level, so -R descends it: only a child-mount root stops the walk.
+  // level, so -R descends it: only a mount root stops the walk.
   it('-R descends structure that continues below', async () => {
     const chain = (parent: string): string[] =>
       parent === '/ghost' ? ['deep'] : parent === '/ghost/deep' ? ['lnk'] : []
     const result = await lsGeneric(
       [PathSpec.fromStrPath('/ghost')],
-      { flags: { R: true }, cwd: '/', ns: { childMounts: chain } } as never,
+      {
+        flags: { R: true },
+        cwd: '/',
+        ns: { childMounts: chain, mounts: mountsAt('/ghost/deep/lnk') },
+      } as never,
       missing,
       missing,
     )
     expect(result?.[1].exitCode).toBe(LS_OK)
     expect(DEC.decode(result?.[0] as Uint8Array)).toBe('/ghost:\ndeep\n\n/ghost/deep:\nlnk\n')
+  })
+
+  // A mount root is an ordinary entry of a backend-served directory. GNU
+  // (coreutils 9.7, tmpfs at `base/nested`) prints `nested` in `base`'s
+  // own listing and then its group. The merge used to be withheld
+  // whenever the walk was recursive, on the theory that the cross-mount
+  // fan-out contributed the whole nested mount; it contributes the group,
+  // not the parent's row, so the row went missing wherever the backend
+  // held no key of that name. Descent is what the fan-out owns, and the
+  // mount table is what says where to stop.
+  it('-R lists a mount root without descending it', async () => {
+    const served: Record<string, FileType> = {
+      '/base': FileType.DIRECTORY,
+      '/base/top.txt': FileType.TEXT,
+    }
+    const servedStat = (p: PathSpec): Promise<FileStat> => {
+      const type = served[rstripSlash(p.virtual)]
+      if (type === undefined) return missing(p)
+      return Promise.resolve(
+        new FileStat({ name: rstripSlash(p.virtual).split('/').pop() ?? '', type }),
+      )
+    }
+    const servedReaddir = (p: PathSpec): Promise<string[]> =>
+      rstripSlash(p.virtual) === '/base' ? Promise.resolve(['/base/top.txt']) : missing(p)
+    const result = await lsGeneric(
+      [PathSpec.fromStrPath('/base')],
+      {
+        flags: { R: true },
+        cwd: '/',
+        ns: {
+          childMounts: (parent: string) => (parent === '/base' ? ['nested'] : []),
+          mounts: mountsAt('/base/nested'),
+        },
+      } as never,
+      servedReaddir,
+      servedStat,
+    )
+    expect(result?.[1].exitCode).toBe(LS_OK)
+    expect(DEC.decode(result?.[0] as Uint8Array)).toBe('/base:\nnested\ntop.txt\n')
+  })
+
+  // A mount root is not always a directory. Every workspace mounts
+  // `/.bash_history` as a whole mount serving one file, and no backend can
+  // stat it: the parent's cannot see into the child mount and the child's
+  // own calls its root '/'. Synthesizing the row as a directory suffixed it
+  // with '/' under -F, rendered it `drwxr-xr-x` under -l, and offered it to
+  // -R as something to descend. GNU (coreutils 9.7, `mount --bind` of one
+  // file onto another) lists it as an ordinary file row of its parent.
+  it('does not render a child mount serving one file as a directory', async () => {
+    const served: Record<string, FileType> = {
+      '/base': FileType.DIRECTORY,
+      '/base/top.txt': FileType.TEXT,
+    }
+    const servedStat = (p: PathSpec): Promise<FileStat> => {
+      const type = served[rstripSlash(p.virtual)]
+      if (type === undefined) return missing(p)
+      return Promise.resolve(
+        new FileStat({ name: rstripSlash(p.virtual).split('/').pop() ?? '', type }),
+      )
+    }
+    const servedReaddir = (p: PathSpec): Promise<string[]> =>
+      rstripSlash(p.virtual) === '/base' ? Promise.resolve(['/base/top.txt']) : missing(p)
+    const result = await lsGeneric(
+      [PathSpec.fromStrPath('/base')],
+      {
+        flags: { R: true, F: true },
+        cwd: '/',
+        // The child mount answers its own root with its name for it.
+        statPath: (virtual: string) =>
+          Promise.resolve(
+            virtual === '/base/hist' ? new FileStat({ name: '/', type: FileType.TEXT }) : null,
+          ),
+        ns: {
+          childMounts: (parent: string) => (parent === '/base' ? ['hist'] : []),
+          mounts: mountsAt('/base/hist'),
+        },
+      } as never,
+      servedReaddir,
+      servedStat,
+    )
+    expect(result?.[1].exitCode).toBe(LS_OK)
+    expect(DEC.decode(result?.[0] as Uint8Array)).toBe('/base:\nhist\ntop.txt\n')
+  })
+
+  // Absence of the door can only mean "nobody can answer", so the row keeps
+  // the shape every caller outside a workspace already saw.
+  it('falls back to a directory row with no dispatcher', async () => {
+    const result = await lsGeneric(
+      [PathSpec.fromStrPath('/ghost')],
+      {
+        flags: { F: true },
+        cwd: '/',
+        ns: { childMounts: (parent: string) => (parent === '/ghost' ? ['deep'] : []) },
+      } as never,
+      missing,
+      missing,
+    )
+    expect(result?.[1].exitCode).toBe(LS_OK)
+    expect(DEC.decode(result?.[0] as Uint8Array)).toBe('deep/\n')
   })
 
   // -d stats the operand itself; the namespace fact is what says the

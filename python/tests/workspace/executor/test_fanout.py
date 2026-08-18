@@ -482,6 +482,109 @@ def test_ls_r_drops_the_shadowed_group_whole():
                            "/base/inner:\nreal.txt\n")
 
 
+def _unnamed_mountpoint_workspace() -> Workspace:
+    """A nested mount whose name the parent's backend does not hold.
+
+    The mirror image of `_shadowed_workspace`, where the parent owns keys
+    under `inner/` and so names the mountpoint from its own readdir
+    whatever the namespace says.
+    """
+    parent = RAMResource()
+    parent._store.files["/top.txt"] = b"T\n"
+    child = RAMResource()
+    child._store.files["/real.txt"] = b"hit\n"
+    return Workspace(
+        resources={
+            "/base/": (parent, MountMode.EXEC),
+            "/base/nested/": (child, MountMode.EXEC),
+        })
+
+
+def test_ls_r_lists_a_mountpoint_the_parent_backend_cannot_name():
+    """A mount root is an ordinary directory entry of its parent.
+
+    Pinned on coreutils 9.7 over a tmpfs mounted at `base/nested`:
+    `ls -R base` prints `nested` in `base`'s own listing, then its group.
+    `-R` used to withhold the namespace merge and leave the whole nested
+    mount to the fan-out, which contributes the group but not the row, so
+    the row went missing wherever the parent's backend held no key of
+    that name.
+    """
+    ws = _unnamed_mountpoint_workspace()
+    io = asyncio.run(ws.execute("ls -R /base"))
+    assert _stdout(io) == ("/base:\nnested\ntop.txt\n\n"
+                           "/base/nested:\nreal.txt\n")
+
+
+def test_ls_r_lists_a_mountpoint_below_the_operand():
+    """The merge is per directory listed, not per operand.
+
+    Pinned on coreutils 9.7 over a tmpfs mounted at `base/sub/deep`:
+    `deep` is a row of `base/sub`, which is a directory the parent's own
+    backend serves.
+    """
+    parent = RAMResource()
+    parent._store.dirs.add("/sub")
+    parent._store.files["/sub/p.txt"] = b"P\n"
+    child = RAMResource()
+    child._store.files["/real.txt"] = b"hit\n"
+    ws = Workspace(
+        resources={
+            "/base/": (parent, MountMode.EXEC),
+            "/base/sub/deep/": (child, MountMode.EXEC),
+        })
+    io = asyncio.run(ws.execute("ls -R /base"))
+    assert _stdout(io) == ("/base:\nsub\n\n"
+                           "/base/sub:\ndeep\np.txt\n\n"
+                           "/base/sub/deep:\nreal.txt\n")
+
+
+def test_ls_r_lists_a_namespace_only_ancestor_under_a_served_root():
+    """`/ghost` exists only because a mount lives below it, and `/` is
+    served by a backend, so the withheld merge dropped the row and the
+    two groups the walk renders from it. Only a mount root is left to the
+    fan-out; the namespace-only directories above one are this walk's,
+    because no other run renders them."""
+    ws = _nested_ghost_workspace()
+    io = asyncio.run(ws.execute("ls -R /"))
+    assert _stdout(io).startswith("/:\ndev\nghost\ntop.txt\n\n"
+                                  "/ghost:\nvery\n\n"
+                                  "/ghost/very:\ndeep\n")
+
+
+def test_ls_r_relative_operand_never_descends_the_mount_root():
+    """A mount root is listed but not descended, so the shadowed group is
+    never produced rather than produced and filtered.
+
+    `_drop_shadowed_ls_groups` only recognizes an absolute header, so a
+    relative operand printed `base/inner:` twice: once with the parent's
+    shadowed `leftover.txt`, once with the mount's own listing. GNU 9.7
+    prints the mounted directory once.
+    """
+    ws = _shadowed_workspace()
+    io = asyncio.run(ws.execute("ls -R base"))
+    assert _stdout(io) == ("base:\ninner\ntop.txt\n\n"
+                           "base/inner:\nreal.txt\n")
+
+
+def test_ls_r_renders_a_file_mount_as_one_row_and_no_group():
+    """`/.bash_history` is a whole mount serving a single file.
+
+    GNU (coreutils 9.7, `mount --bind` of one file onto another) lists a
+    file that happens to be a mountpoint as an ordinary row of its
+    parent -- no `/` under -F, no block of its own. The row used to be
+    synthesized as a directory, and the fan-out ran a sub-run for the
+    mount on top of it, so the same name arrived twice in two wrong
+    shapes.
+    """
+    root = RAMResource()
+    root._store.files["/top.txt"] = b"T\n"
+    ws = Workspace(resources={"/": (root, MountMode.EXEC)})
+    io = asyncio.run(ws.execute("ls -aRF /"))
+    assert _stdout(io) == ("/:\n.bash_history\ndev/\ntop.txt\n\n"
+                           "/dev:\nnull\nzero\n")
+
+
 def test_tree_renders_one_document_across_a_nested_mount():
     """`tree` is not fanned out at all: one root line, one drawing, one
     summary, with the nested mount crossed inside the generic. Pinned on
