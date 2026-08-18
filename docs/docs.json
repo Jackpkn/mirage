@@ -408,7 +408,18 @@
             "pages": [
               "python/runtime/python",
               "python/runtime/javascript",
-              "python/runtime/sandbox"
+              {
+                "group": "Sandbox",
+                "icon": "server",
+                "pages": [
+                  "python/runtime/sandbox",
+                  "python/runtime/sandbox/sandlock",
+                  "python/runtime/sandbox/docker",
+                  "python/runtime/sandbox/smolvm",
+                  "python/runtime/sandbox/daytona",
+                  "python/runtime/sandbox/e2b"
+                ]
+              }
             ]
           }
         ]
@@ -599,7 +610,17 @@
             "pages": [
               "typescript/runtime/python",
               "typescript/runtime/javascript",
-              "typescript/runtime/sandbox"
+              {
+                "group": "Sandbox",
+                "icon": "server",
+                "pages": [
+                  "typescript/runtime/sandbox",
+                  "typescript/runtime/sandbox/docker",
+                  "typescript/runtime/sandbox/smolvm",
+                  "typescript/runtime/sandbox/daytona",
+                  "typescript/runtime/sandbox/e2b"
+                ]
+              }
             ]
           }
         ]

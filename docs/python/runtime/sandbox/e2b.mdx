@@ -1,0 +1,56 @@
+---
+title: E2B
+description: Run captured command lines in an existing E2B sandbox.
+icon: /images/e2b-logo.svg
+---
+
+`E2BRuntime` connects to a live [E2B](https://e2b.dev) sandbox by id. Create
+it with E2B's CLI or SDK from a template carrying Mirage and `fuse3`, then
+provision the workspace inside it. Mirage only connects and executes; it never
+creates, starts, stops, or deletes the sandbox.
+
+See the [Sandbox overview](/python/runtime/sandbox) for the shared image and
+matching mount-prefix setup.
+
+## Install
+
+```bash
+pip install mirage-ai[e2b]
+```
+
+## Configure
+
+```yaml
+runtimes:
+  - name: e2b
+    captures: ["python3", "pip"]
+    config:
+      sandbox_id: ${E2B_SANDBOX_ID}
+      api_key: ${E2B_API_KEY}
+  - vfs
+```
+
+`api_key` is optional when `E2B_API_KEY` is set. The runtime connects on the
+first captured line and reuses the sandbox client until the workspace closes.
+Closing the workspace releases the client and leaves the sandbox running.
+
+The same configuration in application code is:
+
+```python
+from mirage.runtime.sandbox.e2b import E2BRuntime
+
+runtime = E2BRuntime(
+    captures=["python3", "pip"],
+    config={"sandbox_id": "sandbox-id"},
+)
+```
+
+Templates, CPU and memory sizing, networking, and lifecycle controls remain
+E2B settings.
+
+<Warning>
+  Mirage timeouts stop waiting rather than terminating the remote process. E2B
+  also applies its SDK command timeout, currently 60 seconds by default, to
+  both runaway and legitimate long-running commands. See
+  [Resource limits](/python/runtime/sandbox#resource-limits).
+</Warning>
