@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { describe, expect, it } from 'vitest'
-import { NodeType } from './types.ts'
+import { BuiltinTier, GRAMMAR_BUILTINS, NodeType, ShellBuiltin, TOOL_BUILTINS } from './types.ts'
 
 describe('NodeType', () => {
   it('has the load-bearing grammar node types mirroring tree-sitter-bash', () => {
@@ -40,5 +40,20 @@ describe('NodeType', () => {
 
   it('is frozen at runtime', () => {
     expect(Object.isFrozen(NodeType)).toBe(true)
+  })
+})
+
+describe('BuiltinTier', () => {
+  it('names the two tiers', () => {
+    expect(BuiltinTier.GRAMMAR).toBe('grammar')
+    expect(BuiltinTier.TOOL).toBe('tool')
+    expect(GRAMMAR_BUILTINS.has(ShellBuiltin.CD)).toBe(true)
+    expect(TOOL_BUILTINS.has(ShellBuiltin.PYTHON3)).toBe(true)
+  })
+
+  it('partitions ShellBuiltin', () => {
+    for (const b of GRAMMAR_BUILTINS) expect(TOOL_BUILTINS.has(b)).toBe(false)
+    const union = new Set<string>([...GRAMMAR_BUILTINS, ...TOOL_BUILTINS])
+    expect(union).toEqual(new Set<string>(Object.values(ShellBuiltin)))
   })
 })

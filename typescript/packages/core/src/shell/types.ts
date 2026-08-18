@@ -378,66 +378,166 @@ export class Redirect {
   }
 }
 
+// Shell builtin command names: commands that don't touch the
+// filesystem, handled by the executor and never dispatched to a mount.
+// Listed by tier; GRAMMAR_BUILTINS / TOOL_BUILTINS below are the source
+// of truth.
 export const ShellBuiltin = Object.freeze({
+  // grammar: the shell's own language
+  // -- working directory
   PWD: 'pwd',
   CD: 'cd',
+  // -- variables and positional parameters
   EXPORT: 'export',
   UNSET: 'unset',
   LOCAL: 'local',
   SET: 'set',
-  PRINTENV: 'printenv',
-  ENV: 'env',
-  WHOAMI: 'whoami',
-  MAN: 'man',
-  HISTORY: 'history',
-  TRUE: 'true',
-  FALSE: 'false',
-  COLON: ':',
-  SOURCE: 'source',
-  DOT: '.',
-  EVAL: 'eval',
   READ: 'read',
   MAPFILE: 'mapfile',
   READARRAY: 'readarray',
   SHIFT: 'shift',
   GETOPTS: 'getopts',
+  LET: 'let',
+  // -- shell state
   TRAP: 'trap',
   SHOPT: 'shopt',
   UMASK: 'umask',
   ALIAS: 'alias',
   UNALIAS: 'unalias',
-  LET: 'let',
   EXEC: 'exec',
+  // -- conditions
   TEST: 'test',
   BRACKET: '[',
   DOUBLE_BRACKET: '[[',
+  // -- output
+  ECHO: 'echo',
+  PRINTF: 'printf',
+  // -- running lines
+  SOURCE: 'source',
+  DOT: '.',
+  EVAL: 'eval',
+  COMMAND: 'command',
+  // -- name lookup
+  TYPE: 'type',
+  WHICH: 'which',
+  // -- status and control flow
+  TRUE: 'true',
+  FALSE: 'false',
+  COLON: ':',
+  BREAK: 'break',
+  CONTINUE: 'continue',
+  RETURN: 'return',
+  EXIT: 'exit',
+  // tools: programs the line invokes
+  // -- environment and identity
+  PRINTENV: 'printenv',
+  ENV: 'env',
+  WHOAMI: 'whoami',
+  // -- manuals and history
+  MAN: 'man',
+  HISTORY: 'history',
+  // -- job control
   WAIT: 'wait',
   FG: 'fg',
   KILL: 'kill',
   JOBS: 'jobs',
   DISOWN: 'disown',
   PS: 'ps',
-  ECHO: 'echo',
-  PRINTF: 'printf',
+  // -- clock
   SLEEP: 'sleep',
+  // -- nested shells
   BASH: 'bash',
   SH: 'sh',
+  // -- interpreters
   PYTHON: 'python',
   PYTHON3: 'python3',
   NODE: 'node',
   JS: 'js',
+  // -- command runners
   XARGS: 'xargs',
   TIMEOUT: 'timeout',
-  COMMAND: 'command',
-  TYPE: 'type',
-  WHICH: 'which',
-  BREAK: 'break',
-  CONTINUE: 'continue',
-  RETURN: 'return',
-  EXIT: 'exit',
 } as const)
 
 export type ShellBuiltin = (typeof ShellBuiltin)[keyof typeof ShellBuiltin]
+
+// Which of two things a shell builtin is to a permission rule. GRAMMAR
+// is the shell's own language: it moves session state, control flow, or
+// the line's own streams, and never reaches a backend except through the
+// op dispatcher. TOOL is a program the line invokes that a real system
+// ships as a separate binary, or that reaches beyond the session (an
+// interpreter, the job table, the history recording). The permission
+// layer exempts grammar from a command allowlist and treats tools as its
+// subjects; both tiers stay deniable by name.
+export const BuiltinTier = Object.freeze({
+  GRAMMAR: 'grammar',
+  TOOL: 'tool',
+} as const)
+
+export type BuiltinTier = (typeof BuiltinTier)[keyof typeof BuiltinTier]
+
+// Every ShellBuiltin sits in exactly one tier; shell/types.test.ts pins
+// the partition, so a new member has to be filed here on purpose.
+export const GRAMMAR_BUILTINS: ReadonlySet<ShellBuiltin> = new Set<ShellBuiltin>([
+  ShellBuiltin.PWD,
+  ShellBuiltin.CD,
+  ShellBuiltin.EXPORT,
+  ShellBuiltin.UNSET,
+  ShellBuiltin.LOCAL,
+  ShellBuiltin.SET,
+  ShellBuiltin.READ,
+  ShellBuiltin.MAPFILE,
+  ShellBuiltin.READARRAY,
+  ShellBuiltin.SHIFT,
+  ShellBuiltin.GETOPTS,
+  ShellBuiltin.LET,
+  ShellBuiltin.TRAP,
+  ShellBuiltin.SHOPT,
+  ShellBuiltin.UMASK,
+  ShellBuiltin.ALIAS,
+  ShellBuiltin.UNALIAS,
+  ShellBuiltin.EXEC,
+  ShellBuiltin.TEST,
+  ShellBuiltin.BRACKET,
+  ShellBuiltin.DOUBLE_BRACKET,
+  ShellBuiltin.ECHO,
+  ShellBuiltin.PRINTF,
+  ShellBuiltin.SOURCE,
+  ShellBuiltin.DOT,
+  ShellBuiltin.EVAL,
+  ShellBuiltin.COMMAND,
+  ShellBuiltin.TYPE,
+  ShellBuiltin.WHICH,
+  ShellBuiltin.TRUE,
+  ShellBuiltin.FALSE,
+  ShellBuiltin.COLON,
+  ShellBuiltin.BREAK,
+  ShellBuiltin.CONTINUE,
+  ShellBuiltin.RETURN,
+  ShellBuiltin.EXIT,
+])
+
+export const TOOL_BUILTINS: ReadonlySet<ShellBuiltin> = new Set<ShellBuiltin>([
+  ShellBuiltin.PRINTENV,
+  ShellBuiltin.ENV,
+  ShellBuiltin.WHOAMI,
+  ShellBuiltin.MAN,
+  ShellBuiltin.HISTORY,
+  ShellBuiltin.WAIT,
+  ShellBuiltin.FG,
+  ShellBuiltin.KILL,
+  ShellBuiltin.JOBS,
+  ShellBuiltin.DISOWN,
+  ShellBuiltin.PS,
+  ShellBuiltin.SLEEP,
+  ShellBuiltin.BASH,
+  ShellBuiltin.SH,
+  ShellBuiltin.PYTHON,
+  ShellBuiltin.PYTHON3,
+  ShellBuiltin.NODE,
+  ShellBuiltin.JS,
+  ShellBuiltin.XARGS,
+  ShellBuiltin.TIMEOUT,
+])
 
 /**
  * The structural shape of a tree-sitter syntax node, so consumers can

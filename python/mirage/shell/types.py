@@ -400,69 +400,160 @@ class ShellBuiltin(StrEnum):
 
     Commands that don't touch the filesystem.
     Handled directly by the executor, not dispatched
-    to mounts.
+    to mounts. Listed by tier (``GRAMMAR_BUILTINS`` /
+    ``TOOL_BUILTINS`` below are the source of truth).
     """
-    # session state
+    # grammar: the shell's own language
+    # -- working directory
     PWD = "pwd"
     CD = "cd"
+    # -- variables and positional parameters
     EXPORT = "export"
     UNSET = "unset"
     LOCAL = "local"
     SET = "set"
-    PRINTENV = "printenv"
-    ENV = "env"
-    WHOAMI = "whoami"
-    MAN = "man"
-    HISTORY = "history"
-    # control
-    TRUE = "true"
-    FALSE = "false"
-    COLON = ":"
-    SOURCE = "source"
-    DOT = "."
-    EVAL = "eval"
     READ = "read"
     MAPFILE = "mapfile"
     READARRAY = "readarray"
     SHIFT = "shift"
     GETOPTS = "getopts"
+    LET = "let"
+    # -- shell state
     TRAP = "trap"
     SHOPT = "shopt"
     UMASK = "umask"
     ALIAS = "alias"
     UNALIAS = "unalias"
-    LET = "let"
     EXEC = "exec"
+    # -- conditions
     TEST = "test"
     BRACKET = "["
     DOUBLE_BRACKET = "[["
-    # job control
+    # -- output
+    ECHO = "echo"
+    PRINTF = "printf"
+    # -- running lines
+    SOURCE = "source"
+    DOT = "."
+    EVAL = "eval"
+    COMMAND = "command"
+    # -- name lookup
+    TYPE = "type"
+    WHICH = "which"
+    # -- status and control flow
+    TRUE = "true"
+    FALSE = "false"
+    COLON = ":"
+    BREAK = "break"
+    CONTINUE = "continue"
+    RETURN = "return"
+    EXIT = "exit"
+    # tools: programs the line invokes
+    # -- environment and identity
+    PRINTENV = "printenv"
+    ENV = "env"
+    WHOAMI = "whoami"
+    # -- manuals and history
+    MAN = "man"
+    HISTORY = "history"
+    # -- job control
     WAIT = "wait"
     FG = "fg"
     KILL = "kill"
     JOBS = "jobs"
     DISOWN = "disown"
     PS = "ps"
-    # output / text processing (no filesystem)
-    ECHO = "echo"
-    PRINTF = "printf"
+    # -- clock
     SLEEP = "sleep"
-    # nested shells
+    # -- nested shells
     BASH = "bash"
     SH = "sh"
-    # python exec
+    # -- interpreters
     PYTHON = "python"
     PYTHON3 = "python3"
-    # javascript exec
     NODE = "node"
     JS = "js"
-    # commands handled by executor
+    # -- command runners
     XARGS = "xargs"
     TIMEOUT = "timeout"
-    COMMAND = "command"
-    TYPE = "type"
-    WHICH = "which"
-    BREAK = "break"
-    CONTINUE = "continue"
-    RETURN = "return"
-    EXIT = "exit"
+
+
+class BuiltinTier(StrEnum):
+    """Which of two things a shell builtin is to a permission rule.
+
+    ``GRAMMAR`` is the shell's own language: it moves session state,
+    control flow, or the line's own streams, and never reaches a backend
+    except through the op dispatcher. ``TOOL`` is a program the line
+    invokes that a real system ships as a separate binary, or that
+    reaches beyond the session (an interpreter, the job table, the
+    history recording). The permission layer exempts grammar from a
+    command allowlist and treats tools as its subjects; both tiers stay
+    deniable by name.
+    """
+    GRAMMAR = "grammar"
+    TOOL = "tool"
+
+
+# Every ShellBuiltin sits in exactly one tier; tests/shell/test_types.py
+# pins the partition, so a new member has to be filed here on purpose.
+GRAMMAR_BUILTINS: frozenset[ShellBuiltin] = frozenset({
+    ShellBuiltin.PWD,
+    ShellBuiltin.CD,
+    ShellBuiltin.EXPORT,
+    ShellBuiltin.UNSET,
+    ShellBuiltin.LOCAL,
+    ShellBuiltin.SET,
+    ShellBuiltin.READ,
+    ShellBuiltin.MAPFILE,
+    ShellBuiltin.READARRAY,
+    ShellBuiltin.SHIFT,
+    ShellBuiltin.GETOPTS,
+    ShellBuiltin.LET,
+    ShellBuiltin.TRAP,
+    ShellBuiltin.SHOPT,
+    ShellBuiltin.UMASK,
+    ShellBuiltin.ALIAS,
+    ShellBuiltin.UNALIAS,
+    ShellBuiltin.EXEC,
+    ShellBuiltin.TEST,
+    ShellBuiltin.BRACKET,
+    ShellBuiltin.DOUBLE_BRACKET,
+    ShellBuiltin.ECHO,
+    ShellBuiltin.PRINTF,
+    ShellBuiltin.SOURCE,
+    ShellBuiltin.DOT,
+    ShellBuiltin.EVAL,
+    ShellBuiltin.COMMAND,
+    ShellBuiltin.TYPE,
+    ShellBuiltin.WHICH,
+    ShellBuiltin.TRUE,
+    ShellBuiltin.FALSE,
+    ShellBuiltin.COLON,
+    ShellBuiltin.BREAK,
+    ShellBuiltin.CONTINUE,
+    ShellBuiltin.RETURN,
+    ShellBuiltin.EXIT,
+})
+
+TOOL_BUILTINS: frozenset[ShellBuiltin] = frozenset({
+    ShellBuiltin.PRINTENV,
+    ShellBuiltin.ENV,
+    ShellBuiltin.WHOAMI,
+    ShellBuiltin.MAN,
+    ShellBuiltin.HISTORY,
+    ShellBuiltin.WAIT,
+    ShellBuiltin.FG,
+    ShellBuiltin.KILL,
+    ShellBuiltin.JOBS,
+    ShellBuiltin.DISOWN,
+    ShellBuiltin.PS,
+    ShellBuiltin.SLEEP,
+    ShellBuiltin.BASH,
+    ShellBuiltin.SH,
+    ShellBuiltin.PYTHON,
+    ShellBuiltin.PYTHON3,
+    ShellBuiltin.NODE,
+    ShellBuiltin.JS,
+    ShellBuiltin.XARGS,
+    ShellBuiltin.TIMEOUT,
+})
