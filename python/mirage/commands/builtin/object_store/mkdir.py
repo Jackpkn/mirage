@@ -69,5 +69,8 @@ def make_mkdir(resource: str, io: CommandIO) -> Callable[..., Any]:
                                 stderr=stderr,
                                 exit_code=1 if errors else 0)
 
-    return command("mkdir", resource=resource, spec=SPECS["mkdir"],
-                   write=True)(mkdir)
+    wrapped: Callable[..., Any] = command("mkdir",
+                                          resource=resource,
+                                          spec=SPECS["mkdir"],
+                                          write=True)(mkdir)
+    return wrapped

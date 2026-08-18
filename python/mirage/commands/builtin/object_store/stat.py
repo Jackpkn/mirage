@@ -63,4 +63,7 @@ def make_stat(resource: str, io: CommandIO) -> Callable[..., Any]:
             L=fl.as_bool("L"),
             links=opts.ns.links if opts.ns is not None else None)
 
-    return command("stat", resource=resource, spec=SPECS["stat"])(stat)
+    wrapped: Callable[..., Any] = command("stat",
+                                          resource=resource,
+                                          spec=SPECS["stat"])(stat)
+    return wrapped

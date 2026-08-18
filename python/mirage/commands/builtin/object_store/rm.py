@@ -155,4 +155,8 @@ def make_rm(resource: str, io: CommandIO) -> Callable[..., Any]:
                                 stderr=stderr,
                                 exit_code=1 if errors else 0)
 
-    return command("rm", resource=resource, spec=SPECS["rm"], write=True)(rm)
+    wrapped: Callable[..., Any] = command("rm",
+                                          resource=resource,
+                                          spec=SPECS["rm"],
+                                          write=True)(rm)
+    return wrapped

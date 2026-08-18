@@ -54,5 +54,8 @@ def make_tee(resource: str, io: CommandIO) -> Callable[..., Any]:
                                  stdin=opts.stdin,
                                  flags=opts.flags)
 
-    return command("tee", resource=resource, spec=SPECS["tee"],
-                   write=True)(tee)
+    wrapped: Callable[..., Any] = command("tee",
+                                          resource=resource,
+                                          spec=SPECS["tee"],
+                                          write=True)(tee)
+    return wrapped
