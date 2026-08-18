@@ -221,6 +221,46 @@ describe('sandbox policy', () => {
     expect(await ws.fs.exists('/data/bg.txt')).toBe(false)
   })
 
+  it('narrows a confined session without widening it', async () => {
+    const ws = new Workspace({
+      '/allowed': [new RAMResource(), MountMode.WRITE],
+      '/secret': [new RAMResource(), MountMode.WRITE],
+    })
+    workspaces.push(ws)
+    await ws.fs.writeFile('/allowed/a.txt', 'granted')
+    await ws.fs.writeFile('/secret/a.txt', 'classified')
+    ws.createSession('confined', { mounts: { '/allowed': 'exec' } })
+    const shell = await attachShell(ws, { sessionId: 'confined' })
+    const granted = await shell.run(
+      shell.resolve({ command: 'cat /allowed/a.txt', sandboxPolicy: READ_ONLY }),
+    )
+    expect(granted.exitCode).toBe(0)
+    expect(granted.stdout.text).toBe('granted')
+    const secret = await shell.run(
+      shell.resolve({ command: 'cat /secret/a.txt', sandboxPolicy: READ_ONLY }),
+    )
+    expect(secret.exitCode).not.toBe(0)
+    expect(secret.stdout.text).not.toContain('classified')
+  })
+
+  it('keeps an unbound read-only call one-shot', async () => {
+    const { shell } = await makeShell()
+    const leak = shell.resolve({
+      command: 'cd /data && export MARK=leaked',
+      workdir: '/Users/somebody/host-project',
+      sandboxPolicy: READ_ONLY,
+    })
+    await shell.run(leak)
+    const next = await shell.run(
+      shell.resolve({
+        command: 'pwd; echo "[$MARK]"',
+        workdir: '/Users/somebody/host-project',
+        sandboxPolicy: READ_ONLY,
+      }),
+    )
+    expect(next.stdout.text.trim().split('\n')).toEqual(['/', '[]'])
+  })
+
   it('keeps a bound session out of the read-only twin it narrowed into', async () => {
     const { shell } = await makeShell({}, { sessionId: 'agent' })
     await shell.run(shell.resolve({ command: 'export MARK=writable' }))
@@ -661,6 +701,20 @@ describe('foreground output fidelity', () => {
     const path = result.stdout.spillPath
     if (path === undefined) throw new Error('expected a spill path')
     expect(await ws.fs.readFileText(path)).toBe('aaaaabbbbb')
+  })
+
+  it('keeps a foreground stream larger than any console retention budget', async () => {
+    const { shell, ws } = await makeShell(
+      { 'big.txt': 'x'.repeat(4000) },
+      { stdoutMaxBytes: 64, stderrMaxBytes: 64, spillDir: '/data/spill' },
+    )
+    const result = await shell.run(shell.resolve({ command: 'cat /data/big.txt' }))
+    expect(result.exitCode).toBe(0)
+    expect(result.stdout.truncated).toBe(true)
+    expect(result.stdout.text).toBe('x'.repeat(64))
+    const path = result.stdout.spillPath
+    if (path === undefined) throw new Error('expected a spill path')
+    expect(await ws.fs.readFileText(path)).toBe('x'.repeat(4000))
   })
 
   it('leaves spillPath unset when nothing was truncated', async () => {

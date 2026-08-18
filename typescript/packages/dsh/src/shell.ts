@@ -136,6 +136,7 @@ function executeOptions(
   workdir: string,
   signal: AbortSignal,
   sessionId: string | undefined,
+  bound: boolean,
   fallbackWorkdir: string,
   sink?: JobConsole,
 ): ExecuteOptions & { provision?: false } {
@@ -146,13 +147,15 @@ function executeOptions(
   // that per call would fork every command and quietly undo the binding.
   // Those facts are seeded into the session instead, by `applyManagedEnv`.
   const managed = (spec.dshEnv as Record<string, string> | undefined) ?? {}
-  const env =
-    sessionId === undefined ? { ...(spec.env ?? {}), ...managed } : { ...(spec.env ?? {}) }
+  const env = bound ? { ...(spec.env ?? {}) } : { ...(spec.env ?? {}), ...managed }
   // Unbound, `cwd` is always present so every command runs in an ephemeral
-  // fork of the default session: isolation must not hinge on a spec
-  // happening to carry a workdir. Bound, an absent workdir runs in the
-  // session itself, which is what lets its state persist.
-  const cwd = workdir !== '' ? workdir : sessionId === undefined ? fallbackWorkdir : undefined
+  // fork: isolation must not hinge on a spec happening to carry a workdir,
+  // and a read-only call runs in a *named* twin session, so without a cwd
+  // its `cd` and exports would persist into the next nominally one-shot
+  // call. Bound, an absent workdir runs in the session itself, which is
+  // what lets its state persist. Either way the decision is the binding's,
+  // never the session this particular call happens to land in.
+  const cwd = workdir !== '' ? workdir : bound ? undefined : fallbackWorkdir
   return {
     signal,
     ...(sessionId !== undefined ? { sessionId } : {}),
@@ -366,14 +369,13 @@ export class MirageShellExecutor extends ShellExecutor {
    * default when unbound, the session's own cwd when bound.
    *
    * @param spec the resolved spec whose workdir is being placed.
-   * @param sessionId the session this call runs in, if any.
    * @returns the workdir to execute under, `''` meaning the session's own.
    */
-  private async worldWorkdir(spec: ShellExecSpec, sessionId: string | undefined): Promise<string> {
+  private async worldWorkdir(spec: ShellExecSpec): Promise<string> {
     if (spec.workdir === '') return ''
     const ws = await this.workspace()
     if (await ws.fs.isDir(spec.workdir)) return spec.workdir
-    return sessionId === undefined ? this.workdir : ''
+    return this.sessionId === undefined ? this.workdir : ''
   }
 
   // A spill sink for one background command, or null when no spill
@@ -471,6 +473,18 @@ export class MirageShellExecutor extends ShellExecutor {
     return { mode, denied, enforcement: 'full', runnerFailed: false }
   }
 
+  /**
+   * The retention budget of a background command's console.
+   *
+   * Only the background path caps retention: there a follow loop drains
+   * the console while the command still runs, so the budget bounds what
+   * the loop has not reached yet, and a chunk lost to it is reported as
+   * a gap in the sequence. A foreground console is read once, after the
+   * fact, with nothing to bound.
+   *
+   * @param spec the resolved spec carrying the stdout budget.
+   * @returns the retention budget in bytes.
+   */
   private retentionFor(spec: ShellExecSpec): number {
     return Math.max(spec.stdoutMaxBytes, this.stderrMaxBytes) * CONSOLE_RETENTION_DELTAS
   }
@@ -484,9 +498,8 @@ export class MirageShellExecutor extends ShellExecutor {
    * had already printed are recoverable from a sink and nowhere else.
    * Only a truncated stream spills, since an untruncated one is already
    * whole in `text` and writing a file for it would put a copy of every
-   * command's output on a mount. The spill can only hold what the
-   * console retained, so a run that also outran retention is short by
-   * the difference.
+   * command's output on a mount. The console this reads is untrimmed, so
+   * a spill is the whole stream rather than the tail of one.
    *
    * @param console_ the console this run streamed into.
    * @param spec the resolved spec carrying the stdout budget.
@@ -604,15 +617,20 @@ export class MirageShellExecutor extends ShellExecutor {
   }
 
   /**
-   * Create (once) the session a read-only call runs in: a twin of this
-   * executor's binding whose every mount is granted `read`, so mirage's
-   * own dispatch is what refuses the write rather than a second
-   * permission layer bolted on here.
+   * Create (once) the session a read-only call runs in: a twin of the
+   * session this executor would otherwise use, with every grant it holds
+   * narrowed to `read`, so mirage's own dispatch is what refuses the
+   * write rather than a second permission layer bolted on here.
    *
-   * Every mount has to appear in the map: a prefix the map omits is not
-   * narrowed, it is invisible, and a session that cannot see `/` cannot
-   * even run `pwd`. The one mount that keeps its own mode is the null
-   * sink, per {@link SINK_PREFIX}.
+   * The twin narrows, never widens. Its grants are the source session's
+   * own, so a binding confined to `/allowed` stays confined: reading the
+   * mount table instead would hand a read-only call every mount in the
+   * workspace, which is a wider world than the same command gets outside
+   * read-only mode. Only an unconfined source falls back to the mount
+   * table, and then every mount has to appear in the map, since a prefix
+   * the map omits is not narrowed but invisible, and a session that
+   * cannot see `/` cannot even run `pwd`. The one mount that keeps its
+   * own mode is the null sink, per {@link SINK_PREFIX}.
    *
    * The policy's `workspaceRoot` is deliberately not consulted anywhere:
    * it is a directory on the harness's machine, so containment against
@@ -625,9 +643,11 @@ export class MirageShellExecutor extends ShellExecutor {
     const sessionId = `${this.sessionId ?? 'mirage-dsh'}::read-only`
     await ws.ensureSessionsLoaded()
     if (ws.listSessions().some((s) => s.sessionId === sessionId)) return sessionId
+    const source = ws.getSession(this.sessionId ?? ws.defaultSessionId).mountModes
+    const prefixes = source === null ? ws.mounts().map((entry) => entry.prefix) : [...source.keys()]
     const grants: Record<string, string> = {}
-    for (const entry of ws.mounts()) {
-      grants[entry.prefix] = entry.prefix.replace(/\/+$/, '') === SINK_PREFIX ? 'exec' : 'read'
+    for (const prefix of prefixes) {
+      grants[prefix] = prefix.replace(/\/+$/, '') === SINK_PREFIX ? 'exec' : 'read'
     }
     setCwd(ws.createSession(sessionId, { mounts: grants }), this.workdir)
     return sessionId
@@ -660,7 +680,16 @@ export class MirageShellExecutor extends ShellExecutor {
     // The command streams into a console instead of returning its output
     // whole, because mirage answers an abort by throwing: what a killed
     // command already printed survives only in a sink.
-    const console_ = new JobConsole(new RAMConsoleStore(this.retentionFor(spec)))
+    //
+    // Retention is deliberately unbounded here, unlike the background
+    // console: nothing drains this one, `collectFrom` reads it once the
+    // command is over, and the store evicts whole chunks, so a budget
+    // would silently drop an entire buffered stream larger than itself
+    // and report empty output as untruncated. Holding the full stream
+    // for the length of one call is what the executor did anyway before
+    // a sink was attached, and it is what lets a truncated run spill
+    // every byte rather than only the tail a budget kept.
+    const console_ = new JobConsole(new RAMConsoleStore(null))
     let timedOut = false
     let aborted = false
     const timer = setTimeout(() => {
@@ -678,11 +707,12 @@ export class MirageShellExecutor extends ShellExecutor {
       await this.ensureSession()
       const ws = await this.workspace()
       const sessionId = await this.sessionFor(spec)
-      if (sessionId !== undefined) await this.applyManagedEnv(ws, sessionId, spec)
-      const workdir = await this.worldWorkdir(spec, sessionId)
+      const bound = this.sessionId !== undefined
+      if (bound && sessionId !== undefined) await this.applyManagedEnv(ws, sessionId, spec)
+      const workdir = await this.worldWorkdir(spec)
       const result = await ws.execute(
         spec.command,
-        executeOptions(spec, workdir, controller.signal, sessionId, this.workdir, console_),
+        executeOptions(spec, workdir, controller.signal, sessionId, bound, this.workdir, console_),
       )
       const captured = await this.collectFrom(console_, spec)
       const settled = this.sandboxInfo(spec, this.wasDenied(spec, captured.stderr.text))
@@ -727,9 +757,7 @@ export class MirageShellExecutor extends ShellExecutor {
     // has not drained yet (nothing, when the loop keeps up). Its own
     // retention budget is what bounds that, since reading a chunk does
     // not release it.
-    const console_ = new JobConsole(
-      new RAMConsoleStore(spec.stdoutMaxBytes * CONSOLE_RETENTION_DELTAS),
-    )
+    const console_ = new JobConsole(new RAMConsoleStore(this.retentionFor(spec)))
     const spill = this.newSpill()
     if (spec.signal?.aborted === true) {
       controller.abort()
@@ -750,13 +778,22 @@ export class MirageShellExecutor extends ShellExecutor {
       .then(async () => {
         const sessionId = await this.sessionFor(spec)
         const ws = await this.workspace()
-        if (sessionId !== undefined) await this.applyManagedEnv(ws, sessionId, spec)
-        return { ws, sessionId, workdir: await this.worldWorkdir(spec, sessionId) }
+        const bound = this.sessionId !== undefined
+        if (bound && sessionId !== undefined) await this.applyManagedEnv(ws, sessionId, spec)
+        return { ws, sessionId, bound, workdir: await this.worldWorkdir(spec) }
       })
-      .then(({ ws, sessionId, workdir }) =>
+      .then(({ ws, sessionId, bound, workdir }) =>
         ws.execute(
           spec.command,
-          executeOptions(spec, workdir, controller.signal, sessionId, this.workdir, console_),
+          executeOptions(
+            spec,
+            workdir,
+            controller.signal,
+            sessionId,
+            bound,
+            this.workdir,
+            console_,
+          ),
         ),
       )
       .finally(() => spec.signal?.removeEventListener('abort', onAbort))

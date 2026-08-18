@@ -106,7 +106,7 @@ The same blocks work in code, beside live instances, in `MirageService`'s `mount
 
 Both seams tell dsh they are a `workspace-write` sandbox, which is what lets dsh's permission presets compose over them. The claim holds only while every runtime stays inside the VFS (each runtime's `reach` is `vfs`). Add a host-reaching one, such as `local` Python, and both seams drop the claim, since a script could then act outside the mounts: dsh is better told there is no sandbox than a false one.
 
-The claim is enforced per call, not merely advertised. dsh resolves a policy for every command and every file edit, and Mirage applies it. Under `read-only` the shell runs in a session where every mount is granted read, and `ctx.fs` refuses a write or an edit with `FS_SANDBOX_DENIED`, the same error dsh's own sandboxed backend raises:
+The claim is enforced per call, not merely advertised. dsh resolves a policy for every command and every file edit, and Mirage applies it. Under `read-only` the shell runs in a twin of its own session with every grant narrowed to read, so a session already confined to some mounts stays confined (the twin narrows, it never widens), and `ctx.fs` refuses a write or an edit with `FS_SANDBOX_DENIED`, the same error dsh's own sandboxed backend raises:
 
 ```ts
 const policy = { mode: 'read-only', workspaceRoot: '/Users/somebody/host-project' } as const
