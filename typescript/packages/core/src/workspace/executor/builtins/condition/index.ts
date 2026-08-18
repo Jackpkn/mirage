@@ -12,5 +12,5 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-export { handleTest } from './handle.ts'
+export { handleTest } from './condition.ts'
 export type { CondNode } from './types.ts'

@@ -13,14 +13,26 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { IOResult, type ByteSource } from '../../../io/types.ts'
+import type { SessionView } from '../../../ops/types.ts'
+import type { PolicyDenied } from '../../../policy/errors.ts'
+import type { ArithError } from '../../../shell/errors.ts'
 import { PathSpec, wordText } from '../../../types.ts'
 import { mountKey } from '../../../utils/key_prefix.ts'
 import { resolvePath } from '../../../utils/path.ts'
 import { rstripSlash } from '../../../utils/slash.ts'
 import type { Namespace } from '../../mount/namespace/namespace.ts'
+import type { Session } from '../../session/session.ts'
+import { sessionView } from '../../session/state.ts'
 import { ExecutionNode } from '../../types.ts'
 
 export type Result = [ByteSource | null, IOResult, ExecutionNode]
+
+export const IDENTIFIER_RE = /^[A-Za-z_][A-Za-z0-9_]*$/
+
+// An assignment target with an optional subscript (`name` or `name[sub]`).
+// A subscript must be non-empty: bash rejects `a[]` as an invalid
+// identifier, while `a[ ]` is a valid arithmetic 0.
+export const TARGET_RE = /^([A-Za-z_][A-Za-z0-9_]*)(?:\[(.+)\])?$/
 
 const ENC = new TextEncoder()
 
@@ -236,4 +248,66 @@ export async function expandOperands(
     out.push(spec)
   }
   return out
+}
+
+/**
+ * The session view to write through. Production callers thread the
+ * workspace's gated view; a direct invocation (a unit test) gets an
+ * ungated one over the same session.
+ */
+export function viewOf(session: Session, state: SessionView | null): SessionView {
+  return state ?? sessionView(session)
+}
+
+/** Render a policy denial in the builtin's own voice. */
+export function refusal(cmd: string, err: PolicyDenied): Result {
+  const encoded = new TextEncoder().encode(`${err.message}\n`)
+  return [
+    null,
+    new IOResult({ exitCode: 1, stderr: encoded }),
+    new ExecutionNode({ command: cmd, exitCode: 1, stderr: encoded }),
+  ]
+}
+
+/** Render the shell's own readonly refusal, checked before the door. */
+export function readonlyRefusal(cmd: string, name: string): Result {
+  const encoded = new TextEncoder().encode(`bash: ${name}: readonly variable\n`)
+  return [
+    null,
+    new IOResult({ exitCode: 1, stderr: encoded }),
+    new ExecutionNode({ command: cmd, exitCode: 1, stderr: encoded }),
+  ]
+}
+
+/**
+ * Render the `-i` coercion's arithmetic error as bash does.
+ *
+ * GNU voices it as the evaluator's own line, prefixed by the builtin and
+ * the offending text (`bash: read: 1+: syntax error: operand expected`),
+ * and fails the builtin with 1 while the variable keeps its old value,
+ * which is what the door's copy-then-store already guarantees. A plain
+ * assignment (`n=1+`) is fatal instead and is voiced by the executor
+ * without a builtin name.
+ */
+export function arithRefusal(cmd: string, err: ArithError): Result {
+  const encoded = new TextEncoder().encode(`bash: ${cmd}: ${err.message}\n`)
+  return [
+    null,
+    new IOResult({ exitCode: 1, stderr: encoded }),
+    new ExecutionNode({ command: cmd, exitCode: 1, stderr: encoded }),
+  ]
+}
+
+/** Whether the word is a shell identifier. */
+export function isValidName(name: string): boolean {
+  return IDENTIFIER_RE.test(name)
+}
+
+/**
+ * Whether the word is an optionally signed run of digits, which is what
+ * `shift`, `return` and `exit` accept as their argument.
+ */
+export function isCountWord(word: string): boolean {
+  const body = word.startsWith('-') || word.startsWith('+') ? word.slice(1) : word
+  return /^\d+$/.test(body)
 }

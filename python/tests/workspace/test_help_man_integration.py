@@ -119,16 +119,17 @@ def test_man_renders_help_for_known_command():
     assert "cat" in out
 
 
-def test_man_no_args_lists_commands_grouped_by_resource():
+def test_man_no_args_lists_commands_by_kind_of_word():
     ws = _ws()
     io = _exec(ws, "man")
     assert io.exit_code == 0
     out = io.stdout.decode() if isinstance(io.stdout, bytes) else _run(
         _materialize(io.stdout))
-    assert "RAM" in out
+    assert out.startswith("# commands\n\n")
     assert "- cat" in out
     assert "- ls" in out
-    assert "# general" in out
+    assert "RAM" not in out
+    assert "# general" not in out
 
 
 def test_man_unknown_command_exits_1():

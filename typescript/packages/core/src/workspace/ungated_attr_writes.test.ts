@@ -33,13 +33,13 @@ const SRC = dirname(dirname(fileURLToPath(import.meta.url)))
 // write covers it, or routes it through `view.mark` instead. This is
 // the mirror of `tests/workspace/test_ungated_attr_writes.py`.
 const ALLOWED: Record<string, string> = {
-  'workspace/executor/builtins/vars.ts::storeStagedArrays':
+  'workspace/executor/builtins/declare/declare.ts::storeStagedArrays':
     'the `await view.set(name, base)` immediately above stores this ' +
     'same name through the gate',
-  'workspace/executor/builtins/vars.ts::handleExport':
+  'workspace/executor/builtins/declare/export.ts::handleExport':
     'the `=` branch only; `await view.set(key, val)` runs first and ' +
     'the bare form uses `view.mark`',
-  'workspace/executor/builtins/vars.ts::handleReadonly':
+  'workspace/executor/builtins/declare/readonly.ts::handleReadonly':
     'the `=` branch only; `await view.set(key, val)` runs first and ' +
     'the bare form uses `view.mark`',
   'workspace/node/declaration.ts::stampExport':

@@ -14,7 +14,7 @@
 
 from mirage.workspace.executor.builtins.lookup.classify import (classify,
                                                                 describe)
-from mirage.workspace.executor.builtins.lookup.handle import (handle_type,
+from mirage.workspace.executor.builtins.lookup.lookup import (handle_type,
                                                               handle_which)
 
 # The package's public surface: what other packages consume. Inside the

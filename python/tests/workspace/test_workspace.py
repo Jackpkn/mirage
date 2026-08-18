@@ -2167,7 +2167,7 @@ def test_man_bash_renders_spec():
     out = _stdout(io)
     assert b"# bash" in out
     assert b"-c" in out
-    assert b"shell builtin" in out
+    assert b"RESOURCES" not in out
     io2 = _exec(ws, "man sh")
     assert io2.exit_code == 0
     assert b"# sh" in _stdout(io2)
@@ -2820,8 +2820,7 @@ def test_man_date_entry():
     text = _stdout(io).decode()
     assert text.startswith("# date\n")
     assert "## OPTIONS" in text
-    assert "## RESOURCES" in text
-    assert "- general" in text
+    assert "RESOURCES" not in text
 
 
 def test_man_no_entry():
@@ -2831,10 +2830,11 @@ def test_man_no_entry():
     assert io.stderr == b"man: no entry for definitely-not-a-real-command\n"
 
 
-def test_man_index_lists_resources():
+def test_man_index_lists_commands():
     ws = _ws()
     io = _exec(ws, "man")
     assert io.exit_code == 0
     text = _stdout(io).decode()
-    assert "# general" in text
+    assert text.startswith("# commands\n\n")
     assert "- bc" in text
+    assert "# general" not in text

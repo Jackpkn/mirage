@@ -144,15 +144,16 @@ describe('--help and man through the executor', () => {
     expect(out).toContain('cat')
   })
 
-  it('man with no args lists every command grouped by resource kind', async () => {
+  it('man with no args lists every command by kind of word', async () => {
     const ws = await makeWs()
     const io = await ws.execute('man')
     const out = stdoutStr(io)
     expect(io.exitCode).toBe(0)
-    expect(out).toContain('# ram')
+    expect(out.startsWith('# commands\n\n')).toBe(true)
     expect(out).toContain('- cat')
     expect(out).toContain('- ls')
-    expect(out).toContain('# general')
+    expect(out).not.toContain('# ram')
+    expect(out).not.toContain('# general')
   })
 
   it('man on an unknown command exits 1', async () => {

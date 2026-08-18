@@ -23,6 +23,7 @@ import { IOResult, materialize } from '../../io/types.ts'
 import type { ByteSource } from '../../io/types.ts'
 import { RAMResource } from '../../resource/ram/ram.ts'
 import { enoent } from '../../utils/errors.ts'
+import { compareCodePoints } from '../../utils/sort.ts'
 import { byteChar } from '../../shell/bytes.ts'
 import { CallStack } from '../../shell/call_stack.ts'
 import { FileStat, FileType, MountMode } from '../../types.ts'
@@ -56,7 +57,7 @@ import {
   handleWhoami,
   handleXargs,
 } from './builtins/index.ts'
-import { parseDuration } from './builtins/timeout.ts'
+import { parseDuration } from './builtins/timeout/timeout.ts'
 import { ReturnSignal } from './control.ts'
 
 function wireMount(mount: MountEntry): void {
@@ -1250,76 +1251,78 @@ describe('handleSource', () => {
 })
 
 describe('handleMan', () => {
-  it('renders header, description, and RESOURCES list for a known command', async () => {
+  it('renders header and description for a known command, no resource section', async () => {
     const reg = new MountRegistry({ '/ram/': new RAMResource() }, MountMode.WRITE)
     wireRegistry(reg)
-    const s = new Session({ sessionId: 'test', cwd: '/' })
-    const [out, io] = handleMan(['date'], s, reg)
+    const [out, io] = handleMan(['date'], reg)
     expect(io.exitCode).toBe(0)
     const body = await readBody(out)
-    expect(body).toContain('# date')
-    expect(body).toContain('## RESOURCES')
-    expect(body).toMatch(/^- general$/m)
+    expect(body.startsWith('# date\n\n')).toBe(true)
+    expect(body).not.toContain('RESOURCES')
+    expect(body).not.toMatch(/^- general$/m)
   })
 
   it('renders OPTIONS table when the spec has options', async () => {
     const reg = new MountRegistry({ '/ram/': new RAMResource() }, MountMode.WRITE)
     wireRegistry(reg)
-    const s = new Session({ sessionId: 'test', cwd: '/' })
-    const [out, io] = handleMan(['date'], s, reg)
+    const [out, io] = handleMan(['date'], reg)
     expect(io.exitCode).toBe(0)
     const body = await readBody(out)
     expect(body).toContain('## OPTIONS')
+    expect(body).toContain('| short | long | value | description |')
   })
 
-  it('dedupes by resource kind across multiple mounts of the same resource', async () => {
+  it('renders one page however many mounts register the name', async () => {
     const reg = new MountRegistry(
       { '/ram-a/': new RAMResource(), '/ram-b/': new RAMResource() },
       MountMode.WRITE,
     )
     wireRegistry(reg)
-    const s = new Session({ sessionId: 'test', cwd: '/' })
-    const [out, io] = handleMan(['cat'], s, reg)
+    const [out, io] = handleMan(['cat'], reg)
     expect(io.exitCode).toBe(0)
     const body = await readBody(out)
-    const ramLines = body.split('\n').filter((l) => /^- ram\b/.test(l))
-    expect(ramLines.length).toBe(1)
+    expect(body.startsWith('# cat\n\n')).toBe(true)
+    expect(body).not.toContain('ram')
+  })
+
+  it('documents bash and sh from the bash spec', async () => {
+    const reg = new MountRegistry({ '/ram/': new RAMResource() }, MountMode.WRITE)
+    wireRegistry(reg)
+    const [out, io] = handleMan(['bash'], reg)
+    expect(io.exitCode).toBe(0)
+    const body = await readBody(out)
+    expect(body.startsWith('# bash\n')).toBe(true)
+    expect(body).toContain('-c')
+    expect(body).not.toContain('RESOURCES')
+    const [sh] = handleMan(['sh'], reg)
+    expect((await readBody(sh)).startsWith('# sh\n')).toBe(true)
   })
 
   it('exits 1 with a clear error for unknown commands', () => {
     const reg = new MountRegistry({ '/ram/': new RAMResource() }, MountMode.WRITE)
     wireRegistry(reg)
-    const s = new Session({ sessionId: 'test', cwd: '/' })
-    const [, io] = handleMan(['definitely-not-a-real-command-xyz'], s, reg)
+    const [, io] = handleMan(['definitely-not-a-real-command-xyz'], reg)
     expect(io.exitCode).toBe(1)
     const errBytes = io.stderr instanceof Uint8Array ? io.stderr : null
     expect(decode(errBytes)).toContain('no entry for definitely-not-a-real-command-xyz')
   })
 
-  it('groups commands by resource kind, cwd resource first, general last', async () => {
-    const reg = new MountRegistry({ '/ram/': new RAMResource() }, MountMode.WRITE)
-    wireRegistry(reg)
-    const s = new Session({ sessionId: 'test', cwd: '/ram/' })
-    const [body, io] = handleMan([], s, reg)
-    const out = await readBody(body)
-    expect(io.exitCode).toBe(0)
-    const ramIdx = out.indexOf('# ram')
-    const generalIdx = out.indexOf('# general')
-    expect(ramIdx).toBeGreaterThanOrEqual(0)
-    expect(generalIdx).toBeGreaterThan(ramIdx)
-  })
-
-  it('dedupes when the same resource kind is mounted at multiple prefixes', async () => {
+  it('lists every command once under # commands, sorted, with no resource sections', async () => {
     const reg = new MountRegistry(
       { '/ram-a/': new RAMResource(), '/ram-b/': new RAMResource() },
       MountMode.WRITE,
     )
     wireRegistry(reg)
-    const s = new Session({ sessionId: 'test', cwd: '/' })
-    const [body] = handleMan([], s, reg)
+    const [body, io] = handleMan([], reg)
     const out = await readBody(body)
-    const matches = (out.match(/^# ram\b/gm) ?? []).length
-    expect(matches).toBe(1)
+    expect(io.exitCode).toBe(0)
+    expect(out.startsWith('# commands\n\n')).toBe(true)
+    expect(out).not.toContain('# ram')
+    expect(out).not.toContain('# general')
+    const rows = out.split('\n').filter((l) => l.startsWith('- '))
+    const names = rows.map((l) => l.slice(2, l.indexOf(' — ')))
+    expect(names.filter((n) => n === 'cat').length).toBe(1)
+    expect(names).toEqual([...names].sort(compareCodePoints))
   })
 })
 
@@ -1369,11 +1372,7 @@ describe('handleMan for installed CLIs', () => {
   }
 
   it('renders an installed CLI', async () => {
-    const [out, io] = handleMan(
-      ['linear'],
-      new Session({ sessionId: 't', cwd: '/' }),
-      cliRegistry(),
-    )
+    const [out, io] = handleMan(['linear'], cliRegistry())
     expect(io.exitCode).toBe(0)
     const text = await readBody(out)
     expect(text).toContain('Usage: linear')
@@ -1382,27 +1381,26 @@ describe('handleMan for installed CLIs', () => {
 
   it('descends a verb path and resolves aliases', async () => {
     const reg = cliRegistry()
-    const s = new Session({ sessionId: 't', cwd: '/' })
-    const text = await readBody(handleMan(['linear', 'issue', 'create'], s, reg)[0])
+    const text = await readBody(handleMan(['linear', 'issue', 'create'], reg)[0])
     expect(text).toContain('Usage: linear issue create')
-    expect(await readBody(handleMan(['linear', 'i', 'create'], s, reg)[0])).toBe(text)
+    expect(await readBody(handleMan(['linear', 'i', 'create'], reg)[0])).toBe(text)
   })
 
   it('names the whole line for an unknown verb', () => {
-    const s = new Session({ sessionId: 't', cwd: '/' })
-    const [out, io] = handleMan(['linear', 'bogus'], s, cliRegistry())
+    const [out, io] = handleMan(['linear', 'bogus'], cliRegistry())
     expect(out).toBeNull()
     expect(io.exitCode).toBe(1)
     const errBytes = io.stderr instanceof Uint8Array ? io.stderr : null
     expect(decode(errBytes)).toBe('man: no entry for linear bogus\n')
   })
 
-  it('lists installed CLIs in the bare index, before general', async () => {
-    const s = new Session({ sessionId: 't', cwd: '/' })
-    const text = await readBody(handleMan([], s, cliRegistry())[0])
+  it('lists installed CLIs in the bare index, after the commands', async () => {
+    const reg = cliRegistry()
+    const text = await readBody(handleMan([], reg)[0])
     expect(text).toContain('# clis')
     expect(text).toContain('- linear — Linear API client')
-    expect(text.indexOf('# clis')).toBeLessThan(text.indexOf('# general'))
+    expect(text.indexOf('# commands')).toBeLessThan(text.indexOf('# clis'))
+    expect(text).not.toContain('# general')
   })
 })
 

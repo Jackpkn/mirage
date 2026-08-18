@@ -400,69 +400,211 @@ class ShellBuiltin(StrEnum):
 
     Commands that don't touch the filesystem.
     Handled directly by the executor, not dispatched
-    to mounts.
+    to mounts. Listed by tier and group (``BUILTIN_GROUP``
+    below is the source of truth).
     """
-    # session state
+    # grammar: the shell's own language
+    # -- working directory
     PWD = "pwd"
     CD = "cd"
+    # -- variables and positional parameters
     EXPORT = "export"
     UNSET = "unset"
     LOCAL = "local"
     SET = "set"
-    PRINTENV = "printenv"
-    ENV = "env"
-    WHOAMI = "whoami"
-    MAN = "man"
-    HISTORY = "history"
-    # control
-    TRUE = "true"
-    FALSE = "false"
-    COLON = ":"
-    SOURCE = "source"
-    DOT = "."
-    EVAL = "eval"
     READ = "read"
     MAPFILE = "mapfile"
     READARRAY = "readarray"
     SHIFT = "shift"
     GETOPTS = "getopts"
+    LET = "let"
+    # -- shell state
     TRAP = "trap"
     SHOPT = "shopt"
     UMASK = "umask"
     ALIAS = "alias"
     UNALIAS = "unalias"
-    LET = "let"
     EXEC = "exec"
+    # -- conditions
     TEST = "test"
     BRACKET = "["
     DOUBLE_BRACKET = "[["
-    # job control
+    # -- output
+    ECHO = "echo"
+    PRINTF = "printf"
+    # -- running lines
+    SOURCE = "source"
+    DOT = "."
+    EVAL = "eval"
+    COMMAND = "command"
+    # -- name lookup
+    TYPE = "type"
+    WHICH = "which"
+    # -- status and control flow
+    TRUE = "true"
+    FALSE = "false"
+    COLON = ":"
+    BREAK = "break"
+    CONTINUE = "continue"
+    RETURN = "return"
+    EXIT = "exit"
+    # tools: programs the line invokes
+    # -- environment and identity
+    PRINTENV = "printenv"
+    ENV = "env"
+    WHOAMI = "whoami"
+    # -- manuals and history
+    MAN = "man"
+    HISTORY = "history"
+    # -- job control
     WAIT = "wait"
     FG = "fg"
     KILL = "kill"
     JOBS = "jobs"
     DISOWN = "disown"
     PS = "ps"
-    # output / text processing (no filesystem)
-    ECHO = "echo"
-    PRINTF = "printf"
+    # -- clock
     SLEEP = "sleep"
-    # nested shells
+    # -- nested shells
     BASH = "bash"
     SH = "sh"
-    # python exec
+    # -- interpreters
     PYTHON = "python"
     PYTHON3 = "python3"
-    # javascript exec
     NODE = "node"
     JS = "js"
-    # commands handled by executor
+    # -- command runners
     XARGS = "xargs"
     TIMEOUT = "timeout"
-    COMMAND = "command"
-    TYPE = "type"
-    WHICH = "which"
-    BREAK = "break"
-    CONTINUE = "continue"
-    RETURN = "return"
-    EXIT = "exit"
+
+
+class BuiltinTier(StrEnum):
+    """Which of two things a shell builtin is to a permission rule.
+
+    ``GRAMMAR`` is the shell's own language: it moves session state,
+    control flow, or the line's own streams, and never reaches a backend
+    except through the op dispatcher. ``TOOL`` is a program the line
+    invokes that a real system ships as a separate binary, or that
+    reaches beyond the session (an interpreter, the job table, the
+    history recording). The permission layer exempts grammar from a
+    command allowlist and treats tools as its subjects; both tiers stay
+    deniable by name.
+    """
+    GRAMMAR = "grammar"
+    TOOL = "tool"
+
+
+class BuiltinGroup(StrEnum):
+    """The family a shell builtin belongs to, one level below the tier.
+
+    Every group sits in exactly one tier (``GROUP_TIER``), so filing a
+    word in a group also files its tier; ``BUILTIN_GROUP`` is the one
+    row per word. A listing (bare ``man``) or a rule can name a group
+    where it would otherwise have to spell out the words.
+    """
+    # grammar
+    WORKING_DIRECTORY = "working-directory"
+    VARIABLES = "variables"
+    SHELL_STATE = "shell-state"
+    CONDITIONS = "conditions"
+    OUTPUT = "output"
+    RUNNING_LINES = "running-lines"
+    NAME_LOOKUP = "name-lookup"
+    CONTROL_FLOW = "control-flow"
+    # tools
+    ENVIRONMENT = "environment"
+    MANUALS_AND_HISTORY = "manuals-and-history"
+    JOB_CONTROL = "job-control"
+    CLOCK = "clock"
+    NESTED_SHELLS = "nested-shells"
+    INTERPRETERS = "interpreters"
+    COMMAND_RUNNERS = "command-runners"
+
+
+GROUP_TIER: Mapping[BuiltinGroup, BuiltinTier] = {
+    BuiltinGroup.WORKING_DIRECTORY: BuiltinTier.GRAMMAR,
+    BuiltinGroup.VARIABLES: BuiltinTier.GRAMMAR,
+    BuiltinGroup.SHELL_STATE: BuiltinTier.GRAMMAR,
+    BuiltinGroup.CONDITIONS: BuiltinTier.GRAMMAR,
+    BuiltinGroup.OUTPUT: BuiltinTier.GRAMMAR,
+    BuiltinGroup.RUNNING_LINES: BuiltinTier.GRAMMAR,
+    BuiltinGroup.NAME_LOOKUP: BuiltinTier.GRAMMAR,
+    BuiltinGroup.CONTROL_FLOW: BuiltinTier.GRAMMAR,
+    BuiltinGroup.ENVIRONMENT: BuiltinTier.TOOL,
+    BuiltinGroup.MANUALS_AND_HISTORY: BuiltinTier.TOOL,
+    BuiltinGroup.JOB_CONTROL: BuiltinTier.TOOL,
+    BuiltinGroup.CLOCK: BuiltinTier.TOOL,
+    BuiltinGroup.NESTED_SHELLS: BuiltinTier.TOOL,
+    BuiltinGroup.INTERPRETERS: BuiltinTier.TOOL,
+    BuiltinGroup.COMMAND_RUNNERS: BuiltinTier.TOOL,
+}
+
+# One row per ShellBuiltin. tests/shell/test_types.py pins that the rows
+# cover the enum, that every group is used, and that the tier sets below
+# are the rows' partition, so a new member has to be filed here on
+# purpose.
+BUILTIN_GROUP: Mapping[ShellBuiltin, BuiltinGroup] = {
+    ShellBuiltin.PWD: BuiltinGroup.WORKING_DIRECTORY,
+    ShellBuiltin.CD: BuiltinGroup.WORKING_DIRECTORY,
+    ShellBuiltin.EXPORT: BuiltinGroup.VARIABLES,
+    ShellBuiltin.UNSET: BuiltinGroup.VARIABLES,
+    ShellBuiltin.LOCAL: BuiltinGroup.VARIABLES,
+    ShellBuiltin.SET: BuiltinGroup.VARIABLES,
+    ShellBuiltin.READ: BuiltinGroup.VARIABLES,
+    ShellBuiltin.MAPFILE: BuiltinGroup.VARIABLES,
+    ShellBuiltin.READARRAY: BuiltinGroup.VARIABLES,
+    ShellBuiltin.SHIFT: BuiltinGroup.VARIABLES,
+    ShellBuiltin.GETOPTS: BuiltinGroup.VARIABLES,
+    ShellBuiltin.LET: BuiltinGroup.VARIABLES,
+    ShellBuiltin.TRAP: BuiltinGroup.SHELL_STATE,
+    ShellBuiltin.SHOPT: BuiltinGroup.SHELL_STATE,
+    ShellBuiltin.UMASK: BuiltinGroup.SHELL_STATE,
+    ShellBuiltin.ALIAS: BuiltinGroup.SHELL_STATE,
+    ShellBuiltin.UNALIAS: BuiltinGroup.SHELL_STATE,
+    ShellBuiltin.EXEC: BuiltinGroup.SHELL_STATE,
+    ShellBuiltin.TEST: BuiltinGroup.CONDITIONS,
+    ShellBuiltin.BRACKET: BuiltinGroup.CONDITIONS,
+    ShellBuiltin.DOUBLE_BRACKET: BuiltinGroup.CONDITIONS,
+    ShellBuiltin.ECHO: BuiltinGroup.OUTPUT,
+    ShellBuiltin.PRINTF: BuiltinGroup.OUTPUT,
+    ShellBuiltin.SOURCE: BuiltinGroup.RUNNING_LINES,
+    ShellBuiltin.DOT: BuiltinGroup.RUNNING_LINES,
+    ShellBuiltin.EVAL: BuiltinGroup.RUNNING_LINES,
+    ShellBuiltin.COMMAND: BuiltinGroup.RUNNING_LINES,
+    ShellBuiltin.TYPE: BuiltinGroup.NAME_LOOKUP,
+    ShellBuiltin.WHICH: BuiltinGroup.NAME_LOOKUP,
+    ShellBuiltin.TRUE: BuiltinGroup.CONTROL_FLOW,
+    ShellBuiltin.FALSE: BuiltinGroup.CONTROL_FLOW,
+    ShellBuiltin.COLON: BuiltinGroup.CONTROL_FLOW,
+    ShellBuiltin.BREAK: BuiltinGroup.CONTROL_FLOW,
+    ShellBuiltin.CONTINUE: BuiltinGroup.CONTROL_FLOW,
+    ShellBuiltin.RETURN: BuiltinGroup.CONTROL_FLOW,
+    ShellBuiltin.EXIT: BuiltinGroup.CONTROL_FLOW,
+    ShellBuiltin.PRINTENV: BuiltinGroup.ENVIRONMENT,
+    ShellBuiltin.ENV: BuiltinGroup.ENVIRONMENT,
+    ShellBuiltin.WHOAMI: BuiltinGroup.ENVIRONMENT,
+    ShellBuiltin.MAN: BuiltinGroup.MANUALS_AND_HISTORY,
+    ShellBuiltin.HISTORY: BuiltinGroup.MANUALS_AND_HISTORY,
+    ShellBuiltin.WAIT: BuiltinGroup.JOB_CONTROL,
+    ShellBuiltin.FG: BuiltinGroup.JOB_CONTROL,
+    ShellBuiltin.KILL: BuiltinGroup.JOB_CONTROL,
+    ShellBuiltin.JOBS: BuiltinGroup.JOB_CONTROL,
+    ShellBuiltin.DISOWN: BuiltinGroup.JOB_CONTROL,
+    ShellBuiltin.PS: BuiltinGroup.JOB_CONTROL,
+    ShellBuiltin.SLEEP: BuiltinGroup.CLOCK,
+    ShellBuiltin.BASH: BuiltinGroup.NESTED_SHELLS,
+    ShellBuiltin.SH: BuiltinGroup.NESTED_SHELLS,
+    ShellBuiltin.PYTHON: BuiltinGroup.INTERPRETERS,
+    ShellBuiltin.PYTHON3: BuiltinGroup.INTERPRETERS,
+    ShellBuiltin.NODE: BuiltinGroup.INTERPRETERS,
+    ShellBuiltin.JS: BuiltinGroup.INTERPRETERS,
+    ShellBuiltin.XARGS: BuiltinGroup.COMMAND_RUNNERS,
+    ShellBuiltin.TIMEOUT: BuiltinGroup.COMMAND_RUNNERS,
+}
+
+GRAMMAR_BUILTINS: frozenset[ShellBuiltin] = frozenset(
+    b for b, g in BUILTIN_GROUP.items()
+    if GROUP_TIER[g] is BuiltinTier.GRAMMAR)
+
+TOOL_BUILTINS: frozenset[ShellBuiltin] = frozenset(
+    b for b, g in BUILTIN_GROUP.items() if GROUP_TIER[g] is BuiltinTier.TOOL)

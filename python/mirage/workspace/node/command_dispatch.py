@@ -25,28 +25,23 @@ from mirage.runtime.policy import PolicyDecision
 from mirage.shell.bytes import encode_text
 from mirage.shell.parse import find_syntax_error, parse, syntax_error_result
 from mirage.shell.types import NodeType as NT
-from mirage.shell.types import ShellBuiltin as SB
 from mirage.shell.variable import ShellVar, VarAttr
 from mirage.shell.xtrace import trace_command
 from mirage.types import PathSpec, Producer, word_text
 from mirage.utils.glob_walk import glob_pattern
 from mirage.utils.path import CycleError, resolve_path
-from mirage.workspace.executor.builtins.alias import (alias_command_text,
-                                                      handle_alias,
-                                                      handle_unalias)
-from mirage.workspace.executor.builtins.exec_cmd import handle_exec_command
+from mirage.workspace.executor.builtins.alias import alias_command_text
 from mirage.workspace.executor.builtins.scope import _to_scope
+from mirage.workspace.executor.builtins.table import BUILTINS
+from mirage.workspace.executor.builtins.types import BuiltinCall
 from mirage.workspace.executor.command import handle_command
 from mirage.workspace.executor.command.routing import (path_flag_scopes,
                                                        positional_scopes)
-from mirage.workspace.executor.control import BreakSignal, ContinueSignal
 from mirage.workspace.expand import expand_node
 from mirage.workspace.expand.argv import Argv, expand_argv
-from mirage.workspace.expand.classify import classify_bare_path
 from mirage.workspace.expand.globs import expand_boundary_globs
 from mirage.workspace.route import (SLASH_KEEPS_LAST, UNSUPPORTED_BUILTINS,
                                     follows_last_component)
-from mirage.workspace.session.shell_dirs import home_dir, logical_cwd
 from mirage.workspace.session.state import (ensure_var_visible,
                                             pre_session_gate, seed_var,
                                             session_view, set_attr)
@@ -57,77 +52,9 @@ from mirage.shell.helpers import (  # isort: skip
     get_process_sub_direction, get_text, split_env_prefix)
 
 from mirage.workspace.executor.builtins import (  # isort: skip
-    accepts_line, follow_paths, handle_bash, handle_cd, handle_chgrp,
-    handle_exec_path, handle_chmod, handle_chown, handle_command_builtin,
-    handle_df, handle_echo, handle_env, handle_eval, handle_exit,
-    handle_export, handle_getopts, handle_history, handle_let, handle_ln,
-    handle_local, handle_man, handle_mapfile, handle_printenv, handle_printf,
-    handle_read, handle_readlink, handle_return, handle_set, handle_shift,
-    handle_sleep, handle_source, handle_test, handle_timeout, handle_touch,
-    handle_trap, handle_shopt, handle_type, handle_umask, handle_unset,
-    handle_which, handle_whoami, handle_xargs, link_flags, prepare_mv,
-    strip_link_operands)
-
-_CdArgs = list[str | PathSpec]
-
-
-def _loop_levels(args: list[str]) -> int:
-    """Parse the optional numeric level of ``break``/``continue``.
-
-    Args:
-        args (list[str]): words after the builtin name.
-    """
-    if args and args[0].isdigit() and int(args[0]) > 0:
-        return int(args[0])
-    return 1
-
-
-def _split_mode_options(
-        args: _CdArgs,
-        letters: str = "LPe@",
-        default: bool = False) -> tuple[_CdArgs, str | None, bool]:
-    """Split leading ``-L``/``-P`` option flags from the operands.
-
-    Shared by ``cd`` (which also takes ``-e -@``) and ``pwd``, so the
-    last-wins rule -- ``pwd -L -P`` is physical, ``pwd -P -L`` logical --
-    has one implementation. Accepts clusters such as ``-LP`` plus a
-    ``--`` end-of-options marker; a bare ``-`` is an operand (``cd``'s
-    OLDPWD shorthand), not an option.
-
-    Args:
-        args: The classified arguments after the command name.
-        letters: The accepted option characters.
-        default: The mode to assume when the line names neither, which
-            is what ``set -P`` changes for the whole session.
-
-    Returns:
-        ``(operands, bad, physical)`` where ``operands`` are the non-option
-        args, ``bad`` is the first unknown option character (or ``None``),
-        and ``physical`` is True when ``-P`` is the effective (last-wins)
-        mode.
-    """
-    operands: _CdArgs = []
-    parsing = True
-    physical = default
-    for arg in args:
-        s = arg.virtual if isinstance(arg, PathSpec) else str(arg)
-        if parsing:
-            if s == "--":
-                parsing = False
-                continue
-            if s != "-" and len(s) >= 2 and s.startswith("-"):
-                bad = next((c for c in s[1:] if c not in letters), None)
-                if bad is None:
-                    for c in s[1:]:
-                        if c == "P":
-                            physical = True
-                        elif c == "L":
-                            physical = False
-                    continue
-                return operands, bad, physical
-            parsing = False
-        operands.append(arg)
-    return operands, None, physical
+    accepts_line, follow_paths, handle_chgrp, handle_exec_path, handle_chmod,
+    handle_chown, handle_df, handle_ln, handle_readlink, handle_touch,
+    link_flags, prepare_mv, strip_link_operands)
 
 
 async def execute_command(
@@ -478,243 +405,23 @@ async def _run_argv(
                                                          stderr=err)
 
     # ── shell builtins ──────────────────────────
-    # `set -P` (`set -o physical`) is the session-wide version of the
-    # per-command flag, and GNU applies it to both `cd` and `pwd`.
-    shell_physical = bool(session.shell_options.get("physical"))
-
-    if name == SB.PWD:
-        _, bad_opt, physical = _split_mode_options(operands, "LP",
-                                                   shell_physical)
-        if bad_opt is not None:
-            err = (f"pwd: -{bad_opt}: invalid option\n"
-                   f"pwd: usage: pwd [-LP]\n").encode()
-            return None, IOResult(exit_code=2,
-                                  stderr=err), ExecutionNode(command="pwd",
-                                                             exit_code=2,
-                                                             stderr=err)
-        # GNU ignores operands entirely: `pwd extra` still prints the cwd.
-        cwd = session.cwd if physical else logical_cwd(session)
-        out = (cwd + "\n").encode()
-        return out, IOResult(), ExecutionNode(command="pwd", exit_code=0)
-
-    if name == SB.CD:
-        cd_operands, bad_opt, physical = _split_mode_options(
-            operands, default=shell_physical)
-        if bad_opt is not None:
-            err = (f"cd: -{bad_opt}: invalid option\n"
-                   f"cd: usage: cd [-L|[-P [-e]] [-@]] [dir]\n").encode()
-            return None, IOResult(exit_code=2,
-                                  stderr=err), ExecutionNode(command="cd",
-                                                             exit_code=2,
-                                                             stderr=err)
-        if len(cd_operands) > 1:
-            err = b"cd: too many arguments\n"
-            return None, IOResult(exit_code=1,
-                                  stderr=err), ExecutionNode(command="cd",
-                                                             exit_code=1,
-                                                             stderr=err)
-        if not cd_operands:
-            home = home_dir(session)
-            if home is None:
-                err = b"cd: HOME not set\n"
-                return None, IOResult(exit_code=1,
-                                      stderr=err), ExecutionNode(command="cd",
-                                                                 exit_code=1,
-                                                                 stderr=err)
-            return await handle_cd(dispatch,
-                                   registry.is_mount_root,
-                                   home,
-                                   session,
-                                   links=namespace.symlink_targets(),
-                                   physical=physical)
-        raw = cd_operands[0]
-        raw_str = raw.virtual if isinstance(raw, PathSpec) else str(raw)
-        if raw_str == "-":
-            old = session.env.get("OLDPWD")
-            if not old:
-                err = b"cd: OLDPWD not set\n"
-                return None, IOResult(exit_code=1, stderr=err), ExecutionNode(
-                    command="cd -", exit_code=1, stderr=err)
-            return await handle_cd(dispatch,
-                                   registry.is_mount_root,
-                                   old,
-                                   session,
-                                   print_path=True,
-                                   links=namespace.symlink_targets(),
-                                   physical=physical)
-        path: str | PathSpec
-        if isinstance(raw, PathSpec):
-            path = raw
-            cdpath_target = raw.raw_path
-        elif raw_str.startswith("/"):
-            path = raw_str
-            cdpath_target = raw_str
-        else:
-            path = classify_bare_path(raw_str, registry, session.cwd)
-            cdpath_target = raw_str
-        return await handle_cd(dispatch,
-                               registry.is_mount_root,
-                               path,
-                               session,
-                               cdpath_target=cdpath_target,
-                               links=namespace.symlink_targets(),
-                               physical=physical)
-
-    if name == SB.HISTORY:
-        return await handle_history(registry, args, session)
-
-    if name == SB.TRUE:
-        return None, IOResult(), ExecutionNode(command="true", exit_code=0)
-
-    if name == SB.COLON:
-        return None, IOResult(), ExecutionNode(command=":", exit_code=0)
-
-    if name == SB.FALSE:
-        return None, IOResult(exit_code=1), ExecutionNode(command="false",
-                                                          exit_code=1)
-
-    if name in (SB.SOURCE, SB.DOT):
-        path = operands[0] if operands else ""
-        return await handle_source(dispatch, execute_fn, path, session,
-                                   [word_text(o) for o in operands[1:]])
-
-    if name == SB.EVAL:
-        return await handle_eval(execute_fn, args, session)
-
-    if name in (SB.BASH, SB.SH):
-        return await handle_bash(dispatch, execute_fn, args, session, stdin,
-                                 str(name))
-
-    if name == SB.EXPORT:
-        return await handle_export(
-            args, session, session_view(session, namespace.registry.policies))
-
-    if name == SB.UNSET:
-        return await handle_unset(
-            args, session, session_view(session, namespace.registry.policies))
-
-    if name == SB.LOCAL:
-        return await handle_local(
-            args, session, session_view(session, namespace.registry.policies))
-
-    if name == SB.PRINTENV:
-        var_name = args[0] if args else None
-        return await handle_printenv(var_name, session)
-
-    if name == SB.ENV:
-        return await handle_env(execute_fn, args, session, stdin)
-
-    if name == SB.WHOAMI:
-        return await handle_whoami(namespace)
-
-    if name == SB.MAN:
-        return await handle_man(args, session, registry)
-
-    if name == SB.READ:
-        return await handle_read(
-            args, session, stdin,
-            session_view(session, namespace.registry.policies))
-
-    if name in (SB.MAPFILE, SB.READARRAY):
-        return await handle_mapfile(args,
-                                    session,
-                                    stdin,
-                                    execute_fn,
-                                    session_view(session,
-                                                 namespace.registry.policies),
-                                    cmd=str(name))
-
-    if name == SB.SET:
-        return await handle_set(args, session, call_stack=call_stack)
-
-    if name == SB.SHIFT:
-        return await handle_shift(args, call_stack, session=session)
-
-    if name == SB.GETOPTS:
-        return await handle_getopts(
-            args, session, call_stack,
-            session_view(session, namespace.registry.policies))
-
-    if name == SB.TRAP:
-        return await handle_trap(session)
-
-    if name == SB.LET:
-        return await handle_let(
-            args, session, session_view(session, namespace.registry.policies))
-
-    if name == SB.UMASK:
-        return await handle_umask(args, session)
-
-    if name == SB.EXEC:
-        # The redirect-only form is intercepted where redirects are
-        # applied; a bare `exec` reaching here has no redirects, and
-        # `exec cmd` is the process-replacement form this refuses.
-        return await handle_exec_command(args, session)
-
-    if name == SB.SHOPT:
-        return await handle_shopt(args, session)
-
-    if name == SB.ALIAS:
-        return await handle_alias(args, session, (session._parse_current, row))
-
-    if name == SB.UNALIAS:
-        return await handle_unalias(args, session)
-
-    if name in (SB.TEST, SB.BRACKET, SB.DOUBLE_BRACKET):
-        test_args = list(operands)
-        test_name = "[" if name == SB.BRACKET else "test"
-        if name == SB.BRACKET:
-            if test_args and word_text(test_args[-1]) == "]":
-                test_args = test_args[:-1]
-            else:
-                err = b"[: missing `]'\n"
-                return None, IOResult(exit_code=2,
-                                      stderr=err), ExecutionNode(command="[",
-                                                                 exit_code=2,
-                                                                 stderr=err)
-        return await handle_test(dispatch,
-                                 namespace,
-                                 test_args,
-                                 session,
-                                 name=test_name)
-
-    if name == SB.ECHO:
-        return await handle_echo(args)
-
-    if name == SB.PRINTF:
-        return await handle_printf(
-            args, session, session_view(session, namespace.registry.policies))
-
-    if name == SB.SLEEP:
-        return await handle_sleep(args, cancel=cancel)
-
-    if name == SB.RETURN:
-        return await handle_return(args, session, call_stack)
-
-    if name == SB.EXIT:
-        return await handle_exit(args, session)
-
-    if name == SB.COMMAND:
-        return await handle_command_builtin(execute_fn, args, session,
-                                            registry, stdin)
-
-    if name == SB.TYPE:
-        return handle_type(args, session, registry)
-
-    if name == SB.WHICH:
-        return handle_which(args, session, registry)
-
-    if name == SB.XARGS:
-        return await handle_xargs(execute_fn, args, session, stdin)
-
-    if name == SB.TIMEOUT:
-        return await handle_timeout(execute_fn, args, session)
-
-    if name == SB.BREAK:
-        raise BreakSignal(levels=_loop_levels(args))
-
-    if name == SB.CONTINUE:
-        raise ContinueSignal(levels=_loop_levels(args))
+    # One lookup: every executor-run builtin word maps to a handler that
+    # takes the whole invocation, so the arms live beside their workers
+    # (builtins/<word>/) rather than here. Job builtins and the
+    # interpreters are not in the table; they route below.
+    builtin = BUILTINS.get(name)
+    if builtin is not None:
+        return await builtin(
+            BuiltinCall(argv=argv,
+                        session=session,
+                        stdin=stdin,
+                        call_stack=call_stack,
+                        cancel=cancel,
+                        row=row,
+                        dispatch=dispatch,
+                        registry=registry,
+                        namespace=namespace,
+                        execute_fn=execute_fn))
 
     # ── pathname resolution (POSIX): every component of an operand but
     #    the last resolves for every command, so `stat dlink/f2` reports

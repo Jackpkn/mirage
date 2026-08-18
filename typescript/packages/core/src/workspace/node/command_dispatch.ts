@@ -33,9 +33,8 @@ import {
   splitEnvPrefix,
 } from '../../shell/helpers.ts'
 import type { JobTable } from '../../shell/job_table/index.ts'
-import { NodeType as NT, ShellBuiltin as SB } from '../../shell/types.ts'
+import { NodeType as NT } from '../../shell/types.ts'
 import { PathSpec, wordText } from '../../types.ts'
-import { classifyBarePath } from '../expand/classify/index.ts'
 import { Argv, expandArgv } from '../expand/argv.ts'
 import { expandBoundaryGlobs } from '../expand/globs.ts'
 import { type ExecuteFn, expandNode } from '../expand/node.ts'
@@ -43,136 +42,40 @@ import type { TSNodeLike } from '../../shell/types.ts'
 import { handleCommand } from '../executor/command.ts'
 import { pathFlagScopes, positionalScopes } from '../executor/command/routing.ts'
 import { toScope } from '../executor/builtins/scope.ts'
-import {
-  type AliasMark,
-  aliasCommandText,
-  handleAlias,
-  handleUnalias,
-} from '../executor/builtins/alias.ts'
-import { handleExecCommand } from '../executor/builtins/exec_cmd.ts'
+import { type AliasMark, aliasCommandText } from '../executor/builtins/alias/index.ts'
 import { findSyntaxError } from '../../shell/parse.ts'
 import { resolvePath } from '../../utils/path.ts'
 import { runWithTimeout } from '../../commands/builtin/utils/limit.ts'
 import { PolicyDenied, resolveLimit } from '../../policy/index.ts'
-import { BreakSignal, ContinueSignal } from '../executor/control.ts'
 import { traceCommand } from '../../shell/xtrace.ts'
 import type { DispatchFn } from '../../runtime/types.ts'
 import {
   acceptsLine,
   followPaths,
-  handleBash,
-  handleExecPath,
-  handleCd,
-  handleCommandBuiltin,
-  handleType,
-  handleWhich,
-  handleEcho,
-  handleEnv,
-  handleEval,
-  handleExport,
-  handleHistory,
   handleChgrp,
-  handleDf,
   handleChmod,
   handleChown,
-  handleLet,
+  handleDf,
+  handleExecPath,
   handleLn,
-  handleLocal,
-  handleMan,
-  handleMapfile,
-  handlePrintenv,
-  handlePrintf,
-  handleRead,
   handleReadlink,
   handleTouch,
-  handleExit,
-  handleGetopts,
-  handleReturn,
-  handleSet,
-  handleShift,
-  handleShopt,
-  handleSleep,
-  handleSource,
-  handleTest,
-  handleTimeout,
-  handleTrap,
-  handleUmask,
-  handleUnset,
-  handleWhoami,
-  handleXargs,
   linkFlags,
   prepareMv,
   stripLinkOperands,
 } from '../executor/builtins/index.ts'
+import { BUILTINS } from '../executor/builtins/table.ts'
 import { globPattern } from '../../utils/glob_walk.ts'
 import { CycleError } from '../../utils/path.ts'
 import type { Namespace } from '../mount/namespace/namespace.ts'
 import type { MountRegistry } from '../mount/registry.ts'
 import { SLASH_KEEPS_LAST, UNSUPPORTED_BUILTINS, followsLastComponent } from '../route/index.ts'
 import type { Session } from '../session/session.ts'
-import { homeDir, logicalCwd } from '../session/shell_dirs.ts'
 import { ensureVarVisible, sessionView } from '../session/state.ts'
 import { preSessionGate } from '../../policy/index.ts'
 import { ExecutionNode } from '../types.ts'
 
 type Result = [ByteSource | null, IOResult, ExecutionNode]
-
-// Parse the optional numeric level of `break`/`continue`.
-function loopLevels(args: readonly string[]): number {
-  const first = args[0]
-  if (first !== undefined && /^\d+$/.test(first) && parseInt(first, 10) > 0) {
-    return parseInt(first, 10)
-  }
-  return 1
-}
-
-// Split leading -L/-P option flags (clusters like -LP, and a `--`
-// terminator) from the operands. Shared by `cd` (which also takes -e -@)
-// and `pwd`, so the last-wins rule -- `pwd -L -P` is physical, `pwd -P
-// -L` logical -- has one implementation. A bare `-` is an operand (`cd`'s
-// OLDPWD shorthand), not an option. `bad` is the first unknown character.
-function splitModeOptions(
-  args: (string | PathSpec)[],
-  letters = 'LPe@',
-  // The mode to assume when the line names neither, which is what
-  // `set -P` changes for the whole session.
-  fallback = false,
-): {
-  operands: (string | PathSpec)[]
-  bad: string | null
-  physical: boolean
-} {
-  const operands: (string | PathSpec)[] = []
-  let parsing = true
-  let physical = fallback
-  for (const arg of args) {
-    const s = arg instanceof PathSpec ? arg.virtual : arg
-    if (parsing) {
-      if (s === '--') {
-        parsing = false
-        continue
-      }
-      if (s !== '-' && s.length >= 2 && s.startsWith('-')) {
-        let bad: string | null = null
-        for (const c of s.slice(1)) {
-          if (!letters.includes(c)) {
-            bad = c
-            break
-          }
-        }
-        if (bad !== null) return { operands, bad, physical }
-        for (const c of s.slice(1)) {
-          if (c === 'P') physical = true
-          else if (c === 'L') physical = false
-        }
-        continue
-      }
-      parsing = false
-    }
-    operands.push(arg)
-  }
-  return { operands, bad: null, physical }
-}
 
 export async function executeCommand(
   recurse: (
@@ -635,246 +538,24 @@ async function runArgv(
     ]
   }
 
-  // Shell builtins
-  // `set -P` (`set -o physical`) is the session-wide version of the
-  // per-command flag, and GNU applies it to both `cd` and `pwd`.
-  const shellPhysical = session.shellOptions.physical === true
-
-  if (name === SB.PWD) {
-    const { bad: pwdBad, physical: pwdPhysical } = splitModeOptions(operands, 'LP', shellPhysical)
-    if (pwdBad !== null) {
-      const err = new TextEncoder().encode(
-        `pwd: -${pwdBad}: invalid option\npwd: usage: pwd [-LP]\n`,
-      )
-      return [
-        null,
-        new IOResult({ exitCode: 2, stderr: err }),
-        new ExecutionNode({ command: 'pwd', exitCode: 2, stderr: err }),
-      ]
-    }
-    // GNU ignores operands entirely: `pwd extra` still prints the cwd.
-    const cwd = pwdPhysical ? session.cwd : logicalCwd(session)
-    const out = new TextEncoder().encode(`${cwd}\n`)
-    return [out, new IOResult(), new ExecutionNode({ command: 'pwd', exitCode: 0 })]
-  }
-
-  if (name === SB.CD) {
-    const {
-      operands: cdOperands,
-      bad,
-      physical,
-    } = splitModeOptions(operands, 'LPe@', shellPhysical)
-    const links = namespace.symlinkTargets()
-    if (bad !== null) {
-      const err = new TextEncoder().encode(
-        `cd: -${bad}: invalid option\ncd: usage: cd [-L|[-P [-e]] [-@]] [dir]\n`,
-      )
-      return [
-        null,
-        new IOResult({ exitCode: 2, stderr: err }),
-        new ExecutionNode({ command: 'cd', exitCode: 2, stderr: err }),
-      ]
-    }
-    if (cdOperands.length > 1) {
-      const err = new TextEncoder().encode('cd: too many arguments\n')
-      return [
-        null,
-        new IOResult({ exitCode: 1, stderr: err }),
-        new ExecutionNode({ command: 'cd', exitCode: 1, stderr: err }),
-      ]
-    }
-    if (cdOperands.length === 0) {
-      const home = homeDir(session)
-      if (home === null) {
-        const err = new TextEncoder().encode('cd: HOME not set\n')
-        return [
-          null,
-          new IOResult({ exitCode: 1, stderr: err }),
-          new ExecutionNode({ command: 'cd', exitCode: 1, stderr: err }),
-        ]
-      }
-      return handleCd(
-        dispatch,
-        (p) => registry.isMountRoot(p),
-        home,
-        session,
-        false,
-        null,
-        links,
-        physical,
-      )
-    }
-    const raw = cdOperands[0]
-    const rawStr = raw instanceof PathSpec ? raw.virtual : String(raw)
-    if (rawStr === '-') {
-      const old = session.env.OLDPWD
-      if (!old) {
-        const err = new TextEncoder().encode('cd: OLDPWD not set\n')
-        return [
-          null,
-          new IOResult({ exitCode: 1, stderr: err }),
-          new ExecutionNode({ command: 'cd -', exitCode: 1, stderr: err }),
-        ]
-      }
-      return handleCd(
-        dispatch,
-        (p) => registry.isMountRoot(p),
-        old,
-        session,
-        true,
-        null,
-        links,
-        physical,
-      )
-    }
-    let path: string | PathSpec
-    let cdpathTarget: string
-    if (raw instanceof PathSpec) {
-      path = raw
-      cdpathTarget = raw.rawPath
-    } else if (rawStr.startsWith('/')) {
-      path = rawStr
-      cdpathTarget = rawStr
-    } else {
-      path = classifyBarePath(rawStr, registry, session.cwd)
-      cdpathTarget = rawStr
-    }
-    return handleCd(
-      dispatch,
-      (p) => registry.isMountRoot(p),
-      path,
-      session,
-      false,
-      cdpathTarget,
-      links,
-      physical,
-    )
-  }
-
-  if (name === SB.TRUE) {
-    return [null, new IOResult(), new ExecutionNode({ command: 'true', exitCode: 0 })]
-  }
-
-  if (name === SB.COLON) {
-    return [null, new IOResult(), new ExecutionNode({ command: ':', exitCode: 0 })]
-  }
-
-  if (name === SB.FALSE) {
-    return [
-      null,
-      new IOResult({ exitCode: 1 }),
-      new ExecutionNode({ command: 'false', exitCode: 1 }),
-    ]
-  }
-
-  if (name === SB.EVAL) return handleEval(executeFn, args, session)
-  if (name === SB.BASH || name === SB.SH) {
-    return handleBash(dispatch, executeFn, args, session, stdin, name)
-  }
-  if (name === SB.EXPORT)
-    return handleExport(args, session, sessionView(session, registry.policies))
-  if (name === SB.UNSET) return handleUnset(args, session, sessionView(session, registry.policies))
-  if (name === SB.LOCAL) return handleLocal(args, session, sessionView(session, registry.policies))
-  if (name === SB.PRINTENV) {
-    return handlePrintenv(args.length > 0 ? (args[0] ?? null) : null, session)
-  }
-  if (name === SB.ENV) return handleEnv(executeFn, args, session, stdin)
-  if (name === SB.WHOAMI) return handleWhoami(namespace)
-  if (name === SB.MAN) return handleMan(args, session, registry)
-  if (name === SB.HISTORY) return handleHistory(registry, args, session)
-  if (name === SB.SET) return handleSet(args, session, callStack)
-  if (name === SB.SHIFT) {
-    return handleShift(args, callStack, session)
-  }
-  if (name === SB.GETOPTS) {
-    return handleGetopts(args, session, callStack, sessionView(session, registry.policies))
-  }
-  if (name === SB.TRAP) return handleTrap(session)
-  if (name === SB.LET) {
-    return handleLet(args, session, sessionView(session, registry.policies))
-  }
-  if (name === SB.UMASK) return handleUmask(args, session)
-  if (name === SB.SHOPT) return handleShopt(args, session)
-  if (name === SB.ALIAS) return handleAlias(args, session, [session.parseCurrent, row])
-  if (name === SB.UNALIAS) return handleUnalias(args, session)
-  if (name === SB.EXEC) {
-    // The redirect-only form is intercepted where redirects are applied;
-    // a bare `exec` here has none, and `exec cmd` is the
-    // process-replacement form this refuses.
-    return handleExecCommand(args, session)
-  }
-  if (name === SB.MAPFILE || name === SB.READARRAY) {
-    return handleMapfile(
-      args,
+  // Shell builtins. One lookup: every executor-run builtin word maps to
+  // a handler that takes the whole invocation, so the arms live beside
+  // their workers (builtins/<word>/) rather than here. Job builtins and
+  // the interpreters are not in the table; they route below.
+  const builtin = BUILTINS.get(name)
+  if (builtin !== undefined) {
+    return builtin({
+      argv,
       session,
       stdin,
+      callStack,
+      signal,
+      row,
+      dispatch,
+      registry,
+      namespace,
       executeFn,
-      sessionView(session, registry.policies),
-      name,
-    )
-  }
-  if (name === SB.TEST || name === SB.BRACKET || name === SB.DOUBLE_BRACKET) {
-    let testArgs = [...operands]
-    const testName = name === SB.BRACKET ? '[' : 'test'
-    if (name === SB.BRACKET) {
-      const last = testArgs[testArgs.length - 1]
-      if (last !== undefined && wordText(last) === ']') {
-        testArgs = testArgs.slice(0, -1)
-      } else {
-        const err = new TextEncoder().encode("[: missing `]'\n")
-        return [
-          null,
-          new IOResult({ exitCode: 2, stderr: err }),
-          new ExecutionNode({ command: '[', exitCode: 2, stderr: err }),
-        ]
-      }
-    }
-    return handleTest(dispatch, namespace, testArgs, session, testName)
-  }
-  if (name === SB.ECHO) {
-    return handleEcho(args)
-  }
-  if (name === SB.PRINTF) {
-    return handlePrintf(args, session, sessionView(session, registry.policies))
-  }
-  if (name === SB.SLEEP) return handleSleep(args, signal)
-  if (name === SB.READ) {
-    return handleRead(args, session, stdin, sessionView(session, registry.policies))
-  }
-  if (name === SB.SOURCE || name === SB.DOT) {
-    const target = operands[0] ?? ''
-    // Positional parameters keep the words as typed, so a path operand
-    // contributes its spelling, not its resolved mount path.
-    const sourceArgs = operands.slice(1).map((o) => wordText(o))
-    return handleSource(dispatch, executeFn, target, session, sourceArgs)
-  }
-  if (name === SB.RETURN) {
-    return handleReturn(args, session, callStack)
-  }
-  if (name === SB.EXIT) {
-    return handleExit(args, session)
-  }
-  if (name === SB.BREAK) throw new BreakSignal(null, new IOResult(), loopLevels(args))
-  if (name === SB.CONTINUE) throw new ContinueSignal(null, new IOResult(), loopLevels(args))
-
-  if (name === SB.COMMAND) {
-    return handleCommandBuiltin(executeFn, args, session, registry, stdin)
-  }
-
-  if (name === SB.TYPE) {
-    return handleType(args, session, registry)
-  }
-
-  if (name === SB.WHICH) {
-    return handleWhich(args, session, registry)
-  }
-
-  if (name === SB.XARGS) {
-    return handleXargs(executeFn, args, session, stdin)
-  }
-
-  if (name === SB.TIMEOUT) {
-    return handleTimeout(executeFn, args, session)
+    })
   }
 
   // Pathname resolution (POSIX): every component of an operand but the
