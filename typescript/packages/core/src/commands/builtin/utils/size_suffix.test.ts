@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 import { describe, expect, it } from 'vitest'
 
-import { sizeSuffixes } from './size_suffix.ts'
+import { parseBase0, sizeSuffixes } from './size_suffix.ts'
 
 describe('sizeSuffixes', () => {
   it('maps a letter to its binary power', () => {
@@ -40,5 +40,16 @@ describe('sizeSuffixes', () => {
 
   it('rejects an unknown letter', () => {
     expect(() => sizeSuffixes('w')).toThrow("unknown size suffix letter 'w'")
+  })
+})
+
+describe('parseBase0', () => {
+  it('reads hex, octal and decimal', () => {
+    expect(parseBase0('0x400')).toBe(1024n)
+    expect(parseBase0('0X10')).toBe(16n)
+    expect(parseBase0('010')).toBe(8n)
+    expect(parseBase0('007')).toBe(7n)
+    expect(parseBase0('1010')).toBe(1010n)
+    expect(parseBase0('0')).toBe(0n)
   })
 })

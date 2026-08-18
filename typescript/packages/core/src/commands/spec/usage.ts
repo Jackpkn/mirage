@@ -186,6 +186,17 @@ export function missingRequiredError(cmdName: string, option: string): [Uint8Arr
 }
 
 /**
+ * The `Try '<cmd> --help'` line as that command prints it.
+ *
+ * coreutils writes the hint bare; diffutils routes it through `error()`,
+ * so cmp and diff carry the command prefix on the hint line too.
+ */
+export function usageHint(cmdName: string): string {
+  const prefix = USAGE_HINT_PREFIX.has(cmdName) ? `${cmdName}: ` : ''
+  return `${prefix}Try '${cmdName} --help' for more information.`
+}
+
+/**
  * GNU-shaped usage error for an operand past a command's arity.
  *
  * Shapes pinned against real GNU: `<cmd>: extra operand '<arg>'` with the
@@ -198,7 +209,5 @@ export function extraOperandError(cmdName: string, operand: string): UsageError 
     cmdName === (CommandName.MKTEMP as string)
       ? 'mktemp: too many templates'
       : `${cmdName}: extra operand '${operand}'`
-  const prefix = USAGE_HINT_PREFIX.has(cmdName) ? `${cmdName}: ` : ''
-  const hint = `${prefix}Try '${cmdName} --help' for more information.`
-  return new UsageError(`${line}\n${hint}`, usageExitCode(cmdName))
+  return new UsageError(`${line}\n${usageHint(cmdName)}`, usageExitCode(cmdName))
 }

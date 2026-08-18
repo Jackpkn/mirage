@@ -36,4 +36,21 @@ def size_suffixes(letters: str) -> dict[str, int]:
     return table
 
 
-__all__ = ["size_suffixes"]
+def parse_base0(digits: str) -> int:
+    """The digits of an xstrtoumax operand, read at GNU's base 0.
+
+    ``0x…`` is hex, a bare leading zero is octal, anything else decimal.
+    Python's own ``int(s, 0)`` cannot stand in: it rejects ``010``,
+    because python 3 dropped C's octal spelling.
+
+    Args:
+        digits (str): the digit run, sign and suffix already stripped.
+    """
+    if digits[:2].lower() == "0x":
+        return int(digits, 16)
+    if digits.startswith("0") and len(digits) > 1:
+        return int(digits, 8)
+    return int(digits, 10)
+
+
+__all__ = ["parse_base0", "size_suffixes"]

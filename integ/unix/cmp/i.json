@@ -1,0 +1,239 @@
+{
+  "cases": [
+    {
+      "id": "cmp_i_skips_both_files",
+      "seq": 601140,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "gridfs",
+        "s3-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "mkdir -p /data/qcmpi && printf 'abcdefgh' > /data/qcmpi/i1 && printf 'abcXefgh' > /data/qcmpi/i2 && cmp -i 3 /data/qcmpi/i1 /data/qcmpi/i2; echo rc=$?",
+      "expect": {
+        "exit": 0,
+        "stdout": "/data/qcmpi/i1 /data/qcmpi/i2 differ: char 1, line 1\nrc=1\n",
+        "stderr": ""
+      },
+      "flags": [
+        "i"
+      ]
+    },
+    {
+      "id": "cmp_i_pair_skips_one_count_per_file",
+      "seq": 601141,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "gridfs",
+        "s3-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "cmp -i 0:3 /data/qcmpi/i1 /data/qcmpi/i2; echo rc=$?",
+      "expect": {
+        "exit": 0,
+        "stdout": "/data/qcmpi/i1 /data/qcmpi/i2 differ: char 1, line 1\nrc=1\n",
+        "stderr": ""
+      },
+      "flags": [
+        "i"
+      ]
+    },
+    {
+      "id": "cmp_i_equal_skips_realign_the_files",
+      "seq": 601142,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "gridfs",
+        "s3-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "cmp -i 1:1 /data/qcmpi/i1 /data/qcmpi/i2; echo rc=$?",
+      "expect": {
+        "exit": 0,
+        "stdout": "/data/qcmpi/i1 /data/qcmpi/i2 differ: char 3, line 1\nrc=1\n",
+        "stderr": ""
+      },
+      "flags": [
+        "i"
+      ]
+    },
+    {
+      "id": "cmp_i_past_both_files_compares_nothing",
+      "seq": 601143,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "gridfs",
+        "s3-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "cmp -i 99 /data/qcmpi/i1 /data/qcmpi/i2; echo rc=$?",
+      "expect": {
+        "exit": 0,
+        "stdout": "rc=0\n",
+        "stderr": ""
+      },
+      "flags": [
+        "i"
+      ]
+    },
+    {
+      "id": "cmp_i_junk_is_a_usage_error",
+      "seq": 601144,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "gridfs",
+        "s3-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "cmp -i abc /data/qcmpi/i1 /data/qcmpi/i2 2>&1; echo rc=$?",
+      "expect": {
+        "exit": 0,
+        "stdout": "cmp: invalid --ignore-initial value 'abc'\ncmp: Try 'cmp --help' for more information.\nrc=2\n",
+        "stderr": ""
+      },
+      "flags": [
+        "i"
+      ]
+    },
+    {
+      "id": "cmp_eof_is_a_stderr_diagnostic",
+      "seq": 601145,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "gridfs",
+        "s3-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "mkdir -p /data/qcmpe && printf 'ab\\nc' > /data/qcmpe/e1 && printf 'ab\\ncdef' > /data/qcmpe/e2 && cmp /data/qcmpe/e1 /data/qcmpe/e2 2>&1; echo rc=$?",
+      "expect": {
+        "exit": 0,
+        "stdout": "cmp: EOF on /data/qcmpe/e1 after byte 4, in line 2\nrc=1\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "cmp_l_eof_drops_the_line_clause",
+      "seq": 601146,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "gridfs",
+        "s3-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "mkdir -p /data/qcmpd && printf 'aXc' > /data/qcmpd/d1 && printf 'aYcdef' > /data/qcmpd/d2 && cmp -l /data/qcmpd/d1 /data/qcmpd/d2 2>&1; echo rc=$?",
+      "expect": {
+        "exit": 0,
+        "stdout": "2 130 131\ncmp: EOF on /data/qcmpd/d1 after byte 3\nrc=1\n",
+        "stderr": ""
+      },
+      "flags": [
+        "l"
+      ]
+    }
+  ]
+}

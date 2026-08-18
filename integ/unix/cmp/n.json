@@ -1,0 +1,140 @@
+{
+  "cases": [
+    {
+      "id": "cmp_n_within_the_limit_is_equal",
+      "seq": 601132,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "gridfs",
+        "s3-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "mkdir -p /data/qcmpn && printf 'abcdef' > /data/qcmpn/n1 && printf 'abcXef' > /data/qcmpn/n2 && cmp -n 2 /data/qcmpn/n1 /data/qcmpn/n2; echo rc=$?",
+      "expect": {
+        "exit": 0,
+        "stdout": "rc=0\n",
+        "stderr": ""
+      },
+      "flags": [
+        "n"
+      ]
+    },
+    {
+      "id": "cmp_n_past_the_difference_reports_it",
+      "seq": 601133,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "gridfs",
+        "s3-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "cmp -n 4 /data/qcmpn/n1 /data/qcmpn/n2; echo rc=$?",
+      "expect": {
+        "exit": 0,
+        "stdout": "/data/qcmpn/n1 /data/qcmpn/n2 differ: char 4, line 1\nrc=1\n",
+        "stderr": ""
+      },
+      "flags": [
+        "n"
+      ]
+    },
+    {
+      "id": "cmp_n_takes_a_size_suffix",
+      "seq": 601134,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "gridfs",
+        "s3-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "cmp -n 1K /data/qcmpn/n1 /data/qcmpn/n2; echo rc=$?; cmp -n 03 /data/qcmpn/n1 /data/qcmpn/n2; echo rc=$?; cmp -n 010 /data/qcmpn/n1 /data/qcmpn/n2; echo rc=$?",
+      "expect": {
+        "exit": 0,
+        "stdout": "/data/qcmpn/n1 /data/qcmpn/n2 differ: char 4, line 1\nrc=1\nrc=0\n/data/qcmpn/n1 /data/qcmpn/n2 differ: char 4, line 1\nrc=1\n",
+        "stderr": ""
+      },
+      "flags": [
+        "n"
+      ]
+    },
+    {
+      "id": "cmp_n_junk_is_a_usage_error",
+      "seq": 601135,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "gridfs",
+        "s3-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "cmp -n 1b /data/qcmpn/n1 /data/qcmpn/n2 2>&1; echo rc=$?; cmp -n abc /data/qcmpn/n1 /data/qcmpn/n2 2>&1; echo rc=$?",
+      "expect": {
+        "exit": 0,
+        "stdout": "cmp: invalid --bytes value '1b'\ncmp: Try 'cmp --help' for more information.\nrc=2\ncmp: invalid --bytes value 'abc'\ncmp: Try 'cmp --help' for more information.\nrc=2\n",
+        "stderr": ""
+      },
+      "flags": [
+        "n"
+      ]
+    }
+  ]
+}

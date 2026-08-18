@@ -212,6 +212,20 @@ def missing_required_error(cmd_name: str, option: str) -> tuple[bytes, int]:
     return (line + hint).encode(), usage_exit_code(cmd_name)
 
 
+def usage_hint(cmd_name: str) -> str:
+    """The ``Try '<cmd> --help'`` line as that command prints it.
+
+    coreutils writes the hint bare; diffutils routes it through
+    ``error()``, so ``cmp`` and ``diff`` carry the command prefix on the
+    hint line too.
+
+    Args:
+        cmd_name (str): the command whose hint line is wanted.
+    """
+    prefix = f"{cmd_name}: " if cmd_name in USAGE_HINT_PREFIX else ""
+    return f"{prefix}Try '{cmd_name} --help' for more information."
+
+
 def extra_operand_error(cmd_name: str, operand: str) -> UsageError:
     """GNU-shaped usage error for an operand past a command's arity.
 
@@ -229,6 +243,5 @@ def extra_operand_error(cmd_name: str, operand: str) -> UsageError:
         line = "mktemp: too many templates"
     else:
         line = f"{cmd_name}: extra operand '{operand}'"
-    prefix = f"{cmd_name}: " if cmd_name in USAGE_HINT_PREFIX else ""
-    hint = f"{prefix}Try '{cmd_name} --help' for more information."
-    return UsageError(f"{line}\n{hint}", usage_exit_code(cmd_name))
+    return UsageError(f"{line}\n{usage_hint(cmd_name)}",
+                      usage_exit_code(cmd_name))

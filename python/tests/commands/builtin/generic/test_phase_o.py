@@ -187,7 +187,7 @@ async def test_cmp_verbose_lists_all_diffs():
 async def test_cmp_skip_offset():
     rb, _ = _make_backend({"/a.txt": b"xxhello", "/b.txt": b"yyhello"})
     output, io = await cmp_cmd(
-        [_spec("/a.txt"), _spec("/b.txt")], read_bytes=rb, skip=2)
+        [_spec("/a.txt"), _spec("/b.txt")], read_bytes=rb, skip=(2, 2))
     assert output is None
     assert io.exit_code == 0
 
@@ -204,5 +204,8 @@ async def test_cmp_eof_on_shorter():
     rb, _ = _make_backend({"/a.txt": b"abc", "/b.txt": b"abcdef"})
     output, io = await cmp_cmd(
         [_spec("/a.txt"), _spec("/b.txt")], read_bytes=rb)
-    assert output == b"cmp: EOF on /a.txt\n"
+    # GNU writes this to stderr, not stdout, and names the byte it
+    # stopped at plus the line that byte sits in.
+    assert output is None
+    assert io.stderr == b"cmp: EOF on /a.txt after byte 3, in line 1\n"
     assert io.exit_code == 1

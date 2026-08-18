@@ -38,12 +38,13 @@ export const FILE_MIME_MAP: Readonly<Record<string, string>> = Object.freeze({
   'application/pdf': 'application/pdf',
 })
 
-// od and split both read their counts with xstrtoumax, which skips leading
+// od, split and cmp all read their counts with xstrtoumax, which skips leading
 // whitespace and allows one '+' before the digits, so `-b +10` and `-b " 10"`
 // are valid while `+ 10`, `++10`, `-10` and a trailing space are not.
 // A bigint: as a double, 2 ** 64 - 1 rounds up to 2 ** 64, which would let
 // exactly-2**64 values through the too-large checks that python rejects.
 export const UINTMAX = 2n ** 64n - 1n
+export const INTMAX = 2n ** 63n - 1n
 
 export const OD_SIZE_UNITS = sizeSuffixes('bkKmMGTPE')
 // Q/R/Y/Z are in GNU od's suffix set but always overflow uintmax, so they
@@ -53,7 +54,14 @@ export const OD_OVERFLOW_UNITS = sizeSuffixes('QRYZ')
 // 0 is octal, else decimal; the unconsumed remainder is the suffix. The sign
 // stays outside group 1 so the radix is picked from the digits alone
 // (`-N +0x10` is hex, `-N +010` is octal).
-export const OD_COUNT_PATTERN = /^[ \t\n\v\f\r]*\+?(0[xX][0-9a-fA-F]+|0[0-7]*|[1-9][0-9]*)(.*)$/
+export const XSTRTOUMAX_PATTERN = /^[ \t\n\v\f\r]*\+?(0[xX][0-9a-fA-F]+|0[0-7]*|[1-9][0-9]*)(.*)$/
+
+// GNU cmp (diffutils 3.10) shares od's grammar above but not its letter set:
+// no b/c/w, lowercase only up to k, and its gnulib predates Q/R, so `0Q`
+// is an invalid value where `0Z` is a valid zero. Its ceiling is INTMAX, not
+// UINTMAX, and an overflowing value reports as the same "invalid ... value"
+// as a bad suffix rather than as too-large.
+export const CMP_SIZE_UNITS = sizeSuffixes('kKMGTPEZY')
 
 // GNU split's letter set: every uppercase power letter plus b, and lowercase
 // k/m only (pinned against coreutils 9.7). Unlike od, split is base-10 only:
