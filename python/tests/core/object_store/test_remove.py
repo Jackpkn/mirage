@@ -14,6 +14,7 @@
 
 import asyncio
 import errno
+from dataclasses import replace
 
 import pytest
 
@@ -118,3 +119,26 @@ def test_rmdir_on_an_empty_mount_root_is_a_no_op(accessor):
     store = FakeStore({})
     _managed(make_rmdir(make_driver(store))(accessor, spec("/")))
     assert store.objects == {}
+
+
+def test_rmdir_leaves_a_child_that_arrived_after_the_probe(accessor):
+    """The delete is the marker, not the prefix.
+
+    A concurrent writer can create a child between the emptiness listing
+    and the delete, and a prefix delete would take that child down with
+    it -- the subtree loss this function exists to stop, in a smaller
+    window. So rmdir deletes only the one key that spells "empty
+    directory", which nothing arriving after the probe can widen.
+    """
+    store = FakeStore({"a/b/": b""})
+    driver = make_driver(store)
+
+    async def racing_children(conn, pfx):
+        async for child in driver.list_children(conn, pfx):
+            yield child
+        conn.objects["a/b/late.txt"] = b"new"
+
+    rmdir = make_rmdir(replace(driver, list_children=racing_children))
+    _managed(rmdir(accessor, spec("/a/b")))
+    assert store.objects == {"a/b/late.txt": b"new"}
+    assert store.deletes == ["a/b/"]

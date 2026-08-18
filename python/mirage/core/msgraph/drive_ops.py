@@ -536,13 +536,26 @@ async def find_items(
 
 
 async def drive_root_empty(config: MsGraphConfig, loc: DriveLoc) -> bool:
-    """Whether a drive item has no children.
+    """Whether a drive item has no children, in one request.
+
+    One bounded page, not ``graph_list``: the answer is a yes/no, and
+    ``graph_list`` follows every ``@odata.nextLink``, so asking it made
+    a large folder download its whole listing to produce one boolean.
+    ``$top`` through that helper is worse rather than better -- it only
+    shrinks each page, so the walk pages more times, not fewer -- which
+    is why this sends the request itself. ``$select`` drops a driveItem
+    payload this never reads.
 
     Args:
         config (MsGraphConfig): Graph config.
         loc (DriveLoc): the folder to probe.
     """
-    return not await graph_list(config, loc.item("/children"))
+    page = await graph_get(config, loc.item("/children"), {
+        "$top": 1,
+        "$select": "id"
+    })
+    children = page.get("value")
+    return not (isinstance(children, list) and children)
 
 
 async def _item_or_none(config: MsGraphConfig, loc: DriveLoc,

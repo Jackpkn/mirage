@@ -96,4 +96,23 @@ describe('object_store remove', () => {
     await managed(() => makeRmdir(makeDriver(store))(accessor, spec('/')))
     expect(store.contents()).toEqual({})
   })
+
+  it('rmdir leaves a child that arrived after the probe', async () => {
+    // The delete is the marker, not the prefix. A concurrent writer can
+    // create a child between the emptiness listing and the delete, and a
+    // prefix delete would take that child down with it -- the subtree loss
+    // this function exists to stop, in a smaller window. So rmdir deletes
+    // only the one key that spells "empty directory", which nothing
+    // arriving after the probe can widen.
+    const store = new FakeStore({ 'a/b/': '' })
+    const driver = makeDriver(store)
+    async function* racingChildren(conn: FakeStore, pfx: string) {
+      yield* driver.listChildren(conn, pfx)
+      conn.objects.set('a/b/late.txt', new TextEncoder().encode('new'))
+    }
+    const rmdir = makeRmdir({ ...driver, listChildren: racingChildren })
+    await managed(() => rmdir(accessor, spec('/a/b')))
+    expect(store.contents()).toEqual({ 'a/b/late.txt': 'new' })
+    expect(store.deletes).toEqual(['a/b/'])
+  })
 })

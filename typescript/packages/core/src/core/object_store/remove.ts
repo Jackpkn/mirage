@@ -100,7 +100,12 @@ export function makeRmdir<A extends Accessor, C>(driver: ObjectStoreDriver<A, C>
           break
         }
       }
-      if (!hasChild && (sawKey || isRoot)) await driver.deletePrefix(conn, pfx)
+      // The marker only, never the prefix: a child created between the
+      // listing above and this delete would be taken down with it, which
+      // is the subtree loss this function exists to stop in a smaller
+      // window. A root holding no key has no marker and falls through as
+      // the no-op the prefix delete already was.
+      if (!hasChild && sawKey) await driver.deleteFile(conn, pfx)
     } finally {
       await close()
     }

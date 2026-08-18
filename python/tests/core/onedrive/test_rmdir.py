@@ -11,6 +11,10 @@ _BASE = "https://graph.microsoft.com/v1.0/me/drive"
 
 _FILE = {"id": "c1", "name": "a.txt", "size": 1}
 _FOLDER = {"id": "c2", "name": "sub", "folder": {"childCount": 0}}
+# The emptiness probe is one bounded page, not a full listing walk, so the
+# query is part of the URL the stub has to match; a regression to
+# `graph_list` stops matching it.
+_PROBE = "?$top=1&$select=id"
 
 
 def _accessor(**kw) -> OneDriveAccessor:
@@ -20,7 +24,7 @@ def _accessor(**kw) -> OneDriveAccessor:
 @pytest.mark.asyncio
 async def test_rmdir_deletes_an_empty_folder():
     with aioresponses() as m:
-        m.get(_BASE + "/root:/dir:/children", payload={"value": []})
+        m.get(_BASE + "/root:/dir:/children" + _PROBE, payload={"value": []})
         m.delete(_BASE + "/root:/dir", status=204)
         await rmdir(_accessor(), PathSpec.from_str_path("/dir"))
 
@@ -28,7 +32,8 @@ async def test_rmdir_deletes_an_empty_folder():
 @pytest.mark.asyncio
 async def test_rmdir_refuses_a_folder_holding_a_file():
     with aioresponses() as m:
-        m.get(_BASE + "/root:/dir:/children", payload={"value": [_FILE]})
+        m.get(_BASE + "/root:/dir:/children" + _PROBE,
+              payload={"value": [_FILE]})
         with pytest.raises(OSError) as excinfo:
             await rmdir(_accessor(), PathSpec.from_str_path("/dir"))
     assert excinfo.value.errno == errno.ENOTEMPTY
@@ -37,7 +42,8 @@ async def test_rmdir_refuses_a_folder_holding_a_file():
 @pytest.mark.asyncio
 async def test_rmdir_refuses_a_folder_holding_a_subfolder():
     with aioresponses() as m:
-        m.get(_BASE + "/root:/dir:/children", payload={"value": [_FOLDER]})
+        m.get(_BASE + "/root:/dir:/children" + _PROBE,
+              payload={"value": [_FOLDER]})
         with pytest.raises(OSError) as excinfo:
             await rmdir(_accessor(), PathSpec.from_str_path("/dir"))
     assert excinfo.value.errno == errno.ENOTEMPTY
@@ -46,7 +52,8 @@ async def test_rmdir_refuses_a_folder_holding_a_subfolder():
 @pytest.mark.asyncio
 async def test_rmdir_sends_no_delete_when_it_refuses():
     with aioresponses() as m:
-        m.get(_BASE + "/root:/dir:/children", payload={"value": [_FILE]})
+        m.get(_BASE + "/root:/dir:/children" + _PROBE,
+              payload={"value": [_FILE]})
         with pytest.raises(OSError):
             await rmdir(_accessor(), PathSpec.from_str_path("/dir"))
         sent = [key[0] for key in m.requests]

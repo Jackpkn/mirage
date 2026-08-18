@@ -104,8 +104,17 @@ def make_rmdir(driver: ObjectStoreDriver[A, C]) -> PathFn[A]:
                 if child.kind != "marker":
                     has_child = True
                     break
-            if not has_child and (saw_key or is_root):
-                await driver.delete_prefix(conn, pfx)
+            if not has_child and saw_key:
+                # The marker only, never the prefix. Between the listing
+                # above and this delete another writer may have created a
+                # child, and a prefix delete would take it down too --
+                # the subtree loss this function exists to stop, in a
+                # smaller window. Deleting the one key that spells
+                # "empty directory" cannot reach a child no matter what
+                # arrived after the probe. A root holding no key has no
+                # marker to delete and falls through as the no-op the
+                # prefix delete already was.
+                await driver.delete_file(conn, pfx)
         if has_child:
             raise enotempty(path_spec)
         if not saw_key and not is_root:
