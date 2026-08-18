@@ -35,23 +35,12 @@ s3_cat = next(fn for fn in _S3_COMMANDS for rc in fn._registered_commands
               if rc.name == "cat" and rc.filetype is None)
 LAST_MODIFIED = datetime(2026, 3, 26, tzinfo=timezone.utc)
 
+# Every kit-derived op reaches the store through the driver's single
+# connect seam; only read and stream keep a native session of their own.
 _CORE_MODULES = [
+    "mirage.core.s3.driver",
     "mirage.core.s3.read",
-    "mirage.core.s3.write",
-    "mirage.core.s3.stat",
-    "mirage.core.s3.readdir",
-    "mirage.core.s3.find",
-    "mirage.core.s3.du.size",
-    "mirage.core.s3.du.entries",
     "mirage.core.s3.stream",
-    "mirage.core.s3.copy",
-    "mirage.core.s3.rename",
-    "mirage.core.s3.unlink",
-    "mirage.core.s3.rmdir",
-    "mirage.core.s3.rm",
-    "mirage.core.s3.mkdir",
-    "mirage.core.s3.create",
-    "mirage.core.s3.truncate",
 ]
 
 

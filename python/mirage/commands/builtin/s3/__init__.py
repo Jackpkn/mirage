@@ -15,25 +15,16 @@
 from mirage.commands.builtin.generic_bind import make_generic_commands
 from mirage.commands.builtin.generic_bind.provision import \
     with_default_provisions
+from mirage.commands.builtin.object_store import (OBJECT_STORE_OVERRIDES,
+                                                  make_object_store_commands)
 from mirage.commands.builtin.s3.io import IO as _IO
-from mirage.commands.builtin.s3.mkdir import mkdir
-from mirage.commands.builtin.s3.rm import rm
-from mirage.commands.builtin.s3.stat import stat
-from mirage.commands.builtin.s3.tee import tee
-from mirage.commands.builtin.s3.touch import touch
-
-# s3-specific behaviours kept as overrides: no real directories (mkdir -p,
-# rm not-empty), write-tracking (touch/tee), and the
-# index-threaded, missing-operand stat. patch is generic (the factory builder
-# delegates to the shared generic patch).
-_S3_OVERRIDES = {"stat", "rm", "mkdir", "tee", "touch"}
 
 COMMANDS = [
     *make_generic_commands(
         "s3",
         _IO,
-        overrides=_S3_OVERRIDES,
+        overrides=OBJECT_STORE_OVERRIDES,
     ),
-    *with_default_provisions([mkdir, rm, stat, tee, touch], _IO.stat,
+    *with_default_provisions(make_object_store_commands("s3", _IO), _IO.stat,
                              _IO.resolve_glob, _IO.readdir),
 ]

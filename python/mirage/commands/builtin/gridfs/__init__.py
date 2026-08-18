@@ -16,24 +16,15 @@ from mirage.commands.builtin.generic_bind import make_generic_commands
 from mirage.commands.builtin.generic_bind.provision import \
     with_default_provisions
 from mirage.commands.builtin.gridfs.io import IO as _IO
-from mirage.commands.builtin.gridfs.mkdir import mkdir
-from mirage.commands.builtin.gridfs.rm import rm
-from mirage.commands.builtin.gridfs.stat import stat
-from mirage.commands.builtin.gridfs.tee import tee
-from mirage.commands.builtin.gridfs.touch import touch
-
-# gridfs-specific behaviours kept as overrides: no real directories (mkdir -p,
-# rm not-empty), write-tracking (touch/tee), and the
-# index-threaded, missing-operand stat. patch is generic (the factory builder
-# delegates to the shared generic patch).
-_GRIDFS_OVERRIDES = {"stat", "rm", "mkdir", "tee", "touch"}
+from mirage.commands.builtin.object_store import (OBJECT_STORE_OVERRIDES,
+                                                  make_object_store_commands)
 
 COMMANDS = [
     *make_generic_commands(
         "gridfs",
         _IO,
-        overrides=_GRIDFS_OVERRIDES,
+        overrides=OBJECT_STORE_OVERRIDES,
     ),
-    *with_default_provisions([mkdir, rm, stat, tee, touch], _IO.stat,
-                             _IO.resolve_glob, _IO.readdir),
+    *with_default_provisions(make_object_store_commands("gridfs", _IO),
+                             _IO.stat, _IO.resolve_glob, _IO.readdir),
 ]

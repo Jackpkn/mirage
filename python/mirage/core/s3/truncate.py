@@ -12,35 +12,7 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import time
+from mirage.core.object_store.write import make_truncate
+from mirage.core.s3.driver import DRIVER
 
-from mirage.accessor.s3 import S3Accessor
-from mirage.cache.context import invalidate_after_write
-from mirage.core.s3.client import _client_kwargs, _key, async_session
-from mirage.observe.context import record
-from mirage.types import PathSpec
-
-
-async def truncate(accessor: S3Accessor, path_spec: PathSpec,
-                   length: int) -> None:
-    path = path_spec.mount_path
-    start_ms = int(time.monotonic() * 1000)
-    config = accessor.config
-    session = async_session(config)
-    async with session.client(**_client_kwargs(config)) as client:
-        try:
-            resp = await client.get_object(Bucket=config.bucket,
-                                           Key=_key(path, config))
-            data = await resp["Body"].read()
-        except Exception as exc:
-            if (hasattr(exc, "response") and exc.response.get(
-                    "Error", {}).get("Code") == "NoSuchKey"):
-                data = b""
-            else:
-                raise
-        result = data[:length].ljust(length, b"\0")
-        await client.put_object(Bucket=config.bucket,
-                                Key=_key(path, config),
-                                Body=result)
-    record("truncate", path, "s3", 0, start_ms)
-    await invalidate_after_write(path_spec)
+truncate = make_truncate(DRIVER)

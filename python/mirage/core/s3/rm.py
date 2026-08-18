@@ -12,30 +12,7 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from mirage.accessor.s3 import S3Accessor
-from mirage.cache.context import invalidate_after_unlink
-from mirage.core.s3.client import _client_kwargs, _prefix, async_session
-from mirage.types import PathSpec
+from mirage.core.object_store.remove import make_remove_prefix
+from mirage.core.s3.driver import DRIVER
 
-
-async def rm_r(accessor: S3Accessor, path_spec: PathSpec) -> None:
-    """Recursively delete all objects under a prefix.
-
-    Args:
-        accessor (S3Accessor): S3 accessor.
-        path_spec (PathSpec): Prefix path_spec.
-    """
-    path = path_spec.mount_path
-    config = accessor.config
-    pfx = _prefix(path, config)
-    session = async_session(config)
-    async with session.client(**_client_kwargs(config)) as client:
-        paginator = client.get_paginator("list_objects_v2")
-        async for page in paginator.paginate(Bucket=config.bucket, Prefix=pfx):
-            keys = [{"Key": obj["Key"]} for obj in page.get("Contents") or []]
-            if keys:
-                await client.delete_objects(
-                    Bucket=config.bucket,
-                    Delete={"Objects": keys},
-                )
-    await invalidate_after_unlink(path_spec)
+rm_r = make_remove_prefix(DRIVER)

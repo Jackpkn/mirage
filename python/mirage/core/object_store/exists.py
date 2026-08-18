@@ -12,27 +12,23 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import re
-from typing import Any
+from mirage.cache.index import NULL_INDEX
+from mirage.core.object_store.driver import A, ExistsFn, StatFn
+from mirage.types import PathSpec
 
 
-def subtree_query(stem: str) -> dict[str, Any]:
-    """Match the file at ``stem`` plus everything beneath it.
+def make_exists(stat: StatFn[A]) -> ExistsFn[A]:
+    """Build the boolean existence probe over the backend's stat.
 
     Args:
-        stem (str): backend key with no trailing slash.
+        stat (StatFn): the backend's stat, kit-derived or native.
     """
-    if not stem:
-        return {}
-    return {
-        "$or": [
-            {
-                "filename": stem
-            },
-            {
-                "filename": {
-                    "$regex": "^" + re.escape(stem + "/")
-                }
-            },
-        ]
-    }
+
+    async def exists(accessor: A, path: PathSpec) -> bool:
+        try:
+            await stat(accessor, path, index=NULL_INDEX)
+            return True
+        except (FileNotFoundError, ValueError):
+            return False
+
+    return exists

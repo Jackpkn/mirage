@@ -19,6 +19,7 @@ import pytest
 
 from mirage.accessor.gridfs import GridFSAccessor, GridFSConfig
 from mirage.cache.context import push_cache_manager
+from mirage.core.gridfs import driver as gridfs_driver
 from mirage.core.gridfs.rename import rename
 from mirage.types import PathSpec
 
@@ -73,7 +74,7 @@ def _spec(key: str) -> PathSpec:
 
 
 def _install(monkeypatch, files: _FakeFiles) -> None:
-    globs = rename.__globals__
+    globs = vars(gridfs_driver)
     monkeypatch.setitem(globs, "files_coll", lambda accessor: files)
     monkeypatch.setitem(globs, "latest_file", _latest_of(files))
     monkeypatch.setitem(globs, "delete_all", _delete_of(files))

@@ -12,15 +12,7 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from mirage.accessor.s3 import S3Accessor
-from mirage.cache.index import NULL_INDEX
+from mirage.core.object_store.exists import make_exists
 from mirage.core.s3.stat import stat
-from mirage.types import PathSpec
 
-
-async def exists(accessor: S3Accessor, path: PathSpec) -> bool:
-    try:
-        await stat(accessor, path, index=NULL_INDEX)
-        return True
-    except (FileNotFoundError, ValueError):
-        return False
+exists = make_exists(stat)

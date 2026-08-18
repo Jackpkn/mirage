@@ -12,22 +12,7 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from mirage.accessor.gridfs import GridFSAccessor
-from mirage.cache.context import invalidate_after_write, invalidate_ancestors
-from mirage.core.gridfs.client import _prefix, bucket
-from mirage.types import PathSpec
+from mirage.core.gridfs.driver import DRIVER
+from mirage.core.object_store.write import make_mkdir
 
-
-async def mkdir(accessor: GridFSAccessor,
-                path_spec: PathSpec,
-                parents: bool = False) -> None:
-    # GridFS has no real directories; parents is implicit. A zero-byte
-    # "key/" marker doc makes the empty directory visible.
-    path = path_spec.mount_path
-    config = accessor.config
-    pfx = _prefix(path, config)
-    if pfx:
-        await bucket(accessor).upload_from_stream(pfx, b"")
-        await invalidate_after_write(path_spec)
-        if parents:
-            await invalidate_ancestors(path_spec)
+mkdir = make_mkdir(DRIVER)

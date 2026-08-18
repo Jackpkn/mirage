@@ -85,7 +85,7 @@ async def test_range_get(s3_accessor):
 async def test_put_bytes(s3_accessor):
     from mirage.core.s3.write import write_bytes
 
-    with patch("mirage.core.s3.write.async_session") as mock_session:
+    with patch("mirage.core.s3.driver.async_session") as mock_session:
         mock_client = AsyncMock()
         mock_ctx = AsyncMock()
         mock_ctx.__aenter__.return_value = mock_client

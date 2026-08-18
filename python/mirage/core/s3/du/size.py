@@ -12,32 +12,7 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from mirage.accessor.s3 import S3Accessor
-from mirage.cache.index import NULL_INDEX, IndexCacheStore
-from mirage.core.s3.client import _client_kwargs, _key, async_session
-from mirage.types import PathSpec
+from mirage.core.object_store.du import make_du_size
+from mirage.core.s3.driver import DRIVER
 
-
-async def size(accessor: S3Accessor,
-               path_spec: PathSpec,
-               index: IndexCacheStore = NULL_INDEX) -> int:
-    """Recursive byte size of everything under a prefix.
-
-    Args:
-        accessor (S3Accessor): S3 accessor.
-        path_spec (PathSpec): target path.
-    """
-    config = accessor.config
-    stem = _key(path_spec.mount_path, config).rstrip("/")
-    base = (stem + "/") if stem else ""
-    total = 0
-    session = async_session(config)
-    async with session.client(**_client_kwargs(config)) as client:
-        paginator = client.get_paginator("list_objects_v2")
-        async for page in paginator.paginate(Bucket=config.bucket,
-                                             Prefix=stem):
-            for obj in page.get("Contents") or []:
-                okey = obj["Key"]
-                if okey == stem or okey.startswith(base):
-                    total += obj.get("Size", 0)
-    return total
+size = make_du_size(DRIVER)

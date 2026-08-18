@@ -2,9 +2,10 @@ from typing import cast
 
 import pytest
 
-from mirage.accessor.gridfs import GridFSAccessor
+from mirage.accessor.base import Accessor
 from mirage.cache.index import NULL_INDEX, IndexCacheStore
-from mirage.commands.builtin.gridfs.stat import stat
+from mirage.commands.builtin.generic_bind.adapter import CommandIO
+from mirage.commands.builtin.object_store.stat import make_stat
 from mirage.commands.config import CommandOpts
 from mirage.io.types import materialize
 from mirage.ops.types import NamespaceView, StatOverlay
@@ -22,33 +23,41 @@ def _backend_stat() -> FileStat:
                     type=FileType.TEXT)
 
 
-async def _fake_stat_core(_accessor: GridFSAccessor,
+async def _fake_stat_core(_accessor: Accessor,
                           _path: PathSpec,
                           index: IndexCacheStore = NULL_INDEX) -> FileStat:
     return _backend_stat()
 
 
-async def _fake_resolve_glob(_accessor: GridFSAccessor, paths: list[PathSpec],
-                             _index: IndexCacheStore) -> list[PathSpec]:
-    return paths
+async def _unused_readdir(_accessor: Accessor,
+                          _path: PathSpec,
+                          index: IndexCacheStore = NULL_INDEX) -> list[str]:
+    raise AssertionError("readdir must not run for a plain operand")
+
+
+async def _unused_read(_accessor: Accessor,
+                       _path: PathSpec,
+                       index: IndexCacheStore = NULL_INDEX) -> bytes:
+    raise AssertionError("read must not run")
 
 
 def _overlay(_virtual: str, st: FileStat) -> FileStat:
     return st.model_copy(update={"mode": 0o600, "modified": _OVERLAY_MTIME})
 
 
-@pytest.fixture
-def patched_backend(monkeypatch):
-    globals_ = stat.__wrapped__.__globals__
-    monkeypatch.setitem(globals_, "stat_core", _fake_stat_core)
-    monkeypatch.setitem(globals_, "resolve_glob", _fake_resolve_glob)
+_IO = CommandIO(readdir=_unused_readdir,
+                read_bytes=_unused_read,
+                read_stream=_unused_read,
+                stat=_fake_stat_core,
+                is_mounted=lambda a: True)
+
+stat = make_stat("s3", _IO)
 
 
 async def _render(fmt: str,
                   stat_overlay: StatOverlay | None = None) -> tuple[int, str]:
     out, io = await stat(
-        cast(GridFSAccessor, object()),
-        [PathSpec.from_str_path('/gridfs/f.txt')], [],
+        cast(Accessor, object()), [PathSpec.from_str_path('/s3/f.txt')], [],
         CommandOpts(index=NULL_INDEX,
                     ns=NamespaceView(stat_overlay=stat_overlay),
                     flags={'c': fmt}))
@@ -56,17 +65,17 @@ async def _render(fmt: str,
 
 
 @pytest.mark.asyncio
-async def test_stat_c_applies_namespace_overlay(patched_backend):
-    """GridFS registers no setattr op, so chmod/touch state lives only in the
-    namespace overlay; the bespoke stat command must merge it in, like the
-    generic_bind builder does, or stat -c disagrees with ls -l."""
+async def test_stat_c_applies_namespace_overlay():
+    """Keyed stores register no setattr op, so chmod/touch state lives
+    only in the namespace overlay; the override must merge it in, like
+    the generic_bind builder does, or stat -c disagrees with ls -l."""
     code, out = await _render("%a|%y", stat_overlay=_overlay)
     assert code == 0
     assert out == f"600|{_OVERLAY_MTIME}\n"
 
 
 @pytest.mark.asyncio
-async def test_stat_c_without_overlay_reports_backend_values(patched_backend):
+async def test_stat_c_without_overlay_reports_backend_values():
     code, out = await _render("%a|%y")
     assert code == 0
     assert out == f"644|{_BACKEND_MTIME}\n"

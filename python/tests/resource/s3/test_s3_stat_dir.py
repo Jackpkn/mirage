@@ -52,7 +52,7 @@ class TestStatDirectoryFallback:
 
     @pytest.mark.asyncio
     async def test_stat_file_returns_filestat(self, s3_accessor):
-        with patch("mirage.core.s3.stat.async_session") as mock_session:
+        with patch("mirage.core.s3.driver.async_session") as mock_session:
             mock_client = AsyncMock()
             mock_client.head_object.return_value = {
                 "ContentLength": 1024,
@@ -73,7 +73,7 @@ class TestStatDirectoryFallback:
 
     @pytest.mark.asyncio
     async def test_stat_directory_prefix_fallback(self, s3_accessor):
-        with patch("mirage.core.s3.stat.async_session") as mock_session:
+        with patch("mirage.core.s3.driver.async_session") as mock_session:
             mock_client = AsyncMock()
             err = Exception("not found")
             err.response = {"Error": {"Code": "404"}}
@@ -95,7 +95,7 @@ class TestStatDirectoryFallback:
 
     @pytest.mark.asyncio
     async def test_stat_directory_prefix_with_contents(self, s3_accessor):
-        with patch("mirage.core.s3.stat.async_session") as mock_session:
+        with patch("mirage.core.s3.driver.async_session") as mock_session:
             mock_client = AsyncMock()
             err = Exception("not found")
             err.response = {"Error": {"Code": "NoSuchKey"}}
@@ -117,7 +117,7 @@ class TestStatDirectoryFallback:
 
     @pytest.mark.asyncio
     async def test_stat_nonexistent_raises(self, s3_accessor):
-        with patch("mirage.core.s3.stat.async_session") as mock_session:
+        with patch("mirage.core.s3.driver.async_session") as mock_session:
             mock_client = AsyncMock()
             err = Exception("not found")
             err.response = {"Error": {"Code": "404"}}
@@ -179,7 +179,7 @@ class TestReaddirIndexEntries:
 
     @pytest.mark.asyncio
     async def test_readdir_stores_folder_type(self, s3_accessor, index):
-        with patch("mirage.core.s3.readdir.async_session") as mock_session:
+        with patch("mirage.core.s3.driver.async_session") as mock_session:
             mock_client = AsyncMock()
             page_data = {
                 "CommonPrefixes": [{
@@ -219,7 +219,7 @@ class TestReaddirIndexEntries:
 
     @pytest.mark.asyncio
     async def test_readdir_cache_hit(self, s3_accessor, index):
-        with patch("mirage.core.s3.readdir.async_session") as mock_session:
+        with patch("mirage.core.s3.driver.async_session") as mock_session:
             mock_client = AsyncMock()
             page_data = {
                 "CommonPrefixes": [{
@@ -250,7 +250,7 @@ class TestStatAfterReaddir:
 
     @pytest.mark.asyncio
     async def test_stat_hits_cache_after_readdir(self, s3_accessor, index):
-        with patch("mirage.core.s3.readdir.async_session") as mock_session:
+        with patch("mirage.core.s3.driver.async_session") as mock_session:
             mock_client = AsyncMock()
             page_data = {
                 "CommonPrefixes": [{
