@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { readFile } from 'node:fs/promises'
-import { homedir } from 'node:os'
+import { homedir, userInfo } from 'node:os'
 import { resolve } from 'node:path'
 import { RemoteSandbox } from '@struktoai/mirage-core/runtime/sandbox/base'
 import { registerRuntime } from '@struktoai/mirage-core/runtime/table'
@@ -42,7 +42,7 @@ function expandHome(p: string): string {
  * A machine reached over SSH as a whole-line runtime.
  *
  * You run the machine and its sshd yourself; mirage only connects
- * (keys, never a password) and execs lines. One connection opens on
+ * (keys or an agent, never a password) and execs lines. One connection opens on
  * the first captured line and is reused; each line is one exec
  * channel with real byte stdin and separated stderr, the merged
  * environment and session cwd dressed onto the command by wrapLine,
@@ -78,11 +78,15 @@ export class SSHRuntime extends RemoteSandbox<SSHRuntimeConfig> {
     const opts: ConnectConfig = {
       host: this.config.hostname ?? this.config.host,
       port: this.config.port ?? 22,
+      username: this.config.username ?? userInfo().username,
       readyTimeout: (this.config.timeout ?? 30) * 1000,
     }
-    if (this.config.username !== undefined) opts.username = this.config.username
     if (this.config.identityFile !== undefined) {
       opts.privateKey = await readFile(expandHome(this.config.identityFile))
+    } else if (process.env.SSH_AUTH_SOCK) {
+      // The asyncssh twin's rule: a named key is used alone; with
+      // none, the ssh-agent authenticates.
+      opts.agent = process.env.SSH_AUTH_SOCK
     }
     return opts
   }

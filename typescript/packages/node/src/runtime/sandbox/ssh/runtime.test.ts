@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { tmpdir, userInfo } from 'node:os'
 import { join } from 'node:path'
 import { buildRuntime } from '@struktoai/mirage-core/runtime/table'
 import { describe, expect, it } from 'vitest'
@@ -79,6 +79,18 @@ class SdkFakeRuntime extends SSHRuntime {
   }
 }
 
+async function withAgentSock<T>(value: string | undefined, fn: () => Promise<T>): Promise<T> {
+  const prior = process.env.SSH_AUTH_SOCK
+  if (value === undefined) delete process.env.SSH_AUTH_SOCK
+  else process.env.SSH_AUTH_SOCK = value
+  try {
+    return await fn()
+  } finally {
+    if (prior === undefined) delete process.env.SSH_AUTH_SOCK
+    else process.env.SSH_AUTH_SOCK = prior
+  }
+}
+
 describe('SSHRuntime', () => {
   it('host is required', () => {
     expect(() => new SSHRuntime({ config: {} })).toThrow('host')
@@ -98,7 +110,7 @@ describe('SSHRuntime', () => {
     const runtime = new SdkFakeRuntime({
       config: { host: 'box', hostname: '10.0.0.5', port: 2222, username: 'deploy', timeout: 5 },
     })
-    await runtime.connect()
+    await withAgentSock(undefined, () => runtime.connect())
     expect(made[made.length - 1]?.opts).toEqual({
       host: '10.0.0.5',
       port: 2222,
@@ -107,16 +119,29 @@ describe('SSHRuntime', () => {
     })
   })
 
-  it('connect reads the identity file into privateKey', async () => {
+  it('username defaults to the local user and the agent rides when no key is named', async () => {
+    const runtime = new SdkFakeRuntime({ config: { host: 'box' } })
+    await withAgentSock('/tmp/agent.sock', () => runtime.connect())
+    expect(made[made.length - 1]?.opts).toEqual({
+      host: 'box',
+      port: 22,
+      username: userInfo().username,
+      readyTimeout: 30000,
+      agent: '/tmp/agent.sock',
+    })
+  })
+
+  it('connect reads the identity file into privateKey and keeps the agent out', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'mirage-ssh-key-'))
     const keyPath = join(dir, 'id_ed25519')
     await writeFile(keyPath, 'fake-key')
     try {
       const runtime = new SdkFakeRuntime({ config: { host: 'box', identityFile: keyPath } })
-      await runtime.connect()
+      await withAgentSock('/tmp/agent.sock', () => runtime.connect())
       expect(made[made.length - 1]?.opts).toEqual({
         host: 'box',
         port: 22,
+        username: userInfo().username,
         readyTimeout: 30000,
         privateKey: Buffer.from('fake-key'),
       })

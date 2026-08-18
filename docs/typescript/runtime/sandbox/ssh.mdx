@@ -44,7 +44,11 @@ does not matter to either side.
 
 Nothing checks the alignment for you: a mount at a prefix that is not the
 remote path (or on a different host) fails only when a captured line misses
-a file. For mounts the machine cannot see natively (S3, Slack, ...) the
+a file. To expose a friendlier name, align from the remote side (place or
+symlink the directory at that path on the box) rather than renaming the
+mount: a captured line ships verbatim, and no rewrite could reach the paths
+a program reads from its own code or config. For mounts the machine cannot
+see natively (S3, Slack, ...) the
 [general recipe](/typescript/runtime/sandbox#the-workspace-inside-the-sandbox)
 still applies: serve them on the machine with Mirage + FUSE at the same
 prefixes.
@@ -73,8 +77,10 @@ await ws.execute('python3 train.py', { cwd: '/home/deploy/proj' })
 
 The config carries the ssh resource's fields minus `root`: `host` (required,
 also the address unless `hostname` overrides it), `port`, `username`,
-`identityFile`, `timeout`, and the shared `env`. Auth is keys, never a
-password; `ssh2` is the transport and loads on first use (`pnpm add ssh2`).
+`identityFile`, `timeout`, and the shared `env`. Auth is keys or an agent,
+never a password: with no `identityFile`, `SSH_AUTH_SOCK` authenticates, and
+`username` defaults to the local user. `ssh2` is the transport and loads on
+first use (`pnpm add ssh2`).
 Unknown config fields fail at construction.
 
 ## How lines run
