@@ -90,6 +90,71 @@
         "stdout": "sessions/session-one\n",
         "stderr": ""
       }
+    },
+    {
+      "id": "lf_search_two_operands_cover_both",
+      "seq": 602107,
+      "targets": [
+        "langfuse"
+      ],
+      "command": "rg checkout-flow /lf/traces /lf/sessions | cut -d: -f1 | sort -u",
+      "expect": {
+        "exit": 0,
+        "stdout": "/lf/sessions/session-one/trace-alpha.json\n/lf/traces/trace-alpha.json\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "lf_search_two_operands_grep_names_dirs",
+      "seq": 602108,
+      "targets": [
+        "langfuse"
+      ],
+      "command": "grep checkout-flow /lf/traces /lf/sessions",
+      "expect": {
+        "exit": 2,
+        "stdout": "",
+        "stderr": "grep: /lf/traces: Is a directory\ngrep: /lf/sessions: Is a directory\n"
+      }
+    },
+    {
+      "id": "lf_search_two_operands_grep_r_covers_both",
+      "seq": 602109,
+      "targets": [
+        "langfuse"
+      ],
+      "command": "grep -r checkout-flow /lf/traces /lf/sessions | cut -d: -f1 | sort -u",
+      "expect": {
+        "exit": 0,
+        "stdout": "/lf/sessions/session-one/trace-alpha.json\n/lf/traces/trace-alpha.json\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "lf_search_repeated_operand_searched_twice",
+      "seq": 602110,
+      "targets": [
+        "langfuse"
+      ],
+      "command": "rg checkout-flow /lf/traces /lf/traces | cut -d: -f1",
+      "expect": {
+        "exit": 0,
+        "stdout": "/lf/traces/trace-alpha.json\n/lf/traces/trace-alpha.json\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "lf_search_two_operands_across_families",
+      "seq": 602111,
+      "targets": [
+        "langfuse"
+      ],
+      "command": "rg greeting /lf/prompts /lf/datasets | cut -d: -f1 | sort -u",
+      "expect": {
+        "exit": 0,
+        "stdout": "/lf/prompts/greeting/1.json\n/lf/prompts/greeting/2.json\n",
+        "stderr": ""
+      }
     }
   ]
 }

@@ -14,7 +14,6 @@
 
 import type { PostgresAccessor } from '../../../accessor/postgres.ts'
 import { resolveGlobOf } from '../generic_bind/index.ts'
-import { hasUnresolvedGlob } from '../utils/operands.ts'
 import { POSTGRES_IO } from './io.ts'
 import { readStream } from '../../../core/postgres/read.ts'
 import { readdir as postgresReaddir } from '../../../core/postgres/readdir.ts'
@@ -36,7 +35,7 @@ import { type FileStat, ResourceName, type PathSpec } from '../../../types.ts'
 import { command, type CommandFnResult, type CommandOpts } from '../../config.ts'
 import { specOf } from '../../spec/builtins.ts'
 import { rgGeneric } from '../generic/rg.ts'
-import { patternArg, searchPushdownOk } from '../grep_helper.ts'
+import { literalPushdownOperand, patternArg } from '../grep_helper.ts'
 import { formatRecords } from '../utils/output.ts'
 import { FlagView } from '../../spec/types.ts'
 
@@ -52,21 +51,16 @@ async function rgCommand(
   const limit = accessor.config.defaultSearchLimit
 
   // Native search takes one literal pattern and prints each matching row as a
-  // whole line; a multi -e set (#347), a real regex, or any match/output
-  // shaping flag must fall through to the generic scan below.
-  const first = paths[0]
+  // whole line; a multi -e set (#347), a real regex, a multi-operand line, or
+  // any match/output shaping flag must fall through to the generic scan below.
   const fl = new FlagView(opts.flags, specOf('rg'))
   const ci = fl.asBool('i')
-  if (
-    first !== undefined &&
-    !hasUnresolvedGlob(paths) &&
-    pattern !== null &&
-    searchPushdownOk(opts.flags, pattern)
-  ) {
-    const scope = detectScope(first)
+  const operand = literalPushdownOperand(paths, opts.flags, pattern)
+  if (pattern !== null && operand !== null) {
+    const scope = detectScope(operand)
 
     if (scope.level !== 'root') {
-      await postgresStat(accessor, first, opts.index ?? undefined)
+      await postgresStat(accessor, operand, opts.index ?? undefined)
     }
 
     // Directory scopes cover every file under them, so the rendered

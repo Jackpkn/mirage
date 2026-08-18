@@ -90,6 +90,32 @@
         "stdout": "2\n",
         "stderr": ""
       }
+    },
+    {
+      "id": "pg_grep_two_tables_cover_both",
+      "seq": 610057,
+      "targets": [
+        "postgres"
+      ],
+      "command": "grep ada /pg/public/tables/books /pg/public/tables/authors",
+      "expect": {
+        "exit": 2,
+        "stdout": "",
+        "stderr": "grep: /pg/public/tables/books: Is a directory\ngrep: /pg/public/tables/authors: Is a directory\n"
+      }
+    },
+    {
+      "id": "pg_grep_r_two_tables_cover_both",
+      "seq": 610058,
+      "targets": [
+        "postgres"
+      ],
+      "command": "grep -r ada /pg/public/tables/books /pg/public/tables/authors | cut -d: -f1 | sort -u",
+      "expect": {
+        "exit": 0,
+        "stdout": "/pg/public/tables/authors/rows.jsonl\n/pg/public/tables/books/rows.jsonl\n/pg/public/tables/books/semantic.json\n",
+        "stderr": ""
+      }
     }
   ]
 }

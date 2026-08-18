@@ -36,6 +36,17 @@ def _spec(virtual: str) -> PathSpec:
                     resource_path=virtual.strip("/"))
 
 
+def _glob(virtual: str) -> PathSpec:
+    # A glob whose scope IS searchable, so only the glob half of the gate can
+    # defer it: "/traces/*" routes to `invalid` and would defer regardless,
+    # while "/sessions/*" routes to `session` and reaches the push-down.
+    return PathSpec(virtual=virtual,
+                    directory=virtual.rsplit("/", 1)[0],
+                    resource_path=virtual.strip("/"),
+                    pattern=virtual.rsplit("/", 1)[-1],
+                    resolved=False)
+
+
 def _opts(**flags) -> CommandOpts:
     return CommandOpts(index=RAMIndexCacheStore(), flags={**flags})
 
@@ -81,6 +92,23 @@ async def test_shaping_flag_defers_to_generic(accessor):
 
 @pytest.mark.asyncio
 async def test_unresolved_glob_defers_to_generic(accessor):
+    with patch("mirage.commands.builtin.langfuse.grep.fetch_sessions",
+               new=AsyncMock(return_value=[])) as fetch, patch(
+                   "mirage.commands.builtin.langfuse.grep.resolve_glob",
+                   new=AsyncMock(return_value=[])), patch(
+                       "mirage.commands.builtin.langfuse.grep.generic_grep",
+                       new=AsyncMock(return_value=(b"",
+                                                   IOResult()))) as generic:
+        await grep(accessor, [_glob("/sessions/*")], ["search-me"], _opts())
+    fetch.assert_not_awaited()
+    generic.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_second_operand_defers_to_generic(accessor):
+    # The push-down answers for one container, so a second operand used to be
+    # dropped in silence: this line reported traces and never mentioned
+    # sessions at all.
     with patch("mirage.commands.builtin.langfuse.grep.fetch_traces",
                new=AsyncMock(return_value=SUMMARIES)) as fetch, patch(
                    "mirage.commands.builtin.langfuse.grep.resolve_glob",
@@ -88,6 +116,27 @@ async def test_unresolved_glob_defers_to_generic(accessor):
                        "mirage.commands.builtin.langfuse.grep.generic_grep",
                        new=AsyncMock(return_value=(b"",
                                                    IOResult()))) as generic:
-        await grep(accessor, [_spec("/traces/*")], ["search-me"], _opts())
+        await grep(accessor,
+                   [_spec("/traces"), _spec("/sessions")], ["search-me"],
+                   _opts())
+    fetch.assert_not_awaited()
+    generic.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_repeated_operand_defers_to_generic(accessor):
+    # Two operands in one family are the case a per-operand push-down would
+    # get wrong: both route to "search every trace", so it would print the
+    # whole container twice.
+    with patch("mirage.commands.builtin.langfuse.grep.fetch_traces",
+               new=AsyncMock(return_value=SUMMARIES)) as fetch, patch(
+                   "mirage.commands.builtin.langfuse.grep.resolve_glob",
+                   new=AsyncMock(return_value=[])), patch(
+                       "mirage.commands.builtin.langfuse.grep.generic_grep",
+                       new=AsyncMock(return_value=(b"",
+                                                   IOResult()))) as generic:
+        await grep(accessor,
+                   [_spec("/traces"), _spec("/traces")], ["search-me"],
+                   _opts())
     fetch.assert_not_awaited()
     generic.assert_awaited_once()

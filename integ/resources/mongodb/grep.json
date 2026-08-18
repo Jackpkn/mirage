@@ -103,6 +103,32 @@
         "stdout": "2\n",
         "stderr": ""
       }
+    },
+    {
+      "id": "mdb_grep_two_collections_cover_both",
+      "seq": 620058,
+      "targets": [
+        "mongodb"
+      ],
+      "command": "grep ada /mongodb/mirage_integ/collections/books /mongodb/mirage_integ/collections/authors",
+      "expect": {
+        "exit": 2,
+        "stdout": "",
+        "stderr": "grep: /mongodb/mirage_integ/collections/books: Is a directory\ngrep: /mongodb/mirage_integ/collections/authors: Is a directory\n"
+      }
+    },
+    {
+      "id": "mdb_grep_r_two_collections_cover_both",
+      "seq": 620059,
+      "targets": [
+        "mongodb"
+      ],
+      "command": "grep -r ada /mongodb/mirage_integ/collections/books /mongodb/mirage_integ/collections/authors | cut -d: -f1 | sort -u",
+      "expect": {
+        "exit": 0,
+        "stdout": "/mongodb/mirage_integ/collections/authors/documents.jsonl\n/mongodb/mirage_integ/collections/books/documents.jsonl\n",
+        "stderr": ""
+      }
     }
   ]
 }

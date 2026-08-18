@@ -21,6 +21,7 @@ from mirage.accessor.mongodb import MongoDBAccessor
 from mirage.cache.index import NULL_INDEX
 from mirage.commands.builtin.mongodb.grep import grep
 from mirage.commands.config import CommandOpts
+from mirage.io.types import IOResult
 from mirage.resource.mongodb.config import MongoDBConfig
 from mirage.types import FileStat, FileType, PathSpec
 
@@ -90,6 +91,60 @@ async def test_grep_m1_short_circuits_after_first_match(accessor):
         data = await _drain(source)
     assert b"FOUND" in data
     assert len(consumed) < 100
+
+
+@pytest.mark.asyncio
+async def test_grep_second_operand_skips_pushdown(accessor):
+    # Two collection operands are both searchable scopes, and the $regex
+    # push-down answers for one: this line silently reported only coll1.
+    seen: dict[str, list[str]] = {}
+    ops = [_path("/db1/collections/coll1"), _path("/db1/collections/coll2")]
+
+    async def fake_resolve(_accessor, _paths, index=None):
+        return ops
+
+    async def fake_generic(paths, _texts, _flags, **_kwargs):
+        seen["generic"] = [p.virtual for p in paths]
+        return b"", IOResult()
+
+    with patch(
+            "mirage.commands.builtin.mongodb.grep.search_collection",
+            new=AsyncMock(side_effect=AssertionError("pushdown ran on 2 ops")),
+    ), patch(
+            "mirage.commands.builtin.mongodb.grep._stat",
+            new=AsyncMock(side_effect=AssertionError("stat ran on 2 ops")),
+    ), patch(
+            "mirage.commands.builtin.mongodb.grep.resolve_glob",
+            new=fake_resolve,
+    ), patch(
+            "mirage.commands.builtin.mongodb.grep.generic_grep",
+            new=fake_generic,
+    ):
+        await grep(accessor, ops, ['target'], CommandOpts(index=NULL_INDEX))
+
+    assert seen["generic"] == [
+        "/db1/collections/coll1", "/db1/collections/coll2"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_grep_lone_collection_still_uses_pushdown(accessor):
+    search = AsyncMock(return_value=[])
+    with patch(
+            "mirage.commands.builtin.mongodb.grep.search_collection",
+            new=search,
+    ), patch(
+            "mirage.commands.builtin.mongodb.grep._stat",
+            new=AsyncMock(),
+    ), patch(
+            "mirage.commands.builtin.mongodb.grep.resolve_glob",
+            new=AsyncMock(side_effect=AssertionError("generic path ran")),
+    ):
+        _, io = await grep(accessor, [_path("/db1/collections/coll1")],
+                           ['target'], CommandOpts(index=NULL_INDEX))
+
+    search.assert_awaited_once()
+    assert io.exit_code == 1
 
 
 @pytest.mark.asyncio
