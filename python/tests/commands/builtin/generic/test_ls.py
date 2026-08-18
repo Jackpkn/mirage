@@ -8,7 +8,7 @@ from mirage.commands.builtin.generic.ls import (LS_FAILURE, LS_MINOR_PROBLEM,
                                                 LS_OK, LsWarning,
                                                 exit_status_for, format_simple,
                                                 ls, walk)
-from mirage.ops.types import LinkView
+from mirage.ops.types import LinkView, MountView
 from mirage.types import (LINK_TARGET_KEY, FileStat, FileType, LsSortBy,
                           PathSpec)
 
@@ -684,6 +684,19 @@ async def test_ls_l_no_filetype_enrichment():
     assert "data.parquet" in decoded
 
 
+def _mount_view(*roots: str) -> MountView:
+    """A mount table holding exactly ``roots``.
+
+    Only ``is_root`` is exercised: it is what tells a nested mount's root
+    (whose listing belongs to another backend) from a directory the
+    namespace merely owes children, which -R must still descend.
+    """
+    return MountView(descendants=lambda p:
+                     [r for r in roots if r.startswith(p.rstrip("/") + "/")],
+                     is_root=lambda p: p.rstrip("/") in roots,
+                     root_of=lambda p: "/")
+
+
 def _link_view(link: FileStat) -> LinkView:
     """A namespace holding exactly one link, named flink."""
 
@@ -753,8 +766,8 @@ async def test_structure_only_directory_lists_its_children():
 @pytest.mark.asyncio
 async def test_structure_only_directory_renders_group_under_recursive():
     """Under -R the group still renders from the namespace fact; only
-    descent into the child-mount root is withheld, because that listing
-    is another backend's and the cross-mount fan-out assembles it."""
+    descent into the mount root is withheld, because that listing is
+    another backend's and the cross-mount fan-out assembles it."""
 
     async def readdir(p, index=None):
         raise FileNotFoundError(p.virtual)
@@ -769,7 +782,8 @@ async def test_structure_only_directory_renders_group_under_recursive():
                        readdir=readdir,
                        stat=stat,
                        recursive=True,
-                       child_mounts=child_mounts)
+                       child_mounts=child_mounts,
+                       mounts=_mount_view("/ghost/deep"))
     assert io.exit_code == 0
     assert out.decode() == "/ghost:\ndeep\n"
 
@@ -777,7 +791,7 @@ async def test_structure_only_directory_renders_group_under_recursive():
 @pytest.mark.asyncio
 async def test_structure_only_chain_descends_under_recursive():
     """A structure chain (a link's ancestors) continues below the first
-    level, so -R descends it: only a child-mount root stops the walk."""
+    level, so -R descends it: only a mount root stops the walk."""
 
     async def readdir(p, index=None):
         raise FileNotFoundError(p.virtual)
@@ -796,9 +810,89 @@ async def test_structure_only_chain_descends_under_recursive():
                        readdir=readdir,
                        stat=stat,
                        recursive=True,
-                       child_mounts=child_mounts)
+                       child_mounts=child_mounts,
+                       mounts=_mount_view("/ghost/deep/lnk"))
     assert io.exit_code == 0
     assert out.decode() == "/ghost:\ndeep\n\n/ghost/deep:\nlnk\n"
+
+
+@pytest.mark.asyncio
+async def test_mount_root_is_listed_but_not_descended_under_recursive():
+    """A mount root is an ordinary entry of a backend-served directory.
+
+    GNU (coreutils 9.7, tmpfs at `base/nested`) prints `nested` in
+    `base`'s own listing and then its group. The merge used to be
+    withheld whenever the walk was recursive, on the theory that the
+    cross-mount fan-out contributed the whole nested mount; it
+    contributes the group, not the parent's row, so the row went missing
+    wherever the backend held no key of that name. Descent is what the
+    fan-out owns, and the mount table is what says where to stop.
+    """
+    tree = {
+        "/base": _dir("base"),
+        "/base/top.txt": _file("top.txt", 2),
+    }
+    readdir, stat = _make_fs_backend(tree)
+    out, io = await ls([PathSpec.from_str_path("/base")],
+                       readdir=readdir,
+                       stat=stat,
+                       recursive=True,
+                       child_mounts=lambda d: ["nested"]
+                       if d == "/base" else [],
+                       mounts=_mount_view("/base/nested"))
+    assert io.exit_code == 0
+    assert out.decode() == "/base:\nnested\ntop.txt\n"
+
+
+@pytest.mark.asyncio
+async def test_a_child_mount_serving_one_file_is_not_a_directory_row():
+    """A mount root is not always a directory.
+
+    Every workspace mounts `/.bash_history` as a whole mount serving one
+    file, and no backend can stat it: the parent's cannot see into the
+    child mount and the child's own calls its root `/`. Synthesizing the
+    row as a directory suffixed it with `/` under -F, rendered it
+    `drwxr-xr-x` under -l, and offered it to -R as something to descend.
+    GNU (coreutils 9.7, `mount --bind` of one file onto another) lists it
+    as an ordinary file row of its parent.
+    """
+    tree = {
+        "/base": _dir("base"),
+        "/base/top.txt": _file("top.txt", 2),
+    }
+    readdir, stat = _make_fs_backend(tree)
+
+    async def stat_path(virtual: str) -> FileStat | None:
+        if virtual != "/base/hist":
+            return None
+        # The child mount answers its own root with its name for it.
+        return _file("/", 7)
+
+    out, io = await ls([PathSpec.from_str_path("/base")],
+                       readdir=readdir,
+                       stat=stat,
+                       recursive=True,
+                       classify=True,
+                       child_mounts=lambda d: ["hist"] if d == "/base" else [],
+                       mounts=_mount_view("/base/hist"),
+                       stat_path=stat_path)
+    assert io.exit_code == 0
+    assert out.decode() == "/base:\nhist\ntop.txt\n"
+
+
+@pytest.mark.asyncio
+async def test_a_child_mount_row_falls_back_to_directory_with_no_dispatcher():
+    """Absence of the door can only mean "nobody can answer", so the row
+    keeps the shape every caller outside a workspace already saw."""
+    tree = {"/base": _dir("base")}
+    readdir, stat = _make_fs_backend(tree)
+    out, io = await ls([PathSpec.from_str_path("/base")],
+                       readdir=readdir,
+                       stat=stat,
+                       classify=True,
+                       child_mounts=lambda d: ["hist"] if d == "/base" else [])
+    assert io.exit_code == 0
+    assert out.decode() == "hist/\n"
 
 
 @pytest.mark.asyncio

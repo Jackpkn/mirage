@@ -157,6 +157,27 @@ describe('runLs — cross-mount ls', () => {
     expect(rec.out).toBe('/a:\none\nz.txt\n\n/a/one:\nx.txt\n\n/b:\ntwo\n\n/b/two:\ny.txt\n')
   })
 
+  // The mount table names the boundaries a walk's readdir cannot cross,
+  // and a relayed one crosses them: readdir and stat route per path.
+  // Handed the whole namespace — which is what the workspace offers —
+  // the relay must still descend `/a/one` and render its group, because
+  // nothing runs behind a relay to contribute it the way the fan-out
+  // does for a single-mount run.
+  it('is not stopped at a mount root by a full namespace', async () => {
+    const nested = new Set(['/a/one'])
+    const ns: NamespaceView = {
+      mounts: {
+        descendants: () => [],
+        isRoot: (p) => nested.has(rstripSlash(p)),
+        rootOf: () => '/',
+      },
+      childMounts: (parent) => (parent === '/a' ? ['one'] : []),
+    }
+    const { out, io } = await run(['/a', '/b'], { R: true }, ns, nested)
+    expect(io.exitCode).toBe(0)
+    expect(out).toBe('/a:\none\nz.txt\n\n/a/one:\nx.txt\n\n/b:\ntwo\n\n/b/two:\ny.txt\n')
+  })
+
   it('lists each operand once', async () => {
     // Relaying replaces a native run per operand; it must not turn into a
     // listing per operand per mount.

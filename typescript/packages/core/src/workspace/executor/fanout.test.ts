@@ -447,3 +447,106 @@ describe('fanOutTraversal operands spanning mounts', () => {
     )
   })
 })
+
+// Direct port of the ls cases in tests/workspace/executor/test_fanout.py:
+// a mount root is an ordinary directory entry of its parent, listed by
+// the walk but never descended by it.
+describe('ls -R across a mount boundary', () => {
+  async function runLine(mounts: Record<string, RAMResource>, cmd: string): Promise<string> {
+    const parser = await getTestParser()
+    const registry = new OpsRegistry()
+    for (const resource of Object.values(mounts)) registry.registerResource(resource)
+    const ws = new Workspace(mounts, { mode: MountMode.WRITE, ops: registry, shellParser: parser })
+    try {
+      return stdoutStr(await ws.execute(cmd))
+    } finally {
+      await ws.close()
+    }
+  }
+
+  function ram(files: Record<string, string>, dirs: string[] = []): RAMResource {
+    const resource = new RAMResource()
+    for (const dir of dirs) resource.store.dirs.add(dir)
+    for (const [key, text] of Object.entries(files)) {
+      resource.store.files.set(key, new TextEncoder().encode(text))
+    }
+    return resource
+  }
+
+  // Pinned on coreutils 9.7 over a tmpfs mounted at `base/nested`:
+  // `ls -R base` prints `nested` in `base`'s own listing, then its group.
+  // `-R` used to withhold the namespace merge and leave the whole nested
+  // mount to the fan-out, which contributes the group but not the row, so
+  // the row went missing wherever the parent's backend held no key of that
+  // name. The mirror image of the shadowed fixture above, where the parent
+  // owns keys under `inner/` and so names the mountpoint from its own
+  // readdir whatever the namespace says.
+  it('lists a mountpoint the parent backend cannot name', async () => {
+    const mounts = {
+      '/base': ram({ '/top.txt': 'T\n' }),
+      '/base/nested': ram({ '/real.txt': 'hit\n' }),
+    }
+    expect(await runLine(mounts, 'ls -R /base')).toBe(
+      '/base:\nnested\ntop.txt\n\n/base/nested:\nreal.txt\n',
+    )
+  })
+
+  // The merge is per directory listed, not per operand. Pinned on
+  // coreutils 9.7 over a tmpfs mounted at `base/sub/deep`: `deep` is a row
+  // of `base/sub`, which is a directory the parent's own backend serves.
+  it('lists a mountpoint below the operand', async () => {
+    const mounts = {
+      '/base': ram({ '/sub/p.txt': 'P\n' }, ['/sub']),
+      '/base/sub/deep': ram({ '/real.txt': 'hit\n' }),
+    }
+    expect(await runLine(mounts, 'ls -R /base')).toBe(
+      '/base:\nsub\n\n/base/sub:\ndeep\np.txt\n\n/base/sub/deep:\nreal.txt\n',
+    )
+  })
+
+  // `/ghost` exists only because a mount lives below it, and `/` is served
+  // by a backend, so the withheld merge dropped the row and the two groups
+  // the walk renders from it. Only a mount root is left to the fan-out;
+  // the namespace-only directories above one are this walk's, because no
+  // other run renders them.
+  it('lists a namespace-only ancestor under a served root', async () => {
+    const mounts = {
+      '/': ram({ '/top.txt': 'hello\n' }),
+      '/ghost/very/deep': ram({ '/leaf.txt': 'deep\n' }),
+    }
+    expect(await runLine(mounts, 'ls -R /')).toMatch(
+      /^\/:\ndev\nghost\ntop\.txt\n\n\/ghost:\nvery\n\n\/ghost\/very:\ndeep\n/,
+    )
+  })
+
+  // `/.bash_history` is a whole mount serving a single file. GNU
+  // (coreutils 9.7, `mount --bind` of one file onto another) lists a file
+  // that happens to be a mountpoint as an ordinary row of its parent — no
+  // '/' under -F, no block of its own. The row used to be synthesized as a
+  // directory, and the fan-out ran a sub-run for the mount on top of it,
+  // so the same name arrived twice in two wrong shapes.
+  it('renders a file mount as one row and no group', async () => {
+    const mounts = { '/': ram({ '/top.txt': 'T\n' }) }
+    expect(await runLine(mounts, 'ls -aRF /')).toBe(
+      '/:\n.bash_history\ndev/\ntop.txt\n\n/dev:\nnull\nzero\n',
+    )
+  })
+
+  // A mount root is listed but not descended, so the shadowed group is
+  // never produced rather than produced and filtered. `dropShadowedLsGroups`
+  // only recognizes an absolute header, so a relative operand printed
+  // `base/inner:` twice: once with the parent's shadowed `leftover.txt`,
+  // once with the mount's own listing. GNU 9.7 prints the mounted
+  // directory once.
+  it('never descends the mount root under a relative operand', async () => {
+    const mounts = {
+      '/base': ram({ '/top.txt': 'TTTTTTTTTT', '/inner/leftover.txt': 'S'.repeat(1000) }, [
+        '/inner',
+      ]),
+      '/base/inner': ram({ '/real.txt': 'RRRRRRR' }),
+    }
+    expect(await runLine(mounts, 'ls -R base')).toBe(
+      'base:\ninner\ntop.txt\n\nbase/inner:\nreal.txt\n',
+    )
+  })
+})

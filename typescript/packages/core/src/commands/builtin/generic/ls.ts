@@ -18,7 +18,7 @@ import { mountKey, mountPrefixOf } from '../../../utils/key_prefix.ts'
 import { IOResult, type ByteSource } from '../../../io/types.ts'
 import { FileStat, FileType, PathSpec } from '../../../types.ts'
 import type { CommandFnResult, CommandOpts } from '../../config.ts'
-import type { ChildMounts, LinkView } from '../../../ops/types.ts'
+import type { ChildMounts, LinkView, MountView, StatPath } from '../../../ops/types.ts'
 import { formatLsLong } from '../utils/formatting.ts'
 import { gnuStrerror, isWalkError } from '../../../utils/errors.ts'
 import { rstripSlash } from '../../../utils/slash.ts'
@@ -56,12 +56,21 @@ interface WalkOpts {
   // is what makes -R descend it.
   deref: boolean
   // Session-filtered child-mount names: the other half of namespace
-  // structure beside links, merged as directory rows. Under -R a
-  // backend-served listing withholds the merge and a child-mount root
-  // is never descended (the cross-mount fan-out assembles those
-  // groups); a directory only the namespace serves still renders its
-  // own group from it.
+  // structure beside links, merged as directory rows in every listing.
+  // GNU lists a mountpoint as an ordinary entry of its parent, -R or
+  // not, so the merge is unconditional: withholding it under -R dropped
+  // the row whenever the parent's backend held no key of that name.
   childMounts: ChildMounts | null
+  // The mount boundaries this walk's readdir cannot cross. Under -R such
+  // a root is listed but never descended, because that listing is another
+  // backend's and the cross-mount fan-out assembles the group; a
+  // namespace-only directory above one is descended, since no other run
+  // renders it. Null for a walk that can cross -- the relay's readdir
+  // routes per path, so it descends a nested mount itself.
+  mounts: MountView | null
+  // Dispatcher-backed stat, the only way to learn a child mount's real
+  // type. See `mountRow`.
+  statPath: StatPath | null
 }
 
 // One ls operand once its kind is known. `row` is set when the operand is not
@@ -170,6 +179,34 @@ function asOperand(s: FileStat, path: PathSpec): FileStat {
   return s.with({ name: path.rawPath })
 }
 
+// The row for a child mount, carrying its real type.
+//
+// No backend can supply it: the parent's cannot see into the child mount,
+// and the child's own answers its root with that mount's name for itself
+// ('/'), which is why the row is renamed here the way the relay renames
+// one. So the fact comes through the dispatcher, which routes to whichever
+// mount owns the path.
+//
+// A mount root is not always a directory — every workspace mounts
+// `/.bash_history` as a whole mount serving one file — and calling one a
+// directory suffixes it with '/' under -F, renders it `drwxr-xr-x` under
+// -l, and offers it to -R as something to descend. GNU lists a file that
+// happens to be a mountpoint as an ordinary file row (pinned on coreutils
+// 9.7 over a `mount --bind` of one file onto another). Directory is the
+// fallback for a caller with no dispatcher, which is the only thing that
+// absence can mean.
+async function mountRow(
+  directory: PathSpec,
+  name: string,
+  statPath: StatPath | null,
+): Promise<FileStat> {
+  if (statPath !== null) {
+    const row = await statPath(`${rstripSlash(directory.virtual)}/${name}`)
+    if (row !== null) return row.with({ name })
+  }
+  return new FileStat({ name, type: FileType.DIRECTORY })
+}
+
 // An entry that cannot be stat'd is skipped with its own diagnostic rather
 // than failing the whole directory: GNU keeps listing the siblings and exits
 // 1. Mirrors the per-entry tolerance of Python ls `_stat_entries`.
@@ -183,7 +220,7 @@ async function listDir(
   deref: boolean,
   stat2: Stat,
   childMounts: ChildMounts | null,
-  recursive: boolean,
+  statPath: StatPath | null,
 ): Promise<{ stats: FileStat[]; structureOnly: boolean }> {
   let entries: string[]
   let structureOnly = false
@@ -194,10 +231,7 @@ async function listDir(
     // No backend serves it, but the namespace owes it children (a
     // nested mount, a link's ancestors), so the door lists it as a
     // directory and ls must agree: the merge below renders those rows
-    // from an empty backend listing. Under -R this group still renders;
-    // only descent into a child-mount root is withheld, because that
-    // listing is another backend's and the cross-mount fan-out
-    // assembles it.
+    // from an empty backend listing.
     entries = []
     structureOnly = true
   }
@@ -226,12 +260,10 @@ async function listDir(
     const resolved = deref && links !== null ? await derefEntry(dir, link, links, stat2) : null
     stats.push(resolved ?? link)
   }
-  if (!recursive || structureOnly) {
-    for (const name of childMounts?.(dir.virtual) ?? []) {
-      if (seen.has(name)) continue
-      seen.add(name)
-      stats.push(new FileStat({ name, type: FileType.DIRECTORY }))
-    }
+  for (const name of childMounts?.(dir.virtual) ?? []) {
+    if (seen.has(name)) continue
+    seen.add(name)
+    stats.push(await mountRow(dir, name, statPath))
   }
   return {
     stats: all ? stats : stats.filter((s) => !s.name.startsWith('.')),
@@ -303,7 +335,7 @@ async function probeOperand(
       opts.deref,
       stat,
       opts.childMounts,
-      opts.recursive,
+      opts.statPath,
     )
     stats = listed.stats
     structureOnly = listed.structureOnly
@@ -319,7 +351,7 @@ async function probeOperand(
     })
     return { path, row: null, groups: [] }
   }
-  if (stats.length === 0) {
+  if (stats.length === 0 && !structureOnly) {
     const row = await fileEntry(stat, path)
     if (row !== null) return { path, row, groups: [] }
     // Backends without real directories answer readdir on a link with
@@ -334,8 +366,9 @@ async function probeOperand(
     for (const s of entries) {
       if (s.type !== FileType.DIRECTORY) continue
       const childPath = `${rstripSlash(path.virtual)}/${s.name}`
-      if (structureOnly && (opts.childMounts?.(childPath) ?? []).length === 0) {
-        // A child-mount root: its listing is another backend's, so the
+      if (opts.mounts?.isRoot(childPath) ?? false) {
+        // A nested mount's root. Its row belongs here, but its listing
+        // is another backend's, which this walk cannot read: the
         // cross-mount fan-out renders that group.
         continue
       }
@@ -470,6 +503,8 @@ export async function lsGeneric(
     links,
     deref,
     childMounts: opts.ns?.childMounts ?? null,
+    mounts: opts.ns?.mounts ?? null,
+    statPath: opts.statPath ?? null,
   }
   const probed: Operand[] = []
   for (const p of targets) {

@@ -90,6 +90,33 @@ function allowedDescendants(registry: MountRegistry, path: string): MountEntry[]
     .filter((m) => mountAllowed(m.prefix) && pathAllowed('/' + stripSlash(m.prefix)))
 }
 
+// The descendants `ls -R` should render a block for.
+//
+// A mount root is not always a directory (`/.bash_history` is a whole
+// mount serving one file), and GNU lists a file that happens to be a
+// mountpoint as an ordinary row of its parent with no block of its own —
+// pinned on coreutils 9.7 over a `mount --bind` of one file onto another.
+// The parent's listing already carries that row, because ls stats every
+// child mount through this same dispatcher, so a sub-run would print the
+// name a second time.
+//
+// Only a *confirmed* non-directory is dropped: a root the dispatcher
+// cannot stat keeps its block rather than vanishing on a failed probe, and
+// without a dispatcher at all the question cannot be asked and every
+// descendant stands.
+async function lsBlockMounts(
+  descendants: readonly MountEntry[],
+  statPath: StatPath | null,
+): Promise<MountEntry[]> {
+  if (statPath === null) return [...descendants]
+  const kept: MountEntry[] = []
+  for (const m of descendants) {
+    const stat = await statPath(rstripSlash(m.prefix) || '/')
+    if (stat === null || stat.type === FileType.DIRECTORY) kept.push(m)
+  }
+  return kept
+}
+
 export function shouldFanOut(
   cmdName: string,
   paths: readonly PathSpec[],
@@ -324,7 +351,8 @@ export async function fanOutTraversal(
   statPath: StatPath | null = null,
 ): Promise<Result> {
   const targetPath = paths[0]?.virtual ?? cwd
-  const descendants = allowedDescendants(registry, targetPath)
+  let descendants = allowedDescendants(registry, targetPath)
+  if (cmdName === 'ls') descendants = await lsBlockMounts(descendants, statPath)
   // The shadow filter keeps the raw list on purpose: a mount the
   // session cannot see still shadows the primary backend's keys under
   // its prefix, the walk just never descends into it.
