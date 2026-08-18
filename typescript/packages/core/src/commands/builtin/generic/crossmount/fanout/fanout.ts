@@ -121,10 +121,7 @@ export async function runFanout(
     body = duTotal(results, duHuman)
   } else if (cmdName === Cmd.TEE) {
     body = stdinBytes ?? new Uint8Array()
-  } else if (
-    ((cmdName === Cmd.HEAD || cmdName === Cmd.TAIL) && flags[verboseKey] === true) ||
-    (cmdName === Cmd.LS && flagKwargs.R === true)
-  ) {
+  } else if ((cmdName === Cmd.HEAD || cmdName === Cmd.TAIL) && flags[verboseKey] === true) {
     // Blank line between per-operand blocks, like one native run separates
     // its own file blocks.
     body = joinRunsWithBlankLine(results)

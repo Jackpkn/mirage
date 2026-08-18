@@ -14,6 +14,7 @@
 
 import { IOResult, type ByteSource } from '../../../../io/types.ts'
 import type { PathSpec } from '../../../../types.ts'
+import type { NamespaceView } from '../../../../ops/types.ts'
 import { formatFsError, isFsError } from '../../../../utils/errors.ts'
 import { strategyFor } from './detect.ts'
 import { runFanout } from './fanout/index.ts'
@@ -40,6 +41,8 @@ export async function handleCrossMount(
   stdin: ByteSource | null = null,
   // Maps an operand to its storage identity (RELAY's transfer commands).
   storageKey?: (path: PathSpec) => string,
+  // Name-plane facts for the RELAY generics that render them (ls).
+  ns?: NamespaceView,
 ): Promise<CrossResult> {
   try {
     // isCrossMount gated on CROSS_MOUNT_COMMANDS membership, so the name is
@@ -47,7 +50,7 @@ export async function handleCrossMount(
     const cmd = cmdName as Cmd
     const strategy = strategyFor(cmd, flagKwargs)
     if (strategy === Strategy.RELAY) {
-      return await runRelay(cmd, scopes, textArgs, flagKwargs, dispatch, storageKey)
+      return await runRelay(cmd, scopes, textArgs, flagKwargs, dispatch, storageKey, ns)
     }
     if (strategy === Strategy.STREAM) {
       return await runStream(cmd, scopes, textArgs, flagKwargs, runSingle)

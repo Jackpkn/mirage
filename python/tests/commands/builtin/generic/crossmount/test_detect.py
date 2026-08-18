@@ -59,13 +59,19 @@ def test_strategy_for_stream_commands():
 
 
 def test_strategy_for_fanout_commands():
-    for name in ("grep", "wc", "sha256sum", "ls", "rm", "tee"):
+    for name in ("grep", "wc", "sha256sum", "rm", "tee"):
         assert strategy_for(name, {}) is Strategy.FANOUT
 
 
 def test_strategy_for_relay_commands():
     for name in ("cp", "mv", "diff", "cmp"):
         assert strategy_for(name, {}) is Strategy.RELAY
+
+
+def test_ls_relays_because_its_layout_spans_the_whole_line():
+    # A per-operand run sees one operand, so it can neither head its
+    # block nor sort against the operands living on other mounts.
+    assert strategy_for("ls", {}) is Strategy.RELAY
 
 
 def test_sed_default_streams_but_in_place_fans_out():
