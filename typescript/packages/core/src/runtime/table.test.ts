@@ -17,7 +17,6 @@ import { Runtime } from './base.ts'
 import {
   bindCommands,
   buildRuntime,
-  candidates,
   DEFAULT_ENTRIES,
   DEFAULT_PYTHON,
   runtimeBindingsFor,
@@ -37,12 +36,6 @@ class FakeRuntime extends Runtime {
 }
 
 describe('runtime table', () => {
-  it('candidates are ordered, derived from captures', () => {
-    expect(candidates('python3')).toEqual([PyodideRuntime, MontyRuntime])
-    expect(candidates('node')).toEqual([QuickJsRuntime])
-    expect(candidates('grep')).toEqual([])
-  })
-
   it('captures default is declared once per tier', () => {
     // The head words are a language fact like `language` itself: the
     // tier declares them, engines inherit, an instance still overrides.

@@ -113,11 +113,6 @@ const PYTHON_ONLY_HINTS: Record<string, string> = {
     'JavaScript)',
 }
 
-/** The runtime classes that capture a command, preference order. */
-export function candidates(command: string): (typeof RUNTIMES)[number][] {
-  return RUNTIMES.filter((cls) => cls.commands.includes(command))
-}
-
 // Every runtime is constructed the same way; config keys are checked
 // inside each class (its config key list), so the entry level only
 // knows the uniform options. Python gets this check for free

@@ -19,13 +19,89 @@ import type { PathSpec } from '../../../types.ts'
 import type { CommandOpts } from '../../config.ts'
 import { formatFsError, isFsError } from '../../../utils/errors.ts'
 import { formatRecords } from '../utils/output.ts'
+import { sizeSuffixes } from '../utils/size_suffix.ts'
 import { extraOperandError } from '../../spec/usage.ts'
 import { CommandName } from '../../spec/types.ts'
+import { UsageError } from '../../errors.ts'
 
 const ENC = new TextEncoder()
 
-function octal(n: number): string {
-  return n.toString(8)
+const UNITS = sizeSuffixes('bkKMGTPEZY')
+const TRY_HELP = "\nTry 'cmp --help' for more information."
+const COUNT = /^([0-9]+)([A-Za-z]*)$/
+
+function octal(n: number, width = 0): string {
+  return n.toString(8).padStart(width)
+}
+
+/**
+ * One GNU `cmp` byte count: digits and an optional size suffix.
+ *
+ * GNU reads `-n`/`-i` operands through xstrtoumax, so `1K` and `1kB`
+ * are accepted and anything else is a usage error naming the long
+ * option, not a crash.
+ */
+export function parseCount(raw: string, option: string): number {
+  const match = COUNT.exec(raw)
+  const suffix = match?.[2] ?? ''
+  const unit = suffix === '' ? 1 : UNITS[suffix]
+  if (match === null || unit === undefined) {
+    throw new UsageError(`cmp: invalid ${option} value '${raw}'${TRY_HELP}`)
+  }
+  return Number(match[1]) * unit
+}
+
+/**
+ * The `-i` operand as one skip per file.
+ *
+ * GNU takes `SKIP` for both files or `SKIP1:SKIP2` for one each, so
+ * `-i 0:3` compares all of the first file against the fourth byte
+ * onward of the second.
+ */
+export function parseSkip(raw: string): [number, number] {
+  const cut = raw.indexOf(':')
+  if (cut === -1) {
+    const both = parseCount(raw, '--ignore-initial')
+    return [both, both]
+  }
+  return [
+    parseCount(raw.slice(0, cut), '--ignore-initial'),
+    parseCount(raw.slice(cut + 1), '--ignore-initial'),
+  ]
+}
+
+/**
+ * One byte rendered the way GNU `cmp -b` renders it.
+ *
+ * The cat -v alphabet: a control byte becomes `^X` (so tab is `^I`,
+ * unlike `cat -v` itself), DEL becomes `^?`, and a high byte becomes
+ * `M-` followed by the same rules on its low seven bits.
+ */
+export function visible(byte: number): string {
+  if (byte >= 128) return `M-${visible(byte - 128)}`
+  if (byte === 127) return '^?'
+  if (byte < 32) return `^${String.fromCharCode(byte + 64)}`
+  return String.fromCharCode(byte)
+}
+
+interface CmpFlags {
+  readonly silent: boolean
+  readonly verbose: boolean
+  readonly limit: number | null
+  readonly printBytes: boolean
+  readonly skip: readonly [number, number]
+}
+
+function parseFlags(fl: FlagView): CmpFlags {
+  const nRaw = fl.asStr('n')
+  const iRaw = fl.asStr('i')
+  return {
+    silent: fl.asBool('s'),
+    verbose: fl.asBool('args_l'),
+    limit: nRaw === undefined ? null : parseCount(nRaw, '--bytes'),
+    printBytes: fl.asBool('b'),
+    skip: iRaw === undefined ? [0, 0] : parseSkip(iRaw),
+  }
 }
 
 function arraysEqual(a: Uint8Array, b: Uint8Array): boolean {
@@ -34,12 +110,37 @@ function arraysEqual(a: Uint8Array, b: Uint8Array): boolean {
   return true
 }
 
+/**
+ * GNU's `EOF on FILE` diagnostic for a common-prefix difference.
+ *
+ * It is a diagnostic, not output: GNU writes it to stderr and still
+ * exits 1. `-l` reports the byte only, every other mode adds the line
+ * the count lands in.
+ */
+function eofError(
+  paths: PathSpec[],
+  data1: Uint8Array,
+  data2: Uint8Array,
+  verbose: boolean,
+): Uint8Array {
+  const firstShorter = data1.byteLength < data2.byteLength
+  const shorter = firstShorter ? paths[0] : paths[1]
+  const held = firstShorter ? data1 : data2
+  let msg = `cmp: EOF on ${shorter?.virtual ?? ''} after byte ${String(held.byteLength)}`
+  if (!verbose) {
+    let lines = 1
+    for (const byte of held) if (byte === 0x0a) lines += 1
+    msg += `, in line ${String(lines)}`
+  }
+  return ENC.encode(`${msg}\n`)
+}
+
 export async function cmpGeneric(
   paths: PathSpec[],
   opts: CommandOpts,
   stream: (p: PathSpec) => AsyncIterable<Uint8Array>,
 ): Promise<[ByteSource | null, IOResult]> {
-  const fl = new FlagView(opts.flags, specOf('cmp'))
+  const parsed = parseFlags(new FlagView(opts.flags, specOf('cmp')))
   if (paths.length > 2) throw extraOperandError(CommandName.CMP, paths[2]?.rawPath ?? '')
   if (paths.length < 2) {
     return [null, new IOResult({ exitCode: 2, stderr: ENC.encode('cmp: requires two paths\n') })]
@@ -58,43 +159,50 @@ export async function cmpGeneric(
     // unreadable operand) is exit 2.
     return [null, new IOResult({ exitCode: 2, stderr: formatFsError('cmp', err, paths) })]
   }
-  const skipRaw = fl.asInt('i')
-  if (skipRaw !== undefined) {
-    const skip = skipRaw
-    data1 = data1.slice(skip)
-    data2 = data2.slice(skip)
-  }
-  const limitRaw = fl.asInt('n')
-  if (limitRaw !== undefined) {
-    const limit = limitRaw
-    data1 = data1.slice(0, limit)
-    data2 = data2.slice(0, limit)
+  data1 = data1.slice(parsed.skip[0])
+  data2 = data2.slice(parsed.skip[1])
+  if (parsed.limit !== null) {
+    data1 = data1.slice(0, parsed.limit)
+    data2 = data2.slice(0, parsed.limit)
   }
   if (arraysEqual(data1, data2)) return [null, new IOResult()]
-  if (fl.asBool('s')) return [null, new IOResult({ exitCode: 1 })]
-  if (fl.asBool('args_l')) {
+  if (parsed.silent) return [null, new IOResult({ exitCode: 1 })]
+  const common = Math.min(data1.byteLength, data2.byteLength)
+  if (parsed.verbose) {
     const outLines: string[] = []
-    const limit = Math.min(data1.byteLength, data2.byteLength)
-    for (let idx = 0; idx < limit; idx++) {
-      if (data1[idx] !== data2[idx]) {
-        outLines.push(`${String(idx + 1)} ${octal(data1[idx] ?? 0)} ${octal(data2[idx] ?? 0)}`)
-      }
+    for (let idx = 0; idx < common; idx++) {
+      const a = data1[idx] ?? 0
+      const b = data2[idx] ?? 0
+      if (a === b) continue
+      let row = `${String(idx + 1)} ${octal(a, 3)}`
+      if (parsed.printBytes) row += ` ${visible(a).padEnd(4)}`
+      row += ` ${octal(b, 3)}`
+      if (parsed.printBytes) row += ` ${visible(b)}`
+      outLines.push(row)
     }
-    const out: ByteSource = formatRecords(outLines)
-    return [out, new IOResult({ exitCode: 1 })]
+    const io =
+      data1.byteLength === data2.byteLength
+        ? new IOResult({ exitCode: 1 })
+        : new IOResult({ exitCode: 1, stderr: eofError(paths, data1, data2, true) })
+    return [formatRecords(outLines), io]
   }
-  const limit = Math.min(data1.byteLength, data2.byteLength)
-  for (let idx = 0; idx < limit; idx++) {
-    if (data1[idx] !== data2[idx]) {
-      let line = 1
-      for (let k = 0; k < idx; k++) if (data1[k] === 0x0a) line += 1
-      let msg = `${p0.virtual} ${p1.virtual} differ: char ${String(idx + 1)}, line ${String(line)}`
-      if (fl.asBool('b')) {
-        msg += ` is ${octal(data1[idx] ?? 0)} ${String.fromCharCode(data1[idx] ?? 0)} ${octal(data2[idx] ?? 0)} ${String.fromCharCode(data2[idx] ?? 0)}`
-      }
-      return [formatRecords([msg]), new IOResult({ exitCode: 1 })]
+  for (let idx = 0; idx < common; idx++) {
+    const a = data1[idx] ?? 0
+    const b = data2[idx] ?? 0
+    if (a === b) continue
+    let line = 1
+    for (let k = 0; k < idx; k++) if (data1[k] === 0x0a) line += 1
+    // GNU counts in `byte` under -b and in `char` otherwise, on the
+    // same offset -- the word tracks the flag, not a unit.
+    const unit = parsed.printBytes ? 'byte' : 'char'
+    let msg = `${p0.virtual} ${p1.virtual} differ: ${unit} ${String(idx + 1)}, line ${String(line)}`
+    if (parsed.printBytes) {
+      msg += ` is ${octal(a, 3)} ${visible(a)} ${octal(b, 3)} ${visible(b)}`
     }
+    return [formatRecords([msg]), new IOResult({ exitCode: 1 })]
   }
-  const shorter = data1.byteLength < data2.byteLength ? p0 : p1
-  return [formatRecords([`cmp: EOF on ${shorter.virtual}`]), new IOResult({ exitCode: 1 })]
+  return [
+    null,
+    new IOResult({ exitCode: 1, stderr: eofError(paths, data1, data2, parsed.verbose) }),
+  ]
 }

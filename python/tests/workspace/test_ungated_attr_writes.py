@@ -38,7 +38,7 @@ ALLOWED = {
     ("mirage/workspace/executor/builtins/vars.py", "handle_readonly"):
     "the `=` branch only; `await view.set(key, val)` runs first and "
     "the bare form uses `view.mark`",
-    ("mirage/workspace/node/execute_node.py", "_stamp_export"):
+    ("mirage/workspace/node/declaration.py", "_stamp_export"):
     "the `covered` branch only, which is the names that carried a "
     "value or a staged array literal; a bare name has no gated write "
     "to ride on and goes through `view.mark`",

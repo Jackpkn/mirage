@@ -1,0 +1,142 @@
+{
+  "cases": [
+    {
+      "id": "cmp_b_names_the_byte_and_its_character",
+      "seq": 601136,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "gridfs",
+        "s3-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "mkdir -p /data/qcmpb && printf 'abc' > /data/qcmpb/b1 && printf 'aXc' > /data/qcmpb/b2 && printf 'a\\001c' > /data/qcmpb/c1 && printf 'a\\177c' > /data/qcmpb/c2 && cmp -b /data/qcmpb/b1 /data/qcmpb/b2; echo rc=$?",
+      "expect": {
+        "exit": 0,
+        "stdout": "/data/qcmpb/b1 /data/qcmpb/b2 differ: byte 2, line 1 is 142 b 130 X\nrc=1\n",
+        "stderr": ""
+      },
+      "flags": [
+        "b"
+      ]
+    },
+    {
+      "id": "cmp_b_renders_control_bytes_cat_v_style",
+      "seq": 601137,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "gridfs",
+        "s3-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "cmp -b /data/qcmpb/c1 /data/qcmpb/c2; echo rc=$?",
+      "expect": {
+        "exit": 0,
+        "stdout": "/data/qcmpb/c1 /data/qcmpb/c2 differ: byte 2, line 1 is   1 ^A 177 ^?\nrc=1\n",
+        "stderr": ""
+      },
+      "flags": [
+        "b"
+      ]
+    },
+    {
+      "id": "cmp_bl_adds_a_character_column_to_each_octal",
+      "seq": 601138,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "gridfs",
+        "s3-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "cmp -bl /data/qcmpb/b1 /data/qcmpb/b2; echo rc=$?",
+      "expect": {
+        "exit": 0,
+        "stdout": "2 142 b    130 X\nrc=1\n",
+        "stderr": ""
+      },
+      "flags": [
+        "b",
+        "l"
+      ]
+    },
+    {
+      "id": "cmp_bl_pads_the_octal_of_a_control_byte",
+      "seq": 601139,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "gridfs",
+        "s3-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "cmp -bl /data/qcmpb/c1 /data/qcmpb/c2; echo rc=$?",
+      "expect": {
+        "exit": 0,
+        "stdout": "2   1 ^A   177 ^?\nrc=1\n",
+        "stderr": ""
+      },
+      "flags": [
+        "b",
+        "l"
+      ]
+    }
+  ]
+}

@@ -247,11 +247,16 @@ describe('handleCrossMount — cmp', () => {
   })
 
   it('EOF on shorter file → exit 1', async () => {
+    // GNU writes the EOF notice to stderr, not stdout, and names both
+    // the byte it stopped at and the line that byte sits in.
     const d = dispatchWithContents(new TextEncoder().encode('ab'), new TextEncoder().encode('abc'))
     const paths = [PathSpec.fromStrPath('/ram/a'), PathSpec.fromStrPath('/disk/b')]
     const [out, io] = await handleCrossMount('cmp', paths, [], {}, d, runSingleNoop, null, 'cmp')
     expect(io.exitCode).toBe(1)
-    expect(decode(out as Uint8Array)).toMatch(/EOF on/)
+    expect(out).toBeNull()
+    expect(decode(await materialize(io.stderr))).toBe(
+      'cmp: EOF on /ram/a after byte 2, in line 1\n',
+    )
   })
 
   it('missing operand → GNU strerror line', async () => {

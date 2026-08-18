@@ -1,0 +1,52 @@
+{
+  "cases": [
+    {
+      "id": "df_kilo",
+      "seq": 612013,
+      "targets": [
+        "ram"
+      ],
+      "command": "df -k /data",
+      "expect": {
+        "exit": 0,
+        "stdout": "Filesystem     1K-blocks Used Available Use% Mounted on\nram                    -    -         -    - /data\n",
+        "stderr": ""
+      },
+      "flags": [
+        "k"
+      ]
+    },
+    {
+      "id": "df_all",
+      "seq": 612014,
+      "targets": [
+        "ram"
+      ],
+      "command": "df -a /data",
+      "expect": {
+        "exit": 0,
+        "stdout": "Filesystem     1K-blocks Used Available Use% Mounted on\nram                    -    -         -    - /data\n",
+        "stderr": ""
+      },
+      "flags": [
+        "a"
+      ]
+    },
+    {
+      "id": "df_si_human",
+      "seq": 612015,
+      "targets": [
+        "ram"
+      ],
+      "command": "df -H /data",
+      "expect": {
+        "exit": 0,
+        "stdout": "Filesystem     Size Used Avail Use% Mounted on\nram               -    -     -    - /data\n",
+        "stderr": ""
+      },
+      "flags": [
+        "H"
+      ]
+    }
+  ]
+}
