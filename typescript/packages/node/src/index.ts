@@ -405,6 +405,8 @@ export { DockerRuntime } from './runtime/sandbox/docker/runtime.ts'
 export { DOCKER_CONFIG_KEYS, type DockerConfig } from './runtime/sandbox/docker/config.ts'
 export { SmolvmRuntime } from './runtime/sandbox/smolvm/runtime.ts'
 export { SMOLVM_CONFIG_KEYS, type SmolvmConfig } from './runtime/sandbox/smolvm/config.ts'
+export { SSHRuntime } from './runtime/sandbox/ssh/runtime.ts'
+export { SSH_RUNTIME_CONFIG_KEYS, type SSHRuntimeConfig } from './runtime/sandbox/ssh/config.ts'
 export {
   buildResource,
   knownResources,

@@ -87,6 +87,7 @@ SANDBOX_MODULES: dict[str, str] = {
     "docker": "mirage.runtime.sandbox.docker:DockerRuntime",
     "e2b": "mirage.runtime.sandbox.e2b:E2BRuntime",
     "smolvm": "mirage.runtime.sandbox.smolvm:SmolvmRuntime",
+    "ssh": "mirage.runtime.sandbox.ssh:SSHRuntime",
 }
 
 # The python engine a default world registers, named rather than left

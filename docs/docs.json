@@ -417,7 +417,8 @@
                   "python/runtime/sandbox/docker",
                   "python/runtime/sandbox/smolvm",
                   "python/runtime/sandbox/daytona",
-                  "python/runtime/sandbox/e2b"
+                  "python/runtime/sandbox/e2b",
+                  "python/runtime/sandbox/ssh"
                 ]
               }
             ]
@@ -618,7 +619,8 @@
                   "typescript/runtime/sandbox/docker",
                   "typescript/runtime/sandbox/smolvm",
                   "typescript/runtime/sandbox/daytona",
-                  "typescript/runtime/sandbox/e2b"
+                  "typescript/runtime/sandbox/e2b",
+                  "typescript/runtime/sandbox/ssh"
                 ]
               }
             ]
