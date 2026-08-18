@@ -11,17 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
-
-import type { PathSpec } from '@struktoai/mirage-core/types'
-import type { HfAccessor } from '../../accessor/hf.ts'
+import { makeExists } from '@struktoai/mirage-core/core/object_store/exists'
 import { stat } from './stat.ts'
 
-export async function exists(accessor: HfAccessor, path: PathSpec): Promise<boolean> {
-  try {
-    await stat(accessor, path)
-    return true
-  } catch (err) {
-    if ((err as { code?: string } | null)?.code === 'ENOENT') return false
-    throw err
-  }
-}
+export const exists = makeExists(stat)

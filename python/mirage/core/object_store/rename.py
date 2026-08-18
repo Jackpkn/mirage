@@ -29,10 +29,18 @@ def make_rename(driver: ObjectStoreDriver[A, C],
     source that is neither is ENOENT rather than the raw store error.
 
     Args:
-        driver (ObjectStoreDriver): the store's native surface.
+        driver (ObjectStoreDriver): the store's native surface; must
+            carry a native move — a store without one leaves rename
+            unwired, which the dispatcher surfaces as ENOTSUP.
         exists (ExistsFn): the backend's existence probe, for the
             same-key guard.
     """
+    move_file = driver.move_file
+    move_prefix = driver.move_prefix
+    if move_file is None or move_prefix is None:
+        raise ValueError(
+            f"{driver.resource} driver has no native move; leave rename "
+            "unwired instead of building it")
 
     async def rename(accessor: A, src_spec: PathSpec,
                      dst_spec: PathSpec) -> None:
@@ -49,9 +57,9 @@ def make_rename(driver: ObjectStoreDriver[A, C],
                 raise enoent(src_spec)
             return
         async with driver.connect(accessor) as conn:
-            if not await driver.move_file(conn, src_key, kp.apply(kpfx, dst)):
-                if not await driver.move_prefix(conn, kp.apply_dir(kpfx, src),
-                                                kp.apply_dir(kpfx, dst)):
+            if not await move_file(conn, src_key, kp.apply(kpfx, dst)):
+                if not await move_prefix(conn, kp.apply_dir(kpfx, src),
+                                         kp.apply_dir(kpfx, dst)):
                     raise enoent(src_spec.virtual)
         await invalidate_after_unlink(dst_spec)
         await invalidate_after_unlink(src_spec)

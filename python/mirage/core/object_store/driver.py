@@ -201,7 +201,8 @@ class ObjectStoreDriver(Generic[A, C]):
 
     Directory semantics the primitives must honor: a directory is a key
     prefix, an empty directory is a zero-byte marker object keyed at the
-    prefix itself (``key/``), and symlinks or hardlinks do not exist —
+    prefix itself (``key/``) on stores that accept one
+    (``markers_supported``), and symlinks or hardlinks do not exist —
     ops that would need them stay unwired, which the dispatcher already
     surfaces as ENOTSUP.
 
@@ -225,19 +226,30 @@ class ObjectStoreDriver(Generic[A, C]):
         head (Callable): point lookup of one key, None when absent;
             classification failures propagate.
         get (Callable): full object bytes, None when absent.
-        put (Callable): write one object.
+        put (Callable): write one object; a store error meaning the
+            container is absent (``is_not_found``) propagates, and
+            the write factory restates it as ENOENT on the path.
         delete_file (Callable): delete one key (every revision on a
             versioned store); silent on a missing key.
         delete_prefix (Callable): delete every key under a prefix.
-        move_file (Callable): relocate one object; False when the source
-            names no object.
-        move_prefix (Callable): relocate every key under a prefix; False
-            when the source prefix holds nothing.
-        copy_file (Callable): copy one object; False when the source
-            names no object, if the store can tell cheaply.
         probe_prefix (Callable): whether any key sits under a prefix.
         is_not_found (Callable): whether a store error means the key is
             absent.
+        move_file (Callable | None): relocate one object; False when the
+            source names no object. None when the store has no native
+            move — rename stays unwired then, which the dispatcher
+            surfaces as ENOTSUP.
+        move_prefix (Callable | None): relocate every key under a
+            prefix; False when the source prefix holds nothing. None
+            follows ``move_file``.
+        copy_file (Callable | None): copy one object; False when the
+            source names no object, if the store can tell cheaply. None
+            when the store has no native copy — copy stays unwired then.
+        markers_supported (bool): whether the store accepts the
+            zero-byte ``key/`` marker object. False when the store
+            refuses one client-side (hf): an empty directory cannot
+            exist there, ``make_mkdir`` has nothing to write, and a
+            directory exists exactly while it holds a key.
         find_tree (Callable | None): find's listing with native
             predicate push-down, returning the iterator and whether the
             query was narrowed beyond the prefix; None means find walks
@@ -255,10 +267,11 @@ class ObjectStoreDriver(Generic[A, C]):
     put: Callable[[C, str, bytes], Awaitable[None]]
     delete_file: Callable[[C, str], Awaitable[None]]
     delete_prefix: Callable[[C, str], Awaitable[None]]
-    move_file: Callable[[C, str, str], Awaitable[bool]]
-    move_prefix: Callable[[C, str, str], Awaitable[bool]]
-    copy_file: Callable[[C, str, str], Awaitable[bool]]
     probe_prefix: Callable[[C, str], Awaitable[bool]]
     is_not_found: Callable[[Exception], bool]
+    move_file: Callable[[C, str, str], Awaitable[bool]] | None = None
+    move_prefix: Callable[[C, str, str], Awaitable[bool]] | None = None
+    copy_file: Callable[[C, str, str], Awaitable[bool]] | None = None
+    markers_supported: bool = True
     find_tree: Callable[[C, str, FindHints], tuple[AsyncIterator[TreeEntry],
                                                    bool]] | None = None

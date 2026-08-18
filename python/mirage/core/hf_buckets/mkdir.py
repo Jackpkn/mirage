@@ -12,20 +12,7 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from mirage.accessor.hf_buckets import HfBucketsAccessor
-from mirage.cache.index import NULL_INDEX, IndexCacheStore
-from mirage.types import PathSpec
+from mirage.core.hf_buckets.driver import DRIVER
+from mirage.core.object_store.write import make_mkdir
 
-
-async def mkdir(accessor: HfBucketsAccessor,
-                path: PathSpec,
-                parents: bool = False,
-                index: IndexCacheStore = NULL_INDEX) -> None:
-    # Not "object stores have no directories": s3 and gridfs are object
-    # stores too and both put a zero-byte `key/` marker, which is what
-    # keeps an empty directory visible there. OpenDAL's hf service cannot
-    # store one and refuses client-side, before any request is sent:
-    # create_dir is unsupported, and a write to a slash-terminated path
-    # is IsADirectory. So an hf directory exists only while it holds a
-    # key, and `mkdir x` then `rmdir x` is ENOENT here but fine on s3.
-    return None
+mkdir = make_mkdir(DRIVER)

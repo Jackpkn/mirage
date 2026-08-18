@@ -11,16 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
+import { makeCreate } from '@struktoai/mirage-core/core/object_store/write'
+import { DRIVER } from './driver.ts'
 
-import type { IndexCacheStore } from '@struktoai/mirage-core/cache/index/store'
-import type { PathSpec } from '@struktoai/mirage-core/types'
-import type { HfAccessor } from '../../accessor/hf.ts'
-import { write } from './write.ts'
-
-export async function create(
-  accessor: HfAccessor,
-  path: PathSpec,
-  index?: IndexCacheStore,
-): Promise<void> {
-  await write(accessor, path, new Uint8Array(), index)
-}
+export const create = makeCreate(DRIVER)

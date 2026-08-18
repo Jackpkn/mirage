@@ -13,6 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { PathSpec } from '@struktoai/mirage-core/types'
+import { errorVirtualPath } from '@struktoai/mirage-core/utils/errors'
 import { mountKey } from '@struktoai/mirage-core/utils/key_prefix'
 import { describe, expect, it } from 'vitest'
 import { HfBucketsAccessor } from '../../accessor/hf.ts'
@@ -30,6 +31,23 @@ function setup(files: Record<string, string | Buffer> = {}): {
   const fake = fakeHfOperator(files)
   installFakeOperator(accessor, fake)
   return { accessor, fake }
+}
+
+// Refuses writes the way a missing repo or revision does.
+function missingRepo(): ReturnType<typeof fakeHfOperator> {
+  const fake = fakeHfOperator()
+  fake.write = () =>
+    Promise.reject(new Error('NotFound (permanent) at write, context: { service: hf }'))
+  return fake
+}
+
+async function caught(fn: () => Promise<void>): Promise<unknown> {
+  try {
+    await fn()
+  } catch (err) {
+    return err
+  }
+  throw new Error('expected a throw')
 }
 
 describe('hf write', () => {
@@ -65,18 +83,20 @@ describe('hf unlink', () => {
     expect(fake.files.has('a.txt')).toBe(false)
   })
 
-  it('raises EISDIR for directories', async () => {
-    const { accessor } = setup({ 'dir/a.txt': 'x' })
-    await expect(unlink(accessor, PathSpec.fromStrPath('/dir'))).rejects.toMatchObject({
-      code: 'EISDIR',
-    })
+  it('leaves a directory subtree untouched', async () => {
+    // The op is a blind single-key delete; the "Is a directory" refusal
+    // lives in the generic rm builder, which stats before unlinking. A
+    // directory owns no key of its own, so this must touch nothing.
+    const { accessor, fake } = setup({ 'dir/a.txt': 'x' })
+    await expect(unlink(accessor, PathSpec.fromStrPath('/dir'))).resolves.toBeUndefined()
+    expect(fake.files.has('dir/a.txt')).toBe(true)
   })
 
-  it('raises ENOENT for missing files', async () => {
+  it('is silent on a missing key', async () => {
+    // Per the driver contract; the "No such file or directory" refusal
+    // is the rm builder's, from the stat it takes before unlinking.
     const { accessor } = setup()
-    await expect(unlink(accessor, PathSpec.fromStrPath('/nope'))).rejects.toMatchObject({
-      code: 'ENOENT',
-    })
+    await expect(unlink(accessor, PathSpec.fromStrPath('/nope'))).resolves.toBeUndefined()
   })
 })
 
@@ -84,5 +104,27 @@ describe('hf mkdir', () => {
   it('is a no-op', async () => {
     const { accessor } = setup()
     await expect(mkdir(accessor, PathSpec.fromStrPath('/newdir'))).resolves.toBeUndefined()
+  })
+})
+
+describe('hf write on a missing repo', () => {
+  it('a write names the virtual path', async () => {
+    // The driver's put speaks keys ("out.txt"), so letting its error
+    // through would put a backend key in a user-facing message; the kit's
+    // write factory restates it on the path the user typed.
+    const accessor = new HfBucketsAccessor({ bucket: 'ns/store' })
+    installFakeOperator(accessor, missingRepo())
+    const err = await caught(() =>
+      write(accessor, PathSpec.fromStrPath('/out.txt'), new TextEncoder().encode('hi')),
+    )
+    expect((err as { code?: string }).code).toBe('ENOENT')
+    expect(errorVirtualPath(err)).toBe('/out.txt')
+  })
+
+  it('a create names the virtual path', async () => {
+    const accessor = new HfBucketsAccessor({ bucket: 'ns/store' })
+    installFakeOperator(accessor, missingRepo())
+    const err = await caught(() => create(accessor, PathSpec.fromStrPath('/new.txt')))
+    expect(errorVirtualPath(err)).toBe('/new.txt')
   })
 })

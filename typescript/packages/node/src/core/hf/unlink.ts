@@ -11,39 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
+import { makeUnlink } from '@struktoai/mirage-core/core/object_store/remove'
+import { DRIVER } from './driver.ts'
 
-import { invalidateAfterUnlink, invalidateAncestors } from '@struktoai/mirage-core/cache/context'
-import type { IndexCacheStore } from '@struktoai/mirage-core/cache/index/store'
-import { record } from '@struktoai/mirage-core/observe/context'
-import { FileType } from '@struktoai/mirage-core/types'
-import type { PathSpec } from '@struktoai/mirage-core/types'
-import { enoent } from '@struktoai/mirage-core/utils/errors'
-import type { HfAccessor } from '../../accessor/hf.ts'
-import { stat } from './stat.ts'
-import { hfKey, isNotFound, rawPathOf } from './util.ts'
-
-export async function unlink(
-  accessor: HfAccessor,
-  path: PathSpec,
-  index?: IndexCacheStore,
-): Promise<void> {
-  const fileStat = await stat(accessor, path, index)
-  const rawPath = rawPathOf(path)
-  if (fileStat.type === FileType.DIRECTORY) {
-    const e = new Error(`EISDIR: ${rawPath}`) as Error & { code: string }
-    e.code = 'EISDIR'
-    throw e
-  }
-  const key = hfKey(rawPath)
-  const op = await accessor.operator()
-  const startMs = performance.now()
-  try {
-    await op.delete(key)
-  } catch (err) {
-    if (isNotFound(err)) throw enoent(path)
-    throw err
-  }
-  record('unlink', path.virtual, accessor.resourceName, 0, startMs)
-  await invalidateAfterUnlink(path)
-  await invalidateAncestors(path)
-}
+export const unlink = makeUnlink(DRIVER)

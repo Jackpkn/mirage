@@ -11,21 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
+import { makeMkdir } from '@struktoai/mirage-core/core/object_store/write'
+import { DRIVER } from './driver.ts'
 
-import type { IndexCacheStore } from '@struktoai/mirage-core/cache/index/store'
-import type { PathSpec } from '@struktoai/mirage-core/types'
-import type { HfAccessor } from '../../accessor/hf.ts'
-
-export async function mkdir(
-  _accessor: HfAccessor,
-  _path: PathSpec,
-  _index?: IndexCacheStore,
-): Promise<void> {
-  // Not "object stores have no directories": s3 and gridfs are object
-  // stores too and both put a zero-byte `key/` marker, which is what keeps
-  // an empty directory visible there. OpenDAL's hf service cannot store one
-  // and refuses client-side, before any request is sent: create_dir is
-  // unsupported, and a write to a slash-terminated path is IsADirectory. So
-  // an hf directory exists only while it holds a key, and `mkdir x` then
-  // `rmdir x` is ENOENT here but fine on s3.
-}
+export const mkdir = makeMkdir(DRIVER)

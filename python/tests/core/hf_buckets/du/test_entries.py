@@ -30,7 +30,11 @@ async def test_entries_returns_per_file_with_total(make_acc):
 
 
 @pytest.mark.asyncio
-async def test_entries_of_file_is_empty(make_acc):
+async def test_entries_of_file_pins_the_stem(make_acc):
+    # A file operand lists itself as its only entry (the kit's
+    # list_subtree contract); du_generic renders that identically to
+    # the old empty-list shape.
     acc = make_acc({"data/a.json": b"12345"})
-    assert await entries(acc,
-                         PathSpec.from_str_path("/data/a.json")) == ([], 5)
+    assert await entries(acc, PathSpec.from_str_path("/data/a.json")) == ([
+        ("/data/a.json", 5)
+    ], 5)

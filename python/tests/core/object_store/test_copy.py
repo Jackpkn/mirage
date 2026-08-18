@@ -13,6 +13,7 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import asyncio
+from dataclasses import replace
 
 import pytest
 
@@ -65,3 +66,9 @@ def test_copy_onto_the_same_key_still_fails_when_absent(accessor):
     with pytest.raises(FileNotFoundError):
         _managed(
             _copy_for(FakeStore())(accessor, spec("/a.txt"), spec("/a.txt")))
+
+
+def test_copy_without_native_copy_refuses_to_build():
+    driver = replace(make_driver(FakeStore()), copy_file=None)
+    with pytest.raises(ValueError, match="no native copy"):
+        make_copy(driver, make_exists(make_stat(driver)))

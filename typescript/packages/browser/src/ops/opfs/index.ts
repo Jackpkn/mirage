@@ -12,43 +12,14 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import { makeGenericOps } from '@struktoai/mirage-core/ops/generic/factory'
 import type { RegisteredOp } from '@struktoai/mirage-core/ops/registry'
-import { appendOp } from './append.ts'
-import { createOp } from './create.ts'
-import { mkdirOp } from './mkdir.ts'
-import { readOp } from './read.ts'
-import { readdirOp } from './readdir.ts'
-import { renameOp } from './rename.ts'
-import { rmdirOp } from './rmdir.ts'
-import { statOp } from './stat.ts'
-import { truncateOp } from './truncate.ts'
-import { unlinkOp } from './unlink.ts'
-import { writeOp } from './write.ts'
+import { ResourceName } from '@struktoai/mirage-core/types'
+import { OPFS_IO } from '../../commands/builtin/opfs/io.ts'
 
-export const OPFS_OPS: readonly RegisteredOp[] = [
-  appendOp,
-  createOp,
-  mkdirOp,
-  readOp,
-  readdirOp,
-  renameOp,
-  rmdirOp,
-  statOp,
-  truncateOp,
-  unlinkOp,
-  writeOp,
-]
-
-export {
-  appendOp,
-  createOp,
-  mkdirOp,
-  readOp,
-  readdirOp,
-  renameOp,
-  rmdirOp,
-  statOp,
-  truncateOp,
-  unlinkOp,
-  writeOp,
-}
+// mkdirParents because OPFS resolves one directory handle per segment:
+// a mkdir that refused to create intermediates would make the op fail on
+// any nested path, and the VFS/FUSE callers pass whole paths.
+export const OPFS_OPS: readonly RegisteredOp[] = makeGenericOps(ResourceName.OPFS, OPFS_IO, {
+  mkdirParents: true,
+})

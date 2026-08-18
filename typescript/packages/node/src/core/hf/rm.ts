@@ -11,26 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
+import { makeRemovePrefix } from '@struktoai/mirage-core/core/object_store/remove'
+import { DRIVER } from './driver.ts'
 
-import { invalidateAfterUnlink, invalidateAncestors } from '@struktoai/mirage-core/cache/context'
-import { record } from '@struktoai/mirage-core/observe/context'
-import type { PathSpec } from '@struktoai/mirage-core/types'
-import { stripSlash } from '@struktoai/mirage-core/utils/slash'
-import type { HfAccessor } from '../../accessor/hf.ts'
-import { rawPathOf } from './util.ts'
-
-export async function rmR(accessor: HfAccessor, path: PathSpec): Promise<void> {
-  const stripped = stripSlash(rawPathOf(path))
-  const scanPath = stripped !== '' ? `${stripped}/` : '/'
-  const op = await accessor.operator()
-  const startMs = performance.now()
-  const entries = await op.list(scanPath, { recursive: true })
-  for (const entry of entries) {
-    const key = entry.path()
-    if (key.endsWith('/')) continue
-    await op.delete(key)
-  }
-  record('rm_r', path.virtual, accessor.resourceName, 0, startMs)
-  await invalidateAfterUnlink(path)
-  await invalidateAncestors(path)
-}
+export const rmR = makeRemovePrefix(DRIVER)

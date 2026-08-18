@@ -14,6 +14,9 @@
 
 import { describe, expect, it } from 'vitest'
 import { runWithCacheManager } from '../../cache/context.ts'
+import { errorVirtualPath } from '../../utils/errors.ts'
+import type { ObjectStoreDriver } from './driver.ts'
+import type { FakeStore as Store } from './fakes.ts'
 import { FakeAccessor, FakeManager, FakeStore, makeDriver, spec } from './fakes.ts'
 import { makeCreate, makeMkdir, makeTruncate, makeWriteBytes } from './write.ts'
 
@@ -24,6 +27,26 @@ async function managed(fn: () => Promise<void>): Promise<FakeManager> {
   const manager = new FakeManager()
   await runWithCacheManager(manager, fn)
   return manager
+}
+
+class MissingContainer extends Error {}
+
+// A driver whose put fails the way a missing repository or bucket does.
+function missingContainer(): ObjectStoreDriver<FakeAccessor, Store> {
+  return {
+    ...makeDriver(new FakeStore()),
+    put: () => Promise.reject(new MissingContainer('gone')),
+    isNotFound: (err: unknown) => err instanceof MissingContainer,
+  }
+}
+
+async function caught(fn: () => Promise<void>): Promise<unknown> {
+  try {
+    await managed(fn)
+  } catch (err) {
+    return err
+  }
+  throw new Error('expected a throw')
 }
 
 describe('object_store write', () => {
@@ -73,5 +96,47 @@ describe('object_store write', () => {
     expect(manager.writes).toEqual(['/a/b'])
     const deep = await managed(() => makeMkdir(makeDriver(store))(accessor, spec('/x/y'), true))
     expect(deep.writes).toEqual(['/x/y', '/x'])
+  })
+
+  it('write names the path, not the key, when the container is gone', async () => {
+    // The driver primitives speak keys, so the store's own error names
+    // "a/b/c.txt"; only the factory can restate it as the path the user
+    // typed, which is the only spelling allowed in a message.
+    const driver = missingContainer()
+    const err = await caught(() =>
+      makeWriteBytes(driver)(accessor, spec('/a/b/c.txt'), ENC.encode('hi')),
+    )
+    expect((err as { code?: string }).code).toBe('ENOENT')
+    expect(errorVirtualPath(err)).toBe('/mnt/a/b/c.txt')
+  })
+
+  it('create and truncate name the path too', async () => {
+    const created = await caught(() => makeCreate(missingContainer())(accessor, spec('/a/new.txt')))
+    expect(errorVirtualPath(created)).toBe('/mnt/a/new.txt')
+    const cut = await caught(() =>
+      makeTruncate(missingContainer())(accessor, spec('/a/cut.txt'), 4),
+    )
+    expect(errorVirtualPath(cut)).toBe('/mnt/a/cut.txt')
+  })
+
+  it('a store error that is not a missing container propagates', async () => {
+    const driver = {
+      ...makeDriver(new FakeStore()),
+      put: () => Promise.reject(new Error('bucket on fire')),
+    }
+    const err = await caught(() =>
+      makeWriteBytes(driver)(accessor, spec('/a.txt'), ENC.encode('hi')),
+    )
+    expect((err as Error).message).toBe('bucket on fire')
+    expect((err as { code?: string }).code).toBeUndefined()
+  })
+
+  it('mkdir without marker support is a no-op', async () => {
+    const store = new FakeStore()
+    const driver = { ...makeDriver(store), markersSupported: false }
+    const manager = await managed(() => makeMkdir(driver)(accessor, spec('/a/b'), true))
+    expect(store.contents()).toEqual({})
+    expect(store.connects).toBe(0)
+    expect(manager.writes).toEqual([])
   })
 })

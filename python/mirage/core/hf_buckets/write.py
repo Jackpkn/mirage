@@ -12,30 +12,7 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import time
+from mirage.core.hf_buckets.driver import DRIVER
+from mirage.core.object_store.write import make_write_bytes
 
-from opendal.exceptions import NotFound
-
-from mirage.accessor.hf_buckets import HfBucketsAccessor
-from mirage.cache.context import invalidate_after_write, invalidate_ancestors
-from mirage.cache.index import NULL_INDEX, IndexCacheStore
-from mirage.observe.context import record
-from mirage.types import PathSpec
-from mirage.utils.errors import enoent
-
-
-async def write_bytes(accessor: HfBucketsAccessor,
-                      path: PathSpec,
-                      data: bytes,
-                      index: IndexCacheStore = NULL_INDEX) -> None:
-    raw = path.mount_path
-    key = raw.lstrip("/")
-    op = accessor.operator()
-    start_ms = int(time.monotonic() * 1000)
-    try:
-        await op.write(key, data)
-    except NotFound as exc:
-        raise enoent(path) from exc
-    record("write", path.virtual, accessor.RESOURCE_NAME, len(data), start_ms)
-    await invalidate_after_write(path)
-    await invalidate_ancestors(path)
+write_bytes = make_write_bytes(DRIVER)

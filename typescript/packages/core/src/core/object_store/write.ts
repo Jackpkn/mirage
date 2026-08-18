@@ -15,8 +15,29 @@
 import type { Accessor } from '../../accessor/base.ts'
 import { invalidateAfterWrite, invalidateAncestors } from '../../cache/context.ts'
 import { record } from '../../observe/context.ts'
+import type { PathSpec } from '../../types.ts'
+import { enoent } from '../../utils/errors.ts'
 import * as kp from '../../utils/key_prefix.ts'
 import type { MkdirFn, ObjectStoreDriver, PathFn, TruncateFn, WriteFn } from './driver.ts'
+
+// Put one object, translating a missing container to ENOENT. The driver
+// primitives speak keys, so a store error for a missing repository or
+// bucket names the backend key, and only the factory holds the PathSpec
+// the message has to carry.
+async function put<A extends Accessor, C>(
+  driver: ObjectStoreDriver<A, C>,
+  conn: C,
+  key: string,
+  data: Uint8Array,
+  path: PathSpec,
+): Promise<void> {
+  try {
+    await driver.put(conn, key, data)
+  } catch (err) {
+    if (driver.isNotFound(err)) throw enoent(path)
+    throw err
+  }
+}
 
 /** Build the whole-object write over one driver. */
 export function makeWriteBytes<A extends Accessor, C>(driver: ObjectStoreDriver<A, C>): WriteFn<A> {
@@ -25,7 +46,7 @@ export function makeWriteBytes<A extends Accessor, C>(driver: ObjectStoreDriver<
     const start = performance.now()
     const { conn, close } = await driver.connect(accessor)
     try {
-      await driver.put(conn, key, data)
+      await put(driver, conn, key, data, path)
     } finally {
       await close()
     }
@@ -44,7 +65,7 @@ export function makeCreate<A extends Accessor, C>(driver: ObjectStoreDriver<A, C
     const start = performance.now()
     const { conn, close } = await driver.connect(accessor)
     try {
-      await driver.put(conn, key, new Uint8Array(0))
+      await put(driver, conn, key, new Uint8Array(0), path)
     } finally {
       await close()
     }
@@ -68,7 +89,7 @@ export function makeTruncate<A extends Accessor, C>(
       const result = new Uint8Array(length)
       result.set(data.subarray(0, Math.min(data.byteLength, length)), 0)
       // Remaining bytes are already zero-filled (Uint8Array default).
-      await driver.put(conn, key, result)
+      await put(driver, conn, key, result, path)
     } finally {
       await close()
     }
@@ -82,6 +103,14 @@ export function makeTruncate<A extends Accessor, C>(
 /** Build the marker-object mkdir over one driver. */
 export function makeMkdir<A extends Accessor, C>(driver: ObjectStoreDriver<A, C>): MkdirFn<A> {
   return async function mkdir(accessor, path, parents = false) {
+    if (driver.markersSupported === false) {
+      // The store refuses the marker client-side (hf: create_dir is
+      // unsupported and a slash-terminated write is IsADirectory), so a
+      // directory exists only while it holds a key and mkdir has
+      // nothing to write: `mkdir x` then `rmdir x` is ENOENT here but
+      // fine on a marker store.
+      return
+    }
     // Object stores have no real directories; parents is implicit. A
     // zero-byte marker keyed at the prefix makes the empty directory
     // visible.

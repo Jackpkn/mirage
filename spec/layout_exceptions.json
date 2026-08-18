@@ -19,7 +19,6 @@
    "resource/opfs": "OPFS is the one typescript-only backend, declared in spec/parity_exceptions.json. There is no browser filesystem API for python to mirror.",
    "core/opfs": "OPFS backend core, browser-only.",
    "core/opfs/du": "OPFS backend core, browser-only.",
-   "ops/opfs": "OPFS op table, browser-only.",
    "commands/builtin/opfs": "OPFS command wrappers, browser-only.",
    "generated": "browser/src/generated/wasm.ts is a build artifact embedded for the browser bundle, not a source module.",
    "workspace/fixtures": "Test-only helpers: unreachable from the barrel, absent from dist (tsup entry is src/index.ts and files is [\"dist\"]), and imported only by tests.",
