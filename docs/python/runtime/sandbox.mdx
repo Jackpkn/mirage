@@ -1,6 +1,6 @@
 ---
 title: Overview
-description: Run captured lines whole inside a sandbox (Docker, smolvm, Daytona, or e2b) you provision yourself.
+description: Run captured lines whole inside a sandbox (Docker, smolvm, Daytona, e2b, or any machine over SSH) you provision yourself.
 icon: server
 ---
 
@@ -10,7 +10,7 @@ command line and runs it inside a separate machine, a local container or
 microVM or a cloud sandbox. Reach for it when a line needs a real OS, heavy
 packages, or a GPU that the in-process interpreters cannot give it.
 
-Four sandbox runtimes ship today, all with the same surface:
+Five sandbox runtimes ship today, all with the same surface:
 
 | Runtime | Connects to | Config |
 | --- | --- | --- |
@@ -18,10 +18,12 @@ Four sandbox runtimes ship today, all with the same surface:
 | [`smolvm`](/python/runtime/sandbox/smolvm) | A [smolvm](https://smolmachines.com) microVM you started | `machine` |
 | [`daytona`](/python/runtime/sandbox/daytona) | A [Daytona](https://www.daytona.io) sandbox you created | `sandbox_id`, `api_key` |
 | [`e2b`](/python/runtime/sandbox/e2b) | An [E2B](https://e2b.dev) sandbox you created | `sandbox_id`, `api_key` |
+| [`ssh`](/python/runtime/sandbox/ssh) | Any machine running sshd | `host`, `username`, `identity_file` |
 
 `docker` and `smolvm` run on your own machine, Daytona and e2b in the
-cloud. The isolation differs too: a container shares your kernel, while a
-smolvm microVM boots its own.
+cloud, and `ssh` reaches anything you can already `ssh` into. The isolation
+differs too: a container shares your kernel, a smolvm microVM boots its
+own, and an ssh machine is whatever machine you point it at.
 
 <Note>
   [Sandlock](/python/runtime/sandbox/sandlock) is listed in this sidebar
@@ -86,6 +88,14 @@ mounts fails loud only when a path misses.
 
 This needs an image with `fuse3` and Mirage plus your backends installed
 (see [The sandbox image](#the-sandbox-image)).
+
+<Note>
+  The `ssh` provider can skip all of this when the files live on the ssh
+  machine itself: mount them over the ssh resource at a prefix equal to
+  their remote absolute path, and captured lines open them natively with no
+  FUSE and no remote Mirage. See
+  [Skip the FUSE](/python/runtime/sandbox/ssh#skip-the-fuse) on the SSH page.
+</Note>
 
 ## Paths inside the sandbox
 

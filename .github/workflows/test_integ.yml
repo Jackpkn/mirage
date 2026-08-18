@@ -1011,6 +1011,11 @@ jobs:
       MIRAGE_QUICKJS_HOME: /tmp/quickjs
       MIRAGE_WASI_HOME: /tmp/cpython-wasi
       MIRAGE_INTEG_DOCKER_CONTAINER: mirage-integ-runtime-box
+      # The ssh suite's sshd container publishes port 2222 (the suite
+      # json pins the port; env placeholders expand as strings only).
+      MIRAGE_INTEG_SSH_HOST: 127.0.0.1
+      MIRAGE_INTEG_SSH_USERNAME: root
+      MIRAGE_INTEG_SSH_KEY: /tmp/mirage-integ-ssh-key
       # Suites with unmet requirements fail instead of skipping, so a
       # broken build download cannot silently drop wasi/quickjs/docker
       # coverage.
@@ -1099,6 +1104,24 @@ jobs:
 
       - name: Start the docker sandbox container (user-provisioned)
         run: docker run -d --name "$MIRAGE_INTEG_DOCKER_CONTAINER" debian:stable-slim sleep infinity
+
+      - name: Start the ssh sandbox host (user-provisioned)
+        run: |
+          ssh-keygen -t ed25519 -N '' -f "$MIRAGE_INTEG_SSH_KEY"
+          docker run -d --name mirage-integ-ssh-box -p 2222:22 debian:stable-slim sleep infinity
+          docker exec mirage-integ-ssh-box sh -c \
+            'apt-get update -qq && apt-get install -y -qq openssh-server >/dev/null && mkdir -p /run/sshd /root/.ssh'
+          # docker cp keeps the host uid on the file; sshd's StrictModes
+          # refuses an authorized_keys the login user does not own.
+          docker cp "$MIRAGE_INTEG_SSH_KEY.pub" mirage-integ-ssh-box:/root/.ssh/authorized_keys
+          docker exec mirage-integ-ssh-box sh -c \
+            'chown -R root:root /root/.ssh && chmod 700 /root/.ssh && chmod 600 /root/.ssh/authorized_keys'
+          docker exec -d mirage-integ-ssh-box /usr/sbin/sshd -D -e
+          for i in $(seq 1 30); do
+            ssh -p 2222 -i "$MIRAGE_INTEG_SSH_KEY" -o StrictHostKeyChecking=no \
+              -o UserKnownHostsFile=/dev/null root@127.0.0.1 true && break
+            sleep 1
+          done
 
       - name: Run every runtime through the JSON suites (python)
         run: ./python/.venv/bin/python integ/runtime/run.py
