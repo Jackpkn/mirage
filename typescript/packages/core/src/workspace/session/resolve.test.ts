@@ -16,8 +16,19 @@ import { describe, expect, it } from 'vitest'
 
 import { PolicyError } from '../../policy/errors.ts'
 import { MountMode } from '../../types.ts'
-import type { SessionProfile } from './profile.ts'
-import { boundHidden, compileProfile, inherit, rebase, resolveProfile, tighten } from './resolve.ts'
+import type { SessionProfile } from './permissions.ts'
+import {
+  applyProfile,
+  boundHidden,
+  compileProfile,
+  inherit,
+  narrow,
+  rebase,
+  resolveProfile,
+  tighten,
+} from './resolve.ts'
+import { Session } from './session.ts'
+import { VarAttr } from '../../shell/variable.ts'
 
 const PROFILES: Record<string, SessionProfile> = {
   default: { cwd: '/scratch', env: { PAGER: 'cat' }, mounts: { '/repo': 'r', '/scratch': 'rwx' } },
@@ -194,5 +205,49 @@ describe('compileProfile', () => {
       cwd: null,
     })
     expect(compileProfile({})).toEqual(empty)
+  })
+
+  it('grants infrastructure beside listed mounts', () => {
+    // A ceiling must never lock an agent out of the scratch root, /dev
+    // or the history view, so they ride along at EXEC when the profile
+    // lists mounts, and are not invented when it lists none.
+    const infra = ['/', '/dev']
+    expect(compileProfile({ mounts: { '/a': 'r' } }, infra).mountModes).toEqual(
+      new Map([
+        ['/a', MountMode.READ],
+        ['/', MountMode.EXEC],
+        ['/dev', MountMode.EXEC],
+      ]),
+    )
+    expect(compileProfile({ mounts: { '/': 'r' } }, infra).mountModes?.get('/')).toBe(
+      MountMode.READ,
+    )
+    expect(compileProfile({ cwd: '/a' }, infra).mountModes).toBeNull()
+  })
+})
+
+describe('narrow / applyProfile', () => {
+  it('narrow stamps the uneditable fields, applyProfile seeds the rest', () => {
+    const compiled = compileProfile({
+      cwd: '/a',
+      env: { ROLE: 'x' },
+      mounts: { '/a': 'rw' },
+      paths: { hide: ['/a/secrets'] },
+      vars: { hide: ['SLACK_TOKEN'] },
+    })
+    const narrowed = new Session({ sessionId: 's1' })
+    narrow(narrowed, compiled)
+    expect(narrowed.mountModes).toEqual(new Map([['/a', MountMode.WRITE]]))
+    expect(narrowed.mountModes).not.toBe(compiled.mountModes)
+    expect(narrowed.hiddenPaths).toEqual({ paths: ['/a/secrets'], patterns: [] })
+    expect(narrowed.hiddenVars).toEqual({ names: ['SLACK_TOKEN'], patterns: [] })
+    expect(narrowed.cwd).toBe('/')
+    expect(narrowed.env.ROLE).toBeUndefined()
+    const applied = new Session({ sessionId: 's2' })
+    applyProfile(applied, compiled)
+    expect(applied.mountModes).toEqual(new Map([['/a', MountMode.WRITE]]))
+    expect(applied.cwd).toBe('/a')
+    expect(applied.env.ROLE).toBe('x')
+    expect(applied.vars.ROLE?.attrs.has(VarAttr.Export)).toBe(true)
   })
 })

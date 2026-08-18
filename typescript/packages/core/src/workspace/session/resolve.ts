@@ -25,7 +25,9 @@ import {
   type SessionProfile,
   type VarsBlock,
   type WorkspacePermissions,
-} from './profile.ts'
+} from './permissions.ts'
+import { varsFromEnv, type Session } from './session.ts'
+import { setCwd } from './shell_dirs.ts'
 
 export const DEFAULT_PROFILE = 'default'
 
@@ -221,16 +223,28 @@ export function boundHidden(
   return classifyPaths(entries)
 }
 
-/** The session fields an effective profile sets; null is an unrestricted session. */
-export function compileProfile(effective: SessionProfile | null): CompiledProfile {
+/**
+ * The session fields an effective profile sets; null is an unrestricted
+ * session. `infrastructure` names the mount prefixes every session may
+ * touch (the scratch root, the device mount, the history view): a
+ * profile that lists mounts gets them at EXEC beside its own so a
+ * ceiling never locks an agent out of them.
+ */
+export function compileProfile(
+  effective: SessionProfile | null,
+  infrastructure: Iterable<string> = [],
+): CompiledProfile {
   if (effective === null) {
     return { mountModes: null, hiddenPaths: null, hiddenVars: null, env: null, cwd: null }
   }
   const mounts = parseProfileMounts(effective.mounts)
-  let modes: ReadonlyMap<string, MountMode> | null = null
-  if (isCeilings(mounts)) modes = mounts
+  let modes: Map<string, MountMode> | null = null
+  if (isCeilings(mounts)) modes = new Map(mounts)
   else if (mounts !== null)
     modes = new Map(mounts.map((p): [string, MountMode] => [p, MountMode.EXEC]))
+  if (modes !== null) {
+    for (const prefix of infrastructure) if (!modes.has(prefix)) modes.set(prefix, MountMode.EXEC)
+  }
   return {
     mountModes: modes,
     hiddenPaths: classifyPaths(effective.paths?.hide ?? []),
@@ -238,4 +252,33 @@ export function compileProfile(effective: SessionProfile | null): CompiledProfil
     env: effective.env ?? null,
     cwd: effective.cwd ?? null,
   }
+}
+
+/**
+ * Stamp a compiled profile's narrowing onto a session: the three fields
+ * no shell line can edit (mount ceilings, hidden paths, hidden
+ * variables). Applied at creation and again whenever a stored record
+ * could carry a stale copy (the default session after hydration), so
+ * the document, not the store, is what an agent runs under.
+ */
+export function narrow(session: Session, compiled: CompiledProfile): void {
+  session.mountModes = compiled.mountModes === null ? null : new Map(compiled.mountModes)
+  session.hiddenPaths = compiled.hiddenPaths
+  session.hiddenVars = compiled.hiddenVars
+}
+
+/**
+ * Narrow a fresh session and seed its scratch state from the profile.
+ * A profile's env is a *process* environment, the same shape
+ * `ws.env = {...}` speaks, so every name in it is exported: seeding
+ * them plain left `$TOKEN` expanding while every command, CLI and
+ * guest runtime in the profiled session saw nothing, since all three
+ * read `envSnapshot` and that is the exported set. The cwd is where
+ * the session starts; both are the agent's to change afterwards, which
+ * is why hydration keeps the stored ones and re-stamps only `narrow`.
+ */
+export function applyProfile(session: Session, compiled: CompiledProfile): void {
+  narrow(session, compiled)
+  if (compiled.env != null) Object.assign(session.vars, varsFromEnv(compiled.env))
+  if (compiled.cwd !== null) setCwd(session, compiled.cwd)
 }

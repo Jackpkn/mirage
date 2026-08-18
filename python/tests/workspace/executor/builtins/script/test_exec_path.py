@@ -21,8 +21,8 @@ from mirage.resource import RAMResource
 from mirage.types import MountMode
 from mirage.workspace import Workspace
 from mirage.workspace.executor.builtins.script import shebang_words
-from mirage.workspace.session.profile import (CommandsBlock,
-                                              WorkspacePermissions)
+from mirage.workspace.session.permissions import (CommandsBlock,
+                                                  WorkspacePermissions)
 
 
 @pytest.fixture()

@@ -22,6 +22,7 @@ from mirage.cache.file.config import CacheConfig, RedisCacheConfig
 from mirage.config import (DiskStoreBlock, RamCacheBlock, RedisCacheBlock,
                            RedisStoreBlock, S3StoreBlock, WorkspaceConfig,
                            load_config)
+from mirage.policy import DEFAULT_DENY_REASON, CommandRule
 from mirage.resource.ram import RAMResource
 from mirage.resource.s3 import S3Resource
 from mirage.runtime.types import ScriptSource
@@ -35,6 +36,10 @@ from mirage.workspace.session.disk import DiskSessionStore
 from mirage.workspace.store import (DiskWorkspaceStateStore,
                                     RAMWorkspaceStateStore,
                                     RedisWorkspaceStateStore)
+
+from mirage.workspace.session.permissions import (  # isort: skip
+    CommandsBlock, MountPermissions, PathsBlock, SessionProfile, VarsBlock,
+    WorkspacePermissions)
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -383,11 +388,6 @@ policy: policy.js
 
 
 def test_permissions_document_maps_to_workspace_kwargs(tmp_path):
-    from mirage.policy import DEFAULT_DENY_REASON, CommandRule
-    from mirage.workspace.session.profile import (CommandsBlock,
-                                                  MountPermissions, PathsBlock,
-                                                  SessionProfile, VarsBlock,
-                                                  WorkspacePermissions)
     cfg_file = tmp_path / "ws.yaml"
     cfg_file.write_text("""\
 mounts:
@@ -490,19 +490,7 @@ profiles:
     assert readonly.exit_code != 0
 
 
-def test_guards_key_is_gone_and_unknown_profile_fields_fail_loud(tmp_path):
-    with pytest.raises(ValueError):
-        load_config({
-            "mounts": {
-                "/data": {
-                    "resource": "ram"
-                }
-            },
-            "guards": [{
-                "reason": "x",
-                "commands": ["rm"]
-            }],
-        })
+def test_unknown_profile_fields_fail_loud(tmp_path):
     with pytest.raises(ValueError):
         load_config({
             "mounts": {

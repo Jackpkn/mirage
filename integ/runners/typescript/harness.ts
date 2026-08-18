@@ -17,7 +17,7 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } 
 import { tmpdir } from 'node:os'
 import { dirname, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import type { SessionProfile } from '@struktoai/mirage-core/workspace/session/profile'
+import type { SessionProfile } from '@struktoai/mirage-core/workspace/session/permissions'
 
 // integ/runtime holds the runtime suite (its own schema and runners,
 // integ/runtime/run.{py,ts} + cli.sh), not battery cases; keep it out.

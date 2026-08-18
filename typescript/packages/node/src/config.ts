@@ -39,7 +39,7 @@ import {
   parseWorkspacePermissions,
   type MountPermissions,
   type SessionProfile,
-} from '@struktoai/mirage-core/workspace/session/profile'
+} from '@struktoai/mirage-core/workspace/session/permissions'
 import { inherit } from '@struktoai/mirage-core/workspace/session/resolve'
 import type { WorkspaceStateStore } from '@struktoai/mirage-core/workspace/store/base'
 import { RAMWorkspaceStateStore } from '@struktoai/mirage-core/workspace/store/ram'

@@ -32,7 +32,7 @@ from mirage.observe.record import OpRecord
 from mirage.observe.store import ObserverStore
 from mirage.ops import Ops
 from mirage.policy import Policies, Policy
-from mirage.policy.spec import SpecPolicy
+from mirage.policy.rule import RulePolicy
 from mirage.provision import ProvisionResult
 from mirage.resource.history import HISTORY_PREFIX, HistoryViewResource
 from mirage.runtime.base import Runtime
@@ -50,11 +50,9 @@ from mirage.workspace.mount.namespace import Namespace
 from mirage.workspace.mount.namespace.store import NamespaceStore
 from mirage.workspace.session import (Session, SessionManager, SessionProfile,
                                       SessionStore, WorkspacePermissions)
-from mirage.workspace.session.resolve import (bound_hidden, compile_profile,
-                                              inherit, resolve_profile,
-                                              tighten)
-from mirage.workspace.session.session import vars_from_env
-from mirage.workspace.session.shell_dirs import set_cwd
+from mirage.workspace.session.resolve import (apply_profile, bound_hidden,
+                                              compile_profile, inherit,
+                                              resolve_profile, tighten)
 from mirage.workspace.snapshot import (DriftQueue, apply_state_dict,
                                        build_mount_args, install_fingerprints,
                                        read_tar)
@@ -128,13 +126,13 @@ class Workspace:
             inherit(self._profiles, name)
         # Admission policies, consulted in registration order after the
         # built-ins the registry seeds: the document's deny rules first
-        # (compiled by the internal SpecPolicy), then Policy instances,
+        # (compiled by the internal RulePolicy), then Policy instances,
         # then anything added later through ws.policies.add(). The
         # runtime policy (policy=) is the line-level counterpart until it
         # is absorbed as a hook.
         if permissions is not None:
             for rule in permissions.commands.deny:
-                self._registry.policies.add(SpecPolicy(rule))
+                self._registry.policies.add(RulePolicy(rule))
         for entry in policies or []:
             self._registry.policies.add(entry)
         # One provider scopes every control-plane store by workspace id;
@@ -192,6 +190,13 @@ class Workspace:
         self._session_mgr.bound_hidden = bound_hidden(
             permissions, {spec.prefix: spec.permissions
                           for spec in specs})
+        # The workspace's own session is a session created without a
+        # name, so `profiles.default` shapes it too (design 3.4): the
+        # primary agent is not the one agent the document cannot reach.
+        default_profile = resolve_profile(self._profiles, None)
+        self._session_mgr.default_profile = (compile_profile(
+            default_profile, infrastructure_prefixes(
+                self._implicit_root)) if default_profile is not None else None)
 
         self.observer = Observer(store=stores.observe)
         self._registry.mount(HISTORY_PREFIX,
@@ -672,24 +677,11 @@ class Workspace:
         if mounts is not None:
             inline = tighten(inline,
                              SessionProfile.model_validate({"mounts": mounts}))
-        compiled = compile_profile(tighten(base, inline))
-        modes = compiled.mount_modes
-        if modes is not None:
-            for prefix in infrastructure_prefixes(self._implicit_root):
-                modes.setdefault(prefix, MountMode.EXEC)
-        session = self._session_mgr.create(session_id, mount_modes=modes)
-        session.hidden_paths = compiled.hidden_paths
-        session.hidden_vars = compiled.hidden_vars
-        if compiled.env:
-            # A profile's env is a *process* environment, the same
-            # shape `ws.env = {...}` speaks, so every name in it is
-            # exported. Seeding them plain left `$TOKEN` expanding
-            # while every command, CLI and guest runtime in the
-            # profiled session saw nothing, since all three read
-            # `env_snapshot` and that is the exported set.
-            session.vars.update(vars_from_env(compiled.env))
-        if compiled.cwd is not None:
-            set_cwd(session, compiled.cwd)
+        compiled = compile_profile(
+            tighten(base, inline),
+            infrastructure_prefixes(self._implicit_root))
+        session = self._session_mgr.create(session_id)
+        apply_profile(session, compiled)
         return session
 
     def get_session(self, session_id: str) -> Session:

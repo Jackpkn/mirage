@@ -12,16 +12,18 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from typing import Any
 
 from mirage.policy.errors import PolicyError
 from mirage.types import HiddenPaths, MountMode, weaker_mode
 from mirage.utils.hidden import classify_paths, classify_vars
-from mirage.workspace.session.profile import (CompiledProfile,
-                                              MountPermissions, PathsBlock,
-                                              SessionProfile, VarsBlock,
-                                              WorkspacePermissions)
+from mirage.workspace.session.permissions import (CompiledProfile,
+                                                  MountPermissions, PathsBlock,
+                                                  SessionProfile, VarsBlock,
+                                                  WorkspacePermissions)
+from mirage.workspace.session.session import Session, vars_from_env
+from mirage.workspace.session.shell_dirs import set_cwd
 
 DEFAULT_PROFILE = "default"
 
@@ -221,12 +223,18 @@ def bound_hidden(
     return classify_paths(entries)
 
 
-def compile_profile(effective: SessionProfile | None) -> CompiledProfile:
+def compile_profile(
+    effective: SessionProfile | None, infrastructure: Iterable[str] = ()
+) -> CompiledProfile:
     """The session fields an effective profile sets.
 
     Args:
         effective (SessionProfile | None): the resolved and tightened
             profile; None is an unrestricted session.
+        infrastructure (Iterable[str]): mount prefixes every session may
+            touch (the scratch root, the device mount, the history
+            view); a profile that lists mounts gets them at EXEC beside
+            its own so a ceiling never locks an agent out of them.
     """
     if effective is None:
         return CompiledProfile(mount_modes=None,
@@ -241,6 +249,9 @@ def compile_profile(effective: SessionProfile | None) -> CompiledProfile:
         modes = dict(effective.mounts)
     else:
         modes = {p: MountMode.EXEC for p in effective.mounts}
+    if modes is not None:
+        for prefix in infrastructure:
+            modes.setdefault(prefix, MountMode.EXEC)
     return CompiledProfile(
         mount_modes=modes,
         hidden_paths=classify_paths(
@@ -250,3 +261,45 @@ def compile_profile(effective: SessionProfile | None) -> CompiledProfile:
         env=dict(effective.env) if effective.env is not None else None,
         cwd=effective.cwd,
     )
+
+
+def narrow(session: Session, compiled: CompiledProfile) -> None:
+    """Stamp a compiled profile's narrowing onto a session.
+
+    The three fields no shell line can edit: mount ceilings, hidden
+    paths, hidden variables. Applied at creation and again whenever a
+    stored record could carry a stale copy (the default session after
+    hydration), so the document, not the store, is what an agent runs
+    under.
+
+    Args:
+        session (Session): the session to narrow.
+        compiled (CompiledProfile): the effective profile.
+    """
+    session.mount_modes = (dict(compiled.mount_modes)
+                           if compiled.mount_modes is not None else None)
+    session.hidden_paths = compiled.hidden_paths
+    session.hidden_vars = compiled.hidden_vars
+
+
+def apply_profile(session: Session, compiled: CompiledProfile) -> None:
+    """Narrow a fresh session and seed its scratch state from the profile.
+
+    A profile's env is a *process* environment, the same shape
+    ``ws.env = {...}`` speaks, so every name in it is exported: seeding
+    them plain left ``$TOKEN`` expanding while every command, CLI and
+    guest runtime in the profiled session saw nothing, since all three
+    read ``env_snapshot`` and that is the exported set. The cwd is where
+    the session starts; both are the agent's to change afterwards,
+    which is why hydration keeps the stored ones and re-stamps only
+    :func:`narrow`.
+
+    Args:
+        session (Session): the session just created.
+        compiled (CompiledProfile): the effective profile.
+    """
+    narrow(session, compiled)
+    if compiled.env:
+        session.vars.update(vars_from_env(compiled.env))
+    if compiled.cwd is not None:
+        set_cwd(session, compiled.cwd)

@@ -19,7 +19,8 @@ import pytest
 from mirage.resource.ram import RAMResource
 from mirage.types import HiddenPaths, HiddenVars, MountMode
 from mirage.workspace import Workspace
-from mirage.workspace.session import RAMSessionStore, SessionManager
+from mirage.workspace.session import (CompiledProfile, RAMSessionStore,
+                                      SessionManager)
 from mirage.workspace.session.state import seed_var
 
 
@@ -219,6 +220,63 @@ async def test_manager_default_adopts_stored_hidden_specs():
     assert default.hidden_paths == HiddenPaths(paths=("/s3/secrets", ),
                                                patterns=("*.key", ))
     assert default.hidden_vars == HiddenVars(names=("SLACK_TOKEN", ))
+
+
+def test_manager_default_profile_shapes_the_default_session():
+    mgr = SessionManager("default")
+    mgr.default_profile = CompiledProfile(
+        mount_modes={"/s3": MountMode.READ},
+        hidden_paths=HiddenPaths(paths=("/s3/secrets", )),
+        hidden_vars=HiddenVars(names=("SLACK_TOKEN", )),
+        env={"PAGER": "cat"},
+        cwd="/s3")
+    default = mgr.get("default")
+    assert default.mount_modes == {"/s3": MountMode.READ}
+    assert default.hidden_paths == HiddenPaths(paths=("/s3/secrets", ))
+    assert default.hidden_vars == HiddenVars(names=("SLACK_TOKEN", ))
+    assert default.env["PAGER"] == "cat"
+    assert default.cwd == "/s3"
+    # None is "no default profile", not "clear the session".
+    mgr.default_profile = None
+    assert default.mount_modes == {"/s3": MountMode.READ}
+
+
+@pytest.mark.asyncio
+async def test_manager_default_profile_outranks_a_stale_record():
+    # A record written before the profile existed (or under an older
+    # one) must not wake the primary agent unrestricted: the document
+    # wins the narrowing fields after hydration, the record keeps the
+    # scratch state (cwd, env), and the next flush rewrites the record.
+    store = RAMSessionStore()
+    await store.set(
+        "default", {
+            "session_id": "default",
+            "cwd": "/w",
+            "env": {
+                "A": "1"
+            },
+            "mount_modes": {
+                "/s3": "write",
+                "/other": "write"
+            },
+        })
+    mgr = SessionManager("default", store=store)
+    mgr.default_profile = CompiledProfile(
+        mount_modes={"/s3": MountMode.READ},
+        hidden_paths=HiddenPaths(paths=("/s3/secrets", )),
+        hidden_vars=None,
+        env=None,
+        cwd="/s3")
+    await mgr.ensure_loaded()
+    default = mgr.get("default")
+    assert default.cwd == "/w"
+    assert default.env["A"] == "1"
+    assert default.mount_modes == {"/s3": MountMode.READ}
+    assert default.hidden_paths == HiddenPaths(paths=("/s3/secrets", ))
+    await mgr.flush()
+    stored = (await store.load())["default"]
+    assert stored["mount_modes"] == {"/s3": "read"}
+    assert stored["hidden_paths"] == {"paths": ["/s3/secrets"], "patterns": []}
 
 
 @pytest.mark.asyncio

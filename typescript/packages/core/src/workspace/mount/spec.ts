@@ -14,7 +14,7 @@
 
 import type { Resource } from '../../resource/base.ts'
 import type { Limit, MountBackend, MountMode } from '../../types.ts'
-import type { MountPermissions } from '../session/profile.ts'
+import type { MountPermissions } from '../session/permissions.ts'
 
 export interface MountSpecOptions {
   /** Per-mount mode override; falls back to the workspace default when unset. */

@@ -63,7 +63,7 @@ class CommandRule:
 
     It is the element type of ``commands.deny`` (workspace tier today,
     mount and profile tiers with their enforcement) and reaches the
-    workspace only inside that document; the internal SpecPolicy is
+    workspace only inside that document; the internal RulePolicy is
     what evaluates it. Path entries use the document's one grammar:
     an entry with ``*``, ``?`` or ``[`` is a pattern (repo fnmatch
     dialect, ``*`` crossing ``/``, a slashless pattern matching any

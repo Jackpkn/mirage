@@ -79,10 +79,10 @@
       }
     },
     {
-      "name": "top level: guards is gone, rules live under permissions",
+      "name": "deny rule: commands is a list, not a scalar",
       "config": {
         "mounts": { "/d": { "resource": "ram" } },
-        "guards": [{ "reason": "no", "commands": ["rm"] }]
+        "permissions": { "commands": { "deny": [{ "reason": "no", "commands": "rm" }] } }
       }
     },
     {

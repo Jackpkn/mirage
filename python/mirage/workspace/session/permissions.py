@@ -35,6 +35,27 @@ def _norm_prefix(prefix: str) -> str:
     return "/" + prefix.strip("/")
 
 
+def _string_list(value: Any, where: str) -> tuple[str, ...]:
+    """A rule's list field, refused unless it is a list of strings.
+
+    A scalar ``commands: rm`` would otherwise ``tuple()`` into
+    ``('r', 'm')`` and the command it meant to refuse stay allowed, so
+    the document fails to load instead, as it does in TypeScript.
+
+    Args:
+        value (Any): the field as written, None when absent.
+        where (str): the field's name, for the message.
+    """
+    if value is None:
+        return ()
+    if not isinstance(value, (list, tuple)):
+        raise ValueError(f"{where} must be a list of strings")
+    for i, entry in enumerate(value):
+        if not isinstance(entry, str):
+            raise ValueError(f"{where}[{i}] must be a string")
+    return tuple(value)
+
+
 def _rule(entry: Any) -> Any:
     """Coerce one ``deny`` entry to a CommandRule.
 
@@ -52,10 +73,14 @@ def _rule(entry: Any) -> Any:
         if unknown:
             raise ValueError(
                 f"deny rule has unknown field(s): {', '.join(unknown)}")
-        return CommandRule(reason=str(entry.get("reason",
-                                                DEFAULT_DENY_REASON)),
-                           commands=tuple(entry.get("commands", ())),
-                           paths=tuple(entry.get("paths", ())))
+        reason = entry.get("reason", DEFAULT_DENY_REASON)
+        if not isinstance(reason, str):
+            raise ValueError("deny rule reason must be a string")
+        return CommandRule(reason=reason,
+                           commands=_string_list(entry.get("commands"),
+                                                 "deny rule commands"),
+                           paths=_string_list(entry.get("paths"),
+                                              "deny rule paths"))
     return entry
 
 

@@ -154,6 +154,47 @@ describe('SessionManager with a SessionStore', () => {
     expect(dflt.hiddenVars).toEqual({ names: ['SLACK_TOKEN'], patterns: [] })
   })
 
+  it('defaultProfile shapes the default session and outranks a stale record', async () => {
+    // A record written before the profile existed (or under an older
+    // one) must not wake the primary agent unrestricted: the document
+    // wins the narrowing fields after hydration, the record keeps the
+    // scratch state (cwd, env), and the next flush rewrites the record.
+    const store = new RAMSessionStore()
+    await store.set('def', {
+      session_id: 'def',
+      cwd: '/w',
+      env: { A: '1' },
+      mount_modes: { '/s3': 'write', '/other': 'write' },
+    })
+    const m = new SessionManager('def', store)
+    m.defaultProfile = {
+      mountModes: new Map([['/s3', MountMode.READ]]),
+      hiddenPaths: { paths: ['/s3/secrets'], patterns: [] },
+      hiddenVars: { names: ['SLACK_TOKEN'], patterns: [] },
+      env: { PAGER: 'cat' },
+      cwd: '/s3',
+    }
+    const dflt = m.get('def')
+    expect(dflt.cwd).toBe('/s3')
+    expect(dflt.env.PAGER).toBe('cat')
+    expect(dflt.hiddenVars).toEqual({ names: ['SLACK_TOKEN'], patterns: [] })
+    await m.ensureLoaded()
+    expect(dflt.cwd).toBe('/w')
+    expect(dflt.env.A).toBe('1')
+    expect(dflt.mountModes).toEqual(new Map([['/s3', MountMode.READ]]))
+    expect(dflt.hiddenPaths).toEqual({ paths: ['/s3/secrets'], patterns: [] })
+    await m.flush()
+    const stored = (await store.load()).get('def') as {
+      mount_modes: Record<string, string>
+      hidden_paths: { paths: string[] }
+    }
+    expect(stored.mount_modes).toEqual({ '/s3': 'read' })
+    expect(stored.hidden_paths.paths).toEqual(['/s3/secrets'])
+    // null is "no default profile", not "clear the session".
+    m.defaultProfile = null
+    expect(dflt.mountModes).toEqual(new Map([['/s3', MountMode.READ]]))
+  })
+
   it('flush writes every session through', async () => {
     const store = new RAMSessionStore()
     const m = new SessionManager('def', store)

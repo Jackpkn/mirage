@@ -30,7 +30,7 @@ import type { CLISpec } from '../../commands/cli/types.ts'
 import { runWithTimeout } from '../../commands/builtin/utils/limit.ts'
 import type { CLIInstall } from '../cli/types.ts'
 import { resolveLimit } from '../../policy/index.ts'
-import { SpecPolicy } from '../../policy/spec.ts'
+import { RulePolicy } from '../../policy/rule.ts'
 import { JobTable } from '../../shell/job_table/index.ts'
 import type { ShellParser } from '../../shell/parse.ts'
 import { buildFileCache } from './cache.ts'
@@ -71,16 +71,15 @@ import { buildFilePrompt } from '../file_prompt.ts'
 import { SessionManager } from '../session/manager.ts'
 import type { WorkspaceFields, WorkspaceStateStore } from '../store/base.ts'
 import type { Session } from '../session/session.ts'
-import { varsFromEnv } from '../session/session.ts'
-import type { SessionProfile, WorkspacePermissions } from '../session/profile.ts'
+import type { SessionProfile, WorkspacePermissions } from '../session/permissions.ts'
 import {
+  applyProfile,
   boundHidden,
   compileProfile,
   inherit,
   resolveProfile,
   tighten,
 } from '../session/resolve.ts'
-import { setCwd } from '../session/shell_dirs.ts'
 import { newSessionId, newWorkspaceId } from '../../utils/ids.ts'
 import type { WatchRuntime } from '../../watch/base.ts'
 import { resolveControlStores } from './build.ts'
@@ -198,12 +197,12 @@ export class Workspace {
     )
     // Admission policies, consulted in registration order after the
     // built-ins the registry seeds: the document's deny rules first
-    // (compiled by the internal SpecPolicy), then Policy instances,
+    // (compiled by the internal RulePolicy), then Policy instances,
     // then anything added later through ws.policies.add(). The
     // runtime policy (policy option) is the line-level counterpart
     // until it is absorbed as a hook.
     for (const rule of this.permissions?.commands.deny ?? []) {
-      this.registry.policies.add(new SpecPolicy(rule))
+      this.registry.policies.add(new RulePolicy(rule))
     }
     for (const entry of options.policies ?? []) this.registry.policies.add(entry)
     // Installed CLIs, fully separate from mounts: a spec name resolves
@@ -250,6 +249,14 @@ export class Workspace {
       this.registry.mount('/', new RAMResource(), options.mode ?? MountMode.READ)
       this.syntheticRootAnchor = true
     }
+    // The workspace's own session is a session created without a name,
+    // so `profiles.default` shapes it too (design 3.4): the primary
+    // agent is not the one agent the document cannot reach.
+    const defaultProfile = resolveProfile(this.profiles, null)
+    this.sessionManager.defaultProfile =
+      defaultProfile === null
+        ? null
+        : compileProfile(defaultProfile, infrastructurePrefixes(this.syntheticRootAnchor))
     for (const resource of [...this.registry.allMounts().map((m) => m.resource), this.cache]) {
       const resourceOps = resource.ops?.()
       if (resourceOps === undefined) continue
@@ -525,26 +532,12 @@ export class Workspace {
     const base = resolveProfile(this.profiles, options.profile)
     let inline: SessionProfile | null = options.permissions ?? null
     if (options.mounts != null) inline = tighten(inline, { mounts: options.mounts })
-    const compiled = compileProfile(tighten(base, inline))
-    let modes: Map<string, MountMode> | null = null
-    if (compiled.mountModes !== null) {
-      modes = new Map(compiled.mountModes)
-      for (const p of infrastructurePrefixes(this.syntheticRootAnchor)) {
-        if (!modes.has(p)) modes.set(p, MountMode.EXEC)
-      }
-    }
-    const session = this.sessionManager.create(sessionId, { mountModes: modes })
-    session.hiddenPaths = compiled.hiddenPaths
-    session.hiddenVars = compiled.hiddenVars
-    if (compiled.env != null) {
-      // A profile's env is a *process* environment, the same shape
-      // `ws.env = {...}` speaks, so every name in it is exported.
-      // Seeding them plain left `$TOKEN` expanding while every command,
-      // CLI and guest runtime in the profiled session saw nothing,
-      // since all three read `envSnapshot` and that is the exported set.
-      Object.assign(session.vars, varsFromEnv(compiled.env))
-    }
-    if (compiled.cwd !== null) setCwd(session, compiled.cwd)
+    const compiled = compileProfile(
+      tighten(base, inline),
+      infrastructurePrefixes(this.syntheticRootAnchor),
+    )
+    const session = this.sessionManager.create(sessionId)
+    applyProfile(session, compiled)
     return session
   }
 

@@ -27,7 +27,11 @@ import type { Policy } from '../../policy/index.ts'
 import type { PolicyDecision, PolicyFn } from '../../runtime/policy/index.ts'
 import type { RuntimeEntry } from '../../runtime/base.ts'
 import type { NamespaceStore } from '../mount/namespace/store.ts'
-import type { MountPermissions, SessionProfile, WorkspacePermissions } from '../session/profile.ts'
+import type {
+  MountPermissions,
+  SessionProfile,
+  WorkspacePermissions,
+} from '../session/permissions.ts'
 import type { SessionStore } from '../session/store.ts'
 import type { WorkspaceStateStore } from '../store/base.ts'
 

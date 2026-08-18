@@ -19,7 +19,7 @@ import pytest
 from mirage.context import reset_current_session, set_current_session
 from mirage.policy import (Action, CommandRule, Deny, OpsContext, Policies,
                            Policy, PolicyDenied)
-from mirage.policy.spec import SpecPolicy
+from mirage.policy.rule import RulePolicy
 from mirage.resource.ram import RAMResource
 from mirage.types import ConsistencyPolicy, FileType, MountMode, PathSpec
 from mirage.workspace import Workspace
@@ -141,7 +141,7 @@ async def test_readlink_answers_from_the_namespace():
 async def test_spec_op_twin_holds_on_the_dispatch_door():
     policies = Policies()
     policies.add(
-        SpecPolicy(CommandRule(reason="frozen", paths=("/data/locked/*", ))))
+        RulePolicy(CommandRule(reason="frozen", paths=("/data/locked/*", ))))
     dispatcher, _ = _dispatcher(policies)
     with pytest.raises(PolicyDenied) as excinfo:
         await dispatcher.dispatch("read", _path("/data/locked/a.txt"))

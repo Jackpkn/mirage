@@ -52,7 +52,7 @@ export const DEFAULT_DENY_REASON = 'denied by policy'
  * One admission rule of the permissions document: refuse matching
  * commands on matching paths. It is the element type of `commands.deny`
  * and reaches the workspace only inside that document; the internal
- * SpecPolicy is what evaluates it. Path entries use the document's one
+ * RulePolicy is what evaluates it. Path entries use the document's one
  * grammar: an entry with `*`, `?` or `[` is a pattern (repo fnmatch
  * dialect, `*` crossing `/`, a slashless pattern matching any name
  * component), anything else is an exact path and its subtree. Empty

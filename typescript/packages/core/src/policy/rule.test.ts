@@ -17,7 +17,7 @@ import { describe, expect, it } from 'vitest'
 import { RAMResource } from '../resource/ram/ram.ts'
 import { MountMode, PathSpec } from '../types.ts'
 import { MountRegistry } from '../workspace/mount/registry.ts'
-import { SpecPolicy } from './spec.ts'
+import { RulePolicy } from './rule.ts'
 import type { OpsContext } from './types.ts'
 import type { CommandContext } from './types.ts'
 
@@ -36,20 +36,20 @@ function ctx(command: string, paths: PathSpec[]): CommandContext {
   return { command, paths, argv: [], cwd: '/', registry }
 }
 
-describe('SpecPolicy grammar', () => {
+describe('RulePolicy grammar', () => {
   it('a plain path denies the whole subtree and nothing beside it', () => {
     // The document's one grammar: a plain entry is an exact path and its
     // subtree, so `/data/prod` covers `/data/prod/x` but not
     // `/data/production`; the old `*`/`?`-only dialect needed
     // `/data/prod/*` and then missed the directory itself.
-    const policy = new SpecPolicy({ reason: 'prod', commands: ['rm'], paths: ['/data/prod'] })
+    const policy = new RulePolicy({ reason: 'prod', commands: ['rm'], paths: ['/data/prod'] })
     expect(policy.preCommand(ctx('rm', [path('/data/prod')]))).not.toBeNull()
     expect(policy.preCommand(ctx('rm', [path('/data/prod/x')]))).not.toBeNull()
     expect(policy.preCommand(ctx('rm', [path('/data/production')]))).toBeNull()
   })
 
   it('a slashless glob matches any name component', () => {
-    const policy = new SpecPolicy({ reason: 'keys', paths: ['*.key'] })
+    const policy = new RulePolicy({ reason: 'keys', paths: ['*.key'] })
     expect(policy.preCommand(ctx('cat', [path('/a/b.key/c')]))).toEqual({
       kind: 'deny',
       message: 'cat: /a/b.key/c: keys\n',
@@ -61,18 +61,18 @@ describe('SpecPolicy grammar', () => {
   })
 
   it('question mark and a class are patterns too', () => {
-    const one = new SpecPolicy({ reason: 'one', paths: ['/data/?.txt'] })
+    const one = new RulePolicy({ reason: 'one', paths: ['/data/?.txt'] })
     expect(one.preCommand(ctx('cat', [path('/data/a.txt')]))).not.toBeNull()
     expect(one.preCommand(ctx('cat', [path('/data/ab.txt')]))).toBeNull()
-    const classed = new SpecPolicy({ reason: 'cls', paths: ['/data/[ab].txt'] })
+    const classed = new RulePolicy({ reason: 'cls', paths: ['/data/[ab].txt'] })
     expect(classed.preCommand(ctx('cat', [path('/data/b.txt')]))).not.toBeNull()
     expect(classed.preCommand(ctx('cat', [path('/data/c.txt')]))).toBeNull()
   })
 })
 
-describe('SpecPolicy', () => {
+describe('RulePolicy', () => {
   it('matches command and path, naming the operand as typed', () => {
-    const policy = new SpecPolicy({
+    const policy = new RulePolicy({
       reason: 'prod is protected',
       commands: ['rm', 'mv'],
       paths: ['/data/prod/*'],
@@ -88,36 +88,36 @@ describe('SpecPolicy', () => {
   })
 
   it('without paths refuses the command outright', () => {
-    const policy = new SpecPolicy({ reason: 'not here', commands: ['shred'] })
+    const policy = new RulePolicy({ reason: 'not here', commands: ['shred'] })
     const deny = policy.preCommand(ctx('shred', []))
     expect(deny && 'message' in deny ? deny.message : '').toBe('shred: not here\n')
   })
 
   it('without commands covers every command', () => {
-    const policy = new SpecPolicy({ reason: 'frozen', paths: ['/data/locked/*'] })
+    const policy = new RulePolicy({ reason: 'frozen', paths: ['/data/locked/*'] })
     expect(policy.preCommand(ctx('cat', [path('/data/locked/a')]))).not.toBeNull()
     expect(policy.preCommand(ctx('rm', [path('/data/open/a')]))).toBeNull()
   })
 })
 
-describe('SpecPolicy preOps twin', () => {
+describe('RulePolicy preOps twin', () => {
   function opsCtx(virtual: string): OpsContext {
     return { op: 'read', path: path(virtual), write: false, prefix: '/data/' }
   }
 
-  it('holds for path-only specs', () => {
+  it('holds for path-only rules', () => {
     // Pure path protection also fires at the op door, so FUSE and
     // programmatic ops cannot bypass it.
-    const policy = new SpecPolicy({ reason: 'frozen', paths: ['/data/locked/*'] })
+    const policy = new RulePolicy({ reason: 'frozen', paths: ['/data/locked/*'] })
     const deny = policy.preOps(opsCtx('/data/locked/a'))
     expect(deny && 'message' in deny ? deny.message : '').toBe('frozen\n')
     expect(policy.preOps(opsCtx('/data/open/a'))).toBeNull()
   })
 
-  it('skips command-scoped specs', () => {
+  it('skips command-scoped rules', () => {
     // An op does not know which command issued it; command-scoped
-    // specs stay at the command layer.
-    const policy = new SpecPolicy({
+    // rules stay at the command layer.
+    const policy = new RulePolicy({
       reason: 'no rm',
       commands: ['rm'],
       paths: ['/data/prod/*'],

@@ -564,13 +564,7 @@ describe('configToWorkspaceArgs', () => {
     ).toThrow(/deny\[0\]: unknown field `path`/)
   })
 
-  it('guards is gone, unshipped fields and a broken profile chain fail at load', () => {
-    expect(() =>
-      loadWorkspaceConfig({
-        mounts: { '/data': { resource: 'ram' } },
-        guards: [{ reason: 'x', commands: ['rm'] }],
-      }),
-    ).toThrow(/unknown config key `guards`/)
+  it('unshipped fields and a broken profile chain fail at load', () => {
     expect(() =>
       loadWorkspaceConfig({
         mounts: { '/data': { resource: 'ram' } },

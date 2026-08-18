@@ -14,7 +14,7 @@
 
 import { writeFileSync } from 'node:fs'
 import { ConsistencyPolicy } from '@struktoai/mirage-node'
-import { parseSessionProfile } from '@struktoai/mirage-core/workspace/session/profile'
+import { parseSessionProfile } from '@struktoai/mirage-core/workspace/session/permissions'
 import { ADAPTERS, openConsistency } from './adapters.ts'
 import type { Case, Target } from './harness.ts'
 import {

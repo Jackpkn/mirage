@@ -22,9 +22,10 @@ from mirage.resource.ram import RAMResource
 from mirage.types import HiddenPaths, HiddenVars, MountMode
 from mirage.workspace import Workspace
 from mirage.workspace.session import SessionProfile
-from mirage.workspace.session.profile import (CommandsBlock, MountPermissions,
-                                              PathsBlock, VarsBlock,
-                                              WorkspacePermissions)
+from mirage.workspace.session.permissions import (CommandsBlock,
+                                                  MountPermissions, PathsBlock,
+                                                  VarsBlock,
+                                                  WorkspacePermissions)
 from mirage.workspace.session.state import seed_var
 
 
@@ -117,6 +118,29 @@ def test_workspace_permissions_deny_accepts_rules_and_bare_names():
     assert w.paths == PathsBlock(hide=("/shared/finance", ))
     assert WorkspacePermissions() == WorkspacePermissions(
         commands=CommandsBlock(), paths=PathsBlock())
+
+
+@pytest.mark.parametrize("rule", [
+    {
+        "commands": "rm"
+    },
+    {
+        "reason": "no",
+        "paths": "/repo/secret"
+    },
+    {
+        "commands": ["rm", 3]
+    },
+    {
+        "reason": 7,
+        "commands": ["rm"]
+    },
+])
+def test_deny_rule_refuses_scalar_lists_and_non_string_reasons(rule):
+    # `commands: rm` would tuple() into ('r', 'm') and leave rm allowed;
+    # the document fails to load instead, as it does in TypeScript.
+    with pytest.raises(ValidationError):
+        WorkspacePermissions.model_validate({"commands": {"deny": [rule]}})
 
 
 def test_workspace_permissions_rejects_profile_only_and_unknown_fields():
@@ -296,6 +320,51 @@ def test_create_session_without_a_profile_takes_the_default_one():
     # A workspace with no default profile leaves the session unrestricted.
     plain = _ws().create_session("free")
     assert plain.mount_modes is None and plain.cwd == "/"
+
+
+def test_default_profile_shapes_the_workspace_session_too():
+    # The workspace's own session is a session created without a name,
+    # so `profiles.default` reaches it: the primary agent starts in the
+    # profile's cwd, sees its exported env and its mount ceilings, and
+    # cannot see what it hides. A workspace with no default profile
+    # leaves that session as it always was.
+    ws = Workspace(
+        {
+            "/a": (RAMResource(), MountMode.WRITE),
+            "/b": (RAMResource(), MountMode.WRITE)
+        },
+        mode=MountMode.WRITE,
+        profiles={
+            "default":
+            SessionProfile(cwd="/b",
+                           env={"PAGER": "cat"},
+                           mounts={"/b": "rwx"},
+                           paths=PathsBlock(hide=("/b/vault", ))),
+        },
+    )
+    default = ws.get_session(ws.default_session_id)
+    assert default.mount_modes is not None
+    assert default.mount_modes["/b"] == MountMode.EXEC
+    assert "/a" not in default.mount_modes
+    assert default.hidden_paths == HiddenPaths(paths=("/b/vault", ))
+    assert default.cwd == "/b"
+
+    async def run():
+        pwd = await ws.execute("pwd")
+        pager = await ws.execute('echo "$PAGER"')
+        other = await ws.execute("ls /a")
+        vault = await ws.execute("mkdir /b/vault")
+        return (await pwd.stdout_str(), await
+                pager.stdout_str(), other.exit_code, vault.exit_code)
+
+    pwd_out, pager_out, other_exit, vault_exit = asyncio.run(run())
+    assert pwd_out == "/b\n"
+    assert pager_out == "cat\n"
+    assert other_exit != 0
+    assert vault_exit != 0
+    plain_ws = _ws()
+    plain = plain_ws.get_session(plain_ws.default_session_id)
+    assert plain.mount_modes is None and plain.hidden_paths is None
 
 
 def test_create_session_rejects_an_unknown_profile_name():

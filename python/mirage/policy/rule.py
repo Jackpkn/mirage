@@ -18,7 +18,7 @@ from mirage.policy.types import (Action, CommandContext, CommandRule, Deny,
 from mirage.utils.hidden import classify_paths, path_hidden
 
 
-class SpecPolicy(Policy):
+class RulePolicy(Policy):
     """A CommandRule compiled to a policy.
 
     Internal: the workspace builds one per rule of the document's

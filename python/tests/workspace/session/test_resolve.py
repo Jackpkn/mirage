@@ -1,13 +1,15 @@
 import pytest
 
 from mirage.policy.errors import PolicyError
+from mirage.shell.variable import VarAttr
 from mirage.types import HiddenPaths, HiddenVars, MountMode
-from mirage.workspace.session.profile import (MountPermissions, PathsBlock,
-                                              SessionProfile, VarsBlock,
-                                              WorkspacePermissions)
-from mirage.workspace.session.resolve import (bound_hidden, compile_profile,
-                                              inherit, rebase, resolve_profile,
-                                              tighten)
+from mirage.workspace.session.permissions import (MountPermissions, PathsBlock,
+                                                  SessionProfile, VarsBlock,
+                                                  WorkspacePermissions)
+from mirage.workspace.session.resolve import (apply_profile, bound_hidden,
+                                              compile_profile, inherit, narrow,
+                                              rebase, resolve_profile, tighten)
+from mirage.workspace.session.session import Session
 
 PROFILES = {
     "default":
@@ -178,3 +180,42 @@ def test_compile_profile_list_mounts_and_empty_profile():
             empty.env, empty.cwd) == (None, None, None, None, None)
     bare = compile_profile(SessionProfile())
     assert bare == empty
+
+
+def test_compile_profile_grants_infrastructure_beside_listed_mounts():
+    # A ceiling must never lock an agent out of the scratch root, /dev
+    # or the history view, so they ride along at EXEC when the profile
+    # lists mounts, and are not invented when it lists none.
+    infra = ("/", "/dev")
+    listed = compile_profile(SessionProfile(mounts={"/a": "r"}), infra)
+    assert listed.mount_modes == {
+        "/a": MountMode.READ,
+        "/": MountMode.EXEC,
+        "/dev": MountMode.EXEC,
+    }
+    own = compile_profile(SessionProfile(mounts={"/": "r"}), infra)
+    assert own.mount_modes is not None
+    assert own.mount_modes["/"] == MountMode.READ
+    assert compile_profile(SessionProfile(cwd="/a"), infra).mount_modes is None
+
+
+def test_narrow_stamps_the_uneditable_fields_and_apply_seeds_the_rest():
+    compiled = compile_profile(
+        SessionProfile(cwd="/a",
+                       env={"ROLE": "x"},
+                       mounts={"/a": "rw"},
+                       paths=PathsBlock(hide=("/a/secrets", )),
+                       vars=VarsBlock(hide=("SLACK_TOKEN", ))))
+    narrowed = Session(session_id="s1")
+    narrow(narrowed, compiled)
+    assert narrowed.mount_modes == {"/a": MountMode.WRITE}
+    assert narrowed.mount_modes is not compiled.mount_modes
+    assert narrowed.hidden_paths == HiddenPaths(paths=("/a/secrets", ))
+    assert narrowed.hidden_vars == HiddenVars(names=("SLACK_TOKEN", ))
+    assert narrowed.cwd == "/" and "ROLE" not in narrowed.env
+    applied = Session(session_id="s2")
+    apply_profile(applied, compiled)
+    assert applied.mount_modes == {"/a": MountMode.WRITE}
+    assert applied.cwd == "/a"
+    assert applied.env["ROLE"] == "x"
+    assert VarAttr.EXPORT in applied.vars["ROLE"].attrs

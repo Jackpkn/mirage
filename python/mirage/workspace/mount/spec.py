@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 
 from mirage.resource.base import BaseResource
 from mirage.types import Limit, MountBackend, MountMode
-from mirage.workspace.session.profile import MountPermissions
+from mirage.workspace.session.permissions import MountPermissions
 
 
 @dataclass(frozen=True)

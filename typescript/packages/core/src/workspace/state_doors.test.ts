@@ -956,6 +956,44 @@ describe('session profiles', () => {
     ).toThrow("extends unknown profile 'gone'")
   })
 
+  it('the default profile shapes the workspace session too', async () => {
+    // The workspace's own session is a session created without a name,
+    // so `profiles.default` reaches it: the primary agent starts in the
+    // profile's cwd, sees its exported env and its mount ceilings, and
+    // cannot see what it hides. No default profile leaves it as it was.
+    const parser = await getTestParser()
+    const ws = new Workspace(
+      { '/a': new RAMResource(), '/b': new RAMResource() },
+      {
+        mode: MountMode.WRITE,
+        shellParser: parser,
+        profiles: {
+          default: {
+            cwd: '/b',
+            env: { PAGER: 'cat' },
+            mounts: { '/b': 'rwx' },
+            paths: { hide: ['/b/vault'] },
+          },
+        },
+      },
+    )
+    open.push(ws)
+    const dflt = ws.getSession(ws.defaultSessionId)
+    expect(dflt.mountModes?.get('/b')).toBe(MountMode.EXEC)
+    expect(dflt.mountModes?.has('/a')).toBe(false)
+    expect(dflt.hiddenPaths).toEqual({ paths: ['/b/vault'], patterns: [] })
+    expect(dflt.cwd).toBe('/b')
+    expect(stdoutStr(await ws.execute('pwd'))).toBe('/b\n')
+    expect(stdoutStr(await ws.execute('echo "$PAGER"'))).toBe('cat\n')
+    expect((await ws.execute('ls /a')).exitCode).not.toBe(0)
+    expect((await ws.execute('mkdir /b/vault')).exitCode).not.toBe(0)
+    const plain = new Workspace({ '/a': new RAMResource() }, { shellParser: parser })
+    open.push(plain)
+    const own = plain.getSession(plain.defaultSessionId)
+    expect(own.mountModes).toBeNull()
+    expect(own.hiddenPaths).toBeNull()
+  })
+
   it('workspace and mount-owned hides bind every session, the default included', async () => {
     const parser = await getTestParser()
     const repo = new RAMResource()

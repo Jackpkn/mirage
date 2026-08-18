@@ -26,7 +26,7 @@ import { classifyPaths, pathHidden } from '../utils/hidden.ts'
  * match through the same matcher, so a deny scope and a hide read one
  * grammar.
  */
-export class SpecPolicy implements Policy {
+export class RulePolicy implements Policy {
   readonly rule: CommandRule
   private readonly scope: HiddenPaths | null
 

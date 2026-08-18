@@ -15,7 +15,7 @@
 import pytest
 
 from mirage.policy import CommandContext, CommandRule, Deny, OpsContext
-from mirage.policy.spec import SpecPolicy
+from mirage.policy.rule import RulePolicy
 from mirage.resource.ram import RAMResource
 from mirage.types import MountMode, PathSpec
 from mirage.workspace.mount import MountRegistry
@@ -49,7 +49,7 @@ async def test_plain_path_denies_the_whole_subtree_and_nothing_beside_it():
     # subtree, so `/data/prod` covers `/data/prod/x` but not
     # `/data/production`; the old `*`/`?`-only dialect needed `/data/prod/*`
     # and then missed the directory itself.
-    policy = SpecPolicy(
+    policy = RulePolicy(
         CommandRule(reason="prod", commands=("rm", ), paths=("/data/prod", )))
     assert isinstance(
         await policy.pre_command(_ctx("rm", [_path("/data/prod")])), Deny)
@@ -61,7 +61,7 @@ async def test_plain_path_denies_the_whole_subtree_and_nothing_beside_it():
 
 @pytest.mark.asyncio
 async def test_slashless_glob_matches_any_name_component():
-    policy = SpecPolicy(CommandRule(reason="keys", paths=("*.key", )))
+    policy = RulePolicy(CommandRule(reason="keys", paths=("*.key", )))
     deny = await policy.pre_command(_ctx("cat", [_path("/a/b.key/c")]))
     assert deny == Deny("cat: /a/b.key/c: keys\n")
     assert await policy.pre_command(_ctx("cat", [_path("/a/b.keyx")])) is None
@@ -74,12 +74,12 @@ async def test_slashless_glob_matches_any_name_component():
 
 @pytest.mark.asyncio
 async def test_question_mark_and_class_are_patterns_too():
-    policy = SpecPolicy(CommandRule(reason="one", paths=("/data/?.txt", )))
+    policy = RulePolicy(CommandRule(reason="one", paths=("/data/?.txt", )))
     assert await policy.pre_command(_ctx("cat",
                                          [_path("/data/a.txt")])) is not None
     assert await policy.pre_command(_ctx("cat",
                                          [_path("/data/ab.txt")])) is None
-    classed = SpecPolicy(CommandRule(reason="cls", paths=("/data/[ab].txt", )))
+    classed = RulePolicy(CommandRule(reason="cls", paths=("/data/[ab].txt", )))
     assert await classed.pre_command(_ctx("cat",
                                           [_path("/data/b.txt")])) is not None
     assert await classed.pre_command(_ctx("cat",
@@ -87,8 +87,8 @@ async def test_question_mark_and_class_are_patterns_too():
 
 
 @pytest.mark.asyncio
-async def test_spec_policy_matches_command_and_path():
-    policy = SpecPolicy(
+async def test_rule_policy_matches_command_and_path():
+    policy = RulePolicy(
         CommandRule(reason="prod is protected",
                     commands=("rm", "mv"),
                     paths=("/data/prod/*", )))
@@ -104,16 +104,16 @@ async def test_spec_policy_matches_command_and_path():
 
 
 @pytest.mark.asyncio
-async def test_spec_policy_without_paths_refuses_the_command_outright():
-    policy = SpecPolicy(CommandRule(reason="not here", commands=("shred", )))
+async def test_rule_policy_without_paths_refuses_the_command_outright():
+    policy = RulePolicy(CommandRule(reason="not here", commands=("shred", )))
     deny = await policy.pre_command(_ctx("shred", []))
     assert deny is not None
     assert deny.message == "shred: not here\n"
 
 
 @pytest.mark.asyncio
-async def test_spec_policy_without_commands_covers_every_command():
-    policy = SpecPolicy(
+async def test_rule_policy_without_commands_covers_every_command():
+    policy = RulePolicy(
         CommandRule(reason="frozen", paths=("/data/locked/*", )))
     assert await policy.pre_command(_ctx("cat", [_path("/data/locked/a")])
                                     ) is not None
@@ -122,10 +122,10 @@ async def test_spec_policy_without_commands_covers_every_command():
 
 
 @pytest.mark.asyncio
-async def test_spec_policy_op_twin_holds_for_path_only_specs():
+async def test_rule_policy_op_twin_holds_for_path_only_rules():
     # Pure path protection also fires at the op doors, so FUSE and
     # programmatic ops cannot bypass it.
-    policy = SpecPolicy(
+    policy = RulePolicy(
         CommandRule(reason="frozen", paths=("/data/locked/*", )))
     ctx = OpsContext(op="read",
                      path=_path("/data/locked/a"),
@@ -142,10 +142,10 @@ async def test_spec_policy_op_twin_holds_for_path_only_specs():
 
 
 @pytest.mark.asyncio
-async def test_spec_policy_op_twin_skips_command_scoped_specs():
+async def test_rule_policy_op_twin_skips_command_scoped_rules():
     # An op does not know which command issued it; command-scoped
-    # specs stay at the command layer.
-    policy = SpecPolicy(
+    # rules stay at the command layer.
+    policy = RulePolicy(
         CommandRule(reason="no rm",
                     commands=("rm", ),
                     paths=("/data/prod/*", )))

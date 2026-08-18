@@ -17,10 +17,11 @@ from mirage.context import (assert_mount_allowed, get_current_session,
                             set_current_session)
 from mirage.workspace.session.errors import ReadonlyVariableError
 from mirage.workspace.session.manager import SessionManager
-from mirage.workspace.session.profile import (CommandsBlock, CompiledProfile,
-                                              MountPermissions, PathsBlock,
-                                              SessionProfile, VarsBlock,
-                                              WorkspacePermissions)
+from mirage.workspace.session.permissions import (CommandsBlock,
+                                                  CompiledProfile,
+                                                  MountPermissions, PathsBlock,
+                                                  SessionProfile, VarsBlock,
+                                                  WorkspacePermissions)
 from mirage.workspace.session.ram import RAMSessionStore
 from mirage.workspace.session.session import Session
 from mirage.workspace.session.state import (ensure_var_visible, env_snapshot,

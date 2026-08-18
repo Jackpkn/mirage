@@ -21,7 +21,7 @@ import {
   parseProfileMounts,
   parseSessionProfile,
   parseWorkspacePermissions,
-} from './profile.ts'
+} from './permissions.ts'
 
 describe('parseSessionProfile', () => {
   it('regroups paths and vars and normalizes mounts', () => {

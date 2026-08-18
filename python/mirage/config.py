@@ -37,8 +37,9 @@ from mirage.shell.job_table import ConsoleFactory
 from mirage.types import (KERNEL_BACKENDS, ConsistencyPolicy, Limit,
                           MountBackend, MountMode, parse_mount_mode)
 from mirage.workspace.mount.spec import Mount
-from mirage.workspace.session.profile import (MountPermissions, SessionProfile,
-                                              WorkspacePermissions)
+from mirage.workspace.session.permissions import (MountPermissions,
+                                                  SessionProfile,
+                                                  WorkspacePermissions)
 from mirage.workspace.session.resolve import inherit
 from mirage.workspace.store import (DEFAULT_STATE_ROOT,
                                     DiskWorkspaceStateStore,

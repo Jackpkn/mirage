@@ -23,8 +23,10 @@ from mirage.policy import (CommandRule, ExecuteResultContext, OpsContext,
                            OpsResultContext, PolicyError)
 from mirage.resource.ram import RAMResource
 from mirage.types import Limit, MountMode, OnExceed
-from mirage.workspace.session.profile import (CommandsBlock,
-                                              WorkspacePermissions)
+from mirage.workspace.mount.spec import Mount
+
+from mirage.workspace.session.permissions import (  # isort: skip
+    CommandsBlock, MountPermissions, PathsBlock, WorkspacePermissions)
 
 
 class NoInterpreters(Policy):
@@ -560,7 +562,6 @@ async def test_post_execute_sees_the_rightmost_producer():
 
 @pytest.mark.asyncio
 async def test_workspace_hides_bind_every_session_including_the_default():
-    from mirage.workspace.session.profile import PathsBlock
     ram = RAMResource()
     ws = Workspace({"/data/": ram},
                    mode=MountMode.WRITE,
@@ -586,8 +587,6 @@ async def test_workspace_hides_bind_every_session_including_the_default():
 
 @pytest.mark.asyncio
 async def test_mount_owned_hides_are_rebased_under_the_mount():
-    from mirage.workspace.mount.spec import Mount
-    from mirage.workspace.session.profile import MountPermissions, PathsBlock
     repo = RAMResource()
     other = RAMResource()
     ws = Workspace(

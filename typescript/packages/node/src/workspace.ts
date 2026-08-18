@@ -28,7 +28,7 @@ import type {
 } from '@struktoai/mirage-core/workspace/workspace/workspace'
 import { KernelMounts } from './workspace/workspace/kernel_mounts.ts'
 import { Mount } from '@struktoai/mirage-core/workspace/mount/spec'
-import type { MountPermissions } from '@struktoai/mirage-core/workspace/session/profile'
+import type { MountPermissions } from '@struktoai/mirage-core/workspace/session/permissions'
 import './compression_codecs.ts'
 import './runtime/sandbox/daytona/runtime.ts'
 

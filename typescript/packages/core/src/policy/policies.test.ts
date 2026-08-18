@@ -26,7 +26,7 @@ import type { Policy } from './base.ts'
 import { MountRootPolicy } from './builtin/mount_root.ts'
 import { PolicyDenied } from './errors.ts'
 import { Policies, postExecuteGate, postOpsGate, preOpsGate } from './policies.ts'
-import { SpecPolicy } from './spec.ts'
+import { RulePolicy } from './rule.ts'
 import type {
   Action,
   CommandContext,
@@ -152,7 +152,7 @@ describe('Policies', () => {
 
   it('builtin runs first, then user policies in order', async () => {
     const policies = new Policies([new MountRootPolicy()])
-    policies.add(new SpecPolicy({ reason: 'user rule', commands: ['rm'] }))
+    policies.add(new RulePolicy({ reason: 'user rule', commands: ['rm'] }))
     // Both match `rm /data`; the built-in GNU message wins by order.
     let deny = await policies.preCommand(ctx('rm', [path('/data')]))
     expect(deny?.message).toContain('Device or resource busy')
