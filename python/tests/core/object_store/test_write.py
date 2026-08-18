@@ -71,8 +71,7 @@ def test_truncate_extends_a_missing_key(accessor):
 
 def test_mkdir_writes_a_marker_and_parents_gate_ancestors(accessor):
     store = FakeStore()
-    manager = _managed(
-        make_mkdir(make_driver(store))(accessor, spec("/a/b")))
+    manager = _managed(make_mkdir(make_driver(store))(accessor, spec("/a/b")))
     assert store.objects == {"a/b/": b""}
     assert manager.writes == ["/a/b"]
     deep = _managed(

@@ -73,8 +73,7 @@ def make_truncate(driver: ObjectStoreDriver[A, C]) -> TruncateFn[A]:
         driver (ObjectStoreDriver): the store's native surface.
     """
 
-    async def truncate(accessor: A, path_spec: PathSpec,
-                       length: int) -> None:
+    async def truncate(accessor: A, path_spec: PathSpec, length: int) -> None:
         path = path_spec.mount_path
         key = kp.apply(driver.key_prefix_of(accessor), path)
         start_ms = int(time.monotonic() * 1000)

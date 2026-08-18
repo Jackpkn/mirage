@@ -30,8 +30,7 @@ def test_wrong_length_or_literal_is_no_match():
 
 
 def test_codec_failure_fails_the_whole_route():
-    assert match_route(ROUTES, ["rooms", "red", "revisions",
-                                "x.json"]) is None
+    assert match_route(ROUTES, ["rooms", "red", "revisions", "x.json"]) is None
     matched = match_route(ROUTES, ["rooms", "red", "revisions", "3.json"])
     assert matched is not None
     assert matched[1] == {"room": "red", "rev": "3"}

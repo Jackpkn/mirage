@@ -35,8 +35,7 @@ def test_du_size_matches_the_entries_total(accessor):
     driver = make_driver(FakeStore(_STORE))
     found, total = asyncio.run(
         make_du_entries(driver)(accessor, spec("/data")))
-    assert asyncio.run(make_du_size(driver)(accessor,
-                                            spec("/data"))) == total
+    assert asyncio.run(make_du_size(driver)(accessor, spec("/data"))) == total
 
 
 def test_du_of_a_single_file_counts_just_it(accessor):

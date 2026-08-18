@@ -57,9 +57,8 @@ class Route:
     probed: bool = True
 
 
-def match_route(
-        routes: tuple[Route, ...],
-        parts: list[str]) -> tuple[Route, dict[str, str]] | None:
+def match_route(routes: tuple[Route, ...],
+                parts: list[str]) -> tuple[Route, dict[str, str]] | None:
     """Match path segments against the table, first declared route wins.
 
     Args:

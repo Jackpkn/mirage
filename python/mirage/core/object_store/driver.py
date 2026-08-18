@@ -260,5 +260,5 @@ class ObjectStoreDriver(Generic[A, C]):
     copy_file: Callable[[C, str, str], Awaitable[bool]]
     probe_prefix: Callable[[C, str], Awaitable[bool]]
     is_not_found: Callable[[Exception], bool]
-    find_tree: Callable[[C, str, FindHints],
-                        tuple[AsyncIterator[TreeEntry], bool]] | None = None
+    find_tree: Callable[[C, str, FindHints], tuple[AsyncIterator[TreeEntry],
+                                                   bool]] | None = None

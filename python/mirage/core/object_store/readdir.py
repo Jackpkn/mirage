@@ -17,8 +17,7 @@ from functools import partial
 
 from mirage.cache.index import (NULL_INDEX, IndexCacheStore, IndexEntry,
                                 ResourceType)
-from mirage.core.object_store.driver import (A, C, ObjectStoreDriver,
-                                             ReaddirFn)
+from mirage.core.object_store.driver import A, C, ObjectStoreDriver, ReaddirFn
 from mirage.types import PathSpec
 from mirage.utils import key_prefix as kp
 from mirage.utils.errors import listing_error

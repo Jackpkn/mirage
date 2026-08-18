@@ -37,8 +37,7 @@ def make_tee(resource: str, io: CommandIO) -> Callable[..., Any]:
     write_bytes = io.require(Operation.WRITE)
     resolve_glob = io.resolve_glob
 
-    async def tee(accessor: Accessor, paths: list[PathSpec],
-                  texts: list[str],
+    async def tee(accessor: Accessor, paths: list[PathSpec], texts: list[str],
                   opts: CommandOpts) -> tuple[ByteSource | None, IOResult]:
         if not paths:
             raise ValueError("tee: missing operand")

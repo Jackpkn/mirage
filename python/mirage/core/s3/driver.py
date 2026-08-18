@@ -50,8 +50,7 @@ async def _connect(accessor: S3Accessor) -> AsyncIterator[S3Conn]:
         yield S3Conn(client=client, config=accessor.config)
 
 
-async def _list_children(conn: S3Conn,
-                         pfx: str) -> AsyncIterator[ChildEntry]:
+async def _list_children(conn: S3Conn, pfx: str) -> AsyncIterator[ChildEntry]:
     paginator = conn.client.get_paginator("list_objects_v2")
     async for page in paginator.paginate(Bucket=conn.config.bucket,
                                          Prefix=pfx,
@@ -66,11 +65,11 @@ async def _list_children(conn: S3Conn,
             relative = obj["Key"][len(pfx):]
             if relative and "/" not in relative:
                 last_mod = obj.get("LastModified")
-                yield ChildEntry(key=obj["Key"],
-                                 kind="f",
-                                 size=obj.get("Size"),
-                                 modified=to_iso_z(last_mod)
-                                 if last_mod else "")
+                yield ChildEntry(
+                    key=obj["Key"],
+                    kind="f",
+                    size=obj.get("Size"),
+                    modified=to_iso_z(last_mod) if last_mod else "")
             else:
                 yield ChildEntry(key=obj["Key"], kind="marker")
 
@@ -119,8 +118,7 @@ async def _head(conn: S3Conn, key: str) -> ObjectMeta | None:
 
 async def _get(conn: S3Conn, key: str) -> bytes | None:
     try:
-        resp = await conn.client.get_object(Bucket=conn.config.bucket,
-                                            Key=key)
+        resp = await conn.client.get_object(Bucket=conn.config.bucket, Key=key)
     except Exception as exc:
         if is_not_found(exc):
             return None
@@ -130,9 +128,7 @@ async def _get(conn: S3Conn, key: str) -> bytes | None:
 
 
 async def _put(conn: S3Conn, key: str, data: bytes) -> None:
-    await conn.client.put_object(Bucket=conn.config.bucket,
-                                 Key=key,
-                                 Body=data)
+    await conn.client.put_object(Bucket=conn.config.bucket, Key=key, Body=data)
 
 
 async def _delete_file(conn: S3Conn, key: str) -> None:

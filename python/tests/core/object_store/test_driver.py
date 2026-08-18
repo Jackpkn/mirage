@@ -16,8 +16,8 @@ import dataclasses
 
 import pytest
 
-from mirage.core.object_store.driver import (ChildEntry, FindHints,
-                                             ObjectMeta, TreeEntry)
+from mirage.core.object_store.driver import (ChildEntry, FindHints, ObjectMeta,
+                                             TreeEntry)
 from tests.core.object_store.conftest import FakeStore, make_driver
 
 

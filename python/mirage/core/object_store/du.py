@@ -30,11 +30,10 @@ def make_du_entries(driver: ObjectStoreDriver[A, C]) -> DuEntriesFn[A]:
         driver (ObjectStoreDriver): the store's native surface.
     """
 
-    async def entries(
-            accessor: A,
-            path_spec: PathSpec,
-            index: IndexCacheStore = NULL_INDEX
-    ) -> tuple[list[tuple[str, int]], int]:
+    async def entries(accessor: A,
+                      path_spec: PathSpec,
+                      index: IndexCacheStore = NULL_INDEX
+                      ) -> tuple[list[tuple[str, int]], int]:
         kpfx = driver.key_prefix_of(accessor)
         stem = kp.apply(kpfx, path_spec.mount_path).rstrip("/")
         found: list[tuple[str, int]] = []

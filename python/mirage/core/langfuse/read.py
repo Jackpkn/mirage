@@ -44,8 +44,7 @@ async def _read_prompt_version(accessor: LangfuseAccessor, match: RouteMatch,
 
 
 async def _read_dataset_items(accessor: LangfuseAccessor, match: RouteMatch,
-                              path: PathSpec,
-                              index: IndexCacheStore) -> bytes:
+                              path: PathSpec, index: IndexCacheStore) -> bytes:
     items = await fetch_or_enoent(
         fetch_dataset_items(accessor.api, match.captures["dataset_name"]),
         path.virtual)

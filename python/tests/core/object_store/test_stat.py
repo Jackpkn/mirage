@@ -20,8 +20,8 @@ from mirage.cache.index.ram import RAMIndexCacheStore
 from mirage.core.object_store.readdir import make_readdir
 from mirage.core.object_store.stat import make_stat
 from mirage.types import FileType
-from tests.core.object_store.conftest import (MODIFIED, FakeStore,
-                                              make_driver, spec)
+from tests.core.object_store.conftest import (MODIFIED, FakeStore, make_driver,
+                                              spec)
 
 
 def test_stat_maps_the_driver_meta_onto_filestat(accessor):
@@ -46,8 +46,7 @@ def test_stat_root_is_a_directory_without_connecting(accessor):
 def test_stat_prefix_is_a_directory(accessor):
     store = FakeStore({"dir/f.txt": b"x"})
     stat = make_stat(make_driver(store))
-    assert asyncio.run(stat(accessor,
-                            spec("/dir"))).type == FileType.DIRECTORY
+    assert asyncio.run(stat(accessor, spec("/dir"))).type == FileType.DIRECTORY
 
 
 def test_stat_missing_is_enoent(accessor):
@@ -59,8 +58,8 @@ def test_stat_missing_is_enoent(accessor):
 def test_stat_trailing_slash_prefers_the_coexisting_prefix(accessor):
     store = FakeStore({"csv": b"file", "csv/inner.txt": b"x"})
     stat = make_stat(make_driver(store))
-    assert asyncio.run(stat(accessor, spec("/csv"))).type != (
-        FileType.DIRECTORY)
+    assert asyncio.run(stat(accessor,
+                            spec("/csv"))).type != (FileType.DIRECTORY)
     assert asyncio.run(stat(accessor,
                             spec("/csv/"))).type == FileType.DIRECTORY
 
@@ -71,8 +70,7 @@ def test_stat_index_fast_path_skips_the_store(accessor):
     index = RAMIndexCacheStore()
     asyncio.run(make_readdir(driver)(accessor, spec("/"), index=index))
     connects = store.connects
-    st = asyncio.run(make_stat(driver)(accessor, spec("/a.txt"),
-                                       index=index))
+    st = asyncio.run(make_stat(driver)(accessor, spec("/a.txt"), index=index))
     assert st.size == 2
     assert store.connects == connects
 

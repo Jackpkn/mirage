@@ -23,8 +23,8 @@ from mirage.types import PathSpec
 from tests.core.hierarchy.conftest import FakeAccessor, detect_scope, spec
 
 
-async def _read_note(accessor: FakeAccessor, match: RouteMatch,
-                     path: PathSpec, index: IndexCacheStore) -> bytes:
+async def _read_note(accessor: FakeAccessor, match: RouteMatch, path: PathSpec,
+                     index: IndexCacheStore) -> bytes:
     return f"{match.captures['room']}:{match.captures['note']}".encode()
 
 
@@ -37,7 +37,6 @@ def test_reader_gets_the_captures(accessor):
 
 
 def test_everything_else_is_enoent(accessor):
-    for path in ("/", "/rooms", "/rooms/red", "/rooms/.red/a.json",
-                 "/halls"):
+    for path in ("/", "/rooms", "/rooms/red", "/rooms/.red/a.json", "/halls"):
         with pytest.raises(FileNotFoundError):
             asyncio.run(READ(accessor, spec(path)))

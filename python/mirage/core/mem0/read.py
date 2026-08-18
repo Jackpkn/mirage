@@ -39,8 +39,7 @@ async def _resolve_memory(
               if lookup.entry is not None else None)
     if isinstance(cached, dict):
         return cached
-    return await get_memory(accessor.client, match.captures["memory_id"],
-                            path)
+    return await get_memory(accessor.client, match.captures["memory_id"], path)
 
 
 async def _read_memory(accessor: Mem0Accessor, match: RouteMatch,

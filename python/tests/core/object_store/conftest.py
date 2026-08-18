@@ -20,9 +20,8 @@ from typing import Any
 import pytest
 
 from mirage.accessor.base import Accessor
-from mirage.core.object_store.driver import (ChildEntry, FindHints,
-                                             ObjectMeta, ObjectStoreDriver,
-                                             TreeEntry)
+from mirage.core.object_store.driver import (ChildEntry, FindHints, ObjectMeta,
+                                             ObjectStoreDriver, TreeEntry)
 from mirage.types import PathSpec
 
 MODIFIED = "2026-01-01T00:00:00Z"
@@ -54,9 +53,10 @@ def spec(mount_path: str) -> PathSpec:
                     resource_path=key)
 
 
-def make_driver(store: FakeStore,
-                find_narrowing: bool = False
-                ) -> ObjectStoreDriver[FakeAccessor, FakeStore]:
+def make_driver(
+    store: FakeStore,
+    find_narrowing: bool = False
+) -> ObjectStoreDriver[FakeAccessor, FakeStore]:
 
     def key_prefix_of(accessor: FakeAccessor) -> str:
         return accessor.key_prefix
@@ -83,8 +83,7 @@ def make_driver(store: FakeStore,
                 child = pfx + (relative[:slash] if slash != -1 else relative)
                 yield ChildEntry(key=child, kind="d")
 
-    async def list_tree(conn: FakeStore,
-                        pfx: str) -> AsyncIterator[TreeEntry]:
+    async def list_tree(conn: FakeStore, pfx: str) -> AsyncIterator[TreeEntry]:
         for key in conn.under(pfx):
             yield TreeEntry(key=key, size=len(conn.objects[key]))
 
@@ -125,8 +124,7 @@ def make_driver(store: FakeStore,
         conn.objects[dst_key] = conn.objects.pop(src_key)
         return True
 
-    async def move_prefix(conn: FakeStore, src_pfx: str,
-                          dst_pfx: str) -> bool:
+    async def move_prefix(conn: FakeStore, src_pfx: str, dst_pfx: str) -> bool:
         keys = conn.under(src_pfx)
         if not keys:
             return False

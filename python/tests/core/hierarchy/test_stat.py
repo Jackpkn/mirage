@@ -23,8 +23,8 @@ from mirage.core.hierarchy.scope import RouteMatch
 from mirage.core.hierarchy.stat import make_stat
 from mirage.types import FileStat, FileType, PathSpec
 from tests.core.hierarchy.conftest import (FakeAccessor, detect_scope,
-                                           list_notes, list_rooms,
-                                           room_guard, spec)
+                                           list_notes, list_rooms, room_guard,
+                                           spec)
 
 READDIR = make_readdir(
     detect_scope,
@@ -70,8 +70,7 @@ def test_leaf_proves_existence_through_the_parent_listing(accessor):
     assert st.type == FileType.JSON
     assert st.size == 7
     with pytest.raises(FileNotFoundError):
-        asyncio.run(STAT(accessor, spec("/rooms/red/nope.json"),
-                         index=index))
+        asyncio.run(STAT(accessor, spec("/rooms/red/nope.json"), index=index))
 
 
 def test_invalid_shapes_are_enoent(accessor):
@@ -82,6 +81,7 @@ def test_invalid_shapes_are_enoent(accessor):
 
 
 def test_override_replaces_the_whole_shape(accessor):
+
     async def bespoke(accessor: FakeAccessor, match: RouteMatch,
                       path: PathSpec, index: IndexCacheStore) -> FileStat:
         return FileStat(name="custom", type=FileType.TEXT, size=1)

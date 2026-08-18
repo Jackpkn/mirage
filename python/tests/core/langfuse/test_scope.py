@@ -83,8 +83,8 @@ def test_prompts_version_file():
 def test_prompts_version_must_be_an_integer():
     # int("abc") used to crash the read path; a non-numeric version now
     # fails the route match and reads as ENOENT, matching typescript.
-    assert detect_scope(_spec("/prompts/summarize/abc.json")).kind == (
-        "invalid")
+    assert detect_scope(
+        _spec("/prompts/summarize/abc.json")).kind == ("invalid")
 
 
 def test_datasets_dir():

@@ -51,5 +51,5 @@ def test_listed_size_reads_what_the_listing_recorded(accessor):
     path = spec("/rooms/red/a.json")
     asyncio.run(assert_listed(READDIR, accessor, path, index))
     assert asyncio.run(listed_size(index, path)) == 7
-    assert asyncio.run(listed_size(index, spec("/rooms/red/ghost.json"))) is (
-        None)
+    assert asyncio.run(listed_size(index,
+                                   spec("/rooms/red/ghost.json"))) is (None)

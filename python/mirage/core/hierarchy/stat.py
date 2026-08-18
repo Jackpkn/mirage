@@ -26,6 +26,7 @@ ExtraFn = Callable[[RouteMatch], dict[str, str]]
 StatHook = Callable[[A, RouteMatch, PathSpec, IndexCacheStore],
                     Awaitable[FileStat]]
 
+
 def make_stat(
     detect: DetectFn,
     readdir: ReaddirFn[A],
@@ -79,8 +80,8 @@ def make_stat(
             return FileStat(name=name, type=FileType.DIRECTORY, extra=extra)
         return FileStat(
             name=name,
-            type=route.filetype if route.filetype is not None else
-            FileType.JSON,
+            type=route.filetype
+            if route.filetype is not None else FileType.JSON,
             size=await listed_size(index, path),
             extra=extra,
         )

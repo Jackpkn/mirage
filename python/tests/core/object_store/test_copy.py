@@ -49,19 +49,19 @@ def test_copy_duplicates_and_invalidates_destination_ancestors(accessor):
 
 def test_copy_missing_source_is_enoent(accessor):
     with pytest.raises(FileNotFoundError):
-        _managed(_copy_for(FakeStore())(accessor, spec("/never"),
-                                        spec("/dst.txt")))
+        _managed(
+            _copy_for(FakeStore())(accessor, spec("/never"), spec("/dst.txt")))
 
 
 def test_copy_onto_the_same_key_is_a_guarded_no_op(accessor):
     store = FakeStore({"a.txt": b"hi"})
-    manager = _managed(_copy_for(store)(accessor, spec("/a.txt"),
-                                        spec("/a.txt")))
+    manager = _managed(
+        _copy_for(store)(accessor, spec("/a.txt"), spec("/a.txt")))
     assert store.objects == {"a.txt": b"hi"}
     assert manager.writes == []
 
 
 def test_copy_onto_the_same_key_still_fails_when_absent(accessor):
     with pytest.raises(FileNotFoundError):
-        _managed(_copy_for(FakeStore())(accessor, spec("/a.txt"),
-                                        spec("/a.txt")))
+        _managed(
+            _copy_for(FakeStore())(accessor, spec("/a.txt"), spec("/a.txt")))

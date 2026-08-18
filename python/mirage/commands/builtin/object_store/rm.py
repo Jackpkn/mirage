@@ -129,10 +129,7 @@ def make_rm(resource: str, io: CommandIO) -> Callable[..., Any]:
             # followed: the shared helper keeps this identical to the
             # generic builder.
             if is_slashed_link(p, links):
-                refusal = await rm_link_refusal(p,
-                                                links,
-                                                recursive=r,
-                                                force=f)
+                refusal = await rm_link_refusal(p, links, recursive=r, force=f)
                 if refusal is not None:
                     errors.append(refusal)
                 continue

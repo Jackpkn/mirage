@@ -20,13 +20,11 @@ from typing import Any
 from gridfs.errors import NoFile
 
 from mirage.accessor.gridfs import GridFSAccessor
-from mirage.core.gridfs.client import (LATEST_SORT, bucket, delete_all,
-                                       files_coll, iter_latest, latest_file,
-                                       prefix_query)
+from mirage.core.gridfs.client import (bucket, delete_all, files_coll,
+                                       iter_latest, latest_file, prefix_query)
 from mirage.core.gridfs.constants import SCOPE_ERROR
-from mirage.core.object_store.driver import (ChildEntry, FindHints,
-                                             ObjectMeta, ObjectStoreDriver,
-                                             TreeEntry)
+from mirage.core.object_store.driver import (ChildEntry, FindHints, ObjectMeta,
+                                             ObjectStoreDriver, TreeEntry)
 from mirage.core.timeutil import to_iso_z
 
 _COPY_CHUNK = 1024 * 1024
@@ -152,8 +150,7 @@ def _key_prefix_of(accessor: GridFSAccessor) -> str:
 
 
 @asynccontextmanager
-async def _connect(
-        accessor: GridFSAccessor) -> AsyncIterator[GridFSAccessor]:
+async def _connect(accessor: GridFSAccessor) -> AsyncIterator[GridFSAccessor]:
     # The motor client lives on the accessor; there is no per-op handle
     # to open or close.
     yield accessor
@@ -199,9 +196,8 @@ async def _iter_query(conn: GridFSAccessor,
         yield TreeEntry(key=doc["filename"], size=doc["length"])
 
 
-def _find_tree(
-        conn: GridFSAccessor, pfx: str,
-        hints: FindHints) -> tuple[AsyncIterator[TreeEntry], bool]:
+def _find_tree(conn: GridFSAccessor, pfx: str,
+               hints: FindHints) -> tuple[AsyncIterator[TreeEntry], bool]:
     query = build_query(pfx, hints.name, hints.iname, hints.type,
                         hints.min_size, hints.max_size, hints.pushdown)
     return _iter_query(conn, query), query != prefix_query(pfx)
@@ -249,8 +245,7 @@ async def _delete_prefix(conn: GridFSAccessor, pfx: str) -> None:
     await delete_all(conn, prefix_query(pfx))
 
 
-async def _copy_file(conn: GridFSAccessor, src_key: str,
-                     dst_key: str) -> bool:
+async def _copy_file(conn: GridFSAccessor, src_key: str, dst_key: str) -> bool:
     # Copies the latest revision only (mirrors S3 copy_object), streamed
     # chunk-by-chunk so large files never buffer fully in memory.
     doc = await latest_file(conn, src_key)
@@ -271,8 +266,7 @@ async def _copy_file(conn: GridFSAccessor, src_key: str,
     return True
 
 
-async def _move_file(conn: GridFSAccessor, src_key: str,
-                     dst_key: str) -> bool:
+async def _move_file(conn: GridFSAccessor, src_key: str, dst_key: str) -> bool:
     # Server-side: retag every revision's filename instead of copying
     # bytes, so the whole revision history moves with the file.
     if await latest_file(conn, src_key) is None:

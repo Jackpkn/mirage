@@ -13,8 +13,8 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 from mirage.cache.context import invalidate_after_unlink, invalidate_ancestors
-from mirage.core.object_store.driver import (A, C, ExistsFn,
-                                             ObjectStoreDriver, PairFn)
+from mirage.core.object_store.driver import (A, C, ExistsFn, ObjectStoreDriver,
+                                             PairFn)
 from mirage.types import PathSpec
 from mirage.utils import key_prefix as kp
 from mirage.utils.errors import enoent

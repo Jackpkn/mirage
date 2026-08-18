@@ -46,9 +46,8 @@ class FindFn(Protocol[A_contra]):
         ...
 
 
-def _tree_iter(
-    driver: ObjectStoreDriver[A, C], conn: C, pfx: str, hints: FindHints
-) -> tuple[AsyncIterator[TreeEntry], bool]:
+def _tree_iter(driver: ObjectStoreDriver[A, C], conn: C, pfx: str,
+               hints: FindHints) -> tuple[AsyncIterator[TreeEntry], bool]:
     if driver.find_tree is None:
         return driver.list_tree(conn, pfx), False
     return driver.find_tree(conn, pfx, hints)
@@ -116,9 +115,8 @@ def make_find(driver: ObjectStoreDriver[A, C]) -> FindFn[A]:
         # synthesized client-side from key paths, so any server-side file
         # exclusion would also drop the evidence for a matching parent
         # directory.
-        pushdown = (tree is None and name_exclude is None
-                    and or_names is None and path_pattern is None
-                    and not empty and type == "f")
+        pushdown = (tree is None and name_exclude is None and or_names is None
+                    and path_pattern is None and not empty and type == "f")
         tree = tree if tree is not None else build_tree(
             name=name,
             iname=iname,

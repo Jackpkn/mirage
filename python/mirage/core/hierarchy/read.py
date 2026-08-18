@@ -20,12 +20,12 @@ from mirage.core.hierarchy.scope import DetectFn, RouteMatch
 from mirage.types import PathSpec
 from mirage.utils.errors import enoent
 
-Reader = Callable[[A, RouteMatch, PathSpec, IndexCacheStore],
-                  Awaitable[bytes]]
+Reader = Callable[[A, RouteMatch, PathSpec, IndexCacheStore], Awaitable[bytes]]
 
 
-def make_read(detect: DetectFn,
-              readers: Mapping[str, Reader[A]]) -> Callable[..., Awaitable[bytes]]:
+def make_read(
+        detect: DetectFn,
+        readers: Mapping[str, Reader[A]]) -> Callable[..., Awaitable[bytes]]:
     """Build a hierarchy read: classify, dispatch, refuse the rest.
 
     Readers own their fetches, guards and rendering; the kit owns the

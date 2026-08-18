@@ -62,13 +62,13 @@ def test_rename_missing_source_is_enoent(accessor):
 
 def test_rename_onto_the_same_key_is_a_guarded_no_op(accessor):
     store = FakeStore({"a.txt": b"hi"})
-    manager = _managed(_rename_for(store)(accessor, spec("/a.txt"),
-                                          spec("/a.txt")))
+    manager = _managed(
+        _rename_for(store)(accessor, spec("/a.txt"), spec("/a.txt")))
     assert store.objects == {"a.txt": b"hi"}
     assert manager.unlinks == []
 
 
 def test_rename_onto_the_same_key_still_fails_when_absent(accessor):
     with pytest.raises(FileNotFoundError):
-        _managed(_rename_for(FakeStore())(accessor, spec("/a.txt"),
-                                          spec("/a.txt")))
+        _managed(
+            _rename_for(FakeStore())(accessor, spec("/a.txt"), spec("/a.txt")))
