@@ -42,6 +42,11 @@ class FakeDrive:
     def __init__(self) -> None:
         self.items: dict[str, dict] = {}
         self._ids = itertools.count(1)
+        # Every `limit` a caller asked for, so a test can pin that an
+        # emptiness probe is bounded. `page_size` cannot express that: it
+        # caps the page, not the walk, so a small page turns a listing of
+        # a large folder into more requests rather than fewer.
+        self.list_limits: list[int | None] = []
 
     def add(self,
             name: str,
@@ -82,6 +87,7 @@ class FakeDrive:
                          modified_before: str | None = None,
                          name: str | None = None,
                          limit: int | None = None) -> list[dict]:
+        self.list_limits.append(limit)
         out = []
         for item in self.items.values():
             if folder_id not in item["parents"]:
