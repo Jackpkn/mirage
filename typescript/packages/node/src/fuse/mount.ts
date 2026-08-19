@@ -109,6 +109,23 @@ export function appendDirectIO(fuse: FuseInstance): void {
   appendMountOptions(fuse, ['direct_io'])
 }
 
+/**
+ * What to install when the binding will not load, for the platform it did
+ * not load on. Only macOS and Linux have an answer: fuse-native's legacy
+ * Windows path builds against the unmaintained Dokany-based
+ * `fuse-shared-library-win32` rather than WinFsp, so naming a Windows
+ * driver would send the reader after something that cannot fix it. Python
+ * is the one that mounts FUSE on Windows.
+ */
+export function driverHint(platform: string = process.platform): string {
+  if (platform === 'darwin') return 'FUSE also needs the macFUSE driver, installed separately.'
+  if (platform === 'linux') return 'FUSE also needs libfuse3, from the fuse3 package.'
+  return (
+    'TypeScript FUSE mounts run on macOS and Linux only: @zkochan/fuse-native ' +
+    'does not support WinFsp. Python mounts FUSE on Windows experimentally.'
+  )
+}
+
 async function loadFuse(): Promise<FuseConstructor> {
   const mod = await loadOptionalPeer(
     () => import('@zkochan/fuse-native') as unknown as Promise<{ default?: FuseConstructor }>,
@@ -116,6 +133,10 @@ async function loadFuse(): Promise<FuseConstructor> {
       feature: 'FUSE support',
       packageName: '@zkochan/fuse-native',
       docsUrl: 'https://mirage.dev/typescript/setup/fuse',
+      // fuse-native dlopens its binding against libfuse as it loads, so a
+      // machine with the package and no driver fails here, not at
+      // resolution (ERR_DLOPEN_FAILED, or no prebuild for the platform).
+      systemHint: driverHint(),
     },
   )
   const Fuse = (mod.default ?? mod) as unknown as FuseConstructor

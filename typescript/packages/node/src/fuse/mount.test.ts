@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { describe, expect, it } from 'vitest'
-import { appendDirectIO, appendMountOptions } from './mount.ts'
+import { appendDirectIO, appendMountOptions, driverHint } from './mount.ts'
 
 function fakeFuse(serialize?: () => string) {
   const nop = (cb: (err: Error | null) => void): void => {
@@ -72,5 +72,22 @@ describe('appendMountOptions', () => {
     const fuse = fakeFuse(() => '-obackend=fskit')
     appendMountOptions(fuse, ['backend=fskit', 'volname=v'])
     expect(fuse._fuseOptions?.()).toBe('-obackend=fskit,volname=v')
+  })
+})
+
+describe('driverHint', () => {
+  it('names the driver for the platform that has one', () => {
+    expect(driverHint('darwin')).toMatch(/macFUSE/)
+    expect(driverHint('linux')).toMatch(/fuse3/)
+  })
+
+  // fuse-native's Windows path builds against Dokany, not WinFsp, so
+  // recommending WinFsp would send a Windows reader after a driver that
+  // cannot make this load (docs/typescript/setup/fuse.mdx).
+  it('reports Windows as unsupported instead of naming WinFsp', () => {
+    const hint = driverHint('win32')
+    expect(hint).not.toMatch(/install WinFsp/i)
+    expect(hint).toMatch(/does not support WinFsp/)
+    expect(hint).toMatch(/macOS and Linux only/)
   })
 })
