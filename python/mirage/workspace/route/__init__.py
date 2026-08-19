@@ -16,7 +16,8 @@ from mirage.workspace.route.constants import (  # isort: skip
     JOB_BUILTINS, NAMESPACE_COMMANDS, NO_FOLLOW_COMMANDS, SLASH_KEEPS_LAST,
     UNSUPPORTED_BUILTINS, dereferences, end_options_after_program,
     follows_last_component, reports_link)
-from mirage.workspace.route.route import route, route_all
+from mirage.workspace.route.route import (command_visible, is_tool, route,
+                                          route_all)
 from mirage.workspace.route.types import (SHELL_CONSUMERS, Consumer,
                                           WordPolicy, word_policy)
 
@@ -34,6 +35,8 @@ __all__ = [
     "UNSUPPORTED_BUILTINS",
     "WordPolicy",
     "route",
+    "command_visible",
+    "is_tool",
     "route_all",
     "word_policy",
 ]

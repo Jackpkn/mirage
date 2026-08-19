@@ -14,7 +14,7 @@
 
 import { describe, expect, it } from 'vitest'
 
-import { DEFAULT_DENY_REASON } from '../../policy/types.ts'
+import { DEFAULT_ASK_REASON, DEFAULT_DENY_REASON } from '../../policy/types.ts'
 import { MountMode } from '../../types.ts'
 import {
   parseMountPermissions,
@@ -63,9 +63,7 @@ describe('parseSessionProfile', () => {
   it('rejects unknown and unshipped fields loudly', () => {
     expect(() => parseSessionProfile({ hidden_paths: {} })).toThrow(/unknown field `hidden_paths`/)
     expect(() => parseSessionProfile({ hiddenPaths: {} })).toThrow(/unknown field/)
-    expect(() => parseSessionProfile({ commands: { deny: [] } })).toThrow(
-      /unknown field `commands`/,
-    )
+    expect(() => parseSessionProfile({ commands: { hide: [] } })).toThrow(/unknown field `hide`/)
     expect(() => parseSessionProfile({ paths: { show: {} } })).toThrow(
       /paths: unknown field `show`/,
     )
@@ -94,15 +92,50 @@ describe('parseWorkspacePermissions', () => {
       { reason: DEFAULT_DENY_REASON, commands: ['shred'], paths: [] },
     ])
     expect(w.paths).toEqual({ hide: ['/shared/finance'] })
-    expect(parseWorkspacePermissions({})).toEqual({ commands: { deny: [] }, paths: { hide: [] } })
+    expect(parseWorkspacePermissions({})).toEqual({
+      commands: { allow: null, ask: [], deny: [] },
+      paths: { hide: [] },
+    })
+  })
+
+  it('takes allow patterns and ask rules beside deny', () => {
+    const w = parseWorkspacePermissions({
+      commands: {
+        allow: ['ls', 'git log'],
+        ask: ['git push', { reason: 'sign-off', commands: ['rm'], paths: ['/shared/*'] }],
+        deny: ['shred'],
+      },
+    })
+    expect(w.commands.allow).toEqual(['ls', 'git log'])
+    // A bare ask entry carries the ask arm's default reason, not deny's.
+    expect(w.commands.ask).toEqual([
+      { reason: DEFAULT_ASK_REASON, commands: ['git push'] },
+      { reason: 'sign-off', commands: ['rm'], paths: ['/shared/*'] },
+    ])
+    // Unstated allow is null (everything installed), not an empty list.
+    expect(parseWorkspacePermissions({ commands: { deny: ['rm'] } }).commands.allow).toBeNull()
+    const p = parseSessionProfile({ commands: { allow: ['ls'], deny: ['rm'] } })
+    expect(p.commands?.allow).toEqual(['ls'])
+  })
+
+  it.each([
+    { allow: 'ls' },
+    { allow: ['ls', ''] },
+    { allow: ['ls', '  '] },
+    { ask: 'git push' },
+    { ask: [''] },
+    { deny: [{ reason: 'x', commands: [''] }] },
+    { ask: [{ reason: 'x', mount: '/repo' }] },
+  ])('refuses scalars, blank patterns and the compiler field: %j', (bad) => {
+    // A blank pattern is a prefix of every line, so it would allow, ask
+    // about or deny every command; `mount` is the compiler's field.
+    expect(() => parseWorkspacePermissions({ commands: bad })).toThrow()
+    expect(() => parseSessionProfile({ commands: bad })).toThrow()
   })
 
   it('rejects profile-only, unshipped and unknown fields', () => {
     expect(() => parseWorkspacePermissions({ mounts: { '/a': 'r' } })).toThrow(
       /unknown field `mounts`/,
-    )
-    expect(() => parseWorkspacePermissions({ commands: { allow: ['ls'] } })).toThrow(
-      /unknown field `allow`/,
     )
     expect(() =>
       parseWorkspacePermissions({ commands: { deny: [{ reason: 'x', command: ['rm'] }] } }),
@@ -117,13 +150,22 @@ describe('parseWorkspacePermissions', () => {
 })
 
 describe('parseMountPermissions', () => {
-  it('is paths-only in this rung', () => {
+  it('takes paths and ask/deny rules but no allow list', () => {
     expect(parseMountPermissions({ paths: { hide: ['*.pem', '.env'] } })).toEqual({
       paths: { hide: ['*.pem', '.env'] },
+      commands: { ask: [], deny: [] },
     })
-    expect(parseMountPermissions({})).toEqual({ paths: { hide: [] } })
-    expect(() => parseMountPermissions({ commands: { deny: ['rm'] } })).toThrow(
-      /unknown field `commands`/,
+    expect(parseMountPermissions({})).toEqual({
+      paths: { hide: [] },
+      commands: { ask: [], deny: [] },
+    })
+    const m = parseMountPermissions({ commands: { deny: ['git push'], ask: ['git rebase'] } })
+    expect(m.commands?.deny).toEqual([{ reason: DEFAULT_DENY_REASON, commands: ['git push'] }])
+    expect(m.commands?.ask).toEqual([{ reason: DEFAULT_ASK_REASON, commands: ['git rebase'] }])
+    // What a session can see is the session's property, not an
+    // operand's: a mount tier has no allow list.
+    expect(() => parseMountPermissions({ commands: { allow: ['ls'] } })).toThrow(
+      /unknown field `allow`/,
     )
   })
 })

@@ -26,7 +26,7 @@ const DEC = new TextDecoder()
 class DenyAws implements Policy {
   preSession(ctx: SessionContext): Action | null {
     if (!ctx.key.startsWith('AWS_')) return null
-    return { kind: 'deny', message: 'not yours to set\n' }
+    return { kind: 'deny', reason: 'not yours to set' }
   }
 }
 

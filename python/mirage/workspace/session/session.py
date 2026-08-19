@@ -20,6 +20,7 @@ from typing import Any
 
 from mirage.io.async_line_iterator import AsyncLineIterator
 from mirage.io.types import ByteSource
+from mirage.policy.types import CommandRule, CommandsSpec, Grant
 from mirage.shell.array import ShellArray
 from mirage.shell.constants import SHELL_ARGV0
 from mirage.shell.types import FunctionBody
@@ -49,6 +50,9 @@ INHERITED_FIELDS: tuple[str, ...] = (
     "hidden_paths",
     "hidden_vars",
     "bound_hidden",
+    "commands",
+    "bound_commands",
+    "grants",
     "generation",
     "pipeline_timeout_seconds",
     "last_bg_job_id",
@@ -130,6 +134,76 @@ def copy_state(value: Any) -> Any:
     if isinstance(value, list):
         return list(value)
     return value
+
+
+def _rule_to_dict(rule: CommandRule) -> dict[str, Any]:
+    data: dict[str, Any] = {
+        "reason": rule.reason,
+        "commands": list(rule.commands),
+        "paths": list(rule.paths),
+    }
+    if rule.mount:
+        data["mount"] = rule.mount
+    return data
+
+
+def _rule_from_dict(data: Mapping[str, Any]) -> CommandRule:
+    return CommandRule(reason=data["reason"],
+                       commands=tuple(data.get("commands", ())),
+                       paths=tuple(data.get("paths", ())),
+                       mount=data.get("mount", ""))
+
+
+def commands_to_dict(spec: CommandsSpec) -> dict[str, Any]:
+    """A compiled command tier as the session record stores it.
+
+    Args:
+        spec (CommandsSpec): the tier.
+    """
+    return {
+        "allow": list(spec.allow) if spec.allow is not None else None,
+        "ask": [_rule_to_dict(r) for r in spec.ask],
+        "deny": [_rule_to_dict(r) for r in spec.deny],
+    }
+
+
+def commands_from_dict(data: Mapping[str, Any]) -> CommandsSpec:
+    """A compiled command tier read back from a session record.
+
+    Args:
+        data (Mapping[str, Any]): what ``commands_to_dict`` wrote.
+    """
+    allow = data.get("allow")
+    return CommandsSpec(
+        allow=tuple(allow) if allow is not None else None,
+        ask=tuple(_rule_from_dict(r) for r in data.get("ask", ())),
+        deny=tuple(_rule_from_dict(r) for r in data.get("deny", ())))
+
+
+def grant_to_dict(grant: Grant) -> dict[str, Any]:
+    """A host grant as the session record stores it.
+
+    Args:
+        grant (Grant): the grant.
+    """
+    return {
+        "decision": grant.decision,
+        "rule": _rule_to_dict(grant.rule),
+        "argv": list(grant.argv),
+        "cwd": grant.cwd,
+    }
+
+
+def grant_from_dict(data: Mapping[str, Any]) -> Grant:
+    """A host grant read back from a session record.
+
+    Args:
+        data (Mapping[str, Any]): what ``grant_to_dict`` wrote.
+    """
+    return Grant(decision=data["decision"],
+                 rule=_rule_from_dict(data["rule"]),
+                 argv=tuple(data.get("argv", ())),
+                 cwd=data.get("cwd", "/"))
 
 
 def vars_from_env(env: Mapping[str, str]) -> dict[str, ShellVar]:
@@ -233,6 +307,17 @@ class Session:
     # it derives from the workspace's own configuration, so a restart
     # or a config change never leaves a stale fold in the store.
     bound_hidden: HiddenPaths | None = None
+    # The session's own command tier (`profiles.<n>.commands` tightened
+    # by the inline document): allow patterns, ask and deny rules. A
+    # durable restriction like hidden_paths, so it persists; the
+    # workspace-bound tiers ride `bound_commands` the way bound_hidden
+    # does, stamped on create and hydrate and never persisted.
+    commands: CommandsSpec | None = None
+    bound_commands: tuple[CommandsSpec, ...] = ()
+    # The host's standing answers to asked lines (design 3.9): session
+    # state like functions and cwd, persisted, read and written through
+    # the manager by id so a fork shares them, never another session's.
+    grants: tuple[Grant, ...] = ()
     generation: int = 0
     pipeline_timeout_seconds: float | None = None
     last_bg_job_id: int | None = None
@@ -344,6 +429,10 @@ class Session:
                 "names": list(self.hidden_vars.names),
                 "patterns": list(self.hidden_vars.patterns),
             }
+        if self.commands is not None:
+            data["commands"] = commands_to_dict(self.commands)
+        if self.grants:
+            data["grants"] = [grant_to_dict(g) for g in self.grants]
         return data
 
     @classmethod
@@ -363,7 +452,10 @@ class Session:
         modes = data.get("mount_modes")
         paths = data.get("hidden_paths")
         vars_ = data.get("hidden_vars")
-        if modes is not None or paths is not None or vars_ is not None:
+        commands = data.get("commands")
+        grants = data.get("grants")
+        if (modes is not None or paths is not None or vars_ is not None
+                or commands is not None or grants is not None):
             data = dict(data)
         if modes is not None:
             data["mount_modes"] = {
@@ -378,7 +470,19 @@ class Session:
             data["hidden_vars"] = HiddenVars(
                 names=tuple(vars_.get("names", ())),
                 patterns=tuple(vars_.get("patterns", ())))
+        if commands is not None:
+            data["commands"] = commands_from_dict(commands)
+        if grants is not None:
+            data["grants"] = tuple(grant_from_dict(g) for g in grants)
         return cls(**data)
+
+    @property
+    def command_layers(self) -> tuple[CommandsSpec, ...]:
+        """The command tiers this session runs under: the bound ones
+        (mounts, then workspace), then its own."""
+        if self.commands is None:
+            return self.bound_commands
+        return (*self.bound_commands, self.commands)
 
     @property
     def argv0(self) -> str:

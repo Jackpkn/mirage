@@ -52,12 +52,12 @@ describe('RulePolicy grammar', () => {
     const policy = new RulePolicy({ reason: 'keys', paths: ['*.key'] })
     expect(policy.preCommand(ctx('cat', [path('/a/b.key/c')]))).toEqual({
       kind: 'deny',
-      message: 'cat: /a/b.key/c: keys\n',
-      exitCode: 1,
+      reason: '/a/b.key/c: keys',
+      scope: 'operand',
     })
     expect(policy.preCommand(ctx('cat', [path('/a/b.keyx')]))).toBeNull()
     const op: OpsContext = { op: 'read', path: path('/x/y.key'), write: false, prefix: '/x/' }
-    expect(policy.preOps(op)).toEqual({ kind: 'deny', message: 'keys\n', exitCode: 1 })
+    expect(policy.preOps(op)).toEqual({ kind: 'deny', reason: 'keys' })
   })
 
   it('question mark and a class are patterns too', () => {
@@ -80,8 +80,8 @@ describe('RulePolicy', () => {
     const deny = policy.preCommand(ctx('rm', [path('/data/prod/x.txt', 'prod/x.txt')]))
     expect(deny).toEqual({
       kind: 'deny',
-      message: 'rm: prod/x.txt: prod is protected\n',
-      exitCode: 1,
+      reason: 'prod/x.txt: prod is protected',
+      scope: 'operand',
     })
     expect(policy.preCommand(ctx('rm', [path('/data/dev/x.txt')]))).toBeNull()
     expect(policy.preCommand(ctx('cat', [path('/data/prod/x.txt')]))).toBeNull()
@@ -90,7 +90,7 @@ describe('RulePolicy', () => {
   it('without paths refuses the command outright', () => {
     const policy = new RulePolicy({ reason: 'not here', commands: ['shred'] })
     const deny = policy.preCommand(ctx('shred', []))
-    expect(deny && 'message' in deny ? deny.message : '').toBe('shred: not here\n')
+    expect(deny).toEqual({ kind: 'deny', reason: 'not here' })
   })
 
   it('without commands covers every command', () => {
@@ -110,7 +110,7 @@ describe('RulePolicy preOps twin', () => {
     // programmatic ops cannot bypass it.
     const policy = new RulePolicy({ reason: 'frozen', paths: ['/data/locked/*'] })
     const deny = policy.preOps(opsCtx('/data/locked/a'))
-    expect(deny && 'message' in deny ? deny.message : '').toBe('frozen\n')
+    expect(deny).toEqual({ kind: 'deny', reason: 'frozen' })
     expect(policy.preOps(opsCtx('/data/open/a'))).toBeNull()
   })
 

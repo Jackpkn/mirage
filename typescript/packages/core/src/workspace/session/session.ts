@@ -17,6 +17,7 @@ import type { AsyncLineIterator } from '../../io/async_line_iterator.ts'
 import type { ShellArray } from '../../shell/array.ts'
 import type { ShellVar } from '../../shell/variable.ts'
 import { attrsFromLetters, makeVar, storedAttrs, VarAttr, withValue } from '../../shell/variable.ts'
+import type { ApprovalDecision, CommandRule, CommandsSpec, Grant } from '../../policy/types.ts'
 import type { HiddenPaths, HiddenVars, MountMode } from '../../types.ts'
 
 /**
@@ -121,6 +122,18 @@ export interface SessionInit {
    */
   hiddenPaths?: HiddenPaths | null
   hiddenVars?: HiddenVars | null
+  /**
+   * The session's own command tier (`profiles.<n>.commands` tightened
+   * by the inline document): allow patterns, ask and deny rules. A
+   * durable restriction like hiddenPaths, so it persists.
+   */
+  commands?: CommandsSpec | null
+  /**
+   * The host's standing answers to asked lines (design 3.9): session
+   * state like functions and cwd, persisted, read and written through
+   * the manager by id so a fork shares them, never another session's.
+   */
+  grants?: readonly Grant[]
   generation?: number
   pipelineTimeoutSeconds?: number | null
   lastBgJobId?: number | null
@@ -183,6 +196,81 @@ function copyVars(vars: Record<string, ShellVar>): Record<string, ShellVar> {
     else out[name] = v
   }
   return out
+}
+
+/** A compiled command tier as the session record stores it (the Python spelling). */
+export interface CommandsJSON {
+  allow: string[] | null
+  ask: RuleJSON[]
+  deny: RuleJSON[]
+}
+
+export interface RuleJSON {
+  reason: string
+  commands?: string[]
+  paths?: string[]
+  mount?: string
+}
+
+function ruleToJSON(rule: CommandRule): RuleJSON {
+  const out: RuleJSON = {
+    reason: rule.reason,
+    commands: [...(rule.commands ?? [])],
+    paths: [...(rule.paths ?? [])],
+  }
+  if (rule.mount !== undefined && rule.mount !== '') out.mount = rule.mount
+  return out
+}
+
+function ruleFromJSON(data: RuleJSON): CommandRule {
+  return {
+    reason: data.reason,
+    commands: data.commands ?? [],
+    paths: data.paths ?? [],
+    mount: data.mount ?? '',
+  }
+}
+
+export function commandsToJSON(spec: CommandsSpec): CommandsJSON {
+  return {
+    allow: spec.allow === null ? null : [...spec.allow],
+    ask: spec.ask.map(ruleToJSON),
+    deny: spec.deny.map(ruleToJSON),
+  }
+}
+
+export function commandsFromJSON(data: CommandsJSON): CommandsSpec {
+  return {
+    allow: data.allow ?? null,
+    ask: data.ask.map(ruleFromJSON),
+    deny: data.deny.map(ruleFromJSON),
+  }
+}
+
+/** A host grant as the session record stores it (the Python spelling). */
+export interface GrantJSON {
+  decision: ApprovalDecision
+  rule: RuleJSON
+  argv: string[]
+  cwd: string
+}
+
+export function grantToJSON(grant: Grant): GrantJSON {
+  return {
+    decision: grant.decision,
+    rule: ruleToJSON(grant.rule),
+    argv: [...grant.argv],
+    cwd: grant.cwd,
+  }
+}
+
+export function grantFromJSON(data: GrantJSON): Grant {
+  return {
+    decision: data.decision,
+    rule: ruleFromJSON(data.rule),
+    argv: data.argv,
+    cwd: data.cwd,
+  }
 }
 
 export class Session {
@@ -251,6 +339,10 @@ export class Session {
   // stale fold in the store. fork() carries it (a fork binds the same
   // workspace).
   boundHidden: HiddenPaths | null = null
+  // The workspace-bound command tiers (mounts in registration order,
+  // then the workspace), stamped and carried exactly like boundHidden,
+  // never persisted.
+  boundCommands: readonly CommandsSpec[] = []
   // Command-substitution tracking for assignment statements: how many
   // substitutions have run in this session, and the status of the
   // most recent one. An assignment statement snapshots the count
@@ -286,6 +378,8 @@ export class Session {
   mountModes: ReadonlyMap<string, MountMode> | null
   hiddenPaths: HiddenPaths | null
   hiddenVars: HiddenVars | null
+  commands: CommandsSpec | null
+  grants: readonly Grant[]
   generation: number
   pipelineTimeoutSeconds: number | null
   lastBgJobId: number | null
@@ -306,6 +400,8 @@ export class Session {
     this.mountModes = init.mountModes ?? null
     this.hiddenPaths = init.hiddenPaths ?? null
     this.hiddenVars = init.hiddenVars ?? null
+    this.commands = init.commands ?? null
+    this.grants = init.grants ?? []
     this.generation = init.generation ?? 0
     this.pipelineTimeoutSeconds = init.pipelineTimeoutSeconds ?? null
     this.lastBgJobId = init.lastBgJobId ?? null
@@ -356,6 +452,8 @@ export class Session {
       mountModes: overrides.mountModes ?? this.mountModes,
       hiddenPaths: overrides.hiddenPaths ?? this.hiddenPaths,
       hiddenVars: overrides.hiddenVars ?? this.hiddenVars,
+      commands: overrides.commands ?? this.commands,
+      grants: overrides.grants ?? this.grants,
       generation: overrides.generation ?? this.generation,
       pipelineTimeoutSeconds: overrides.pipelineTimeoutSeconds ?? this.pipelineTimeoutSeconds,
       lastBgJobId: overrides.lastBgJobId ?? this.lastBgJobId,
@@ -364,6 +462,7 @@ export class Session {
     forked.getoptsOptind = this.getoptsOptind
     forked.abortSignal = this.abortSignal
     forked.boundHidden = this.boundHidden
+    forked.boundCommands = this.boundCommands
     forked.cmdsubSeq = this.cmdsubSeq
     forked.cmdsubStatus = this.cmdsubStatus
     forked.shopts = { ...this.shopts }
@@ -540,7 +639,17 @@ export class Session {
         patterns: [...(this.hiddenVars.patterns ?? [])],
       }
     }
+    if (this.commands !== null) data.commands = commandsToJSON(this.commands)
+    if (this.grants.length > 0) data.grants = this.grants.map(grantToJSON)
     return data
+  }
+
+  /**
+   * The command tiers this session runs under: the bound ones (mounts,
+   * then workspace), then its own.
+   */
+  get commandLayers(): readonly CommandsSpec[] {
+    return this.commands === null ? this.boundCommands : [...this.boundCommands, this.commands]
   }
 
   static fromJSON(data: {
@@ -552,6 +661,8 @@ export class Session {
     mount_modes?: Record<string, MountMode> | null
     hidden_paths?: { paths?: string[]; patterns?: string[] } | null
     hidden_vars?: { names?: string[]; patterns?: string[] } | null
+    commands?: CommandsJSON | null
+    grants?: GrantJSON[] | null
     generation?: number
   }): Session {
     return new Session({
@@ -581,6 +692,8 @@ export class Session {
         data.hidden_vars != null
           ? { names: data.hidden_vars.names ?? [], patterns: data.hidden_vars.patterns ?? [] }
           : null,
+      commands: data.commands != null ? commandsFromJSON(data.commands) : null,
+      grants: data.grants != null ? data.grants.map(grantFromJSON) : [],
     })
   }
 }

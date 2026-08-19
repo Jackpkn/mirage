@@ -14,7 +14,8 @@
 
 import pytest
 
-from mirage.policy import CommandContext, CommandRule, Deny, OpsContext
+from mirage.policy import (CommandContext, CommandRule, Deny, DenyScope,
+                           OpsContext)
 from mirage.policy.rule import RulePolicy
 from mirage.resource.ram import RAMResource
 from mirage.types import MountMode, PathSpec
@@ -63,13 +64,13 @@ async def test_plain_path_denies_the_whole_subtree_and_nothing_beside_it():
 async def test_slashless_glob_matches_any_name_component():
     policy = RulePolicy(CommandRule(reason="keys", paths=("*.key", )))
     deny = await policy.pre_command(_ctx("cat", [_path("/a/b.key/c")]))
-    assert deny == Deny("cat: /a/b.key/c: keys\n")
+    assert deny == Deny("/a/b.key/c: keys", DenyScope.OPERAND)
     assert await policy.pre_command(_ctx("cat", [_path("/a/b.keyx")])) is None
     op = OpsContext(op="read",
                     path=_path("/x/y.key"),
                     write=False,
                     prefix="/x/")
-    assert await policy.pre_ops(op) == Deny("keys\n")
+    assert await policy.pre_ops(op) == Deny("keys")
 
 
 @pytest.mark.asyncio
@@ -95,8 +96,7 @@ async def test_rule_policy_matches_command_and_path():
     deny = await policy.pre_command(
         _ctx("rm", [_path("/data/prod/x.txt", raw="prod/x.txt")]))
     assert deny is not None
-    assert deny.message == "rm: prod/x.txt: prod is protected\n"
-    assert deny.exit_code == 1
+    assert deny == Deny("prod/x.txt: prod is protected", DenyScope.OPERAND)
     assert await policy.pre_command(_ctx("rm",
                                          [_path("/data/dev/x.txt")])) is None
     assert await policy.pre_command(_ctx("cat",
@@ -108,7 +108,7 @@ async def test_rule_policy_without_paths_refuses_the_command_outright():
     policy = RulePolicy(CommandRule(reason="not here", commands=("shred", )))
     deny = await policy.pre_command(_ctx("shred", []))
     assert deny is not None
-    assert deny.message == "shred: not here\n"
+    assert deny == Deny("not here")
 
 
 @pytest.mark.asyncio
@@ -133,7 +133,7 @@ async def test_rule_policy_op_twin_holds_for_path_only_rules():
                      prefix="/data/")
     deny = await policy.pre_ops(ctx)
     assert deny is not None
-    assert deny.message == "frozen\n"
+    assert deny == Deny("frozen")
     open_ctx = OpsContext(op="read",
                           path=_path("/data/open/a"),
                           write=False,

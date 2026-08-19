@@ -18,7 +18,7 @@ from typing import Any, Callable
 from mirage.commands.builtin.utils.limit import guard_output
 from mirage.io import IOResult
 from mirage.io.stream import materialize
-from mirage.policy import ExecuteResultContext, post_execute_gate
+from mirage.policy import ExecuteResultContext, post_execute_gate, render_deny
 from mirage.runtime.policy import PolicyDecision
 from mirage.runtime.types import DispatchFn
 from mirage.shell.barrier import BarrierPolicy, apply_barrier
@@ -97,8 +97,9 @@ async def run_command_tree(
     deny, bound = await post_execute_gate(registry.policies, ctx)
     if deny is not None:
         existing = await materialize(io.stderr) if io.stderr else b""
-        io.stderr = existing + deny.message.encode()
-        io.exit_code = deny.exit_code
+        err, code = render_deny(ctx.producer.command or "line", deny)
+        io.stderr = existing + err
+        io.exit_code = code
         io.stdout = None
         return io, exec_node
     stdout, io.stderr, io.exit_code = await guard_output(

@@ -20,5 +20,5 @@ export {
   endOptionsAfterProgram,
   followsLastComponent,
 } from './constants.ts'
-export { route, routeAll } from './route.ts'
+export { commandVisible, isTool, route, routeAll } from './route.ts'
 export { Consumer, SHELL_CONSUMERS, WordPolicy, wordPolicy } from './types.ts'

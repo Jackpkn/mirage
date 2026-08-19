@@ -14,6 +14,7 @@
 
 import dataclasses
 
+from mirage.policy.types import CommandRule, CommandsSpec, Grant
 from mirage.shell.variable import ShellVar, VarAttr
 from mirage.types import MountMode
 from mirage.workspace.session import Session
@@ -315,3 +316,67 @@ def test_a_payload_with_no_attributes_is_read_as_a_process_environment():
     # a cross-language handoff both mean.
     back = Session.from_dict({"session_id": "x", "env": {"A": "1"}})
     assert back.vars["A"] == ShellVar("1", frozenset({VarAttr.EXPORT}))
+
+
+def test_session_command_tier_round_trips_through_the_record():
+    own = CommandsSpec(allow=("ls", "git log"),
+                       ask=(CommandRule(reason="sign-off",
+                                        commands=("git push", ),
+                                        paths=("/repo/*", ),
+                                        mount="/repo"), ),
+                       deny=(CommandRule(reason="no", commands=("rm", )), ))
+    s = Session(session_id="s1", commands=own)
+    d = s.to_dict()
+    assert d["commands"] == {
+        "allow": ["ls", "git log"],
+        "ask": [{
+            "reason": "sign-off",
+            "commands": ["git push"],
+            "paths": ["/repo/*"],
+            "mount": "/repo"
+        }],
+        "deny": [{
+            "reason": "no",
+            "commands": ["rm"],
+            "paths": []
+        }],
+    }
+    assert Session.from_dict(d).commands == own
+    # None means unstated and is not written; a tier without an allow
+    # list writes allow as null, distinct from an empty list.
+    assert "commands" not in Session(session_id="s2").to_dict()
+    bare = Session(session_id="s3",
+                   commands=CommandsSpec(deny=(CommandRule(reason="x"), )))
+    assert bare.to_dict()["commands"]["allow"] is None
+    assert Session.from_dict(bare.to_dict()).commands == bare.commands
+
+
+def test_session_grants_round_trip_through_the_record():
+    rule = CommandRule(reason="sign-off", commands=("git push", ))
+    grants = (Grant("allow_session", rule, ("git", "push"), "/repo"),
+              Grant("deny", rule, ("git", "push", "--force"), "/repo"))
+    s = Session(session_id="s1", grants=grants)
+    d = s.to_dict()
+    assert d["grants"] == [{
+        "decision": "allow_session",
+        "rule": {
+            "reason": "sign-off",
+            "commands": ["git push"],
+            "paths": []
+        },
+        "argv": ["git", "push"],
+        "cwd": "/repo",
+    }, {
+        "decision": "deny",
+        "rule": {
+            "reason": "sign-off",
+            "commands": ["git push"],
+            "paths": []
+        },
+        "argv": ["git", "push", "--force"],
+        "cwd": "/repo",
+    }]
+    assert Session.from_dict(d).grants == grants
+    # Nothing held writes nothing, and a fork carries what is held.
+    assert "grants" not in Session(session_id="s2").to_dict()
+    assert s.fork().grants == grants

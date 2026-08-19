@@ -12,6 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import { walk } from '../../../commands/cli/walk.ts'
 import { SPECS } from '../../../commands/spec/index.ts'
 import { parseCommand, parseToKwargs } from '../../../commands/spec/parser.ts'
 import type { ByteSource } from '../../../io/types.ts'
@@ -128,4 +129,32 @@ export function mergeScopes(positional: PathSpec[], flagScopes: PathSpec[]): Pat
     }
   }
   return merged
+}
+
+/**
+ * The line as an admission pattern reads it, and the program it runs.
+ *
+ * For an installed CLI head the spec walk names the verb path (global
+ * options before the verb dropped, an alias canonicalized) and hands
+ * back the leaf's own words, so `git -C /r push origin` reads as
+ * `git push origin` and a rule on `git push` catches it; a walk the tree
+ * refuses (unknown verb, bare group, usage error) reads the raw words,
+ * since the line fails on its own. Anything else is the name and the raw
+ * argv, and the program is the bare name.
+ */
+export function programTokens(
+  registry: MountRegistry,
+  name: string,
+  argv: readonly string[],
+  cwd: string,
+): [readonly string[], readonly string[]] {
+  const install = registry.clis.get(name)
+  if (install !== null) {
+    const result = walk(name, install.spec, argv, cwd)
+    if (result.leaf !== null) {
+      const program = [name, ...result.path]
+      return [[...program, ...result.argv], program]
+    }
+  }
+  return [[name, ...argv], [name]]
 }

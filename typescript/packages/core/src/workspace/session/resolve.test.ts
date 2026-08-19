@@ -19,7 +19,9 @@ import { MountMode } from '../../types.ts'
 import type { SessionProfile } from './permissions.ts'
 import {
   applyProfile,
+  boundCommands,
   boundHidden,
+  compileCommands,
   compileProfile,
   inherit,
   narrow,
@@ -203,6 +205,7 @@ describe('compileProfile', () => {
       hiddenVars: null,
       env: null,
       cwd: null,
+      commands: null,
     })
     expect(compileProfile({})).toEqual(empty)
   })
@@ -249,5 +252,115 @@ describe('narrow / applyProfile', () => {
     expect(applied.cwd).toBe('/a')
     expect(applied.env.ROLE).toBe('x')
     expect(applied.vars.ROLE?.attrs.has(VarAttr.Export)).toBe(true)
+  })
+})
+
+describe('command tiers', () => {
+  it('inherit replaces the commands block whole', () => {
+    const profiles: Record<string, SessionProfile> = {
+      base: { commands: { allow: ['ls', 'git'], deny: [{ reason: 'no', commands: ['rm'] }] } },
+      child: { extends: 'base', commands: { allow: ['ls'], deny: [] } },
+      grand: { extends: 'child', cwd: '/x' },
+    }
+    // A stated block replaces the parent's (field inheritance), an
+    // absent one is inherited; safety comes from tightening, not here.
+    expect(inherit(profiles, 'child').commands).toEqual({ allow: ['ls'], deny: [] })
+    expect(inherit(profiles, 'grand').commands).toEqual({ allow: ['ls'], deny: [] })
+  })
+
+  it('tighten intersects allow and unions ask and deny', () => {
+    const base: SessionProfile = {
+      commands: {
+        allow: ['ls', 'git', 'cat'],
+        ask: [{ reason: 'a', commands: ['git push'] }],
+        deny: [{ reason: 'no', commands: ['rm'] }],
+      },
+    }
+    const inline: SessionProfile = {
+      commands: { allow: ['git log', 'cat', 'wc'], deny: [{ reason: 'no', commands: ['mv'] }] },
+    }
+    const out = tighten(base, inline)
+    expect(out?.commands).toEqual({
+      allow: ['git log', 'cat'],
+      ask: [{ reason: 'a', commands: ['git push'] }],
+      deny: [
+        { reason: 'no', commands: ['rm'] },
+        { reason: 'no', commands: ['mv'] },
+      ],
+    })
+    // One side without a list leaves the other's alone; one side
+    // without a block leaves the other's block.
+    const only = tighten(base, { commands: { deny: [{ reason: 'x', commands: ['cp'] }] } })
+    expect(only?.commands?.allow).toEqual(['ls', 'git', 'cat'])
+    expect(tighten(base, { cwd: '/x' })?.commands).toEqual(base.commands)
+    expect(tighten({ cwd: '/x' }, inline)?.commands).toEqual(inline.commands)
+  })
+
+  it('compileCommands scopes a mount tier and rebases its paths', () => {
+    expect(compileCommands(null)).toBeNull()
+    expect(compileCommands({ deny: [] })).toBeNull()
+    // A workspace or profile tier compiles as written.
+    expect(compileCommands({ allow: ['ls'], deny: [{ reason: 'no', commands: ['rm'] }] })).toEqual({
+      allow: ['ls'],
+      ask: [],
+      deny: [{ reason: 'no', commands: ['rm'] }],
+    })
+    // A mount tier: every rule scoped to the mount root, its paths
+    // rebased under it, no allow list.
+    expect(
+      compileCommands(
+        {
+          ask: [{ reason: 'a', commands: ['git rebase'] }],
+          deny: [{ reason: 'ro', commands: ['rm'], paths: ['*.lock', '/docs'] }],
+        },
+        '/repo/',
+      ),
+    ).toEqual({
+      allow: null,
+      ask: [{ reason: 'a', commands: ['git rebase'], paths: [], mount: '/repo' }],
+      deny: [
+        { reason: 'ro', commands: ['rm'], paths: ['/repo/*.lock', '/repo/docs'], mount: '/repo' },
+      ],
+    })
+    // An empty mount block is nothing to evaluate.
+    expect(compileCommands({ ask: [], deny: [] }, '/repo')).toBeNull()
+  })
+
+  it('boundCommands lists mount tiers then the workspace', () => {
+    const layers = boundCommands(
+      { commands: { allow: ['ls'], deny: [] }, paths: { hide: [] } },
+      new Map([
+        [
+          '/repo/',
+          { paths: { hide: [] }, commands: { deny: [{ reason: 'no', commands: ['git push'] }] } },
+        ],
+        ['/scratch/', null],
+        ['/s3/', { paths: { hide: ['.env'] } }],
+      ]),
+    )
+    expect(layers).toHaveLength(2)
+    expect(layers[0]?.deny[0]?.mount).toBe('/repo')
+    expect(layers[1]).toEqual({ allow: ['ls'], ask: [], deny: [] })
+    expect(boundCommands(null, new Map([['/a/', null]]))).toEqual([])
+    expect(boundCommands({ commands: { deny: [] }, paths: { hide: [] } }, new Map())).toEqual([])
+  })
+
+  it('compileProfile and narrow carry the command tier', () => {
+    const compiled = compileProfile({
+      commands: { allow: ['ls'], ask: [{ reason: 'a', commands: ['git'] }], deny: [] },
+    })
+    expect(compiled.commands).toEqual({
+      allow: ['ls'],
+      ask: [{ reason: 'a', commands: ['git'] }],
+      deny: [],
+    })
+    expect(compileProfile({ cwd: '/x' }).commands).toBeNull()
+    const session = new Session({ sessionId: 's' })
+    narrow(session, compiled)
+    expect(session.commands).toEqual(compiled.commands)
+    expect(session.commandLayers).toEqual([compiled.commands])
+    const bound = { allow: null, ask: [], deny: [{ reason: 'x' }] }
+    session.boundCommands = [bound]
+    expect(session.commandLayers).toEqual([bound, compiled.commands])
   })
 })

@@ -49,6 +49,7 @@ import {
 import {
   assertMountAllowed,
   effectiveMountMode,
+  getCurrentSession,
   MountNotAllowedError,
   pathAllowed,
 } from '../../context/session_context.ts'
@@ -74,6 +75,12 @@ function visibleEntries(entries: string[], parent: string): string[] {
     const name = trimmed.slice(trimmed.lastIndexOf('/') + 1)
     return pathAllowed(`${base}/${name}`)
   })
+}
+
+// The id of the session this door serves, empty for the unbound host
+// view; the same binding the hides and modes above read.
+function sessionId(): string {
+  return getCurrentSession()?.sessionId ?? ''
 }
 
 /** The byte window a read asked for, whole file when it asked none. */
@@ -217,7 +224,7 @@ export class Dispatcher {
       // the mounted overlay write; an ungranted mount is not that
       // case and keeps the canonical denial.
       if (opName === 'setattr' && isMissingPath(err)) {
-        await preOpsGate(this.policies, opName, p, true, '')
+        await preOpsGate(this.policies, opName, p, true, '', sessionId())
         const stored = await this.overlaySetattr(p, kwargs ?? {})
         memoryAnswered(report)
         await postOpsGate(this.policies, opName, p, true, '', stored)
@@ -230,7 +237,7 @@ export class Dispatcher {
         fallback = visibleEntries(fallback, p.virtual)
       }
       const fallbackWrite = POLICY_WRITE_OPS.has(opName)
-      await preOpsGate(this.policies, opName, p, fallbackWrite, '')
+      await preOpsGate(this.policies, opName, p, fallbackWrite, '', sessionId())
       // A synthetic namespace answer (a directory that exists only
       // because a mount or a link sits below it) contacts nothing, so
       // attributing it to the mount that lexically owns the path would
@@ -252,7 +259,7 @@ export class Dispatcher {
     // one door in TypeScript: shell internals, programmatic access, the
     // fs facade, and FUSE all end up here.
     const opWrite = POLICY_WRITE_OPS.has(opName)
-    await preOpsGate(this.policies, opName, p, opWrite, mountPrefix)
+    await preOpsGate(this.policies, opName, p, opWrite, mountPrefix, sessionId())
     const caches = cachesReads(resource)
     // The file cache is keyed on the path alone, and what a command put
     // there is the rendered read. A raw read asks for a different value
@@ -412,7 +419,7 @@ export class Dispatcher {
     const owner = ownerPrefix(this.namespace.mountPrefixes(), path.virtual)
     if (owner !== null) assertMountAllowed(owner)
     const write = POLICY_WRITE_OPS.has(opName)
-    await preOpsGate(this.policies, opName, path, write, owner ?? '')
+    await preOpsGate(this.policies, opName, path, write, owner ?? '', sessionId())
     let target: string
     let result: string | null
     if (opName === 'unlink') {

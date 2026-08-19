@@ -18,7 +18,8 @@ import { RAMResource } from '../../resource/ram/ram.ts'
 import { MountMode, PathSpec } from '../../types.ts'
 import { MountRegistry } from '../../workspace/mount/registry.ts'
 import { MountRootPolicy, hasParentsFlag } from './mount_root.ts'
-import type { CommandContext } from '../types.ts'
+import { renderDeny } from '../policies.ts'
+import type { CommandContext, Deny } from '../types.ts'
 
 function registry(): MountRegistry {
   return new MountRegistry({ '/data': new RAMResource() }, MountMode.WRITE, {})
@@ -56,8 +57,13 @@ describe('MountRootPolicy', () => {
     const deny = new MountRootPolicy().preCommand(ctx(cmd, [path('/data')]))
     expect(deny).not.toBeNull()
     expect(deny?.kind).toBe('deny')
-    expect(deny && 'message' in deny ? deny.message : '').toContain(needle)
-    expect(deny && 'exitCode' in deny ? deny.exitCode : 0).toBe(1)
+    expect(deny && 'reason' in deny ? deny.reason : '').toContain(needle)
+    // Every mount-root refusal is about one operand and speaks in the
+    // command's own voice; the door renders `<cmd>: <reason>`.
+    expect(deny && 'scope' in deny ? deny.scope : '').toBe('operand')
+    const [err, code] = renderDeny(cmd, deny as Deny)
+    expect(new TextDecoder().decode(err)).toBe(`${cmd}: ${(deny as Deny).reason}\n`)
+    expect(code).toBe(1)
   })
 
   it('treats mkdir -p on a mount root as a no-op', () => {
@@ -81,7 +87,7 @@ describe('MountRootPolicy', () => {
 
   it('rm -r on a mount root is refused, never treated as an unmount', () => {
     const deny = new MountRootPolicy().preCommand(ctx('rm', [path('/data')], ['-rf']))
-    expect(deny && 'message' in deny ? deny.message : '').toContain('Device or resource busy')
+    expect(deny && 'reason' in deny ? deny.reason : '').toContain('Device or resource busy')
   })
 
   it('ln wording follows the link kind', () => {
@@ -89,12 +95,12 @@ describe('MountRootPolicy', () => {
     // plain ln says "link" (pinned by integ guard_root_ln_is_eexist).
     const policy = new MountRootPolicy()
     const symbolic = policy.preCommand(ctx('ln', [path('/data/k.txt'), path('/data')], ['-s']))
-    expect(symbolic && 'message' in symbolic ? symbolic.message : '').toBe(
-      "ln: failed to create symbolic link '/data': File exists\n",
+    expect(symbolic && 'reason' in symbolic ? symbolic.reason : '').toBe(
+      "failed to create symbolic link '/data': File exists",
     )
     const hard = policy.preCommand(ctx('ln', [path('/data/k.txt'), path('/data')]))
-    expect(hard && 'message' in hard ? hard.message : '').toBe(
-      "ln: failed to create link '/data': File exists\n",
+    expect(hard && 'reason' in hard ? hard.reason : '').toBe(
+      "failed to create link '/data': File exists",
     )
   })
 
@@ -109,9 +115,13 @@ describe('MountRootPolicy', () => {
 
 describe('MountRootPolicy: whole-mount archivers', () => {
   it.each([
-    ['tar', 'tar: /data: Cannot open: Device or resource busy'],
-    ['zip', "zip: cannot read '/data': Device or resource busy"],
-    ['cp', "cp: cannot copy '/data': Device or resource busy"],
+    [
+      'tar',
+      'tar: /data: Cannot open: Device or resource busy\n' +
+        'tar: Error is not recoverable: exiting now\n',
+    ],
+    ['zip', "zip: cannot read '/data': Device or resource busy\n"],
+    ['cp', "cp: cannot copy '/data': Device or resource busy\n"],
   ])('refuses %s with a mount root in a source slot', (cmd, needle) => {
     // zip's first operand is the archive it writes, cp's last is the
     // destination, so each line puts the mount root in a source slot.
@@ -123,16 +133,19 @@ describe('MountRootPolicy: whole-mount archivers', () => {
     const argv = cmd === 'tar' ? ['-cf', '/out.tar'] : []
     const deny = new MountRootPolicy().preCommand(ctx(cmd, operands[cmd] ?? [], argv))
     expect(deny).not.toBeNull()
-    expect(deny && 'message' in deny ? deny.message : '').toContain(needle)
+    expect(new TextDecoder().decode(renderDeny(cmd, deny as Deny)[0])).toBe(needle)
   })
 
   it("names tar's operand as typed and exits 2", () => {
     const deny = new MountRootPolicy().preCommand(
       ctx('tar', [path('/data', '.')], ['-cf', '/out.tar']),
     )
-    expect(deny && 'message' in deny ? deny.message : '').toContain('tar: .: Cannot open')
-    expect(deny && 'message' in deny ? deny.message : '').toContain('Error is not recoverable')
-    expect(deny && 'exitCode' in deny ? deny.exitCode : 0).toBe(2)
+    const [err, code] = renderDeny('tar', deny as Deny)
+    expect(new TextDecoder().decode(err)).toContain('tar: .: Cannot open')
+    expect(new TextDecoder().decode(err)).toContain('Error is not recoverable')
+    // tar's fatal-error code, from the operand-exit table, not from
+    // the policy: a Deny carries no number.
+    expect(code).toBe(2)
   })
 
   it.each([

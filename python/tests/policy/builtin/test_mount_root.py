@@ -14,7 +14,8 @@
 
 import pytest
 
-from mirage.policy import CommandContext, MountRootPolicy
+from mirage.policy import (CommandContext, DenyScope, MountRootPolicy,
+                           render_deny)
 from mirage.policy.builtin.mount_root import has_parents_flag
 from mirage.resource.ram import RAMResource
 from mirage.types import MountMode, PathSpec
@@ -61,8 +62,11 @@ def _ctx(command: str,
 async def test_mount_root_refuses(cmd, needle):
     deny = await MountRootPolicy().pre_command(_ctx(cmd, [_path("/data")]))
     assert deny is not None
-    assert needle in deny.message
-    assert deny.exit_code == 1
+    assert needle in deny.reason
+    # Every mount-root refusal is about one operand and speaks in the
+    # command's own voice; the door renders `<cmd>: <reason>`.
+    assert deny.scope is DenyScope.OPERAND
+    assert render_deny(cmd, deny) == (f"{cmd}: {deny.reason}\n".encode(), 1)
 
 
 @pytest.mark.asyncio
@@ -92,7 +96,7 @@ async def test_rm_r_on_a_mount_root_is_refused_never_an_unmount():
     deny = await MountRootPolicy().pre_command(
         _ctx("rm", [_path("/data")], ["-rf"]))
     assert deny is not None
-    assert "Device or resource busy" in deny.message
+    assert "Device or resource busy" in deny.reason
 
 
 @pytest.mark.asyncio
@@ -103,12 +107,12 @@ async def test_ln_wording_follows_the_link_kind():
     deny = await policy.pre_command(
         _ctx("ln", [_path("/data/k.txt"), _path("/data")], ["-s"]))
     assert deny is not None
-    assert deny.message == ("ln: failed to create symbolic link "
-                            "'/data': File exists\n")
+    assert deny.reason == ("failed to create symbolic link "
+                           "'/data': File exists")
     deny = await policy.pre_command(
         _ctx("ln", [_path("/data/k.txt"), _path("/data")]))
     assert deny is not None
-    assert deny.message == "ln: failed to create link '/data': File exists\n"
+    assert deny.reason == "failed to create link '/data': File exists"
 
 
 def test_has_parents_flag_spots_the_shorthand_cluster():
@@ -120,9 +124,10 @@ def test_has_parents_flag_spots_the_shorthand_cluster():
 
 
 @pytest.mark.parametrize("cmd,needle", [
-    ("tar", "tar: /data: Cannot open: Device or resource busy"),
-    ("zip", "zip: cannot read '/data': Device or resource busy"),
-    ("cp", "cp: cannot copy '/data': Device or resource busy"),
+    ("tar", "tar: /data: Cannot open: Device or resource busy\n"
+     "tar: Error is not recoverable: exiting now\n"),
+    ("zip", "zip: cannot read '/data': Device or resource busy\n"),
+    ("cp", "cp: cannot copy '/data': Device or resource busy\n"),
 ])
 @pytest.mark.asyncio
 async def test_whole_mount_archivers_refused(cmd, needle):
@@ -136,7 +141,7 @@ async def test_whole_mount_archivers_refused(cmd, needle):
     argv = ["-cf", "/out.tar"] if cmd == "tar" else []
     deny = await MountRootPolicy().pre_command(_ctx(cmd, operands, argv=argv))
     assert deny is not None
-    assert needle in deny.message
+    assert render_deny(cmd, deny)[0] == needle.encode()
 
 
 @pytest.mark.asyncio
@@ -144,9 +149,12 @@ async def test_tar_refusal_names_the_operand_as_typed_and_exits_two():
     deny = await MountRootPolicy().pre_command(
         _ctx("tar", [_path("/data", raw=".")], argv=["-cf", "/out.tar"]))
     assert deny is not None
-    assert "tar: .: Cannot open" in deny.message
-    assert "Error is not recoverable" in deny.message
-    assert deny.exit_code == 2
+    err, code = render_deny("tar", deny)
+    assert b"tar: .: Cannot open" in err
+    assert b"Error is not recoverable" in err
+    # tar's fatal-error code, from the operand-exit table, not from the
+    # policy: a Deny carries no number.
+    assert code == 2
 
 
 @pytest.mark.asyncio

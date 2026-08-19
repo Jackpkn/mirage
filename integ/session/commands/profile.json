@@ -1,0 +1,116 @@
+{
+  "cases": [
+    {
+      "id": "cmd_profile_keeps_what_both_tiers_list",
+      "seq": 923009,
+      "targets": [
+        "ram-commands"
+      ],
+      "session": "reviewer",
+      "command": "cat /scratch/locked/y",
+      "expect": {
+        "exit": 0,
+        "stdout": "y\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "cmd_profile_hides_what_it_does_not_list",
+      "seq": 923010,
+      "targets": [
+        "ram-commands"
+      ],
+      "session": "reviewer",
+      "command": "python3 -c 1",
+      "expect": {
+        "exit": 127,
+        "stdout": "",
+        "stderr": "python3: command not found\n"
+      }
+    },
+    {
+      "id": "cmd_profile_verb_pattern_keeps_the_head_visible",
+      "seq": 923011,
+      "targets": [
+        "ram-commands"
+      ],
+      "session": "reviewer",
+      "command": "type -t git",
+      "expect": {
+        "exit": 0,
+        "stdout": "cli\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "cmd_profile_uncovered_line_names_the_program",
+      "seq": 923012,
+      "targets": [
+        "ram-commands"
+      ],
+      "session": "reviewer",
+      "command": "git -C /repo add letters.txt",
+      "expect": {
+        "exit": 126,
+        "stdout": "",
+        "stderr": "git: policy denied: git add is not allowed\n"
+      }
+    },
+    {
+      "id": "cmd_profile_verb_walk_reads_past_options",
+      "seq": 923013,
+      "targets": [
+        "ram-commands"
+      ],
+      "session": "reviewer",
+      "command": "git -C /repo status",
+      "expect": {
+        "exit": 0,
+        "stdout": "On branch main\nnothing to commit, working tree clean\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "cmd_profile_xargs_reenters_the_chokepoint",
+      "seq": 923014,
+      "targets": [
+        "ram-commands"
+      ],
+      "session": "reviewer",
+      "command": "echo /scratch/z | xargs rm",
+      "expect": {
+        "exit": 127,
+        "stdout": "",
+        "stderr": "rm: command not found\n"
+      }
+    },
+    {
+      "id": "cmd_profile_eval_reenters_the_chokepoint",
+      "seq": 923015,
+      "targets": [
+        "ram-commands"
+      ],
+      "session": "reviewer",
+      "command": "eval 'rm /scratch/z'",
+      "expect": {
+        "exit": 127,
+        "stdout": "",
+        "stderr": "rm: command not found\n"
+      }
+    },
+    {
+      "id": "cmd_profile_function_body_reenters_the_chokepoint",
+      "seq": 923016,
+      "targets": [
+        "ram-commands"
+      ],
+      "session": "reviewer",
+      "command": "f() { rm /scratch/z; }; f",
+      "expect": {
+        "exit": 127,
+        "stdout": "",
+        "stderr": "rm: command not found\n"
+      }
+    }
+  ]
+}

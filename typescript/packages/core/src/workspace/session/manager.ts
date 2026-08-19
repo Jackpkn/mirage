@@ -18,6 +18,7 @@ import type { CompiledProfile } from './permissions.ts'
 import { RAMSessionStore } from './ram.ts'
 import { applyProfile, narrow } from './resolve.ts'
 import { CAS_MAX_RETRIES, generationOf, type SessionFields, type SessionStore } from './store.ts'
+import type { CommandsSpec, Grant } from '../../policy/types.ts'
 import type { HiddenPaths, MountMode } from '../../types.ts'
 
 type StoredSession = Parameters<typeof Session.fromJSON>[0]
@@ -45,6 +46,7 @@ export class SessionManager {
   private readonly persisted = new Map<string, string>()
 
   private boundHiddenInternal: HiddenPaths | null = null
+  private boundCommandsInternal: readonly CommandsSpec[] = []
   private defaultProfileInternal: CompiledProfile | null = null
 
   constructor(defaultSessionId: string, store?: SessionStore) {
@@ -88,6 +90,49 @@ export class SessionManager {
   set boundHidden(spec: HiddenPaths | null) {
     this.boundHiddenInternal = spec
     for (const session of this.sessions.values()) session.boundHidden = spec
+  }
+
+  /**
+   * The command tiers the workspace and its mounts bind every session
+   * to (mounts in registration order, then the workspace).
+   */
+  get boundCommands(): readonly CommandsSpec[] {
+    return this.boundCommandsInternal
+  }
+
+  /**
+   * Stamp the workspace-bound command tiers onto every live session,
+   * and onto every session created or hydrated later, the way
+   * boundHidden rides the session without being persisted.
+   */
+  set boundCommands(layers: readonly CommandsSpec[]) {
+    this.boundCommandsInternal = layers
+    for (const session of this.sessions.values()) session.boundCommands = layers
+  }
+
+  /**
+   * The command tiers one session runs under (SessionCommandsQuery). The
+   * bound tiers alone for an id this manager does not know, the empty id
+   * of an unbound door included, so a door that names no session still
+   * fails toward refusal.
+   */
+  commandsOf(sessionId: string): readonly CommandsSpec[] {
+    const session = this.sessions.get(sessionId)
+    return session === undefined ? this.boundCommandsInternal : session.commandLayers
+  }
+
+  /**
+   * The host grants one session holds (SessionGrantsQuery). Read off the
+   * registered session, never a fork, so a line running in a background
+   * copy sees the same answers.
+   */
+  grantsOf(sessionId: string): readonly Grant[] {
+    return this.get(sessionId).grants
+  }
+
+  /** Replace one session's host grants (SessionGrantsQuery); durable at the next flush. */
+  setGrants(sessionId: string, grants: readonly Grant[]): void {
+    this.get(sessionId).grants = grants
   }
 
   get store(): SessionStore {
@@ -168,6 +213,7 @@ export class SessionManager {
         // store.
         dflt.hiddenPaths = stored.hiddenPaths
         dflt.hiddenVars = stored.hiddenVars
+        dflt.commands = stored.commands
         dflt.generation = stored.generation
         // Hydrated sessions start clean: baseline what the store
         // holds so the next flush skips them.
@@ -180,6 +226,7 @@ export class SessionManager {
       }
       if (this.sessions.has(sid)) continue
       stored.boundHidden = this.boundHiddenInternal
+      stored.boundCommands = this.boundCommandsInternal
       this.sessions.set(sid, stored)
       this.persisted.set(sid, JSON.stringify(stored.toJSON()))
     }
@@ -245,6 +292,7 @@ export class SessionManager {
       mountModes: options.mountModes ?? null,
     })
     session.boundHidden = this.boundHiddenInternal
+    session.boundCommands = this.boundCommandsInternal
     this.sessions.set(sessionId, session)
     return session
   }

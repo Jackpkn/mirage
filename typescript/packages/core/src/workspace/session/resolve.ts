@@ -13,13 +13,17 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { PolicyError } from '../../policy/errors.ts'
+import { intersectPatterns } from '../../policy/match.ts'
+import type { CommandRule, CommandsSpec } from '../../policy/types.ts'
 import type { HiddenPaths } from '../../types.ts'
 import { MountMode, weakerMode } from '../../types.ts'
 import { classifyPaths, classifyVars } from '../../utils/hidden.ts'
 import { stripSlash } from '../../utils/slash.ts'
 import {
   parseProfileMounts,
+  type CommandsBlock,
   type CompiledProfile,
+  type MountCommandsBlock,
   type MountPermissions,
   type PathsBlock,
   type SessionProfile,
@@ -77,6 +81,7 @@ export function inherit(
       | null
     paths?: PathsBlock | null
     vars?: VarsBlock | null
+    commands?: CommandsBlock | null
   } = {}
   for (const node of [...chain].reverse()) {
     if (node.cwd != null) merged.cwd = node.cwd
@@ -84,6 +89,7 @@ export function inherit(
     if (node.mounts != null) merged.mounts = node.mounts
     if (node.paths != null) merged.paths = node.paths
     if (node.vars != null) merged.vars = node.vars
+    if (node.commands != null) merged.commands = node.commands
   }
   return merged
 }
@@ -159,10 +165,36 @@ function unionHide(
 }
 
 /**
+ * The commands block both documents grant: allow lists intersect (a
+ * line must be covered by both), ask and deny rules union in
+ * base-then-inline order; a side that states no list leaves the other's
+ * alone.
+ */
+function tightenCommands(
+  base: CommandsBlock | null | undefined,
+  inline: CommandsBlock | null | undefined,
+): CommandsBlock | null {
+  if (base == null) return inline ?? null
+  if (inline == null) return base
+  const baseAllow = base.allow ?? null
+  const inlineAllow = inline.allow ?? null
+  let allow: readonly string[] | null
+  if (baseAllow === null) allow = inlineAllow
+  else if (inlineAllow === null) allow = baseAllow
+  else allow = intersectPatterns(baseAllow, inlineAllow)
+  return {
+    allow,
+    ask: [...(base.ask ?? []), ...(inline.ask ?? [])],
+    deny: [...base.deny, ...inline.deny],
+  }
+}
+
+/**
  * Narrow a profile by an inline document (design 3.4): mounts
- * intersect, hides union, `cwd` and `env` are the inline document's
- * when it states them (session presets, not permissions). Either side
- * null returns the other unchanged.
+ * intersect, hides union, allow lists intersect, ask and deny rules
+ * union, `cwd` and `env` are the inline document's when it states them
+ * (session presets, not permissions). Either side null returns the
+ * other unchanged.
  */
 export function tighten(
   base: SessionProfile | null,
@@ -176,6 +208,7 @@ export function tighten(
     mounts?: ProfileMounts
     paths?: PathsBlock | null
     vars?: VarsBlock | null
+    commands?: CommandsBlock | null
   } = {}
   const cwd = inline.cwd ?? base.cwd
   if (cwd != null) out.cwd = cwd
@@ -187,24 +220,31 @@ export function tighten(
     out.paths = { hide: unionHide(base.paths, inline.paths) }
   if (base.vars != null || inline.vars != null)
     out.vars = { hide: unionHide(base.vars, inline.vars) }
+  const commands = tightenCommands(base.commands, inline.commands)
+  if (commands !== null) out.commands = commands
   return out
 }
 
 /**
- * A mount's hides in absolute terms. Every entry, glob or plain, is
- * joined under the mount root, so a mount-relative rule can never reach
- * outside its mount; a slashless glob stops being a component pattern
- * and becomes anchored under the mount, which is the only reading
- * "relative to the mount root" can have.
+ * Mount-relative path entries in absolute terms. Every entry, glob or
+ * plain, is joined under the mount root, so a mount-relative rule can
+ * never reach outside its mount; a slashless glob stops being a
+ * component pattern and becomes anchored under the mount, which is the
+ * only reading "relative to the mount root" can have.
  */
-export function rebase(prefix: string, perms: MountPermissions | null | undefined): string[] {
-  if (perms == null) return []
+export function rebaseEntries(prefix: string, entries: readonly string[]): string[] {
   const root = '/' + stripSlash(prefix)
   const base = root === '/' ? '' : root
-  return perms.paths.hide.map((entry) => {
+  return entries.map((entry) => {
     const rel = entry.replace(/^\/+/, '')
     return rel === '' ? root : `${base}/${rel}`
   })
+}
+
+/** A mount's hides in absolute terms (`rebaseEntries` of the block's `paths.hide`). */
+export function rebase(prefix: string, perms: MountPermissions | null | undefined): string[] {
+  if (perms == null) return []
+  return rebaseEntries(prefix, perms.paths.hide)
 }
 
 /**
@@ -223,6 +263,55 @@ export function boundHidden(
   return classifyPaths(entries)
 }
 
+// A mount tier's rules, scoped to the mount and rebased under it.
+function scopeRules(rules: readonly CommandRule[], root: string): CommandRule[] {
+  return rules.map((rule) => ({
+    reason: rule.reason,
+    commands: rule.commands ?? [],
+    paths: rebaseEntries(root, rule.paths ?? []),
+    mount: root,
+  }))
+}
+
+/**
+ * One tier's commands block, compiled; null when there is nothing to
+ * evaluate. A mount tier's rules are scoped to the mount
+ * (`CommandRule.mount`) and their paths rebased under its root, so a
+ * mount-relative rule can never reach outside its mount and a bare rule
+ * applies to the lines that work inside it.
+ */
+export function compileCommands(
+  block: CommandsBlock | MountCommandsBlock | null | undefined,
+  mount = '',
+): CommandsSpec | null {
+  if (block == null) return null
+  const allow = 'allow' in block ? (block.allow ?? null) : null
+  const ask = block.ask ?? []
+  if (allow === null && ask.length === 0 && block.deny.length === 0) return null
+  if (mount === '') return { allow, ask, deny: block.deny }
+  const root = '/' + stripSlash(mount)
+  return { allow: null, ask: scopeRules(ask, root), deny: scopeRules(block.deny, root) }
+}
+
+/**
+ * The command tiers every session of the workspace runs under: each
+ * mount's, in registration order, then the workspace's, so the resource
+ * owner speaks first when several rules match.
+ */
+export function boundCommands(
+  workspace: WorkspacePermissions | null | undefined,
+  mounts: ReadonlyMap<string, MountPermissions | null | undefined>,
+): CommandsSpec[] {
+  const layers: CommandsSpec[] = []
+  for (const [prefix, perms] of mounts) {
+    const spec = compileCommands(perms?.commands, prefix)
+    if (spec !== null) layers.push(spec)
+  }
+  const spec = compileCommands(workspace?.commands)
+  if (spec !== null) layers.push(spec)
+  return layers
+}
+
 /**
  * The session fields an effective profile sets; null is an unrestricted
  * session. `infrastructure` names the mount prefixes every session may
@@ -235,7 +324,14 @@ export function compileProfile(
   infrastructure: Iterable<string> = [],
 ): CompiledProfile {
   if (effective === null) {
-    return { mountModes: null, hiddenPaths: null, hiddenVars: null, env: null, cwd: null }
+    return {
+      mountModes: null,
+      hiddenPaths: null,
+      hiddenVars: null,
+      env: null,
+      cwd: null,
+      commands: null,
+    }
   }
   const mounts = parseProfileMounts(effective.mounts)
   let modes: Map<string, MountMode> | null = null
@@ -251,20 +347,23 @@ export function compileProfile(
     hiddenVars: classifyVars(effective.vars?.hide ?? []),
     env: effective.env ?? null,
     cwd: effective.cwd ?? null,
+    commands: compileCommands(effective.commands),
   }
 }
 
 /**
- * Stamp a compiled profile's narrowing onto a session: the three fields
+ * Stamp a compiled profile's narrowing onto a session: the four fields
  * no shell line can edit (mount ceilings, hidden paths, hidden
- * variables). Applied at creation and again whenever a stored record
- * could carry a stale copy (the default session after hydration), so
- * the document, not the store, is what an agent runs under.
+ * variables, the command tier). Applied at creation and again whenever
+ * a stored record could carry a stale copy (the default session after
+ * hydration), so the document, not the store, is what an agent runs
+ * under.
  */
 export function narrow(session: Session, compiled: CompiledProfile): void {
   session.mountModes = compiled.mountModes === null ? null : new Map(compiled.mountModes)
   session.hiddenPaths = compiled.hiddenPaths
   session.hiddenVars = compiled.hiddenVars
+  session.commands = compiled.commands
 }
 
 /**

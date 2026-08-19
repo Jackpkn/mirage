@@ -16,7 +16,8 @@ from collections.abc import Sequence
 
 from mirage.commands.builtin.generic.tar.mode import is_create_mode
 from mirage.policy.base import Policy
-from mirage.policy.types import Action, CommandContext, Deny, MountRootQuery
+from mirage.policy.types import (Action, CommandContext, Deny, DenyScope,
+                                 MountRootQuery)
 from mirage.types import PathSpec
 
 
@@ -108,37 +109,40 @@ class MountRootPolicy(Policy):
             for p in ctx.paths:
                 if ctx.registry.is_mount_root(p.virtual):
                     if cmd == "rmdir":
-                        msg = (f"rmdir: failed to remove '{p.virtual}': "
-                               f"Device or resource busy\n")
+                        msg = (f"failed to remove '{p.virtual}': "
+                               f"Device or resource busy")
                     else:
-                        msg = (f"rm: cannot remove '{p.virtual}': "
-                               f"Device or resource busy\n")
-                    return Deny(msg)
+                        msg = (f"cannot remove '{p.virtual}': "
+                               f"Device or resource busy")
+                    return Deny(msg, DenyScope.OPERAND)
         elif cmd == "mv":
             if ctx.registry.is_mount_root(ctx.paths[0].virtual):
                 dst = ctx.paths[1].virtual if len(ctx.paths) > 1 else "?"
                 return Deny(
-                    f"mv: cannot move '{ctx.paths[0].virtual}' to '{dst}': "
-                    f"Device or resource busy\n")
+                    f"cannot move '{ctx.paths[0].virtual}' to '{dst}': "
+                    f"Device or resource busy", DenyScope.OPERAND)
         elif cmd == "mkdir":
             # GNU mkdir -p makes "already exists" a no-op.
             if has_parents_flag(ctx.argv):
                 return None
             for p in ctx.paths:
                 if ctx.registry.is_mount_root(p.virtual):
-                    return Deny(f"mkdir: cannot create directory "
-                                f"'{p.virtual}': File exists\n")
+                    return Deny(
+                        f"cannot create directory '{p.virtual}': "
+                        f"File exists", DenyScope.OPERAND)
         elif cmd == "touch":
             for p in ctx.paths:
                 if ctx.registry.is_mount_root(p.virtual):
-                    return Deny(
-                        f"touch: cannot touch '{p.virtual}': Is a directory\n")
+                    return Deny(f"cannot touch '{p.virtual}': Is a directory",
+                                DenyScope.OPERAND)
         elif cmd == "ln":
             if ctx.registry.is_mount_root(ctx.paths[-1].virtual):
                 kind = ("symbolic link"
                         if has_symlink_flag(ctx.argv) else "link")
-                return Deny(f"ln: failed to create {kind} "
-                            f"'{ctx.paths[-1].virtual}': File exists\n")
+                return Deny(
+                    f"failed to create {kind} "
+                    f"'{ctx.paths[-1].virtual}': File exists",
+                    DenyScope.OPERAND)
         elif cmd == "tar":
             # Only -c reads the filesystem; -t and -x match their
             # operands against names inside the archive.
@@ -146,21 +150,24 @@ class MountRootPolicy(Policy):
                     if is_create_mode(ctx.argv) else None)
             if root is not None:
                 return Deny(
-                    f"tar: {root.raw_path}: Cannot open: "
+                    f"{root.raw_path}: Cannot open: "
                     f"Device or resource busy\n"
-                    f"tar: Error is not recoverable: exiting now\n", 2)
+                    f"tar: Error is not recoverable: exiting now",
+                    DenyScope.OPERAND)
         elif cmd == "zip":
             # The first operand is the archive being written, not a
             # source; only what follows it is read.
             root = first_root(ctx.registry, ctx.operands[1:])
             if root is not None:
-                return Deny(f"zip: cannot read '{root.raw_path}': "
-                            f"Device or resource busy\n")
+                return Deny(
+                    f"cannot read '{root.raw_path}': "
+                    f"Device or resource busy", DenyScope.OPERAND)
         elif cmd == "cp":
             # The last operand is the destination, and copying INTO a
             # mount is ordinary; only the sources are refused.
             root = first_root(ctx.registry, ctx.operands[:-1])
             if root is not None:
-                return Deny(f"cp: cannot copy '{root.raw_path}': "
-                            f"Device or resource busy\n")
+                return Deny(
+                    f"cannot copy '{root.raw_path}': "
+                    f"Device or resource busy", DenyScope.OPERAND)
         return None

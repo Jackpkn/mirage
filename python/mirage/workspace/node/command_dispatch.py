@@ -19,7 +19,8 @@ from typing import Any
 from mirage.commands.builtin.utils.limit import run_with_timeout
 from mirage.io import IOResult
 from mirage.io.types import materialize
-from mirage.policy import CommandContext, PolicyDenied, resolve_limit
+from mirage.policy import (Ask, CommandContext, Deny, Pending, PolicyDenied,
+                           render_deny, render_pending, resolve_limit)
 from mirage.policy.types import SessionContext
 from mirage.runtime.policy import PolicyDecision
 from mirage.shell.bytes import encode_text
@@ -36,12 +37,14 @@ from mirage.workspace.executor.builtins.table import BUILTINS
 from mirage.workspace.executor.builtins.types import BuiltinCall
 from mirage.workspace.executor.command import handle_command
 from mirage.workspace.executor.command.routing import (path_flag_scopes,
-                                                       positional_scopes)
+                                                       positional_scopes,
+                                                       program_tokens)
 from mirage.workspace.expand import expand_node
 from mirage.workspace.expand.argv import Argv, expand_argv
 from mirage.workspace.expand.globs import expand_boundary_globs
 from mirage.workspace.route import (SLASH_KEEPS_LAST, UNSUPPORTED_BUILTINS,
-                                    follows_last_component)
+                                    command_visible, follows_last_component,
+                                    is_tool)
 from mirage.workspace.session.state import (ensure_var_visible,
                                             pre_session_gate, seed_var,
                                             session_view, set_attr)
@@ -350,6 +353,18 @@ async def _run_argv(
     args = list(argv.args)
     operands = list(argv.operands)
 
+    # ── visibility ──────────────────────────────
+    # A word the session's allow lists do not install is not a command
+    # for it: bash's "command not found", before any admission hook, so
+    # an unlisted tool never leaks a deny reason. Checked here rather
+    # than in handle_command because the BUILTINS table below runs
+    # ahead of route(); the enumerators read the same filter through
+    # _layers.
+    if name and not command_visible(name, session):
+        err = f"{name}: command not found\n".encode()
+        return None, IOResult(exit_code=127, stderr=err), ExecutionNode(
+            command=" ".join([name, *args]), exit_code=127, stderr=err)
+
     # ── admission policies ──────────────────────
     # The one chokepoint every command class passes through: shell
     # builtins, namespace-routed commands (touch/chmod/ln -s), job
@@ -366,23 +381,33 @@ async def _run_argv(
             # argv[0], not the operands, so a path-pattern guard would
             # never see it without this row.
             scopes.insert(0, _to_scope(resolve_path(name, session.cwd)))
-        deny = await registry.policies.pre_command(
-            CommandContext(command=name,
-                           paths=tuple(scopes),
-                           operands=tuple(
-                               positional_scopes(name, args, session.cwd,
-                                                 operands)),
-                           argv=tuple(args),
-                           cwd=session.cwd,
-                           registry=registry))
-        if deny is not None:
-            err = deny.message.encode()
+        tokens, program = program_tokens(registry, name, args, session.cwd)
+        ctx = CommandContext(command=name,
+                             paths=tuple(scopes),
+                             operands=tuple(
+                                 positional_scopes(name, args, session.cwd,
+                                                   operands)),
+                             argv=tuple(args),
+                             cwd=session.cwd,
+                             registry=registry,
+                             session_id=session.session_id,
+                             tokens=tokens,
+                             program=program,
+                             tool=is_tool(name, session))
+        asked = await registry.policies.pre_command(ctx)
+        # An Ask is the chain's answer only after every Deny had its
+        # say; the door answers it from the session's grants or the
+        # host, so a grant never re-opens a deny.
+        verdict: Deny | Pending | None = (await registry.approvals.resolve(
+            ctx, asked) if isinstance(asked, Ask) else asked)
+        if verdict is not None:
+            err, code = (render_pending(name, verdict) if isinstance(
+                verdict, Pending) else render_deny(name, verdict))
             cmd_str = " ".join([name, *args])
-            return None, IOResult(exit_code=deny.exit_code,
-                                  stderr=err), ExecutionNode(
-                                      command=cmd_str,
-                                      exit_code=deny.exit_code,
-                                      stderr=err)
+            return None, IOResult(exit_code=code,
+                                  stderr=err), ExecutionNode(command=cmd_str,
+                                                             exit_code=code,
+                                                             stderr=err)
 
     # ── path execution ─────────────────────────
     # bash hands a slash-carrying head word to the loader, never to

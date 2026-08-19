@@ -14,10 +14,63 @@
 
 from collections.abc import Iterator
 
+from mirage.policy.match import head_visible
+from mirage.shell.types import GRAMMAR_BUILTINS
 from mirage.workspace.mount import MountRegistry
 from mirage.workspace.route.constants import NAMESPACE_COMMANDS, SHELL_NAMES
 from mirage.workspace.route.types import Consumer
 from mirage.workspace.session import Session
+
+
+def listed(name: str, session: Session) -> bool:
+    """What the session's allow lists say about a tool word.
+
+    A tier without a list installs everything; a tier with one installs
+    only the names its patterns start with (``head_visible``). This is
+    the raw answer; ``command_visible`` and ``_layers`` add the words
+    that are never subjects.
+
+    Args:
+        name (str): expanded command name.
+        session (Session): the shell session running the line.
+    """
+    layers = session.command_layers
+    return not layers or head_visible(name, layers)
+
+
+def is_tool(name: str, session: Session) -> bool:
+    """Whether a command word is a tool the allow lists govern.
+
+    Three kinds of word are never subjects: the shell's own grammar
+    (the grammar-tier builtins), a path being executed (its lines are
+    each checked as they run), and the agent's own function where the
+    function is what runs, which in this shell means a name no builtin
+    owns (builtins shadow functions), so a function cannot resurrect a
+    hidden builtin.
+
+    Args:
+        name (str): expanded command name.
+        session (Session): the shell session running the line.
+    """
+    if name in GRAMMAR_BUILTINS or "/" in name:
+        return False
+    return not (name in session.functions and name not in SHELL_NAMES)
+
+
+def command_visible(name: str, session: Session) -> bool:
+    """Whether a session can see a command word at all.
+
+    The document's allow lists (``commands.allow`` at the workspace and
+    profile tiers) decide: a tool name no list of a tier starts a
+    pattern with is not installed for the session, so it is 127 at the
+    chokepoint and absent from every enumerator; a word that is not a
+    tool (``is_tool``) is always visible.
+
+    Args:
+        name (str): expanded command name.
+        session (Session): the shell session running the line.
+    """
+    return not is_tool(name, session) or listed(name, session)
 
 
 def _layers(name: str, session: Session,
@@ -27,22 +80,28 @@ def _layers(name: str, session: Session,
     The one place precedence is written down: ``route`` reads the first
     yield and ``route_all`` reads all of them. Lazy on purpose, so the
     winner costs exactly what it did before the split (a name an
-    installed CLI answers never reaches the mount lookup).
+    installed CLI answers never reaches the mount lookup). The
+    document's visibility filter lives here too, so ``type``, ``which``,
+    ``command -v`` and dispatch agree on what a session can see: an
+    unlisted tool word yields nothing (grammar and functions are not
+    subjects, and a function named after a hidden builtin is as
+    unreachable as the builtin).
 
     Args:
         name (str): expanded command name.
         session (Session): shell session (function table).
         registry (MountRegistry): mount registry (command registration).
     """
-    if name in SHELL_NAMES:
+    installed = listed(name, session)
+    if name in SHELL_NAMES and (installed or name in GRAMMAR_BUILTINS):
         yield Consumer.SESSION
-    if name in NAMESPACE_COMMANDS:
+    if installed and name in NAMESPACE_COMMANDS:
         yield Consumer.NAMESPACE
-    if name in session.functions:
+    if name in session.functions and (installed or name not in SHELL_NAMES):
         yield Consumer.FUNCTION
-    if registry.clis.get(name) is not None:
+    if installed and registry.clis.get(name) is not None:
         yield Consumer.CLI
-    if registry.mount_for_command(name) is not None:
+    if installed and registry.mount_for_command(name) is not None:
         yield Consumer.MOUNT
 
 

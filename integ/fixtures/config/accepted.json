@@ -9,12 +9,22 @@
         "runtimes": ["node"],
         "policy": "policy.py",
         "permissions": {
-          "commands": { "deny": [{ "reason": "no rm here", "commands": ["rm"], "paths": ["/d/*"] }, "shred"] },
+          "commands": {
+            "allow": ["ls", "cat", "git", "rm"],
+            "ask": ["git push", { "reason": "sign-off", "commands": ["rm"], "paths": ["/d/shared/*"] }],
+            "deny": [{ "reason": "no rm here", "commands": ["rm"], "paths": ["/d/*"] }, "shred"]
+          },
           "paths": { "hide": ["/d/finance", "*.key"] }
         },
         "profiles": {
           "default": { "cwd": "/d", "env": { "PAGER": "cat" }, "mounts": { "/d": "rw" } },
-          "reviewer": { "extends": "default", "mounts": ["/d"], "paths": { "hide": ["/d/docs"] }, "vars": { "hide": ["AWS_*"] } }
+          "reviewer": {
+            "extends": "default",
+            "mounts": ["/d"],
+            "paths": { "hide": ["/d/docs"] },
+            "vars": { "hide": ["AWS_*"] },
+            "commands": { "allow": ["ls", "git log"], "ask": ["git *"], "deny": ["rm"] }
+          }
         },
         "mode": "write",
         "consistency": "lazy",
@@ -37,7 +47,10 @@
             "command_limits": { "cat": { "max_bytes": 1024, "on_exceed": "error" } },
             "backend": "vfs",
             "mountpoint": "/mnt/d",
-            "permissions": { "paths": { "hide": [".env", "*.pem"] } }
+            "permissions": {
+              "paths": { "hide": [".env", "*.pem"] },
+              "commands": { "ask": ["git rebase"], "deny": [{ "reason": "read-only history", "commands": ["git push"] }] }
+            }
           }
         }
       }

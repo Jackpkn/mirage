@@ -177,7 +177,7 @@ describe('Ops policy door', () => {
   class SealReads implements Policy {
     preOps(ctx: OpsContext): Action | null {
       if (!ctx.write && ctx.path.virtual.endsWith('.sealed')) {
-        return { kind: 'deny', message: 'sealed\n' }
+        return { kind: 'deny', reason: 'sealed' }
       }
       return null
     }
@@ -187,7 +187,7 @@ describe('Ops policy door', () => {
     postOps(ctx: OpsResultContext): Action | null {
       const data = ctx.result instanceof Uint8Array ? ctx.result : null
       if (ctx.op === 'read' && data !== null && DEC.decode(data).includes('TOPSECRET')) {
-        return { kind: 'deny', message: 'redacted\n' }
+        return { kind: 'deny', reason: 'redacted' }
       }
       return null
     }
@@ -205,7 +205,7 @@ describe('Ops policy door', () => {
   class LockWrites implements Policy {
     preOps(ctx: OpsContext): Action | null {
       if (ctx.write && ctx.path.virtual.startsWith('/data/locked/')) {
-        return { kind: 'deny', message: 'locked\n' }
+        return { kind: 'deny', reason: 'locked' }
       }
       return null
     }
@@ -280,7 +280,7 @@ describe('Ops is one door with the dispatcher', () => {
 
   class DenyInner implements Policy {
     postOps(ctx: OpsResultContext): Action | null {
-      if (ctx.path.virtual === '/m/inner') return { kind: 'deny', message: 'no\n' }
+      if (ctx.path.virtual === '/m/inner') return { kind: 'deny', reason: 'no' }
       return null
     }
   }
@@ -396,7 +396,7 @@ describe('Ops is one door with the dispatcher', () => {
 describe('Ops accounting survives the delegation', () => {
   class DenyBigReads implements Policy {
     postOps(ctx: OpsResultContext): Action | null {
-      if (ctx.op === 'read') return { kind: 'deny', message: 'too big\n' }
+      if (ctx.op === 'read') return { kind: 'deny', reason: 'too big' }
       return null
     }
   }
@@ -417,7 +417,7 @@ describe('Ops accounting survives the delegation', () => {
 
   class SealReads implements Policy {
     preOps(ctx: OpsContext): Action | null {
-      if (ctx.op === 'read') return { kind: 'deny', message: 'sealed\n' }
+      if (ctx.op === 'read') return { kind: 'deny', reason: 'sealed' }
       return null
     }
   }

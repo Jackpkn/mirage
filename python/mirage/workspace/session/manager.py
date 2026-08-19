@@ -16,6 +16,7 @@ import asyncio
 import copy
 from collections.abc import Mapping
 
+from mirage.policy.types import CommandsSpec, Grant
 from mirage.types import HiddenPaths, MountMode
 from mirage.workspace.record.types import CAS_MAX_RETRIES, generation_of
 from mirage.workspace.session.permissions import CompiledProfile
@@ -54,6 +55,7 @@ class SessionManager:
         self._loaded = False
         self._load_lock = asyncio.Lock()
         self._bound_hidden: HiddenPaths | None = None
+        self._bound_commands: tuple[CommandsSpec, ...] = ()
         self._default_profile: CompiledProfile | None = None
 
     @property
@@ -100,6 +102,61 @@ class SessionManager:
         self._bound_hidden = spec
         for session in self._sessions.values():
             session.bound_hidden = spec
+
+    @property
+    def bound_commands(self) -> tuple[CommandsSpec, ...]:
+        """The command tiers the workspace and its mounts bind every
+        session to (mounts in registration order, then the workspace)."""
+        return self._bound_commands
+
+    @bound_commands.setter
+    def bound_commands(self, layers: tuple[CommandsSpec, ...]) -> None:
+        """Stamp the workspace-bound command tiers onto every live
+        session, and onto every session created or hydrated later, the
+        way ``bound_hidden`` rides the session without being persisted.
+
+        Args:
+            layers (tuple[CommandsSpec, ...]): the compiled bound tiers.
+        """
+        self._bound_commands = layers
+        for session in self._sessions.values():
+            session.bound_commands = layers
+
+    def commands_of(self, session_id: str) -> tuple[CommandsSpec, ...]:
+        """The command tiers one session runs under (SessionCommandsQuery).
+
+        The bound tiers alone for an id this manager does not know, the
+        empty id of an unbound door included, so a door that names no
+        session still fails toward refusal.
+
+        Args:
+            session_id (str): the session, empty when none is bound.
+        """
+        session = self._sessions.get(session_id)
+        if session is None:
+            return self._bound_commands
+        return session.command_layers
+
+    def grants_of(self, session_id: str) -> tuple[Grant, ...]:
+        """The host grants one session holds (SessionGrantsQuery).
+
+        Read off the registered session, never a fork, so a line
+        running in a background copy sees the same answers.
+
+        Args:
+            session_id (str): the session.
+        """
+        return self.get(session_id).grants
+
+    def set_grants(self, session_id: str, grants: tuple[Grant, ...]) -> None:
+        """Replace one session's host grants (SessionGrantsQuery);
+        durable at the next flush.
+
+        Args:
+            session_id (str): the session.
+            grants (tuple[Grant, ...]): the new list.
+        """
+        self.get(session_id).grants = grants
 
     @property
     def default_id(self) -> str:
@@ -180,6 +237,7 @@ class SessionManager:
                     # flush erase them from the store.
                     default.hidden_paths = stored.hidden_paths
                     default.hidden_vars = stored.hidden_vars
+                    default.commands = stored.commands
                     default.generation = stored.generation
                     # Hydrated sessions start clean: baseline what the
                     # store holds so the next flush skips them.
@@ -194,6 +252,7 @@ class SessionManager:
                     continue
                 session = Session.from_dict(fields)
                 session.bound_hidden = self._bound_hidden
+                session.bound_commands = self._bound_commands
                 self._sessions[sid] = session
                 self._locks[sid] = asyncio.Lock()
                 self._persisted[sid] = copy.deepcopy(session.to_dict())
@@ -249,7 +308,8 @@ class SessionManager:
             raise ValueError(f"Session {session_id!r} already exists")
         session = Session(session_id=session_id,
                           mount_modes=mount_modes,
-                          bound_hidden=self._bound_hidden)
+                          bound_hidden=self._bound_hidden,
+                          bound_commands=self._bound_commands)
         self._sessions[session_id] = session
         self._locks[session_id] = asyncio.Lock()
         return session

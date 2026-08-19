@@ -93,23 +93,44 @@
       }
     },
     {
-      "name": "profile: commands are not a profile field yet",
+      "name": "profile: commands block takes no hide arm",
       "config": {
         "mounts": { "/d": { "resource": "ram" } },
-        "profiles": { "a": { "commands": { "deny": ["rm"] } } }
+        "profiles": { "a": { "commands": { "hide": ["rm"] } } }
       }
     },
     {
-      "name": "permissions: allow is not shipped yet",
+      "name": "commands: allow is a list, not a scalar",
       "config": {
         "mounts": { "/d": { "resource": "ram" } },
-        "permissions": { "commands": { "allow": ["ls"] } }
+        "permissions": { "commands": { "allow": "ls" } }
       }
     },
     {
-      "name": "mount permissions: paths only in this rung",
+      "name": "commands: a blank allow pattern would install every command",
       "config": {
-        "mounts": { "/d": { "resource": "ram", "permissions": { "commands": { "deny": ["rm"] } } } }
+        "mounts": { "/d": { "resource": "ram" } },
+        "permissions": { "commands": { "allow": ["ls", " "] } }
+      }
+    },
+    {
+      "name": "ask rule: a blank pattern would ask about every command",
+      "config": {
+        "mounts": { "/d": { "resource": "ram" } },
+        "permissions": { "commands": { "ask": [""] } }
+      }
+    },
+    {
+      "name": "ask rule: mount is the compiler's field, never typed",
+      "config": {
+        "mounts": { "/d": { "resource": "ram" } },
+        "permissions": { "commands": { "ask": [{ "reason": "x", "commands": ["rm"], "mount": "/d" }] } }
+      }
+    },
+    {
+      "name": "mount permissions: no allow list at the mount tier",
+      "config": {
+        "mounts": { "/d": { "resource": "ram", "permissions": { "commands": { "allow": ["ls"] } } } }
       }
     },
     {

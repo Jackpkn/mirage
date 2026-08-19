@@ -58,6 +58,15 @@ export const USAGE_HINT_PREFIX: ReadonlySet<string> = new Set(['diff', 'cmp'])
 // not know. Pinned on GNU tar 1.35: `tar xzf` is 2, `tar -Q` is 64.
 export const OLD_OPTION_EXIT = 2
 
+// The exit code of a command refused on one operand before it ran (an
+// admission policy's operand-scoped Deny): 1 for the GNU tools, which
+// report an operand they cannot act on and exit 1, and tar's own fatal
+// code, since tar reports an operand it cannot open and exits 2 (GNU tar
+// 1.35, `Exiting with failure status due to previous errors`).
+export const OPERAND_EXIT: Readonly<Record<string, number>> = Object.freeze({
+  tar: 2,
+})
+
 export const USAGE_EXIT: Readonly<Record<string, number>> = Object.freeze({
   grep: 2,
   egrep: 2,

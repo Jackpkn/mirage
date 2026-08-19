@@ -14,6 +14,8 @@
 
 import { stripSlash } from '../../utils/slash.ts'
 import { type ByteSource, materialize } from '../../io/types.ts'
+import { getCurrentSession } from '../../context/session_context.ts'
+import { preOpsGate } from '../../policy/policies.ts'
 import { PathSpec } from '../../types.ts'
 import type { MountRegistry } from '../mount/registry.ts'
 import type { FlagValue } from '../../commands/spec/types.ts'
@@ -69,8 +71,20 @@ export async function applyFindActions(
         resolved: true,
       })
       try {
-        // -d so directories emptied by the deepest-first pass are removable,
+        // -delete is find's own action, not an `rm` line, so no command
+        // rule sees it; it is a removal all the same, so it clears the
+        // op door a path rule guards (the same gate `ws.ops`, FUSE and a
+        // redirect clear), by the session the line runs under. -d so
+        // directories emptied by the deepest-first pass are removable,
         // matching GNU -delete's rmdir behavior.
+        await preOpsGate(
+          registry.policies,
+          'unlink',
+          ps,
+          true,
+          mount.prefix,
+          getCurrentSession()?.sessionId ?? '',
+        )
         const [, rmIo] = await mount.executeCmd('rm', [ps], [], { d: true }, { stdin: null, cwd })
         if (rmIo.exitCode !== 0) {
           const errBytes = await materialize(rmIo.stderr)

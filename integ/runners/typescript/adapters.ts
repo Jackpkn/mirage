@@ -91,6 +91,12 @@ import {
   Workspace,
   type ConsoleFactory,
 } from '@struktoai/mirage-node'
+import {
+  parseMountPermissions,
+  parseWorkspacePermissions,
+  type MountPermissions,
+  type WorkspacePermissions,
+} from '@struktoai/mirage-core/workspace/session/permissions'
 import * as lancedb from '@lancedb/lancedb'
 import { QdrantClient } from '@qdrant/js-client-rest'
 import { ChromaClient } from 'chromadb'
@@ -204,6 +210,30 @@ function consoleFactoryFor(target: Target): ConsoleFactory | undefined {
     )
 }
 
+// The permissions document a target declares: the workspace tier
+// (`permissions` on the target) and each mount's own block
+// (`permissions` on the mount), validated by the parsers the YAML door
+// uses so a case runs under exactly what a deployment would write. Only
+// the ram and disk openers consult it (main.ts refuses it on any other
+// resource), the same way the console block rides ram alone.
+function permissionOptions(target: Target): {
+  permissions?: WorkspacePermissions
+  mountPermissions?: Record<string, MountPermissions>
+} {
+  const mountPermissions: Record<string, MountPermissions> = {}
+  for (const m of target.mounts) {
+    if (m.permissions !== undefined) {
+      mountPermissions[m.path] = parseMountPermissions(m.permissions, `mount ${m.path} permissions`)
+    }
+  }
+  return {
+    ...(target.permissions !== undefined
+      ? { permissions: parseWorkspacePermissions(target.permissions) }
+      : {}),
+    ...(Object.keys(mountPermissions).length > 0 ? { mountPermissions } : {}),
+  }
+}
+
 async function openRam(target: Target): Promise<Open> {
   const mounts: Record<string, RAMResource | [RAMResource, MountMode]> = {}
   const built: Record<string, RAMResource> = {}
@@ -224,6 +254,7 @@ async function openRam(target: Target): Promise<Open> {
     mode: MountMode.WRITE,
     ...(target.agentId !== undefined ? { agentId: target.agentId } : {}),
     ...(consoleFactory !== undefined ? { consoleFactory } : {}),
+    ...permissionOptions(target),
   })
   installLocalClis(ws, target)
   return { ws: ws as unknown as ExecWorkspace, cleanup: () => ws.close() }
@@ -238,7 +269,7 @@ async function openDisk(target: Target): Promise<Open> {
     const resource = new DiskResource({ root })
     mounts[m.path] = m.mode === 'read' ? [resource, MountMode.READ] : resource
   }
-  const ws = new Workspace(mounts, { mode: MountMode.WRITE })
+  const ws = new Workspace(mounts, { mode: MountMode.WRITE, ...permissionOptions(target) })
   installLocalClis(ws, target)
   const cleanup = async (): Promise<void> => {
     await ws.close()

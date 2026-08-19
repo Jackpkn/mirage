@@ -1,0 +1,217 @@
+{
+  "cases": [
+    {
+      "id": "ask_prep",
+      "seq": 923040,
+      "targets": [
+        "ram-commands"
+      ],
+      "command": "mkdir -p /scratch/shared && touch /scratch/shared/a /scratch/shared/b /scratch/plain",
+      "expect": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "ask_scoped_rule_refuses_for_now",
+      "seq": 923041,
+      "targets": [
+        "ram-commands"
+      ],
+      "session": "asker",
+      "command": "rm /scratch/shared/a",
+      "expect": {
+        "exit": 126,
+        "stdout": "",
+        "stderr": "rm: requires approval: sign-off (approval 6b27b00a1daa)\n"
+      }
+    },
+    {
+      "id": "ask_retry_quotes_the_same_id",
+      "seq": 923042,
+      "targets": [
+        "ram-commands"
+      ],
+      "session": "asker",
+      "command": "rm /scratch/shared/a",
+      "expect": {
+        "exit": 126,
+        "stdout": "",
+        "stderr": "rm: requires approval: sign-off (approval 6b27b00a1daa)\n"
+      }
+    },
+    {
+      "id": "ask_scoped_rule_leaves_other_paths_alone",
+      "seq": 923043,
+      "targets": [
+        "ram-commands"
+      ],
+      "session": "asker",
+      "command": "rm /scratch/plain && ls /scratch",
+      "expect": {
+        "exit": 0,
+        "stdout": "locked\nshared\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "ask_once_grant_passes_one_retry",
+      "seq": 923044,
+      "targets": [
+        "ram-commands"
+      ],
+      "session": "asker",
+      "answer": "allow_once",
+      "command": "rm /scratch/shared/a && ls /scratch/shared",
+      "expect": {
+        "exit": 0,
+        "stdout": "b\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "ask_once_grant_is_spent",
+      "seq": 923045,
+      "targets": [
+        "ram-commands"
+      ],
+      "session": "asker",
+      "command": "rm /scratch/shared/b",
+      "expect": {
+        "exit": 126,
+        "stdout": "",
+        "stderr": "rm: requires approval: sign-off (approval 191446418252)\n"
+      }
+    },
+    {
+      "id": "ask_deny_refuses_the_retry_once",
+      "seq": 923046,
+      "targets": [
+        "ram-commands"
+      ],
+      "session": "asker",
+      "answer": "deny",
+      "command": "rm /scratch/shared/b",
+      "expect": {
+        "exit": 126,
+        "stdout": "",
+        "stderr": "rm: policy denied: sign-off\n"
+      }
+    },
+    {
+      "id": "ask_after_a_deny_the_question_is_open_again",
+      "seq": 923047,
+      "targets": [
+        "ram-commands"
+      ],
+      "session": "asker",
+      "command": "rm /scratch/shared/b",
+      "expect": {
+        "exit": 126,
+        "stdout": "",
+        "stderr": "rm: requires approval: sign-off (approval 191446418252)\n"
+      }
+    },
+    {
+      "id": "ask_session_grant_covers_the_rule",
+      "seq": 923048,
+      "targets": [
+        "ram-commands"
+      ],
+      "session": "asker",
+      "answer": "allow_session",
+      "command": "rm /scratch/shared/b && touch /scratch/shared/c && rm /scratch/shared/c && ls /scratch/shared",
+      "expect": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "ask_session_grant_is_the_sessions_own",
+      "seq": 923049,
+      "targets": [
+        "ram-commands"
+      ],
+      "session": "asker2",
+      "command": "touch /scratch/shared/d && rm /scratch/shared/d",
+      "expect": {
+        "exit": 126,
+        "stdout": "",
+        "stderr": "rm: requires approval: sign-off (approval d5d85d5fe238)\n"
+      }
+    },
+    {
+      "id": "ask_deny_rule_is_never_reopened_by_a_grant",
+      "seq": 923050,
+      "targets": [
+        "ram-commands"
+      ],
+      "session": "asker",
+      "command": "rm /repo/letters.txt",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "rm: /repo/letters.txt: no deletes in the repo\n"
+      }
+    },
+    {
+      "id": "ask_mount_rule_asks_through_the_verb_walk",
+      "seq": 923051,
+      "targets": [
+        "ram-commands"
+      ],
+      "session": "asker",
+      "command": "git -C /repo log --oneline -n 1",
+      "expect": {
+        "exit": 126,
+        "stdout": "",
+        "stderr": "git: requires approval: log needs a nod (approval cb6bb46546ff)\n"
+      }
+    },
+    {
+      "id": "ask_mount_rule_grant_passes",
+      "seq": 923052,
+      "targets": [
+        "ram-commands"
+      ],
+      "session": "asker",
+      "answer": "allow_once",
+      "command": "git -C /repo log --oneline -n 1",
+      "expect": {
+        "exit": 0,
+        "stdout": "8ef2542 add two\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "ask_mount_rule_stops_at_the_mount",
+      "seq": 923053,
+      "targets": [
+        "ram-commands"
+      ],
+      "session": "asker",
+      "command": "git -C /scratch log --oneline",
+      "expect": {
+        "exit": 128,
+        "stdout": "",
+        "stderr": "fatal: not a git repository (or any of the parent directories): .git\n"
+      }
+    },
+    {
+      "id": "ask_bare_pattern_asks_with_the_default_reason",
+      "seq": 923054,
+      "targets": [
+        "ram-commands"
+      ],
+      "session": "asker",
+      "command": "head -n 1 /repo/letters.txt",
+      "expect": {
+        "exit": 126,
+        "stdout": "",
+        "stderr": "head: requires approval: no standing approval (approval b3a667a9ba0c)\n"
+      }
+    }
+  ]
+}

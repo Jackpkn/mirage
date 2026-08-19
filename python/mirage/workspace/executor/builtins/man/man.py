@@ -25,6 +25,8 @@ from mirage.workspace.executor.builtins.man.types import ManEntry
 from mirage.workspace.executor.builtins.shared import Result
 from mirage.workspace.executor.builtins.types import BuiltinCall
 from mirage.workspace.mount.registry import DEV_PREFIX, MountRegistry
+from mirage.workspace.route import command_visible
+from mirage.workspace.session import Session
 from mirage.workspace.types import ExecutionNode
 
 # Shell builtins the manual documents through a spec of another name.
@@ -76,31 +78,36 @@ def _builtin_entry(name: str) -> ManEntry | None:
     return ManEntry(name=name, spec=spec)
 
 
-def _command_entries(registry: MountRegistry) -> list[ManEntry]:
-    """One entry per name registered on any mount, first registration wins.
+def _command_entries(registry: MountRegistry,
+                     session: Session) -> list[ManEntry]:
+    """One entry per name registered on any mount that the session can
+    see, first registration wins.
 
     Args:
         registry (MountRegistry): registry holding the mounts.
+        session (Session): the session reading the manual.
     """
     seen: dict[str, ManEntry] = {}
     for mount in registry.mounts():
         if mount.prefix == DEV_PREFIX:
             continue
         for cmd in mount.all_commands():
-            if cmd.name not in seen:
+            if cmd.name not in seen and command_visible(cmd.name, session):
                 seen[cmd.name] = ManEntry(name=cmd.name, spec=cmd.spec)
     return list(seen.values())
 
 
-def _cli_entries(registry: MountRegistry) -> list[ManEntry]:
-    """One entry per installed CLI head word.
+def _cli_entries(registry: MountRegistry, session: Session) -> list[ManEntry]:
+    """One entry per installed CLI head word the session can see.
 
     Args:
         registry (MountRegistry): registry holding the installs.
+        session (Session): the session reading the manual.
     """
     return [
         ManEntry(name=name, spec=install.spec)
         for name, install in registry.clis.items().items()
+        if command_visible(name, session)
     ]
 
 
@@ -175,19 +182,21 @@ def _render_cli_entry(head: str, verbs: Sequence[str],
     return node_help(" ".join((head, ) + path), node, spec.usage_style)
 
 
-def _render_man_index(registry: MountRegistry) -> str:
+def _render_man_index(registry: MountRegistry, session: Session) -> str:
     """The bare ``man`` listing, by kind of word: commands, then CLIs.
 
     Every name registered on any mount is one row however many mounts
     register it, and no row says which: the manual documents words, and
-    dispatch by name already picks the mount that serves one.
+    dispatch by name already picks the mount that serves one. A word the
+    session cannot see is not listed, as it is not a command for it.
 
     Args:
         registry (MountRegistry): registry holding mounts and installs.
+        session (Session): the session reading the manual.
     """
     sections = [
-        _render_section("commands", _command_entries(registry)),
-        _render_section("clis", _cli_entries(registry)),
+        _render_section("commands", _command_entries(registry, session)),
+        _render_section("clis", _cli_entries(registry, session)),
     ]
     body = "\n\n".join(s for s in sections if s)
     return body + "\n" if body else ""
@@ -230,19 +239,22 @@ def _cli_man(
 async def handle_man(
     args: list[str],
     registry: MountRegistry,
+    session: Session,
 ) -> tuple[ByteSource | None, IOResult, ExecutionNode]:
     if not args:
-        out = _render_man_index(registry).encode()
+        out = _render_man_index(registry, session).encode()
         return out, IOResult(), ExecutionNode(command="man", exit_code=0)
     name = args[0]
     cmd_str = "man " + " ".join(args)
     # Only an installed head word reads the words after it: they are its
     # verb path. Everything else keeps man's older shape and documents
-    # args[0].
+    # args[0]. A word the session cannot see has no page.
     install = registry.clis.get(name)
-    if install is not None:
+    if install is not None and command_visible(name, session):
         return _cli_man(install, args[1:], cmd_str, registry)
-    entry = _command_entry(name, registry) or _builtin_entry(name)
+    entry = None
+    if command_visible(name, session):
+        entry = _command_entry(name, registry) or _builtin_entry(name)
     if entry is None:
         err = f"man: no entry for {name}\n".encode()
         return None, IOResult(exit_code=1,
@@ -259,4 +271,4 @@ async def man_builtin(call: BuiltinCall) -> Result:
     Args:
         call (BuiltinCall): the invocation.
     """
-    return await handle_man(list(call.argv.args), call.registry)
+    return await handle_man(list(call.argv.args), call.registry, call.session)

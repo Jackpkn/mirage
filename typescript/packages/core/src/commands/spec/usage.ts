@@ -15,6 +15,7 @@
 import { UsageError } from '../errors.ts'
 import {
   OLD_OPTION_EXIT,
+  OPERAND_EXIT,
   PYTHON_NAMES,
   pythonUsage,
   USAGE_EXIT,
@@ -25,6 +26,11 @@ import { CommandName } from './types.ts'
 /** GNU usage-error exit code for a command. */
 export function usageExitCode(cmdName: string): number {
   return USAGE_EXIT[cmdName] ?? 1
+}
+
+/** Exit code of a command refused on one operand before it ran. */
+export function operandExitCode(cmdName: string): number {
+  return OPERAND_EXIT[cmdName] ?? 1
 }
 
 /**

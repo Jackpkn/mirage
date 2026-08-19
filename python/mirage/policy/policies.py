@@ -16,11 +16,12 @@ import errno
 import logging
 from typing import Any
 
+from mirage.commands.spec.usage import operand_exit_code
 from mirage.policy.base import Policy
 from mirage.policy.errors import PolicyDenied, PolicyError
-from mirage.policy.types import (VALIDITY, CommandContext, Deny,
-                                 ExecuteResultContext, OpsContext,
-                                 OpsResultContext, SessionContext)
+from mirage.policy.types import (VALIDITY, Ask, CommandContext, Deny,
+                                 DenyScope, ExecuteResultContext, OpsContext,
+                                 OpsResultContext, Pending, SessionContext)
 from mirage.types import Limit, PathSpec
 
 logger = logging.getLogger(__name__)
@@ -28,9 +29,50 @@ logger = logging.getLogger(__name__)
 HookContext = (CommandContext | OpsContext | OpsResultContext
                | ExecuteResultContext | SessionContext)
 
+# A whole-command refusal exits as bash does for a command it found but
+# may not run.
+POLICY_DENIED_EXIT = 126
 
-async def pre_ops_gate(policies: "Policies", op: str, path: PathSpec,
-                       write: bool, prefix: str) -> None:
+
+def render_deny(subject: str, deny: Deny) -> tuple[bytes, int]:
+    """The command plane's rendering of a refusal: stderr and exit code.
+
+    The one place the outcome table for that plane is written down, so
+    a document rule and a coded policy print alike: a whole-command
+    Deny is ``<subject>: policy denied: <reason>`` at 126, an operand
+    Deny keeps the GNU voice ``<subject>: <reason>`` at the command's
+    operand-refusal code (1, tar 2).
+
+    Args:
+        subject (str): the command name (or ``line`` at the boundary).
+        deny (Deny): the verdict.
+    """
+    if deny.scope is DenyScope.OPERAND:
+        return (f"{subject}: {deny.reason}\n".encode(),
+                operand_exit_code(subject))
+    return (f"{subject}: policy denied: {deny.reason}\n".encode(),
+            POLICY_DENIED_EXIT)
+
+
+def render_pending(subject: str, pending: Pending) -> tuple[bytes, int]:
+    """The command plane's rendering of an unanswered ask: refused for
+    now at 126, naming the approval the agent should quote, so the
+    retry after the host grants it passes.
+
+    Args:
+        subject (str): the command name.
+        pending (Pending): the door's answer.
+    """
+    return (f"{subject}: requires approval: {pending.reason} "
+            f"(approval {pending.id})\n".encode(), POLICY_DENIED_EXIT)
+
+
+async def pre_ops_gate(policies: "Policies",
+                       op: str,
+                       path: PathSpec,
+                       write: bool,
+                       prefix: str,
+                       session_id: str = "") -> None:
     """Fire pre_ops at an op door; a Deny becomes EACCES.
 
     The one seam helper both doors (the ops facade and the dispatcher)
@@ -45,14 +87,19 @@ async def pre_ops_gate(policies: "Policies", op: str, path: PathSpec,
         path (PathSpec): the resolved virtual path.
         write (bool): whether the op mutates the mount.
         prefix (str): the owning mount's prefix.
+        session_id (str): the session the door serves, empty for the
+            unbound host view.
     """
     if not policies.wants("pre_ops"):
         return
     deny = await policies.pre_ops(
-        OpsContext(op=op, path=path, write=write, prefix=prefix))
+        OpsContext(op=op,
+                   path=path,
+                   write=write,
+                   prefix=prefix,
+                   session_id=session_id))
     if deny is not None:
-        raise PolicyDenied(errno.EACCES, deny.message.rstrip("\n"),
-                           path.virtual)
+        raise PolicyDenied(errno.EACCES, deny.reason, path.virtual)
 
 
 async def post_ops_gate(policies: "Policies", op: str, path: PathSpec,
@@ -80,8 +127,7 @@ async def post_ops_gate(policies: "Policies", op: str, path: PathSpec,
                          prefix=prefix,
                          result=result))
     if deny is not None:
-        raise PolicyDenied(errno.EACCES, deny.message.rstrip("\n"),
-                           path.virtual)
+        raise PolicyDenied(errno.EACCES, deny.reason, path.virtual)
     return bound
 
 
@@ -104,7 +150,7 @@ async def pre_session_gate(policies: "Policies | None",
         return
     deny = await policies.pre_session(ctx)
     if deny is not None:
-        raise PolicyDenied(errno.EACCES, deny.message.rstrip("\n"), ctx.key)
+        raise PolicyDenied(errno.EACCES, deny.reason, ctx.key)
 
 
 async def post_execute_gate(
@@ -125,6 +171,22 @@ async def post_execute_gate(
     return await policies.post_execute(ctx)
 
 
+def _deny_only(hook: str, verdict: Deny | Ask | None) -> Deny | None:
+    """Narrow a hook's answer where VALIDITY admits no Ask.
+
+    Args:
+        hook (str): the hook name, for the message.
+        verdict (Deny | Ask | None): what the loop returned.
+
+    Raises:
+        PolicyError: an Ask reached a hook that cannot carry one, which
+            VALIDITY already refuses inside the loop.
+    """
+    if isinstance(verdict, Ask):
+        raise PolicyError(f"{hook} cannot answer with an Ask: {verdict!r}")
+    return verdict
+
+
 class Policies:
     """Ordered policies; on a pre hook the first Deny wins.
 
@@ -137,9 +199,9 @@ class Policies:
     message is shown, never whether a refusal holds.
 
     A policy that raises fails closed: the command is refused with a
-    Deny naming the policy, and the error is logged. A policy that
-    returns something the hook may not return (VALIDITY) raises
-    PolicyError: that is a programming error, not a refusal.
+    whole-command Deny naming the policy, and the error is logged. A
+    policy that returns something the hook may not return (VALIDITY)
+    raises PolicyError: that is a programming error, not a refusal.
 
     Args:
         policies (list[Policy] | None): initial policies, consulted in
@@ -184,16 +246,21 @@ class Policies:
                     break
         self._wanted = frozenset(wanted)
 
-    async def _fire(self, hook: str, ctx: HookContext,
-                    subject: str) -> tuple[Deny | None, Limit | None]:
+    async def _fire(
+            self, hook: str,
+            ctx: HookContext) -> tuple[Deny | Ask | None, Limit | None]:
         """One loop for every hook: first Deny wins, Limits merge.
 
         A refusal short-circuits (limits are moot once the result is
         suppressed); Limit actions accumulate and aggregate to the
-        tightest value per field.
+        tightest value per field. An Ask is remembered and the loop
+        goes on looking for a Deny, so a later policy's refusal
+        outranks an earlier policy's question and an approval can never
+        re-open a deny; the first Ask is returned when nothing refused.
         """
         base = getattr(Policy, hook)
         limits: list[Limit] = []
+        asked: Ask | None = None
         for policy in self._policies:
             if getattr(type(policy), hook) is base:
                 continue
@@ -202,27 +269,32 @@ class Policies:
                 action = await getattr(policy, hook)(ctx)
             except Exception as exc:
                 logger.error("%s policy %s raised: %s", hook, name, exc)
-                return Deny(f"{subject}: policy {name} failed: {exc}\n"), None
+                return Deny(f"policy {name} failed: {exc}"), None
             if action is None:
                 continue
             legal = VALIDITY[hook]
             if isinstance(action, Deny) and Deny.kind in legal:
                 return action, None
+            if isinstance(action, Ask) and Ask.kind in legal:
+                if asked is None:
+                    asked = action
+                continue
             if isinstance(action, Limit) and Limit.kind in legal:
                 limits.append(action)
                 continue
             raise PolicyError(f"{hook} of {name} returned {action!r}; "
                               f"legal kinds here: {sorted(legal)}")
-        return None, Limit.aggr(limits)
+        return asked, Limit.aggr(limits)
 
-    async def pre_command(self, ctx: CommandContext) -> Deny | None:
-        """Fire pre_command across the policies; first Deny wins.
+    async def pre_command(self, ctx: CommandContext) -> Deny | Ask | None:
+        """Fire pre_command across the policies; first Deny wins, else
+        the first Ask.
 
         Args:
             ctx (CommandContext): the classified command.
         """
-        deny, _ = await self._fire("pre_command", ctx, ctx.command)
-        return deny
+        verdict, _ = await self._fire("pre_command", ctx)
+        return verdict
 
     async def pre_ops(self, ctx: OpsContext) -> Deny | None:
         """Fire pre_ops across the policies; first Deny wins.
@@ -230,8 +302,8 @@ class Policies:
         Args:
             ctx (OpsContext): the op about to run.
         """
-        deny, _ = await self._fire("pre_ops", ctx, ctx.op)
-        return deny
+        verdict, _ = await self._fire("pre_ops", ctx)
+        return _deny_only("pre_ops", verdict)
 
     async def pre_session(self, ctx: SessionContext) -> Deny | None:
         """Fire pre_session across the policies; first Deny wins.
@@ -239,8 +311,8 @@ class Policies:
         Args:
             ctx (SessionContext): the mutation about to land.
         """
-        deny, _ = await self._fire("pre_session", ctx, ctx.key)
-        return deny
+        verdict, _ = await self._fire("pre_session", ctx)
+        return _deny_only("pre_session", verdict)
 
     async def post_ops(
             self, ctx: OpsResultContext) -> tuple[Deny | None, Limit | None]:
@@ -249,7 +321,8 @@ class Policies:
         Args:
             ctx (OpsResultContext): the op and its raw result.
         """
-        return await self._fire("post_ops", ctx, ctx.op)
+        verdict, limit = await self._fire("post_ops", ctx)
+        return _deny_only("post_ops", verdict), limit
 
     async def post_execute(
             self,
@@ -259,5 +332,5 @@ class Policies:
         Args:
             ctx (ExecuteResultContext): the finished line's facts.
         """
-        return await self._fire("post_execute", ctx, ctx.producer.command
-                                or "line")
+        verdict, limit = await self._fire("post_execute", ctx)
+        return _deny_only("post_execute", verdict), limit

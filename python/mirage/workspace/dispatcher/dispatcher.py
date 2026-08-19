@@ -21,7 +21,7 @@ from typing import Any
 from mirage.cache.file import io as cache_io
 from mirage.cache.manager import CacheManager
 from mirage.commands.builtin.utils.limit import apply_op_limit
-from mirage.context import mount_allowed, path_allowed
+from mirage.context import get_current_session, mount_allowed, path_allowed
 from mirage.io import IOResult, OpReport
 from mirage.observe.context import record
 from mirage.observe.record import OpRecord
@@ -97,6 +97,14 @@ def _visible_entries(entries: list[str], parent: str) -> list[str]:
         e for e in entries
         if path_allowed(f"{base}/{e.rstrip('/').rsplit('/', 1)[-1]}")
     ]
+
+
+def _session_id() -> str:
+    """The id of the session this door serves, empty for the unbound
+    host view; the same binding the hides and modes above read.
+    """
+    sess = get_current_session()
+    return sess.session_id if sess is not None else ""
 
 
 def _window(kwargs: dict[str, Any]) -> tuple[int, int | None]:
@@ -179,7 +187,7 @@ class Dispatcher:
         write = op in POLICY_WRITE_OPS
         # A pre gate refuses before the answer exists, so it is not a
         # completed op and stays before the stamp.
-        await pre_ops_gate(policies, op, path, write, "")
+        await pre_ops_gate(policies, op, path, write, "", _session_id())
         _memory_answered(report)
         if op == "readdir" and isinstance(fallback, list):
             fallback = _visible_entries(fallback, path.virtual)
@@ -242,7 +250,7 @@ class Dispatcher:
             # gated exactly like the mounted overlay write.
             if op == "setattr":
                 policies = self._namespace.registry.policies
-                await pre_ops_gate(policies, op, path, True, "")
+                await pre_ops_gate(policies, op, path, True, "", _session_id())
                 applied = await self._overlay_setattr(path, kwargs)
                 _memory_answered(report)
                 await post_ops_gate(policies, op, path, True, "", applied)
@@ -270,7 +278,8 @@ class Dispatcher:
         # like a cold one, or the cache becomes a policy bypass.
         policies = self._namespace.registry.policies
         write = op in POLICY_WRITE_OPS
-        await pre_ops_gate(policies, op, path, write, mount.prefix)
+        await pre_ops_gate(policies, op, path, write, mount.prefix,
+                           _session_id())
         caches_reads = mount.resource.caches_reads
         # The file cache is keyed on the path alone, and what a command
         # put there is the rendered read. A raw read asks for a
@@ -390,7 +399,8 @@ class Dispatcher:
             assert_mount_allowed(owner)
         policies = self._namespace.registry.policies
         write = op in POLICY_WRITE_OPS
-        await pre_ops_gate(policies, op, path, write, owner or "")
+        await pre_ops_gate(policies, op, path, write, owner or "",
+                           _session_id())
         if op == "unlink":
             target = self._namespace.readlink(path.virtual) or ""
             await self._namespace.unlink(path.virtual)

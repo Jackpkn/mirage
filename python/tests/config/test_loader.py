@@ -513,7 +513,7 @@ def test_unknown_profile_fields_fail_loud(tmp_path):
                     "resource": "ram",
                     "permissions": {
                         "commands": {
-                            "deny": ["rm"]
+                            "allow": ["ls"]
                         }
                     }
                 }

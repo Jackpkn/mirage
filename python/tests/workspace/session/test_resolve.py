@@ -1,15 +1,17 @@
 import pytest
 
 from mirage.policy.errors import PolicyError
+from mirage.policy.types import CommandRule, CommandsSpec
 from mirage.shell.variable import VarAttr
 from mirage.types import HiddenPaths, HiddenVars, MountMode
-from mirage.workspace.session.permissions import (MountPermissions, PathsBlock,
-                                                  SessionProfile, VarsBlock,
-                                                  WorkspacePermissions)
-from mirage.workspace.session.resolve import (apply_profile, bound_hidden,
-                                              compile_profile, inherit, narrow,
-                                              rebase, resolve_profile, tighten)
 from mirage.workspace.session.session import Session
+
+from mirage.workspace.session.permissions import (  # isort: skip
+    CommandsBlock, MountCommandsBlock, MountPermissions, PathsBlock,
+    SessionProfile, VarsBlock, WorkspacePermissions)
+from mirage.workspace.session.resolve import (  # isort: skip
+    apply_profile, bound_commands, bound_hidden, compile_commands,
+    compile_profile, inherit, narrow, rebase, resolve_profile, tighten)
 
 PROFILES = {
     "default":
@@ -219,3 +221,103 @@ def test_narrow_stamps_the_uneditable_fields_and_apply_seeds_the_rest():
     assert applied.cwd == "/a"
     assert applied.env["ROLE"] == "x"
     assert VarAttr.EXPORT in applied.vars["ROLE"].attrs
+
+
+def test_inherit_replaces_the_commands_block_whole():
+    profiles = {
+        "base":
+        SessionProfile(
+            commands=CommandsBlock(allow=("ls", "git"), deny=("rm", ))),
+        "child":
+        SessionProfile(extends="base", commands=CommandsBlock(allow=("ls", ))),
+        "grand":
+        SessionProfile(extends="child", cwd="/x"),
+    }
+    # A stated block replaces the parent's (field inheritance), an
+    # absent one is inherited; safety comes from tightening, not here.
+    assert inherit(profiles, "child").commands == CommandsBlock(allow=("ls", ))
+    assert inherit(profiles, "grand").commands == CommandsBlock(allow=("ls", ))
+
+
+def test_tighten_intersects_allow_and_unions_ask_and_deny():
+    base = SessionProfile(commands=CommandsBlock(
+        allow=("ls", "git", "cat"), ask=("git push", ), deny=("rm", )))
+    inline = SessionProfile(commands=CommandsBlock(
+        allow=("git log", "cat", "wc"),
+        deny=(CommandRule(reason="no", commands=("mv", )), )))
+    out = tighten(base, inline)
+    assert out is not None and out.commands is not None
+    assert out.commands.allow == ("git log", "cat")
+    assert [r.commands for r in out.commands.ask] == [("git push", )]
+    assert [r.commands for r in out.commands.deny] == [("rm", ), ("mv", )]
+    # One side without a list leaves the other's alone; one side without
+    # a block leaves the other's block.
+    only = tighten(base, SessionProfile(commands=CommandsBlock(deny=("cp", ))))
+    assert only is not None and only.commands is not None
+    assert only.commands.allow == ("ls", "git", "cat")
+    assert tighten(base, SessionProfile(cwd="/x")).commands == base.commands
+    assert tighten(SessionProfile(cwd="/x"),
+                   inline).commands == inline.commands
+
+
+def test_compile_commands_scopes_a_mount_tier_and_rebases_its_paths():
+    assert compile_commands(None) is None
+    assert compile_commands(CommandsBlock()) is None
+    # A workspace or profile tier compiles as written.
+    spec = compile_commands(CommandsBlock(allow=("ls", ), deny=("rm", )))
+    assert spec == CommandsSpec(allow=("ls", ),
+                                deny=(CommandRule(reason="denied by policy",
+                                                  commands=("rm", )), ))
+    # A mount tier: every rule scoped to the mount root, its paths
+    # rebased under it, no allow list.
+    mount = compile_commands(MountCommandsBlock(
+        ask=("git rebase", ),
+        deny=(CommandRule(reason="ro",
+                          commands=("rm", ),
+                          paths=("*.lock", "/docs")), )),
+                             mount="/repo/")
+    assert mount == CommandsSpec(
+        allow=None,
+        ask=(CommandRule(reason="no standing approval",
+                         commands=("git rebase", ),
+                         mount="/repo"), ),
+        deny=(CommandRule(reason="ro",
+                          commands=("rm", ),
+                          paths=("/repo/*.lock", "/repo/docs"),
+                          mount="/repo"), ))
+    # An empty mount block is nothing to evaluate.
+    assert compile_commands(MountCommandsBlock(), mount="/repo") is None
+
+
+def test_bound_commands_lists_mount_tiers_then_the_workspace():
+    layers = bound_commands(
+        WorkspacePermissions(commands=CommandsBlock(allow=("ls", ))), {
+            "/repo/":
+            MountPermissions(commands=MountCommandsBlock(deny=("git push", ))),
+            "/scratch/":
+            None,
+            "/s3/":
+            MountPermissions(paths=PathsBlock(hide=(".env", ))),
+        })
+    assert len(layers) == 2
+    assert layers[0].deny[0].mount == "/repo"
+    assert layers[1] == CommandsSpec(allow=("ls", ))
+    assert bound_commands(None, {"/a/": None}) == ()
+    assert bound_commands(WorkspacePermissions(), {}) == ()
+
+
+def test_compile_profile_and_narrow_carry_the_command_tier():
+    compiled = compile_profile(
+        SessionProfile(commands=CommandsBlock(allow=("ls", ), ask=("git", ))))
+    assert compiled.commands == CommandsSpec(allow=("ls", ),
+                                             ask=(CommandRule(
+                                                 reason="no standing approval",
+                                                 commands=("git", )), ))
+    assert compile_profile(SessionProfile(cwd="/x")).commands is None
+    session = Session(session_id="s")
+    narrow(session, compiled)
+    assert session.commands == compiled.commands
+    assert session.command_layers == (compiled.commands, )
+    bound = CommandsSpec(deny=(CommandRule(reason="x"), ))
+    session.bound_commands = (bound, )
+    assert session.command_layers == (bound, compiled.commands)

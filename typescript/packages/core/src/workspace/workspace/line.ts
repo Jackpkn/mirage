@@ -22,7 +22,7 @@ import { materialize } from '../../io/types.ts'
 import type { Runtime } from '../../runtime/base.ts'
 import type { LineExecutor } from '../../runtime/mixin.ts'
 import type { RunResult } from '../../runtime/types.ts'
-import { type Policies, postExecuteGate, resolveLimit } from '../../policy/index.ts'
+import { type Policies, postExecuteGate, renderDeny, resolveLimit } from '../../policy/index.ts'
 import type { MountEntry } from '../mount/mount.ts'
 import type { Session } from '../session/session.ts'
 import { envSnapshot } from '../session/state.ts'
@@ -79,12 +79,12 @@ export async function runWholeLine(
     exitCode: result.exitCode,
   })
   if (deny !== null) {
-    const denyBytes = new TextEncoder().encode(deny.message)
+    const [denyBytes, exitCode] = renderDeny(name, deny)
     const priorErr = result.stderr !== null ? await materialize(result.stderr) : new Uint8Array()
     const mergedErr = new Uint8Array(priorErr.byteLength + denyBytes.byteLength)
     mergedErr.set(priorErr, 0)
     mergedErr.set(denyBytes, priorErr.byteLength)
-    return { stdout: new Uint8Array(), stderr: mergedErr, exitCode: deny.exitCode ?? 1 }
+    return { stdout: new Uint8Array(), stderr: mergedErr, exitCode }
   }
   const [capped, cappedErr, cappedCode] = await guardOutput(
     result.stdout,

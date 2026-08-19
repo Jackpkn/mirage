@@ -2017,6 +2017,102 @@
           "fixture": "git"
         }
       ]
+    },
+    {
+      "id": "ram-commands",
+      "hosts": [
+        "python",
+        "typescript-node"
+      ],
+      "clis": [
+        "git"
+      ],
+      "permissions": {
+        "commands": {
+          "allow": [
+            "mkdir",
+            "tee",
+            "touch",
+            "ls",
+            "cat",
+            "head",
+            "rm",
+            "find",
+            "grep",
+            "git",
+            "man",
+            "xargs",
+            "python3"
+          ],
+          "ask": [
+            {
+              "reason": "sign-off",
+              "commands": ["rm"],
+              "paths": ["/scratch/shared/*"]
+            },
+            "head"
+          ],
+          "deny": [
+            {
+              "reason": "no deletes in the repo",
+              "commands": ["rm"],
+              "paths": ["/repo/*"]
+            },
+            {
+              "reason": "sealed until review",
+              "paths": ["/repo/sealed/*"]
+            }
+          ]
+        }
+      },
+      "mounts": [
+        {
+          "path": "/repo",
+          "resource": "ram",
+          "backend": "memory",
+          "fixture": "git",
+          "permissions": {
+            "commands": {
+              "ask": [
+                {
+                  "reason": "log needs a nod",
+                  "commands": ["git log"]
+                }
+              ],
+              "deny": [
+                {
+                  "reason": "history is read-only here",
+                  "commands": ["git commit", "git reset --hard"]
+                }
+              ]
+            }
+          }
+        },
+        {
+          "path": "/scratch",
+          "resource": "ram",
+          "backend": "memory"
+        }
+      ],
+      "sessions": {
+        "reviewer": {
+          "commands": {
+            "allow": ["ls", "cat", "git log", "git status", "xargs"]
+          }
+        },
+        "asker": ["/repo", "/scratch"],
+        "asker2": ["/repo", "/scratch"],
+        "frozen": {
+          "commands": {
+            "deny": [
+              {
+                "reason": "frozen",
+                "paths": ["/scratch/locked/*"]
+              }
+            ]
+          }
+        }
+      }
     }
   ]
 }

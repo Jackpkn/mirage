@@ -13,19 +13,22 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 from mirage.policy.base import Policy
+from mirage.policy.match import op_hit, rule_hit
 from mirage.policy.types import (Action, CommandContext, CommandRule, Deny,
-                                 OpsContext)
-from mirage.utils.hidden import classify_paths, path_hidden
+                                 DenyScope, OpsContext)
+from mirage.utils.hidden import classify_paths
 
 
 class RulePolicy(Policy):
     """A CommandRule compiled to a policy.
 
-    Internal: the workspace builds one per rule of the document's
-    ``commands.deny``; nothing outside the package constructs it. The
-    rule's paths compile through the same classifier as ``paths.hide``
-    and match through the same matcher, so a deny scope and a hide
-    read one grammar.
+    Internal: the permissions policy evaluates the document's rules
+    through the same matcher this wraps, and nothing outside the
+    package constructs one; it survives as the one-rule form for tests
+    and for code that wants a single rule as a Policy. The rule's paths
+    compile through the same classifier as ``paths.hide`` and match
+    through the same matcher, so a deny scope and a hide read one
+    grammar.
 
     Args:
         rule (CommandRule): the declarative rule.
@@ -36,25 +39,18 @@ class RulePolicy(Policy):
         self._scope = classify_paths(rule.paths)
 
     async def pre_command(self, ctx: CommandContext) -> Action | None:
-        rule = self.rule
-        if rule.commands and ctx.command not in rule.commands:
+        hit = rule_hit(self.rule, self._scope, ctx)
+        if hit is None:
             return None
-        if self._scope is None:
-            return Deny(f"{ctx.command}: {rule.reason}\n")
-        for p in ctx.paths:
-            if path_hidden(self._scope, p.virtual):
-                display = p.raw_path or p.virtual
-                return Deny(f"{ctx.command}: {display}: {rule.reason}\n")
-        return None
+        if hit.operand is None:
+            return Deny(self.rule.reason)
+        return Deny(f"{hit.operand}: {self.rule.reason}", DenyScope.OPERAND)
 
     async def pre_ops(self, ctx: OpsContext) -> Action | None:
         # The op-layer twin: pure path protection (no command scope)
         # also holds at the op doors, so FUSE, programmatic ops, and
         # the warm cache cannot bypass it. Command-scoped rules stay
         # command-layer: an op does not know which command issued it.
-        rule = self.rule
-        if rule.commands or self._scope is None:
-            return None
-        if path_hidden(self._scope, ctx.path.virtual):
-            return Deny(f"{rule.reason}\n")
+        if op_hit(self.rule, self._scope, ctx):
+            return Deny(self.rule.reason)
         return None

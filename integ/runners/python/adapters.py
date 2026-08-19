@@ -42,7 +42,7 @@ from moto.server import ThreadedMotoServer
 from pymongo import AsyncMongoClient
 from qdrant_client import AsyncQdrantClient, models
 
-from mirage import MountMode, Workspace
+from mirage import Mount, MountMode, Workspace
 from mirage.accessor.onedrive import OneDriveConfig
 from mirage.accessor.sharepoint import SharePointConfig
 from mirage.commands.cli.specs import cli_spec_for
@@ -112,6 +112,7 @@ from mirage.shell.console import JobConsole
 from mirage.shell.console.redis import RedisConsoleStore
 from mirage.shell.job_table import ConsoleFactory
 from mirage.types import ConsistencyPolicy
+from mirage.workspace.session import MountPermissions, WorkspacePermissions
 
 REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
 EMAIL_IMAP_PORT = int(os.environ.get("EMAIL_IMAP_PORT", "3143"))
@@ -2179,8 +2180,17 @@ async def build_mounts(
                 pair = await pair
             resource, cleanup = pair
         built[mount["path"]] = resource
-        if mount.get("mode") == "read":
-            mounts[mount["path"]] = (resource, MountMode.READ)
+        mode = MountMode.READ if mount.get("mode") == "read" else None
+        # A mount's own permissions block (`mounts.<p>.permissions` in
+        # YAML), validated by the model the YAML door uses.
+        if mount.get("permissions") is not None:
+            mounts[mount["path"]] = Mount(
+                resource,
+                mode,
+                permissions=MountPermissions.model_validate(
+                    mount["permissions"]))
+        elif mode is not None:
+            mounts[mount["path"]] = (resource, mode)
         else:
             mounts[mount["path"]] = resource
         cleanups.append(cleanup)
@@ -2275,17 +2285,23 @@ async def open_target(
     mounts, cleanups = await build_mounts(target, run_id, service)
     agent_id = target.get("agentId")
     factory = console_factory(target, run_id)
+    # The workspace tier of the permissions document, validated by the
+    # model the YAML door uses; it binds every session the cases name.
+    permissions = (WorkspacePermissions.model_validate(target["permissions"])
+                   if target.get("permissions") is not None else None)
     if consistency is not None:
         ws = Workspace(mounts,
                        mode=MountMode.WRITE,
                        consistency=consistency,
                        agent_id=agent_id,
-                       console_factory=factory)
+                       console_factory=factory,
+                       permissions=permissions)
     else:
         ws = Workspace(mounts,
                        mode=MountMode.WRITE,
                        agent_id=agent_id,
-                       console_factory=factory)
+                       console_factory=factory,
+                       permissions=permissions)
     for cli_name in target.get("clis", []):
         spec, config = cli_install(service, cli_name)
         ws.register_cli(cli_name, spec, config)
