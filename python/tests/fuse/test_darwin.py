@@ -27,8 +27,6 @@ from mirage.fuse.darwin import (RENAME_EXCL, RENAME_SWAP, SetattrX,
 try:
     import mfusepy
 except (ImportError, OSError):
-    # mfusepy raises OSError("Unable to find libfuse") at import time when
-    # the package is installed but no libfuse is on the system.
     mfusepy = None
 
 requires_mfusepy = pytest.mark.skipif(
@@ -110,7 +108,7 @@ def test_install_extends_struct_and_keeps_size(monkeypatch):
     monkeypatch.setattr(darwin, "_installed", False)
     monkeypatch.setattr(darwin.sys, "platform", "darwin")
     before = ctypes.sizeof(mfusepy.fuse_operations)
-    install_macfuse_extensions()
+    install_macfuse_extensions(mfusepy)
     names = [f[0] for f in mfusepy.fuse_operations._fields_]
     assert "setattr_x" in names
     assert "renamex" in names
@@ -126,9 +124,9 @@ def test_install_extends_struct_and_keeps_size(monkeypatch):
 def test_install_is_idempotent(monkeypatch):
     monkeypatch.setattr(darwin, "_installed", False)
     monkeypatch.setattr(darwin.sys, "platform", "darwin")
-    install_macfuse_extensions()
+    install_macfuse_extensions(mfusepy)
     fields_after_first = mfusepy.fuse_operations
-    install_macfuse_extensions()
+    install_macfuse_extensions(mfusepy)
     assert mfusepy.fuse_operations is fields_after_first
 
 
@@ -137,5 +135,5 @@ def test_install_skips_off_darwin(monkeypatch):
     monkeypatch.setattr(darwin, "_installed", False)
     monkeypatch.setattr(darwin.sys, "platform", "linux")
     saved = mfusepy.fuse_operations
-    install_macfuse_extensions()
+    install_macfuse_extensions(mfusepy)
     assert mfusepy.fuse_operations is saved

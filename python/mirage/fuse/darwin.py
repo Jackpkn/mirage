@@ -21,13 +21,6 @@ from typing import Any
 
 from mirage.types import JsonValue
 
-try:
-    import mfusepy
-except (ImportError, OSError):
-    # mfusepy raises OSError("Unable to find libfuse") at import time when
-    # the package is installed but no libfuse is on the system.
-    mfusepy = None
-
 logger = logging.getLogger(__name__)
 
 # macFUSE's libfuse extends fuse_operations with Darwin-only callbacks
@@ -176,7 +169,7 @@ def _marshal_renamex(self: Any, old: bytes, new: bytes, flags: int) -> int:
                                    new.decode(self.encoding), flags)
 
 
-def install_macfuse_extensions() -> None:
+def install_macfuse_extensions(mfusepy: Any) -> None:
     """Teach mfusepy the Darwin-only callbacks the FSKit backend needs.
 
     Replaces mfusepy's reserved tail slots with macFUSE's real Apple
@@ -185,13 +178,15 @@ def install_macfuse_extensions() -> None:
     three carry callbacks; the rest stay opaque pointers and therefore
     NULL, and macFUSE prefers setattr_x over the per-attribute
     setcrtime/setchgtime/chflags entry points when it is non-NULL, so one
-    decomposing callback covers them all. Idempotent, and a no-op off
-    macOS or without mfusepy. Layout safety is asserted: the extended
-    struct must be byte-identical in size to the one mfusepy already
-    hands to libfuse.
+    decomposing callback covers them all. Idempotent, and a no-op off macOS.
+    Layout safety is asserted: the extended struct must be byte-identical in
+    size to the one mfusepy already hands to libfuse.
+
+    Args:
+        mfusepy (Any): the lazily loaded mfusepy module.
     """
     global _installed
-    if _installed or mfusepy is None:
+    if _installed:
         return
     # Guard on the observable layout, not mfusepy's _system tag: the
     # 'Darwin-MacFuse' alias needs a macfuse_version symbol current macFUSE
