@@ -22,6 +22,7 @@ from mirage.core.dropbox.client import DropboxTokenManager
 from mirage.core.dropbox.rmdir import rmdir
 from mirage.resource.dropbox.config import DropboxConfig
 from mirage.types import PathSpec
+from tests.core.dropbox.conftest import FakeDropboxRpc
 
 FOLDER = {".tag": "folder", "name": "docs"}
 FILE = {".tag": "file", "name": "a.txt", "size": 1}
@@ -70,3 +71,18 @@ async def test_rmdir_file_raises_enotdir():
                return_value=FILE):
         with pytest.raises(NotADirectoryError):
             await rmdir(make_accessor(), PathSpec.from_str_path("/a.txt"))
+
+
+@pytest.mark.asyncio
+async def test_rmdir_probe_is_bounded_to_one_entry(dropbox_accessor):
+    # The emptiness probe is bounded, not a full listing: `list_folder`
+    # follows every continuation cursor, so asking it with a small page
+    # size made one request per child to answer a yes/no.
+    rpc = FakeDropboxRpc(entries=[FILE, FILE, FILE], metadata=FOLDER)
+    with patch("mirage.core.dropbox.api.dropbox_rpc", new=rpc):
+        with pytest.raises(OSError) as excinfo:
+            await rmdir(dropbox_accessor, PathSpec.from_str_path("/docs"))
+    assert excinfo.value.errno == errno.ENOTEMPTY
+    assert rpc.list_limits == [1]
+    assert rpc.list_requests == 1
+    assert rpc.deleted == []

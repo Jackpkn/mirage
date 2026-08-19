@@ -46,6 +46,11 @@
    "python_only": {
     "sdk": "The asyncssh import shim (None when the ssh extra is absent), the same shape daytona and e2b carry in their baselined sdk modules; TypeScript loads ssh2 through loadOptionalPeer inside runtime.ts, so there is no ts twin."
    }
+  },
+  "core/dropbox": {
+   "typescript_only": {
+    "_test_util": "The FakeDropboxRpc transport fake shared by rmdir.test.ts and rename.test.ts. TypeScript colocates tests with sources, so a shared test helper lands in the source directory; python keeps the same fake in tests/core/dropbox/conftest.py, which this gate does not scan. core/gdrive carries an identical _test_util.ts, still counted in the baseline rather than excused here."
+   }
   }
  }
 }

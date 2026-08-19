@@ -115,17 +115,37 @@ async def list_folder(
     tm: DropboxTokenManager,
     path: str,
     recursive: bool = False,
-    limit: int = 2000,
+    page_size: int = 2000,
+    limit: int | None = None,
 ) -> list[dict[str, Any]]:
+    """List a folder's entries, following every continuation cursor.
+
+    Args:
+        tm (DropboxTokenManager): Dropbox token manager.
+        path (str): folder to list; "/" and "" both mean the account root.
+        recursive (bool): list every descendant, not just the children.
+        page_size (int): entries per request.
+        limit (int | None): stop once this many entries are in hand and do
+            not request another page. An emptiness probe wants one entry,
+            and ``page_size`` alone cannot express that: it caps the page,
+            not the walk, so a small page turned a listing of a large
+            folder into many requests instead of fewer.
+
+    Returns:
+        list[dict]: entry metadata dicts.
+    """
     api_path = "" if path in ("/", "") else path
     out: list[dict[str, Any]] = []
-    resp = await dropbox_rpc(tm, "/files/list_folder", {
-        "path": api_path,
-        "recursive": recursive,
-        "limit": limit,
-    })
+    resp = await dropbox_rpc(
+        tm, "/files/list_folder", {
+            "path": api_path,
+            "recursive": recursive,
+            "limit": page_size if limit is None else min(page_size, limit),
+        })
     out.extend(resp["entries"])
     while resp.get("has_more"):
+        if limit is not None and len(out) >= limit:
+            break
         resp = await dropbox_rpc(tm, "/files/list_folder/continue",
                                  {"cursor": resp["cursor"]})
         out.extend(resp["entries"])

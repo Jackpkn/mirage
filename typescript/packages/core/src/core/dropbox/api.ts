@@ -48,22 +48,41 @@ interface SearchResponseV2 {
   cursor?: string
 }
 
+/**
+ * List a folder's entries, following every continuation cursor.
+ *
+ * `/` and `''` both mean the account root.
+ */
 export async function listFolder(
   tm: DropboxTokenManager,
   path: string,
-  opts: { recursive?: boolean; limit?: number } = {},
+  opts: {
+    recursive?: boolean
+    /** Entries per request. */
+    pageSize?: number
+    /**
+     * Stop once this many entries are in hand and do not request another
+     * page. An emptiness probe wants one entry, and `pageSize` alone
+     * cannot express that: it caps the page, not the walk, so a small
+     * page turned a listing of a large folder into many requests instead
+     * of fewer.
+     */
+    limit?: number | null
+  } = {},
 ): Promise<DropboxEntry[]> {
   const apiPath = path === '/' || path === '' ? '' : path
   const recursive = opts.recursive === true
-  const limit = opts.limit ?? 2000
+  const pageSize = opts.pageSize ?? 2000
+  const limit = opts.limit ?? null
   const out: DropboxEntry[] = []
   let resp = (await dropboxRpc(tm, '/files/list_folder', {
     path: apiPath,
     recursive,
-    limit,
+    limit: limit === null ? pageSize : Math.min(pageSize, limit),
   })) as ListFolderResponse
   out.push(...resp.entries)
   while (resp.has_more) {
+    if (limit !== null && out.length >= limit) break
     resp = (await dropboxRpc(tm, '/files/list_folder/continue', {
       cursor: resp.cursor,
     })) as ListFolderResponse
