@@ -37,17 +37,17 @@ def _make_gslides_ops() -> tuple[Ops, IndexCacheStore]:
 async def test_readdir():
     ops, index = _make_gslides_ops()
     await index.set_dir("/gslides/owned", [(
-        "deck.gslide.json",
+        "Deck__slide1.gslide.json",
         IndexEntry(
             id="slide1",
             name="Deck",
             resource_type="gslides/slide",
             remote_time="2026-04-01T00:00:00Z",
-            vfs_name="deck.gslide.json",
+            vfs_name="Deck__slide1.gslide.json",
         ),
     )])
     result = await ops.readdir("/gslides/owned")
-    assert "/gslides/owned/deck.gslide.json" in result
+    assert "/gslides/owned/Deck__slide1.gslide.json" in result
 
 
 @pytest.mark.asyncio
@@ -59,6 +59,6 @@ async def test_read_presentation():
             new_callable=AsyncMock,
             return_value=pres_json,
     ):
-        result = await ops.read("/gslides/owned/deck.gslide.json")
+        result = await ops.read("/gslides/owned/Deck__slide1.gslide.json")
         parsed = json.loads(result)
         assert parsed["presentationId"] == "slide1"

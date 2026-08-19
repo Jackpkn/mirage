@@ -17,7 +17,10 @@ from typing import Any
 
 from pymongo import AsyncMongoClient
 
-from mirage.core.mongodb.client import list_collections
+from mirage.accessor.mongodb import MongoDBAccessor
+from mirage.core.hierarchy.scope import ScopeMatch
+from mirage.core.hierarchy.search import Searcher, SearchQuery
+from mirage.core.mongodb.client import list_collections, list_databases
 from mirage.core.mongodb.stream import render_doc
 from mirage.core.mongodb.types import PRIMARY_KEY, EntityKind
 
@@ -96,3 +99,47 @@ def format_grep_results(
             line_json = render_doc(doc)
             lines.append(f"{path}:{line_json}")
     return lines
+
+
+async def _entity_searcher(accessor: MongoDBAccessor, match: ScopeMatch,
+                           query: SearchQuery) -> list[str]:
+    database = match.slots["database"]
+    name = match.slots["name"]
+    docs = await search_collection(accessor.client,
+                                   database,
+                                   name,
+                                   query.pattern,
+                                   limit=accessor.config.default_search_limit)
+    return format_grep_results([(database, name, docs)] if docs else [])
+
+
+async def _database_searcher(accessor: MongoDBAccessor, match: ScopeMatch,
+                             query: SearchQuery) -> list[str]:
+    results = await search_database(accessor.client,
+                                    match.slots["database"],
+                                    query.pattern,
+                                    limit=accessor.config.default_search_limit)
+    return format_grep_results(results)
+
+
+async def _root_searcher(accessor: MongoDBAccessor, match: ScopeMatch,
+                         query: SearchQuery) -> list[str]:
+    config = accessor.config
+    databases = await list_databases(accessor.client, config)
+    tasks = [
+        search_database(accessor.client,
+                        db_name,
+                        query.pattern,
+                        limit=config.default_search_limit)
+        for db_name in databases
+    ]
+    nested = await asyncio.gather(*tasks)
+    results = [r for sub in nested for r in sub]
+    return format_grep_results(results)
+
+
+SEARCHERS: dict[str, Searcher[MongoDBAccessor]] = {
+    "root": _root_searcher,
+    "database": _database_searcher,
+    "entity": _entity_searcher,
+}

@@ -21,22 +21,21 @@ import { enoent } from '../../utils/errors.ts'
 import { stripSlash } from '../../utils/slash.ts'
 import { JSON_NAME } from './codec.ts'
 import { makeReaddir, type Guard, type Lister } from './readdir.ts'
-import { Capture, Route } from './route.ts'
-import { makeDetectScope } from './scope.ts'
-import { makeStat, type ExtraFn, type StatHook } from './stat.ts'
+import { Slot, Scope, makeDetectScope } from './scope.ts'
+import { makeStat, type EntryStatFn, type ExtraFn, type StatHook } from './stat.ts'
 
-const ROUTES: readonly Route[] = [
-  new Route({ kind: 'rooms', segments: ['rooms'], probed: false }),
-  new Route({ kind: 'room', segments: ['rooms', new Capture('room')] }),
-  new Route({
+const SCOPES: readonly Scope[] = [
+  new Scope({ kind: 'rooms', segments: ['rooms'], probed: false }),
+  new Scope({ kind: 'room', segments: ['rooms', new Slot('room')] }),
+  new Scope({
     kind: 'note',
-    segments: ['rooms', new Capture('room'), new Capture('note', JSON_NAME)],
+    segments: ['rooms', new Slot('room'), new Slot('note', JSON_NAME)],
     leaf: true,
     filetype: FileType.JSON,
   }),
 ]
 
-const detectScope = makeDetectScope(ROUTES)
+const detectScope = makeDetectScope(SCOPES)
 
 const TREE: Record<string, string[]> = {
   rooms: ['red', 'blue'],
@@ -68,7 +67,7 @@ const listRooms: Lister<FakeAccessor> = (accessor, _match) => {
 }
 
 const listNotes: Lister<FakeAccessor> = (accessor, match) => {
-  const room = match.captures.room ?? ''
+  const room = match.slots.room ?? ''
   accessor.calls.push(`notes:${room}`)
   return Promise.resolve(
     (TREE[room] ?? []).map((note): [string, IndexEntry] => [
@@ -79,7 +78,7 @@ const listNotes: Lister<FakeAccessor> = (accessor, match) => {
 }
 
 const roomGuard: Guard<FakeAccessor> = (accessor, match, virtual) => {
-  const room = match.captures.room ?? ''
+  const room = match.slots.room ?? ''
   accessor.calls.push(`guard:${room}`)
   if (!(TREE.rooms ?? []).includes(room)) return Promise.reject(enoent(virtual))
   return Promise.resolve()
@@ -94,7 +93,7 @@ const READDIR = makeReaddir<FakeAccessor>(detectScope, {
   guards: { room: roomGuard },
 })
 
-const roomExtra: ExtraFn = (match) => ({ room: match.captures.room ?? '' })
+const roomExtra: ExtraFn = (match) => ({ room: match.slots.room ?? '' })
 
 const STAT = makeStat<FakeAccessor>(detectScope, READDIR, {
   guards: { room: roomGuard },
@@ -146,5 +145,24 @@ describe('hierarchy makeStat', () => {
     const st = await stat(accessor, spec('/rooms/red/a.json'))
     expect(st.name).toBe('custom')
     expect(accessor.calls).toEqual([])
+  })
+
+  it('builds an entry stat from the resolved entry', async () => {
+    const fromEntry: EntryStatFn = (_match, _path, entry) =>
+      new FileStat({
+        name: entry.vfsName,
+        type: FileType.JSON,
+        size: entry.size,
+        extra: { doc_id: entry.id },
+      })
+    const stat = makeStat<FakeAccessor>(detectScope, READDIR, { entryStats: { note: fromEntry } })
+    const index = new RAMIndexCacheStore()
+    const st = await stat(new FakeAccessor(), spec('/rooms/red/a.json'), index)
+    expect(st.name).toBe('a.json')
+    expect(st.size).toBe(7)
+    expect(st.extra).toEqual({ doc_id: 'a.json' })
+    await expect(
+      stat(new FakeAccessor(), spec('/rooms/red/nope.json'), index),
+    ).rejects.toMatchObject({ code: 'ENOENT' })
   })
 })

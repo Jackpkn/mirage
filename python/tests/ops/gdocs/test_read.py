@@ -41,11 +41,11 @@ async def test_read_calls_core(accessor):
             new_callable=AsyncMock,
             return_value=b"doc content",
     ) as mock:
-        scope = _scope("/gdocs/owned/file.gdoc.json")
+        scope = _scope("/gdocs/owned/File__doc1.gdoc.json")
         result = await fn(accessor, scope, index=None)
         mock.assert_called_once_with(
-            accessor, _scope("/gdocs/owned/file.gdoc.json", prefix="/gdocs"),
-            None)
+            accessor,
+            _scope("/gdocs/owned/File__doc1.gdoc.json", prefix="/gdocs"), None)
         assert result == b"doc content"
 
 
@@ -59,5 +59,5 @@ async def test_read_not_found(accessor):
     ):
         with pytest.raises(FileNotFoundError):
             await fn(accessor,
-                     _scope("/gdocs/owned/nonexistent.gdoc.json"),
+                     _scope("/gdocs/owned/Nonexistent__doc9.gdoc.json"),
                      index=None)

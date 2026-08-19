@@ -14,120 +14,62 @@
 
 import type { MongoDBAccessor } from '../../accessor/mongodb.ts'
 import type { IndexCacheStore } from '../../cache/index/store.ts'
-import { FileStat, FileType, PathSpec } from '../../types.ts'
-import { countDocuments, databaseExists, entityExists, isView, listIndexes } from './client.ts'
-import { detectScope } from './scope.ts'
-import { EntityKind, KIND_TO_DIR, ScopeLevel } from './types.ts'
+import { FileStat, FileType, type PathSpec } from '../../types.ts'
+import { makeStat } from '../hierarchy/stat.ts'
+import type { ScopeMatch } from '../hierarchy/scope.ts'
+import { countDocuments, isView, listIndexes } from './client.ts'
+import { databaseGuard, entityGuard, readdir } from './readdir.ts'
+import { detectScope, entityKind } from './scope.ts'
+import { EntityKind } from './types.ts'
 
-function notFound(p: string): Error {
-  const err = new Error(p) as Error & { code?: string }
-  err.code = 'ENOENT'
-  return err
+function databaseExtra(match: ScopeMatch): Record<string, string> {
+  return { database: match.slots.database ?? '' }
 }
 
-export async function stat(
+function kindDirExtra(match: ScopeMatch): Record<string, string> {
+  return { database: match.slots.database ?? '', kind: entityKind(match) }
+}
+
+function entityExtra(match: ScopeMatch): Record<string, string> {
+  return {
+    database: match.slots.database ?? '',
+    kind: entityKind(match),
+    name: match.slots.name ?? '',
+  }
+}
+
+async function entityStat(
   accessor: MongoDBAccessor,
-  path: PathSpec | string,
+  match: ScopeMatch,
+  path: PathSpec,
   _index?: IndexCacheStore,
 ): Promise<FileStat> {
-  const spec = typeof path === 'string' ? PathSpec.fromStrPath(path) : path
-  const scope = detectScope(spec)
-
-  if (scope.level === ScopeLevel.ROOT) {
-    return new FileStat({ name: '/', type: FileType.DIRECTORY })
-  }
-
-  if (scope.level === ScopeLevel.DATABASE && scope.database !== null) {
-    if (!(await databaseExists(accessor, scope.database))) throw notFound(spec.virtual)
-    return new FileStat({
-      name: scope.database,
-      type: FileType.DIRECTORY,
-      extra: { database: scope.database },
-    })
-  }
-
-  if (scope.level === ScopeLevel.KIND_DIR && scope.database !== null && scope.kind !== null) {
-    if (!(await databaseExists(accessor, scope.database))) throw notFound(spec.virtual)
-    return new FileStat({
-      name: KIND_TO_DIR[scope.kind],
-      type: FileType.DIRECTORY,
-      extra: { database: scope.database, kind: scope.kind },
-    })
-  }
-
-  if (
-    scope.level === ScopeLevel.ENTITY &&
-    scope.database !== null &&
-    scope.kind !== null &&
-    scope.name !== null
-  ) {
-    if (!(await entityExists(accessor, scope.database, scope.name, scope.kind))) {
-      throw notFound(spec.virtual)
-    }
-    const docCount = await countDocuments(accessor, scope.database, scope.name)
-    return new FileStat({
-      name: scope.name,
-      type: FileType.DIRECTORY,
-      extra: {
-        database: scope.database,
-        kind: scope.kind,
-        name: scope.name,
-        document_count: docCount,
-      },
-    })
-  }
-
-  if (
-    scope.level === ScopeLevel.DOCUMENTS &&
-    scope.database !== null &&
-    scope.kind !== null &&
-    scope.name !== null
-  ) {
-    if (!(await entityExists(accessor, scope.database, scope.name, scope.kind))) {
-      throw notFound(spec.virtual)
-    }
-    return documentsStat(accessor, scope.database, scope.kind, scope.name)
-  }
-
-  if (
-    scope.level === ScopeLevel.SCHEMA_JSON &&
-    scope.database !== null &&
-    scope.kind !== null &&
-    scope.name !== null
-  ) {
-    if (!(await entityExists(accessor, scope.database, scope.name, scope.kind))) {
-      throw notFound(spec.virtual)
-    }
-    return new FileStat({
-      name: 'schema.json',
-      type: FileType.TEXT,
-      extra: {
-        database: scope.database,
-        kind: scope.kind,
-        name: scope.name,
-      },
-    })
-  }
-
-  if (scope.level === ScopeLevel.DATABASE_JSON && scope.database !== null) {
-    if (!(await databaseExists(accessor, scope.database))) throw notFound(spec.virtual)
-    return new FileStat({
-      name: 'database.json',
-      type: FileType.TEXT,
-      extra: { database: scope.database },
-    })
-  }
-
-  throw notFound(spec.virtual)
+  await entityGuard(accessor, match, path.virtual)
+  const database = match.slots.database ?? ''
+  const name = match.slots.name ?? ''
+  const docCount = await countDocuments(accessor, database, name)
+  return new FileStat({
+    name,
+    type: FileType.DIRECTORY,
+    extra: {
+      database,
+      kind: entityKind(match),
+      name,
+      document_count: docCount,
+    },
+  })
 }
 
 async function documentsStat(
   accessor: MongoDBAccessor,
-  database: string,
-  kind: EntityKind,
-  name: string,
+  match: ScopeMatch,
+  path: PathSpec,
+  _index?: IndexCacheStore,
 ): Promise<FileStat> {
-  const view = kind === EntityKind.VIEW || (await isView(accessor, database, name))
+  await entityGuard(accessor, match, path.virtual)
+  const database = match.slots.database ?? ''
+  const name = match.slots.name ?? ''
+  const view = entityKind(match) === EntityKind.VIEW || (await isView(accessor, database, name))
   const docCount = await countDocuments(accessor, database, name)
   let indexInfo: { name: unknown; keys: Record<string, unknown> }[] = []
   if (!view) {
@@ -150,3 +92,22 @@ async function documentsStat(
     },
   })
 }
+
+export const stat = makeStat<MongoDBAccessor>(detectScope, readdir, {
+  guards: {
+    database: databaseGuard,
+    kind_dir: databaseGuard,
+    database_json: databaseGuard,
+    schema_json: entityGuard,
+  },
+  extras: {
+    database: databaseExtra,
+    kind_dir: kindDirExtra,
+    database_json: databaseExtra,
+    schema_json: entityExtra,
+  },
+  overrides: {
+    entity: entityStat,
+    documents: documentsStat,
+  },
+})

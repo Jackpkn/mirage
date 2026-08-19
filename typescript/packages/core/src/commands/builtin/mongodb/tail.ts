@@ -25,7 +25,6 @@ import {
   stringifyDoc,
   watchStream,
 } from '../../../core/mongodb/stream.ts'
-import { ScopeLevel } from '../../../core/mongodb/types.ts'
 import { IOResult } from '../../../io/types.ts'
 import { type PathSpec, ResourceName } from '../../../types.ts'
 import { command, type CommandFnResult, type CommandOpts } from '../../config.ts'
@@ -50,23 +49,18 @@ async function* tailSource(
   pushdown: boolean,
 ): AsyncIterable<Uint8Array> {
   const scope = detectScope(p)
-  if (
-    pushdown &&
-    scope.level === ScopeLevel.DOCUMENTS &&
-    scope.database !== null &&
-    scope.name !== null
-  ) {
+  if (pushdown && scope.kind === 'documents') {
     const limit = Math.min(lines, accessor.config.maxDocLimit)
     const docs = await findDocuments(
       accessor,
-      scope.database,
-      scope.name,
+      scope.slots.database ?? '',
+      scope.slots.name ?? '',
       {},
       { limit, sort: { _id: -1 } },
     )
     docs.reverse()
     if (docs.length === 0) return
-    const elide = elisionPaths(accessor, scope.database, scope.name)
+    const elide = elisionPaths(accessor, scope.slots.database ?? '', scope.slots.name ?? '')
     const jsonl =
       docs.map((d) => stringifyDoc(elide.size > 0 ? applyElision(d, elide) : d)).join('\n') + '\n'
     yield ENC.encode(jsonl)
@@ -89,7 +83,7 @@ async function tailCommand(
     fl.asBool('follow') &&
     resolved.length === 1 &&
     first !== undefined &&
-    detectScope(first).level === ScopeLevel.DOCUMENTS
+    detectScope(first).kind === 'documents'
   ) {
     return [watchStream(accessor, first), new IOResult()]
   }

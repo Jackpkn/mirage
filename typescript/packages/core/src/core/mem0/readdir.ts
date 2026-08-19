@@ -15,14 +15,14 @@
 import type { Mem0Accessor } from '../../accessor/mem0.ts'
 import { IndexEntry } from '../../cache/index/config.ts'
 import { makeReaddir } from '../hierarchy/readdir.ts'
-import type { RouteMatch } from '../hierarchy/scope.ts'
+import type { ScopeMatch } from '../hierarchy/scope.ts'
 import { jsonBytes } from '../render/json.ts'
 import { getAllMemories } from './client.ts'
 import { detectScope } from './scope.ts'
 
 async function listMemories(
   accessor: Mem0Accessor,
-  _match: RouteMatch,
+  _match: ScopeMatch,
 ): Promise<[string, IndexEntry][]> {
   const entries: [string, IndexEntry][] = []
   for (const memory of await getAllMemories(accessor)) {

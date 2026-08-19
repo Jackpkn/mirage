@@ -18,11 +18,12 @@ import { IndexEntry } from '../../cache/index/config.ts'
 import type { IndexCacheStore } from '../../cache/index/store.ts'
 import type { PathSpec } from '../../types.ts'
 import { globToModifiedRange } from '../google/date_glob.ts'
+import { TOP_LEVEL_DIRS } from '../google/constants.ts'
+import { MIME } from './constants.ts'
+import { detectScope } from './scope.ts'
 import { listAllFiles } from '../google/drive.ts'
 import { makeFilename } from '../../resource/gdocs/doc_entry.ts'
 import { stripSlash } from '../../utils/slash.ts'
-
-const MIME = 'application/vnd.google-apps.document'
 
 export async function readdir(
   accessor: GDocsAccessor,
@@ -37,11 +38,15 @@ export async function readdir(
   const key = stripSlash(p)
   const virtualKey = key !== '' ? `${prefix}/${key}` : prefix !== '' ? prefix : '/'
 
-  if (key === '') {
-    return [`${prefix}/owned`, `${prefix}/shared`]
+  // Bespoke below the classifier: the date-glob push-down filters the
+  // Drive query itself, and a filtered or incomplete listing must not be
+  // cached as the directory, which the kit readdir has no notion of.
+  const match = detectScope(p)
+  if (match.kind === 'root') {
+    return TOP_LEVEL_DIRS.map((d) => `${prefix}/${d}`)
   }
 
-  if (key !== 'owned' && key !== 'shared') {
+  if (match.kind !== 'corpus') {
     const e = new Error(`ENOENT: ${path.virtual}`) as Error & { code: string }
     e.code = 'ENOENT'
     throw e

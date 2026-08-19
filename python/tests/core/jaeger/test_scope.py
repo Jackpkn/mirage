@@ -32,7 +32,7 @@ TRACE = "a" * 32
         ("traces", "invalid"),
         ("services/checkout/traces/deep/nested.json", "invalid"),
         ("services/checkout/unknown.json", "invalid"),
-        # A malformed trace id fails the route's codec, so the path never
+        # A malformed trace id fails the scope's codec, so the path never
         # classifies as a trace at all.
         ("services/checkout/traces/nothex.json", "invalid"),
         ("services/.hidden", "invalid"),
@@ -44,9 +44,9 @@ def test_detect_scope_kinds(path, kind):
 
 def test_detect_scope_carries_service_and_trace_id():
     match = detect_scope(f"services/checkout/traces/{TRACE}.json")
-    assert match.captures == {"service": "checkout", "trace_id": TRACE}
+    assert match.slots == {"service": "checkout", "trace_id": TRACE}
 
 
 def test_detect_scope_service_without_trace():
     match = detect_scope("services/checkout/traces")
-    assert match.captures == {"service": "checkout"}
+    assert match.slots == {"service": "checkout"}

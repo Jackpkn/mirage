@@ -44,7 +44,7 @@ describe('langfuse detectScope', () => {
   it('classifies a trace file', () => {
     const match = detectScope(spec('/traces/abc.json'))
     expect(match.kind).toBe('trace')
-    expect(match.captures).toEqual({ trace_id: 'abc' })
+    expect(match.slots).toEqual({ trace_id: 'abc' })
   })
 
   it('classifies the sessions dir', () => {
@@ -54,13 +54,13 @@ describe('langfuse detectScope', () => {
   it('classifies a session id', () => {
     const match = detectScope(spec('/sessions/sid1'))
     expect(match.kind).toBe('session')
-    expect(match.captures).toEqual({ session_id: 'sid1' })
+    expect(match.slots).toEqual({ session_id: 'sid1' })
   })
 
   it('classifies a session trace file', () => {
     const match = detectScope(spec('/sessions/sid1/tid1.json'))
     expect(match.kind).toBe('session_trace')
-    expect(match.captures).toEqual({ session_id: 'sid1', trace_id: 'tid1' })
+    expect(match.slots).toEqual({ session_id: 'sid1', trace_id: 'tid1' })
   })
 
   it('classifies the prompts dir', () => {
@@ -70,18 +70,18 @@ describe('langfuse detectScope', () => {
   it('classifies a prompt name', () => {
     const match = detectScope(spec('/prompts/summarize'))
     expect(match.kind).toBe('prompt')
-    expect(match.captures).toEqual({ prompt_name: 'summarize' })
+    expect(match.slots).toEqual({ prompt_name: 'summarize' })
   })
 
   it('classifies a prompt version file', () => {
     const match = detectScope(spec('/prompts/summarize/1.json'))
     expect(match.kind).toBe('prompt_version')
-    expect(match.captures).toEqual({ prompt_name: 'summarize', version: '1' })
+    expect(match.slots).toEqual({ prompt_name: 'summarize', version: '1' })
   })
 
   it('requires a prompt version to be an integer', () => {
     // int("abc") used to crash the python read path; a non-numeric version
-    // now fails the route match and reads as ENOENT in both languages.
+    // now fails the scope match and reads as ENOENT in both languages.
     expect(detectScope(spec('/prompts/summarize/abc.json')).kind).toBe('invalid')
   })
 
@@ -92,7 +92,7 @@ describe('langfuse detectScope', () => {
   it('classifies a dataset name', () => {
     const match = detectScope(spec('/datasets/qa-eval'))
     expect(match.kind).toBe('dataset')
-    expect(match.captures).toEqual({ dataset_name: 'qa-eval' })
+    expect(match.slots).toEqual({ dataset_name: 'qa-eval' })
   })
 })
 
@@ -129,7 +129,7 @@ describe('langfuse detectScope glob specs', () => {
     })
     const match = detectScope(gs)
     expect(match.kind).toBe('trace')
-    expect(match.captures).toEqual({ trace_id: 'abc' })
+    expect(match.slots).toEqual({ trace_id: 'abc' })
   })
 })
 

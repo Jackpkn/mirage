@@ -37,20 +37,20 @@ def index():
 @pytest.mark.asyncio
 async def test_unlink_calls_delete_with_doc_id(accessor, index):
     await index.set_dir("/gdocs/owned", [
-        ("foo.gdoc.json",
+        ("Foo__doc1.gdoc.json",
          IndexEntry(id="doc1",
                     name="Foo",
                     resource_type="gdocs/file",
-                    vfs_name="foo.gdoc.json")),
+                    vfs_name="Foo__doc1.gdoc.json")),
     ])
-    with patch("mirage.core.google.tree_ops.delete_file",
+    with patch("mirage.core.gdocs.unlink.delete_file",
                new_callable=AsyncMock) as mock_delete:
         await unlink(
             accessor,
-            PathSpec(resource_path=mount_key("/gdocs/owned/foo.gdoc.json",
-                                             "/gdocs"),
-                     virtual="/gdocs/owned/foo.gdoc.json",
-                     directory="/gdocs/owned/foo.gdoc.json"), index)
+            PathSpec(resource_path=mount_key(
+                "/gdocs/owned/Foo__doc1.gdoc.json", "/gdocs"),
+                     virtual="/gdocs/owned/Foo__doc1.gdoc.json",
+                     directory="/gdocs/owned/Foo__doc1.gdoc.json"), index)
         mock_delete.assert_awaited_once()
         assert mock_delete.await_args.args[1] == "doc1"
     listing = await index.list_dir("/gdocs/owned")
@@ -76,7 +76,7 @@ async def test_unlink_missing_raises(accessor, index):
         with pytest.raises(FileNotFoundError):
             await unlink(
                 accessor,
-                PathSpec(resource_path=mount_key("/gdocs/owned/nope.gdoc.json",
-                                                 "/gdocs"),
-                         virtual="/gdocs/owned/nope.gdoc.json",
-                         directory="/gdocs/owned/nope.gdoc.json"), index)
+                PathSpec(resource_path=mount_key(
+                    "/gdocs/owned/Nope__doc9.gdoc.json", "/gdocs"),
+                         virtual="/gdocs/owned/Nope__doc9.gdoc.json",
+                         directory="/gdocs/owned/Nope__doc9.gdoc.json"), index)

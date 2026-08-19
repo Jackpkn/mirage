@@ -12,12 +12,14 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { mountKey, mountPrefixOf } from '../../utils/key_prefix.ts'
-import { FileStat, FileType, PathSpec } from '../../types.ts'
+import type { PostgresAccessor } from '../../accessor/postgres.ts'
 import type { IndexCacheStore } from '../../cache/index/store.ts'
+import { FileStat, FileType, type PathSpec } from '../../types.ts'
+import { enoent } from '../../utils/errors.ts'
 import { sha256Hex } from '../../utils/hash.ts'
 import { compactJsonBytes } from '../render/json.ts'
-import type { PostgresAccessor } from '../../accessor/postgres.ts'
+import { makeStat } from '../hierarchy/stat.ts'
+import type { ScopeMatch } from '../hierarchy/scope.ts'
 import {
   estimatedRowCount,
   fetchColumns,
@@ -27,20 +29,25 @@ import {
   listViews,
   tableSizeBytes,
 } from './client.ts'
+import { readdir } from './readdir.ts'
 import { detectScope } from './scope.ts'
-import { enoent } from '../../utils/errors.ts'
 
-async function schemaExists(accessor: PostgresAccessor, schema: string): Promise<boolean> {
+async function schemaGuard(
+  accessor: PostgresAccessor,
+  match: ScopeMatch,
+  virtual: string,
+): Promise<void> {
   const schemas = await listSchemas(accessor, accessor.config.schemas)
-  return schemas.includes(schema)
+  if (!schemas.includes(match.slots.schema ?? '')) throw enoent(virtual)
 }
 
-async function entityExists(
+async function entityGuard(
   accessor: PostgresAccessor,
-  schema: string,
-  kind: string,
-  entity: string,
-): Promise<boolean> {
+  match: ScopeMatch,
+  virtual: string,
+): Promise<void> {
+  const schema = match.slots.schema ?? ''
+  const kind = match.slots.kind ?? ''
   let names: string[]
   if (kind === 'tables') {
     names = await listTables(accessor, schema)
@@ -49,83 +56,35 @@ async function entityExists(
     const mviews = await listMatviews(accessor, schema)
     names = [...new Set([...views, ...mviews])]
   }
-  return names.includes(entity)
+  if (!names.includes(match.slots.entity ?? '')) throw enoent(virtual)
 }
 
-export async function stat(
-  accessor: PostgresAccessor,
-  path: PathSpec | string,
-  _index?: IndexCacheStore,
-): Promise<FileStat> {
-  const spec = typeof path === 'string' ? PathSpec.fromStrPath(path) : path
-  const prefix = mountPrefixOf(spec.virtual, spec.resourcePath)
-  let raw = spec.virtual
-  if (prefix !== '' && raw.startsWith(prefix)) {
-    raw = raw.slice(prefix.length) || '/'
-  }
-  const scope = detectScope(
-    new PathSpec({ virtual: raw, directory: raw, resourcePath: mountKey(raw, prefix) }),
-  )
+function schemaExtra(match: ScopeMatch): Record<string, string> {
+  return { schema: match.slots.schema ?? '' }
+}
 
-  if (scope.level === 'root') {
-    return new FileStat({ name: '/', type: FileType.DIRECTORY })
+function kindExtra(match: ScopeMatch): Record<string, string> {
+  return { schema: match.slots.schema ?? '', kind: match.slots.kind ?? '' }
+}
+
+function entityExtra(match: ScopeMatch): Record<string, string> {
+  return {
+    schema: match.slots.schema ?? '',
+    kind: match.slots.kind ?? '',
+    name: match.slots.entity ?? '',
   }
-  if (scope.level === 'database_json') {
-    return new FileStat({ name: 'database.json', type: FileType.JSON })
-  }
-  if (scope.level === 'schema') {
-    if (!(await schemaExists(accessor, scope.schema))) throw enoent(spec)
-    return new FileStat({
-      name: scope.schema,
-      type: FileType.DIRECTORY,
-      extra: { schema: scope.schema },
-    })
-  }
-  if (scope.level === 'kind') {
-    if (!(await schemaExists(accessor, scope.schema))) throw enoent(spec)
-    return new FileStat({
-      name: scope.kind,
-      type: FileType.DIRECTORY,
-      extra: { schema: scope.schema, kind: scope.kind },
-    })
-  }
-  if (scope.level === 'entity') {
-    if (!(await entityExists(accessor, scope.schema, scope.kind, scope.entity))) throw enoent(spec)
-    return new FileStat({
-      name: scope.entity,
-      type: FileType.DIRECTORY,
-      extra: { schema: scope.schema, kind: scope.kind, name: scope.entity },
-    })
-  }
-  if (scope.level === 'entity_schema') {
-    if (!(await entityExists(accessor, scope.schema, scope.kind, scope.entity))) throw enoent(spec)
-    return new FileStat({
-      name: 'schema.json',
-      type: FileType.JSON,
-      extra: { schema: scope.schema, kind: scope.kind, name: scope.entity },
-    })
-  }
-  if (scope.level === 'entity_semantic') {
-    if (!(await entityExists(accessor, scope.schema, scope.kind, scope.entity))) throw enoent(spec)
-    return new FileStat({
-      name: 'semantic.json',
-      type: FileType.JSON,
-      extra: { schema: scope.schema, kind: scope.kind, name: scope.entity },
-    })
-  }
-  if (scope.level === 'entity_rows') {
-    if (!(await entityExists(accessor, scope.schema, scope.kind, scope.entity))) throw enoent(spec)
-    return rowsStat(accessor, scope.schema, scope.kind, scope.entity)
-  }
-  throw enoent(spec)
 }
 
 async function rowsStat(
   accessor: PostgresAccessor,
-  schema: string,
-  kind: string,
-  entity: string,
+  match: ScopeMatch,
+  path: PathSpec,
+  _index?: IndexCacheStore,
 ): Promise<FileStat> {
+  await entityGuard(accessor, match, path.virtual)
+  const schema = match.slots.schema ?? ''
+  const kind = match.slots.kind ?? ''
+  const entity = match.slots.entity ?? ''
   const cols = await fetchColumns(accessor, schema, entity)
   const rows = await estimatedRowCount(accessor, schema, entity)
   const size = await tableSizeBytes(accessor, schema, entity)
@@ -147,3 +106,21 @@ async function rowsStat(
     },
   })
 }
+
+export const stat = makeStat<PostgresAccessor>(detectScope, readdir, {
+  guards: {
+    schema: schemaGuard,
+    kind: schemaGuard,
+    entity: entityGuard,
+    entity_schema: entityGuard,
+    entity_semantic: entityGuard,
+  },
+  extras: {
+    schema: schemaExtra,
+    kind: kindExtra,
+    entity: entityExtra,
+    entity_schema: entityExtra,
+    entity_semantic: entityExtra,
+  },
+  overrides: { entity_rows: rowsStat },
+})

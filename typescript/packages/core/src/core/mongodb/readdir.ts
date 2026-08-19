@@ -12,121 +12,103 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { mountPrefixOf } from '../../utils/key_prefix.ts'
 import type { MongoDBAccessor } from '../../accessor/mongodb.ts'
 import { IndexEntry } from '../../cache/index/config.ts'
-import type { IndexCacheStore } from '../../cache/index/store.ts'
-import { PathSpec } from '../../types.ts'
+import { enoent } from '../../utils/errors.ts'
+import { makeReaddir } from '../hierarchy/readdir.ts'
+import type { ScopeMatch } from '../hierarchy/scope.ts'
 import { databaseExists, entityExists, listCollections, listDatabases } from './client.ts'
-import { detectScope } from './scope.ts'
-import type { EntityKind } from './types.ts'
-import { KIND_TO_DIR, KIND_TO_RESOURCE_TYPE, RESOURCE_TYPE_DATABASE, ScopeLevel } from './types.ts'
-import { rstripSlash } from '../../utils/slash.ts'
+import { detectScope, entityKind } from './scope.ts'
+import { KIND_TO_DIR, KIND_TO_RESOURCE_TYPE, RESOURCE_TYPE_DATABASE } from './types.ts'
 
-function notFound(p: string): Error {
-  const err = new Error(p) as Error & { code?: string }
-  err.code = 'ENOENT'
-  return err
+export const ENTITY_FILES = ['schema.json', 'documents.jsonl'] as const
+
+/** ENOENT unless the slotted database exists. */
+export async function databaseGuard(
+  accessor: MongoDBAccessor,
+  match: ScopeMatch,
+  virtual: string,
+): Promise<void> {
+  if (!(await databaseExists(accessor, match.slots.database ?? ''))) {
+    throw enoent(virtual)
+  }
 }
 
-export async function readdir(
+/** ENOENT unless the slotted collection or view exists. */
+export async function entityGuard(
   accessor: MongoDBAccessor,
-  path: PathSpec | string,
-  index?: IndexCacheStore,
-): Promise<string[]> {
-  const spec = typeof path === 'string' ? PathSpec.fromStrPath(path) : path
-  const prefix = mountPrefixOf(spec.virtual, spec.resourcePath)
-  const scope = detectScope(spec)
-  const virtualKey = rstripSlash(`${prefix}${scope.resourcePath}`) || '/'
-
-  if (scope.level === ScopeLevel.ROOT) {
-    return listRoot(accessor, virtualKey, index, prefix)
-  }
-
-  if (scope.level === ScopeLevel.DATABASE && scope.database !== null) {
-    if (!(await databaseExists(accessor, scope.database))) throw notFound(spec.virtual)
-    const base = `${prefix}/${scope.database}`
-    return [`${base}/database.json`, `${base}/collections`, `${base}/views`]
-  }
-
-  if (scope.level === ScopeLevel.KIND_DIR && scope.database !== null && scope.kind !== null) {
-    if (!(await databaseExists(accessor, scope.database))) throw notFound(spec.virtual)
-    return listKindDir(accessor, scope.database, scope.kind, virtualKey, index, prefix)
-  }
-
-  if (
-    scope.level === ScopeLevel.ENTITY &&
-    scope.database !== null &&
-    scope.kind !== null &&
-    scope.name !== null
-  ) {
-    if (!(await entityExists(accessor, scope.database, scope.name, scope.kind))) {
-      throw notFound(spec.virtual)
-    }
-    const base = `${prefix}/${scope.database}/${KIND_TO_DIR[scope.kind]}/${scope.name}`
-    return [`${base}/schema.json`, `${base}/documents.jsonl`]
-  }
-
-  throw notFound(spec.virtual)
+  match: ScopeMatch,
+  virtual: string,
+): Promise<void> {
+  const exists = await entityExists(
+    accessor,
+    match.slots.database ?? '',
+    match.slots.name ?? '',
+    entityKind(match),
+  )
+  if (!exists) throw enoent(virtual)
 }
 
 async function listRoot(
   accessor: MongoDBAccessor,
-  virtualKey: string,
-  index: IndexCacheStore | undefined,
-  prefix: string,
-): Promise<string[]> {
-  if (index !== undefined) {
-    const cached = await index.listDir(virtualKey)
-    if (cached.entries !== null && cached.entries !== undefined) return cached.entries
-  }
+  _match: ScopeMatch,
+): Promise<[string, IndexEntry][]> {
   const dbs = await listDatabases(accessor)
-  const entries: [string, IndexEntry][] = []
-  const names: string[] = []
-  for (const db of dbs) {
-    entries.push([
-      db,
-      new IndexEntry({
-        id: db,
-        name: db,
-        resourceType: RESOURCE_TYPE_DATABASE,
-        vfsName: db,
-      }),
-    ])
-    names.push(`${prefix}/${db}`)
-  }
-  if (index !== undefined) await index.setDir(virtualKey, entries)
-  return names
+  return dbs.map((db) => [
+    db,
+    new IndexEntry({ id: db, name: db, resourceType: RESOURCE_TYPE_DATABASE, vfsName: db }),
+  ])
+}
+
+function listDatabase(
+  _accessor: MongoDBAccessor,
+  _match: ScopeMatch,
+): Promise<[string, IndexEntry][]> {
+  // database.json, collections/ and views/ exist by construction under
+  // every database that exists at all (the guard has already run).
+  const names = ['database.json', ...Object.values(KIND_TO_DIR)]
+  return Promise.resolve(
+    names.map((name): [string, IndexEntry] => [
+      name,
+      new IndexEntry({ id: name, name, resourceType: 'mongodb/database_entry', vfsName: name }),
+    ]),
+  )
 }
 
 async function listKindDir(
   accessor: MongoDBAccessor,
-  database: string,
-  kind: EntityKind,
-  virtualKey: string,
-  index: IndexCacheStore | undefined,
-  prefix: string,
-): Promise<string[]> {
-  if (index !== undefined) {
-    const cached = await index.listDir(virtualKey)
-    if (cached.entries !== null && cached.entries !== undefined) return cached.entries
-  }
-  const names = await listCollections(accessor, database, kind)
-  const base = `${prefix}/${database}/${KIND_TO_DIR[kind]}`
-  const entries: [string, IndexEntry][] = []
-  const out: string[] = []
-  for (const name of names) {
-    entries.push([
-      name,
-      new IndexEntry({
-        id: name,
-        name,
-        resourceType: KIND_TO_RESOURCE_TYPE[kind],
-        vfsName: name,
-      }),
-    ])
-    out.push(`${base}/${name}`)
-  }
-  if (index !== undefined) await index.setDir(virtualKey, entries)
-  return out
+  match: ScopeMatch,
+): Promise<[string, IndexEntry][]> {
+  const kind = entityKind(match)
+  const names = await listCollections(accessor, match.slots.database ?? '', kind)
+  return names.map((name) => [
+    name,
+    new IndexEntry({ id: name, name, resourceType: KIND_TO_RESOURCE_TYPE[kind], vfsName: name }),
+  ])
 }
+
+function listEntityFiles(
+  _accessor: MongoDBAccessor,
+  _match: ScopeMatch,
+): Promise<[string, IndexEntry][]> {
+  return Promise.resolve(
+    ENTITY_FILES.map((name): [string, IndexEntry] => [
+      name,
+      new IndexEntry({ id: name, name, resourceType: 'mongodb/entity_file', vfsName: name }),
+    ]),
+  )
+}
+
+export const readdir = makeReaddir<MongoDBAccessor>(detectScope, {
+  listers: {
+    root: listRoot,
+    database: listDatabase,
+    kind_dir: listKindDir,
+    entity: listEntityFiles,
+  },
+  guards: {
+    database: databaseGuard,
+    kind_dir: databaseGuard,
+    entity: entityGuard,
+  },
+})

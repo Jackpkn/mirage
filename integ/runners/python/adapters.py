@@ -1682,6 +1682,12 @@ class PostgresService:
                                "books WHERE year >= 2022")
             await conn.execute("ANALYZE books")
             await conn.execute("ANALYZE authors")
+            # A quoted dot-prefixed schema is legal; the kit must keep it
+            # out of listings, not advertise a path stat reports absent.
+            await conn.execute('DROP SCHEMA IF EXISTS ".hidden" CASCADE')
+            await conn.execute('CREATE SCHEMA ".hidden"')
+            await conn.execute(
+                'CREATE TABLE ".hidden".ghost (id int PRIMARY KEY)')
         finally:
             await conn.close()
         return cls(dsn)

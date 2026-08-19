@@ -12,11 +12,14 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+from functools import partial
 from typing import Any
 
 import orjson
 
 from mirage.accessor.postgres import PostgresAccessor
+from mirage.core.hierarchy.scope import ScopeMatch
+from mirage.core.hierarchy.search import Searcher, SearchQuery
 from mirage.core.postgres import client
 from mirage.core.postgres._schema_json import build_entity_schema_json
 from mirage.core.postgres.client import (canonicalize_row, qualified,
@@ -280,3 +283,97 @@ def format_grep_results(
             line = orjson.dumps(r, default=str).decode()
             lines.append(f"{schema}/{kind}/{entity}/rows.jsonl:{line}")
     return lines
+
+
+# Directory scopes cover every file under them, so the rendered
+# schema.json / semantic.json are searched alongside the row push-down.
+# Deliberate divergence from GNU: rows come first and metadata second,
+# rather than in per-entity readdir order.
+async def _root_searcher(accessor: PostgresAccessor, match: ScopeMatch,
+                         query: SearchQuery) -> list[str]:
+    limit = accessor.config.default_search_limit
+    ci = query.ignore_case
+    lines = format_grep_results(await search_database(accessor,
+                                                      query.pattern,
+                                                      limit,
+                                                      case_insensitive=ci))
+    lines += await search_database_metadata(accessor,
+                                            query.pattern,
+                                            case_insensitive=ci)
+    return lines
+
+
+async def _schema_searcher(accessor: PostgresAccessor, match: ScopeMatch,
+                           query: SearchQuery) -> list[str]:
+    schema = match.slots["schema"]
+    limit = accessor.config.default_search_limit
+    ci = query.ignore_case
+    lines = format_grep_results(await search_schema(accessor,
+                                                    schema,
+                                                    query.pattern,
+                                                    limit,
+                                                    case_insensitive=ci))
+    lines += await search_schema_metadata(accessor,
+                                          schema,
+                                          query.pattern,
+                                          case_insensitive=ci)
+    return lines
+
+
+async def _kind_searcher(accessor: PostgresAccessor, match: ScopeMatch,
+                         query: SearchQuery) -> list[str]:
+    schema = match.slots["schema"]
+    kind = match.slots["kind"]
+    limit = accessor.config.default_search_limit
+    ci = query.ignore_case
+    lines = format_grep_results(await search_kind(accessor,
+                                                  schema,
+                                                  kind,
+                                                  query.pattern,
+                                                  limit,
+                                                  case_insensitive=ci))
+    lines += await search_kind_metadata(accessor,
+                                        schema,
+                                        kind,
+                                        query.pattern,
+                                        case_insensitive=ci)
+    return lines
+
+
+async def _entity_lines(accessor: PostgresAccessor, match: ScopeMatch,
+                        query: SearchQuery, metadata: bool) -> list[str]:
+    schema = match.slots["schema"]
+    kind = match.slots["kind"]
+    entity = match.slots["entity"]
+    limit = accessor.config.default_search_limit
+    ci = query.ignore_case
+    rows = await search_entity(accessor,
+                               schema,
+                               kind,
+                               entity,
+                               query.pattern,
+                               limit,
+                               case_insensitive=ci)
+    lines = format_grep_results([(schema, kind, entity, rows)])
+    # entity_rows names rows.jsonl explicitly; only the directory scope
+    # pulls in the sibling metadata files.
+    if metadata:
+        lines += await search_entity_metadata(accessor,
+                                              schema,
+                                              kind,
+                                              entity,
+                                              query.pattern,
+                                              case_insensitive=ci)
+    return lines
+
+
+_entity_searcher = partial(_entity_lines, metadata=True)
+_rows_searcher = partial(_entity_lines, metadata=False)
+
+SEARCHERS: dict[str, Searcher[PostgresAccessor]] = {
+    "root": _root_searcher,
+    "schema": _schema_searcher,
+    "kind": _kind_searcher,
+    "entity": _entity_searcher,
+    "entity_rows": _rows_searcher,
+}

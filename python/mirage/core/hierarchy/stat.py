@@ -14,17 +14,18 @@
 
 from collections.abc import Awaitable, Callable, Mapping
 
-from mirage.cache.index import NULL_INDEX, IndexCacheStore
+from mirage.cache.index import NULL_INDEX, IndexCacheStore, IndexEntry
 from mirage.core.hierarchy.probe import (A, ReaddirFn, assert_listed,
-                                         listed_size)
+                                         listed_size, resolve_entry)
 from mirage.core.hierarchy.readdir import Guard
-from mirage.core.hierarchy.scope import ROOT, DetectFn, RouteMatch
+from mirage.core.hierarchy.scope import ROOT, DetectFn, ScopeMatch
 from mirage.types import FileStat, FileType, PathSpec
 from mirage.utils.errors import enoent
 
-ExtraFn = Callable[[RouteMatch], dict[str, str]]
-StatHook = Callable[[A, RouteMatch, PathSpec, IndexCacheStore],
+ExtraFn = Callable[[ScopeMatch], dict[str, str]]
+StatHook = Callable[[A, ScopeMatch, PathSpec, IndexCacheStore],
                     Awaitable[FileStat]]
+EntryStatFn = Callable[[ScopeMatch, PathSpec, IndexEntry], FileStat]
 
 
 def make_stat(
@@ -34,8 +35,9 @@ def make_stat(
     guards: Mapping[str, Guard[A]] | None = None,
     extras: Mapping[str, ExtraFn] | None = None,
     overrides: Mapping[str, StatHook[A]] | None = None,
+    entry_stats: Mapping[str, EntryStatFn] | None = None,
 ) -> Callable[..., Awaitable[FileStat]]:
-    """Build a hierarchy stat: existence probes and shapes per route.
+    """Build a hierarchy stat: existence probes and shapes per scope.
 
     Directories answer as themselves once proven to exist; leaves prove
     existence through their parent's listing and pick up any size that
@@ -44,14 +46,19 @@ def make_stat(
     the whole shape for kinds with bespoke stats.
 
     Args:
-        detect (DetectFn): the backend's route classifier.
+        detect (DetectFn): the backend's scope classifier.
         readdir (ReaddirFn): the backend's readdir, for the
             parent-listing probe.
         guards (Mapping[str, Guard]): per-kind existence checks used
             instead of the parent listing.
         extras (Mapping[str, ExtraFn]): per-kind ``FileStat.extra``
-            payloads derived from the captures.
+            payloads derived from the slots.
         overrides (Mapping[str, StatHook]): per-kind full replacements.
+        entry_stats (Mapping[str, EntryStatFn]): per-kind shapes built
+            from the path's own index entry, for id-addressed backends
+            whose listing already carries the stat (Drive-item trees);
+            the kit resolves the entry through the parent readdir and an
+            absent entry is ENOENT.
     """
 
     async def stat(accessor: A,
@@ -61,27 +68,36 @@ def make_stat(
         match = detect(path)
         if match.kind == ROOT:
             return FileStat(name="/", type=FileType.DIRECTORY)
-        route = match.route
-        if route is None:
+        scope = match.scope
+        if scope is None:
             raise enoent(virtual)
         override = (overrides.get(match.kind)
                     if overrides is not None else None)
         if override is not None:
             return await override(accessor, match, path, index)
         guard = guards.get(match.kind) if guards is not None else None
+        entry_fn = (entry_stats.get(match.kind)
+                    if entry_stats is not None else None)
+        if entry_fn is not None:
+            if guard is not None:
+                await guard(accessor, match, virtual)
+            entry = await resolve_entry(readdir, accessor, path, index)
+            if entry is None:
+                raise enoent(virtual)
+            return entry_fn(match, path, entry)
         if guard is not None:
             await guard(accessor, match, virtual)
-        elif route.probed:
+        elif scope.probed:
             await assert_listed(readdir, accessor, path, index)
         name = path.resource_path.strip("/").split("/")[-1]
         extra_fn = extras.get(match.kind) if extras is not None else None
         extra = extra_fn(match) if extra_fn is not None else {}
-        if not route.leaf:
+        if not scope.leaf:
             return FileStat(name=name, type=FileType.DIRECTORY, extra=extra)
         return FileStat(
             name=name,
-            type=route.filetype
-            if route.filetype is not None else FileType.JSON,
+            type=scope.filetype
+            if scope.filetype is not None else FileType.JSON,
             size=await listed_size(index, path),
             extra=extra,
         )

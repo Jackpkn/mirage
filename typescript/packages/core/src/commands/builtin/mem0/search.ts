@@ -28,7 +28,7 @@ function memoryIds(paths: readonly PathSpec[]): Set<string> {
   for (const path of paths) {
     const match = detectScope(path)
     if (match.kind !== 'memory') throw enoent(path)
-    ids.add(match.captures.memory_id ?? '')
+    ids.add(match.slots.memory_id ?? '')
   }
   return ids
 }

@@ -15,7 +15,7 @@
 import type { Mem0Accessor } from '../../accessor/mem0.ts'
 import type { IndexCacheStore } from '../../cache/index/store.ts'
 import { FileStat, FileType, type PathSpec } from '../../types.ts'
-import type { RouteMatch } from '../hierarchy/scope.ts'
+import type { ScopeMatch } from '../hierarchy/scope.ts'
 import { makeStat } from '../hierarchy/stat.ts'
 import { jsonBytes } from '../render/json.ts'
 import { getMemory } from './client.ts'
@@ -39,7 +39,7 @@ function fileStat(memory: Record<string, unknown>): FileStat {
 
 async function memoryStat(
   accessor: Mem0Accessor,
-  match: RouteMatch,
+  match: ScopeMatch,
   path: PathSpec,
   index?: IndexCacheStore,
 ): Promise<FileStat> {
@@ -57,7 +57,7 @@ async function memoryStat(
       return fileStat(cached as Record<string, unknown>)
     }
   }
-  return fileStat(await getMemory(accessor, match.captures.memory_id ?? '', path))
+  return fileStat(await getMemory(accessor, match.slots.memory_id ?? '', path))
 }
 
 export const stat = makeStat(detectScope, readdir, {

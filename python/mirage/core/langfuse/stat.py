@@ -12,22 +12,22 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from mirage.core.hierarchy.scope import RouteMatch
+from mirage.core.hierarchy.scope import ScopeMatch
 from mirage.core.hierarchy.stat import make_stat
 from mirage.core.langfuse.readdir import readdir
 from mirage.core.langfuse.scope import detect_scope
 
 
-def _session_extra(match: RouteMatch) -> dict[str, str]:
-    return {"session_id": match.captures["session_id"]}
+def _session_extra(match: ScopeMatch) -> dict[str, str]:
+    return {"session_id": match.slots["session_id"]}
 
 
-def _prompt_extra(match: RouteMatch) -> dict[str, str]:
-    return {"prompt_name": match.captures["prompt_name"]}
+def _prompt_extra(match: ScopeMatch) -> dict[str, str]:
+    return {"prompt_name": match.slots["prompt_name"]}
 
 
-def _dataset_extra(match: RouteMatch) -> dict[str, str]:
-    return {"dataset_name": match.captures["dataset_name"]}
+def _dataset_extra(match: ScopeMatch) -> dict[str, str]:
+    return {"dataset_name": match.slots["dataset_name"]}
 
 
 stat = make_stat(

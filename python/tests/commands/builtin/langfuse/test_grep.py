@@ -24,6 +24,9 @@ from mirage.io.types import IOResult
 from mirage.resource.langfuse.config import LangfuseConfig
 from mirage.types import PathSpec
 
+GENERICS = "mirage.commands.builtin.generic_bind.search._GENERICS"
+RESOLVE = "mirage.commands.builtin.generic_bind.adapter.make_resolve_glob"
+
 
 @pytest.fixture
 def accessor():
@@ -49,6 +52,14 @@ def _glob(virtual: str) -> PathSpec:
 
 def _opts(**flags) -> CommandOpts:
     return CommandOpts(index=RAMIndexCacheStore(), flags={**flags})
+
+
+async def _resolve_empty(_accessor, _paths, index=None):
+    return []
+
+
+def _fake_resolver(resolve):
+    return lambda *_args, **_kwargs: resolve
 
 
 SUMMARIES = [
@@ -78,13 +89,10 @@ async def test_fast_path_matches_listing_summaries(accessor):
 
 @pytest.mark.asyncio
 async def test_shaping_flag_defers_to_generic(accessor):
+    generic = AsyncMock(return_value=(b"", IOResult()))
     with patch("mirage.commands.builtin.langfuse.grep.fetch_traces",
-               new=AsyncMock(return_value=SUMMARIES)) as fetch, patch(
-                   "mirage.commands.builtin.langfuse.grep.resolve_glob",
-                   new=AsyncMock(return_value=[])), patch(
-                       "mirage.commands.builtin.langfuse.grep.generic_grep",
-                       new=AsyncMock(return_value=(b"",
-                                                   IOResult()))) as generic:
+               new=AsyncMock(return_value=SUMMARIES)) as fetch, patch.dict(
+                   GENERICS, {"grep": generic}):
         await grep(accessor, [_spec("/traces")], ["search-me"], _opts(c=True))
     fetch.assert_not_awaited()
     generic.assert_awaited_once()
@@ -92,13 +100,11 @@ async def test_shaping_flag_defers_to_generic(accessor):
 
 @pytest.mark.asyncio
 async def test_unresolved_glob_defers_to_generic(accessor):
+    generic = AsyncMock(return_value=(b"", IOResult()))
     with patch("mirage.commands.builtin.langfuse.grep.fetch_sessions",
                new=AsyncMock(return_value=[])) as fetch, patch(
-                   "mirage.commands.builtin.langfuse.grep.resolve_glob",
-                   new=AsyncMock(return_value=[])), patch(
-                       "mirage.commands.builtin.langfuse.grep.generic_grep",
-                       new=AsyncMock(return_value=(b"",
-                                                   IOResult()))) as generic:
+                   RESOLVE, new=_fake_resolver(_resolve_empty)), patch.dict(
+                       GENERICS, {"grep": generic}):
         await grep(accessor, [_glob("/sessions/*")], ["search-me"], _opts())
     fetch.assert_not_awaited()
     generic.assert_awaited_once()
@@ -109,13 +115,10 @@ async def test_second_operand_defers_to_generic(accessor):
     # The push-down answers for one container, so a second operand used to be
     # dropped in silence: this line reported traces and never mentioned
     # sessions at all.
+    generic = AsyncMock(return_value=(b"", IOResult()))
     with patch("mirage.commands.builtin.langfuse.grep.fetch_traces",
-               new=AsyncMock(return_value=SUMMARIES)) as fetch, patch(
-                   "mirage.commands.builtin.langfuse.grep.resolve_glob",
-                   new=AsyncMock(return_value=[])), patch(
-                       "mirage.commands.builtin.langfuse.grep.generic_grep",
-                       new=AsyncMock(return_value=(b"",
-                                                   IOResult()))) as generic:
+               new=AsyncMock(return_value=SUMMARIES)) as fetch, patch.dict(
+                   GENERICS, {"grep": generic}):
         await grep(accessor,
                    [_spec("/traces"), _spec("/sessions")], ["search-me"],
                    _opts())
@@ -128,13 +131,10 @@ async def test_repeated_operand_defers_to_generic(accessor):
     # Two operands in one family are the case a per-operand push-down would
     # get wrong: both route to "search every trace", so it would print the
     # whole container twice.
+    generic = AsyncMock(return_value=(b"", IOResult()))
     with patch("mirage.commands.builtin.langfuse.grep.fetch_traces",
-               new=AsyncMock(return_value=SUMMARIES)) as fetch, patch(
-                   "mirage.commands.builtin.langfuse.grep.resolve_glob",
-                   new=AsyncMock(return_value=[])), patch(
-                       "mirage.commands.builtin.langfuse.grep.generic_grep",
-                       new=AsyncMock(return_value=(b"",
-                                                   IOResult()))) as generic:
+               new=AsyncMock(return_value=SUMMARIES)) as fetch, patch.dict(
+                   GENERICS, {"grep": generic}):
         await grep(accessor,
                    [_spec("/traces"), _spec("/traces")], ["search-me"],
                    _opts())

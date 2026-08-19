@@ -41,12 +41,12 @@ async def test_read_calls_core(accessor):
             new_callable=AsyncMock,
             return_value=b'{"spreadsheetId": "sheet1"}',
     ) as mock:
-        scope = _scope("/gsheets/owned/budget.gsheet.json")
+        scope = _scope("/gsheets/owned/Budget__sheet1.gsheet.json")
         result = await fn(accessor, scope, index=None)
         mock.assert_called_once_with(
             accessor,
-            _scope("/gsheets/owned/budget.gsheet.json", prefix="/gsheets"),
-            None)
+            _scope("/gsheets/owned/Budget__sheet1.gsheet.json",
+                   prefix="/gsheets"), None)
         assert b"sheet1" in result
 
 
@@ -60,5 +60,5 @@ async def test_read_not_found(accessor):
     ):
         with pytest.raises(FileNotFoundError):
             await fn(accessor,
-                     _scope("/gsheets/owned/nonexistent.gsheet.json"),
+                     _scope("/gsheets/owned/Nonexistent__sheet9.gsheet.json"),
                      index=None)

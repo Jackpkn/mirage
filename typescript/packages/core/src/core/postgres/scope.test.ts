@@ -13,7 +13,6 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { stripSlash } from '../../utils/slash.ts'
-import { mountKey } from '../../utils/key_prefix.ts'
 import { describe, expect, it } from 'vitest'
 import { PathSpec } from '../../types.ts'
 import { detectScope } from './scope.ts'
@@ -25,129 +24,94 @@ function ps(p: string): PathSpec {
 describe('detectScope', () => {
   it('detects root from "/"', () => {
     const s = detectScope(ps('/'))
-    expect(s.level).toBe('root')
+    expect(s.kind).toBe('root')
     expect(s.resourcePath).toBe('/')
   })
 
   it('detects root from empty string', () => {
-    expect(detectScope(ps('')).level).toBe('root')
+    expect(detectScope(ps('')).kind).toBe('root')
   })
 
   it('detects database.json', () => {
     const s = detectScope(ps('/database.json'))
-    expect(s.level).toBe('database_json')
-    if (s.level !== 'database_json') return
-    expect(s.file).toBe('database.json')
+    expect(s.kind).toBe('database_json')
   })
 
   it('detects schema level', () => {
     const s = detectScope(ps('/public'))
-    expect(s.level).toBe('schema')
-    if (s.level !== 'schema') return
-    expect(s.schema).toBe('public')
+    expect(s.kind).toBe('schema')
+    expect(s.slots).toEqual({ schema: 'public' })
   })
 
   it('detects schema level with trailing slash', () => {
     const s = detectScope(ps('/public/'))
-    expect(s.level).toBe('schema')
-    if (s.level !== 'schema') return
-    expect(s.schema).toBe('public')
+    expect(s.kind).toBe('schema')
+    expect(s.slots).toEqual({ schema: 'public' })
   })
 
-  it('detects kind=tables', () => {
+  it('detects tables kind dir', () => {
     const s = detectScope(ps('/public/tables'))
-    expect(s.level).toBe('kind')
-    if (s.level !== 'kind') return
-    expect(s.schema).toBe('public')
-    expect(s.kind).toBe('tables')
+    expect(s.kind).toBe('kind')
+    expect(s.slots).toEqual({ schema: 'public', kind: 'tables' })
   })
 
-  it('detects kind=views', () => {
+  it('detects views kind dir', () => {
     const s = detectScope(ps('/analytics/views'))
-    expect(s.level).toBe('kind')
-    if (s.level !== 'kind') return
-    expect(s.schema).toBe('analytics')
-    expect(s.kind).toBe('views')
+    expect(s.kind).toBe('kind')
+    expect(s.slots).toEqual({ schema: 'analytics', kind: 'views' })
   })
 
-  it('detects entity under tables', () => {
+  it('detects a table entity dir', () => {
     const s = detectScope(ps('/public/tables/users'))
-    expect(s.level).toBe('entity')
-    if (s.level !== 'entity') return
-    expect(s.schema).toBe('public')
-    expect(s.kind).toBe('tables')
-    expect(s.entity).toBe('users')
+    expect(s.kind).toBe('entity')
+    expect(s.slots).toEqual({ schema: 'public', kind: 'tables', entity: 'users' })
   })
 
-  it('detects entity under views', () => {
+  it('detects a view entity dir', () => {
     const s = detectScope(ps('/analytics/views/daily_revenue'))
-    expect(s.level).toBe('entity')
-    if (s.level !== 'entity') return
-    expect(s.kind).toBe('views')
-    expect(s.entity).toBe('daily_revenue')
+    expect(s.kind).toBe('entity')
+    expect(s.slots.kind).toBe('views')
+    expect(s.slots.entity).toBe('daily_revenue')
   })
 
-  it('detects entity_schema file', () => {
+  it('detects an entity schema.json', () => {
     const s = detectScope(ps('/public/tables/users/schema.json'))
-    expect(s.level).toBe('entity_schema')
-    if (s.level !== 'entity_schema') return
-    expect(s.schema).toBe('public')
-    expect(s.kind).toBe('tables')
-    expect(s.entity).toBe('users')
-    expect(s.file).toBe('schema.json')
+    expect(s.kind).toBe('entity_schema')
+    expect(s.slots).toEqual({ schema: 'public', kind: 'tables', entity: 'users' })
   })
 
-  it('detects entity_semantic file', () => {
+  it('detects an entity semantic.json', () => {
     const s = detectScope(ps('/public/tables/users/semantic.json'))
-    expect(s.level).toBe('entity_semantic')
-    if (s.level !== 'entity_semantic') return
-    expect(s.schema).toBe('public')
-    expect(s.kind).toBe('tables')
-    expect(s.entity).toBe('users')
-    expect(s.file).toBe('semantic.json')
+    expect(s.kind).toBe('entity_semantic')
+    expect(s.slots).toEqual({ schema: 'public', kind: 'tables', entity: 'users' })
   })
 
-  it('detects entity_rows file', () => {
+  it('detects an entity rows.jsonl', () => {
     const s = detectScope(ps('/public/tables/users/rows.jsonl'))
-    expect(s.level).toBe('entity_rows')
-    if (s.level !== 'entity_rows') return
-    expect(s.entity).toBe('users')
-    expect(s.file).toBe('rows.jsonl')
+    expect(s.kind).toBe('entity_rows')
+    expect(s.slots.schema).toBe('public')
+    expect(s.slots.entity).toBe('users')
   })
 
-  it('detects view entity_schema file', () => {
+  it('detects a view entity schema.json', () => {
     const s = detectScope(ps('/analytics/views/daily_revenue/schema.json'))
-    expect(s.level).toBe('entity_schema')
-    if (s.level !== 'entity_schema') return
-    expect(s.kind).toBe('views')
+    expect(s.kind).toBe('entity_schema')
+    expect(s.slots.kind).toBe('views')
   })
 
-  it('marks invalid kind segment', () => {
-    expect(detectScope(ps('/public/sequences')).level).toBe('invalid')
+  it('rejects an unknown kind segment', () => {
+    expect(detectScope(ps('/public/sequences')).kind).toBe('invalid')
   })
 
-  it('marks too-deep path invalid', () => {
-    expect(detectScope(ps('/public/tables/users/extra/foo')).level).toBe('invalid')
+  it('rejects a path that is too deep', () => {
+    expect(detectScope(ps('/public/tables/users/extra/foo')).kind).toBe('invalid')
   })
 
-  it('marks unknown file invalid', () => {
-    expect(detectScope(ps('/public/tables/users/data.jsonl')).level).toBe('invalid')
+  it('rejects an unknown entity file', () => {
+    expect(detectScope(ps('/public/tables/users/data.jsonl')).kind).toBe('invalid')
   })
 
-  it('marks invalid kind in third position', () => {
-    expect(detectScope(ps('/public/wrong_kind/foo')).level).toBe('invalid')
-  })
-
-  it('strips mount prefix before detection', () => {
-    const path = new PathSpec({
-      virtual: '/pg/public/tables/users',
-      directory: '/pg/public/tables/',
-      resourcePath: mountKey('/pg/public/tables/users', '/pg/'),
-    })
-    const s = detectScope(path)
-    expect(s.level).toBe('entity')
-    if (s.level !== 'entity') return
-    expect(s.schema).toBe('public')
-    expect(s.entity).toBe('users')
+  it('rejects a wrong kind in third position', () => {
+    expect(detectScope(ps('/public/wrong_kind/foo')).kind).toBe('invalid')
   })
 })

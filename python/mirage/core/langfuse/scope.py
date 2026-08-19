@@ -13,8 +13,7 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 from mirage.core.hierarchy.codec import INT_JSON, JSON_NAME, JSONL_NAME
-from mirage.core.hierarchy.route import Capture, Route
-from mirage.core.hierarchy.scope import make_detect_scope
+from mirage.core.hierarchy.scope import Scope, Slot, make_detect_scope
 from mirage.types import FileType
 
 TOP_LEVEL_DIRS = ["traces", "sessions", "prompts", "datasets"]
@@ -23,44 +22,43 @@ TOP_LEVEL_DIRS = ["traces", "sessions", "prompts", "datasets"]
 # search push-down all classify through it, so the file surface and the
 # search surface cannot disagree about what a path means (they used to
 # be two hand-maintained dispatch ladders).
-ROUTES = (
-    Route(kind="traces", segments=("traces", ), probed=False),
-    Route(kind="trace",
-          segments=("traces", Capture("trace_id", JSON_NAME)),
+SCOPES = (
+    Scope(kind="traces", segments=("traces", ), probed=False),
+    Scope(kind="trace",
+          segments=("traces", Slot("trace_id", JSON_NAME)),
           leaf=True,
           filetype=FileType.JSON),
-    Route(kind="sessions", segments=("sessions", ), probed=False),
-    Route(kind="session", segments=("sessions", Capture("session_id"))),
-    Route(kind="session_trace",
-          segments=("sessions", Capture("session_id"),
-                    Capture("trace_id", JSON_NAME)),
+    Scope(kind="sessions", segments=("sessions", ), probed=False),
+    Scope(kind="session", segments=("sessions", Slot("session_id"))),
+    Scope(kind="session_trace",
+          segments=("sessions", Slot("session_id"),
+                    Slot("trace_id", JSON_NAME)),
           leaf=True,
           filetype=FileType.JSON),
-    Route(kind="prompts", segments=("prompts", ), probed=False),
-    Route(kind="prompt", segments=("prompts", Capture("prompt_name"))),
+    Scope(kind="prompts", segments=("prompts", ), probed=False),
+    Scope(kind="prompt", segments=("prompts", Slot("prompt_name"))),
     # A version that is not a plain ASCII integer cannot name a prompt
-    # version, so it fails the route match and reads as ENOENT instead
+    # version, so it fails the scope match and reads as ENOENT instead
     # of an int() crash (python) or a digit-prefix guess (typescript).
-    Route(kind="prompt_version",
-          segments=("prompts", Capture("prompt_name"),
-                    Capture("version", INT_JSON)),
+    Scope(kind="prompt_version",
+          segments=("prompts", Slot("prompt_name"), Slot("version", INT_JSON)),
           leaf=True,
           filetype=FileType.JSON),
-    Route(kind="datasets", segments=("datasets", ), probed=False),
-    Route(kind="dataset", segments=("datasets", Capture("dataset_name"))),
-    Route(kind="dataset_items",
-          segments=("datasets", Capture("dataset_name"), "items.jsonl"),
+    Scope(kind="datasets", segments=("datasets", ), probed=False),
+    Scope(kind="dataset", segments=("datasets", Slot("dataset_name"))),
+    Scope(kind="dataset_items",
+          segments=("datasets", Slot("dataset_name"), "items.jsonl"),
           leaf=True,
           filetype=FileType.TEXT),
-    Route(kind="runs", segments=("datasets", Capture("dataset_name"), "runs")),
-    Route(kind="dataset_run",
-          segments=("datasets", Capture("dataset_name"), "runs",
-                    Capture("run_name", JSONL_NAME)),
+    Scope(kind="runs", segments=("datasets", Slot("dataset_name"), "runs")),
+    Scope(kind="dataset_run",
+          segments=("datasets", Slot("dataset_name"), "runs",
+                    Slot("run_name", JSONL_NAME)),
           leaf=True,
           filetype=FileType.TEXT),
 )
 
-detect_scope = make_detect_scope(ROUTES)
+detect_scope = make_detect_scope(SCOPES)
 
 # The kinds the grep/rg push-down may answer with a whole-container
 # search; leaves and unrecognized paths fall through to the generic

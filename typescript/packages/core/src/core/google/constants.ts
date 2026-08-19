@@ -12,6 +12,8 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import { Codec } from '../hierarchy/codec.ts'
+
 export const TOKEN_URL = 'https://oauth2.googleapis.com/token'
 export const DRIVE_API_BASE = 'https://www.googleapis.com/drive/v3'
 export const DOCS_API_BASE = 'https://docs.googleapis.com/v1'
@@ -22,3 +24,15 @@ export const CALENDAR_API_BASE = 'https://www.googleapis.com/calendar/v3'
 export const FORMS_API_BASE = 'https://forms.googleapis.com/v1'
 export const DRIVE_UPLOAD_BASE = 'https://www.googleapis.com/upload/drive/v3'
 export const TOKEN_BUFFER_SECONDS = 300
+
+// The Drive-item backends (gdocs, gsheets, gslides) present the same
+// synthetic owned/shared tree; the per-backend route tables differ only in
+// the leaf suffix.
+export const TOP_LEVEL_DIRS = ['owned', 'shared'] as const
+
+/** Whether the segment names a Drive corpus directory. */
+export function isCorpus(text: string): boolean {
+  return (TOP_LEVEL_DIRS as readonly string[]).includes(text)
+}
+
+export const CORPUS = new Codec({ validate: isCorpus })

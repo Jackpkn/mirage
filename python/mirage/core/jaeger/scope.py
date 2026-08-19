@@ -13,34 +13,33 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 from mirage.core.hierarchy.codec import Codec
-from mirage.core.hierarchy.route import Capture, Route
-from mirage.core.hierarchy.scope import make_detect_scope
+from mirage.core.hierarchy.scope import Scope, Slot, make_detect_scope
 from mirage.core.jaeger.client import is_trace_id
 from mirage.types import FileType
 
 OPERATIONS_FILE = "operations.json"
 TOP_LEVEL_DIRS = ["services"]
 
-# A malformed id cannot name an existing trace, so it fails the route
+# A malformed id cannot name an existing trace, so it fails the scope
 # match outright and reads as ENOENT rather than the API's 400 "invalid
 # length for TraceID".
 TRACE_FILE = Codec(suffix=".json", validate=is_trace_id)
 
 # The tree is service-scoped because Jaeger's search API requires a
 # service: there is no endpoint that lists every trace.
-ROUTES = (
-    Route(kind="services", segments=("services", ), probed=False),
-    Route(kind="service", segments=("services", Capture("service"))),
-    Route(kind="operations",
-          segments=("services", Capture("service"), OPERATIONS_FILE),
+SCOPES = (
+    Scope(kind="services", segments=("services", ), probed=False),
+    Scope(kind="service", segments=("services", Slot("service"))),
+    Scope(kind="operations",
+          segments=("services", Slot("service"), OPERATIONS_FILE),
           leaf=True,
           filetype=FileType.JSON),
-    Route(kind="traces", segments=("services", Capture("service"), "traces")),
-    Route(kind="trace",
-          segments=("services", Capture("service"), "traces",
-                    Capture("trace_id", TRACE_FILE)),
+    Scope(kind="traces", segments=("services", Slot("service"), "traces")),
+    Scope(kind="trace",
+          segments=("services", Slot("service"), "traces",
+                    Slot("trace_id", TRACE_FILE)),
           leaf=True,
           filetype=FileType.JSON),
 )
 
-detect_scope = make_detect_scope(ROUTES)
+detect_scope = make_detect_scope(SCOPES)

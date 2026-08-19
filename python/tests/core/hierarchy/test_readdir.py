@@ -63,6 +63,24 @@ def test_leaf_and_invalid_paths_refuse(accessor):
         asyncio.run(READDIR(accessor, spec("/halls")))
 
 
+def test_dot_prefixed_names_are_dropped_from_listings(accessor):
+    # The classifier refuses every dot-leading segment, so a listing
+    # must not advertise one (a quoted postgres schema can be named
+    # ".foo"; every other op would report it absent).
+    async def hidden_rooms(a, match):
+        rooms = await list_rooms(a, match)
+        return [(".secret", rooms[0][1]), *rooms]
+
+    readdir = make_readdir(detect_scope,
+                           listers={"rooms": hidden_rooms},
+                           static_root=("rooms", ))
+    index = RAMIndexCacheStore()
+    out = asyncio.run(readdir(accessor, spec("/rooms"), index=index))
+    assert out == ["/h/rooms/red", "/h/rooms/blue"]
+    cached = asyncio.run(index.list_dir("/h/rooms"))
+    assert cached.entries == ["/h/rooms/red", "/h/rooms/blue"]
+
+
 def test_leaf_error_can_be_enotdir(accessor):
     readdir = make_readdir(detect_scope,
                            listers={"rooms": list_rooms},

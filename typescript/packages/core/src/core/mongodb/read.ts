@@ -14,18 +14,13 @@
 
 import type { MongoDBAccessor } from '../../accessor/mongodb.ts'
 import type { IndexCacheStore } from '../../cache/index/store.ts'
-import { PathSpec } from '../../types.ts'
-import { databaseExists, entityExists } from './client.ts'
+import type { PathSpec } from '../../types.ts'
+import { makeRead } from '../hierarchy/read.ts'
+import type { ScopeMatch } from '../hierarchy/scope.ts'
 import { buildCollectionSchemaJson, buildDatabaseJson } from './_schema_json.ts'
+import { databaseGuard, entityGuard } from './readdir.ts'
 import { detectScope } from './scope.ts'
 import { readStream, stringifyDoc } from './stream.ts'
-import { ScopeLevel } from './types.ts'
-
-function notFound(p: string): Error {
-  const err = new Error(p) as Error & { code?: string }
-  err.code = 'ENOENT'
-  return err
-}
 
 export async function* streamAny(
   accessor: MongoDBAccessor,
@@ -33,57 +28,67 @@ export async function* streamAny(
   index?: IndexCacheStore,
 ): AsyncIterable<Uint8Array> {
   const scope = detectScope(path)
-  if (scope.level === ScopeLevel.DOCUMENTS && scope.database !== null && scope.name !== null) {
+  if (scope.kind === 'documents') {
     yield* readStream(accessor, path)
     return
   }
   yield await read(accessor, path, index)
 }
 
-export async function read(
+async function readDocuments(
   accessor: MongoDBAccessor,
-  path: PathSpec | string,
+  match: ScopeMatch,
+  path: PathSpec,
   _index?: IndexCacheStore,
 ): Promise<Uint8Array> {
-  const spec = typeof path === 'string' ? PathSpec.fromStrPath(path) : path
-  const scope = detectScope(spec)
-
-  if (scope.level === ScopeLevel.DOCUMENTS && scope.database !== null && scope.name !== null) {
-    if (!(await entityExists(accessor, scope.database, scope.name, scope.kind))) {
-      throw notFound(spec.virtual)
-    }
-    const chunks: Uint8Array[] = []
-    let total = 0
-    for await (const chunk of readStream(accessor, spec)) {
-      chunks.push(chunk)
-      total += chunk.byteLength
-    }
-    const buf = new Uint8Array(total)
-    let off = 0
-    for (const c of chunks) {
-      buf.set(c, off)
-      off += c.byteLength
-    }
-    return buf
+  await entityGuard(accessor, match, path.virtual)
+  const chunks: Uint8Array[] = []
+  let total = 0
+  for await (const chunk of readStream(accessor, path)) {
+    chunks.push(chunk)
+    total += chunk.byteLength
   }
-
-  if (scope.level === ScopeLevel.SCHEMA_JSON && scope.database !== null && scope.name !== null) {
-    if (!(await entityExists(accessor, scope.database, scope.name, scope.kind))) {
-      throw notFound(spec.virtual)
-    }
-    const payload = await buildCollectionSchemaJson(accessor, scope.database, scope.name)
-    return new TextEncoder().encode(
-      stringifyDoc(payload as unknown as Record<string, unknown>) + '\n',
-    )
+  const buf = new Uint8Array(total)
+  let off = 0
+  for (const c of chunks) {
+    buf.set(c, off)
+    off += c.byteLength
   }
-
-  if (scope.level === ScopeLevel.DATABASE_JSON && scope.database !== null) {
-    if (!(await databaseExists(accessor, scope.database))) throw notFound(spec.virtual)
-    const payload = await buildDatabaseJson(accessor, scope.database)
-    return new TextEncoder().encode(
-      stringifyDoc(payload as unknown as Record<string, unknown>) + '\n',
-    )
-  }
-
-  throw notFound(spec.virtual)
+  return buf
 }
+
+async function readSchemaJson(
+  accessor: MongoDBAccessor,
+  match: ScopeMatch,
+  path: PathSpec,
+  _index?: IndexCacheStore,
+): Promise<Uint8Array> {
+  await entityGuard(accessor, match, path.virtual)
+  const payload = await buildCollectionSchemaJson(
+    accessor,
+    match.slots.database ?? '',
+    match.slots.name ?? '',
+  )
+  return new TextEncoder().encode(
+    stringifyDoc(payload as unknown as Record<string, unknown>) + '\n',
+  )
+}
+
+async function readDatabaseJson(
+  accessor: MongoDBAccessor,
+  match: ScopeMatch,
+  path: PathSpec,
+  _index?: IndexCacheStore,
+): Promise<Uint8Array> {
+  await databaseGuard(accessor, match, path.virtual)
+  const payload = await buildDatabaseJson(accessor, match.slots.database ?? '')
+  return new TextEncoder().encode(
+    stringifyDoc(payload as unknown as Record<string, unknown>) + '\n',
+  )
+}
+
+export const read = makeRead<MongoDBAccessor>(detectScope, {
+  documents: readDocuments,
+  schema_json: readSchemaJson,
+  database_json: readDatabaseJson,
+})

@@ -18,66 +18,55 @@ from dataclasses import replace
 from typing import Any
 
 from mirage.accessor.langfuse import LangfuseAccessor
-from mirage.commands.builtin.generic.grep import grep as generic_grep
-from mirage.commands.builtin.generic_bind.adapter import bound_op
-from mirage.commands.builtin.grep_helper import (compile_pattern, pattern_arg,
+from mirage.commands.builtin.generic_bind.search import make_search
+from mirage.commands.builtin.grep_helper import (compile_pattern,
                                                  pushdown_operand)
 from mirage.commands.builtin.langfuse._provision import file_read_provision
-from mirage.commands.builtin.langfuse.io import resolve_glob
-from mirage.commands.builtin.utils.output import format_records
+from mirage.commands.builtin.langfuse.io import IO
 from mirage.commands.config import CommandOpts
 from mirage.commands.registry import command
 from mirage.commands.spec import SPECS
-from mirage.commands.spec.types import FlagView
+from mirage.core.hierarchy.scope import ScopeMatch
+from mirage.core.hierarchy.search import Searcher, SearchQuery
 from mirage.core.langfuse.client import (fetch_datasets, fetch_prompts,
                                          fetch_sessions, fetch_traces)
-from mirage.core.langfuse.read import read as langfuse_read
-from mirage.core.langfuse.readdir import readdir as _readdir
 from mirage.core.langfuse.scope import SEARCH_KINDS, detect_scope
-from mirage.core.langfuse.stat import stat as _stat
 from mirage.io.types import ByteSource, IOResult
 from mirage.provision.types import ProvisionResult
 from mirage.types import PathSpec
 
 
-def _filter_traces(
-    traces: list[dict[str, Any]],
-    pattern: re.Pattern[str],
-) -> tuple[bytes, IOResult]:
+def _compiled(query: SearchQuery) -> re.Pattern[str]:
+    return compile_pattern(query.pattern, query.ignore_case,
+                           query.fixed_string, query.whole_word)
+
+
+def _filter_traces(traces: list[dict[str, Any]],
+                   pattern: re.Pattern[str]) -> list[str]:
     lines: list[str] = []
     for t in traces:
         trace_id = t.get("id", "")
         line_json = json.dumps(t, ensure_ascii=False, separators=(",", ":"))
         if not pattern.search(line_json):
             continue
-        line = f"traces/{trace_id}.json:{line_json}"
-        lines.append(line)
-    if not lines:
-        return b"", IOResult(exit_code=1)
-    return format_records(lines), IOResult()
+        lines.append(f"traces/{trace_id}.json:{line_json}")
+    return lines
 
 
-def _format_session_results(
-    sessions: list[dict[str, Any]],
-    pattern: re.Pattern[str],
-) -> tuple[bytes, IOResult]:
+def _filter_sessions(sessions: list[dict[str, Any]],
+                     pattern: re.Pattern[str]) -> list[str]:
     lines: list[str] = []
     for s in sessions:
         session_id = s.get("id", "")
         if not pattern.search(session_id):
             continue
         line_json = json.dumps(s, ensure_ascii=False, separators=(",", ":"))
-        line = f"sessions/{session_id}:{line_json}"
-        lines.append(line)
-    if not lines:
-        return b"", IOResult(exit_code=1)
-    return format_records(lines), IOResult()
+        lines.append(f"sessions/{session_id}:{line_json}")
+    return lines
 
 
-def _format_prompt_results(
-    prompts: list[dict[str, Any]],
-    pattern: re.Pattern[str],
-) -> tuple[bytes, IOResult]:
+def _filter_prompts(prompts: list[dict[str, Any]],
+                    pattern: re.Pattern[str]) -> list[str]:
     lines: list[str] = []
     seen: set[str] = set()
     for p in prompts:
@@ -88,28 +77,67 @@ def _format_prompt_results(
             continue
         seen.add(prompt_name)
         line_json = json.dumps(p, ensure_ascii=False, separators=(",", ":"))
-        line = f"prompts/{prompt_name}:{line_json}"
-        lines.append(line)
-    if not lines:
-        return b"", IOResult(exit_code=1)
-    return format_records(lines), IOResult()
+        lines.append(f"prompts/{prompt_name}:{line_json}")
+    return lines
 
 
-def _format_dataset_results(
-    datasets: list[dict[str, Any]],
-    pattern: re.Pattern[str],
-) -> tuple[bytes, IOResult]:
+def _filter_datasets(datasets: list[dict[str, Any]],
+                     pattern: re.Pattern[str]) -> list[str]:
     lines: list[str] = []
     for d in datasets:
         dataset_name = d.get("name", "")
         if not pattern.search(dataset_name):
             continue
         line_json = json.dumps(d, ensure_ascii=False, separators=(",", ":"))
-        line = f"datasets/{dataset_name}:{line_json}"
-        lines.append(line)
-    if not lines:
-        return b"", IOResult(exit_code=1)
-    return format_records(lines), IOResult()
+        lines.append(f"datasets/{dataset_name}:{line_json}")
+    return lines
+
+
+# The search push-down answers from the list endpoints (one call instead
+# of one read per entry), so it greps listing summaries: a pattern that
+# only occurs in a trace's observation bodies needs a file read to match.
+async def _traces_searcher(accessor: LangfuseAccessor, match: ScopeMatch,
+                           query: SearchQuery) -> list[str]:
+    traces = await fetch_traces(accessor.api,
+                                limit=accessor.config.default_search_limit)
+    return _filter_traces(traces, _compiled(query))
+
+
+async def _sessions_searcher(accessor: LangfuseAccessor, match: ScopeMatch,
+                             query: SearchQuery) -> list[str]:
+    sessions = await fetch_sessions(accessor.api,
+                                    limit=accessor.config.default_search_limit)
+    return _filter_sessions(sessions, _compiled(query))
+
+
+async def _prompts_searcher(accessor: LangfuseAccessor, match: ScopeMatch,
+                            query: SearchQuery) -> list[str]:
+    return _filter_prompts(await fetch_prompts(accessor.api), _compiled(query))
+
+
+async def _datasets_searcher(accessor: LangfuseAccessor, match: ScopeMatch,
+                             query: SearchQuery) -> list[str]:
+    return _filter_datasets(await fetch_datasets(accessor.api),
+                            _compiled(query))
+
+
+_CONTAINERS: dict[str, Searcher[LangfuseAccessor]] = {
+    "traces": _traces_searcher,
+    "sessions": _sessions_searcher,
+    "prompts": _prompts_searcher,
+    "datasets": _datasets_searcher,
+}
+
+SEARCHERS: dict[str, Searcher[LangfuseAccessor]] = {
+    kind: _CONTAINERS[container]
+    for kind, container in SEARCH_KINDS.items()
+}
+
+_search = make_search("grep",
+                      detect_scope,
+                      SEARCHERS,
+                      IO,
+                      qualify=pushdown_operand)
 
 
 async def grep_provision(accessor: LangfuseAccessor, paths: list[PathSpec],
@@ -127,62 +155,4 @@ async def grep_provision(accessor: LangfuseAccessor, paths: list[PathSpec],
 async def grep(accessor: LangfuseAccessor, paths: list[PathSpec],
                texts: list[str],
                opts: CommandOpts) -> tuple[ByteSource | None, IOResult]:
-    fl = FlagView(opts.flags, spec=SPECS["grep"])
-    pattern = pattern_arg(texts, fl)
-
-    limit = accessor.config.default_search_limit
-
-    # The search push-down answers from the list endpoints (one call instead
-    # of one read per entry), so it greps listing summaries: a pattern that
-    # only occurs in a trace's observation bodies needs a file read to match.
-    # Output/match-shaping flags and a multi-operand line defer to the
-    # generic scan below.
-    operand = pushdown_operand(paths, opts.flags, pattern)
-    if pattern is not None and operand is not None:
-        search = SEARCH_KINDS.get(detect_scope(operand).kind)
-        ignore_case = fl.as_bool("i")
-        fixed_string = fl.as_bool("F")
-        whole_word = fl.as_bool("w")
-
-        if search == "traces":
-            traces = await fetch_traces(
-                accessor.api,
-                limit=limit,
-            )
-            pat = compile_pattern(pattern, ignore_case, fixed_string,
-                                  whole_word)
-            return _filter_traces(traces, pat)
-
-        if search == "sessions":
-            sessions = await fetch_sessions(
-                accessor.api,
-                limit=limit,
-            )
-            pat = compile_pattern(pattern, ignore_case, fixed_string,
-                                  whole_word)
-            return _format_session_results(sessions, pat)
-
-        if search == "prompts":
-            prompts = await fetch_prompts(accessor.api)
-            pat = compile_pattern(pattern, ignore_case, fixed_string,
-                                  whole_word)
-            return _format_prompt_results(prompts, pat)
-
-        if search == "datasets":
-            datasets = await fetch_datasets(accessor.api)
-            pat = compile_pattern(pattern, ignore_case, fixed_string,
-                                  whole_word)
-            return _format_dataset_results(datasets, pat)
-
-    resolved = await resolve_glob(accessor, paths,
-                                  index=opts.index) if paths else []
-    return await generic_grep(
-        resolved,
-        texts,
-        opts.flags,
-        readdir=bound_op(_readdir, accessor, opts.index),
-        stat=bound_op(_stat, accessor, opts.index),
-        read_bytes=bound_op(langfuse_read, accessor, opts.index),
-        read_stream=None,
-        stdin=opts.stdin,
-    )
+    return await _search(accessor, paths, texts, opts)

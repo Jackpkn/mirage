@@ -12,17 +12,17 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { mountKey, mountPrefixOf } from '../../utils/key_prefix.ts'
 import type { IndexCacheStore } from '../../cache/index/store.ts'
 import { PathSpec } from '../../types.ts'
 import { encodeBase64 } from '../../utils/base64.ts'
 import { jsonBytes } from '../render/json.ts'
 import type { PostgresAccessor } from '../../accessor/postgres.ts'
+import { makeRead, type Reader, type ReadWindow, type WindowedReader } from '../hierarchy/read.ts'
+import type { ScopeMatch } from '../hierarchy/scope.ts'
 import { estimateSize, fetchRows } from './client.ts'
 import { buildDatabaseJson, buildEntitySchemaJson } from './_schema_json.ts'
 import { buildEntitySemanticJson } from './semantic.ts'
 import { detectScope } from './scope.ts'
-import { enoent } from '../../utils/errors.ts'
 
 export interface ReadOptions {
   limit?: number | null
@@ -38,40 +38,60 @@ export async function* readStream(
   yield await read(accessor, path, index, options)
 }
 
+function entityKind(match: ScopeMatch): 'table' | 'view' {
+  return (match.slots.kind ?? '') === 'tables' ? 'table' : 'view'
+}
+
+const readDatabaseJson: Reader<PostgresAccessor> = async (accessor) =>
+  jsonBytes(await buildDatabaseJson(accessor))
+
+const readEntitySchema: Reader<PostgresAccessor> = async (accessor, match) =>
+  jsonBytes(
+    await buildEntitySchemaJson(
+      accessor,
+      match.slots.schema ?? '',
+      match.slots.entity ?? '',
+      entityKind(match),
+    ),
+  )
+
+const readEntitySemantic: Reader<PostgresAccessor> = async (accessor, match) =>
+  jsonBytes(
+    await buildEntitySemanticJson(
+      accessor,
+      match.slots.schema ?? '',
+      match.slots.entity ?? '',
+      entityKind(match),
+    ),
+  )
+
+const readEntityRows: WindowedReader<PostgresAccessor> = (accessor, match, _path, _index, window) =>
+  readRows(
+    accessor,
+    match.slots.schema ?? '',
+    match.slots.kind ?? '',
+    match.slots.entity ?? '',
+    window,
+  )
+
+const kitRead = makeRead<PostgresAccessor>(
+  detectScope,
+  {
+    database_json: readDatabaseJson,
+    entity_schema: readEntitySchema,
+    entity_semantic: readEntitySemantic,
+  },
+  { entity_rows: readEntityRows },
+)
+
 export async function read(
   accessor: PostgresAccessor,
   path: PathSpec | string,
-  _index?: IndexCacheStore,
+  index?: IndexCacheStore,
   options: ReadOptions = {},
 ): Promise<Uint8Array> {
   const spec = typeof path === 'string' ? PathSpec.fromStrPath(path) : path
-  const prefix = mountPrefixOf(spec.virtual, spec.resourcePath)
-  let raw = spec.virtual
-  if (prefix !== '' && raw.startsWith(prefix)) {
-    raw = raw.slice(prefix.length) || '/'
-  }
-  const scope = detectScope(
-    new PathSpec({ virtual: raw, directory: raw, resourcePath: mountKey(raw, prefix) }),
-  )
-
-  if (scope.level === 'database_json') {
-    const doc = await buildDatabaseJson(accessor)
-    return jsonBytes(doc)
-  }
-  if (scope.level === 'entity_schema') {
-    const kind = scope.kind === 'tables' ? 'table' : 'view'
-    const doc = await buildEntitySchemaJson(accessor, scope.schema, scope.entity, kind)
-    return jsonBytes(doc)
-  }
-  if (scope.level === 'entity_semantic') {
-    const kind = scope.kind === 'tables' ? 'table' : 'view'
-    const doc = await buildEntitySemanticJson(accessor, scope.schema, scope.entity, kind)
-    return jsonBytes(doc)
-  }
-  if (scope.level === 'entity_rows') {
-    return readRows(accessor, scope.schema, scope.kind, scope.entity, options)
-  }
-  throw enoent(spec)
+  return kitRead(accessor, spec, index, options)
 }
 
 async function readRows(
@@ -79,7 +99,7 @@ async function readRows(
   schema: string,
   kind: string,
   entity: string,
-  options: ReadOptions,
+  options: ReadWindow,
 ): Promise<Uint8Array> {
   const cfg = accessor.config
   const limit = options.limit ?? null

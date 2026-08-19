@@ -129,6 +129,19 @@
         "stdout": "/mongodb/mirage_integ/collections/authors/documents.jsonl\n/mongodb/mirage_integ/collections/books/documents.jsonl\n",
         "stderr": ""
       }
+    },
+    {
+      "id": "mdb_grep_schema_json",
+      "seq": 620067,
+      "targets": [
+        "mongodb"
+      ],
+      "command": "grep -c database /mongodb/mirage_integ/collections/books/schema.json",
+      "expect": {
+        "exit": 0,
+        "stdout": "1\n",
+        "stderr": ""
+      }
     }
   ]
 }

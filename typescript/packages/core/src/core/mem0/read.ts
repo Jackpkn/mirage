@@ -17,7 +17,7 @@ import type { IndexCacheStore } from '../../cache/index/store.ts'
 import type { PathSpec } from '../../types.ts'
 import { enoent } from '../../utils/errors.ts'
 import { makeRead } from '../hierarchy/read.ts'
-import type { RouteMatch } from '../hierarchy/scope.ts'
+import type { ScopeMatch } from '../hierarchy/scope.ts'
 import { jsonBytes } from '../render/json.ts'
 import { getMemory } from './client.ts'
 import { detectScope } from './scope.ts'
@@ -41,12 +41,12 @@ async function resolveMemory(
       return cached as Record<string, unknown>
     }
   }
-  return getMemory(accessor, match.captures.memory_id ?? '', path)
+  return getMemory(accessor, match.slots.memory_id ?? '', path)
 }
 
 async function readMemory(
   accessor: Mem0Accessor,
-  _match: RouteMatch,
+  _match: ScopeMatch,
   path: PathSpec,
   index?: IndexCacheStore,
 ): Promise<Uint8Array> {

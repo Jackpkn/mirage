@@ -12,18 +12,17 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import posixpath
-from functools import partial
-
 from mirage.accessor.gdocs import GDocsAccessor
-from mirage.cache.index import NULL_INDEX, IndexCacheStore
-from mirage.cache.index.warm import entry_or_warm
+from mirage.cache.index import IndexCacheStore
 from mirage.core.gdocs.client import TokenManager, docs_base, google_get
 from mirage.core.gdocs.readdir import readdir
+from mirage.core.gdocs.scope import detect_scope
+from mirage.core.hierarchy.probe import resolve_entry
+from mirage.core.hierarchy.read import make_read
+from mirage.core.hierarchy.scope import ScopeMatch
 from mirage.core.render.json import compact_json_bytes
 from mirage.types import PathSpec
 from mirage.utils.errors import enoent
-from mirage.utils.key_prefix import mount_key, mount_prefix_of
 
 
 async def read_doc(token_manager: TokenManager, doc_id: str) -> bytes:
@@ -32,23 +31,12 @@ async def read_doc(token_manager: TokenManager, doc_id: str) -> bytes:
     return compact_json_bytes(data)
 
 
-async def read(
-    accessor: GDocsAccessor,
-    path: PathSpec,
-    index: IndexCacheStore = NULL_INDEX,
-) -> bytes:
-    virtual = path.virtual
-    prefix = mount_prefix_of(path.virtual, path.resource_path)
-    key = path.resource_path
-    virtual_key = prefix + "/" + key if prefix else "/" + key
-    parent_key = posixpath.dirname(virtual_key) or "/"
-    parent_path = PathSpec.from_str_path(parent_key,
-                                         mount_key(parent_key, prefix))
-    warm = (partial(readdir, accessor, parent_path, index)
-            if parent_key != virtual_key else None)
-    entry = await entry_or_warm(index, virtual_key, warm)
+async def _read_file(accessor: GDocsAccessor, match: ScopeMatch,
+                     path: PathSpec, index: IndexCacheStore) -> bytes:
+    entry = await resolve_entry(readdir, accessor, path, index)
     if entry is None:
-        raise enoent(virtual)
-    if entry.resource_type in ("gdocs/directory", ):
-        raise IsADirectoryError(virtual)
+        raise enoent(path.virtual)
     return await read_doc(accessor.token_manager, entry.id)
+
+
+read = make_read(detect_scope, readers={"file": _read_file})

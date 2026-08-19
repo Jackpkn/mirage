@@ -12,7 +12,25 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { makeStat } from '../google/tree_ops.ts'
+import type { IndexEntry } from '../../cache/index/config.ts'
+import { FileStat, FileType, type PathSpec } from '../../types.ts'
+import type { ScopeMatch } from '../hierarchy/scope.ts'
+import { makeStat } from '../hierarchy/stat.ts'
 import { readdir } from './readdir.ts'
+import { detectScope } from './scope.ts'
 
-export const stat = makeStat(readdir)
+function fileStat(_match: ScopeMatch, _path: PathSpec, entry: IndexEntry): FileStat {
+  return new FileStat({
+    name: entry.vfsName !== '' ? entry.vfsName : entry.name,
+    type: FileType.JSON,
+    modified: entry.remoteTime,
+    size: entry.size,
+    extra: {
+      doc_id: entry.id,
+      doc_name: entry.name,
+      ...entry.extra,
+    },
+  })
+}
+
+export const stat = makeStat(detectScope, readdir, { entryStats: { file: fileStat } })

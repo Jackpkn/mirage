@@ -15,7 +15,7 @@
 from mirage.accessor.jaeger import JaegerAccessor
 from mirage.cache.index import IndexEntry
 from mirage.core.hierarchy.readdir import make_readdir
-from mirage.core.hierarchy.scope import RouteMatch
+from mirage.core.hierarchy.scope import ScopeMatch
 from mirage.core.jaeger.client import (fetch_operations, fetch_services,
                                        fetch_traces, is_trace_id)
 from mirage.core.jaeger.scope import (OPERATIONS_FILE, TOP_LEVEL_DIRS,
@@ -45,13 +45,13 @@ async def assert_service(accessor: JaegerAccessor, service: str,
         raise enoent(virtual)
 
 
-async def service_guard(accessor: JaegerAccessor, match: RouteMatch,
+async def service_guard(accessor: JaegerAccessor, match: ScopeMatch,
                         virtual: str) -> None:
-    await assert_service(accessor, match.captures["service"], virtual)
+    await assert_service(accessor, match.slots["service"], virtual)
 
 
 async def _list_services(accessor: JaegerAccessor,
-                         match: RouteMatch) -> list[tuple[str, IndexEntry]]:
+                         match: ScopeMatch) -> list[tuple[str, IndexEntry]]:
     services = await fetch_services(accessor)
     return [(service,
              IndexEntry(
@@ -63,8 +63,8 @@ async def _list_services(accessor: JaegerAccessor,
 
 
 async def _list_service(accessor: JaegerAccessor,
-                        match: RouteMatch) -> list[tuple[str, IndexEntry]]:
-    service = match.captures["service"]
+                        match: ScopeMatch) -> list[tuple[str, IndexEntry]]:
+    service = match.slots["service"]
     # One operations call per service directory actually entered: nothing
     # in the services listing carries operation names, so operations.json
     # can only be sized here, and only for services the caller opens.
@@ -89,8 +89,8 @@ async def _list_service(accessor: JaegerAccessor,
 
 
 async def _list_traces(accessor: JaegerAccessor,
-                       match: RouteMatch) -> list[tuple[str, IndexEntry]]:
-    service = match.captures["service"]
+                       match: ScopeMatch) -> list[tuple[str, IndexEntry]]:
+    service = match.slots["service"]
     traces = await fetch_traces(
         accessor,
         service,

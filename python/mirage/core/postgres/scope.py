@@ -12,141 +12,54 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from dataclasses import dataclass, field
-from typing import Literal, TypeAlias
-
-from mirage.types import PathSpec
-
-PostgresKind: TypeAlias = Literal["tables", "views"]
-
-
-@dataclass(frozen=True)
-class PostgresRootScope:
-    resource_path: str = "/"
-    level: Literal["root"] = field(default="root", init=False)
-
-
-@dataclass(frozen=True)
-class PostgresDatabaseJSONScope:
-    resource_path: str
-    file: Literal["database.json"] = field(default="database.json", init=False)
-    level: Literal["database_json"] = field(default="database_json",
-                                            init=False)
-
-
-@dataclass(frozen=True)
-class PostgresSchemaScope:
-    schema: str
-    resource_path: str
-    level: Literal["schema"] = field(default="schema", init=False)
-
-
-@dataclass(frozen=True)
-class PostgresKindScope:
-    schema: str
-    kind: PostgresKind
-    resource_path: str
-    level: Literal["kind"] = field(default="kind", init=False)
-
-
-@dataclass(frozen=True)
-class PostgresEntityScope:
-    schema: str
-    kind: PostgresKind
-    entity: str
-    resource_path: str
-    level: Literal["entity"] = field(default="entity", init=False)
-
-
-@dataclass(frozen=True)
-class PostgresEntitySchemaScope:
-    schema: str
-    kind: PostgresKind
-    entity: str
-    resource_path: str
-    file: Literal["schema.json"] = field(default="schema.json", init=False)
-    level: Literal["entity_schema"] = field(default="entity_schema",
-                                            init=False)
-
-
-@dataclass(frozen=True)
-class PostgresEntitySemanticScope:
-    schema: str
-    kind: PostgresKind
-    entity: str
-    resource_path: str
-    file: Literal["semantic.json"] = field(default="semantic.json", init=False)
-    level: Literal["entity_semantic"] = field(default="entity_semantic",
-                                              init=False)
-
-
-@dataclass(frozen=True)
-class PostgresEntityRowsScope:
-    schema: str
-    kind: PostgresKind
-    entity: str
-    resource_path: str
-    file: Literal["rows.jsonl"] = field(default="rows.jsonl", init=False)
-    level: Literal["entity_rows"] = field(default="entity_rows", init=False)
-
-
-@dataclass(frozen=True)
-class PostgresInvalidScope:
-    resource_path: str
-    level: Literal["invalid"] = field(default="invalid", init=False)
-
-
-PostgresScope: TypeAlias = (PostgresRootScope | PostgresDatabaseJSONScope
-                            | PostgresSchemaScope | PostgresKindScope
-                            | PostgresEntityScope | PostgresEntitySchemaScope
-                            | PostgresEntitySemanticScope
-                            | PostgresEntityRowsScope | PostgresInvalidScope)
+from mirage.core.hierarchy.codec import Codec
+from mirage.core.hierarchy.scope import Scope, Slot, make_detect_scope
+from mirage.types import FileType
 
 ENTITY_FILES = ("schema.json", "semantic.json", "rows.jsonl")
 
+KIND_DIRS = ("tables", "views")
 
-def detect_scope(path: PathSpec) -> PostgresScope:
-    raw = path.mount_path
-    key = raw.strip("/")
 
-    if not key:
-        return PostgresRootScope(resource_path="/")
+def is_kind(text: str) -> bool:
+    """Whether the segment names an entity-kind directory.
 
-    if key == "database.json":
-        return PostgresDatabaseJSONScope(resource_path=raw)
+    Args:
+        text (str): decoded segment payload.
+    """
+    return text in KIND_DIRS
 
-    parts = key.split("/")
 
-    if len(parts) == 1:
-        return PostgresSchemaScope(schema=parts[0], resource_path=raw)
+KIND = Codec(validate=is_kind)
 
-    if len(parts) == 2 and parts[1] in ("tables", "views"):
-        kind: PostgresKind = "tables" if parts[1] == "tables" else "views"
-        return PostgresKindScope(schema=parts[0], kind=kind, resource_path=raw)
+# One description of the tree: readdir, stat, read AND the grep/rg
+# search push-down all classify through it, so the file surface and the
+# search surface cannot disagree about what a path means.
+SCOPES = (
+    Scope(kind="database_json",
+          segments=("database.json", ),
+          leaf=True,
+          filetype=FileType.JSON,
+          probed=False),
+    Scope(kind="schema", segments=(Slot("schema"), )),
+    Scope(kind="kind", segments=(Slot("schema"), Slot("kind", KIND))),
+    Scope(kind="entity",
+          segments=(Slot("schema"), Slot("kind", KIND), Slot("entity"))),
+    Scope(kind="entity_schema",
+          segments=(Slot("schema"), Slot("kind",
+                                         KIND), Slot("entity"), "schema.json"),
+          leaf=True,
+          filetype=FileType.JSON),
+    Scope(kind="entity_semantic",
+          segments=(Slot("schema"), Slot("kind", KIND), Slot("entity"),
+                    "semantic.json"),
+          leaf=True,
+          filetype=FileType.JSON),
+    Scope(kind="entity_rows",
+          segments=(Slot("schema"), Slot("kind",
+                                         KIND), Slot("entity"), "rows.jsonl"),
+          leaf=True,
+          filetype=FileType.TEXT),
+)
 
-    if len(parts) == 3 and parts[1] in ("tables", "views"):
-        kind = "tables" if parts[1] == "tables" else "views"
-        return PostgresEntityScope(schema=parts[0],
-                                   kind=kind,
-                                   entity=parts[2],
-                                   resource_path=raw)
-
-    if len(parts) == 4 and parts[1] in ("tables",
-                                        "views") and parts[3] in ENTITY_FILES:
-        kind = "tables" if parts[1] == "tables" else "views"
-        if parts[3] == "schema.json":
-            return PostgresEntitySchemaScope(schema=parts[0],
-                                             kind=kind,
-                                             entity=parts[2],
-                                             resource_path=raw)
-        if parts[3] == "semantic.json":
-            return PostgresEntitySemanticScope(schema=parts[0],
-                                               kind=kind,
-                                               entity=parts[2],
-                                               resource_path=raw)
-        return PostgresEntityRowsScope(schema=parts[0],
-                                       kind=kind,
-                                       entity=parts[2],
-                                       resource_path=raw)
-
-    return PostgresInvalidScope(resource_path=raw)
+detect_scope = make_detect_scope(SCOPES)

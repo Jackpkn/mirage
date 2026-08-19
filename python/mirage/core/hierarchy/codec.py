@@ -41,7 +41,7 @@ class Codec:
             bare names.
         validate (Callable | None): extra shape check on the decoded
             payload; a failing payload means the segment does not match
-            the route at all.
+            the scope at all.
     """
     suffix: str = ""
     validate: Callable[[str], bool] | None = None

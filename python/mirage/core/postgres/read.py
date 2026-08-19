@@ -15,59 +15,53 @@
 import orjson
 
 from mirage.accessor.postgres import PostgresAccessor
-from mirage.cache.index import NULL_INDEX, IndexCacheStore
+from mirage.cache.index import IndexCacheStore
+from mirage.core.hierarchy.read import make_read
+from mirage.core.hierarchy.scope import ScopeMatch
 from mirage.core.postgres import client
 from mirage.core.postgres._schema_json import (build_database_json,
                                                build_entity_schema_json)
 from mirage.core.postgres.scope import detect_scope
 from mirage.core.postgres.semantic import build_entity_semantic_json
 from mirage.types import PathSpec
-from mirage.utils.errors import enoent
-from mirage.utils.key_prefix import mount_key, mount_prefix_of
 
 
-async def read(
-    accessor: PostgresAccessor,
-    path: PathSpec,
-    index: IndexCacheStore = NULL_INDEX,
-    *,
-    limit: int | None = None,
-    offset: int | None = None,
-) -> bytes:
-    prefix = mount_prefix_of(path.virtual, path.resource_path)
-    raw = path.virtual
-    if prefix and raw.startswith(prefix):
-        raw = raw[len(prefix):] or "/"
-    scope = detect_scope(
-        PathSpec(virtual=raw,
-                 directory=raw,
-                 resource_path=mount_key(raw, prefix)))
+def _entity_kind(match: ScopeMatch) -> str:
+    return "table" if match.slots["kind"] == "tables" else "view"
 
-    if scope.level == "database_json":
-        doc = await build_database_json(accessor)
-        return orjson.dumps(doc, option=orjson.OPT_INDENT_2)
 
-    if scope.level == "entity_schema":
-        kind = "table" if scope.kind == "tables" else "view"
-        doc = await build_entity_schema_json(accessor, scope.schema,
-                                             scope.entity, kind)
-        return orjson.dumps(doc, option=orjson.OPT_INDENT_2)
+async def _read_database_json(accessor: PostgresAccessor, match: ScopeMatch,
+                              path: PathSpec, index: IndexCacheStore) -> bytes:
+    doc = await build_database_json(accessor)
+    return orjson.dumps(doc, option=orjson.OPT_INDENT_2)
 
-    if scope.level == "entity_semantic":
-        kind = "table" if scope.kind == "tables" else "view"
-        doc = await build_entity_semantic_json(accessor, scope.schema,
-                                               scope.entity, kind)
-        return orjson.dumps(doc, option=orjson.OPT_INDENT_2)
 
-    if scope.level == "entity_rows":
-        return await _read_rows(accessor,
-                                scope.schema,
-                                scope.entity,
-                                kind=scope.kind,
-                                limit=limit,
-                                offset=offset)
+async def _read_entity_schema(accessor: PostgresAccessor, match: ScopeMatch,
+                              path: PathSpec, index: IndexCacheStore) -> bytes:
+    doc = await build_entity_schema_json(accessor, match.slots["schema"],
+                                         match.slots["entity"],
+                                         _entity_kind(match))
+    return orjson.dumps(doc, option=orjson.OPT_INDENT_2)
 
-    raise enoent(path)
+
+async def _read_entity_semantic(accessor: PostgresAccessor, match: ScopeMatch,
+                                path: PathSpec,
+                                index: IndexCacheStore) -> bytes:
+    doc = await build_entity_semantic_json(accessor, match.slots["schema"],
+                                           match.slots["entity"],
+                                           _entity_kind(match))
+    return orjson.dumps(doc, option=orjson.OPT_INDENT_2)
+
+
+async def _read_entity_rows(accessor: PostgresAccessor, match: ScopeMatch,
+                            path: PathSpec, index: IndexCacheStore,
+                            limit: int | None, offset: int | None) -> bytes:
+    return await _read_rows(accessor,
+                            match.slots["schema"],
+                            match.slots["entity"],
+                            kind=match.slots["kind"],
+                            limit=limit,
+                            offset=offset)
 
 
 async def _read_rows(accessor: PostgresAccessor, schema: str, entity: str, *,
@@ -103,3 +97,11 @@ async def _read_rows(accessor: PostgresAccessor, schema: str, entity: str, *,
         return b""
     lines = [orjson.dumps(r, default=str).decode() for r in data]
     return ("\n".join(lines) + "\n").encode()
+
+
+read = make_read(detect_scope, {
+    "database_json": _read_database_json,
+    "entity_schema": _read_entity_schema,
+    "entity_semantic": _read_entity_semantic,
+},
+                 windowed={"entity_rows": _read_entity_rows})

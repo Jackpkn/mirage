@@ -12,83 +12,58 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { PathSpec } from '../../types.ts'
-import type { EntityKind } from './types.ts'
-import { KIND_DIR_NAMES, ScopeLevel } from './types.ts'
-import { stripSlash } from '../../utils/slash.ts'
+import { FileType } from '../../types.ts'
+import { Codec } from '../hierarchy/codec.ts'
+import { Slot, Scope, makeDetectScope, type ScopeMatch } from '../hierarchy/scope.ts'
+import { KIND_DIR_NAMES, type EntityKind } from './types.ts'
 
-export interface MongoDBScope {
-  level: ScopeLevel
-  database: string | null
-  kind: EntityKind | null
-  name: string | null
-  resourcePath: string
+/** Whether the segment names an entity-kind directory. */
+export function isKindDir(text: string): boolean {
+  return KIND_DIR_NAMES[text] !== undefined
 }
 
-function scope(
-  level: ScopeLevel,
-  resourcePath: string,
-  database: string | null = null,
-  kind: EntityKind | null = null,
-  name: string | null = null,
-): MongoDBScope {
-  return { level, database, kind, name, resourcePath }
-}
+export const KIND = new Codec({ validate: isKindDir })
 
-export function detectScope(path: PathSpec | string): MongoDBScope {
-  const raw = path instanceof PathSpec ? path.mountPath : path
-  const key = stripSlash(raw)
+// One description of the tree: readdir, stat, read AND the grep/rg search
+// push-down all classify through it, so the file surface and the search
+// surface cannot disagree about what a path means.
+export const SCOPES: readonly Scope[] = [
+  new Scope({ kind: 'database', segments: [new Slot('database')] }),
+  new Scope({
+    kind: 'database_json',
+    segments: [new Slot('database'), 'database.json'],
+    leaf: true,
+    filetype: FileType.TEXT,
+  }),
+  new Scope({
+    kind: 'kind_dir',
+    segments: [new Slot('database'), new Slot('kind', KIND)],
+  }),
+  new Scope({
+    kind: 'entity',
+    segments: [new Slot('database'), new Slot('kind', KIND), new Slot('name')],
+  }),
+  new Scope({
+    kind: 'schema_json',
+    segments: [new Slot('database'), new Slot('kind', KIND), new Slot('name'), 'schema.json'],
+    leaf: true,
+    filetype: FileType.TEXT,
+  }),
+  new Scope({
+    kind: 'documents',
+    segments: [new Slot('database'), new Slot('kind', KIND), new Slot('name'), 'documents.jsonl'],
+    leaf: true,
+    filetype: FileType.TEXT,
+  }),
+]
 
-  if (key === '') {
-    return scope(ScopeLevel.ROOT, '/')
+export const detectScope = makeDetectScope(SCOPES)
+
+/** The EntityKind a matched scope's kind directory names. */
+export function entityKind(match: ScopeMatch): EntityKind {
+  const kind = KIND_DIR_NAMES[match.slots.kind ?? '']
+  if (kind === undefined) {
+    throw new Error(`scope ${match.kind} holds no kind slot`)
   }
-
-  const parts = key.split('/')
-
-  if (parts.length === 1) {
-    return scope(ScopeLevel.DATABASE, raw, parts[0])
-  }
-
-  if (parts.length === 2) {
-    const db = parts[0] ?? ''
-    const leaf = parts[1] ?? ''
-    if (leaf === 'database.json') {
-      return scope(ScopeLevel.DATABASE_JSON, raw, db)
-    }
-    const dirKind = KIND_DIR_NAMES[leaf]
-    if (dirKind !== undefined) {
-      return scope(ScopeLevel.KIND_DIR, raw, db, dirKind)
-    }
-    return scope(ScopeLevel.UNKNOWN, raw)
-  }
-
-  if (parts.length === 3) {
-    const db = parts[0] ?? ''
-    const kindSeg = parts[1] ?? ''
-    const name = parts[2] ?? ''
-    const dirKind = KIND_DIR_NAMES[kindSeg]
-    if (dirKind !== undefined) {
-      return scope(ScopeLevel.ENTITY, raw, db, dirKind, name)
-    }
-    return scope(ScopeLevel.UNKNOWN, raw)
-  }
-
-  if (parts.length === 4) {
-    const db = parts[0] ?? ''
-    const kindSeg = parts[1] ?? ''
-    const name = parts[2] ?? ''
-    const leaf = parts[3] ?? ''
-    const dirKind = KIND_DIR_NAMES[kindSeg]
-    if (dirKind !== undefined) {
-      if (leaf === 'schema.json') {
-        return scope(ScopeLevel.SCHEMA_JSON, raw, db, dirKind, name)
-      }
-      if (leaf === 'documents.jsonl') {
-        return scope(ScopeLevel.DOCUMENTS, raw, db, dirKind, name)
-      }
-    }
-    return scope(ScopeLevel.UNKNOWN, raw)
-  }
-
-  return scope(ScopeLevel.UNKNOWN, raw)
+  return kind
 }

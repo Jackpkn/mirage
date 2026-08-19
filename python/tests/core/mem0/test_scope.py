@@ -6,7 +6,7 @@ def test_root():
     match = detect_scope(
         PathSpec(virtual="/mem", directory="/mem", resource_path=""))
     assert match.kind == "root"
-    assert match.captures == {}
+    assert match.slots == {}
 
 
 def test_memory_file():
@@ -15,7 +15,7 @@ def test_memory_file():
                  resource_path="abc.json")
     match = detect_scope(p)
     assert match.kind == "memory"
-    assert match.captures == {"memory_id": "abc"}
+    assert match.slots == {"memory_id": "abc"}
 
 
 def test_hidden_is_invalid():

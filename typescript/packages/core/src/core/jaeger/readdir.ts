@@ -16,7 +16,7 @@ import type { JaegerAccessor } from '../../accessor/jaeger.ts'
 import { IndexEntry } from '../../cache/index/config.ts'
 import { enoent } from '../../utils/errors.ts'
 import { makeReaddir } from '../hierarchy/readdir.ts'
-import type { RouteMatch } from '../hierarchy/scope.ts'
+import type { ScopeMatch } from '../hierarchy/scope.ts'
 import { jsonBytes } from '../render/json.ts'
 import { fetchOperations, fetchServices, fetchTraces, isTraceId } from './client.ts'
 import { OPERATIONS_FILE, TOP_LEVEL_DIRS, detectScope } from './scope.ts'
@@ -39,15 +39,15 @@ export async function assertService(
 
 export async function serviceGuard(
   accessor: JaegerAccessor,
-  match: RouteMatch,
+  match: ScopeMatch,
   virtual: string,
 ): Promise<void> {
-  await assertService(accessor, match.captures.service ?? '', virtual)
+  await assertService(accessor, match.slots.service ?? '', virtual)
 }
 
 async function listServices(
   accessor: JaegerAccessor,
-  _match: RouteMatch,
+  _match: ScopeMatch,
 ): Promise<[string, IndexEntry][]> {
   const services = await fetchServices(accessor.transport)
   return services.map((service): [string, IndexEntry] => [
@@ -63,9 +63,9 @@ async function listServices(
 
 async function listService(
   accessor: JaegerAccessor,
-  match: RouteMatch,
+  match: ScopeMatch,
 ): Promise<[string, IndexEntry][]> {
-  const service = match.captures.service ?? ''
+  const service = match.slots.service ?? ''
   // One operations call per service directory actually entered: nothing in
   // the services listing carries operation names, so operations.json can only
   // be sized here, and only for services the caller opens.
@@ -95,9 +95,9 @@ async function listService(
 
 async function listTraces(
   accessor: JaegerAccessor,
-  match: RouteMatch,
+  match: ScopeMatch,
 ): Promise<[string, IndexEntry][]> {
-  const service = match.captures.service ?? ''
+  const service = match.slots.service ?? ''
   const opts: { limit: number; fromTimestamp?: string; toTimestamp?: string } = {
     limit: accessor.config.defaultTraceLimit ?? 100,
   }

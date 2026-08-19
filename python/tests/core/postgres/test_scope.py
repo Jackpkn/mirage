@@ -22,109 +22,97 @@ def _ps(p: str) -> PathSpec:
 
 def test_root():
     s = detect_scope(_ps("/"))
-    assert s.level == "root"
+    assert s.kind == "root"
     assert s.resource_path == "/"
 
 
 def test_root_empty_path():
     s = detect_scope(_ps(""))
-    assert s.level == "root"
+    assert s.kind == "root"
 
 
 def test_database_json():
     s = detect_scope(_ps("/database.json"))
-    assert s.level == "database_json"
-    assert s.file == "database.json"
+    assert s.kind == "database_json"
 
 
 def test_schema():
     s = detect_scope(_ps("/public"))
-    assert s.level == "schema"
-    assert s.schema == "public"
+    assert s.kind == "schema"
+    assert s.slots == {"schema": "public"}
 
 
 def test_schema_with_trailing_slash():
     s = detect_scope(_ps("/public/"))
-    assert s.level == "schema"
-    assert s.schema == "public"
+    assert s.kind == "schema"
+    assert s.slots == {"schema": "public"}
 
 
 def test_kind_tables():
     s = detect_scope(_ps("/public/tables"))
-    assert s.level == "kind"
-    assert s.schema == "public"
-    assert s.kind == "tables"
+    assert s.kind == "kind"
+    assert s.slots == {"schema": "public", "kind": "tables"}
 
 
 def test_kind_views():
     s = detect_scope(_ps("/analytics/views"))
-    assert s.level == "kind"
-    assert s.schema == "analytics"
-    assert s.kind == "views"
+    assert s.kind == "kind"
+    assert s.slots == {"schema": "analytics", "kind": "views"}
 
 
 def test_entity_table():
     s = detect_scope(_ps("/public/tables/users"))
-    assert s.level == "entity"
-    assert s.schema == "public"
-    assert s.kind == "tables"
-    assert s.entity == "users"
+    assert s.kind == "entity"
+    assert s.slots == {"schema": "public", "kind": "tables", "entity": "users"}
 
 
 def test_entity_view():
     s = detect_scope(_ps("/analytics/views/daily_revenue"))
-    assert s.level == "entity"
-    assert s.kind == "views"
-    assert s.entity == "daily_revenue"
+    assert s.kind == "entity"
+    assert s.slots["kind"] == "views"
+    assert s.slots["entity"] == "daily_revenue"
 
 
 def test_entity_schema_file():
     s = detect_scope(_ps("/public/tables/users/schema.json"))
-    assert s.level == "entity_schema"
-    assert s.schema == "public"
-    assert s.kind == "tables"
-    assert s.entity == "users"
-    assert s.file == "schema.json"
+    assert s.kind == "entity_schema"
+    assert s.slots == {"schema": "public", "kind": "tables", "entity": "users"}
 
 
 def test_entity_semantic_file():
     s = detect_scope(_ps("/public/tables/users/semantic.json"))
-    assert s.level == "entity_semantic"
-    assert s.schema == "public"
-    assert s.kind == "tables"
-    assert s.entity == "users"
-    assert s.file == "semantic.json"
+    assert s.kind == "entity_semantic"
+    assert s.slots == {"schema": "public", "kind": "tables", "entity": "users"}
 
 
 def test_entity_rows_file():
     s = detect_scope(_ps("/public/tables/users/rows.jsonl"))
-    assert s.level == "entity_rows"
-    assert s.schema == "public"
-    assert s.entity == "users"
-    assert s.file == "rows.jsonl"
+    assert s.kind == "entity_rows"
+    assert s.slots["schema"] == "public"
+    assert s.slots["entity"] == "users"
 
 
 def test_view_entity_schema_file():
     s = detect_scope(_ps("/analytics/views/daily_revenue/schema.json"))
-    assert s.level == "entity_schema"
-    assert s.kind == "views"
+    assert s.kind == "entity_schema"
+    assert s.slots["kind"] == "views"
 
 
 def test_invalid_kind_segment():
     s = detect_scope(_ps("/public/sequences"))
-    assert s.level == "invalid"
+    assert s.kind == "invalid"
 
 
 def test_invalid_too_deep():
     s = detect_scope(_ps("/public/tables/users/extra/foo"))
-    assert s.level == "invalid"
+    assert s.kind == "invalid"
 
 
 def test_invalid_unknown_file():
     s = detect_scope(_ps("/public/tables/users/data.jsonl"))
-    assert s.level == "invalid"
+    assert s.kind == "invalid"
 
 
 def test_invalid_kind_in_third_position():
     s = detect_scope(_ps("/public/wrong_kind/foo"))
-    assert s.level == "invalid"
+    assert s.kind == "invalid"

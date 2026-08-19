@@ -14,36 +14,35 @@
 
 import { FileType } from '../../types.ts'
 import { Codec } from '../hierarchy/codec.ts'
-import { Capture, Route } from '../hierarchy/route.ts'
-import { makeDetectScope } from '../hierarchy/scope.ts'
+import { Slot, Scope, makeDetectScope } from '../hierarchy/scope.ts'
 import { isTraceId } from './client.ts'
 
 export const OPERATIONS_FILE = 'operations.json'
 export const TOP_LEVEL_DIRS = ['services']
 
-// A malformed id cannot name an existing trace, so it fails the route match
+// A malformed id cannot name an existing trace, so it fails the scope match
 // outright and reads as ENOENT rather than the API's 400 "invalid length for
 // TraceID".
 const TRACE_FILE = new Codec({ suffix: '.json', validate: isTraceId })
 
 // The tree is service-scoped because Jaeger's search API requires a service:
 // there is no endpoint that lists every trace.
-const ROUTES: readonly Route[] = [
-  new Route({ kind: 'services', segments: ['services'], probed: false }),
-  new Route({ kind: 'service', segments: ['services', new Capture('service')] }),
-  new Route({
+const SCOPES: readonly Scope[] = [
+  new Scope({ kind: 'services', segments: ['services'], probed: false }),
+  new Scope({ kind: 'service', segments: ['services', new Slot('service')] }),
+  new Scope({
     kind: 'operations',
-    segments: ['services', new Capture('service'), OPERATIONS_FILE],
+    segments: ['services', new Slot('service'), OPERATIONS_FILE],
     leaf: true,
     filetype: FileType.JSON,
   }),
-  new Route({ kind: 'traces', segments: ['services', new Capture('service'), 'traces'] }),
-  new Route({
+  new Scope({ kind: 'traces', segments: ['services', new Slot('service'), 'traces'] }),
+  new Scope({
     kind: 'trace',
-    segments: ['services', new Capture('service'), 'traces', new Capture('trace_id', TRACE_FILE)],
+    segments: ['services', new Slot('service'), 'traces', new Slot('trace_id', TRACE_FILE)],
     leaf: true,
     filetype: FileType.JSON,
   }),
 ]
 
-export const detectScope = makeDetectScope(ROUTES)
+export const detectScope = makeDetectScope(SCOPES)

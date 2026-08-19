@@ -13,93 +13,28 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 from mirage.accessor.mongodb import MongoDBAccessor
-from mirage.commands.builtin.generic.rg import rg as generic_rg
-from mirage.commands.builtin.generic_bind.adapter import bound_op
-from mirage.commands.builtin.grep_helper import pattern_arg, pushdown_operand
-from mirage.commands.builtin.mongodb.io import resolve_glob
-from mirage.commands.builtin.utils.output import format_records
+from mirage.commands.builtin.generic_bind.search import make_search
+from mirage.commands.builtin.grep_helper import pushdown_operand
+from mirage.commands.builtin.mongodb.io import IO
 from mirage.commands.config import CommandOpts
-from mirage.commands.errors import UsageError
 from mirage.commands.registry import command
 from mirage.commands.spec import SPECS
-from mirage.commands.spec.types import FlagView
-from mirage.core.mongodb.client import list_databases
-from mirage.core.mongodb.read import read as mongodb_read
-from mirage.core.mongodb.readdir import readdir as _readdir
-from mirage.core.mongodb.scope import (MongoDBDatabaseScope,
-                                       MongoDBEntityScope, MongoDBRootScope,
-                                       detect_scope)
-from mirage.core.mongodb.search import (format_grep_results, search_collection,
-                                        search_database)
-from mirage.core.mongodb.stat import stat as _stat
+from mirage.core.mongodb.scope import detect_scope
+from mirage.core.mongodb.search import SEARCHERS
 from mirage.io.types import ByteSource, IOResult
 from mirage.types import PathSpec
 
-SEARCHABLE_SCOPE_TYPES = (MongoDBEntityScope, MongoDBDatabaseScope,
-                          MongoDBRootScope)
+_search = make_search("rg",
+                      detect_scope,
+                      SEARCHERS,
+                      IO,
+                      qualify=pushdown_operand,
+                      guard=True,
+                      stream=True)
 
 
 @command("rg", resource="mongodb", spec=SPECS["rg"])
 async def rg(accessor: MongoDBAccessor, paths: list[PathSpec],
              texts: list[str],
              opts: CommandOpts) -> tuple[ByteSource | None, IOResult]:
-    fl = FlagView(opts.flags, spec=SPECS["rg"])
-    pattern_str = pattern_arg(texts, fl)
-    if pattern_str is None:
-        raise UsageError("rg: usage: rg [flags] pattern [path]")
-
-    config = accessor.config
-    limit = config.default_search_limit
-
-    # The $regex push-down prints each matching document as a whole line, so
-    # output/match-shaping flags and a multi-operand line must defer to the
-    # generic scan below.
-    operand = pushdown_operand(paths, opts.flags, pattern_str)
-    if operand is not None:
-        scope = detect_scope(operand)
-
-        if isinstance(scope, SEARCHABLE_SCOPE_TYPES):
-            if isinstance(scope, MongoDBEntityScope):
-                docs = await search_collection(
-                    accessor.client,
-                    scope.database,
-                    scope.name,
-                    pattern_str,
-                    limit=limit,
-                )
-                results = [(scope.database, scope.name, docs)] if docs else []
-            elif isinstance(scope, MongoDBDatabaseScope):
-                results = await search_database(
-                    accessor.client,
-                    scope.database,
-                    pattern_str,
-                    limit=limit,
-                )
-            else:
-                databases = await list_databases(accessor.client, config)
-                results = []
-                for db_name in databases:
-                    results.extend(await search_database(
-                        accessor.client,
-                        db_name,
-                        pattern_str,
-                        limit=limit,
-                    ))
-
-            all_lines = format_grep_results(results)
-            if not all_lines:
-                return b"", IOResult(exit_code=1)
-            return format_records(all_lines), IOResult()
-
-    resolved = await resolve_glob(accessor, paths,
-                                  index=opts.index) if paths else []
-    return await generic_rg(
-        resolved,
-        texts,
-        opts.flags,
-        readdir=bound_op(_readdir, accessor, opts.index),
-        stat=bound_op(_stat, accessor, opts.index),
-        read_bytes=bound_op(mongodb_read, accessor, opts.index),
-        read_stream=None,
-        stdin=opts.stdin,
-    )
+    return await _search(accessor, paths, texts, opts)

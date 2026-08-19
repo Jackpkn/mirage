@@ -12,103 +12,33 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import asyncio
-
 from mirage.accessor.mongodb import MongoDBAccessor
-from mirage.commands.builtin.generic.grep import grep as generic_grep
-from mirage.commands.builtin.generic_bind.adapter import bound_op
-from mirage.commands.builtin.grep_helper import pattern_arg, pushdown_operand
-from mirage.commands.builtin.mongodb.io import resolve_glob
-from mirage.commands.builtin.utils.output import format_records
+from mirage.commands.builtin.generic_bind.search import make_search
+from mirage.commands.builtin.grep_helper import pushdown_operand
+from mirage.commands.builtin.mongodb.io import IO
 from mirage.commands.config import CommandOpts
 from mirage.commands.registry import command
 from mirage.commands.spec import SPECS
-from mirage.commands.spec.types import FlagView
-from mirage.core.mongodb.client import list_databases
-from mirage.core.mongodb.read import read as mongodb_read
-from mirage.core.mongodb.readdir import readdir as _readdir
-from mirage.core.mongodb.scope import (MongoDBDatabaseScope,
-                                       MongoDBEntityScope, MongoDBRootScope,
-                                       detect_scope)
-from mirage.core.mongodb.search import (format_grep_results, search_collection,
-                                        search_database)
-from mirage.core.mongodb.stat import stat as _stat
-from mirage.core.mongodb.stream import read_stream
+from mirage.core.mongodb.scope import detect_scope
+from mirage.core.mongodb.search import SEARCHERS
 from mirage.io.types import ByteSource, IOResult
 from mirage.types import PathSpec
 
-SEARCHABLE_SCOPE_TYPES = (MongoDBEntityScope, MongoDBDatabaseScope,
-                          MongoDBRootScope)
+# The $regex push-down prints each matching document as a whole line;
+# pushdown_operand defers shaping flags and multi-operand lines to the
+# generic scan, which streams documents rather than reading whole
+# collections.
+_search = make_search("grep",
+                      detect_scope,
+                      SEARCHERS,
+                      IO,
+                      qualify=pushdown_operand,
+                      guard=True,
+                      stream=True)
 
 
 @command("grep", resource="mongodb", spec=SPECS["grep"])
 async def grep(accessor: MongoDBAccessor, paths: list[PathSpec],
                texts: list[str],
                opts: CommandOpts) -> tuple[ByteSource | None, IOResult]:
-    fl = FlagView(opts.flags, spec=SPECS["grep"])
-    pattern = pattern_arg(texts, fl)
-
-    config = accessor.config
-    limit = config.default_search_limit
-
-    # The $regex push-down prints each matching document as a whole line, so
-    # output/match-shaping flags and a multi-operand line must defer to the
-    # generic scan below.
-    operand = pushdown_operand(paths, opts.flags, pattern)
-    if pattern is not None and operand is not None:
-        scope = detect_scope(operand)
-
-        if isinstance(scope, SEARCHABLE_SCOPE_TYPES):
-            if not isinstance(scope, MongoDBRootScope):
-                await _stat(accessor, operand, index=opts.index)
-            if isinstance(scope, MongoDBEntityScope):
-                docs = await search_collection(
-                    accessor.client,
-                    scope.database,
-                    scope.name,
-                    pattern,
-                    limit=limit,
-                )
-                results = [(scope.database, scope.name, docs)] if docs else []
-            elif isinstance(scope, MongoDBDatabaseScope):
-                results = await search_database(
-                    accessor.client,
-                    scope.database,
-                    pattern,
-                    limit=limit,
-                )
-            else:
-                databases = await list_databases(
-                    accessor.client,
-                    config,
-                )
-                tasks = [
-                    search_database(
-                        accessor.client,
-                        db_name,
-                        pattern,
-                        limit=limit,
-                    ) for db_name in databases
-                ]
-                nested = await asyncio.gather(*tasks)
-                results = []
-                for r in nested:
-                    results.extend(r)
-
-            all_lines = format_grep_results(results)
-            if not all_lines:
-                return b"", IOResult(exit_code=1)
-            return format_records(all_lines), IOResult()
-
-    resolved = await resolve_glob(accessor, paths,
-                                  index=opts.index) if paths else []
-    return await generic_grep(
-        resolved,
-        texts,
-        opts.flags,
-        readdir=bound_op(_readdir, accessor, opts.index),
-        stat=bound_op(_stat, accessor, opts.index),
-        read_bytes=bound_op(mongodb_read, accessor, opts.index),
-        read_stream=bound_op(read_stream, accessor, opts.index),
-        stdin=opts.stdin,
-    )
+    return await _search(accessor, paths, texts, opts)

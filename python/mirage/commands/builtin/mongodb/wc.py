@@ -24,7 +24,7 @@ from mirage.commands.config import CommandOpts
 from mirage.commands.registry import command
 from mirage.commands.spec import SPECS
 from mirage.core.mongodb.client import count_documents
-from mirage.core.mongodb.scope import MongoDBDocumentsScope, detect_scope
+from mirage.core.mongodb.scope import detect_scope
 from mirage.io.types import ByteSource, IOResult
 from mirage.types import PathSpec
 
@@ -44,15 +44,14 @@ async def wc(accessor: MongoDBAccessor, paths: list[PathSpec],
     count_only = parsed.lines and not (parsed.words or parsed.bytes_ or
                                        parsed.chars or parsed.max_line_length)
     scopes = [detect_scope(p) for p in resolved]
-    document_scopes = [
-        scope for scope in scopes if isinstance(scope, MongoDBDocumentsScope)
-    ]
+    document_scopes = [scope for scope in scopes if scope.kind == "documents"]
     if resolved and count_only and len(document_scopes) == len(scopes):
         rows: list[tuple[WCCounts, str | None]] = []
         total = 0
         for p, scope in zip(resolved, document_scopes):
-            count = await count_documents(accessor.client, scope.database,
-                                          scope.name)
+            count = await count_documents(accessor.client,
+                                          scope.slots["database"],
+                                          scope.slots["name"])
             rows.append((WCCounts(lines=count), p.raw_path))
             total += count
         return format_count_rows(rows, WCCounts(lines=total), len(resolved),

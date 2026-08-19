@@ -18,7 +18,6 @@ import { resolveGlobOf } from '../generic_bind/index.ts'
 import { MONGODB_IO } from './io.ts'
 import { streamAny } from '../../../core/mongodb/read.ts'
 import { detectScope } from '../../../core/mongodb/scope.ts'
-import { ScopeLevel } from '../../../core/mongodb/types.ts'
 import { type ByteSource, IOResult } from '../../../io/types.ts'
 import { type PathSpec, ResourceName } from '../../../types.ts'
 import { command, type CommandFnResult, type CommandOpts } from '../../config.ts'
@@ -30,8 +29,8 @@ const resolveGlob = resolveGlobOf(MONGODB_IO)
 
 function documentsScope(p: PathSpec): { database: string; name: string } | null {
   const scope = detectScope(p)
-  if (scope.level === ScopeLevel.DOCUMENTS && scope.database !== null && scope.name !== null) {
-    return { database: scope.database, name: scope.name }
+  if (scope.kind === 'documents') {
+    return { database: scope.slots.database ?? '', name: scope.slots.name ?? '' }
   }
   return null
 }

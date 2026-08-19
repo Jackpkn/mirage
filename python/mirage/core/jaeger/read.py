@@ -17,7 +17,7 @@ from typing import Any
 from mirage.accessor.jaeger import JaegerAccessor
 from mirage.cache.index import IndexCacheStore
 from mirage.core.hierarchy.read import make_read
-from mirage.core.hierarchy.scope import RouteMatch
+from mirage.core.hierarchy.scope import ScopeMatch
 from mirage.core.jaeger.client import (JaegerApiError, fetch_operations,
                                        fetch_trace)
 from mirage.core.jaeger.readdir import assert_service
@@ -51,20 +51,20 @@ def _has_service(trace: dict[str, Any], service: str) -> bool:
         for p in processes.values())
 
 
-async def _read_operations(accessor: JaegerAccessor, match: RouteMatch,
+async def _read_operations(accessor: JaegerAccessor, match: ScopeMatch,
                            path: PathSpec, index: IndexCacheStore) -> bytes:
-    service = match.captures["service"]
+    service = match.slots["service"]
     await assert_service(accessor, service, path.virtual)
     operations = await fetch_operations(accessor, service)
     return json_bytes(operations)
 
 
-async def _read_trace(accessor: JaegerAccessor, match: RouteMatch,
+async def _read_trace(accessor: JaegerAccessor, match: ScopeMatch,
                       path: PathSpec, index: IndexCacheStore) -> bytes:
-    service = match.captures["service"]
+    service = match.slots["service"]
     await assert_service(accessor, service, path.virtual)
     try:
-        trace = await fetch_trace(accessor, match.captures["trace_id"])
+        trace = await fetch_trace(accessor, match.slots["trace_id"])
     except JaegerApiError as exc:
         if exc.status_code == 404:
             raise enoent(path.virtual) from exc

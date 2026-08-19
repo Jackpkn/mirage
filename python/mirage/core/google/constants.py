@@ -12,6 +12,8 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+from mirage.core.hierarchy.codec import Codec
+
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 DRIVE_API_BASE = "https://www.googleapis.com/drive/v3"
 DOCS_API_BASE = "https://docs.googleapis.com/v1"
@@ -22,3 +24,20 @@ CALENDAR_API_BASE = "https://www.googleapis.com/calendar/v3"
 FORMS_API_BASE = "https://forms.googleapis.com/v1"
 DRIVE_UPLOAD_BASE = "https://www.googleapis.com/upload/drive/v3"
 TOKEN_BUFFER_SECONDS = 300
+
+# The Drive-item backends (gdocs, gsheets, gslides) present the same
+# synthetic owned/shared tree; the per-backend scope tables differ only
+# in the leaf suffix.
+TOP_LEVEL_DIRS = ("owned", "shared")
+
+
+def is_corpus(text: str) -> bool:
+    """Whether the segment names a Drive corpus directory.
+
+    Args:
+        text (str): decoded segment payload.
+    """
+    return text in TOP_LEVEL_DIRS
+
+
+CORPUS = Codec(validate=is_corpus)
