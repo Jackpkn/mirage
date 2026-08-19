@@ -15,6 +15,7 @@
 import { operandExitCode } from '../commands/spec/usage.ts'
 import { Limit, type PathSpec } from '../types.ts'
 import type { Policy } from './base.ts'
+import { POLICY_DENIED_EXIT } from './constants.ts'
 import { PolicyDenied, PolicyError } from './errors.ts'
 import {
   VALIDITY,
@@ -29,9 +30,6 @@ import {
 } from './types.ts'
 
 type Hook = keyof typeof VALIDITY
-
-/** A whole-command refusal exits as bash does for a command it found but may not run. */
-export const POLICY_DENIED_EXIT = 126
 
 /**
  * The command plane's rendering of a refusal: stderr and exit code. The

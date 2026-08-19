@@ -51,13 +51,6 @@ export interface Deny {
 }
 
 /**
- * The reason a bare command pattern under `commands.deny` carries, and
- * the one a bare pattern under `commands.ask` carries.
- */
-export const DEFAULT_DENY_REASON = 'denied by policy'
-export const DEFAULT_ASK_REASON = 'no standing approval'
-
-/**
  * One admission rule of the permissions document: refuse (or ask about)
  * matching commands on matching paths. It is the element type of
  * `commands.deny` and `commands.ask` at every tier and reaches the

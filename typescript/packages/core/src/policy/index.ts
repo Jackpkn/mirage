@@ -19,8 +19,8 @@ export { CallbackApprover, RecordApprover, requestId, type Approver } from './ap
 export { MountRootPolicy } from './builtin/mount_root.ts'
 export { PermissionsPolicy } from './builtin/permissions.ts'
 export { OutputCapPolicy, resolveProducer, resolveLimit } from './builtin/output_cap.ts'
+export { DEFAULT_ASK_REASON, DEFAULT_DENY_REASON, POLICY_DENIED_EXIT } from './constants.ts'
 export {
-  POLICY_DENIED_EXIT,
   Policies,
   postExecuteGate,
   postOpsGate,
@@ -29,7 +29,6 @@ export {
   renderDeny,
   renderPending,
 } from './policies.ts'
-export { DEFAULT_ASK_REASON, DEFAULT_DENY_REASON } from './types.ts'
 export {
   type Action,
   type ApprovalDecision,

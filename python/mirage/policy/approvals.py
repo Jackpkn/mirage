@@ -15,13 +15,10 @@
 from collections.abc import Callable
 
 from mirage.policy.approver import Approver, RecordApprover, request_id
+from mirage.policy.constants import EXACT_LINE_DECISIONS
 from mirage.policy.types import (ApprovalDecision, ApprovalRequest, Ask,
                                  CommandContext, CommandRule, Deny, Grant,
                                  GrantScope, Pending, SessionGrantsQuery)
-
-# The exact-line decisions: each answers one retry of the words and cwd
-# of the request, and is consumed by it.
-_EXACT_LINE = frozenset({"allow_once", "deny"})
 
 
 def ask_rule(ctx: CommandContext, ask: Ask) -> CommandRule:
@@ -140,7 +137,7 @@ class Approvals:
         argv = (ctx.command, *ctx.argv)
         held = self._grants(ctx.session_id)
         for grant in held:
-            if (grant.decision in _EXACT_LINE and grant.argv == argv
+            if (grant.decision in EXACT_LINE_DECISIONS and grant.argv == argv
                     and grant.cwd == ctx.cwd):
                 self._set(ctx.session_id,
                           tuple(g for g in held if g is not grant))

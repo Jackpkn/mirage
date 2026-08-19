@@ -21,8 +21,8 @@ from pydantic import ValidationError
 from mirage.commands.cli.specs import cli_spec_for
 from mirage.policy import (Action, ApprovalRequest, Ask, CallbackApprover,
                            CommandContext, Policy)
-from mirage.policy.types import (DEFAULT_ASK_REASON, DEFAULT_DENY_REASON,
-                                 CommandRule)
+from mirage.policy.constants import DEFAULT_ASK_REASON, DEFAULT_DENY_REASON
+from mirage.policy.types import CommandRule
 from mirage.resource.ram import RAMResource
 from mirage.types import HiddenPaths, HiddenVars, MountMode
 from mirage.workspace import Workspace

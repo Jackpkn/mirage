@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { PolicyError } from '../../policy/errors.ts'
-import { intersectPatterns } from '../../policy/match.ts'
+import { intersectPatterns } from '../../policy/match/pattern.ts'
 import type { CommandRule, CommandsSpec } from '../../policy/types.ts'
 import type { HiddenPaths } from '../../types.ts'
 import { MountMode, weakerMode } from '../../types.ts'
@@ -30,10 +30,9 @@ import {
   type VarsBlock,
   type WorkspacePermissions,
 } from './permissions.ts'
+import { DEFAULT_PROFILE } from './constants.ts'
 import { varsFromEnv, type Session } from './session.ts'
 import { setCwd } from './shell_dirs.ts'
-
-export const DEFAULT_PROFILE = 'default'
 
 /** A profile's mounts once every spelling is normalized: ceilings, an allowlist, or unrestricted. */
 export type ProfileMounts = ReadonlyMap<string, MountMode> | readonly string[] | null

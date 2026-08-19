@@ -18,9 +18,10 @@ from mirage.policy.types import CommandRule, CommandsSpec, Grant
 from mirage.shell.variable import ShellVar, VarAttr
 from mirage.types import MountMode
 from mirage.workspace.session import Session
-from mirage.workspace.session.session import (CHILD_SHELL_FIELDS,
-                                              INHERITED_FIELDS,
-                                              TRANSIENT_FIELDS, vars_from_env)
+from mirage.workspace.session.constants import (CHILD_SHELL_FIELDS,
+                                                INHERITED_FIELDS,
+                                                TRANSIENT_FIELDS)
+from mirage.workspace.session.session import vars_from_env
 from mirage.workspace.session.state import seed_var, set_attr
 
 

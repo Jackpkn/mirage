@@ -17,7 +17,15 @@ import type { AsyncLineIterator } from '../../io/async_line_iterator.ts'
 import type { ShellArray } from '../../shell/array.ts'
 import type { ShellVar } from '../../shell/variable.ts'
 import { attrsFromLetters, makeVar, storedAttrs, VarAttr, withValue } from '../../shell/variable.ts'
-import type { ApprovalDecision, CommandRule, CommandsSpec, Grant } from '../../policy/types.ts'
+import type { CommandsSpec, Grant } from '../../policy/types.ts'
+import {
+  commandsFromJSON,
+  commandsToJSON,
+  grantFromJSON,
+  grantToJSON,
+  type CommandsJSON,
+  type GrantJSON,
+} from './serialize.ts'
 import type { HiddenPaths, HiddenVars, MountMode } from '../../types.ts'
 
 /**
@@ -196,81 +204,6 @@ function copyVars(vars: Record<string, ShellVar>): Record<string, ShellVar> {
     else out[name] = v
   }
   return out
-}
-
-/** A compiled command tier as the session record stores it (the Python spelling). */
-export interface CommandsJSON {
-  allow: string[] | null
-  ask: RuleJSON[]
-  deny: RuleJSON[]
-}
-
-export interface RuleJSON {
-  reason: string
-  commands?: string[]
-  paths?: string[]
-  mount?: string
-}
-
-function ruleToJSON(rule: CommandRule): RuleJSON {
-  const out: RuleJSON = {
-    reason: rule.reason,
-    commands: [...(rule.commands ?? [])],
-    paths: [...(rule.paths ?? [])],
-  }
-  if (rule.mount !== undefined && rule.mount !== '') out.mount = rule.mount
-  return out
-}
-
-function ruleFromJSON(data: RuleJSON): CommandRule {
-  return {
-    reason: data.reason,
-    commands: data.commands ?? [],
-    paths: data.paths ?? [],
-    mount: data.mount ?? '',
-  }
-}
-
-export function commandsToJSON(spec: CommandsSpec): CommandsJSON {
-  return {
-    allow: spec.allow === null ? null : [...spec.allow],
-    ask: spec.ask.map(ruleToJSON),
-    deny: spec.deny.map(ruleToJSON),
-  }
-}
-
-export function commandsFromJSON(data: CommandsJSON): CommandsSpec {
-  return {
-    allow: data.allow ?? null,
-    ask: data.ask.map(ruleFromJSON),
-    deny: data.deny.map(ruleFromJSON),
-  }
-}
-
-/** A host grant as the session record stores it (the Python spelling). */
-export interface GrantJSON {
-  decision: ApprovalDecision
-  rule: RuleJSON
-  argv: string[]
-  cwd: string
-}
-
-export function grantToJSON(grant: Grant): GrantJSON {
-  return {
-    decision: grant.decision,
-    rule: ruleToJSON(grant.rule),
-    argv: [...grant.argv],
-    cwd: grant.cwd,
-  }
-}
-
-export function grantFromJSON(data: GrantJSON): Grant {
-  return {
-    decision: data.decision,
-    rule: ruleFromJSON(data.rule),
-    argv: data.argv,
-    cwd: data.cwd,
-  }
 }
 
 export class Session {

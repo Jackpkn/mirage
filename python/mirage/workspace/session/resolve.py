@@ -20,19 +20,14 @@ from mirage.policy.match import intersect_patterns
 from mirage.policy.types import CommandRule, CommandsSpec
 from mirage.types import HiddenPaths, MountMode, weaker_mode
 from mirage.utils.hidden import classify_paths, classify_vars
+from mirage.workspace.session.constants import (DEFAULT_PROFILE,
+                                                PROFILE_INHERITED_FIELDS)
 from mirage.workspace.session.session import Session, vars_from_env
 from mirage.workspace.session.shell_dirs import set_cwd
 
 from mirage.workspace.session.permissions import (  # isort: skip
     CommandsBlock, CompiledProfile, MountCommandsBlock, MountPermissions,
     PathsBlock, SessionProfile, VarsBlock, WorkspacePermissions)
-
-DEFAULT_PROFILE = "default"
-
-# The profile fields inheritance copies: a stated field replaces the
-# parent's, an absent (None) one is inherited. `extends` itself is not
-# a field a child inherits.
-_INHERITED = ("cwd", "env", "mounts", "paths", "vars", "commands")
 
 ProfileMounts = dict[str, MountMode] | tuple[str, ...] | None
 
@@ -71,7 +66,7 @@ def inherit(profiles: Mapping[str, SessionProfile],
         current = node.extends
     merged: dict[str, Any] = {}
     for node in reversed(chain):
-        for field_name in _INHERITED:
+        for field_name in PROFILE_INHERITED_FIELDS:
             value = getattr(node, field_name)
             if value is not None:
                 merged[field_name] = value

@@ -15,7 +15,8 @@
 import type { HiddenPaths } from '../../types.ts'
 import { classifyPaths } from '../../utils/hidden.ts'
 import type { Policy } from '../base.ts'
-import { lineAllowed, opHit, ruleHit } from '../match.ts'
+import { lineAllowed } from '../match/allow.ts'
+import { matchOp, matchRule } from '../match/rule.ts'
 import type {
   Action,
   CommandContext,
@@ -73,7 +74,7 @@ export class PermissionsPolicy implements Policy {
     }
     for (const spec of layers) {
       for (const rule of spec.deny) {
-        const hit = ruleHit(rule, this.scope(rule), ctx)
+        const hit = matchRule(rule, this.scope(rule), ctx)
         if (hit === null) continue
         if (hit.operand === null) return { kind: 'deny', reason: rule.reason }
         return { kind: 'deny', reason: `${hit.operand}: ${rule.reason}`, scope: 'operand' }
@@ -81,7 +82,7 @@ export class PermissionsPolicy implements Policy {
     }
     for (const spec of layers) {
       for (const rule of spec.ask) {
-        if (ruleHit(rule, this.scope(rule), ctx) !== null) {
+        if (matchRule(rule, this.scope(rule), ctx) !== null) {
           return { kind: 'ask', reason: rule.reason, rule }
         }
       }
@@ -92,7 +93,7 @@ export class PermissionsPolicy implements Policy {
   preOps(ctx: OpsContext): Action | null {
     for (const spec of this.sessions.commandsOf(ctx.sessionId ?? '')) {
       for (const rule of spec.deny) {
-        if (opHit(rule, this.scope(rule), ctx)) return { kind: 'deny', reason: rule.reason }
+        if (matchOp(rule, this.scope(rule), ctx)) return { kind: 'deny', reason: rule.reason }
       }
     }
     return null

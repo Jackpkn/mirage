@@ -18,6 +18,7 @@ from typing import Any
 
 from mirage.commands.spec.usage import operand_exit_code
 from mirage.policy.base import Policy
+from mirage.policy.constants import POLICY_DENIED_EXIT
 from mirage.policy.errors import PolicyDenied, PolicyError
 from mirage.policy.types import (VALIDITY, Ask, CommandContext, Deny,
                                  DenyScope, ExecuteResultContext, OpsContext,
@@ -28,10 +29,6 @@ logger = logging.getLogger(__name__)
 
 HookContext = (CommandContext | OpsContext | OpsResultContext
                | ExecuteResultContext | SessionContext)
-
-# A whole-command refusal exits as bash does for a command it found but
-# may not run.
-POLICY_DENIED_EXIT = 126
 
 
 def render_deny(subject: str, deny: Deny) -> tuple[bytes, int]:

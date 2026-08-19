@@ -12,7 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { headVisible } from '../../policy/match.ts'
+import { headVisible } from '../../policy/match/allow.ts'
 import { GRAMMAR_BUILTINS, type ShellBuiltin } from '../../shell/types.ts'
 import type { MountRegistry } from '../mount/registry.ts'
 import type { Session } from '../session/session.ts'

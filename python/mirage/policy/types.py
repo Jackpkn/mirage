@@ -68,12 +68,6 @@ class Deny:
     scope: DenyScope = DenyScope.COMMAND
 
 
-# The reason a bare command pattern under ``commands.deny`` carries, and
-# the one a bare pattern under ``commands.ask`` carries.
-DEFAULT_DENY_REASON = "denied by policy"
-DEFAULT_ASK_REASON = "no standing approval"
-
-
 @dataclass(frozen=True, slots=True)
 class CommandRule:
     """One admission rule of the permissions document: refuse (or ask

@@ -12,12 +12,8 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import {
-  DEFAULT_ASK_REASON,
-  DEFAULT_DENY_REASON,
-  type CommandRule,
-  type CommandsSpec,
-} from '../../policy/types.ts'
+import { DEFAULT_ASK_REASON, DEFAULT_DENY_REASON } from '../../policy/constants.ts'
+import type { CommandRule, CommandsSpec } from '../../policy/types.ts'
 import type { HiddenPaths, HiddenVars } from '../../types.ts'
 import { type MountMode, parseMountMode } from '../../types.ts'
 import { stripSlash } from '../../utils/slash.ts'

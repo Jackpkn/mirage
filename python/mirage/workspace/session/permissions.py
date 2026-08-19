@@ -18,8 +18,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, field_validator
 
-from mirage.policy.types import (DEFAULT_ASK_REASON, DEFAULT_DENY_REASON,
-                                 CommandRule, CommandsSpec)
+from mirage.policy.constants import DEFAULT_ASK_REASON, DEFAULT_DENY_REASON
+from mirage.policy.types import CommandRule, CommandsSpec
 from mirage.types import HiddenPaths, HiddenVars, MountMode, parse_mount_mode
 
 _DOC = ConfigDict(extra="forbid", frozen=True)

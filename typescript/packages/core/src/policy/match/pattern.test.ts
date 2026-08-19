@@ -1,0 +1,62 @@
+// ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+// ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
+
+import { describe, expect, it } from 'vitest'
+
+import { WILDCARD } from '../constants.ts'
+import { intersectPatterns, patternMatches, patternNames, splitPattern } from './pattern.ts'
+
+describe('patterns', () => {
+  it('splitPattern drops trailing wildcards only', () => {
+    expect(splitPattern('git push')).toEqual(['git', 'push'])
+    expect(splitPattern('git *')).toEqual(['git'])
+    expect(splitPattern('git * *')).toEqual(['git'])
+    expect(splitPattern('git * --hard')).toEqual(['git', WILDCARD, '--hard'])
+    expect(splitPattern('  rm  ')).toEqual(['rm'])
+    expect(splitPattern('*')).toEqual([])
+  })
+
+  it('patternMatches is a token prefix', () => {
+    expect(patternMatches('rm', ['rm', '-rf', '/x'])).toBe(true)
+    expect(patternMatches('rm', ['rm'])).toBe(true)
+    expect(patternMatches('rm', ['rmdir'])).toBe(false)
+    expect(patternMatches('git push', ['git', 'push', 'origin', 'main'])).toBe(true)
+    expect(patternMatches('git push', ['git', 'pull'])).toBe(false)
+    expect(patternMatches('git push', ['git'])).toBe(false)
+    expect(patternMatches('git reset --hard', ['git', 'reset', '--hard', 'HEAD'])).toBe(true)
+    expect(patternMatches('git reset --hard', ['git', 'reset', 'HEAD', '--hard'])).toBe(false)
+    // A wildcard token is any one token; trailing it is redundant.
+    expect(patternMatches('git * --hard', ['git', 'reset', '--hard'])).toBe(true)
+    expect(patternMatches('git * --hard', ['git', 'reset', '--soft'])).toBe(false)
+    expect(patternMatches('git *', ['git'])).toBe(true)
+    expect(patternMatches('*', ['anything', 'at', 'all'])).toBe(true)
+  })
+
+  it('patternNames starts a line of the command', () => {
+    expect(patternNames('git log', 'git')).toBe(true)
+    expect(patternNames('git log', 'log')).toBe(false)
+    expect(patternNames('*', 'rm')).toBe(true)
+  })
+
+  it('intersectPatterns unifies token by token', () => {
+    expect(intersectPatterns(['git'], ['git log', 'git diff'])).toEqual(['git log', 'git diff'])
+    expect(intersectPatterns(['ls', 'cat', 'git'], ['cat', 'git log'])).toEqual(['cat', 'git log'])
+    expect(intersectPatterns(['*'], ['ls'])).toEqual(['ls'])
+    expect(intersectPatterns(['git * --hard'], ['git reset'])).toEqual(['git reset --hard'])
+    expect(intersectPatterns(['rm'], ['ls'])).toEqual([])
+    expect(intersectPatterns(['*'], ['*'])).toEqual(['*'])
+    // Duplicates collapse, order follows the first list.
+    expect(intersectPatterns(['git', 'git log'], ['git log'])).toEqual(['git log'])
+  })
+})

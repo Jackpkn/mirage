@@ -13,7 +13,7 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 from mirage.policy.base import Policy
-from mirage.policy.match import line_allowed, op_hit, rule_hit
+from mirage.policy.match import line_allowed, match_op, match_rule
 from mirage.policy.types import (Action, Ask, CommandContext, CommandRule,
                                  Deny, DenyScope, OpsContext,
                                  SessionCommandsQuery)
@@ -75,7 +75,7 @@ class PermissionsPolicy(Policy):
             return Deny(f"{program} is not allowed")
         for spec in layers:
             for rule in spec.deny:
-                hit = rule_hit(rule, self._scope(rule), ctx)
+                hit = match_rule(rule, self._scope(rule), ctx)
                 if hit is None:
                     continue
                 if hit.operand is None:
@@ -83,13 +83,13 @@ class PermissionsPolicy(Policy):
                 return Deny(f"{hit.operand}: {rule.reason}", DenyScope.OPERAND)
         for spec in layers:
             for rule in spec.ask:
-                if rule_hit(rule, self._scope(rule), ctx) is not None:
+                if match_rule(rule, self._scope(rule), ctx) is not None:
                     return Ask(rule.reason, rule)
         return None
 
     async def pre_ops(self, ctx: OpsContext) -> Action | None:
         for spec in self._sessions.commands_of(ctx.session_id):
             for rule in spec.deny:
-                if op_hit(rule, self._scope(rule), ctx):
+                if match_op(rule, self._scope(rule), ctx):
                     return Deny(rule.reason)
         return None

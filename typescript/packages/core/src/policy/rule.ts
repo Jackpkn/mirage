@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import type { Policy } from './base.ts'
-import { opHit, ruleHit } from './match.ts'
+import { matchOp, matchRule } from './match/rule.ts'
 import type { Action, CommandContext, CommandRule, OpsContext } from './types.ts'
 import type { HiddenPaths } from '../types.ts'
 import { classifyPaths } from '../utils/hidden.ts'
@@ -38,7 +38,7 @@ export class RulePolicy implements Policy {
   }
 
   preCommand(ctx: CommandContext): Action | null {
-    const hit = ruleHit(this.rule, this.scope, ctx)
+    const hit = matchRule(this.rule, this.scope, ctx)
     if (hit === null) return null
     if (hit.operand === null) return { kind: 'deny', reason: this.rule.reason }
     return { kind: 'deny', reason: `${hit.operand}: ${this.rule.reason}`, scope: 'operand' }
@@ -49,7 +49,7 @@ export class RulePolicy implements Policy {
     // holds at the op door, so FUSE, programmatic ops, and the warm
     // cache cannot bypass it. Command-scoped rules stay command-layer:
     // an op does not know which command issued it.
-    if (opHit(this.rule, this.scope, ctx)) return { kind: 'deny', reason: this.rule.reason }
+    if (matchOp(this.rule, this.scope, ctx)) return { kind: 'deny', reason: this.rule.reason }
     return null
   }
 }

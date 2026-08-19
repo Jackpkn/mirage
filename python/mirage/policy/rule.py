@@ -13,7 +13,7 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 from mirage.policy.base import Policy
-from mirage.policy.match import op_hit, rule_hit
+from mirage.policy.match import match_op, match_rule
 from mirage.policy.types import (Action, CommandContext, CommandRule, Deny,
                                  DenyScope, OpsContext)
 from mirage.utils.hidden import classify_paths
@@ -39,7 +39,7 @@ class RulePolicy(Policy):
         self._scope = classify_paths(rule.paths)
 
     async def pre_command(self, ctx: CommandContext) -> Action | None:
-        hit = rule_hit(self.rule, self._scope, ctx)
+        hit = match_rule(self.rule, self._scope, ctx)
         if hit is None:
             return None
         if hit.operand is None:
@@ -51,6 +51,6 @@ class RulePolicy(Policy):
         # also holds at the op doors, so FUSE, programmatic ops, and
         # the warm cache cannot bypass it. Command-scoped rules stay
         # command-layer: an op does not know which command issued it.
-        if op_hit(self.rule, self._scope, ctx):
+        if match_op(self.rule, self._scope, ctx):
             return Deny(self.rule.reason)
         return None

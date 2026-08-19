@@ -14,7 +14,7 @@
 
 import { describe, expect, it } from 'vitest'
 
-import { DEFAULT_ASK_REASON, DEFAULT_DENY_REASON } from '../../policy/types.ts'
+import { DEFAULT_ASK_REASON, DEFAULT_DENY_REASON } from '../../policy/constants.ts'
 import { MountMode } from '../../types.ts'
 import {
   parseMountPermissions,

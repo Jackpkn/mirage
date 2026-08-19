@@ -13,6 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { RecordApprover, requestId, type Approver } from './approver.ts'
+import { EXACT_LINE_DECISIONS } from './constants.ts'
 import type {
   ApprovalDecision,
   ApprovalRequest,
@@ -25,10 +26,6 @@ import type {
   Pending,
   SessionGrantsQuery,
 } from './types.ts'
-
-// The exact-line decisions: each answers one retry of the words and cwd
-// of the request, and is consumed by it.
-const EXACT_LINE: ReadonlySet<ApprovalDecision> = new Set(['allow_once', 'deny'])
 
 function sameWords(a: readonly string[], b: readonly string[]): boolean {
   return a.length === b.length && a.every((w, i) => w === b[i])
@@ -138,7 +135,11 @@ export class Approvals {
     const sessionId = ctx.sessionId ?? ''
     const held = this.grants(sessionId)
     for (const grant of held) {
-      if (EXACT_LINE.has(grant.decision) && sameWords(grant.argv, argv) && grant.cwd === ctx.cwd) {
+      if (
+        EXACT_LINE_DECISIONS.has(grant.decision) &&
+        sameWords(grant.argv, argv) &&
+        grant.cwd === ctx.cwd
+      ) {
         this.set(
           sessionId,
           held.filter((g) => g !== grant),
