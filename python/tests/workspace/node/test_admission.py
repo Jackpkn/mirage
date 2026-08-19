@@ -12,14 +12,19 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import errno
+
 import pytest
 
+from mirage.policy import PolicyDenied
+from mirage.policy.types import CommandRule, CommandsSpec
 from mirage.resource.ram import RAMResource
 from mirage.shell import parse
 from mirage.types import MountMode
 from mirage.workspace import Workspace
 from mirage.workspace.expand.classify import classify_parts
-from mirage.workspace.node.admission import admit, admit_line, policy_scopes
+from mirage.workspace.node.admission import (Admitted, admit, admit_line,
+                                             policy_scopes)
 from mirage.workspace.session import SessionProfile, WorkspacePermissions
 from mirage.workspace.session.permissions import PathsBlock
 
@@ -105,9 +110,11 @@ async def test_admit_line_refuses_the_first_offending_command():
         assert refusal is not None
         assert (refusal.exit_code,
                 refusal.stderr) == (1, b"cat: /data/secret: sealed\n")
-        # The same gate, one command at a time.
-        assert await admit("rm", ["/data/x"], [], session, registry,
-                           namespace) is None
+        # The same gate, one command at a time; a command that gets
+        # through comes back as its gate.
+        assert isinstance(
+            await admit("rm", ["/data/x"], [], session, registry, namespace),
+            Admitted)
     finally:
         await ws.close()
 
@@ -132,8 +139,9 @@ async def test_a_bare_listing_reads_the_working_directory():
                                   registry,
                                   namespace,
                                   stdin=stdin)
-            return None if refusal is None else (refusal.exit_code,
-                                                 refusal.stderr.decode())
+            return None if isinstance(refusal,
+                                      Admitted) else (refusal.exit_code,
+                                                      refusal.stderr.decode())
 
         assert await run("ls") is None
         await ws.execute("cd /data/private")
@@ -227,8 +235,9 @@ async def test_a_hidden_path_is_no_path_to_any_policy():
             words = classify_parts([name, *args], registry, session.cwd)
             refusal = await admit(name, list(args), words[1:], session,
                                   registry, namespace)
-            return None if refusal is None else (refusal.exit_code,
-                                                 refusal.stderr.decode())
+            return None if isinstance(refusal,
+                                      Admitted) else (refusal.exit_code,
+                                                      refusal.stderr.decode())
 
         assert await run(plain, "cat",
                          "/data/secret") == (1, "cat: /data/secret: sealed\n")
@@ -265,5 +274,66 @@ async def test_admit_line_without_rules_admits_the_words_as_typed():
                      "ls | xargs cat"):
             assert await admit_line(parse(text), session, ws._registry,
                                     ws._namespace) is None
+    finally:
+        await ws.close()
+
+
+def test_the_admitted_gate_judges_what_the_line_did_not_name():
+    deny = CommandRule(reason="sealed", paths=("/data/sealed", ))
+    ask = CommandRule(reason="nod",
+                      commands=("grep", ),
+                      paths=("/data/asked/*", ))
+    layers = (CommandsSpec(ask=(ask, ), deny=(deny, )), )
+    gate = Admitted(layers=layers,
+                    tokens=("grep", "-r", "x", "/data"),
+                    judged=frozenset({"/data"}),
+                    granted=(),
+                    scoped=True)
+    gate.check("/data")
+    gate.check("/data/open/o")
+    with pytest.raises(PolicyDenied) as info:
+        gate.check("/data/sealed/s")
+    assert info.value.errno == errno.EACCES
+    assert info.value.strerror == "sealed"
+    assert info.value.filename == "/data/sealed/s"
+    with pytest.raises(PolicyDenied) as info:
+        gate.check("/data/asked/a")
+    assert info.value.strerror == "nod"
+    # An operand the gate judged passes whatever the rules say about it
+    # (the line was admitted on it), and a grant under the asking rule
+    # opens its scope to the walk.
+    judged = Admitted(layers=layers,
+                      tokens=("grep", "x", "/data/asked/a"),
+                      judged=frozenset({"/data/asked/a"}),
+                      granted=(),
+                      scoped=True)
+    judged.check("/data/asked/a")
+    granted = Admitted(layers=layers,
+                       tokens=("grep", "-r", "x", "/data/asked"),
+                       judged=frozenset({"/data/asked"}),
+                       granted=(ask, ),
+                       scoped=True)
+    granted.check("/data/asked/a")
+
+
+@pytest.mark.asyncio
+async def test_admit_reports_the_grant_the_line_runs_under_and_its_scope():
+    ws = _ws()
+    try:
+        session = ws._session_mgr.get(ws._session_mgr.default_id)
+        registry, namespace = ws._registry, ws._namespace
+        words = classify_parts(["rm", "/data/x"], registry, session.cwd)
+        verdict = await admit("rm", ["/data/x"], words[1:], session, registry,
+                              namespace)
+        assert isinstance(verdict, Admitted)
+        assert verdict.tokens == ("rm", "/data/x")
+        assert verdict.judged == frozenset({"/data/x"})
+        assert verdict.granted == ()
+        # `rm` is under no path rule in this document; `cat` is.
+        assert not verdict.scoped
+        words = classify_parts(["cat", "/data/a"], registry, session.cwd)
+        verdict = await admit("cat", ["/data/a"], words[1:], session, registry,
+                              namespace)
+        assert isinstance(verdict, Admitted) and verdict.scoped
     finally:
         await ws.close()

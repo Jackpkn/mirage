@@ -300,6 +300,7 @@ export async function findGeneric(
   find: (root: PathSpec, options: FindOptions) => Promise<string[]>,
   stat?: (spec: PathSpec) => Promise<FileStat>,
   dirEmpty?: (spec: PathSpec) => Promise<boolean>,
+  unreadable?: () => string[],
 ): Promise<CommandFnResult> {
   const fl = new FlagView(opts.flags, specOf('find'))
   const nameFlag = fl.asStr('name') ?? null
@@ -449,6 +450,13 @@ export async function findGeneric(
       // (rate limits, auth failures) must surface.
       if (isEnoent(err)) continue
       throw err
+    }
+    // GNU names a directory it may not open in the walk's own order,
+    // lists the directory itself, and exits 1 like a start point it
+    // could not read. Drained per start point, so the lines stay under
+    // the operand that walked them.
+    for (const shown of respellRaw(unreadable?.() ?? [], root.virtual, root.rawPath)) {
+      missing.push(`find: '${shown}': Permission denied`)
     }
     const rootKey = rstripSlash(root.mountPath) || '/'
     const rootMatches: string[] = []

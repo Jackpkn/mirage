@@ -1438,8 +1438,34 @@
       "facet": "cli",
       "mail": "email/v1",
       "clis": [
-        "himalaya"
+        "himalaya",
+        "h1",
+        "h2"
       ],
+      "sessions": {
+        "crew": {
+          "commands": {
+            "allow": ["h1", "h2"],
+            "ask": [
+              {
+                "reason": "outbound mail needs a nod",
+                "commands": ["h1 message send"]
+              }
+            ],
+            "deny": [
+              {
+                "reason": "beta is read-only",
+                "commands": ["h2 message send"]
+              }
+            ]
+          }
+        },
+        "solo": {
+          "commands": {
+            "allow": ["h1", "type"]
+          }
+        }
+      },
       "mounts": [
         {
           "path": "/mail",
@@ -2045,7 +2071,11 @@
             "python3",
             "ln",
             "mv",
-            "rmdir"
+            "rmdir",
+            "du",
+            "cp",
+            "tar",
+            "tree"
           ],
           "ask": [
             {
@@ -2152,6 +2182,10 @@
               {
                 "reason": "frozen",
                 "paths": ["/scratch/locked/*"]
+              },
+              {
+                "reason": "walled",
+                "paths": ["/scratch/wk/sealed"]
               }
             ]
           }

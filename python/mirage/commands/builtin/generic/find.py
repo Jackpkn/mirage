@@ -706,6 +706,7 @@ async def _walk_collect(
     maxdepth: int | None,
     depth: int,
     acc: list[tuple[str, str]],
+    unreadable: list[str] | None = None,
 ) -> None:
     if maxdepth is not None and depth > maxdepth:
         return
@@ -714,6 +715,15 @@ async def _walk_collect(
     except FileNotFoundError:
         # Only vanished dirs are skipped; API errors (rate limit, auth)
         # propagate.
+        return
+    except PermissionError:
+        # A directory the session may not open (a rule refused it at
+        # the guarded readdir): GNU names it and walks on, so a caller
+        # that collects those gets the path and the walk continues; one
+        # that does not is not left with a silent gap in its listing.
+        if unreadable is None:
+            raise
+        unreadable.append(spec.virtual)
         return
     prefix = mount_prefix_of(spec.virtual, spec.resource_path)
     for child in children:
@@ -736,7 +746,7 @@ async def _walk_collect(
                                   resolved=False,
                                   resource_path=mount_key(trimmed, prefix))
             await _walk_collect(readdir, stat, child_spec, index, maxdepth,
-                                depth + 1, acc)
+                                depth + 1, acc, unreadable)
 
 
 async def link_results(
@@ -837,6 +847,7 @@ async def walk_find(
     args: FindArgs,
     links: LinkView | None = None,
     follow: bool = False,
+    unreadable: list[str] | None = None,
 ) -> list[str]:
     collected: list[tuple[str, str]] = []
     prefix = mount_prefix_of(search_path.virtual, search_path.resource_path)
@@ -853,7 +864,7 @@ async def walk_find(
     # (Box answers ENOTDIR) or a wasted round trip everywhere else.
     if root_stat is None or root_stat.type == FileType.DIRECTORY:
         await _walk_collect(readdir, stat, search_path, index, args.maxdepth,
-                            1, collected)
+                            1, collected, unreadable)
     tree = prefix_path_nodes(args_to_tree(args), prefix)
     need_empty = tree_has_empty(tree)
     results: list[str] = []
@@ -1041,14 +1052,22 @@ async def find_walk_generic(
         if not start.walk:
             rows = start.results
         else:
+            unreadable: list[str] = []
             walked = await walk_find(search,
                                      readdir=readdir,
                                      stat=stat,
                                      index=opts.index,
                                      args=args,
                                      links=links,
-                                     follow=parsed.follow)
+                                     follow=parsed.follow,
+                                     unreadable=unreadable)
             rows = respell_raw(walked, search.virtual, search.raw_path)
+            # GNU names a directory it may not open in the walk's own
+            # order, lists the directory itself, and exits 1 like a
+            # start point it could not read.
+            missing.extend(f"find: '{shown}': Permission denied"
+                           for shown in respell_raw(unreadable, search.virtual,
+                                                    search.raw_path))
         results.extend(rows)
         if args.printf is not None:
             printf_pairs.extend((row, search) for row in rows)

@@ -16,7 +16,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Iterable
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum, StrEnum
-from typing import TYPE_CHECKING, Annotated, Any, ClassVar, TypeAlias
+from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Protocol, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field, NonNegativeInt
 
@@ -300,6 +300,38 @@ class HiddenVars:
 
     names: tuple[str, ...] = ()
     patterns: tuple[str, ...] = ()
+
+
+class EntryGate(Protocol):
+    """What a command's own I/O asks before touching an entry it
+    reached below its operands.
+
+    The admission gate judges the paths a line names; a walk (``grep
+    -r``, ``find``, ``du``, ``cp -r``, ``tar``) then reaches entries no
+    rule has seen. The dispatcher binds the admitted command's gate to
+    the session context for the command's run, and the commands tier
+    reads it there, so the tier that enforces the rules never imports
+    the tier that states them.
+
+    Args:
+        scoped (bool): whether a path rule in force reads this command's
+            paths at all; a native walk (a backend's own find or du)
+            yields to the guarded readdir walk while it is set, so each
+            entry passes the gate.
+    """
+
+    @property
+    def scoped(self) -> bool:
+        ...
+
+    def check(self, virtual: str) -> None:
+        """Raise when a rule in force refuses this entry for the running
+        command; return when the command may touch it.
+
+        Args:
+            virtual (str): absolute virtual path of the entry.
+        """
+        ...
 
 
 MOUNT_MODE_ALIASES: dict[str, MountMode] = {

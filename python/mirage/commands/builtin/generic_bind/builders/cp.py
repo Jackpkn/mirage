@@ -27,9 +27,10 @@ from mirage.commands.builtin.generic_bind.adapter import (Builder, CommandIO,
 from mirage.commands.config import CommandOpts
 from mirage.commands.spec import SPECS
 from mirage.commands.spec.types import FlagView
+from mirage.context import path_rules_active
 from mirage.io.types import ByteSource, IOResult
 from mirage.ops.types import StatOverlay
-from mirage.types import NativeCopy, PathSpec
+from mirage.types import NativeCopy, PathSpec, PrimitiveCopy
 from mirage.utils.key_prefix import rekey
 
 
@@ -78,6 +79,13 @@ def overlayable_stat(ops: CommandIO, accessor: Accessor,
                    index=index)
 
 
+async def _write(op: OperationFn,
+                 accessor: Accessor,
+                 path: PathSpec,
+                 data: bytes = b"") -> None:
+    await op(accessor, path, data)
+
+
 async def cp(ops: CommandIO, accessor: Accessor, paths: list[PathSpec],
              texts: list[str],
              opts: CommandOpts) -> tuple[ByteSource | None, IOResult]:
@@ -88,10 +96,26 @@ async def cp(ops: CommandIO, accessor: Accessor, paths: list[PathSpec],
     paths = await ops.resolve_glob(accessor, paths, opts.index)
     dir_copy = partial(ops.dir_copy, accessor) if ops.dir_copy else None
     mkdir = partial(ops.mkdir, accessor) if ops.mkdir else None
-    strategy = NativeCopy(copy=partial(ops.require(Operation.COPY), accessor),
-                          find=_make_find(ops, accessor, opts.index),
-                          dir_copy=dir_copy,
-                          mkdir=mkdir)
+    strategy: NativeCopy | PrimitiveCopy
+    if path_rules_active() and ops.write is not None and mkdir is not None:
+        # A native copy moves a tree in one backend call and a native
+        # find lists it, neither of which passes an entry through the
+        # guard the way a read does; while a path rule scopes cp, the
+        # primitive walk copies entry by entry (the cross-mount relay's
+        # own path), which is also where GNU's per-entry refusals are
+        # worded.
+        strategy = PrimitiveCopy(read_bytes=bound_op(ops.read_bytes, accessor,
+                                                     opts.index),
+                                 write=partial(_write, ops.write, accessor),
+                                 mkdir=mkdir,
+                                 readdir=bound_op(ops.readdir, accessor,
+                                                  opts.index))
+    else:
+        strategy = NativeCopy(copy=partial(ops.require(Operation.COPY),
+                                           accessor),
+                              find=_make_find(ops, accessor, opts.index),
+                              dir_copy=dir_copy,
+                              mkdir=mkdir)
     overlay = opts.ns.stat_overlay if opts.ns is not None else None
     return await generic_cp(paths,
                             strategy=strategy,

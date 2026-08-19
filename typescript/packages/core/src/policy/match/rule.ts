@@ -13,9 +13,9 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import type { HiddenPaths } from '../../types.ts'
-import { pathCovers, pathHidden } from '../../utils/hidden.ts'
-import { SUBTREE_COMMANDS, SUBTREE_OPS } from '../constants.ts'
-import type { CommandContext, CommandRule, OpsContext } from '../types.ts'
+import { classifyPaths, pathCovers, pathHidden } from '../../utils/hidden.ts'
+import { METADATA_OPS, SUBTREE_COMMANDS, SUBTREE_OPS } from '../constants.ts'
+import type { CommandContext, CommandRule, CommandsSpec, OpsContext } from '../types.ts'
 import { lineTokens } from './allow.ts'
 import { patternMatches } from './pattern.ts'
 
@@ -96,13 +96,86 @@ function subtreeMatch(scope: HiddenPaths, ctx: CommandContext): RuleMatch | null
  * does not know which command issued it. The op's path is tested against
  * the scope, and an op that moves or removes a whole subtree
  * (SUBTREE_OPS) is also refused on the directory holding the scope or on
- * any ancestor, since it would take the scope along.
+ * any ancestor, since it would take the scope along. A metadata op
+ * (METADATA_OPS) passes: deny is present and refused, so the entry stats
+ * and its content is what the door withholds.
  */
 export function matchOp(rule: CommandRule, scope: HiddenPaths | null, ctx: OpsContext): boolean {
-  if ((rule.commands ?? []).length > 0 || scope === null) return false
+  // A metadata op passes: deny is present and refused, so the entry
+  // stats and its content is what the door withholds.
+  if ((rule.commands ?? []).length > 0 || scope === null || METADATA_OPS.has(ctx.op)) return false
   if (pathHidden(scope, ctx.path.virtual)) return true
   // An op that moves or removes a whole subtree is also refused on the
   // directory holding the scope or on any ancestor: it would take the
   // scope along.
   return SUBTREE_OPS.has(ctx.op) && pathCovers(scope, ctx.path.virtual)
+}
+
+const scopes = new WeakMap<CommandRule, HiddenPaths | null>()
+
+/**
+ * A rule's paths, classified once and remembered: null when the rule
+ * names none, so a caller can tell a whole-line rule from a path-scoped
+ * one without re-reading the document grammar.
+ */
+export function ruleScope(rule: CommandRule): HiddenPaths | null {
+  const known = scopes.get(rule)
+  if (known !== undefined) return known
+  const scope = classifyPaths(rule.paths ?? [])
+  scopes.set(rule, scope)
+  return scope
+}
+
+/**
+ * Whether a rule reaches an entry a command touches on its own, below
+ * its operands: the rule names the line (its command patterns against
+ * the line's tokens, none meaning every command) and its paths hold the
+ * entry. A rule with no paths spoke about the whole line at admission
+ * and has nothing to add at an entry; the directory holding a scope is
+ * not in it, so a listing still shows a refused entry's name, which is
+ * what deny means: present, and refused.
+ */
+export function matchIo(
+  rule: CommandRule,
+  scope: HiddenPaths | null,
+  tokens: readonly string[],
+  virtual: string,
+): boolean {
+  if (scope === null) return false
+  const commands = rule.commands ?? []
+  if (commands.length > 0 && !commands.some((p) => patternMatches(p, tokens))) return false
+  return pathHidden(scope, virtual)
+}
+
+/**
+ * The reason a command may not touch an entry it reached on its own,
+ * null when it may.
+ *
+ * The same precedence the admission gate applies to a line: the deny
+ * rules in tier order, the first that reaches the entry refusing it;
+ * then the ask rules in tier order, where the first that reaches it
+ * refuses unless the line holds a grant under that rule (the nod the gate
+ * took for `rm -r /x` covers the entries under `/x`; a walk that wanders
+ * into an asked scope from outside gets no nod mid-command, so it is
+ * refused and the agent names the path to be asked).
+ */
+export function ioRefusal(
+  layers: readonly CommandsSpec[],
+  tokens: readonly string[],
+  virtual: string,
+  granted: readonly CommandRule[],
+): string | null {
+  for (const spec of layers) {
+    for (const rule of spec.deny) {
+      if (matchIo(rule, ruleScope(rule), tokens, virtual)) return rule.reason
+    }
+  }
+  for (const spec of layers) {
+    for (const rule of spec.ask) {
+      if (matchIo(rule, ruleScope(rule), tokens, virtual)) {
+        return granted.includes(rule) ? null : rule.reason
+      }
+    }
+  }
+  return null
 }

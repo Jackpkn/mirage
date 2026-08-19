@@ -16,11 +16,14 @@ import { describe, expect, it } from 'vitest'
 import {
   assertMountAllowed,
   effectiveMountMode,
+  getAdmission,
   getCurrentSession,
   getCurrentSessionFor,
   hiddenPathsActive,
   MountNotAllowedError,
   pathAllowed,
+  pathRulesActive,
+  runWithAdmission,
   runWithSession,
   sessionPathAllowed,
 } from './session_context.ts'
@@ -219,5 +222,28 @@ describe('bound hides', () => {
       expect(pathAllowed('/repo/.env')).toBe(true)
       return Promise.resolve()
     })
+  })
+})
+
+describe('the admission binding', () => {
+  it('is scoped to one command and hands the outer one back', async () => {
+    const gate = (scoped: boolean) => ({ scoped, check: () => undefined })
+    expect(getAdmission()).toBeNull()
+    expect(pathRulesActive()).toBe(false)
+    const outer = gate(true)
+    await runWithAdmission(outer, async () => {
+      expect(getAdmission()).toBe(outer)
+      expect(pathRulesActive()).toBe(true)
+      // A nested line binds its own and hands the outer one back.
+      const inner = gate(false)
+      await runWithAdmission(inner, () => {
+        expect(getAdmission()).toBe(inner)
+        expect(pathRulesActive()).toBe(false)
+        return Promise.resolve()
+      })
+      expect(getAdmission()).toBe(outer)
+    })
+    expect(getAdmission()).toBeNull()
+    expect(pathRulesActive()).toBe(false)
   })
 })

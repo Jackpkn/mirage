@@ -108,8 +108,9 @@ class Workspace:
         console_factory: ConsoleFactory | None = None,
         runtimes: list[Runtime | str] | None = None,
         policy: PolicyFn | None = None,
-        permissions: WorkspacePermissions | None = None,
-        profiles: Mapping[str, SessionProfile] | None = None,
+        permissions: WorkspacePermissions | Mapping[str, Any] | None = None,
+        profiles: Mapping[str, SessionProfile | Mapping[str, Any]]
+        | None = None,
         policies: list[Policy] | None = None,
         approver: Approver | None = None,
         clis: dict[str, tuple[str | CLISpec, dict[str, Any] | None]]
@@ -118,11 +119,17 @@ class Workspace:
         self._registry = MountRegistry()
         # The permissions document, workspace tier: `permissions` binds
         # every session, `profiles` are the named templates a session is
-        # created from. Every named profile resolves once here so an
-        # unknown `extends` or a cycle fails at construction, not at the
-        # first create_session.
-        self._permissions = permissions
-        self._profiles: dict[str, SessionProfile] = dict(profiles or {})
+        # created from. Both accept the plain document a YAML file or the
+        # TypeScript constructor would hold; model_validate is a no-op on
+        # an already-built model. Every named profile resolves once here
+        # so an unknown `extends` or a cycle fails at construction, not
+        # at the first create_session.
+        self._permissions = (WorkspacePermissions.model_validate(permissions)
+                             if permissions is not None else None)
+        self._profiles: dict[str, SessionProfile] = {
+            name: SessionProfile.model_validate(doc)
+            for name, doc in (profiles or {}).items()
+        }
         for name in self._profiles:
             inherit(self._profiles, name)
         # One provider scopes every control-plane store by workspace id;
@@ -191,11 +198,13 @@ class Workspace:
         # stamped onto the default session now and onto every session
         # created or hydrated later.
         self._session_mgr.bound_hidden = bound_hidden(
-            permissions, {spec.prefix: spec.permissions
-                          for spec in specs})
+            self._permissions,
+            {spec.prefix: spec.permissions
+             for spec in specs})
         self._session_mgr.bound_commands = bound_commands(
-            permissions, {spec.prefix: spec.permissions
-                          for spec in specs})
+            self._permissions,
+            {spec.prefix: spec.permissions
+             for spec in specs})
         # The workspace's own session is a session created without a
         # name, so `profiles.default` shapes it too (design 3.4): the
         # primary agent is not the one agent the document cannot reach.
@@ -660,16 +669,16 @@ class Workspace:
         session_id: str,
         mounts: Mapping[str, MountMode | str] | Sequence[str] | None = None,
         *,
-        profile: str | SessionProfile | None = None,
-        permissions: SessionProfile | None = None,
+        profile: str | SessionProfile | Mapping[str, Any] | None = None,
+        permissions: SessionProfile | Mapping[str, Any] | None = None,
     ) -> Session:
         """Create a session from a profile, optionally tightened inline.
 
         The profile is a name from the workspace's ``profiles`` (or the
-        ``default`` one when none is named and one exists), or a
-        SessionProfile object; ``permissions`` and ``mounts`` narrow it
-        further (mounts intersect at the weaker mode, hides union;
-        design 3.4). Nothing here can widen what the profile grants.
+        ``default`` one when none is named and one exists), or a profile
+        document; ``permissions`` and ``mounts`` narrow it further
+        (mounts intersect at the weaker mode, hides union; design 3.4).
+        Nothing here can widen what the profile grants.
 
         Args:
             session_id (str): unique id for the session.
@@ -680,16 +689,20 @@ class Workspace:
                 (or one bare prefix) keeps each mount at its own
                 configured mode. A set or a generator is refused, so
                 the same grant reads the same way in TypeScript.
-            profile (str | SessionProfile | None): the role to create
-                the session from.
-            permissions (SessionProfile | None): an inline document that
-                tightens the profile.
+            profile (str | SessionProfile | Mapping[str, Any] | None):
+                the role to create the session from: a name, a
+                SessionProfile, or its plain document.
+            permissions (SessionProfile | Mapping[str, Any] | None): an
+                inline document that tightens the profile.
 
         Raises:
             PolicyError: an unknown profile name or a broken chain.
         """
+        if isinstance(profile, Mapping):
+            profile = SessionProfile.model_validate(profile)
         base = resolve_profile(self._profiles, profile)
-        inline = permissions
+        inline = (SessionProfile.model_validate(permissions)
+                  if permissions is not None else None)
         if mounts is not None:
             inline = tighten(inline,
                              SessionProfile.model_validate({"mounts": mounts}))

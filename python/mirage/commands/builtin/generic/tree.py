@@ -26,6 +26,8 @@ _INDENT = "    "
 Readdir = Callable[[PathSpec, IndexCacheStore | None], Awaitable[list[str]]]
 Stat = Callable[[PathSpec, IndexCacheStore | None], Awaitable[FileStat]]
 
+UNOPENABLE_MARK = "  [error opening dir]"
+
 
 async def _cross_readdir(readdir_path: ReaddirPath, path: PathSpec,
                          index: IndexCacheStore | None) -> list[str]:
@@ -102,15 +104,25 @@ async def _walk(
     mounts: MountView | None = None,
     cross_readdir: Readdir | None = None,
     cross_stat: Stat | None = None,
-) -> tuple[list[str], int, int]:
+) -> tuple[list[str], int, int, int]:
+    """One directory's lines, its counts, and how many directories in
+    its subtree (itself included) could not be opened.
+
+    A directory the walk could not open (a rule refused it below the
+    operand) contributes no lines and counts itself, so the caller
+    marks its own line the way GNU does and the run exits 2; the
+    refusal itself is kept in ``warnings`` for the root case, which has
+    no line to mark.
+    """
     lines: list[str] = []
     dirs = 0
     files = 0
+    unopened = 0
     try:
         entries = sorted(await readdir(path, index))
     except WALK_ERRORS as exc:
         warnings.append(f"tree: '{path.raw_path}': {exc}")
-        return lines, dirs, files
+        return lines, dirs, files, 1
     child_mounts = _child_mounts(mounts, path.virtual)
     if child_mounts:
         entries = sorted(set(entries) | set(child_mounts))
@@ -163,25 +175,33 @@ async def _walk(
         # routes every path to its owner.
         sub_readdir = cross_readdir if crossing and cross_readdir else readdir
         sub_stat = cross_stat if crossing and cross_stat else stat
-        sub, sub_dirs, sub_files = await _walk(entry_spec,
-                                               sub_readdir,
-                                               sub_stat,
-                                               prefix=prefix + extension,
-                                               depth=depth + 1,
-                                               max_depth=max_depth,
-                                               show_hidden=show_hidden,
-                                               ignore_pattern=ignore_pattern,
-                                               dirs_only=dirs_only,
-                                               match_pattern=match_pattern,
-                                               warnings=warnings,
-                                               index=index,
-                                               mounts=mounts,
-                                               cross_readdir=cross_readdir,
-                                               cross_stat=cross_stat)
+        sub, sub_dirs, sub_files, sub_unopened = await _walk(
+            entry_spec,
+            sub_readdir,
+            sub_stat,
+            prefix=prefix + extension,
+            depth=depth + 1,
+            max_depth=max_depth,
+            show_hidden=show_hidden,
+            ignore_pattern=ignore_pattern,
+            dirs_only=dirs_only,
+            match_pattern=match_pattern,
+            warnings=warnings,
+            index=index,
+            mounts=mounts,
+            cross_readdir=cross_readdir,
+            cross_stat=cross_stat)
+        if sub_unopened and not sub:
+            # The child itself could not be opened (one that opened but
+            # holds an unopenable grandchild lists at least that line):
+            # GNU marks it inline, on the directory's own line, and
+            # still counts it.
+            lines[-1] += UNOPENABLE_MARK
         lines.extend(sub)
         dirs += sub_dirs
         files += sub_files
-    return lines, dirs, files
+        unopened += sub_unopened
+    return lines, dirs, files, unopened
 
 
 def _summary(dirs: int, files: int, dirs_only: bool) -> str:
@@ -208,7 +228,7 @@ def _unopenable(root_label: str, dirs_only: bool, files: int,
         exit_code (int): process exit status.
     """
     body = [
-        f"{root_label}  [error opening dir]", "",
+        f"{root_label}{UNOPENABLE_MARK}", "",
         _summary(0, files, dirs_only)
     ]
     return format_records(body), IOResult(exit_code=exit_code)
@@ -273,21 +293,21 @@ async def tree(
                      if readdir_path is not None else None)
     cross_stat = (partial(_cross_stat, stat_path)
                   if stat_path is not None else None)
-    lines, dirs, files = await _walk(path,
-                                     readdir,
-                                     stat,
-                                     prefix="",
-                                     depth=0,
-                                     max_depth=max_depth,
-                                     show_hidden=show_hidden,
-                                     ignore_pattern=ignore_pattern,
-                                     dirs_only=dirs_only,
-                                     match_pattern=match_pattern,
-                                     warnings=warnings,
-                                     index=index,
-                                     mounts=mounts,
-                                     cross_readdir=cross_readdir,
-                                     cross_stat=cross_stat)
+    lines, dirs, files, unopened = await _walk(path,
+                                               readdir,
+                                               stat,
+                                               prefix="",
+                                               depth=0,
+                                               max_depth=max_depth,
+                                               show_hidden=show_hidden,
+                                               ignore_pattern=ignore_pattern,
+                                               dirs_only=dirs_only,
+                                               match_pattern=match_pattern,
+                                               warnings=warnings,
+                                               index=index,
+                                               mounts=mounts,
+                                               cross_readdir=cross_readdir,
+                                               cross_stat=cross_stat)
     # GNU signals an unopenable path with the inline "[error opening dir]"
     # marker and exit 2, and writes nothing to stderr. `warnings` therefore
     # only decides the marker; emitting it would diverge. With stat_path
@@ -300,7 +320,9 @@ async def tree(
     # count is omitted under -d).
     root_dirs = dirs + 1 if lines else 0
     body = [root_label] + lines + ["", _summary(root_dirs, files, dirs_only)]
-    return format_records(body), IOResult()
+    # A directory below the root it could not open is marked inline and
+    # makes the run exit 2, as GNU does, with nothing on stderr.
+    return format_records(body), IOResult(exit_code=2 if unopened else 0)
 
 
 __all__ = ["tree"]

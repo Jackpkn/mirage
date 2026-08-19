@@ -196,3 +196,41 @@ def test_bound_hides_alone_activate_the_gate():
         assert path_allowed("/repo/.env")
     finally:
         reset_current_session(token)
+
+
+class _Gate:
+
+    def __init__(self, scoped: bool, refused: str = "") -> None:
+        self.scoped = scoped
+        self.refused = refused
+        self.asked: list[str] = []
+
+    def check(self, virtual: str) -> None:
+        self.asked.append(virtual)
+        if virtual == self.refused:
+            raise PermissionError(virtual)
+
+
+def test_the_admission_binding_is_scoped_to_one_command():
+    from mirage.context import (get_admission, path_rules_active,
+                                reset_admission, set_admission)
+    assert get_admission() is None
+    assert not path_rules_active()
+    outer = _Gate(scoped=True)
+    token = set_admission(outer)
+    try:
+        assert get_admission() is outer
+        assert path_rules_active()
+        # A nested line binds its own and hands the outer one back.
+        inner = _Gate(scoped=False)
+        inner_token = set_admission(inner)
+        try:
+            assert get_admission() is inner
+            assert not path_rules_active()
+        finally:
+            reset_admission(inner_token)
+        assert get_admission() is outer
+    finally:
+        reset_admission(token)
+    assert get_admission() is None
+    assert not path_rules_active()

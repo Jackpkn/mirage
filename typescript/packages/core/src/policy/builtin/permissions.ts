@@ -12,18 +12,10 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import type { HiddenPaths } from '../../types.ts'
-import { classifyPaths } from '../../utils/hidden.ts'
 import type { Policy } from '../base.ts'
 import { lineAllowed } from '../match/allow.ts'
-import { matchOp, matchRule } from '../match/rule.ts'
-import type {
-  Action,
-  CommandContext,
-  CommandRule,
-  OpsContext,
-  SessionCommandsQuery,
-} from '../types.ts'
+import { matchOp, matchRule, ruleScope } from '../match/rule.ts'
+import type { Action, CommandContext, OpsContext, SessionCommandsQuery } from '../types.ts'
 
 /**
  * The permissions document's `commands` blocks, enforced.
@@ -48,19 +40,9 @@ import type {
  */
 export class PermissionsPolicy implements Policy {
   private readonly sessions: SessionCommandsQuery
-  private readonly scopes = new Map<CommandRule, HiddenPaths | null>()
 
   constructor(sessions: SessionCommandsQuery) {
     this.sessions = sessions
-  }
-
-  // A rule's paths, classified once and remembered.
-  private scope(rule: CommandRule): HiddenPaths | null {
-    const known = this.scopes.get(rule)
-    if (known !== undefined) return known
-    const scope = classifyPaths(rule.paths ?? [])
-    this.scopes.set(rule, scope)
-    return scope
   }
 
   preCommand(ctx: CommandContext): Action | null {
@@ -74,7 +56,7 @@ export class PermissionsPolicy implements Policy {
     }
     for (const spec of layers) {
       for (const rule of spec.deny) {
-        const hit = matchRule(rule, this.scope(rule), ctx)
+        const hit = matchRule(rule, ruleScope(rule), ctx)
         if (hit === null) continue
         if (hit.operand === null) return { kind: 'deny', reason: rule.reason }
         return { kind: 'deny', reason: `${hit.operand}: ${rule.reason}`, scope: 'operand' }
@@ -82,7 +64,7 @@ export class PermissionsPolicy implements Policy {
     }
     for (const spec of layers) {
       for (const rule of spec.ask) {
-        if (matchRule(rule, this.scope(rule), ctx) !== null) {
+        if (matchRule(rule, ruleScope(rule), ctx) !== null) {
           return { kind: 'ask', reason: rule.reason, rule }
         }
       }
@@ -93,7 +75,7 @@ export class PermissionsPolicy implements Policy {
   preOps(ctx: OpsContext): Action | null {
     for (const spec of this.sessions.commandsOf(ctx.sessionId ?? '')) {
       for (const rule of spec.deny) {
-        if (matchOp(rule, this.scope(rule), ctx)) return { kind: 'deny', reason: rule.reason }
+        if (matchOp(rule, ruleScope(rule), ctx)) return { kind: 'deny', reason: rule.reason }
       }
     }
     return null

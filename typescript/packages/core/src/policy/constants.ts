@@ -58,3 +58,13 @@ export const SUBTREE_OPS: ReadonlySet<string> = new Set(['rename', 'rmdir', 'rm_
  * whole.
  */
 export const SUBTREE_COMMANDS: ReadonlySet<string> = new Set(['rm', 'rmdir', 'mv'])
+
+/**
+ * Ops that read an entry's metadata and nothing of its content, which a
+ * deny rule lets through at the op door: deny means present and refused,
+ * not absent, so a listing shows the entry's name and size and the read
+ * of it is what fails, as GNU reports an unreadable file. The command
+ * tier's guard leaves its `stat` slot unwrapped for the same reason; a
+ * hidden path is the hide arm's, and stays ENOENT.
+ */
+export const METADATA_OPS: ReadonlySet<string> = new Set(['stat', 'exists'])

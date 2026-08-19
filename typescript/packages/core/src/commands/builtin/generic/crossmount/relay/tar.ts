@@ -46,7 +46,7 @@ export async function runTar(
         await dispatch('mkdir', p)
       },
       stat: statOp(dispatch),
-      walk: () => Promise.resolve([]),
+      walk: () => Promise.resolve({ paths: [] }),
       isDir: () => Promise.resolve(false),
     },
     true,

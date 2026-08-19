@@ -14,13 +14,15 @@
 
 import { sessionPathAllowed } from '../../context/session_context.ts'
 import type { ByteSource } from '../../io/types.ts'
-import { renderDeny, renderPending } from '../../policy/index.ts'
-import type { CommandContext, CommandsSpec } from '../../policy/index.ts'
-import { hasRules, readsArgs } from '../../policy/match/reads.ts'
+import { PolicyDenied, askRule, renderDeny, renderPending } from '../../policy/index.ts'
+import type { CommandContext, CommandRule, CommandsSpec } from '../../policy/index.ts'
+import { ioRefusal } from '../../policy/match/rule.ts'
+import { hasRules, readsArgs, scopesPaths } from '../../policy/match/reads.ts'
 import { commandNodes } from '../../runtime/policy/index.ts'
 import { getParts, getText, literalWord, splitEnvPrefix } from '../../shell/helpers.ts'
 import type { TSNodeLike } from '../../shell/types.ts'
 import { PathSpec } from '../../types.ts'
+import type { EntryGate } from '../../types.ts'
 import { CycleError, resolvePath } from '../../utils/path.ts'
 import { toScope } from '../executor/builtins/scope.ts'
 import { followPaths } from '../executor/builtins/links/links.ts'
@@ -48,6 +50,54 @@ import { innerLines, innerReadable, wordValue, type Word } from './inner_lines.t
 export interface Refusal {
   readonly stderr: Uint8Array
   readonly exitCode: number
+}
+
+function norm(virtual: string): string {
+  return virtual.replace(/\/+$/, '') || '/'
+}
+
+/**
+ * A command the gate let through, and what its own I/O may touch.
+ *
+ * The gate judged the paths the line names; a walk below them reaches
+ * entries no rule has seen, so the dispatcher binds this to the session
+ * context for the command's run and the commands tier asks it before each
+ * read, write or listing (`EntryGate`). The paths the gate already judged
+ * pass, since the line was admitted on them; every other entry is judged
+ * by `ioRefusal` under the same precedence the gate applied to the line,
+ * and a refusal is the op door's `PolicyDenied` (EACCES, the reason, the
+ * path), which every command renders as GNU's `Permission denied`.
+ * `granted` holds the ask rules the line runs under a grant for: the one
+ * the door answered for this line, and the session's standing ones.
+ */
+export class Admitted implements EntryGate {
+  readonly layers: readonly CommandsSpec[]
+  readonly tokens: readonly string[]
+  readonly judged: ReadonlySet<string>
+  readonly granted: readonly CommandRule[]
+  readonly scoped: boolean
+
+  constructor(init: {
+    layers: readonly CommandsSpec[]
+    tokens: readonly string[]
+    judged: ReadonlySet<string>
+    granted: readonly CommandRule[]
+    scoped: boolean
+  }) {
+    this.layers = init.layers
+    this.tokens = init.tokens
+    this.judged = init.judged
+    this.granted = init.granted
+    this.scoped = init.scoped
+  }
+
+  // Throw `PolicyDenied` when a rule in force refuses this entry for the
+  // running command.
+  check(virtual: string): void {
+    if (this.judged.has(norm(virtual))) return
+    const reason = ioRefusal(this.layers, this.tokens, virtual, this.granted)
+    if (reason !== null) throw new PolicyDenied(reason, virtual)
+  }
 }
 
 /**
@@ -147,7 +197,7 @@ export async function admit(
   namespace: Namespace | null,
   agentId = '',
   stdin: ByteSource | null = null,
-): Promise<Refusal | null> {
+): Promise<Refusal | Admitted> {
   if (!commandVisible(name, session)) {
     return { stderr: new TextEncoder().encode(`${name}: command not found\n`), exitCode: 127 }
   }
@@ -175,7 +225,18 @@ export async function admit(
   // never re-opens a deny.
   const verdict =
     asked !== null && asked.kind === 'ask' ? await registry.approvals.resolve(ctx, asked) : asked
-  if (verdict === null) return null
+  if (verdict === null) {
+    const granted = session.grants.filter((g) => g.decision === 'allow_session').map((g) => g.rule)
+    if (asked !== null && asked.kind === 'ask') granted.unshift(askRule(ctx, asked))
+    const layers = session.commandLayers
+    return new Admitted({
+      layers,
+      tokens,
+      judged: new Set(ctx.paths.map((p) => norm(p.virtual))),
+      granted,
+      scoped: scopesPaths(layers, name),
+    })
+  }
   const [stderr, exitCode] =
     verdict.kind === 'pending' ? renderPending(name, verdict) : renderDeny(name, verdict)
   return { stderr, exitCode }
@@ -211,7 +272,7 @@ async function admitWords(
   const name = wordValue(head)
   const args = words.slice(1).map(wordValue)
   const classified = classifyParts([name, ...args], registry, session.cwd)
-  const refusal = await admit(
+  const verdict = await admit(
     name,
     args,
     classified.slice(1),
@@ -220,7 +281,7 @@ async function admitWords(
     namespace,
     agentId,
   )
-  if (refusal !== null) return refusal
+  if (!(verdict instanceof Admitted)) return verdict
   const unread = words.slice(1).find((w) => w.text === null)?.raw
   if ((unread !== undefined || open) && readsArgs(layers, name)) {
     return refuse(

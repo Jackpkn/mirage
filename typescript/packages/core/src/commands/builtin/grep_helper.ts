@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { breToRegExp } from '../../utils/bre.ts'
-import { isMissingPath } from '../../utils/errors.ts'
+import { fsStrerror } from '../../utils/errors.ts'
 import { mountKey, mountPrefixOf } from '../../utils/key_prefix.ts'
 import { AsyncLineIterator } from '../../io/async_line_iterator.ts'
 import { materialize, type IOResult } from '../../io/types.ts'
@@ -613,7 +613,9 @@ export async function grepRecursive(
     entries = await readdirFn(path)
   } catch (err) {
     if (warnings !== null)
-      warnings.push(`grep: ${path}: ${err instanceof Error ? err.message : String(err)}`)
+      warnings.push(
+        `grep: ${path}: ${fsStrerror(err) ?? (err instanceof Error ? err.message : String(err))}`,
+      )
     return results
   }
   for (const entry of entries) {
@@ -622,7 +624,9 @@ export async function grepRecursive(
       s = await statFn(entry)
     } catch (err) {
       if (warnings !== null)
-        warnings.push(`grep: ${entry}: ${err instanceof Error ? err.message : String(err)}`)
+        warnings.push(
+          `grep: ${entry}: ${fsStrerror(err) ?? (err instanceof Error ? err.message : String(err))}`,
+        )
       continue
     }
     const filters = opts.filters ?? NO_FILTERS
@@ -658,7 +662,9 @@ export async function grepRecursive(
       }
     } catch (err) {
       if (warnings !== null)
-        warnings.push(`grep: ${entry}: ${err instanceof Error ? err.message : String(err)}`)
+        warnings.push(
+          `grep: ${entry}: ${fsStrerror(err) ?? (err instanceof Error ? err.message : String(err))}`,
+        )
     }
   }
   return results
@@ -701,8 +707,7 @@ async function operandIsDirectory(
 // reach here: it is recognized from its type before the read, because what a
 // read throws for one is whatever the backend happens to do about it.
 function operandError(path: string, err: unknown): string {
-  if (isMissingPath(err)) return `grep: ${path}: No such file or directory`
-  return `grep: ${path}: ${err instanceof Error ? err.message : String(err)}`
+  return `grep: ${path}: ${fsStrerror(err) ?? (err instanceof Error ? err.message : String(err))}`
 }
 
 export async function grepFilesOnly(

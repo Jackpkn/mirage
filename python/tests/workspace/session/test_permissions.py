@@ -19,6 +19,7 @@ import pytest
 from pydantic import ValidationError
 
 from mirage.commands.cli.specs import cli_spec_for
+from mirage.context import reset_current_session, set_current_session
 from mirage.policy import (Action, ApprovalRequest, Ask, CallbackApprover,
                            CommandContext, Policy)
 from mirage.policy.constants import DEFAULT_ASK_REASON, DEFAULT_DENY_REASON
@@ -1363,3 +1364,229 @@ async def test_a_blocking_approver_answers_inside_the_line():
         assert (await _line(ws, "cat /scratch/z"))[0] == 0
     finally:
         await ws.close()
+
+
+# A plain document, passed raw: the constructor validates it, so the
+# whole walk battery also pins the raw-doc door.
+WALK_DOC = {
+    "paths": {
+        "hide": ["/data/t/ghost"]
+    },
+    "commands": {
+        "allow": [
+            "mkdir", "echo", "ls", "cat", "grep", "find", "du", "cp", "tar",
+            "tree", "stat", "rm", "test"
+        ],
+        "ask": [{
+            "reason": "nod",
+            "commands": {
+                "grep": ["/data/t/asked/*"]
+            }
+        }],
+        "deny": [{
+            "reason": "private",
+            "commands": {
+                "grep": ["/data/t/private"],
+                "ls": ["/data/t/private"]
+            }
+        }, {
+            "reason": "sealed",
+            "paths": ["/data/t/sealed"]
+        }, {
+            "reason": "frozen",
+            "paths": ["/data/t/locked/*"]
+        }],
+    }
+}
+
+
+def _walk_ws() -> Workspace:
+    # The rules live on a profile so the tree can be seeded under the
+    # unrestricted default session; every probe runs as "g".
+    ws = Workspace({"/data/": (RAMResource(), MountMode.WRITE)},
+                   mode=MountMode.WRITE,
+                   profiles={"guarded": WALK_DOC})
+    ws.create_session("g", profile="guarded")
+    return ws
+
+
+async def _seed_walk_tree(ws: Workspace) -> None:
+    await ws.execute(
+        "mkdir -p /data/t/private /data/t/sealed/deep /data/t/locked "
+        "/data/t/open /data/t/asked /data/t/ghost && "
+        "echo k > /data/t/private/k && echo s > /data/t/sealed/s && "
+        "echo d > /data/t/sealed/deep/d && echo y > /data/t/locked/y && "
+        "echo o > /data/t/open/o && echo a > /data/t/asked/a && "
+        "echo g > /data/t/ghost/g")
+
+
+@pytest.mark.asyncio
+async def test_a_walk_below_the_operand_meets_the_rule_guard():
+    # The gate judges the operands; the entries a walk reaches below
+    # them pass the same rules at the command's own I/O, and each
+    # walker reports the refusal the way GNU reports an unreadable
+    # entry (pinned on debian:stable-slim): names and sizes still show,
+    # the content is what is refused, and a hidden path is simply not
+    # there.
+    ws = _walk_ws()
+    try:
+        await _seed_walk_tree(ws)
+        code, out, err = await _line(ws, "grep -r . /data/t", "g")
+        assert code == 2
+        assert out == "/data/t/open/o:o\n"
+        assert err == ("grep: /data/t/asked/a: Permission denied\n"
+                       "grep: /data/t/locked/y: Permission denied\n"
+                       "grep: /data/t/private: Permission denied\n"
+                       "grep: /data/t/sealed: Permission denied\n")
+        code, out, err = await _line(ws, "ls -R /data/t", "g")
+        assert code == 1
+        assert "locked:\ny\n" in out and "asked:\na\n" in out
+        assert "ghost" not in out
+        assert err == (
+            "ls: cannot open directory '/data/t/private': Permission denied\n"
+            "ls: cannot open directory '/data/t/sealed': Permission denied\n")
+        code, out, err = await _line(ws, "find /data/t -name '*'", "g")
+        assert code == 1
+        assert "/data/t/sealed\n" in out and "/data/t/sealed/s" not in out
+        assert "/data/t/locked/y\n" in out and "/data/t/private/k\n" in out
+        assert err == "find: '/data/t/sealed': Permission denied\n"
+        code, out, err = await _line(ws, "du -a /data/t", "g")
+        assert code == 1
+        assert "2\t/data/t/locked/y\n" in out and "sealed" not in out
+        assert err == ("du: cannot read directory '/data/t/sealed': "
+                       "Permission denied\n")
+        code, out, err = await _line(ws, "cp -r /data/t /data/copy", "g")
+        assert code == 1
+        assert err == (
+            "cp: cannot access '/data/t/sealed': Permission denied\n"
+            "cp: cannot open '/data/t/locked/y' for reading: "
+            "Permission denied\n")
+        assert (await _line(ws, "cat /data/copy/private/k", "g"))[1] == "k\n"
+        assert (await _line(ws, "test -d /data/copy/sealed", "g"))[0] == 0
+        assert (await _line(ws, "test -e /data/copy/locked/y", "g"))[0] == 1
+        code, out, err = await _line(ws, "tar -cf /data/a.tar /data/t", "g")
+        assert code == 2
+        assert err == ("tar: Removing leading `/' from member names\n"
+                       "tar: /data/t/sealed: Cannot open: Permission denied\n"
+                       "tar: /data/t/locked/y: Cannot open: Permission "
+                       "denied\n"
+                       "tar: Exiting with failure status due to previous "
+                       "errors\n")
+        code, out, err = await _line(ws, "tar -tf /data/a.tar", "g")
+        assert "data/t/sealed/\n" in out and "locked/y" not in out
+        assert "data/t/private/k\n" in out and "ghost" not in out
+        code, out, err = await _line(ws, "tree /data/t", "g")
+        assert code == 2 and err == ""
+        assert "`-- sealed  [error opening dir]\n" in out
+        assert "|   `-- y\n" in out
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_an_asked_scope_reached_by_a_walk_is_refused_until_named():
+    # A walk gets no nod mid-command: the entry is refused without a
+    # request, the agent names the path, the grant covers that line.
+    ws = _walk_ws()
+    try:
+        await _seed_walk_tree(ws)
+        assert await _line(
+            ws, "grep -r a /data/t/asked",
+            "g") == (2, "", "grep: /data/t/asked/a: Permission denied\n")
+        assert ws.approvals.list() == ()
+        code, _, err = await _line(ws, "grep a /data/t/asked/a", "g")
+        assert code == 126 and err.startswith("grep: requires approval: nod")
+        (request, ) = ws.approvals.list()
+        await ws.approvals.grant(request.id)
+        assert await _line(ws, "grep a /data/t/asked/a", "g") == (0, "a\n", "")
+        # A standing grant covers the walk too.
+        code, _, err = await _line(ws, "grep a /data/t/asked/a", "g")
+        (request, ) = ws.approvals.list()
+        await ws.approvals.grant(request.id, "session")
+        assert await _line(ws, "grep -r a /data/t/asked",
+                           "g") == (0, "/data/t/asked/a:a\n", "")
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_the_op_door_stats_a_refused_entry_and_withholds_its_content():
+    ws = _walk_ws()
+    try:
+        await _seed_walk_tree(ws)
+        sess = ws.get_session("g")
+        token = set_current_session(sess)
+        try:
+            assert (await ws.ops.stat("/data/t/locked/y")).size == 2
+            with pytest.raises(PermissionError):
+                await ws.ops.read("/data/t/locked/y")
+            with pytest.raises(FileNotFoundError):
+                await ws.ops.stat("/data/t/ghost/g")
+        finally:
+            reset_current_session(token)
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_every_permissions_door_accepts_the_plain_document():
+    # The constructor, create_session and Mount validate raw mappings
+    # internally, so the Python API reads like the YAML and the
+    # TypeScript object literal; a built model still passes unchanged.
+    ws = Workspace(
+        {
+            "/data/": (RAMResource(), MountMode.WRITE),
+            "/box/":
+            Mount(RAMResource(),
+                  MountMode.WRITE,
+                  permissions={
+                      "commands": {
+                          "deny": [{
+                              "reason": "boxed",
+                              "paths": ["top"]
+                          }]
+                      }
+                  }),
+        },
+        mode=MountMode.WRITE,
+        permissions={
+            "commands": {
+                "deny": [{
+                    "reason": "walled",
+                    "paths": ["/data/w"]
+                }]
+            }
+        },
+    )
+    try:
+        assert await _line(ws,
+                           "cat /data/w") == (1, "", "cat: /data/w: walled\n")
+        assert await _line(ws,
+                           "cat /box/top") == (1, "", "cat: /box/top: boxed\n")
+        ws.create_session("i", permissions={"commands": {"allow": ["echo"]}})
+        assert (await _line(ws, "ls /data", "i"))[0] == 127
+        ws.create_session("d",
+                          profile={
+                              "commands": {
+                                  "deny": [{
+                                      "reason": "no",
+                                      "commands": {
+                                          "cat": ["/data/*"]
+                                      }
+                                  }]
+                              }
+                          })
+        assert await _line(ws, "cat /data/x",
+                           "d") == (1, "", "cat: /data/x: no\n")
+    finally:
+        await ws.close()
+
+
+def test_a_misspelled_document_field_fails_at_construction():
+    with pytest.raises(ValidationError):
+        Workspace({"/data/": RAMResource()}, profiles={"g": {"commandz": {}}})
+    with pytest.raises(ValidationError):
+        Workspace({"/data/": RAMResource()},
+                  permissions={"command": {
+                      "deny": []
+                  }})

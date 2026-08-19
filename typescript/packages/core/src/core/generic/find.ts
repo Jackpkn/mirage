@@ -12,7 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { isEnoent } from '../../utils/errors.ts'
+import { isEacces, isEnoent } from '../../utils/errors.ts'
 import { mountKey, mountPrefixOf } from '../../utils/key_prefix.ts'
 import type { IndexCacheStore } from '../../cache/index/store.ts'
 import type { FindOptions } from '../../resource/base.ts'
@@ -40,6 +40,12 @@ export interface WalkFindDeps {
   // is one that no backend readdir can see. Without this a directory
   // holding only a link reads as empty.
   links?: LinkView | null
+  // Where a directory the walk could not open (a rule refused it at the
+  // guarded readdir) is recorded, as its virtual path: GNU names it and
+  // walks on, so a caller that collects those gets the path and the walk
+  // continues; one that does not is not left with a silent gap in its
+  // listing, the refusal propagates.
+  unreadable?: string[]
 }
 
 interface WalkEntry {
@@ -118,6 +124,10 @@ async function walk(
     children = await deps.readdir(spec, index)
   } catch (err) {
     if (isEnoent(err)) return
+    if (isEacces(err) && deps.unreadable !== undefined) {
+      deps.unreadable.push(spec.virtual)
+      return
+    }
     throw err
   }
   for (const child of children) {

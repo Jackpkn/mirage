@@ -4,6 +4,7 @@ from dataclasses import replace
 
 import pytest
 
+from mirage.commands.builtin.generic.archive.types import Walked
 from mirage.commands.builtin.generic.tar import (excluded, member_name, pruned,
                                                  strip_prefix, tar)
 from mirage.ops.types import LinkView, MountView
@@ -41,6 +42,8 @@ class _Tree:
 
     async def read_bytes(self, path):
         key = path.virtual if isinstance(path, PathSpec) else path
+        if key in getattr(self, "refused", ()):
+            raise PermissionError(13, "frozen", key)
         if key not in self.files:
             raise FileNotFoundError(key)
         return self.files[key]
@@ -64,8 +67,14 @@ class _Tree:
     async def walk(self, path, find_type):
         base = path.virtual.rstrip("/") or "/"
         pool = self.dirs if find_type == "d" else self.files
-        return sorted(p for p in pool
-                      if p == base or p.startswith(base.rstrip("/") + "/"))
+        closed = getattr(self, "closed", ())
+        return Walked(paths=tuple(
+            sorted(p for p in pool
+                   if (p == base or p.startswith(base.rstrip("/") + "/"))
+                   and not any(p.startswith(c + "/") for c in closed))),
+                      unreadable=tuple(c for c in closed
+                                       if c.startswith(base.rstrip("/") +
+                                                       "/")))
 
     async def is_dir(self, path):
         return (path.virtual.rstrip("/") or "/") in self.dirs
@@ -531,3 +540,33 @@ async def test_a_symlink_operand_is_stored_as_a_symlink():
     assert member.issym()
     assert member.size == 0
     assert member.linkname == "/d/a.txt"
+
+
+@pytest.mark.asyncio
+async def test_create_reports_what_it_may_not_open_and_exits_two():
+    # Pinned on GNU tar 1.35 (debian:stable-slim) over a mode-000 file
+    # and directory: "Cannot open: Permission denied" for each, named as
+    # the operand was typed, the directory's own entry kept, the file
+    # left out, one trailer, exit 2. The scan's directory comes before
+    # the write's file, a deliberate ordering: GNU interleaves them in
+    # readdir order.
+    tree = _Tree({
+        "/d/a.txt": b"x",
+        "/d/locked/y": b"y",
+        "/d/sealed/s": b"s"
+    },
+                 dirs=("/d", "/d/locked", "/d/sealed"))
+    tree.closed = ("/d/sealed", )
+    tree.refused = ("/d/locked/y", )
+    _, io_res = await _create(tree, [_raw("/d", "/d")],
+                              c=True,
+                              f=_spec("/out.tar"))
+    assert io_res.exit_code == 2
+    assert io_res.stderr.decode() == (
+        "tar: Removing leading `/' from member names\n"
+        "tar: /d/sealed: Cannot open: Permission denied\n"
+        "tar: /d/locked/y: Cannot open: Permission denied\n"
+        "tar: Exiting with failure status due to previous errors\n")
+    assert _names(io_res.writes["/out.tar"]) == [
+        "d/", "d/a.txt", "d/locked/", "d/sealed/"
+    ]

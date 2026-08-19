@@ -12,7 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { hiddenPathsActive } from '../../../../context/session_context.ts'
+import { hiddenPathsActive, pathRulesActive } from '../../../../context/session_context.ts'
 import { walkFind } from '../../../../core/generic/find.ts'
 import { findGeneric } from '../../generic/find.ts'
 import type { PathSpec } from '../../../../types.ts'
@@ -31,11 +31,12 @@ export const FIND_BUILDER: Builder = {
     // A native find op classifies on the raw backend tree, so under
     // hidden paths its predicates would answer for entries the session
     // cannot see (-empty omits a visible directory whose only child is
-    // hidden, which also reveals that the child exists). The walk
-    // classifies through the guarded readdir/stat, so it sees exactly
-    // the visible tree; same trade du makes for its summarize fast
-    // path.
-    if (find !== undefined && !hiddenPathsActive()) {
+    // hidden, which also reveals that the child exists), and under a
+    // path rule it would list a directory the rule refuses to open. The
+    // walk classifies through the guarded readdir/stat, so it sees
+    // exactly the visible tree and reports the refusal where GNU does;
+    // same trade du makes for its summarize fast path.
+    if (find !== undefined && !hiddenPathsActive() && !pathRulesActive()) {
       // -mtime must see namespace times (touch results, observed
       // writes), so local backends post-filter through the overlay-
       // aware stat instead of pushing the window into the core.
@@ -53,7 +54,10 @@ export const FIND_BUILDER: Builder = {
       )
     }
     // No backend find op: walk readdir/stat; the walk classifies entries
-    // through stat (see walkFind).
+    // through stat (see walkFind). A directory the guarded readdir
+    // refuses is collected here and reported by the generic per start
+    // point.
+    const closed: string[] = []
     return findGeneric(
       resolved,
       texts,
@@ -62,6 +66,7 @@ export const FIND_BUILDER: Builder = {
         walkFind(
           root,
           {
+            unreadable: closed,
             readdir: (spec, i) => ops.readdir(accessor, spec, i),
             // -mtime must see namespace times (touch results, observed
             // writes on mtime-less backends), same as ls.
@@ -79,6 +84,7 @@ export const FIND_BUILDER: Builder = {
         ),
       undefined,
       dirEmpty,
+      () => closed.splice(0),
     )
   },
 }

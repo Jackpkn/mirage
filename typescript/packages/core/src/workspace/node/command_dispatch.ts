@@ -16,6 +16,7 @@ import type { ShellVar } from '../../shell/variable.ts'
 import { sessionEntry, setSessionEntry } from '../session/session.ts'
 import { seedVar, setAttr } from '../session/state.ts'
 import { VarAttr } from '../../shell/variable.ts'
+import { runWithAdmission } from '../../context/session_context.ts'
 import type { Runtime } from '../../runtime/base.ts'
 import type { PolicyDecision } from '../../runtime/policy/index.ts'
 import { mergeSignals } from '../abort.ts'
@@ -67,7 +68,7 @@ import { CycleError } from '../../utils/path.ts'
 import type { Namespace } from '../mount/namespace/namespace.ts'
 import type { MountRegistry } from '../mount/registry.ts'
 import { SLASH_KEEPS_LAST, UNSUPPORTED_BUILTINS, followsLastComponent } from '../route/index.ts'
-import { admit } from './admission.ts'
+import { Admitted, admit } from './admission.ts'
 import type { Session } from '../session/session.ts'
 import { ensureVarVisible, sessionView } from '../session/state.ts'
 import { preSessionGate } from '../../policy/index.ts'
@@ -477,9 +478,6 @@ async function runArgv(
     argv = new Argv(argv.name, expandedWords, boundary)
   }
 
-  const args = [...argv.args]
-  let operands = [...argv.operands]
-
   // Visibility and admission. The one chokepoint every command class
   // passes through: shell builtins, namespace-routed commands (touch/
   // chmod/ln -s), job builtins, shell functions, and mount commands all
@@ -487,20 +485,84 @@ async function runArgv(
   // Checked ahead of the BUILTINS table, which runs before route(); the
   // enumerators read the same visibility filter through layers().
   // Refusals win over flag parsing, routing, and runtime placement.
+  let admitted: Admitted | null = null
   if (name !== '') {
-    const refusal = await admit(name, args, operands, session, registry, namespace, agentId, stdin)
-    if (refusal !== null) {
+    const verdict = await admit(
+      name,
+      [...argv.args],
+      [...argv.operands],
+      session,
+      registry,
+      namespace,
+      agentId,
+      stdin,
+    )
+    if (!(verdict instanceof Admitted)) {
       return [
         null,
-        new IOResult({ exitCode: refusal.exitCode, stderr: refusal.stderr }),
+        new IOResult({ exitCode: verdict.exitCode, stderr: verdict.stderr }),
         new ExecutionNode({
-          command: [name, ...args].join(' '),
-          stderr: refusal.stderr,
-          exitCode: refusal.exitCode,
+          command: [name, ...argv.args].join(' '),
+          stderr: verdict.stderr,
+          exitCode: verdict.exitCode,
         }),
       ]
     }
+    admitted = verdict
   }
+
+  // The admitted command's gate is bound for its run and handed back
+  // after, so its own I/O can ask about the entries the gate did not see
+  // and a nested line binds its own (see `Admitted`).
+  const route = () =>
+    routeArgv(
+      recurse,
+      dispatch,
+      registry,
+      namespace,
+      executeFn,
+      argv,
+      session,
+      stdin,
+      callStack,
+      jobTable,
+      ensureOpen,
+      runtimeBindings,
+      routingDecision,
+      signal,
+      row,
+    )
+  if (admitted === null) return route()
+  return runWithAdmission(admitted, route)
+}
+
+async function routeArgv(
+  recurse: (
+    n: TSNodeLike,
+    s: Session,
+    i: ByteSource | null,
+    cs: CallStack | null,
+  ) => Promise<Result>,
+  dispatch: DispatchFn,
+  registry: MountRegistry,
+  namespace: Namespace,
+  executeFn: ExecuteFn,
+  argv: Argv,
+  session: Session,
+  stdin: ByteSource | null,
+  callStack: CallStack | null,
+  jobTable: JobTable | null,
+  ensureOpen: ((resource: Resource) => Promise<void>) | undefined,
+  runtimeBindings: Record<string, Runtime> | undefined,
+  routingDecision: PolicyDecision | undefined,
+  signal: AbortSignal | undefined,
+  row: number,
+): Promise<Result> {
+  // The half of `runArgv` past the gate, split out so the gate's verdict
+  // can be bound around it.
+  const name = argv.name
+  const args = [...argv.args]
+  let operands = [...argv.operands]
 
   // Path execution: bash hands a slash-carrying head word to the
   // loader, never to command lookup: no builtin, function, or CLI can

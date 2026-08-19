@@ -49,7 +49,7 @@ export interface VarsBlock {
 export interface CommandsBlock {
   readonly allow?: readonly string[] | null
   readonly ask?: readonly CommandRule[]
-  readonly deny: readonly CommandRule[]
+  readonly deny?: readonly CommandRule[]
 }
 
 /**
@@ -61,7 +61,7 @@ export interface CommandsBlock {
  */
 export interface MountCommandsBlock {
   readonly ask?: readonly CommandRule[]
-  readonly deny: readonly CommandRule[]
+  readonly deny?: readonly CommandRule[]
 }
 
 /** `mounts.<prefix>.permissions`: mount-owned, relative to the mount root, binding every session. */

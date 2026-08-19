@@ -12,15 +12,17 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import errno
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
 from mirage.context.session_context import session_path_allowed
 from mirage.io.types import ByteSource
-from mirage.policy import (Ask, CommandContext, CommandsSpec, Deny, Pending,
-                           render_deny, render_pending)
-from mirage.policy.match import has_rules, reads_args
+from mirage.policy import (Ask, CommandContext, CommandRule, CommandsSpec,
+                           Deny, Pending, PolicyDenied, ask_rule, render_deny,
+                           render_pending)
+from mirage.policy.match import has_rules, io_refusal, reads_args, scopes_paths
 from mirage.runtime.policy import command_nodes
 from mirage.shell import parse
 from mirage.shell.helpers import (get_parts, get_text, literal_word,
@@ -57,6 +59,55 @@ class Refusal:
 
     stderr: bytes
     exit_code: int
+
+
+def _norm(virtual: str) -> str:
+    return virtual.rstrip("/") or "/"
+
+
+@dataclass(frozen=True, slots=True)
+class Admitted:
+    """A command the gate let through, and what its own I/O may touch.
+
+    The gate judged the paths the line names; a walk below them
+    reaches entries no rule has seen, so the dispatcher binds this to
+    the session context for the command's run and the commands tier
+    asks it before each read, write or listing (``EntryGate``). The
+    paths the gate already judged pass, since the line was admitted on
+    them; every other entry is judged by ``io_refusal`` under the same
+    precedence the gate applied to the line, and a refusal is the op
+    door's ``PolicyDenied`` (EACCES, the reason, the path), which every
+    command renders as GNU's ``Permission denied``.
+
+    Args:
+        layers (tuple[CommandsSpec, ...]): the session's command tiers.
+        tokens (tuple[str, ...]): the line's tokens, command name first.
+        judged (frozenset[str]): the virtual paths the gate judged.
+        granted (tuple[CommandRule, ...]): the ask rules the line runs
+            under a grant for: the one the door answered for this
+            line, and the session's standing ones.
+        scoped (bool): whether a path rule in force reads this
+            command's paths (``EntryGate.scoped``).
+    """
+
+    layers: tuple[CommandsSpec, ...]
+    tokens: tuple[str, ...]
+    judged: frozenset[str]
+    granted: tuple[CommandRule, ...]
+    scoped: bool
+
+    def check(self, virtual: str) -> None:
+        """Raise ``PolicyDenied`` when a rule in force refuses this entry
+        for the running command.
+
+        Args:
+            virtual (str): absolute virtual path of the entry.
+        """
+        if _norm(virtual) in self.judged:
+            return
+        reason = io_refusal(self.layers, self.tokens, virtual, self.granted)
+        if reason is not None:
+            raise PolicyDenied(errno.EACCES, reason, virtual)
 
 
 def policy_scopes(
@@ -148,7 +199,7 @@ async def admit(
     namespace: Namespace | None,
     agent_id: str = "",
     stdin: ByteSource | None = None,
-) -> Refusal | None:
+) -> Refusal | Admitted:
     """The command plane's admission of one command: visibility, then
     the policy chain, then the approval door.
 
@@ -160,7 +211,9 @@ async def admit(
     a deny reason; a path the session cannot see is dropped before any
     hook, so a rule never names it and the door answers ENOENT; a Deny
     renders in the outcome table's voice; an Ask is answered by the
-    door from the session's grants or the host.
+    door from the session's grants or the host. A command that gets
+    through comes back as its ``Admitted`` gate, which its own I/O
+    consults for the entries the gate did not see.
 
     Args:
         name (str): command name, expanded.
@@ -205,7 +258,17 @@ async def admit(
     verdict: Deny | Pending | None = (await registry.approvals.resolve(
         ctx, asked) if isinstance(asked, Ask) else asked)
     if verdict is None:
-        return None
+        granted = [
+            g.rule for g in session.grants if g.decision == "allow_session"
+        ]
+        if isinstance(asked, Ask):
+            granted.insert(0, ask_rule(ctx, asked))
+        layers = session.command_layers
+        return Admitted(layers=layers,
+                        tokens=tokens,
+                        judged=frozenset(_norm(p.virtual) for p in ctx.paths),
+                        granted=tuple(granted),
+                        scoped=scopes_paths(layers, name))
     err, code = (render_pending(name, verdict) if isinstance(verdict, Pending)
                  else render_deny(name, verdict))
     return Refusal(err, code)
@@ -249,10 +312,10 @@ async def _admit_words(
     name = head.value
     args = [w.value for w in words[1:]]
     classified = classify_parts([name, *args], registry, session.cwd)
-    refusal = await admit(name, args, classified[1:], session, registry,
+    verdict = await admit(name, args, classified[1:], session, registry,
                           namespace, agent_id)
-    if refusal is not None:
-        return refusal
+    if isinstance(verdict, Refusal):
+        return verdict
     unread = next((w.raw for w in words[1:] if w.text is None), None)
     if (unread is not None or open_) and reads_args(layers, name):
         return _refuse(

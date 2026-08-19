@@ -216,7 +216,7 @@ describe('parseWorkspacePermissions', () => {
         commands: { deny: [{ commands: { rm: [entry] } }] },
       })
       expect(m.paths).toEqual({ hide: [entry] })
-      expect(m.commands?.deny[0]?.paths).toEqual([entry])
+      expect(m.commands?.deny?.[0]?.paths).toEqual([entry])
     },
   )
 

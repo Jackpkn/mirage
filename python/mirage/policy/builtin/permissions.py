@@ -13,12 +13,9 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 from mirage.policy.base import Policy
-from mirage.policy.match import line_allowed, match_op, match_rule
-from mirage.policy.types import (Action, Ask, CommandContext, CommandRule,
-                                 Deny, DenyScope, OpsContext,
-                                 SessionCommandsQuery)
-from mirage.types import HiddenPaths
-from mirage.utils.hidden import classify_paths
+from mirage.policy.match import line_allowed, match_op, match_rule, rule_scope
+from mirage.policy.types import (Action, Ask, CommandContext, Deny, DenyScope,
+                                 OpsContext, SessionCommandsQuery)
 
 
 class PermissionsPolicy(Policy):
@@ -51,20 +48,6 @@ class PermissionsPolicy(Policy):
 
     def __init__(self, sessions: SessionCommandsQuery) -> None:
         self._sessions = sessions
-        self._scopes: dict[CommandRule, HiddenPaths | None] = {}
-
-    def _scope(self, rule: CommandRule) -> HiddenPaths | None:
-        """A rule's paths, classified once and remembered.
-
-        Args:
-            rule (CommandRule): the rule.
-        """
-        try:
-            return self._scopes[rule]
-        except KeyError:
-            scope = classify_paths(rule.paths)
-            self._scopes[rule] = scope
-            return scope
 
     async def pre_command(self, ctx: CommandContext) -> Action | None:
         layers = self._sessions.commands_of(ctx.session_id)
@@ -75,7 +58,7 @@ class PermissionsPolicy(Policy):
             return Deny(f"{program} is not allowed")
         for spec in layers:
             for rule in spec.deny:
-                hit = match_rule(rule, self._scope(rule), ctx)
+                hit = match_rule(rule, rule_scope(rule), ctx)
                 if hit is None:
                     continue
                 if hit.operand is None:
@@ -83,13 +66,13 @@ class PermissionsPolicy(Policy):
                 return Deny(f"{hit.operand}: {rule.reason}", DenyScope.OPERAND)
         for spec in layers:
             for rule in spec.ask:
-                if match_rule(rule, self._scope(rule), ctx) is not None:
+                if match_rule(rule, rule_scope(rule), ctx) is not None:
                     return Ask(rule.reason, rule)
         return None
 
     async def pre_ops(self, ctx: OpsContext) -> Action | None:
         for spec in self._sessions.commands_of(ctx.session_id):
             for rule in spec.deny:
-                if match_op(rule, self._scope(rule), ctx):
+                if match_op(rule, rule_scope(rule), ctx):
                     return Deny(rule.reason)
         return None

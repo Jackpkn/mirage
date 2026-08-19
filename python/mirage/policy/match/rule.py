@@ -12,14 +12,17 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import functools
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 
-from mirage.policy.constants import SUBTREE_COMMANDS, SUBTREE_OPS
+from mirage.policy.constants import METADATA_OPS, SUBTREE_COMMANDS, SUBTREE_OPS
 from mirage.policy.match.allow import line_tokens
 from mirage.policy.match.pattern import pattern_matches
-from mirage.policy.types import CommandContext, CommandRule, OpsContext
+from mirage.policy.types import (CommandContext, CommandRule, CommandsSpec,
+                                 OpsContext)
 from mirage.types import HiddenPaths
-from mirage.utils.hidden import path_covers, path_hidden
+from mirage.utils.hidden import classify_paths, path_covers, path_hidden
 
 
 @dataclass(frozen=True, slots=True)
@@ -116,20 +119,92 @@ def _subtree_match(scope: HiddenPaths,
     return None
 
 
+@functools.lru_cache(maxsize=1024)
+def rule_scope(rule: CommandRule) -> HiddenPaths | None:
+    """A rule's paths, classified once and remembered: None when the
+    rule names none, so a caller can tell a whole-line rule from a
+    path-scoped one without re-reading the document grammar.
+
+    Args:
+        rule (CommandRule): the rule, which is frozen and so a key.
+    """
+    return classify_paths(rule.paths)
+
+
+def match_io(rule: CommandRule, scope: HiddenPaths | None,
+             tokens: Sequence[str], virtual: str) -> bool:
+    """Whether a rule reaches an entry a command touches on its own,
+    below its operands: the rule names the line (its command patterns
+    against the line's tokens, none meaning every command) and its
+    paths hold the entry. A rule with no paths spoke about the whole
+    line at admission and has nothing to add at an entry; the
+    directory holding a scope is not in it, so a listing still shows
+    a refused entry's name, which is what deny means: present, and
+    refused.
+
+    Args:
+        rule (CommandRule): the rule.
+        scope (HiddenPaths | None): the rule's classified paths.
+        tokens (Sequence[str]): the line as an admission pattern reads
+            it, command name first.
+        virtual (str): absolute virtual path of the entry.
+    """
+    if scope is None:
+        return False
+    if rule.commands and not any(
+            pattern_matches(p, tokens) for p in rule.commands):
+        return False
+    return path_hidden(scope, virtual)
+
+
+def io_refusal(layers: Sequence[CommandsSpec], tokens: Sequence[str],
+               virtual: str, granted: Collection[CommandRule]) -> str | None:
+    """The reason a command may not touch an entry it reached on its
+    own, None when it may.
+
+    The same precedence the admission gate applies to a line: the deny
+    rules in tier order, the first that reaches the entry refusing it;
+    then the ask rules in tier order, where the first that reaches it
+    refuses unless the line holds a grant under that rule (the nod the
+    gate took for ``rm -r /x`` covers the entries under ``/x``; a walk
+    that wanders into an asked scope from outside gets no nod
+    mid-command, so it is refused and the agent names the path to be
+    asked).
+
+    Args:
+        layers (Sequence[CommandsSpec]): the session's command tiers.
+        tokens (Sequence[str]): the line's tokens, command name first.
+        virtual (str): absolute virtual path of the entry.
+        granted (Collection[CommandRule]): the ask rules the line runs
+            under a grant for.
+    """
+    for spec in layers:
+        for rule in spec.deny:
+            if match_io(rule, rule_scope(rule), tokens, virtual):
+                return rule.reason
+    for spec in layers:
+        for rule in spec.ask:
+            if match_io(rule, rule_scope(rule), tokens, virtual):
+                return None if rule in granted else rule.reason
+    return None
+
+
 def match_op(rule: CommandRule, scope: HiddenPaths | None,
              ctx: OpsContext) -> bool:
     """Whether a rule refuses an op: only a pure path rule can, since an
     op does not know which command issued it. The op's path is tested
     against the scope, and an op that moves or removes a whole subtree
     (``SUBTREE_OPS``) is also refused on the directory holding the
-    scope or on any ancestor, since it would take the scope along.
+    scope or on any ancestor, since it would take the scope along. A
+    metadata op (``METADATA_OPS``) passes: deny is present and refused,
+    so the entry stats and its content is what the door withholds.
 
     Args:
         rule (CommandRule): the rule.
         scope (HiddenPaths | None): the rule's classified paths.
         ctx (OpsContext): the op about to run.
     """
-    if rule.commands or scope is None:
+    if rule.commands or scope is None or ctx.op in METADATA_OPS:
         return False
     if path_hidden(scope, ctx.path.virtual):
         return True

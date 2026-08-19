@@ -15,6 +15,7 @@
 import type { FileStat } from '../../types.ts'
 import { FileType } from '../../types.ts'
 import { rstripSlash } from '../../utils/slash.ts'
+import { fsStrerror } from '../../utils/errors.ts'
 import { gnuBasename } from '../../utils/path.ts'
 import { getExtension } from '../resolve.ts'
 import { BINARY_EXTENSIONS, compilePattern, grepLines } from './grep_helper.ts'
@@ -157,7 +158,7 @@ export async function rgFull(
       data = DEC.decode(raw).split('\n')
       if (data.length > 0 && data[data.length - 1] === '') data.pop()
     } catch (err) {
-      if (warnings !== null) warnings.push(`rg: ${path}: ${String(err)}`)
+      if (warnings !== null) warnings.push(`rg: ${path}: ${fsStrerror(err) ?? String(err)}`)
       return []
     }
     if (
@@ -190,7 +191,7 @@ export async function rgFull(
   try {
     entries = await readdirFn(path)
   } catch (err) {
-    if (warnings !== null) warnings.push(`rg: ${path}: ${String(err)}`)
+    if (warnings !== null) warnings.push(`rg: ${path}: ${fsStrerror(err) ?? String(err)}`)
     return results
   }
 
@@ -199,7 +200,7 @@ export async function rgFull(
     try {
       s = await statFn(entry)
     } catch (err) {
-      if (warnings !== null) warnings.push(`rg: ${entry}: ${String(err)}`)
+      if (warnings !== null) warnings.push(`rg: ${entry}: ${fsStrerror(err) ?? String(err)}`)
       continue
     }
 
@@ -223,7 +224,7 @@ export async function rgFull(
       data = DEC.decode(raw).split('\n')
       if (data.length > 0 && data[data.length - 1] === '') data.pop()
     } catch (err) {
-      if (warnings !== null) warnings.push(`rg: ${entry}: ${String(err)}`)
+      if (warnings !== null) warnings.push(`rg: ${entry}: ${fsStrerror(err) ?? String(err)}`)
       continue
     }
     // ripgrep -I drops per-file labels in directory walks; -l keeps
@@ -265,7 +266,7 @@ export async function rgFolderFiletype(
   try {
     entries = await readdirFn(path)
   } catch (err) {
-    if (warnings !== null) warnings.push(`rg: ${path}: ${String(err)}`)
+    if (warnings !== null) warnings.push(`rg: ${path}: ${fsStrerror(err) ?? String(err)}`)
     return results
   }
 
@@ -277,7 +278,7 @@ export async function rgFolderFiletype(
     try {
       s = await statFn(entry)
     } catch (err) {
-      if (warnings !== null) warnings.push(`rg: ${entry}: ${String(err)}`)
+      if (warnings !== null) warnings.push(`rg: ${entry}: ${fsStrerror(err) ?? String(err)}`)
       continue
     }
 
@@ -302,7 +303,7 @@ export async function rgFolderFiletype(
     try {
       raw = await readBytesFn(entry)
     } catch (err) {
-      if (warnings !== null) warnings.push(`rg: ${entry}: ${String(err)}`)
+      if (warnings !== null) warnings.push(`rg: ${entry}: ${fsStrerror(err) ?? String(err)}`)
       continue
     }
     const textLines = DEC.decode(raw).split('\n')

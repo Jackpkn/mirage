@@ -36,7 +36,11 @@ import { LINE_EXECUTOR, type LineExecutor } from '../runtime/mixin.ts'
 import type { RunResult } from '../runtime/types.ts'
 import { MountMode, ResourceName } from '../types.ts'
 import { cliSpecFor } from '../commands/cli/specs.ts'
-import { parseWorkspacePermissions, type SessionProfile } from './session/permissions.ts'
+import {
+  parseSessionProfile,
+  parseWorkspacePermissions,
+  type SessionProfile,
+} from './session/permissions.ts'
 import { getTestParser, stderrStr, stdoutStr } from './fixtures/workspace_fixture.ts'
 import { Workspace } from './workspace/workspace.ts'
 
@@ -1701,5 +1705,152 @@ describe('ask end to end', () => {
     await no.execute('touch /scratch/z')
     expect(await line(no, 'rm /scratch/z')).toEqual([126, '', 'rm: policy denied: sign-off\n'])
     expect((await line(no, 'cat /scratch/z'))[0]).toBe(0)
+  })
+})
+
+describe('a walk below the operand meets the rule guard', () => {
+  const WALK_DOC: SessionProfile = parseSessionProfile({
+    paths: { hide: ['/data/t/ghost'] },
+    commands: {
+      allow: [
+        'mkdir',
+        'echo',
+        'ls',
+        'cat',
+        'grep',
+        'find',
+        'du',
+        'cp',
+        'tar',
+        'tree',
+        'stat',
+        'rm',
+        'test',
+      ],
+      ask: [{ reason: 'nod', commands: { grep: ['/data/t/asked/*'] } }],
+      deny: [
+        { reason: 'private', commands: { grep: ['/data/t/private'], ls: ['/data/t/private'] } },
+        { reason: 'sealed', paths: ['/data/t/sealed'] },
+        { reason: 'frozen', paths: ['/data/t/locked/*'] },
+      ],
+    },
+  })
+
+  // The rules live on a profile so the tree can be seeded under the
+  // unrestricted default session; every probe runs as "g".
+  async function walkWs(): Promise<Workspace> {
+    const parser = await getTestParser()
+    const ws = new Workspace(
+      { '/data': new RAMResource() },
+      { mode: MountMode.WRITE, shellParser: parser, profiles: { guarded: WALK_DOC } },
+    )
+    open.push(ws)
+    ws.createSession('g', { profile: 'guarded' })
+    await ws.execute(
+      'mkdir -p /data/t/private /data/t/sealed/deep /data/t/locked ' +
+        '/data/t/open /data/t/asked /data/t/ghost && ' +
+        'echo k > /data/t/private/k && echo s > /data/t/sealed/s && ' +
+        'echo d > /data/t/sealed/deep/d && echo y > /data/t/locked/y && ' +
+        'echo o > /data/t/open/o && echo a > /data/t/asked/a && ' +
+        'echo g > /data/t/ghost/g',
+    )
+    return ws
+  }
+
+  async function line(ws: Workspace, text: string): Promise<[number, string, string]> {
+    const r = await ws.execute(text, { sessionId: 'g' })
+    return [r.exitCode, stdoutStr(r), stderrStr(r)]
+  }
+
+  it('each walker reports the refusal the way GNU reports an unreadable entry', async () => {
+    const ws = await walkWs()
+    const [grepCode, grepOut, grepErr] = await line(ws, 'grep -r . /data/t')
+    expect(grepCode).toBe(2)
+    expect(grepOut).toBe('/data/t/open/o:o\n')
+    expect(grepErr).toBe(
+      'grep: /data/t/asked/a: Permission denied\n' +
+        'grep: /data/t/locked/y: Permission denied\n' +
+        'grep: /data/t/private: Permission denied\n' +
+        'grep: /data/t/sealed: Permission denied\n',
+    )
+    const [lsCode, lsOut, lsErr] = await line(ws, 'ls -R /data/t')
+    expect(lsCode).toBe(1)
+    expect(lsOut).toContain('locked:\ny\n')
+    expect(lsOut).not.toContain('ghost')
+    expect(lsErr).toBe(
+      "ls: cannot open directory '/data/t/private': Permission denied\n" +
+        "ls: cannot open directory '/data/t/sealed': Permission denied\n",
+    )
+    const [findCode, findOut, findErr] = await line(ws, "find /data/t -name '*'")
+    expect(findCode).toBe(1)
+    expect(findOut).toContain('/data/t/sealed\n')
+    expect(findOut).not.toContain('/data/t/sealed/s')
+    expect(findOut).toContain('/data/t/locked/y\n')
+    expect(findErr).toBe("find: '/data/t/sealed': Permission denied\n")
+    const [duCode, duOut, duErr] = await line(ws, 'du -a /data/t')
+    expect(duCode).toBe(1)
+    expect(duOut).toContain('2\t/data/t/locked/y\n')
+    expect(duOut).not.toContain('sealed')
+    expect(duErr).toBe("du: cannot read directory '/data/t/sealed': Permission denied\n")
+    const [cpCode, , cpErr] = await line(ws, 'cp -r /data/t /data/copy')
+    expect(cpCode).toBe(1)
+    expect(cpErr).toBe(
+      "cp: cannot access '/data/t/sealed': Permission denied\n" +
+        "cp: cannot open '/data/t/locked/y' for reading: Permission denied\n",
+    )
+    expect((await line(ws, 'cat /data/copy/private/k'))[1]).toBe('k\n')
+    expect((await line(ws, 'test -d /data/copy/sealed'))[0]).toBe(0)
+    expect((await line(ws, 'test -e /data/copy/locked/y'))[0]).toBe(1)
+    const [tarCode, , tarErr] = await line(ws, 'tar -cf /data/a.tar /data/t')
+    expect(tarCode).toBe(2)
+    expect(tarErr).toBe(
+      "tar: Removing leading `/' from member names\n" +
+        'tar: /data/t/sealed: Cannot open: Permission denied\n' +
+        'tar: /data/t/locked/y: Cannot open: Permission denied\n' +
+        'tar: Exiting with failure status due to previous errors\n',
+    )
+    const [, listOut] = await line(ws, 'tar -tf /data/a.tar')
+    expect(listOut).toContain('data/t/sealed/\n')
+    expect(listOut).not.toContain('locked/y')
+    expect(listOut).toContain('data/t/private/k\n')
+    expect(listOut).not.toContain('ghost')
+    const [treeCode, treeOut, treeErr] = await line(ws, 'tree /data/t')
+    expect(treeCode).toBe(2)
+    expect(treeErr).toBe('')
+    expect(treeOut).toContain('`-- sealed  [error opening dir]\n')
+  })
+
+  it('an asked scope reached by a walk is refused until named', async () => {
+    const ws = await walkWs()
+    expect(await line(ws, 'grep -r a /data/t/asked')).toEqual([
+      2,
+      '',
+      'grep: /data/t/asked/a: Permission denied\n',
+    ])
+    expect(ws.approvals.list()).toEqual([])
+    const [code, , err] = await line(ws, 'grep a /data/t/asked/a')
+    expect(code).toBe(126)
+    expect(err).toContain('grep: requires approval: nod')
+    const [request] = ws.approvals.list()
+    if (request === undefined) throw new Error('no pending request')
+    await ws.approvals.grant(request.id)
+    expect(await line(ws, 'grep a /data/t/asked/a')).toEqual([0, 'a\n', ''])
+    // A standing grant covers the walk too.
+    await line(ws, 'grep a /data/t/asked/a')
+    const [second] = ws.approvals.list()
+    if (second === undefined) throw new Error('no pending request')
+    await ws.approvals.grant(second.id, 'session')
+    expect(await line(ws, 'grep -r a /data/t/asked')).toEqual([0, '/data/t/asked/a:a\n', ''])
+  })
+
+  it('the op door stats a refused entry and withholds its content', async () => {
+    const ws = await walkWs()
+    const sess = ws.getSession('g')
+    await runWithSession(sess, async () => {
+      const st = (await ws.dispatch('stat', '/data/t/locked/y')) as { size?: number }
+      expect(st.size).toBe(2)
+      await expect(ws.dispatch('read', '/data/t/locked/y')).rejects.toThrow('frozen')
+      await expect(ws.dispatch('stat', '/data/t/ghost/g')).rejects.toThrow()
+    })
   })
 })

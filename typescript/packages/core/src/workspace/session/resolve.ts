@@ -184,7 +184,7 @@ function tightenCommands(
   return {
     allow,
     ask: [...(base.ask ?? []), ...(inline.ask ?? [])],
-    deny: [...base.deny, ...inline.deny],
+    deny: [...(base.deny ?? []), ...(inline.deny ?? [])],
   }
 }
 
@@ -286,10 +286,11 @@ export function compileCommands(
   if (block == null) return null
   const allow = 'allow' in block ? (block.allow ?? null) : null
   const ask = block.ask ?? []
-  if (allow === null && ask.length === 0 && block.deny.length === 0) return null
-  if (mount === '') return { allow, ask, deny: block.deny }
+  const deny = block.deny ?? []
+  if (allow === null && ask.length === 0 && deny.length === 0) return null
+  if (mount === '') return { allow, ask, deny }
   const root = '/' + stripSlash(mount)
-  return { allow: null, ask: scopeRules(ask, root), deny: scopeRules(block.deny, root) }
+  return { allow: null, ask: scopeRules(ask, root), deny: scopeRules(deny, root) }
 }
 
 /**

@@ -16,8 +16,8 @@ import { describe, expect, it } from 'vitest'
 
 import { PathSpec } from '../../types.ts'
 import { classifyPaths } from '../../utils/hidden.ts'
-import type { CommandContext, CommandRule, OpsContext } from '../types.ts'
-import { matchOp, matchRule } from './rule.ts'
+import type { CommandContext, CommandRule, CommandsSpec, OpsContext } from '../types.ts'
+import { ioRefusal, matchIo, matchOp, matchRule, ruleScope } from './rule.ts'
 
 const registry = { isMountRoot: () => false }
 
@@ -166,5 +166,88 @@ describe('rules', () => {
         prefix: '/data/',
       }),
     ).toBe(false)
+  })
+  it('matchOp lets a metadata op through', () => {
+    // Deny is present and refused: the entry stats, the read is refused.
+    const rule: CommandRule = { reason: 'frozen', paths: ['/data/locked/*'] }
+    const scope = classifyPaths(rule.paths ?? [])
+    for (const op of ['stat', 'exists']) {
+      expect(
+        matchOp(rule, scope, { op, path: path('/data/locked/a'), write: false, prefix: '/data/' }),
+      ).toBe(false)
+    }
+    expect(
+      matchOp(rule, scope, {
+        op: 'read',
+        path: path('/data/locked/a'),
+        write: false,
+        prefix: '/data/',
+      }),
+    ).toBe(true)
+  })
+
+  it('matchIo names the line and holds the entry', () => {
+    const pure: CommandRule = { reason: 'sealed', paths: ['/data/sealed'] }
+    const scope = ruleScope(pure)
+    expect(matchIo(pure, scope, ['grep', '-r', 'x', '/data'], '/data/sealed/deep/f')).toBe(true)
+    expect(matchIo(pure, scope, ['du', '/data'], '/data/sealed')).toBe(true)
+    expect(matchIo(pure, scope, ['du', '/data'], '/data/open/f')).toBe(false)
+    // A command-scoped rule reads the line's tokens, so a pattern with a
+    // token after the name applies only to the line that carries it.
+    const scoped: CommandRule = { reason: 'no', commands: ['grep -r'], paths: ['/data/private'] }
+    expect(
+      matchIo(scoped, ruleScope(scoped), ['grep', '-r', 'k', '/data'], '/data/private/k'),
+    ).toBe(true)
+    expect(matchIo(scoped, ruleScope(scoped), ['grep', 'k', '/data'], '/data/private/k')).toBe(
+      false,
+    )
+    expect(matchIo(scoped, ruleScope(scoped), ['cat', '/data'], '/data/private/k')).toBe(false)
+    // A whole-line rule spoke at admission and says nothing at an entry;
+    // the directory holding a children pattern is not in it.
+    const whole: CommandRule = { reason: 'no', commands: ['rm'] }
+    expect(matchIo(whole, ruleScope(whole), ['rm', '/data/x'], '/data/x')).toBe(false)
+    const children: CommandRule = { reason: 'frozen', paths: ['/data/locked/*'] }
+    expect(matchIo(children, ruleScope(children), ['ls', '/data'], '/data/locked')).toBe(false)
+    expect(matchIo(children, ruleScope(children), ['ls', '/data'], '/data/locked/y')).toBe(true)
+  })
+
+  it('ruleScope is null for a whole-line rule and remembered per rule', () => {
+    const whole: CommandRule = { reason: 'no', commands: ['rm'] }
+    expect(ruleScope(whole)).toBeNull()
+    const scoped: CommandRule = { reason: 'no', paths: ['/data/*'] }
+    expect(ruleScope(scoped)).toBe(ruleScope(scoped))
+  })
+
+  it('ioRefusal applies the gate precedence to an entry', () => {
+    const deny: CommandRule = { reason: 'locked', commands: ['rm'], paths: ['/data/both/locked/*'] }
+    const askWs: CommandRule = {
+      reason: 'both: needs a nod',
+      commands: ['rm'],
+      paths: ['/data/both/*'],
+    }
+    const askProfile: CommandRule = {
+      reason: 'profile nod',
+      commands: ['rm'],
+      paths: ['/data/both/*'],
+    }
+    const layers: CommandsSpec[] = [
+      { allow: null, ask: [askWs], deny: [deny] },
+      { allow: null, ask: [askProfile], deny: [] },
+    ]
+    const tokens = ['rm', '-r', '/data/both']
+    // deny > ask, whatever the tier order.
+    expect(ioRefusal(layers, tokens, '/data/both/locked/y', [askWs])).toBe('locked')
+    // The first matching ask rule in tier order speaks: refused without a
+    // grant under it, passed with one, and a later tier's rule never gets
+    // a say.
+    expect(ioRefusal(layers, tokens, '/data/both/a', [])).toBe('both: needs a nod')
+    expect(ioRefusal(layers, tokens, '/data/both/a', [askWs])).toBeNull()
+    expect(ioRefusal(layers, tokens, '/data/both/a', [askProfile])).toBe('both: needs a nod')
+    // An entry no rule holds passes; so does one a whole-line rule names.
+    expect(ioRefusal(layers, tokens, '/data/open/a', [])).toBeNull()
+    const whole: CommandsSpec[] = [
+      { allow: null, ask: [], deny: [{ reason: 'no', commands: ['rm'] }] },
+    ]
+    expect(ioRefusal(whole, tokens, '/data/x', [])).toBeNull()
   })
 })

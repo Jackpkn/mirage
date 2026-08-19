@@ -154,6 +154,10 @@ async def plan_zip(
                                   dereference=not store_links,
                                   recurse=recurse)
         for problem in scan.problems:
+            if problem.unreadable:
+                # Info-ZIP stores the directory it could not open and
+                # says nothing about it (pinned on debian:stable-slim).
+                continue
             shown = respell_one(problem.path, base, raw)
             if problem.fatal:
                 warnings.append(NOT_MATCHED + shown)
@@ -246,6 +250,12 @@ async def zip_cmd(
                               nothing.encode())
     buf = io.BytesIO()
     output_lines: list[str] = []
+    # A member the session may not read (a rule refused it below the
+    # operand) aborts the run with zip's name on the refusal and writes
+    # no archive. Deliberate divergence: Info-ZIP writes the rest, echoes
+    # ``could not open for reading`` beside the adding line, and closes
+    # with a read/skipped summary that needs every member's size and
+    # exit 18; none of that is reproduced.
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for member in plan.members:
             data = b""

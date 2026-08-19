@@ -32,11 +32,25 @@ export interface Entry {
 
 // One thing the scan could not archive, in the order it was met.
 // `reason` is empty when `fatal` says the path could not be stat'd at
-// all, since each archiver words that case itself.
+// all, since each archiver words that case itself. `unreadable` marks a
+// directory the walk could not open (a rule refused it below the
+// operand), so its own entry is archived and its contents are not: tar
+// reports it as `Cannot open` and fails the run, Info-ZIP stores the
+// directory and says nothing.
 export interface Problem {
   path: string
   reason?: string
   fatal?: boolean
+  unreadable?: boolean
+}
+
+// One subtree listing, as the scan's walk reports it: the entries of the
+// asked kind as absolute virtual paths, and the directories below the
+// operand the walk could not open, whose contents are therefore not in
+// `paths`; the same ones whichever kind was asked for.
+export interface Walked {
+  paths: string[]
+  unreadable?: string[]
 }
 
 // What one operand contributed, in virtual path space.

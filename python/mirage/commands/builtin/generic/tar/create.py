@@ -241,13 +241,19 @@ async def plan_create(
         # Each name is then stripped on its own, so one operand can owe
         # two notices: `tar -cf a.tar ..` drops `..` from the directory
         # and `../` from everything under it.
-        named: list[tuple[str, Entry]] = []
+        named: list[tuple[str, str, Entry]] = []
         for entry in scan.entries:
             spelled = respell_one(entry.name_path, base, raw)
             _announce_prefix(strip_prefix(spelled)[1], dropped, notices)
-            named.append((member_name(spelled, entry.kind), entry))
+            named.append((member_name(spelled, entry.kind), spelled, entry))
         for problem in scan.problems:
             shown = respell_one(problem.path, base, raw)
+            if problem.unreadable:
+                # A directory the walk could not open: GNU names it,
+                # keeps its entry, and fails the run.
+                notices.append(f"tar: {shown}: Cannot open: {problem.reason}")
+                exit_code = CREATE_ERROR_EXIT
+                continue
             if not problem.fatal:
                 notices.append(f"tar: {shown}: {problem.reason}")
                 continue
@@ -258,8 +264,8 @@ async def plan_create(
         for crossing in scan.crossings:
             shown = member_name(respell_one(crossing, base, raw), "dir")
             notices.append(f"tar: {shown}: {OTHER_FILESYSTEM}")
-        keep = set(pruned([name for name, _ in named], exclude))
-        for name, entry in named:
+        keep = set(pruned([name for name, _, _ in named], exclude))
+        for name, spelled, entry in named:
             if name not in keep:
                 continue
             read = entry.read
@@ -270,7 +276,8 @@ async def plan_create(
                 Member(name=name,
                        kind=entry.kind,
                        path=entry.read,
-                       target=entry.target))
+                       target=entry.target,
+                       spelled=spelled))
     if exit_code:
         # GNU closes a run that failed an operand with one trailer, after
         # everything it did manage to name.

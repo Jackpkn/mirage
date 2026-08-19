@@ -44,3 +44,11 @@ SUBTREE_OPS = frozenset({"rename", "rmdir", "rm_r"})
 # ``tar``) is the command tier's I/O to refuse file by file, not a line
 # to refuse whole.
 SUBTREE_COMMANDS = frozenset({"rm", "rmdir", "mv"})
+
+# Ops that read an entry's metadata and nothing of its content, which a
+# deny rule lets through at the op door: deny means present and
+# refused, not absent, so a listing shows the entry's name and size
+# and the read of it is what fails, as GNU reports an unreadable file.
+# The command tier's guard leaves its ``stat`` slot unwrapped for the
+# same reason; a hidden path is the hide arm's, and stays ENOENT.
+METADATA_OPS = frozenset({"stat", "exists"})

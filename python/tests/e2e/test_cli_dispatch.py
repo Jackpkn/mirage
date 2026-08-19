@@ -94,6 +94,68 @@ async def test_renamed_install_attributes_to_its_own_head(ws):
 
 
 @pytest.mark.asyncio
+async def test_command_tiers_key_on_the_installed_name():
+    # Two installs of one spec are two subjects: allow installs one head
+    # word and not the other, deny and ask rules name one install and
+    # leave its twin alone, and a grant runs the line under the granted
+    # install's own config.
+    ws = Workspace({"/data": (RAMResource(), MountMode.WRITE)},
+                   mode=MountMode.WRITE,
+                   profiles={
+                       "crew": {
+                           "commands": {
+                               "allow": ["h1", "h2", "type"],
+                               "ask": [{
+                                   "reason": "outbound needs a nod",
+                                   "commands": ["h1 message send"]
+                               }],
+                               "deny": [{
+                                   "reason": "beta is read-only",
+                                   "commands": ["h2 message send"]
+                               }],
+                           }
+                       },
+                       "solo": {
+                           "commands": {
+                               "allow": ["h1", "type"]
+                           }
+                       },
+                   })
+    tree = make_tree()
+    ws.register_cli("h1", tree, {"token": "one"})
+    ws.register_cli("h2", tree, {"token": "two"})
+    ws.create_session("c", profile="crew")
+    ws.create_session("s", profile="solo")
+    try:
+        io = await ws.execute("h2 message send -t x hi", session_id="c")
+        err = await materialize(io.stderr) if io.stderr else b""
+        assert io.exit_code == 126
+        assert err == b"h2: policy denied: beta is read-only\n"
+        io = await ws.execute("h1 message send -t x hi", session_id="c")
+        err = await materialize(io.stderr) if io.stderr else b""
+        assert io.exit_code == 126
+        assert err.startswith(b"h1: requires approval: outbound needs a nod")
+        (request, ) = ws.approvals.list()
+        assert request.command == "h1"
+        await ws.approvals.grant(request.id)
+        io = await ws.execute("h1 message send -t x hi", session_id="c")
+        out = await materialize(io.stdout) if io.stdout else b""
+        assert (io.exit_code, out) == (0, b"sent[one] to=x: hi\n")
+        io = await ws.execute("h2 message send -t x hi", session_id="s")
+        err = await materialize(io.stderr) if io.stderr else b""
+        assert io.exit_code == 127
+        assert b"h2: command not found" in err
+        io = await ws.execute("type -t h1; type -t h2", session_id="s")
+        out = await materialize(io.stdout) if io.stdout else b""
+        assert (io.exit_code, out) == (1, b"cli\n")
+        io = await ws.execute("h1 message send -t x hi", session_id="s")
+        out = await materialize(io.stdout) if io.stdout else b""
+        assert (io.exit_code, out) == (0, b"sent[one] to=x: hi\n")
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
 async def test_leaf_usage_error_exits_2(ws):
     ws.register_cli("sl", make_tree(), {"token": "t"})
     code, _, err = await run(ws, "sl message send hi")

@@ -27,6 +27,10 @@ export interface Member {
   kind: MemberKind
   path: PathSpec | null
   target: string
+  // The path as the operand was typed, before the member-name strip:
+  // what a diagnostic about the member names (GNU reports `/t/priv`, not
+  // `t/priv`).
+  spelled?: string
 }
 
 // What one `tar -c` pass decided, before anything is written. Notices

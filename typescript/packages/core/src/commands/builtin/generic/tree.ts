@@ -26,6 +26,8 @@ import { fnmatch } from '../../../utils/fnmatch.ts'
 import { formatRecords } from '../utils/output.ts'
 import { compareCodePoints } from '../../../utils/sort.ts'
 
+const UNOPENABLE_MARK = '  [error opening dir]'
+
 interface TreeOpts {
   showHidden: boolean
   maxDepth: number | null
@@ -73,15 +75,19 @@ async function walkTree(
   lines: string[],
   treeOpts: TreeOpts,
   depth: number,
-): Promise<{ dirs: number; files: number; failed: boolean }> {
+): Promise<{ dirs: number; files: number; failed: boolean; unopened: number }> {
+  // `unopened` counts the directories in this subtree (itself included)
+  // that could not be opened (a rule refused them below the operand): the
+  // caller marks such a child inline the way GNU does and the run exits 2.
   let dirs = 0
   let files = 0
+  let unopened = 0
   let entries: string[]
   try {
     entries = await readdir(path)
   } catch (err) {
     if (!isWalkError(err)) throw err
-    return { dirs, files, failed: true }
+    return { dirs, files, failed: true, unopened: 1 }
   }
   const nested = childMounts(treeOpts.mounts, path.virtual)
   if (nested.length > 0) entries = [...new Set([...entries, ...nested])]
@@ -134,6 +140,7 @@ async function walkTree(
       // every path to its owner.
       const subReaddir = entry.crossing ? (treeOpts.crossReaddir ?? readdir) : readdir
       const subStat = entry.crossing ? (treeOpts.crossStat ?? stat) : stat
+      const own = lines.length - 1
       const child = await walkTree(
         subReaddir,
         subStat,
@@ -143,13 +150,19 @@ async function walkTree(
         treeOpts,
         depth + 1,
       )
+      if (child.failed) {
+        // GNU marks a directory it could not open inline, on the
+        // directory's own line, and still counts it.
+        lines[own] = `${lines[own] ?? ''}${UNOPENABLE_MARK}`
+      }
       dirs += child.dirs
       files += child.files
+      unopened += child.unopened
     } else {
       files += 1
     }
   }
-  return { dirs, files, failed: false }
+  return { dirs, files, failed: false, unopened }
 }
 
 function treeSummary(dirs: number, files: number, dirsOnly: boolean): string {
@@ -225,12 +238,12 @@ export async function treeGeneric(
     if (opts.statPath !== undefined) {
       const start = await opts.statPath(p.virtual)
       if (start === null) {
-        lines[before] = `${label}  [error opening dir]`
+        lines[before] = `${label}${UNOPENABLE_MARK}`
         anyError = true
         continue
       }
       if (start.type !== FileType.DIRECTORY) {
-        lines[before] = `${label}  [error opening dir]`
+        lines[before] = `${label}${UNOPENABLE_MARK}`
         totalFiles += 1
         continue
       }
@@ -238,13 +251,16 @@ export async function treeGeneric(
     const counts = await walkTree(readdir, stat, p, '', lines, treeOpts, 0)
     if (counts.failed && lines.length === before + 1) {
       // The root could not be opened (GNU marks it inline and exits 2).
-      lines[before] = `${label}  [error opening dir]`
+      lines[before] = `${label}${UNOPENABLE_MARK}`
       anyError = true
     } else if (lines.length > before + 1) {
       // GNU counts the root as a directory once it has any listed entry.
       totalDirs += counts.dirs + 1
       totalFiles += counts.files
     }
+    // A directory below the root it could not open is marked inline and
+    // makes the run exit 2, as GNU does, with nothing on stderr.
+    if (counts.unopened > 0) anyError = true
   }
   lines.push('', treeSummary(totalDirs, totalFiles, treeOpts.dirsOnly))
   const out: ByteSource = formatRecords(lines)

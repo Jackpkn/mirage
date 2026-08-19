@@ -12,7 +12,7 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import partial
 
 from mirage.accessor.base import Accessor
@@ -22,6 +22,7 @@ from mirage.commands.builtin.generic.du import (ComputeEntries, ComputeSize,
 from mirage.commands.builtin.generic_bind.adapter import (Builder, CommandIO,
                                                           OperationFn)
 from mirage.commands.config import CommandOpts
+from mirage.context import path_rules_active
 from mirage.io.types import ByteSource, IOResult
 from mirage.types import FileType, PathSpec
 from mirage.utils.key_prefix import mount_key, mount_prefix_of, rekey
@@ -37,13 +38,20 @@ class WalkBudget:
     walk of a real workspace is tens of thousands of requests. The budget
     stops the walk and records that the answer is partial.
 
+    It also collects the directories the walk could not open (a rule
+    refused them below the operand), which the generic reports after
+    the walks the way GNU names an unreadable directory.
+
     Args:
         remaining (int | None): entries still allowed, or None for no cap.
         hit (bool): whether the cap was reached.
+        unreadable (list[str]): virtual paths of the directories the
+            walk could not open, in the order it met them.
     """
 
     remaining: int | None
     hit: bool = False
+    unreadable: list[str] = field(default_factory=list)
 
     def spend(self) -> bool:
         """Charge one entry to the budget.
@@ -81,6 +89,9 @@ async def _walk(
     try:
         children = await ops.readdir(accessor, path, index)
     except (FileNotFoundError, ValueError):
+        return 0
+    except PermissionError:
+        budget.unreadable.append(path.virtual)
         return 0
     total = 0
     for child in children:
@@ -150,6 +161,10 @@ def _budget_hit(budget: WalkBudget) -> bool:
     return budget.hit
 
 
+def _budget_unreadable(budget: WalkBudget) -> list[str]:
+    return budget.unreadable
+
+
 async def du(ops: CommandIO, accessor: Accessor, paths: list[PathSpec],
              texts: list[str],
              opts: CommandOpts) -> tuple[ByteSource | None, IOResult]:
@@ -159,7 +174,9 @@ async def du(ops: CommandIO, accessor: Accessor, paths: list[PathSpec],
     native = ops.du
     compute_size: ComputeSize
     compute_entries: ComputeEntries
-    if native is None:
+    # A native du sums the raw tree; under a path rule the walk is what
+    # reports a directory the rule refuses to open, where GNU does.
+    if native is None or path_rules_active():
         compute_size = partial(_walk_size, ops, accessor, opts.index, budget)
         compute_entries = partial(_walk_entries, ops, accessor, opts.index,
                                   budget)
@@ -174,7 +191,8 @@ async def du(ops: CommandIO, accessor: Accessor, paths: list[PathSpec],
                             partial(_stat, ops, accessor, opts.index),
                             compute_size,
                             compute_entries,
-                            truncated=partial(_budget_hit, budget))
+                            truncated=partial(_budget_hit, budget),
+                            unreadable=partial(_budget_unreadable, budget))
 
 
 BUILDER = Builder('du', du, None, False, None)

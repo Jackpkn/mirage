@@ -114,6 +114,26 @@ export interface HiddenVars {
   readonly patterns?: readonly string[]
 }
 
+/**
+ * What a command's own I/O asks before touching an entry it reached
+ * below its operands.
+ *
+ * The admission gate judges the paths a line names; a walk (`grep -r`,
+ * `find`, `du`, `cp -r`, `tar`) then reaches entries no rule has seen.
+ * The dispatcher binds the admitted command's gate to the session
+ * context for the command's run, and the commands tier reads it there,
+ * so the tier that enforces the rules never imports the tier that
+ * states them. `scoped` is whether a path rule in force reads this
+ * command's paths at all; a native walk (a backend's own find or du)
+ * yields to the guarded readdir walk while it is set, so each entry
+ * passes the gate. `check` throws when a rule in force refuses the entry
+ * for the running command and returns when the command may touch it.
+ */
+export interface EntryGate {
+  readonly scoped: boolean
+  check(virtual: string): void
+}
+
 const MOUNT_MODE_ALIASES: Readonly<Record<string, MountMode>> = Object.freeze({
   r: MountMode.READ,
   rw: MountMode.WRITE,

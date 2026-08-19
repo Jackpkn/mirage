@@ -20,7 +20,7 @@ import { FileStat, FileType, PathSpec } from '../../../types.ts'
 import type { CommandFnResult, CommandOpts } from '../../config.ts'
 import type { ChildMounts, LinkView, MountView, StatPath } from '../../../ops/types.ts'
 import { formatLsLong } from '../utils/formatting.ts'
-import { gnuStrerror, isWalkError } from '../../../utils/errors.ts'
+import { gnuStrerror, isEacces, isWalkError } from '../../../utils/errors.ts'
 import { rstripSlash } from '../../../utils/slash.ts'
 import { CycleError, respellOne } from '../../../utils/path.ts'
 import { formatRecords } from '../utils/output.ts'
@@ -345,8 +345,11 @@ async function probeOperand(
     if (row !== null) return { path, row, groups: [] }
     const link = linkRow(path, opts.links)
     if (link !== null) return { path, row: link, groups: [] }
+    // GNU words a directory it may not read differently from one it
+    // cannot stat: the entry is there, opening it is what failed.
+    const verb = isEacces(err) ? 'cannot open directory' : 'cannot access'
     warnings.push({
-      message: `ls: cannot access '${path.rawPath}': ${errText(err)}`,
+      message: `ls: ${verb} '${path.rawPath}': ${errText(err)}`,
       serious: commandLineArg,
     })
     return { path, row: null, groups: [] }

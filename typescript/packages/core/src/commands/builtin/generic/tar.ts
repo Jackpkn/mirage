@@ -22,7 +22,15 @@ import type { CommandFnResult, CommandOpts } from '../../config.ts'
 import { readTar, writeTar, type TarEntry } from '../tar_helper.ts'
 import { rstripSlash } from '../../../utils/slash.ts'
 import { COMPRESSION_SIGNATURES } from './tar/constants.ts'
-import { planCreate, type DirProbe, type StatFn, type WalkFn } from './tar/create.ts'
+import {
+  CREATE_ERROR_EXIT,
+  ERROR_TRAILER,
+  planCreate,
+  type DirProbe,
+  type StatFn,
+  type WalkFn,
+} from './tar/create.ts'
+import { fsStrerror, isEacces } from '../../../utils/errors.ts'
 import { ensureDir, extractDest } from './archive/extract.ts'
 import type { Compression, CompressionKind, CreateResult } from './tar/types.ts'
 
@@ -179,9 +187,27 @@ async function writeArchive(
 ): Promise<CommandFnResult> {
   const entries: TarEntry[] = []
   const names: string[] = []
+  // A file the session may not read (a rule refused it below the
+  // operand) is GNU's "Cannot open": the member is left out, the run
+  // fails, and the one trailer closes the notices. The plan's notices
+  // come first, so a directory the scan could not open is reported
+  // before a file the write could not read.
+  const notices = plan.notices.filter((n) => n !== ERROR_TRAILER)
+  let exitCode = plan.exitCode
   for (const member of plan.members) {
-    const data =
-      member.path !== null ? await materialize(deps.stream(member.path)) : new Uint8Array(0)
+    let data: Uint8Array = new Uint8Array(0)
+    if (member.path !== null) {
+      try {
+        data = await materialize(deps.stream(member.path))
+      } catch (err) {
+        if (!isEacces(err)) throw err
+        notices.push(
+          `tar: ${member.spelled ?? member.name}: Cannot open: ${String(fsStrerror(err))}`,
+        )
+        exitCode = CREATE_ERROR_EXIT
+        continue
+      }
+    }
     entries.push({
       name: member.name,
       data,
@@ -191,16 +217,17 @@ async function writeArchive(
     })
     names.push(member.name)
   }
+  if (exitCode !== 0) notices.push(ERROR_TRAILER)
   const raw = await writeTar(entries)
   const archive = await compress(raw, compression)
   await deps.write(makePathSpec(archivePath, mountPrefix), archive)
-  const stderr = stderrOf(plan.notices)
+  const stderr = stderrOf(notices)
   const stdout = verbose && names.length > 0 ? ENC.encode(`${names.join('\n')}\n`) : null
   return [
     stdout,
     new IOResult({
       writes: { [archivePath]: archive },
-      exitCode: plan.exitCode,
+      exitCode,
       ...(stderr !== null ? { stderr } : {}),
     }),
   ]

@@ -123,6 +123,14 @@ EMAIL_USERNAME = "integ@example.com"
 # git remote real gh reads. Seeded by the fake alongside the mounted one.
 GH_CLI_REPO = "integ/repo-cli"
 EMAIL_PASSWORD = "secret"
+# Two more GreenMail accounts, provisioned through the REST API after
+# every reset (the reset restores the startup user list). The mount
+# keeps the primary account; the renamed CLI installs h1 and h2 hold
+# these two, so the mount and the CLIs never share an account.
+EMAIL_USERNAME_ALPHA = "alpha@example.com"
+EMAIL_PASSWORD_ALPHA = "secret1"
+EMAIL_USERNAME_BETA = "beta@example.com"
+EMAIL_PASSWORD_BETA = "secret2"
 EMAIL_SENT_FOLDER = "Sent"
 # Doubles as the workspace id on the fake notion server.
 NOTION_TOKEN = "integ-test"
@@ -728,22 +736,43 @@ class EmailService:
     async def create(cls, run_id: str, target: dict) -> "EmailService":
         host = os.environ["EMAIL_HOST"]
         api = f"http://{host}:{EMAIL_API_PORT}/api/service/reset"
+        users = f"http://{host}:{EMAIL_API_PORT}/api/user"
+        extras = ((EMAIL_USERNAME_ALPHA, EMAIL_PASSWORD_ALPHA),
+                  (EMAIL_USERNAME_BETA, EMAIL_PASSWORD_BETA))
         async with aiohttp.ClientSession() as session:
             async with session.post(api) as resp:
                 resp.raise_for_status()
+            # The reset restores the startup user list, dropping any
+            # API-provisioned account, so the CLI accounts are created
+            # after every reset rather than once.
+            for user, password in extras:
+                async with session.post(users,
+                                        json={
+                                            "email": user,
+                                            "login": user,
+                                            "password": password,
+                                        }) as resp:
+                    resp.raise_for_status()
         mail = target.get("mail")
         if mail:
             manifest = Path(
                 __file__).resolve().parents[2] / "fixtures" / f"{mail}.json"
-            cls._seed_imap(host, json.loads(manifest.read_text()))
+            entries = json.loads(manifest.read_text())
+            for user, password in ((EMAIL_USERNAME, EMAIL_PASSWORD), *extras):
+                rows = [
+                    e for e in entries
+                    if e.get("account", EMAIL_USERNAME) == user
+                ]
+                cls._seed_imap(host, user, password, rows)
         return cls(host)
 
     @staticmethod
-    def _seed_imap(host: str, entries: list[dict]) -> None:
+    def _seed_imap(host: str, user: str, password: str,
+                   entries: list[dict]) -> None:
         # Sync imaplib is fine here: this is test scaffolding running
         # before the workspace opens, not backend code.
         imap = imaplib.IMAP4(host, EMAIL_IMAP_PORT)
-        imap.login(EMAIL_USERNAME, EMAIL_PASSWORD)
+        imap.login(user, password)
         # GreenMail hands a new account nothing but an INBOX, where every
         # real provider ships a sent mailbox already made. himalaya files
         # a copy of each sent message into one, so create it here rather
@@ -772,16 +801,28 @@ class EmailService:
                         use_ssl=False))
 
     def cli_installs(self) -> dict[str, tuple[CLISpec, dict[str, object]]]:
+        # h1 and h2 are the same spec installed twice: two head words,
+        # two accounts, and neither shares the mount's account, so a
+        # line's behavior proves which config it ran under.
+        integ = {
+            "imap_host": self.host,
+            "imap_port": EMAIL_IMAP_PORT,
+            "smtp_host": self.host,
+            "smtp_port": EMAIL_SMTP_PORT,
+            "username": EMAIL_USERNAME,
+            "password": EMAIL_PASSWORD,
+            "use_ssl": False,
+        }
+        alpha = dict(integ,
+                     username=EMAIL_USERNAME_ALPHA,
+                     password=EMAIL_PASSWORD_ALPHA)
+        beta = dict(integ,
+                    username=EMAIL_USERNAME_BETA,
+                    password=EMAIL_PASSWORD_BETA)
         return {
-            "himalaya": (cli_spec_for("himalaya"), {
-                "imap_host": self.host,
-                "imap_port": EMAIL_IMAP_PORT,
-                "smtp_host": self.host,
-                "smtp_port": EMAIL_SMTP_PORT,
-                "username": EMAIL_USERNAME,
-                "password": EMAIL_PASSWORD,
-                "use_ssl": False,
-            }),
+            "himalaya": (cli_spec_for("himalaya"), integ),
+            "h1": (cli_spec_for("himalaya"), alpha),
+            "h2": (cli_spec_for("himalaya"), beta),
         }
 
     async def teardown(self) -> None:

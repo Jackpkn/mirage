@@ -16,7 +16,7 @@ from contextvars import ContextVar, Token
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from mirage.types import MountMode, weaker_mode
+from mirage.types import EntryGate, MountMode, weaker_mode
 from mirage.utils.hidden import path_hidden
 
 if TYPE_CHECKING:
@@ -194,6 +194,56 @@ def path_allowed(virtual: str) -> bool:
     """
     sess = get_current_session()
     return sess is None or session_path_allowed(sess, virtual)
+
+
+_current_admission: ContextVar["EntryGate | None"] = ContextVar(
+    "mirage_current_admission",
+    default=None,
+)
+
+
+def set_admission(gate: "EntryGate") -> Token[Any]:
+    """Bind the admitted command's entry gate to the current async
+    context, for the run of that one command.
+
+    Set by the dispatcher once the gate let the command through and
+    reset when the command returns, so a nested line (``xargs``,
+    ``find -exec``, ``eval``) binds its own and the outer command gets
+    its gate back, and a pipeline stage in its own task never sees a
+    sibling's.
+
+    Args:
+        gate (EntryGate): the admitted command's gate.
+    """
+    return _current_admission.set(gate)
+
+
+def reset_admission(token: Token[Any]) -> None:
+    """Restore the previous admission binding."""
+    _current_admission.reset(token)
+
+
+def get_admission() -> "EntryGate | None":
+    """The entry gate of the command running in this context, None
+    when no admitted command is bound (a command constructed outside
+    the dispatcher, or a line no gate judged)."""
+    return _current_admission.get()
+
+
+def path_rules_active() -> bool:
+    """Whether a path rule in force reads the running command's paths.
+
+    The twin of ``hidden_paths_active`` for the rule arms: a backend's
+    native find or du classifies the raw tree, so an entry a rule
+    refuses would be listed or summed past the gate; the readdir walk
+    passes every entry through it instead. False when no admitted
+    command is bound.
+
+    Args:
+        None
+    """
+    gate = get_admission()
+    return gate is not None and gate.scoped
 
 
 def mount_allowed(mount_prefix: str) -> bool:

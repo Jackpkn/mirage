@@ -17,6 +17,7 @@ import dataclasses
 from typing import Any
 
 from mirage.commands.builtin.utils.limit import run_with_timeout
+from mirage.context import reset_admission, set_admission
 from mirage.io import IOResult
 from mirage.io.types import materialize
 from mirage.policy import PolicyDenied, resolve_limit
@@ -37,7 +38,7 @@ from mirage.workspace.executor.command import handle_command
 from mirage.workspace.expand import expand_node
 from mirage.workspace.expand.argv import Argv, expand_argv
 from mirage.workspace.expand.globs import expand_boundary_globs
-from mirage.workspace.node.admission import admit
+from mirage.workspace.node.admission import Admitted, Refusal, admit
 from mirage.workspace.route import (SLASH_KEEPS_LAST, UNSUPPORTED_BUILTINS,
                                     follows_last_component)
 from mirage.workspace.session.state import (ensure_var_visible,
@@ -351,9 +352,6 @@ async def _run_argv(
                                    operands=tuple(boundary),
                                    args=tuple(expanded))
 
-    args = list(argv.args)
-    operands = list(argv.operands)
-
     # ── visibility and admission ────────────────
     # The one chokepoint every command class passes through: shell
     # builtins, namespace-routed commands (touch/chmod/ln -s), job
@@ -362,16 +360,59 @@ async def _run_argv(
     # the BUILTINS table, which runs before route(); the enumerators
     # read the same visibility filter through _layers. Refusals win
     # over flag parsing, routing, and runtime placement.
+    admitted: Admitted | None = None
     if name:
-        refusal = await admit(name, args, operands, session, registry,
-                              namespace, agent_id, stdin)
-        if refusal is not None:
-            cmd_str = " ".join([name, *args])
-            return None, IOResult(exit_code=refusal.exit_code,
-                                  stderr=refusal.stderr), ExecutionNode(
+        verdict = await admit(name, list(argv.args), list(argv.operands),
+                              session, registry, namespace, agent_id, stdin)
+        if isinstance(verdict, Refusal):
+            cmd_str = " ".join([name, *argv.args])
+            return None, IOResult(exit_code=verdict.exit_code,
+                                  stderr=verdict.stderr), ExecutionNode(
                                       command=cmd_str,
-                                      exit_code=refusal.exit_code,
-                                      stderr=refusal.stderr)
+                                      exit_code=verdict.exit_code,
+                                      stderr=verdict.stderr)
+        admitted = verdict
+
+    # ── run ────────────────────────────────────
+    # The admitted command's gate is bound for its run and reset after,
+    # so its own I/O can ask about the entries the gate did not see and
+    # a nested line binds its own (see ``Admitted``).
+    if admitted is None:
+        return await _route_argv(recurse, dispatch, registry, namespace,
+                                 execute_fn, argv, session, stdin, call_stack,
+                                 job_table, cancel, routing_decision, row)
+    token = set_admission(admitted)
+    try:
+        return await _route_argv(recurse, dispatch, registry, namespace,
+                                 execute_fn, argv, session, stdin, call_stack,
+                                 job_table, cancel, routing_decision, row)
+    finally:
+        reset_admission(token)
+
+
+async def _route_argv(
+    recurse,
+    dispatch,
+    registry,
+    namespace,
+    execute_fn,
+    argv: Argv,
+    session,
+    stdin,
+    call_stack,
+    job_table,
+    cancel: asyncio.Event | None,
+    routing_decision: PolicyDecision | None,
+    row: int,
+) -> tuple[Any, IOResult, ExecutionNode]:
+    """Route one admitted command to its builtin or mount handler.
+
+    The half of ``_run_argv`` past the gate, split out so the gate's
+    verdict can be bound around it.
+    """
+    name = argv.name
+    args = list(argv.args)
+    operands = list(argv.operands)
 
     # ── path execution ─────────────────────────
     # bash hands a slash-carrying head word to the loader, never to

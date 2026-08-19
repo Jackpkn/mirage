@@ -19,7 +19,9 @@ import { MountMode } from '../../types.ts'
 import { classifyParts } from '../expand/classify/parts.ts'
 import { getTestParser } from '../fixtures/workspace_fixture.ts'
 import { Workspace } from '../workspace/workspace.ts'
-import { admit, admitLine, policyScopes } from './admission.ts'
+import { Admitted, admit, admitLine, policyScopes } from './admission.ts'
+import { PolicyDenied } from '../../policy/index.ts'
+import type { CommandRule, CommandsSpec } from '../../policy/types.ts'
 
 const DEC = new TextDecoder()
 
@@ -95,7 +97,7 @@ describe('admission', () => {
         '',
         stdin,
       )
-      return refusal === null ? null : [refusal.exitCode, DEC.decode(refusal.stderr)]
+      return refusal instanceof Admitted ? null : [refusal.exitCode, DEC.decode(refusal.stderr)]
     }
     expect(await run('ls', [])).toBeNull()
     await w.execute('cd /data/private')
@@ -122,7 +124,7 @@ describe('admission', () => {
     const run = async (session: typeof plain, name: string, ...args: string[]) => {
       const words = classifyParts([name, ...args], w.registry, session.cwd)
       const refusal = await admit(name, args, words.slice(1), session, w.registry, w.namespace)
-      return refusal === null ? null : [refusal.exitCode, DEC.decode(refusal.stderr)]
+      return refusal instanceof Admitted ? null : [refusal.exitCode, DEC.decode(refusal.stderr)]
     }
     expect(await run(plain, 'cat', '/data/secret')).toEqual([1, 'cat: /data/secret: sealed\n'])
     expect(await run(veiled, 'cat', '/data/secret')).toBeNull()
@@ -230,6 +232,69 @@ describe('admission', () => {
       'cat: /data/secret: sealed\n',
     ])
     // The same gate, one command at a time.
-    expect(await admit('rm', ['/data/x'], [], session, w.registry, w.namespace)).toBeNull()
+    expect(await admit('rm', ['/data/x'], [], session, w.registry, w.namespace)).toBeInstanceOf(
+      Admitted,
+    )
+  })
+  it('the admitted gate judges what the line did not name', () => {
+    const deny: CommandRule = { reason: 'sealed', paths: ['/data/sealed'] }
+    const ask: CommandRule = { reason: 'nod', commands: ['grep'], paths: ['/data/asked/*'] }
+    const layers: CommandsSpec[] = [{ allow: null, ask: [ask], deny: [deny] }]
+    const gate = new Admitted({
+      layers,
+      tokens: ['grep', '-r', 'x', '/data'],
+      judged: new Set(['/data']),
+      granted: [],
+      scoped: true,
+    })
+    gate.check('/data')
+    gate.check('/data/open/o')
+    let thrown: unknown = null
+    try {
+      gate.check('/data/sealed/s')
+    } catch (err) {
+      thrown = err
+    }
+    expect(thrown).toBeInstanceOf(PolicyDenied)
+    expect((thrown as PolicyDenied).message).toBe('sealed')
+    expect((thrown as PolicyDenied).virtualPath).toBe('/data/sealed/s')
+    expect(() => {
+      gate.check('/data/asked/a')
+    }).toThrow('nod')
+    // An operand the gate judged passes whatever the rules say about it
+    // (the line was admitted on it), and a grant under the asking rule
+    // opens its scope to the walk.
+    new Admitted({
+      layers,
+      tokens: ['grep', 'x', '/data/asked/a'],
+      judged: new Set(['/data/asked/a']),
+      granted: [],
+      scoped: true,
+    }).check('/data/asked/a')
+    new Admitted({
+      layers,
+      tokens: ['grep', '-r', 'x', '/data/asked'],
+      judged: new Set(['/data/asked']),
+      granted: [ask],
+      scoped: true,
+    }).check('/data/asked/a')
+  })
+
+  it('admit reports the grant the line runs under and its scope', async () => {
+    const w = await ws()
+    const session = w.sessionManager.get(w.sessionManager.defaultId)
+    let words = classifyParts(['rm', '/data/x'], w.registry, session.cwd)
+    const verdict = await admit('rm', ['/data/x'], words.slice(1), session, w.registry, w.namespace)
+    expect(verdict).toBeInstanceOf(Admitted)
+    const admitted = verdict as Admitted
+    expect(admitted.tokens).toEqual(['rm', '/data/x'])
+    expect([...admitted.judged]).toEqual(['/data/x'])
+    expect(admitted.granted).toEqual([])
+    // `rm` is under no path rule in this document; `cat` is.
+    expect(admitted.scoped).toBe(false)
+    words = classifyParts(['cat', '/data/a'], w.registry, session.cwd)
+    const scoped = await admit('cat', ['/data/a'], words.slice(1), session, w.registry, w.namespace)
+    expect(scoped).toBeInstanceOf(Admitted)
+    expect((scoped as Admitted).scoped).toBe(true)
   })
 })

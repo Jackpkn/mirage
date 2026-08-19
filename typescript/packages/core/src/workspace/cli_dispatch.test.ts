@@ -109,6 +109,62 @@ describe('CLI dispatch e2e', () => {
     expect(dec.decode(help.stdout).startsWith('sl message send\n')).toBe(true)
   })
 
+  it('command tiers key on the installed name', async () => {
+    // Two installs of one spec are two subjects: allow installs one
+    // head word and not the other, deny and ask rules name one install
+    // and leave its twin alone, and a grant runs the line under the
+    // granted install's own config.
+    const ram = new RAMResource()
+    const registry = new OpsRegistry()
+    registry.registerResource(ram)
+    const ws = new Workspace(
+      { '/data': ram },
+      {
+        mode: MountMode.WRITE,
+        ops: registry,
+        shellParser: parser,
+        profiles: {
+          crew: {
+            commands: {
+              allow: ['h1', 'h2', 'type'],
+              ask: [{ reason: 'outbound needs a nod', commands: ['h1 message send'] }],
+              deny: [{ reason: 'beta is read-only', commands: ['h2 message send'] }],
+            },
+          },
+          solo: { commands: { allow: ['h1', 'type'] } },
+        },
+      },
+    )
+    const tree = makeTree()
+    ws.registerCli('h1', tree, { token: 'one' })
+    ws.registerCli('h2', tree, { token: 'two' })
+    ws.createSession('c', { profile: 'crew' })
+    ws.createSession('s', { profile: 'solo' })
+    const denied = await ws.execute('h2 message send -t x hi', { sessionId: 'c' })
+    expect([denied.exitCode, dec.decode(denied.stderr)]).toEqual([
+      126,
+      'h2: policy denied: beta is read-only\n',
+    ])
+    const asked = await ws.execute('h1 message send -t x hi', { sessionId: 'c' })
+    expect(asked.exitCode).toBe(126)
+    expect(dec.decode(asked.stderr).startsWith('h1: requires approval: outbound needs a nod')).toBe(
+      true,
+    )
+    const request = ws.approvals.list()[0]
+    if (request === undefined) throw new Error('no pending approval')
+    expect(request.command).toBe('h1')
+    await ws.approvals.grant(request.id)
+    const granted = await ws.execute('h1 message send -t x hi', { sessionId: 'c' })
+    expect([granted.exitCode, dec.decode(granted.stdout)]).toEqual([0, 'sent[one] to=x: hi\n'])
+    const missing = await ws.execute('h2 message send -t x hi', { sessionId: 's' })
+    expect(missing.exitCode).toBe(127)
+    expect(dec.decode(missing.stderr)).toContain('h2: command not found')
+    const typed = await ws.execute('type -t h1; type -t h2', { sessionId: 's' })
+    expect([typed.exitCode, dec.decode(typed.stdout)]).toEqual([1, 'cli\n'])
+    const listed = await ws.execute('h1 message send -t x hi', { sessionId: 's' })
+    expect([listed.exitCode, dec.decode(listed.stdout)]).toEqual([0, 'sent[one] to=x: hi\n'])
+  })
+
   it('leaf usage errors exit 2', async () => {
     const ws = buildWorkspace()
     ws.registerCli('sl', makeTree(), { token: 't' })

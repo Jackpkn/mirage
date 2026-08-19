@@ -31,7 +31,7 @@ from mirage.io.async_line_iterator import AsyncLineIterator
 from mirage.io.types import IOResult
 from mirage.types import FileStat, FileType, PathSpec
 from mirage.utils.bre import bre_to_python
-from mirage.utils.errors import WALK_ERRORS
+from mirage.utils.errors import WALK_ERRORS, fs_strerror
 from mirage.utils.key_prefix import mount_prefix_of
 
 BINARY_EXTENSIONS = frozenset({
@@ -791,14 +791,14 @@ async def grep_recursive(
         entries = await readdir_fn(path)
     except WALK_ERRORS as exc:
         if warnings is not None:
-            warnings.append(f"grep: {path}: {exc}")
+            warnings.append(f"grep: {path}: {fs_strerror(exc) or exc}")
         return results
     for entry in entries:
         try:
             s = await stat_fn(entry)
         except WALK_ERRORS as exc:
             if warnings is not None:
-                warnings.append(f"grep: {entry}: {exc}")
+                warnings.append(f"grep: {entry}: {fs_strerror(exc) or exc}")
             continue
         if s.type == FileType.DIRECTORY:
             if not dir_admitted(entry, filters):
@@ -849,7 +849,8 @@ async def grep_recursive(
                     results.extend(f"{entry}:{r}" for r in file_results)
             except WALK_ERRORS as exc:
                 if warnings is not None:
-                    warnings.append(f"grep: {entry}: {exc}")
+                    warnings.append(
+                        f"grep: {entry}: {fs_strerror(exc) or exc}")
                 continue
         else:
             try:
@@ -875,7 +876,8 @@ async def grep_recursive(
                     results.extend(f"{entry}:{r}" for r in file_results)
             except WALK_ERRORS as exc:
                 if warnings is not None:
-                    warnings.append(f"grep: {entry}: {exc}")
+                    warnings.append(
+                        f"grep: {entry}: {fs_strerror(exc) or exc}")
                 continue
     return results
 
@@ -952,9 +954,7 @@ def operand_error(path: str, exc: BaseException) -> str:
     Returns:
         str: the `grep: <path>: <reason>` line, without a trailing newline.
     """
-    if isinstance(exc, FileNotFoundError):
-        return f"grep: {path}: No such file or directory"
-    return f"grep: {path}: {exc}"
+    return f"grep: {path}: {fs_strerror(exc) or exc}"
 
 
 async def grep_files_only(

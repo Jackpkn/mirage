@@ -17,6 +17,7 @@ import type { SessionManager } from '../workspace/session/manager.ts'
 import type { Session } from '../workspace/session/session.ts'
 import { stripSlash } from '../utils/slash.ts'
 import { pathHidden } from '../utils/hidden.ts'
+import type { EntryGate } from '../types.ts'
 import { MountMode, weakerMode } from '../types.ts'
 
 /**
@@ -187,6 +188,42 @@ export function sessionPathAllowed(sess: Session, virtual: string): boolean {
 export function pathAllowed(virtual: string): boolean {
   const sess = getCurrentSession()
   return sess == null || sessionPathAllowed(sess, virtual)
+}
+
+const admissionStorage = createAsyncContext<EntryGate>()
+
+/**
+ * Bind the admitted command's entry gate for the duration of `fn`: the
+ * run of that one command.
+ *
+ * Bound by the dispatcher once the gate let the command through, so a
+ * nested line (`xargs`, `find -exec`, `eval`) binds its own and the outer
+ * command gets its gate back when it returns, and a pipeline stage in
+ * its own async context never sees a sibling's.
+ */
+export function runWithAdmission<T>(gate: EntryGate, fn: () => Promise<T>): Promise<T> {
+  return Promise.resolve(admissionStorage.run(gate, fn))
+}
+
+/**
+ * The entry gate of the command running in this context, null when no
+ * admitted command is bound (a command constructed outside the
+ * dispatcher, or a line no gate judged).
+ */
+export function getAdmission(): EntryGate | null {
+  return admissionStorage.getStore() ?? null
+}
+
+/**
+ * Whether a path rule in force reads the running command's paths.
+ *
+ * The twin of `hiddenPathsActive` for the rule arms: a backend's native
+ * find or du classifies the raw tree, so an entry a rule refuses would be
+ * listed or summed past the gate; the readdir walk passes every entry
+ * through it instead. False when no admitted command is bound.
+ */
+export function pathRulesActive(): boolean {
+  return getAdmission()?.scoped ?? false
 }
 
 /**

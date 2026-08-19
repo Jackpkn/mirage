@@ -12,6 +12,8 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import { pathRulesActive } from '../../../../context/session_context.ts'
+import { isEacces } from '../../../../utils/errors.ts'
 import { mountKey, mountPrefixOf, rekey } from '../../../../utils/key_prefix.ts'
 import type { Accessor } from '../../../../accessor/base.ts'
 import type { IndexCacheStore } from '../../../../cache/index/store.ts'
@@ -39,6 +41,10 @@ import { compareCodePoints } from '../../../../utils/sort.ts'
 class WalkBudget {
   private remaining: number | null
   hit = false
+  // Directories the walk could not open (a rule refused them below the
+  // operand), in the order it met them; the generic reports them after
+  // the walks the way GNU names an unreadable directory.
+  readonly unreadable: string[] = []
 
   constructor(remaining: number | null) {
     this.remaining = remaining
@@ -81,7 +87,8 @@ async function duWalk(
   let children: string[]
   try {
     children = await ops.readdir(accessor, path, index)
-  } catch {
+  } catch (err) {
+    if (isEacces(err)) budget.unreadable.push(path.virtual)
     return 0
   }
   let total = 0
@@ -116,7 +123,9 @@ export const DU_BUILDER: Builder = {
   name: 'du',
   fn: async (ops, accessor, paths, _texts, opts) => {
     const idx = opts.index ?? undefined
-    const native = ops.du
+    // A native du sums the raw tree; under a path rule the walk is what
+    // reports a directory the rule refuses to open, where GNU does.
+    const native = pathRulesActive() ? undefined : ops.du
     const budget = new WalkBudget(ops.maxDuEntries ?? DEFAULT_MAX_DU_ENTRIES)
     const computeSize: ComputeSize =
       native === undefined
@@ -135,6 +144,7 @@ export const DU_BUILDER: Builder = {
       computeSize,
       computeEntries,
       () => budget.hit,
+      () => budget.unreadable,
     )
     return [out.stdout, new IOResult({ stderr: out.stderr, exitCode: out.exitCode })]
   },

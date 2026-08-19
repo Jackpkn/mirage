@@ -12,8 +12,10 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from mirage.policy.match.rule import RuleMatch, match_op, match_rule
-from mirage.policy.types import CommandContext, CommandRule, OpsContext
+from mirage.policy.match.rule import (RuleMatch, io_refusal, match_io,
+                                      match_op, match_rule, rule_scope)
+from mirage.policy.types import (CommandContext, CommandRule, CommandsSpec,
+                                 OpsContext)
 from mirage.types import PathSpec
 from mirage.utils.hidden import classify_paths
 
@@ -172,3 +174,90 @@ def test_match_op_refuses_a_subtree_op_on_the_directory_holding_the_scope():
                    path=_path("/data/other"),
                    write=True,
                    prefix="/data/"))
+
+
+def test_match_op_lets_a_metadata_op_through():
+    # Deny is present and refused: the entry stats, the read is refused.
+    rule = CommandRule(reason="frozen", paths=("/data/locked/*", ))
+    scope = classify_paths(rule.paths)
+    for op in ("stat", "exists"):
+        assert not match_op(
+            rule, scope,
+            OpsContext(op=op,
+                       path=_path("/data/locked/a"),
+                       write=False,
+                       prefix="/data/"))
+    assert match_op(
+        rule, scope,
+        OpsContext(op="read",
+                   path=_path("/data/locked/a"),
+                   write=False,
+                   prefix="/data/"))
+
+
+def test_match_io_names_the_line_and_holds_the_entry():
+    pure = CommandRule(reason="sealed", paths=("/data/sealed", ))
+    scope = rule_scope(pure)
+    assert match_io(pure, scope, ("grep", "-r", "x", "/data"),
+                    "/data/sealed/deep/f")
+    assert match_io(pure, scope, ("du", "/data"), "/data/sealed")
+    assert not match_io(pure, scope, ("du", "/data"), "/data/open/f")
+    # A command-scoped rule reads the line's tokens, so a pattern with a
+    # token after the name applies only to the line that carries it.
+    scoped = CommandRule(reason="no",
+                         commands=("grep -r", ),
+                         paths=("/data/private", ))
+    assert match_io(scoped, rule_scope(scoped), ("grep", "-r", "k", "/data"),
+                    "/data/private/k")
+    assert not match_io(scoped, rule_scope(scoped),
+                        ("grep", "k", "/data"), "/data/private/k")
+    assert not match_io(scoped, rule_scope(scoped),
+                        ("cat", "/data"), "/data/private/k")
+    # A whole-line rule spoke at admission and says nothing at an entry;
+    # the directory holding a children pattern is not in it.
+    whole = CommandRule(reason="no", commands=("rm", ))
+    assert not match_io(whole, rule_scope(whole), ("rm", "/data/x"), "/data/x")
+    children = CommandRule(reason="frozen", paths=("/data/locked/*", ))
+    assert not match_io(children, rule_scope(children),
+                        ("ls", "/data"), "/data/locked")
+    assert match_io(children, rule_scope(children), ("ls", "/data"),
+                    "/data/locked/y")
+
+
+def test_rule_scope_is_none_for_a_whole_line_rule_and_remembered():
+    whole = CommandRule(reason="no", commands=("rm", ))
+    assert rule_scope(whole) is None
+    scoped = CommandRule(reason="no", paths=("/data/*", ))
+    assert rule_scope(scoped) is rule_scope(
+        CommandRule(reason="no", paths=("/data/*", )))
+
+
+def test_io_refusal_applies_the_gate_precedence_to_an_entry():
+    deny = CommandRule(reason="locked",
+                       commands=("rm", ),
+                       paths=("/data/both/locked/*", ))
+    ask_ws = CommandRule(reason="both: needs a nod",
+                         commands=("rm", ),
+                         paths=("/data/both/*", ))
+    ask_profile = CommandRule(reason="profile nod",
+                              commands=("rm", ),
+                              paths=("/data/both/*", ))
+    layers = (CommandsSpec(ask=(ask_ws, ),
+                           deny=(deny, )), CommandsSpec(ask=(ask_profile, )))
+    tokens = ("rm", "-r", "/data/both")
+    # deny > ask, whatever the tier order.
+    assert io_refusal(layers, tokens, "/data/both/locked/y",
+                      (ask_ws, )) == "locked"
+    # The first matching ask rule in tier order speaks: refused without
+    # a grant under it, passed with one, and a later tier's rule never
+    # gets a say.
+    assert io_refusal(layers, tokens, "/data/both/a",
+                      ()) == "both: needs a nod"
+    assert io_refusal(layers, tokens, "/data/both/a", (ask_ws, )) is None
+    assert io_refusal(layers, tokens, "/data/both/a",
+                      (ask_profile, )) == "both: needs a nod"
+    # An entry no rule holds passes; so does one a whole-line rule names.
+    assert io_refusal(layers, tokens, "/data/open/a", ()) is None
+    whole = (CommandsSpec(
+        deny=(CommandRule(reason="no", commands=("rm", )), )), )
+    assert io_refusal(whole, tokens, "/data/x", ()) is None
