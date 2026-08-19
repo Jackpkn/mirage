@@ -438,4 +438,23 @@ describe('SessionManager host grants', () => {
     ])
     expect(() => m.grantsOf('nobody')).toThrow(/unknown session/)
   })
+
+  it('hydrate onto the default session', async () => {
+    const store = new RAMSessionStore()
+    const m = new SessionManager('def', store)
+    await m.ensureLoaded()
+    const rule = { reason: 'sign-off', commands: ['git push'], paths: [], mount: '' }
+    const grant: Grant = { decision: 'allow_session', rule, argv: ['git', 'push'], cwd: '/repo' }
+    m.setGrants('def', [grant])
+    await m.flush()
+    // The default session takes the stored durable fields on reopen;
+    // the grants are among them, so an approved line does not ask
+    // again after a restart and the next flush keeps the grant.
+    const again = new SessionManager('def', store)
+    await again.ensureLoaded()
+    expect(again.grantsOf('def')).toEqual([grant])
+    await again.flush()
+    const stored = (await store.load()).get('def') as { grants: { decision: string }[] }
+    expect(stored.grants[0]?.decision).toBe('allow_session')
+  })
 })

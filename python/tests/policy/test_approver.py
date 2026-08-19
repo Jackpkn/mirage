@@ -39,9 +39,9 @@ def _request(words: tuple[str, ...] = ("git", "push"),
 def test_request_id_is_a_digest_of_what_was_asked():
     same = request_id("s", "/repo", ("git", "push"))
     assert same == request_id("s", "/repo", ("git", "push"))
-    # sha1("s\0/repo\0git\0push\0")[:12], the value the TypeScript
+    # sha256("s\0/repo\0git\0push\0")[:12], the value the TypeScript
     # requestId computes for the same question (pinned in approver.test.ts).
-    assert same == "97702f321d7a"
+    assert same == "22ce9edec956"
     # Any of session, cwd or a word changes the question.
     assert same != request_id("t", "/repo", ("git", "push"))
     assert same != request_id("s", "/scratch", ("git", "push"))

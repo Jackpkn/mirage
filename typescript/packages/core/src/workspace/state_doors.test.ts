@@ -31,6 +31,9 @@ import type {
 } from '../policy/index.ts'
 import { CallbackApprover } from '../policy/index.ts'
 import { RAMResource } from '../resource/ram/ram.ts'
+import { Runtime } from '../runtime/base.ts'
+import { LINE_EXECUTOR, type LineExecutor } from '../runtime/mixin.ts'
+import type { RunResult } from '../runtime/types.ts'
 import { MountMode, ResourceName } from '../types.ts'
 import { cliSpecFor } from '../commands/cli/specs.ts'
 import { parseWorkspacePermissions, type SessionProfile } from './session/permissions.ts'
@@ -1225,7 +1228,104 @@ describe('command permissions end to end', () => {
     ])
     expect((await line(ws, 'cat /repo/locked/y'))[0]).toBe(1)
   })
+
+  it('a command-scoped path rule reads the path the command touches', async () => {
+    // A command-scoped rule never runs at the op door, so the command
+    // plane has to see the path the command will actually touch: for a
+    // command that follows links (open(2)) that is the target, for one
+    // that acts on the link itself (rm, lstat(2)) it is the link.
+    const parser = await getTestParser()
+    const ws = new Workspace(
+      { '/data': new RAMResource() },
+      {
+        mode: MountMode.WRITE,
+        shellParser: parser,
+        permissions: {
+          commands: {
+            deny: [
+              { reason: 'sealed', commands: ['cat', 'head'], paths: ['/data/secret*'] },
+              { reason: 'keep the link', commands: ['rm'], paths: ['/data/link'] },
+            ],
+          },
+          paths: { hide: [] },
+        },
+      },
+    )
+    open.push(ws)
+    await ws.execute(
+      'echo top > /data/secret && ln -s /data/secret /data/link && ln -s /data/secret /data/other',
+    )
+    expect(await line(ws, 'cat /data/secret')).toEqual([1, '', 'cat: /data/secret: sealed\n'])
+    // Through the link: refused, the operand named as typed.
+    expect(await line(ws, 'cat /data/link')).toEqual([1, '', 'cat: /data/link: sealed\n'])
+    expect(await line(ws, 'head -n 1 /data/other')).toEqual([1, '', 'head: /data/other: sealed\n'])
+    // rm removes the link, not the target: the target's rule does not
+    // apply, the link's own does.
+    expect(await line(ws, 'rm /data/other')).toEqual([0, '', ''])
+    expect(await line(ws, 'rm /data/link')).toEqual([1, '', 'rm: /data/link: keep the link\n'])
+    expect((await line(ws, 'cat /data/link'))[0]).toBe(1)
+  })
+
+  it('a whole-line runtime is gated like the tree', async () => {
+    // A runtime that captures the raw line runs it under the same
+    // tiers: every parsed command clears visibility, the policy chain
+    // and the approval door before the runtime sees a byte, so a
+    // captured line cannot run what the tree would refuse.
+    const parser = await getTestParser()
+    const box = new Box()
+    const ws = new Workspace(
+      { '/repo': new RAMResource() },
+      {
+        mode: MountMode.WRITE,
+        shellParser: parser,
+        permissions: COMMANDS_DOC,
+        profiles: { reviewer: REVIEWER },
+        runtimes: [box, 'vfs'],
+      },
+    )
+    open.push(ws)
+    ws.registerCli('git', cliSpecFor('git'))
+    expect(await line(ws, 'sort /repo/x')).toEqual([127, '', 'sort: command not found\n'])
+    expect(await line(ws, 'cat /repo/a | sort')).toEqual([127, '', 'sort: command not found\n'])
+    expect(await line(ws, 'rm /repo/x')).toEqual([1, '', 'rm: /repo/x: no deletes in the repo\n'])
+    expect(await line(ws, 'cat /repo/a; rm -f /repo/x')).toEqual([
+      1,
+      '',
+      'rm: /repo/x: no deletes in the repo\n',
+    ])
+    expect(box.lines).toEqual([])
+    expect(await line(ws, 'cat /repo/a | wc -l')).toEqual([0, 'box:cat /repo/a | wc -l', ''])
+    ws.createSession('rev', { profile: 'reviewer' })
+    expect(await line(ws, 'git add x', 'rev')).toEqual([
+      126,
+      '',
+      'git: policy denied: git add is not allowed\n',
+    ])
+    expect((await line(ws, 'git status', 'rev'))[0]).toBe(0)
+    expect(box.lines).toEqual(['cat /repo/a | wc -l', 'git status'])
+  })
 })
+
+/** A runtime that takes every line raw, recording what reached it. */
+class Box extends Runtime implements LineExecutor {
+  readonly [LINE_EXECUTOR] = true as const
+  readonly name = 'box'
+  lines: string[] = []
+
+  constructor() {
+    super({ captures: ['*'] })
+  }
+
+  runLine(
+    line: string,
+    _stdin: Uint8Array | null,
+    _env: Record<string, string>,
+    _cwd: string,
+  ): Promise<RunResult> {
+    this.lines.push(line)
+    return Promise.resolve({ stdout: ENC.encode(`box:${line}`), stderr: null, exitCode: 0 })
+  }
+}
 
 describe('ask end to end', () => {
   // Through the document parser, as the YAML door reads it: a bare
@@ -1297,6 +1397,16 @@ describe('ask end to end', () => {
     expect(request.sessionId).toBe(ws.sessionManager.defaultId)
     expect(await line(ws, 'rm /scratch/z')).toEqual([126, '', err])
     expect(ws.approvals.list()).toHaveLength(1)
+    // The request names the agent of the call that asked, not the
+    // workspace's constructor agent, so a shared workspace attributes
+    // an approval to whoever raised it.
+    expect(request.agentId).toBe('')
+    const byBob = await ws.execute('rm /scratch/z2', { agentId: 'bob' })
+    expect(byBob.exitCode).toBe(126)
+    expect(ws.approvals.list().map((r) => r.agentId)).toEqual(['', 'bob'])
+    const bobs = ws.approvals.list().find((r) => r.agentId === 'bob')
+    if (bobs === undefined) throw new Error('no request from bob')
+    await ws.approvals.deny(bobs.id)
     // Granted once: the exact retry passes, and the next one asks.
     await ws.approvals.grant(request.id)
     expect(ws.approvals.list()).toEqual([])

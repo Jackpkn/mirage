@@ -54,7 +54,7 @@ class SealReadsPolicy(Policy):
 
     async def pre_ops(self, ctx: OpsContext) -> Deny | None:
         if not ctx.write and ctx.path.virtual.endswith(".sealed"):
-            return Deny(message="sealed\n")
+            return Deny("sealed")
         return None
 
 
@@ -65,7 +65,7 @@ class RedactReadsPolicy(Policy):
         data = ctx.result if isinstance(ctx.result,
                                         (bytes, bytearray)) else None
         if ctx.op == "read" and data is not None and b"TOPSECRET" in data:
-            return Deny(message="redacted\n")
+            return Deny("redacted")
         return None
 
 

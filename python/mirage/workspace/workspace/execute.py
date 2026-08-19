@@ -29,6 +29,7 @@ from mirage.shell.parse import (find_syntax_error, find_unterminated_backtick,
                                 parse, syntax_error_result)
 from mirage.workspace.abort import MirageAbortError
 from mirage.workspace.node import provision_node, run_command_tree
+from mirage.workspace.node.admission import admit_line
 from mirage.workspace.session import (get_current_session_for,
                                       reset_current_session,
                                       set_current_session)
@@ -198,6 +199,16 @@ async def execute_line(
                 name)
         line_runtime = ws._runtimes.whole_line(ast, decision)
         if line_runtime is not None:
+            # A whole line is a command like any other: the same
+            # visibility and admission gate as the tree, per parsed
+            # command, before the runtime sees a byte of it.
+            refusal = await admit_line(ast, effective_session, ws._registry,
+                                       ws._namespace)
+            if refusal is not None:
+                io = IOResult(exit_code=refusal.exit_code,
+                              stderr=refusal.stderr)
+                session.last_exit_code = io.exit_code
+                return io
             io = await run_whole_line(
                 line_runtime, command, stdin, effective_session,
                 ws._registry.mounts(), ws._registry.policies,

@@ -12,7 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { sha1Hex } from '../utils/hash.ts'
+import { sha256Hex } from '../utils/hash.ts'
 import type { ApprovalDecision, ApprovalRequest } from './types.ts'
 
 /**
@@ -46,7 +46,7 @@ export async function requestId(
     bytes.set(part, offset)
     offset += part.byteLength
   }
-  return (await sha1Hex(bytes)).slice(0, 12)
+  return (await sha256Hex(bytes)).slice(0, 12)
 }
 
 /**

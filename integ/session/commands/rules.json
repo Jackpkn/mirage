@@ -157,6 +157,32 @@
         "stdout": "y\n",
         "stderr": ""
       }
+    },
+    {
+      "id": "cmd_path_rule_sees_through_a_followed_link",
+      "seq": 923055,
+      "targets": [
+        "ram-commands"
+      ],
+      "command": "mkdir -p /scratch/private && echo k > /scratch/private/k && ln -s /scratch/private/k /scratch/k && cat /scratch/k",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "cat: /scratch/k: private\n"
+      }
+    },
+    {
+      "id": "cmd_no_follow_command_acts_on_the_link_itself",
+      "seq": 923056,
+      "targets": [
+        "ram-commands"
+      ],
+      "command": "ln -s /repo/letters.txt /scratch/lt && rm /scratch/lt && test -e /repo/letters.txt && echo kept",
+      "expect": {
+        "exit": 0,
+        "stdout": "kept\n",
+        "stderr": ""
+      }
     }
   ]
 }

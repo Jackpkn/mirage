@@ -74,7 +74,7 @@ async function runSizelessProbe(
 class SealReadsPolicy implements Policy {
   preOps(ctx: OpsContext): Action | null {
     if (!ctx.write && ctx.path.virtual.endsWith(".sealed")) {
-      return { kind: "deny", message: "sealed\n" };
+      return { kind: "deny", reason: "sealed" };
     }
     return null;
   }
@@ -84,7 +84,7 @@ class RedactReadsPolicy implements Policy {
   postOps(ctx: OpsResultContext): Action | null {
     const data = ctx.result instanceof Uint8Array ? new TextDecoder().decode(ctx.result) : null;
     if (ctx.op === "read" && data !== null && data.includes("TOPSECRET")) {
-      return { kind: "deny", message: "redacted\n" };
+      return { kind: "deny", reason: "redacted" };
     }
     return null;
   }

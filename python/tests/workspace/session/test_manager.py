@@ -548,3 +548,23 @@ async def test_manager_grants_live_on_the_registered_session_and_persist():
     assert again.grants_of("agent") == (grant, )
     with pytest.raises(KeyError):
         mgr.grants_of("nobody")
+
+
+@pytest.mark.asyncio
+async def test_manager_default_session_hydrates_its_grants():
+    store = RAMSessionStore()
+    mgr = SessionManager("default", store=store)
+    await mgr.ensure_loaded()
+    rule = CommandRule(reason="sign-off", commands=("git push", ))
+    grant = Grant("allow_session", rule, ("git", "push"), "/repo")
+    mgr.set_grants("default", (grant, ))
+    await mgr.flush()
+    # The default session takes the stored durable fields on reopen;
+    # the grants are among them, so an approved line does not ask
+    # again after a restart and the next flush keeps the grant.
+    again = SessionManager("default", store=store)
+    await again.ensure_loaded()
+    assert again.grants_of("default") == (grant, )
+    await again.flush()
+    assert (await store.load())["default"]["grants"][0]["decision"] == (
+        "allow_session")

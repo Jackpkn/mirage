@@ -24,7 +24,7 @@
       "expect": {
         "exit": 126,
         "stdout": "",
-        "stderr": "rm: requires approval: sign-off (approval 6b27b00a1daa)\n"
+        "stderr": "rm: requires approval: sign-off (approval 5b25c31eb62e)\n"
       }
     },
     {
@@ -38,7 +38,7 @@
       "expect": {
         "exit": 126,
         "stdout": "",
-        "stderr": "rm: requires approval: sign-off (approval 6b27b00a1daa)\n"
+        "stderr": "rm: requires approval: sign-off (approval 5b25c31eb62e)\n"
       }
     },
     {
@@ -81,7 +81,7 @@
       "expect": {
         "exit": 126,
         "stdout": "",
-        "stderr": "rm: requires approval: sign-off (approval 191446418252)\n"
+        "stderr": "rm: requires approval: sign-off (approval b416c5b1c8fa)\n"
       }
     },
     {
@@ -110,7 +110,7 @@
       "expect": {
         "exit": 126,
         "stdout": "",
-        "stderr": "rm: requires approval: sign-off (approval 191446418252)\n"
+        "stderr": "rm: requires approval: sign-off (approval b416c5b1c8fa)\n"
       }
     },
     {
@@ -139,7 +139,7 @@
       "expect": {
         "exit": 126,
         "stdout": "",
-        "stderr": "rm: requires approval: sign-off (approval d5d85d5fe238)\n"
+        "stderr": "rm: requires approval: sign-off (approval 5bda3012c32d)\n"
       }
     },
     {
@@ -167,7 +167,7 @@
       "expect": {
         "exit": 126,
         "stdout": "",
-        "stderr": "git: requires approval: log needs a nod (approval cb6bb46546ff)\n"
+        "stderr": "git: requires approval: log needs a nod (approval f520086f93cb)\n"
       }
     },
     {
@@ -210,7 +210,7 @@
       "expect": {
         "exit": 126,
         "stdout": "",
-        "stderr": "head: requires approval: no standing approval (approval b3a667a9ba0c)\n"
+        "stderr": "head: requires approval: no standing approval (approval edd518295293)\n"
       }
     }
   ]

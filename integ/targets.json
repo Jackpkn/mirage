@@ -2042,7 +2042,8 @@
             "git",
             "man",
             "xargs",
-            "python3"
+            "python3",
+            "ln"
           ],
           "ask": [
             {
@@ -2061,6 +2062,11 @@
             {
               "reason": "sealed until review",
               "paths": ["/repo/sealed/*"]
+            },
+            {
+              "reason": "private",
+              "commands": ["cat"],
+              "paths": ["/scratch/private/*"]
             }
           ]
         }

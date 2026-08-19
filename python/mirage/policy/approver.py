@@ -50,7 +50,7 @@ def request_id(session_id: str, cwd: str, argv: tuple[str, ...]) -> str:
         argv (tuple[str, ...]): the line as expanded, command name
             first.
     """
-    digest = hashlib.sha1()
+    digest = hashlib.sha256()
     for part in (session_id, cwd, *argv):
         digest.update(part.encode())
         digest.update(b"\0")

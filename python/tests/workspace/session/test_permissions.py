@@ -24,6 +24,9 @@ from mirage.policy import (Action, ApprovalRequest, Ask, CallbackApprover,
 from mirage.policy.constants import DEFAULT_ASK_REASON, DEFAULT_DENY_REASON
 from mirage.policy.types import CommandRule
 from mirage.resource.ram import RAMResource
+from mirage.runtime.base import Runtime
+from mirage.runtime.mixin import LineExecutorMixin
+from mirage.runtime.types import RunResult
 from mirage.types import HiddenPaths, HiddenVars, MountMode
 from mirage.workspace import Workspace
 from mirage.workspace.mount.spec import Mount
@@ -716,6 +719,106 @@ async def test_find_delete_is_gated_at_the_op_door_not_by_a_named_rule():
         await ws.close()
 
 
+LINK_DOC = WorkspacePermissions.model_validate({
+    "commands": {
+        "deny": [{
+            "reason": "sealed",
+            "commands": ["cat", "head"],
+            "paths": ["/data/secret*"]
+        }, {
+            "reason": "keep the link",
+            "commands": ["rm"],
+            "paths": ["/data/link"]
+        }],
+    }
+})
+
+
+@pytest.mark.asyncio
+async def test_a_command_scoped_path_rule_reads_the_path_the_command_touches():
+    # A command-scoped rule never runs at the op door, so the command
+    # plane has to see the path the command will actually touch: for a
+    # command that follows links (open(2)) that is the target, for one
+    # that acts on the link itself (rm, lstat(2)) it is the link.
+    ws = Workspace({"/data/": (RAMResource(), MountMode.WRITE)},
+                   mode=MountMode.WRITE,
+                   permissions=LINK_DOC)
+    try:
+        await ws.execute("echo top > /data/secret && "
+                         "ln -s /data/secret /data/link && "
+                         "ln -s /data/secret /data/other")
+        assert await _line(
+            ws, "cat /data/secret") == (1, "", "cat: /data/secret: sealed\n")
+        # Through the link: refused, the operand named as typed.
+        assert await _line(ws,
+                           "cat /data/link") == (1, "",
+                                                 "cat: /data/link: sealed\n")
+        assert await _line(
+            ws,
+            "head -n 1 /data/other") == (1, "", "head: /data/other: sealed\n")
+        # rm removes the link, not the target: the target's rule does
+        # not apply, the link's own does.
+        assert await _line(ws, "rm /data/other") == (0, "", "")
+        assert await _line(
+            ws, "rm /data/link") == (1, "", "rm: /data/link: keep the link\n")
+        assert (await _line(ws, "cat /data/link"))[0] == 1
+    finally:
+        await ws.close()
+
+
+class _Box(Runtime, LineExecutorMixin):
+    """A runtime that takes every line raw, recording what reached it."""
+
+    name = "box"
+    captures = ("*", )
+
+    def __init__(self) -> None:
+        self.lines: list[str] = []
+
+    async def run_line(self, line: str, stdin: bytes | None,
+                       env: dict[str, str], cwd: str) -> RunResult:
+        self.lines.append(line)
+        return RunResult(stdout=b"box:" + line.encode(),
+                         stderr=None,
+                         exit_code=0)
+
+
+@pytest.mark.asyncio
+async def test_a_whole_line_runtime_is_gated_like_the_tree():
+    # A runtime that captures the raw line runs it under the same
+    # tiers: every parsed command clears visibility, the policy chain
+    # and the approval door before the runtime sees a byte, so a
+    # captured line cannot run what the tree would refuse.
+    box = _Box()
+    ws = Workspace({"/repo/": (RAMResource(), MountMode.WRITE)},
+                   mode=MountMode.WRITE,
+                   permissions=COMMANDS_DOC,
+                   profiles={"reviewer": REVIEWER_COMMANDS},
+                   runtimes=[box, "vfs"])
+    ws.register_cli("git", cli_spec_for("git"))
+    try:
+        assert await _line(ws, "sort /repo/x") == (127, "",
+                                                   "sort: command not found\n")
+        assert await _line(
+            ws, "cat /repo/a | sort") == (127, "", "sort: command not found\n")
+        assert await _line(
+            ws,
+            "rm /repo/x") == (1, "", "rm: /repo/x: no deletes in the repo\n")
+        assert await _line(ws, "cat /repo/a; rm -f /repo/x") == (
+            1, "", "rm: /repo/x: no deletes in the repo\n")
+        assert box.lines == []
+        assert await _line(
+            ws, "cat /repo/a | wc -l") == (0, "box:cat /repo/a | wc -l", "")
+        ws.create_session("rev", profile="reviewer")
+        assert await _line(
+            ws, "git add x",
+            "rev") == (126, "", "git: policy denied: git add is not allowed\n")
+        assert (await _line(ws, "git status", "rev"))[0] == 0
+        assert box.lines == ["cat /repo/a | wc -l", "git status"]
+    finally:
+        await ws.close()
+
+
 ASK_DOC = WorkspacePermissions.model_validate({
     "commands": {
         "ask": [{
@@ -773,6 +876,15 @@ async def test_an_asked_line_is_refused_until_the_host_answers():
         assert request.session_id == ws._session_mgr.default_id
         assert await _line(ws, "rm /scratch/z") == (126, "", err)
         assert len(ws.approvals.list()) == 1
+        # The request names the agent of the call that asked, not the
+        # workspace's default agent, so a shared workspace attributes an
+        # approval to whoever raised it.
+        assert request.agent_id == ""
+        by_bob = await ws.execute("rm /scratch/z2", agent_id="bob")
+        assert by_bob.exit_code == 126
+        assert [r.agent_id for r in ws.approvals.list()] == ["", "bob"]
+        (bobs, ) = (r for r in ws.approvals.list() if r.agent_id == "bob")
+        await ws.approvals.deny(bobs.id)
         # Granted once: the exact retry passes, and the next one asks.
         await ws.approvals.grant(request.id)
         assert ws.approvals.list() == ()

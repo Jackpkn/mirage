@@ -40,14 +40,10 @@ import { expandBoundaryGlobs } from '../expand/globs.ts'
 import { type ExecuteFn, expandNode } from '../expand/node.ts'
 import type { TSNodeLike } from '../../shell/types.ts'
 import { handleCommand } from '../executor/command.ts'
-import { pathFlagScopes, positionalScopes, programTokens } from '../executor/command/routing.ts'
-import { toScope } from '../executor/builtins/scope.ts'
 import { type AliasMark, aliasCommandText } from '../executor/builtins/alias/index.ts'
 import { findSyntaxError } from '../../shell/parse.ts'
-import { resolvePath } from '../../utils/path.ts'
 import { runWithTimeout } from '../../commands/builtin/utils/limit.ts'
-import { PolicyDenied, renderDeny, renderPending, resolveLimit } from '../../policy/index.ts'
-import type { CommandContext } from '../../policy/index.ts'
+import { PolicyDenied, resolveLimit } from '../../policy/index.ts'
 import { traceCommand } from '../../shell/xtrace.ts'
 import type { DispatchFn } from '../../runtime/types.ts'
 import {
@@ -70,13 +66,8 @@ import { globPattern } from '../../utils/glob_walk.ts'
 import { CycleError } from '../../utils/path.ts'
 import type { Namespace } from '../mount/namespace/namespace.ts'
 import type { MountRegistry } from '../mount/registry.ts'
-import {
-  SLASH_KEEPS_LAST,
-  UNSUPPORTED_BUILTINS,
-  commandVisible,
-  followsLastComponent,
-  isTool,
-} from '../route/index.ts'
+import { SLASH_KEEPS_LAST, UNSUPPORTED_BUILTINS, followsLastComponent } from '../route/index.ts'
+import { admit } from './admission.ts'
 import type { Session } from '../session/session.ts'
 import { ensureVarVisible, sessionView } from '../session/state.ts'
 import { preSessionGate } from '../../policy/index.ts'
@@ -482,70 +473,23 @@ async function runArgv(
   const args = [...argv.args]
   let operands = [...argv.operands]
 
-  // Visibility. A word the session's allow lists do not install is not
-  // a command for it: bash's "command not found", before any admission
-  // hook, so an unlisted tool never leaks a deny reason. Checked here
-  // rather than in handleCommand because the BUILTINS table below runs
-  // ahead of route(); the enumerators read the same filter through
-  // layers().
-  if (name !== '' && !commandVisible(name, session)) {
-    const err = new TextEncoder().encode(`${name}: command not found\n`)
-    return [
-      null,
-      new IOResult({ exitCode: 127, stderr: err }),
-      new ExecutionNode({ command: [name, ...args].join(' '), exitCode: 127, stderr: err }),
-    ]
-  }
-
-  // Admission policies. The one chokepoint every command class passes
-  // through: shell builtins, namespace-routed commands (touch/chmod/
-  // ln -s), job builtins, shell functions, and mount commands all
-  // route below, so the hook must fire here, not in handleCommand.
-  // Paths are the operands as typed plus path-valued flags (shuf -o
-  // DEST); refusals win over flag parsing, routing, and runtime
-  // placement.
+  // Visibility and admission. The one chokepoint every command class
+  // passes through: shell builtins, namespace-routed commands (touch/
+  // chmod/ln -s), job builtins, shell functions, and mount commands all
+  // route below, so the gate must fire here, not in handleCommand.
+  // Checked ahead of the BUILTINS table, which runs before route(); the
+  // enumerators read the same visibility filter through layers().
+  // Refusals win over flag parsing, routing, and runtime placement.
   if (name !== '') {
-    const scopes: PathSpec[] = []
-    for (const p of operands) {
-      if (p instanceof PathSpec) scopes.push(p)
-    }
-    scopes.push(...pathFlagScopes(name, args, session.cwd))
-    if (name.includes('/')) {
-      // A slash-carrying head word is a file the line executes (the
-      // path-execution branch below), and it lives in argv[0], not the
-      // operands, so a path-pattern guard would never see it without
-      // this row.
-      scopes.unshift(toScope(resolvePath(name, session.cwd)))
-    }
-    const [tokens, program] = programTokens(registry, name, args, session.cwd)
-    const ctx: CommandContext = {
-      command: name,
-      paths: scopes,
-      operands: positionalScopes(name, args, session.cwd, operands),
-      argv: args,
-      cwd: session.cwd,
-      registry,
-      sessionId: session.sessionId,
-      tokens,
-      program,
-      tool: isTool(name, session),
-    }
-    const asked = await registry.policies.preCommand(ctx)
-    // An Ask is the chain's answer only after every Deny had its say;
-    // the door answers it from the session's grants or the host, so a
-    // grant never re-opens a deny.
-    const verdict =
-      asked !== null && asked.kind === 'ask' ? await registry.approvals.resolve(ctx, asked) : asked
-    if (verdict !== null) {
-      const [err, exitCode] =
-        verdict.kind === 'pending' ? renderPending(name, verdict) : renderDeny(name, verdict)
+    const refusal = await admit(name, args, operands, session, registry, namespace)
+    if (refusal !== null) {
       return [
         null,
-        new IOResult({ exitCode, stderr: err }),
+        new IOResult({ exitCode: refusal.exitCode, stderr: refusal.stderr }),
         new ExecutionNode({
           command: [name, ...args].join(' '),
-          stderr: err,
-          exitCode,
+          stderr: refusal.stderr,
+          exitCode: refusal.exitCode,
         }),
       ]
     }

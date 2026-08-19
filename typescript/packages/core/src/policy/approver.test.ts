@@ -42,9 +42,9 @@ describe('requestId', () => {
     const same = await requestId('s', '/repo', ['git', 'push'])
     expect(same).toBe(await requestId('s', '/repo', ['git', 'push']))
     expect(same).toHaveLength(12)
-    // sha1("s\0/repo\0git\0push\0")[:12], the value the Python request_id
+    // sha256("s\0/repo\0git\0push\0")[:12], the value the Python request_id
     // computes for the same question (pinned in tests/policy/test_approver.py).
-    expect(same).toBe('97702f321d7a')
+    expect(same).toBe('22ce9edec956')
     // Any of session, cwd or a word changes the question.
     expect(same).not.toBe(await requestId('t', '/repo', ['git', 'push']))
     expect(same).not.toBe(await requestId('s', '/scratch', ['git', 'push']))

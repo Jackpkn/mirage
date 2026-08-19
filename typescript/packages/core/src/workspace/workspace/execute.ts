@@ -40,6 +40,7 @@ import type { SessionManager } from '../session/manager.ts'
 import type { Session } from '../session/session.ts'
 import type { ExecutionNode } from '../types.ts'
 import { failureResult, isControlFlowError } from './failure.ts'
+import { admitLine } from '../node/admission.ts'
 import { runWholeLine } from './line.ts'
 import type { WorkspaceMeta } from './meta.ts'
 import type { PolicyRouter } from './policy.ts'
@@ -295,6 +296,24 @@ async function runParsedLine(
   }
   const lineRuntime = env.runtimes.wholeLineFor(rootNode, deps.routingDecision ?? null)
   if (lineRuntime?.runLine !== undefined) {
+    // A whole line is a command like any other: the same visibility and
+    // admission gate as the tree, per parsed command, before the
+    // runtime sees a byte of it.
+    const refusal = await admitLine(rootNode, effectiveSession, env.registry, env.namespace)
+    if (refusal !== null) {
+      targetSession.lastExitCode = refusal.exitCode
+      if (isLine) {
+        await env.observer.logExecution(
+          command,
+          new IOResult({ exitCode: refusal.exitCode, stderr: refusal.stderr }),
+          [],
+          callAgentId,
+          targetSession.sessionId,
+          effectiveSession.cwd,
+        )
+      }
+      return new ExecuteResult(new Uint8Array(), refusal.stderr, refusal.exitCode)
+    }
     const result = await runWholeLine(
       lineRuntime,
       command,
