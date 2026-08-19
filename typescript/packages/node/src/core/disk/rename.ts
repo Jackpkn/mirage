@@ -14,7 +14,7 @@
 
 import type { DiskAccessor } from '../../accessor/disk.ts'
 import { rename as fsRename } from 'node:fs/promises'
-import { invalidateAfterUnlink } from '@struktoai/mirage-core/cache/context'
+import { invalidateSubtree } from '@struktoai/mirage-core/cache/context'
 import type { PathSpec } from '@struktoai/mirage-core/types'
 import { enoent } from '@struktoai/mirage-core/utils/errors'
 import { resolveSafe } from './utils.ts'
@@ -30,8 +30,9 @@ export async function rename(accessor: DiskAccessor, src: PathSpec, dst: PathSpe
     }
     throw err
   }
-  await invalidateAfterUnlink(src)
-  // The unlink flavor on dst: a rename destroys the destination's previous
-  // identity, so a replaced empty directory loses its cached listing too.
-  await invalidateAfterUnlink(dst)
+  await invalidateSubtree(src)
+  // Both sides are subtree evictions: a rename destroys the destination's
+  // previous identity and relocates everything under the source, so a
+  // listing or body cached below either name is now stale.
+  await invalidateSubtree(dst)
 }

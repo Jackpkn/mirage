@@ -24,6 +24,7 @@ import { createAsyncContext } from '../utils/async_context.ts'
 export interface CacheInvalidator {
   invalidateAfterWrite(path: string | PathSpec): Promise<void>
   invalidateAfterUnlink(path: string | PathSpec): Promise<void>
+  invalidateSubtree(path: string | PathSpec): Promise<void>
   cachedBytes(path: PathSpec): Promise<Uint8Array | null>
 }
 
@@ -70,6 +71,28 @@ export async function invalidateAfterUnlink(path: string | PathSpec): Promise<vo
   const manager = storage.getStore()?.manager
   if (manager !== null && manager !== undefined) {
     await manager.invalidateAfterUnlink(path)
+  }
+}
+
+/**
+ * Report a backend deletion that took a whole subtree with it.
+ *
+ * `invalidateAfterUnlink` evicts the path's own listing and its
+ * parent's, which is the whole story for a file. A recursive delete or a
+ * directory rename also strands every listing and every cached body
+ * *below* the path, and those were cached under their own keys, so
+ * nothing above them evicts one: `ls` kept printing a deleted
+ * directory's contents and `cat` kept serving a deleted file's bytes
+ * until the index TTL expired.
+ *
+ * Unlike {@link invalidateAncestors}, this cannot be assembled from
+ * `invalidateAfterWrite` calls, because the set of keys beneath the path
+ * is only known to the caches themselves.
+ */
+export async function invalidateSubtree(path: string | PathSpec): Promise<void> {
+  const manager = storage.getStore()?.manager
+  if (manager !== null && manager !== undefined) {
+    await manager.invalidateSubtree(path)
   }
 }
 

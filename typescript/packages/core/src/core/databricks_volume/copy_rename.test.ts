@@ -35,6 +35,7 @@ const resolveGlob = resolveGlobOf(DATABRICKS_VOLUME_IO)
 class FakeManager {
   writes: string[] = []
   unlinks: string[] = []
+  subtrees: string[] = []
 
   invalidateAfterWrite(path: string | PathSpec): Promise<void> {
     this.writes.push(typeof path === 'string' ? path : path.mountPath)
@@ -43,6 +44,11 @@ class FakeManager {
 
   invalidateAfterUnlink(path: string | PathSpec): Promise<void> {
     this.unlinks.push(typeof path === 'string' ? path : path.mountPath)
+    return Promise.resolve()
+  }
+
+  invalidateSubtree(path: string | PathSpec): Promise<void> {
+    this.subtrees.push(typeof path === 'string' ? path : path.mountPath)
     return Promise.resolve()
   }
 

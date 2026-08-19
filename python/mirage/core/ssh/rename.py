@@ -15,7 +15,7 @@
 import asyncssh
 
 from mirage.accessor.ssh import SSHAccessor
-from mirage.cache.context import invalidate_after_unlink
+from mirage.cache.context import invalidate_subtree
 from mirage.core.ssh.client import _abs
 from mirage.types import PathSpec
 
@@ -37,7 +37,8 @@ async def rename(accessor: SSHAccessor, src_spec: PathSpec,
             raise FileNotFoundError(src)
     except asyncssh.SFTPNoSuchFile:
         raise FileNotFoundError(src)
-    # The unlink flavor on dst: a rename destroys the destination's previous
-    # identity, so a replaced empty directory loses its cached listing too.
-    await invalidate_after_unlink(dst_spec)
-    await invalidate_after_unlink(src_spec)
+    # Both sides are subtree evictions: a rename destroys the destination's
+    # previous identity and relocates everything under the source, so a
+    # listing or body cached below either name is now stale.
+    await invalidate_subtree(dst_spec)
+    await invalidate_subtree(src_spec)

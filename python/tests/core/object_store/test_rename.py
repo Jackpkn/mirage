@@ -45,7 +45,7 @@ def test_rename_moves_a_file(accessor):
     manager = _managed(
         _rename_for(store)(accessor, spec("/a/src.txt"), spec("/b/dst.txt")))
     assert store.objects == {"b/dst.txt": b"hi"}
-    assert manager.unlinks == ["/b/dst.txt", "/a/src.txt"]
+    assert manager.subtrees == ["/b/dst.txt", "/a/src.txt"]
     assert manager.writes == ["/b", "/a"]
 
 
@@ -67,6 +67,7 @@ def test_rename_onto_the_same_key_is_a_guarded_no_op(accessor):
         _rename_for(store)(accessor, spec("/a.txt"), spec("/a.txt")))
     assert store.objects == {"a.txt": b"hi"}
     assert manager.unlinks == []
+    assert manager.subtrees == []
 
 
 def test_rename_onto_the_same_key_still_fails_when_absent(accessor):

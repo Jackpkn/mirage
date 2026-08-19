@@ -39,6 +39,10 @@ class FakeManager {
     return Promise.resolve()
   }
 
+  invalidateSubtree(_path: PathSpec): Promise<void> {
+    return Promise.resolve()
+  }
+
   cachedBytes(_path: PathSpec): Promise<Uint8Array | null> {
     return Promise.resolve(null)
   }

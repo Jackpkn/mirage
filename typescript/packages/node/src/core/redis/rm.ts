@@ -12,7 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { invalidateAfterUnlink } from '@struktoai/mirage-core/cache/context'
+import { invalidateSubtree } from '@struktoai/mirage-core/cache/context'
 import type { PathSpec } from '@struktoai/mirage-core/types'
 import { rstripSlash } from '@struktoai/mirage-core/utils/slash'
 import type { RedisAccessor } from '../../accessor/redis.ts'
@@ -38,5 +38,5 @@ export async function rmR(accessor: RedisAccessor, path: PathSpec): Promise<void
       await store.delAttrs(key)
     }
   }
-  await invalidateAfterUnlink(path)
+  await invalidateSubtree(path)
 }

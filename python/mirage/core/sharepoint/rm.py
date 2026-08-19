@@ -1,5 +1,5 @@
 from mirage.accessor.sharepoint import SharePointAccessor
-from mirage.cache.context import invalidate_after_unlink
+from mirage.cache.context import invalidate_subtree
 from mirage.core.sharepoint.client import graph_delete, item_url, split_path
 from mirage.core.sharepoint.resolve import resolve
 from mirage.types import PathSpec
@@ -16,4 +16,4 @@ async def rm_r(accessor: SharePointAccessor, path: PathSpec) -> None:
     await graph_delete(
         accessor.config,
         item_url(accessor.config, resolved.drive_id, resolved.item_path))
-    await invalidate_after_unlink(path)
+    await invalidate_subtree(path)

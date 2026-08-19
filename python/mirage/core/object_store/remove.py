@@ -12,7 +12,8 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from mirage.cache.context import invalidate_after_unlink, invalidate_ancestors
+from mirage.cache.context import (invalidate_after_unlink,
+                                  invalidate_ancestors, invalidate_subtree)
 from mirage.core.object_store.driver import A, C, ObjectStoreDriver, PathFn
 from mirage.types import PathSpec
 from mirage.utils import key_prefix as kp
@@ -56,7 +57,10 @@ def make_remove_prefix(driver: ObjectStoreDriver[A, C]) -> PathFn[A]:
         pfx = kp.apply_dir(driver.key_prefix_of(accessor), path)
         async with driver.connect(accessor) as conn:
             await driver.delete_prefix(conn, pfx)
-        await invalidate_after_unlink(path_spec)
+        # Not invalidate_after_unlink: a prefix delete takes every key
+        # below with it, and each of those listings and bodies was
+        # cached under its own key, so nothing above them evicts one.
+        await invalidate_subtree(path_spec)
         # Same rationale as unlink: ancestors that existed only as this
         # prefix are gone now.
         await invalidate_ancestors(path_spec)

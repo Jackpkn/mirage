@@ -17,6 +17,7 @@ import {
   invalidateAfterUnlink,
   invalidateAfterWrite,
   invalidateAncestors,
+  invalidateSubtree,
 } from '../../cache/context.ts'
 import { IndexEntry, ResourceType } from '../../cache/index/config.ts'
 import type { IndexCacheStore } from '../../cache/index/store.ts'
@@ -287,7 +288,7 @@ export async function rmR(accessor: SharePointAccessor, path: PathSpec): Promise
   const resolved = await accessor.resolve(path.resourcePath)
   if (resolved.driveId === null || resolved.itemPath === null) return
   await graphDelete(accessor.config, accessor.loc(resolved, path.resourcePath).item())
-  await invalidateAfterUnlink(path)
+  await invalidateSubtree(path)
 }
 
 /**
@@ -333,8 +334,8 @@ export async function rename(
     accessor.loc(srcResolved, src.resourcePath),
     accessor.loc(dstResolved, dst.resourcePath),
   )
-  await invalidateAfterUnlink(dst)
-  await invalidateAfterUnlink(src)
+  await invalidateSubtree(dst)
+  await invalidateSubtree(src)
 }
 
 export async function copy(

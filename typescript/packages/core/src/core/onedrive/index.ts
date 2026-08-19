@@ -17,6 +17,7 @@ import {
   invalidateAfterUnlink,
   invalidateAfterWrite,
   invalidateAncestors,
+  invalidateSubtree,
 } from '../../cache/context.ts'
 import type { IndexCacheStore } from '../../cache/index/store.ts'
 import { startBasename } from '../../commands/builtin/find_eval.ts'
@@ -207,7 +208,7 @@ export async function unlink(accessor: OneDriveAccessor, path: PathSpec): Promis
 export async function rmR(accessor: OneDriveAccessor, path: PathSpec): Promise<void> {
   if (path.resourcePath === '') return
   await graphDelete(accessor.config, accessor.loc(path.resourcePath).item())
-  await invalidateAfterUnlink(path)
+  await invalidateSubtree(path)
 }
 
 /**
@@ -249,8 +250,8 @@ export async function rename(
     accessor.loc(src.resourcePath),
     accessor.loc(dst.resourcePath),
   )
-  await invalidateAfterUnlink(dst)
-  await invalidateAfterUnlink(src)
+  await invalidateSubtree(dst)
+  await invalidateSubtree(src)
 }
 
 export async function copy(

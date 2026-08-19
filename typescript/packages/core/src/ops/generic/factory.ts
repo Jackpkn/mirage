@@ -51,7 +51,11 @@ export interface OpsTable<A extends Accessor = Accessor> {
 }
 
 export interface MakeGenericOpsOptions {
-  /** Synthesize truncate from readBytes + write (no native partial write). */
+  /**
+   * Synthesize truncate from readBytes + write for a backend with no
+   * native partial write (dropbox is the only one; a table carrying a
+   * real `truncate` wins outright).
+   */
   emulateTruncate?: boolean
   /** Forward `parents=true` to the core mkdir (disk). */
   mkdirParents?: boolean

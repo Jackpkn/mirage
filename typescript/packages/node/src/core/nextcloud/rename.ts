@@ -1,4 +1,4 @@
-import { invalidateAfterUnlink } from '@struktoai/mirage-core/cache/context'
+import { invalidateSubtree } from '@struktoai/mirage-core/cache/context'
 import type { PathSpec } from '@struktoai/mirage-core/types'
 import { enoent } from '@struktoai/mirage-core/utils/errors'
 import type { NextcloudAccessor } from '../../accessor/nextcloud.ts'
@@ -16,6 +16,6 @@ export async function rename(
     if (isNotFound(error)) throw enoent(source)
     throw error
   }
-  await invalidateAfterUnlink(destination)
-  await invalidateAfterUnlink(source)
+  await invalidateSubtree(destination)
+  await invalidateSubtree(source)
 }

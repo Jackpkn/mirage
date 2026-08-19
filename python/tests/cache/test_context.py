@@ -17,7 +17,7 @@ import asyncio
 from mirage.cache.context import (active_cache_manager,
                                   invalidate_after_unlink,
                                   invalidate_after_write, invalidate_ancestors,
-                                  push_cache_manager)
+                                  invalidate_subtree, push_cache_manager)
 from mirage.types import PathSpec
 
 
@@ -30,12 +30,16 @@ class FakeManager:
     def __init__(self) -> None:
         self.writes: list[PathSpec] = []
         self.unlinks: list[PathSpec] = []
+        self.subtrees: list[PathSpec] = []
 
     async def invalidate_after_write(self, path: PathSpec) -> None:
         self.writes.append(path)
 
     async def invalidate_after_unlink(self, path: PathSpec) -> None:
         self.unlinks.append(path)
+
+    async def invalidate_subtree(self, path: PathSpec) -> None:
+        self.subtrees.append(path)
 
 
 def _spec(virtual: str) -> PathSpec:
@@ -51,6 +55,7 @@ async def _delegates() -> FakeManager:
     prev = push_cache_manager(manager)
     await invalidate_after_write(_spec("/a.txt"))
     await invalidate_after_unlink(_spec("/b.txt"))
+    await invalidate_subtree(_spec("/c"))
     push_cache_manager(prev)
     return manager
 
@@ -59,12 +64,14 @@ def test_delegates_to_active_manager():
     manager = _run(_delegates())
     assert [p.mount_path for p in manager.writes] == ["/a.txt"]
     assert [p.mount_path for p in manager.unlinks] == ["/b.txt"]
+    assert [p.mount_path for p in manager.subtrees] == ["/c"]
 
 
 async def _noop_without_manager() -> None:
     push_cache_manager(None)
     await invalidate_after_write(_spec("/a.txt"))
     await invalidate_after_unlink(_spec("/b.txt"))
+    await invalidate_subtree(_spec("/c"))
 
 
 def test_noop_without_active_manager():

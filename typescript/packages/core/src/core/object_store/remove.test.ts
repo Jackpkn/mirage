@@ -40,7 +40,10 @@ describe('object_store remove', () => {
     const store = new FakeStore({ 'a/b/c.txt': 'hi', 'a/b/d/e.txt': 'x' })
     const manager = await managed(() => makeRemovePrefix(makeDriver(store))(accessor, spec('/a/b')))
     expect(store.contents()).toEqual({})
-    expect(manager.unlinks).toEqual(['/a/b'])
+    // A subtree evict, not an unlink: every key below /a/b went with it,
+    // and each one was cached under its own key.
+    expect(manager.subtrees).toEqual(['/a/b'])
+    expect(manager.unlinks).toEqual([])
     expect(manager.writes).toEqual(['/a'])
   })
 

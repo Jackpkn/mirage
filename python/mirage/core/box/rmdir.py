@@ -13,7 +13,7 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 from mirage.accessor.box import BoxAccessor
-from mirage.cache.context import invalidate_after_unlink
+from mirage.cache.context import invalidate_after_unlink, invalidate_subtree
 from mirage.core.box.api import delete_file, delete_folder
 from mirage.core.box.client import BoxApiError
 from mirage.core.box.resolve import path_parts, resolve_item
@@ -55,4 +55,4 @@ async def rm_r(accessor: BoxAccessor, path: PathSpec) -> None:
         await delete_folder(accessor.token_manager, item["id"], recursive=True)
     else:
         await delete_file(accessor.token_manager, item["id"])
-    await invalidate_after_unlink(path)
+    await invalidate_subtree(path)

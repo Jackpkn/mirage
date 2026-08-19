@@ -175,7 +175,7 @@ async def test_rm_r_recursive_on_folder(root_accessor):
     with patch("mirage.core.box.resolve.list_folder_items", new=_fake_list), \
          patch("mirage.core.box.rmdir.delete_folder",
                new_callable=AsyncMock) as df, \
-         patch("mirage.core.box.rmdir.invalidate_after_unlink",
+         patch("mirage.core.box.rmdir.invalidate_subtree",
                new_callable=AsyncMock):
         await rm_r(root_accessor, _spec("/data/sub"))
     df.assert_awaited_once_with(root_accessor.token_manager,
@@ -188,7 +188,7 @@ async def test_rename_moves_file(root_accessor):
     with patch("mirage.core.box.resolve.list_folder_items", new=_fake_list), \
          patch("mirage.core.box.rename.update_file",
                new_callable=AsyncMock) as uf, \
-         patch("mirage.core.box.rename.invalidate_after_unlink",
+         patch("mirage.core.box.rename.invalidate_subtree",
                new_callable=AsyncMock):
         await rename(root_accessor, _spec("/data/a.txt"), _spec("/data/b.txt"))
     uf.assert_awaited_once_with(root_accessor.token_manager,

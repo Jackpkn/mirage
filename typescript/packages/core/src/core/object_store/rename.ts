@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import type { Accessor } from '../../accessor/base.ts'
-import { invalidateAfterUnlink, invalidateAncestors } from '../../cache/context.ts'
+import { invalidateAncestors, invalidateSubtree } from '../../cache/context.ts'
 import { enoent } from '../../utils/errors.ts'
 import * as kp from '../../utils/key_prefix.ts'
 import type { ExistsFn, ObjectStoreDriver, PairFn } from './driver.ts'
@@ -64,8 +64,12 @@ export function makeRename<A extends Accessor, C>(
     } finally {
       await close()
     }
-    await invalidateAfterUnlink(dst)
-    await invalidateAfterUnlink(src)
+    // Subtrees, not single paths: movePrefix relocates every key under
+    // src, so each listing and body cached below the old name names
+    // something that is no longer there, and each one below the new name
+    // predates the move.
+    await invalidateSubtree(dst)
+    await invalidateSubtree(src)
     // The move can create the destination's missing ancestors and erase
     // the source's prefix-only ones in the same call.
     await invalidateAncestors(dst)

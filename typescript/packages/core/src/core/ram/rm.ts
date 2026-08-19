@@ -16,7 +16,7 @@ import type { RAMAccessor } from '../../accessor/ram.ts'
 import type { PathSpec } from '../../types.ts'
 import { norm } from './utils.ts'
 import { rstripSlash } from '../../utils/slash.ts'
-import { invalidateAfterUnlink } from '../../cache/context.ts'
+import { invalidateSubtree } from '../../cache/context.ts'
 
 export async function rmR(accessor: RAMAccessor, path: PathSpec): Promise<void> {
   const p = norm(path.mountPath)
@@ -28,7 +28,7 @@ export async function rmR(accessor: RAMAccessor, path: PathSpec): Promise<void> 
       accessor.store.attrs.delete(key)
     }
   }
-  await invalidateAfterUnlink(path)
+  await invalidateSubtree(path)
   for (const key of [...accessor.store.dirs]) {
     if (key === p || key.startsWith(prefix)) {
       accessor.store.dirs.delete(key)

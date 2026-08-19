@@ -12,7 +12,7 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from mirage.cache.context import invalidate_after_unlink, invalidate_ancestors
+from mirage.cache.context import invalidate_ancestors, invalidate_subtree
 from mirage.core.object_store.driver import (A, C, ExistsFn, ObjectStoreDriver,
                                              PairFn)
 from mirage.types import PathSpec
@@ -61,8 +61,12 @@ def make_rename(driver: ObjectStoreDriver[A, C],
                 if not await move_prefix(conn, kp.apply_dir(kpfx, src),
                                          kp.apply_dir(kpfx, dst)):
                     raise enoent(src_spec.virtual)
-        await invalidate_after_unlink(dst_spec)
-        await invalidate_after_unlink(src_spec)
+        # Subtrees, not single paths: move_prefix relocates every key
+        # under src, so each listing and body cached below the old name
+        # names something that is no longer there, and each one below
+        # the new name predates the move.
+        await invalidate_subtree(dst_spec)
+        await invalidate_subtree(src_spec)
         # The move can create the destination's missing ancestors and
         # erase the source's prefix-only ones in the same call.
         await invalidate_ancestors(dst_spec)

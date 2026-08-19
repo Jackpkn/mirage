@@ -31,11 +31,19 @@ vi.mock('./api.ts', async () => {
 })
 
 vi.mock('../../cache/context.ts', () => {
-  return { invalidateAfterWrite: vi.fn(), invalidateAfterUnlink: vi.fn() }
+  return {
+    invalidateAfterWrite: vi.fn(),
+    invalidateAfterUnlink: vi.fn(),
+    invalidateSubtree: vi.fn(),
+  }
 })
 
 import { BoxAccessor } from '../../accessor/box.ts'
-import { invalidateAfterUnlink, invalidateAfterWrite } from '../../cache/context.ts'
+import {
+  invalidateAfterUnlink,
+  invalidateAfterWrite,
+  invalidateSubtree,
+} from '../../cache/context.ts'
 import { PathSpec } from '../../types.ts'
 import type { BoxTokenManager } from './client.ts'
 import * as api from './api.ts'
@@ -122,14 +130,18 @@ describe('box write ops', () => {
     })
   })
 
-  it('rename evicts both identities so a replaced empty dir loses its listing', async () => {
+  it('rename evicts both identities as subtrees, so a replaced dir loses its listing', async () => {
     vi.mocked(invalidateAfterWrite).mockClear()
     vi.mocked(invalidateAfterUnlink).mockClear()
+    vi.mocked(invalidateSubtree).mockClear()
     await rename(makeAccessor(), spec('/data/a.txt'), spec('/data/b.txt'))
+    // Subtrees rather than unlinks: renaming a directory strands every
+    // listing and body cached below the old name, and below the new one.
     const evicted = vi
-      .mocked(invalidateAfterUnlink)
+      .mocked(invalidateSubtree)
       .mock.calls.map(([path]) => (typeof path === 'string' ? path : path.virtual))
     expect(evicted).toEqual(['/data/b.txt', '/data/a.txt'])
+    expect(vi.mocked(invalidateAfterUnlink)).not.toHaveBeenCalled()
     expect(vi.mocked(invalidateAfterWrite)).not.toHaveBeenCalled()
   })
 

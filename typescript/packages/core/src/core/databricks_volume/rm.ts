@@ -15,7 +15,7 @@
 import type { DatabricksVolumeAccessor } from '../../accessor/databricks_volume.ts'
 import type { IndexCacheStore } from '../../cache/index/store.ts'
 import { FileType, type PathSpec } from '../../types.ts'
-import { invalidateAfterUnlink } from '../../cache/context.ts'
+import { invalidateSubtree } from '../../cache/context.ts'
 import { dbxFetch } from './client.ts'
 import { ensurePathSpec } from './_helpers.ts'
 import { isNotFound, notFoundError } from './errors.ts'
@@ -60,6 +60,6 @@ export async function rmRecursive(
     if (isNotFound(exc)) throw notFoundError(p.virtual)
     throw exc
   }
-  await invalidateAfterUnlink(p)
+  await invalidateSubtree(p)
   return removed.map((backend) => virtualPath(accessor.config, backend, ''))
 }

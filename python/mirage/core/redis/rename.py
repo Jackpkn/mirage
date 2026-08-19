@@ -13,7 +13,7 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 from mirage.accessor.redis import RedisAccessor
-from mirage.cache.context import invalidate_after_unlink
+from mirage.cache.context import invalidate_subtree
 from mirage.core.redis.dest import check_dest_parents
 from mirage.core.timeutil import now_iso
 from mirage.resource.redis.store import RedisStore
@@ -101,5 +101,5 @@ async def rename(
         await _move_subtree(store, s, d)
     else:
         raise FileNotFoundError(s)
-    await invalidate_after_unlink(dst_spec)
-    await invalidate_after_unlink(src_spec)
+    await invalidate_subtree(dst_spec)
+    await invalidate_subtree(src_spec)

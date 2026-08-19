@@ -14,7 +14,11 @@
 
 import { mountKey, mountPrefixOf } from '../../utils/key_prefix.ts'
 import type { BoxAccessor } from '../../accessor/box.ts'
-import { invalidateAfterUnlink, invalidateAfterWrite } from '../../cache/context.ts'
+import {
+  invalidateAfterUnlink,
+  invalidateAfterWrite,
+  invalidateSubtree,
+} from '../../cache/context.ts'
 import { PathSpec } from '../../types.ts'
 import { eisdir, enoent, enotdir, enotempty } from '../../utils/errors.ts'
 import { BoxApiError } from './client.ts'
@@ -137,7 +141,7 @@ export async function rmR(accessor: BoxAccessor, path: PathSpec): Promise<void> 
   } else {
     await deleteFile(accessor.tokenManager, item.id)
   }
-  await invalidateAfterUnlink(path)
+  await invalidateSubtree(path)
 }
 
 async function clearDest(accessor: BoxAccessor, dstParts: string[], srcId: string): Promise<void> {
@@ -163,8 +167,8 @@ export async function rename(accessor: BoxAccessor, src: PathSpec, dst: PathSpec
   else await updateFile(tm, item.id, { name: newName, parentId: dstParent })
   // The unlink flavor on dst: a rename destroys the destination's previous
   // identity, so a replaced empty directory loses its cached listing too.
-  await invalidateAfterUnlink(dst)
-  await invalidateAfterUnlink(src)
+  await invalidateSubtree(dst)
+  await invalidateSubtree(src)
 }
 
 function childSpec(parent: PathSpec, name: string): PathSpec {
