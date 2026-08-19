@@ -49,3 +49,19 @@ def test_sanitize_label_keeps_non_ascii_letters():
     assert sanitize_label("日本語の文書", fallback="X", max_len=100) == "日本語の文書"
     assert sanitize_label("Café Notes", fallback="X",
                           max_len=100) == "Café_Notes"
+
+
+def test_sanitize_label_budget_counts_code_points():
+    # The typescript twin measured `String.length`, which counts UTF-16 units:
+    # 50 ascii plus 26 astral letters reads as 102 there and 76 here. This is
+    # the input that made it truncate a label python leaves whole.
+    label = "a" * 50 + "\U00010400" * 26
+    assert sanitize_label(label, fallback="X", max_len=100) == label
+
+
+def test_sanitize_label_ellipsizes_on_code_point_boundary():
+    label = "\U00010400" * 120
+    result = sanitize_label(label, fallback="X", max_len=100)
+    assert len(result) == 100
+    assert result.endswith("...")
+    assert "\ufffd" not in result

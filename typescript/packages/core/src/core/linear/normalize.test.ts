@@ -24,6 +24,7 @@ import {
   normalizeTeam,
   normalizeUser,
   toJsonBytes,
+  type NormalizedComment,
 } from './normalize.ts'
 
 describe('normalize', () => {
@@ -144,12 +145,12 @@ describe('normalize', () => {
     expect(new TextDecoder().decode(bytes)).toBe('{\n  "a": 1\n}')
   })
 
-  it('toJsonlBytes returns empty for empty', () => {
+  it('jsonlBytesByCreatedAt returns empty for empty', () => {
     expect(jsonlBytesByCreatedAt([]).length).toBe(0)
   })
 
-  it('toJsonlBytes sorts by created_at', () => {
-    const bytes = jsonlBytesByCreatedAt([
+  it('jsonlBytesByCreatedAt sorts by created_at', () => {
+    const rows: NormalizedComment[] = [
       {
         comment_id: 'a',
         issue_id: 'i',
@@ -174,7 +175,8 @@ describe('normalize', () => {
         updated_at: null,
         url: null,
       },
-    ])
+    ]
+    const bytes = jsonlBytesByCreatedAt(rows)
     const text = new TextDecoder().decode(bytes)
     const lines = text.trimEnd().split('\n')
     expect(lines).toHaveLength(2)

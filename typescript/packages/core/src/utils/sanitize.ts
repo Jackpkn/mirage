@@ -71,7 +71,9 @@ export function sanitizeName(name: string): string {
   cleaned = cleaned.replace(/ /g, '_')
   cleaned = cleaned.replace(MULTI_UNDERSCORE, '_')
   cleaned = stripUnderscores(cleaned)
-  if (cleaned.length > MAX_LEN) cleaned = cleaned.slice(0, MAX_LEN)
+  // Code points, not UTF-16 units -- see sanitizeLabel.
+  const points = Array.from(cleaned)
+  if (points.length > MAX_LEN) cleaned = points.slice(0, MAX_LEN).join('')
   return cleaned
 }
 
@@ -104,8 +106,13 @@ export function sanitizeLabel(text: string, options: { fallback: string; maxLen:
   if (text.trim() === '') return options.fallback
   let cleaned = text.replace(UNSAFE_CHARS, '_').replace(/ /g, '_').replace(MULTI_UNDERSCORE, '_')
   cleaned = stripUnderscores(cleaned)
-  if (cleaned.length > options.maxLen) {
-    cleaned = `${cleaned.slice(0, options.maxLen - 3)}...`
+  // The budget counts characters, and python counts code points where
+  // `String.length` counts UTF-16 units. Measuring in units both truncates a
+  // label python leaves whole and can cut a surrogate pair in half, which
+  // encodes as U+FFFD in the filename.
+  const points = Array.from(cleaned)
+  if (points.length > options.maxLen) {
+    cleaned = `${points.slice(0, options.maxLen - 3).join('')}...`
   }
   return cleaned
 }
