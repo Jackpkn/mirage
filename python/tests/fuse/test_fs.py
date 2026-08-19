@@ -13,6 +13,7 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import errno
+import importlib
 import os
 import stat
 import subprocess
@@ -28,7 +29,15 @@ from mirage.resource.ram import RAMResource
 from mirage.types import MountMode
 from mirage.workspace import Workspace
 
-_fuse_available = sys.platform in ("linux", "darwin")
+try:
+    importlib.import_module("mfusepy")
+    _driver_present = True
+except (ImportError, OSError, AttributeError):
+    # mfusepy imports only where it finds a libfuse it can use; without one
+    # mount_background raises before it mounts anything.
+    _driver_present = False
+
+_fuse_available = sys.platform in ("linux", "darwin") and _driver_present
 
 
 @pytest_asyncio.fixture

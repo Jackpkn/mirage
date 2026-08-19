@@ -29,9 +29,13 @@ from mirage.workspace.session.session import Session
 
 
 def load_fuse() -> Any:
+    # mfusepy resolves libfuse while it is imported, and reports each way
+    # that can fail with a different type: ImportError when the extra is
+    # missing, OSError when no driver is found, AttributeError when the
+    # library found has the wrong major version.
     try:
         fuse = importlib.import_module("mfusepy")
-    except (ImportError, OSError) as err:
+    except (ImportError, OSError, AttributeError) as err:
         raise RuntimeError(
             "FUSE support requires the 'fuse' extra: install "
             '"mirage-ai[fuse]" plus the OS driver (macFUSE, fuse3, or '

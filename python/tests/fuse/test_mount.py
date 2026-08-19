@@ -166,10 +166,31 @@ def test_import_does_not_load_mfusepy():
     assert proc.returncode == 0, proc.stderr
 
 
-def test_load_fuse_reports_missing_driver(monkeypatch):
-    err = OSError("Unable to find libfuse")
+@pytest.mark.parametrize("err", [
+    ImportError("No module named 'mfusepy'"),
+    OSError("Unable to find libfuse"),
+    AttributeError("Found library libfuse.so.3 has wrong major version: 3"),
+])
+def test_load_fuse_reports_missing_driver(monkeypatch, err):
+    # Every way mfusepy can fail to resolve libfuse means the same thing to
+    # a caller, so all of them have to arrive as the actionable RuntimeError
+    # naming the extra and the drivers.
     importer = Mock(side_effect=err)
     monkeypatch.setattr("mirage.fuse.mount.importlib.import_module", importer)
     with pytest.raises(RuntimeError, match="OS driver") as exc:
         load_fuse()
     assert exc.value.__cause__ is err
+
+
+def test_load_fuse_installs_macfuse_extensions(monkeypatch):
+    # The FSKit write surface rides on the Darwin-only callbacks being
+    # declared before the operations struct is built (CLAUDE.md, FUSE), and
+    # the loader is the only place left that declares them.
+    module = SimpleNamespace()
+    install = Mock()
+    monkeypatch.setattr("mirage.fuse.mount.importlib.import_module",
+                        Mock(return_value=module))
+    monkeypatch.setattr("mirage.fuse.mount.install_macfuse_extensions",
+                        install)
+    assert load_fuse() is module
+    install.assert_called_once_with(module)
