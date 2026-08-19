@@ -14,7 +14,7 @@
 
 from typing import Any
 
-from mirage.core.render.json import json_bytes, jsonl_bytes
+from mirage.core.render.json import json_bytes
 
 
 def normalize_team(team: dict[str, Any]) -> dict[str, Any]:
@@ -189,8 +189,3 @@ def normalize_cycle(cycle: dict[str, Any], *, team_id: str) -> dict[str, Any]:
 
 def to_json_bytes(value: dict[str, Any] | list[Any]) -> bytes:
     return json_bytes(value)
-
-
-def to_jsonl_bytes(rows: list[dict[str, Any]]) -> bytes:
-    ordered = sorted(rows, key=lambda row: row.get("created_at") or "")
-    return jsonl_bytes(ordered)

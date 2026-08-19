@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { describe, expect, it } from 'vitest'
-import { pathSafeName, sanitizeName } from './sanitize.ts'
+import { pathSafeName, sanitizeLabel, sanitizeName } from './sanitize.ts'
 
 describe('sanitizeName', () => {
   it('returns "unknown" for empty/whitespace input', () => {
@@ -61,5 +61,55 @@ describe('pathSafeName', () => {
   it('preserves spelling and replaces only the path separator', () => {
     expect(pathSafeName("Zecheng's Server")).toBe("Zecheng's Server")
     expect(pathSafeName('a/b')).toBe('a∕b')
+  })
+})
+
+describe('sanitizeLabel', () => {
+  it('replaces unsafe characters and spaces with underscores', () => {
+    expect(sanitizeLabel('Hello World', { fallback: 'X', maxLen: 100 })).toBe('Hello_World')
+    expect(sanitizeLabel('My/Doc: A\\Test', { fallback: 'X', maxLen: 100 })).toBe('My_Doc_A_Test')
+  })
+
+  it('collapses runs and trims the edges', () => {
+    expect(sanitizeLabel('Hello   //  World', { fallback: 'X', maxLen: 100 })).toBe('Hello_World')
+    expect(sanitizeLabel('__edge__', { fallback: 'X', maxLen: 100 })).toBe('edge')
+  })
+
+  it('uses the fallback for a blank label', () => {
+    expect(sanitizeLabel('', { fallback: 'Untitled', maxLen: 100 })).toBe('Untitled')
+    expect(sanitizeLabel('   ', { fallback: 'No_Subject', maxLen: 80 })).toBe('No_Subject')
+  })
+
+  it('ellipsizes past the budget', () => {
+    const long = sanitizeLabel('x'.repeat(120), { fallback: 'X', maxLen: 100 })
+    expect(long).toHaveLength(100)
+    expect(long.endsWith('...')).toBe(true)
+    expect(sanitizeLabel('x'.repeat(100), { fallback: 'X', maxLen: 100 })).toBe('x'.repeat(100))
+  })
+
+  it('measures the budget in code points, matching python', () => {
+    // `String.length` counts UTF-16 units, so 50 ascii plus 26 astral letters
+    // reads as 102 there and 76 in python. Measuring in units truncated a
+    // label python leaves whole, and sliced through a surrogate pair.
+    const label = 'a'.repeat(50) + '\u{10400}'.repeat(26)
+    const out = sanitizeLabel(label, { fallback: 'X', maxLen: 100 })
+    expect(out).toBe(label)
+    expect(out).not.toContain('\uFFFD')
+  })
+
+  it('ellipsizes on a code-point boundary', () => {
+    const label = '\u{10400}'.repeat(120)
+    const out = sanitizeLabel(label, { fallback: 'X', maxLen: 100 })
+    expect(Array.from(out)).toHaveLength(100)
+    expect(out.endsWith('...')).toBe(true)
+    expect(out).not.toContain('\uFFFD')
+  })
+
+  it('keeps non-ascii letters, matching python', () => {
+    // The per-backend copies this replaced used `\w`, which is ascii-only in
+    // javascript, so a CJK title became a row of underscores while python --
+    // where `\w` is unicode-aware -- kept it.
+    expect(sanitizeLabel('日本語の文書', { fallback: 'X', maxLen: 100 })).toBe('日本語の文書')
+    expect(sanitizeLabel('Café Notes', { fallback: 'X', maxLen: 100 })).toBe('Café_Notes')
   })
 })

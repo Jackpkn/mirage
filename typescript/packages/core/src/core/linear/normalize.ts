@@ -12,7 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { jsonBytes, jsonlBytes } from '../render/json.ts'
+import { jsonBytes } from '../render/json.ts'
 
 type Json = Record<string, unknown>
 
@@ -344,15 +344,4 @@ export function buildProjectIssue(issue: Json): NormalizedProjectIssue {
 
 export function toJsonBytes(value: unknown): Uint8Array {
   return jsonBytes(value)
-}
-
-export function toJsonlBytes(rows: readonly NormalizedComment[]): Uint8Array {
-  const ordered = [...rows].sort((a, b) => {
-    const ka = a.created_at ?? ''
-    const kb = b.created_at ?? ''
-    if (ka < kb) return -1
-    if (ka > kb) return 1
-    return 0
-  })
-  return jsonlBytes(ordered)
 }

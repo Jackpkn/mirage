@@ -13,8 +13,8 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import logging
-import re
 from datetime import datetime, timezone
+from functools import partial
 from typing import Any
 
 from mirage.accessor.gmail import GmailAccessor
@@ -27,22 +27,13 @@ from mirage.core.gmail.messages import (_extract_attachments, _extract_header,
 from mirage.types import PathSpec
 from mirage.utils.errors import enoent
 from mirage.utils.key_prefix import mount_key, mount_prefix_of
+from mirage.utils.sanitize import sanitize_label
 
 logger = logging.getLogger(__name__)
 
 TITLE_MAX = 80
-UNSAFE = re.compile(r"[^\w\s\-.]")
-MULTI_UNDERSCORE = re.compile(r"_+")
 
-
-def _sanitize(text: str) -> str:
-    if not text.strip():
-        return "No_Subject"
-    cleaned = UNSAFE.sub("_", text).replace(" ", "_")
-    cleaned = MULTI_UNDERSCORE.sub("_", cleaned).strip("_")
-    if len(cleaned) > TITLE_MAX:
-        cleaned = cleaned[:TITLE_MAX - 3] + "..."
-    return cleaned
+_sanitize = partial(sanitize_label, fallback="No_Subject", max_len=TITLE_MAX)
 
 
 def _msg_filename(subject: str, msg_id: str) -> str:

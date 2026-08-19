@@ -22,10 +22,11 @@ from mirage.core.linear.normalize import (normalize_comment, normalize_cycle,
                                           normalize_document, normalize_issue,
                                           normalize_project, normalize_team,
                                           normalize_user, project_issue_rows,
-                                          to_json_bytes, to_jsonl_bytes)
+                                          to_json_bytes)
 from mirage.core.linear.pathing import (cycle_filename, document_filename,
                                         issue_dirname, member_filename,
                                         project_filename, team_dirname)
+from mirage.core.render.json import jsonl_bytes_by_created_at
 from mirage.types import PathSpec
 from mirage.utils.errors import enoent
 from mirage.utils.key_prefix import mount_key, mount_prefix_of
@@ -80,7 +81,7 @@ async def _size_issue_files(
                 resource_type="linear/comments",
                 remote_time=comments_time or entry.remote_time,
                 vfs_name="comments.jsonl",
-                size=len(to_jsonl_bytes(rows)),
+                size=len(jsonl_bytes_by_created_at(rows)),
             ),
         ),
     ])

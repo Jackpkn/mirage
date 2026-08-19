@@ -12,8 +12,8 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import re
 from email.utils import parsedate_to_datetime
+from functools import partial
 from typing import Any
 
 from mirage.accessor.email import EmailAccessor
@@ -25,21 +25,12 @@ from mirage.core.email.render import message_json_bytes
 from mirage.types import PathSpec
 from mirage.utils.errors import enoent
 from mirage.utils.key_prefix import mount_key, mount_prefix_of
+from mirage.utils.sanitize import sanitize_label
 
 TITLE_MAX = 80
-UNSAFE = re.compile(r"[^\w\s\-.]")
-MULTI_UNDERSCORE = re.compile(r"_+")
 EPOCH_DATE = "1970-01-01"
 
-
-def _sanitize(text: str) -> str:
-    if not text.strip():
-        return "No_Subject"
-    cleaned = UNSAFE.sub("_", text).replace(" ", "_")
-    cleaned = MULTI_UNDERSCORE.sub("_", cleaned).strip("_")
-    if len(cleaned) > TITLE_MAX:
-        cleaned = cleaned[:TITLE_MAX - 3] + "..."
-    return cleaned
+_sanitize = partial(sanitize_label, fallback="No_Subject", max_len=TITLE_MAX)
 
 
 def _msg_filename(subject: str, uid: str) -> str:

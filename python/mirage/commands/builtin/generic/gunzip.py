@@ -1,5 +1,5 @@
 import zlib
-from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 
 from mirage.commands.builtin.utils.stream import _resolve_source
@@ -8,18 +8,7 @@ from mirage.commands.spec import SPECS
 from mirage.commands.spec.types import FlagValue, FlagView
 from mirage.io.types import ByteSource, IOResult
 from mirage.types import PathSpec
-
-
-async def _gzip_decompress_stream(
-        source: AsyncIterator[bytes]) -> AsyncIterator[bytes]:
-    decompressor = zlib.decompressobj(zlib.MAX_WBITS | 16)
-    async for chunk in source:
-        decompressed = decompressor.decompress(chunk)
-        if decompressed:
-            yield decompressed
-    tail = decompressor.flush()
-    if tail:
-        yield tail
+from mirage.utils.compress import gzip_decompress_stream
 
 
 async def gunzip(
@@ -37,7 +26,7 @@ async def gunzip(
     if not paths:
         source = _resolve_source(stdin,
                                  "gunzip: (stdin): unexpected end of file")
-        return _gzip_decompress_stream(source), IOResult()
+        return gzip_decompress_stream(source), IOResult()
 
     if test_only:
         for p in paths:

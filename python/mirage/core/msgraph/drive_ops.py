@@ -17,13 +17,15 @@ import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, replace
 from functools import partial
-from typing import Any
+from typing import Any, Protocol, TypeVar
 from urllib.parse import quote
 
 import aiohttp
 
+from mirage.accessor.base import Accessor
 from mirage.cache.context import invalidate_after_write
-from mirage.cache.index import IndexCacheStore, IndexEntry, ResourceType
+from mirage.cache.index import (NULL_INDEX, IndexCacheStore, IndexEntry,
+                                ResourceType)
 from mirage.commands.builtin.find_eval import (FindEntry, PredNode, build_tree,
                                                emit_start_path, keep)
 from mirage.core.msgraph.client import (GraphError, graph_delete, graph_get,
@@ -656,3 +658,100 @@ async def stat_item(config: MsGraphConfig, loc: DriveLoc, virtual: str,
             raise enoent(virtual)
         raise
     return entry_stat(item)
+
+
+A = TypeVar("A", bound=Accessor)
+A_contra = TypeVar("A_contra", bound=Accessor, contravariant=True)
+
+
+class StatFn(Protocol[A_contra]):
+
+    def __call__(self,
+                 accessor: A_contra,
+                 path: PathSpec,
+                 index: IndexCacheStore = ...) -> Awaitable[FileStat]:
+        ...
+
+
+class ExistsFn(Protocol[A_contra]):
+
+    def __call__(self,
+                 accessor: A_contra,
+                 path: PathSpec,
+                 index: IndexCacheStore = ...) -> Awaitable[bool]:
+        ...
+
+
+class ReadFn(Protocol[A_contra]):
+
+    def __call__(self,
+                 accessor: A_contra,
+                 path: PathSpec,
+                 index: IndexCacheStore = ...,
+                 offset: int = ...,
+                 size: int | None = ...) -> Awaitable[bytes]:
+        ...
+
+
+class WriteFn(Protocol[A_contra]):
+
+    def __call__(self, accessor: A_contra, path: PathSpec,
+                 data: bytes) -> Awaitable[None]:
+        ...
+
+
+class TruncateFn(Protocol[A_contra]):
+
+    def __call__(self, accessor: A_contra, path: PathSpec,
+                 length: int) -> Awaitable[None]:
+        ...
+
+
+def make_exists(stat: StatFn[A]) -> ExistsFn[A]:
+    """Build the boolean existence probe over a drive backend's stat.
+
+    Graph has no cheap HEAD for an item, so existence is a stat that
+    tolerates ENOENT. Both drive backends address items differently but
+    probe identically, so only their stat is injected.
+
+    Args:
+        stat (StatFn): the backend's stat.
+
+    Returns:
+        ExistsFn: the probe.
+    """
+
+    async def exists(accessor: A,
+                     path: PathSpec,
+                     index: IndexCacheStore = NULL_INDEX) -> bool:
+        try:
+            await stat(accessor, path, index)
+            return True
+        except FileNotFoundError:
+            return False
+
+    return exists
+
+
+def make_truncate(read: ReadFn[A], write: WriteFn[A]) -> TruncateFn[A]:
+    """Build read-slice-pad-rewrite truncation over a drive backend's IO.
+
+    Graph exposes no truncate, so the whole item is rewritten. A missing
+    item truncates to a fresh one, matching ``open(path, "w")``.
+
+    Args:
+        read (ReadFn): the backend's read_bytes.
+        write (WriteFn): the backend's write_bytes.
+
+    Returns:
+        TruncateFn: the truncation.
+    """
+
+    async def truncate(accessor: A, path: PathSpec, length: int) -> None:
+        try:
+            data = await read(accessor, path, index=NULL_INDEX)
+        except FileNotFoundError:
+            data = b""
+        await write(accessor, path, data[:length].ljust(length, b"\0"))
+
+    return truncate

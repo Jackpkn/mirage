@@ -12,23 +12,12 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { stripUnderscores } from '../../utils/sanitize.ts'
+import { sanitizeLabel } from '../../utils/sanitize.ts'
 
 const TITLE_MAX_CHARS = 100
-const UNSAFE_CHARS = /[^\w\s\-.]/g
-const MULTI_UNDERSCORE = /_+/g
 
-function sanitizeTitle(title: string): string {
-  if (title.trim() === '') return 'Untitled'
-  let cleaned = title.replace(UNSAFE_CHARS, '_')
-  cleaned = cleaned.replace(/ /g, '_')
-  cleaned = cleaned.replace(MULTI_UNDERSCORE, '_')
-  cleaned = stripUnderscores(cleaned)
-  if (cleaned.length > TITLE_MAX_CHARS) {
-    cleaned = cleaned.slice(0, TITLE_MAX_CHARS - 3) + '...'
-  }
-  return cleaned
-}
+const sanitizeTitle = (title: string): string =>
+  sanitizeLabel(title, { fallback: 'Untitled', maxLen: TITLE_MAX_CHARS })
 
 export function makeFilename(title: string, docId: string, modifiedTime = ''): string {
   const datePrefix = modifiedTime.length >= 10 ? modifiedTime.slice(0, 10) : ''

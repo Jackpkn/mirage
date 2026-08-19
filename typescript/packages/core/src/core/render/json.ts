@@ -39,3 +39,18 @@ export function jsonlBytes(rows: readonly unknown[]): Uint8Array {
   if (rows.length === 0) return new Uint8Array()
   return ENC.encode(rows.map((row) => compactJsonText(row)).join('\n') + '\n')
 }
+
+// A comment feed arrives in whatever order the API paginated it, and a file
+// that reads the same twice needs a stable order. `created_at` is the one
+// field every comment normalizer emits, and a row missing it sorts first
+// rather than throwing.
+export function jsonlBytesByCreatedAt(rows: readonly { created_at?: string | null }[]): Uint8Array {
+  const ordered = [...rows].sort((a, b) => {
+    const ka = a.created_at ?? ''
+    const kb = b.created_at ?? ''
+    if (ka < kb) return -1
+    if (ka > kb) return 1
+    return 0
+  })
+  return jsonlBytes(ordered)
+}

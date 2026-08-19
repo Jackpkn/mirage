@@ -69,3 +69,21 @@ def jsonl_bytes(rows: list[dict[str, Any]]) -> bytes:
         return b""
     lines = [compact_json_text(row) for row in rows]
     return ("\n".join(lines) + "\n").encode()
+
+
+def jsonl_bytes_by_created_at(rows: list[dict[str, Any]]) -> bytes:
+    """Render rows as JSONL in ``created_at`` order.
+
+    A comment feed arrives in whatever order the API paginated it, and a
+    file that reads the same twice needs a stable order. ``created_at`` is
+    the one field every comment normalizer emits, and a row missing it
+    sorts first rather than raising.
+
+    Args:
+        rows (list[dict[str, Any]]): normalized comment rows.
+
+    Returns:
+        bytes: newline-delimited JSON, oldest first.
+    """
+    ordered = sorted(rows, key=lambda row: row.get("created_at") or "")
+    return jsonl_bytes(ordered)

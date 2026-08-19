@@ -43,6 +43,8 @@ import {
   duTreeEntries,
   duTreeTotal,
   findItems,
+  makeExists,
+  makeTruncate,
   readItem,
   readdirItems,
   renameReplace,
@@ -312,15 +314,7 @@ export async function rmdir(accessor: SharePointAccessor, path: PathSpec): Promi
   await invalidateAfterUnlink(path)
 }
 
-export async function exists(accessor: SharePointAccessor, path: PathSpec): Promise<boolean> {
-  try {
-    await stat(accessor, path)
-    return true
-  } catch (error) {
-    if ((error as { code?: unknown }).code === 'ENOENT') return false
-    throw error
-  }
-}
+export const exists = makeExists<SharePointAccessor>(stat)
 
 export async function rename(
   accessor: SharePointAccessor,
@@ -353,22 +347,7 @@ export async function copy(
   await invalidateAfterWrite(dst)
 }
 
-export async function truncate(
-  accessor: SharePointAccessor,
-  path: PathSpec,
-  length: number,
-): Promise<void> {
-  let data: Uint8Array
-  try {
-    data = await read(accessor, path)
-  } catch (error) {
-    if ((error as { code?: unknown }).code !== 'ENOENT') throw error
-    data = new Uint8Array()
-  }
-  const resized = new Uint8Array(length)
-  resized.set(data.slice(0, length))
-  await write(accessor, path, resized)
-}
+export const truncate = makeTruncate<SharePointAccessor>(read, write)
 
 export async function du(
   accessor: SharePointAccessor,

@@ -37,7 +37,6 @@ import {
   normalizeTeam,
   normalizeUser,
   toJsonBytes,
-  toJsonlBytes,
   type NormalizedProjectIssue,
 } from './normalize.ts'
 import {
@@ -50,6 +49,7 @@ import {
 } from './pathing.ts'
 import { stripSlash } from '../../utils/slash.ts'
 import { enoent } from '../../utils/errors.ts'
+import { jsonlBytesByCreatedAt } from '../render/json.ts'
 
 export interface LinearReaddirFilter {
   teamIds?: readonly string[]
@@ -140,7 +140,7 @@ async function sizeIssueFiles(
         resourceType: 'linear/comments',
         remoteTime: commentsTime || entry.remoteTime,
         vfsName: 'comments.jsonl',
-        size: toJsonlBytes(rows).length,
+        size: jsonlBytesByCreatedAt(rows).length,
       }),
     ],
   ])

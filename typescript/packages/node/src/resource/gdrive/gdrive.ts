@@ -28,7 +28,11 @@ import { GDRIVE_PROMPT } from '@struktoai/mirage-core/resource/gdrive/prompt'
 import { PathSpec, ResourceName } from '@struktoai/mirage-core/types'
 import type { FileStat } from '@struktoai/mirage-core/types'
 import { mountKey, mountPrefixOf } from '@struktoai/mirage-core/utils/key_prefix'
-import { redactGDriveConfig, type GDriveConfig, type GDriveConfigRedacted } from './config.ts'
+import {
+  redactGDriveConfig,
+  type GDriveConfig,
+  type GDriveConfigRedacted,
+} from '@struktoai/mirage-core/resource/gdrive/config'
 import { buildDeltaHook } from '@struktoai/mirage-core/core/gdrive/watch'
 import { type DeltaHook } from '@struktoai/mirage-core/watch/index'
 

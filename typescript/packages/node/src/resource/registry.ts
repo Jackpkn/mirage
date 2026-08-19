@@ -231,32 +231,34 @@ const REGISTRY: Record<string, ResourceFactory> = {
   },
   github: async (config) => {
     const { GitHubResource } = await import('./github/github.ts')
-    const { normalizeGitHubConfig } = await import('./github/config.ts')
+    const { normalizeGitHubConfig } = await import('@struktoai/mirage-core/core/github/config')
     return GitHubResource.create(normalizeGitHubConfig(config))
   },
   gcal: async (config) => {
     const { GCalResource } = await import('./gcal/gcal.ts')
-    const { normalizeGCalConfig } = await import('./gcal/config.ts')
+    const { normalizeGCalConfig } = await import('@struktoai/mirage-core/resource/gcal/config')
     return new GCalResource(normalizeGCalConfig(config))
   },
   gdocs: async (config) => {
     const { GDocsResource } = await import('./gdocs/gdocs.ts')
-    const { normalizeGDocsConfig } = await import('./gdocs/config.ts')
+    const { normalizeGDocsConfig } = await import('@struktoai/mirage-core/resource/gdocs/config')
     return new GDocsResource(normalizeGDocsConfig(config))
   },
   gsheets: async (config) => {
     const { GSheetsResource } = await import('./gsheets/gsheets.ts')
-    const { normalizeGSheetsConfig } = await import('./gsheets/config.ts')
+    const { normalizeGSheetsConfig } =
+      await import('@struktoai/mirage-core/resource/gsheets/config')
     return new GSheetsResource(normalizeGSheetsConfig(config))
   },
   gslides: async (config) => {
     const { GSlidesResource } = await import('./gslides/gslides.ts')
-    const { normalizeGSlidesConfig } = await import('./gslides/config.ts')
+    const { normalizeGSlidesConfig } =
+      await import('@struktoai/mirage-core/resource/gslides/config')
     return new GSlidesResource(normalizeGSlidesConfig(config))
   },
   gdrive: async (config) => {
     const { GDriveResource } = await import('./gdrive/gdrive.ts')
-    const { normalizeGDriveConfig } = await import('./gdrive/config.ts')
+    const { normalizeGDriveConfig } = await import('@struktoai/mirage-core/resource/gdrive/config')
     return new GDriveResource(normalizeGDriveConfig(config))
   },
   onedrive: async (config) => {
@@ -287,7 +289,7 @@ const REGISTRY: Record<string, ResourceFactory> = {
   },
   gmail: async (config) => {
     const { GmailResource } = await import('./gmail/gmail.ts')
-    const { normalizeGmailConfig } = await import('./gmail/config.ts')
+    const { normalizeGmailConfig } = await import('@struktoai/mirage-core/resource/gmail/config')
     return new GmailResource(normalizeGmailConfig(config))
   },
   email: async (config) => {

@@ -36,7 +36,11 @@ import { PathSpec, ResourceName } from '@struktoai/mirage-core/types'
 import type { FileStat } from '@struktoai/mirage-core/types'
 import { mountKey, mountPrefixOf } from '@struktoai/mirage-core/utils/key_prefix'
 import type { DeltaHook } from '@struktoai/mirage-core/watch/index'
-import { redactGitHubConfig, type GitHubConfig, type GitHubConfigRedacted } from './config.ts'
+import {
+  redactGitHubConfig,
+  type GitHubConfig,
+  type GitHubConfigRedacted,
+} from '@struktoai/mirage-core/core/github/config'
 
 const githubResolveGlob = makeResolveGlob(githubReaddir)
 

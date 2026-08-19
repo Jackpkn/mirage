@@ -27,23 +27,13 @@ import {
   messageJsonBytes,
 } from './messages.ts'
 import { enoent } from '../../utils/errors.ts'
+import { sanitizeLabel } from '../../utils/sanitize.ts'
 import { compareCodePoints } from '../../utils/sort.ts'
 
 const TITLE_MAX = 80
-const UNSAFE = /[^\w\s\-.]/g
-const MULTI_UNDERSCORE = /_+/g
 
-export function sanitize(text: string): string {
-  if (text.trim() === '') return 'No_Subject'
-  let cleaned = text.replace(UNSAFE, '_').replace(/ /g, '_').replace(MULTI_UNDERSCORE, '_')
-  let start = 0
-  let end = cleaned.length
-  while (start < end && cleaned.charCodeAt(start) === 95) start++
-  while (end > start && cleaned.charCodeAt(end - 1) === 95) end--
-  cleaned = cleaned.slice(start, end)
-  if (cleaned.length > TITLE_MAX) cleaned = `${cleaned.slice(0, TITLE_MAX - 3)}...`
-  return cleaned
-}
+export const sanitize = (text: string): string =>
+  sanitizeLabel(text, { fallback: 'No_Subject', maxLen: TITLE_MAX })
 
 function msgFilename(subject: string, msgId: string): string {
   return `${sanitize(subject)}__${msgId}.gmail.json`

@@ -71,7 +71,9 @@ export function sanitizeName(name: string): string {
   cleaned = cleaned.replace(/ /g, '_')
   cleaned = cleaned.replace(MULTI_UNDERSCORE, '_')
   cleaned = stripUnderscores(cleaned)
-  if (cleaned.length > MAX_LEN) cleaned = cleaned.slice(0, MAX_LEN)
+  // Code points, not UTF-16 units -- see sanitizeLabel.
+  const points = Array.from(cleaned)
+  if (points.length > MAX_LEN) cleaned = points.slice(0, MAX_LEN).join('')
   return cleaned
 }
 
@@ -87,4 +89,30 @@ export function sanitizeName(name: string): string {
 export function pathSafeName(name: string): string {
   if (name.trim() === '') return 'unknown'
   return name.replace(/\//g, '∕')
+}
+
+/**
+ * Sanitize an API-supplied label for use inside a filename.
+ *
+ * The shared body behind every backend's title/subject sanitizer: replace
+ * shell-unsafe characters and spaces with underscores, collapse the runs, trim
+ * the edges, then ellipsize past the budget. Backends differ only in what an
+ * empty label becomes and how long a label may be, so those are the arguments.
+ *
+ * Unlike `sanitizeName` this ellipsizes rather than hard-cutting, so a
+ * truncated name reads as truncated.
+ */
+export function sanitizeLabel(text: string, options: { fallback: string; maxLen: number }): string {
+  if (text.trim() === '') return options.fallback
+  let cleaned = text.replace(UNSAFE_CHARS, '_').replace(/ /g, '_').replace(MULTI_UNDERSCORE, '_')
+  cleaned = stripUnderscores(cleaned)
+  // The budget counts characters, and python counts code points where
+  // `String.length` counts UTF-16 units. Measuring in units both truncates a
+  // label python leaves whole and can cut a surrogate pair in half, which
+  // encodes as U+FFFD in the filename.
+  const points = Array.from(cleaned)
+  if (points.length > options.maxLen) {
+    cleaned = `${points.slice(0, options.maxLen - 3).join('')}...`
+  }
+  return cleaned
 }

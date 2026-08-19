@@ -36,6 +36,8 @@ import {
   duTreeTotal,
   findItems,
   folderChildCount,
+  makeExists,
+  makeTruncate,
   readItem,
   readdirItems,
   renameReplace,
@@ -230,15 +232,7 @@ export async function rmdir(accessor: OneDriveAccessor, path: PathSpec): Promise
   await invalidateAfterUnlink(path)
 }
 
-export async function exists(accessor: OneDriveAccessor, path: PathSpec): Promise<boolean> {
-  try {
-    await stat(accessor, path)
-    return true
-  } catch (error) {
-    if ((error as { code?: unknown }).code === 'ENOENT') return false
-    throw error
-  }
-}
+export const exists = makeExists<OneDriveAccessor>(stat)
 
 export async function rename(
   accessor: OneDriveAccessor,
@@ -263,22 +257,7 @@ export async function copy(
   await invalidateAfterWrite(dst)
 }
 
-export async function truncate(
-  accessor: OneDriveAccessor,
-  path: PathSpec,
-  length: number,
-): Promise<void> {
-  let data: Uint8Array
-  try {
-    data = await read(accessor, path)
-  } catch (error) {
-    if ((error as { code?: unknown }).code !== 'ENOENT') throw error
-    data = new Uint8Array()
-  }
-  const resized = new Uint8Array(length)
-  resized.set(data.slice(0, length))
-  await write(accessor, path, resized)
-}
+export const truncate = makeTruncate<OneDriveAccessor>(read, write)
 
 export async function du(
   accessor: OneDriveAccessor,
