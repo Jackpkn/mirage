@@ -14,8 +14,7 @@
 
 import asyncio
 import logging
-from collections.abc import (AsyncIterator, Callable, Iterable, Mapping,
-                             Sequence)
+from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from types import ModuleType, TracebackType
 from typing import Any, Literal, overload
 
@@ -644,7 +643,7 @@ class Workspace:
     def create_session(
         self,
         session_id: str,
-        mounts: Mapping[str, MountMode | str] | Iterable[str] | None = None,
+        mounts: Mapping[str, MountMode | str] | Sequence[str] | None = None,
         *,
         profile: str | SessionProfile | None = None,
         permissions: SessionProfile | None = None,
@@ -659,11 +658,13 @@ class Workspace:
 
         Args:
             session_id (str): unique id for the session.
-            mounts (Mapping[str, MountMode | str] | Iterable[str] | None):
+            mounts (Mapping[str, MountMode | str] | Sequence[str] | None):
                 sugar for ``permissions.mounts``: a mapping assigns each
                 prefix a mode ceiling ("read", "write", "exec", or the
-                filesystem aliases "r", "rw", "rwx"); a plain iterable
-                of prefixes keeps each mount at its own configured mode.
+                filesystem aliases "r", "rw", "rwx"); a list of prefixes
+                (or one bare prefix) keeps each mount at its own
+                configured mode. A set or a generator is refused, so
+                the same grant reads the same way in TypeScript.
             profile (str | SessionProfile | None): the role to create
                 the session from.
             permissions (SessionProfile | None): an inline document that
