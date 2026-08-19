@@ -30,17 +30,24 @@ export interface GmailSearchRow {
   bodyText: string
 }
 
+// Every offset below is a python string index, and python counts code points
+// where `String.length` and `String.indexOf` count UTF-16 units. Measuring in
+// units halves the budget for astral text -- a 200-emoji body excerpts to all
+// 200 in python and to 117 here -- and the cut lands inside the 118th
+// surrogate pair, whose lone half encodes as U+FFFD.
 function extractExcerpt(text: string, pattern: string): string {
   if (text === '' || pattern === '') return ''
   const flat = text.replace(/\s+/g, ' ').trim()
   const lower = flat.toLowerCase()
-  const idx = lower.indexOf(pattern.toLowerCase())
-  if (idx < 0) return flat.slice(0, EXCERPT_MAX)
+  const hit = lower.indexOf(pattern.toLowerCase())
+  const points = Array.from(flat)
+  if (hit < 0) return points.slice(0, EXCERPT_MAX).join('')
+  const idx = Array.from(lower.slice(0, hit)).length
   const start = Math.max(0, idx - EXCERPT_WINDOW)
-  const end = Math.min(flat.length, idx + pattern.length + EXCERPT_WINDOW)
+  const end = Math.min(points.length, idx + Array.from(pattern).length + EXCERPT_WINDOW)
   const prefix = start > 0 ? '...' : ''
-  const suffix = end < flat.length ? '...' : ''
-  return `${prefix}${flat.slice(start, end)}${suffix}`
+  const suffix = end < points.length ? '...' : ''
+  return `${prefix}${points.slice(start, end).join('')}${suffix}`
 }
 
 function buildQuery(pattern: string, labelName: string | null, dateStr: string | null): string {

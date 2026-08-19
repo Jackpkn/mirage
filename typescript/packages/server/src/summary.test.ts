@@ -13,11 +13,12 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { describe, expect, it } from 'vitest'
+import type { Resource } from '@struktoai/mirage-core/resource/base'
 import { RAMResource } from '@struktoai/mirage-core/resource/ram/ram'
 import { MountMode } from '@struktoai/mirage-core/types'
 import { Workspace } from '@struktoai/mirage-node'
 import { WorkspaceRegistry } from './registry.ts'
-import { makeBrief, makeDetail } from './summary.ts'
+import { describeResource, makeBrief, makeDetail } from './summary.ts'
 
 describe('summary', () => {
   it('makeBrief reports prefix count + workspace mode', () => {
@@ -41,5 +42,42 @@ describe('summary', () => {
     expect(detail.mounts.map((m) => m.prefix).sort()).toEqual(['/', '/data/'])
     const dataMount = detail.mounts.find((m) => m.prefix === '/data/')
     expect(dataMount?.resource).toBe('ram')
+  })
+})
+
+const ASTRAL = '\u{10400}'
+
+// `RAMResource.prompt` is inferred as its own string literal, so a subclass
+// cannot widen it; the description only ever reads the field.
+function promptResource(prompt: string): Resource {
+  return Object.assign(new RAMResource(), { prompt })
+}
+
+describe('describeResource', () => {
+  it('returns a short prompt whole', () => {
+    expect(describeResource(promptResource('hello'))).toBe('hello')
+    expect(describeResource(promptResource(''))).toBe('')
+  })
+
+  it('measures the budget in code points, matching python', () => {
+    // 40 ascii plus 45 Deseret letters is 85 code points and 130 UTF-16
+    // units, so measuring `String.length` ellipsized a prompt python leaves
+    // whole -- and the cut landed inside the 40th surrogate pair.
+    const prompt = 'a'.repeat(40) + ASTRAL.repeat(45)
+    expect(describeResource(promptResource(prompt))).toBe(prompt)
+  })
+
+  it('ellipsizes on a code-point boundary', () => {
+    const out = describeResource(promptResource(ASTRAL.repeat(130)))
+    expect(out).toBe(ASTRAL.repeat(119) + '\u2026')
+    expect(Array.from(out)).toHaveLength(120)
+    // A half pair is a legal `String` value and only becomes U+FFFD once the
+    // bytes are written, so the check has to go through UTF-8.
+    expect(new TextDecoder('utf-8').decode(new TextEncoder().encode(out))).not.toContain('\uFFFD')
+  })
+
+  it('drops trailing whitespace before the ellipsis', () => {
+    const prompt = 'x'.repeat(118) + '  ' + 'y'.repeat(10)
+    expect(describeResource(promptResource(prompt))).toBe('x'.repeat(118) + '\u2026')
   })
 })
