@@ -370,6 +370,7 @@ export async function executeNode(
       deps.routingDecision,
       deps.signal,
       deps.reparse,
+      agentId,
     )
   }
 

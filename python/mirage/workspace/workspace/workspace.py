@@ -150,7 +150,6 @@ class Workspace:
         self._shared_resources: set[int] = set()
         self._drift = DriftQueue()
         self.job_table = JobTable(console_factory)
-        self._current_agent_id: str | None = agent_id
         self._default_agent_id = agent_id
         self._session_mgr = SessionManager(session_id, store=stores.sessions)
         # Admission policies, consulted in registration order after the
@@ -166,8 +165,7 @@ class Workspace:
         # The approval door an Ask is taken to (design 3.9): grants live
         # on the sessions, the host answers through `approver` (the
         # recording one when none is wired) and reads `ws.approvals`.
-        self._registry.approvals = Approvals(self._session_mgr, approver,
-                                             self._agent)
+        self._registry.approvals = Approvals(self._session_mgr, approver)
         self._meta = WorkspaceMeta(self._workspace_id, self._state_store,
                                    self._session_mgr, session_id,
                                    session_id_explicit)
@@ -283,11 +281,6 @@ class Workspace:
         agent's retry passes or is refused.
         """
         return self._registry.approvals
-
-    def _agent(self) -> str:
-        """The agent the current line is attributed to, for an
-        approval request."""
-        return self._current_agent_id or ""
 
     @property
     def max_drain_bytes(self) -> int | None:

@@ -62,6 +62,7 @@ async def recurse(
     ws: "Workspace",
     cancel: asyncio.Event | None,
     routing_decision: PolicyDecision | None,
+    agent_id: str | None,
     cmd: str,
     **opts: Any,
 ) -> Any:
@@ -70,19 +71,22 @@ async def recurse(
     Never a typed line, so it must not record a history entry or open
     its own recording context (GNU: history is appended by the line
     reader, the evaluator can't touch it). It inherits the typed
-    line's routing decision: nested lines never re-route.
+    line's routing decision and agent: nested lines never re-route,
+    and an approval they raise is the outer line's agent's.
 
     Args:
         ws: the workspace hosting the outer line.
         cancel (asyncio.Event | None): the outer line's abort event.
         routing_decision (PolicyDecision | None): the typed line's
             decision, inherited verbatim.
+        agent_id (str | None): the typed line's agent, inherited.
         cmd (str): the nested command line.
     """
     return await ws.execute(cmd,
                             cancel=cancel,
                             record=False,
                             routing_decision=routing_decision,
+                            agent_id=agent_id,
                             **opts)
 
 
@@ -155,8 +159,10 @@ async def execute_line(
             session_id = ws._session_mgr.default_id
         session = ws._session_mgr.get(session_id)
     effective_session = fork_for_call(session, cwd, env)
-    ws._current_agent_id = (agent_id
-                            if agent_id is not None else ws._default_agent_id)
+    # The agent of this line, carried with the execution rather than
+    # held on the workspace: a nested line inherits it through
+    # `recurse`, a concurrent line keeps its own.
+    agent = agent_id if agent_id is not None else ws._default_agent_id
     io = IOResult()
     # The line-reader decision (GNU: history is appended where the
     # typed line is read, never inside the evaluator). Internal
@@ -185,10 +191,9 @@ async def execute_line(
             return io
         decision = await ws._policy_router.decide(ast, command, runtime,
                                                   provision, effective_session,
-                                                  session_id,
-                                                  ws._current_agent_id or "",
+                                                  session_id, agent or "",
                                                   ws._policy, routing_decision)
-        exec_recursion = partial(recurse, ws, cancel, decision)
+        exec_recursion = partial(recurse, ws, cancel, decision, agent)
         if provision:
             name = command_name(command)
             guard = resolve_limit(name) if name else None
@@ -203,7 +208,7 @@ async def execute_line(
             # visibility and admission gate as the tree, per parsed
             # command, before the runtime sees a byte of it.
             refusal = await admit_line(ast, effective_session, ws._registry,
-                                       ws._namespace)
+                                       ws._namespace, agent or "")
             if refusal is not None:
                 io = IOResult(exit_code=refusal.exit_code,
                               stderr=refusal.stderr)
@@ -221,7 +226,7 @@ async def execute_line(
             ws._namespace,
             ws.job_table,
             exec_recursion,
-            ws._current_agent_id or "",
+            agent or "",
             ast,
             effective_session,
             stdin,
@@ -261,7 +266,6 @@ async def execute_line(
         await ws._session_mgr.flush()
         ws._ops.records.extend(scope.records)
         if is_line:
-            await ws.observer.log_execution(command, io, scope.records,
-                                            ws._current_agent_id or "",
-                                            session_id,
+            await ws.observer.log_execution(command, io, scope.records, agent
+                                            or "", session_id,
                                             session_cwd(ws, session_id))

@@ -17,9 +17,12 @@ from enum import StrEnum
 
 import tree_sitter
 
+from mirage.shell.escapes import (decode_ansi_c, unescape_dquoted,
+                                  unescape_unquoted)
 from mirage.shell.types import FunctionBody
 from mirage.shell.types import NodeType as NT
 from mirage.shell.types import Redirect, RedirectKind
+from mirage.utils.path import expand_tilde
 
 
 class ProcessSubDirection(StrEnum):
@@ -63,6 +66,89 @@ def get_parts(node: tree_sitter.Node) -> list[tree_sitter.Node]:
                     or nxt.start_byte != c.end_byte):
                 parts.append(c)
     return parts
+
+
+def brace_expands(text: str) -> bool:
+    """Whether unquoted text holds a brace expansion (``{a,b}``,
+    ``{1..3}``), which the shell turns into several words.
+
+    Args:
+        text (str): the word as typed.
+    """
+    start = -1
+    for position, char in enumerate(text):
+        if char == "{":
+            start = position
+        elif char == "}" and start >= 0:
+            body = text[start + 1:position]
+            if "," in body or ".." in body:
+                return True
+            start = -1
+    return False
+
+
+def literal_word(node: tree_sitter.Node,
+                 home: str | None = None) -> str | None:
+    """The text a word names before any expansion, or None.
+
+    A word is literal when nothing in it waits on the shell: a plain
+    word, a number, a quoted string with no expansion inside, or a
+    concatenation of those. Quotes are removed, escapes resolved and a
+    leading unquoted ``~`` expanded the way expansion would. A word
+    carrying a parameter, command, arithmetic or process substitution,
+    or a brace expression, answers None: what it names is known only
+    when it runs.
+
+    Args:
+        node (tree_sitter.Node): a command word node, or the
+            command_name wrapping one.
+        home (str | None): the home directory a leading ``~`` names;
+            None leaves it literal, as bash does with no ``$HOME``.
+    """
+    ntype = node.type
+    if ntype == NT.COMMAND_NAME:
+        named = node.named_children
+        return literal_word(named[0], home) if named else get_text(node)
+    if ntype in (NT.WORD, NT.NUMBER, NT.CONCATENATION) and brace_expands(
+            get_text(node)):
+        return None
+    if ntype in (NT.WORD, NT.NUMBER):
+        return expand_tilde(unescape_unquoted(get_text(node)), home)
+    if ntype == NT.RAW_STRING:
+        return get_text(node)[1:-1]
+    if ntype == NT.ANSI_C_STRING:
+        return decode_ansi_c(get_text(node)[2:-1])
+    if ntype == NT.TRANSLATED_STRING:
+        for child in node.named_children:
+            if child.type == NT.STRING:
+                return literal_word(child)
+        return ""
+    if ntype == NT.STRING:
+        pieces: list[str] = []
+        for child in node.children:
+            if child.type == NT.DQUOTE:
+                continue
+            if child.type != NT.STRING_CONTENT:
+                return None
+            pieces.append(unescape_dquoted(get_text(child)))
+        return "".join(pieces)
+    if ntype == NT.CONCATENATION:
+        pieces = []
+        children = node.children
+        for position, child in enumerate(children):
+            # The `$` of a `$"..."` is the translation marker, not text.
+            if (child.type == "$" and position + 1 < len(children)
+                    and children[position + 1].type == NT.STRING):
+                continue
+            # Only a leading unquoted piece carries a tilde prefix.
+            piece = literal_word(child, home if not pieces else None)
+            if piece is None:
+                return None
+            pieces.append(piece)
+        return "".join(pieces)
+    if ntype == "$":
+        return "$"
+    return None
 
 
 def has_command_substitution(node: tree_sitter.Node) -> bool:

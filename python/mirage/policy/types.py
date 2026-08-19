@@ -314,6 +314,10 @@ class CommandContext:
         registry (MountRootQuery): mount-root oracle for POSIX rules.
         session_id (str): the session running the line, set by the
             door; empty outside a workspace.
+        agent_id (str): the agent the workspace attributes the line
+            to, carried per execution so a nested line (``eval``,
+            ``$()``, ``xargs``) and a concurrent one keep their own;
+            what an approval request names.
         tokens (tuple[str, ...]): the line as an admission pattern
             reads it, command name first: for an installed CLI the
             verb path replaces the words before it (options before the
@@ -336,6 +340,7 @@ class CommandContext:
     registry: MountRootQuery
     operands: tuple[PathSpec, ...] = ()
     session_id: str = ""
+    agent_id: str = ""
     tokens: tuple[str, ...] = ()
     program: tuple[str, ...] = ()
     tool: bool = True

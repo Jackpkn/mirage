@@ -62,7 +62,13 @@ function path(virtual: string): PathSpec {
 
 function ctx(
   words: readonly string[] = ['git', 'push'],
-  extra: { cwd?: string; sessionId?: string; program?: readonly string[]; paths?: PathSpec[] } = {},
+  extra: {
+    cwd?: string
+    sessionId?: string
+    program?: readonly string[]
+    paths?: PathSpec[]
+    agentId?: string
+  } = {},
 ): CommandContext {
   return {
     command: words[0] ?? '',
@@ -71,6 +77,7 @@ function ctx(
     cwd: extra.cwd ?? '/repo',
     registry,
     sessionId: extra.sessionId ?? 's',
+    agentId: extra.agentId ?? '',
     tokens: words,
     program: extra.program ?? ['git', 'push'],
   }
@@ -225,8 +232,13 @@ describe('Approvals', () => {
   })
 
   it('without sessions, grants live in memory', async () => {
-    const door = new Approvals(null, null, () => 'claude')
-    const pending = (await door.resolve(ctx(), ASK)) as Pending
+    const door = new Approvals()
+    // The request names the agent the line carries, not one the door
+    // was configured with: a nested or concurrent line keeps its own.
+    const pending = (await door.resolve(
+      ctx(['git', 'push'], { agentId: 'claude' }),
+      ASK,
+    )) as Pending
     expect(pending.kind).toBe('pending')
     expect(door.list()[0]?.agentId).toBe('claude')
     await door.grant(pending.id, 'session')

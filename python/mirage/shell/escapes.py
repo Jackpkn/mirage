@@ -12,6 +12,8 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import shlex
+
 from mirage.shell.bytes import byte_char
 
 # The ANSI-C escape table $'...' shares with bash's strtrans.c. \e/\E
@@ -174,3 +176,35 @@ def decode_ansi_c(content: str) -> str:
         out.append(char + marker)
         i += 2
     return "".join(out)
+
+
+def unescape_unquoted(text: str) -> str:
+    """The text an unquoted word's backslash escapes name.
+
+    Args:
+        text (str): the word as typed.
+    """
+    if "\\" not in text:
+        return text
+    try:
+        parts = shlex.split(text, posix=True)
+    except ValueError:
+        return text
+    return parts[0] if parts else text
+
+
+def unescape_dquoted(text: str) -> str:
+    """The text a double-quoted segment's escapes name.
+
+    Bash recognizes ``\\$``, ``\\```, ``\\"``, ``\\\\`` and
+    ``\\<newline>`` inside double quotes; every other backslash stays.
+
+    Args:
+        text (str): the segment between the quotes, as typed.
+    """
+    text = text.replace("\\\\", "\x00")
+    text = text.replace('\\"', '"')
+    text = text.replace("\\$", "$")
+    text = text.replace("\\`", "`")
+    text = text.replace("\\\n", "")
+    return text.replace("\x00", "\\")

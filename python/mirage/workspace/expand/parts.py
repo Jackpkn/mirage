@@ -20,6 +20,7 @@ import tree_sitter
 
 from mirage.ops.types import SessionView
 from mirage.shell.call_stack import CallStack
+from mirage.shell.escapes import unescape_unquoted
 from mirage.shell.helpers import get_text
 from mirage.shell.types import SET_OPTION_DEFAULTS
 from mirage.shell.types import NodeType as NT
@@ -31,8 +32,7 @@ from mirage.workspace.expand.brace import (expand_template, make_inert,
 from mirage.workspace.expand.classify import classify_word
 from mirage.workspace.expand.constants import (BRACE_LITERAL_TYPES,
                                                BRACE_WORD_TYPES, SPLIT_TYPES)
-from mirage.workspace.expand.node import (_folded_whitespace,
-                                          _unescape_unquoted, expand_node,
+from mirage.workspace.expand.node import (_folded_whitespace, expand_node,
                                           expand_node_marked)
 from mirage.workspace.expand.variable import expand_array_at, is_multiword_at
 from mirage.workspace.mount import MountRegistry
@@ -149,7 +149,7 @@ async def _expand_brace_word(
     home = home_dir(session)
     return [
         substitute(
-            expand_tilde(_unescape_unquoted(mark_escaped_globs(w)), home),
+            expand_tilde(unescape_unquoted(mark_escaped_globs(w)), home),
             values) for w in words
     ]
 

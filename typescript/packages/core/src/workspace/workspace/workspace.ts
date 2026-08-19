@@ -115,11 +115,6 @@ export class Workspace {
   private readonly openOrder: Resource[] = []
   readonly jobTable: JobTable
   readonly agentId: string | null
-  // The agent the workspace attributes the line being executed to: the
-  // call's `agentId` when the caller passed one, else the constructor's
-  // (python `_current_agent_id`). Read by the approval door, so a
-  // request raised in a shared workspace names the agent that asked.
-  private currentAgentId: string | null
   readonly cache: FileCache & Resource
   readonly namespace: Namespace
   private readonly dispatcher: Dispatcher
@@ -173,7 +168,6 @@ export class Workspace {
     this.shellParser = options.shellParser ?? null
     this.shellParserFactory = options.shellParserFactory ?? null
     this.agentId = options.agentId ?? null
-    this.currentAgentId = this.agentId
     this.watchManager = new WatchManager(this.registry)
     const sandboxResolver = new PrefixResolver(() => this.sandboxVisibleMounts())
     this.runtimes = new Runtimes({
@@ -214,11 +208,7 @@ export class Workspace {
     // The approval door an Ask is taken to (design 3.9): grants live on
     // the sessions, the host answers through `approver` (the recording
     // one when none is wired) and reads `ws.approvals`.
-    this.registry.approvals = new Approvals(
-      this.sessionManager,
-      options.approver ?? null,
-      () => this.currentAgentId ?? '',
-    )
+    this.registry.approvals = new Approvals(this.sessionManager, options.approver ?? null)
     // Installed CLIs, fully separate from mounts: a spec name resolves
     // against the named registry and every entry installs through the
     // same fail-loud path as registerCli.
@@ -890,7 +880,6 @@ export class Workspace {
     command: string,
     options: ExecuteOptions = {},
   ): Promise<ExecuteResult | ProvisionResult> {
-    this.currentAgentId = options.agentId ?? this.agentId
     return executeLine(this.executeEnv(), command, options)
   }
 

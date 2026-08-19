@@ -98,6 +98,8 @@ export async function executeCommand(
   // Parse one line into a tree; only alias expansion needs it. Absent
   // means an alias is stored and printed but never expanded.
   reparse?: (line: string) => TSNodeLike,
+  // The agent the line is attributed to, which an approval request names.
+  agentId = '',
 ): Promise<Result> {
   const name = getCommandName(node)
   const [assignmentNodes, nonPrefixParts] = splitEnvPrefix(getParts(node))
@@ -252,6 +254,7 @@ export async function executeCommand(
       runtimeBindings,
       routingDecision,
       signal,
+      agentId,
     )
   } finally {
     for (const [k, prev] of savedEnvOverrides) {
@@ -287,6 +290,7 @@ async function runCommandBody(
   runtimeBindings?: Record<string, Runtime>,
   routingDecision?: PolicyDecision,
   signalIn?: AbortSignal,
+  agentId = '',
 ): Promise<Result> {
   let stdin = stdinIn
   // A background job's kill channel rides the session; fold it in so
@@ -385,6 +389,7 @@ async function runCommandBody(
       routingDecision,
       signal,
       node.startPosition?.row ?? 0,
+      agentId,
     ),
     timeout,
     argv.name !== '' ? argv.name : '?',
@@ -443,6 +448,8 @@ async function runArgv(
   // definition remembers where it was made so a use on the same line
   // does not see it, as bash's line reader would not.
   row = 0,
+  // The agent the line is attributed to, which an approval request names.
+  agentId = '',
 ): Promise<Result> {
   const name = argv.name
 
@@ -481,7 +488,7 @@ async function runArgv(
   // enumerators read the same visibility filter through layers().
   // Refusals win over flag parsing, routing, and runtime placement.
   if (name !== '') {
-    const refusal = await admit(name, args, operands, session, registry, namespace)
+    const refusal = await admit(name, args, operands, session, registry, namespace, agentId, stdin)
     if (refusal !== null) {
       return [
         null,

@@ -12,20 +12,31 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import type { ByteSource } from '../../io/types.ts'
 import { renderDeny, renderPending } from '../../policy/index.ts'
-import type { CommandContext } from '../../policy/index.ts'
-import { parsedCommands } from '../../runtime/policy/index.ts'
+import type { CommandContext, CommandsSpec } from '../../policy/index.ts'
+import { hasRules, readsArgs } from '../../policy/match/reads.ts'
+import { commandNodes } from '../../runtime/policy/index.ts'
+import { getParts, getText, literalWord, splitEnvPrefix } from '../../shell/helpers.ts'
 import type { TSNodeLike } from '../../shell/types.ts'
 import { PathSpec } from '../../types.ts'
 import { CycleError, resolvePath } from '../../utils/path.ts'
 import { toScope } from '../executor/builtins/scope.ts'
 import { followPaths } from '../executor/builtins/links/links.ts'
-import { pathFlagScopes, positionalScopes, programTokens } from '../executor/command/routing.ts'
+import {
+  CWD_DEFAULT_RAW,
+  defaultCwdOperand,
+  pathFlagScopes,
+  positionalScopes,
+  programTokens,
+} from '../executor/command/routing.ts'
 import { classifyParts } from '../expand/classify/parts.ts'
 import type { Namespace } from '../mount/namespace/namespace.ts'
 import type { MountRegistry } from '../mount/registry.ts'
 import { SLASH_KEEPS_LAST, commandVisible, followsLastComponent, isTool } from '../route/index.ts'
 import type { Session } from '../session/session.ts'
+import { homeDir } from '../session/shell_dirs.ts'
+import { innerLines, innerReadable, wordValue, type Word } from './inner_lines.ts'
 
 /**
  * What the command plane prints when a line does not get to run: 127
@@ -49,7 +60,10 @@ export interface Refusal {
  * itself, `-L` turns following back on), the same one the router
  * applies to the operands before the handler runs, so a rule sees
  * exactly the path the command will touch. A loop is left to that later
- * step to report; here the typed paths stand.
+ * step to report; here the typed paths stand. Last comes the operand a
+ * bare `ls`/`find`/`du`/`tree`/`grep -r` implies, the working directory,
+ * which the executor injects after the gate and which a rule on that
+ * directory has to see.
  */
 export function policyScopes(
   name: string,
@@ -57,6 +71,7 @@ export function policyScopes(
   operands: readonly (string | PathSpec)[],
   namespace: Namespace | null,
   cwd: string,
+  implied: PathSpec | null = null,
 ): PathSpec[] {
   const scopes: PathSpec[] = []
   for (const p of operands) {
@@ -69,25 +84,28 @@ export function policyScopes(
     // never see it without this row.
     scopes.unshift(toScope(resolvePath(name, cwd)))
   }
-  if (namespace === null || namespace.nodes.size === 0 || operands.length === 0) return scopes
-  let followed: (string | PathSpec)[]
-  try {
-    followed = followPaths(
-      namespace,
-      [...operands],
-      followsLastComponent(name, [name, ...args]),
-      !SLASH_KEEPS_LAST.has(name),
-    )
-  } catch (err) {
-    if (err instanceof CycleError) return scopes
-    throw err
-  }
-  const seen = new Set(scopes.map((p) => p.virtual))
-  for (const item of followed) {
-    if (item instanceof PathSpec && !seen.has(item.virtual)) {
-      seen.add(item.virtual)
-      scopes.push(item)
+  if (namespace !== null && namespace.nodes.size > 0 && operands.length > 0) {
+    let followed: (string | PathSpec)[] = []
+    try {
+      followed = followPaths(
+        namespace,
+        [...operands],
+        followsLastComponent(name, [name, ...args]),
+        !SLASH_KEEPS_LAST.has(name),
+      )
+    } catch (err) {
+      if (!(err instanceof CycleError)) throw err
     }
+    const seen = new Set(scopes.map((p) => p.virtual))
+    for (const item of followed) {
+      if (item instanceof PathSpec && !seen.has(item.virtual)) {
+        seen.add(item.virtual)
+        scopes.push(item)
+      }
+    }
+  }
+  if (implied !== null && !scopes.some((p) => p.virtual === implied.virtual)) {
+    scopes.push(implied)
   }
   return scopes
 }
@@ -101,7 +119,9 @@ export function policyScopes(
  * bash's "command not found" before any admission hook, so an unlisted
  * tool never leaks a deny reason; a Deny renders in the outcome table's
  * voice; an Ask is answered by the door from the session's grants or
- * the host.
+ * the host. `agentId` is the agent the line is attributed to, for an
+ * approval request; `stdin` decides whether a bare `rg` reads the
+ * working directory.
  */
 export async function admit(
   name: string,
@@ -110,19 +130,26 @@ export async function admit(
   session: Session,
   registry: MountRegistry,
   namespace: Namespace | null,
+  agentId = '',
+  stdin: ByteSource | null = null,
 ): Promise<Refusal | null> {
   if (!commandVisible(name, session)) {
     return { stderr: new TextEncoder().encode(`${name}: command not found\n`), exitCode: 127 }
   }
   const [tokens, program] = programTokens(registry, name, [...args], session.cwd)
+  const implied =
+    name in CWD_DEFAULT_RAW
+      ? defaultCwdOperand([name, ...operands], name, registry, session.cwd, stdin)
+      : null
   const ctx: CommandContext = {
     command: name,
-    paths: policyScopes(name, args, operands, namespace, session.cwd),
+    paths: policyScopes(name, args, operands, namespace, session.cwd, implied),
     operands: positionalScopes(name, [...args], session.cwd, [...operands]),
     argv: [...args],
     cwd: session.cwd,
     registry,
     sessionId: session.sessionId,
+    agentId,
     tokens,
     program,
     tool: isTool(name, session),
@@ -139,31 +166,121 @@ export async function admit(
   return { stderr, exitCode }
 }
 
+function refuse(name: string, reason: string): Refusal {
+  const [stderr, exitCode] = renderDeny(name, { kind: 'deny', reason, scope: 'command' })
+  return { stderr, exitCode }
+}
+
+function unreadable(raw: string): string {
+  return `cannot read ${raw} before the runtime expands it`
+}
+
+/**
+ * Admit one command of a whole line on the words the gate read, then
+ * whatever lines the command runs in turn. `open` says the runtime
+ * appends operands the gate cannot read (`xargs`, `find -exec`).
+ */
+async function admitWords(
+  words: readonly Word[],
+  open: boolean,
+  session: Session,
+  registry: MountRegistry,
+  namespace: Namespace | null,
+  agentId: string,
+  layers: readonly CommandsSpec[],
+  reparse: (line: string) => TSNodeLike,
+): Promise<Refusal | null> {
+  const head = words[0]
+  if (head === undefined) return null
+  if (head.text === null && hasRules(layers)) return refuse(head.raw, unreadable(head.raw))
+  const name = wordValue(head)
+  const args = words.slice(1).map(wordValue)
+  const classified = classifyParts([name, ...args], registry, session.cwd)
+  const refusal = await admit(
+    name,
+    args,
+    classified.slice(1),
+    session,
+    registry,
+    namespace,
+    agentId,
+  )
+  if (refusal !== null) return refusal
+  const unread = words.slice(1).find((w) => w.text === null)?.raw
+  if ((unread !== undefined || open) && readsArgs(layers, name)) {
+    return refuse(
+      name,
+      unread !== undefined ? unreadable(unread) : 'runs on operands the gate cannot read',
+    )
+  }
+  for (const inner of innerLines(name, words.slice(1))) {
+    if (!innerReadable(inner)) {
+      if (hasRules(layers)) return refuse(name, 'runs lines the gate cannot read')
+      continue
+    }
+    const innerRefusal =
+      inner.line !== null
+        ? await admitLine(reparse(inner.line), session, registry, namespace, agentId, reparse)
+        : await admitWords(
+            inner.argv,
+            inner.open,
+            session,
+            registry,
+            namespace,
+            agentId,
+            layers,
+            reparse,
+          )
+    if (innerRefusal !== null) return innerRefusal
+  }
+  return null
+}
+
 /**
  * Admit every command of a line a runtime takes whole. A whole line is
- * a command like any other: the runtime does the expanding, so each
- * parsed command is admitted on its literal words, classified as typed
- * (a path-shaped word is a path, an installed CLI's verb path is
- * walked), and the first refusal is the line's. A word the gate cannot
- * read (`$cmd`) is a word no allow list covers, which fails toward
- * refusal.
+ * a command like any other, but the runtime does the expanding, so the
+ * gate reads the line as typed: each command is admitted on its literal
+ * words (quotes removed, escapes resolved, a path-shaped word a path, an
+ * installed CLI's verb path walked), and the first refusal is the
+ * line's. A word only the runtime can expand (`$cmd`, `"$p"`, `$(...)`,
+ * `{a,b}`) is refused wherever a rule in force would have read it: as
+ * the command name whenever the session has any command rule, as an
+ * argument when a rule reads that command's arguments (a pattern with a
+ * token after the name, a path-scoped or mount-scoped rule). The words
+ * that run other words (`eval`, `sh -c`, `xargs`, `env` ... see
+ * `innerLines`) have those lines admitted in turn, and a line the gate
+ * cannot read at all (a sourced file, a script, `eval "$p"`) is refused
+ * under any command rule. With no rule in force nothing is refused on
+ * this account: the words are admitted as typed, which is all a coded
+ * policy ever saw. `reparse` parses the text a word runs (`eval`,
+ * `sh -c`) the way the line reader parsed the line.
  */
 export async function admitLine(
   root: TSNodeLike,
   session: Session,
   registry: MountRegistry,
   namespace: Namespace | null,
+  agentId: string,
+  reparse: (line: string) => TSNodeLike,
 ): Promise<Refusal | null> {
-  for (const parsed of parsedCommands(root, registry.clis.names())) {
-    const args = parsed.words.slice(1)
-    const classified = classifyParts([parsed.command, ...args], registry, session.cwd)
-    const refusal = await admit(
-      parsed.command,
-      args,
-      classified.slice(1),
+  const layers = session.commandLayers
+  const home = homeDir(session)
+  for (const node of commandNodes(root)) {
+    const [, parts] = splitEnvPrefix(getParts(node))
+    const words: Word[] = parts.map((part) => ({
+      raw: getText(part),
+      text: literalWord(part, home),
+    }))
+    if (words.length === 0) continue
+    const refusal = await admitWords(
+      words,
+      false,
       session,
       registry,
       namespace,
+      agentId,
+      layers,
+      reparse,
     )
     if (refusal !== null) return refusal
   }

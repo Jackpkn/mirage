@@ -12,8 +12,6 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from collections.abc import Callable
-
 from mirage.policy.approver import Approver, RecordApprover, request_id
 from mirage.policy.constants import EXACT_LINE_DECISIONS
 from mirage.policy.types import (ApprovalDecision, ApprovalRequest, Ask,
@@ -54,18 +52,14 @@ class Approvals:
             policy chain outside a workspace).
         approver (Approver | None): how the host answers; None installs
             the non-blocking ``RecordApprover``.
-        agent_of (Callable[[], str] | None): the agent the workspace
-            attributes the current line to, for the request.
     """
 
     def __init__(self,
                  sessions: SessionGrantsQuery | None = None,
-                 approver: Approver | None = None,
-                 agent_of: Callable[[], str] | None = None) -> None:
+                 approver: Approver | None = None) -> None:
         self._sessions = sessions
         self._approver: Approver = (approver if approver is not None else
                                     RecordApprover())
-        self._agent_of = agent_of
         self._memory: dict[str, tuple[Grant, ...]] = {}
 
     @property
@@ -147,16 +141,15 @@ class Approvals:
         for grant in held:
             if grant.decision == "allow_session" and grant.rule == rule:
                 return None
-        request = ApprovalRequest(
-            id=request_id(ctx.session_id, ctx.cwd, argv),
-            session_id=ctx.session_id,
-            agent_id=self._agent_of() if self._agent_of is not None else "",
-            command=ctx.command,
-            argv=tuple(ctx.argv),
-            cwd=ctx.cwd,
-            paths=tuple(p.virtual for p in ctx.paths),
-            reason=ask.reason,
-            rule=rule)
+        request = ApprovalRequest(id=request_id(ctx.session_id, ctx.cwd, argv),
+                                  session_id=ctx.session_id,
+                                  agent_id=ctx.agent_id,
+                                  command=ctx.command,
+                                  argv=tuple(ctx.argv),
+                                  cwd=ctx.cwd,
+                                  paths=tuple(p.virtual for p in ctx.paths),
+                                  reason=ask.reason,
+                                  rule=rule)
         decision = await self._approver.approve(request)
         if decision is None:
             return Pending(request.id, ask.reason)

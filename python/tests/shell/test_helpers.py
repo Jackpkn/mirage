@@ -20,11 +20,12 @@ from mirage.shell.types import NodeType as NT
 from mirage.shell.types import RedirectKind
 
 from mirage.shell.helpers import (  # isort: skip
-    get_case_items, get_case_word, get_command_name, get_declaration_keyword,
-    get_for_parts, get_function_body, get_function_name, get_heredoc_meta,
-    get_heredoc_parts, get_if_branches, get_list_parts, get_negated_command,
-    get_parts, get_pipeline_commands, get_process_sub_body, get_redirects,
-    get_subshell_body, get_text, get_unset_names, get_while_parts)
+    brace_expands, get_case_items, get_case_word, get_command_name,
+    get_declaration_keyword, get_for_parts, get_function_body,
+    get_function_name, get_heredoc_meta, get_heredoc_parts, get_if_branches,
+    get_list_parts, get_negated_command, get_parts, get_pipeline_commands,
+    get_process_sub_body, get_redirects, get_subshell_body, get_text,
+    get_unset_names, get_while_parts, literal_word, split_env_prefix)
 
 _LANG = tree_sitter.Language(tree_sitter_bash.language())
 _PARSER = tree_sitter.Parser(_LANG)
@@ -772,3 +773,48 @@ def test_get_heredoc_meta_body_gets_trailing_newline():
     heredoc = node.named_children[1]
     body, _, _ = get_heredoc_meta(heredoc)
     assert body == "line\n"
+
+
+def _literals(line: str, home: str | None = None) -> list[str | None]:
+    _, parts = split_env_prefix(get_parts(_first(line)))
+    return [literal_word(p, home) for p in parts]
+
+
+@pytest.mark.parametrize(
+    "line, expected",
+    [
+        # Plain, quoted and escaped words read as the text they name.
+        ("rm x", ["rm", "x"]),
+        ("'rm' \"/a b\" c", ["rm", "/a b", "c"]),
+        ("\\rm a\"b\"c \"a\\\"b\"", ["rm", "abc", 'a"b']),
+        ("$'x\\ty' $\"hi\" 3", ["x\ty", "hi", "3"]),
+        ("echo $ /a*", ["echo", "$", "/a*"]),
+        # A word only the runtime can expand reads as None, wherever it
+        # sits and however it is quoted or joined.
+        ("$cmd /x", [None, "/x"]),
+        ("\"$cmd\" x", [None, "x"]),
+        ("${cmd} a$b", [None, None]),
+        ("eval \"$P\"", ["eval", None]),
+        ("cat \"$d\"/x --f=\"$v\"", ["cat", None, None]),
+        ("rm $((1+2)) $(date) <(ls)", ["rm", None, None, None]),
+        # Brace expansion multiplies words, so it is not literal either;
+        # a lone {} and a quoted brace are.
+        ("rm /r/{a,b} x{1..3} {} '{a,b}'", ["rm", None, None, "{}", "{a,b}"]),
+    ])
+def test_literal_word_reads_what_a_word_names_before_expansion(line, expected):
+    assert _literals(line) == expected
+
+
+def test_literal_word_expands_a_leading_unquoted_tilde_only():
+    assert _literals("ls ~ ~/x \"~/y\" ~u a~ ~/x\"y\"", "/home/me") == [
+        "ls", "/home/me", "/home/me/x", "~/y", "~u", "a~", "/home/me/xy"
+    ]
+    # No $HOME: the tilde stays, as in bash.
+    assert _literals("ls ~/x") == ["ls", "~/x"]
+
+
+def test_brace_expands():
+    assert brace_expands("{a,b}") and brace_expands("x{1..3}y")
+    assert brace_expands("{a,{b,c}}")
+    assert not brace_expands("{}") and not brace_expands("{abc}")
+    assert not brace_expands("a,b") and not brace_expands("{a,b")

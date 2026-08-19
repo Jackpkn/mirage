@@ -55,11 +55,12 @@ def _path(virtual: str) -> PathSpec:
 
 
 def _ctx(
-    words: tuple[str, ...] = ("git", "push"),
-    cwd: str = "/repo",
-    session_id: str = "s",
-    program: tuple[str, ...] = ("git", "push"),
-    paths: tuple[PathSpec, ...] = ()
+        words: tuple[str, ...] = ("git", "push"),
+        cwd: str = "/repo",
+        session_id: str = "s",
+        program: tuple[str, ...] = ("git", "push"),
+        paths: tuple[PathSpec, ...] = (),
+        agent_id: str = "",
 ) -> CommandContext:
     return CommandContext(command=words[0],
                           paths=paths,
@@ -67,6 +68,7 @@ def _ctx(
                           cwd=cwd,
                           registry=Registry(),
                           session_id=session_id,
+                          agent_id=agent_id,
                           tokens=words,
                           program=program)
 
@@ -216,14 +218,12 @@ async def test_a_coded_ask_keys_the_session_grant_on_the_program():
 
 @pytest.mark.asyncio
 async def test_without_sessions_grants_live_in_memory():
-    door = Approvals(agent_of=_agent)
-    pending = await door.resolve(_ctx(), ASK)
+    door = Approvals()
+    # The request names the agent the line carries, not one the door
+    # was configured with: a nested or concurrent line keeps its own.
+    pending = await door.resolve(_ctx(agent_id="claude"), ASK)
     assert isinstance(pending, Pending)
     assert door.list()[0].agent_id == "claude"
     await door.grant(pending.id, "session")
     assert await door.resolve(_ctx(), ASK) is None
     assert isinstance(await door.resolve(_ctx(session_id="t"), ASK), Pending)
-
-
-def _agent() -> str:
-    return "claude"

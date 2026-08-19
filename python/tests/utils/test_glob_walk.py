@@ -18,6 +18,7 @@ import pytest
 
 from mirage.accessor.base import NOOPAccessor
 from mirage.context import reset_current_session, set_current_session
+from mirage.shell.escapes import unescape_unquoted
 from mirage.types import HiddenPaths, PathSpec
 from mirage.utils.glob_walk import (DEFAULT_MAX_GLOB_MATCHES, expand_pattern,
                                     glob_pattern, has_glob, is_word_shaped,
@@ -25,7 +26,6 @@ from mirage.utils.glob_walk import (DEFAULT_MAX_GLOB_MATCHES, expand_pattern,
                                     mark_escaped_globs, mark_globs,
                                     resolve_glob_with, spell_match,
                                     unmark_globs)
-from mirage.workspace.expand.node import _unescape_unquoted
 from mirage.workspace.session.session import Session
 
 TREE = {
@@ -109,7 +109,7 @@ def test_glob_pattern_makes_a_marked_char_literal():
 def test_mark_escaped_globs_reads_backslashes_like_bash():
 
     def marked(text: str) -> bool:
-        return has_glob(_unescape_unquoted(mark_escaped_globs(text)))
+        return has_glob(unescape_unquoted(mark_escaped_globs(text)))
 
     assert marked("Demo_*")
     assert marked("x?")

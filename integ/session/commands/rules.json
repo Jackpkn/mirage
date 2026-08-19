@@ -183,6 +183,32 @@
         "stdout": "kept\n",
         "stderr": ""
       }
+    },
+    {
+      "id": "cmd_bare_listing_reads_the_working_directory",
+      "seq": 923057,
+      "targets": [
+        "ram-commands"
+      ],
+      "command": "mkdir -p /scratch/private && (cd /scratch/private && ls)",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "ls: .: private\n"
+      }
+    },
+    {
+      "id": "cmd_bare_recursive_grep_reads_the_working_directory",
+      "seq": 923058,
+      "targets": [
+        "ram-commands"
+      ],
+      "command": "mkdir -p /scratch/private && (cd /scratch/private && grep -r k)",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "grep: /scratch/private: private\n"
+      }
     }
   ]
 }

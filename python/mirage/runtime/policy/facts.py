@@ -12,7 +12,7 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from collections.abc import Container
+from collections.abc import Container, Iterator
 
 import tree_sitter
 
@@ -26,6 +26,22 @@ _WORD_TYPES = (NodeType.COMMAND_NAME, NodeType.WORD, NodeType.STRING,
                NodeType.CONCATENATION)
 
 
+def command_nodes(ast: tree_sitter.Node) -> Iterator[tree_sitter.Node]:
+    """Every command node of a parsed line, in source order, nested
+    ones included (a substitution's command follows the word holding
+    it).
+
+    Args:
+        ast (tree_sitter.Node): the parsed tree-sitter root node.
+    """
+    stack = [ast]
+    while stack:
+        node = stack.pop()
+        if node.type == "command":
+            yield node
+        stack.extend(reversed(node.children))
+
+
 def parsed_commands(
     ast: tree_sitter.Node, clis: Container[str] = frozenset()
 ) -> tuple[ParsedCommand, ...]:
@@ -37,21 +53,16 @@ def parsed_commands(
             name is one of them carries it as ``cli``.
     """
     commands: list[ParsedCommand] = []
-    stack = [ast]
-    while stack:
-        node = stack.pop()
-        if node.type == "command":
-            words = tuple(
-                child.text.decode() for child in node.children
-                if child.type in _WORD_TYPES and child.text is not None)
-            if words:
-                commands.append(
-                    ParsedCommand(
-                        command=words[0],
-                        words=words,
-                        builtin=words[0] in SPECS,
-                        paths=tuple(w for w in words[1:] if w.startswith("/")),
-                        cli=words[0] if words[0] in clis else None,
-                    ))
-        stack.extend(reversed(node.children))
+    for node in command_nodes(ast):
+        words = tuple(child.text.decode() for child in node.children
+                      if child.type in _WORD_TYPES and child.text is not None)
+        if words:
+            commands.append(
+                ParsedCommand(
+                    command=words[0],
+                    words=words,
+                    builtin=words[0] in SPECS,
+                    paths=tuple(w for w in words[1:] if w.startswith("/")),
+                    cli=words[0] if words[0] in clis else None,
+                ))
     return tuple(commands)

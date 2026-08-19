@@ -21,10 +21,9 @@ import { sessionElements, visibleEnv } from '../session/state.ts'
 import { markEscapedGlobs, markGlobs, unmarkGlobs } from '../../utils/glob_walk.ts'
 import { expandTilde } from '../../utils/path.ts'
 import { homeDir } from '../session/shell_dirs.ts'
-import { shlexSplit } from '../../utils/shlex.ts'
 import { evaluateArith } from '../../shell/arith.ts'
 import { ArithError } from '../../shell/errors.ts'
-import { decodeAnsiC } from '../../shell/escapes.ts'
+import { decodeAnsiC, unescapeDquoted, unescapeUnquoted } from '../../shell/escapes.ts'
 import { ARITH_DELIMITERS, ARITH_OPERATORS } from './constants.ts'
 import { expandBraces, expansionWrite, lookupVar } from './variable.ts'
 import type { ArithResult, TSNodeLike } from '../../shell/types.ts'
@@ -33,12 +32,6 @@ export type ExecuteFn = (
   command: string,
   opts: { sessionId: string; stdin?: ByteSource | null },
 ) => Promise<IOResult>
-
-export function unescapeUnquoted(text: string): string {
-  if (!text.includes('\\')) return text
-  const parts = shlexSplit(text)
-  return parts[0] ?? text
-}
 
 // Whitespace tree-sitter folds into an expansion's opening token.
 // Inside a double-quoted string, a run of whitespace between two
@@ -423,15 +416,7 @@ export async function expandNodeMarked(
   }
 
   if (ntype === NT.STRING_CONTENT) {
-    const NUL = String.fromCharCode(0)
-    let text = tsNode.text
-    text = text.replaceAll('\\\\', NUL)
-    text = text.replaceAll('\\"', '"')
-    text = text.replaceAll('\\$', '$')
-    text = text.replaceAll('\\`', '`')
-    text = text.replaceAll('\\\n', '')
-    text = text.replaceAll(NUL, '\\')
-    return text
+    return unescapeDquoted(tsNode.text)
   }
 
   if (ntype === NT.RAW_STRING) {

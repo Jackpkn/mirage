@@ -13,8 +13,10 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { describe, expect, it } from 'vitest'
+import { getTestParser } from '../workspace/fixtures/workspace_fixture.ts'
 import type { TSNodeLike } from './types.ts'
 import {
+  braceExpands,
   getCommandAssignments,
   getCommandName,
   getDeclarationAssignments,
@@ -33,6 +35,8 @@ import {
   getTestArgv,
   getUnsetNames,
   getWhileParts,
+  literalWord,
+  splitEnvPrefix,
 } from './helpers.ts'
 import { NodeType as NT, type Redirect, RedirectKind } from './types.ts'
 
@@ -384,5 +388,60 @@ describe('getTestArgv / getNegatedCommand / getFunction*', () => {
   it('getFunctionBody returns null when no compound statement', () => {
     const n = node('function_definition', '', { namedChildren: [node('word', 'myfn')] })
     expect(getFunctionBody(n)).toBeNull()
+  })
+})
+
+describe('literalWord', () => {
+  async function literals(line: string, home: string | null = null): Promise<(string | null)[]> {
+    const parser = await getTestParser()
+    const first = parser.parse(line).children[0] as TSNodeLike
+    const [, parts] = splitEnvPrefix(getParts(first))
+    return parts.map((p) => literalWord(p, home))
+  }
+
+  it.each([
+    // Plain, quoted and escaped words read as the text they name.
+    ['rm x', ['rm', 'x']],
+    ['\'rm\' "/a b" c', ['rm', '/a b', 'c']],
+    ['\\rm a"b"c "a\\"b"', ['rm', 'abc', 'a"b']],
+    ['$\'x\\ty\' $"hi" 3', ['x\ty', 'hi', '3']],
+    ['echo $ /a*', ['echo', '$', '/a*']],
+    // A word only the runtime can expand reads as null, wherever it sits
+    // and however it is quoted or joined.
+    ['$cmd /x', [null, '/x']],
+    ['"$cmd" x', [null, 'x']],
+    ['${cmd} a$b', [null, null]],
+    ['eval "$P"', ['eval', null]],
+    ['cat "$d"/x --f="$v"', ['cat', null, null]],
+    ['rm $((1+2)) $(date) <(ls)', ['rm', null, null, null]],
+    // Brace expansion multiplies words, so it is not literal either; a
+    // lone {} and a quoted brace are.
+    ["rm /r/{a,b} x{1..3} {} '{a,b}'", ['rm', null, null, '{}', '{a,b}']],
+  ])('reads %s before expansion', async (line, expected) => {
+    expect(await literals(line)).toEqual(expected)
+  })
+
+  it('expands a leading unquoted tilde only', async () => {
+    expect(await literals('ls ~ ~/x "~/y" ~u a~ ~/x"y"', '/home/me')).toEqual([
+      'ls',
+      '/home/me',
+      '/home/me/x',
+      '~/y',
+      '~u',
+      'a~',
+      '/home/me/xy',
+    ])
+    // No $HOME: the tilde stays, as in bash.
+    expect(await literals('ls ~/x')).toEqual(['ls', '~/x'])
+  })
+
+  it('braceExpands', () => {
+    expect(braceExpands('{a,b}')).toBe(true)
+    expect(braceExpands('x{1..3}y')).toBe(true)
+    expect(braceExpands('{a,{b,c}}')).toBe(true)
+    expect(braceExpands('{}')).toBe(false)
+    expect(braceExpands('{abc}')).toBe(false)
+    expect(braceExpands('a,b')).toBe(false)
+    expect(braceExpands('{a,b')).toBe(false)
   })
 })

@@ -12,7 +12,6 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import shlex
 from collections.abc import Callable
 from functools import partial
 from typing import Any
@@ -23,7 +22,8 @@ from mirage.ops.types import SessionView
 from mirage.shell.arith import evaluate_arith
 from mirage.shell.call_stack import CallStack
 from mirage.shell.errors import ArithError
-from mirage.shell.escapes import decode_ansi_c
+from mirage.shell.escapes import (decode_ansi_c, unescape_dquoted,
+                                  unescape_unquoted)
 from mirage.shell.helpers import get_text
 from mirage.shell.parse import parse
 from mirage.shell.types import NodeType as NT
@@ -110,16 +110,6 @@ async def _expand_backtick_region(
         session._cmdsub_seq += 1
         session._cmdsub_status = io.exit_code
     return "".join(parts)
-
-
-def _unescape_unquoted(text: str) -> str:
-    if "\\" not in text:
-        return text
-    try:
-        parts = shlex.split(text, posix=True)
-    except ValueError:
-        return text
-    return parts[0] if parts else text
 
 
 def unescape_heredoc(text: str) -> str:
@@ -295,7 +285,7 @@ async def expand_node_marked(
     ntype = ts_node.type
 
     if ntype == NT.WORD:
-        word = _unescape_unquoted(mark_escaped_globs(get_text(ts_node)))
+        word = unescape_unquoted(mark_escaped_globs(get_text(ts_node)))
         return expand_tilde(word, home_dir(session))
 
     if ntype == NT.NUMBER:
@@ -436,16 +426,7 @@ async def expand_node_marked(
         return mark_globs("".join(parts))
 
     if ntype == NT.STRING_CONTENT:
-        # Bash double-quote escapes: \$, \`, \", \\, \<newline>.
-        # Everything else preserves the backslash literally.
-        text = get_text(ts_node)
-        text = text.replace("\\\\", "\x00")
-        text = text.replace('\\"', '"')
-        text = text.replace("\\$", "$")
-        text = text.replace("\\`", "`")
-        text = text.replace("\\\n", "")
-        text = text.replace("\x00", "\\")
-        return text
+        return unescape_dquoted(get_text(ts_node))
 
     if ntype == NT.RAW_STRING:
         raw = get_text(ts_node)

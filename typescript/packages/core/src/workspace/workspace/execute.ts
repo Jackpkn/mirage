@@ -228,6 +228,9 @@ async function runLine(
       sessionId: opts.sessionId,
     }
     if (options.signal !== undefined) innerOpts.signal = options.signal
+    // The agent rides with the execution: an approval a nested line
+    // raises is the typed line's agent's, not the workspace default's.
+    if (options.agentId !== undefined) innerOpts.agentId = options.agentId
     // Nested lines never re-route: the evaluator's inner lines keep
     // the typed line's decision (runtime argument, policy, or scripts).
     if (routingDecision !== null) innerOpts.routingDecision = routingDecision
@@ -265,7 +268,16 @@ async function runLine(
     ...(options.sink !== undefined ? { sink: options.sink } : {}),
   }
   try {
-    return await runParsedLine(env, command, options, rootNode, deps, targetSession, stdin)
+    return await runParsedLine(
+      env,
+      command,
+      options,
+      rootNode,
+      deps,
+      targetSession,
+      stdin,
+      (line) => parser.parse(line),
+    )
   } finally {
     // Durable session fields (cwd, env, grants) flush at the end of
     // every execute, success or failure, mirroring Python's finally.
@@ -281,6 +293,7 @@ async function runParsedLine(
   deps: ExecuteNodeDeps,
   targetSession: Session,
   stdin: ByteSource | null,
+  reparse: (line: string) => TSNodeLike,
 ): Promise<ExecuteResult> {
   const callAgentId = options.agentId ?? env.agentId ?? ''
   const effectiveSession = forkForCall(targetSession, options.cwd, options.env)
@@ -299,7 +312,14 @@ async function runParsedLine(
     // A whole line is a command like any other: the same visibility and
     // admission gate as the tree, per parsed command, before the
     // runtime sees a byte of it.
-    const refusal = await admitLine(rootNode, effectiveSession, env.registry, env.namespace)
+    const refusal = await admitLine(
+      rootNode,
+      effectiveSession,
+      env.registry,
+      env.namespace,
+      callAgentId,
+      reparse,
+    )
     if (refusal !== null) {
       targetSession.lastExitCode = refusal.exitCode
       if (isLine) {

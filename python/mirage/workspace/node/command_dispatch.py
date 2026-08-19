@@ -68,6 +68,7 @@ async def execute_command(
     job_table,
     cancel: asyncio.Event | None = None,
     routing_decision: PolicyDecision | None = None,
+    agent_id: str = "",
 ) -> tuple[Any, IOResult, ExecutionNode]:
     """Dispatch a command node by name."""
     name = get_command_name(node)
@@ -190,7 +191,7 @@ async def execute_command(
                                             namespace, execute_fn, node, parts,
                                             name, session, stdin, call_stack,
                                             job_table, cancel,
-                                            routing_decision)
+                                            routing_decision, agent_id)
     finally:
         for k, prev in saved_env_overrides.items():
             if prev is None:
@@ -214,6 +215,7 @@ async def _dispatch_command_body(
     job_table,
     cancel: asyncio.Event | None = None,
     routing_decision: PolicyDecision | None = None,
+    agent_id: str = "",
 ) -> tuple[Any, IOResult, ExecutionNode]:
     parent = node.parent
     if parent is None or parent.type != NT.REDIRECTED_STATEMENT:
@@ -279,7 +281,8 @@ async def _dispatch_command_body(
                      job_table,
                      cancel,
                      routing_decision,
-                     row=node.start_point[0])
+                     row=node.start_point[0],
+                     agent_id=agent_id)
     # Capture xtrace before the body runs so `set -x` itself is not
     # traced (bash enables tracing only for the following commands).
     xtrace = bool(session.shell_options.get("xtrace"))
@@ -313,12 +316,15 @@ async def _run_argv(
     cancel: asyncio.Event | None = None,
     routing_decision: PolicyDecision | None = None,
     row: int = 0,
+    agent_id: str = "",
 ) -> tuple[Any, IOResult, ExecutionNode]:
     """Route one expanded command to its builtin or mount handler.
 
     ``row`` is the command's line within its parse, which only ``alias``
     reads: a definition remembers where it was made so a use on the
     same line does not see it, as bash's line reader would not.
+    ``agent_id`` is the agent the line is attributed to, which an
+    approval request names.
     """
     name = argv.name
 
@@ -358,7 +364,7 @@ async def _run_argv(
     # over flag parsing, routing, and runtime placement.
     if name:
         refusal = await admit(name, args, operands, session, registry,
-                              namespace)
+                              namespace, agent_id, stdin)
         if refusal is not None:
             cmd_str = " ".join([name, *args])
             return None, IOResult(exit_code=refusal.exit_code,

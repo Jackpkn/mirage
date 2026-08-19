@@ -74,7 +74,6 @@ export class Approvals {
   constructor(
     private readonly sessions: SessionGrantsQuery | null = null,
     approver: Approver | null = null,
-    private readonly agentOf: (() => string) | null = null,
   ) {
     this.approverImpl = approver ?? new RecordApprover()
   }
@@ -153,7 +152,7 @@ export class Approvals {
     const request: ApprovalRequest = {
       id: await requestId(sessionId, ctx.cwd, argv),
       sessionId,
-      agentId: this.agentOf !== null ? this.agentOf() : '',
+      agentId: ctx.agentId ?? '',
       command: ctx.command,
       argv: [...ctx.argv],
       cwd: ctx.cwd,

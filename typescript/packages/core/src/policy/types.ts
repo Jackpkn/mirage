@@ -225,6 +225,12 @@ export interface CommandContext {
   /** The session running the line, set by the door; empty outside a workspace. */
   sessionId?: string
   /**
+   * The agent the workspace attributes the line to, carried per
+   * execution so a nested line (`eval`, `$()`, `xargs`) and a
+   * concurrent one keep their own; what an approval request names.
+   */
+  agentId?: string
+  /**
    * The line as an admission pattern reads it, command name first: for
    * an installed CLI the verb path replaces the words before it (options
    * before the verb dropped, an alias canonicalized), then the leaf's

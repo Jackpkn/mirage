@@ -2065,8 +2065,8 @@
             },
             {
               "reason": "private",
-              "commands": ["cat"],
-              "paths": ["/scratch/private/*"]
+              "commands": ["cat", "ls", "grep"],
+              "paths": ["/scratch/private"]
             }
           ]
         }

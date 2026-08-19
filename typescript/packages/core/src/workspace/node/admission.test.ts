@@ -25,8 +25,11 @@ const DEC = new TextDecoder()
 
 const DOC = {
   commands: {
-    allow: ['cat', 'rm', 'ls', 'ln', 'echo', 'head'],
-    deny: [{ reason: 'sealed', commands: ['cat'], paths: ['/data/secret*'] }],
+    allow: ['cat', 'rm', 'ls', 'ln', 'echo', 'head', 'grep', 'rg', 'cd', 'xargs', 'sh', 'mkdir'],
+    deny: [
+      { reason: 'sealed', commands: ['cat'], paths: ['/data/secret*'] },
+      { reason: 'private', commands: ['ls', 'grep', 'rg'], paths: ['/data/private'] },
+    ],
   },
   paths: { hide: [] },
 }
@@ -36,11 +39,15 @@ afterEach(async () => {
   for (const ws of open.splice(0)) await ws.close()
 })
 
-async function ws(): Promise<Workspace> {
+async function ws(permissions: typeof DOC | null = DOC): Promise<Workspace> {
   const parser = await getTestParser()
   const w = new Workspace(
     { '/data': new RAMResource() },
-    { mode: MountMode.WRITE, shellParser: parser, permissions: DOC },
+    {
+      mode: MountMode.WRITE,
+      shellParser: parser,
+      ...(permissions !== null ? { permissions } : {}),
+    },
   )
   open.push(w)
   return w
@@ -69,11 +76,112 @@ describe('admission', () => {
     ).toEqual(['/data/link'])
   })
 
+  it('a bare listing reads the working directory', async () => {
+    // `ls`, `find`, `du`, `tree` and `grep -r` typed bare read the cwd,
+    // an operand the executor injects after the gate; a rule on that
+    // directory has to see it here, as the operand typed `.`.
+    const w = await ws()
+    await w.execute('mkdir -p /data/private && echo x > /data/private/f')
+    const session = w.sessionManager.get(w.sessionManager.defaultId)
+    const run = async (name: string, args: string[], stdin: Uint8Array | null = null) => {
+      const words = classifyParts([name, ...args], w.registry, session.cwd)
+      const refusal = await admit(
+        name,
+        args,
+        words.slice(1),
+        session,
+        w.registry,
+        w.namespace,
+        '',
+        stdin,
+      )
+      return refusal === null ? null : [refusal.exitCode, DEC.decode(refusal.stderr)]
+    }
+    expect(await run('ls', [])).toBeNull()
+    await w.execute('cd /data/private')
+    expect(await run('ls', [])).toEqual([1, 'ls: .: private\n'])
+    // A named operand replaces the implied one.
+    expect(await run('ls', ['/data'])).toBeNull()
+    // grep reads the cwd only under -r; rg yields to a piped stdin.
+    expect(await run('grep', ['x'])).toBeNull()
+    expect(await run('grep', ['-r', 'x'])).toEqual([1, 'grep: /data/private: private\n'])
+    expect(await run('rg', ['x'], new TextEncoder().encode('x\n'))).toBeNull()
+    expect(await run('rg', ['x'])).toEqual([1, 'rg: /data/private: private\n'])
+  })
+
+  it('admitLine reads literal words and refuses the unreadable', async () => {
+    const w = await ws()
+    const parser = await getTestParser()
+    const session = w.sessionManager.get(w.sessionManager.defaultId)
+    const reparse = (text: string) => parser.parse(text)
+    const line = async (text: string) => {
+      const refusal = await admitLine(
+        parser.parse(text),
+        session,
+        w.registry,
+        w.namespace,
+        '',
+        reparse,
+      )
+      return refusal === null ? null : [refusal.exitCode, DEC.decode(refusal.stderr)]
+    }
+    const unread = (raw: string) =>
+      `policy denied: cannot read ${raw} before the runtime expands it\n`
+    // Quotes and escapes read as the text they name: a quoted path is a
+    // path, a quoted head is the command.
+    expect(await line('\'cat\' "/data/secret"')).toEqual([1, 'cat: /data/secret: sealed\n'])
+    expect(await line('cat /data/sec\\ret')).toEqual([1, 'cat: /data/secret: sealed\n'])
+    // A head only the runtime can expand is refused under any rule.
+    expect(await line('$cmd /data/x')).toEqual([126, '$cmd: ' + unread('$cmd')])
+    expect(await line('"$cmd" /data/x')).toEqual([126, '"$cmd": ' + unread('"$cmd"')])
+    // An argument is refused only where a rule reads that command's
+    // arguments: cat has a path rule, echo has none.
+    expect(await line('cat "$f"')).toEqual([126, 'cat: ' + unread('"$f"')])
+    expect(await line('cat /data/{a,secret}')).toEqual([126, 'cat: ' + unread('/data/{a,secret}')])
+    expect(await line('echo "$HOME" $(ls /data)')).toBeNull()
+    // What a word runs is admitted in turn.
+    expect(await line("eval 'cat /data/secret'")).toEqual([1, 'cat: /data/secret: sealed\n'])
+    expect(await line('eval "$p"')).toEqual([126, '"$p": ' + unread('"$p"')])
+    expect(await line('echo $(cat /data/secret)')).toEqual([1, 'cat: /data/secret: sealed\n'])
+    expect(await line('ls | xargs cat')).toEqual([
+      126,
+      'cat: policy denied: runs on operands the gate cannot read\n',
+    ])
+    expect(await line('ls | xargs echo')).toBeNull()
+    expect(await line('source /data/env.sh')).toEqual([
+      126,
+      'source: policy denied: runs lines the gate cannot read\n',
+    ])
+    expect(await line('/data/run.sh')).toEqual([
+      126,
+      '/data/run.sh: policy denied: runs lines the gate cannot read\n',
+    ])
+    expect(await line("sh -c 'rm /data/x'; sh -c 'sort'")).toEqual([
+      127,
+      'sort: command not found\n',
+    ])
+  })
+
+  it('admitLine without rules admits the words as typed', async () => {
+    // No command rule in force: nothing is refused for being unreadable,
+    // which is what a coded policy always saw.
+    const w = await ws(null)
+    const parser = await getTestParser()
+    const session = w.sessionManager.get(w.sessionManager.defaultId)
+    const reparse = (text: string) => parser.parse(text)
+    for (const text of ['$cmd /data/x', 'eval "$p"', 'source /data/env.sh', 'ls | xargs cat']) {
+      expect(
+        await admitLine(parser.parse(text), session, w.registry, w.namespace, '', reparse),
+      ).toBeNull()
+    }
+  })
+
   it('admitLine refuses the first offending command', async () => {
     const w = await ws()
     const parser = await getTestParser()
     const session = w.sessionManager.get(w.sessionManager.defaultId)
-    const line = (text: string) => admitLine(parser.parse(text), session, w.registry, w.namespace)
+    const line = (text: string) =>
+      admitLine(parser.parse(text), session, w.registry, w.namespace, '', (t) => parser.parse(t))
     expect(await line('cat /data/a | head -n 1')).toBeNull()
     // An unlisted word anywhere in the line is 127 before any hook.
     const unlisted = await line('cat /data/a | sort')

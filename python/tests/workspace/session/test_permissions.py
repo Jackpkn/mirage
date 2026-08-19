@@ -819,6 +819,120 @@ async def test_a_whole_line_runtime_is_gated_like_the_tree():
         await ws.close()
 
 
+LITERAL_DOC = WorkspacePermissions.model_validate({
+    "commands": {
+        "deny": [{
+            "reason": "no deletes",
+            "commands": ["rm"]
+        }, {
+            "reason": "sealed",
+            "commands": ["cat"],
+            "paths": ["/repo/secret*"]
+        }, {
+            "reason": "no pushes",
+            "commands": ["git push"]
+        }],
+    }
+})
+
+
+@pytest.mark.asyncio
+async def test_a_whole_line_runtime_reads_only_literal_words():
+    # The runtime expands the line, so the gate reads it as typed and
+    # refuses what only the runtime could read where a rule in force
+    # would have read it: the command name under any rule, an argument
+    # where a rule reads that command's arguments, and a line a word
+    # runs that the gate cannot see into.
+    box = _Box()
+    ws = Workspace({"/repo/": (RAMResource(), MountMode.WRITE)},
+                   mode=MountMode.WRITE,
+                   permissions=LITERAL_DOC,
+                   runtimes=[box, "vfs"])
+    ws.register_cli("git", cli_spec_for("git"))
+    try:
+        unread = ("policy denied: cannot read {} before the runtime "
+                  "expands it\n")
+        assert await _line(ws,
+                           "rm /repo/x") == (126, "",
+                                             "rm: policy denied: no deletes\n")
+        assert await _line(ws, "$cmd /repo/x") == (126, "", "$cmd: " +
+                                                   unread.format("$cmd"))
+        assert await _line(ws, "PAYLOAD='rm /repo/x'; eval \"$PAYLOAD\"") == (
+            126, "", '"$PAYLOAD": ' + unread.format('"$PAYLOAD"'))
+        assert await _line(
+            ws, "eval 'rm /repo/x'") == (126, "",
+                                         "rm: policy denied: no deletes\n")
+        assert await _line(ws, 'cat "$f"') == (126, "",
+                                               "cat: " + unread.format('"$f"'))
+        assert await _line(ws,
+                           'git "$verb" origin') == (126, "", "git: " +
+                                                     unread.format('"$verb"'))
+        assert await _line(
+            ws, "ls /repo | xargs rm") == (126, "",
+                                           "rm: policy denied: no deletes\n")
+        assert await _line(ws, "ls /repo | xargs cat") == (
+            126, "",
+            "cat: policy denied: runs on operands the gate cannot read\n")
+        assert await _line(ws, "source /repo/env.sh") == (
+            126, "",
+            "source: policy denied: runs lines the gate cannot read\n")
+        assert await _line(ws, "sh -c 'timeout 5 rm /repo/x'") == (
+            126, "", "rm: policy denied: no deletes\n")
+        assert box.lines == []
+        # Literal words, and dynamic ones no rule reads, reach the runtime.
+        for line in ('echo "$HOME" $(date)', "git status", "'cat' /repo/a",
+                     "ls | xargs echo", "command -v rm"):
+            assert (await _line(ws, line))[0] == 0
+        assert box.lines == [
+            'echo "$HOME" $(date)', "git status", "'cat' /repo/a",
+            "ls | xargs echo", "command -v rm"
+        ]
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_a_bare_listing_in_a_ruled_directory_is_refused():
+    # `ls`, `find`, `du`, `tree` and `grep -r` typed bare read the
+    # working directory: the executor injects that operand after the
+    # gate, so the gate supplies it itself, typed as `.`.
+    ws = Workspace({"/repo/": (RAMResource(), MountMode.WRITE)},
+                   mode=MountMode.WRITE,
+                   permissions=WorkspacePermissions.model_validate({
+                       "commands": {
+                           "deny": [{
+                               "reason": "sealed",
+                               "commands": ["ls", "find", "grep"],
+                               "paths": ["/repo/sealed"]
+                           }]
+                       }
+                   }))
+    try:
+        await ws.execute("mkdir -p /repo/sealed && echo x > /repo/sealed/f")
+        assert await _line(ws,
+                           "ls /repo/sealed") == (1, "",
+                                                  "ls: /repo/sealed: sealed\n")
+        assert await _line(ws, "cd /repo/sealed && ls") == (1, "",
+                                                            "ls: .: sealed\n")
+        assert await _line(
+            ws,
+            "cd /repo/sealed && find -name f") == (1, "", "find: .: sealed\n")
+        assert await _line(
+            ws,
+            "cd /repo/sealed && grep -r x") == (1, "",
+                                                "grep: /repo/sealed: sealed\n")
+        # With an operand, or without the recursion that reads the
+        # directory, nothing is implied.
+        assert await _line(ws,
+                           "cd /repo/sealed && ls /repo") == (0, "sealed\n",
+                                                              "")
+        assert await _line(ws,
+                           "cd /repo/sealed && echo x | grep x") == (0, "x\n",
+                                                                     "")
+    finally:
+        await ws.close()
+
+
 ASK_DOC = WorkspacePermissions.model_validate({
     "commands": {
         "ask": [{
@@ -883,6 +997,28 @@ async def test_an_asked_line_is_refused_until_the_host_answers():
         by_bob = await ws.execute("rm /scratch/z2", agent_id="bob")
         assert by_bob.exit_code == 126
         assert [r.agent_id for r in ws.approvals.list()] == ["", "bob"]
+        # The agent rides with the execution, not the workspace: a line
+        # asked through a nested eval keeps its caller's, and two lines
+        # in flight at once keep their own.
+        nested = await ws.execute("echo $(rm /scratch/z3)", agent_id="carol")
+        assert nested.exit_code == 0
+        await asyncio.gather(
+            ws.execute("rm /scratch/z4", agent_id="dan"),
+            ws.execute("eval 'rm /scratch/z5'", agent_id="eve"))
+        by_agent = {
+            r.command + " " + " ".join(r.argv): r.agent_id
+            for r in ws.approvals.list()
+        }
+        assert by_agent == {
+            "rm /scratch/z": "",
+            "rm /scratch/z2": "bob",
+            "rm /scratch/z3": "carol",
+            "rm /scratch/z4": "dan",
+            "rm /scratch/z5": "eve",
+        }
+        for r in ws.approvals.list():
+            if r.agent_id not in ("", "bob"):
+                await ws.approvals.deny(r.id)
         (bobs, ) = (r for r in ws.approvals.list() if r.agent_id == "bob")
         await ws.approvals.deny(bobs.id)
         # Granted once: the exact retry passes, and the next one asks.

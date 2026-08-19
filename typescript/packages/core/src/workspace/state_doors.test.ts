@@ -1304,6 +1304,117 @@ describe('command permissions end to end', () => {
     expect((await line(ws, 'git status', 'rev'))[0]).toBe(0)
     expect(box.lines).toEqual(['cat /repo/a | wc -l', 'git status'])
   })
+
+  it('a whole-line runtime reads only literal words', async () => {
+    // The runtime expands the line, so the gate reads it as typed and
+    // refuses what only the runtime could read where a rule in force
+    // would have read it: the command name under any rule, an argument
+    // where a rule reads that command's arguments, and a line a word
+    // runs that the gate cannot see into.
+    const parser = await getTestParser()
+    const box = new Box()
+    const ws = new Workspace(
+      { '/repo': new RAMResource() },
+      {
+        mode: MountMode.WRITE,
+        shellParser: parser,
+        permissions: {
+          commands: {
+            deny: [
+              { reason: 'no deletes', commands: ['rm'] },
+              { reason: 'sealed', commands: ['cat'], paths: ['/repo/secret*'] },
+              { reason: 'no pushes', commands: ['git push'] },
+            ],
+          },
+          paths: { hide: [] },
+        },
+        runtimes: [box, 'vfs'],
+      },
+    )
+    open.push(ws)
+    ws.registerCli('git', cliSpecFor('git'))
+    const unread = (raw: string) =>
+      `policy denied: cannot read ${raw} before the runtime expands it\n`
+    expect(await line(ws, 'rm /repo/x')).toEqual([126, '', 'rm: policy denied: no deletes\n'])
+    expect(await line(ws, '$cmd /repo/x')).toEqual([126, '', '$cmd: ' + unread('$cmd')])
+    expect(await line(ws, 'PAYLOAD=\'rm /repo/x\'; eval "$PAYLOAD"')).toEqual([
+      126,
+      '',
+      '"$PAYLOAD": ' + unread('"$PAYLOAD"'),
+    ])
+    expect(await line(ws, "eval 'rm /repo/x'")).toEqual([
+      126,
+      '',
+      'rm: policy denied: no deletes\n',
+    ])
+    expect(await line(ws, 'cat "$f"')).toEqual([126, '', 'cat: ' + unread('"$f"')])
+    expect(await line(ws, 'git "$verb" origin')).toEqual([126, '', 'git: ' + unread('"$verb"')])
+    expect(await line(ws, 'ls /repo | xargs rm')).toEqual([
+      126,
+      '',
+      'rm: policy denied: no deletes\n',
+    ])
+    expect(await line(ws, 'ls /repo | xargs cat')).toEqual([
+      126,
+      '',
+      'cat: policy denied: runs on operands the gate cannot read\n',
+    ])
+    expect(await line(ws, 'source /repo/env.sh')).toEqual([
+      126,
+      '',
+      'source: policy denied: runs lines the gate cannot read\n',
+    ])
+    expect(await line(ws, "sh -c 'timeout 5 rm /repo/x'")).toEqual([
+      126,
+      '',
+      'rm: policy denied: no deletes\n',
+    ])
+    expect(box.lines).toEqual([])
+    // Literal words, and dynamic ones no rule reads, reach the runtime.
+    const passing = [
+      'echo "$HOME" $(date)',
+      'git status',
+      "'cat' /repo/a",
+      'ls | xargs echo',
+      'command -v rm',
+    ]
+    for (const text of passing) expect((await line(ws, text))[0]).toBe(0)
+    expect(box.lines).toEqual(passing)
+  })
+
+  it('a bare listing in a ruled directory is refused', async () => {
+    // `ls`, `find`, `du`, `tree` and `grep -r` typed bare read the
+    // working directory: the executor injects that operand after the
+    // gate, so the gate supplies it itself, typed as `.`.
+    const parser = await getTestParser()
+    const ws = new Workspace(
+      { '/repo': new RAMResource() },
+      {
+        mode: MountMode.WRITE,
+        shellParser: parser,
+        permissions: {
+          commands: {
+            deny: [{ reason: 'sealed', commands: ['ls', 'find', 'grep'], paths: ['/repo/sealed'] }],
+          },
+          paths: { hide: [] },
+        },
+      },
+    )
+    open.push(ws)
+    await ws.execute('mkdir -p /repo/sealed && echo x > /repo/sealed/f')
+    expect(await line(ws, 'ls /repo/sealed')).toEqual([1, '', 'ls: /repo/sealed: sealed\n'])
+    expect(await line(ws, 'cd /repo/sealed && ls')).toEqual([1, '', 'ls: .: sealed\n'])
+    expect(await line(ws, 'cd /repo/sealed && find -name f')).toEqual([1, '', 'find: .: sealed\n'])
+    expect(await line(ws, 'cd /repo/sealed && grep -r x')).toEqual([
+      1,
+      '',
+      'grep: /repo/sealed: sealed\n',
+    ])
+    // With an operand, or without the recursion that reads the
+    // directory, nothing is implied.
+    expect(await line(ws, 'cd /repo/sealed && ls /repo')).toEqual([0, 'sealed\n', ''])
+    expect(await line(ws, 'cd /repo/sealed && echo x | grep x')).toEqual([0, 'x\n', ''])
+  })
 })
 
 /** A runtime that takes every line raw, recording what reached it. */
@@ -1404,6 +1515,28 @@ describe('ask end to end', () => {
     const byBob = await ws.execute('rm /scratch/z2', { agentId: 'bob' })
     expect(byBob.exitCode).toBe(126)
     expect(ws.approvals.list().map((r) => r.agentId)).toEqual(['', 'bob'])
+    // The agent rides with the execution, not the workspace: a line
+    // asked through a nested eval keeps its caller's, and two lines in
+    // flight at once keep their own.
+    const nested = await ws.execute('echo $(rm /scratch/z3)', { agentId: 'carol' })
+    expect(nested.exitCode).toBe(0)
+    await Promise.all([
+      ws.execute('rm /scratch/z4', { agentId: 'dan' }),
+      ws.execute("eval 'rm /scratch/z5'", { agentId: 'eve' }),
+    ])
+    const byAgent = Object.fromEntries(
+      ws.approvals.list().map((r) => [[r.command, ...r.argv].join(' '), r.agentId]),
+    )
+    expect(byAgent).toEqual({
+      'rm /scratch/z': '',
+      'rm /scratch/z2': 'bob',
+      'rm /scratch/z3': 'carol',
+      'rm /scratch/z4': 'dan',
+      'rm /scratch/z5': 'eve',
+    })
+    for (const r of ws.approvals.list()) {
+      if (r.agentId !== '' && r.agentId !== 'bob') await ws.approvals.deny(r.id)
+    }
     const bobs = ws.approvals.list().find((r) => r.agentId === 'bob')
     if (bobs === undefined) throw new Error('no request from bob')
     await ws.approvals.deny(bobs.id)

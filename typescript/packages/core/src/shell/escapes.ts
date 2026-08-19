@@ -12,6 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import { shlexSplit } from '../utils/shlex.ts'
 import { byteChar } from './bytes.ts'
 
 // The ANSI-C escape table $'...' shares with bash's strtrans.c. \e/\E
@@ -184,4 +185,25 @@ export function decodeAnsiC(content: string): string {
     i += 2
   }
   return out.join('')
+}
+
+// The text an unquoted word's backslash escapes name.
+export function unescapeUnquoted(text: string): string {
+  if (!text.includes('\\')) return text
+  const parts = shlexSplit(text)
+  return parts[0] ?? text
+}
+
+// The text a double-quoted segment's escapes name. Bash recognizes
+// \$, \`, \", \\ and \<newline> inside double quotes; every other
+// backslash stays.
+export function unescapeDquoted(text: string): string {
+  const NUL = String.fromCharCode(0)
+  let out = text
+  out = out.replaceAll('\\\\', NUL)
+  out = out.replaceAll('\\"', '"')
+  out = out.replaceAll('\\$', '$')
+  out = out.replaceAll('\\`', '`')
+  out = out.replaceAll('\\\n', '')
+  return out.replaceAll(NUL, '\\')
 }
