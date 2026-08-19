@@ -68,4 +68,11 @@ describe('object_store rename', () => {
       codeOf(managed(() => renameFor(new FakeStore())(accessor, spec('/a.txt'), spec('/a.txt')))),
     ).resolves.toBe('ENOENT')
   })
+
+  it('refuses to build without a native move', () => {
+    const driver = makeDriver(new FakeStore())
+    delete driver.moveFile
+    delete driver.movePrefix
+    expect(() => makeRename(driver, makeExists(makeStat(driver)))).toThrow('no native move')
+  })
 })

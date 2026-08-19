@@ -13,11 +13,13 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import pytest
+from opendal.exceptions import NotFound
 
 from mirage.core.hf_buckets.create import create
 from mirage.core.hf_buckets.unlink import unlink
 from mirage.core.hf_buckets.write import write_bytes
 from mirage.types import PathSpec
+from tests.core.hf_buckets.conftest import FakeAsyncOperator
 
 
 @pytest.mark.asyncio
@@ -35,11 +37,13 @@ async def test_unlink_deletes_file(make_acc):
 
 
 @pytest.mark.asyncio
-async def test_unlink_refuses_directory(make_acc):
+async def test_unlink_of_directory_leaves_subtree(make_acc):
+    # The op is a blind single-key delete; the "Is a directory" refusal
+    # lives in the generic rm builder, which stats before unlinking. A
+    # directory owns no key of its own, so this must touch nothing.
     acc = make_acc({"some-dir/child.txt": b"x"})
-    with pytest.raises(IsADirectoryError):
-        await unlink(acc, PathSpec.from_str_path("/some-dir"))
-    assert "some-dir/child.txt" in acc._fake.files
+    await unlink(acc, PathSpec.from_str_path("/some-dir"))
+    assert acc._fake.files == {"some-dir/child.txt": b"x"}
 
 
 @pytest.mark.asyncio
@@ -47,3 +51,31 @@ async def test_create_writes_empty_file(make_acc):
     acc = make_acc({})
     await create(acc, PathSpec.from_str_path("/touched.txt"))
     assert acc._fake.files.get("touched.txt") == b""
+
+
+class _MissingRepoOperator(FakeAsyncOperator):
+    """Refuses writes the way a missing repo or revision does."""
+
+    async def write(self, key: str, data: bytes) -> None:
+        raise NotFound("repository not found", key)
+
+
+@pytest.mark.asyncio
+async def test_write_into_a_missing_repo_names_the_virtual_path(make_acc):
+    # The driver's put speaks keys ("out.txt"), so letting its error
+    # through would put a backend key in a user-facing message; the kit's
+    # write factory restates it on the path the user typed.
+    acc = make_acc({})
+    acc.operator = lambda: _MissingRepoOperator(files={})
+    with pytest.raises(FileNotFoundError) as caught:
+        await write_bytes(acc, PathSpec.from_str_path("/out.txt"), b"hi")
+    assert str(caught.value) == "/out.txt"
+
+
+@pytest.mark.asyncio
+async def test_create_into_a_missing_repo_names_the_virtual_path(make_acc):
+    acc = make_acc({})
+    acc.operator = lambda: _MissingRepoOperator(files={})
+    with pytest.raises(FileNotFoundError) as caught:
+        await create(acc, PathSpec.from_str_path("/new.txt"))
+    assert str(caught.value) == "/new.txt"

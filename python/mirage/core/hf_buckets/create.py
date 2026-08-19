@@ -12,13 +12,7 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from mirage.accessor.hf_buckets import HfBucketsAccessor
-from mirage.cache.index import NULL_INDEX, IndexCacheStore
-from mirage.core.hf_buckets.write import write_bytes
-from mirage.types import PathSpec
+from mirage.core.hf_buckets.driver import DRIVER
+from mirage.core.object_store.write import make_create
 
-
-async def create(accessor: HfBucketsAccessor,
-                 path: PathSpec,
-                 index: IndexCacheStore = NULL_INDEX) -> None:
-    await write_bytes(accessor, path, b"", index)
+create = make_create(DRIVER)

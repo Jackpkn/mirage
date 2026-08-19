@@ -86,6 +86,27 @@
       }
     },
     {
+      "name": "permissions: deny is a list, not a scalar",
+      "config": {
+        "mounts": { "/d": { "resource": "ram" } },
+        "permissions": { "commands": { "deny": "rm" } }
+      }
+    },
+    {
+      "name": "profile: mount lists contain only strings",
+      "config": {
+        "mounts": { "/d": { "resource": "ram" } },
+        "profiles": { "a": { "mounts": ["/d", 7] } }
+      }
+    },
+    {
+      "name": "profile: a mount ceiling is a mode name, not a list",
+      "config": {
+        "mounts": { "/d": { "resource": "ram" } },
+        "profiles": { "a": { "mounts": { "/d": ["read"] } } }
+      }
+    },
+    {
       "name": "profile: the old hidden_paths spelling",
       "config": {
         "mounts": { "/d": { "resource": "ram" } },

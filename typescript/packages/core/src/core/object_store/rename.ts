@@ -23,12 +23,20 @@ import type { ExistsFn, ObjectStoreDriver, PairFn } from './driver.ts'
  *
  * A single object moves with the driver's native file move. A directory
  * owns no object of its own, so it moves as a prefix walk; a source that
- * is neither is ENOENT rather than the raw store error.
+ * is neither is ENOENT rather than the raw store error. The driver must
+ * carry a native move — a store without one leaves rename unwired,
+ * which the dispatcher surfaces as ENOTSUP.
  */
 export function makeRename<A extends Accessor, C>(
   driver: ObjectStoreDriver<A, C>,
   exists: ExistsFn<A>,
 ): PairFn<A> {
+  const { moveFile, movePrefix } = driver
+  if (moveFile === undefined || movePrefix === undefined) {
+    throw new Error(
+      `${driver.resource} driver has no native move; leave rename unwired instead of building it`,
+    )
+  }
   return async function rename(accessor, src, dst) {
     const kpfx = driver.keyPrefixOf(accessor)
     const srcKey = kp.apply(kpfx, src.mountPath)
@@ -42,9 +50,9 @@ export function makeRename<A extends Accessor, C>(
     }
     const { conn, close } = await driver.connect(accessor)
     try {
-      if (!(await driver.moveFile(conn, srcKey, kp.apply(kpfx, dst.mountPath)))) {
+      if (!(await moveFile(conn, srcKey, kp.apply(kpfx, dst.mountPath)))) {
         if (
-          !(await driver.movePrefix(
+          !(await movePrefix(
             conn,
             kp.applyDir(kpfx, src.mountPath),
             kp.applyDir(kpfx, dst.mountPath),

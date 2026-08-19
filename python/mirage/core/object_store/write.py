@@ -20,6 +20,30 @@ from mirage.core.object_store.driver import (A, C, MkdirFn, ObjectStoreDriver,
 from mirage.observe.context import record
 from mirage.types import PathSpec
 from mirage.utils import key_prefix as kp
+from mirage.utils.errors import enoent
+
+
+async def _put(driver: ObjectStoreDriver[A, C], conn: C, key: str, data: bytes,
+               path_spec: PathSpec) -> None:
+    """Put one object, translating a missing container to ENOENT.
+
+    The driver primitives speak keys, so a store error for a missing
+    repository or bucket names the backend key, and only the factory
+    holds the PathSpec the message has to carry.
+
+    Args:
+        driver (ObjectStoreDriver): the store's native surface.
+        conn (C): the open store connection.
+        key (str): the prefix-applied object key.
+        data (bytes): the object body.
+        path_spec (PathSpec): the operand, for the error's virtual path.
+    """
+    try:
+        await driver.put(conn, key, data)
+    except Exception as exc:
+        if driver.is_not_found(exc):
+            raise enoent(path_spec) from exc
+        raise
 
 
 def make_write_bytes(driver: ObjectStoreDriver[A, C]) -> WriteFn[A]:
@@ -35,7 +59,7 @@ def make_write_bytes(driver: ObjectStoreDriver[A, C]) -> WriteFn[A]:
         key = kp.apply(driver.key_prefix_of(accessor), path)
         start_ms = int(time.monotonic() * 1000)
         async with driver.connect(accessor) as conn:
-            await driver.put(conn, key, data)
+            await _put(driver, conn, key, data, path_spec)
         record("write", path, driver.resource, len(data), start_ms)
         await invalidate_after_write(path_spec)
         # A put materializes every missing level of the key at once, so
@@ -57,7 +81,7 @@ def make_create(driver: ObjectStoreDriver[A, C]) -> PathFn[A]:
         key = kp.apply(driver.key_prefix_of(accessor), path)
         start_ms = int(time.monotonic() * 1000)
         async with driver.connect(accessor) as conn:
-            await driver.put(conn, key, b"")
+            await _put(driver, conn, key, b"", path_spec)
         record("create", path, driver.resource, 0, start_ms)
         await invalidate_after_write(path_spec)
         # An empty put materializes missing parents exactly like write.
@@ -82,7 +106,7 @@ def make_truncate(driver: ObjectStoreDriver[A, C]) -> TruncateFn[A]:
             if data is None:
                 data = b""
             result = data[:length].ljust(length, b"\0")
-            await driver.put(conn, key, result)
+            await _put(driver, conn, key, result, path_spec)
         record("truncate", path, driver.resource, 0, start_ms)
         await invalidate_after_write(path_spec)
         # Truncating a missing key creates it, parents included.
@@ -101,6 +125,13 @@ def make_mkdir(driver: ObjectStoreDriver[A, C]) -> MkdirFn[A]:
     async def mkdir(accessor: A,
                     path_spec: PathSpec,
                     parents: bool = False) -> None:
+        if not driver.markers_supported:
+            # The store refuses the marker client-side (hf: create_dir is
+            # unsupported and a slash-terminated write is IsADirectory),
+            # so a directory exists only while it holds a key and mkdir
+            # has nothing to write: `mkdir x` then `rmdir x` is ENOENT
+            # here but fine on a marker store.
+            return
         # Object stores have no real directories; parents is implicit. A
         # zero-byte marker keyed at the prefix makes the empty directory
         # visible.

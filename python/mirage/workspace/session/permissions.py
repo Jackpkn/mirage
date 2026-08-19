@@ -36,10 +36,25 @@ def _norm_prefix(prefix: str) -> str:
     return "/" + prefix.strip("/")
 
 
+def _list(value: Any, where: str, expected: str = "a list") -> tuple[Any, ...]:
+    """A document list, refused before a scalar can be iterated.
+
+    Args:
+        value (Any): the field as written, None when absent.
+        where (str): the field's name, for the message.
+        expected (str): the expected shape named in the message.
+    """
+    if value is None:
+        return ()
+    if not isinstance(value, (list, tuple)):
+        raise ValueError(f"{where} must be {expected}")
+    return tuple(value)
+
+
 def _string_list(value: Any,
                  where: str,
                  nonblank: bool = False) -> tuple[str, ...]:
-    """A rule's list field, refused unless it is a list of strings.
+    """A document list field, refused unless every item is a string.
 
     A scalar ``commands: rm`` would otherwise ``tuple()`` into
     ``('r', 'm')`` and the command it meant to refuse stay allowed, so
@@ -53,16 +68,13 @@ def _string_list(value: Any,
         where (str): the field's name, for the message.
         nonblank (bool): refuse entries with no token.
     """
-    if value is None:
-        return ()
-    if not isinstance(value, (list, tuple)):
-        raise ValueError(f"{where} must be a list of strings")
-    for i, entry in enumerate(value):
+    entries = _list(value, where, "a list of strings")
+    for i, entry in enumerate(entries):
         if not isinstance(entry, str):
             raise ValueError(f"{where}[{i}] must be a string")
         if nonblank and not entry.split():
             raise ValueError(f"{where}[{i}] must name a command")
-    return tuple(value)
+    return entries
 
 
 def _rule(entry: Any, where: str, default_reason: str) -> Any:
@@ -100,12 +112,10 @@ def _rule(entry: Any, where: str, default_reason: str) -> Any:
 
 
 def _rules(v: Any, where: str) -> Any:
-    if v is None:
-        return ()
-    if not isinstance(v, (list, tuple)):
-        raise ValueError(f"commands.{where} must be a list of rules")
     default = DEFAULT_ASK_REASON if where == "ask" else DEFAULT_DENY_REASON
-    return tuple(_rule(entry, f"{where} rule", default) for entry in v)
+    return tuple(
+        _rule(entry, f"{where} rule", default)
+        for entry in _list(v, f"commands.{where}", "a list of rules"))
 
 
 def _patterns(v: Any) -> Any:
@@ -294,11 +304,19 @@ class SessionProfile(BaseModel):
         if isinstance(v, str):
             return (_norm_prefix(v), )
         if isinstance(v, Mapping):
-            return {
-                _norm_prefix(str(p)): parse_mount_mode(m)
-                for p, m in v.items()
-            }
-        return tuple(_norm_prefix(str(p)) for p in v)
+            modes: dict[str, MountMode] = {}
+            for prefix, mode in v.items():
+                if not isinstance(prefix, str):
+                    raise ValueError("mounts keys must be strings")
+                if not isinstance(mode, str):
+                    raise ValueError(
+                        f"mounts[{prefix}] must be a mode name or alias")
+                modes[_norm_prefix(prefix)] = parse_mount_mode(mode)
+            return modes
+        if not isinstance(v, (list, tuple)):
+            raise ValueError("mounts must be a mapping or a list of strings")
+        return tuple(
+            _norm_prefix(prefix) for prefix in _string_list(v, "mounts"))
 
 
 @dataclass(frozen=True, slots=True)

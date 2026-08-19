@@ -18,11 +18,21 @@ import { enoent } from '../../utils/errors.ts'
 import * as kp from '../../utils/key_prefix.ts'
 import type { ExistsFn, ObjectStoreDriver, PairFn } from './driver.ts'
 
-/** Build single-object copy over one driver. */
+/**
+ * Build single-object copy over one driver. The driver must carry a
+ * native copy — a store without one leaves copy unwired, which the
+ * dispatcher surfaces as ENOTSUP.
+ */
 export function makeCopy<A extends Accessor, C>(
   driver: ObjectStoreDriver<A, C>,
   exists: ExistsFn<A>,
 ): PairFn<A> {
+  const { copyFile } = driver
+  if (copyFile === undefined) {
+    throw new Error(
+      `${driver.resource} driver has no native copy; leave copy unwired instead of building it`,
+    )
+  }
   return async function copy(accessor, src, dst) {
     const kpfx = driver.keyPrefixOf(accessor)
     const srcKey = kp.apply(kpfx, src.mountPath)
@@ -37,7 +47,7 @@ export function makeCopy<A extends Accessor, C>(
     }
     const { conn, close } = await driver.connect(accessor)
     try {
-      if (!(await driver.copyFile(conn, srcKey, dstKey))) throw enoent(src)
+      if (!(await copyFile(conn, srcKey, dstKey))) throw enoent(src)
     } finally {
       await close()
     }

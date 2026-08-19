@@ -13,6 +13,7 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import asyncio
+from dataclasses import replace
 
 import pytest
 
@@ -72,3 +73,11 @@ def test_rename_onto_the_same_key_still_fails_when_absent(accessor):
     with pytest.raises(FileNotFoundError):
         _managed(
             _rename_for(FakeStore())(accessor, spec("/a.txt"), spec("/a.txt")))
+
+
+def test_rename_without_native_move_refuses_to_build():
+    driver = replace(make_driver(FakeStore()),
+                     move_file=None,
+                     move_prefix=None)
+    with pytest.raises(ValueError, match="no native move"):
+        make_rename(driver, make_exists(make_stat(driver)))

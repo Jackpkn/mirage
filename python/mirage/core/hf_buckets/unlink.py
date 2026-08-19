@@ -12,33 +12,7 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import time
+from mirage.core.hf_buckets.driver import DRIVER
+from mirage.core.object_store.remove import make_unlink
 
-from opendal.exceptions import NotFound
-
-from mirage.accessor.hf_buckets import HfBucketsAccessor
-from mirage.cache.context import invalidate_after_unlink, invalidate_ancestors
-from mirage.cache.index import NULL_INDEX, IndexCacheStore
-from mirage.core.hf_buckets.stat import stat
-from mirage.observe.context import record
-from mirage.types import FileType, PathSpec
-from mirage.utils.errors import enoent
-
-
-async def unlink(accessor: HfBucketsAccessor,
-                 path: PathSpec,
-                 index: IndexCacheStore = NULL_INDEX) -> None:
-    file_stat = await stat(accessor, path, index)
-    if file_stat.type == FileType.DIRECTORY:
-        raise IsADirectoryError(path.mount_path)
-    raw = path.mount_path
-    key = raw.lstrip("/")
-    op = accessor.operator()
-    start_ms = int(time.monotonic() * 1000)
-    try:
-        await op.delete(key)
-    except NotFound as exc:
-        raise enoent(path) from exc
-    record("unlink", path.virtual, accessor.RESOURCE_NAME, 0, start_ms)
-    await invalidate_after_unlink(path)
-    await invalidate_ancestors(path)
+unlink = make_unlink(DRIVER)

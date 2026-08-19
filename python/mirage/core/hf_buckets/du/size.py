@@ -12,40 +12,7 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from opendal.exceptions import NotFound
+from mirage.core.hf_buckets.driver import DRIVER
+from mirage.core.object_store.du import make_du_size
 
-from mirage.accessor.hf_buckets import HfBucketsAccessor
-from mirage.cache.index import NULL_INDEX, IndexCacheStore
-from mirage.core.hf_buckets.stat import stat
-from mirage.types import FileType, PathSpec
-
-
-async def size(accessor: HfBucketsAccessor,
-               path: PathSpec,
-               index: IndexCacheStore = NULL_INDEX) -> int:
-    """Recursive byte size of everything under a path.
-
-    Args:
-        accessor (HfBucketsAccessor): HF buckets accessor.
-        path (PathSpec): target path.
-    """
-    try:
-        info = await stat(accessor, path, index=index)
-    except FileNotFoundError:
-        info = None
-    if info is not None and info.type != FileType.DIRECTORY:
-        return info.size or 0
-    pfx = path.mount_path.strip("/")
-    scan_path = pfx + "/" if pfx else "/"
-    op = accessor.operator()
-    total = 0
-    try:
-        async for entry in await op.scan(scan_path):
-            if entry.path.endswith("/"):
-                continue
-            meta = entry.metadata
-            if meta is not None:
-                total += int(meta.content_length or 0)
-    except NotFound:
-        return 0
-    return total
+size = make_du_size(DRIVER)

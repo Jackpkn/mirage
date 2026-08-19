@@ -134,8 +134,14 @@ const MOUNT_PERMISSIONS_FIELDS = ['paths', 'commands'] as const
 const WORKSPACE_PERMISSIONS_FIELDS = ['commands', 'paths'] as const
 const PROFILE_FIELDS = ['extends', 'cwd', 'env', 'mounts', 'paths', 'vars', 'commands'] as const
 
+// A document mapping, not merely "an object": a Set, a Date or any class
+// instance has no own enumerable string keys, so Object.entries would read
+// one as an empty mapping and a `mounts` Set would compile to a session
+// granting nothing at all. Python refuses the same values loudly.
 function isPlainObject(v: unknown): v is Record<string, unknown> {
-  return typeof v === 'object' && v !== null && !Array.isArray(v) && !(v instanceof Map)
+  if (typeof v !== 'object' || v === null) return false
+  const proto: unknown = Object.getPrototypeOf(v)
+  return proto === Object.prototype || proto === null
 }
 
 function rejectUnknownKeys(
@@ -155,12 +161,17 @@ function asObject(raw: unknown, where: string): Record<string, unknown> {
   return raw
 }
 
+/** A document list, refused before a scalar can be iterated (python's `_list`). */
+function asList(raw: unknown, where: string, expected = 'a list'): readonly unknown[] {
+  if (raw === undefined || raw === null) return []
+  if (!Array.isArray(raw)) throw new Error(`${where} must be ${expected}`)
+  return raw as readonly unknown[]
+}
+
 // A command pattern must hold a token: a blank one is a prefix of every
 // line, so a stray "" would allow, ask about or deny every command.
 function stringList(raw: unknown, where: string, nonblank = false): readonly string[] {
-  if (raw === undefined || raw === null) return []
-  if (!Array.isArray(raw)) throw new Error(`${where} must be a list of strings`)
-  return raw.map((entry, i) => {
+  return asList(raw, where, 'a list of strings').map((entry, i) => {
     if (typeof entry !== 'string') throw new Error(`${where}[${String(i)}] must be a string`)
     if (nonblank && entry.trim() === '')
       throw new Error(`${where}[${String(i)}] must name a command`)
@@ -192,10 +203,10 @@ function parseRule(raw: unknown, where: string, defaultReason: string): CommandR
 }
 
 function parseRules(raw: unknown, where: string, arm: 'ask' | 'deny'): readonly CommandRule[] {
-  if (raw === undefined || raw === null) return []
-  if (!Array.isArray(raw)) throw new Error(`${where}.${arm} must be a list of rules`)
   const fallback = arm === 'ask' ? DEFAULT_ASK_REASON : DEFAULT_DENY_REASON
-  return raw.map((entry, i) => parseRule(entry, `${where}.${arm}[${String(i)}]`, fallback))
+  return asList(raw, `${where}.${arm}`, 'a list of rules').map((entry, i) =>
+    parseRule(entry, `${where}.${arm}[${String(i)}]`, fallback),
+  )
 }
 
 function parseAllow(raw: unknown, where: string): readonly string[] | null {
@@ -273,12 +284,13 @@ export function parseProfileMounts(
   if (raw === undefined || raw === null) return null
   if (typeof raw === 'string') return [normPrefix(raw)]
   if (Array.isArray(raw)) return stringList(raw, where).map(normPrefix)
-  const entries: [string, unknown][] =
-    raw instanceof Map
-      ? [...(raw as Map<string, unknown>).entries()]
-      : Object.entries(asObject(raw, where))
+  let entries: [unknown, unknown][]
+  if (raw instanceof Map) entries = [...raw.entries()]
+  else if (isPlainObject(raw)) entries = Object.entries(raw)
+  else throw new Error(`${where} must be a mapping or a list of strings`)
   const modes = new Map<string, MountMode>()
   for (const [prefix, mode] of entries) {
+    if (typeof prefix !== 'string') throw new Error(`${where} keys must be strings`)
     if (typeof mode !== 'string')
       throw new Error(`${where}[${prefix}] must be a mode name or alias`)
     modes.set(normPrefix(prefix), parseMountMode(mode))

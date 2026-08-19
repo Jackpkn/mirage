@@ -14,12 +14,8 @@
 
 import errno
 import logging
+import os
 from typing import Any, Callable
-
-try:
-    import mfusepy as fuse
-except ImportError:
-    fuse = None
 
 from mirage.fuse.core import MountCore
 from mirage.fuse.darwin import rename_flags_check
@@ -30,18 +26,14 @@ from mirage.workspace.session.session import Session
 
 logger = logging.getLogger(__name__)
 
-# Base class only when mfusepy is installed; otherwise the module still imports
-# (FUSE is the optional [fuse] extra) but instantiating MirageFS raises.
-_FUSE_OPERATIONS: Any = fuse.Operations if fuse is not None else object
 
-
-class MirageFS(_FUSE_OPERATIONS):
+class MirageFS:
     """libfuse adapter over MountCore.
 
-    Owns exactly the FUSE-specific concerns: the mfusepy ``Operations``
-    method signatures and the translation of mirage-native exceptions into
-    ``FuseOSError``. All filesystem semantics live in MountCore, so an
-    FSKit or File Provider adapter can reuse them unchanged.
+    Owns exactly the FUSE-specific concerns: the mfusepy callback method
+    signatures and the translation of mirage-native exceptions into
+    ``OSError``. All filesystem semantics live in MountCore, so an FSKit or
+    File Provider adapter can reuse them unchanged.
 
     Args:
         ops (Ops): the workspace op facade every callback routes to.
@@ -55,12 +47,6 @@ class MirageFS(_FUSE_OPERATIONS):
                  ops: Ops,
                  root_prefix: str = "",
                  session: Session | None = None) -> None:
-        if fuse is None:
-            raise RuntimeError(
-                "FUSE support requires the 'fuse' extra: install "
-                '"mirage-ai[fuse]" plus the OS driver (macFUSE, fuse3, or '
-                "WinFsp). Setup and support matrix: "
-                "https://mirage.dev/home/setup/fuse")
         self.core = MountCore(ops, root_prefix=root_prefix, session=session)
 
     def _call(self, fn: Callable[..., Any], *args: Any) -> Any:
@@ -87,7 +73,7 @@ class MirageFS(_FUSE_OPERATIONS):
                                                     (OSError, ValueError)):
                 logger.warning("unclassified mount error in %s: %r",
                                fn.__name__, err)
-            raise fuse.FuseOSError(code) from err
+            raise OSError(code, os.strerror(code)) from err
 
     def drain_ops(self) -> list[dict[str, Any]]:
         return self.core.drain_ops()
@@ -134,7 +120,7 @@ class MirageFS(_FUSE_OPERATIONS):
             new_exists = False
         code = rename_flags_check(new_exists, flags)
         if code is not None:
-            raise fuse.FuseOSError(code)
+            raise OSError(code, os.strerror(code))
         self._call(self.core.rename, old, new)
         return 0
 

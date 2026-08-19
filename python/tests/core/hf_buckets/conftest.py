@@ -34,7 +34,7 @@ class _FakeMetadata:
 @dataclass
 class _FakeEntry:
     path: str
-    metadata: _FakeMetadata
+    metadata: _FakeMetadata | None
 
     @property
     def name(self) -> str:
@@ -117,7 +117,9 @@ class FakeAsyncOperator:
         self.files.pop(key, None)
         self.metas.pop(key, None)
 
-    async def list(self, path: str):
+    async def list(self, path: str, *, recursive: bool = False):
+        if recursive:
+            return await self.scan(path)
         pfx = path.lstrip("/")
         seen_dirs: set[str] = set()
         entries: list[_FakeEntry] = []

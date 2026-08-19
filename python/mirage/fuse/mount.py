@@ -12,16 +12,13 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import importlib
 import os
 import subprocess
 import sys
 import threading
 import time
-
-try:
-    import mfusepy as fuse
-except ImportError:
-    fuse = None
+from typing import Any
 
 from mirage.fuse.backend import MountBackend, prepare_backend
 from mirage.fuse.darwin import install_macfuse_extensions
@@ -29,6 +26,23 @@ from mirage.fuse.fs import MirageFS
 from mirage.ops import Ops
 from mirage.types import JsonValue
 from mirage.workspace.session.session import Session
+
+
+def load_fuse() -> Any:
+    # mfusepy resolves libfuse while it is imported, and reports each way
+    # that can fail with a different type: ImportError when the extra is
+    # missing, OSError when no driver is found, AttributeError when the
+    # library found has the wrong major version.
+    try:
+        fuse = importlib.import_module("mfusepy")
+    except (ImportError, OSError, AttributeError) as err:
+        raise RuntimeError(
+            "FUSE support requires the 'fuse' extra: install "
+            '"mirage-ai[fuse]" plus the OS driver (macFUSE, fuse3, or '
+            "WinFsp). Setup and support matrix: "
+            "https://mirage.dev/home/setup/fuse") from err
+    install_macfuse_extensions(fuse)
+    return fuse
 
 
 def _prepare_mountpoint(mountpoint: str) -> None:
@@ -41,7 +55,8 @@ def _prepare_mountpoint(mountpoint: str) -> None:
         os.rmdir(mountpoint)
 
 
-def _run_fuse(fs: MirageFS,
+def _run_fuse(fuse: Any,
+              fs: MirageFS,
               mountpoint: str,
               foreground: bool,
               backend: MountBackend = MountBackend.FUSE) -> None:
@@ -55,11 +70,6 @@ def _run_fuse(fs: MirageFS,
     # uid=-1/gid=-1 (win32): the WinFsp-FUSE builtin that presents all files
     # as owned by the mounting user; POSIX uid/gid values reported by getattr
     # have no meaningful SID mapping on Windows (see the WinFsp FAQ).
-    # macFUSE needs its Darwin-only callbacks (setattr_x, renamex) declared
-    # before the operations struct is built; without them the FSKit shim
-    # fails every create/mkdir with ENOSYS after the op already applied,
-    # and rename never reaches userspace. No-op off macOS.
-    install_macfuse_extensions()
     win_opts = {"uid": -1, "gid": -1} if sys.platform == "win32" else {}
     opts: dict[str, JsonValue] = {"attr_timeout": 0}
     if backend is MountBackend.FSKIT:
@@ -130,10 +140,11 @@ def mount_background(
                                ops=ops,
                                mountpoint=mountpoint,
                                root_prefix=root_prefix)
+    fuse = load_fuse()
     fs = MirageFS(ops, root_prefix=root_prefix, session=session)
     _prepare_mountpoint(mountpoint)
     t = threading.Thread(target=_run_fuse,
-                         args=(fs, mountpoint, True, resolved),
+                         args=(fuse, fs, mountpoint, True, resolved),
                          daemon=True)
     t.start()
     _await_ready(t, mountpoint)
@@ -152,6 +163,7 @@ def mount(ops: Ops | None = None,
         if ops is None:
             raise ValueError("mount requires either ops or a prebuilt fs")
         fs = MirageFS(ops)
+    fuse = load_fuse()
     _prepare_mountpoint(mountpoint)
     if daemon:
         pid = os.fork()
@@ -160,11 +172,11 @@ def mount(ops: Ops | None = None,
         os.setsid()
         if post_fork:
             post_fork()
-        _run_fuse(fs, mountpoint, True, resolved)
+        _run_fuse(fuse, fs, mountpoint, True, resolved)
         return
     t = threading.Thread(
         target=_run_fuse,
-        args=(fs, mountpoint, foreground, resolved),
+        args=(fuse, fs, mountpoint, foreground, resolved),
         daemon=True,
     )
     if post_fork:

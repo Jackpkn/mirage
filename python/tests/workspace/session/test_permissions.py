@@ -13,6 +13,7 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import asyncio
+import re
 
 import pytest
 from pydantic import ValidationError
@@ -69,6 +70,29 @@ def test_profile_mounts_list_form_keeps_each_mounts_own_mode():
     assert SessionProfile(mounts=["/repo", "scratch"]).mounts == ("/repo",
                                                                   "/scratch")
     assert SessionProfile(mounts="/repo").mounts == ("/repo", )
+
+
+@pytest.mark.parametrize("mounts,message", [
+    (["/repo", 7], "mounts[1] must be a string"),
+    ({
+        7: "read"
+    }, "mounts keys must be strings"),
+    ({
+        "/repo": ["read"]
+    }, "mounts[/repo] must be a mode name or alias"),
+    ({
+        "/repo": 7
+    }, "mounts[/repo] must be a mode name or alias"),
+    (7, "mounts must be a mapping or a list of strings"),
+    ({"/repo"}, "mounts must be a mapping or a list of strings"),
+])
+def test_profile_mounts_rejects_what_typescript_rejects(mounts, message):
+    # The message is asserted, not just the type: a mode that is not a
+    # string used to reach parse_mount_mode and come back as a bare
+    # TypeError (unhashable dict/list key), which is not the ValueError
+    # the loader's contract promises.
+    with pytest.raises(ValidationError, match=re.escape(message)):
+        SessionProfile.model_validate({"mounts": mounts})
 
 
 def test_profile_rejects_unknown_and_unshipped_fields():
@@ -194,6 +218,13 @@ def test_workspace_permissions_deny_accepts_rules_and_bare_names():
     assert w.paths == PathsBlock(hide=("/shared/finance", ))
     assert WorkspacePermissions() == WorkspacePermissions(
         commands=CommandsBlock(), paths=PathsBlock())
+
+
+@pytest.mark.parametrize("deny", ["rm", {"rm": "no"}, 7])
+def test_workspace_permissions_deny_is_a_list_not_a_scalar(deny):
+    with pytest.raises(ValidationError,
+                       match=re.escape("commands.deny must be a list")):
+        WorkspacePermissions.model_validate({"commands": {"deny": deny}})
 
 
 @pytest.mark.parametrize("rule", [
