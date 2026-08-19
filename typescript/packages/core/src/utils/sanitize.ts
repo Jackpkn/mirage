@@ -88,3 +88,24 @@ export function pathSafeName(name: string): string {
   if (name.trim() === '') return 'unknown'
   return name.replace(/\//g, '∕')
 }
+
+/**
+ * Sanitize an API-supplied label for use inside a filename.
+ *
+ * The shared body behind every backend's title/subject sanitizer: replace
+ * shell-unsafe characters and spaces with underscores, collapse the runs, trim
+ * the edges, then ellipsize past the budget. Backends differ only in what an
+ * empty label becomes and how long a label may be, so those are the arguments.
+ *
+ * Unlike `sanitizeName` this ellipsizes rather than hard-cutting, so a
+ * truncated name reads as truncated.
+ */
+export function sanitizeLabel(text: string, options: { fallback: string; maxLen: number }): string {
+  if (text.trim() === '') return options.fallback
+  let cleaned = text.replace(UNSAFE_CHARS, '_').replace(/ /g, '_').replace(MULTI_UNDERSCORE, '_')
+  cleaned = stripUnderscores(cleaned)
+  if (cleaned.length > options.maxLen) {
+    cleaned = `${cleaned.slice(0, options.maxLen - 3)}...`
+  }
+  return cleaned
+}

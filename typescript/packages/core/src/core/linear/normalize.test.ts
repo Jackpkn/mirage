@@ -13,6 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { describe, expect, it } from 'vitest'
+import { jsonlBytesByCreatedAt } from '../render/json.ts'
 import {
   normalizeComment,
   normalizeCycle,
@@ -23,7 +24,6 @@ import {
   normalizeTeam,
   normalizeUser,
   toJsonBytes,
-  toJsonlBytes,
 } from './normalize.ts'
 
 describe('normalize', () => {
@@ -145,11 +145,11 @@ describe('normalize', () => {
   })
 
   it('toJsonlBytes returns empty for empty', () => {
-    expect(toJsonlBytes([]).length).toBe(0)
+    expect(jsonlBytesByCreatedAt([]).length).toBe(0)
   })
 
   it('toJsonlBytes sorts by created_at', () => {
-    const bytes = toJsonlBytes([
+    const bytes = jsonlBytesByCreatedAt([
       {
         comment_id: 'a',
         issue_id: 'i',

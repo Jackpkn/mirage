@@ -14,11 +14,11 @@
 
 import json
 
+from mirage.core.render.json import jsonl_bytes_by_created_at
 from mirage.core.trello.normalize import (normalize_board, normalize_card,
                                           normalize_comment, normalize_label,
                                           normalize_list, normalize_member,
-                                          normalize_workspace, to_json_bytes,
-                                          to_jsonl_bytes)
+                                          normalize_workspace, to_json_bytes)
 
 
 def test_normalize_workspace():
@@ -127,7 +127,7 @@ def test_to_json_bytes():
     assert json.loads(result) == data
 
 
-def test_to_jsonl_bytes():
+def test_jsonl_bytes_by_created_at():
     rows = [
         {
             "created_at": "2026-04-05",
@@ -138,7 +138,7 @@ def test_to_jsonl_bytes():
             "text": "first"
         },
     ]
-    result = to_jsonl_bytes(rows)
+    result = jsonl_bytes_by_created_at(rows)
     lines = result.strip().split(b"\n")
     assert len(lines) == 2
     assert json.loads(lines[0])["text"] == "first"
@@ -146,4 +146,4 @@ def test_to_jsonl_bytes():
 
 
 def test_to_jsonl_bytes_empty():
-    assert to_jsonl_bytes([]) == b""
+    assert jsonl_bytes_by_created_at([]) == b""

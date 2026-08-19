@@ -28,7 +28,11 @@ import { GCAL_PROMPT, GCAL_WRITE_PROMPT } from '@struktoai/mirage-core/resource/
 import { PathSpec, ResourceName } from '@struktoai/mirage-core/types'
 import type { FileStat } from '@struktoai/mirage-core/types'
 import { mountKey, mountPrefixOf } from '@struktoai/mirage-core/utils/key_prefix'
-import { redactGCalConfig, type GCalConfig, type GCalConfigRedacted } from './config.ts'
+import {
+  redactGCalConfig,
+  type GCalConfig,
+  type GCalConfigRedacted,
+} from '@struktoai/mirage-core/resource/gcal/config'
 
 const gcalResolveGlob = makeResolveGlob(gcalReaddir)
 

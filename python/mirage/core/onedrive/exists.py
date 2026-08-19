@@ -12,17 +12,7 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from mirage.accessor.onedrive import OneDriveAccessor
-from mirage.cache.index import NULL_INDEX, IndexCacheStore
+from mirage.core.msgraph.drive_ops import make_exists
 from mirage.core.onedrive.stat import stat
-from mirage.types import PathSpec
 
-
-async def exists(accessor: OneDriveAccessor,
-                 path: PathSpec,
-                 index: IndexCacheStore = NULL_INDEX) -> bool:
-    try:
-        await stat(accessor, path, index)
-        return True
-    except FileNotFoundError:
-        return False
+exists = make_exists(stat)

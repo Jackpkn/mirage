@@ -28,7 +28,11 @@ import { GDOCS_PROMPT, GDOCS_WRITE_PROMPT } from '@struktoai/mirage-core/resourc
 import { PathSpec, ResourceName } from '@struktoai/mirage-core/types'
 import type { FileStat } from '@struktoai/mirage-core/types'
 import { mountKey, mountPrefixOf } from '@struktoai/mirage-core/utils/key_prefix'
-import { redactGDocsConfig, type GDocsConfig, type GDocsConfigRedacted } from './config.ts'
+import {
+  redactGDocsConfig,
+  type GDocsConfig,
+  type GDocsConfigRedacted,
+} from '@struktoai/mirage-core/resource/gdocs/config'
 
 const gdocsResolveGlob = makeResolveGlob(gdocsReaddir)
 

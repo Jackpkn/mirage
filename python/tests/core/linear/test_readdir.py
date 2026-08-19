@@ -22,8 +22,9 @@ from mirage.cache.index.ram import RAMIndexCacheStore
 from mirage.core.linear.config import LinearConfig
 from mirage.core.linear.normalize import (normalize_comment, normalize_issue,
                                           normalize_team, normalize_user,
-                                          to_json_bytes, to_jsonl_bytes)
+                                          to_json_bytes)
 from mirage.core.linear.readdir import readdir
+from mirage.core.render.json import jsonl_bytes_by_created_at
 from mirage.types import PathSpec
 from mirage.utils.key_prefix import mount_key
 
@@ -190,7 +191,7 @@ async def test_readdir_issue_folder(accessor, index):
     comments_file = await index.get(
         "/teams/ENG__Engineering__TEAM1/issues/ENG-123__ISSUE1/comments.jsonl")
     assert comments_file.entry is not None
-    expected = to_jsonl_bytes([
+    expected = jsonl_bytes_by_created_at([
         normalize_comment(comments[0], issue_id="ISSUE1", issue_key="ENG-123")
     ])
     assert comments_file.entry.size == len(expected)

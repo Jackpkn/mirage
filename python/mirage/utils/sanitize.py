@@ -86,3 +86,33 @@ def path_safe_name(name: str) -> str:
     if not name.strip():
         return "unknown"
     return name.replace("/", "∕")
+
+
+def sanitize_label(text: str, *, fallback: str, max_len: int) -> str:
+    """Sanitize an API-supplied label for use inside a filename.
+
+    The shared body behind every backend's title/subject sanitizer:
+    replace shell-unsafe characters and spaces with underscores, collapse
+    the runs, trim the edges, then ellipsize past the budget. Backends
+    differ only in what an empty label becomes and how long a label may
+    be, so those are the arguments.
+
+    Unlike ``sanitize_name`` this ellipsizes rather than hard-cutting, so
+    a truncated name reads as truncated.
+
+    Args:
+        text (str): raw label from the API.
+        fallback (str): what an empty or whitespace-only label becomes.
+        max_len (int): budget in characters; a longer label keeps its
+            first ``max_len - 3`` characters plus an ellipsis.
+
+    Returns:
+        str: the sanitized label.
+    """
+    if not text.strip():
+        return fallback
+    cleaned = UNSAFE_CHARS.sub("_", text).replace(" ", "_")
+    cleaned = MULTI_UNDERSCORE.sub("_", cleaned).strip("_")
+    if len(cleaned) > max_len:
+        cleaned = cleaned[:max_len - 3] + "..."
+    return cleaned

@@ -19,22 +19,13 @@ from io import BytesIO
 from mirage.accessor.databricks_volume import DatabricksVolumeAccessor
 from mirage.cache.context import invalidate_after_write
 from mirage.cache.index import NULL_INDEX, IndexCacheStore
-from mirage.core.databricks_volume._helpers import parent_path
+from mirage.core.databricks_volume._helpers import (is_directory_metadata,
+                                                    parent_path)
 from mirage.core.databricks_volume.errors import is_not_found
 from mirage.core.databricks_volume.path import backend_path
 from mirage.observe.context import record
-from mirage.types import JsonValue, PathSpec
+from mirage.types import PathSpec
 from mirage.utils.errors import enoent
-
-
-def _is_directory_metadata(metadata: JsonValue) -> bool:
-    value = getattr(metadata, "is_directory", None)
-    if value is not None:
-        return bool(value)
-    object_type = getattr(metadata, "object_type", None)
-    if object_type is None:
-        return False
-    return str(object_type).lower().endswith("directory")
 
 
 def _ensure_parent_directory_sync(
@@ -55,7 +46,7 @@ def _ensure_parent_directory_sync(
         if is_not_found(exc):
             raise FileNotFoundError(virtual_target) from not_found
         raise
-    if not _is_directory_metadata(metadata):
+    if not is_directory_metadata(metadata):
         raise NotADirectoryError(virtual_target)
 
 

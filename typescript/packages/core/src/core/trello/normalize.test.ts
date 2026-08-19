@@ -13,6 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { describe, expect, it } from 'vitest'
+import { jsonlBytesByCreatedAt } from '../render/json.ts'
 import {
   normalizeBoard,
   normalizeCard,
@@ -22,7 +23,6 @@ import {
   normalizeMember,
   normalizeWorkspace,
   toJsonBytes,
-  toJsonlBytes,
 } from './normalize.ts'
 
 describe('normalize', () => {
@@ -144,11 +144,11 @@ describe('normalize', () => {
   })
 
   it('toJsonlBytes returns empty for empty input', () => {
-    expect(toJsonlBytes([]).length).toBe(0)
+    expect(jsonlBytesByCreatedAt([]).length).toBe(0)
   })
 
   it('toJsonlBytes sorts by created_at and ends with newline', () => {
-    const bytes = toJsonlBytes([
+    const bytes = jsonlBytesByCreatedAt([
       {
         comment_id: 'a',
         card_id: 'c',

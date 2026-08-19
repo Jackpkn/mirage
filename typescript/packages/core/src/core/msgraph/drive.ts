@@ -644,3 +644,40 @@ export async function statItem(
     throw error
   }
 }
+
+// Graph has no cheap HEAD for an item, so existence is a stat that tolerates
+// ENOENT. Both drive backends address items differently but probe
+// identically, so only their stat is injected.
+export function makeExists<A>(
+  stat: (accessor: A, path: PathSpec) => Promise<unknown>,
+): (accessor: A, path: PathSpec) => Promise<boolean> {
+  return async (accessor, path) => {
+    try {
+      await stat(accessor, path)
+      return true
+    } catch (error) {
+      if ((error as { code?: unknown }).code === 'ENOENT') return false
+      throw error
+    }
+  }
+}
+
+// Graph exposes no truncate, so the whole item is rewritten. A missing item
+// truncates to a fresh one, matching `open(path, "w")`.
+export function makeTruncate<A>(
+  read: (accessor: A, path: PathSpec) => Promise<Uint8Array>,
+  write: (accessor: A, path: PathSpec, data: Uint8Array) => Promise<void>,
+): (accessor: A, path: PathSpec, length: number) => Promise<void> {
+  return async (accessor, path, length) => {
+    let data: Uint8Array
+    try {
+      data = await read(accessor, path)
+    } catch (error) {
+      if ((error as { code?: unknown }).code !== 'ENOENT') throw error
+      data = new Uint8Array()
+    }
+    const resized = new Uint8Array(length)
+    resized.set(data.slice(0, length))
+    await write(accessor, path, resized)
+  }
+}

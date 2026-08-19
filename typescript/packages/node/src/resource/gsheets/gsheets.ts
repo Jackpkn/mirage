@@ -31,7 +31,11 @@ import {
 import { PathSpec, ResourceName } from '@struktoai/mirage-core/types'
 import type { FileStat } from '@struktoai/mirage-core/types'
 import { mountKey, mountPrefixOf } from '@struktoai/mirage-core/utils/key_prefix'
-import { redactGSheetsConfig, type GSheetsConfig, type GSheetsConfigRedacted } from './config.ts'
+import {
+  redactGSheetsConfig,
+  type GSheetsConfig,
+  type GSheetsConfigRedacted,
+} from '@struktoai/mirage-core/resource/gsheets/config'
 
 const gsheetsResolveGlob = makeResolveGlob(gsheetsReaddir)
 

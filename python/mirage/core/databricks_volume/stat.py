@@ -18,6 +18,7 @@ from email.utils import parsedate_to_datetime
 
 from mirage.accessor.databricks_volume import DatabricksVolumeAccessor
 from mirage.cache.index import NULL_INDEX, IndexCacheStore
+from mirage.core.databricks_volume._helpers import is_directory_metadata
 from mirage.core.databricks_volume.errors import is_not_found
 from mirage.core.databricks_volume.path import backend_path
 from mirage.types import FileStat, FileType, PathSpec
@@ -43,16 +44,6 @@ def modified_to_iso(value) -> str | None:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
     return parsed.astimezone(timezone.utc).isoformat()
-
-
-def _is_directory(metadata) -> bool:
-    value = getattr(metadata, "is_directory", None)
-    if value is not None:
-        return bool(value)
-    object_type = getattr(metadata, "object_type", None)
-    if object_type is None:
-        return False
-    return str(object_type).lower().endswith("directory")
 
 
 def _name_from_backend_path(path: str) -> str:
@@ -108,7 +99,7 @@ async def stat(
             return await _directory_stat_or_raise(accessor, remote_path, path)
         raise
     name = _name_from_backend_path(remote_path)
-    if _is_directory(metadata):
+    if is_directory_metadata(metadata):
         return FileStat(name=name, type=FileType.DIRECTORY)
     size = getattr(metadata, "content_length", None)
     modified = modified_to_iso(getattr(metadata, "last_modified", None))

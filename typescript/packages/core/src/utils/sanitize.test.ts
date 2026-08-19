@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { describe, expect, it } from 'vitest'
-import { pathSafeName, sanitizeName } from './sanitize.ts'
+import { pathSafeName, sanitizeLabel, sanitizeName } from './sanitize.ts'
 
 describe('sanitizeName', () => {
   it('returns "unknown" for empty/whitespace input', () => {
@@ -61,5 +61,37 @@ describe('pathSafeName', () => {
   it('preserves spelling and replaces only the path separator', () => {
     expect(pathSafeName("Zecheng's Server")).toBe("Zecheng's Server")
     expect(pathSafeName('a/b')).toBe('a∕b')
+  })
+})
+
+describe('sanitizeLabel', () => {
+  it('replaces unsafe characters and spaces with underscores', () => {
+    expect(sanitizeLabel('Hello World', { fallback: 'X', maxLen: 100 })).toBe('Hello_World')
+    expect(sanitizeLabel('My/Doc: A\\Test', { fallback: 'X', maxLen: 100 })).toBe('My_Doc_A_Test')
+  })
+
+  it('collapses runs and trims the edges', () => {
+    expect(sanitizeLabel('Hello   //  World', { fallback: 'X', maxLen: 100 })).toBe('Hello_World')
+    expect(sanitizeLabel('__edge__', { fallback: 'X', maxLen: 100 })).toBe('edge')
+  })
+
+  it('uses the fallback for a blank label', () => {
+    expect(sanitizeLabel('', { fallback: 'Untitled', maxLen: 100 })).toBe('Untitled')
+    expect(sanitizeLabel('   ', { fallback: 'No_Subject', maxLen: 80 })).toBe('No_Subject')
+  })
+
+  it('ellipsizes past the budget', () => {
+    const long = sanitizeLabel('x'.repeat(120), { fallback: 'X', maxLen: 100 })
+    expect(long).toHaveLength(100)
+    expect(long.endsWith('...')).toBe(true)
+    expect(sanitizeLabel('x'.repeat(100), { fallback: 'X', maxLen: 100 })).toBe('x'.repeat(100))
+  })
+
+  it('keeps non-ascii letters, matching python', () => {
+    // The per-backend copies this replaced used `\w`, which is ascii-only in
+    // javascript, so a CJK title became a row of underscores while python --
+    // where `\w` is unicode-aware -- kept it.
+    expect(sanitizeLabel('日本語の文書', { fallback: 'X', maxLen: 100 })).toBe('日本語の文書')
+    expect(sanitizeLabel('Café Notes', { fallback: 'X', maxLen: 100 })).toBe('Café_Notes')
   })
 })

@@ -324,35 +324,35 @@ export {
   redactGitHubConfig,
   type GitHubConfig,
   type GitHubConfigRedacted,
-} from './resource/github/config.ts'
+} from '@struktoai/mirage-core/core/github/config'
 export { GDocsResource, type GDocsResourceState } from './resource/gdocs/gdocs.ts'
 export {
   normalizeGDocsConfig,
   redactGDocsConfig,
   type GDocsConfig,
   type GDocsConfigRedacted,
-} from './resource/gdocs/config.ts'
+} from '@struktoai/mirage-core/resource/gdocs/config'
 export { GSheetsResource, type GSheetsResourceState } from './resource/gsheets/gsheets.ts'
 export {
   normalizeGSheetsConfig,
   redactGSheetsConfig,
   type GSheetsConfig,
   type GSheetsConfigRedacted,
-} from './resource/gsheets/config.ts'
+} from '@struktoai/mirage-core/resource/gsheets/config'
 export { GSlidesResource, type GSlidesResourceState } from './resource/gslides/gslides.ts'
 export {
   normalizeGSlidesConfig,
   redactGSlidesConfig,
   type GSlidesConfig,
   type GSlidesConfigRedacted,
-} from './resource/gslides/config.ts'
+} from '@struktoai/mirage-core/resource/gslides/config'
 export { GDriveResource, type GDriveResourceState } from './resource/gdrive/gdrive.ts'
 export {
   normalizeGDriveConfig,
   redactGDriveConfig,
   type GDriveConfig,
   type GDriveConfigRedacted,
-} from './resource/gdrive/config.ts'
+} from '@struktoai/mirage-core/resource/gdrive/config'
 export { DropboxResource, type DropboxResourceState } from './resource/dropbox/dropbox.ts'
 export {
   normalizeDropboxConfig,
@@ -373,14 +373,14 @@ export {
   redactGmailConfig,
   type GmailConfig,
   type GmailConfigRedacted,
-} from './resource/gmail/config.ts'
+} from '@struktoai/mirage-core/resource/gmail/config'
 export { GCalResource, type GCalResourceState } from './resource/gcal/gcal.ts'
 export {
   normalizeGCalConfig,
   redactGCalConfig,
   type GCalConfig,
   type GCalConfigRedacted,
-} from './resource/gcal/config.ts'
+} from '@struktoai/mirage-core/resource/gcal/config'
 export { EmailResource, type EmailResourceState } from './resource/email/email.ts'
 export {
   buildEmailConfig,

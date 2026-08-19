@@ -32,7 +32,11 @@ import {
 import { PathSpec, ResourceName } from '@struktoai/mirage-core/types'
 import type { FileStat } from '@struktoai/mirage-core/types'
 import { mountKey, mountPrefixOf } from '@struktoai/mirage-core/utils/key_prefix'
-import { redactGSlidesConfig, type GSlidesConfig, type GSlidesConfigRedacted } from './config.ts'
+import {
+  redactGSlidesConfig,
+  type GSlidesConfig,
+  type GSlidesConfigRedacted,
+} from '@struktoai/mirage-core/resource/gslides/config'
 
 const gslidesResolveGlob = makeResolveGlob(gslidesReaddir)
 

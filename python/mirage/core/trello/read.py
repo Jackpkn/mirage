@@ -14,14 +14,14 @@
 
 from mirage.accessor.trello import TrelloAccessor
 from mirage.cache.index import NULL_INDEX, IndexCacheStore
+from mirage.core.render.json import jsonl_bytes_by_created_at
 from mirage.core.trello.client import (get_board, get_card, list_board_labels,
                                        list_board_lists, list_board_members,
                                        list_card_comments, list_workspaces)
 from mirage.core.trello.normalize import (normalize_board, normalize_card,
                                           normalize_comment, normalize_label,
                                           normalize_list, normalize_member,
-                                          normalize_workspace, to_json_bytes,
-                                          to_jsonl_bytes)
+                                          normalize_workspace, to_json_bytes)
 from mirage.core.trello.pathing import split_suffix_id
 from mirage.resource.trello.config import TrelloConfig
 from mirage.types import PathSpec
@@ -96,7 +96,7 @@ async def read_bytes(
         rows = [
             normalize_comment(comment, card_id=card_id) for comment in comments
         ]
-        return to_jsonl_bytes(rows)
+        return jsonl_bytes_by_created_at(rows)
 
     raise enoent(virtual)
 

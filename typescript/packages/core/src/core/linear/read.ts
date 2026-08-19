@@ -37,12 +37,12 @@ import {
   normalizeTeam,
   normalizeUser,
   toJsonBytes,
-  toJsonlBytes,
   type NormalizedProjectIssue,
 } from './normalize.ts'
 import { splitSuffixId } from './pathing.ts'
 import { stripSlash } from '../../utils/slash.ts'
 import { enoent } from '../../utils/errors.ts'
+import { jsonlBytesByCreatedAt } from '../render/json.ts'
 
 export interface ReadFilter {
   teamIds?: readonly string[]
@@ -90,7 +90,7 @@ export async function readBytes(
       const normIssue = normalizeIssue(issue)
       const comments = await listIssueComments(transport, issueId)
       const rows = comments.map((c) => normalizeComment(c, issueId, normIssue.issue_key))
-      return toJsonlBytes(rows)
+      return jsonlBytesByCreatedAt(rows)
     }
     throw enoent(virtual)
   }

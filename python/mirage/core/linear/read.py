@@ -23,8 +23,9 @@ from mirage.core.linear.normalize import (normalize_comment, normalize_cycle,
                                           normalize_document, normalize_issue,
                                           normalize_project, normalize_team,
                                           normalize_user, project_issue_rows,
-                                          to_json_bytes, to_jsonl_bytes)
+                                          to_json_bytes)
 from mirage.core.linear.pathing import split_suffix_id
+from mirage.core.render.json import jsonl_bytes_by_created_at
 from mirage.types import PathSpec
 from mirage.utils.errors import enoent
 
@@ -72,7 +73,7 @@ async def read_bytes(
                                   issue_key=norm_issue.get("issue_key"))
                 for comment in comments
             ]
-            return to_jsonl_bytes(rows)
+            return jsonl_bytes_by_created_at(rows)
         raise enoent(virtual)
 
     if len(parts) == 4 and parts[0] == "teams" and parts[2] == "projects":

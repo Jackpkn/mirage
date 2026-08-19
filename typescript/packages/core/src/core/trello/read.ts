@@ -35,11 +35,11 @@ import {
   normalizeMember,
   normalizeWorkspace,
   toJsonBytes,
-  toJsonlBytes,
 } from './normalize.ts'
 import { splitSuffixId } from './pathing.ts'
 import { stripSlash } from '../../utils/slash.ts'
 import { enoent } from '../../utils/errors.ts'
+import { jsonlBytesByCreatedAt } from '../render/json.ts'
 
 export async function readBytes(
   transport: TrelloTransport,
@@ -139,7 +139,7 @@ export async function readBytes(
     const [, cardId] = splitSuffixId(parts[7] ?? '')
     const comments = await listCardComments(transport, cardId)
     const rows = comments.map((c) => normalizeComment(c, cardId))
-    return toJsonlBytes(rows)
+    return jsonlBytesByCreatedAt(rows)
   }
 
   throw enoent(virtual)

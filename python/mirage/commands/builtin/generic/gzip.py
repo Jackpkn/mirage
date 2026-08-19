@@ -1,5 +1,5 @@
 import zlib
-from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 
 from mirage.commands.builtin.utils.stream import _resolve_source
@@ -9,6 +9,7 @@ from mirage.commands.spec.constants import flag_kwarg_name
 from mirage.commands.spec.types import FlagValue, FlagView
 from mirage.io.types import ByteSource, IOResult
 from mirage.types import PathSpec
+from mirage.utils.compress import gzip_compress_stream, gzip_decompress_stream
 
 
 def extract_level(fl: FlagView) -> int:
@@ -28,32 +29,6 @@ def extract_level(fl: FlagView) -> int:
     return zlib.Z_DEFAULT_COMPRESSION
 
 
-async def _gzip_compress_stream(
-    source: AsyncIterator[bytes],
-    level: int,
-) -> AsyncIterator[bytes]:
-    compressor = zlib.compressobj(level, zlib.DEFLATED, zlib.MAX_WBITS | 16)
-    async for chunk in source:
-        compressed = compressor.compress(chunk)
-        if compressed:
-            yield compressed
-    tail = compressor.flush()
-    if tail:
-        yield tail
-
-
-async def _gzip_decompress_stream(
-        source: AsyncIterator[bytes]) -> AsyncIterator[bytes]:
-    decompressor = zlib.decompressobj(zlib.MAX_WBITS | 16)
-    async for chunk in source:
-        decompressed = decompressor.decompress(chunk)
-        if decompressed:
-            yield decompressed
-    tail = decompressor.flush()
-    if tail:
-        yield tail
-
-
 async def gzip(
     paths: list[PathSpec],
     *,
@@ -71,9 +46,9 @@ async def gzip(
         if decompress:
             source = _resolve_source(stdin,
                                      "gzip: (stdin): unexpected end of file")
-            return _gzip_decompress_stream(source), IOResult()
+            return gzip_decompress_stream(source), IOResult()
         source = _resolve_source(stdin)
-        return _gzip_compress_stream(source, level=level), IOResult()
+        return gzip_compress_stream(source, level=level), IOResult()
 
     if to_stdout:
         chunks: list[bytes] = []

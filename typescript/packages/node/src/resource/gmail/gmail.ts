@@ -28,7 +28,11 @@ import { GMAIL_PROMPT, GMAIL_WRITE_PROMPT } from '@struktoai/mirage-core/resourc
 import { PathSpec, ResourceName } from '@struktoai/mirage-core/types'
 import type { FileStat } from '@struktoai/mirage-core/types'
 import { mountKey, mountPrefixOf } from '@struktoai/mirage-core/utils/key_prefix'
-import { redactGmailConfig, type GmailConfig, type GmailConfigRedacted } from './config.ts'
+import {
+  redactGmailConfig,
+  type GmailConfig,
+  type GmailConfigRedacted,
+} from '@struktoai/mirage-core/resource/gmail/config'
 
 const gmailResolveGlob = makeResolveGlob(gmailReaddir)
 

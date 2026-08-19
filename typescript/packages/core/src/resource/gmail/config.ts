@@ -13,10 +13,10 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 export {
-  normalizeGoogleConfig as normalizeGSheetsConfig,
-  redactGoogleConfig as redactGSheetsConfig,
-} from '@struktoai/mirage-core/core/google/config'
+  normalizeGoogleConfig as normalizeGmailConfig,
+  redactGoogleConfig as redactGmailConfig,
+} from '../../core/google/config.ts'
 export type {
-  GoogleConfig as GSheetsConfig,
-  GoogleConfigRedacted as GSheetsConfigRedacted,
-} from '@struktoai/mirage-core/core/google/config'
+  GoogleConfig as GmailConfig,
+  GoogleConfigRedacted as GmailConfigRedacted,
+} from '../../core/google/config.ts'

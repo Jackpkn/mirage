@@ -12,12 +12,12 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import re
 from dataclasses import dataclass
+from functools import partial
+
+from mirage.utils.sanitize import sanitize_label
 
 TITLE_MAX_CHARS = 100
-UNSAFE_CHARS = re.compile(r'[^\w\s\-.]')
-MULTI_UNDERSCORE = re.compile(r'_+')
 
 
 @dataclass
@@ -32,24 +32,9 @@ class DocEntry:
     filename: str
 
 
-def sanitize_title(title: str) -> str:
-    """Sanitize a document title for use in filenames.
-
-    Args:
-        title (str): raw document title.
-
-    Returns:
-        str: sanitized title, max 100 chars.
-    """
-    if not title.strip():
-        return "Untitled"
-    cleaned = UNSAFE_CHARS.sub("_", title)
-    cleaned = cleaned.replace(" ", "_")
-    cleaned = MULTI_UNDERSCORE.sub("_", cleaned)
-    cleaned = cleaned.strip("_")
-    if len(cleaned) > TITLE_MAX_CHARS:
-        cleaned = cleaned[:TITLE_MAX_CHARS - 3] + "..."
-    return cleaned
+sanitize_title = partial(sanitize_label,
+                         fallback="Untitled",
+                         max_len=TITLE_MAX_CHARS)
 
 
 def make_filename(title: str, doc_id: str, modified_time: str = "") -> str:
