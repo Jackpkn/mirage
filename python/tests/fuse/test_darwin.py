@@ -16,7 +16,6 @@ import ctypes
 import errno
 import sys
 
-import mfusepy
 import pytest
 
 from mirage.fuse import darwin
@@ -24,6 +23,15 @@ from mirage.fuse.darwin import (RENAME_EXCL, RENAME_SWAP, SetattrX,
                                 changes_from_setattr,
                                 install_macfuse_extensions, rename_flags_check,
                                 timespec_to_float)
+
+try:
+    import mfusepy
+except (ImportError, OSError):
+    mfusepy = None
+
+requires_mfusepy = pytest.mark.skipif(
+    mfusepy is None,
+    reason="mfusepy needs a libfuse on the system (macFUSE, fuse3, WinFsp)")
 
 
 def make_attr(valid: int, **fields: int) -> SetattrX:
@@ -91,6 +99,7 @@ def test_rename_flags_swap_is_unsupported():
                               flags=RENAME_SWAP) == errno.ENOTSUP
 
 
+@requires_mfusepy
 @pytest.mark.skipif(sys.platform != "darwin",
                     reason="mfusepy builds fuse_operations per platform; the "
                     "reserved tail the Apple fields replace only exists in "
@@ -99,7 +108,7 @@ def test_install_extends_struct_and_keeps_size(monkeypatch):
     monkeypatch.setattr(darwin, "_installed", False)
     monkeypatch.setattr(darwin.sys, "platform", "darwin")
     before = ctypes.sizeof(mfusepy.fuse_operations)
-    install_macfuse_extensions()
+    install_macfuse_extensions(mfusepy)
     names = [f[0] for f in mfusepy.fuse_operations._fields_]
     assert "setattr_x" in names
     assert "renamex" in names
@@ -111,18 +120,20 @@ def test_install_extends_struct_and_keeps_size(monkeypatch):
     assert hasattr(mfusepy.FUSE, "renamex")
 
 
+@requires_mfusepy
 def test_install_is_idempotent(monkeypatch):
     monkeypatch.setattr(darwin, "_installed", False)
     monkeypatch.setattr(darwin.sys, "platform", "darwin")
-    install_macfuse_extensions()
+    install_macfuse_extensions(mfusepy)
     fields_after_first = mfusepy.fuse_operations
-    install_macfuse_extensions()
+    install_macfuse_extensions(mfusepy)
     assert mfusepy.fuse_operations is fields_after_first
 
 
+@requires_mfusepy
 def test_install_skips_off_darwin(monkeypatch):
     monkeypatch.setattr(darwin, "_installed", False)
     monkeypatch.setattr(darwin.sys, "platform", "linux")
     saved = mfusepy.fuse_operations
-    install_macfuse_extensions()
+    install_macfuse_extensions(mfusepy)
     assert mfusepy.fuse_operations is saved
