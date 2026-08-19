@@ -25,10 +25,17 @@ def make_copy(driver: ObjectStoreDriver[A, C],
     """Build single-object copy over one driver.
 
     Args:
-        driver (ObjectStoreDriver): the store's native surface.
+        driver (ObjectStoreDriver): the store's native surface; must
+            carry a native copy — a store without one leaves copy
+            unwired, which the dispatcher surfaces as ENOTSUP.
         exists (ExistsFn): the backend's existence probe, for the
             same-key guard.
     """
+    copy_file = driver.copy_file
+    if copy_file is None:
+        raise ValueError(
+            f"{driver.resource} driver has no native copy; leave copy "
+            "unwired instead of building it")
 
     async def copy(accessor: A, src_spec: PathSpec,
                    dst_spec: PathSpec) -> None:
@@ -46,7 +53,7 @@ def make_copy(driver: ObjectStoreDriver[A, C],
                 raise enoent(src_spec)
             return
         async with driver.connect(accessor) as conn:
-            if not await driver.copy_file(conn, src_key, dst_key):
+            if not await copy_file(conn, src_key, dst_key):
                 raise enoent(src_spec.virtual)
         await invalidate_after_write(dst_spec)
         # The copy can materialize the destination's missing ancestors.

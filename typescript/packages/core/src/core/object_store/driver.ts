@@ -157,9 +157,9 @@ export interface ObjectStoreConnection<C> {
  *
  * Directory semantics the primitives must honor: a directory is a key
  * prefix, an empty directory is a zero-byte marker object keyed at the
- * prefix itself (`key/`), and symlinks or hardlinks do not exist —
- * ops that would need them stay unwired, which the dispatcher already
- * surfaces as ENOTSUP.
+ * prefix itself (`key/`) on stores that accept one (`markersSupported`),
+ * and symlinks or hardlinks do not exist — ops that would need them
+ * stay unwired, which the dispatcher already surfaces as ENOTSUP.
  */
 export interface ObjectStoreDriver<A extends Accessor, C> {
   /** Resource name, used in op records and log lines. */
@@ -190,7 +190,11 @@ export interface ObjectStoreDriver<A extends Accessor, C> {
   head: (conn: C, key: string) => Promise<ObjectMeta | null>
   /** Full object bytes, null when absent. */
   get: (conn: C, key: string) => Promise<Uint8Array | null>
-  /** Write one object. */
+  /**
+   * Write one object. A store error meaning the container is absent
+   * (`isNotFound`) propagates, and the write factory restates it as
+   * ENOENT on the path.
+   */
   put: (conn: C, key: string, data: Uint8Array) => Promise<void>
   /**
    * Delete one key (every revision on a versioned store); silent on a
@@ -199,22 +203,35 @@ export interface ObjectStoreDriver<A extends Accessor, C> {
   deleteFile: (conn: C, key: string) => Promise<void>
   /** Delete every key under a prefix. */
   deletePrefix: (conn: C, pfx: string) => Promise<void>
-  /** Relocate one object; false when the source names no object. */
-  moveFile: (conn: C, srcKey: string, dstKey: string) => Promise<boolean>
-  /**
-   * Relocate every key under a prefix; false when the source prefix
-   * holds nothing.
-   */
-  movePrefix: (conn: C, srcPfx: string, dstPfx: string) => Promise<boolean>
-  /**
-   * Copy one object; false when the source names no object, if the
-   * store can tell cheaply.
-   */
-  copyFile: (conn: C, srcKey: string, dstKey: string) => Promise<boolean>
   /** Whether any key sits under a prefix. */
   probePrefix: (conn: C, pfx: string) => Promise<boolean>
   /** Whether a store error means the key is absent. */
   isNotFound: (err: unknown) => boolean
+  /**
+   * Relocate one object; false when the source names no object. Absent
+   * when the store has no native move — rename stays unwired then,
+   * which the dispatcher surfaces as ENOTSUP.
+   */
+  moveFile?: (conn: C, srcKey: string, dstKey: string) => Promise<boolean>
+  /**
+   * Relocate every key under a prefix; false when the source prefix
+   * holds nothing. Absence follows `moveFile`.
+   */
+  movePrefix?: (conn: C, srcPfx: string, dstPfx: string) => Promise<boolean>
+  /**
+   * Copy one object; false when the source names no object, if the
+   * store can tell cheaply. Absent when the store has no native copy —
+   * copy stays unwired then.
+   */
+  copyFile?: (conn: C, srcKey: string, dstKey: string) => Promise<boolean>
+  /**
+   * Whether the store accepts the zero-byte `key/` marker object;
+   * absent means true. False when the store refuses one client-side
+   * (hf): an empty directory cannot exist there, `makeMkdir` has
+   * nothing to write, and a directory exists exactly while it holds a
+   * key.
+   */
+  markersSupported?: boolean
   /**
    * Find's listing with native predicate push-down, returning the
    * iterator and whether the query was narrowed beyond the prefix;

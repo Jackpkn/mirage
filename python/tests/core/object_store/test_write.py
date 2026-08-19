@@ -13,6 +13,7 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import asyncio
+from dataclasses import replace
 
 from mirage.cache.context import push_cache_manager
 from mirage.core.object_store.write import (make_create, make_mkdir,
@@ -77,3 +78,63 @@ def test_mkdir_writes_a_marker_and_parents_gate_ancestors(accessor):
     deep = _managed(
         make_mkdir(make_driver(store))(accessor, spec("/x/y"), parents=True))
     assert deep.writes == ["/x/y", "/x"]
+
+
+def test_mkdir_without_marker_support_is_a_no_op(accessor):
+    store = FakeStore()
+    driver = replace(make_driver(store), markers_supported=False)
+    manager = _managed(
+        make_mkdir(driver)(accessor, spec("/a/b"), parents=True))
+    assert store.objects == {}
+    assert store.connects == 0
+    assert manager.writes == []
+
+
+async def _put_missing_container(conn: FakeStore, key: str,
+                                 data: bytes) -> None:
+    del conn, data
+    raise KeyError(key)
+
+
+def _enoent_from(fn, path: str) -> FileNotFoundError:
+    store = FakeStore()
+    driver = replace(make_driver(store), put=_put_missing_container)
+    try:
+        _managed(fn(driver, spec(path)))
+    except FileNotFoundError as exc:
+        return exc
+    raise AssertionError("expected FileNotFoundError")
+
+
+def test_write_names_the_path_not_the_key_when_the_container_is_gone(accessor):
+    # The driver primitives speak keys, so the store's own error names
+    # "a/b/c.txt"; only the factory can restate it as the path the user
+    # typed, which is the only spelling allowed in a message.
+    exc = _enoent_from(lambda d, s: make_write_bytes(d)(accessor, s, b"hi"),
+                       "/a/b/c.txt")
+    assert str(exc) == "/mnt/a/b/c.txt"
+
+
+def test_create_and_truncate_name_the_path_too(accessor):
+    created = _enoent_from(lambda d, s: make_create(d)(accessor, s),
+                           "/a/new.txt")
+    assert str(created) == "/mnt/a/new.txt"
+    cut = _enoent_from(lambda d, s: make_truncate(d)(accessor, s, 4),
+                       "/a/cut.txt")
+    assert str(cut) == "/mnt/a/cut.txt"
+
+
+def test_a_store_error_that_is_not_a_missing_container_propagates(accessor):
+    store = FakeStore()
+
+    async def boom(conn: FakeStore, key: str, data: bytes) -> None:
+        del conn, key, data
+        raise RuntimeError("bucket on fire")
+
+    driver = replace(make_driver(store), put=boom)
+    try:
+        _managed(make_write_bytes(driver)(accessor, spec("/a.txt"), b"hi"))
+    except RuntimeError as exc:
+        assert str(exc) == "bucket on fire"
+    else:
+        raise AssertionError("expected RuntimeError")

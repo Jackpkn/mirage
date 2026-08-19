@@ -92,7 +92,7 @@ export abstract class HfResource extends BaseResource implements Resource {
   }
 
   writeFile(p: PathSpec, data: Uint8Array): Promise<void> {
-    return writeCore(this.accessor, p, data, this.index)
+    return writeCore(this.accessor, p, data)
   }
 
   readdir(p: PathSpec): Promise<string[]> {
@@ -112,7 +112,7 @@ export abstract class HfResource extends BaseResource implements Resource {
   }
 
   unlink(p: PathSpec): Promise<void> {
-    return unlinkCore(this.accessor, p, this.index)
+    return unlinkCore(this.accessor, p)
   }
 
   du(p: PathSpec): Promise<number> {

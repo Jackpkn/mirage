@@ -60,4 +60,10 @@ describe('object_store copy', () => {
       codeOf(managed(() => copyFor(new FakeStore())(accessor, spec('/a.txt'), spec('/a.txt')))),
     ).resolves.toBe('ENOENT')
   })
+
+  it('refuses to build without a native copy', () => {
+    const driver = makeDriver(new FakeStore())
+    delete driver.copyFile
+    expect(() => makeCopy(driver, makeExists(makeStat(driver)))).toThrow('no native copy')
+  })
 })
