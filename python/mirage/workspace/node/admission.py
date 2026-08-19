@@ -16,6 +16,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from mirage.context.session_context import session_path_allowed
 from mirage.io.types import ByteSource
 from mirage.policy import (Ask, CommandContext, CommandsSpec, Deny, Pending,
                            render_deny, render_pending)
@@ -122,6 +123,22 @@ def policy_scopes(
     return scopes
 
 
+def _seen(session: Session, specs: list[PathSpec]) -> tuple[PathSpec, ...]:
+    """The paths of a line the session can see.
+
+    A hidden path is nonexistent for the session, so no policy may
+    learn of it either: a rule scoped to it must not fire (the reason
+    would say the path is there), an ask must not be raised for it (a
+    request would name it to the host), and the line runs on to the
+    door, which answers ENOENT like any other absent path.
+
+    Args:
+        session (Session): the session running the line.
+        specs (list[PathSpec]): the paths as the gate collected them.
+    """
+    return tuple(p for p in specs if session_path_allowed(session, p.virtual))
+
+
 async def admit(
     name: str,
     args: list[str],
@@ -140,8 +157,10 @@ async def admit(
     runtime takes whole (``admit_line``, per parsed command). A word
     the session's allow lists do not install is bash's "command not
     found" before any admission hook, so an unlisted tool never leaks
-    a deny reason; a Deny renders in the outcome table's voice; an Ask
-    is answered by the door from the session's grants or the host.
+    a deny reason; a path the session cannot see is dropped before any
+    hook, so a rule never names it and the door answers ENOENT; a Deny
+    renders in the outcome table's voice; an Ask is answered by the
+    door from the session's grants or the host.
 
     Args:
         name (str): command name, expanded.
@@ -163,10 +182,12 @@ async def admit(
                                    session.cwd, stdin)
                if name in CWD_DEFAULT_RAW else None)
     ctx = CommandContext(command=name,
-                         paths=tuple(
+                         paths=_seen(
+                             session,
                              policy_scopes(name, args, operands, namespace,
                                            session.cwd, implied)),
-                         operands=tuple(
+                         operands=_seen(
+                             session,
                              positional_scopes(name, args, session.cwd,
                                                list(operands))),
                          argv=tuple(args),

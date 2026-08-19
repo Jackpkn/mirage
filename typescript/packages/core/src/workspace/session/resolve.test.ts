@@ -151,7 +151,15 @@ describe('rebase / boundHidden', () => {
       '/repo/docs/*',
     ])
     expect(rebase('repo', null)).toEqual([])
-    expect(rebase('/', { paths: { hide: ['a', '/b', ''] } })).toEqual(['/a', '/b', '/'])
+    // A blank entry is refused at the door, so the mount root is spelled
+    // "/" (and only that way): the mount tier is where a relative entry
+    // is legal, and "/" there is the root of the mount, not of the tree.
+    expect(rebase('/', { paths: { hide: ['a', '/b', '/'] } })).toEqual(['/a', '/b', '/'])
+    expect(rebase('/repo', { paths: { hide: ['a', '/b', '/'] } })).toEqual([
+      '/repo/a',
+      '/repo/b',
+      '/repo',
+    ])
   })
 
   it('combines workspace and rebased mount hides', () => {

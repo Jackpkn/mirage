@@ -1,0 +1,183 @@
+{
+  "cases": [
+    {
+      "id": "conflict_prep",
+      "seq": 923066,
+      "targets": [
+        "ram-commands"
+      ],
+      "command": "mkdir -p /scratch/both/locked && touch /scratch/both/a /scratch/both/b /scratch/both/locked/y /scratch/plain2",
+      "expect": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "conflict_allow_and_deny_on_one_path_the_deny_speaks",
+      "seq": 923067,
+      "targets": [
+        "ram-commands"
+      ],
+      "command": "rm /repo/letters.txt",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "rm: /repo/letters.txt: no deletes in the repo\n"
+      }
+    },
+    {
+      "id": "conflict_the_allowed_head_still_works_elsewhere",
+      "seq": 923068,
+      "targets": [
+        "ram-commands"
+      ],
+      "command": "rm /scratch/plain2 && echo gone",
+      "expect": {
+        "exit": 0,
+        "stdout": "gone\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "conflict_deny_over_ask_on_one_subject_first_rule_of_the_tier",
+      "seq": 923069,
+      "targets": [
+        "ram-commands"
+      ],
+      "session": "granted",
+      "command": "rm /scratch/both/locked/y",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "rm: /scratch/both/locked/y: both: locked\n"
+      }
+    },
+    {
+      "id": "conflict_the_ask_still_fires_beside_the_deny",
+      "seq": 923070,
+      "targets": [
+        "ram-commands"
+      ],
+      "session": "granted",
+      "command": "rm /scratch/both/a",
+      "expect": {
+        "exit": 126,
+        "stdout": "",
+        "stderr": "rm: requires approval: both: needs a nod (approval d2c4107e8cd1)\n"
+      }
+    },
+    {
+      "id": "conflict_a_session_grant_answers_the_ask",
+      "seq": 923071,
+      "targets": [
+        "ram-commands"
+      ],
+      "session": "granted",
+      "answer": "allow_session",
+      "command": "rm /scratch/both/a && ls /scratch/both",
+      "expect": {
+        "exit": 0,
+        "stdout": "b\nlocked\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "conflict_the_session_grant_never_beats_the_deny",
+      "seq": 923072,
+      "targets": [
+        "ram-commands"
+      ],
+      "session": "granted",
+      "command": "rm /scratch/both/locked/y",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "rm: /scratch/both/locked/y: both: locked\n"
+      }
+    },
+    {
+      "id": "conflict_the_deny_kept_the_file",
+      "seq": 923073,
+      "targets": [
+        "ram-commands"
+      ],
+      "command": "test -e /scratch/both/locked/y && echo kept",
+      "expect": {
+        "exit": 0,
+        "stdout": "kept\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "conflict_two_ask_tiers_the_first_tier_speaks",
+      "seq": 923074,
+      "targets": [
+        "ram-commands"
+      ],
+      "session": "nodder",
+      "command": "rm /scratch/both/b",
+      "expect": {
+        "exit": 126,
+        "stdout": "",
+        "stderr": "rm: requires approval: both: needs a nod (approval 8a63c4d87a83)\n"
+      }
+    },
+    {
+      "id": "conflict_one_grant_answers_the_line_whatever_tier_also_asks",
+      "seq": 923075,
+      "targets": [
+        "ram-commands"
+      ],
+      "session": "nodder",
+      "answer": "allow_session",
+      "command": "rm /scratch/both/b && ls /scratch/both",
+      "expect": {
+        "exit": 0,
+        "stdout": "locked\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "conflict_two_deny_tiers_the_mount_speaks_first",
+      "seq": 923076,
+      "targets": [
+        "ram-commands"
+      ],
+      "command": "rm /repo/sealed/x",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "rm: /repo/sealed/x: owner: sealed\n"
+      }
+    },
+    {
+      "id": "conflict_a_later_tiers_deny_outranks_an_earlier_tiers_ask",
+      "seq": 923077,
+      "targets": [
+        "ram-commands"
+      ],
+      "session": "granted",
+      "command": "cd /repo && git branch",
+      "expect": {
+        "exit": 126,
+        "stdout": "",
+        "stderr": "git: policy denied: no branches\n"
+      }
+    },
+    {
+      "id": "conflict_a_hidden_path_outranks_the_ask_and_the_deny",
+      "seq": 923078,
+      "targets": [
+        "ram-commands"
+      ],
+      "session": "veiled",
+      "command": "rm /scratch/shared/h /repo/sealed/x",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "rm: cannot remove '/scratch/shared/h': No such file or directory\nrm: cannot remove '/repo/sealed/x': No such file or directory\n"
+      }
+    }
+  ]
+}

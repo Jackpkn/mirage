@@ -99,3 +99,76 @@ def test_match_op_only_for_pure_path_rules():
     named = CommandRule(reason="x", commands=("rm", ), paths=("/data/*", ))
     assert not match_op(named, classify_paths(named.paths), op)
     assert not match_op(CommandRule(reason="x", commands=("rm", )), None, op)
+
+
+def _subtree_ctx(command: str, *operands: str) -> CommandContext:
+    paths = tuple(_path(o, raw=o) for o in operands)
+    return CommandContext(command=command,
+                          paths=paths,
+                          operands=paths,
+                          argv=operands,
+                          cwd="/",
+                          registry=_Registry(),
+                          tokens=(command, *operands))
+
+
+def test_a_subtree_command_on_the_directory_holding_the_scope_matches():
+    # `/x/locked/*` protects the children; `rm -r /x/locked`, `rm -r /x`
+    # and `mv /x/locked elsewhere` take them along, so for rm, rmdir and
+    # mv the operand at or above the holding directory matches.
+    rule = CommandRule(reason="frozen", paths=("/x/locked/*", ))
+    scope = classify_paths(rule.paths)
+    for command in ("rm", "rmdir"):
+        for operand in ("/x/locked", "/x", "/"):
+            assert match_rule(rule, scope, _subtree_ctx(
+                command, operand)) == RuleMatch(operand=operand)
+        assert match_rule(rule, scope, _subtree_ctx(command,
+                                                    "/x/other")) is None
+    assert match_rule(rule, scope,
+                      _subtree_ctx("mv", "/x/locked",
+                                   "/y")) == RuleMatch(operand="/x/locked")
+    assert match_rule(rule, scope,
+                      _subtree_ctx("mv", "/x",
+                                   "/y")) == RuleMatch(operand="/x")
+    # mv's destination matches only as the holding directory itself:
+    # moving into it lands in the scope, moving into an ancestor does not.
+    assert match_rule(rule, scope, _subtree_ctx(
+        "mv", "/z", "/x/locked")) == RuleMatch(operand="/x/locked")
+    assert match_rule(rule, scope, _subtree_ctx("mv", "/z", "/x")) is None
+    # A reader given the same operand is not a whole-line refusal: its
+    # I/O under the scope is the command tier's to refuse, file by file.
+    assert match_rule(rule, scope, _subtree_ctx("cat", "/x/locked")) is None
+    assert match_rule(rule, scope, _subtree_ctx("cp", "/x", "/y")) is None
+    # A command-scoped rule judges its own command the same way.
+    named = CommandRule(reason="locked",
+                        commands=("rm", ),
+                        paths=("/x/locked/*", ))
+    assert match_rule(named, classify_paths(named.paths),
+                      _subtree_ctx("rm", "/x")) == RuleMatch(operand="/x")
+    assert match_rule(named, classify_paths(named.paths),
+                      _subtree_ctx("mv", "/x", "/y")) is None
+
+
+def test_match_op_refuses_a_subtree_op_on_the_directory_holding_the_scope():
+    rule = CommandRule(reason="frozen", paths=("/data/locked/*", ))
+    scope = classify_paths(rule.paths)
+    for op, virtual in (("rename", "/data/locked"), ("rename", "/data"),
+                        ("rmdir", "/data/locked"), ("rm_r", "/data")):
+        assert match_op(
+            rule, scope,
+            OpsContext(op=op, path=_path(virtual), write=True,
+                       prefix="/data/"))
+    # A read or write of the directory itself is not in the scope, and a
+    # subtree op beside the scope is not either.
+    assert not match_op(
+        rule, scope,
+        OpsContext(op="readdir",
+                   path=_path("/data/locked"),
+                   write=False,
+                   prefix="/data/"))
+    assert not match_op(
+        rule, scope,
+        OpsContext(op="rename",
+                   path=_path("/data/other"),
+                   write=True,
+                   prefix="/data/"))

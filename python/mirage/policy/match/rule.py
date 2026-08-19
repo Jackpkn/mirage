@@ -14,11 +14,12 @@
 
 from dataclasses import dataclass
 
+from mirage.policy.constants import SUBTREE_COMMANDS, SUBTREE_OPS
 from mirage.policy.match.allow import line_tokens
 from mirage.policy.match.pattern import pattern_matches
 from mirage.policy.types import CommandContext, CommandRule, OpsContext
 from mirage.types import HiddenPaths
-from mirage.utils.hidden import path_hidden
+from mirage.utils.hidden import path_covers, path_hidden
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,13 +85,44 @@ def match_rule(rule: CommandRule, scope: HiddenPaths | None,
     for p in ctx.paths:
         if path_hidden(scope, p.virtual):
             return RuleMatch(operand=p.raw_path or p.virtual)
+    return _subtree_match(scope, ctx)
+
+
+def _subtree_match(scope: HiddenPaths,
+                   ctx: CommandContext) -> RuleMatch | None:
+    """The operand of a subtree command that holds the scope, if any.
+
+    ``rm -r /x`` and ``mv /x /y`` take ``/x/locked/*`` along, so for
+    the commands in ``SUBTREE_COMMANDS`` an operand at or above the
+    directory holding the scope matches like an operand inside it.
+    ``mv``'s last operand is its destination, which only matches when
+    it is that directory itself (moving into ``/x/locked`` lands in
+    the scope; moving into ``/x`` does not).
+
+    Args:
+        scope (HiddenPaths): the rule's classified paths.
+        ctx (CommandContext): the classified command.
+    """
+    if ctx.command not in SUBTREE_COMMANDS:
+        return None
+    operands = list(ctx.operands)
+    dst = (operands.pop()
+           if ctx.command == "mv" and len(operands) > 1 else None)
+    for p in operands:
+        if path_covers(scope, p.virtual):
+            return RuleMatch(operand=p.raw_path or p.virtual)
+    if dst is not None and path_covers(scope, dst.virtual, ancestors=False):
+        return RuleMatch(operand=dst.raw_path or dst.virtual)
     return None
 
 
 def match_op(rule: CommandRule, scope: HiddenPaths | None,
              ctx: OpsContext) -> bool:
     """Whether a rule refuses an op: only a pure path rule can, since an
-    op does not know which command issued it.
+    op does not know which command issued it. The op's path is tested
+    against the scope, and an op that moves or removes a whole subtree
+    (``SUBTREE_OPS``) is also refused on the directory holding the
+    scope or on any ancestor, since it would take the scope along.
 
     Args:
         rule (CommandRule): the rule.
@@ -99,4 +131,6 @@ def match_op(rule: CommandRule, scope: HiddenPaths | None,
     """
     if rule.commands or scope is None:
         return False
-    return path_hidden(scope, ctx.path.virtual)
+    if path_hidden(scope, ctx.path.virtual):
+        return True
+    return ctx.op in SUBTREE_OPS and path_covers(scope, ctx.path.virtual)

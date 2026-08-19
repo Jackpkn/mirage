@@ -22,6 +22,7 @@ import {
   MountNotAllowedError,
   pathAllowed,
   runWithSession,
+  sessionPathAllowed,
 } from './session_context.ts'
 import { asyncContextIsolatesTasks } from '../utils/async_context.ts'
 import { MountMode, weakerMode } from '../types.ts'
@@ -181,6 +182,24 @@ describe('bound hides', () => {
       expect(pathAllowed('/repo/certs/k.pem')).toBe(false)
       expect(pathAllowed('/repo/README')).toBe(true)
       expect(pathAllowed('/shared/public')).toBe(true)
+      return Promise.resolve()
+    })
+  })
+
+  it('the explicit-session predicate answers without a binding', async () => {
+    // A door that holds the session (the admission gate) asks it
+    // directly; the bound form is the same answer for the bound
+    // session, and no session bound means nothing is hidden.
+    const sess = new Session({ sessionId: 'agent', hiddenPaths: { paths: ['/a/secrets'] } })
+    sess.boundHidden = { patterns: ['*.pem'] }
+    expect(getCurrentSession()).toBeNull()
+    expect(sessionPathAllowed(sess, '/a/secrets/x')).toBe(false)
+    expect(sessionPathAllowed(sess, '/repo/k.pem')).toBe(false)
+    expect(sessionPathAllowed(sess, '/a/public')).toBe(true)
+    expect(pathAllowed('/a/secrets/x')).toBe(true)
+    await runWithSession(sess, () => {
+      expect(pathAllowed('/a/secrets/x')).toBe(false)
+      expect(pathAllowed('/a/public')).toBe(true)
       return Promise.resolve()
     })
   })

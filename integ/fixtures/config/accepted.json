@@ -1,29 +1,98 @@
 {
-  "note": "Workspace configs both loaders must accept. The counterpart to rejected.json, and the reason it exists: TypeScript checks keys against hand-written tables that mirror Python's pydantic models, so a field added on the Python side would be silently refused by TypeScript until a config using it turned up. Every key of every block appears here at least once, which turns that drift into a failing test. Values are only as real as validation demands — no resource is built and no script is read, both loaders stop at the shape.",
+  "note": "Workspace configs both loaders must accept. The counterpart to rejected.json, and the reason it exists: TypeScript checks keys against hand-written tables that mirror Python's pydantic models, so a field added on the Python side would be silently refused by TypeScript until a config using it turned up. Every key of every block appears here at least once, which turns that drift into a failing test. Values are only as real as validation demands \u2014 no resource is built and no script is read, both loaders stop at the shape.",
   "cases": [
     {
       "name": "top level: every key",
       "config": {
-        "mounts": { "/d": { "resource": "ram" } },
-        "clis": { "sl": { "cli": "slack" } },
-        "runtimes": ["node"],
+        "mounts": {
+          "/d": {
+            "resource": "ram"
+          }
+        },
+        "clis": {
+          "sl": {
+            "cli": "slack"
+          }
+        },
+        "runtimes": [
+          "node"
+        ],
         "policy": "policy.py",
         "permissions": {
           "commands": {
-            "allow": ["ls", "cat", "git", "rm"],
-            "ask": ["git push", { "reason": "sign-off", "commands": ["rm"], "paths": ["/d/shared/*"] }],
-            "deny": [{ "reason": "no rm here", "commands": ["rm"], "paths": ["/d/*"] }, "shred"]
+            "allow": [
+              "ls",
+              "cat",
+              "git",
+              "rm"
+            ],
+            "ask": [
+              "git push",
+              {
+                "reason": "sign-off",
+                "commands": {
+                  "rm": [
+                    "/d/shared/*"
+                  ]
+                }
+              }
+            ],
+            "deny": [
+              {
+                "reason": "no rm here",
+                "commands": {
+                  "rm": [
+                    "/d/*"
+                  ]
+                }
+              },
+              "shred"
+            ]
           },
-          "paths": { "hide": ["/d/finance", "*.key"] }
+          "paths": {
+            "hide": [
+              "/d/finance",
+              "*.key"
+            ]
+          }
         },
         "profiles": {
-          "default": { "cwd": "/d", "env": { "PAGER": "cat" }, "mounts": { "/d": "rw" } },
+          "default": {
+            "cwd": "/d",
+            "env": {
+              "PAGER": "cat"
+            },
+            "mounts": {
+              "/d": "rw"
+            }
+          },
           "reviewer": {
             "extends": "default",
-            "mounts": ["/d"],
-            "paths": { "hide": ["/d/docs"] },
-            "vars": { "hide": ["AWS_*"] },
-            "commands": { "allow": ["ls", "git log"], "ask": ["git *"], "deny": ["rm"] }
+            "mounts": [
+              "/d"
+            ],
+            "paths": {
+              "hide": [
+                "/d/docs"
+              ]
+            },
+            "vars": {
+              "hide": [
+                "AWS_*"
+              ]
+            },
+            "commands": {
+              "allow": [
+                "ls",
+                "git log"
+              ],
+              "ask": [
+                "git *"
+              ],
+              "deny": [
+                "rm"
+              ]
+            }
           }
         },
         "mode": "write",
@@ -31,9 +100,15 @@
         "default_session_id": "s1",
         "default_agent_id": "a1",
         "workspace_id": "w1",
-        "cache": { "type": "ram" },
-        "index": { "type": "ram" },
-        "store": { "type": "ram" }
+        "cache": {
+          "type": "ram"
+        },
+        "index": {
+          "type": "ram"
+        },
+        "store": {
+          "type": "ram"
+        }
       }
     },
     {
@@ -43,13 +118,37 @@
           "/d": {
             "resource": "ram",
             "mode": "read",
-            "config": { "root": "/tmp/x" },
-            "command_limits": { "cat": { "max_bytes": 1024, "on_exceed": "error" } },
+            "config": {
+              "root": "/tmp/x"
+            },
+            "command_limits": {
+              "cat": {
+                "max_bytes": 1024,
+                "on_exceed": "error"
+              }
+            },
             "backend": "vfs",
             "mountpoint": "/mnt/d",
             "permissions": {
-              "paths": { "hide": [".env", "*.pem"] },
-              "commands": { "ask": ["git rebase"], "deny": [{ "reason": "read-only history", "commands": ["git push"] }] }
+              "paths": {
+                "hide": [
+                  ".env",
+                  "*.pem"
+                ]
+              },
+              "commands": {
+                "ask": [
+                  "git rebase"
+                ],
+                "deny": [
+                  {
+                    "reason": "read-only history",
+                    "commands": [
+                      "git push"
+                    ]
+                  }
+                ]
+              }
             }
           }
         }
@@ -58,15 +157,30 @@
     {
       "name": "cache and index: every ram key",
       "config": {
-        "mounts": { "/d": { "resource": "ram" } },
-        "cache": { "type": "ram", "limit": "1MB", "max_drain_bytes": 8 },
-        "index": { "type": "ram", "ttl": 5 }
+        "mounts": {
+          "/d": {
+            "resource": "ram"
+          }
+        },
+        "cache": {
+          "type": "ram",
+          "limit": "1MB",
+          "max_drain_bytes": 8
+        },
+        "index": {
+          "type": "ram",
+          "ttl": 5
+        }
       }
     },
     {
       "name": "cache and index: every redis key",
       "config": {
-        "mounts": { "/d": { "resource": "ram" } },
+        "mounts": {
+          "/d": {
+            "resource": "ram"
+          }
+        },
         "cache": {
           "type": "redis",
           "limit": "1MB",
@@ -85,14 +199,23 @@
     {
       "name": "store: every key, one backend per plane",
       "config": {
-        "mounts": { "/d": { "resource": "ram" } },
+        "mounts": {
+          "/d": {
+            "resource": "ram"
+          }
+        },
         "store": {
           "type": "redis",
           "url": "redis://localhost:6379/0",
           "key_prefix": "mirage:",
           "root": "/tmp/state",
-          "namespace": { "type": "ram" },
-          "observer": { "type": "disk", "root": "/tmp/observer" },
+          "namespace": {
+            "type": "ram"
+          },
+          "observer": {
+            "type": "disk",
+            "root": "/tmp/observer"
+          },
           "workspace": {
             "type": "s3",
             "bucket": "b",
@@ -108,43 +231,152 @@
     {
       "name": "clis entry: the script form takes a runtime and a config",
       "config": {
-        "mounts": { "/d": { "resource": "ram" } },
-        "clis": { "tool": { "script": "tool.py", "runtime": "py", "config": { "token": "t" } } }
+        "mounts": {
+          "/d": {
+            "resource": "ram"
+          }
+        },
+        "clis": {
+          "tool": {
+            "script": "tool.py",
+            "runtime": "py",
+            "config": {
+              "token": "t"
+            }
+          }
+        }
       }
     },
     {
       "name": "clis entry: the cli form takes a file reference",
       "config": {
-        "mounts": { "/d": { "resource": "ram" } },
-        "clis": { "tally": { "cli": "./cli/tally.py:TALLY", "config": { "unit": "kg" } } }
+        "mounts": {
+          "/d": {
+            "resource": "ram"
+          }
+        },
+        "clis": {
+          "tally": {
+            "cli": "./cli/tally.py:TALLY",
+            "config": {
+              "unit": "kg"
+            }
+          }
+        }
       }
     },
     {
       "name": "clis entry: the cli form takes a module reference",
       "config": {
-        "mounts": { "/d": { "resource": "ram" } },
-        "clis": { "jira": { "cli": "my_clis:JIRA" } }
+        "mounts": {
+          "/d": {
+            "resource": "ram"
+          }
+        },
+        "clis": {
+          "jira": {
+            "cli": "my_clis:JIRA"
+          }
+        }
       }
     },
     {
       "name": "console block: ram form",
       "config": {
-        "mounts": { "/d": { "resource": "ram" } },
-        "console": { "type": "ram" }
+        "mounts": {
+          "/d": {
+            "resource": "ram"
+          }
+        },
+        "console": {
+          "type": "ram"
+        }
       }
     },
     {
       "name": "console block: redis form, every key",
       "config": {
-        "mounts": { "/d": { "resource": "ram" } },
-        "console": { "type": "redis", "url": "redis://localhost:6379/5", "key_prefix": "c:", "ttl_seconds": 3600 }
+        "mounts": {
+          "/d": {
+            "resource": "ram"
+          }
+        },
+        "console": {
+          "type": "redis",
+          "url": "redis://localhost:6379/5",
+          "key_prefix": "c:",
+          "ttl_seconds": 3600
+        }
       }
     },
     {
       "name": "console block: null ttl keeps keys forever",
       "config": {
-        "mounts": { "/d": { "resource": "ram" } },
-        "console": { "type": "redis", "ttl_seconds": null }
+        "mounts": {
+          "/d": {
+            "resource": "ram"
+          }
+        },
+        "console": {
+          "type": "redis",
+          "ttl_seconds": null
+        }
+      }
+    },
+    {
+      "name": "command rules: a mapping scopes each command to its own paths",
+      "config": {
+        "mounts": {
+          "/d": {
+            "resource": "ram",
+            "permissions": {
+              "commands": {
+                "deny": [
+                  {
+                    "reason": "prod",
+                    "commands": {
+                      "rm": [
+                        "prod/*"
+                      ],
+                      "mv": [
+                        "prod/*",
+                        "docs"
+                      ]
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "permissions": {
+          "commands": {
+            "ask": [
+              {
+                "commands": {
+                  "git push": [
+                    "/d/*"
+                  ]
+                }
+              }
+            ],
+            "deny": [
+              {
+                "reason": "sealed",
+                "paths": [
+                  "/d/sealed/*"
+                ]
+              },
+              {
+                "reason": "no history edits",
+                "commands": [
+                  "git commit",
+                  "git reset --hard"
+                ]
+              }
+            ]
+          }
+        }
       }
     }
   ]

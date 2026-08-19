@@ -59,3 +59,26 @@ export function readsArgs(layers: readonly CommandsSpec[], name: string): boolea
   }
   return false
 }
+
+/**
+ * Whether a path rule in force reads this command's paths.
+ *
+ * The argv builder asks this before deciding who resolves a glob
+ * operand: a mount command's pattern is normally pushed down to the
+ * backend, so the gate would see the pattern, not the matches, and
+ * `cat /scratch/*\/k` would pass a rule on `/scratch/private` that
+ * `cat /scratch/private/k` fails. When a rule that reads paths (or a
+ * mount) applies to the command, whether it names the command or every
+ * command, the shell expands the glob first, so the gate judges the
+ * paths the command will touch.
+ */
+export function scopesPaths(layers: readonly CommandsSpec[], name: string): boolean {
+  for (const layer of layers) {
+    for (const rule of [...layer.ask, ...layer.deny]) {
+      if ((rule.paths ?? []).length === 0 && (rule.mount ?? '') === '') continue
+      const commands = rule.commands ?? []
+      if (commands.length === 0 || commands.some((p) => patternNames(p, name))) return true
+    }
+  }
+  return false
+}

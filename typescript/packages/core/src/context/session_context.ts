@@ -164,11 +164,29 @@ export function dotglobActive(): boolean {
   return getCurrentSession()?.shopts.dotglob === true
 }
 
-export function pathAllowed(virtual: string): boolean {
-  const sess = getCurrentSession()
-  if (sess == null) return true
+/**
+ * Whether a session's hidden-paths specs, its own and the workspace-bound
+ * one, leave this path visible. The explicit-session form of
+ * `pathAllowed`, for a door that holds the session rather than running
+ * under it: the admission gate drops a hidden operand before any policy
+ * reads it, so a rule or an ask never names a path the session cannot
+ * see.
+ */
+export function sessionPathAllowed(sess: Session, virtual: string): boolean {
   if (sess.hiddenPaths != null && pathHidden(sess.hiddenPaths, virtual)) return false
   return !(sess.boundHidden != null && pathHidden(sess.boundHidden, virtual))
+}
+
+/**
+ * Whether the current session's hidden-paths specs, its own and the
+ * workspace-bound one, leave this path visible: enumeration surfaces
+ * filter names through it and the doors answer ENOENT (EACCES for
+ * creates) when it says no, so hiding reads as nonexistence, never as a
+ * denial that leaks the name. True when no session is bound.
+ */
+export function pathAllowed(virtual: string): boolean {
+  const sess = getCurrentSession()
+  return sess == null || sessionPathAllowed(sess, virtual)
 }
 
 /**

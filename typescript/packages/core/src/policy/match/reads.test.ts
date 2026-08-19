@@ -15,7 +15,7 @@
 import { describe, expect, it } from 'vitest'
 
 import type { CommandsSpec } from '../types.ts'
-import { hasRules, readsArgs } from './reads.ts'
+import { hasRules, readsArgs, scopesPaths } from './reads.ts'
 
 // Mirrors python/tests/policy/match/test_reads.py.
 
@@ -62,5 +62,30 @@ describe('reads', () => {
       ),
     ).toBe(false)
     expect(readsArgs([], 'rm')).toBe(false)
+  })
+
+  it('scopesPaths is a path rule that applies to this command', () => {
+    const named: CommandsSpec = {
+      ...EMPTY,
+      deny: [
+        { reason: 'no rm', commands: ['rm'] },
+        { reason: 'sealed', commands: ['cat'], paths: ['/secret*'] },
+        { reason: 'repo', commands: ['ls'], mount: '/repo' },
+      ],
+    }
+    // A glob operand of cat or ls must be expanded before the gate reads
+    // it: a rule names the command and reads its paths (or its mount).
+    expect(scopesPaths([named], 'cat')).toBe(true)
+    expect(scopesPaths([named], 'ls')).toBe(true)
+    // The bare rm deny and an allow list read the name alone.
+    expect(scopesPaths([named, { ...EMPTY, allow: ['rm', '*'] }], 'rm')).toBe(false)
+    expect(scopesPaths([named], 'echo')).toBe(false)
+    expect(scopesPaths([], 'cat')).toBe(false)
+    // A pure path rule applies to every command, so every command's globs
+    // expand: a pattern that only later matches under the scope would
+    // otherwise reach the command unjudged.
+    const pure: CommandsSpec = { ...EMPTY, ask: [{ reason: 'frozen', paths: ['/locked/*'] }] }
+    expect(scopesPaths([named, pure], 'rm')).toBe(true)
+    expect(scopesPaths([pure], 'echo')).toBe(true)
   })
 })

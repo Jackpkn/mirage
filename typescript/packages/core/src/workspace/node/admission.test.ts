@@ -109,6 +109,39 @@ describe('admission', () => {
     expect(await run('rg', ['x'])).toEqual([1, 'rg: /data/private: private\n'])
   })
 
+  it('a hidden path is no path to any policy', async () => {
+    // A session that cannot see a path must not learn of it from a
+    // rule: the gate drops the operand before any hook, the rule does
+    // not fire, and the line goes on to the door, which answers ENOENT.
+    const w = await ws()
+    await w.execute('mkdir -p /data/private && echo s > /data/secret')
+    const veiled = w.createSession('veiled', {
+      profile: { paths: { hide: ['/data/secret', '/data/private'] } },
+    })
+    const plain = w.sessionManager.get(w.sessionManager.defaultId)
+    const run = async (session: typeof plain, name: string, ...args: string[]) => {
+      const words = classifyParts([name, ...args], w.registry, session.cwd)
+      const refusal = await admit(name, args, words.slice(1), session, w.registry, w.namespace)
+      return refusal === null ? null : [refusal.exitCode, DEC.decode(refusal.stderr)]
+    }
+    expect(await run(plain, 'cat', '/data/secret')).toEqual([1, 'cat: /data/secret: sealed\n'])
+    expect(await run(veiled, 'cat', '/data/secret')).toBeNull()
+    expect(await run(plain, 'ls', '/data/private')).toEqual([1, 'ls: /data/private: private\n'])
+    expect(await run(veiled, 'ls', '/data/private')).toBeNull()
+    // The followed target and the implied operand are dropped too.
+    await w.execute('ln -s /data/secret /data/l')
+    expect(await run(plain, 'cat', '/data/l')).toEqual([1, 'cat: /data/l: sealed\n'])
+    expect(await run(veiled, 'cat', '/data/l')).toBeNull()
+    // Whatever the session sees is still read as before.
+    expect(await run(veiled, 'cat', '/data/a')).toBeNull()
+    await w.execute('echo x > /data/private/f')
+    expect(await run(plain, 'grep', '-r', 'x', '/data/private')).toEqual([
+      1,
+      'grep: /data/private: private\n',
+    ])
+    expect(await run(veiled, 'grep', '-r', 'x', '/data/private')).toBeNull()
+  })
+
   it('admitLine reads literal words and refuses the unreadable', async () => {
     const w = await ws()
     const parser = await getTestParser()

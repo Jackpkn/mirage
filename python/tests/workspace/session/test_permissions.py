@@ -127,14 +127,16 @@ def test_profile_commands_block_takes_allow_ask_and_deny():
             "ask": [
                 "git push", {
                     "reason": "sign-off",
-                    "commands": ["rm"],
-                    "paths": ["/shared/*"]
+                    "commands": {
+                        "rm": ["/shared/*"]
+                    }
                 }
             ],
             "deny": [{
                 "reason": "no",
-                "commands": ["rm"],
-                "paths": ["/repo/*"]
+                "commands": {
+                    "rm": ["/repo/*"]
+                }
             }],
         }
     })
@@ -202,8 +204,9 @@ def test_workspace_permissions_deny_accepts_rules_and_bare_names():
         "commands": {
             "deny": [{
                 "reason": "no deletes",
-                "commands": ["rm"],
-                "paths": ["/repo/*"]
+                "commands": {
+                    "rm": ["/repo/*"]
+                }
             }, "python3", {
                 "commands": ["shred"]
             }]
@@ -251,6 +254,140 @@ def test_deny_rule_refuses_scalar_lists_and_non_string_reasons(rule):
     # the document fails to load instead, as it does in TypeScript.
     with pytest.raises(ValidationError):
         WorkspacePermissions.model_validate({"commands": {"deny": [rule]}})
+
+
+def test_a_rule_maps_each_command_to_its_own_paths():
+    # One command to many paths, never a list of commands beside a list
+    # of paths: the document says which command each path belongs to,
+    # and compiles one rule per command.
+    w = WorkspacePermissions.model_validate({
+        "commands": {
+            "deny": [{
+                "reason": "prod is protected",
+                "commands": {
+                    "rm": ["/repo/prod/*", "/shared/*"],
+                    "mv": ["/repo/prod/*"]
+                }
+            }],
+            "ask": [{
+                "commands": {
+                    "git push": ["/repo/*"]
+                }
+            }],
+        }
+    })
+    assert w.commands.deny == (
+        CommandRule(reason="prod is protected",
+                    commands=("rm", ),
+                    paths=("/repo/prod/*", "/shared/*")),
+        CommandRule(reason="prod is protected",
+                    commands=("mv", ),
+                    paths=("/repo/prod/*", )),
+    )
+    assert w.commands.ask == (CommandRule(reason=DEFAULT_ASK_REASON,
+                                          commands=("git push", ),
+                                          paths=("/repo/*", )), )
+
+
+@pytest.mark.parametrize("bad,message", [
+    ({
+        "reason": "x",
+        "commands": ["rm", "mv"],
+        "paths": ["/a"]
+    }, "map each command to its paths"),
+    ({
+        "reason": "x",
+        "commands": {
+            "rm": ["/a"]
+        },
+        "paths": ["/b"]
+    }, "takes no paths of its own"),
+    ({
+        "reason": "x"
+    }, "names no command and no path"),
+    ({
+        "reason": "x",
+        "commands": {}
+    }, "must name at least one command"),
+    ({
+        "reason": "x",
+        "commands": {
+            "rm": []
+        }
+    }, "must list at least one path"),
+    ({
+        "reason": "x",
+        "commands": {
+            "rm": "/a"
+        }
+    }, "must be a list of strings"),
+    ({
+        "reason": "x",
+        "commands": {
+            " ": ["/a"]
+        }
+    }, "keys must name a command"),
+    ({
+        "reason": "x",
+        "commands": {
+            "rm": ["/a", " "]
+        }
+    }, "commands[rm][1] must name a path"),
+    ({
+        "reason": "x",
+        "paths": [""]
+    }, "paths[0] must name a path"),
+    (7, "must be a command pattern or a mapping"),
+])
+def test_a_rule_that_does_not_say_whose_path_it_is_is_refused(bad, message):
+    for doc in (WorkspacePermissions, SessionProfile, MountPermissions):
+        with pytest.raises(ValidationError, match=re.escape(message)):
+            doc.model_validate({"commands": {"deny": [bad]}})
+
+
+@pytest.mark.parametrize("entry", ["xxx", "secrets/*", "./x", "~/x", "a/b"])
+def test_a_relative_path_is_refused_where_paths_are_absolute(entry):
+    # The workspace and profile tiers speak in virtual paths: `xxx` would
+    # silently read as `/xxx` and `secrets/*` as `/secrets/*`. A name
+    # pattern (no slash) is the one relative spelling with a meaning.
+    for doc in (WorkspacePermissions, SessionProfile):
+        with pytest.raises(ValidationError, match="is relative"):
+            doc.model_validate({"paths": {"hide": [entry]}})
+        with pytest.raises(ValidationError, match="is relative"):
+            doc.model_validate(
+                {"commands": {
+                    "ask": [{
+                        "commands": {
+                            "rm": ["/ok", entry]
+                        }
+                    }]
+                }})
+        with pytest.raises(ValidationError, match="is relative"):
+            doc.model_validate({"commands": {"deny": [{"paths": [entry]}]}})
+        doc.model_validate({"paths": {"hide": ["/" + entry, "*.pem", "?"]}})
+    # The mount tier is relative by definition, to the mount root.
+    m = MountPermissions.model_validate({
+        "paths": {
+            "hide": [entry]
+        },
+        "commands": {
+            "deny": [{
+                "commands": {
+                    "rm": [entry]
+                }
+            }]
+        },
+    })
+    assert m.paths.hide == (entry, )
+    assert m.commands.deny[0].paths == (entry, )
+
+
+def test_a_blank_hide_entry_is_refused_at_every_tier():
+    # "" is the root under the subtree rule: it would hide the whole tree.
+    for doc in (WorkspacePermissions, SessionProfile, MountPermissions):
+        with pytest.raises(ValidationError,
+                           match="hide\\[1\\] must name a path"):
+            doc.model_validate({"paths": {"hide": ["/a", ""]}})
 
 
 def test_workspace_permissions_rejects_profile_only_and_unknown_fields():
@@ -541,8 +678,9 @@ COMMANDS_DOC = WorkspacePermissions.model_validate({
         ],
         "deny": [{
             "reason": "no deletes in the repo",
-            "commands": ["rm"],
-            "paths": ["/repo/*"]
+            "commands": {
+                "rm": ["/repo/*"]
+            }
         }, {
             "reason": "frozen",
             "paths": ["/repo/locked/*"]
@@ -723,12 +861,15 @@ LINK_DOC = WorkspacePermissions.model_validate({
     "commands": {
         "deny": [{
             "reason": "sealed",
-            "commands": ["cat", "head"],
-            "paths": ["/data/secret*"]
+            "commands": {
+                "cat": ["/data/secret*"],
+                "head": ["/data/secret*"]
+            }
         }, {
             "reason": "keep the link",
-            "commands": ["rm"],
-            "paths": ["/data/link"]
+            "commands": {
+                "rm": ["/data/link"]
+            }
         }],
     }
 })
@@ -826,8 +967,9 @@ LITERAL_DOC = WorkspacePermissions.model_validate({
             "commands": ["rm"]
         }, {
             "reason": "sealed",
-            "commands": ["cat"],
-            "paths": ["/repo/secret*"]
+            "commands": {
+                "cat": ["/repo/secret*"]
+            }
         }, {
             "reason": "no pushes",
             "commands": ["git push"]
@@ -902,8 +1044,11 @@ async def test_a_bare_listing_in_a_ruled_directory_is_refused():
                        "commands": {
                            "deny": [{
                                "reason": "sealed",
-                               "commands": ["ls", "find", "grep"],
-                               "paths": ["/repo/sealed"]
+                               "commands": {
+                                   "ls": ["/repo/sealed"],
+                                   "find": ["/repo/sealed"],
+                                   "grep": ["/repo/sealed"]
+                               }
                            }]
                        }
                    }))
@@ -933,6 +1078,80 @@ async def test_a_bare_listing_in_a_ruled_directory_is_refused():
         await ws.close()
 
 
+VEILED_DOC = WorkspacePermissions.model_validate({
+    "commands": {
+        "allow": ["mkdir", "echo", "touch", "cat", "rm", "ls", "head"],
+        "ask": [{
+            "reason": "sign-off",
+            "commands": {
+                "rm": ["/repo/shared/*"]
+            }
+        }],
+        "deny": [{
+            "reason": "private",
+            "commands": {
+                "cat": ["/repo/private"]
+            }
+        }, {
+            "reason": "sealed",
+            "paths": ["/repo/sealed/*"]
+        }, {
+            "reason": "no heads",
+            "commands": ["head"]
+        }],
+    }
+})
+
+
+@pytest.mark.asyncio
+async def test_a_hidden_path_reads_as_absent_to_every_rule():
+    # hide outranks every admission arm: a path the session cannot see
+    # is dropped before any hook, so a deny never names it, an ask is
+    # never raised for it, and the door answers ENOENT as for any
+    # absent path. The same lines under a session that sees them meet
+    # the rules as usual.
+    ws = Workspace({"/repo/": (RAMResource(), MountMode.WRITE)},
+                   mode=MountMode.WRITE,
+                   permissions=VEILED_DOC)
+    try:
+        await ws.execute("mkdir -p /repo/private /repo/shared && "
+                         "echo k > /repo/private/k && touch /repo/shared/a")
+        ws.create_session(
+            "veiled",
+            profile=SessionProfile(paths=PathsBlock(hide=("/repo/private",
+                                                          "/repo/shared",
+                                                          "/repo/sealed"))))
+        assert await _line(
+            ws, "cat /repo/private/k") == (1, "",
+                                           "cat: /repo/private/k: private\n")
+        assert await _line(
+            ws, "cat /repo/private/k",
+            "veiled") == (1, "",
+                          "cat: /repo/private/k: No such file or directory\n")
+        assert await _line(
+            ws,
+            "cat /repo/sealed/x") == (1, "", "cat: /repo/sealed/x: sealed\n")
+        assert await _line(
+            ws, "cat /repo/sealed/x",
+            "veiled") == (1, "",
+                          "cat: /repo/sealed/x: No such file or directory\n")
+        code, _, err = await _line(ws, "rm /repo/shared/a")
+        assert code == 126 and err.startswith(
+            "rm: requires approval: sign-off")
+        assert await _line(ws, "rm /repo/shared/a", "veiled") == (
+            1, "",
+            "rm: cannot remove '/repo/shared/a': No such file or directory\n")
+        assert [r.session_id
+                for r in ws.approvals.list()] == [ws._session_mgr.default_id]
+        assert await _line(ws, "ls /repo", "veiled") == (0, "", "")
+        # A rule with no path in it still speaks: nothing hidden is named.
+        assert await _line(ws, "head /repo/private/k",
+                           "veiled") == (126, "",
+                                         "head: policy denied: no heads\n")
+    finally:
+        await ws.close()
+
+
 ASK_DOC = WorkspacePermissions.model_validate({
     "commands": {
         "ask": [{
@@ -941,8 +1160,9 @@ ASK_DOC = WorkspacePermissions.model_validate({
         }, "head"],
         "deny": [{
             "reason": "no deletes in the repo",
-            "commands": ["rm"],
-            "paths": ["/repo/*"]
+            "commands": {
+                "rm": ["/repo/*"]
+            }
         }],
     }
 })
@@ -1058,10 +1278,13 @@ async def test_a_session_grant_covers_the_rule_and_a_deny_is_never_reopened():
         assert (await _line(ws, "rm /scratch/y"))[0] == 0
         assert (await _line(ws, "cd /scratch && rm z"))[0] == 0
         # ... except where a deny rule speaks: the deny arm runs before
-        # the ask arm, so no grant can re-open it.
+        # the ask arm, so no grant can re-open it, and the denied line
+        # raises no request (nothing for the host to answer; the battery
+        # cannot see this, so it is pinned here).
         assert await _line(
             ws,
             "cd /repo/d && rm x") == (1, "", "rm: x: no deletes in the repo\n")
+        assert ws.approvals.list() == ()
         # The grant is session state: on the record, and not another
         # session's.
         default = ws._session_mgr.get(ws._session_mgr.default_id)

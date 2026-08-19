@@ -260,6 +260,13 @@ export class Dispatcher {
     // fs facade, and FUSE all end up here.
     const opWrite = POLICY_WRITE_OPS.has(opName)
     await preOpsGate(this.policies, opName, p, opWrite, mountPrefix, sessionId())
+    // A rename's destination is a create there: it passes the same gate
+    // as the source, so a path rule holds against moving into a
+    // protected scope (or onto the directory that holds one) the way it
+    // holds against writing there.
+    if (opName === 'rename' && dstArg instanceof PathSpec) {
+      await preOpsGate(this.policies, opName, dstArg, true, mountPrefix, sessionId())
+    }
     const caches = cachesReads(resource)
     // The file cache is keyed on the path alone, and what a command put
     // there is the rendered read. A raw read asks for a different value

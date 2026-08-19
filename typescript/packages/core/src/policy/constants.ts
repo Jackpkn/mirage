@@ -39,3 +39,22 @@ export const WILDCARD = '*'
  * is the one that covers the rule and stays.
  */
 export const EXACT_LINE_DECISIONS: ReadonlySet<ApprovalDecision> = new Set(['allow_once', 'deny'])
+
+/**
+ * Ops that act on a whole subtree at once, so a pure path rule refuses
+ * them on the directory that holds its scope or on any ancestor: moving
+ * or removing `/x` takes `/x/locked/*` along. `rename` is the
+ * dispatcher's; `rmdir` removes the scope's own directory; `rm_r` is the
+ * command tier's recursive remove.
+ */
+export const SUBTREE_OPS: ReadonlySet<string> = new Set(['rename', 'rmdir', 'rm_r'])
+
+/**
+ * Commands whose operand is a whole subtree they move or remove, so a
+ * path rule judges the operand the way it judges a SUBTREE_OPS op: the
+ * directory holding the scope, or any ancestor of it, is the scope. Only
+ * the destroyers: a reader given an ancestor (`grep -r`, `du`, `tar`) is
+ * the command tier's I/O to refuse file by file, not a line to refuse
+ * whole.
+ */
+export const SUBTREE_COMMANDS: ReadonlySet<string> = new Set(['rm', 'rmdir', 'mv'])

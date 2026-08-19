@@ -52,19 +52,29 @@ export interface Deny {
 
 /**
  * One admission rule of the permissions document: refuse (or ask about)
- * matching commands on matching paths. It is the element type of
- * `commands.deny` and `commands.ask` at every tier and reaches the
- * workspace only inside that document; the internal RulePolicy is what
- * evaluates it. A command entry is a token-prefix pattern over the line
- * as the door normalizes it (`rm` is every rm line, `git push` every
- * `git push ...`, a `*` token any one token). Path entries use the
- * document's one grammar: an entry with `*`, `?` or `[` is a pattern
- * (repo fnmatch dialect, `*` crossing `/`, a slashless pattern matching
- * any name component), anything else is an exact path and its subtree.
- * Empty `commands` means every command; empty `paths` refuses the
- * command regardless of its operands. `mount` is set by the compiler for
- * a mount-tier rule (the mount root the rule is scoped to: it applies
- * only to a line whose cwd or paths lie under it), never typed.
+ * matching commands, on matching paths when it names any. It is the
+ * compiled element of `commands.deny` and `commands.ask` at every tier
+ * and reaches the workspace only inside that document; the internal
+ * RulePolicy is what evaluates it. The document writes a rule in one of
+ * three shapes, and each compiles to rules of this shape: a list of
+ * command patterns (a whole-line rule on each, no paths), a mapping of
+ * command pattern to its paths (one command to many paths, one rule per
+ * command, so a path is never stated beside a command it was not meant
+ * for), or paths alone (a rule on every command, at the op door too). A
+ * command entry is a token-prefix pattern over the line as the door
+ * normalizes it (`rm` is every rm line, `git push` every `git push ...`,
+ * a `*` token any one token). Path entries use the document's one
+ * grammar: an entry with `*`, `?` or `[` is a pattern (repo fnmatch
+ * dialect, `*` crossing `/`, a slashless pattern matching any name
+ * component), anything else is an exact path and its subtree. An entry
+ * holds a token (a blank one would be the root), and at the workspace
+ * and profile tiers it is absolute or a name pattern; only the mount
+ * tier's entries are relative, to the mount root. Empty
+ * `commands` means every command, and a path-scoped rule carries exactly
+ * one; empty `paths` refuses the command regardless of its operands.
+ * `mount` is set by the compiler for a mount-tier rule (the mount root
+ * the rule is scoped to: it applies only to a line whose cwd or paths
+ * lie under it), never typed.
  */
 export interface CommandRule {
   reason: string

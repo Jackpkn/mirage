@@ -102,12 +102,11 @@
               },
               {
                 "reason": "sealed",
-                "commands": [
-                  "cat"
-                ],
-                "paths": [
-                  "/ram/secret*"
-                ]
+                "commands": {
+                  "cat": [
+                    "/ram/secret*"
+                  ]
+                }
               }
             ]
           }

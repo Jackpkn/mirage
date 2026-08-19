@@ -12,6 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import { sessionPathAllowed } from '../../context/session_context.ts'
 import type { ByteSource } from '../../io/types.ts'
 import { renderDeny, renderPending } from '../../policy/index.ts'
 import type { CommandContext, CommandsSpec } from '../../policy/index.ts'
@@ -111,17 +112,31 @@ export function policyScopes(
 }
 
 /**
+ * The paths of a line the session can see. A hidden path is nonexistent
+ * for the session, so no policy may learn of it either: a rule scoped
+ * to it must not fire (the reason would say the path is there), an ask
+ * must not be raised for it (a request would name it to the host), and
+ * the line runs on to the door, which answers ENOENT like any other
+ * absent path.
+ */
+function seen(session: Session, specs: readonly PathSpec[]): PathSpec[] {
+  return specs.filter((p) => sessionPathAllowed(session, p.virtual))
+}
+
+/**
  * The command plane's admission of one command: visibility, then the
  * policy chain, then the approval door. The one gate every command
  * class passes through, in the tree (`runArgv`, once the words are
  * expanded) and for a line a runtime takes whole (`admitLine`, per
  * parsed command). A word the session's allow lists do not install is
  * bash's "command not found" before any admission hook, so an unlisted
- * tool never leaks a deny reason; a Deny renders in the outcome table's
- * voice; an Ask is answered by the door from the session's grants or
- * the host. `agentId` is the agent the line is attributed to, for an
- * approval request; `stdin` decides whether a bare `rg` reads the
- * working directory.
+ * tool never leaks a deny reason; a path the session cannot see is
+ * dropped before any hook, so a rule never names it and the door
+ * answers ENOENT; a Deny renders in the outcome table's voice; an Ask
+ * is answered by the door from the session's grants or the host.
+ * `agentId` is the agent the line is attributed to, for an approval
+ * request; `stdin` decides whether a bare `rg` reads the working
+ * directory.
  */
 export async function admit(
   name: string,
@@ -143,8 +158,8 @@ export async function admit(
       : null
   const ctx: CommandContext = {
     command: name,
-    paths: policyScopes(name, args, operands, namespace, session.cwd, implied),
-    operands: positionalScopes(name, [...args], session.cwd, [...operands]),
+    paths: seen(session, policyScopes(name, args, operands, namespace, session.cwd, implied)),
+    operands: seen(session, positionalScopes(name, [...args], session.cwd, [...operands])),
     argv: [...args],
     cwd: session.cwd,
     registry,

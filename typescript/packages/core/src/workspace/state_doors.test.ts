@@ -1415,6 +1415,73 @@ describe('command permissions end to end', () => {
     expect(await line(ws, 'cd /repo/sealed && ls /repo')).toEqual([0, 'sealed\n', ''])
     expect(await line(ws, 'cd /repo/sealed && echo x | grep x')).toEqual([0, 'x\n', ''])
   })
+
+  it('a hidden path reads as absent to every rule', async () => {
+    // hide outranks every admission arm: a path the session cannot see
+    // is dropped before any hook, so a deny never names it, an ask is
+    // never raised for it, and the door answers ENOENT as for any
+    // absent path. The same lines under a session that sees them meet
+    // the rules as usual.
+    const parser = await getTestParser()
+    const ws = new Workspace(
+      { '/repo': new RAMResource() },
+      {
+        mode: MountMode.WRITE,
+        shellParser: parser,
+        permissions: {
+          commands: {
+            allow: ['mkdir', 'echo', 'touch', 'cat', 'rm', 'ls', 'head'],
+            ask: [{ reason: 'sign-off', commands: ['rm'], paths: ['/repo/shared/*'] }],
+            deny: [
+              { reason: 'private', commands: ['cat'], paths: ['/repo/private'] },
+              { reason: 'sealed', paths: ['/repo/sealed/*'] },
+              { reason: 'no heads', commands: ['head'] },
+            ],
+          },
+          paths: { hide: [] },
+        },
+      },
+    )
+    open.push(ws)
+    await ws.execute(
+      'mkdir -p /repo/private /repo/shared && echo k > /repo/private/k && touch /repo/shared/a',
+    )
+    ws.createSession('veiled', {
+      profile: { paths: { hide: ['/repo/private', '/repo/shared', '/repo/sealed'] } },
+    })
+    expect(await line(ws, 'cat /repo/private/k')).toEqual([
+      1,
+      '',
+      'cat: /repo/private/k: private\n',
+    ])
+    expect(await line(ws, 'cat /repo/private/k', 'veiled')).toEqual([
+      1,
+      '',
+      'cat: /repo/private/k: No such file or directory\n',
+    ])
+    expect(await line(ws, 'cat /repo/sealed/x')).toEqual([1, '', 'cat: /repo/sealed/x: sealed\n'])
+    expect(await line(ws, 'cat /repo/sealed/x', 'veiled')).toEqual([
+      1,
+      '',
+      'cat: /repo/sealed/x: No such file or directory\n',
+    ])
+    const [code, , err] = await line(ws, 'rm /repo/shared/a')
+    expect(code).toBe(126)
+    expect(err.startsWith('rm: requires approval: sign-off')).toBe(true)
+    expect(await line(ws, 'rm /repo/shared/a', 'veiled')).toEqual([
+      1,
+      '',
+      "rm: cannot remove '/repo/shared/a': No such file or directory\n",
+    ])
+    expect(ws.approvals.list().map((r) => r.sessionId)).toEqual([ws.sessionManager.defaultId])
+    expect(await line(ws, 'ls /repo', 'veiled')).toEqual([0, '', ''])
+    // A rule with no path in it still speaks: nothing hidden is named.
+    expect(await line(ws, 'head /repo/private/k', 'veiled')).toEqual([
+      126,
+      '',
+      'head: policy denied: no heads\n',
+    ])
+  })
 })
 
 /** A runtime that takes every line raw, recording what reached it. */
@@ -1444,7 +1511,7 @@ describe('ask end to end', () => {
   const ASK_DOC = parseWorkspacePermissions({
     commands: {
       ask: [{ reason: 'sign-off', commands: ['rm'] }, 'head'],
-      deny: [{ reason: 'no deletes in the repo', commands: ['rm'], paths: ['/repo/*'] }],
+      deny: [{ reason: 'no deletes in the repo', commands: { rm: ['/repo/*'] } }],
     },
   })
 
@@ -1574,8 +1641,11 @@ describe('ask end to end', () => {
     expect((await line(ws, 'rm /scratch/y'))[0]).toBe(0)
     expect((await line(ws, 'cd /scratch && rm z'))[0]).toBe(0)
     // ... except where a deny rule speaks: the deny arm runs before the
-    // ask arm, so no grant can re-open it.
+    // ask arm, so no grant can re-open it, and the denied line raises no
+    // request (nothing for the host to answer; the battery cannot see
+    // this, so it is pinned here).
     expect(await line(ws, 'cd /repo/d && rm x')).toEqual([1, '', 'rm: x: no deletes in the repo\n'])
+    expect(ws.approvals.list()).toEqual([])
     // The grant is session state: on the record, and not another
     // session's.
     const record = ws.sessionManager.get(ws.sessionManager.defaultId).toJSON() as {

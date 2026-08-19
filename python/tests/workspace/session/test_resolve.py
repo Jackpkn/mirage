@@ -138,8 +138,12 @@ def test_rebase_joins_every_entry_under_the_mount_root():
     assert rebase("/repo/", perms) == ("/repo/.env", "/repo/*.pem",
                                        "/repo/abs/x", "/repo/docs/*")
     assert rebase("repo", None) == ()
-    root = MountPermissions(paths=PathsBlock(hide=("a", "/b", "")))
+    # A blank entry is refused at the door, so the mount root is spelled
+    # "/" (and only that way): the mount tier is where a relative entry
+    # is legal, and "/" there is the root of the mount, not of the tree.
+    root = MountPermissions(paths=PathsBlock(hide=("a", "/b", "/")))
     assert rebase("/", root) == ("/a", "/b", "/")
+    assert rebase("/repo", root) == ("/repo/a", "/repo/b", "/repo")
 
 
 def test_bound_hidden_combines_workspace_and_rebased_mount_hides():

@@ -280,6 +280,13 @@ class Dispatcher:
         write = op in POLICY_WRITE_OPS
         await pre_ops_gate(policies, op, path, write, mount.prefix,
                            _session_id())
+        # A rename's destination is a create there: it passes the same
+        # gate as the source, so a path rule holds against moving into
+        # a protected scope (or onto the directory that holds one) the
+        # way it holds against writing there.
+        if op == "rename" and isinstance(dst, PathSpec):
+            await pre_ops_gate(policies, op, dst, True, mount.prefix,
+                               _session_id())
         caches_reads = mount.resource.caches_reads
         # The file cache is keyed on the path alone, and what a command
         # put there is the rendered read. A raw read asks for a

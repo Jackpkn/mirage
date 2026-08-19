@@ -15,7 +15,7 @@
 from mirage.policy.match.allow import head_visible, line_allowed, line_tokens
 from mirage.policy.match.pattern import (intersect_patterns, pattern_matches,
                                          pattern_names, split_pattern)
-from mirage.policy.match.reads import has_rules, reads_args
+from mirage.policy.match.reads import has_rules, reads_args, scopes_paths
 from mirage.policy.match.rule import RuleMatch, match_op, match_rule
 
 __all__ = [
@@ -30,5 +30,6 @@ __all__ = [
     "pattern_matches",
     "pattern_names",
     "reads_args",
+    "scopes_paths",
     "split_pattern",
 ]

@@ -96,7 +96,7 @@ describe('parseWorkspacePermissions', () => {
     const w = parseWorkspacePermissions({
       commands: {
         deny: [
-          { reason: 'no deletes', commands: ['rm'], paths: ['/repo/*'] },
+          { reason: 'no deletes', commands: { rm: ['/repo/*'] } },
           'python3',
           { commands: ['shred'] },
         ],
@@ -119,7 +119,7 @@ describe('parseWorkspacePermissions', () => {
     const w = parseWorkspacePermissions({
       commands: {
         allow: ['ls', 'git log'],
-        ask: ['git push', { reason: 'sign-off', commands: ['rm'], paths: ['/shared/*'] }],
+        ask: ['git push', { reason: 'sign-off', commands: { rm: ['/shared/*'] } }],
         deny: ['shred'],
       },
     })
@@ -153,6 +153,77 @@ describe('parseWorkspacePermissions', () => {
   it('requires deny itself to be a list', () => {
     for (const deny of ['rm', { rm: 'no' }, 7]) {
       expect(() => parseWorkspacePermissions({ commands: { deny } })).toThrow(/deny must be a list/)
+    }
+  })
+
+  it('maps each command to its own paths, one rule per command', () => {
+    // One command to many paths, never a list of commands beside a list
+    // of paths: the document says which command each path belongs to.
+    const w = parseWorkspacePermissions({
+      commands: {
+        deny: [
+          {
+            reason: 'prod is protected',
+            commands: { rm: ['/repo/prod/*', '/shared/*'], mv: ['/repo/prod/*'] },
+          },
+        ],
+        ask: [{ commands: { 'git push': ['/repo/*'] } }],
+      },
+    })
+    expect(w.commands.deny).toEqual([
+      { reason: 'prod is protected', commands: ['rm'], paths: ['/repo/prod/*', '/shared/*'] },
+      { reason: 'prod is protected', commands: ['mv'], paths: ['/repo/prod/*'] },
+    ])
+    expect(w.commands.ask).toEqual([
+      { reason: DEFAULT_ASK_REASON, commands: ['git push'], paths: ['/repo/*'] },
+    ])
+  })
+
+  it.each([
+    [{ reason: 'x', commands: ['rm', 'mv'], paths: ['/a'] }, /map each command to its paths/],
+    [{ reason: 'x', commands: { rm: ['/a'] }, paths: ['/b'] }, /takes no paths of its own/],
+    [{ reason: 'x' }, /names no command and no path/],
+    [{ reason: 'x', commands: {} }, /must name at least one command/],
+    [{ reason: 'x', commands: { rm: [] } }, /must list at least one path/],
+    [{ reason: 'x', commands: { rm: '/a' } }, /must be a list of strings/],
+    [{ reason: 'x', commands: { ' ': ['/a'] } }, /keys must name a command/],
+    [{ reason: 'x', commands: { rm: ['/a', ' '] } }, /commands\[rm\]\[1\] must name a path/],
+    [{ reason: 'x', paths: [''] }, /paths\[0\] must name a path/],
+    [7, /must be a command pattern or a mapping/],
+  ])('refuses a rule that does not say which command a path belongs to: %j', (bad, message) => {
+    expect(() => parseWorkspacePermissions({ commands: { deny: [bad] } })).toThrow(message)
+    expect(() => parseSessionProfile({ commands: { ask: [bad] } })).toThrow(message)
+    expect(() => parseMountPermissions({ commands: { deny: [bad] } })).toThrow(message)
+  })
+
+  it.each(['xxx', 'secrets/*', './x', '~/x', 'a/b'])(
+    'refuses a relative path where paths are absolute: %s',
+    (entry) => {
+      // The workspace and profile tiers speak in virtual paths: `xxx` would
+      // silently read as `/xxx` and `secrets/*` as `/secrets/*`. A name
+      // pattern (no slash) is the one relative spelling with a meaning.
+      for (const parse of [parseWorkspacePermissions, parseSessionProfile]) {
+        expect(() => parse({ paths: { hide: [entry] } })).toThrow(/is relative/)
+        expect(() => parse({ commands: { ask: [{ commands: { rm: ['/ok', entry] } }] } })).toThrow(
+          /is relative/,
+        )
+        expect(() => parse({ commands: { deny: [{ paths: [entry] }] } })).toThrow(/is relative/)
+        parse({ paths: { hide: ['/' + entry, '*.pem', '?'] } })
+      }
+      // The mount tier is relative by definition, to the mount root.
+      const m = parseMountPermissions({
+        paths: { hide: [entry] },
+        commands: { deny: [{ commands: { rm: [entry] } }] },
+      })
+      expect(m.paths).toEqual({ hide: [entry] })
+      expect(m.commands?.deny[0]?.paths).toEqual([entry])
+    },
+  )
+
+  it('refuses a blank hide entry at every tier', () => {
+    // "" is the root under the subtree rule: it would hide the whole tree.
+    for (const parse of [parseWorkspacePermissions, parseSessionProfile, parseMountPermissions]) {
+      expect(() => parse({ paths: { hide: ['/a', ''] } })).toThrow(/hide\[1\] must name a path/)
     }
   })
 

@@ -12,7 +12,7 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from mirage.policy.match import has_rules, reads_args
+from mirage.policy.match import has_rules, reads_args, scopes_paths
 from mirage.policy.types import CommandRule, CommandsSpec
 
 
@@ -46,3 +46,24 @@ def test_reads_args_only_for_a_rule_that_reads_past_the_name():
         (CommandsSpec(allow=("*", "rm")),
          CommandsSpec(deny=(CommandRule("no rm", commands=("rm", )), ))), "rm")
     assert not reads_args((), "rm")
+
+
+def test_scopes_paths_is_a_path_rule_that_applies_to_this_command():
+    named = CommandsSpec(
+        deny=(CommandRule("no rm", commands=("rm", )),
+              CommandRule("sealed", commands=("cat", ), paths=("/secret*", )),
+              CommandRule("repo", commands=("ls", ), mount="/repo")))
+    # A glob operand of cat or ls must be expanded before the gate reads
+    # it: a rule names the command and reads its paths (or its mount).
+    assert scopes_paths((named, ), "cat")
+    assert scopes_paths((named, ), "ls")
+    # The bare rm deny and an allow list read the name alone.
+    assert not scopes_paths((named, CommandsSpec(allow=("rm", "*"))), "rm")
+    assert not scopes_paths((named, ), "echo")
+    assert not scopes_paths((), "cat")
+    # A pure path rule applies to every command, so every command's globs
+    # expand: a pattern that only later matches under the scope would
+    # otherwise reach the command unjudged.
+    pure = CommandsSpec(ask=(CommandRule("frozen", paths=("/locked/*", )), ))
+    assert scopes_paths((named, pure), "rm")
+    assert scopes_paths((pure, ), "echo")

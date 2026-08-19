@@ -154,6 +154,28 @@ def test_bound_hides_join_the_sessions_own_in_the_predicate():
         reset_current_session(token)
 
 
+def test_the_explicit_session_predicate_answers_without_a_binding():
+    # A door that holds the session (the admission gate) asks it
+    # directly; the contextvar form is the same answer for the bound
+    # session, and no session bound means nothing is hidden.
+    from mirage.context import path_allowed, session_path_allowed
+    from mirage.types import HiddenPaths
+    sess = Session(session_id="agent",
+                   hidden_paths=HiddenPaths(paths=("/a/secrets", )),
+                   bound_hidden=HiddenPaths(patterns=("*.pem", )))
+    assert get_current_session() is None
+    assert not session_path_allowed(sess, "/a/secrets/x")
+    assert not session_path_allowed(sess, "/repo/k.pem")
+    assert session_path_allowed(sess, "/a/public")
+    assert path_allowed("/a/secrets/x")
+    token = set_current_session(sess)
+    try:
+        assert not path_allowed("/a/secrets/x")
+        assert path_allowed("/a/public")
+    finally:
+        reset_current_session(token)
+
+
 def test_bound_hides_alone_activate_the_gate():
     from mirage.context import hidden_paths_active, path_allowed
     from mirage.types import HiddenPaths

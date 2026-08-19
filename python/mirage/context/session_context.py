@@ -159,6 +159,26 @@ def dotglob_active() -> bool:
     return sess is not None and bool(sess.shopts.get("dotglob"))
 
 
+def session_path_allowed(sess: "Session", virtual: str) -> bool:
+    """Whether a session's hidden-paths specs, its own and the
+    workspace-bound one, leave this path visible.
+
+    The explicit-session form of ``path_allowed``, for a door that
+    holds the session rather than running under it: the admission
+    gate drops a hidden operand before any policy reads it, so a rule
+    or an ask never names a path the session cannot see.
+
+    Args:
+        sess (Session): the session asking.
+        virtual (str): absolute virtual path.
+    """
+    if sess.hidden_paths is not None and path_hidden(sess.hidden_paths,
+                                                     virtual):
+        return False
+    return not (sess.bound_hidden is not None
+                and path_hidden(sess.bound_hidden, virtual))
+
+
 def path_allowed(virtual: str) -> bool:
     """Whether the current session's hidden-paths specs, its own and
     the workspace-bound one, leave this path visible.
@@ -173,13 +193,7 @@ def path_allowed(virtual: str) -> bool:
         virtual (str): absolute virtual path.
     """
     sess = get_current_session()
-    if sess is None:
-        return True
-    if sess.hidden_paths is not None and path_hidden(sess.hidden_paths,
-                                                     virtual):
-        return False
-    return not (sess.bound_hidden is not None
-                and path_hidden(sess.bound_hidden, virtual))
+    return sess is None or session_path_allowed(sess, virtual)
 
 
 def mount_allowed(mount_prefix: str) -> bool:

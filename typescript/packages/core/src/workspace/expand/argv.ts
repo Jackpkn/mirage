@@ -13,6 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import type { SessionView } from '../../ops/types.ts'
+import { scopesPaths } from '../../policy/match/reads.ts'
 import type { CallStack } from '../../shell/call_stack.ts'
 import { PathSpec, wordText } from '../../types.ts'
 import { literalWord, markGlobs, unmarkGlobs } from '../../utils/glob_walk.ts'
@@ -127,9 +128,15 @@ export async function expandArgv(
   // WordPolicy.SHELL words get matches here; mount commands keep
   // patterns for backend pushdown; unknown names fail without
   // touching backends.
+  // So does a command a path-scoped rule names: the admission gate reads
+  // the words before the backend would resolve them, and a pattern that
+  // only later matches under the rule's path would pass a gate its
+  // matches fail.
   const globOpts = globOptions(session)
   const words =
-    policy === WordPolicy.SHELL || globNeedsShell(globOpts)
+    policy === WordPolicy.SHELL ||
+    globNeedsShell(globOpts) ||
+    scopesPaths(session.commandLayers, name)
       ? await resolveGlobs(classified, registry, false, namespace, globOpts)
       : // A pattern still owes its backend a resolution, so it travels
         // marked and the marks come off there; every other word is done

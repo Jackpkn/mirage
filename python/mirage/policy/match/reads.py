@@ -72,3 +72,29 @@ def reads_args(layers: Sequence[CommandsSpec], name: str) -> bool:
             if _rule_reads_args(rule, name):
                 return True
     return False
+
+
+def scopes_paths(layers: Sequence[CommandsSpec], name: str) -> bool:
+    """Whether a path rule in force reads this command's paths.
+
+    The argv builder asks this before deciding who resolves a glob
+    operand: a mount command's pattern is normally pushed down to the
+    backend, so the gate would see the pattern, not the matches, and
+    ``cat /scratch/*/k`` would pass a rule on ``/scratch/private``
+    that ``cat /scratch/private/k`` fails. When a rule that reads
+    paths (or a mount) applies to the command, whether it names the
+    command or every command, the shell expands the glob first, so
+    the gate judges the paths the command will touch.
+
+    Args:
+        layers (Sequence[CommandsSpec]): the session's command tiers.
+        name (str): the command name, as typed.
+    """
+    for layer in layers:
+        for rule in (*layer.ask, *layer.deny):
+            if not rule.paths and not rule.mount:
+                continue
+            if not rule.commands or any(
+                    pattern_names(p, name) for p in rule.commands):
+                return True
+    return False

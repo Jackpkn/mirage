@@ -21,6 +21,7 @@ import tree_sitter
 
 from mirage.commands.spec.types import ValueType
 from mirage.ops.types import SessionView
+from mirage.policy.match import scopes_paths
 from mirage.shell.call_stack import CallStack
 from mirage.types import PathSpec, word_text
 from mirage.utils.glob_walk import literal_word, mark_globs, unmark_globs
@@ -160,11 +161,16 @@ async def expand_argv(
     # patterns for backend pushdown; unknown names fail without
     # touching backends.
     glob_opts = glob_options(session)
-    if policy is WordPolicy.SHELL or glob_opts.needs_shell:
+    if (policy is WordPolicy.SHELL or glob_opts.needs_shell
+            or scopes_paths(session.command_layers, name)):
         # A backend's resolve_glob speaks bash's defaults only, so a
         # session that turned on nullglob, failglob or globstar has its
         # mount-command globs expanded here too, and the command receives
-        # matches the way it does across a mount boundary.
+        # matches the way it does across a mount boundary. So does a
+        # command a path-scoped rule names: the admission gate reads the
+        # words before the backend would resolve them, and a pattern
+        # that only later matches under the rule's path would pass a
+        # gate its matches fail.
         words = await resolve_globs(classified,
                                     registry,
                                     links=namespace,

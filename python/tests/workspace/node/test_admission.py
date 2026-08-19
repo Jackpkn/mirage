@@ -20,7 +20,8 @@ from mirage.types import MountMode
 from mirage.workspace import Workspace
 from mirage.workspace.expand.classify import classify_parts
 from mirage.workspace.node.admission import admit, admit_line, policy_scopes
-from mirage.workspace.session import WorkspacePermissions
+from mirage.workspace.session import SessionProfile, WorkspacePermissions
+from mirage.workspace.session.permissions import PathsBlock
 
 DOC = WorkspacePermissions.model_validate({
     "commands": {
@@ -30,12 +31,16 @@ DOC = WorkspacePermissions.model_validate({
         ],
         "deny": [{
             "reason": "sealed",
-            "commands": ["cat"],
-            "paths": ["/data/secret*"]
+            "commands": {
+                "cat": ["/data/secret*"]
+            }
         }, {
             "reason": "private",
-            "commands": ["ls", "grep", "rg"],
-            "paths": ["/data/private"]
+            "commands": {
+                "ls": ["/data/private"],
+                "grep": ["/data/private"],
+                "rg": ["/data/private"]
+            }
         }],
     }
 })
@@ -199,6 +204,51 @@ async def test_admit_line_reads_literal_words_and_refuses_the_unreadable():
             "/data/run.sh: policy denied: runs lines the gate cannot read\n")
         assert await line("sh -c 'rm /data/x'; sh -c 'sort'") == (
             127, "sort: command not found\n")
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_a_hidden_path_is_no_path_to_any_policy():
+    # A session that cannot see a path must not learn of it from a
+    # rule: the gate drops the operand before any hook, the rule does
+    # not fire, and the line goes on to the door, which answers ENOENT.
+    ws = _ws()
+    try:
+        await ws.execute("mkdir -p /data/private && echo s > /data/secret")
+        veiled = ws.create_session(
+            "veiled",
+            profile=SessionProfile(paths=PathsBlock(hide=("/data/secret",
+                                                          "/data/private"))))
+        plain = ws._session_mgr.get(ws._session_mgr.default_id)
+        registry, namespace = ws._registry, ws._namespace
+
+        async def run(session, name: str, *args: str):
+            words = classify_parts([name, *args], registry, session.cwd)
+            refusal = await admit(name, list(args), words[1:], session,
+                                  registry, namespace)
+            return None if refusal is None else (refusal.exit_code,
+                                                 refusal.stderr.decode())
+
+        assert await run(plain, "cat",
+                         "/data/secret") == (1, "cat: /data/secret: sealed\n")
+        assert await run(veiled, "cat", "/data/secret") is None
+        assert await run(plain, "ls",
+                         "/data/private") == (1,
+                                              "ls: /data/private: private\n")
+        assert await run(veiled, "ls", "/data/private") is None
+        # The followed target and the implied operand are dropped too.
+        await ws.execute("ln -s /data/secret /data/l")
+        assert await run(plain, "cat",
+                         "/data/l") == (1, "cat: /data/l: sealed\n")
+        assert await run(veiled, "cat", "/data/l") is None
+        # Whatever the session sees is still read as before.
+        assert await run(veiled, "cat", "/data/a") is None
+        await ws.execute("echo x > /data/private/f")
+        assert await run(plain, "grep", "-r", "x",
+                         "/data/private") == (1,
+                                              "grep: /data/private: private\n")
+        assert await run(veiled, "grep", "-r", "x", "/data/private") is None
     finally:
         await ws.close()
 

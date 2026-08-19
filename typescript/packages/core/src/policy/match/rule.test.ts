@@ -96,4 +96,75 @@ describe('rules', () => {
     expect(matchOp(named, classifyPaths(named.paths ?? []), op)).toBe(false)
     expect(matchOp({ reason: 'x', commands: ['rm'] }, null, op)).toBe(false)
   })
+
+  function subtreeCtx(command: string, ...operands: string[]): CommandContext {
+    const paths = operands.map((o) => path(o, o))
+    return ctx(command, { paths, operands: paths, argv: operands, tokens: [command, ...operands] })
+  }
+
+  it('a subtree command on the directory holding the scope matches', () => {
+    // `/x/locked/*` protects the children; `rm -r /x/locked`, `rm -r /x`
+    // and `mv /x/locked elsewhere` take them along, so for rm, rmdir and
+    // mv the operand at or above the holding directory matches.
+    const rule: CommandRule = { reason: 'frozen', paths: ['/x/locked/*'] }
+    const scope = classifyPaths(rule.paths ?? [])
+    for (const command of ['rm', 'rmdir']) {
+      for (const operand of ['/x/locked', '/x', '/']) {
+        expect(matchRule(rule, scope, subtreeCtx(command, operand))).toEqual({ operand })
+      }
+      expect(matchRule(rule, scope, subtreeCtx(command, '/x/other'))).toBeNull()
+    }
+    expect(matchRule(rule, scope, subtreeCtx('mv', '/x/locked', '/y'))).toEqual({
+      operand: '/x/locked',
+    })
+    expect(matchRule(rule, scope, subtreeCtx('mv', '/x', '/y'))).toEqual({ operand: '/x' })
+    // mv's destination matches only as the holding directory itself:
+    // moving into it lands in the scope, moving into an ancestor does not.
+    expect(matchRule(rule, scope, subtreeCtx('mv', '/z', '/x/locked'))).toEqual({
+      operand: '/x/locked',
+    })
+    expect(matchRule(rule, scope, subtreeCtx('mv', '/z', '/x'))).toBeNull()
+    // A reader given the same operand is not a whole-line refusal: its
+    // I/O under the scope is the command tier's to refuse, file by file.
+    expect(matchRule(rule, scope, subtreeCtx('cat', '/x/locked'))).toBeNull()
+    expect(matchRule(rule, scope, subtreeCtx('cp', '/x', '/y'))).toBeNull()
+    // A command-scoped rule judges its own command the same way.
+    const named: CommandRule = { reason: 'locked', commands: ['rm'], paths: ['/x/locked/*'] }
+    const namedScope = classifyPaths(named.paths ?? [])
+    expect(matchRule(named, namedScope, subtreeCtx('rm', '/x'))).toEqual({ operand: '/x' })
+    expect(matchRule(named, namedScope, subtreeCtx('mv', '/x', '/y'))).toBeNull()
+  })
+
+  it('matchOp refuses a subtree op on the directory holding the scope', () => {
+    const rule: CommandRule = { reason: 'frozen', paths: ['/data/locked/*'] }
+    const scope = classifyPaths(rule.paths ?? [])
+    for (const [op, virtual] of [
+      ['rename', '/data/locked'],
+      ['rename', '/data'],
+      ['rmdir', '/data/locked'],
+      ['rm_r', '/data'],
+    ] as const) {
+      expect(matchOp(rule, scope, { op, path: path(virtual), write: true, prefix: '/data/' })).toBe(
+        true,
+      )
+    }
+    // A read or write of the directory itself is not in the scope, and a
+    // subtree op beside the scope is not either.
+    expect(
+      matchOp(rule, scope, {
+        op: 'readdir',
+        path: path('/data/locked'),
+        write: false,
+        prefix: '/data/',
+      }),
+    ).toBe(false)
+    expect(
+      matchOp(rule, scope, {
+        op: 'rename',
+        path: path('/data/other'),
+        write: true,
+        prefix: '/data/',
+      }),
+    ).toBe(false)
+  })
 })
