@@ -103,8 +103,14 @@ const MOUNT_PERMISSIONS_FIELDS = ['paths'] as const
 const WORKSPACE_PERMISSIONS_FIELDS = ['commands', 'paths'] as const
 const PROFILE_FIELDS = ['extends', 'cwd', 'env', 'mounts', 'paths', 'vars'] as const
 
+// A document mapping, not merely "an object": a Set, a Date or any class
+// instance has no own enumerable string keys, so Object.entries would read
+// one as an empty mapping and a `mounts` Set would compile to a session
+// granting nothing at all. Python refuses the same values loudly.
 function isPlainObject(v: unknown): v is Record<string, unknown> {
-  return typeof v === 'object' && v !== null && !Array.isArray(v) && !(v instanceof Map)
+  if (typeof v !== 'object' || v === null) return false
+  const proto: unknown = Object.getPrototypeOf(v)
+  return proto === Object.prototype || proto === null
 }
 
 function rejectUnknownKeys(
@@ -124,10 +130,15 @@ function asObject(raw: unknown, where: string): Record<string, unknown> {
   return raw
 }
 
-function stringList(raw: unknown, where: string): readonly string[] {
+/** A document list, refused before a scalar can be iterated (python's `_list`). */
+function asList(raw: unknown, where: string, expected = 'a list'): readonly unknown[] {
   if (raw === undefined || raw === null) return []
-  if (!Array.isArray(raw)) throw new Error(`${where} must be a list of strings`)
-  return raw.map((entry, i) => {
+  if (!Array.isArray(raw)) throw new Error(`${where} must be ${expected}`)
+  return raw as readonly unknown[]
+}
+
+function stringList(raw: unknown, where: string): readonly string[] {
+  return asList(raw, where, 'a list of strings').map((entry, i) => {
     if (typeof entry !== 'string') throw new Error(`${where}[${String(i)}] must be a string`)
     return entry
   })
@@ -166,8 +177,7 @@ export function parseVarsBlock(raw: unknown, where = 'vars'): VarsBlock {
 export function parseCommandsBlock(raw: unknown, where = 'commands'): CommandsBlock {
   const obj = asObject(raw, where)
   rejectUnknownKeys(obj, COMMANDS_FIELDS, where)
-  const deny = obj.deny ?? []
-  if (!Array.isArray(deny)) throw new Error(`${where}.deny must be a list`)
+  const deny = asList(obj.deny, `${where}.deny`)
   return { deny: deny.map((entry, i) => parseRule(entry, `${where}.deny[${String(i)}]`)) }
 }
 
@@ -208,8 +218,10 @@ export function parseProfileMounts(
   if (raw === undefined || raw === null) return null
   if (typeof raw === 'string') return [normPrefix(raw)]
   if (Array.isArray(raw)) return stringList(raw, where).map(normPrefix)
-  const entries: [unknown, unknown][] =
-    raw instanceof Map ? [...raw.entries()] : Object.entries(asObject(raw, where))
+  let entries: [unknown, unknown][]
+  if (raw instanceof Map) entries = [...raw.entries()]
+  else if (isPlainObject(raw)) entries = Object.entries(raw)
+  else throw new Error(`${where} must be a mapping or a list of strings`)
   const modes = new Map<string, MountMode>()
   for (const [prefix, mode] of entries) {
     if (typeof prefix !== 'string') throw new Error(`${where} keys must be strings`)

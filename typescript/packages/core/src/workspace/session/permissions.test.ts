@@ -60,12 +60,21 @@ describe('parseSessionProfile', () => {
     expect(parseProfileMounts(null)).toBeNull()
   })
 
-  it('rejects non-string mount prefixes', () => {
+  it('rejects the mount spellings python rejects', () => {
     expect(() => parseSessionProfile({ mounts: ['/repo', 7] })).toThrow(
       /mounts\[1\] must be a string/,
     )
-    expect(() => parseSessionProfile({ mounts: 7 })).toThrow(/mounts must be a mapping/)
     expect(() => parseProfileMounts(new Map([[7, 'read']]))).toThrow(/mounts keys must be strings/)
+    expect(() => parseSessionProfile({ mounts: { '/repo': ['read'] } })).toThrow(
+      /mounts\[\/repo\] must be a mode name or alias/,
+    )
+    // A Set has no own enumerable keys, so Object.entries used to read
+    // it as an empty mapping and the session silently granted nothing.
+    for (const bad of [7, new Set(['/repo']), new Date()]) {
+      expect(() => parseSessionProfile({ mounts: bad })).toThrow(
+        /mounts must be a mapping or a list of strings/,
+      )
+    }
   })
 
   it('rejects unknown and unshipped fields loudly', () => {
@@ -106,9 +115,9 @@ describe('parseWorkspacePermissions', () => {
   })
 
   it('requires deny itself to be a list', () => {
-    expect(() => parseWorkspacePermissions({ commands: { deny: 'rm' } })).toThrow(
-      /deny must be a list/,
-    )
+    for (const deny of ['rm', { rm: 'no' }, 7]) {
+      expect(() => parseWorkspacePermissions({ commands: { deny } })).toThrow(/deny must be a list/)
+    }
   })
 
   it('rejects profile-only, unshipped and unknown fields', () => {

@@ -226,8 +226,13 @@ class SessionProfile(BaseModel):
             for prefix, mode in v.items():
                 if not isinstance(prefix, str):
                     raise ValueError("mounts keys must be strings")
+                if not isinstance(mode, str):
+                    raise ValueError(
+                        f"mounts[{prefix}] must be a mode name or alias")
                 modes[_norm_prefix(prefix)] = parse_mount_mode(mode)
             return modes
+        if not isinstance(v, (list, tuple)):
+            raise ValueError("mounts must be a mapping or a list of strings")
         return tuple(
             _norm_prefix(prefix) for prefix in _string_list(v, "mounts"))
 

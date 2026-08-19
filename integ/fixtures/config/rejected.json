@@ -100,6 +100,13 @@
       }
     },
     {
+      "name": "profile: a mount ceiling is a mode name, not a list",
+      "config": {
+        "mounts": { "/d": { "resource": "ram" } },
+        "profiles": { "a": { "mounts": { "/d": ["read"] } } }
+      }
+    },
+    {
       "name": "profile: the old hidden_paths spelling",
       "config": {
         "mounts": { "/d": { "resource": "ram" } },
