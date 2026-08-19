@@ -19,6 +19,7 @@ from typing import Any
 
 from mirage.io import OpReport
 from mirage.observe import OpRecord
+from mirage.observe.context import active_recorder
 from mirage.ops.config import NO_FOLLOW_OPS, NamespaceLinks, OpsMount
 from mirage.runtime.types import DispatchFn
 from mirage.types import FileStat, FileType, MountMode, PathSpec
@@ -130,6 +131,10 @@ class Ops:
     def _record(self, op: str, path: str, source: str, nbytes: int,
                 start_ms: int) -> None:
         elapsed = int(time.monotonic() * 1000) - start_ms
+        # A facade call raised by guest code inside a typed line (the
+        # runtime's patched open()) belongs to that line; one raised by
+        # a FUSE callback belongs to no line and carries none.
+        recorder = active_recorder()
         rec = OpRecord(
             op=op,
             path=path,
@@ -137,6 +142,7 @@ class Ops:
             bytes=nbytes,
             timestamp=int(time.time() * 1000),
             duration_ms=elapsed,
+            line_id=(recorder.line_id or None) if recorder else None,
         )
         self.records.append(rec)
         if self._observer is not None:
