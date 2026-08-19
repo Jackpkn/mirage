@@ -12,11 +12,8 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import type { RegisteredCommand } from '@struktoai/mirage-core/commands/config'
-import type { RegisteredOp } from '@struktoai/mirage-core/ops/registry'
-import { remapCommandsResource, remapOpsResource } from '@struktoai/mirage-core/resource/s3/remap'
 import { ResourceName } from '@struktoai/mirage-core/types'
-import { S3Resource } from '../s3/s3.ts'
+import { S3AliasResource, type S3AliasResourceState } from '../s3_alias.ts'
 import {
   backblazeToS3Config,
   redactBackblazeConfig,
@@ -25,41 +22,12 @@ import {
 } from './config.ts'
 import { BACKBLAZE_PROMPT } from './prompt.ts'
 
-export interface BackblazeResourceState {
-  type: string
-  config: BackblazeConfigRedacted
-}
+export type BackblazeResourceState = S3AliasResourceState<BackblazeConfigRedacted>
 
-export class BackblazeResource extends S3Resource {
-  override readonly kind: string = ResourceName.BACKBLAZE
+export class BackblazeResource extends S3AliasResource<BackblazeConfig, BackblazeConfigRedacted> {
   override readonly prompt: string = BACKBLAZE_PROMPT
-  readonly backblazeConfig: BackblazeConfig
-  private readonly backblazeOps: readonly RegisteredOp[]
-  private readonly backblazeCommands: readonly RegisteredCommand[]
 
   constructor(config: BackblazeConfig) {
-    super(backblazeToS3Config(config))
-    this.backblazeConfig = config
-    this.backblazeOps = remapOpsResource(super.ops(), ResourceName.BACKBLAZE)
-    this.backblazeCommands = remapCommandsResource(super.commands(), ResourceName.BACKBLAZE)
-  }
-
-  override ops(): readonly RegisteredOp[] {
-    return this.backblazeOps
-  }
-
-  override commands(): readonly RegisteredCommand[] {
-    return this.backblazeCommands
-  }
-
-  override getState(): Promise<BackblazeResourceState> {
-    return Promise.resolve({
-      type: this.kind,
-      config: redactBackblazeConfig(this.backblazeConfig),
-    })
-  }
-
-  override loadState(_state: BackblazeResourceState): Promise<void> {
-    return Promise.resolve()
+    super(ResourceName.BACKBLAZE, config, backblazeToS3Config(config), redactBackblazeConfig)
   }
 }

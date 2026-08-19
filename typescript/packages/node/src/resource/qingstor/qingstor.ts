@@ -12,11 +12,8 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import type { RegisteredCommand } from '@struktoai/mirage-core/commands/config'
-import type { RegisteredOp } from '@struktoai/mirage-core/ops/registry'
-import { remapCommandsResource, remapOpsResource } from '@struktoai/mirage-core/resource/s3/remap'
 import { ResourceName } from '@struktoai/mirage-core/types'
-import { S3Resource } from '../s3/s3.ts'
+import { S3AliasResource, type S3AliasResourceState } from '../s3_alias.ts'
 import {
   qingStorToS3Config,
   redactQingStorConfig,
@@ -25,41 +22,12 @@ import {
 } from './config.ts'
 import { QINGSTOR_PROMPT } from './prompt.ts'
 
-export interface QingStorResourceState {
-  type: string
-  config: QingStorConfigRedacted
-}
+export type QingStorResourceState = S3AliasResourceState<QingStorConfigRedacted>
 
-export class QingStorResource extends S3Resource {
-  override readonly kind: string = ResourceName.QINGSTOR
+export class QingStorResource extends S3AliasResource<QingStorConfig, QingStorConfigRedacted> {
   override readonly prompt: string = QINGSTOR_PROMPT
-  readonly qingStorConfig: QingStorConfig
-  private readonly qingStorOps: readonly RegisteredOp[]
-  private readonly qingStorCommands: readonly RegisteredCommand[]
 
   constructor(config: QingStorConfig) {
-    super(qingStorToS3Config(config))
-    this.qingStorConfig = config
-    this.qingStorOps = remapOpsResource(super.ops(), ResourceName.QINGSTOR)
-    this.qingStorCommands = remapCommandsResource(super.commands(), ResourceName.QINGSTOR)
-  }
-
-  override ops(): readonly RegisteredOp[] {
-    return this.qingStorOps
-  }
-
-  override commands(): readonly RegisteredCommand[] {
-    return this.qingStorCommands
-  }
-
-  override getState(): Promise<QingStorResourceState> {
-    return Promise.resolve({
-      type: this.kind,
-      config: redactQingStorConfig(this.qingStorConfig),
-    })
-  }
-
-  override loadState(_state: QingStorResourceState): Promise<void> {
-    return Promise.resolve()
+    super(ResourceName.QINGSTOR, config, qingStorToS3Config(config), redactQingStorConfig)
   }
 }

@@ -12,11 +12,11 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from typing import ClassVar
+from typing import Any, ClassVar
 
 from pydantic import BaseModel, ConfigDict, SecretStr
 
-from mirage.resource.s3 import S3Config
+from mirage.resource.s3 import S3Config, S3Resource
 
 
 class S3AliasConfig(BaseModel):
@@ -98,3 +98,24 @@ class FixedEndpointConfig(S3AliasConfig):
 
     def resolved_endpoint_url(self) -> str:
         return self.endpoint_url
+
+
+class S3AliasResource(S3Resource):
+    """The shared body of every S3-compatible provider resource.
+
+    A provider is an :class:`S3Resource` reached through a provider-shaped
+    config, so all it owns is that config and the redacted state built
+    from it; the conversion itself lives on :class:`S3AliasConfig`. A
+    subclass declares only its ``PROMPT`` and narrows the config type.
+
+    Mirrors the TypeScript ``S3AliasResource`` in
+    ``packages/{node,browser}/src/resource/s3_alias.ts``, which also has to
+    retag ops and commands onto the alias name.
+    """
+
+    def __init__(self, config: S3AliasConfig) -> None:
+        self.alias_config = config
+        super().__init__(config.to_s3_config())
+
+    def get_state(self) -> dict[str, Any]:
+        return self.config_state(self.alias_config)

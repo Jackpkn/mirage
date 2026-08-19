@@ -12,49 +12,17 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import type { RegisteredCommand } from '@struktoai/mirage-core/commands/config'
-import type { RegisteredOp } from '@struktoai/mirage-core/ops/registry'
-import { remapCommandsResource, remapOpsResource } from '@struktoai/mirage-core/resource/s3/remap'
 import { ResourceName } from '@struktoai/mirage-core/types'
-import { S3Resource } from '../s3/s3.ts'
+import { S3AliasResource, type S3AliasResourceState } from '../s3_alias.ts'
 import { gcsToS3Config, redactGcsConfig, type GCSConfig, type GCSConfigRedacted } from './config.ts'
 import { GCS_PROMPT } from './prompt.ts'
 
-export interface GCSResourceState {
-  type: string
-  config: GCSConfigRedacted
-}
+export type GCSResourceState = S3AliasResourceState<GCSConfigRedacted>
 
-export class GCSResource extends S3Resource {
-  override readonly kind: string = ResourceName.GCS
+export class GCSResource extends S3AliasResource<GCSConfig, GCSConfigRedacted> {
   override readonly prompt: string = GCS_PROMPT
-  readonly gcsConfig: GCSConfig
-  private readonly gcsOps: readonly RegisteredOp[]
-  private readonly gcsCommands: readonly RegisteredCommand[]
 
   constructor(config: GCSConfig) {
-    super(gcsToS3Config(config))
-    this.gcsConfig = config
-    this.gcsOps = remapOpsResource(super.ops(), ResourceName.GCS)
-    this.gcsCommands = remapCommandsResource(super.commands(), ResourceName.GCS)
-  }
-
-  override ops(): readonly RegisteredOp[] {
-    return this.gcsOps
-  }
-
-  override commands(): readonly RegisteredCommand[] {
-    return this.gcsCommands
-  }
-
-  override getState(): Promise<GCSResourceState> {
-    return Promise.resolve({
-      type: this.kind,
-      config: redactGcsConfig(this.gcsConfig),
-    })
-  }
-
-  override loadState(_state: GCSResourceState): Promise<void> {
-    return Promise.resolve()
+    super(ResourceName.GCS, config, gcsToS3Config(config), redactGcsConfig)
   }
 }

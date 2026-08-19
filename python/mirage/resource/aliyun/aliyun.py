@@ -12,23 +12,14 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from typing import Any
-
 from mirage.resource.aliyun.config import AliyunConfig
 from mirage.resource.aliyun.prompt import PROMPT
-from mirage.resource.s3 import S3Resource
+from mirage.resource.s3_alias import S3AliasResource
 
 
-class AliyunResource(S3Resource):
+class AliyunResource(S3AliasResource):
 
     PROMPT: str = PROMPT
 
     def __init__(self, config: AliyunConfig) -> None:
-        self.aliyun_config = config
-        super().__init__(config.to_s3_config())
-
-    def get_state(self) -> dict[str, Any]:
-        return self.config_state(self.aliyun_config)
-
-    def load_state(self, state: dict[str, Any]) -> None:
-        pass
+        super().__init__(config)

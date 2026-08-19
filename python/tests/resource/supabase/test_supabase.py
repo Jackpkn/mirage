@@ -106,7 +106,7 @@ def test_supabase_resource_preserves_original_config():
         secret_access_key="secret-key",
     )
     resource = SupabaseResource(config)
-    assert resource.supabase_config is config
+    assert resource.alias_config is config
 
 
 def test_s3_client_kwargs_support_path_style_and_session_token():

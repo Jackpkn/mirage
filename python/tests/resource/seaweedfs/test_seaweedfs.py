@@ -95,4 +95,4 @@ def test_seaweedfs_resource_preserves_original_config():
         secret_access_key="s",
     )
     resource = SeaweedFSResource(config)
-    assert resource.seaweedfs_config is config
+    assert resource.alias_config is config

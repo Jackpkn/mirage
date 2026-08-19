@@ -12,11 +12,8 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import type { RegisteredCommand } from '@struktoai/mirage-core/commands/config'
-import type { RegisteredOp } from '@struktoai/mirage-core/ops/registry'
-import { remapCommandsResource, remapOpsResource } from '@struktoai/mirage-core/resource/s3/remap'
 import { ResourceName } from '@struktoai/mirage-core/types'
-import { S3Resource } from '../s3/s3.ts'
+import { S3AliasResource, type S3AliasResourceState } from '../s3_alias.ts'
 import {
   redactSupabaseConfig,
   supabaseToS3Config,
@@ -25,41 +22,12 @@ import {
 } from './config.ts'
 import { SUPABASE_PROMPT } from './prompt.ts'
 
-export interface SupabaseResourceState {
-  type: string
-  config: SupabaseConfigRedacted
-}
+export type SupabaseResourceState = S3AliasResourceState<SupabaseConfigRedacted>
 
-export class SupabaseResource extends S3Resource {
-  override readonly kind: string = ResourceName.SUPABASE
+export class SupabaseResource extends S3AliasResource<SupabaseConfig, SupabaseConfigRedacted> {
   override readonly prompt: string = SUPABASE_PROMPT
-  readonly supabaseConfig: SupabaseConfig
-  private readonly supabaseOps: readonly RegisteredOp[]
-  private readonly supabaseCommands: readonly RegisteredCommand[]
 
   constructor(config: SupabaseConfig) {
-    super(supabaseToS3Config(config))
-    this.supabaseConfig = config
-    this.supabaseOps = remapOpsResource(super.ops(), ResourceName.SUPABASE)
-    this.supabaseCommands = remapCommandsResource(super.commands(), ResourceName.SUPABASE)
-  }
-
-  override ops(): readonly RegisteredOp[] {
-    return this.supabaseOps
-  }
-
-  override commands(): readonly RegisteredCommand[] {
-    return this.supabaseCommands
-  }
-
-  override getState(): Promise<SupabaseResourceState> {
-    return Promise.resolve({
-      type: this.kind,
-      config: redactSupabaseConfig(this.supabaseConfig),
-    })
-  }
-
-  override loadState(_state: SupabaseResourceState): Promise<void> {
-    return Promise.resolve()
+    super(ResourceName.SUPABASE, config, supabaseToS3Config(config), redactSupabaseConfig)
   }
 }

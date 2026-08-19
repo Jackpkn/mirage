@@ -12,54 +12,22 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import type { RegisteredCommand } from '@struktoai/mirage-core/commands/config'
-import type { RegisteredOp } from '@struktoai/mirage-core/ops/registry'
-import { remapCommandsResource, remapOpsResource } from '@struktoai/mirage-core/resource/s3/remap'
 import { ResourceName } from '@struktoai/mirage-core/types'
-import { S3Resource } from '../s3/s3.ts'
+import { S3AliasResource, type S3AliasResourceState } from '../s3_alias.ts'
 import {
   redactWasabiConfig,
-  wasabiToS3Config,
   type WasabiConfig,
   type WasabiConfigRedacted,
+  wasabiToS3Config,
 } from './config.ts'
 import { WASABI_BROWSER_PROMPT } from './prompt.ts'
 
-export interface WasabiResourceState {
-  type: string
-  config: WasabiConfigRedacted
-}
+export type WasabiResourceState = S3AliasResourceState<WasabiConfigRedacted>
 
-export class WasabiResource extends S3Resource {
-  override readonly kind: string = ResourceName.WASABI
+export class WasabiResource extends S3AliasResource<WasabiConfig, WasabiConfigRedacted> {
   override readonly prompt: string = WASABI_BROWSER_PROMPT
-  readonly wasabiConfig: WasabiConfig
-  private readonly wasabiOps: readonly RegisteredOp[]
-  private readonly wasabiCommands: readonly RegisteredCommand[]
 
   constructor(config: WasabiConfig) {
-    super(wasabiToS3Config(config))
-    this.wasabiConfig = config
-    this.wasabiOps = remapOpsResource(super.ops(), ResourceName.WASABI)
-    this.wasabiCommands = remapCommandsResource(super.commands(), ResourceName.WASABI)
-  }
-
-  override ops(): readonly RegisteredOp[] {
-    return this.wasabiOps
-  }
-
-  override commands(): readonly RegisteredCommand[] {
-    return this.wasabiCommands
-  }
-
-  override getState(): Promise<WasabiResourceState> {
-    return Promise.resolve({
-      type: this.kind,
-      config: redactWasabiConfig(this.wasabiConfig),
-    })
-  }
-
-  override loadState(_state: WasabiResourceState): Promise<void> {
-    return Promise.resolve()
+    super(ResourceName.WASABI, config, wasabiToS3Config(config), redactWasabiConfig)
   }
 }
