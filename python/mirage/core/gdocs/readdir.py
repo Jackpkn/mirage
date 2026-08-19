@@ -14,14 +14,15 @@
 
 from mirage.accessor.gdocs import GDocsAccessor
 from mirage.cache.index import NULL_INDEX, IndexCacheStore, IndexEntry
+from mirage.core.gdocs.constants import MIME
+from mirage.core.gdocs.scope import detect_scope
+from mirage.core.google.constants import TOP_LEVEL_DIRS
 from mirage.core.google.date_glob import glob_to_modified_range
 from mirage.core.google.drive import list_all_files
 from mirage.resource.gdocs.doc_entry import make_filename
 from mirage.types import PathSpec
 from mirage.utils.errors import enoent
 from mirage.utils.key_prefix import mount_prefix_of
-
-MIME = "application/vnd.google-apps.document"
 
 
 async def readdir(
@@ -42,10 +43,14 @@ async def readdir(
     key = path.strip("/")
     virtual_key = prefix + "/" + key if key else prefix or "/"
 
-    if not key:
-        return [f"{prefix}/owned", f"{prefix}/shared"]
+    # Bespoke below the classifier: the date-glob push-down filters the
+    # Drive query itself, and a filtered or incomplete listing must not be
+    # cached as the directory, which the kit readdir has no notion of.
+    match = detect_scope(path)
+    if match.kind == "root":
+        return [f"{prefix}/{d}" for d in TOP_LEVEL_DIRS]
 
-    if key not in ("owned", "shared"):
+    if match.kind != "corpus":
         raise enoent(virtual)
 
     if not modified_range:

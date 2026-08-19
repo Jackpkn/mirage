@@ -13,7 +13,8 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import type { MongoDBAccessor } from '../../accessor/mongodb.ts'
-import { findDocuments, listCollections } from './client.ts'
+import type { Searcher } from '../hierarchy/search.ts'
+import { findDocuments, listCollections, listDatabases } from './client.ts'
 import { stringifyDoc } from './stream.ts'
 import { EntityKind, PRIMARY_KEY } from './types.ts'
 import { compareCodePoints } from '../../utils/sort.ts'
@@ -100,4 +101,44 @@ export function formatGrepResults(results: readonly CollectionMatches[]): string
     }
   }
   return lines
+}
+
+const entitySearcher: Searcher<MongoDBAccessor> = async (accessor, match, query) => {
+  const database = match.slots.database ?? ''
+  const name = match.slots.name ?? ''
+  const docs = await searchCollection(
+    accessor,
+    database,
+    name,
+    query.pattern,
+    accessor.config.defaultSearchLimit,
+  )
+  return formatGrepResults(docs.length > 0 ? [{ database, collection: name, docs }] : [])
+}
+
+const databaseSearcher: Searcher<MongoDBAccessor> = async (accessor, match, query) => {
+  const results = await searchDatabase(
+    accessor,
+    match.slots.database ?? '',
+    query.pattern,
+    accessor.config.defaultSearchLimit,
+  )
+  return formatGrepResults(results)
+}
+
+const rootSearcher: Searcher<MongoDBAccessor> = async (accessor, _match, query) => {
+  const dbs = await listDatabases(accessor)
+  const results: CollectionMatches[] = []
+  for (const db of dbs) {
+    results.push(
+      ...(await searchDatabase(accessor, db, query.pattern, accessor.config.defaultSearchLimit)),
+    )
+  }
+  return formatGrepResults(results)
+}
+
+export const SEARCHERS: Readonly<Record<string, Searcher<MongoDBAccessor>>> = {
+  root: rootSearcher,
+  database: databaseSearcher,
+  entity: entitySearcher,
 }

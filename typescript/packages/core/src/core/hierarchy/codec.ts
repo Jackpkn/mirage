@@ -30,7 +30,7 @@ export function asciiDigits(text: string): boolean {
  *
  * `suffix` is the extension the segment carries ('.json'); empty for bare
  * names. `validate` is an extra shape check on the decoded payload; a
- * failing payload means the segment does not match the route at all.
+ * failing payload means the segment does not match the scope at all.
  */
 export class Codec {
   readonly suffix: string

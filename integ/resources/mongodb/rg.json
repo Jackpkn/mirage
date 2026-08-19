@@ -90,6 +90,19 @@
         "stdout": "mirage_integ/collections/authors/documents.jsonl:{\"_id\": 1, \"name\": \"ada\", \"books\": 2}\n",
         "stderr": ""
       }
+    },
+    {
+      "id": "mdb_rg_schema_json",
+      "seq": 620068,
+      "targets": [
+        "mongodb"
+      ],
+      "command": "rg -c database /mongodb/mirage_integ/collections/books/schema.json",
+      "expect": {
+        "exit": 0,
+        "stdout": "1\n",
+        "stderr": ""
+      }
     }
   ]
 }

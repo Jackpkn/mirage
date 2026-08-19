@@ -17,7 +17,7 @@ import type { IndexCacheStore } from '../../cache/index/store.ts'
 import type { PathSpec } from '../../types.ts'
 import { enoent } from '../../utils/errors.ts'
 import { makeRead } from '../hierarchy/read.ts'
-import type { RouteMatch } from '../hierarchy/scope.ts'
+import type { ScopeMatch } from '../hierarchy/scope.ts'
 import { jsonBytes } from '../render/json.ts'
 import { JaegerApiError, fetchOperations, fetchTrace } from './client.ts'
 import { assertService } from './readdir.ts'
@@ -42,11 +42,11 @@ function hasService(trace: unknown, service: string): boolean {
 
 async function readOperations(
   accessor: JaegerAccessor,
-  match: RouteMatch,
+  match: ScopeMatch,
   path: PathSpec,
   _index?: IndexCacheStore,
 ): Promise<Uint8Array> {
-  const service = match.captures.service ?? ''
+  const service = match.slots.service ?? ''
   await assertService(accessor, service, path.virtual)
   const operations = await fetchOperations(accessor.transport, service)
   return jsonBytes(operations)
@@ -54,15 +54,15 @@ async function readOperations(
 
 async function readTrace(
   accessor: JaegerAccessor,
-  match: RouteMatch,
+  match: ScopeMatch,
   path: PathSpec,
   _index?: IndexCacheStore,
 ): Promise<Uint8Array> {
-  const service = match.captures.service ?? ''
+  const service = match.slots.service ?? ''
   await assertService(accessor, service, path.virtual)
   let trace: unknown
   try {
-    trace = await fetchTrace(accessor.transport, match.captures.trace_id ?? '')
+    trace = await fetchTrace(accessor.transport, match.slots.trace_id ?? '')
   } catch (err) {
     if (err instanceof JaegerApiError && err.status === 404) throw enoent(path)
     throw err

@@ -24,7 +24,7 @@ from mirage.commands.registry import command
 from mirage.commands.spec import SPECS
 from mirage.core.postgres import client
 from mirage.core.postgres.read import read as postgres_read
-from mirage.core.postgres.scope import PostgresEntityRowsScope, detect_scope
+from mirage.core.postgres.scope import detect_scope
 from mirage.io.types import ByteSource, IOResult
 from mirage.types import PathSpec
 
@@ -44,17 +44,15 @@ async def wc(accessor: PostgresAccessor, paths: list[PathSpec],
     count_only = parsed.lines and not (parsed.words or parsed.bytes_ or
                                        parsed.chars or parsed.max_line_length)
     scopes = [detect_scope(p) for p in resolved]
-    row_scopes = [
-        scope for scope in scopes if isinstance(scope, PostgresEntityRowsScope)
-    ]
+    row_scopes = [scope for scope in scopes if scope.kind == "entity_rows"]
     if resolved and count_only and len(row_scopes) == len(scopes):
         rows: list[tuple[WCCounts, str | None]] = []
         total = 0
         pool = await accessor.pool()
         async with pool.acquire() as conn:
             for p, scope in zip(resolved, row_scopes):
-                count = await client.count_rows(conn, scope.schema,
-                                                scope.entity)
+                count = await client.count_rows(conn, scope.slots["schema"],
+                                                scope.slots["entity"])
                 rows.append((WCCounts(lines=count), p.raw_path))
                 total += count
         return format_count_rows(rows, WCCounts(lines=total), len(resolved),

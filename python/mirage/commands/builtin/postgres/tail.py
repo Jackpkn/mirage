@@ -28,7 +28,7 @@ from mirage.commands.registry import command
 from mirage.commands.spec import SPECS
 from mirage.core.postgres import client
 from mirage.core.postgres.read import read as postgres_read
-from mirage.core.postgres.scope import PostgresEntityRowsScope, detect_scope
+from mirage.core.postgres.scope import detect_scope
 from mirage.io.types import ByteSource, IOResult
 from mirage.types import PathSpec
 
@@ -47,18 +47,18 @@ async def tail(accessor: PostgresAccessor, paths: list[PathSpec],
         # Row scopes fetch only the last N rows server-side (COUNT then
         # OFFSET) instead of reading the whole relation.
         if (len(paths) == 1 and not has_unresolved_glob(paths)
-                and isinstance(scope, PostgresEntityRowsScope)
-                and counts.byte_count is None and counts.from_byte is None
-                and counts.lines is not None):
+                and scope.kind == "entity_rows" and counts.byte_count is None
+                and counts.from_byte is None and counts.lines is not None):
+            schema = scope.slots["schema"]
+            entity = scope.slots["entity"]
             limit = min(counts.lines, accessor.config.default_row_limit)
             pool = await accessor.pool()
             async with pool.acquire() as conn:
-                total = await client.count_rows(conn, scope.schema,
-                                                scope.entity)
+                total = await client.count_rows(conn, schema, entity)
                 offset = max(0, total - limit)
                 rows = await client.fetch_rows(conn,
-                                               scope.schema,
-                                               scope.entity,
+                                               schema,
+                                               entity,
                                                limit=limit,
                                                offset=offset)
             data = b""

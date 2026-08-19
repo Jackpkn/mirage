@@ -16,8 +16,8 @@ import { stripSlash } from '../../utils/slash.ts'
 import { mountKey } from '../../utils/key_prefix.ts'
 import { describe, expect, it } from 'vitest'
 import { PathSpec } from '../../types.ts'
-import { detectScope } from './scope.ts'
-import { EntityKind, ScopeLevel } from './types.ts'
+import { detectScope, entityKind } from './scope.ts'
+import { EntityKind } from './types.ts'
 
 function ps(p: string): PathSpec {
   return new PathSpec({ resourcePath: stripSlash(p), virtual: p, directory: p })
@@ -26,86 +26,86 @@ function ps(p: string): PathSpec {
 describe('detectScope', () => {
   it('returns root for "/"', () => {
     const s = detectScope(ps('/'))
-    expect(s.level).toBe(ScopeLevel.ROOT)
+    expect(s.kind).toBe('root')
     expect(s.resourcePath).toBe('/')
   })
 
   it('returns root for empty string', () => {
-    expect(detectScope(ps('')).level).toBe(ScopeLevel.ROOT)
+    expect(detectScope(ps('')).kind).toBe('root')
   })
 
   it('returns database level for /<db>', () => {
     const s = detectScope(ps('/app'))
-    expect(s.level).toBe(ScopeLevel.DATABASE)
-    expect(s.database).toBe('app')
+    expect(s.kind).toBe('database')
+    expect(s.slots).toEqual({ database: 'app' })
   })
 
   it('handles trailing slash on database path', () => {
     const s = detectScope(ps('/app/'))
-    expect(s.level).toBe(ScopeLevel.DATABASE)
-    expect(s.database).toBe('app')
+    expect(s.kind).toBe('database')
+    expect(s.slots).toEqual({ database: 'app' })
   })
 
   it('returns database_json for /<db>/database.json', () => {
     const s = detectScope(ps('/app/database.json'))
-    expect(s.level).toBe(ScopeLevel.DATABASE_JSON)
-    expect(s.database).toBe('app')
+    expect(s.kind).toBe('database_json')
+    expect(s.slots).toEqual({ database: 'app' })
   })
 
   it('returns kind_dir for /<db>/collections', () => {
     const s = detectScope(ps('/app/collections'))
-    expect(s.level).toBe(ScopeLevel.KIND_DIR)
-    expect(s.database).toBe('app')
-    expect(s.kind).toBe(EntityKind.COLLECTION)
+    expect(s.kind).toBe('kind_dir')
+    expect(s.slots.database).toBe('app')
+    expect(entityKind(s)).toBe(EntityKind.COLLECTION)
   })
 
   it('returns kind_dir for /<db>/views', () => {
     const s = detectScope(ps('/app/views'))
-    expect(s.level).toBe(ScopeLevel.KIND_DIR)
-    expect(s.kind).toBe(EntityKind.VIEW)
+    expect(s.kind).toBe('kind_dir')
+    expect(entityKind(s)).toBe(EntityKind.VIEW)
   })
 
   it('returns entity for /<db>/collections/<name>', () => {
     const s = detectScope(ps('/app/collections/users'))
-    expect(s.level).toBe(ScopeLevel.ENTITY)
-    expect(s.database).toBe('app')
-    expect(s.kind).toBe(EntityKind.COLLECTION)
-    expect(s.name).toBe('users')
+    expect(s.kind).toBe('entity')
+    expect(s.slots.database).toBe('app')
+    expect(entityKind(s)).toBe(EntityKind.COLLECTION)
+    expect(s.slots.name).toBe('users')
   })
 
   it('returns entity for /<db>/views/<name>', () => {
     const s = detectScope(ps('/app/views/active_users'))
-    expect(s.level).toBe(ScopeLevel.ENTITY)
-    expect(s.kind).toBe(EntityKind.VIEW)
-    expect(s.name).toBe('active_users')
+    expect(s.kind).toBe('entity')
+    expect(entityKind(s)).toBe(EntityKind.VIEW)
+    expect(s.slots.name).toBe('active_users')
   })
 
   it('returns schema_json for documents-deep schema.json', () => {
     const s = detectScope(ps('/app/collections/users/schema.json'))
-    expect(s.level).toBe(ScopeLevel.SCHEMA_JSON)
-    expect(s.kind).toBe(EntityKind.COLLECTION)
-    expect(s.name).toBe('users')
+    expect(s.kind).toBe('schema_json')
+    expect(entityKind(s)).toBe(EntityKind.COLLECTION)
+    expect(s.slots.name).toBe('users')
   })
 
   it('returns documents for documents-deep documents.jsonl', () => {
     const s = detectScope(ps('/app/collections/users/documents.jsonl'))
-    expect(s.level).toBe(ScopeLevel.DOCUMENTS)
-    expect(s.kind).toBe(EntityKind.COLLECTION)
-    expect(s.name).toBe('users')
+    expect(s.kind).toBe('documents')
+    expect(entityKind(s)).toBe(EntityKind.COLLECTION)
+    expect(s.slots.name).toBe('users')
   })
 
   it('returns documents for a view documents.jsonl', () => {
     const s = detectScope(ps('/app/views/active_users/documents.jsonl'))
-    expect(s.level).toBe(ScopeLevel.DOCUMENTS)
-    expect(s.kind).toBe(EntityKind.VIEW)
+    expect(s.kind).toBe('documents')
+    expect(entityKind(s)).toBe(EntityKind.VIEW)
   })
 
-  it('returns unknown for unrecognized 2-part paths', () => {
-    expect(detectScope(ps('/app/something')).level).toBe(ScopeLevel.UNKNOWN)
+  it('returns invalid for unrecognized 2-part paths', () => {
+    expect(detectScope(ps('/app/something')).kind).toBe('invalid')
   })
 
-  it('returns unknown for too-deep paths', () => {
-    expect(detectScope(ps('/a/collections/b/documents.jsonl/extra')).level).toBe(ScopeLevel.UNKNOWN)
+  it('returns invalid for too-deep paths', () => {
+    expect(detectScope(ps('/a/collections/b/documents.jsonl/extra')).kind).toBe('invalid')
   })
 })
 
@@ -117,9 +117,9 @@ describe('detectScope (path prefix)', () => {
       resourcePath: mountKey('/mongo/app/collections/users/documents.jsonl', '/mongo'),
     })
     const s = detectScope(path)
-    expect(s.level).toBe(ScopeLevel.DOCUMENTS)
-    expect(s.database).toBe('app')
-    expect(s.kind).toBe(EntityKind.COLLECTION)
-    expect(s.name).toBe('users')
+    expect(s.kind).toBe('documents')
+    expect(s.slots.database).toBe('app')
+    expect(entityKind(s)).toBe(EntityKind.COLLECTION)
+    expect(s.slots.name).toBe('users')
   })
 })

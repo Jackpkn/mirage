@@ -12,7 +12,8 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from unittest.mock import AsyncMock, patch
+from contextlib import asynccontextmanager
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -29,11 +30,42 @@ from mirage.types import PathSpec
 CONCRETE = "/public/tables/books/rows.jsonl"
 GLOB = "/public/tables/*/rows.jsonl"
 
+GENERICS = "mirage.commands.builtin.generic_bind.search._GENERICS"
+RESOLVE = "mirage.commands.builtin.generic_bind.adapter.make_resolve_glob"
+SEARCH_ENTITY = "mirage.core.postgres.search.search_entity"
+
+
+@asynccontextmanager
+async def _fake_acquire():
+    yield MagicMock()
+
 
 @pytest.fixture
 def accessor():
-    return PostgresAccessor(config=PostgresConfig(
+    a = PostgresAccessor(config=PostgresConfig(
         dsn="postgres://u:p@localhost:5432/db"))
+    pool = MagicMock()
+    pool.acquire = lambda: _fake_acquire()
+    a.pool = AsyncMock(return_value=pool)
+    return a
+
+
+@pytest.fixture
+def _guard_reads(monkeypatch):
+    # The stat guard is captured by the search factory at import, so fake
+    # what it reads at call time: the pool (above) and the client queries.
+    monkeypatch.setattr("mirage.core.postgres.client.list_tables",
+                        AsyncMock(return_value=["authors", "books"]))
+    monkeypatch.setattr("mirage.core.postgres.client.list_views",
+                        AsyncMock(return_value=[]))
+    monkeypatch.setattr("mirage.core.postgres.client.list_matviews",
+                        AsyncMock(return_value=[]))
+    monkeypatch.setattr("mirage.core.postgres.client.fetch_columns",
+                        AsyncMock(return_value=[]))
+    monkeypatch.setattr("mirage.core.postgres.client.estimated_row_count",
+                        AsyncMock(return_value=0))
+    monkeypatch.setattr("mirage.core.postgres.client.table_size_bytes",
+                        AsyncMock(return_value=0))
 
 
 def _glob_path() -> PathSpec:
@@ -58,30 +90,29 @@ def _resolved_pair() -> list[PathSpec]:
     ]
 
 
+async def _resolve_pair(_accessor, _paths, index=None):
+    return _resolved_pair()
+
+
+def _fake_resolver(resolve):
+    return lambda *_args, **_kwargs: resolve
+
+
 @pytest.mark.asyncio
 async def test_grep_glob_skips_pushdown_and_expands(accessor):
     seen: dict[str, object] = {}
-
-    async def fake_resolve(_accessor, _paths, index=None):
-        return _resolved_pair()
 
     async def fake_generic(paths, _texts, _flags, **_kwargs):
         seen["generic"] = [p.virtual for p in paths]
         return b"", IOResult()
 
     with patch(
-            "mirage.commands.builtin.postgres.grep.search_entity",
+            SEARCH_ENTITY,
             new=AsyncMock(side_effect=AssertionError("pushdown ran on glob")),
     ), patch(
-            "mirage.commands.builtin.postgres.grep._stat",
-            new=AsyncMock(side_effect=AssertionError("stat ran on glob")),
-    ), patch(
-            "mirage.commands.builtin.postgres.grep.resolve_glob",
-            new=fake_resolve,
-    ), patch(
-            "mirage.commands.builtin.postgres.grep.generic_grep",
-            new=fake_generic,
-    ):
+            RESOLVE,
+            new=_fake_resolver(_resolve_pair),
+    ), patch.dict(GENERICS, {"grep": fake_generic}):
         _, io = await grep(accessor, [_glob_path()], ['ada'],
                            CommandOpts(index=NULL_INDEX))
 
@@ -93,17 +124,15 @@ async def test_grep_glob_skips_pushdown_and_expands(accessor):
 
 
 @pytest.mark.asyncio
-async def test_grep_concrete_path_still_uses_pushdown(accessor):
+async def test_grep_concrete_path_still_uses_pushdown(accessor, _guard_reads):
     search = AsyncMock(return_value=[])
     with patch(
-            "mirage.commands.builtin.postgres.grep.search_entity",
+            SEARCH_ENTITY,
             new=search,
     ), patch(
-            "mirage.commands.builtin.postgres.grep._stat",
-            new=AsyncMock(),
-    ), patch(
-            "mirage.commands.builtin.postgres.grep.resolve_glob",
-            new=AsyncMock(side_effect=AssertionError("glob ran")),
+            RESOLVE,
+            new=_fake_resolver(
+                AsyncMock(side_effect=AssertionError("glob ran"))),
     ):
         _, io = await grep(accessor, [
             PathSpec(virtual=CONCRETE,
@@ -141,7 +170,7 @@ async def test_grep_shaping_flag_skips_pushdown(accessor, flags):
     # whole matching rows), so the wrapper must defer to the generic scan.
     seen: dict[str, object] = {}
 
-    async def fake_resolve(_accessor, _paths, index=None):
+    async def _resolve_one(_accessor, _paths, index=None):
         return [_concrete_path()]
 
     async def fake_generic(paths, _texts, _flags, **_kwargs):
@@ -149,15 +178,12 @@ async def test_grep_shaping_flag_skips_pushdown(accessor, flags):
         return b"", IOResult()
 
     with patch(
-            "mirage.commands.builtin.postgres.grep.search_entity",
+            SEARCH_ENTITY,
             new=AsyncMock(side_effect=AssertionError("pushdown ran w/ flag")),
     ), patch(
-            "mirage.commands.builtin.postgres.grep.resolve_glob",
-            new=fake_resolve,
-    ), patch(
-            "mirage.commands.builtin.postgres.grep.generic_grep",
-            new=fake_generic,
-    ):
+            RESOLVE,
+            new=_fake_resolver(_resolve_one),
+    ), patch.dict(GENERICS, {"grep": fake_generic}):
         await grep(accessor, [_concrete_path()], ['ada'],
                    CommandOpts(index=NULL_INDEX, flags={**flags}))
 
@@ -170,7 +196,7 @@ async def test_grep_regex_pattern_skips_pushdown(accessor):
     # take the generic scan rather than silently mis-matching.
     seen: dict[str, object] = {}
 
-    async def fake_resolve(_accessor, _paths, index=None):
+    async def _resolve_one(_accessor, _paths, index=None):
         return [_concrete_path()]
 
     async def fake_generic(paths, _texts, _flags, **_kwargs):
@@ -178,15 +204,12 @@ async def test_grep_regex_pattern_skips_pushdown(accessor):
         return b"", IOResult()
 
     with patch(
-            "mirage.commands.builtin.postgres.grep.search_entity",
+            SEARCH_ENTITY,
             new=AsyncMock(side_effect=AssertionError("pushdown ran on regex")),
     ), patch(
-            "mirage.commands.builtin.postgres.grep.resolve_glob",
-            new=fake_resolve,
-    ), patch(
-            "mirage.commands.builtin.postgres.grep.generic_grep",
-            new=fake_generic,
-    ):
+            RESOLVE,
+            new=_fake_resolver(_resolve_one),
+    ), patch.dict(GENERICS, {"grep": fake_generic}):
         await grep(accessor, [_concrete_path()], ['a.b'],
                    CommandOpts(index=NULL_INDEX))
 
@@ -206,7 +229,7 @@ async def test_grep_second_operand_skips_pushdown(accessor):
     # rest, so a two-operand line silently reported only books.
     seen: dict[str, object] = {}
 
-    async def fake_resolve(_accessor, _paths, index=None):
+    async def _resolve_two(_accessor, _paths, index=None):
         return [_concrete_path(), _second_path()]
 
     async def fake_generic(paths, _texts, _flags, **_kwargs):
@@ -214,18 +237,12 @@ async def test_grep_second_operand_skips_pushdown(accessor):
         return b"", IOResult()
 
     with patch(
-            "mirage.commands.builtin.postgres.grep.search_entity",
+            SEARCH_ENTITY,
             new=AsyncMock(side_effect=AssertionError("pushdown ran on 2 ops")),
     ), patch(
-            "mirage.commands.builtin.postgres.grep._stat",
-            new=AsyncMock(side_effect=AssertionError("stat ran on 2 ops")),
-    ), patch(
-            "mirage.commands.builtin.postgres.grep.resolve_glob",
-            new=fake_resolve,
-    ), patch(
-            "mirage.commands.builtin.postgres.grep.generic_grep",
-            new=fake_generic,
-    ):
+            RESOLVE,
+            new=_fake_resolver(_resolve_two),
+    ), patch.dict(GENERICS, {"grep": fake_generic}):
         await grep(accessor,
                    [_concrete_path(), _second_path()], ['ada'],
                    CommandOpts(index=NULL_INDEX))
@@ -237,7 +254,7 @@ async def test_grep_second_operand_skips_pushdown(accessor):
 async def test_rg_second_operand_skips_pushdown(accessor):
     seen: dict[str, object] = {}
 
-    async def fake_resolve(_accessor, _paths, index=None):
+    async def _resolve_two(_accessor, _paths, index=None):
         return [_concrete_path(), _second_path()]
 
     async def fake_generic(paths, _texts, _flags, **_kwargs):
@@ -245,18 +262,12 @@ async def test_rg_second_operand_skips_pushdown(accessor):
         return b"", IOResult()
 
     with patch(
-            "mirage.commands.builtin.postgres.rg.search_entity",
+            SEARCH_ENTITY,
             new=AsyncMock(side_effect=AssertionError("pushdown ran on 2 ops")),
     ), patch(
-            "mirage.commands.builtin.postgres.rg._stat",
-            new=AsyncMock(side_effect=AssertionError("stat ran on 2 ops")),
-    ), patch(
-            "mirage.commands.builtin.postgres.rg.resolve_glob",
-            new=fake_resolve,
-    ), patch(
-            "mirage.commands.builtin.postgres.rg.generic_rg",
-            new=fake_generic,
-    ):
+            RESOLVE,
+            new=_fake_resolver(_resolve_two),
+    ), patch.dict(GENERICS, {"rg": fake_generic}):
         await rg(accessor, [_concrete_path(), _second_path()], ['ada'],
                  CommandOpts(index=NULL_INDEX))
 
@@ -267,26 +278,17 @@ async def test_rg_second_operand_skips_pushdown(accessor):
 async def test_rg_glob_skips_pushdown_and_expands(accessor):
     seen: dict[str, object] = {}
 
-    async def fake_resolve(_accessor, _paths, index=None):
-        return _resolved_pair()
-
     async def fake_generic(paths, _texts, _flags, **_kwargs):
         seen["generic"] = [p.virtual for p in paths]
         return b"", IOResult()
 
     with patch(
-            "mirage.commands.builtin.postgres.rg.search_entity",
+            SEARCH_ENTITY,
             new=AsyncMock(side_effect=AssertionError("pushdown ran on glob")),
     ), patch(
-            "mirage.commands.builtin.postgres.rg._stat",
-            new=AsyncMock(side_effect=AssertionError("stat ran on glob")),
-    ), patch(
-            "mirage.commands.builtin.postgres.rg.resolve_glob",
-            new=fake_resolve,
-    ), patch(
-            "mirage.commands.builtin.postgres.rg.generic_rg",
-            new=fake_generic,
-    ):
+            RESOLVE,
+            new=_fake_resolver(_resolve_pair),
+    ), patch.dict(GENERICS, {"rg": fake_generic}):
         _, io = await rg(accessor, [_glob_path()], ['ada'],
                          CommandOpts(index=NULL_INDEX))
 

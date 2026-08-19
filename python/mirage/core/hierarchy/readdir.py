@@ -17,13 +17,13 @@ from typing import Literal
 
 from mirage.cache.index import NULL_INDEX, IndexCacheStore, IndexEntry
 from mirage.core.hierarchy.probe import A, ReaddirFn
-from mirage.core.hierarchy.scope import INVALID, ROOT, DetectFn, RouteMatch
+from mirage.core.hierarchy.scope import INVALID, ROOT, DetectFn, ScopeMatch
 from mirage.types import PathSpec
 from mirage.utils.errors import enoent, enotdir
 from mirage.utils.key_prefix import mount_prefix_of
 
-Lister = Callable[[A, RouteMatch], Awaitable[list[tuple[str, IndexEntry]]]]
-Guard = Callable[[A, RouteMatch, str], Awaitable[None]]
+Lister = Callable[[A, ScopeMatch], Awaitable[list[tuple[str, IndexEntry]]]]
+Guard = Callable[[A, ScopeMatch, str], Awaitable[None]]
 
 
 def make_readdir(
@@ -40,9 +40,12 @@ def make_readdir(
     IndexEntry)`` pairs; everything else — classification, existence
     guards, the index probe and write-back, and virtual name
     construction — happens here, identically for every backend.
+    A dot-prefixed name is dropped from the listing: the classifier
+    refuses every dot-leading segment, so listing one would advertise a
+    path that stat, read and child readdir all report absent.
 
     Args:
-        detect (DetectFn): the backend's route classifier.
+        detect (DetectFn): the backend's scope classifier.
         listers (Mapping[str, Lister]): one lister per directory kind;
             include ``root`` for a dynamic mount root.
         static_root (tuple[str, ...] | None): fixed top-level names, for
@@ -69,7 +72,7 @@ def make_readdir(
             return [f"{prefix}/{d}" for d in static_root]
         lister = listers.get(match.kind)
         if lister is None:
-            if (match.route is not None and match.route.leaf
+            if (match.scope is not None and match.scope.leaf
                     and leaf_error == "enotdir"):
                 raise enotdir(virtual)
             raise enoent(virtual)
@@ -79,7 +82,9 @@ def make_readdir(
         listing = await index.list_dir(virtual_key)
         if listing.entries is not None:
             return listing.entries
-        entries = await lister(accessor, match)
+        entries = [(name, entry)
+                   for name, entry in await lister(accessor, match)
+                   if not name.startswith(".")]
         await index.set_dir(virtual_key, entries)
         stem = virtual_key.rstrip("/")
         return [f"{stem}/{name}" for name, _ in entries]

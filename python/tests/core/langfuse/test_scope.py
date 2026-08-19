@@ -45,7 +45,7 @@ def test_traces_dir():
 def test_traces_file():
     match = detect_scope(_spec("/traces/abc.json"))
     assert match.kind == "trace"
-    assert match.captures == {"trace_id": "abc"}
+    assert match.slots == {"trace_id": "abc"}
 
 
 def test_sessions_dir():
@@ -55,13 +55,13 @@ def test_sessions_dir():
 def test_sessions_id():
     match = detect_scope(_spec("/sessions/sid1"))
     assert match.kind == "session"
-    assert match.captures == {"session_id": "sid1"}
+    assert match.slots == {"session_id": "sid1"}
 
 
 def test_sessions_trace_file():
     match = detect_scope(_spec("/sessions/sid1/tid1.json"))
     assert match.kind == "session_trace"
-    assert match.captures == {"session_id": "sid1", "trace_id": "tid1"}
+    assert match.slots == {"session_id": "sid1", "trace_id": "tid1"}
 
 
 def test_prompts_dir():
@@ -71,18 +71,18 @@ def test_prompts_dir():
 def test_prompts_name():
     match = detect_scope(_spec("/prompts/summarize"))
     assert match.kind == "prompt"
-    assert match.captures == {"prompt_name": "summarize"}
+    assert match.slots == {"prompt_name": "summarize"}
 
 
 def test_prompts_version_file():
     match = detect_scope(_spec("/prompts/summarize/1.json"))
     assert match.kind == "prompt_version"
-    assert match.captures == {"prompt_name": "summarize", "version": "1"}
+    assert match.slots == {"prompt_name": "summarize", "version": "1"}
 
 
 def test_prompts_version_must_be_an_integer():
     # int("abc") used to crash the read path; a non-numeric version now
-    # fails the route match and reads as ENOENT, matching typescript.
+    # fails the scope match and reads as ENOENT, matching typescript.
     assert detect_scope(
         _spec("/prompts/summarize/abc.json")).kind == ("invalid")
 
@@ -94,7 +94,7 @@ def test_datasets_dir():
 def test_datasets_name():
     match = detect_scope(_spec("/datasets/qa-eval"))
     assert match.kind == "dataset"
-    assert match.captures == {"dataset_name": "qa-eval"}
+    assert match.slots == {"dataset_name": "qa-eval"}
 
 
 def test_glob_scope_root():
@@ -129,7 +129,7 @@ def test_glob_scope_file():
     )
     match = detect_scope(gs)
     assert match.kind == "trace"
-    assert match.captures == {"trace_id": "abc"}
+    assert match.slots == {"trace_id": "abc"}
 
 
 def test_unrecognized_path_is_not_root():

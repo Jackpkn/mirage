@@ -22,7 +22,7 @@ from mirage.cache.index import NULL_INDEX, IndexCacheStore
 from mirage.core.mongodb.client import (find_documents, iter_documents,
                                         iter_inserts)
 from mirage.core.mongodb.scope import detect_scope
-from mirage.core.mongodb.types import PRIMARY_KEY, ScopeLevel
+from mirage.core.mongodb.types import PRIMARY_KEY
 from mirage.types import PathSpec
 from mirage.utils.errors import enoent
 from mirage.utils.json_canonical import canonicalize_value
@@ -75,20 +75,21 @@ async def read_tail(
         index (IndexCacheStore): Unused; kept for reader-signature parity.
     """
     scope = detect_scope(path)
-    if scope.level != ScopeLevel.DOCUMENTS:
+    if scope.kind != "documents":
         raise enoent(path)
     limit = min(n, accessor.config.max_doc_limit)
     docs = await find_documents(
         accessor.client,
-        scope.database,
-        scope.name,
+        scope.slots["database"],
+        scope.slots["name"],
         sort=[(PRIMARY_KEY, -1)],
         limit=limit,
     )
     docs.reverse()
     if not docs:
         return b""
-    elide = _elision_paths(accessor.config, scope.database, scope.name)
+    elide = _elision_paths(accessor.config, scope.slots["database"],
+                           scope.slots["name"])
     lines = []
     for doc in docs:
         if elide:
@@ -104,13 +105,14 @@ async def read_stream(
     batch_size: int = 100,
 ) -> AsyncIterator[bytes]:
     scope = detect_scope(path)
-    if scope.level != ScopeLevel.DOCUMENTS:
+    if scope.kind != "documents":
         raise enoent(path)
-    elide = _elision_paths(accessor.config, scope.database, scope.name)
+    elide = _elision_paths(accessor.config, scope.slots["database"],
+                           scope.slots["name"])
     async for doc in iter_documents(
             accessor.client,
-            scope.database,
-            scope.name,
+            scope.slots["database"],
+            scope.slots["name"],
             sort=[(PRIMARY_KEY, 1)],
             batch_size=batch_size,
     ):
@@ -125,10 +127,12 @@ async def watch_stream(
     index: IndexCacheStore = NULL_INDEX,
 ) -> AsyncIterator[bytes]:
     scope = detect_scope(path)
-    if scope.level != ScopeLevel.DOCUMENTS:
+    if scope.kind != "documents":
         raise enoent(path)
-    elide = _elision_paths(accessor.config, scope.database, scope.name)
-    async for doc in iter_inserts(accessor.client, scope.database, scope.name):
+    elide = _elision_paths(accessor.config, scope.slots["database"],
+                           scope.slots["name"])
+    async for doc in iter_inserts(accessor.client, scope.slots["database"],
+                                  scope.slots["name"]):
         if elide:
             doc = _apply_elision(doc, elide)
         yield (render_doc(doc) + "\n").encode()

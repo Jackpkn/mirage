@@ -20,16 +20,16 @@ import { enoent, enotdir } from '../../utils/errors.ts'
 import { mountPrefixOf } from '../../utils/key_prefix.ts'
 import { rstripSlash, stripSlash } from '../../utils/slash.ts'
 import type { ReaddirFn } from './probe.ts'
-import { INVALID, ROOT, type DetectFn, type RouteMatch } from './scope.ts'
+import { INVALID, ROOT, type DetectFn, type ScopeMatch } from './scope.ts'
 
 export type Lister<A extends Accessor> = (
   accessor: A,
-  match: RouteMatch,
+  match: ScopeMatch,
 ) => Promise<[string, IndexEntry][]>
 
 export type Guard<A extends Accessor> = (
   accessor: A,
-  match: RouteMatch,
+  match: ScopeMatch,
   virtual: string,
 ) => Promise<void>
 
@@ -39,7 +39,9 @@ export type Guard<A extends Accessor> = (
  * A lister fetches one directory kind and returns `[vfsName, IndexEntry]`
  * pairs; everything else — classification, existence guards, the index probe
  * and write-back, and virtual name construction — happens here, identically
- * for every backend.
+ * for every backend. A dot-prefixed name is dropped from the listing: the
+ * classifier refuses every dot-leading segment, so listing one would
+ * advertise a path that stat, read and child readdir all report absent.
  *
  * `listers` holds one lister per directory kind; include `root` for a
  * dynamic mount root. `staticRoot` names fixed top-level entries, for
@@ -76,7 +78,7 @@ export function makeReaddir<A extends Accessor>(
     }
     const lister = listers[match.kind]
     if (lister === undefined) {
-      if (match.route !== null && match.route.leaf && leafError === 'enotdir') {
+      if (match.scope !== null && match.scope.leaf && leafError === 'enotdir') {
         throw enotdir(pathSpec)
       }
       throw enoent(pathSpec)
@@ -87,7 +89,7 @@ export function makeReaddir<A extends Accessor>(
       const listing = await index.listDir(virtualKey)
       if (listing.entries !== undefined && listing.entries !== null) return listing.entries
     }
-    const entries = await lister(accessor, match)
+    const entries = (await lister(accessor, match)).filter(([name]) => !name.startsWith('.'))
     if (index !== undefined) await index.setDir(virtualKey, entries)
     const stem = rstripSlash(virtualKey)
     return entries.map(([name]) => `${stem}/${name}`)

@@ -13,40 +13,32 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import type { LangfuseAccessor } from '../../../accessor/langfuse.ts'
-import type { IndexCacheStore } from '../../../cache/index/store.ts'
 import {
   fetchDatasets,
   fetchPrompts,
   fetchSessions,
   fetchTraces,
 } from '../../../core/langfuse/client.ts'
-import { resolveGlobOf } from '../generic_bind/index.ts'
-import { LANGFUSE_IO } from './io.ts'
-import { read as langfuseRead } from '../../../core/langfuse/read.ts'
-import { readdir as langfuseReaddir } from '../../../core/langfuse/readdir.ts'
 import { SEARCH_KINDS, detectScope } from '../../../core/langfuse/scope.ts'
-import { stat as langfuseStat } from '../../../core/langfuse/stat.ts'
-import { IOResult } from '../../../io/types.ts'
-import { type FileStat, type PathSpec, ResourceName } from '../../../types.ts'
-import { command, type CommandFnResult, type CommandOpts } from '../../config.ts'
+import type { Searcher, SearchQuery } from '../../../core/hierarchy/search.ts'
+import { ResourceName } from '../../../types.ts'
+import { command } from '../../config.ts'
 import { specOf } from '../../spec/builtins.ts'
-import { grepGeneric } from '../generic/grep.ts'
-import { compilePattern, patternArg, pushdownOperand } from '../grep_helper.ts'
-import { formatRecords } from '../utils/output.ts'
+import { makeSearch } from '../generic_bind/search.ts'
+import { compilePattern, pushdownOperand } from '../grep_helper.ts'
 import { fileReadProvision } from './_provision.ts'
-import { FlagView } from '../../spec/types.ts'
-
-const resolveLangfuseGlob = resolveGlobOf(LANGFUSE_IO)
+import { LANGFUSE_IO } from './io.ts'
 
 function pickString(record: Record<string, unknown>, key: string): string {
   const value = record[key]
   return typeof value === 'string' ? value : ''
 }
 
-export function filterTraces(
-  traces: readonly Record<string, unknown>[],
-  pattern: RegExp,
-): CommandFnResult {
+function compiled(query: SearchQuery): RegExp {
+  return compilePattern(query.pattern, query.ignoreCase, query.fixedString, query.wholeWord)
+}
+
+function filterTraces(traces: readonly Record<string, unknown>[], pattern: RegExp): string[] {
   const lines: string[] = []
   for (const t of traces) {
     const traceId = pickString(t, 'id')
@@ -54,29 +46,20 @@ export function filterTraces(
     if (!pattern.test(lineJson)) continue
     lines.push(`traces/${traceId}.json:${lineJson}`)
   }
-  if (lines.length === 0) return [new Uint8Array(0), new IOResult({ exitCode: 1 })]
-  return [formatRecords(lines), new IOResult()]
+  return lines
 }
 
-export function filterSessions(
-  sessions: readonly Record<string, unknown>[],
-  pattern: RegExp,
-): CommandFnResult {
+function filterSessions(sessions: readonly Record<string, unknown>[], pattern: RegExp): string[] {
   const lines: string[] = []
   for (const s of sessions) {
     const sessionId = pickString(s, 'id')
     if (!pattern.test(sessionId)) continue
-    const lineJson = JSON.stringify(s)
-    lines.push(`sessions/${sessionId}:${lineJson}`)
+    lines.push(`sessions/${sessionId}:${JSON.stringify(s)}`)
   }
-  if (lines.length === 0) return [new Uint8Array(0), new IOResult({ exitCode: 1 })]
-  return [formatRecords(lines), new IOResult()]
+  return lines
 }
 
-export function filterPrompts(
-  prompts: readonly Record<string, unknown>[],
-  pattern: RegExp,
-): CommandFnResult {
+function filterPrompts(prompts: readonly Record<string, unknown>[], pattern: RegExp): string[] {
   const lines: string[] = []
   const seen = new Set<string>()
   for (const p of prompts) {
@@ -84,91 +67,62 @@ export function filterPrompts(
     if (seen.has(promptName)) continue
     if (!pattern.test(promptName)) continue
     seen.add(promptName)
-    const lineJson = JSON.stringify(p)
-    lines.push(`prompts/${promptName}:${lineJson}`)
+    lines.push(`prompts/${promptName}:${JSON.stringify(p)}`)
   }
-  if (lines.length === 0) return [new Uint8Array(0), new IOResult({ exitCode: 1 })]
-  return [formatRecords(lines), new IOResult()]
+  return lines
 }
 
-export function filterDatasets(
-  datasets: readonly Record<string, unknown>[],
-  pattern: RegExp,
-): CommandFnResult {
+function filterDatasets(datasets: readonly Record<string, unknown>[], pattern: RegExp): string[] {
   const lines: string[] = []
   for (const d of datasets) {
     const datasetName = pickString(d, 'name')
     if (!pattern.test(datasetName)) continue
-    const lineJson = JSON.stringify(d)
-    lines.push(`datasets/${datasetName}:${lineJson}`)
+    lines.push(`datasets/${datasetName}:${JSON.stringify(d)}`)
   }
-  if (lines.length === 0) return [new Uint8Array(0), new IOResult({ exitCode: 1 })]
-  return [formatRecords(lines), new IOResult()]
+  return lines
 }
 
-async function* langfuseStream(
-  accessor: LangfuseAccessor,
-  p: PathSpec,
-  index?: IndexCacheStore,
-): AsyncIterable<Uint8Array> {
-  yield await langfuseRead(accessor, p, index)
-}
-
-async function grepCommand(
-  accessor: LangfuseAccessor,
-  paths: PathSpec[],
-  texts: string[],
-  opts: CommandOpts,
-): Promise<CommandFnResult> {
-  const pattern = patternArg(texts, opts.flags)
+// The search push-down answers from the list endpoints (one call instead
+// of one read per entry), so it greps listing summaries: a pattern that
+// only occurs in a trace's observation bodies needs a file read to match.
+const tracesSearcher: Searcher<LangfuseAccessor> = async (accessor, _match, query) => {
   const limit = accessor.config.defaultSearchLimit ?? 50
-
-  // The search push-down answers from the list endpoints (one call instead
-  // of one read per entry), so it greps listing summaries: a pattern that
-  // only occurs in a trace's observation bodies needs a file read to match.
-  // Output/match-shaping flags and a multi-operand line defer to the generic
-  // scan below.
-  const operand = pushdownOperand(paths, opts.flags, pattern)
-  if (pattern !== null && operand !== null) {
-    const search = SEARCH_KINDS[detectScope(operand).kind]
-    const fl = new FlagView(opts.flags, specOf('grep'))
-    const ignoreCase = fl.asBool('i')
-    const fixedString = fl.asBool('F')
-    const wholeWord = fl.asBool('w')
-    const pat = compilePattern(pattern, ignoreCase, fixedString, wholeWord)
-    if (search === 'traces') {
-      const traces = await fetchTraces(accessor.transport, { limit })
-      return filterTraces(traces, pat)
-    }
-    if (search === 'sessions') {
-      const sessions = await fetchSessions(accessor.transport, { limit })
-      return filterSessions(sessions, pat)
-    }
-    if (search === 'prompts') {
-      const prompts = await fetchPrompts(accessor.transport)
-      return filterPrompts(prompts, pat)
-    }
-    if (search === 'datasets') {
-      const datasets = await fetchDatasets(accessor.transport)
-      return filterDatasets(datasets, pat)
-    }
-  }
-
-  const resolved =
-    paths.length > 0 ? await resolveLangfuseGlob(accessor, paths, opts.index ?? undefined) : []
-  const stat = (p: PathSpec): Promise<FileStat> =>
-    langfuseStat(accessor, p, opts.index ?? undefined)
-  const readdir = (p: PathSpec): Promise<string[]> =>
-    langfuseReaddir(accessor, p, opts.index ?? undefined)
-  return grepGeneric('grep', resolved, texts, opts, stat, readdir, (p) =>
-    langfuseStream(accessor, p, opts.index ?? undefined),
-  )
+  const traces = await fetchTraces(accessor.transport, { limit })
+  return filterTraces(traces, compiled(query))
 }
+
+const sessionsSearcher: Searcher<LangfuseAccessor> = async (accessor, _match, query) => {
+  const limit = accessor.config.defaultSearchLimit ?? 50
+  const sessions = await fetchSessions(accessor.transport, { limit })
+  return filterSessions(sessions, compiled(query))
+}
+
+const promptsSearcher: Searcher<LangfuseAccessor> = async (accessor, _match, query) =>
+  filterPrompts(await fetchPrompts(accessor.transport), compiled(query))
+
+const datasetsSearcher: Searcher<LangfuseAccessor> = async (accessor, _match, query) =>
+  filterDatasets(await fetchDatasets(accessor.transport), compiled(query))
+
+const CONTAINERS: Readonly<Record<string, Searcher<LangfuseAccessor>>> = {
+  traces: tracesSearcher,
+  sessions: sessionsSearcher,
+  prompts: promptsSearcher,
+  datasets: datasetsSearcher,
+}
+
+export const SEARCHERS: Readonly<Record<string, Searcher<LangfuseAccessor>>> = Object.fromEntries(
+  Object.entries(SEARCH_KINDS).flatMap(([kind, container]) => {
+    const searcher = CONTAINERS[container]
+    return searcher === undefined ? [] : [[kind, searcher] as const]
+  }),
+)
 
 export const LANGFUSE_GREP = command({
   name: 'grep',
   resource: ResourceName.LANGFUSE,
   spec: specOf('grep'),
-  fn: grepCommand,
+  fn: makeSearch('grep', detectScope, SEARCHERS, LANGFUSE_IO, {
+    qualify: pushdownOperand,
+  }),
   provision: fileReadProvision,
 })

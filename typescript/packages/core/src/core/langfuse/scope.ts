@@ -14,8 +14,7 @@
 
 import { FileType } from '../../types.ts'
 import { INT_JSON, JSON_NAME, JSONL_NAME } from '../hierarchy/codec.ts'
-import { Capture, Route } from '../hierarchy/route.ts'
-import { makeDetectScope } from '../hierarchy/scope.ts'
+import { Slot, Scope, makeDetectScope } from '../hierarchy/scope.ts'
 
 export const TOP_LEVEL_DIRS = ['traces', 'sessions', 'prompts', 'datasets']
 
@@ -23,56 +22,51 @@ export const TOP_LEVEL_DIRS = ['traces', 'sessions', 'prompts', 'datasets']
 // push-down all classify through it, so the file surface and the search
 // surface cannot disagree about what a path means (they used to be two
 // hand-maintained dispatch ladders).
-export const ROUTES: readonly Route[] = [
-  new Route({ kind: 'traces', segments: ['traces'], probed: false }),
-  new Route({
+export const SCOPES: readonly Scope[] = [
+  new Scope({ kind: 'traces', segments: ['traces'], probed: false }),
+  new Scope({
     kind: 'trace',
-    segments: ['traces', new Capture('trace_id', JSON_NAME)],
+    segments: ['traces', new Slot('trace_id', JSON_NAME)],
     leaf: true,
     filetype: FileType.JSON,
   }),
-  new Route({ kind: 'sessions', segments: ['sessions'], probed: false }),
-  new Route({ kind: 'session', segments: ['sessions', new Capture('session_id')] }),
-  new Route({
+  new Scope({ kind: 'sessions', segments: ['sessions'], probed: false }),
+  new Scope({ kind: 'session', segments: ['sessions', new Slot('session_id')] }),
+  new Scope({
     kind: 'session_trace',
-    segments: ['sessions', new Capture('session_id'), new Capture('trace_id', JSON_NAME)],
+    segments: ['sessions', new Slot('session_id'), new Slot('trace_id', JSON_NAME)],
     leaf: true,
     filetype: FileType.JSON,
   }),
-  new Route({ kind: 'prompts', segments: ['prompts'], probed: false }),
-  new Route({ kind: 'prompt', segments: ['prompts', new Capture('prompt_name')] }),
+  new Scope({ kind: 'prompts', segments: ['prompts'], probed: false }),
+  new Scope({ kind: 'prompt', segments: ['prompts', new Slot('prompt_name')] }),
   // A version that is not a plain ASCII integer cannot name a prompt version,
-  // so it fails the route match and reads as ENOENT instead of an int() crash
+  // so it fails the scope match and reads as ENOENT instead of an int() crash
   // (python) or a digit-prefix guess (typescript).
-  new Route({
+  new Scope({
     kind: 'prompt_version',
-    segments: ['prompts', new Capture('prompt_name'), new Capture('version', INT_JSON)],
+    segments: ['prompts', new Slot('prompt_name'), new Slot('version', INT_JSON)],
     leaf: true,
     filetype: FileType.JSON,
   }),
-  new Route({ kind: 'datasets', segments: ['datasets'], probed: false }),
-  new Route({ kind: 'dataset', segments: ['datasets', new Capture('dataset_name')] }),
-  new Route({
+  new Scope({ kind: 'datasets', segments: ['datasets'], probed: false }),
+  new Scope({ kind: 'dataset', segments: ['datasets', new Slot('dataset_name')] }),
+  new Scope({
     kind: 'dataset_items',
-    segments: ['datasets', new Capture('dataset_name'), 'items.jsonl'],
+    segments: ['datasets', new Slot('dataset_name'), 'items.jsonl'],
     leaf: true,
     filetype: FileType.TEXT,
   }),
-  new Route({ kind: 'runs', segments: ['datasets', new Capture('dataset_name'), 'runs'] }),
-  new Route({
+  new Scope({ kind: 'runs', segments: ['datasets', new Slot('dataset_name'), 'runs'] }),
+  new Scope({
     kind: 'dataset_run',
-    segments: [
-      'datasets',
-      new Capture('dataset_name'),
-      'runs',
-      new Capture('run_name', JSONL_NAME),
-    ],
+    segments: ['datasets', new Slot('dataset_name'), 'runs', new Slot('run_name', JSONL_NAME)],
     leaf: true,
     filetype: FileType.TEXT,
   }),
 ]
 
-export const detectScope = makeDetectScope(ROUTES)
+export const detectScope = makeDetectScope(SCOPES)
 
 // The kinds the grep/rg push-down may answer with a whole-container search;
 // leaves and unrecognized paths fall through to the generic per-file scan.

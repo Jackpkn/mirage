@@ -14,18 +14,17 @@
 
 import { FileType } from '../../types.ts'
 import { JSON_NAME } from '../hierarchy/codec.ts'
-import { Capture, Route } from '../hierarchy/route.ts'
-import { makeDetectScope } from '../hierarchy/scope.ts'
+import { Slot, Scope, makeDetectScope } from '../hierarchy/scope.ts'
 
 // The mount is one flat directory of memory files; which memories exist is a
 // function of the configured scope filter, not of the path.
-const ROUTES: readonly Route[] = [
-  new Route({
+const SCOPES: readonly Scope[] = [
+  new Scope({
     kind: 'memory',
-    segments: [new Capture('memory_id', JSON_NAME)],
+    segments: [new Slot('memory_id', JSON_NAME)],
     leaf: true,
     filetype: FileType.JSON,
   }),
 ]
 
-export const detectScope = makeDetectScope(ROUTES)
+export const detectScope = makeDetectScope(SCOPES)

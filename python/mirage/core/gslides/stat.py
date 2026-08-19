@@ -12,7 +12,27 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from mirage.core.google.tree_ops import make_stat
+from mirage.cache.index import IndexEntry
 from mirage.core.gslides.readdir import readdir
+from mirage.core.gslides.scope import detect_scope
+from mirage.core.hierarchy.scope import ScopeMatch
+from mirage.core.hierarchy.stat import make_stat
+from mirage.types import FileStat, FileType, PathSpec
 
-stat = make_stat(readdir)
+
+def _file_stat(match: ScopeMatch, path: PathSpec,
+               entry: IndexEntry) -> FileStat:
+    return FileStat(
+        name=entry.vfs_name,
+        type=FileType.JSON,
+        modified=entry.remote_time,
+        size=entry.size,
+        extra={
+            "doc_id": entry.id,
+            "doc_name": entry.name,
+            **entry.extra,
+        },
+    )
+
+
+stat = make_stat(detect_scope, readdir, entry_stats={"file": _file_stat})

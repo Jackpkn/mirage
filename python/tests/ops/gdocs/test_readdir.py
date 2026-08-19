@@ -64,8 +64,8 @@ async def test_readdir_owned_serves_cached_listing(accessor, index):
         name="Report",
         resource_type="gdocs/doc",
         remote_time="2026-04-01T00:00:00Z",
-        vfs_name="file.gdoc.json",
+        vfs_name="File__doc1.gdoc.json",
     )
-    await index.set_dir("/gdocs/owned", [("file.gdoc.json", entry)])
+    await index.set_dir("/gdocs/owned", [("File__doc1.gdoc.json", entry)])
     result = await readdir(accessor, _scope("/gdocs/owned"), index=index)
-    assert "/gdocs/owned/file.gdoc.json" in result
+    assert "/gdocs/owned/File__doc1.gdoc.json" in result

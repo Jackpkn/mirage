@@ -13,10 +13,12 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 from collections.abc import Awaitable
+from functools import partial
 from typing import Protocol, TypeVar
 
 from mirage.accessor.base import Accessor
-from mirage.cache.index import IndexCacheStore
+from mirage.cache.index import IndexCacheStore, IndexEntry
+from mirage.cache.index.warm import entry_or_warm
 from mirage.types import PathSpec
 from mirage.utils.errors import enoent
 from mirage.utils.key_prefix import mount_key, mount_prefix_of
@@ -78,3 +80,35 @@ async def listed_size(index: IndexCacheStore, path: PathSpec) -> int | None:
     prefix = mount_prefix_of(path.virtual, path.resource_path)
     lookup = await index.get(prefix + "/" + path.resource_path)
     return lookup.entry.size if lookup.entry is not None else None
+
+
+async def resolve_entry(readdir: ReaddirFn[A], accessor: A, path: PathSpec,
+                        index: IndexCacheStore) -> IndexEntry | None:
+    """Resolve the path's index entry, listing its parent when cold.
+
+    Id-addressed backends can only turn a path into an id through the
+    index, so the entry is the proof of existence AND the id source; this
+    wraps ``entry_or_warm`` with the parent-readdir warm every such
+    backend used to spell by hand.
+
+    Args:
+        readdir (ReaddirFn): the backend's readdir.
+        accessor (Accessor): backend accessor.
+        path (PathSpec): resource-relative path being resolved.
+        index (IndexCacheStore): index cache.
+    """
+    prefix = mount_prefix_of(path.virtual, path.resource_path)
+    key = path.resource_path.strip("/")
+    virtual_key = prefix + "/" + key if key else prefix or "/"
+    parent_virtual = virtual_key.rsplit("/", 1)[0] or "/"
+    warm = None
+    if parent_virtual != virtual_key:
+        warm = partial(
+            readdir,
+            accessor,
+            PathSpec(virtual=parent_virtual,
+                     directory=parent_virtual,
+                     resource_path=mount_key(parent_virtual, prefix)),
+            index=index,
+        )
+    return await entry_or_warm(index, virtual_key, warm)

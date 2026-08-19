@@ -29,8 +29,8 @@ const resolveGlob = resolveGlobOf(POSTGRES_IO)
 
 function rowsScope(p: PathSpec): { schema: string; entity: string } | null {
   const scope = detectScope(p)
-  if (scope.level === 'entity_rows') {
-    return { schema: scope.schema, entity: scope.entity }
+  if (scope.kind === 'entity_rows') {
+    return { schema: scope.slots.schema ?? '', entity: scope.slots.entity ?? '' }
   }
   return null
 }

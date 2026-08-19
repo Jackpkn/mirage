@@ -51,6 +51,19 @@
         "stdout": "/pg/public/tables/books/rows.jsonl\n",
         "stderr": ""
       }
+    },
+    {
+      "id": "pg_find_root_hides_dot_schema",
+      "seq": 610044,
+      "targets": [
+        "postgres"
+      ],
+      "command": "find /pg/ -maxdepth 1",
+      "expect": {
+        "exit": 0,
+        "stdout": "/pg/\n/pg/database.json\n/pg/public\n",
+        "stderr": ""
+      }
     }
   ]
 }

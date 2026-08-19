@@ -12,133 +12,55 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from dataclasses import dataclass, field
-from typing import Literal, TypeAlias
-
-from mirage.core.mongodb.types import KIND_DIR_NAMES, EntityKind, ScopeLevel
-from mirage.types import PathSpec
-
-
-@dataclass(frozen=True)
-class MongoDBRootScope:
-    resource_path: str = "/"
-    level: Literal[ScopeLevel.ROOT] = field(default=ScopeLevel.ROOT,
-                                            init=False)
+from mirage.core.hierarchy.codec import Codec
+from mirage.core.hierarchy.scope import (Scope, ScopeMatch, Slot,
+                                         make_detect_scope)
+from mirage.core.mongodb.types import KIND_DIR_NAMES, EntityKind
+from mirage.types import FileType
 
 
-@dataclass(frozen=True)
-class MongoDBDatabaseScope:
-    database: str
-    resource_path: str
-    level: Literal[ScopeLevel.DATABASE] = field(default=ScopeLevel.DATABASE,
-                                                init=False)
+def is_kind_dir(text: str) -> bool:
+    """Whether the segment names an entity-kind directory.
+
+    Args:
+        text (str): decoded segment payload.
+    """
+    return text in KIND_DIR_NAMES
 
 
-@dataclass(frozen=True)
-class MongoDBDatabaseJSONScope:
-    database: str
-    resource_path: str
-    level: Literal[ScopeLevel.DATABASE_JSON] = field(
-        default=ScopeLevel.DATABASE_JSON, init=False)
+KIND = Codec(validate=is_kind_dir)
+
+# One description of the tree: readdir, stat, read AND the grep/rg
+# search push-down all classify through it, so the file surface and the
+# search surface cannot disagree about what a path means.
+SCOPES = (
+    Scope(kind="database", segments=(Slot("database"), )),
+    Scope(kind="database_json",
+          segments=(Slot("database"), "database.json"),
+          leaf=True,
+          filetype=FileType.TEXT),
+    Scope(kind="kind_dir", segments=(Slot("database"), Slot("kind", KIND))),
+    Scope(kind="entity",
+          segments=(Slot("database"), Slot("kind", KIND), Slot("name"))),
+    Scope(kind="schema_json",
+          segments=(Slot("database"), Slot("kind",
+                                           KIND), Slot("name"), "schema.json"),
+          leaf=True,
+          filetype=FileType.TEXT),
+    Scope(kind="documents",
+          segments=(Slot("database"), Slot("kind", KIND), Slot("name"),
+                    "documents.jsonl"),
+          leaf=True,
+          filetype=FileType.TEXT),
+)
+
+detect_scope = make_detect_scope(SCOPES)
 
 
-@dataclass(frozen=True)
-class MongoDBKindScope:
-    database: str
-    kind: EntityKind
-    resource_path: str
-    level: Literal[ScopeLevel.KIND_DIR] = field(default=ScopeLevel.KIND_DIR,
-                                                init=False)
+def entity_kind(match: ScopeMatch) -> EntityKind:
+    """The EntityKind a matched scope's kind directory names.
 
-
-@dataclass(frozen=True)
-class MongoDBEntityScope:
-    database: str
-    kind: EntityKind
-    name: str
-    resource_path: str
-    level: Literal[ScopeLevel.ENTITY] = field(default=ScopeLevel.ENTITY,
-                                              init=False)
-
-
-@dataclass(frozen=True)
-class MongoDBSchemaScope:
-    database: str
-    kind: EntityKind
-    name: str
-    resource_path: str
-    level: Literal[ScopeLevel.SCHEMA_JSON] = field(
-        default=ScopeLevel.SCHEMA_JSON, init=False)
-
-
-@dataclass(frozen=True)
-class MongoDBDocumentsScope:
-    database: str
-    kind: EntityKind
-    name: str
-    resource_path: str
-    level: Literal[ScopeLevel.DOCUMENTS] = field(default=ScopeLevel.DOCUMENTS,
-                                                 init=False)
-
-
-@dataclass(frozen=True)
-class MongoDBUnknownScope:
-    resource_path: str
-    level: Literal[ScopeLevel.UNKNOWN] = field(default=ScopeLevel.UNKNOWN,
-                                               init=False)
-
-
-MongoDBScope: TypeAlias = (MongoDBRootScope | MongoDBDatabaseScope
-                           | MongoDBDatabaseJSONScope | MongoDBKindScope
-                           | MongoDBEntityScope | MongoDBSchemaScope
-                           | MongoDBDocumentsScope | MongoDBUnknownScope)
-
-
-def detect_scope(path: PathSpec) -> MongoDBScope:
-    raw = path.mount_path
-    key = raw.strip("/")
-
-    if not key:
-        return MongoDBRootScope(resource_path="/")
-
-    parts = key.split("/")
-
-    if len(parts) == 1:
-        return MongoDBDatabaseScope(database=parts[0], resource_path=raw)
-
-    if len(parts) == 2:
-        db, leaf = parts
-        if leaf == "database.json":
-            return MongoDBDatabaseJSONScope(database=db, resource_path=raw)
-        if leaf in KIND_DIR_NAMES:
-            return MongoDBKindScope(database=db,
-                                    kind=KIND_DIR_NAMES[leaf],
-                                    resource_path=raw)
-        return MongoDBUnknownScope(resource_path=raw)
-
-    if len(parts) == 3:
-        db, kind_seg, name = parts
-        if kind_seg in KIND_DIR_NAMES:
-            return MongoDBEntityScope(database=db,
-                                      kind=KIND_DIR_NAMES[kind_seg],
-                                      name=name,
-                                      resource_path=raw)
-        return MongoDBUnknownScope(resource_path=raw)
-
-    if len(parts) == 4:
-        db, kind_seg, name, leaf = parts
-        if kind_seg in KIND_DIR_NAMES:
-            kind = KIND_DIR_NAMES[kind_seg]
-            if leaf == "schema.json":
-                return MongoDBSchemaScope(database=db,
-                                          kind=kind,
-                                          name=name,
-                                          resource_path=raw)
-            if leaf == "documents.jsonl":
-                return MongoDBDocumentsScope(database=db,
-                                             kind=kind,
-                                             name=name,
-                                             resource_path=raw)
-        return MongoDBUnknownScope(resource_path=raw)
-
-    return MongoDBUnknownScope(resource_path=raw)
+    Args:
+        match (ScopeMatch): a match whose slots hold ``kind``.
+    """
+    return KIND_DIR_NAMES[match.slots["kind"]]

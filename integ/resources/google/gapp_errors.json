@@ -3,15 +3,23 @@
     {
       "id": "gapp_cat_dir_is_gnu",
       "seq": 930030,
-      "targets": ["gapps"],
+      "targets": [
+        "gapps"
+      ],
       "clear_cache": true,
       "command": "cat /docs/owned",
-      "expect": { "exit": 1, "stdout": "", "stderr": "cat: /docs/owned: Is a directory\n" }
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "cat: /docs/owned: Is a directory\n"
+      }
     },
     {
       "id": "gapp_cat_missing_parent",
       "seq": 930031,
-      "targets": ["gapps"],
+      "targets": [
+        "gapps"
+      ],
       "clear_cache": true,
       "command": "cat /docs/owned/nope/x.gdoc.json",
       "expect": {
@@ -23,7 +31,9 @@
     {
       "id": "gapp_ls_missing_parent",
       "seq": 930032,
-      "targets": ["gapps"],
+      "targets": [
+        "gapps"
+      ],
       "clear_cache": true,
       "command": "ls /docs/owned/nope",
       "expect": {
@@ -35,7 +45,9 @@
     {
       "id": "gapp_rm_missing_parent",
       "seq": 930033,
-      "targets": ["gapps"],
+      "targets": [
+        "gapps"
+      ],
       "clear_cache": true,
       "command": "rm /docs/owned/nope/x.gdoc.json",
       "expect": {
@@ -47,9 +59,43 @@
     {
       "id": "gdrive_cat_dir_is_gnu",
       "seq": 930034,
-      "targets": ["gdrive"],
+      "targets": [
+        "gdrive"
+      ],
       "command": "ls /data > /dev/null && cat /data/sub",
-      "expect": { "exit": 1, "stdout": "", "stderr": "cat: /data/sub: Is a directory\n" }
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "cat: /data/sub: Is a directory\n"
+      }
+    },
+    {
+      "id": "gapp_cat_idless_name",
+      "seq": 930035,
+      "targets": [
+        "gapps"
+      ],
+      "clear_cache": true,
+      "command": "cat /docs/owned/plain.gdoc.json",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "cat: /docs/owned/plain.gdoc.json: No such file or directory\n"
+      }
+    },
+    {
+      "id": "gapp_cat_wrong_suffix",
+      "seq": 930036,
+      "targets": [
+        "gapps"
+      ],
+      "clear_cache": true,
+      "command": "cat /docs/owned/File__id.wrong.json",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "cat: /docs/owned/File__id.wrong.json: No such file or directory\n"
+      }
     }
   ]
 }

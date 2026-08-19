@@ -13,7 +13,7 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 from contextlib import asynccontextmanager
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -50,10 +50,16 @@ def accessor():
 
 @pytest.fixture(autouse=True)
 def _exists(monkeypatch):
-    monkeypatch.setattr("mirage.core.postgres.stat._schema_exists",
-                        AsyncMock(return_value=True))
-    monkeypatch.setattr("mirage.core.postgres.stat._entity_exists",
-                        AsyncMock(return_value=True))
+    # The guards are captured by make_stat at import, so patch the client
+    # functions they read at call time rather than names on the stat module.
+    monkeypatch.setattr("mirage.core.postgres.client.list_schemas",
+                        AsyncMock(return_value=["public", "analytics"]))
+    monkeypatch.setattr("mirage.core.postgres.client.list_tables",
+                        AsyncMock(return_value=["users"]))
+    monkeypatch.setattr("mirage.core.postgres.client.list_views",
+                        AsyncMock(return_value=["daily_revenue"]))
+    monkeypatch.setattr("mirage.core.postgres.client.list_matviews",
+                        AsyncMock(return_value=[]))
 
 
 @pytest.mark.asyncio
@@ -142,9 +148,10 @@ async def test_stat_entity_schema_json(accessor, index):
 
 
 @pytest.mark.asyncio
-async def test_stat_entity_rows_jsonl(accessor, index):
-    with patch("mirage.core.postgres.stat.client") as mc:
-        mc.fetch_columns = AsyncMock(return_value=[
+async def test_stat_entity_rows_jsonl(accessor, index, monkeypatch):
+    monkeypatch.setattr(
+        "mirage.core.postgres.client.fetch_columns",
+        AsyncMock(return_value=[
             {
                 "name": "id",
                 "type": "uuid",
@@ -155,14 +162,16 @@ async def test_stat_entity_rows_jsonl(accessor, index):
                 "type": "text",
                 "nullable": False
             },
-        ])
-        mc.estimated_row_count = AsyncMock(return_value=42)
-        mc.table_size_bytes = AsyncMock(return_value=4096)
-        result = await stat(
-            accessor,
-            PathSpec(resource_path="public/tables/users/rows.jsonl",
-                     virtual="/public/tables/users/rows.jsonl",
-                     directory="/public/tables/users/rows.jsonl"), index)
+        ]))
+    monkeypatch.setattr("mirage.core.postgres.client.estimated_row_count",
+                        AsyncMock(return_value=42))
+    monkeypatch.setattr("mirage.core.postgres.client.table_size_bytes",
+                        AsyncMock(return_value=4096))
+    result = await stat(
+        accessor,
+        PathSpec(resource_path="public/tables/users/rows.jsonl",
+                 virtual="/public/tables/users/rows.jsonl",
+                 directory="/public/tables/users/rows.jsonl"), index)
     assert result.type == FileType.TEXT
     assert result.name == "rows.jsonl"
     assert result.size is None
@@ -176,50 +185,57 @@ async def test_stat_entity_rows_jsonl(accessor, index):
 
 
 @pytest.mark.asyncio
-async def test_stat_view_entity_rows(accessor, index):
-    with patch("mirage.core.postgres.stat.client") as mc:
-        mc.fetch_columns = AsyncMock(return_value=[
+async def test_stat_view_entity_rows(accessor, index, monkeypatch):
+    monkeypatch.setattr(
+        "mirage.core.postgres.client.fetch_columns",
+        AsyncMock(return_value=[
             {
                 "name": "team",
                 "type": "text",
                 "nullable": True
             },
-        ])
-        mc.estimated_row_count = AsyncMock(return_value=2)
-        mc.table_size_bytes = AsyncMock(return_value=128)
-        result = await stat(
-            accessor,
-            PathSpec(resource_path="analytics/views/daily_revenue/rows.jsonl",
-                     virtual="/analytics/views/daily_revenue/rows.jsonl",
-                     directory="/analytics/views/daily_revenue/rows.jsonl"),
-            index)
+        ]))
+    monkeypatch.setattr("mirage.core.postgres.client.estimated_row_count",
+                        AsyncMock(return_value=2))
+    monkeypatch.setattr("mirage.core.postgres.client.table_size_bytes",
+                        AsyncMock(return_value=128))
+    result = await stat(
+        accessor,
+        PathSpec(resource_path="analytics/views/daily_revenue/rows.jsonl",
+                 virtual="/analytics/views/daily_revenue/rows.jsonl",
+                 directory="/analytics/views/daily_revenue/rows.jsonl"), index)
     assert result.type == FileType.TEXT
     assert result.extra["kind"] == "views"
 
 
 @pytest.mark.asyncio
-async def test_stat_fingerprint_changes_with_row_count(accessor, index):
-    with patch("mirage.core.postgres.stat.client") as mc:
-        mc.fetch_columns = AsyncMock(return_value=[
+async def test_stat_fingerprint_changes_with_row_count(accessor, index,
+                                                       monkeypatch):
+    monkeypatch.setattr(
+        "mirage.core.postgres.client.fetch_columns",
+        AsyncMock(return_value=[
             {
                 "name": "id",
                 "type": "uuid",
                 "nullable": False
             },
-        ])
-        mc.table_size_bytes = AsyncMock(return_value=100)
-        mc.estimated_row_count = AsyncMock(return_value=10)
-        first = await stat(
-            accessor,
-            PathSpec(resource_path="public/tables/users/rows.jsonl",
-                     virtual="/public/tables/users/rows.jsonl",
-                     directory="/public/tables/users/rows.jsonl"), index)
-        mc.estimated_row_count = AsyncMock(return_value=20)
-        second = await stat(
-            accessor,
-            PathSpec(resource_path="public/tables/users/rows.jsonl",
-                     virtual="/public/tables/users/rows.jsonl",
-                     directory="/public/tables/users/rows.jsonl"), index)
+        ]))
+    monkeypatch.setattr("mirage.core.postgres.client.table_size_bytes",
+                        AsyncMock(return_value=100))
+    monkeypatch.setattr("mirage.core.postgres.client.estimated_row_count",
+                        AsyncMock(return_value=10))
+    first = await stat(
+        accessor,
+        PathSpec(resource_path="public/tables/users/rows.jsonl",
+                 virtual="/public/tables/users/rows.jsonl",
+                 directory="/public/tables/users/rows.jsonl"), index)
+    monkeypatch.setattr("mirage.core.postgres.client.estimated_row_count",
+                        AsyncMock(return_value=20))
+    second = await stat(
+        accessor,
+        PathSpec(resource_path="public/tables/users/rows.jsonl",
+                 virtual="/public/tables/users/rows.jsonl",
+                 directory="/public/tables/users/rows.jsonl"), index)
     assert first.fingerprint != second.fingerprint
 
 
@@ -234,25 +250,24 @@ async def test_stat_invalid_raises(accessor, index):
 
 
 @pytest.mark.asyncio
-async def test_stat_missing_schema_raises(accessor, index):
-    with patch("mirage.core.postgres.stat._schema_exists",
-               AsyncMock(return_value=False)):
-        with pytest.raises(FileNotFoundError):
-            await stat(
-                accessor,
-                PathSpec(resource_path=mount_key("/pg/__nf_missing__.txt",
-                                                 "/pg"),
-                         virtual="/pg/__nf_missing__.txt",
-                         directory="/pg/__nf_missing__.txt"), index)
+async def test_stat_missing_schema_raises(accessor, index, monkeypatch):
+    monkeypatch.setattr("mirage.core.postgres.client.list_schemas",
+                        AsyncMock(return_value=[]))
+    with pytest.raises(FileNotFoundError):
+        await stat(
+            accessor,
+            PathSpec(resource_path=mount_key("/pg/__nf_missing__.txt", "/pg"),
+                     virtual="/pg/__nf_missing__.txt",
+                     directory="/pg/__nf_missing__.txt"), index)
 
 
 @pytest.mark.asyncio
-async def test_stat_missing_entity_raises(accessor, index):
-    with patch("mirage.core.postgres.stat._entity_exists",
-               AsyncMock(return_value=False)):
-        with pytest.raises(FileNotFoundError):
-            await stat(
-                accessor,
-                PathSpec(resource_path="public/tables/nope",
-                         virtual="/public/tables/nope",
-                         directory="/public/tables/nope"), index)
+async def test_stat_missing_entity_raises(accessor, index, monkeypatch):
+    monkeypatch.setattr("mirage.core.postgres.client.list_tables",
+                        AsyncMock(return_value=[]))
+    with pytest.raises(FileNotFoundError):
+        await stat(
+            accessor,
+            PathSpec(resource_path="public/tables/nope",
+                     virtual="/public/tables/nope",
+                     directory="/public/tables/nope"), index)

@@ -15,7 +15,7 @@
 from mirage.accessor.langfuse import LangfuseAccessor
 from mirage.cache.index import IndexCacheStore
 from mirage.core.hierarchy.read import make_read
-from mirage.core.hierarchy.scope import RouteMatch
+from mirage.core.hierarchy.scope import ScopeMatch
 from mirage.core.langfuse.client import (fetch_dataset_items,
                                          fetch_dataset_runs, fetch_or_enoent,
                                          fetch_prompt, fetch_trace)
@@ -25,38 +25,38 @@ from mirage.types import PathSpec
 from mirage.utils.errors import enoent
 
 
-async def _read_trace(accessor: LangfuseAccessor, match: RouteMatch,
+async def _read_trace(accessor: LangfuseAccessor, match: ScopeMatch,
                       path: PathSpec, index: IndexCacheStore) -> bytes:
     data = await fetch_or_enoent(
-        fetch_trace(accessor.api, match.captures["trace_id"]), path.virtual)
+        fetch_trace(accessor.api, match.slots["trace_id"]), path.virtual)
     return json_bytes(data)
 
 
-async def _read_prompt_version(accessor: LangfuseAccessor, match: RouteMatch,
+async def _read_prompt_version(accessor: LangfuseAccessor, match: ScopeMatch,
                                path: PathSpec,
                                index: IndexCacheStore) -> bytes:
-    # The route's codec only matches plain ASCII integers, so the int()
+    # The scope's codec only matches plain ASCII integers, so the int()
     # here cannot raise.
     data = await fetch_or_enoent(
-        fetch_prompt(accessor.api, match.captures["prompt_name"],
-                     int(match.captures["version"])), path.virtual)
+        fetch_prompt(accessor.api, match.slots["prompt_name"],
+                     int(match.slots["version"])), path.virtual)
     return json_bytes(data)
 
 
-async def _read_dataset_items(accessor: LangfuseAccessor, match: RouteMatch,
+async def _read_dataset_items(accessor: LangfuseAccessor, match: ScopeMatch,
                               path: PathSpec, index: IndexCacheStore) -> bytes:
     items = await fetch_or_enoent(
-        fetch_dataset_items(accessor.api, match.captures["dataset_name"]),
+        fetch_dataset_items(accessor.api, match.slots["dataset_name"]),
         path.virtual)
     return jsonl_bytes(items)
 
 
-async def _read_dataset_run(accessor: LangfuseAccessor, match: RouteMatch,
+async def _read_dataset_run(accessor: LangfuseAccessor, match: ScopeMatch,
                             path: PathSpec, index: IndexCacheStore) -> bytes:
     runs = await fetch_or_enoent(
-        fetch_dataset_runs(accessor.api, match.captures["dataset_name"]),
+        fetch_dataset_runs(accessor.api, match.slots["dataset_name"]),
         path.virtual)
-    run_name = match.captures["run_name"]
+    run_name = match.slots["run_name"]
     matched = [r for r in runs if r.get("name") == run_name]
     if not matched:
         raise enoent(path.virtual)

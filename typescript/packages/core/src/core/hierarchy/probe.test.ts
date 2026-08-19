@@ -19,23 +19,22 @@ import { RAMIndexCacheStore } from '../../cache/index/ram.ts'
 import { FileType, PathSpec } from '../../types.ts'
 import { stripSlash } from '../../utils/slash.ts'
 import { JSON_NAME } from './codec.ts'
-import { assertListed, listedSize } from './probe.ts'
+import { assertListed, listedSize, resolveEntry } from './probe.ts'
 import { makeReaddir, type Lister } from './readdir.ts'
-import { Capture, Route } from './route.ts'
-import { makeDetectScope } from './scope.ts'
+import { Slot, Scope, makeDetectScope } from './scope.ts'
 
-const ROUTES: readonly Route[] = [
-  new Route({ kind: 'rooms', segments: ['rooms'], probed: false }),
-  new Route({ kind: 'room', segments: ['rooms', new Capture('room')] }),
-  new Route({
+const SCOPES: readonly Scope[] = [
+  new Scope({ kind: 'rooms', segments: ['rooms'], probed: false }),
+  new Scope({ kind: 'room', segments: ['rooms', new Slot('room')] }),
+  new Scope({
     kind: 'note',
-    segments: ['rooms', new Capture('room'), new Capture('note', JSON_NAME)],
+    segments: ['rooms', new Slot('room'), new Slot('note', JSON_NAME)],
     leaf: true,
     filetype: FileType.JSON,
   }),
 ]
 
-const detectScope = makeDetectScope(ROUTES)
+const detectScope = makeDetectScope(SCOPES)
 
 const TREE: Record<string, string[]> = {
   rooms: ['red', 'blue'],
@@ -67,7 +66,7 @@ const listRooms: Lister<FakeAccessor> = (accessor, _match) => {
 }
 
 const listNotes: Lister<FakeAccessor> = (accessor, match) => {
-  const room = match.captures.room ?? ''
+  const room = match.slots.room ?? ''
   accessor.calls.push(`notes:${room}`)
   return Promise.resolve(
     (TREE[room] ?? []).map((note): [string, IndexEntry] => [
@@ -106,5 +105,25 @@ describe('hierarchy probe', () => {
     await assertListed(READDIR, new FakeAccessor(), path, index)
     expect(await listedSize(index, path)).toBe(7)
     expect(await listedSize(index, spec('/rooms/red/ghost.json'))).toBeNull()
+  })
+
+  it('resolveEntry warms the parent once', async () => {
+    const index = new RAMIndexCacheStore()
+    const accessor = new FakeAccessor()
+    const entry = await resolveEntry(READDIR, accessor, spec('/rooms/red/a.json'), index)
+    expect(entry?.id).toBe('a.json')
+    expect(accessor.calls).toEqual(['notes:red'])
+    // A warm cache answers from the index without another listing.
+    const again = await resolveEntry(READDIR, accessor, spec('/rooms/red/b.json'), index)
+    expect(again).not.toBeNull()
+    expect(accessor.calls).toEqual(['notes:red'])
+  })
+
+  it('resolveEntry answers null for an absent child or a missing index', async () => {
+    const index = new RAMIndexCacheStore()
+    expect(
+      await resolveEntry(READDIR, new FakeAccessor(), spec('/rooms/red/nope.json'), index),
+    ).toBeNull()
+    expect(await resolveEntry(READDIR, new FakeAccessor(), spec('/rooms/red/a.json'))).toBeNull()
   })
 })

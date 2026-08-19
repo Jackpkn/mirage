@@ -12,18 +12,17 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import posixpath
-from functools import partial
-
 from mirage.accessor.gsheets import GSheetsAccessor
-from mirage.cache.index import NULL_INDEX, IndexCacheStore
-from mirage.cache.index.warm import entry_or_warm
+from mirage.cache.index import IndexCacheStore
 from mirage.core.gsheets.client import TokenManager, google_get, sheets_base
 from mirage.core.gsheets.readdir import readdir
+from mirage.core.gsheets.scope import detect_scope
+from mirage.core.hierarchy.probe import resolve_entry
+from mirage.core.hierarchy.read import make_read
+from mirage.core.hierarchy.scope import ScopeMatch
 from mirage.core.render.json import compact_json_bytes
 from mirage.types import PathSpec
 from mirage.utils.errors import enoent
-from mirage.utils.key_prefix import mount_key, mount_prefix_of
 
 GRID_DATA_PARAM = "true"
 
@@ -67,21 +66,12 @@ async def read_values(token_manager: TokenManager, spreadsheet_id: str,
     return compact_json_bytes(data)
 
 
-async def read(
-    accessor: GSheetsAccessor,
-    path: PathSpec,
-    index: IndexCacheStore = NULL_INDEX,
-) -> bytes:
-    virtual = path.virtual
-    prefix = mount_prefix_of(path.virtual, path.resource_path)
-    key = path.resource_path
-    virtual_key = prefix + "/" + key if prefix else "/" + key
-    parent_key = posixpath.dirname(virtual_key) or "/"
-    parent_path = PathSpec.from_str_path(parent_key,
-                                         mount_key(parent_key, prefix))
-    warm = (partial(readdir, accessor, parent_path, index)
-            if parent_key != virtual_key else None)
-    entry = await entry_or_warm(index, virtual_key, warm)
+async def _read_file(accessor: GSheetsAccessor, match: ScopeMatch,
+                     path: PathSpec, index: IndexCacheStore) -> bytes:
+    entry = await resolve_entry(readdir, accessor, path, index)
     if entry is None:
-        raise enoent(virtual)
+        raise enoent(path.virtual)
     return await read_spreadsheet(accessor.token_manager, entry.id)
+
+
+read = make_read(detect_scope, readers={"file": _read_file})

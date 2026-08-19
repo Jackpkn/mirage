@@ -29,7 +29,7 @@ describe('jaeger detectScope', () => {
     ['traces', 'invalid'],
     ['services/checkout/traces/deep/nested.json', 'invalid'],
     ['services/checkout/unknown.json', 'invalid'],
-    // A malformed trace id fails the route's codec, so the path never
+    // A malformed trace id fails the scope's codec, so the path never
     // classifies as a trace at all.
     ['services/checkout/traces/nothex.json', 'invalid'],
     ['services/.hidden', 'invalid'],
@@ -39,11 +39,11 @@ describe('jaeger detectScope', () => {
 
   it('carries service and trace id', () => {
     const match = detectScope(`services/checkout/traces/${TRACE}.json`)
-    expect(match.captures).toEqual({ service: 'checkout', trace_id: TRACE })
+    expect(match.slots).toEqual({ service: 'checkout', trace_id: TRACE })
   })
 
   it('carries the service without a trace', () => {
     const match = detectScope('services/checkout/traces')
-    expect(match.captures).toEqual({ service: 'checkout' })
+    expect(match.slots).toEqual({ service: 'checkout' })
   })
 })

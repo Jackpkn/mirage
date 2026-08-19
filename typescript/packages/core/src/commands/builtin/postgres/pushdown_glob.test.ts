@@ -13,17 +13,33 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('../../../core/postgres/search.ts', () => ({
-  searchEntity: vi.fn(),
-  searchKind: vi.fn(),
-  searchSchema: vi.fn(),
-  searchDatabase: vi.fn(),
-  searchEntityMetadata: vi.fn(() => []),
-  searchKindMetadata: vi.fn(() => []),
-  searchSchemaMetadata: vi.fn(() => []),
-  searchDatabaseMetadata: vi.fn(() => []),
-  formatGrepResults: vi.fn(() => []),
-}))
+// The SEARCHERS map is rebuilt over the mocked searchEntity: the real map
+// closes over the module-local binding, which a module mock cannot reach.
+vi.mock('../../../core/postgres/search.ts', () => {
+  const searchEntity = vi.fn()
+  const viaEntity = async (): Promise<string[]> => {
+    await (searchEntity as () => Promise<unknown>)()
+    return []
+  }
+  return {
+    searchEntity,
+    searchKind: vi.fn(),
+    searchSchema: vi.fn(),
+    searchDatabase: vi.fn(),
+    searchEntityMetadata: vi.fn(() => []),
+    searchKindMetadata: vi.fn(() => []),
+    searchSchemaMetadata: vi.fn(() => []),
+    searchDatabaseMetadata: vi.fn(() => []),
+    formatGrepResults: vi.fn(() => []),
+    SEARCHERS: {
+      root: vi.fn(() => Promise.resolve([])),
+      schema: vi.fn(() => Promise.resolve([])),
+      kind: vi.fn(() => Promise.resolve([])),
+      entity: viaEntity,
+      entity_rows: viaEntity,
+    },
+  }
+})
 vi.mock('../../../core/postgres/stat.ts', () => ({ stat: vi.fn() }))
 // When the push-down is skipped the wrapper falls through to the generic
 // scan, which reads the rendered file; stub the read so those cases exercise

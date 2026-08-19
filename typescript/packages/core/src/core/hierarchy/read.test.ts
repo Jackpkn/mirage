@@ -17,22 +17,21 @@ import { Accessor } from '../../accessor/base.ts'
 import { FileType, PathSpec } from '../../types.ts'
 import { stripSlash } from '../../utils/slash.ts'
 import { JSON_NAME } from './codec.ts'
-import { makeRead, type Reader } from './read.ts'
-import { Capture, Route } from './route.ts'
-import { makeDetectScope } from './scope.ts'
+import { makeRead, type Reader, type WindowedReader } from './read.ts'
+import { Slot, Scope, makeDetectScope } from './scope.ts'
 
-const ROUTES: readonly Route[] = [
-  new Route({ kind: 'rooms', segments: ['rooms'], probed: false }),
-  new Route({ kind: 'room', segments: ['rooms', new Capture('room')] }),
-  new Route({
+const SCOPES: readonly Scope[] = [
+  new Scope({ kind: 'rooms', segments: ['rooms'], probed: false }),
+  new Scope({ kind: 'room', segments: ['rooms', new Slot('room')] }),
+  new Scope({
     kind: 'note',
-    segments: ['rooms', new Capture('room'), new Capture('note', JSON_NAME)],
+    segments: ['rooms', new Slot('room'), new Slot('note', JSON_NAME)],
     leaf: true,
     filetype: FileType.JSON,
   }),
 ]
 
-const detectScope = makeDetectScope(ROUTES)
+const detectScope = makeDetectScope(SCOPES)
 
 class FakeAccessor extends Accessor {
   readonly calls: string[] = []
@@ -48,14 +47,12 @@ function spec(mountPath: string): PathSpec {
 }
 
 const readNote: Reader<FakeAccessor> = (_accessor, match, _path, _index) =>
-  Promise.resolve(
-    new TextEncoder().encode(`${match.captures.room ?? ''}:${match.captures.note ?? ''}`),
-  )
+  Promise.resolve(new TextEncoder().encode(`${match.slots.room ?? ''}:${match.slots.note ?? ''}`))
 
 const READ = makeRead<FakeAccessor>(detectScope, { note: readNote })
 
 describe('hierarchy makeRead', () => {
-  it('hands the reader the captures', async () => {
+  it('hands the reader the slots', async () => {
     const out = await READ(new FakeAccessor(), spec('/rooms/red/a.json'))
     expect(new TextDecoder().decode(out)).toBe('red:a')
   })
@@ -66,5 +63,27 @@ describe('hierarchy makeRead', () => {
         code: 'ENOENT',
       })
     }
+  })
+
+  it('hands a windowed reader the window', async () => {
+    const readWindowed: WindowedReader<FakeAccessor> = (_accessor, match, _path, _index, window) =>
+      Promise.resolve(
+        new TextEncoder().encode(
+          `${match.slots.note ?? ''}:${String(window.limit ?? null)}:${String(window.offset ?? null)}`,
+        ),
+      )
+    const read = makeRead<FakeAccessor>(detectScope, {}, { note: readWindowed })
+    let out = await read(new FakeAccessor(), spec('/rooms/red/a.json'), undefined, {
+      limit: 5,
+      offset: 2,
+    })
+    expect(new TextDecoder().decode(out)).toBe('a:5:2')
+    out = await read(new FakeAccessor(), spec('/rooms/red/a.json'))
+    expect(new TextDecoder().decode(out)).toBe('a:null:null')
+  })
+
+  it('lets a plain reader ignore the window', async () => {
+    const out = await READ(new FakeAccessor(), spec('/rooms/red/a.json'), undefined, { limit: 3 })
+    expect(new TextDecoder().decode(out)).toBe('red:a')
   })
 })

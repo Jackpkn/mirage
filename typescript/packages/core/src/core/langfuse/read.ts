@@ -17,7 +17,7 @@ import type { IndexCacheStore } from '../../cache/index/store.ts'
 import type { PathSpec } from '../../types.ts'
 import { enoent } from '../../utils/errors.ts'
 import { makeRead } from '../hierarchy/read.ts'
-import type { RouteMatch } from '../hierarchy/scope.ts'
+import type { ScopeMatch } from '../hierarchy/scope.ts'
 import { jsonBytes, jsonlBytes } from '../render/json.ts'
 import {
   fetchDatasetItems,
@@ -30,28 +30,25 @@ import { detectScope } from './scope.ts'
 
 async function readTrace(
   accessor: LangfuseAccessor,
-  match: RouteMatch,
+  match: ScopeMatch,
   path: PathSpec,
   _index?: IndexCacheStore,
 ): Promise<Uint8Array> {
-  const data = await fetchOrEnoent(
-    fetchTrace(accessor.transport, match.captures.trace_id ?? ''),
-    path,
-  )
+  const data = await fetchOrEnoent(fetchTrace(accessor.transport, match.slots.trace_id ?? ''), path)
   return jsonBytes(data)
 }
 
 async function readPromptVersion(
   accessor: LangfuseAccessor,
-  match: RouteMatch,
+  match: ScopeMatch,
   path: PathSpec,
   _index?: IndexCacheStore,
 ): Promise<Uint8Array> {
-  // The route's codec only matches plain ASCII integers, so the parse here
+  // The scope's codec only matches plain ASCII integers, so the parse here
   // cannot fail.
-  const version = Number.parseInt(match.captures.version ?? '', 10)
+  const version = Number.parseInt(match.slots.version ?? '', 10)
   const data = await fetchOrEnoent(
-    fetchPrompt(accessor.transport, match.captures.prompt_name ?? '', version),
+    fetchPrompt(accessor.transport, match.slots.prompt_name ?? '', version),
     path,
   )
   return jsonBytes(data)
@@ -59,12 +56,12 @@ async function readPromptVersion(
 
 async function readDatasetItems(
   accessor: LangfuseAccessor,
-  match: RouteMatch,
+  match: ScopeMatch,
   path: PathSpec,
   _index?: IndexCacheStore,
 ): Promise<Uint8Array> {
   const items = await fetchOrEnoent(
-    fetchDatasetItems(accessor.transport, match.captures.dataset_name ?? ''),
+    fetchDatasetItems(accessor.transport, match.slots.dataset_name ?? ''),
     path,
   )
   return jsonlBytes(items)
@@ -72,15 +69,15 @@ async function readDatasetItems(
 
 async function readDatasetRun(
   accessor: LangfuseAccessor,
-  match: RouteMatch,
+  match: ScopeMatch,
   path: PathSpec,
   _index?: IndexCacheStore,
 ): Promise<Uint8Array> {
   const runs = await fetchOrEnoent(
-    fetchDatasetRuns(accessor.transport, match.captures.dataset_name ?? ''),
+    fetchDatasetRuns(accessor.transport, match.slots.dataset_name ?? ''),
     path,
   )
-  const runName = match.captures.run_name ?? ''
+  const runName = match.slots.run_name ?? ''
   const matched = runs.filter((r) => r.name === runName)
   const first = matched[0]
   if (first === undefined) throw enoent(path)

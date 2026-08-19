@@ -12,21 +12,21 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import type { RouteMatch } from '../hierarchy/scope.ts'
+import type { ScopeMatch } from '../hierarchy/scope.ts'
 import { makeStat } from '../hierarchy/stat.ts'
 import { readdir } from './readdir.ts'
 import { detectScope } from './scope.ts'
 
-function sessionExtra(match: RouteMatch): Record<string, string> {
-  return { session_id: match.captures.session_id ?? '' }
+function sessionExtra(match: ScopeMatch): Record<string, string> {
+  return { session_id: match.slots.session_id ?? '' }
 }
 
-function promptExtra(match: RouteMatch): Record<string, string> {
-  return { prompt_name: match.captures.prompt_name ?? '' }
+function promptExtra(match: ScopeMatch): Record<string, string> {
+  return { prompt_name: match.slots.prompt_name ?? '' }
 }
 
-function datasetExtra(match: RouteMatch): Record<string, string> {
-  return { dataset_name: match.captures.dataset_name ?? '' }
+function datasetExtra(match: ScopeMatch): Record<string, string> {
+  return { dataset_name: match.slots.dataset_name ?? '' }
 }
 
 export const stat = makeStat(detectScope, readdir, {

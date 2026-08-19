@@ -12,18 +12,6 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-export const ScopeLevel = {
-  ROOT: 'root',
-  DATABASE: 'database',
-  DATABASE_JSON: 'database_json',
-  KIND_DIR: 'kind_dir',
-  ENTITY: 'entity',
-  SCHEMA_JSON: 'schema_json',
-  DOCUMENTS: 'documents',
-  UNKNOWN: 'unknown',
-} as const
-export type ScopeLevel = (typeof ScopeLevel)[keyof typeof ScopeLevel]
-
 export const EntityKind = {
   COLLECTION: 'collection',
   VIEW: 'view',

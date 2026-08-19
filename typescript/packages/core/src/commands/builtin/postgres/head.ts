@@ -38,7 +38,7 @@ async function* headSource(
   pushdown: boolean,
 ): AsyncIterable<Uint8Array> {
   const scope = detectScope(p)
-  if (pushdown && scope.level === 'entity_rows') {
+  if (pushdown && scope.kind === 'entity_rows') {
     const limit = Math.min(lines, accessor.config.defaultRowLimit)
     yield* readStream(accessor, p, index, { limit, offset: 0 })
     return

@@ -37,17 +37,17 @@ def _make_gsheets_ops() -> tuple[Ops, IndexCacheStore]:
 async def test_readdir():
     ops, index = _make_gsheets_ops()
     await index.set_dir("/gsheets/owned", [(
-        "budget.gsheet.json",
+        "Budget__sheet1.gsheet.json",
         IndexEntry(
             id="sheet1",
             name="Budget",
             resource_type="gsheets/sheet",
             remote_time="2026-04-01T00:00:00Z",
-            vfs_name="budget.gsheet.json",
+            vfs_name="Budget__sheet1.gsheet.json",
         ),
     )])
     result = await ops.readdir("/gsheets/owned")
-    assert "/gsheets/owned/budget.gsheet.json" in result
+    assert "/gsheets/owned/Budget__sheet1.gsheet.json" in result
 
 
 @pytest.mark.asyncio
@@ -59,6 +59,6 @@ async def test_read_spreadsheet():
             new_callable=AsyncMock,
             return_value=sheet_json,
     ):
-        result = await ops.read("/gsheets/owned/budget.gsheet.json")
+        result = await ops.read("/gsheets/owned/Budget__sheet1.gsheet.json")
         parsed = json.loads(result)
         assert parsed["spreadsheetId"] == "sheet1"

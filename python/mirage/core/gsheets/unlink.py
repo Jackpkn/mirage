@@ -12,7 +12,16 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from mirage.core.google.tree_ops import make_unlink
+from mirage.accessor.gsheets import GSheetsAccessor
+from mirage.cache.index import IndexEntry
+from mirage.core.google.drive import delete_file
 from mirage.core.gsheets.readdir import readdir
+from mirage.core.gsheets.scope import detect_scope
+from mirage.core.hierarchy.unlink import make_unlink
 
-unlink = make_unlink(readdir)
+
+async def _delete(accessor: GSheetsAccessor, entry: IndexEntry) -> None:
+    await delete_file(accessor.token_manager, entry.id)
+
+
+unlink = make_unlink(detect_scope, readdir, deleters={"file": _delete})

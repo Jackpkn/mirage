@@ -1004,6 +1004,11 @@ async function seedPostgres(dsn: string): Promise<void> {
     await client.query('CREATE VIEW recent_books AS SELECT * FROM books WHERE year >= 2022')
     await client.query('ANALYZE books')
     await client.query('ANALYZE authors')
+    // A quoted dot-prefixed schema is legal; the kit must keep it out of
+    // listings, not advertise a path stat reports absent.
+    await client.query('DROP SCHEMA IF EXISTS ".hidden" CASCADE')
+    await client.query('CREATE SCHEMA ".hidden"')
+    await client.query('CREATE TABLE ".hidden".ghost (id int PRIMARY KEY)')
   } finally {
     await client.end()
   }

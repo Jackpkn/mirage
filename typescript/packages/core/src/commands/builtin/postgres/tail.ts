@@ -39,9 +39,9 @@ async function* tailSource(
   pushdown: boolean,
 ): AsyncIterable<Uint8Array> {
   const scope = detectScope(p)
-  if (pushdown && scope.level === 'entity_rows') {
+  if (pushdown && scope.kind === 'entity_rows') {
     const limit = Math.min(lines, accessor.config.defaultRowLimit)
-    const total = await countRows(accessor, scope.schema, scope.entity)
+    const total = await countRows(accessor, scope.slots.schema ?? '', scope.slots.entity ?? '')
     const offset = Math.max(0, total - limit)
     yield* readStream(accessor, p, index, { limit, offset })
     return

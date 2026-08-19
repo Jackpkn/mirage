@@ -24,11 +24,29 @@ from mirage.io.types import IOResult
 from mirage.resource.mongodb.config import MongoDBConfig
 from mirage.types import PathSpec
 
+GENERICS = "mirage.commands.builtin.generic_bind.search._GENERICS"
+RESOLVE = "mirage.commands.builtin.generic_bind.adapter.make_resolve_glob"
+SEARCH_COLLECTION = "mirage.core.mongodb.search.search_collection"
+
 
 @pytest.fixture
 def accessor():
     return MongoDBAccessor(config=MongoDBConfig(
         uri="mongodb://localhost:27017"))
+
+
+@pytest.fixture
+def _stat_reads(monkeypatch):
+    # The stat guard is captured by the search factory at import, so fake
+    # what it reads at call time: the existence probes and the counters.
+    monkeypatch.setattr("mirage.core.mongodb.readdir.entity_exists",
+                        AsyncMock(return_value=True))
+    monkeypatch.setattr("mirage.core.mongodb.stat.count_documents",
+                        AsyncMock(return_value=5))
+    monkeypatch.setattr("mirage.core.mongodb.stat.is_view",
+                        AsyncMock(return_value=False))
+    monkeypatch.setattr("mirage.core.mongodb.stat.get_indexes",
+                        AsyncMock(return_value=[]))
 
 
 def _path(s: str) -> PathSpec:
@@ -44,18 +62,13 @@ def _glob_path() -> PathSpec:
 
 
 @pytest.mark.asyncio
-async def test_rg_lone_collection_uses_pushdown(accessor):
+async def test_rg_lone_collection_uses_pushdown(accessor, _stat_reads):
     search = AsyncMock(return_value=[])
+    generic = AsyncMock(side_effect=AssertionError("generic path ran"))
     with patch(
-            "mirage.commands.builtin.mongodb.rg.search_collection",
+            SEARCH_COLLECTION,
             new=search,
-    ), patch(
-            "mirage.commands.builtin.mongodb.rg._stat",
-            new=AsyncMock(),
-    ), patch(
-            "mirage.commands.builtin.mongodb.rg.resolve_glob",
-            new=AsyncMock(side_effect=AssertionError("generic path ran")),
-    ):
+    ), patch.dict(GENERICS, {"rg": generic}):
         _, io = await rg(accessor, [_path("/db1/collections/coll1")],
                          ['target'], CommandOpts(index=NULL_INDEX))
 
@@ -70,26 +83,17 @@ async def test_rg_second_operand_skips_pushdown(accessor):
     seen: dict[str, list[str]] = {}
     ops = [_path("/db1/collections/coll1"), _path("/db1/collections/coll2")]
 
-    async def fake_resolve(_accessor, _paths, index=None):
-        return ops
-
     async def fake_generic(paths, _texts, _flags, **_kwargs):
         seen["generic"] = [p.virtual for p in paths]
         return b"", IOResult()
 
     with patch(
-            "mirage.commands.builtin.mongodb.rg.search_collection",
+            SEARCH_COLLECTION,
             new=AsyncMock(side_effect=AssertionError("pushdown ran on 2 ops")),
     ), patch(
-            "mirage.commands.builtin.mongodb.rg._stat",
+            "mirage.core.mongodb.readdir.entity_exists",
             new=AsyncMock(side_effect=AssertionError("stat ran on 2 ops")),
-    ), patch(
-            "mirage.commands.builtin.mongodb.rg.resolve_glob",
-            new=fake_resolve,
-    ), patch(
-            "mirage.commands.builtin.mongodb.rg.generic_rg",
-            new=fake_generic,
-    ):
+    ), patch.dict(GENERICS, {"rg": fake_generic}):
         await rg(accessor, ops, ['target'], CommandOpts(index=NULL_INDEX))
 
     assert seen["generic"] == [
@@ -110,18 +114,15 @@ async def test_rg_unresolved_glob_skips_pushdown(accessor):
         return b"", IOResult()
 
     with patch(
-            "mirage.commands.builtin.mongodb.rg.search_collection",
+            SEARCH_COLLECTION,
             new=AsyncMock(side_effect=AssertionError("pushdown ran on glob")),
     ), patch(
-            "mirage.commands.builtin.mongodb.rg._stat",
+            "mirage.core.mongodb.readdir.entity_exists",
             new=AsyncMock(side_effect=AssertionError("stat ran on glob")),
     ), patch(
-            "mirage.commands.builtin.mongodb.rg.resolve_glob",
-            new=fake_resolve,
-    ), patch(
-            "mirage.commands.builtin.mongodb.rg.generic_rg",
-            new=fake_generic,
-    ):
+            RESOLVE,
+            new=lambda *_args, **_kwargs: fake_resolve,
+    ), patch.dict(GENERICS, {"rg": fake_generic}):
         await rg(accessor, [_glob_path()], ['target'],
                  CommandOpts(index=NULL_INDEX))
 

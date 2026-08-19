@@ -19,7 +19,7 @@ import pytest
 from mirage.cache.index import IndexCacheStore
 from mirage.cache.index.ram import RAMIndexCacheStore
 from mirage.core.hierarchy.readdir import make_readdir
-from mirage.core.hierarchy.scope import RouteMatch
+from mirage.core.hierarchy.scope import ScopeMatch
 from mirage.core.hierarchy.stat import make_stat
 from mirage.types import FileStat, FileType, PathSpec
 from tests.core.hierarchy.conftest import (FakeAccessor, detect_scope,
@@ -37,8 +37,8 @@ READDIR = make_readdir(
 )
 
 
-def _room_extra(match: RouteMatch) -> dict[str, str]:
-    return {"room": match.captures["room"]}
+def _room_extra(match: ScopeMatch) -> dict[str, str]:
+    return {"room": match.slots["room"]}
 
 
 STAT = make_stat(
@@ -82,7 +82,7 @@ def test_invalid_shapes_are_enoent(accessor):
 
 def test_override_replaces_the_whole_shape(accessor):
 
-    async def bespoke(accessor: FakeAccessor, match: RouteMatch,
+    async def bespoke(accessor: FakeAccessor, match: ScopeMatch,
                       path: PathSpec, index: IndexCacheStore) -> FileStat:
         return FileStat(name="custom", type=FileType.TEXT, size=1)
 
@@ -90,3 +90,21 @@ def test_override_replaces_the_whole_shape(accessor):
     st = asyncio.run(stat(accessor, spec("/rooms/red/a.json")))
     assert st.name == "custom"
     assert accessor.calls == []
+
+
+def test_entry_stat_builds_from_the_resolved_entry(accessor):
+
+    def from_entry(match, path, entry) -> FileStat:
+        return FileStat(name=entry.vfs_name,
+                        type=FileType.JSON,
+                        size=entry.size,
+                        extra={"doc_id": entry.id})
+
+    stat = make_stat(detect_scope, READDIR, entry_stats={"note": from_entry})
+    index = RAMIndexCacheStore()
+    st = asyncio.run(stat(accessor, spec("/rooms/red/a.json"), index=index))
+    assert st.name == "a.json"
+    assert st.size == 7
+    assert st.extra == {"doc_id": "a.json"}
+    with pytest.raises(FileNotFoundError):
+        asyncio.run(stat(accessor, spec("/rooms/red/nope.json"), index=index))

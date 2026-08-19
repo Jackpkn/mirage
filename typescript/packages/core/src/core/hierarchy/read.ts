@@ -16,13 +16,26 @@ import type { Accessor } from '../../accessor/base.ts'
 import type { IndexCacheStore } from '../../cache/index/store.ts'
 import type { PathSpec } from '../../types.ts'
 import { enoent } from '../../utils/errors.ts'
-import type { DetectFn, RouteMatch } from './scope.ts'
+import type { DetectFn, ScopeMatch } from './scope.ts'
 
 export type Reader<A extends Accessor> = (
   accessor: A,
-  match: RouteMatch,
+  match: ScopeMatch,
   path: PathSpec,
   index?: IndexCacheStore,
+) => Promise<Uint8Array>
+
+export interface ReadWindow {
+  limit?: number | null
+  offset?: number | null
+}
+
+export type WindowedReader<A extends Accessor> = (
+  accessor: A,
+  match: ScopeMatch,
+  path: PathSpec,
+  index: IndexCacheStore | undefined,
+  window: ReadWindow,
 ) => Promise<Uint8Array>
 
 /**
@@ -30,18 +43,31 @@ export type Reader<A extends Accessor> = (
  *
  * Readers own their fetches, guards and rendering; the kit owns the
  * classification and the ENOENT funnel for every non-file shape. `readers`
- * holds one reader per leaf kind.
+ * holds one reader per leaf kind. `windowed` holds readers for kinds whose
+ * content is windowed at the source (postgres rows take a row limit/offset
+ * the backend pushes into the query); they receive the caller's window,
+ * which every plain reader ignores, matching a filesystem read that has no
+ * row notion.
  */
 export function makeRead<A extends Accessor>(
   detect: DetectFn,
   readers: Readonly<Record<string, Reader<A>>>,
-): (accessor: A, path: PathSpec, index?: IndexCacheStore) => Promise<Uint8Array> {
+  windowed: Readonly<Record<string, WindowedReader<A>>> = {},
+): (
+  accessor: A,
+  path: PathSpec,
+  index?: IndexCacheStore,
+  window?: ReadWindow,
+) => Promise<Uint8Array> {
   return async function read(
     accessor: A,
     path: PathSpec,
     index?: IndexCacheStore,
+    window: ReadWindow = {},
   ): Promise<Uint8Array> {
     const match = detect(path)
+    const windowReader = windowed[match.kind]
+    if (windowReader !== undefined) return windowReader(accessor, match, path, index, window)
     const reader = readers[match.kind]
     if (reader === undefined) throw enoent(path)
     return reader(accessor, match, path, index)

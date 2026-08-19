@@ -12,125 +12,56 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { PathSpec } from '../../types.ts'
-import { stripSlash } from '../../utils/slash.ts'
-
-type EntityKind = 'tables' | 'views'
+import { FileType } from '../../types.ts'
+import { Codec } from '../hierarchy/codec.ts'
+import { Slot, Scope, makeDetectScope } from '../hierarchy/scope.ts'
 
 export const ENTITY_FILES = ['schema.json', 'semantic.json', 'rows.jsonl'] as const
 
-export type PostgresScope =
-  | { level: 'root'; resourcePath: string }
-  | { level: 'database_json'; file: 'database.json'; resourcePath: string }
-  | { level: 'schema'; schema: string; resourcePath: string }
-  | { level: 'kind'; schema: string; kind: EntityKind; resourcePath: string }
-  | {
-      level: 'entity'
-      schema: string
-      kind: EntityKind
-      entity: string
-      resourcePath: string
-    }
-  | {
-      level: 'entity_schema'
-      schema: string
-      kind: EntityKind
-      entity: string
-      file: 'schema.json'
-      resourcePath: string
-    }
-  | {
-      level: 'entity_semantic'
-      schema: string
-      kind: EntityKind
-      entity: string
-      file: 'semantic.json'
-      resourcePath: string
-    }
-  | {
-      level: 'entity_rows'
-      schema: string
-      kind: EntityKind
-      entity: string
-      file: 'rows.jsonl'
-      resourcePath: string
-    }
-  | { level: 'invalid'; resourcePath: string }
+export const KIND_DIRS = ['tables', 'views'] as const
 
-export function detectScope(path: PathSpec | string): PostgresScope {
-  const raw = path instanceof PathSpec ? path.mountPath : path
-  const key = stripSlash(raw)
-
-  if (key === '') {
-    return { level: 'root', resourcePath: '/' }
-  }
-
-  if (key === 'database.json') {
-    return { level: 'database_json', file: 'database.json', resourcePath: raw }
-  }
-
-  const parts = key.split('/')
-  const schema = parts[0]
-  if (schema === undefined) {
-    return { level: 'invalid', resourcePath: raw }
-  }
-
-  if (parts.length === 1) {
-    return { level: 'schema', schema, resourcePath: raw }
-  }
-
-  const kindRaw = parts[1]
-  if (kindRaw !== 'tables' && kindRaw !== 'views') {
-    return { level: 'invalid', resourcePath: raw }
-  }
-  const kind: EntityKind = kindRaw
-
-  if (parts.length === 2) {
-    return { level: 'kind', schema, kind, resourcePath: raw }
-  }
-
-  const entity = parts[2]
-  if (entity === undefined) {
-    return { level: 'invalid', resourcePath: raw }
-  }
-
-  if (parts.length === 3) {
-    return { level: 'entity', schema, kind, entity, resourcePath: raw }
-  }
-
-  if (parts.length === 4) {
-    const file = parts[3]
-    if (file === 'schema.json') {
-      return {
-        level: 'entity_schema',
-        schema,
-        kind,
-        entity,
-        file: 'schema.json',
-        resourcePath: raw,
-      }
-    }
-    if (file === 'semantic.json') {
-      return {
-        level: 'entity_semantic',
-        schema,
-        kind,
-        entity,
-        file: 'semantic.json',
-        resourcePath: raw,
-      }
-    }
-    if (file === 'rows.jsonl') {
-      return {
-        level: 'entity_rows',
-        schema,
-        kind,
-        entity,
-        file: 'rows.jsonl',
-        resourcePath: raw,
-      }
-    }
-  }
-
-  return { level: 'invalid', resourcePath: raw }
+/** Whether the segment names an entity-kind directory. */
+export function isKind(text: string): boolean {
+  return (KIND_DIRS as readonly string[]).includes(text)
 }
+
+export const KIND = new Codec({ validate: isKind })
+
+// One description of the tree: readdir, stat, read AND the grep/rg search
+// push-down all classify through it, so the file surface and the search
+// surface cannot disagree about what a path means.
+export const SCOPES: readonly Scope[] = [
+  new Scope({
+    kind: 'database_json',
+    segments: ['database.json'],
+    leaf: true,
+    filetype: FileType.JSON,
+    probed: false,
+  }),
+  new Scope({ kind: 'schema', segments: [new Slot('schema')] }),
+  new Scope({ kind: 'kind', segments: [new Slot('schema'), new Slot('kind', KIND)] }),
+  new Scope({
+    kind: 'entity',
+    segments: [new Slot('schema'), new Slot('kind', KIND), new Slot('entity')],
+  }),
+  new Scope({
+    kind: 'entity_schema',
+    segments: [new Slot('schema'), new Slot('kind', KIND), new Slot('entity'), 'schema.json'],
+    leaf: true,
+    filetype: FileType.JSON,
+  }),
+  new Scope({
+    kind: 'entity_semantic',
+    segments: [new Slot('schema'), new Slot('kind', KIND), new Slot('entity'), 'semantic.json'],
+    leaf: true,
+    filetype: FileType.JSON,
+  }),
+  new Scope({
+    kind: 'entity_rows',
+    segments: [new Slot('schema'), new Slot('kind', KIND), new Slot('entity'), 'rows.jsonl'],
+    leaf: true,
+    filetype: FileType.TEXT,
+  }),
+]
+
+export const detectScope = makeDetectScope(SCOPES)

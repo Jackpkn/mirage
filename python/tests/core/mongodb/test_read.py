@@ -57,11 +57,11 @@ def _path(s: str) -> PathSpec:
 @pytest.fixture(autouse=True)
 def _stub_existence_checks():
     with patch(
-            "mirage.core.mongodb.read.database_exists",
+            "mirage.core.mongodb.readdir.database_exists",
             new_callable=AsyncMock,
             return_value=True,
     ), patch(
-            "mirage.core.mongodb.read.entity_exists",
+            "mirage.core.mongodb.readdir.entity_exists",
             new_callable=AsyncMock,
             return_value=True,
     ):
@@ -160,7 +160,7 @@ async def test_read_kind_dir_path_raises(accessor, index):
 @pytest.mark.asyncio
 async def test_read_documents_missing_collection_raises(accessor, index):
     with patch(
-            "mirage.core.mongodb.read.entity_exists",
+            "mirage.core.mongodb.readdir.entity_exists",
             new_callable=AsyncMock,
             return_value=False,
     ):
@@ -174,7 +174,7 @@ async def test_read_documents_missing_collection_raises(accessor, index):
 @pytest.mark.asyncio
 async def test_read_database_json_missing_db_raises(accessor, index):
     with patch(
-            "mirage.core.mongodb.read.database_exists",
+            "mirage.core.mongodb.readdir.database_exists",
             new_callable=AsyncMock,
             return_value=False,
     ):

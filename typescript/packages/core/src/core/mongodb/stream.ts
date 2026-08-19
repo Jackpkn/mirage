@@ -18,7 +18,7 @@ import type { MongoDBAccessor } from '../../accessor/mongodb.ts'
 import { PathSpec } from '../../types.ts'
 import { iterDocuments, iterInserts } from './client.ts'
 import { detectScope } from './scope.ts'
-import { PRIMARY_KEY, ScopeLevel } from './types.ts'
+import { PRIMARY_KEY } from './types.ts'
 
 function notFound(p: string): Error {
   const err = new Error(p) as Error & { code?: string }
@@ -105,15 +105,20 @@ export async function* readStream(
       ? new PathSpec({ resourcePath: stripSlash(path), virtual: path, directory: path })
       : path
   const scope = detectScope(ps)
-  if (scope.level !== ScopeLevel.DOCUMENTS || scope.database === null || scope.name === null) {
+  if (scope.kind !== 'documents') {
     throw notFound(ps.virtual)
   }
-  const elide = elisionPaths(accessor, scope.database, scope.name)
+  const elide = elisionPaths(accessor, scope.slots.database ?? '', scope.slots.name ?? '')
   const batchSize = options.batchSize ?? 100
-  for await (const doc of iterDocuments(accessor, scope.database, scope.name, {
-    sort: { [PRIMARY_KEY]: 1 },
-    batchSize,
-  })) {
+  for await (const doc of iterDocuments(
+    accessor,
+    scope.slots.database ?? '',
+    scope.slots.name ?? '',
+    {
+      sort: { [PRIMARY_KEY]: 1 },
+      batchSize,
+    },
+  )) {
     const final = elide.size > 0 ? applyElision(doc, elide) : doc
     yield encodeLine(final)
   }
@@ -128,11 +133,15 @@ export async function* watchStream(
       ? new PathSpec({ resourcePath: stripSlash(path), virtual: path, directory: path })
       : path
   const scope = detectScope(ps)
-  if (scope.level !== ScopeLevel.DOCUMENTS || scope.database === null || scope.name === null) {
+  if (scope.kind !== 'documents') {
     throw notFound(ps.virtual)
   }
-  const elide = elisionPaths(accessor, scope.database, scope.name)
-  for await (const doc of iterInserts(accessor, scope.database, scope.name)) {
+  const elide = elisionPaths(accessor, scope.slots.database ?? '', scope.slots.name ?? '')
+  for await (const doc of iterInserts(
+    accessor,
+    scope.slots.database ?? '',
+    scope.slots.name ?? '',
+  )) {
     const final = elide.size > 0 ? applyElision(doc, elide) : doc
     yield encodeLine(final)
   }

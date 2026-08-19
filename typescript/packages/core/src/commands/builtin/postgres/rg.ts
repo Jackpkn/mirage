@@ -12,130 +12,21 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import type { PostgresAccessor } from '../../../accessor/postgres.ts'
-import { resolveGlobOf } from '../generic_bind/index.ts'
-import { POSTGRES_IO } from './io.ts'
-import { readStream } from '../../../core/postgres/read.ts'
-import { readdir as postgresReaddir } from '../../../core/postgres/readdir.ts'
 import { detectScope } from '../../../core/postgres/scope.ts'
-import {
-  formatGrepResults,
-  searchDatabase,
-  searchDatabaseMetadata,
-  searchEntity,
-  searchEntityMetadata,
-  searchKind,
-  searchKindMetadata,
-  searchSchema,
-  searchSchemaMetadata,
-} from '../../../core/postgres/search.ts'
-import { stat as postgresStat } from '../../../core/postgres/stat.ts'
-import { IOResult } from '../../../io/types.ts'
-import { type FileStat, ResourceName, type PathSpec } from '../../../types.ts'
-import { command, type CommandFnResult, type CommandOpts } from '../../config.ts'
+import { SEARCHERS } from '../../../core/postgres/search.ts'
+import { ResourceName } from '../../../types.ts'
+import { command } from '../../config.ts'
 import { specOf } from '../../spec/builtins.ts'
-import { rgGeneric } from '../generic/rg.ts'
-import { literalPushdownOperand, patternArg } from '../grep_helper.ts'
-import { formatRecords } from '../utils/output.ts'
-import { FlagView } from '../../spec/types.ts'
-
-const resolveGlob = resolveGlobOf(POSTGRES_IO)
-
-async function rgCommand(
-  accessor: PostgresAccessor,
-  paths: PathSpec[],
-  texts: string[],
-  opts: CommandOpts,
-): Promise<CommandFnResult> {
-  const pattern = patternArg(texts, opts.flags)
-  const limit = accessor.config.defaultSearchLimit
-
-  // Native search takes one literal pattern and prints each matching row as a
-  // whole line; a multi -e set (#347), a real regex, a multi-operand line, or
-  // any match/output shaping flag must fall through to the generic scan below.
-  const fl = new FlagView(opts.flags, specOf('rg'))
-  const ci = fl.asBool('i')
-  const operand = literalPushdownOperand(paths, opts.flags, pattern)
-  if (pattern !== null && operand !== null) {
-    const scope = detectScope(operand)
-
-    if (scope.level !== 'root') {
-      await postgresStat(accessor, operand, opts.index ?? undefined)
-    }
-
-    // Directory scopes cover every file under them, so the rendered
-    // schema.json / semantic.json are searched alongside the row push-down.
-    // Deliberate divergence from GNU: rows come first and metadata second,
-    // rather than in per-entity readdir order.
-    if (scope.level === 'root') {
-      const results = await searchDatabase(accessor, pattern, limit, ci)
-      const allLines = formatGrepResults(results)
-      allLines.push(...(await searchDatabaseMetadata(accessor, pattern, ci)))
-      if (allLines.length === 0) return [new Uint8Array(0), new IOResult({ exitCode: 1 })]
-      return [formatRecords(allLines), new IOResult()]
-    }
-
-    if (scope.level === 'schema') {
-      const results = await searchSchema(accessor, scope.schema, pattern, limit, ci)
-      const allLines = formatGrepResults(results)
-      allLines.push(...(await searchSchemaMetadata(accessor, scope.schema, pattern, ci)))
-      if (allLines.length === 0) return [new Uint8Array(0), new IOResult({ exitCode: 1 })]
-      return [formatRecords(allLines), new IOResult()]
-    }
-
-    if (scope.level === 'kind') {
-      const results = await searchKind(accessor, scope.schema, scope.kind, pattern, limit, ci)
-      const allLines = formatGrepResults(results)
-      allLines.push(...(await searchKindMetadata(accessor, scope.schema, scope.kind, pattern, ci)))
-      if (allLines.length === 0) return [new Uint8Array(0), new IOResult({ exitCode: 1 })]
-      return [formatRecords(allLines), new IOResult()]
-    }
-
-    if (scope.level === 'entity' || scope.level === 'entity_rows') {
-      const rows = await searchEntity(
-        accessor,
-        scope.schema,
-        scope.kind,
-        scope.entity,
-        pattern,
-        limit,
-        ci,
-      )
-      const results = [{ schema: scope.schema, kind: scope.kind, entity: scope.entity, rows }]
-      const allLines = formatGrepResults(results)
-      // entity_rows names rows.jsonl explicitly; only the directory scope
-      // pulls in the sibling metadata files.
-      if (scope.level === 'entity') {
-        allLines.push(
-          ...(await searchEntityMetadata(
-            accessor,
-            scope.schema,
-            scope.kind,
-            scope.entity,
-            pattern,
-            ci,
-          )),
-        )
-      }
-      if (allLines.length === 0) return [new Uint8Array(0), new IOResult({ exitCode: 1 })]
-      return [formatRecords(allLines), new IOResult()]
-    }
-  }
-
-  const resolved =
-    paths.length > 0 ? await resolveGlob(accessor, paths, opts.index ?? undefined) : []
-  const stat = (p: PathSpec): Promise<FileStat> =>
-    postgresStat(accessor, p, opts.index ?? undefined)
-  const readdir = (p: PathSpec): Promise<string[]> =>
-    postgresReaddir(accessor, p, opts.index ?? undefined)
-  return rgGeneric(resolved, texts, opts, stat, readdir, (p) =>
-    readStream(accessor, p, opts.index ?? undefined),
-  )
-}
+import { makeSearch } from '../generic_bind/search.ts'
+import { literalPushdownOperand } from '../grep_helper.ts'
+import { POSTGRES_IO } from './io.ts'
 
 export const POSTGRES_RG = command({
   name: 'rg',
   resource: ResourceName.POSTGRES,
   spec: specOf('rg'),
-  fn: rgCommand,
+  fn: makeSearch('rg', detectScope, SEARCHERS, POSTGRES_IO, {
+    qualify: literalPushdownOperand,
+    guard: true,
+  }),
 })

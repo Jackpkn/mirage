@@ -159,6 +159,32 @@
         "stdout": "==> /mongodb/mirage_integ/collections/books/documents.jsonl <==\n{\"_id\": 4, \"title\": \"delta\", \"author\": \"ada\", \"year\": 2023, \"tags\": [\"history\"], \"rating\": 4}\n{\"_id\": 5, \"title\": \"epsilon\", \"author\": \"ben\", \"year\": 2024, \"rating\": 2.5}\n",
         "stderr": "tail: /mongodb/__nf_missing__.txt: No such file or directory\n"
       }
+    },
+    {
+      "id": "mdb_ls_unknown_kind_dir",
+      "seq": 620102,
+      "targets": [
+        "mongodb"
+      ],
+      "command": "ls /mongodb/mirage_integ/randomdir",
+      "expect": {
+        "exit": 2,
+        "stdout": "",
+        "stderr": "ls: cannot access '/mongodb/mirage_integ/randomdir': No such file or directory\n"
+      }
+    },
+    {
+      "id": "mdb_cat_unknown_entity_file",
+      "seq": 620103,
+      "targets": [
+        "mongodb"
+      ],
+      "command": "cat /mongodb/mirage_integ/collections/books/weird.txt",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "cat: /mongodb/mirage_integ/collections/books/weird.txt: No such file or directory\n"
+      }
     }
   ]
 }

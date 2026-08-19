@@ -21,21 +21,20 @@ import { enoent } from '../../utils/errors.ts'
 import { stripSlash } from '../../utils/slash.ts'
 import { JSON_NAME } from './codec.ts'
 import { makeReaddir, type Guard, type Lister } from './readdir.ts'
-import { Capture, Route } from './route.ts'
-import { makeDetectScope } from './scope.ts'
+import { Slot, Scope, makeDetectScope } from './scope.ts'
 
-const ROUTES: readonly Route[] = [
-  new Route({ kind: 'rooms', segments: ['rooms'], probed: false }),
-  new Route({ kind: 'room', segments: ['rooms', new Capture('room')] }),
-  new Route({
+const SCOPES: readonly Scope[] = [
+  new Scope({ kind: 'rooms', segments: ['rooms'], probed: false }),
+  new Scope({ kind: 'room', segments: ['rooms', new Slot('room')] }),
+  new Scope({
     kind: 'note',
-    segments: ['rooms', new Capture('room'), new Capture('note', JSON_NAME)],
+    segments: ['rooms', new Slot('room'), new Slot('note', JSON_NAME)],
     leaf: true,
     filetype: FileType.JSON,
   }),
 ]
 
-const detectScope = makeDetectScope(ROUTES)
+const detectScope = makeDetectScope(SCOPES)
 
 const TREE: Record<string, string[]> = {
   rooms: ['red', 'blue'],
@@ -67,7 +66,7 @@ const listRooms: Lister<FakeAccessor> = (accessor, _match) => {
 }
 
 const listNotes: Lister<FakeAccessor> = (accessor, match) => {
-  const room = match.captures.room ?? ''
+  const room = match.slots.room ?? ''
   accessor.calls.push(`notes:${room}`)
   return Promise.resolve(
     (TREE[room] ?? []).map((note): [string, IndexEntry] => [
@@ -78,7 +77,7 @@ const listNotes: Lister<FakeAccessor> = (accessor, match) => {
 }
 
 const roomGuard: Guard<FakeAccessor> = (accessor, match, virtual) => {
-  const room = match.captures.room ?? ''
+  const room = match.slots.room ?? ''
   accessor.calls.push(`guard:${room}`)
   if (!(TREE.rooms ?? []).includes(room)) return Promise.reject(enoent(virtual))
   return Promise.resolve()
@@ -128,6 +127,26 @@ describe('hierarchy makeReaddir', () => {
     await expect(READDIR(new FakeAccessor(), spec('/halls'))).rejects.toMatchObject({
       code: 'ENOENT',
     })
+  })
+
+  it('drops dot-prefixed names from listings', async () => {
+    // The classifier refuses every dot-leading segment, so a listing must
+    // not advertise one (a quoted postgres schema can be named ".foo").
+    const hiddenRooms: Lister<FakeAccessor> = async (accessor, match) => {
+      const rooms = await listRooms(accessor, match)
+      const entry = rooms[0]?.[1]
+      if (entry === undefined) throw new Error('fixture rooms empty')
+      return [['.secret', entry], ...rooms]
+    }
+    const readdir = makeReaddir<FakeAccessor>(detectScope, {
+      listers: { rooms: hiddenRooms },
+      staticRoot: ['rooms'],
+    })
+    const index = new RAMIndexCacheStore()
+    const out = await readdir(new FakeAccessor(), spec('/rooms'), index)
+    expect(out).toEqual(['/h/rooms/red', '/h/rooms/blue'])
+    const cached = await index.listDir('/h/rooms')
+    expect(cached.entries).toEqual(['/h/rooms/red', '/h/rooms/blue'])
   })
 
   it('can answer a leaf with ENOTDIR', async () => {

@@ -15,17 +15,6 @@
 from enum import StrEnum
 
 
-class ScopeLevel(StrEnum):
-    ROOT = "root"
-    DATABASE = "database"
-    DATABASE_JSON = "database_json"
-    KIND_DIR = "kind_dir"
-    ENTITY = "entity"
-    SCHEMA_JSON = "schema_json"
-    DOCUMENTS = "documents"
-    UNKNOWN = "unknown"
-
-
 class EntityKind(StrEnum):
     COLLECTION = "collection"
     VIEW = "view"

@@ -18,20 +18,26 @@ import pytest
 
 from mirage.cache.index import IndexCacheStore
 from mirage.core.hierarchy.read import make_read
-from mirage.core.hierarchy.scope import RouteMatch
+from mirage.core.hierarchy.scope import ScopeMatch
 from mirage.types import PathSpec
 from tests.core.hierarchy.conftest import FakeAccessor, detect_scope, spec
 
 
-async def _read_note(accessor: FakeAccessor, match: RouteMatch, path: PathSpec,
+async def _read_note(accessor: FakeAccessor, match: ScopeMatch, path: PathSpec,
                      index: IndexCacheStore) -> bytes:
-    return f"{match.captures['room']}:{match.captures['note']}".encode()
+    return f"{match.slots['room']}:{match.slots['note']}".encode()
+
+
+async def _read_note_window(accessor: FakeAccessor, match: ScopeMatch,
+                            path: PathSpec, index: IndexCacheStore,
+                            limit: int | None, offset: int | None) -> bytes:
+    return f"{match.slots['note']}:{limit}:{offset}".encode()
 
 
 READ = make_read(detect_scope, {"note": _read_note})
 
 
-def test_reader_gets_the_captures(accessor):
+def test_reader_gets_the_slots(accessor):
     out = asyncio.run(READ(accessor, spec("/rooms/red/a.json")))
     assert out == b"red:a"
 
@@ -40,3 +46,17 @@ def test_everything_else_is_enoent(accessor):
     for path in ("/", "/rooms", "/rooms/red", "/rooms/.red/a.json", "/halls"):
         with pytest.raises(FileNotFoundError):
             asyncio.run(READ(accessor, spec(path)))
+
+
+def test_windowed_reader_receives_the_window(accessor):
+    read = make_read(detect_scope, {}, windowed={"note": _read_note_window})
+    out = asyncio.run(
+        read(accessor, spec("/rooms/red/a.json"), limit=5, offset=2))
+    assert out == b"a:5:2"
+    out = asyncio.run(read(accessor, spec("/rooms/red/a.json")))
+    assert out == b"a:None:None"
+
+
+def test_plain_reader_ignores_the_window(accessor):
+    out = asyncio.run(READ(accessor, spec("/rooms/red/a.json"), limit=3))
+    assert out == b"red:a"

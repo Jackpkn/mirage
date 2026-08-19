@@ -12,7 +12,8 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from mirage.core.mongodb.scope import detect_scope
+from mirage.core.mongodb.scope import detect_scope, entity_kind
+from mirage.core.mongodb.types import EntityKind
 from mirage.types import PathSpec
 from mirage.utils.key_prefix import mount_key
 
@@ -23,83 +24,81 @@ def _ps(path: str) -> PathSpec:
 
 def test_root():
     scope = detect_scope(_ps("/"))
-    assert scope.level == "root"
+    assert scope.kind == "root"
 
 
 def test_database():
     scope = detect_scope(_ps("/sample_mflix"))
-    assert scope.level == "database"
-    assert scope.database == "sample_mflix"
+    assert scope.kind == "database"
+    assert scope.slots == {"database": "sample_mflix"}
 
 
 def test_database_json():
     scope = detect_scope(_ps("/sample_mflix/database.json"))
-    assert scope.level == "database_json"
-    assert scope.database == "sample_mflix"
+    assert scope.kind == "database_json"
+    assert scope.slots == {"database": "sample_mflix"}
 
 
 def test_collections_kind_dir():
     scope = detect_scope(_ps("/sample_mflix/collections"))
-    assert scope.level == "kind_dir"
-    assert scope.database == "sample_mflix"
-    assert scope.kind == "collection"
+    assert scope.kind == "kind_dir"
+    assert scope.slots == {"database": "sample_mflix", "kind": "collections"}
+    assert entity_kind(scope) == EntityKind.COLLECTION
 
 
 def test_views_kind_dir():
     scope = detect_scope(_ps("/sample_mflix/views"))
-    assert scope.level == "kind_dir"
-    assert scope.database == "sample_mflix"
-    assert scope.kind == "view"
+    assert scope.kind == "kind_dir"
+    assert entity_kind(scope) == EntityKind.VIEW
 
 
 def test_collection_entity_dir():
     scope = detect_scope(_ps("/sample_mflix/collections/movies"))
-    assert scope.level == "entity"
-    assert scope.database == "sample_mflix"
-    assert scope.kind == "collection"
-    assert scope.name == "movies"
+    assert scope.kind == "entity"
+    assert scope.slots["database"] == "sample_mflix"
+    assert entity_kind(scope) == EntityKind.COLLECTION
+    assert scope.slots["name"] == "movies"
 
 
 def test_view_entity_dir():
     scope = detect_scope(_ps("/sample_mflix/views/top_rated"))
-    assert scope.level == "entity"
-    assert scope.database == "sample_mflix"
-    assert scope.kind == "view"
-    assert scope.name == "top_rated"
+    assert scope.kind == "entity"
+    assert entity_kind(scope) == EntityKind.VIEW
+    assert scope.slots["name"] == "top_rated"
 
 
 def test_collection_schema_json():
     scope = detect_scope(_ps("/sample_mflix/collections/movies/schema.json"))
-    assert scope.level == "schema_json"
-    assert scope.database == "sample_mflix"
-    assert scope.kind == "collection"
-    assert scope.name == "movies"
+    assert scope.kind == "schema_json"
+    assert scope.slots["database"] == "sample_mflix"
+    assert entity_kind(scope) == EntityKind.COLLECTION
+    assert scope.slots["name"] == "movies"
 
 
 def test_collection_documents_jsonl():
     scope = detect_scope(
         _ps("/sample_mflix/collections/movies/documents.jsonl"))
-    assert scope.level == "documents"
-    assert scope.database == "sample_mflix"
-    assert scope.kind == "collection"
-    assert scope.name == "movies"
+    assert scope.kind == "documents"
+    assert scope.slots["database"] == "sample_mflix"
+    assert entity_kind(scope) == EntityKind.COLLECTION
+    assert scope.slots["name"] == "movies"
 
 
 def test_view_documents_jsonl():
     scope = detect_scope(_ps("/sample_mflix/views/top_rated/documents.jsonl"))
-    assert scope.level == "documents"
-    assert scope.kind == "view"
-    assert scope.name == "top_rated"
+    assert scope.kind == "documents"
+    assert entity_kind(scope) == EntityKind.VIEW
+    assert scope.slots["name"] == "top_rated"
 
 
 def test_unknown_leaf_under_entity():
     scope = detect_scope(_ps("/sample_mflix/collections/movies/weird.txt"))
-    assert scope.level == "unknown"
+    assert scope.kind == "invalid"
 
 
 def test_unknown_top_segment_under_db():
     scope = detect_scope(_ps("/sample_mflix/randomdir"))
-    assert scope.level == "unknown"
+    assert scope.kind == "invalid"
 
 
 def test_pathspec_with_prefix_root():
@@ -109,7 +108,7 @@ def test_pathspec_with_prefix_root():
         directory="/mongo/",
     )
     scope = detect_scope(p)
-    assert scope.level == "root"
+    assert scope.kind == "root"
 
 
 def test_pathspec_with_prefix_database():
@@ -119,8 +118,8 @@ def test_pathspec_with_prefix_database():
         directory="/mongo/",
     )
     scope = detect_scope(p)
-    assert scope.level == "database"
-    assert scope.database == "sample_mflix"
+    assert scope.kind == "database"
+    assert scope.slots == {"database": "sample_mflix"}
 
 
 def test_pathspec_with_prefix_documents():
@@ -132,7 +131,7 @@ def test_pathspec_with_prefix_documents():
         directory="/mongo/sample_mflix/collections/movies/",
     )
     scope = detect_scope(p)
-    assert scope.level == "documents"
-    assert scope.database == "sample_mflix"
-    assert scope.kind == "collection"
-    assert scope.name == "movies"
+    assert scope.kind == "documents"
+    assert scope.slots["database"] == "sample_mflix"
+    assert entity_kind(scope) == EntityKind.COLLECTION
+    assert scope.slots["name"] == "movies"

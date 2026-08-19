@@ -13,15 +13,14 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 from mirage.core.hierarchy.codec import JSON_NAME
-from mirage.core.hierarchy.route import Capture, Route
-from mirage.core.hierarchy.scope import make_detect_scope
+from mirage.core.hierarchy.scope import Scope, Slot, make_detect_scope
 from mirage.types import FileType
 
 # The mount is one flat directory of memory files; which memories exist
 # is a function of the configured scope filter, not of the path.
-ROUTES = (Route(kind="memory",
-                segments=(Capture("memory_id", JSON_NAME), ),
+SCOPES = (Scope(kind="memory",
+                segments=(Slot("memory_id", JSON_NAME), ),
                 leaf=True,
                 filetype=FileType.JSON), )
 
-detect_scope = make_detect_scope(ROUTES)
+detect_scope = make_detect_scope(SCOPES)

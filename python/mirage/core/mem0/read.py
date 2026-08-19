@@ -18,7 +18,7 @@ from typing import Any
 from mirage.accessor.mem0 import Mem0Accessor
 from mirage.cache.index import NULL_INDEX, IndexCacheStore
 from mirage.core.hierarchy.read import make_read
-from mirage.core.hierarchy.scope import RouteMatch
+from mirage.core.hierarchy.scope import ScopeMatch
 from mirage.core.mem0.client import get_memory
 from mirage.core.mem0.scope import detect_scope
 from mirage.core.render.json import json_bytes
@@ -39,10 +39,10 @@ async def _resolve_memory(
               if lookup.entry is not None else None)
     if isinstance(cached, dict):
         return cached
-    return await get_memory(accessor.client, match.captures["memory_id"], path)
+    return await get_memory(accessor.client, match.slots["memory_id"], path)
 
 
-async def _read_memory(accessor: Mem0Accessor, match: RouteMatch,
+async def _read_memory(accessor: Mem0Accessor, match: ScopeMatch,
                        path: PathSpec, index: IndexCacheStore) -> bytes:
     memory = await _resolve_memory(accessor, path, index)
     return json_bytes(memory)

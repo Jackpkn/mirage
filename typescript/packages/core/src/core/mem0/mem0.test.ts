@@ -119,7 +119,7 @@ describe('mem0 detectScope', () => {
       new PathSpec({ virtual: '/mem', directory: '/mem', resourcePath: '' }),
     )
     expect(match.kind).toBe('root')
-    expect(match.captures).toEqual({})
+    expect(match.slots).toEqual({})
   })
 
   it('classifies a memory file and carries the id', () => {
@@ -130,7 +130,7 @@ describe('mem0 detectScope', () => {
     })
     const match = detectScope(p)
     expect(match.kind).toBe('memory')
-    expect(match.captures).toEqual({ memory_id: 'abc' })
+    expect(match.slots).toEqual({ memory_id: 'abc' })
   })
 
   it('classifies a hidden name as invalid', () => {

@@ -26,7 +26,6 @@ from mirage.commands.registry import command
 from mirage.commands.spec import SPECS
 from mirage.core.mongodb.scope import detect_scope
 from mirage.core.mongodb.stream import read_tail, watch_stream
-from mirage.core.mongodb.types import ScopeLevel
 from mirage.io.types import ByteSource, IOResult
 from mirage.types import PathSpec
 
@@ -42,15 +41,14 @@ async def tail(accessor: MongoDBAccessor, paths: list[PathSpec],
     counts = parsed.counts
     resolved = await resolve_or_empty(IO, accessor, paths, opts.index)
     if (parsed.follow and len(resolved) == 1
-            and detect_scope(resolved[0]).level == ScopeLevel.DOCUMENTS):
+            and detect_scope(resolved[0]).kind == "documents"):
         return watch_stream(accessor, resolved[0], opts.index), IOResult()
     # Collections fetch only the last N documents server-side (sort by
     # primary key descending + limit) instead of reading everything.
     n_eff = counts.lines if counts.lines is not None else 10
     if (len(resolved) == 1 and counts.byte_count is None
             and counts.from_byte is None and counts.from_line is None
-            and n_eff > 0
-            and detect_scope(resolved[0]).level == ScopeLevel.DOCUMENTS):
+            and n_eff > 0 and detect_scope(resolved[0]).kind == "documents"):
         data = await read_tail(accessor, resolved[0], n_eff, opts.index)
         return generic_tail(data, n=n_eff, c=None, from_line=None), IOResult()
     return await tail_generic(resolved, list(texts), opts,

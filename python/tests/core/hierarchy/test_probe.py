@@ -17,7 +17,8 @@ import asyncio
 import pytest
 
 from mirage.cache.index.ram import RAMIndexCacheStore
-from mirage.core.hierarchy.probe import assert_listed, listed_size
+from mirage.core.hierarchy.probe import (assert_listed, listed_size,
+                                         resolve_entry)
 from mirage.core.hierarchy.readdir import make_readdir
 from tests.core.hierarchy.conftest import (detect_scope, list_notes,
                                            list_rooms, spec)
@@ -53,3 +54,24 @@ def test_listed_size_reads_what_the_listing_recorded(accessor):
     assert asyncio.run(listed_size(index, path)) == 7
     assert asyncio.run(listed_size(index,
                                    spec("/rooms/red/ghost.json"))) is (None)
+
+
+def test_resolve_entry_warms_the_parent_once(accessor):
+    index = RAMIndexCacheStore()
+    entry = asyncio.run(
+        resolve_entry(READDIR, accessor, spec("/rooms/red/a.json"), index))
+    assert entry is not None
+    assert entry.id == "a.json"
+    assert accessor.calls == ["notes:red"]
+    # A warm cache answers from the index without another listing.
+    again = asyncio.run(
+        resolve_entry(READDIR, accessor, spec("/rooms/red/b.json"), index))
+    assert again is not None
+    assert accessor.calls == ["notes:red"]
+
+
+def test_resolve_entry_answers_none_for_an_absent_child(accessor):
+    index = RAMIndexCacheStore()
+    entry = asyncio.run(
+        resolve_entry(READDIR, accessor, spec("/rooms/red/nope.json"), index))
+    assert entry is None

@@ -57,8 +57,8 @@ def _fake_cluster():
                side_effect=_list_collections), \
          patch("mirage.core.mongodb.readdir.database_exists", **exists), \
          patch("mirage.core.mongodb.readdir.entity_exists", **exists), \
-         patch("mirage.core.mongodb.stat.database_exists", **exists), \
-         patch("mirage.core.mongodb.stat.entity_exists", **exists), \
+         patch("mirage.core.mongodb.readdir.database_exists", **exists), \
+         patch("mirage.core.mongodb.readdir.entity_exists", **exists), \
          patch("mirage.core.mongodb.stat.count_documents",
                new_callable=AsyncMock, return_value=2), \
          patch("mirage.core.mongodb.stat.is_view",

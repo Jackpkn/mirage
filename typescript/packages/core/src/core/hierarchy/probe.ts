@@ -13,11 +13,13 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import type { Accessor } from '../../accessor/base.ts'
+import type { IndexEntry } from '../../cache/index/config.ts'
 import type { IndexCacheStore } from '../../cache/index/store.ts'
+import { entryOrWarm } from '../../cache/index/warm.ts'
 import { PathSpec } from '../../types.ts'
 import { enoent } from '../../utils/errors.ts'
 import { mountKey, mountPrefixOf } from '../../utils/key_prefix.ts'
-import { rstripSlash } from '../../utils/slash.ts'
+import { rstripSlash, stripSlash } from '../../utils/slash.ts'
 
 export type ReaddirFn<A extends Accessor> = (
   accessor: A,
@@ -72,4 +74,40 @@ export async function listedSize(
   const prefix = mountPrefixOf(path.virtual, path.resourcePath)
   const lookup = await index.get(`${prefix}/${path.resourcePath}`)
   return lookup.entry?.size ?? null
+}
+
+/**
+ * Resolve the path's index entry, listing its parent when cold.
+ *
+ * Id-addressed backends can only turn a path into an id through the index,
+ * so the entry is the proof of existence AND the id source; this wraps
+ * `entryOrWarm` with the parent-readdir warm every such backend used to
+ * spell by hand.
+ */
+export async function resolveEntry<A extends Accessor>(
+  readdir: ReaddirFn<A>,
+  accessor: A,
+  path: PathSpec,
+  index?: IndexCacheStore,
+): Promise<IndexEntry | null> {
+  if (index === undefined) return null
+  const prefix = mountPrefixOf(path.virtual, path.resourcePath)
+  const key = stripSlash(path.resourcePath)
+  const virtualKey = key !== '' ? `${prefix}/${key}` : prefix !== '' ? prefix : '/'
+  const parentVirtual = virtualKey.slice(0, virtualKey.lastIndexOf('/')) || '/'
+  const warm =
+    parentVirtual !== virtualKey
+      ? () =>
+          readdir(
+            accessor,
+            new PathSpec({
+              virtual: parentVirtual,
+              directory: parentVirtual,
+              resolved: false,
+              resourcePath: mountKey(parentVirtual, prefix),
+            }),
+            index,
+          )
+      : null
+  return entryOrWarm(index, virtualKey, warm)
 }

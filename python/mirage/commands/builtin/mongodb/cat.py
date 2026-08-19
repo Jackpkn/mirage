@@ -25,7 +25,6 @@ from mirage.commands.spec import SPECS
 from mirage.core.mongodb.read import read as mongodb_read
 from mirage.core.mongodb.scope import detect_scope
 from mirage.core.mongodb.stream import read_stream
-from mirage.core.mongodb.types import ScopeLevel
 from mirage.io.types import ByteSource, IOResult
 from mirage.types import PathSpec, PolymorphicReadResult
 
@@ -43,7 +42,7 @@ async def stream_any(accessor: MongoDBAccessor, path: PathSpec, *,
         index (IndexCacheStore): Index cache store.
     """
     scope = detect_scope(path)
-    if scope.level == ScopeLevel.DOCUMENTS:
+    if scope.kind == "documents":
         return read_stream(accessor, path, index)
     return await mongodb_read(accessor, path, index)
 

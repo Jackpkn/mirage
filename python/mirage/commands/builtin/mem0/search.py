@@ -60,7 +60,7 @@ def memory_ids(paths: list[PathSpec]) -> set[str]:
         match = detect_scope(path)
         if match.kind != "memory":
             raise FileNotFoundError(path.virtual)
-        ids.add(match.captures["memory_id"])
+        ids.add(match.slots["memory_id"])
     return ids
 
 

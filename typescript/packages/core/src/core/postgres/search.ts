@@ -13,6 +13,8 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import type { PostgresAccessor } from '../../accessor/postgres.ts'
+import type { ScopeMatch } from '../hierarchy/scope.ts'
+import type { Searcher, SearchQuery } from '../hierarchy/search.ts'
 import { listMatviews, listSchemas, listTables, listViews, quoteIdent } from './client.ts'
 import { buildEntitySchemaJson } from './_schema_json.ts'
 import { buildEntitySemanticJson } from './semantic.ts'
@@ -216,4 +218,66 @@ export function formatGrepResults(results: readonly EntityMatches[]): string[] {
     }
   }
   return lines
+}
+
+// Directory scopes cover every file under them, so the rendered
+// schema.json / semantic.json are searched alongside the row push-down.
+// Deliberate divergence from GNU: rows come first and metadata second,
+// rather than in per-entity readdir order.
+const rootSearcher: Searcher<PostgresAccessor> = async (accessor, _match, query) => {
+  const limit = accessor.config.defaultSearchLimit
+  const ci = query.ignoreCase
+  const lines = formatGrepResults(await searchDatabase(accessor, query.pattern, limit, ci))
+  lines.push(...(await searchDatabaseMetadata(accessor, query.pattern, ci)))
+  return lines
+}
+
+const schemaSearcher: Searcher<PostgresAccessor> = async (accessor, match, query) => {
+  const schema = match.slots.schema ?? ''
+  const limit = accessor.config.defaultSearchLimit
+  const ci = query.ignoreCase
+  const lines = formatGrepResults(await searchSchema(accessor, schema, query.pattern, limit, ci))
+  lines.push(...(await searchSchemaMetadata(accessor, schema, query.pattern, ci)))
+  return lines
+}
+
+const kindSearcher: Searcher<PostgresAccessor> = async (accessor, match, query) => {
+  const schema = match.slots.schema ?? ''
+  const kind = match.slots.kind ?? ''
+  const limit = accessor.config.defaultSearchLimit
+  const ci = query.ignoreCase
+  const lines = formatGrepResults(
+    await searchKind(accessor, schema, kind, query.pattern, limit, ci),
+  )
+  lines.push(...(await searchKindMetadata(accessor, schema, kind, query.pattern, ci)))
+  return lines
+}
+
+async function entityLines(
+  accessor: PostgresAccessor,
+  match: ScopeMatch,
+  query: SearchQuery,
+  metadata: boolean,
+): Promise<string[]> {
+  const schema = match.slots.schema ?? ''
+  const kind = match.slots.kind ?? ''
+  const entity = match.slots.entity ?? ''
+  const limit = accessor.config.defaultSearchLimit
+  const ci = query.ignoreCase
+  const rows = await searchEntity(accessor, schema, kind, entity, query.pattern, limit, ci)
+  const lines = formatGrepResults([{ schema, kind, entity, rows }])
+  // entity_rows names rows.jsonl explicitly; only the directory scope
+  // pulls in the sibling metadata files.
+  if (metadata) {
+    lines.push(...(await searchEntityMetadata(accessor, schema, kind, entity, query.pattern, ci)))
+  }
+  return lines
+}
+
+export const SEARCHERS: Readonly<Record<string, Searcher<PostgresAccessor>>> = {
+  root: rootSearcher,
+  schema: schemaSearcher,
+  kind: kindSearcher,
+  entity: (accessor, match, query) => entityLines(accessor, match, query, true),
+  entity_rows: (accessor, match, query) => entityLines(accessor, match, query, false),
 }

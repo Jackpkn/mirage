@@ -13,48 +13,15 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 from mirage.accessor.postgres import PostgresAccessor
-from mirage.cache.index import NULL_INDEX, IndexCacheStore, IndexEntry
+from mirage.cache.index import IndexEntry
+from mirage.core.hierarchy.readdir import make_readdir
+from mirage.core.hierarchy.scope import ScopeMatch
 from mirage.core.postgres import client
-from mirage.core.postgres.scope import ENTITY_FILES, detect_scope
-from mirage.types import PathSpec
-from mirage.utils.errors import enoent
-from mirage.utils.key_prefix import mount_key, mount_prefix_of
+from mirage.core.postgres.scope import ENTITY_FILES, KIND_DIRS, detect_scope
 
 
-async def readdir(accessor: PostgresAccessor,
-                  path: PathSpec,
-                  index: IndexCacheStore = NULL_INDEX) -> list[str]:
-    prefix = mount_prefix_of(path.virtual, path.resource_path)
-    raw = path.directory if path.pattern else path.virtual
-    if prefix and raw.startswith(prefix):
-        raw = raw[len(prefix):] or "/"
-    scope = detect_scope(
-        PathSpec(virtual=raw,
-                 directory=raw,
-                 resource_path=mount_key(raw, prefix)))
-    # Canonical key: no trailing slash (except root), or the same dir
-    # indexes under two keys and cache hits return doubled-slash entries.
-    virtual_key = ((prefix or "") + raw).rstrip("/") or "/"
-
-    if scope.level == "root":
-        return await _list_root(accessor, virtual_key, index, prefix)
-    if scope.level == "schema":
-        base = raw.rstrip("/")
-        return [f"{prefix}{base}/tables", f"{prefix}{base}/views"]
-    if scope.level == "kind":
-        return await _list_entities(accessor, scope.schema, scope.kind,
-                                    virtual_key, index, prefix, raw)
-    if scope.level == "entity":
-        base = raw.rstrip("/")
-        return [f"{prefix}{base}/{name}" for name in ENTITY_FILES]
-    raise enoent(path)
-
-
-async def _list_root(accessor: PostgresAccessor, virtual_key: str,
-                     index: IndexCacheStore, prefix: str) -> list[str]:
-    listing = await index.list_dir(virtual_key)
-    if listing.entries is not None:
-        return listing.entries
+async def _list_root(accessor: PostgresAccessor,
+                     match: ScopeMatch) -> list[tuple[str, IndexEntry]]:
     pool = await accessor.pool()
     async with pool.acquire() as conn:
         schemas = await client.list_schemas(conn, accessor.config.schemas)
@@ -71,16 +38,24 @@ async def _list_root(accessor: PostgresAccessor, virtual_key: str,
                                    name=s,
                                    resource_type="postgres/schema",
                                    vfs_name=s)))
-    await index.set_dir(virtual_key, entries)
-    return [f"{prefix}/{name}" for name, _ in entries]
+    return entries
 
 
-async def _list_entities(accessor: PostgresAccessor, schema: str, kind: str,
-                         virtual_key: str, index: IndexCacheStore, prefix: str,
-                         raw: str) -> list[str]:
-    listing = await index.list_dir(virtual_key)
-    if listing.entries is not None:
-        return listing.entries
+async def _list_schema(accessor: PostgresAccessor,
+                       match: ScopeMatch) -> list[tuple[str, IndexEntry]]:
+    # tables/ and views/ exist by construction under every schema, the
+    # same way the entity files below do under every entity.
+    return [(name,
+             IndexEntry(id=name,
+                        name=name,
+                        resource_type="postgres/kind",
+                        vfs_name=name)) for name in KIND_DIRS]
+
+
+async def _list_entities(accessor: PostgresAccessor,
+                         match: ScopeMatch) -> list[tuple[str, IndexEntry]]:
+    schema = match.slots["schema"]
+    kind = match.slots["kind"]
     pool = await accessor.pool()
     async with pool.acquire() as conn:
         if kind == "tables":
@@ -89,13 +64,29 @@ async def _list_entities(accessor: PostgresAccessor, schema: str, kind: str,
             views = await client.list_views(conn, schema)
             mviews = await client.list_matviews(conn, schema)
             names = sorted(set(views) | set(mviews))
-    entries: list[tuple[str, IndexEntry]] = []
-    for n in names:
-        entries.append((n,
-                        IndexEntry(id=n,
-                                   name=n,
-                                   resource_type=f"postgres/{kind[:-1]}",
-                                   vfs_name=n)))
-    await index.set_dir(virtual_key, entries)
-    base = raw.rstrip("/")
-    return [f"{prefix}{base}/{n}" for n, _ in entries]
+    return [(n,
+             IndexEntry(id=n,
+                        name=n,
+                        resource_type=f"postgres/{kind[:-1]}",
+                        vfs_name=n)) for n in names]
+
+
+async def _list_entity_files(
+        accessor: PostgresAccessor,
+        match: ScopeMatch) -> list[tuple[str, IndexEntry]]:
+    return [(name,
+             IndexEntry(id=name,
+                        name=name,
+                        resource_type="postgres/entity_file",
+                        vfs_name=name)) for name in ENTITY_FILES]
+
+
+readdir = make_readdir(
+    detect_scope,
+    listers={
+        "root": _list_root,
+        "schema": _list_schema,
+        "kind": _list_entities,
+        "entity": _list_entity_files,
+    },
+)

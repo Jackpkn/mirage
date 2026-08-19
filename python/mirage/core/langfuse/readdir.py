@@ -15,7 +15,7 @@
 from mirage.accessor.langfuse import LangfuseAccessor
 from mirage.cache.index import IndexEntry
 from mirage.core.hierarchy.readdir import make_readdir
-from mirage.core.hierarchy.scope import RouteMatch
+from mirage.core.hierarchy.scope import ScopeMatch
 from mirage.core.langfuse.client import (fetch_dataset_items,
                                          fetch_dataset_runs, fetch_datasets,
                                          fetch_prompts, fetch_sessions,
@@ -25,7 +25,7 @@ from mirage.core.render.json import jsonl_bytes
 
 
 async def _list_traces(accessor: LangfuseAccessor,
-                       match: RouteMatch) -> list[tuple[str, IndexEntry]]:
+                       match: ScopeMatch) -> list[tuple[str, IndexEntry]]:
     traces = await fetch_traces(
         accessor.api,
         limit=accessor.config.default_trace_limit,
@@ -46,7 +46,7 @@ async def _list_traces(accessor: LangfuseAccessor,
 
 
 async def _list_sessions(accessor: LangfuseAccessor,
-                         match: RouteMatch) -> list[tuple[str, IndexEntry]]:
+                         match: ScopeMatch) -> list[tuple[str, IndexEntry]]:
     sessions = await fetch_sessions(accessor.api)
     return [(s.get("id", ""),
              IndexEntry(
@@ -59,10 +59,10 @@ async def _list_sessions(accessor: LangfuseAccessor,
 
 async def _list_session_traces(
         accessor: LangfuseAccessor,
-        match: RouteMatch) -> list[tuple[str, IndexEntry]]:
+        match: ScopeMatch) -> list[tuple[str, IndexEntry]]:
     traces = await fetch_traces(
         accessor.api,
-        session_id=match.captures["session_id"],
+        session_id=match.slots["session_id"],
         limit=accessor.config.default_trace_limit,
         from_timestamp=accessor.config.default_from_timestamp,
     )
@@ -76,7 +76,7 @@ async def _list_session_traces(
 
 
 async def _list_prompts(accessor: LangfuseAccessor,
-                        match: RouteMatch) -> list[tuple[str, IndexEntry]]:
+                        match: ScopeMatch) -> list[tuple[str, IndexEntry]]:
     prompts = await fetch_prompts(accessor.api)
     seen: set[str] = set()
     entries: list[tuple[str, IndexEntry]] = []
@@ -97,8 +97,8 @@ async def _list_prompts(accessor: LangfuseAccessor,
 
 async def _list_prompt_versions(
         accessor: LangfuseAccessor,
-        match: RouteMatch) -> list[tuple[str, IndexEntry]]:
-    prompt_name = match.captures["prompt_name"]
+        match: ScopeMatch) -> list[tuple[str, IndexEntry]]:
+    prompt_name = match.slots["prompt_name"]
     prompts = await fetch_prompts(accessor.api)
     entries: list[tuple[str, IndexEntry]] = []
     for p in prompts:
@@ -120,7 +120,7 @@ async def _list_prompt_versions(
 
 
 async def _list_datasets(accessor: LangfuseAccessor,
-                         match: RouteMatch) -> list[tuple[str, IndexEntry]]:
+                         match: ScopeMatch) -> list[tuple[str, IndexEntry]]:
     datasets = await fetch_datasets(accessor.api)
     return [(d.get("name", ""),
              IndexEntry(
@@ -132,8 +132,8 @@ async def _list_datasets(accessor: LangfuseAccessor,
 
 
 async def _list_dataset(accessor: LangfuseAccessor,
-                        match: RouteMatch) -> list[tuple[str, IndexEntry]]:
-    dataset_name = match.captures["dataset_name"]
+                        match: ScopeMatch) -> list[tuple[str, IndexEntry]]:
+    dataset_name = match.slots["dataset_name"]
     # One dataset_items call per dataset directory actually entered: the
     # dataset listing carries no item payloads, so items.jsonl can only
     # be sized here, and only for datasets the caller opens.
@@ -159,8 +159,8 @@ async def _list_dataset(accessor: LangfuseAccessor,
 
 async def _list_dataset_runs(
         accessor: LangfuseAccessor,
-        match: RouteMatch) -> list[tuple[str, IndexEntry]]:
-    dataset_name = match.captures["dataset_name"]
+        match: ScopeMatch) -> list[tuple[str, IndexEntry]]:
+    dataset_name = match.slots["dataset_name"]
     runs = await fetch_dataset_runs(accessor.api, dataset_name)
     entries: list[tuple[str, IndexEntry]] = []
     for r in runs:

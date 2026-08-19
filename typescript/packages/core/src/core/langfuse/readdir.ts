@@ -15,7 +15,7 @@
 import type { LangfuseAccessor } from '../../accessor/langfuse.ts'
 import { IndexEntry } from '../../cache/index/config.ts'
 import { makeReaddir } from '../hierarchy/readdir.ts'
-import type { RouteMatch } from '../hierarchy/scope.ts'
+import type { ScopeMatch } from '../hierarchy/scope.ts'
 import { jsonlBytes } from '../render/json.ts'
 import {
   fetchDatasetItems,
@@ -48,7 +48,7 @@ function promptVersions(record: Record<string, unknown>): string[] {
 
 async function listTraces(
   accessor: LangfuseAccessor,
-  _match: RouteMatch,
+  _match: ScopeMatch,
 ): Promise<[string, IndexEntry][]> {
   const limit = accessor.config.defaultTraceLimit ?? DEFAULT_TRACE_LIMIT
   // No implicit time window: an unset defaultFromTimestamp lists whatever the
@@ -80,7 +80,7 @@ async function listTraces(
 
 async function listSessions(
   accessor: LangfuseAccessor,
-  _match: RouteMatch,
+  _match: ScopeMatch,
 ): Promise<[string, IndexEntry][]> {
   const sessions = await fetchSessions(accessor.transport)
   return sessions.map((s): [string, IndexEntry] => {
@@ -99,11 +99,11 @@ async function listSessions(
 
 async function listSessionTraces(
   accessor: LangfuseAccessor,
-  match: RouteMatch,
+  match: ScopeMatch,
 ): Promise<[string, IndexEntry][]> {
   const limit = accessor.config.defaultTraceLimit ?? DEFAULT_TRACE_LIMIT
   const opts: { sessionId: string; limit: number; fromTimestamp?: string } = {
-    sessionId: match.captures.session_id ?? '',
+    sessionId: match.slots.session_id ?? '',
     limit,
   }
   const from = accessor.config.defaultFromTimestamp
@@ -126,7 +126,7 @@ async function listSessionTraces(
 
 async function listPrompts(
   accessor: LangfuseAccessor,
-  _match: RouteMatch,
+  _match: ScopeMatch,
 ): Promise<[string, IndexEntry][]> {
   const prompts = await fetchPrompts(accessor.transport)
   const seen = new Set<string>()
@@ -150,9 +150,9 @@ async function listPrompts(
 
 async function listPromptVersions(
   accessor: LangfuseAccessor,
-  match: RouteMatch,
+  match: ScopeMatch,
 ): Promise<[string, IndexEntry][]> {
-  const promptName = match.captures.prompt_name ?? ''
+  const promptName = match.slots.prompt_name ?? ''
   const prompts = await fetchPrompts(accessor.transport)
   const entries: [string, IndexEntry][] = []
   for (const p of prompts) {
@@ -177,7 +177,7 @@ async function listPromptVersions(
 
 async function listDatasets(
   accessor: LangfuseAccessor,
-  _match: RouteMatch,
+  _match: ScopeMatch,
 ): Promise<[string, IndexEntry][]> {
   const datasets = await fetchDatasets(accessor.transport)
   return datasets.map((d): [string, IndexEntry] => {
@@ -196,9 +196,9 @@ async function listDatasets(
 
 async function listDataset(
   accessor: LangfuseAccessor,
-  match: RouteMatch,
+  match: ScopeMatch,
 ): Promise<[string, IndexEntry][]> {
-  const datasetName = match.captures.dataset_name ?? ''
+  const datasetName = match.slots.dataset_name ?? ''
   // One dataset_items call per dataset directory actually entered: the
   // dataset listing carries no item payloads, so items.jsonl can only be
   // sized here, and only for datasets the caller opens.
@@ -228,9 +228,9 @@ async function listDataset(
 
 async function listDatasetRuns(
   accessor: LangfuseAccessor,
-  match: RouteMatch,
+  match: ScopeMatch,
 ): Promise<[string, IndexEntry][]> {
-  const datasetName = match.captures.dataset_name ?? ''
+  const datasetName = match.slots.dataset_name ?? ''
   const runs = await fetchDatasetRuns(accessor.transport, datasetName)
   return runs.map((r): [string, IndexEntry] => {
     const runName = pickString(r, 'name')

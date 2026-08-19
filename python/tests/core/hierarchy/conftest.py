@@ -17,29 +17,28 @@ import pytest
 from mirage.accessor.base import Accessor
 from mirage.cache.index import IndexEntry
 from mirage.core.hierarchy.codec import INT_JSON, JSON_NAME, Codec
-from mirage.core.hierarchy.route import Capture, Route
-from mirage.core.hierarchy.scope import RouteMatch, make_detect_scope
+from mirage.core.hierarchy.scope import (Scope, ScopeMatch, Slot,
+                                         make_detect_scope)
 from mirage.types import FileType, PathSpec
 
-ROUTES = (
-    Route(kind="rooms", segments=("rooms", ), probed=False),
-    Route(kind="room", segments=("rooms", Capture("room"))),
-    Route(kind="note",
-          segments=("rooms", Capture("room"), Capture("note", JSON_NAME)),
+SCOPES = (
+    Scope(kind="rooms", segments=("rooms", ), probed=False),
+    Scope(kind="room", segments=("rooms", Slot("room"))),
+    Scope(kind="note",
+          segments=("rooms", Slot("room"), Slot("note", JSON_NAME)),
           leaf=True,
           filetype=FileType.JSON),
-    Route(kind="revision",
-          segments=("rooms", Capture("room"), "revisions",
-                    Capture("rev", INT_JSON)),
+    Scope(kind="revision",
+          segments=("rooms", Slot("room"), "revisions", Slot("rev", INT_JSON)),
           leaf=True,
           filetype=FileType.JSON),
-    Route(kind="tagged",
-          segments=("tags", Capture("tag", Codec(validate=str.islower))),
+    Scope(kind="tagged",
+          segments=("tags", Slot("tag", Codec(validate=str.islower))),
           leaf=True,
           filetype=FileType.TEXT),
 )
 
-detect_scope = make_detect_scope(ROUTES)
+detect_scope = make_detect_scope(SCOPES)
 
 TREE: dict[str, list[str]] = {
     "rooms": ["red", "blue"],
@@ -62,7 +61,7 @@ def spec(mount_path: str) -> PathSpec:
 
 
 async def list_rooms(accessor: FakeAccessor,
-                     match: RouteMatch) -> list[tuple[str, IndexEntry]]:
+                     match: ScopeMatch) -> list[tuple[str, IndexEntry]]:
     accessor.calls.append("rooms")
     return [(room,
              IndexEntry(id=room,
@@ -72,20 +71,20 @@ async def list_rooms(accessor: FakeAccessor,
 
 
 async def list_notes(accessor: FakeAccessor,
-                     match: RouteMatch) -> list[tuple[str, IndexEntry]]:
-    accessor.calls.append(f"notes:{match.captures['room']}")
+                     match: ScopeMatch) -> list[tuple[str, IndexEntry]]:
+    accessor.calls.append(f"notes:{match.slots['room']}")
     return [(note,
              IndexEntry(id=note,
                         name=note,
                         resource_type="fake/note",
                         vfs_name=note,
-                        size=7)) for note in TREE[match.captures["room"]]]
+                        size=7)) for note in TREE[match.slots["room"]]]
 
 
-async def room_guard(accessor: FakeAccessor, match: RouteMatch,
+async def room_guard(accessor: FakeAccessor, match: ScopeMatch,
                      virtual: str) -> None:
-    accessor.calls.append(f"guard:{match.captures['room']}")
-    if match.captures["room"] not in TREE["rooms"]:
+    accessor.calls.append(f"guard:{match.slots['room']}")
+    if match.slots["room"] not in TREE["rooms"]:
         raise FileNotFoundError(virtual)
 
 

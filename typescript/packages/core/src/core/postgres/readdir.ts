@@ -12,63 +12,18 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { mountKey, mountPrefixOf } from '../../utils/key_prefix.ts'
-import { IndexEntry } from '../../cache/index/config.ts'
-import type { IndexCacheStore } from '../../cache/index/store.ts'
-import { PathSpec } from '../../types.ts'
 import type { PostgresAccessor } from '../../accessor/postgres.ts'
-import { listMatviews, listSchemas, listTables, listViews } from './client.ts'
-import { detectScope, ENTITY_FILES } from './scope.ts'
-import { rstripSlash } from '../../utils/slash.ts'
+import { IndexEntry } from '../../cache/index/config.ts'
+import { makeReaddir } from '../hierarchy/readdir.ts'
+import type { ScopeMatch } from '../hierarchy/scope.ts'
 import { compareCodePoints } from '../../utils/sort.ts'
-
-export async function readdir(
-  accessor: PostgresAccessor,
-  path: PathSpec | string,
-  index?: IndexCacheStore,
-): Promise<string[]> {
-  const spec = typeof path === 'string' ? PathSpec.fromStrPath(path) : path
-  const prefix = mountPrefixOf(spec.virtual, spec.resourcePath)
-  let raw = spec.pattern !== null ? spec.directory : spec.virtual
-  if (prefix !== '' && raw.startsWith(prefix)) {
-    raw = raw.slice(prefix.length) || '/'
-  }
-  const scope = detectScope(
-    new PathSpec({ virtual: raw, directory: raw, resourcePath: mountKey(raw, prefix) }),
-  )
-  // Canonical key: no trailing slash (except root), or the same dir
-  // indexes under two keys and cache hits return doubled-slash entries.
-  const virtualKey = rstripSlash((prefix !== '' ? prefix : '') + raw) || '/'
-
-  if (scope.level === 'root') {
-    return listRoot(accessor, virtualKey, index, prefix)
-  }
-  if (scope.level === 'schema') {
-    const base = rstripSlash(raw)
-    return [`${prefix}${base}/tables`, `${prefix}${base}/views`]
-  }
-  if (scope.level === 'kind') {
-    return listEntities(accessor, scope.schema, scope.kind, virtualKey, index, prefix, raw)
-  }
-  if (scope.level === 'entity') {
-    const base = rstripSlash(raw)
-    return ENTITY_FILES.map((name) => `${prefix}${base}/${name}`)
-  }
-  const err = new Error(raw) as Error & { code?: string }
-  err.code = 'ENOENT'
-  throw err
-}
+import { listMatviews, listSchemas, listTables, listViews } from './client.ts'
+import { detectScope, ENTITY_FILES, KIND_DIRS } from './scope.ts'
 
 async function listRoot(
   accessor: PostgresAccessor,
-  virtualKey: string,
-  index: IndexCacheStore | undefined,
-  prefix: string,
-): Promise<string[]> {
-  if (index !== undefined) {
-    const cached = await index.listDir(virtualKey)
-    if (cached.entries !== null && cached.entries !== undefined) return cached.entries
-  }
+  _match: ScopeMatch,
+): Promise<[string, IndexEntry][]> {
   const schemas = await listSchemas(accessor, accessor.config.schemas)
   const entries: [string, IndexEntry][] = [
     [
@@ -84,31 +39,32 @@ async function listRoot(
   for (const s of schemas) {
     entries.push([
       s,
-      new IndexEntry({
-        id: s,
-        name: s,
-        resourceType: 'postgres/schema',
-        vfsName: s,
-      }),
+      new IndexEntry({ id: s, name: s, resourceType: 'postgres/schema', vfsName: s }),
     ])
   }
-  if (index !== undefined) await index.setDir(virtualKey, entries)
-  return entries.map(([name]) => `${prefix}/${name}`)
+  return entries
+}
+
+function listSchema(
+  _accessor: PostgresAccessor,
+  _match: ScopeMatch,
+): Promise<[string, IndexEntry][]> {
+  // tables/ and views/ exist by construction under every schema, the same
+  // way the entity files below do under every entity.
+  return Promise.resolve(
+    KIND_DIRS.map((name) => [
+      name,
+      new IndexEntry({ id: name, name, resourceType: 'postgres/kind', vfsName: name }),
+    ]),
+  )
 }
 
 async function listEntities(
   accessor: PostgresAccessor,
-  schema: string,
-  kind: string,
-  virtualKey: string,
-  index: IndexCacheStore | undefined,
-  prefix: string,
-  raw: string,
-): Promise<string[]> {
-  if (index !== undefined) {
-    const cached = await index.listDir(virtualKey)
-    if (cached.entries !== null && cached.entries !== undefined) return cached.entries
-  }
+  match: ScopeMatch,
+): Promise<[string, IndexEntry][]> {
+  const schema = match.slots.schema ?? ''
+  const kind = match.slots.kind ?? ''
   let names: string[]
   if (kind === 'tables') {
     names = await listTables(accessor, schema)
@@ -117,7 +73,7 @@ async function listEntities(
     const mviews = await listMatviews(accessor, schema)
     names = [...new Set([...views, ...mviews])].sort(compareCodePoints)
   }
-  const entries: [string, IndexEntry][] = names.map((n) => [
+  return names.map((n) => [
     n,
     new IndexEntry({
       id: n,
@@ -126,7 +82,25 @@ async function listEntities(
       vfsName: n,
     }),
   ])
-  if (index !== undefined) await index.setDir(virtualKey, entries)
-  const base = rstripSlash(raw)
-  return entries.map(([n]) => `${prefix}${base}/${n}`)
 }
+
+function listEntityFiles(
+  _accessor: PostgresAccessor,
+  _match: ScopeMatch,
+): Promise<[string, IndexEntry][]> {
+  return Promise.resolve(
+    ENTITY_FILES.map((name) => [
+      name,
+      new IndexEntry({ id: name, name, resourceType: 'postgres/entity_file', vfsName: name }),
+    ]),
+  )
+}
+
+export const readdir = makeReaddir<PostgresAccessor>(detectScope, {
+  listers: {
+    root: listRoot,
+    schema: listSchema,
+    kind: listEntities,
+    entity: listEntityFiles,
+  },
+})

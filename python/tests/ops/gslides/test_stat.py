@@ -61,18 +61,18 @@ async def test_stat_root_is_directory(accessor, index):
 @pytest.mark.asyncio
 async def test_stat_slide(accessor, index):
     await index.put(
-        "/gslides/owned/deck.gslide.json",
+        "/gslides/owned/Deck__slide1.gslide.json",
         IndexEntry(
             id="slide1",
             name="Deck",
             resource_type="gslides/slide",
             remote_time="2026-04-01T00:00:00Z",
-            vfs_name="deck.gslide.json",
+            vfs_name="Deck__slide1.gslide.json",
         ))
     result = await stat(accessor,
-                        _scope("/gslides/owned/deck.gslide.json"),
+                        _scope("/gslides/owned/Deck__slide1.gslide.json"),
                         index=index)
-    assert result.name == "deck.gslide.json"
+    assert result.name == "Deck__slide1.gslide.json"
     assert result.extra["doc_id"] == "slide1"
 
 
@@ -81,5 +81,5 @@ async def test_stat_not_found(accessor, index):
     await index.set_dir("/gslides/owned", [])
     with pytest.raises(FileNotFoundError):
         await stat(accessor,
-                   _scope("/gslides/owned/nonexistent.gslide.json"),
+                   _scope("/gslides/owned/Nonexistent__slide9.gslide.json"),
                    index=index)

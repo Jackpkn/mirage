@@ -17,6 +17,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('./readdir.ts', () => ({
   readdir: vi.fn(),
+  databaseGuard: vi.fn(),
+  entityGuard: vi.fn(),
 }))
 
 import { MongoDBAccessor } from '../../accessor/mongodb.ts'
