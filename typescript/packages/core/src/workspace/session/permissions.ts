@@ -208,12 +208,11 @@ export function parseProfileMounts(
   if (raw === undefined || raw === null) return null
   if (typeof raw === 'string') return [normPrefix(raw)]
   if (Array.isArray(raw)) return stringList(raw, where).map(normPrefix)
-  const entries: [string, unknown][] =
-    raw instanceof Map
-      ? [...(raw as Map<string, unknown>).entries()]
-      : Object.entries(asObject(raw, where))
+  const entries: [unknown, unknown][] =
+    raw instanceof Map ? [...raw.entries()] : Object.entries(asObject(raw, where))
   const modes = new Map<string, MountMode>()
   for (const [prefix, mode] of entries) {
+    if (typeof prefix !== 'string') throw new Error(`${where} keys must be strings`)
     if (typeof mode !== 'string')
       throw new Error(`${where}[${prefix}] must be a mode name or alias`)
     modes.set(normPrefix(prefix), parseMountMode(mode))

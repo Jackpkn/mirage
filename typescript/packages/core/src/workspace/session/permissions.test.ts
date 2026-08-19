@@ -60,6 +60,14 @@ describe('parseSessionProfile', () => {
     expect(parseProfileMounts(null)).toBeNull()
   })
 
+  it('rejects non-string mount prefixes', () => {
+    expect(() => parseSessionProfile({ mounts: ['/repo', 7] })).toThrow(
+      /mounts\[1\] must be a string/,
+    )
+    expect(() => parseSessionProfile({ mounts: 7 })).toThrow(/mounts must be a mapping/)
+    expect(() => parseProfileMounts(new Map([[7, 'read']]))).toThrow(/mounts keys must be strings/)
+  })
+
   it('rejects unknown and unshipped fields loudly', () => {
     expect(() => parseSessionProfile({ hidden_paths: {} })).toThrow(/unknown field `hidden_paths`/)
     expect(() => parseSessionProfile({ hiddenPaths: {} })).toThrow(/unknown field/)
@@ -95,6 +103,12 @@ describe('parseWorkspacePermissions', () => {
     ])
     expect(w.paths).toEqual({ hide: ['/shared/finance'] })
     expect(parseWorkspacePermissions({})).toEqual({ commands: { deny: [] }, paths: { hide: [] } })
+  })
+
+  it('requires deny itself to be a list', () => {
+    expect(() => parseWorkspacePermissions({ commands: { deny: 'rm' } })).toThrow(
+      /deny must be a list/,
+    )
   })
 
   it('rejects profile-only, unshipped and unknown fields', () => {

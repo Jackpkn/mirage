@@ -66,6 +66,12 @@ def test_profile_mounts_list_form_keeps_each_mounts_own_mode():
     assert SessionProfile(mounts="/repo").mounts == ("/repo", )
 
 
+@pytest.mark.parametrize("mounts", [["/repo", 7], 7, {7: "read"}])
+def test_profile_mounts_rejects_non_string_prefixes(mounts):
+    with pytest.raises(ValidationError):
+        SessionProfile.model_validate({"mounts": mounts})
+
+
 def test_profile_rejects_unknown_and_unshipped_fields():
     for bad in ({
             "hidden_paths": {}
@@ -118,6 +124,11 @@ def test_workspace_permissions_deny_accepts_rules_and_bare_names():
     assert w.paths == PathsBlock(hide=("/shared/finance", ))
     assert WorkspacePermissions() == WorkspacePermissions(
         commands=CommandsBlock(), paths=PathsBlock())
+
+
+def test_workspace_permissions_deny_is_a_list_not_a_scalar():
+    with pytest.raises(ValidationError):
+        WorkspacePermissions.model_validate({"commands": {"deny": "rm"}})
 
 
 @pytest.mark.parametrize("rule", [
