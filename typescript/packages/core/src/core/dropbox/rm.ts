@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import type { DropboxAccessor } from '../../accessor/dropbox.ts'
-import { invalidateAfterUnlink } from '../../cache/context.ts'
+import { invalidateSubtree } from '../../cache/context.ts'
 import { record } from '../../observe/context.ts'
 import type { PathSpec } from '../../types.ts'
 import { enoent } from '../../utils/errors.ts'
@@ -33,6 +33,6 @@ export async function rmR(accessor: DropboxAccessor, path: PathSpec): Promise<vo
     throw err
   }
   record('rm_r', path.virtual, 'dropbox', 0, startMs)
-  await invalidateAfterUnlink(path)
+  await invalidateSubtree(path)
   await invalidateAncestors(path)
 }

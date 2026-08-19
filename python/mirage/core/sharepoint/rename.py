@@ -1,5 +1,5 @@
 from mirage.accessor.sharepoint import SharePointAccessor
-from mirage.cache.context import invalidate_after_unlink
+from mirage.cache.context import invalidate_subtree
 from mirage.core.msgraph.drive_ops import rename_replace
 from mirage.core.sharepoint.copy import drive_loc
 from mirage.core.sharepoint.resolve import resolve
@@ -20,5 +20,5 @@ async def rename(accessor: SharePointAccessor, src: PathSpec,
     await rename_replace(accessor.config,
                          drive_loc(accessor.config, src_resolved, src_virt),
                          drive_loc(accessor.config, dst_resolved, dst_virt))
-    await invalidate_after_unlink(dst)
-    await invalidate_after_unlink(src)
+    await invalidate_subtree(dst)
+    await invalidate_subtree(src)

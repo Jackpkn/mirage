@@ -15,7 +15,7 @@
 import time
 
 from mirage.accessor.dropbox import DropboxAccessor
-from mirage.cache.context import invalidate_after_unlink, invalidate_ancestors
+from mirage.cache.context import invalidate_ancestors, invalidate_subtree
 from mirage.core.dropbox.api import (delete_path, get_metadata, list_folder,
                                      move_path)
 from mirage.core.dropbox.client import DropboxApiError
@@ -59,7 +59,7 @@ async def rename(accessor: DropboxAccessor, src: PathSpec,
         await delete_path(accessor.token_manager, to_path)
         await move_path(accessor.token_manager, from_path, to_path)
     record("rename", src.virtual, "dropbox", 0, start_ms)
-    await invalidate_after_unlink(src)
+    await invalidate_subtree(src)
     await invalidate_ancestors(src)
-    await invalidate_after_unlink(dst)
+    await invalidate_subtree(dst)
     await invalidate_ancestors(dst)

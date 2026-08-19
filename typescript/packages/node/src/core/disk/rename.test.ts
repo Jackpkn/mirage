@@ -24,6 +24,7 @@ import { rename } from './rename.ts'
 class FakeManager {
   writes: string[] = []
   unlinks: string[] = []
+  subtrees: string[] = []
 
   invalidateAfterWrite(path: string | PathSpec): Promise<void> {
     this.writes.push(typeof path === 'string' ? path : path.mountPath)
@@ -32,6 +33,11 @@ class FakeManager {
 
   invalidateAfterUnlink(path: string | PathSpec): Promise<void> {
     this.unlinks.push(typeof path === 'string' ? path : path.mountPath)
+    return Promise.resolve()
+  }
+
+  invalidateSubtree(path: string | PathSpec): Promise<void> {
+    this.subtrees.push(typeof path === 'string' ? path : path.mountPath)
     return Promise.resolve()
   }
 
@@ -71,7 +77,7 @@ describe('core/disk/rename', () => {
     await runWithCacheManager(manager, async () => {
       await rename(accessor, spec('/src'), spec('/dst'))
     })
-    expect(manager.unlinks).toEqual(['/src', '/dst'])
+    expect(manager.subtrees).toEqual(['/src', '/dst'])
     expect(manager.writes).toEqual([])
     expect(await readFile(join(root, 'dst', 'f.txt'), 'utf-8')).toBe('x')
   })

@@ -15,7 +15,7 @@
 import asyncssh
 
 from mirage.accessor.ssh import SSHAccessor
-from mirage.cache.context import invalidate_after_unlink
+from mirage.cache.context import invalidate_subtree
 from mirage.core.ssh.client import _abs
 from mirage.types import PathSpec
 
@@ -28,7 +28,7 @@ async def rm_r(accessor: SSHAccessor, path_spec: PathSpec) -> None:
         await _rm_r_inner(sftp, config, path)
     except asyncssh.SFTPNoSuchFile:
         raise FileNotFoundError(path)
-    await invalidate_after_unlink(path_spec)
+    await invalidate_subtree(path_spec)
 
 
 async def _rm_r_inner(sftp, config, path: str) -> None:

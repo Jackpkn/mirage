@@ -20,12 +20,14 @@ import {
   invalidateAfterUnlink,
   invalidateAfterWrite,
   invalidateAncestors,
+  invalidateSubtree,
   runWithCacheManager,
 } from './context.ts'
 
 class FakeManager {
   writes: string[] = []
   unlinks: string[] = []
+  subtrees: string[] = []
 
   invalidateAfterWrite(path: string | PathSpec): Promise<void> {
     this.writes.push(path as string)
@@ -34,6 +36,11 @@ class FakeManager {
 
   invalidateAfterUnlink(path: string | PathSpec): Promise<void> {
     this.unlinks.push(path as string)
+    return Promise.resolve()
+  }
+
+  invalidateSubtree(path: string | PathSpec): Promise<void> {
+    this.subtrees.push(path as string)
     return Promise.resolve()
   }
 
@@ -48,14 +55,17 @@ describe('cache context', () => {
     await runWithCacheManager(manager, async () => {
       await invalidateAfterWrite('/a.txt')
       await invalidateAfterUnlink('/b.txt')
+      await invalidateSubtree('/c')
     })
     expect(manager.writes).toEqual(['/a.txt'])
     expect(manager.unlinks).toEqual(['/b.txt'])
+    expect(manager.subtrees).toEqual(['/c'])
   })
 
   it('no-ops without an active manager', async () => {
     await invalidateAfterWrite('/a.txt')
     await invalidateAfterUnlink('/b.txt')
+    await invalidateSubtree('/c')
   })
 
   it('scopes the manager to the run', async () => {

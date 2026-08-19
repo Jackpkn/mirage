@@ -15,7 +15,7 @@
 import time
 
 from mirage.accessor.dropbox import DropboxAccessor
-from mirage.cache.context import invalidate_after_unlink, invalidate_ancestors
+from mirage.cache.context import invalidate_ancestors, invalidate_subtree
 from mirage.core.dropbox.api import delete_path
 from mirage.core.dropbox.client import DropboxApiError
 from mirage.core.dropbox.paths import dropbox_path_of
@@ -35,5 +35,5 @@ async def rm_r(accessor: DropboxAccessor, path: PathSpec) -> None:
             raise enoent(path.virtual) from exc
         raise
     record("rm_r", path.virtual, "dropbox", 0, start_ms)
-    await invalidate_after_unlink(path)
+    await invalidate_subtree(path)
     await invalidate_ancestors(path)

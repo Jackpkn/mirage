@@ -210,8 +210,9 @@ def make_generic_ops(
             HF family registers one surface for four resources).
         table (OpsTable): the backend's IO table (its ``CommandIO``).
         emulate_truncate (bool): synthesize ``truncate`` from
-            ``read_bytes`` + ``write`` for backends with no native
-            partial write (s3/ssh/ram/redis today).
+            ``read_bytes`` + ``write`` for a backend with no native
+            partial write (dropbox is the only one; the rest grew a
+            real ``truncate`` in their table, which wins outright).
         mkdir_parents (bool): forward ``parents=True`` to the core
             mkdir (disk).
         overrides (set[str] | None): op names to skip because the

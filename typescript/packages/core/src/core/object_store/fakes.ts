@@ -249,6 +249,7 @@ export function makeDriver(
 export class FakeManager {
   readonly writes: string[] = []
   readonly unlinks: string[] = []
+  readonly subtrees: string[] = []
 
   invalidateAfterWrite(path: string | PathSpec): Promise<void> {
     this.writes.push(typeof path === 'string' ? path : path.mountPath)
@@ -257,6 +258,11 @@ export class FakeManager {
 
   invalidateAfterUnlink(path: string | PathSpec): Promise<void> {
     this.unlinks.push(typeof path === 'string' ? path : path.mountPath)
+    return Promise.resolve()
+  }
+
+  invalidateSubtree(path: string | PathSpec): Promise<void> {
+    this.subtrees.push(typeof path === 'string' ? path : path.mountPath)
     return Promise.resolve()
   }
 

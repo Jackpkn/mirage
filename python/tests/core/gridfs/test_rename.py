@@ -32,6 +32,9 @@ class _FakeManager:
     async def invalidate_after_unlink(self, path: PathSpec) -> None:
         return None
 
+    async def invalidate_subtree(self, path: PathSpec) -> None:
+        return None
+
 
 class _FakeFiles:
 

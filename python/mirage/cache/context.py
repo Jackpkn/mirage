@@ -32,6 +32,9 @@ class CacheInvalidator(Protocol):
     async def invalidate_after_unlink(self, path: PathSpec) -> None:
         ...
 
+    async def invalidate_subtree(self, path: PathSpec) -> None:
+        ...
+
     async def cached_bytes(self, path: PathSpec) -> bytes | None:
         ...
 
@@ -90,6 +93,29 @@ async def invalidate_after_unlink(path: PathSpec) -> None:
     manager = _active.get()
     if manager is not None:
         await manager.invalidate_after_unlink(path)
+
+
+async def invalidate_subtree(path: PathSpec) -> None:
+    """Report a backend deletion that took a whole subtree with it.
+
+    ``invalidate_after_unlink`` evicts the path's own listing and its
+    parent's, which is the whole story for a file. A recursive delete
+    or a directory rename also strands every listing and every cached
+    body *below* the path, and those were cached under their own keys,
+    so nothing above them evicts one: ``ls`` kept printing a deleted
+    directory's contents and ``cat`` kept serving a deleted file's
+    bytes until the index TTL expired.
+
+    Unlike :func:`invalidate_ancestors`, this cannot be assembled from
+    ``invalidate_after_write`` calls, because the set of keys beneath
+    the path is only known to the caches themselves.
+
+    Args:
+        path (PathSpec): Root of the subtree that is gone.
+    """
+    manager = _active.get()
+    if manager is not None:
+        await manager.invalidate_subtree(path)
 
 
 async def invalidate_ancestors(path: PathSpec) -> None:

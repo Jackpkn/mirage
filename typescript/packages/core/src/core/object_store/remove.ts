@@ -13,7 +13,11 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import type { Accessor } from '../../accessor/base.ts'
-import { invalidateAfterUnlink, invalidateAncestors } from '../../cache/context.ts'
+import {
+  invalidateAfterUnlink,
+  invalidateAncestors,
+  invalidateSubtree,
+} from '../../cache/context.ts'
 import { enoent, enotempty } from '../../utils/errors.ts'
 import * as kp from '../../utils/key_prefix.ts'
 import { rstripSlash } from '../../utils/slash.ts'
@@ -55,7 +59,10 @@ export function makeRemovePrefix<A extends Accessor, C>(
     } finally {
       await close()
     }
-    await invalidateAfterUnlink(path)
+    // Not invalidateAfterUnlink: a prefix delete takes every key below
+    // with it, and each of those listings and bodies was cached under
+    // its own key, so nothing above them evicts one.
+    await invalidateSubtree(path)
     // Same rationale as unlink: ancestors that existed only as this
     // prefix are gone now.
     await invalidateAncestors(path)

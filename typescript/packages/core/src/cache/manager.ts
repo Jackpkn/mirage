@@ -128,12 +128,13 @@ export class CacheManager {
   /**
    * Drop `path` and everything cached beneath it.
    *
-   * For an observed change that names a scope rather than a file: a push
-   * notification often says only which folder moved, and the listings below it
-   * were cached independently, so evicting the path and its parent leaves
-   * stale entries one level down. The cheaper `invalidateAfterWrite` cannot be
-   * widened to do this, because it also runs on every ordinary write, where a
-   * file has no subtree to drop.
+   * Two callers, one shape. A push notification often says only which folder
+   * moved, and a recursive delete or a directory rename takes a whole tree
+   * with it; either way the listings and bodies below the path were cached
+   * independently, so evicting the path and its parent leaves stale entries
+   * one level down. The cheaper `invalidateAfterWrite` cannot be widened to do
+   * this, because it also runs on every ordinary write, where a file has no
+   * subtree to drop.
    *
    * Mirrors Python `CacheManager.invalidate_subtree`.
    */

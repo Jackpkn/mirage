@@ -51,7 +51,10 @@ def test_remove_prefix_deletes_the_subtree_and_ancestors_evict(accessor):
     manager = _managed(
         make_remove_prefix(make_driver(store))(accessor, spec("/a/b")))
     assert store.objects == {}
-    assert manager.unlinks == ["/a/b"]
+    # A subtree evict, not an unlink: every key below /a/b went with it,
+    # and each one was cached under its own key.
+    assert manager.subtrees == ["/a/b"]
+    assert manager.unlinks == []
     assert manager.writes == ["/a"]
 
 

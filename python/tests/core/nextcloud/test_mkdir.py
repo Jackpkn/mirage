@@ -11,12 +11,16 @@ class _RecordingInvalidator:
     def __init__(self) -> None:
         self.writes: list[str] = []
         self.unlinks: list[str] = []
+        self.subtrees: list[str] = []
 
     async def invalidate_after_write(self, path: PathSpec) -> None:
         self.writes.append(path.mount_path)
 
     async def invalidate_after_unlink(self, path: PathSpec) -> None:
         self.unlinks.append(path.mount_path)
+
+    async def invalidate_subtree(self, path: PathSpec) -> None:
+        self.subtrees.append(path.mount_path)
 
     async def cached_bytes(self, path: PathSpec) -> bytes | None:
         return None

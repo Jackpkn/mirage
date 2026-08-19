@@ -13,7 +13,7 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 from mirage.accessor.ram import RAMAccessor
-from mirage.cache.context import invalidate_after_unlink
+from mirage.cache.context import invalidate_subtree
 from mirage.types import PathSpec
 from mirage.utils.path import norm
 
@@ -33,4 +33,4 @@ async def rm_r(accessor: RAMAccessor, path_spec: PathSpec) -> None:
             store.dirs.discard(key)
             store.modified.pop(key, None)
             store.attrs.pop(key, None)
-    await invalidate_after_unlink(path_spec)
+    await invalidate_subtree(path_spec)

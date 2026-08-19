@@ -1,0 +1,260 @@
+{
+  "cases": [
+    {
+      "id": "cache_subtree_seed",
+      "seq": 942000,
+      "targets": [
+        "s3",
+        "s3-prefix",
+        "gridfs",
+        "gridfs-prefix"
+      ],
+      "command": "mkdir -p {mount}/sub_dir/a/b/deep",
+      "expect": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "cache_subtree_seed_body",
+      "seq": 942001,
+      "targets": [
+        "s3",
+        "s3-prefix",
+        "gridfs",
+        "gridfs-prefix"
+      ],
+      "command": "printf 'hello' > {mount}/sub_dir/a/b/deep/c.txt",
+      "expect": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "cache_subtree_warm_listing",
+      "seq": 942002,
+      "targets": [
+        "s3",
+        "s3-prefix",
+        "gridfs",
+        "gridfs-prefix"
+      ],
+      "command": "ls {mount}/sub_dir/a/b/deep",
+      "expect": {
+        "exit": 0,
+        "stdout": "c.txt\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "cache_subtree_warm_body",
+      "seq": 942003,
+      "targets": [
+        "s3",
+        "s3-prefix",
+        "gridfs",
+        "gridfs-prefix"
+      ],
+      "command": "cat {mount}/sub_dir/a/b/deep/c.txt",
+      "expect": {
+        "exit": 0,
+        "stdout": "hello",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "cache_subtree_remove_recursive",
+      "seq": 942004,
+      "targets": [
+        "s3",
+        "s3-prefix",
+        "gridfs",
+        "gridfs-prefix"
+      ],
+      "command": "rm -r {mount}/sub_dir/a/b",
+      "expect": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "cache_subtree_listing_gone_not_stale",
+      "seq": 942005,
+      "targets": [
+        "s3",
+        "s3-prefix",
+        "gridfs",
+        "gridfs-prefix"
+      ],
+      "command": "ls {mount}/sub_dir/a/b/deep",
+      "expect": {
+        "exit": 2,
+        "stdout": "",
+        "stderr": "ls: cannot access '{mount}/sub_dir/a/b/deep': No such file or directory\n"
+      }
+    },
+    {
+      "id": "cache_subtree_body_gone_not_stale",
+      "seq": 942006,
+      "targets": [
+        "s3",
+        "s3-prefix",
+        "gridfs",
+        "gridfs-prefix"
+      ],
+      "command": "cat {mount}/sub_dir/a/b/deep/c.txt",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "cat: {mount}/sub_dir/a/b/deep/c.txt: No such file or directory\n"
+      }
+    },
+    {
+      "id": "cache_subtree_mv_seed",
+      "seq": 942007,
+      "targets": [
+        "s3",
+        "s3-prefix",
+        "gridfs",
+        "gridfs-prefix"
+      ],
+      "command": "mkdir -p {mount}/sub_mv/a/b/deep",
+      "expect": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "cache_subtree_mv_seed_body",
+      "seq": 942008,
+      "targets": [
+        "s3",
+        "s3-prefix",
+        "gridfs",
+        "gridfs-prefix"
+      ],
+      "command": "printf 'hello' > {mount}/sub_mv/a/b/deep/c.txt",
+      "expect": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "cache_subtree_mv_warm_listing",
+      "seq": 942009,
+      "targets": [
+        "s3",
+        "s3-prefix",
+        "gridfs",
+        "gridfs-prefix"
+      ],
+      "command": "ls {mount}/sub_mv/a/b/deep",
+      "expect": {
+        "exit": 0,
+        "stdout": "c.txt\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "cache_subtree_mv_warm_body",
+      "seq": 942010,
+      "targets": [
+        "s3",
+        "s3-prefix",
+        "gridfs",
+        "gridfs-prefix"
+      ],
+      "command": "cat {mount}/sub_mv/a/b/deep/c.txt",
+      "expect": {
+        "exit": 0,
+        "stdout": "hello",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "cache_subtree_mv_directory",
+      "seq": 942011,
+      "targets": [
+        "s3",
+        "s3-prefix",
+        "gridfs",
+        "gridfs-prefix"
+      ],
+      "command": "mv {mount}/sub_mv/a/b {mount}/sub_mv/a/z",
+      "expect": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "cache_subtree_mv_source_listing_not_stale",
+      "seq": 942012,
+      "targets": [
+        "s3",
+        "s3-prefix",
+        "gridfs",
+        "gridfs-prefix"
+      ],
+      "command": "ls {mount}/sub_mv/a/b/deep",
+      "expect": {
+        "exit": 2,
+        "stdout": "",
+        "stderr": "ls: cannot access '{mount}/sub_mv/a/b/deep': No such file or directory\n"
+      }
+    },
+    {
+      "id": "cache_subtree_mv_source_body_not_stale",
+      "seq": 942013,
+      "targets": [
+        "s3",
+        "s3-prefix",
+        "gridfs",
+        "gridfs-prefix"
+      ],
+      "command": "cat {mount}/sub_mv/a/b/deep/c.txt",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "cat: {mount}/sub_mv/a/b/deep/c.txt: No such file or directory\n"
+      }
+    },
+    {
+      "id": "cache_subtree_mv_destination_reachable",
+      "seq": 942014,
+      "targets": [
+        "s3",
+        "s3-prefix",
+        "gridfs",
+        "gridfs-prefix"
+      ],
+      "command": "ls {mount}/sub_mv/a/z/deep",
+      "expect": {
+        "exit": 0,
+        "stdout": "c.txt\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "cache_subtree_cleanup",
+      "seq": 942015,
+      "targets": [
+        "s3",
+        "s3-prefix",
+        "gridfs",
+        "gridfs-prefix"
+      ],
+      "command": "rm -rf {mount}/sub_dir {mount}/sub_mv",
+      "expect": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    }
+  ]
+}

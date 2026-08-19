@@ -17,6 +17,7 @@ function accessorWith(fake: FakeNextcloudOperator): NextcloudAccessor {
 class RecordingInvalidator implements CacheInvalidator {
   readonly writes: string[] = []
   readonly unlinks: string[] = []
+  readonly subtrees: string[] = []
 
   invalidateAfterWrite(path: string | PathSpec): Promise<void> {
     this.writes.push(typeof path === 'string' ? path : path.mountPath)
@@ -25,6 +26,11 @@ class RecordingInvalidator implements CacheInvalidator {
 
   invalidateAfterUnlink(path: string | PathSpec): Promise<void> {
     this.unlinks.push(typeof path === 'string' ? path : path.mountPath)
+    return Promise.resolve()
+  }
+
+  invalidateSubtree(path: string | PathSpec): Promise<void> {
+    this.subtrees.push(typeof path === 'string' ? path : path.mountPath)
     return Promise.resolve()
   }
 

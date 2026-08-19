@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import type { GDriveAccessor } from '../../accessor/gdrive.ts'
-import { invalidateAfterUnlink } from '../../cache/context.ts'
+import { invalidateSubtree } from '../../cache/context.ts'
 import type { PathSpec } from '../../types.ts'
 import { enoent, enotempty } from '../../utils/errors.ts'
 import { deleteFile, listFiles, patchFile } from '../google/drive.ts'
@@ -48,8 +48,8 @@ async function renameImpl(accessor: GDriveAccessor, src: PathSpec, dst: PathSpec
     body: { name },
     ...(move ? { addParents: dstParentId, removeParents: srcParentId } : {}),
   })
-  await invalidateAfterUnlink(dst)
-  await invalidateAfterUnlink(src)
+  await invalidateSubtree(dst)
+  await invalidateSubtree(src)
 }
 
 export const rename = eaccesOnDenied(renameImpl)

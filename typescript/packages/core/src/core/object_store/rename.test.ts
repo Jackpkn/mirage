@@ -39,7 +39,7 @@ describe('object_store rename', () => {
       renameFor(store)(accessor, spec('/a/src.txt'), spec('/b/dst.txt')),
     )
     expect(store.contents()).toEqual({ 'b/dst.txt': 'hi' })
-    expect(manager.unlinks).toEqual(['/b/dst.txt', '/a/src.txt'])
+    expect(manager.subtrees).toEqual(['/b/dst.txt', '/a/src.txt'])
     expect(manager.writes).toEqual(['/b', '/a'])
   })
 
@@ -61,6 +61,7 @@ describe('object_store rename', () => {
     const manager = await managed(() => renameFor(store)(accessor, spec('/a.txt'), spec('/a.txt')))
     expect(store.contents()).toEqual({ 'a.txt': 'hi' })
     expect(manager.unlinks).toEqual([])
+    expect(manager.subtrees).toEqual([])
   })
 
   it('renaming onto the same key still fails when absent', async () => {

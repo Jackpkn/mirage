@@ -12,7 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { invalidateAfterUnlink } from '@struktoai/mirage-core/cache/context'
+import { invalidateSubtree } from '@struktoai/mirage-core/cache/context'
 import type { PathSpec } from '@struktoai/mirage-core/types'
 import { enoent } from '@struktoai/mirage-core/utils/errors'
 import { rstripSlash } from '@struktoai/mirage-core/utils/slash'
@@ -74,8 +74,8 @@ export async function rename(accessor: RedisAccessor, src: PathSpec, dst: PathSp
     await store.setFile(d, data)
     await store.setModified(d, mod ?? now)
     if (Object.keys(attrs).length > 0) await store.setAttrs(d, attrs)
-    await invalidateAfterUnlink(s)
-    await invalidateAfterUnlink(d)
+    await invalidateSubtree(s)
+    await invalidateSubtree(d)
     return
   }
   if (await store.hasDir(s)) {
@@ -88,8 +88,8 @@ export async function rename(accessor: RedisAccessor, src: PathSpec, dst: PathSp
     await store.setModified(d, mod ?? now)
     if (Object.keys(attrs).length > 0) await store.setAttrs(d, attrs)
     await moveSubtree(store, s, d)
-    await invalidateAfterUnlink(s)
-    await invalidateAfterUnlink(d)
+    await invalidateSubtree(s)
+    await invalidateSubtree(d)
     return
   }
   throw enoent(src)
