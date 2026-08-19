@@ -132,3 +132,47 @@ def test_ls_reports_enoent_for_an_emptied_implicit_directory(s3_endpoint):
     assert code == 2, f"exit {code}, stdout: {out!r}"
     assert err == ("ls: cannot access '/data/imp': "
                    "No such file or directory\n")
+
+
+async def _rm_r_then_read_nested(ws: Workspace) -> tuple[int, str, str]:
+    setup = await _exec(
+        ws, "mkdir -p /data/a/b"
+        " && echo hi | tee /data/a/b/f.txt > /dev/null"
+        " && ls /data/a/b")
+    assert setup[0] == 0, setup
+    rm = await _exec(ws, "rm -r /data/a")
+    assert rm[0] == 0, rm
+    return await _exec(ws, "cat /data/a/b/f.txt")
+
+
+def test_cat_does_not_serve_a_file_from_a_removed_subtree(s3_endpoint):
+    # `rm -r` removes directories the operand never named. The first ls
+    # cached a listing for "/data/a/b" and the read cached its body, and
+    # invalidating the operand plus its parent reaches neither: cat kept
+    # printing "hi" for a key the bucket no longer had, without issuing a
+    # single request.
+    ws = _s3_workspace(s3_endpoint, "bucket-rm-r-subtree")
+    code, out, err = asyncio.run(_rm_r_then_read_nested(ws))
+    assert code == 1, f"exit {code}, stdout: {out!r}"
+    assert out == ""
+    assert err == "cat: /data/a/b/f.txt: No such file or directory\n"
+
+
+async def _rm_r_then_ls_nested(ws: Workspace) -> tuple[int, str, str]:
+    setup = await _exec(
+        ws, "mkdir -p /data/x/y"
+        " && echo hi | tee /data/x/y/f.txt > /dev/null"
+        " && ls /data/x/y")
+    assert setup[0] == 0, setup
+    rm = await _exec(ws, "rm -r /data/x")
+    assert rm[0] == 0, rm
+    return await _exec(ws, "ls /data/x/y")
+
+
+def test_ls_reports_enoent_for_a_directory_inside_a_removed_subtree(
+        s3_endpoint):
+    ws = _s3_workspace(s3_endpoint, "bucket-rm-r-listing")
+    code, out, err = asyncio.run(_rm_r_then_ls_nested(ws))
+    assert code == 2, f"exit {code}, stdout: {out!r}"
+    assert err == ("ls: cannot access '/data/x/y': "
+                   "No such file or directory\n")
