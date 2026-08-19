@@ -21,6 +21,7 @@ from mirage.core.dropbox.client import DropboxApiError, DropboxTokenManager
 from mirage.core.dropbox.rename import rename
 from mirage.resource.dropbox.config import DropboxConfig
 from mirage.types import PathSpec
+from tests.core.dropbox.conftest import FakeDropboxRpc
 
 
 def make_accessor() -> DropboxAccessor:
@@ -109,3 +110,27 @@ async def test_rename_missing_source_raises_enoent():
         with pytest.raises(FileNotFoundError):
             await rename(make_accessor(), PathSpec.from_str_path("/ghost"),
                          PathSpec.from_str_path("/b.txt"))
+
+
+@pytest.mark.asyncio
+async def test_rename_conflict_probe_is_bounded_to_one_entry(dropbox_accessor):
+    # The conflict probe is bounded, not a full listing: `list_folder`
+    # follows every continuation cursor, so asking it with a small page
+    # size made one request per child to answer a yes/no.
+    conflict = DropboxApiError("conflict", 409, "to/conflict/folder/...")
+    rpc = FakeDropboxRpc(entries=[{
+        ".tag": "file",
+        "name": "keep.txt"
+    }] * 3,
+                         metadata={
+                             ".tag": "folder",
+                             "name": "dst"
+                         },
+                         move_errors=[conflict])
+    with patch("mirage.core.dropbox.api.dropbox_rpc", new=rpc):
+        with pytest.raises(DropboxApiError):
+            await rename(dropbox_accessor, PathSpec.from_str_path("/src"),
+                         PathSpec.from_str_path("/dst"))
+    assert rpc.list_limits == [1]
+    assert rpc.list_requests == 1
+    assert rpc.deleted == []
