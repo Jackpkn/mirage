@@ -106,4 +106,4 @@ def test_oci_resource_preserves_original_config():
         secret_access_key="secret-key",
     )
     resource = OCIResource(config)
-    assert resource.oci_config is config
+    assert resource.alias_config is config

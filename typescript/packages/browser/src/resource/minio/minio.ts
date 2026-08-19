@@ -12,11 +12,8 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import type { RegisteredCommand } from '@struktoai/mirage-core/commands/config'
-import type { RegisteredOp } from '@struktoai/mirage-core/ops/registry'
-import { remapCommandsResource, remapOpsResource } from '@struktoai/mirage-core/resource/s3/remap'
 import { ResourceName } from '@struktoai/mirage-core/types'
-import { S3Resource } from '../s3/s3.ts'
+import { S3AliasResource, type S3AliasResourceState } from '../s3_alias.ts'
 import {
   minioToS3Config,
   redactMinIOConfig,
@@ -25,41 +22,12 @@ import {
 } from './config.ts'
 import { MINIO_BROWSER_PROMPT } from './prompt.ts'
 
-export interface MinIOResourceState {
-  type: string
-  config: MinIOConfigRedacted
-}
+export type MinIOResourceState = S3AliasResourceState<MinIOConfigRedacted>
 
-export class MinIOResource extends S3Resource {
-  override readonly kind: string = ResourceName.MINIO
+export class MinIOResource extends S3AliasResource<MinIOConfig, MinIOConfigRedacted> {
   override readonly prompt: string = MINIO_BROWSER_PROMPT
-  readonly minioConfig: MinIOConfig
-  private readonly minioOps: readonly RegisteredOp[]
-  private readonly minioCommands: readonly RegisteredCommand[]
 
   constructor(config: MinIOConfig) {
-    super(minioToS3Config(config))
-    this.minioConfig = config
-    this.minioOps = remapOpsResource(super.ops(), ResourceName.MINIO)
-    this.minioCommands = remapCommandsResource(super.commands(), ResourceName.MINIO)
-  }
-
-  override ops(): readonly RegisteredOp[] {
-    return this.minioOps
-  }
-
-  override commands(): readonly RegisteredCommand[] {
-    return this.minioCommands
-  }
-
-  override getState(): Promise<MinIOResourceState> {
-    return Promise.resolve({
-      type: this.kind,
-      config: redactMinIOConfig(this.minioConfig),
-    })
-  }
-
-  override loadState(_state: MinIOResourceState): Promise<void> {
-    return Promise.resolve()
+    super(ResourceName.MINIO, config, minioToS3Config(config), redactMinIOConfig)
   }
 }

@@ -12,49 +12,17 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import type { RegisteredCommand } from '@struktoai/mirage-core/commands/config'
-import type { RegisteredOp } from '@struktoai/mirage-core/ops/registry'
-import { remapCommandsResource, remapOpsResource } from '@struktoai/mirage-core/resource/s3/remap'
 import { ResourceName } from '@struktoai/mirage-core/types'
-import { S3Resource } from '../s3/s3.ts'
+import { S3AliasResource, type S3AliasResourceState } from '../s3_alias.ts'
 import { ociToS3Config, redactOciConfig, type OCIConfig, type OCIConfigRedacted } from './config.ts'
 import { OCI_PROMPT } from './prompt.ts'
 
-export interface OCIResourceState {
-  type: string
-  config: OCIConfigRedacted
-}
+export type OCIResourceState = S3AliasResourceState<OCIConfigRedacted>
 
-export class OCIResource extends S3Resource {
-  override readonly kind: string = ResourceName.OCI
+export class OCIResource extends S3AliasResource<OCIConfig, OCIConfigRedacted> {
   override readonly prompt: string = OCI_PROMPT
-  readonly ociConfig: OCIConfig
-  private readonly ociOps: readonly RegisteredOp[]
-  private readonly ociCommands: readonly RegisteredCommand[]
 
   constructor(config: OCIConfig) {
-    super(ociToS3Config(config))
-    this.ociConfig = config
-    this.ociOps = remapOpsResource(super.ops(), ResourceName.OCI)
-    this.ociCommands = remapCommandsResource(super.commands(), ResourceName.OCI)
-  }
-
-  override ops(): readonly RegisteredOp[] {
-    return this.ociOps
-  }
-
-  override commands(): readonly RegisteredCommand[] {
-    return this.ociCommands
-  }
-
-  override getState(): Promise<OCIResourceState> {
-    return Promise.resolve({
-      type: this.kind,
-      config: redactOciConfig(this.ociConfig),
-    })
-  }
-
-  override loadState(_state: OCIResourceState): Promise<void> {
-    return Promise.resolve()
+    super(ResourceName.OCI, config, ociToS3Config(config), redactOciConfig)
   }
 }

@@ -68,4 +68,4 @@ def test_ceph_resource_uses_s3_resource_type():
         ))
     assert resource.name == ResourceName.S3
     assert isinstance(resource.config, S3Config)
-    assert resource.ceph_config.endpoint_url == "https://ceph.example.com"
+    assert resource.alias_config.endpoint_url == "https://ceph.example.com"

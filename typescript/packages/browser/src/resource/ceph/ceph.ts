@@ -12,11 +12,8 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import type { RegisteredCommand } from '@struktoai/mirage-core/commands/config'
-import type { RegisteredOp } from '@struktoai/mirage-core/ops/registry'
-import { remapCommandsResource, remapOpsResource } from '@struktoai/mirage-core/resource/s3/remap'
 import { ResourceName } from '@struktoai/mirage-core/types'
-import { S3Resource } from '../s3/s3.ts'
+import { S3AliasResource, type S3AliasResourceState } from '../s3_alias.ts'
 import {
   cephToS3Config,
   redactCephConfig,
@@ -25,41 +22,12 @@ import {
 } from './config.ts'
 import { CEPH_BROWSER_PROMPT } from './prompt.ts'
 
-export interface CephResourceState {
-  type: string
-  config: CephConfigRedacted
-}
+export type CephResourceState = S3AliasResourceState<CephConfigRedacted>
 
-export class CephResource extends S3Resource {
-  override readonly kind: string = ResourceName.CEPH
+export class CephResource extends S3AliasResource<CephConfig, CephConfigRedacted> {
   override readonly prompt: string = CEPH_BROWSER_PROMPT
-  readonly cephConfig: CephConfig
-  private readonly cephOps: readonly RegisteredOp[]
-  private readonly cephCommands: readonly RegisteredCommand[]
 
   constructor(config: CephConfig) {
-    super(cephToS3Config(config))
-    this.cephConfig = config
-    this.cephOps = remapOpsResource(super.ops(), ResourceName.CEPH)
-    this.cephCommands = remapCommandsResource(super.commands(), ResourceName.CEPH)
-  }
-
-  override ops(): readonly RegisteredOp[] {
-    return this.cephOps
-  }
-
-  override commands(): readonly RegisteredCommand[] {
-    return this.cephCommands
-  }
-
-  override getState(): Promise<CephResourceState> {
-    return Promise.resolve({
-      type: this.kind,
-      config: redactCephConfig(this.cephConfig),
-    })
-  }
-
-  override loadState(_state: CephResourceState): Promise<void> {
-    return Promise.resolve()
+    super(ResourceName.CEPH, config, cephToS3Config(config), redactCephConfig)
   }
 }

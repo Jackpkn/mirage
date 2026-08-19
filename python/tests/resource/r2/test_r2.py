@@ -82,4 +82,4 @@ def test_r2resource_uses_s3_resource_type():
 def test_r2resource_preserves_original_config():
     config = R2Config(bucket="my-bucket", account_id="account-123")
     resource = R2Resource(config)
-    assert resource.r2_config is config
+    assert resource.alias_config is config

@@ -12,49 +12,17 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import type { RegisteredCommand } from '@struktoai/mirage-core/commands/config'
-import type { RegisteredOp } from '@struktoai/mirage-core/ops/registry'
-import { remapCommandsResource, remapOpsResource } from '@struktoai/mirage-core/resource/s3/remap'
 import { ResourceName } from '@struktoai/mirage-core/types'
-import { S3Resource } from '../s3/s3.ts'
+import { S3AliasResource, type S3AliasResourceState } from '../s3_alias.ts'
 import { r2ToS3Config, redactR2Config, type R2Config, type R2ConfigRedacted } from './config.ts'
 import { R2_PROMPT } from './prompt.ts'
 
-export interface R2ResourceState {
-  type: string
-  config: R2ConfigRedacted
-}
+export type R2ResourceState = S3AliasResourceState<R2ConfigRedacted>
 
-export class R2Resource extends S3Resource {
-  override readonly kind: string = ResourceName.R2
+export class R2Resource extends S3AliasResource<R2Config, R2ConfigRedacted> {
   override readonly prompt: string = R2_PROMPT
-  readonly r2Config: R2Config
-  private readonly r2Ops: readonly RegisteredOp[]
-  private readonly r2Commands: readonly RegisteredCommand[]
 
   constructor(config: R2Config) {
-    super(r2ToS3Config(config))
-    this.r2Config = config
-    this.r2Ops = remapOpsResource(super.ops(), ResourceName.R2)
-    this.r2Commands = remapCommandsResource(super.commands(), ResourceName.R2)
-  }
-
-  override ops(): readonly RegisteredOp[] {
-    return this.r2Ops
-  }
-
-  override commands(): readonly RegisteredCommand[] {
-    return this.r2Commands
-  }
-
-  override getState(): Promise<R2ResourceState> {
-    return Promise.resolve({
-      type: this.kind,
-      config: redactR2Config(this.r2Config),
-    })
-  }
-
-  override loadState(_state: R2ResourceState): Promise<void> {
-    return Promise.resolve()
+    super(ResourceName.R2, config, r2ToS3Config(config), redactR2Config)
   }
 }

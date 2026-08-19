@@ -12,11 +12,8 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import type { RegisteredCommand } from '@struktoai/mirage-core/commands/config'
-import type { RegisteredOp } from '@struktoai/mirage-core/ops/registry'
-import { remapCommandsResource, remapOpsResource } from '@struktoai/mirage-core/resource/s3/remap'
 import { ResourceName } from '@struktoai/mirage-core/types'
-import { S3Resource } from '../s3/s3.ts'
+import { S3AliasResource, type S3AliasResourceState } from '../s3_alias.ts'
 import {
   redactTencentConfig,
   tencentToS3Config,
@@ -25,41 +22,12 @@ import {
 } from './config.ts'
 import { TENCENT_PROMPT } from './prompt.ts'
 
-export interface TencentResourceState {
-  type: string
-  config: TencentConfigRedacted
-}
+export type TencentResourceState = S3AliasResourceState<TencentConfigRedacted>
 
-export class TencentResource extends S3Resource {
-  override readonly kind: string = ResourceName.TENCENT
+export class TencentResource extends S3AliasResource<TencentConfig, TencentConfigRedacted> {
   override readonly prompt: string = TENCENT_PROMPT
-  readonly tencentConfig: TencentConfig
-  private readonly tencentOps: readonly RegisteredOp[]
-  private readonly tencentCommands: readonly RegisteredCommand[]
 
   constructor(config: TencentConfig) {
-    super(tencentToS3Config(config))
-    this.tencentConfig = config
-    this.tencentOps = remapOpsResource(super.ops(), ResourceName.TENCENT)
-    this.tencentCommands = remapCommandsResource(super.commands(), ResourceName.TENCENT)
-  }
-
-  override ops(): readonly RegisteredOp[] {
-    return this.tencentOps
-  }
-
-  override commands(): readonly RegisteredCommand[] {
-    return this.tencentCommands
-  }
-
-  override getState(): Promise<TencentResourceState> {
-    return Promise.resolve({
-      type: this.kind,
-      config: redactTencentConfig(this.tencentConfig),
-    })
-  }
-
-  override loadState(_state: TencentResourceState): Promise<void> {
-    return Promise.resolve()
+    super(ResourceName.TENCENT, config, tencentToS3Config(config), redactTencentConfig)
   }
 }

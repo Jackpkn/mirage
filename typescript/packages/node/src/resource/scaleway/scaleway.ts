@@ -12,11 +12,8 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import type { RegisteredCommand } from '@struktoai/mirage-core/commands/config'
-import type { RegisteredOp } from '@struktoai/mirage-core/ops/registry'
-import { remapCommandsResource, remapOpsResource } from '@struktoai/mirage-core/resource/s3/remap'
 import { ResourceName } from '@struktoai/mirage-core/types'
-import { S3Resource } from '../s3/s3.ts'
+import { S3AliasResource, type S3AliasResourceState } from '../s3_alias.ts'
 import {
   redactScalewayConfig,
   scalewayToS3Config,
@@ -25,41 +22,12 @@ import {
 } from './config.ts'
 import { SCALEWAY_PROMPT } from './prompt.ts'
 
-export interface ScalewayResourceState {
-  type: string
-  config: ScalewayConfigRedacted
-}
+export type ScalewayResourceState = S3AliasResourceState<ScalewayConfigRedacted>
 
-export class ScalewayResource extends S3Resource {
-  override readonly kind: string = ResourceName.SCALEWAY
+export class ScalewayResource extends S3AliasResource<ScalewayConfig, ScalewayConfigRedacted> {
   override readonly prompt: string = SCALEWAY_PROMPT
-  readonly scalewayConfig: ScalewayConfig
-  private readonly scalewayOps: readonly RegisteredOp[]
-  private readonly scalewayCommands: readonly RegisteredCommand[]
 
   constructor(config: ScalewayConfig) {
-    super(scalewayToS3Config(config))
-    this.scalewayConfig = config
-    this.scalewayOps = remapOpsResource(super.ops(), ResourceName.SCALEWAY)
-    this.scalewayCommands = remapCommandsResource(super.commands(), ResourceName.SCALEWAY)
-  }
-
-  override ops(): readonly RegisteredOp[] {
-    return this.scalewayOps
-  }
-
-  override commands(): readonly RegisteredCommand[] {
-    return this.scalewayCommands
-  }
-
-  override getState(): Promise<ScalewayResourceState> {
-    return Promise.resolve({
-      type: this.kind,
-      config: redactScalewayConfig(this.scalewayConfig),
-    })
-  }
-
-  override loadState(_state: ScalewayResourceState): Promise<void> {
-    return Promise.resolve()
+    super(ResourceName.SCALEWAY, config, scalewayToS3Config(config), redactScalewayConfig)
   }
 }

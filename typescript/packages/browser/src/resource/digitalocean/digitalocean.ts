@@ -12,11 +12,8 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import type { RegisteredCommand } from '@struktoai/mirage-core/commands/config'
-import type { RegisteredOp } from '@struktoai/mirage-core/ops/registry'
-import { remapCommandsResource, remapOpsResource } from '@struktoai/mirage-core/resource/s3/remap'
 import { ResourceName } from '@struktoai/mirage-core/types'
-import { S3Resource } from '../s3/s3.ts'
+import { S3AliasResource, type S3AliasResourceState } from '../s3_alias.ts'
 import {
   digitalOceanToS3Config,
   redactDigitalOceanConfig,
@@ -25,41 +22,20 @@ import {
 } from './config.ts'
 import { DIGITALOCEAN_BROWSER_PROMPT } from './prompt.ts'
 
-export interface DigitalOceanResourceState {
-  type: string
-  config: DigitalOceanConfigRedacted
-}
+export type DigitalOceanResourceState = S3AliasResourceState<DigitalOceanConfigRedacted>
 
-export class DigitalOceanResource extends S3Resource {
-  override readonly kind: string = ResourceName.DIGITALOCEAN
+export class DigitalOceanResource extends S3AliasResource<
+  DigitalOceanConfig,
+  DigitalOceanConfigRedacted
+> {
   override readonly prompt: string = DIGITALOCEAN_BROWSER_PROMPT
-  readonly digitalOceanConfig: DigitalOceanConfig
-  private readonly digitalOceanOps: readonly RegisteredOp[]
-  private readonly digitalOceanCommands: readonly RegisteredCommand[]
 
   constructor(config: DigitalOceanConfig) {
-    super(digitalOceanToS3Config(config))
-    this.digitalOceanConfig = config
-    this.digitalOceanOps = remapOpsResource(super.ops(), ResourceName.DIGITALOCEAN)
-    this.digitalOceanCommands = remapCommandsResource(super.commands(), ResourceName.DIGITALOCEAN)
-  }
-
-  override ops(): readonly RegisteredOp[] {
-    return this.digitalOceanOps
-  }
-
-  override commands(): readonly RegisteredCommand[] {
-    return this.digitalOceanCommands
-  }
-
-  override getState(): Promise<DigitalOceanResourceState> {
-    return Promise.resolve({
-      type: this.kind,
-      config: redactDigitalOceanConfig(this.digitalOceanConfig),
-    })
-  }
-
-  override loadState(_state: DigitalOceanResourceState): Promise<void> {
-    return Promise.resolve()
+    super(
+      ResourceName.DIGITALOCEAN,
+      config,
+      digitalOceanToS3Config(config),
+      redactDigitalOceanConfig,
+    )
   }
 }

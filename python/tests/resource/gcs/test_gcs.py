@@ -72,7 +72,7 @@ def test_gcs_resource_creates():
         secret_access_key="secret",
     )
     resource = GCSResource(c)
-    assert resource.gcs_config is c
+    assert resource.alias_config is c
     assert resource.accessor.config.bucket == "my-bucket"
     expected = "https://storage.googleapis.com"
     assert resource.accessor.config.endpoint_url == expected

@@ -12,11 +12,8 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import type { RegisteredCommand } from '@struktoai/mirage-core/commands/config'
-import type { RegisteredOp } from '@struktoai/mirage-core/ops/registry'
-import { remapCommandsResource, remapOpsResource } from '@struktoai/mirage-core/resource/s3/remap'
 import { ResourceName } from '@struktoai/mirage-core/types'
-import { S3Resource } from '../s3/s3.ts'
+import { S3AliasResource, type S3AliasResourceState } from '../s3_alias.ts'
 import {
   redactSeaweedFSConfig,
   seaweedfsToS3Config,
@@ -25,41 +22,12 @@ import {
 } from './config.ts'
 import { SEAWEEDFS_PROMPT } from './prompt.ts'
 
-export interface SeaweedFSResourceState {
-  type: string
-  config: SeaweedFSConfigRedacted
-}
+export type SeaweedFSResourceState = S3AliasResourceState<SeaweedFSConfigRedacted>
 
-export class SeaweedFSResource extends S3Resource {
-  override readonly kind: string = ResourceName.SEAWEEDFS
+export class SeaweedFSResource extends S3AliasResource<SeaweedFSConfig, SeaweedFSConfigRedacted> {
   override readonly prompt: string = SEAWEEDFS_PROMPT
-  readonly seaweedfsConfig: SeaweedFSConfig
-  private readonly seaweedfsOps: readonly RegisteredOp[]
-  private readonly seaweedfsCommands: readonly RegisteredCommand[]
 
   constructor(config: SeaweedFSConfig) {
-    super(seaweedfsToS3Config(config))
-    this.seaweedfsConfig = config
-    this.seaweedfsOps = remapOpsResource(super.ops(), ResourceName.SEAWEEDFS)
-    this.seaweedfsCommands = remapCommandsResource(super.commands(), ResourceName.SEAWEEDFS)
-  }
-
-  override ops(): readonly RegisteredOp[] {
-    return this.seaweedfsOps
-  }
-
-  override commands(): readonly RegisteredCommand[] {
-    return this.seaweedfsCommands
-  }
-
-  override getState(): Promise<SeaweedFSResourceState> {
-    return Promise.resolve({
-      type: this.kind,
-      config: redactSeaweedFSConfig(this.seaweedfsConfig),
-    })
-  }
-
-  override loadState(_state: SeaweedFSResourceState): Promise<void> {
-    return Promise.resolve()
+    super(ResourceName.SEAWEEDFS, config, seaweedfsToS3Config(config), redactSeaweedFSConfig)
   }
 }

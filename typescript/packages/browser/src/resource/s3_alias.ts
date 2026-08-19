@@ -12,8 +12,12 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import { S3Resource } from './s3/s3.ts'
+import type { RegisteredCommand } from '@struktoai/mirage-core/commands/config'
+import type { RegisteredOp } from '@struktoai/mirage-core/ops/registry'
+import { remapCommandsResource, remapOpsResource } from '@struktoai/mirage-core/resource/s3/remap'
 import { redactConfigWithSchema, secretSchema, z } from '@struktoai/mirage-core/resource/secrets'
-import type { S3BrowserPresignedUrlProvider, S3Config } from './s3/config.ts'
+import type { S3BrowserPresignedUrlProvider, S3Config, S3ConfigRedacted } from './s3/config.ts'
 
 /**
  * Shared shape for the browser's S3-compatible providers.
@@ -133,5 +137,72 @@ export function makeBrowserS3Alias<
       }
     },
     redact: (config) => redactConfigWithSchema(schema, config) as unknown as R,
+  }
+}
+
+/**
+ * The snapshot state of an S3-compatible alias: its own kind and its own
+ * redacted config, not the `s3` kind and S3 config it delegates to.
+ */
+export interface S3AliasResourceState<TRedacted> {
+  type: string
+  config: TRedacted
+}
+
+/**
+ * The shared body of every S3-compatible provider resource (MinIO, Ceph,
+ * R2, Wasabi, ...). Each is an {@link S3Resource} reached through a
+ * provider-shaped config, so all it owns is its `kind`, that config, and
+ * ops/commands retagged from `s3` onto the kind. A subclass supplies its
+ * prompt as a plain field and hands the varying pieces to `super`.
+ *
+ * `toS3Config` and `redact` arrive as functions rather than as an
+ * {@link Alias}: the four providers whose region or endpoint rule fits
+ * neither {@link makeRegionAlias} nor {@link makeFixedAlias} write their
+ * own pair, so the resource layer takes the two functions every provider
+ * has either way. Mirrors python `S3AliasResource` in
+ * `mirage/resource/s3_alias.py`.
+ */
+export abstract class S3AliasResource<
+  TConfig,
+  TRedacted extends S3ConfigRedacted,
+> extends S3Resource {
+  override readonly kind: string
+  readonly aliasConfig: TConfig
+  private readonly aliasOps: readonly RegisteredOp[]
+  private readonly aliasCommands: readonly RegisteredCommand[]
+  private readonly redactAlias: (config: TConfig) => TRedacted
+
+  protected constructor(
+    kind: string,
+    config: TConfig,
+    s3Config: S3Config,
+    redact: (config: TConfig) => TRedacted,
+  ) {
+    super(s3Config)
+    this.kind = kind
+    this.aliasConfig = config
+    this.redactAlias = redact
+    this.aliasOps = remapOpsResource(super.ops(), kind)
+    this.aliasCommands = remapCommandsResource(super.commands(), kind)
+  }
+
+  override ops(): readonly RegisteredOp[] {
+    return this.aliasOps
+  }
+
+  override commands(): readonly RegisteredCommand[] {
+    return this.aliasCommands
+  }
+
+  override getState(): Promise<S3AliasResourceState<TRedacted>> {
+    return Promise.resolve({
+      type: this.kind,
+      config: this.redactAlias(this.aliasConfig),
+    })
+  }
+
+  override loadState(_state: S3AliasResourceState<TRedacted>): Promise<void> {
+    return Promise.resolve()
   }
 }

@@ -95,4 +95,4 @@ def test_minio_resource_preserves_original_config():
         secret_access_key="s",
     )
     resource = MinIOResource(config)
-    assert resource.minio_config is config
+    assert resource.alias_config is config
