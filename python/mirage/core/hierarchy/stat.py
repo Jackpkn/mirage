@@ -15,6 +15,7 @@
 from collections.abc import Awaitable, Callable, Mapping
 
 from mirage.cache.index import NULL_INDEX, IndexCacheStore, IndexEntry
+from mirage.cache.index.ram import RAMIndexCacheStore
 from mirage.core.hierarchy.probe import (A, ReaddirFn, assert_listed,
                                          listed_size, resolve_entry)
 from mirage.core.hierarchy.readdir import Guard
@@ -26,6 +27,31 @@ ExtraFn = Callable[[ScopeMatch], dict[str, str]]
 StatHook = Callable[[A, ScopeMatch, PathSpec, IndexCacheStore],
                     Awaitable[FileStat]]
 EntryStatFn = Callable[[ScopeMatch, PathSpec, IndexEntry], FileStat]
+
+
+def entry_stat(id_field: str, filetype: FileType) -> EntryStatFn:
+    """The shape most id-addressed nodes share, keyed by an id field.
+
+    Name from the entry's ``vfs_name``, size and modified straight off
+    the listing, and the entry's id under ``id_field`` in ``extra``. A
+    kind whose shape differs writes its own ``EntryStatFn`` instead.
+
+    Args:
+        id_field (str): the ``extra`` key the entry's id rides under.
+        filetype (FileType): the node's rendered type.
+    """
+
+    def build(match: ScopeMatch, path: PathSpec,
+              entry: IndexEntry) -> FileStat:
+        return FileStat(
+            name=entry.vfs_name,
+            type=filetype,
+            size=entry.size,
+            modified=entry.remote_time or None,
+            extra={id_field: entry.id},
+        )
+
+    return build
 
 
 def make_stat(
@@ -64,6 +90,11 @@ def make_stat(
     async def stat(accessor: A,
                    path: PathSpec,
                    index: IndexCacheStore = NULL_INDEX) -> FileStat:
+        if index is NULL_INDEX:
+            # Entry resolution and listed_size read what the probe's
+            # parent listing just wrote, so a caller with no cache still
+            # needs one for the duration of the call.
+            index = RAMIndexCacheStore()
         virtual = path.virtual
         match = detect(path)
         if match.kind == ROOT:

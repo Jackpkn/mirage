@@ -42,8 +42,18 @@ def test_reader_gets_the_slots(accessor):
     assert out == b"red:a"
 
 
+def test_directories_that_exist_by_construction_read_as_eisdir(accessor):
+    # The root and a probed=False scope provably exist, so reading one
+    # as a file is EISDIR rather than absent.
+    for path in ("/", "/rooms"):
+        with pytest.raises(IsADirectoryError):
+            asyncio.run(READ(accessor, spec(path)))
+
+
 def test_everything_else_is_enoent(accessor):
-    for path in ("/", "/rooms", "/rooms/red", "/rooms/.red/a.json", "/halls"):
+    # A probed directory shape is no proof the node exists, so a read
+    # there reports absence, matching GNU's wording for a missing name.
+    for path in ("/rooms/red", "/rooms/.red/a.json", "/halls"):
         with pytest.raises(FileNotFoundError):
             asyncio.run(READ(accessor, spec(path)))
 

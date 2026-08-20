@@ -13,7 +13,6 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { LinearAccessor } from '@struktoai/mirage-core/accessor/linear'
-import type { IndexCacheStore } from '@struktoai/mirage-core/cache/index/store'
 import { makeResolveGlob } from '@struktoai/mirage-core/commands/builtin/generic_bind/index'
 import { LINEAR_COMMANDS } from '@struktoai/mirage-core/commands/builtin/linear/index'
 import type { RegisteredCommand } from '@struktoai/mirage-core/commands/config'
@@ -22,7 +21,6 @@ import { redactLinearConfig } from '@struktoai/mirage-core/core/linear/config'
 import type { LinearConfig, LinearConfigRedacted } from '@struktoai/mirage-core/core/linear/config'
 import { read as linearRead } from '@struktoai/mirage-core/core/linear/read'
 import { readdir as linearReaddir } from '@struktoai/mirage-core/core/linear/readdir'
-import type { LinearReaddirFilter } from '@struktoai/mirage-core/core/linear/readdir'
 import { stat as linearStat } from '@struktoai/mirage-core/core/linear/stat'
 import { LINEAR_OPS } from '@struktoai/mirage-core/ops/linear/index'
 import type { RegisteredOp } from '@struktoai/mirage-core/ops/registry'
@@ -33,15 +31,7 @@ import { PathSpec, ResourceName } from '@struktoai/mirage-core/types'
 import type { FileStat } from '@struktoai/mirage-core/types'
 import { mountKey, mountPrefixOf } from '@struktoai/mirage-core/utils/key_prefix'
 
-const resolveLinearGlob = (
-  accessor: LinearAccessor,
-  paths: readonly PathSpec[],
-  index: IndexCacheStore | undefined,
-  filter: LinearReaddirFilter,
-): Promise<PathSpec[]> =>
-  makeResolveGlob((a: LinearAccessor, p: PathSpec, i?: IndexCacheStore) =>
-    linearReaddir(a, p, i, filter),
-  )(accessor, paths, index)
+const resolveLinearGlob = makeResolveGlob(linearReaddir)
 
 export interface LinearResourceState {
   type: string
@@ -66,7 +56,9 @@ export class LinearResource extends BaseResource implements Resource {
     this.config = config
     const transportOpts: { apiKey: string; baseUrl?: string } = { apiKey: config.apiKey }
     if (config.baseUrl !== undefined) transportOpts.baseUrl = config.baseUrl
-    this.accessor = new LinearAccessor(new HttpLinearTransport(transportOpts))
+    const accessorOpts: { teamIds?: readonly string[] } = {}
+    if (config.teamIds !== undefined) accessorOpts.teamIds = config.teamIds
+    this.accessor = new LinearAccessor(new HttpLinearTransport(transportOpts), accessorOpts)
   }
 
   open(): Promise<void> {
@@ -81,18 +73,12 @@ export class LinearResource extends BaseResource implements Resource {
     return LINEAR_OPS
   }
 
-  private filter(): LinearReaddirFilter {
-    const out: LinearReaddirFilter = {}
-    if (this.config.teamIds !== undefined) out.teamIds = this.config.teamIds
-    return out
-  }
-
   readFile(p: PathSpec): Promise<Uint8Array> {
-    return linearRead(this.accessor, p, this.index, this.filter())
+    return linearRead(this.accessor, p, this.index)
   }
 
   readdir(p: PathSpec): Promise<string[]> {
-    return linearReaddir(this.accessor, p, this.index, this.filter())
+    return linearReaddir(this.accessor, p, this.index)
   }
 
   stat(p: PathSpec): Promise<FileStat> {
@@ -114,7 +100,7 @@ export class LinearResource extends BaseResource implements Resource {
                 }),
           )
         : paths
-    return resolveLinearGlob(this.accessor, effective, this.index, this.filter())
+    return resolveLinearGlob(this.accessor, effective, this.index)
   }
 
   override getState(): Promise<LinearResourceState> {

@@ -15,15 +15,20 @@
 import type { Accessor } from '../../accessor/base.ts'
 import { invalidateAfterUnlink } from '../../cache/context.ts'
 import type { IndexEntry } from '../../cache/index/config.ts'
+import { RAMIndexCacheStore } from '../../cache/index/ram.ts'
 import type { IndexCacheStore } from '../../cache/index/store.ts'
 import type { PathSpec } from '../../types.ts'
 import { eisdir, enoent } from '../../utils/errors.ts'
 import { mountPrefixOf } from '../../utils/key_prefix.ts'
 import { stripSlash } from '../../utils/slash.ts'
 import { resolveEntry, type ReaddirFn } from './probe.ts'
-import { INVALID, type DetectFn } from './scope.ts'
+import { INVALID, type DetectFn, type ScopeMatch } from './scope.ts'
 
-export type DeleteFn<A extends Accessor> = (accessor: A, entry: IndexEntry) => Promise<void>
+export type DeleteFn<A extends Accessor> = (
+  accessor: A,
+  match: ScopeMatch,
+  entry: IndexEntry,
+) => Promise<void>
 
 /**
  * Build a hierarchy unlink: classify, resolve, delete, invalidate.
@@ -31,7 +36,10 @@ export type DeleteFn<A extends Accessor> = (accessor: A, entry: IndexEntry) => P
  * A deleter owns only the backend delete call; classification, the
  * id-resolving parent listing, the directory refusal and the cache
  * invalidation happen here, identically for every backend. `deleters` holds
- * one deleter per leaf kind.
+ * one deleter per leaf kind. The match rides along because a delete
+ * addressed inside a container needs the container's slots (gcal deletes an
+ * event from a calendar), while a globally-id-addressed backend just
+ * ignores it.
  */
 export function makeUnlink<A extends Accessor>(
   detect: DetectFn,
@@ -44,6 +52,9 @@ export function makeUnlink<A extends Accessor>(
     path: PathSpec,
     index?: IndexCacheStore,
   ): Promise<void> {
+    // Entry resolution reads what its parent-listing warm just wrote, so
+    // a caller with no cache still needs one for the duration of the call.
+    const store = index ?? new RAMIndexCacheStore()
     const match = detect(path)
     const deleter = deleters[match.kind]
     if (deleter === undefined) {
@@ -52,14 +63,14 @@ export function makeUnlink<A extends Accessor>(
       }
       throw enoent(path.virtual)
     }
-    const entry = await resolveEntry(readdir, accessor, path, index)
-    if (entry === null || index === undefined) throw enoent(path.virtual)
-    await deleter(accessor, entry)
+    const entry = await resolveEntry(readdir, accessor, path, store)
+    if (entry === null) throw enoent(path.virtual)
+    await deleter(accessor, match, entry)
     const prefix = mountPrefixOf(path.virtual, path.resourcePath)
     const key = stripSlash(path.resourcePath)
     const virtualKey = key !== '' ? `${prefix}/${key}` : prefix !== '' ? prefix : '/'
     const parentDir = virtualKey.slice(0, virtualKey.lastIndexOf('/')) || '/'
-    await index.invalidateDir(parentDir)
+    await store.invalidateDir(parentDir)
     await invalidateAfterUnlink(virtualKey)
   }
 }

@@ -12,68 +12,37 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import type { IndexCacheStore } from '../../cache/index/store.ts'
-import type { PathSpec } from '../../types.ts'
-import type { NotionTransport } from './client.ts'
+import type { NotionAccessor } from '../../accessor/notion.ts'
+import type { ScopeMatch } from '../hierarchy/scope.ts'
+import { makeRead } from '../hierarchy/read.ts'
 import { normalizeDataSource, normalizeDatabase, normalizePage, toJsonBytes } from './normalize.ts'
 import { getBlockTree, getDataSource, getDatabase, getPage } from './pages.ts'
-import { parseSegment } from './pathing.ts'
-import { enoent } from '../../utils/errors.ts'
+import { detectScope } from './scope.ts'
 
-export interface NotionReadAccessor {
-  readonly transport: NotionTransport
-}
-
-export async function read(
-  accessor: NotionReadAccessor,
-  path: PathSpec,
-  _index?: IndexCacheStore,
-): Promise<Uint8Array> {
-  void _index
-  const key = path.resourcePath
-  if (key === '') throw enoent(path.virtual)
-  const parts = key.split('/')
-  const last = parts[parts.length - 1] ?? ''
-  if (last !== 'page.json' && last !== 'database.json' && last !== 'data_source.json') {
-    throw enoent(path.virtual)
-  }
-  if (last === 'database.json') {
-    if (parts[0] !== 'databases' || parts.length !== 3) throw enoent(path.virtual)
-    const databaseSegment = parts[parts.length - 2] ?? ''
-    let parsedDatabase: { id: string; title: string }
-    try {
-      parsedDatabase = parseSegment(databaseSegment)
-    } catch {
-      throw enoent(path.virtual)
-    }
-    const database = await getDatabase(accessor.transport, parsedDatabase.id)
-    return toJsonBytes(normalizeDatabase(database))
-  }
-  if (last === 'data_source.json') {
-    if (parts[0] !== 'databases' || parts.length !== 4) throw enoent(path.virtual)
-    const sourceSegment = parts[parts.length - 2] ?? ''
-    let parsedSource: { id: string; title: string }
-    try {
-      parsedSource = parseSegment(sourceSegment)
-    } catch {
-      throw enoent(path.virtual)
-    }
-    const dataSource = await getDataSource(accessor.transport, parsedSource.id)
-    return toJsonBytes(normalizeDataSource(dataSource))
-  }
-  const isPageJson =
-    (parts[0] === 'pages' && parts.length >= 3) || (parts[0] === 'databases' && parts.length >= 5)
-  if (!isPageJson) throw enoent(path.virtual)
-  const parentSegment = parts[parts.length - 2] ?? ''
-  let parsed: { id: string; title: string }
-  try {
-    parsed = parseSegment(parentSegment)
-  } catch {
-    throw enoent(path.virtual)
-  }
+async function readPageJson(accessor: NotionAccessor, match: ScopeMatch): Promise<Uint8Array> {
+  const pageId = match.slots.page_id ?? ''
   const [page, blocks] = await Promise.all([
-    getPage(accessor.transport, parsed.id),
-    getBlockTree(accessor.transport, parsed.id),
+    getPage(accessor.transport, pageId),
+    getBlockTree(accessor.transport, pageId),
   ])
   return toJsonBytes(normalizePage(page, blocks))
 }
+
+async function readDatabaseJson(accessor: NotionAccessor, match: ScopeMatch): Promise<Uint8Array> {
+  const database = await getDatabase(accessor.transport, match.slots.database_id ?? '')
+  return toJsonBytes(normalizeDatabase(database))
+}
+
+async function readDataSourceJson(
+  accessor: NotionAccessor,
+  match: ScopeMatch,
+): Promise<Uint8Array> {
+  const dataSource = await getDataSource(accessor.transport, match.slots.data_source_id ?? '')
+  return toJsonBytes(normalizeDataSource(dataSource))
+}
+
+export const read = makeRead<NotionAccessor>(detectScope, {
+  page_json: readPageJson,
+  database_json: readDatabaseJson,
+  data_source_json: readDataSourceJson,
+})

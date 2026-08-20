@@ -14,6 +14,7 @@
 
 from mirage.accessor.notion import NotionAccessor
 from mirage.cache.index import NULL_INDEX, IndexCacheStore
+from mirage.cache.index.ram import RAMIndexCacheStore
 from mirage.commands.builtin.find_eval import (FindEntry, PredNode, build_tree,
                                                keep, start_basename,
                                                tree_has_empty)
@@ -65,6 +66,12 @@ async def find(
     *,
     index: IndexCacheStore = NULL_INDEX,
 ) -> list[str]:
+    if index is NULL_INDEX:
+        # The walk stats every entry it just listed, and stat resolves
+        # entries through the index; with no cache at all the resolution
+        # would re-list every parent and still find nothing, so a
+        # walk-local cache stands in.
+        index = RAMIndexCacheStore()
     start_name = start_basename(path)
     base = path.mount_path
     base = "/" + base.strip("/") if base.strip("/") else "/"

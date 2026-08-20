@@ -15,8 +15,8 @@
 import type { Accessor } from '../../accessor/base.ts'
 import type { IndexCacheStore } from '../../cache/index/store.ts'
 import type { PathSpec } from '../../types.ts'
-import { enoent } from '../../utils/errors.ts'
-import type { DetectFn, ScopeMatch } from './scope.ts'
+import { eisdir, enoent } from '../../utils/errors.ts'
+import { ROOT, type DetectFn, type ScopeMatch } from './scope.ts'
 
 export type Reader<A extends Accessor> = (
   accessor: A,
@@ -69,7 +69,20 @@ export function makeRead<A extends Accessor>(
     const windowReader = windowed[match.kind]
     if (windowReader !== undefined) return windowReader(accessor, match, path, index, window)
     const reader = readers[match.kind]
-    if (reader === undefined) throw enoent(path)
+    if (reader === undefined) {
+      // A directory that exists by construction (the root, or a
+      // probed=false scope) read as a file is EISDIR. Everything else is
+      // reported absent: a matched shape alone is no proof the node
+      // exists, and GNU says "No such file" for a missing name, "Is a
+      // directory" only for a real one.
+      if (
+        match.kind === ROOT ||
+        (match.scope !== null && !match.scope.leaf && !match.scope.probed)
+      ) {
+        throw eisdir(path)
+      }
+      throw enoent(path)
+    }
     return reader(accessor, match, path, index)
   }
 }

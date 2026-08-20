@@ -15,8 +15,20 @@
 import { describe, expect, it } from 'vitest'
 import { FileType, PathSpec } from '../../types.ts'
 import { stripSlash } from '../../utils/slash.ts'
-import { Codec, INT_JSON, JSON_NAME } from './codec.ts'
+import { Codec, INT_JSON, JSON_NAME, RAW } from './codec.ts'
 import { Slot, Scope, makeDetectScope, matchScope } from './scope.ts'
+
+const VARIADIC_SCOPES: readonly Scope[] = [
+  new Scope({
+    kind: 'page_json',
+    segments: ['pages', new Slot('page', RAW, 'page_id', true), 'page.json'],
+    leaf: true,
+  }),
+  new Scope({
+    kind: 'page',
+    segments: ['pages', new Slot('page', RAW, 'page_id', true)],
+  }),
+]
 
 const SCOPES: readonly Scope[] = [
   new Scope({ kind: 'rooms', segments: ['rooms'], probed: false }),
@@ -94,6 +106,37 @@ describe('hierarchy matchScope', () => {
     expect(matchScope(idScopes, ['owned', 'plain.json'])).toBeNull()
     expect(matchScope(idScopes, ['owned', '__id.json'])).toBeNull()
     expect(matchScope(idScopes, ['owned', 'label__.json'])).toBeNull()
+  })
+
+  it('stores the deepest segment of a variadic run', () => {
+    let matched = matchScope(VARIADIC_SCOPES, ['pages', 'a__1'])
+    expect(matched?.[0].kind).toBe('page')
+    expect(matched?.[1]).toEqual({ page: 'a', page_id: '1' })
+    matched = matchScope(VARIADIC_SCOPES, ['pages', 'a__1', 'b__2', 'c__3'])
+    expect(matched?.[0].kind).toBe('page')
+    expect(matched?.[1]).toEqual({ page: 'c', page_id: '3' })
+  })
+
+  it('anchors a literal after the variadic run at the end', () => {
+    const matched = matchScope(VARIADIC_SCOPES, ['pages', 'a__1', 'b__2', 'page.json'])
+    expect(matched?.[0].kind).toBe('page_json')
+    expect(matched?.[1]).toEqual({ page: 'b', page_id: '2' })
+    // The run needs at least one segment, so the literal alone is no leaf.
+    expect(matchScope(VARIADIC_SCOPES, ['pages', 'page.json'])).toBeNull()
+  })
+
+  it('requires every segment of the run to decode', () => {
+    expect(matchScope(VARIADIC_SCOPES, ['pages', 'a__1', 'plain', 'c__3'])).toBeNull()
+  })
+
+  it('fails loud on two variadic slots', () => {
+    const bad = [
+      new Scope({
+        kind: 'broken',
+        segments: [new Slot('a', RAW, null, true), new Slot('b', RAW, null, true)],
+      }),
+    ]
+    expect(() => makeDetectScope(bad)).toThrow('at most one variadic slot')
   })
 })
 

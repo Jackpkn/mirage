@@ -13,10 +13,11 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { mountKey, mountPrefixOf } from '../../utils/key_prefix.ts'
+import { RAMIndexCacheStore } from '../../cache/index/ram.ts'
 import type { IndexCacheStore } from '../../cache/index/store.ts'
 import type { FindOptions } from '../../resource/base.ts'
 import { type FileStat, FileType, PathSpec } from '../../types.ts'
-import type { NotionStatAccessor } from './stat.ts'
+import type { NotionAccessor } from '../../accessor/notion.ts'
 import { readdir } from './readdir.ts'
 import { stat } from './stat.ts'
 import { stripSlash } from '../../utils/slash.ts'
@@ -24,7 +25,7 @@ import { buildTree, keep, startBasename } from '../../commands/builtin/find_eval
 import { compareCodePoints } from '../../utils/sort.ts'
 
 async function collect(
-  accessor: NotionStatAccessor,
+  accessor: NotionAccessor,
   path: PathSpec,
   index: IndexCacheStore | undefined,
   out: [string, FileStat][],
@@ -44,17 +45,21 @@ async function collect(
 }
 
 export async function find(
-  accessor: NotionStatAccessor,
+  accessor: NotionAccessor,
   path: PathSpec,
   options: FindOptions = {},
   index?: IndexCacheStore,
 ): Promise<string[]> {
+  // The walk stats every entry it just listed, and stat resolves entries
+  // through the index; with no cache at all the resolution would re-list
+  // every parent and still find nothing, so a walk-local cache stands in.
+  const walkIndex = index ?? new RAMIndexCacheStore()
   const startName = startBasename(path.virtual)
   const stripped = stripSlash(path.mountPath)
   const base = stripped !== '' ? `/${stripped}` : '/'
   const baseDepth = base === '/' ? 0 : (base.match(/\//g) ?? []).length
   const collected: [string, FileStat][] = []
-  await collect(accessor, path, index, collected)
+  await collect(accessor, path, walkIndex, collected)
   const results: string[] = []
   const tree =
     options.tree ??

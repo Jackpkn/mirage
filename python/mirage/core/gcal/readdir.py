@@ -19,8 +19,10 @@ from mirage.cache.index import NULL_INDEX, IndexCacheStore, IndexEntry
 from mirage.core.gcal.client import list_calendars, list_events
 from mirage.core.gcal.day import (WINDOW_AHEAD_DAYS, WINDOW_BACK_DAYS,
                                   clamped_hhmm, day_bounds, days_covered,
-                                  event_span, valid_day, window_bounds)
+                                  event_span, window_bounds)
+from mirage.core.gcal.scope import detect_scope
 from mirage.core.google.date_glob import glob_to_date_range
+from mirage.core.hierarchy.scope import ROOT
 from mirage.core.render.json import compact_json_bytes
 from mirage.resource.gcal.event_entry import (CALENDAR_FILE, PRIMARY_DIR,
                                               event_title,
@@ -206,24 +208,31 @@ def event_entries(events: list[dict[str, JsonValue]], day: str, tz: str,
 
 async def readdir(
     accessor: GCalAccessor,
-    path: PathSpec,
+    path_spec: PathSpec,
     index: IndexCacheStore = NULL_INDEX,
 ) -> list[str]:
     """List one level of the calendar tree.
 
     Args:
         accessor (GCalAccessor): the mount's accessor.
-        path (PathSpec): the directory being listed.
+        path_spec (PathSpec): the directory being listed.
         index (IndexCacheStore): the mount's index cache.
 
     Returns:
         list[str]: virtual paths of the directory's children.
     """
+    path = path_spec
     prefix, key, virtual_key = normalize(path)
+    # Bespoke below the classifier: the date-glob push-down filters the
+    # events query itself, and a globbed listing must not be cached as
+    # the directory, which the kit readdir has no notion of.
+    match = detect_scope(key)
+    if match.kind not in (ROOT, "calendar", "day"):
+        raise enoent(path.virtual)
     calendars = await calendar_index(accessor)
     tz = bucket_zone(accessor, calendars)
 
-    if not key:
+    if match.kind == ROOT:
         entries = [(name,
                     IndexEntry(id=str(entry.get("id") or name),
                                name=name,
@@ -233,16 +242,15 @@ async def readdir(
         await index.set_dir(virtual_key, entries)
         return [f"{prefix}/{name}" for name, _ in entries]
 
-    parts = key.split("/")
-    entry = calendars.get(parts[0])
-    if entry is None or len(parts) > 2:
+    entry = calendars.get(match.slots["calendar"])
+    if entry is None:
         raise enoent(path.virtual)
     cal_id = entry.get("id")
     if not isinstance(cal_id, str):
         raise enoent(path.virtual)
     free_busy = entry.get("accessRole") == FREE_BUSY_ROLE
 
-    if len(parts) == 1:
+    if match.kind == "calendar":
         time_min, time_max, first, last = day_span(path.pattern,
                                                    accessor.today(tz), tz)
         events = await list_events(accessor.token_manager, cal_id, time_min,
@@ -278,9 +286,7 @@ async def readdir(
             await index.set_dir(virtual_key, rows)
         return [f"{prefix}/{key}/{name}" for name, _ in rows]
 
-    day = parts[1]
-    if not valid_day(day):
-        raise enoent(path.virtual)
+    day = match.slots["day"]
     time_min, time_max = day_bounds(day, tz)
     events = await list_events(accessor.token_manager, cal_id, time_min,
                                time_max, tz)

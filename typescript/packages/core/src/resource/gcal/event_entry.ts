@@ -21,7 +21,7 @@ import {
   truncateBytes,
 } from '../../utils/sanitize.ts'
 
-const EVENT_SUFFIX = '.gcal.json'
+export const EVENT_SUFFIX = '.gcal.json'
 export const CALENDAR_FILE = 'calendar.json'
 export const PRIMARY_DIR = 'primary'
 // "HHMM-HHMM"

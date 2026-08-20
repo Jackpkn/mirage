@@ -26,16 +26,26 @@ export const INVALID = 'invalid'
  * three-part `KEY__name__id` keeps `KEY__name` as the label), the label
  * stored under `name` and the id under `idKey`. A payload with no `__` or an
  * empty half does not match the scope.
+ *
+ * A `variadic` slot stands for a run of one or more consecutive segments
+ * instead of exactly one. Segments before it anchor at the start of the
+ * path, segments after it at the end, every segment in the run must decode,
+ * and the stored value comes from the run's DEEPEST segment: notion's pages
+ * nest arbitrarily, and `pages/a__1/b__2/page.json` stores `page=b,
+ * page_id=2` because the innermost page is the one the path addresses. At
+ * most one variadic slot per scope.
  */
 export class Slot {
   readonly name: string
   readonly codec: Codec
   readonly idKey: string | null
+  readonly variadic: boolean
 
-  constructor(name: string, codec: Codec = RAW, idKey: string | null = null) {
+  constructor(name: string, codec: Codec = RAW, idKey: string | null = null, variadic = false) {
     this.name = name
     this.codec = codec
     this.idKey = idKey
+    this.variadic = variadic
   }
 }
 
@@ -86,44 +96,83 @@ export interface ScopeMatch {
 
 export type DetectFn = (path: PathSpec | string) => ScopeMatch
 
+/** Decode one path segment through a slot, null when it does not fit. */
+export function decodeSlot(slot: Slot, part: string): Record<string, string> | null {
+  const decoded = slot.codec.decode(part)
+  if (decoded === null) return null
+  if (slot.idKey !== null) {
+    const cut = decoded.lastIndexOf('__')
+    const label = cut > 0 ? decoded.slice(0, cut) : ''
+    const ident = cut >= 0 ? decoded.slice(cut + 2) : ''
+    if (label === '' || ident === '') return null
+    return { [slot.name]: label, [slot.idKey]: ident }
+  }
+  return { [slot.name]: decoded }
+}
+
+/** The scope's variadic slot and its position, null when it has none. */
+export function variadicSlot(segments: readonly (string | Slot)[]): [number, Slot] | null {
+  let found: [number, Slot] | null = null
+  for (const [i, segment] of segments.entries()) {
+    if (typeof segment !== 'string' && segment.variadic) {
+      if (found !== null) throw new Error('a scope holds at most one variadic slot')
+      found = [i, segment]
+    }
+  }
+  return found
+}
+
+function matchRun(
+  segments: readonly (string | Slot)[],
+  parts: readonly string[],
+): Record<string, string> | null {
+  const slots: Record<string, string> = {}
+  for (const [i, segment] of segments.entries()) {
+    const part = parts[i] ?? ''
+    if (typeof segment === 'string') {
+      if (part !== segment) return null
+      continue
+    }
+    const values = decodeSlot(segment, part)
+    if (values === null) return null
+    Object.assign(slots, values)
+  }
+  return slots
+}
+
+function matchSegments(
+  segments: readonly (string | Slot)[],
+  parts: readonly string[],
+): Record<string, string> | null {
+  const found = variadicSlot(segments)
+  if (found === null) {
+    if (segments.length !== parts.length) return null
+    return matchRun(segments, parts)
+  }
+  if (parts.length < segments.length) return null
+  const [at, slot] = found
+  const tailLen = segments.length - at - 1
+  const head = matchRun(segments.slice(0, at), parts.slice(0, at))
+  if (head === null) return null
+  const tail = matchRun(segments.slice(at + 1), parts.slice(parts.length - tailLen))
+  if (tail === null) return null
+  let values: Record<string, string> | null = null
+  for (const part of parts.slice(at, parts.length - tailLen)) {
+    values = decodeSlot(slot, part)
+    if (values === null) return null
+  }
+  if (values === null) return null
+  return { ...head, ...values, ...tail }
+}
+
 /** Match path segments against the table, first declared scope wins. */
 export function matchScope(
   scopes: readonly Scope[],
   parts: readonly string[],
 ): [Scope, Record<string, string>] | null {
   for (const scope of scopes) {
-    if (scope.segments.length !== parts.length) continue
-    const slots: Record<string, string> = {}
-    let matched = true
-    for (const [i, segment] of scope.segments.entries()) {
-      const part = parts[i] ?? ''
-      if (typeof segment === 'string') {
-        if (part !== segment) {
-          matched = false
-          break
-        }
-        continue
-      }
-      const decoded = segment.codec.decode(part)
-      if (decoded === null) {
-        matched = false
-        break
-      }
-      if (segment.idKey !== null) {
-        const cut = decoded.lastIndexOf('__')
-        const label = cut > 0 ? decoded.slice(0, cut) : ''
-        const ident = cut >= 0 ? decoded.slice(cut + 2) : ''
-        if (label === '' || ident === '') {
-          matched = false
-          break
-        }
-        slots[segment.name] = label
-        slots[segment.idKey] = ident
-        continue
-      }
-      slots[segment.name] = decoded
-    }
-    if (matched) return [scope, slots]
+    const slots = matchSegments(scope.segments, parts)
+    if (slots !== null) return [scope, slots]
   }
   return null
 }
@@ -151,6 +200,7 @@ export function matchScope(
  * contribute no slot, and one dynamic level can contribute two (`idKey`).
  */
 export function makeDetectScope(scopes: readonly Scope[]): DetectFn {
+  for (const scope of scopes) variadicSlot(scope.segments)
   return function detectScope(path: PathSpec | string): ScopeMatch {
     const raw = path instanceof PathSpec ? path.mountPath : path
     const key = stripSlash(raw)

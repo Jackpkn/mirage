@@ -12,11 +12,10 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { mountKey, mountPrefixOf } from '../../utils/key_prefix.ts'
 import type { TrelloAccessor } from '../../accessor/trello.ts'
 import { IndexEntry } from '../../cache/index/config.ts'
-import type { IndexCacheStore } from '../../cache/index/store.ts'
-import { PathSpec } from '../../types.ts'
+import { makeReaddir } from '../hierarchy/readdir.ts'
+import type { ScopeMatch } from '../hierarchy/scope.ts'
 import {
   listBoardLabels,
   listBoardLists,
@@ -42,464 +41,334 @@ import {
   memberFilename,
   workspaceDirname,
 } from './pathing.ts'
-import { stripSlash } from '../../utils/slash.ts'
-import { enoent } from '../../utils/errors.ts'
-
-export interface TrelloReaddirFilter {
-  workspaceId?: string
-  boardIds?: readonly string[]
-}
+import { detectScope } from './scope.ts'
 
 function pickString(record: Record<string, unknown>, key: string): string {
   const value = record[key]
   return typeof value === 'string' ? value : ''
 }
 
-function makeVirtualKey(prefix: string, key: string): string {
-  if (key === '') return prefix !== '' ? prefix : '/'
-  return `${prefix}/${key}`
+function extraSize(entry: IndexEntry): number | null {
+  const value = entry.extra.json_size
+  return typeof value === 'number' ? value : null
 }
 
-async function ensureLookup(
+async function filteredWorkspaces(accessor: TrelloAccessor): Promise<Record<string, unknown>[]> {
+  let workspaces = await listWorkspaces(accessor.transport)
+  if (accessor.workspaceId !== null && accessor.workspaceId !== '') {
+    workspaces = workspaces.filter((w) => pickString(w, 'id') === accessor.workspaceId)
+  }
+  return workspaces
+}
+
+async function filteredBoards(
   accessor: TrelloAccessor,
-  index: IndexCacheStore,
-  filter: TrelloReaddirFilter,
-  prefix: string,
-  parentKey: string,
-  virtualKey: string,
-): Promise<{ id: string }> {
-  let lookup = await index.get(virtualKey)
-  if (lookup.entry === undefined || lookup.entry === null) {
-    const parentPath = `${prefix}/${parentKey}`
-    await readdir(
-      accessor,
-      new PathSpec({
-        virtual: parentPath,
-        directory: parentPath,
-        resourcePath: mountKey(parentPath, prefix),
+  workspaceId: string,
+): Promise<Record<string, unknown>[]> {
+  let boards = await listWorkspaceBoards(accessor.transport, workspaceId)
+  if (accessor.boardIds !== null && accessor.boardIds.length > 0) {
+    const allowed = new Set(accessor.boardIds)
+    boards = boards.filter((b) => allowed.has(pickString(b, 'id')))
+  }
+  return boards
+}
+
+async function listWorkspacesDir(
+  accessor: TrelloAccessor,
+  _match: ScopeMatch,
+): Promise<[string, IndexEntry][]> {
+  const entries: [string, IndexEntry][] = []
+  for (const workspace of await filteredWorkspaces(accessor)) {
+    const dirname = workspaceDirname(workspace)
+    // workspace.json renders the workspace object this listing already
+    // fetched, so its exact size rides the directory entry for the child
+    // listing to read back without another call.
+    entries.push([
+      dirname,
+      new IndexEntry({
+        id: pickString(workspace, 'id'),
+        name:
+          pickString(workspace, 'displayName') ||
+          pickString(workspace, 'name') ||
+          pickString(workspace, 'id'),
+        resourceType: 'trello/workspace',
+        remoteTime: '',
+        vfsName: dirname,
+        extra: { json_size: toJsonBytes(normalizeWorkspace(workspace)).byteLength },
       }),
-      index,
-      filter,
-    )
-    lookup = await index.get(virtualKey)
+    ])
   }
-  if (lookup.entry === undefined || lookup.entry === null) {
-    throw enoent(virtualKey)
-  }
-  return { id: lookup.entry.id }
+  return entries
 }
 
-export async function readdir(
+function listWorkspace(
+  _accessor: TrelloAccessor,
+  _match: ScopeMatch,
+  entry: IndexEntry,
+): Promise<[string, IndexEntry][]> {
+  return Promise.resolve<[string, IndexEntry][]>([
+    [
+      'workspace.json',
+      new IndexEntry({
+        id: entry.id,
+        name: 'workspace.json',
+        resourceType: 'trello/workspace_json',
+        vfsName: 'workspace.json',
+        size: extraSize(entry),
+      }),
+    ],
+    [
+      'boards',
+      new IndexEntry({
+        id: entry.id,
+        name: 'boards',
+        resourceType: 'trello/boards_dir',
+        vfsName: 'boards',
+      }),
+    ],
+  ])
+}
+
+async function listBoards(
   accessor: TrelloAccessor,
-  path: PathSpec,
-  index?: IndexCacheStore,
-  filter: TrelloReaddirFilter = {},
-): Promise<string[]> {
-  const prefix = mountPrefixOf(path.virtual, path.resourcePath)
-  let p = path.pattern !== null ? path.directory : path.virtual
-  if (prefix !== '' && p.startsWith(prefix)) {
-    p = p.slice(prefix.length) || '/'
+  match: ScopeMatch,
+  _entry: IndexEntry,
+): Promise<[string, IndexEntry][]> {
+  const entries: [string, IndexEntry][] = []
+  for (const board of await filteredBoards(accessor, match.slots.workspace_id ?? '')) {
+    const dirname = boardDirname(board)
+    // board.json's normalizer only uses fields the board listing already
+    // carries, so its exact size is free here.
+    entries.push([
+      dirname,
+      new IndexEntry({
+        id: pickString(board, 'id'),
+        name: pickString(board, 'name') || pickString(board, 'id'),
+        resourceType: 'trello/board',
+        remoteTime: pickString(board, 'dateLastActivity'),
+        vfsName: dirname,
+        extra: { json_size: toJsonBytes(normalizeBoard(board)).byteLength },
+      }),
+    ])
   }
-  const key = stripSlash(p)
-  const virtualKey = makeVirtualKey(prefix, key)
-
-  if (key === '') {
-    return [`${prefix}/workspaces`]
-  }
-
-  if (key === 'workspaces') {
-    if (index !== undefined) {
-      const listing = await index.listDir(virtualKey)
-      if (listing.entries !== undefined && listing.entries !== null) {
-        return listing.entries
-      }
-    }
-    let workspaces = await listWorkspaces(accessor.transport)
-    if (filter.workspaceId !== undefined && filter.workspaceId !== '') {
-      workspaces = workspaces.filter((w) => pickString(w, 'id') === filter.workspaceId)
-    }
-    const entries: [string, IndexEntry][] = []
-    const names: string[] = []
-    for (const ws of workspaces) {
-      const dirname = workspaceDirname(ws)
-      entries.push([
-        dirname,
-        new IndexEntry({
-          id: pickString(ws, 'id'),
-          name: pickString(ws, 'displayName') || pickString(ws, 'name') || pickString(ws, 'id'),
-          resourceType: 'trello/workspace',
-          remoteTime: '',
-          vfsName: dirname,
-        }),
-      ])
-      names.push(`${prefix}/workspaces/${dirname}`)
-      if (index !== undefined) {
-        // workspace.json renders the workspace object this listing already
-        // fetched, so its exact size is free here.
-        await index.setDir(`${virtualKey}/${dirname}`, [
-          [
-            'workspace.json',
-            new IndexEntry({
-              id: pickString(ws, 'id'),
-              name: 'workspace.json',
-              resourceType: 'trello/workspace_json',
-              vfsName: 'workspace.json',
-              size: toJsonBytes(normalizeWorkspace(ws)).byteLength,
-            }),
-          ],
-          [
-            'boards',
-            new IndexEntry({
-              id: pickString(ws, 'id'),
-              name: 'boards',
-              resourceType: 'trello/boards_dir',
-              vfsName: 'boards',
-            }),
-          ],
-        ])
-      }
-    }
-    if (index !== undefined) await index.setDir(virtualKey, entries)
-    return names
-  }
-
-  const parts = key.split('/')
-
-  if (parts.length === 2 && parts[0] === 'workspaces') {
-    if (index !== undefined) {
-      const cached = await index.listDir(virtualKey)
-      if (cached.entries !== undefined && cached.entries !== null) return cached.entries
-      await ensureLookup(accessor, index, filter, prefix, 'workspaces', virtualKey)
-      const listing = await index.listDir(virtualKey)
-      if (listing.entries !== undefined && listing.entries !== null) return listing.entries
-    }
-    return [`${prefix}/${key}/workspace.json`, `${prefix}/${key}/boards`]
-  }
-
-  if (parts.length === 3 && parts[0] === 'workspaces' && parts[2] === 'boards') {
-    if (index === undefined) throw enoent(path)
-    const wsKey = makeVirtualKey(prefix, parts.slice(0, 2).join('/'))
-    const ws = await ensureLookup(accessor, index, filter, prefix, 'workspaces', wsKey)
-    const listing = await index.listDir(virtualKey)
-    if (listing.entries !== undefined && listing.entries !== null) {
-      return listing.entries
-    }
-    let boards = await listWorkspaceBoards(accessor.transport, ws.id)
-    if (filter.boardIds !== undefined && filter.boardIds.length > 0) {
-      const allowed = new Set(filter.boardIds)
-      boards = boards.filter((b) => allowed.has(pickString(b, 'id')))
-    }
-    const entries: [string, IndexEntry][] = []
-    const names: string[] = []
-    for (const board of boards) {
-      const dirname = boardDirname(board)
-      entries.push([
-        dirname,
-        new IndexEntry({
-          id: pickString(board, 'id'),
-          name: pickString(board, 'name') || pickString(board, 'id'),
-          resourceType: 'trello/board',
-          remoteTime: pickString(board, 'dateLastActivity'),
-          vfsName: dirname,
-        }),
-      ])
-      names.push(`${prefix}/${key}/${dirname}`)
-      // board.json's normalizer only uses fields this listing already
-      // carries, so its exact size is free here.
-      await index.setDir(`${virtualKey}/${dirname}`, [
-        [
-          'board.json',
-          new IndexEntry({
-            id: pickString(board, 'id'),
-            name: 'board.json',
-            resourceType: 'trello/board_json',
-            vfsName: 'board.json',
-            size: toJsonBytes(normalizeBoard(board)).byteLength,
-            remoteTime: pickString(board, 'dateLastActivity'),
-          }),
-        ],
-        [
-          'members',
-          new IndexEntry({
-            id: pickString(board, 'id'),
-            name: 'members',
-            resourceType: 'trello/members_dir',
-            vfsName: 'members',
-          }),
-        ],
-        [
-          'labels',
-          new IndexEntry({
-            id: pickString(board, 'id'),
-            name: 'labels',
-            resourceType: 'trello/labels_dir',
-            vfsName: 'labels',
-          }),
-        ],
-        [
-          'lists',
-          new IndexEntry({
-            id: pickString(board, 'id'),
-            name: 'lists',
-            resourceType: 'trello/lists_dir',
-            vfsName: 'lists',
-          }),
-        ],
-      ])
-    }
-    await index.setDir(virtualKey, entries)
-    return names
-  }
-
-  if (parts.length === 4 && parts[0] === 'workspaces' && parts[2] === 'boards') {
-    if (index !== undefined) {
-      const cached = await index.listDir(virtualKey)
-      if (cached.entries !== undefined && cached.entries !== null) return cached.entries
-      const parentKey = parts.slice(0, 3).join('/')
-      await ensureLookup(accessor, index, filter, prefix, parentKey, virtualKey)
-      const listing = await index.listDir(virtualKey)
-      if (listing.entries !== undefined && listing.entries !== null) return listing.entries
-    }
-    return [
-      `${prefix}/${key}/board.json`,
-      `${prefix}/${key}/members`,
-      `${prefix}/${key}/labels`,
-      `${prefix}/${key}/lists`,
-    ]
-  }
-
-  if (
-    parts.length === 5 &&
-    parts[0] === 'workspaces' &&
-    parts[2] === 'boards' &&
-    parts[4] === 'members'
-  ) {
-    if (index === undefined) throw enoent(path)
-    const boardKey = makeVirtualKey(prefix, parts.slice(0, 4).join('/'))
-    const parentKey = parts.slice(0, 3).join('/')
-    const board = await ensureLookup(accessor, index, filter, prefix, parentKey, boardKey)
-    const listing = await index.listDir(virtualKey)
-    if (listing.entries !== undefined && listing.entries !== null) {
-      return listing.entries
-    }
-    const members = await listBoardMembers(accessor.transport, board.id)
-    const entries: [string, IndexEntry][] = []
-    const names: string[] = []
-    for (const member of members) {
-      const filename = memberFilename(member)
-      entries.push([
-        filename,
-        new IndexEntry({
-          id: pickString(member, 'id'),
-          name:
-            pickString(member, 'fullName') ||
-            pickString(member, 'username') ||
-            pickString(member, 'id'),
-          resourceType: 'trello/member',
-          remoteTime: '',
-          vfsName: filename,
-          size: toJsonBytes(normalizeMember(member)).byteLength,
-        }),
-      ])
-      names.push(`${prefix}/${key}/${filename}`)
-    }
-    await index.setDir(virtualKey, entries)
-    return names
-  }
-
-  if (
-    parts.length === 5 &&
-    parts[0] === 'workspaces' &&
-    parts[2] === 'boards' &&
-    parts[4] === 'labels'
-  ) {
-    if (index === undefined) throw enoent(path)
-    const boardKey = makeVirtualKey(prefix, parts.slice(0, 4).join('/'))
-    const parentKey = parts.slice(0, 3).join('/')
-    const board = await ensureLookup(accessor, index, filter, prefix, parentKey, boardKey)
-    const listing = await index.listDir(virtualKey)
-    if (listing.entries !== undefined && listing.entries !== null) {
-      return listing.entries
-    }
-    const labels = await listBoardLabels(accessor.transport, board.id)
-    const entries: [string, IndexEntry][] = []
-    const names: string[] = []
-    for (const label of labels) {
-      const filename = labelFilename(label)
-      entries.push([
-        filename,
-        new IndexEntry({
-          id: pickString(label, 'id'),
-          name: pickString(label, 'name') || pickString(label, 'color') || pickString(label, 'id'),
-          resourceType: 'trello/label',
-          remoteTime: '',
-          vfsName: filename,
-          size: toJsonBytes(normalizeLabel(label)).byteLength,
-        }),
-      ])
-      names.push(`${prefix}/${key}/${filename}`)
-    }
-    await index.setDir(virtualKey, entries)
-    return names
-  }
-
-  if (
-    parts.length === 5 &&
-    parts[0] === 'workspaces' &&
-    parts[2] === 'boards' &&
-    parts[4] === 'lists'
-  ) {
-    if (index === undefined) throw enoent(path)
-    const boardKey = makeVirtualKey(prefix, parts.slice(0, 4).join('/'))
-    const parentKey = parts.slice(0, 3).join('/')
-    const board = await ensureLookup(accessor, index, filter, prefix, parentKey, boardKey)
-    const listing = await index.listDir(virtualKey)
-    if (listing.entries !== undefined && listing.entries !== null) {
-      return listing.entries
-    }
-    const lists = await listBoardLists(accessor.transport, board.id)
-    const entries: [string, IndexEntry][] = []
-    const names: string[] = []
-    for (const lst of lists) {
-      const dirname = listDirname(lst)
-      entries.push([
-        dirname,
-        new IndexEntry({
-          id: pickString(lst, 'id'),
-          name: pickString(lst, 'name') || pickString(lst, 'id'),
-          resourceType: 'trello/list',
-          remoteTime: '',
-          vfsName: dirname,
-        }),
-      ])
-      names.push(`${prefix}/${key}/${dirname}`)
-      // list.json's normalizer only uses fields this listing already
-      // carries, so its exact size is free here.
-      await index.setDir(`${virtualKey}/${dirname}`, [
-        [
-          'list.json',
-          new IndexEntry({
-            id: pickString(lst, 'id'),
-            name: 'list.json',
-            resourceType: 'trello/list_json',
-            vfsName: 'list.json',
-            size: toJsonBytes(normalizeList(lst)).byteLength,
-          }),
-        ],
-        [
-          'cards',
-          new IndexEntry({
-            id: pickString(lst, 'id'),
-            name: 'cards',
-            resourceType: 'trello/cards_dir',
-            vfsName: 'cards',
-          }),
-        ],
-      ])
-    }
-    await index.setDir(virtualKey, entries)
-    return names
-  }
-
-  if (
-    parts.length === 6 &&
-    parts[0] === 'workspaces' &&
-    parts[2] === 'boards' &&
-    parts[4] === 'lists'
-  ) {
-    if (index !== undefined) {
-      const cached = await index.listDir(virtualKey)
-      if (cached.entries !== undefined && cached.entries !== null) return cached.entries
-      const parentKey = parts.slice(0, 5).join('/')
-      await ensureLookup(accessor, index, filter, prefix, parentKey, virtualKey)
-      const listing = await index.listDir(virtualKey)
-      if (listing.entries !== undefined && listing.entries !== null) return listing.entries
-    }
-    return [`${prefix}/${key}/list.json`, `${prefix}/${key}/cards`]
-  }
-
-  if (
-    parts.length === 7 &&
-    parts[0] === 'workspaces' &&
-    parts[2] === 'boards' &&
-    parts[4] === 'lists' &&
-    parts[6] === 'cards'
-  ) {
-    if (index === undefined) throw enoent(path)
-    const listKey = makeVirtualKey(prefix, parts.slice(0, 6).join('/'))
-    const parentKey = parts.slice(0, 5).join('/')
-    const list = await ensureLookup(accessor, index, filter, prefix, parentKey, listKey)
-    const listing = await index.listDir(virtualKey)
-    if (listing.entries !== undefined && listing.entries !== null) {
-      return listing.entries
-    }
-    const cards = await listListCards(accessor.transport, list.id)
-    const entries: [string, IndexEntry][] = []
-    const names: string[] = []
-    for (const card of cards) {
-      const dirname = cardDirname(card)
-      entries.push([
-        dirname,
-        new IndexEntry({
-          id: pickString(card, 'id'),
-          name: pickString(card, 'name') || pickString(card, 'id'),
-          resourceType: 'trello/card',
-          remoteTime: pickString(card, 'dateLastActivity'),
-          vfsName: dirname,
-        }),
-      ])
-      names.push(`${prefix}/${key}/${dirname}`)
-      // card.json's normalizer only uses fields this listing already
-      // carries, so its exact size is free here; comments.jsonl needs a
-      // per-card actions call and stays size-unknown.
-      await index.setDir(`${virtualKey}/${dirname}`, [
-        [
-          'card.json',
-          new IndexEntry({
-            id: pickString(card, 'id'),
-            name: 'card.json',
-            resourceType: 'trello/card_json',
-            vfsName: 'card.json',
-            size: toJsonBytes(normalizeCard(card)).byteLength,
-            remoteTime: pickString(card, 'dateLastActivity'),
-          }),
-        ],
-        [
-          'comments.jsonl',
-          new IndexEntry({
-            id: pickString(card, 'id'),
-            name: 'comments.jsonl',
-            resourceType: 'trello/comments_jsonl',
-            vfsName: 'comments.jsonl',
-            remoteTime: pickString(card, 'dateLastActivity'),
-          }),
-        ],
-      ])
-    }
-    await index.setDir(virtualKey, entries)
-    return names
-  }
-
-  if (
-    parts.length === 8 &&
-    parts[0] === 'workspaces' &&
-    parts[2] === 'boards' &&
-    parts[4] === 'lists' &&
-    parts[6] === 'cards'
-  ) {
-    if (index !== undefined) {
-      const cached = await index.listDir(virtualKey)
-      if (cached.entries !== undefined && cached.entries !== null) return cached.entries
-      const parentKey = parts.slice(0, 7).join('/')
-      await ensureLookup(accessor, index, filter, prefix, parentKey, virtualKey)
-      const listing = await index.listDir(virtualKey)
-      if (listing.entries !== undefined && listing.entries !== null) return listing.entries
-    }
-    return [`${prefix}/${key}/card.json`, `${prefix}/${key}/comments.jsonl`]
-  }
-
-  // An unrecognized path is not an empty directory: returning [] made `ls` and
-  // `tree` report a bogus path as a real-but-empty one, and left `rg` without a
-  // message.
-  throw enoent(virtualKey)
+  return entries
 }
+
+function listBoard(
+  _accessor: TrelloAccessor,
+  _match: ScopeMatch,
+  entry: IndexEntry,
+): Promise<[string, IndexEntry][]> {
+  return Promise.resolve<[string, IndexEntry][]>([
+    [
+      'board.json',
+      new IndexEntry({
+        id: entry.id,
+        name: 'board.json',
+        resourceType: 'trello/board_json',
+        vfsName: 'board.json',
+        size: extraSize(entry),
+        remoteTime: entry.remoteTime,
+      }),
+    ],
+    [
+      'members',
+      new IndexEntry({
+        id: entry.id,
+        name: 'members',
+        resourceType: 'trello/members_dir',
+        vfsName: 'members',
+      }),
+    ],
+    [
+      'labels',
+      new IndexEntry({
+        id: entry.id,
+        name: 'labels',
+        resourceType: 'trello/labels_dir',
+        vfsName: 'labels',
+      }),
+    ],
+    [
+      'lists',
+      new IndexEntry({
+        id: entry.id,
+        name: 'lists',
+        resourceType: 'trello/lists_dir',
+        vfsName: 'lists',
+      }),
+    ],
+  ])
+}
+
+async function listMembers(
+  accessor: TrelloAccessor,
+  match: ScopeMatch,
+  _entry: IndexEntry,
+): Promise<[string, IndexEntry][]> {
+  const members = await listBoardMembers(accessor.transport, match.slots.board_id ?? '')
+  return members.map((member): [string, IndexEntry] => {
+    const filename = memberFilename(member)
+    return [
+      filename,
+      new IndexEntry({
+        id: pickString(member, 'id'),
+        name:
+          pickString(member, 'fullName') ||
+          pickString(member, 'username') ||
+          pickString(member, 'id'),
+        resourceType: 'trello/member',
+        remoteTime: '',
+        vfsName: filename,
+        size: toJsonBytes(normalizeMember(member)).byteLength,
+      }),
+    ]
+  })
+}
+
+async function listLabels(
+  accessor: TrelloAccessor,
+  match: ScopeMatch,
+  _entry: IndexEntry,
+): Promise<[string, IndexEntry][]> {
+  const labels = await listBoardLabels(accessor.transport, match.slots.board_id ?? '')
+  return labels.map((label): [string, IndexEntry] => {
+    const filename = labelFilename(label)
+    return [
+      filename,
+      new IndexEntry({
+        id: pickString(label, 'id'),
+        name: pickString(label, 'name') || pickString(label, 'color') || pickString(label, 'id'),
+        resourceType: 'trello/label',
+        remoteTime: '',
+        vfsName: filename,
+        size: toJsonBytes(normalizeLabel(label)).byteLength,
+      }),
+    ]
+  })
+}
+
+async function listLists(
+  accessor: TrelloAccessor,
+  match: ScopeMatch,
+  _entry: IndexEntry,
+): Promise<[string, IndexEntry][]> {
+  const lists = await listBoardLists(accessor.transport, match.slots.board_id ?? '')
+  return lists.map((lst): [string, IndexEntry] => {
+    const dirname = listDirname(lst)
+    // list.json's normalizer only uses fields the list listing already
+    // carries, so its exact size is free here.
+    return [
+      dirname,
+      new IndexEntry({
+        id: pickString(lst, 'id'),
+        name: pickString(lst, 'name') || pickString(lst, 'id'),
+        resourceType: 'trello/list',
+        remoteTime: '',
+        vfsName: dirname,
+        extra: { json_size: toJsonBytes(normalizeList(lst)).byteLength },
+      }),
+    ]
+  })
+}
+
+function listList(
+  _accessor: TrelloAccessor,
+  _match: ScopeMatch,
+  entry: IndexEntry,
+): Promise<[string, IndexEntry][]> {
+  return Promise.resolve<[string, IndexEntry][]>([
+    [
+      'list.json',
+      new IndexEntry({
+        id: entry.id,
+        name: 'list.json',
+        resourceType: 'trello/list_json',
+        vfsName: 'list.json',
+        size: extraSize(entry),
+      }),
+    ],
+    [
+      'cards',
+      new IndexEntry({
+        id: entry.id,
+        name: 'cards',
+        resourceType: 'trello/cards_dir',
+        vfsName: 'cards',
+      }),
+    ],
+  ])
+}
+
+async function listCards(
+  accessor: TrelloAccessor,
+  match: ScopeMatch,
+  _entry: IndexEntry,
+): Promise<[string, IndexEntry][]> {
+  const cards = await listListCards(accessor.transport, match.slots.list_id ?? '')
+  return cards.map((card): [string, IndexEntry] => {
+    const dirname = cardDirname(card)
+    // card.json's normalizer only uses fields the card listing already
+    // carries, so its exact size is free here.
+    return [
+      dirname,
+      new IndexEntry({
+        id: pickString(card, 'id'),
+        name: pickString(card, 'name') || pickString(card, 'id'),
+        resourceType: 'trello/card',
+        remoteTime: pickString(card, 'dateLastActivity'),
+        vfsName: dirname,
+        extra: { json_size: toJsonBytes(normalizeCard(card)).byteLength },
+      }),
+    ]
+  })
+}
+
+function listCard(
+  _accessor: TrelloAccessor,
+  _match: ScopeMatch,
+  entry: IndexEntry,
+): Promise<[string, IndexEntry][]> {
+  // comments.jsonl needs a per-card actions call and stays size-unknown.
+  return Promise.resolve<[string, IndexEntry][]>([
+    [
+      'card.json',
+      new IndexEntry({
+        id: entry.id,
+        name: 'card.json',
+        resourceType: 'trello/card_json',
+        vfsName: 'card.json',
+        size: extraSize(entry),
+        remoteTime: entry.remoteTime,
+      }),
+    ],
+    [
+      'comments.jsonl',
+      new IndexEntry({
+        id: entry.id,
+        name: 'comments.jsonl',
+        resourceType: 'trello/comments_jsonl',
+        vfsName: 'comments.jsonl',
+        remoteTime: entry.remoteTime,
+      }),
+    ],
+  ])
+}
+
+export const readdir = makeReaddir<TrelloAccessor>(detectScope, {
+  listers: {
+    workspaces: listWorkspacesDir,
+  },
+  entryListers: {
+    workspace: listWorkspace,
+    boards: listBoards,
+    board: listBoard,
+    members: listMembers,
+    labels: listLabels,
+    lists: listLists,
+    list: listList,
+    cards: listCards,
+    card: listCard,
+  },
+  staticRoot: ['workspaces'],
+})

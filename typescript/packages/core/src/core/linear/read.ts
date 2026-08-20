@@ -12,10 +12,12 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { mountPrefixOf } from '../../utils/key_prefix.ts'
 import type { LinearAccessor } from '../../accessor/linear.ts'
-import type { IndexCacheStore } from '../../cache/index/store.ts'
 import type { PathSpec } from '../../types.ts'
+import { enoent } from '../../utils/errors.ts'
+import { makeRead } from '../hierarchy/read.ts'
+import type { ScopeMatch } from '../hierarchy/scope.ts'
+import { jsonlBytesByCreatedAt } from '../render/json.ts'
 import {
   getIssue,
   listIssueComments,
@@ -25,7 +27,6 @@ import {
   listTeamMembers,
   listTeamProjects,
   listTeams,
-  type LinearTransport,
 } from './client.ts'
 import {
   buildProjectIssue,
@@ -39,127 +40,129 @@ import {
   toJsonBytes,
   type NormalizedProjectIssue,
 } from './normalize.ts'
-import { splitSuffixId } from './pathing.ts'
-import { stripSlash } from '../../utils/slash.ts'
-import { enoent } from '../../utils/errors.ts'
-import { jsonlBytesByCreatedAt } from '../render/json.ts'
+import { detectScope } from './scope.ts'
 
-export interface ReadFilter {
-  teamIds?: readonly string[]
+function pickString(record: Record<string, unknown>, key: string): string {
+  const value = record[key]
+  return typeof value === 'string' ? value : ''
 }
 
-export async function readBytes(
-  transport: LinearTransport,
-  path: string,
-  virtual: string,
-  filter: ReadFilter = {},
-): Promise<Uint8Array> {
-  const key = stripSlash(path)
-  const parts = key.split('/')
-
-  if (parts.length === 3 && parts[0] === 'teams' && parts[2] === 'team.json') {
-    const [, teamId] = splitSuffixId(parts[1] ?? '')
-    let teams = await listTeams(transport)
-    if (filter.teamIds !== undefined && filter.teamIds.length > 0) {
-      const allowed = new Set(filter.teamIds)
-      teams = teams.filter((t) => allowed.has(typeof t.id === 'string' ? t.id : ''))
-    }
-    for (const team of teams) {
-      if (team.id === teamId) return toJsonBytes(normalizeTeam(team))
-    }
-    throw enoent(virtual)
+async function filteredTeams(accessor: LinearAccessor): Promise<Record<string, unknown>[]> {
+  let teams = await listTeams(accessor.transport)
+  if (accessor.teamIds !== null && accessor.teamIds.length > 0) {
+    const allowed = new Set(accessor.teamIds)
+    teams = teams.filter((t) => allowed.has(pickString(t, 'id')))
   }
-
-  if (parts.length === 4 && parts[0] === 'teams' && parts[2] === 'members') {
-    const [, teamId] = splitSuffixId(parts[1] ?? '')
-    const [, userId] = splitSuffixId(parts[3] ?? '', '.json')
-    const users = await listTeamMembers(transport, teamId)
-    for (const user of users) {
-      if (user.id === userId) return toJsonBytes(normalizeUser(user))
-    }
-    throw enoent(virtual)
-  }
-
-  if (parts.length === 5 && parts[0] === 'teams' && parts[2] === 'issues') {
-    const [, issueId] = splitSuffixId(parts[3] ?? '')
-    const issue = await getIssue(transport, issueId)
-    if (parts[4] === 'issue.json') {
-      return toJsonBytes(normalizeIssue(issue))
-    }
-    if (parts[4] === 'comments.jsonl') {
-      const normIssue = normalizeIssue(issue)
-      const comments = await listIssueComments(transport, issueId)
-      const rows = comments.map((c) => normalizeComment(c, issueId, normIssue.issue_key))
-      return jsonlBytesByCreatedAt(rows)
-    }
-    throw enoent(virtual)
-  }
-
-  if (parts.length === 4 && parts[0] === 'teams' && parts[2] === 'projects') {
-    const [, teamId] = splitSuffixId(parts[1] ?? '')
-    const [, projectId] = splitSuffixId(parts[3] ?? '', '.json')
-    const teams = await listTeams(transport)
-    const team = teams.find((t) => t.id === teamId) ?? {}
-    const projects = await listTeamProjects(transport, teamId)
-    const teamIssues = await listTeamIssues(transport, teamId)
-    for (const project of projects) {
-      if (project.id === projectId) {
-        const projectIssues: NormalizedProjectIssue[] = []
-        for (const issue of teamIssues) {
-          const projField = issue.project
-          const projObj =
-            projField !== null && typeof projField === 'object'
-              ? (projField as Record<string, unknown>)
-              : {}
-          if (projObj.id !== projectId) continue
-          projectIssues.push(buildProjectIssue(issue))
-        }
-        return toJsonBytes(
-          normalizeProject(project, {
-            teamId,
-            teamKey: typeof team.key === 'string' ? team.key : null,
-            teamName: typeof team.name === 'string' ? team.name : null,
-            issues: projectIssues,
-          }),
-        )
-      }
-    }
-    throw enoent(virtual)
-  }
-
-  if (parts.length === 4 && parts[0] === 'teams' && parts[2] === 'cycles') {
-    const [, teamId] = splitSuffixId(parts[1] ?? '')
-    const [, cycleId] = splitSuffixId(parts[3] ?? '', '.json')
-    const cycles = await listTeamCycles(transport, teamId)
-    for (const cycle of cycles) {
-      if (cycle.id === cycleId) return toJsonBytes(normalizeCycle(cycle, teamId))
-    }
-    throw enoent(virtual)
-  }
-
-  if (parts.length === 4 && parts[0] === 'teams' && parts[2] === 'documents') {
-    const [, teamId] = splitSuffixId(parts[1] ?? '')
-    const [, documentId] = splitSuffixId(parts[3] ?? '', '.json')
-    const documents = await listTeamDocuments(transport, teamId)
-    for (const document of documents) {
-      if (document.id === documentId) return toJsonBytes(normalizeDocument(document))
-    }
-    throw enoent(virtual)
-  }
-
-  throw enoent(virtual)
+  return teams
 }
 
-export async function read(
+async function readTeamJson(
   accessor: LinearAccessor,
+  match: ScopeMatch,
   path: PathSpec,
-  _index?: IndexCacheStore,
-  filter: ReadFilter = {},
 ): Promise<Uint8Array> {
-  const prefix = mountPrefixOf(path.virtual, path.resourcePath)
-  let p = path.virtual
-  if (prefix !== '' && p.startsWith(prefix)) {
-    p = p.slice(prefix.length) || '/'
+  const teamId = match.slots.team_id ?? ''
+  for (const team of await filteredTeams(accessor)) {
+    if (team.id === teamId) return toJsonBytes(normalizeTeam(team))
   }
-  return readBytes(accessor.transport, p, path.virtual, filter)
+  throw enoent(path.virtual)
 }
+
+async function readMember(
+  accessor: LinearAccessor,
+  match: ScopeMatch,
+  path: PathSpec,
+): Promise<Uint8Array> {
+  const memberId = match.slots.member_id ?? ''
+  const users = await listTeamMembers(accessor.transport, match.slots.team_id ?? '')
+  for (const user of users) {
+    if (user.id === memberId) return toJsonBytes(normalizeUser(user))
+  }
+  throw enoent(path.virtual)
+}
+
+async function readIssueJson(accessor: LinearAccessor, match: ScopeMatch): Promise<Uint8Array> {
+  const issue = await getIssue(accessor.transport, match.slots.issue_id ?? '')
+  return toJsonBytes(normalizeIssue(issue))
+}
+
+async function readComments(accessor: LinearAccessor, match: ScopeMatch): Promise<Uint8Array> {
+  const issueId = match.slots.issue_id ?? ''
+  const issue = await getIssue(accessor.transport, issueId)
+  const normIssue = normalizeIssue(issue)
+  const comments = await listIssueComments(accessor.transport, issueId)
+  const rows = comments.map((c) => normalizeComment(c, issueId, normIssue.issue_key))
+  return jsonlBytesByCreatedAt(rows)
+}
+
+async function readProject(
+  accessor: LinearAccessor,
+  match: ScopeMatch,
+  path: PathSpec,
+): Promise<Uint8Array> {
+  const teamId = match.slots.team_id ?? ''
+  const projectId = match.slots.project_id ?? ''
+  const teams = await listTeams(accessor.transport)
+  const team = teams.find((t) => t.id === teamId) ?? {}
+  const projects = await listTeamProjects(accessor.transport, teamId)
+  const teamIssues = await listTeamIssues(accessor.transport, teamId)
+  for (const project of projects) {
+    if (project.id !== projectId) continue
+    const projectIssues: NormalizedProjectIssue[] = []
+    for (const issue of teamIssues) {
+      const projField = issue.project
+      const projObj =
+        projField !== null && typeof projField === 'object'
+          ? (projField as Record<string, unknown>)
+          : {}
+      if (projObj.id !== projectId) continue
+      projectIssues.push(buildProjectIssue(issue))
+    }
+    return toJsonBytes(
+      normalizeProject(project, {
+        teamId,
+        teamKey: pickString(team, 'key') || null,
+        teamName: pickString(team, 'name') || null,
+        issues: projectIssues,
+      }),
+    )
+  }
+  throw enoent(path.virtual)
+}
+
+async function readCycle(
+  accessor: LinearAccessor,
+  match: ScopeMatch,
+  path: PathSpec,
+): Promise<Uint8Array> {
+  const teamId = match.slots.team_id ?? ''
+  const cycles = await listTeamCycles(accessor.transport, teamId)
+  for (const cycle of cycles) {
+    if (cycle.id === match.slots.cycle_id) return toJsonBytes(normalizeCycle(cycle, teamId))
+  }
+  throw enoent(path.virtual)
+}
+
+async function readDocument(
+  accessor: LinearAccessor,
+  match: ScopeMatch,
+  path: PathSpec,
+): Promise<Uint8Array> {
+  const documents = await listTeamDocuments(accessor.transport, match.slots.team_id ?? '')
+  for (const document of documents) {
+    if (document.id === match.slots.document_id) {
+      return toJsonBytes(normalizeDocument(document))
+    }
+  }
+  throw enoent(path.virtual)
+}
+
+export const read = makeRead<LinearAccessor>(detectScope, {
+  team_json: readTeamJson,
+  member: readMember,
+  issue_json: readIssueJson,
+  comments_jsonl: readComments,
+  project: readProject,
+  cycle: readCycle,
+  document: readDocument,
+})

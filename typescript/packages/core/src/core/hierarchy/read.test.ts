@@ -57,8 +57,20 @@ describe('hierarchy makeRead', () => {
     expect(new TextDecoder().decode(out)).toBe('red:a')
   })
 
+  it('answers directories that exist by construction with EISDIR', async () => {
+    // The root and a probed=false scope provably exist, so reading one
+    // as a file is EISDIR rather than absent.
+    for (const path of ['/', '/rooms']) {
+      await expect(READ(new FakeAccessor(), spec(path))).rejects.toMatchObject({
+        code: 'EISDIR',
+      })
+    }
+  })
+
   it('answers everything else with ENOENT', async () => {
-    for (const path of ['/', '/rooms', '/rooms/red', '/rooms/.red/a.json', '/halls']) {
+    // A probed directory shape is no proof the node exists, so a read
+    // there reports absence, matching GNU's wording for a missing name.
+    for (const path of ['/rooms/red', '/rooms/.red/a.json', '/halls']) {
       await expect(READ(new FakeAccessor(), spec(path))).rejects.toMatchObject({
         code: 'ENOENT',
       })

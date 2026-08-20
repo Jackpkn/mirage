@@ -17,10 +17,12 @@ from mirage.cache.index import IndexEntry
 from mirage.core.gdocs.readdir import readdir
 from mirage.core.gdocs.scope import detect_scope
 from mirage.core.google.drive import delete_file
+from mirage.core.hierarchy.scope import ScopeMatch
 from mirage.core.hierarchy.unlink import make_unlink
 
 
-async def _delete(accessor: GDocsAccessor, entry: IndexEntry) -> None:
+async def _delete(accessor: GDocsAccessor, match: ScopeMatch,
+                  entry: IndexEntry) -> None:
     await delete_file(accessor.token_manager, entry.id)
 
 

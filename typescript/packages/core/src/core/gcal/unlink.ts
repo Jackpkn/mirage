@@ -13,41 +13,32 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import type { GCalAccessor } from '../../accessor/gcal.ts'
-import { invalidateAfterUnlink } from '../../cache/context.ts'
-import type { IndexCacheStore } from '../../cache/index/store.ts'
-import { parseEventFilename } from '../../resource/gcal/event_entry.ts'
-import type { PathSpec } from '../../types.ts'
-import { eacces, eisdir, enoent } from '../../utils/errors.ts'
+import type { IndexEntry } from '../../cache/index/config.ts'
+import { eacces, enoent } from '../../utils/errors.ts'
+import type { ScopeMatch } from '../hierarchy/scope.ts'
+import { makeUnlink } from '../hierarchy/unlink.ts'
 import { deleteEvent } from './client.ts'
-import { calendarIndex, normalize } from './readdir.ts'
+import { calendarIndex, readdir } from './readdir.ts'
+import { detectScope } from './scope.ts'
 
 const WRITABLE_ROLES = new Set(['owner', 'writer'])
 
 /**
- * Delete the event a path names.
+ * Delete the event the entry names, on the slotted calendar.
  *
- * The path carries the event id, so no read is needed first: rm resolves
- * through the name the listing already produced.
+ * The entry already carries the event id (rm resolves through the name the
+ * listing produced), so only the calendar's id and write role are looked up
+ * here.
  */
-export async function unlink(
-  accessor: GCalAccessor,
-  path: PathSpec,
-  index?: IndexCacheStore,
-): Promise<void> {
-  const [, key, virtualKey] = normalize(path)
-  const parts = key === '' ? [] : key.split('/')
-  const [calName = '', , file = ''] = parts
-  if (parts.length !== 3) throw eisdir(path.virtual)
+async function del(accessor: GCalAccessor, match: ScopeMatch, entry: IndexEntry): Promise<void> {
   const calendars = await calendarIndex(accessor)
-  const entry = calendars.get(calName)
-  if (entry === undefined) throw enoent(path.virtual)
-  const role = entry.accessRole
-  if (typeof role !== 'string' || !WRITABLE_ROLES.has(role)) throw eacces(path.virtual)
-  const calId = entry.id
-  if (typeof calId !== 'string') throw enoent(path.virtual)
-  const [eventId] = parseEventFilename(file)
-  await deleteEvent(accessor.tokenManager, calId, eventId)
-  const parentDir = virtualKey.slice(0, virtualKey.lastIndexOf('/')) || '/'
-  if (index !== undefined) await index.invalidateDir(parentDir)
-  await invalidateAfterUnlink(virtualKey)
+  const calendar = calendars.get(match.slots.calendar ?? '')
+  if (calendar === undefined) throw enoent(match.resourcePath)
+  const role = calendar.accessRole
+  if (typeof role !== 'string' || !WRITABLE_ROLES.has(role)) throw eacces(match.resourcePath)
+  const calId = calendar.id
+  if (typeof calId !== 'string') throw enoent(match.resourcePath)
+  await deleteEvent(accessor.tokenManager, calId, entry.id)
 }
+
+export const unlink = makeUnlink(detectScope, readdir, { deleters: { event: del } })

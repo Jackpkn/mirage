@@ -22,7 +22,8 @@ from mirage.cache.index.ram import RAMIndexCacheStore
 from mirage.core.linear import read as linear_read
 from mirage.core.linear import readdir as linear_readdir
 from mirage.core.linear.config import LinearConfig
-from mirage.core.linear.read import read_bytes
+from mirage.core.linear.normalize import normalize_team, to_json_bytes
+from mirage.core.linear.read import read
 from mirage.core.linear.readdir import readdir
 from mirage.core.linear.stat import stat
 from mirage.types import FileType, PathSpec
@@ -140,28 +141,18 @@ async def test_stat_comments_jsonl(accessor, index):
 
 
 @pytest.mark.asyncio
-async def test_stat_team_json_reports_rendered_size(accessor, index):
-    await index.put(
-        "/teams/ENG__Engineering__TEAM1",
-        IndexEntry(
-            id="TEAM1",
-            name="Engineering",
-            resource_type="linear/team",
-            remote_time="2026-04-05T00:00:00Z",
-            vfs_name="ENG__Engineering__TEAM1",
-            extra={
-                "team_key": "ENG",
-                "team_name": "Engineering",
-                "team_json_size": 123,
-            },
-        ),
-    )
+async def test_stat_team_json_reports_rendered_size(accessor, index,
+                                                    monkeypatch):
+    # The team-dir listing computes team.json's size from the team object
+    # the find already fetched, so stat answers the rendered byte length.
+    monkeypatch.setattr(linear_readdir, "list_teams",
+                        AsyncMock(return_value=[_TEAM]))
     result = await stat(
         accessor,
         PathSpec.from_str_path("/teams/ENG__Engineering__TEAM1/team.json"),
         index)
     assert result.type == FileType.JSON
-    assert result.size == 123
+    assert result.size == len(to_json_bytes(normalize_team(_TEAM)))
     assert result.modified == "2026-04-05T00:00:00Z"
     assert result.extra["team_id"] == "TEAM1"
 
@@ -372,12 +363,13 @@ async def test_stat_size_matches_read_for_every_file(accessor, index,
     }
     for module in (linear_readdir, linear_read):
         for name, fake in fakes.items():
-            monkeypatch.setattr(module, name, fake)
+            if hasattr(module, name):
+                monkeypatch.setattr(module, name, fake)
     files = await _walk_files(accessor, index)
     assert len(files) == 9
     # Sizing never refetches an issue: the issues listing already carries the
     # payloads, so walking the whole tree costs no per-file issue fetch.
     fakes["get_issue"].assert_not_awaited()
     for path, entry_stat in files:
-        body = await read_bytes(accessor.config, path, path)
+        body = await read(accessor, PathSpec.from_str_path(path), index)
         assert entry_stat.size == len(body), path

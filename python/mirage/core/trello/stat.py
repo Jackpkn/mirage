@@ -12,202 +12,25 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import logging
+from mirage.core.hierarchy.stat import entry_stat, make_stat
+from mirage.core.trello.readdir import readdir
+from mirage.core.trello.scope import detect_scope
+from mirage.types import FileType
 
-from mirage.accessor.trello import TrelloAccessor
-from mirage.cache.index import NULL_INDEX, IndexCacheStore
-from mirage.core.trello.readdir import readdir as _readdir
-from mirage.types import FileStat, FileType, PathSpec
-from mirage.utils.errors import enoent
-from mirage.utils.key_prefix import mount_key, mount_prefix_of
-
-logger = logging.getLogger(__name__)
-
-VIRTUAL_DIRS = {"", "workspaces"}
-
-
-async def _lookup_with_fallback(
-    accessor: TrelloAccessor,
-    idx_key: str,
-    prefix: str,
-    index: IndexCacheStore = NULL_INDEX,
-):
-    result = await index.get(idx_key)
-    if result.entry is not None:
-        return result
-    parent_idx = idx_key.rsplit("/", 1)[0] or "/"
-    parent_path = (prefix + parent_idx) if prefix else parent_idx
-    try:
-        await _readdir(
-            accessor,
-            PathSpec(virtual=parent_path,
-                     directory=parent_path,
-                     resource_path=mount_key(parent_path, prefix)),
-            index=index,
-        )
-    except FileNotFoundError as exc:
-        logger.debug("stat populate failed for %s: %s", idx_key, exc)
-    return await index.get(idx_key)
-
-
-async def stat(
-    accessor: TrelloAccessor,
-    path: PathSpec,
-    index: IndexCacheStore = NULL_INDEX,
-) -> FileStat:
-    virtual = path.virtual
-    prefix = mount_prefix_of(path.virtual, path.resource_path)
-    key = path.resource_path
-    idx_key = "/" + key if key else "/"
-
-    if key in VIRTUAL_DIRS:
-        return FileStat(name=key if key else "/", type=FileType.DIRECTORY)
-
-    parts = key.split("/")
-
-    if len(parts) == 2 and parts[0] == "workspaces":
-        result = await _lookup_with_fallback(accessor, idx_key, prefix, index)
-        if result.entry is None:
-            raise enoent(virtual)
-        return FileStat(
-            name=result.entry.vfs_name,
-            type=FileType.DIRECTORY,
-            modified=result.entry.remote_time or None,
-            extra={"workspace_id": result.entry.id},
-        )
-
-    if len(parts) == 3 and parts[0] == "workspaces":
-        if parts[2] == "workspace.json":
-            result = await _lookup_with_fallback(accessor, idx_key, prefix,
-                                                 index)
-            if result.entry is None:
-                raise enoent(virtual)
-            return FileStat(
-                name="workspace.json",
-                type=FileType.JSON,
-                size=result.entry.size,
-                extra={"workspace_id": result.entry.id},
-            )
-        if parts[2] == "boards":
-            return FileStat(name="boards", type=FileType.DIRECTORY)
-
-    if len(parts) == 4 and parts[0] == "workspaces" and parts[2] == "boards":
-        result = await _lookup_with_fallback(accessor, idx_key, prefix, index)
-        if result.entry is None:
-            raise enoent(virtual)
-        return FileStat(
-            name=result.entry.vfs_name,
-            type=FileType.DIRECTORY,
-            modified=result.entry.remote_time or None,
-            extra={"board_id": result.entry.id},
-        )
-
-    if (len(parts) == 5 and parts[0] == "workspaces" and parts[2] == "boards"):
-        if parts[4] == "board.json":
-            result = await _lookup_with_fallback(accessor, idx_key, prefix,
-                                                 index)
-            if result.entry is None:
-                raise enoent(virtual)
-            return FileStat(
-                name="board.json",
-                type=FileType.JSON,
-                size=result.entry.size,
-                modified=result.entry.remote_time or None,
-                extra={"board_id": result.entry.id},
-            )
-        if parts[4] in {"members", "labels", "lists"}:
-            return FileStat(name=parts[4], type=FileType.DIRECTORY)
-
-    if (len(parts) == 6 and parts[0] == "workspaces" and parts[2] == "boards"
-            and parts[4] == "members"):
-        result = await _lookup_with_fallback(accessor, idx_key, prefix, index)
-        if result.entry is None:
-            raise enoent(virtual)
-        return FileStat(
-            name=result.entry.vfs_name,
-            type=FileType.JSON,
-            size=result.entry.size,
-            modified=result.entry.remote_time or None,
-            extra={"member_id": result.entry.id},
-        )
-
-    if (len(parts) == 6 and parts[0] == "workspaces" and parts[2] == "boards"
-            and parts[4] == "labels"):
-        result = await _lookup_with_fallback(accessor, idx_key, prefix, index)
-        if result.entry is None:
-            raise enoent(virtual)
-        return FileStat(
-            name=result.entry.vfs_name,
-            type=FileType.JSON,
-            size=result.entry.size,
-            modified=result.entry.remote_time or None,
-            extra={"label_id": result.entry.id},
-        )
-
-    if (len(parts) == 6 and parts[0] == "workspaces" and parts[2] == "boards"
-            and parts[4] == "lists"):
-        result = await _lookup_with_fallback(accessor, idx_key, prefix, index)
-        if result.entry is None:
-            raise enoent(virtual)
-        return FileStat(
-            name=result.entry.vfs_name,
-            type=FileType.DIRECTORY,
-            modified=result.entry.remote_time or None,
-            extra={"list_id": result.entry.id},
-        )
-
-    if (len(parts) == 7 and parts[0] == "workspaces" and parts[2] == "boards"
-            and parts[4] == "lists"):
-        if parts[6] == "list.json":
-            result = await _lookup_with_fallback(accessor, idx_key, prefix,
-                                                 index)
-            if result.entry is None:
-                raise enoent(virtual)
-            return FileStat(
-                name="list.json",
-                type=FileType.JSON,
-                size=result.entry.size,
-                extra={"list_id": result.entry.id},
-            )
-        if parts[6] == "cards":
-            return FileStat(name="cards", type=FileType.DIRECTORY)
-
-    if (len(parts) == 8 and parts[0] == "workspaces" and parts[2] == "boards"
-            and parts[4] == "lists" and parts[6] == "cards"):
-        result = await _lookup_with_fallback(accessor, idx_key, prefix, index)
-        if result.entry is None:
-            raise enoent(virtual)
-        return FileStat(
-            name=result.entry.vfs_name,
-            type=FileType.DIRECTORY,
-            modified=result.entry.remote_time or None,
-            extra={"card_id": result.entry.id},
-        )
-
-    if (len(parts) == 9 and parts[0] == "workspaces" and parts[2] == "boards"
-            and parts[4] == "lists" and parts[6] == "cards"):
-        if parts[8] == "card.json":
-            result = await _lookup_with_fallback(accessor, idx_key, prefix,
-                                                 index)
-            if result.entry is None:
-                raise enoent(virtual)
-            return FileStat(
-                name="card.json",
-                type=FileType.JSON,
-                size=result.entry.size,
-                modified=result.entry.remote_time or None,
-                extra={"card_id": result.entry.id},
-            )
-        if parts[8] == "comments.jsonl":
-            result = await _lookup_with_fallback(accessor, idx_key, prefix,
-                                                 index)
-            if result.entry is None:
-                raise enoent(virtual)
-            return FileStat(
-                name="comments.jsonl",
-                type=FileType.TEXT,
-                modified=result.entry.remote_time or None,
-                extra={"card_id": result.entry.id},
-            )
-
-    raise enoent(virtual)
+stat = make_stat(
+    detect_scope,
+    readdir,
+    entry_stats={
+        "workspace": entry_stat("workspace_id", FileType.DIRECTORY),
+        "workspace_json": entry_stat("workspace_id", FileType.JSON),
+        "board": entry_stat("board_id", FileType.DIRECTORY),
+        "board_json": entry_stat("board_id", FileType.JSON),
+        "member": entry_stat("member_id", FileType.JSON),
+        "label": entry_stat("label_id", FileType.JSON),
+        "list": entry_stat("list_id", FileType.DIRECTORY),
+        "list_json": entry_stat("list_id", FileType.JSON),
+        "card": entry_stat("card_id", FileType.DIRECTORY),
+        "card_json": entry_stat("card_id", FileType.JSON),
+        "comments_jsonl": entry_stat("card_id", FileType.TEXT),
+    },
+)

@@ -16,7 +16,7 @@ import { mountKey } from '../../utils/key_prefix.ts'
 import { describe, expect, it, vi } from 'vitest'
 import { FileStat, FileType, PathSpec } from '../../types.ts'
 import { stripSlash } from '../../utils/slash.ts'
-import type { NotionStatAccessor } from './stat.ts'
+import type { NotionAccessor } from '../../accessor/notion.ts'
 
 const DIRS = new Set(['/db', '/db/sub'])
 const FILES: Record<string, number> = {
@@ -54,7 +54,7 @@ const { find } = await import('./find.ts')
 
 const accessor = {
   transport: { callTool: () => Promise.reject(new Error('unused')) },
-} as NotionStatAccessor
+} as NotionAccessor
 
 function root(): PathSpec {
   return new PathSpec({

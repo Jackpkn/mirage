@@ -15,8 +15,25 @@
 import { Accessor } from './base.ts'
 import type { TrelloTransport } from '../core/trello/client.ts'
 
+/**
+ * The mount's handle: the transport plus the configured visibility filter.
+ * The filter lives here rather than being threaded per call because the
+ * python twin reads it off `accessor.config`, and a workspace or board
+ * outside it must be invisible on every surface, not only on the listings
+ * that remembered to pass it.
+ */
 export class TrelloAccessor extends Accessor {
-  constructor(public readonly transport: TrelloTransport) {
+  readonly transport: TrelloTransport
+  readonly workspaceId: string | null
+  readonly boardIds: readonly string[] | null
+
+  constructor(
+    transport: TrelloTransport,
+    options: { workspaceId?: string; boardIds?: readonly string[] } = {},
+  ) {
     super()
+    this.transport = transport
+    this.workspaceId = options.workspaceId ?? null
+    this.boardIds = options.boardIds ?? null
   }
 }

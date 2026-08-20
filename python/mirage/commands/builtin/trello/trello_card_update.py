@@ -51,7 +51,7 @@ async def trello_card_update(
             or file_operand(fl, "desc_file") is not None
             or opts.stdin is not None):
         desc = await resolve_text_input(
-            config,
+            accessor,
             inline_text=fl.as_str("desc"),
             file_path=file_operand(fl, "desc_file"),
             stdin=opts.stdin,

@@ -16,10 +16,13 @@ import asyncio
 
 import pytest
 
+from mirage.cache.index import IndexEntry
 from mirage.cache.index.ram import RAMIndexCacheStore
 from mirage.core.hierarchy.readdir import make_readdir
-from tests.core.hierarchy.conftest import (detect_scope, list_notes,
-                                           list_rooms, room_guard, spec)
+from mirage.core.hierarchy.scope import ScopeMatch
+from tests.core.hierarchy.conftest import (FakeAccessor, detect_scope,
+                                           list_notes, list_rooms, room_guard,
+                                           spec)
 
 READDIR = make_readdir(
     detect_scope,
@@ -88,3 +91,55 @@ def test_leaf_error_can_be_enotdir(accessor):
                            leaf_error="enotdir")
     with pytest.raises(NotADirectoryError):
         asyncio.run(readdir(accessor, spec("/rooms/red/a.json")))
+
+
+async def _entry_notes(accessor: FakeAccessor, match: ScopeMatch,
+                       entry: IndexEntry) -> list[tuple[str, IndexEntry]]:
+    accessor.calls.append(f"entry-notes:{entry.id}")
+    return [("note.json",
+             IndexEntry(id=entry.id,
+                        name="note.json",
+                        resource_type="fake/note",
+                        vfs_name="note.json",
+                        size=entry.extra.get("json_size")))]
+
+
+ENTRY_READDIR = make_readdir(
+    detect_scope,
+    listers={"rooms": list_rooms},
+    entry_listers={"room": _entry_notes},
+    static_root=("rooms", ),
+)
+
+
+def test_entry_lister_resolves_through_the_parent_listing(accessor):
+    # The kit warms the parent listing once and hands the directory's own
+    # entry to the lister; the lister never re-fetches its ancestors.
+    index = RAMIndexCacheStore()
+    out = asyncio.run(ENTRY_READDIR(accessor, spec("/rooms/red"), index=index))
+    assert out == ["/h/rooms/red/note.json"]
+    assert accessor.calls == ["rooms", "entry-notes:red"]
+    asyncio.run(ENTRY_READDIR(accessor, spec("/rooms/blue"), index=index))
+    # The second room resolves from the already-cached rooms listing.
+    assert accessor.calls == ["rooms", "entry-notes:red", "entry-notes:blue"]
+
+
+def test_entry_lister_unlisted_container_is_enoent(accessor):
+    with pytest.raises(FileNotFoundError):
+        asyncio.run(ENTRY_READDIR(accessor, spec("/rooms/ghost")))
+    assert accessor.calls == ["rooms"]
+
+
+def test_entry_lister_works_without_an_index(accessor):
+    # A caller with no cache gets a call-local one, so the parent warm
+    # still feeds the entry resolution.
+    out = asyncio.run(ENTRY_READDIR(accessor, spec("/rooms/red")))
+    assert out == ["/h/rooms/red/note.json"]
+
+
+def test_a_kind_in_both_lister_tables_fails_at_build():
+    with pytest.raises(ValueError):
+        make_readdir(detect_scope,
+                     listers={"room": list_notes},
+                     entry_listers={"room": _entry_notes},
+                     static_root=("rooms", ))

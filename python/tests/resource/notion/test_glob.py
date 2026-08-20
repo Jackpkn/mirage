@@ -48,12 +48,15 @@ def glob_spec(virtual: str) -> PathSpec:
 
 @pytest_asyncio.fixture
 async def index():
+    # The index is keyed by the full virtual path (the kit standard, and
+    # what invalidation walks), not the mount-relative key the old
+    # bespoke readdir used.
     store = RAMIndexCacheStore()
-    await store.set_dir("/pages", [
+    await store.set_dir("/notion/pages", [
         ("Demo_page__uuid1", page_entry("Demo_page__uuid1")),
         ("Roadmap__uuid2", page_entry("Roadmap__uuid2")),
     ])
-    await store.set_dir("/pages/Demo_page__uuid1", [
+    await store.set_dir("/notion/pages/Demo_page__uuid1", [
         ("page.json", file_entry("page.json")),
         ("page.md", file_entry("page.md")),
     ])

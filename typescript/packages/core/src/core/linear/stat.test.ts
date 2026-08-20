@@ -20,7 +20,7 @@ import { RAMIndexCacheStore } from '../../cache/index/ram.ts'
 import type { FileStat } from '../../types.ts'
 import { FileType, PathSpec } from '../../types.ts'
 import type { LinearTransport } from './client.ts'
-import { readBytes } from './read.ts'
+import { read } from './read.ts'
 import { readdir } from './readdir.ts'
 import { stat } from './stat.ts'
 
@@ -246,7 +246,7 @@ describe('linear size push-down', () => {
     // payloads, so walking the whole tree costs no per-file issue fetch.
     expect(transport.issueFetches).toBe(0)
     for (const [child, s] of files) {
-      const body = await readBytes(transport, child, child)
+      const body = await read(accessor, spec(child), idx)
       expect(s.size, child).toBe(body.length)
     }
   })

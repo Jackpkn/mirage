@@ -33,10 +33,13 @@ async def test_unlink_deletes_the_event_the_name_carries(api, accessor, index):
     assert api.deleted == [("integ@example.com", "aaaa1")]
 
 
-async def test_unlink_needs_no_read_first(api, accessor, index):
-    # The id comes off the filename, so deleting costs one API call.
+async def test_unlink_resolves_through_the_day_listing(api, accessor, index):
+    # The kit resolves the entry through the parent day's listing before
+    # deleting, so an unlisted name is refused without a destructive call.
     await unlink(accessor, spec(EVENT), index)
-    assert api.listed == []
+    assert len(api.listed) == 1
+    assert api.listed[0][0] == "integ@example.com"
+    assert api.listed[0][1].startswith("2026-08-11")
 
 
 async def test_unlink_refuses_a_directory(api, accessor, index):

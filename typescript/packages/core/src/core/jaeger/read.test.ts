@@ -160,13 +160,14 @@ describe('jaeger read', () => {
     ).rejects.toBeInstanceOf(JaegerApiError)
   })
 
-  it('raises ENOENT for an unknown service and for a directory', async () => {
+  it('raises ENOENT for an unknown service and EISDIR for a directory', async () => {
     const t = new RecordingTransport(SERVICES)
     await expect(
       read(accessor(t), spec('/services/nope/operations.json'), new RAMIndexCacheStore()),
     ).rejects.toMatchObject({ code: 'ENOENT' })
+    // A matched directory kind is a real node being read as a file.
     await expect(
       read(accessor(t), spec('/services'), new RAMIndexCacheStore()),
-    ).rejects.toMatchObject({ code: 'ENOENT' })
+    ).rejects.toMatchObject({ code: 'EISDIR' })
   })
 })

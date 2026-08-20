@@ -67,3 +67,14 @@ async def test_stat_page_returns_modified_from_index():
     spec = _spec(f"/notion/pages/Top1__{TOP_ID}", "/notion")
     s = await stat(_ACCESSOR, spec, index)
     assert s.modified == "2026-01-02T00:00:00.000Z"
+
+
+@pytest.mark.asyncio
+async def test_stat_without_an_index_still_resolves_the_page():
+    # A caller with no cache gets a call-local one, so the entry
+    # resolution can read the parent listing it just warmed instead of
+    # reporting every existing page as absent.
+    spec = _spec(f"/notion/pages/Top1__{TOP_ID}", "/notion")
+    s = await stat(_ACCESSOR, spec)
+    assert s.modified == "2026-01-02T00:00:00.000Z"
+    assert s.extra["page_id"] == TOP_ID

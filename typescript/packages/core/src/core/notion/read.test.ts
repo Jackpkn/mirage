@@ -16,7 +16,8 @@ import { mountKey } from '../../utils/key_prefix.ts'
 import { describe, expect, it } from 'vitest'
 import { PathSpec } from '../../types.ts'
 import type { NotionTransport } from './client.ts'
-import { read, type NotionReadAccessor } from './read.ts'
+import type { NotionAccessor } from '../../accessor/notion.ts'
+import { read } from './read.ts'
 
 class FakeTransport implements NotionTransport {
   public readonly invocations: { name: string; args: Record<string, unknown> }[] = []
@@ -41,7 +42,7 @@ class FakeTransport implements NotionTransport {
   }
 }
 
-function makeAccessor(transport: NotionTransport): NotionReadAccessor {
+function makeAccessor(transport: NotionTransport): NotionAccessor {
   return { transport }
 }
 
@@ -181,10 +182,16 @@ describe('notion read', () => {
 
   it('throws ENOENT when the path does not end in page.json', async () => {
     const transport = new FakeTransport()
+    // A probed directory shape is no proof the node exists, so a page
+    // dir read reports absence; only the roots, which exist by
+    // construction, answer EISDIR.
+    await expect(read(makeAccessor(transport), spec('/pages'), undefined)).rejects.toMatchObject({
+      code: 'EISDIR',
+    })
     const cases = [
       `/pages/My_Page__${PAGE_ID_DASHED}/`,
-      `/pages/My_Page__${PAGE_ID_DASHED}/foo.txt`,
       `/pages/My_Page__${PAGE_ID_DASHED}/SubPage__${CHILD_ID_DASHED}/`,
+      `/pages/My_Page__${PAGE_ID_DASHED}/foo.txt`,
     ]
     for (const original of cases) {
       let captured: unknown = null

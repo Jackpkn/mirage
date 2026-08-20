@@ -194,6 +194,8 @@ async def test_read_rows_empty_returns_empty_bytes():
 
 @pytest.mark.asyncio
 async def test_read_invalid_path_raises():
+    # A probed directory shape is no proof the node exists, so the read
+    # reports absence rather than EISDIR.
     accessor = _accessor()
     with pytest.raises(FileNotFoundError):
         await read(

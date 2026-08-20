@@ -33,6 +33,15 @@ git -C "$DEST" init -q -b main
 git -C "$DEST" config user.name "$GIT_AUTHOR_NAME"
 git -C "$DEST" config user.email "$GIT_AUTHOR_EMAIL"
 
+# Recent git detaches `maintenance run --auto` after a commit, and the
+# stray process creates and removes .git/objects/maintenance.lock after
+# the commit command has already returned. Tests mirror this tree file by
+# file, so a path enumerated one moment is gone the next and the copy
+# dies with ENOENT. The fixture never needs maintenance; turn both the
+# maintenance and the legacy gc trigger off for every later invocation.
+git -C "$DEST" config maintenance.auto false
+git -C "$DEST" config gc.auto 0
+
 commit() {
   local when="$1" message="$2"
   GIT_AUTHOR_DATE="$when" GIT_COMMITTER_DATE="$when" \
