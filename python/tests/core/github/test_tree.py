@@ -21,8 +21,8 @@ from mirage.accessor.github import GitHubAccessor
 from mirage.cache.index import NULL_INDEX
 from mirage.cache.index.ram import RAMIndexCacheStore
 from mirage.core.github.config import GitHubConfig
-from mirage.core.github.tree import (ensure_live_index, fetch_dir_tree,
-                                     fetch_tree, index_rows)
+from mirage.core.github.tree import (ensure_live_index, ensure_tree,
+                                     fetch_dir_tree, fetch_tree, index_rows)
 from mirage.core.github.tree_entry import TreeEntry
 
 
@@ -251,3 +251,35 @@ def test_index_rows_root_mount_keeps_bare_paths():
 def test_index_rows_gives_an_empty_repo_a_root_row():
     _entries, children = index_rows({}, "/gh")
     assert children == {"/gh": []}
+
+
+@pytest.mark.asyncio
+@patch("mirage.core.github.repo.github_get")
+@patch("mirage.core.github.tree.github_get")
+async def test_an_unpinned_mount_reads_the_repos_default_branch(
+        mock_tree_get, mock_repo_get, config):
+    """An unresolved ref must be settled before the tree is fetched.
+
+    ``accessor.ref`` is None until something resolves it, so reading it
+    straight sends `ref=None` to the one request the whole mount is built
+    on. This pins the resolution, not the config default -- the mount that
+    supplies the default lives a layer up, in
+    tests/resource/github/test_lazy_hydration.py.
+    """
+    mock_repo_get.return_value = {"default_branch": "master"}
+    mock_tree_get.return_value = {"truncated": False, "tree": []}
+    accessor = GitHubAccessor(config, "acme", "proj")
+    await ensure_tree(accessor)
+    assert mock_tree_get.await_args.kwargs["ref"] == "master"
+
+
+@pytest.mark.asyncio
+@patch("mirage.core.github.repo.github_get")
+@patch("mirage.core.github.tree.github_get")
+async def test_a_pinned_mount_reads_its_ref_and_never_asks_for_the_branch(
+        mock_tree_get, mock_repo_get, config):
+    mock_tree_get.return_value = {"truncated": False, "tree": []}
+    accessor = GitHubAccessor(config, "acme", "proj", "release-2")
+    await ensure_tree(accessor)
+    assert mock_tree_get.await_args.kwargs["ref"] == "release-2"
+    mock_repo_get.assert_not_awaited()

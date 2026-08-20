@@ -14,6 +14,7 @@
 
 import { redactConfigWithSchema, secretSchema, z } from '@struktoai/mirage-core/resource/secrets'
 import type { ConfigOf, RedactedConfig } from '@struktoai/mirage-core/resource/secrets'
+import { normalizeFields } from '@struktoai/mirage-core/utils/normalize'
 
 type HeaderProvider = () => Promise<Record<string, string>> | Record<string, string>
 
@@ -30,4 +31,15 @@ export type DiscordConfigRedacted = RedactedConfig<DiscordConfig, 'getHeaders'>
 
 export function redactDiscordConfig(config: DiscordConfig): DiscordConfigRedacted {
   return redactConfigWithSchema(DiscordConfigSchema, config) as unknown as DiscordConfigRedacted
+}
+
+/**
+ * Translate a python-style config blob to this one's camelCase.
+ *
+ * No rename map: every field's camelCase spelling is what `snakeToCamel`
+ * already produces, and restating those only creates a second place to be
+ * wrong. Mirrors node's `normalizeDiscordConfig`.
+ */
+export function normalizeDiscordConfig(input: Record<string, unknown>): DiscordConfig {
+  return normalizeFields(input) as unknown as DiscordConfig
 }

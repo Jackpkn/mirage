@@ -14,6 +14,7 @@
 
 import { redactConfigWithSchema, secretStr, z } from '@struktoai/mirage-core/resource/secrets'
 import type { ConfigOf, RedactedConfig } from '@struktoai/mirage-core/resource/secrets'
+import { normalizeFields } from '@struktoai/mirage-core/utils/normalize'
 
 const TrelloConfigSchema = z.object({
   apiKey: secretStr(),
@@ -29,4 +30,15 @@ export type TrelloConfigRedacted = RedactedConfig<TrelloConfig, 'apiKey' | 'apiT
 
 export function redactTrelloConfig(config: TrelloConfig): TrelloConfigRedacted {
   return redactConfigWithSchema(TrelloConfigSchema, config) as unknown as TrelloConfigRedacted
+}
+
+/**
+ * Translate a python-style config blob to this one's camelCase.
+ *
+ * No rename map: every field's camelCase spelling is what `snakeToCamel`
+ * already produces, and restating those only creates a second place to be
+ * wrong. Mirrors node's `normalizeTrelloConfig`.
+ */
+export function normalizeTrelloConfig(input: Record<string, unknown>): TrelloConfig {
+  return normalizeFields(input) as unknown as TrelloConfig
 }

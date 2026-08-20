@@ -18,7 +18,6 @@ import type { DifyConfig } from '@struktoai/mirage-core/resource/dify/config'
 import type { QdrantConfig } from '@struktoai/mirage-core/resource/qdrant/config'
 import { normalizeFields } from '@struktoai/mirage-core/utils/normalize'
 import { compareCodePoints } from '@struktoai/mirage-core/utils/sort'
-import type { OAuthClientProvider } from '@modelcontextprotocol/sdk/client/auth.js'
 
 /**
  * Construct a resource by registry name in the browser runtime.
@@ -35,78 +34,6 @@ import type { OAuthClientProvider } from '@modelcontextprotocol/sdk/client/auth.
  */
 export type ResourceFactory = (config: Record<string, unknown>) => Promise<Resource>
 
-interface S3BrowserCtorConfig {
-  bucket: string
-  presignedUrlProvider: (
-    path: string,
-    op: 'GET' | 'PUT' | 'HEAD' | 'DELETE' | 'LIST' | 'COPY',
-    opts?: {
-      contentType?: string
-      ttlSec?: number
-      listPrefix?: string
-      listDelimiter?: string
-      listContinuationToken?: string
-      copySource?: string
-    },
-  ) => Promise<string>
-}
-
-type GCSBrowserCtorConfig = S3BrowserCtorConfig & { region?: string; endpoint?: string }
-type R2BrowserCtorConfig = S3BrowserCtorConfig & {
-  accountId?: string
-  region?: string
-  endpoint?: string
-}
-type OCIBrowserCtorConfig = S3BrowserCtorConfig & {
-  namespace?: string
-  region?: string
-  endpoint?: string
-}
-type SupabaseBrowserCtorConfig = S3BrowserCtorConfig & {
-  projectRef?: string
-  region?: string
-  endpoint?: string
-}
-type S3AliasBrowserCtorConfig = S3BrowserCtorConfig & {
-  region?: string
-  endpoint?: string
-}
-interface SlackBrowserCtorConfig {
-  proxyUrl: string
-  getHeaders?: () => Promise<Record<string, string>> | Record<string, string>
-}
-interface DiscordBrowserCtorConfig {
-  proxyUrl: string
-  getHeaders?: () => Promise<Record<string, string>> | Record<string, string>
-}
-interface NotionBrowserCtorConfig {
-  authProvider: OAuthClientProvider
-  serverUrl?: string
-}
-interface TrelloBrowserCtorConfig {
-  apiKey: string
-  apiToken: string
-  workspaceId?: string
-  boardIds?: readonly string[]
-  baseUrl?: string
-}
-interface LangfuseBrowserCtorConfig {
-  publicKey: string
-  secretKey: string
-  host?: string
-  defaultTraceLimit?: number
-  defaultSearchLimit?: number
-  defaultFromTimestamp?: string
-}
-interface PostgresBrowserCtorConfig {
-  dsn: string
-  schemas?: readonly string[]
-  defaultRowLimit?: number
-  maxReadRows?: number
-  maxReadBytes?: number
-  defaultSearchLimit?: number
-}
-
 const REGISTRY: Record<string, ResourceFactory> = {
   ram: async (_config) => {
     const { RAMResource } = await import('@struktoai/mirage-core/resource/ram/ram')
@@ -119,135 +46,93 @@ const REGISTRY: Record<string, ResourceFactory> = {
   },
   s3: async (config) => {
     const { S3Resource } = await import('./s3/s3.ts')
-    const norm = normalizeFields(config, {
-      rename: { endpoint_url: 'endpoint' },
-    })
-    return new S3Resource(norm as unknown as S3BrowserCtorConfig)
+    const { normalizeS3Config } = await import('./s3/config.ts')
+    return new S3Resource(normalizeS3Config(config))
   },
   gcs: async (config) => {
     const { GCSResource } = await import('./gcs/gcs.ts')
-    const norm = normalizeFields(config, {
-      rename: { endpoint_url: 'endpoint' },
-    })
-    return new GCSResource(norm as unknown as GCSBrowserCtorConfig)
+    const { normalizeGCSConfig } = await import('./gcs/config.ts')
+    return new GCSResource(normalizeGCSConfig(config))
   },
   r2: async (config) => {
     const { R2Resource } = await import('./r2/r2.ts')
-    const norm = normalizeFields(config, {
-      rename: { account_id: 'accountId', endpoint_url: 'endpoint' },
-    })
-    return new R2Resource(norm as unknown as R2BrowserCtorConfig)
+    const { normalizeR2Config } = await import('./r2/config.ts')
+    return new R2Resource(normalizeR2Config(config))
   },
   oci: async (config) => {
     const { OCIResource } = await import('./oci/oci.ts')
-    const norm = normalizeFields(config, {
-      rename: { endpoint_url: 'endpoint' },
-    })
-    return new OCIResource(norm as unknown as OCIBrowserCtorConfig)
+    const { normalizeOCIConfig } = await import('./oci/config.ts')
+    return new OCIResource(normalizeOCIConfig(config))
   },
   supabase: async (config) => {
     const { SupabaseResource } = await import('./supabase/supabase.ts')
-    const norm = normalizeFields(config, {
-      rename: { project_ref: 'projectRef', endpoint_url: 'endpoint' },
-    })
-    return new SupabaseResource(norm as unknown as SupabaseBrowserCtorConfig)
+    const { normalizeSupabaseConfig } = await import('./supabase/config.ts')
+    return new SupabaseResource(normalizeSupabaseConfig(config))
   },
   minio: async (config) => {
     const { MinIOResource } = await import('./minio/minio.ts')
-    const norm = normalizeFields(config, {
-      rename: { endpoint_url: 'endpoint' },
-    })
-    return new MinIOResource(norm as unknown as S3AliasBrowserCtorConfig)
+    const { normalizeMinIOConfig } = await import('./minio/config.ts')
+    return new MinIOResource(normalizeMinIOConfig(config))
   },
   ceph: async (config) => {
     const { CephResource } = await import('./ceph/ceph.ts')
-    const norm = normalizeFields(config, {
-      rename: { endpoint_url: 'endpoint' },
-    })
-    return new CephResource(norm as unknown as S3AliasBrowserCtorConfig)
+    const { normalizeCephConfig } = await import('./ceph/config.ts')
+    return new CephResource(normalizeCephConfig(config))
   },
   seaweedfs: async (config) => {
     const { SeaweedFSResource } = await import('./seaweedfs/seaweedfs.ts')
-    const norm = normalizeFields(config, {
-      rename: { endpoint_url: 'endpoint' },
-    })
-    return new SeaweedFSResource(norm as unknown as S3AliasBrowserCtorConfig)
+    const { normalizeSeaweedFSConfig } = await import('./seaweedfs/config.ts')
+    return new SeaweedFSResource(normalizeSeaweedFSConfig(config))
   },
   wasabi: async (config) => {
     const { WasabiResource } = await import('./wasabi/wasabi.ts')
-    const norm = normalizeFields(config, {
-      rename: { endpoint_url: 'endpoint' },
-    })
-    return new WasabiResource(norm as unknown as S3AliasBrowserCtorConfig)
+    const { normalizeWasabiConfig } = await import('./wasabi/config.ts')
+    return new WasabiResource(normalizeWasabiConfig(config))
   },
   backblaze: async (config) => {
     const { BackblazeResource } = await import('./backblaze/backblaze.ts')
-    const norm = normalizeFields(config, {
-      rename: { endpoint_url: 'endpoint' },
-    })
-    return new BackblazeResource(norm as unknown as S3AliasBrowserCtorConfig)
+    const { normalizeBackblazeConfig } = await import('./backblaze/config.ts')
+    return new BackblazeResource(normalizeBackblazeConfig(config))
   },
   digitalocean: async (config) => {
     const { DigitalOceanResource } = await import('./digitalocean/digitalocean.ts')
-    const norm = normalizeFields(config, {
-      rename: { endpoint_url: 'endpoint' },
-    })
-    return new DigitalOceanResource(norm as unknown as S3AliasBrowserCtorConfig)
+    const { normalizeDigitalOceanConfig } = await import('./digitalocean/config.ts')
+    return new DigitalOceanResource(normalizeDigitalOceanConfig(config))
   },
   tencent: async (config) => {
     const { TencentResource } = await import('./tencent/tencent.ts')
-    const norm = normalizeFields(config, {
-      rename: { endpoint_url: 'endpoint' },
-    })
-    return new TencentResource(norm as unknown as S3AliasBrowserCtorConfig)
+    const { normalizeTencentConfig } = await import('./tencent/config.ts')
+    return new TencentResource(normalizeTencentConfig(config))
   },
   aliyun: async (config) => {
     const { AliyunResource } = await import('./aliyun/aliyun.ts')
-    const norm = normalizeFields(config, {
-      rename: { endpoint_url: 'endpoint' },
-    })
-    return new AliyunResource(norm as unknown as S3AliasBrowserCtorConfig)
+    const { normalizeAliyunConfig } = await import('./aliyun/config.ts')
+    return new AliyunResource(normalizeAliyunConfig(config))
   },
   scaleway: async (config) => {
     const { ScalewayResource } = await import('./scaleway/scaleway.ts')
-    const norm = normalizeFields(config, {
-      rename: { endpoint_url: 'endpoint' },
-    })
-    return new ScalewayResource(norm as unknown as S3AliasBrowserCtorConfig)
+    const { normalizeScalewayConfig } = await import('./scaleway/config.ts')
+    return new ScalewayResource(normalizeScalewayConfig(config))
   },
   qingstor: async (config) => {
     const { QingStorResource } = await import('./qingstor/qingstor.ts')
-    const norm = normalizeFields(config, {
-      rename: { endpoint_url: 'endpoint' },
-    })
-    return new QingStorResource(norm as unknown as S3AliasBrowserCtorConfig)
+    const { normalizeQingStorConfig } = await import('./qingstor/config.ts')
+    return new QingStorResource(normalizeQingStorConfig(config))
   },
   slack: async (config) => {
     const { SlackResource } = await import('./slack/slack.ts')
-    const norm = normalizeFields(config, {
-      rename: { proxy_url: 'proxyUrl', get_headers: 'getHeaders' },
-    })
-    return new SlackResource(norm as unknown as SlackBrowserCtorConfig)
+    const { normalizeSlackConfig } = await import('./slack/config.ts')
+    return new SlackResource(normalizeSlackConfig(config))
   },
   discord: async (config) => {
     const { DiscordResource } = await import('./discord/discord.ts')
-    const norm = normalizeFields(config, {
-      rename: { proxy_url: 'proxyUrl', get_headers: 'getHeaders' },
-    })
-    return new DiscordResource(norm as unknown as DiscordBrowserCtorConfig)
+    const { normalizeDiscordConfig } = await import('./discord/config.ts')
+    return new DiscordResource(normalizeDiscordConfig(config))
   },
   trello: async (config) => {
     const { TrelloResource } = await import('./trello/trello.ts')
-    const norm = normalizeFields(config, {
-      rename: {
-        api_key: 'apiKey',
-        api_token: 'apiToken',
-        workspace_id: 'workspaceId',
-        board_ids: 'boardIds',
-        base_url: 'baseUrl',
-      },
-    })
-    return new TrelloResource(norm as unknown as TrelloBrowserCtorConfig)
+    const { normalizeTrelloConfig } = await import('./trello/config.ts')
+    return new TrelloResource(normalizeTrelloConfig(config))
   },
   linear: async (config) => {
     const { LinearResource } = await import('./linear/linear.ts')
@@ -256,15 +141,9 @@ const REGISTRY: Record<string, ResourceFactory> = {
   },
   postgres: async (config) => {
     const { PostgresResource } = await import('./postgres/postgres.ts')
-    const norm = normalizeFields(config, {
-      rename: {
-        default_row_limit: 'defaultRowLimit',
-        max_read_rows: 'maxReadRows',
-        max_read_bytes: 'maxReadBytes',
-        default_search_limit: 'defaultSearchLimit',
-      },
-    })
-    return new PostgresResource(norm as unknown as PostgresBrowserCtorConfig)
+    const { normalizePostgresConfig } =
+      await import('@struktoai/mirage-core/resource/postgres/config')
+    return new PostgresResource(normalizePostgresConfig(config))
   },
   mongodb: async (config) => {
     const { MongoDBResource } = await import('./mongodb/mongodb.ts')
@@ -294,23 +173,13 @@ const REGISTRY: Record<string, ResourceFactory> = {
   },
   notion: async (config) => {
     const { NotionResource } = await import('./notion/notion.ts')
-    const norm = normalizeFields(config, {
-      rename: { auth_provider: 'authProvider', server_url: 'serverUrl' },
-    })
-    return new NotionResource(norm as unknown as NotionBrowserCtorConfig)
+    const { normalizeNotionConfig } = await import('./notion/config.ts')
+    return new NotionResource(normalizeNotionConfig(config))
   },
   langfuse: async (config) => {
     const { LangfuseResource } = await import('./langfuse/langfuse.ts')
-    const norm = normalizeFields(config, {
-      rename: {
-        public_key: 'publicKey',
-        secret_key: 'secretKey',
-        default_trace_limit: 'defaultTraceLimit',
-        default_search_limit: 'defaultSearchLimit',
-        default_from_timestamp: 'defaultFromTimestamp',
-      },
-    })
-    return new LangfuseResource(norm as unknown as LangfuseBrowserCtorConfig)
+    const { normalizeLangfuseConfig } = await import('./langfuse/config.ts')
+    return new LangfuseResource(normalizeLangfuseConfig(config))
   },
   github: async (config) => {
     const { GitHubResource } = await import('./github/github.ts')

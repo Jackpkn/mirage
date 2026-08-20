@@ -20,7 +20,7 @@ from mirage.commands.builtin.grep_helper import (is_literal_pattern,
 from mirage.core.github.constants import SCOPE_WARN
 from mirage.core.github.pushdown import (count_scope_files, scope_relative_key,
                                          should_use_search)
-from mirage.core.github.repo import ensure_default_branch
+from mirage.core.github.repo import ensure_default_branch, ensure_ref
 from mirage.core.github.search import narrow_paths
 from mirage.core.github.tree import ensure_tree
 from mirage.types import PathSpec
@@ -87,7 +87,7 @@ async def narrow_scope(
     use_search = (query is not None and whole_word and literal
                   and file_count > SCOPE_WARN and should_use_search(
                       recursive=recursive,
-                      on_default_branch=(accessor.ref == await
+                      on_default_branch=(await ensure_ref(accessor) == await
                                          ensure_default_branch(accessor)),
                   ))
     if use_search:

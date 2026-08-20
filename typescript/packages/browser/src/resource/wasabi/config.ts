@@ -34,3 +34,4 @@ const alias = makeBrowserS3Alias<WasabiConfig, WasabiConfigRedacted, string>({
 export const resolvedWasabiEndpoint = alias.resolvedEndpoint
 export const wasabiToS3Config = alias.toS3Config
 export const redactWasabiConfig = alias.redact
+export const normalizeWasabiConfig = alias.normalize

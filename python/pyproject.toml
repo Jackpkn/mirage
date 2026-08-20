@@ -311,7 +311,6 @@ module = [
     "mirage.accessor._hf",
     "mirage.accessor.gdocs",
     "mirage.accessor.gdrive",
-    "mirage.accessor.github",
     "mirage.accessor.gmail",
     "mirage.accessor.gsheets",
     "mirage.accessor.gslides",

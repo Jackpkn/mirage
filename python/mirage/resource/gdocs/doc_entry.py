@@ -15,9 +15,11 @@
 from dataclasses import dataclass
 from functools import partial
 
-from mirage.utils.sanitize import sanitize_label
+from mirage.utils.sanitize import NAME_MAX_BYTES, byte_len, sanitize_label
 
 TITLE_MAX_CHARS = 100
+SUFFIX = ".gdoc.json"
+DATE_LEN = 10
 
 
 @dataclass
@@ -40,6 +42,12 @@ sanitize_title = partial(sanitize_label,
 def make_filename(title: str, doc_id: str, modified_time: str = "") -> str:
     """Build a filename from title, doc ID, and modified date.
 
+    The title takes whatever of the 255-byte NAME_MAX the date, the id and
+    the suffix leave, rather than a flat character count: those are the same
+    number only for ASCII, and a 100-character CJK title rendered a name ext4
+    and APFS reject outright. The id never gives, so the name keeps
+    addressing the document -- same rule as gcal's event filenames.
+
     Args:
         title (str): raw document title.
         doc_id (str): Google Docs document ID.
@@ -48,7 +56,8 @@ def make_filename(title: str, doc_id: str, modified_time: str = "") -> str:
     Returns:
         str: filename in format "YYYY-MM-DD_Sanitized_Title__docid.json".
     """
-    date_prefix = modified_time[:10] if len(modified_time) >= 10 else ""
-    if date_prefix:
-        return f"{date_prefix}_{sanitize_title(title)}__{doc_id}.gdoc.json"
-    return f"{sanitize_title(title)}__{doc_id}.gdoc.json"
+    lead = (f"{modified_time[:DATE_LEN]}_"
+            if len(modified_time) >= DATE_LEN else "")
+    fixed = byte_len(lead) + len("__") + byte_len(doc_id) + len(SUFFIX)
+    label = sanitize_title(title, max_bytes=NAME_MAX_BYTES - fixed)
+    return f"{lead}{label}__{doc_id}{SUFFIX}"

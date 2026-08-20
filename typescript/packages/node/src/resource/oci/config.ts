@@ -83,12 +83,8 @@ export function redactOciConfig(config: OCIConfig): OCIConfigRedacted {
 export function normalizeOciConfig(input: Record<string, unknown>): OCIConfig {
   return normalizeFields(input, {
     rename: {
-      access_key_id: 'accessKeyId',
-      secret_access_key: 'secretAccessKey',
-      session_token: 'sessionToken',
       aws_profile: 'profile',
       endpoint_url: 'endpoint',
-      key_prefix: 'keyPrefix',
       timeout: 'timeoutMs',
     },
     transform: {

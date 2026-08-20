@@ -14,7 +14,7 @@
 
 import type { EmailAccessor } from '../../accessor/email.ts'
 import { fetchMessage, listMessageUids, type FetchedMessage } from './client.ts'
-import { dateBucket, sanitize } from './readdir.ts'
+import { dateBucket, msgFilename } from './readdir.ts'
 import { messageJsonText } from './render.ts'
 import type { EmailScope } from './scope.ts'
 
@@ -62,10 +62,13 @@ async function searchMessages(
   return listMessageUids(accessor, folder, criteria, maxResults)
 }
 
-function buildVfsPath(prefix: string, folder: string, msg: FetchedMessage): string {
+export function buildVfsPath(prefix: string, folder: string, msg: FetchedMessage): string {
   const dateStr = dateBucket(msg)
-  const subject = sanitize(msg.subject !== '' ? msg.subject : 'No Subject')
-  const filename = `${subject}__${msg.uid}.email.json`
+  // The same builder readdir names the file with, not a second spelling of
+  // it: the subject's budget depends on the uid and the suffix, so a hit
+  // composed here from a bare `sanitize` pointed at a path that does not
+  // exist as soon as a long subject was trimmed differently.
+  const filename = msgFilename(msg.subject !== '' ? msg.subject : 'No Subject', msg.uid)
   return [prefix, folder, dateStr, filename].filter((p) => p !== '').join('/')
 }
 

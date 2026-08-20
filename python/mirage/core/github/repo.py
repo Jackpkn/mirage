@@ -61,6 +61,34 @@ async def ensure_default_branch(accessor: GitHubAccessor, ) -> str:
         return accessor.default_branch
 
 
+async def ensure_ref(accessor: GitHubAccessor) -> str:
+    """Settle which ref this mount reads, fetching the default branch once.
+
+    A mount that named no ref follows the repository's default branch, and
+    learning that costs a request the constructor cannot make. Every reader
+    that needs a concrete ref -- the tree fetches, the watch walk, readdir's
+    per-directory descent -- goes through here instead of reading
+    ``accessor.ref`` directly, so an unpinned mount resolves exactly once and
+    then behaves like a pinned one.
+
+    Defaulting to the string ``"main"`` instead was the bug this replaces: a
+    repository whose default branch is ``master`` (or anything else) 404s on
+    every tree fetch, so the whole mount reads as empty.
+
+    Args:
+        accessor (GitHubAccessor): the mount's accessor.
+
+    Returns:
+        str: the ref to read, as named by the mount or as resolved from the
+        repository's default branch.
+    """
+    if accessor.ref is not None:
+        return accessor.ref
+    resolved = await ensure_default_branch(accessor)
+    accessor.ref = resolved
+    return resolved
+
+
 def parse_repo(spec: str) -> RepoRef:
     """Split gh's `[HOST/]OWNER/REPO`.
 

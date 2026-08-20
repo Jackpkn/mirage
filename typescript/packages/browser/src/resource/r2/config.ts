@@ -34,3 +34,4 @@ const alias = makeBrowserS3Alias<R2Config, R2ConfigRedacted>({
 export const resolvedR2Endpoint = alias.resolvedEndpoint
 export const r2ToS3Config = alias.toS3Config
 export const redactR2Config = alias.redact
+export const normalizeR2Config = alias.normalize

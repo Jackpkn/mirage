@@ -12,12 +12,15 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import asyncio
 from unittest.mock import patch
 
 import pytest
 
+from mirage.accessor.github import GitHubAccessor
 from mirage.core.github.config import GitHubConfig
-from mirage.core.github.repo import fetch_default_branch, parse_repo
+from mirage.core.github.repo import (ensure_ref, fetch_default_branch,
+                                     parse_repo)
 
 
 @pytest.fixture
@@ -64,3 +67,35 @@ def test_parse_repo_drops_the_optional_host():
 def test_parse_repo_refuses_a_spec_that_is_not_the_format(spec):
     with pytest.raises(ValueError, match="OWNER/REPO"):
         parse_repo(spec)
+
+
+@pytest.mark.asyncio
+@patch("mirage.core.github.repo.github_get")
+async def test_ensure_ref_resolves_the_default_branch_when_none_was_named(
+        mock_get, config):
+    mock_get.return_value = {"default_branch": "master"}
+    accessor = GitHubAccessor(config, "acme", "proj")
+    assert await ensure_ref(accessor) == "master"
+    # Settled on the accessor, so the next reader neither refetches nor
+    # disagrees with the ref this one read.
+    assert accessor.ref == "master"
+
+
+@pytest.mark.asyncio
+@patch("mirage.core.github.repo.github_get")
+async def test_ensure_ref_keeps_a_pinned_ref_without_a_request(
+        mock_get, config):
+    accessor = GitHubAccessor(config, "acme", "proj", "release-2")
+    assert await ensure_ref(accessor) == "release-2"
+    mock_get.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@patch("mirage.core.github.repo.github_get")
+async def test_ensure_ref_resolves_once_for_concurrent_readers(
+        mock_get, config):
+    mock_get.return_value = {"default_branch": "trunk"}
+    accessor = GitHubAccessor(config, "acme", "proj")
+    refs = await asyncio.gather(*(ensure_ref(accessor) for _ in range(4)))
+    assert refs == ["trunk"] * 4
+    assert mock_get.await_count == 1

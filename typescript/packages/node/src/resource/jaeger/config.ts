@@ -34,12 +34,5 @@ export function redactJaegerConfig(config: JaegerConfig): JaegerConfigRedacted {
 }
 
 export function normalizeJaegerConfig(input: Record<string, unknown>): JaegerConfig {
-  return normalizeFields(input, {
-    rename: {
-      default_trace_limit: 'defaultTraceLimit',
-      default_from_timestamp: 'defaultFromTimestamp',
-      default_to_timestamp: 'defaultToTimestamp',
-      request_timeout: 'requestTimeout',
-    },
-  }) as unknown as JaegerConfig
+  return normalizeFields(input) as unknown as JaegerConfig
 }

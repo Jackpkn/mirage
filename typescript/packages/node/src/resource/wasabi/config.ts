@@ -85,13 +85,9 @@ export function redactWasabiConfig(config: WasabiConfig): WasabiConfigRedacted {
 export function normalizeWasabiConfig(input: Record<string, unknown>): WasabiConfig {
   return normalizeFields(input, {
     rename: {
-      access_key_id: 'accessKeyId',
-      secret_access_key: 'secretAccessKey',
-      session_token: 'sessionToken',
       aws_profile: 'profile',
       endpoint_url: 'endpoint',
       path_style: 'forcePathStyle',
-      key_prefix: 'keyPrefix',
       timeout: 'timeoutMs',
     },
     transform: {

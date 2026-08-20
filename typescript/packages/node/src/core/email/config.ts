@@ -68,18 +68,7 @@ export function buildEmailConfig(input: EmailConfigInput): EmailConfig {
 }
 
 export function normalizeEmailConfig(input: Record<string, unknown>): EmailConfig {
-  const norm = normalizeFields(input, {
-    rename: {
-      imap_host: 'imapHost',
-      imap_port: 'imapPort',
-      smtp_host: 'smtpHost',
-      smtp_port: 'smtpPort',
-      use_ssl: 'useSsl',
-      max_messages: 'maxMessages',
-      save_copy: 'saveCopy',
-      sent_folder: 'sentFolder',
-    },
-  })
+  const norm = normalizeFields(input)
   const built: EmailConfigInput = {
     imapHost: asString(norm.imapHost),
     smtpHost: asString(norm.smtpHost),

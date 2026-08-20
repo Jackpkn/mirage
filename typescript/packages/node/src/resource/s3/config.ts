@@ -68,7 +68,6 @@ export function normalizeS3Config(input: Record<string, unknown>): S3Config {
       endpoint_url: 'endpoint',
       path_style: 'forcePathStyle',
       timeout: 'timeoutMs',
-      key_prefix: 'keyPrefix',
     },
     transform: {
       timeout: (v: unknown) => (typeof v === 'number' ? v * 1000 : v),

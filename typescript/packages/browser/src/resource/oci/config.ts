@@ -36,3 +36,4 @@ const alias = makeBrowserS3Alias<OCIConfig, OCIConfigRedacted>({
 export const resolvedOciEndpoint = alias.resolvedEndpoint
 export const ociToS3Config = alias.toS3Config
 export const redactOciConfig = alias.redact
+export const normalizeOCIConfig = alias.normalize

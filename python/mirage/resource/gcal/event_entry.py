@@ -13,7 +13,8 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 from mirage.utils.naming import make_id_name
-from mirage.utils.sanitize import NAME_MAX_BYTES, sanitize_name, truncate_bytes
+from mirage.utils.sanitize import (NAME_MAX_BYTES, byte_len, sanitize_name,
+                                   truncate_bytes)
 
 EVENT_SUFFIX = ".gcal.json"
 CALENDAR_FILE = "calendar.json"
@@ -58,7 +59,7 @@ def make_event_filename(event_id: str, hhmm: str, title: str) -> str:
     Returns:
         str: e.g. ``la9i1t9...__0900-1030_PhD_Defense.gcal.json``.
     """
-    fixed = len(event_id.encode()) + len("__") + len(hhmm) + len("_") + len(
+    fixed = byte_len(event_id) + len("__") + len(hhmm) + len("_") + len(
         EVENT_SUFFIX)
     trimmed = truncate_bytes(title, NAME_MAX_BYTES - fixed).rstrip("_")
     if not trimmed:

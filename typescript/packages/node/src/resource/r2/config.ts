@@ -89,14 +89,9 @@ export function redactR2Config(config: R2Config): R2ConfigRedacted {
 export function normalizeR2Config(input: Record<string, unknown>): R2Config {
   return normalizeFields(input, {
     rename: {
-      account_id: 'accountId',
-      access_key_id: 'accessKeyId',
-      secret_access_key: 'secretAccessKey',
-      session_token: 'sessionToken',
       aws_profile: 'profile',
       endpoint_url: 'endpoint',
       path_style: 'forcePathStyle',
-      key_prefix: 'keyPrefix',
       timeout: 'timeoutMs',
     },
     transform: {

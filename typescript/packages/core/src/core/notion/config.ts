@@ -35,10 +35,5 @@ export function redactNotionConfig(config: NotionConfig): NotionConfigRedacted {
 }
 
 export function normalizeNotionConfig(input: Record<string, unknown>): NotionConfig {
-  return normalizeFields(input, {
-    rename: {
-      api_key: 'apiKey',
-      base_url: 'baseUrl',
-    },
-  }) as unknown as NotionConfig
+  return normalizeFields(input) as unknown as NotionConfig
 }

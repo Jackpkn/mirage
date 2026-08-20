@@ -34,9 +34,7 @@ export function redactGitHubConfig(config: GitHubConfig): GitHubConfigRedacted {
 }
 
 export function normalizeGitHubConfig(input: Record<string, unknown>): GitHubConfig {
-  return normalizeFields(input, {
-    rename: { base_url: 'baseUrl' },
-  }) as unknown as GitHubConfig
+  return normalizeFields(input) as unknown as GitHubConfig
 }
 
 export const GhConfigSchema = z.object({

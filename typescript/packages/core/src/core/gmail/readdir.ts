@@ -27,16 +27,27 @@ import {
   messageJsonBytes,
 } from './messages.ts'
 import { enoent } from '../../utils/errors.ts'
-import { sanitizeLabel } from '../../utils/sanitize.ts'
+import { NAME_MAX_BYTES, byteLength, sanitizeLabel } from '../../utils/sanitize.ts'
 import { compareCodePoints } from '../../utils/sort.ts'
 
 const TITLE_MAX = 80
+const MSG_SUFFIX = '.gmail.json'
 
-export const sanitize = (text: string): string =>
-  sanitizeLabel(text, { fallback: 'No_Subject', maxLen: TITLE_MAX })
+export const sanitize = (text: string, maxBytes?: number): string =>
+  sanitizeLabel(text, {
+    fallback: 'No_Subject',
+    maxLen: TITLE_MAX,
+    ...(maxBytes !== undefined ? { maxBytes } : {}),
+  })
 
-function msgFilename(subject: string, msgId: string): string {
-  return `${sanitize(subject)}__${msgId}.gmail.json`
+/**
+ * 80 characters is 240 bytes of CJK, which overflows the 255-byte NAME_MAX
+ * once the id and `.gmail.json` are added; the filesystem rejects the name
+ * outright. So the subject takes what the id and the suffix leave.
+ */
+export function msgFilename(subject: string, msgId: string): string {
+  const fixed = 2 + byteLength(msgId) + MSG_SUFFIX.length
+  return `${sanitize(subject, NAME_MAX_BYTES - fixed)}__${msgId}${MSG_SUFFIX}`
 }
 
 function dateFromInternal(internalDate: string | undefined): string {

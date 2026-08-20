@@ -14,7 +14,7 @@
 
 import type { TokenManager } from '../google/client.ts'
 import { decodeBody, extractHeader, getMessageRaw, listMessages } from './messages.ts'
-import { sanitize } from './readdir.ts'
+import { msgFilename } from './readdir.ts'
 import type { GmailScope } from './scope.ts'
 
 const EXCERPT_WINDOW = 120
@@ -115,7 +115,11 @@ export function formatGrepResults(
     const label = row.label !== '' ? row.label : (scope.labelName ?? 'INBOX')
     const date = row.date
     const mid = row.id
-    const filename = `${sanitize(row.subject || 'No Subject')}__${mid}.gmail.json`
+    // The same builder readdir names the file with, not a second spelling of
+    // it: the subject's budget depends on the id and the suffix, so a hit
+    // composed from a bare `sanitize` pointed at a path that does not exist
+    // once a long subject was trimmed.
+    const filename = msgFilename(row.subject || 'No Subject', mid)
     const sender = row.sender !== '' ? row.sender : '?'
     const haystack = `${row.subject}\n${row.bodyText}`
     let excerpt = pattern !== '' ? extractExcerpt(haystack, pattern) : ''

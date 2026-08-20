@@ -22,6 +22,7 @@ from mirage.cache.index import (NULL_INDEX, IndexCacheStore, IndexEntry,
                                 LookupStatus)
 from mirage.core.github.client import github_get
 from mirage.core.github.config import GitHubConfig
+from mirage.core.github.repo import ensure_ref
 from mirage.core.github.tree_entry import TreeEntry
 
 log = logging.getLogger(__name__)
@@ -201,8 +202,9 @@ async def refill_index(
     """
     if index is NULL_INDEX:
         return False
+    ref = await ensure_ref(accessor)
     tree, truncated = await fetch_tree(accessor.config, accessor.owner,
-                                       accessor.repo, accessor.ref)
+                                       accessor.repo, ref)
     accessor.truncated = truncated
     accessor.tree = tree
     accessor.tree_loaded = True
@@ -301,8 +303,9 @@ async def ensure_tree(
             await ensure_live_index(accessor, index, prefix)
             if accessor.tree_loaded:
                 return
+        ref = await ensure_ref(accessor)
         tree, truncated = await fetch_tree(accessor.config, accessor.owner,
-                                           accessor.repo, accessor.ref)
+                                           accessor.repo, ref)
         accessor.truncated = truncated
         accessor.tree = tree
         accessor.tree_loaded = True

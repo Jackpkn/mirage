@@ -36,6 +36,50 @@ describe('browser resource registry', () => {
     }
   })
 
+  // Every entry used to hand-roll `normalizeFields` with a rename map that
+  // mostly restated what `snakeToCamel` already does, then cast the result
+  // through a config interface written a second time in the registry. The
+  // casts hid a mismatch: nothing checked that the shape the resource wants
+  // is the shape the entry produces.
+  it('normalizes snake_case config for every hand-wired backend', async () => {
+    const provider = (): Promise<string> => Promise.resolve('https://example.com/signed')
+    const cases: [string, Record<string, unknown>, Record<string, unknown>][] = [
+      [
+        'trello',
+        { api_key: 'k', api_token: 't', workspace_id: 'w', board_ids: ['b'], base_url: 'u' },
+        { workspaceId: 'w', boardIds: ['b'], baseUrl: 'u' },
+      ],
+      [
+        'langfuse',
+        { public_key: 'p', secret_key: 's', default_trace_limit: 5, default_search_limit: 6 },
+        { publicKey: 'p', defaultTraceLimit: 5, defaultSearchLimit: 6 },
+      ],
+      ['slack', { proxy_url: 'http://x' }, { proxyUrl: 'http://x' }],
+      ['discord', { proxy_url: 'http://x' }, { proxyUrl: 'http://x' }],
+      [
+        's3',
+        { bucket: 'b', presignedUrlProvider: provider, endpoint_url: 'http://e', key_prefix: 'p/' },
+        { bucket: 'b', endpoint: 'http://e', keyPrefix: 'p/' },
+      ],
+      [
+        'minio',
+        { bucket: 'b', presignedUrlProvider: provider, endpoint_url: 'http://e' },
+        { bucket: 'b', endpoint: 'http://e' },
+      ],
+    ]
+    for (const [name, input, expected] of cases) {
+      const state = (await (await buildResource(name, input)).getState()) as {
+        config: Record<string, unknown>
+      }
+      expect(state.config, name).toMatchObject(expected)
+      // `endpoint_url` is the one rename that is not mechanical; a leftover
+      // snake_case key means the entry skipped normalization entirely.
+      for (const key of Object.keys(state.config)) {
+        expect(key, `${name}.${key}`).not.toContain('_')
+      }
+    }
+  })
+
   it('lists known resources sorted', () => {
     const names = knownResources()
     expect(names).toContain('ram')

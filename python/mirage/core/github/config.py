@@ -19,7 +19,11 @@ class GitHubConfig(BaseModel):
     token: SecretStr
     owner: str | None = None
     repo: str | None = None
-    ref: str = "main"
+    # None means "whatever the repository's default branch is", resolved on
+    # the first read through ``ensure_ref``. It is not a synonym for "main":
+    # defaulting to that string mounted a nonexistent ref on every repo whose
+    # default is `master`, and the tree fetch 404s rather than falling back.
+    ref: str | None = None
     base_url: str | None = None
 
 

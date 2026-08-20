@@ -47,13 +47,5 @@ export function redactDropboxConfig(config: DropboxConfig): DropboxConfigRedacte
 }
 
 export function normalizeDropboxConfig(input: Record<string, unknown>): DropboxConfig {
-  return normalizeFields(input, {
-    rename: {
-      client_id: 'clientId',
-      client_secret: 'clientSecret',
-      refresh_token: 'refreshToken',
-      root_path: 'rootPath',
-      content_search: 'contentSearch',
-    },
-  }) as unknown as DropboxConfig
+  return normalizeFields(input) as unknown as DropboxConfig
 }

@@ -39,12 +39,7 @@ export function redactConfig(config: GridFSConfig): GridFSConfigRedacted {
  * normalize the key prefix the way the accessor expects.
  */
 export function normalizeGridFSConfig(input: Record<string, unknown>): GridFSConfig {
-  const norm = normalizeFields(input, {
-    rename: {
-      key_prefix: 'keyPrefix',
-      chunk_size_bytes: 'chunkSizeBytes',
-    },
-  }) as unknown as GridFSConfig
+  const norm = normalizeFields(input) as unknown as GridFSConfig
   const prefix = normalizeKeyPrefix(norm.keyPrefix)
   if (prefix !== undefined) {
     norm.keyPrefix = prefix

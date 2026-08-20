@@ -34,7 +34,10 @@ def test_github_config_owner_repo_ref_default():
     cfg = GitHubConfig(token="ghp_abc123")
     assert cfg.owner is None
     assert cfg.repo is None
-    assert cfg.ref == "main"
+    # Not "main": that guess 404s the tree fetch on every repository whose
+    # default branch is something else. None means "resolve the default
+    # branch", which `ensure_ref` does on the first read.
+    assert cfg.ref is None
 
 
 def test_github_config_accepts_owner_repo_ref():

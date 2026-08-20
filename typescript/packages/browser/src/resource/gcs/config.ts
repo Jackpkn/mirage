@@ -29,3 +29,4 @@ const alias = makeBrowserS3Alias<GCSConfig, GCSConfigRedacted, string>({
 
 export const gcsToS3Config = alias.toS3Config
 export const redactGcsConfig = alias.redact
+export const normalizeGCSConfig = alias.normalize

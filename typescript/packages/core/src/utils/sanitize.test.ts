@@ -13,7 +13,13 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { describe, expect, it } from 'vitest'
-import { pathSafeName, sanitizeLabel, sanitizeName } from './sanitize.ts'
+import {
+  NAME_MAX_BYTES,
+  byteLength,
+  pathSafeName,
+  sanitizeLabel,
+  sanitizeName,
+} from './sanitize.ts'
 
 describe('sanitizeName', () => {
   it('returns "unknown" for empty/whitespace input', () => {
@@ -98,11 +104,40 @@ describe('sanitizeLabel', () => {
   })
 
   it('ellipsizes on a code-point boundary', () => {
+    // A byte budget wide enough to stay out of the way, so this pins the
+    // character budget alone.
     const label = '\u{10400}'.repeat(120)
-    const out = sanitizeLabel(label, { fallback: 'X', maxLen: 100 })
+    const out = sanitizeLabel(label, { fallback: 'X', maxLen: 100, maxBytes: 10_000 })
     expect(Array.from(out)).toHaveLength(100)
     expect(out.endsWith('...')).toBe(true)
     expect(out).not.toContain('\uFFFD')
+  })
+
+  it('honors the byte ceiling within the character budget', () => {
+    // 100 astral code points is 400 bytes, so a name the character budget
+    // accepts is one ext4 and APFS reject with ENAMETOOLONG. The default
+    // budget is NAME_MAX, and the cut still lands on a code-point boundary.
+    const label = '\u{10400}'.repeat(120)
+    const out = sanitizeLabel(label, { fallback: 'X', maxLen: 100 })
+    expect(Array.from(out).length).toBeLessThan(100)
+    expect(byteLength(out)).toBeLessThanOrEqual(NAME_MAX_BYTES)
+    expect(out.endsWith('...')).toBe(true)
+    expect(out).not.toContain('\uFFFD')
+  })
+
+  it('takes the byte budget as the caller remaining room', () => {
+    // What the gdocs/gmail filenames pass: NAME_MAX minus the id, the
+    // separators and the suffix.
+    const out = sanitizeLabel('会'.repeat(200), { fallback: 'X', maxLen: 100, maxBytes: 60 })
+    expect(byteLength(out)).toBeLessThanOrEqual(60)
+    expect(out.endsWith('...')).toBe(true)
+    expect(out).not.toContain('\uFFFD')
+  })
+
+  it('drops the ellipsis when it cannot fit', () => {
+    // Three dots and nothing is not a name; a budget this small yields
+    // whatever of the label actually fits.
+    expect(sanitizeLabel('abcdef', { fallback: 'X', maxLen: 100, maxBytes: 2 })).toBe('ab')
   })
 
   it('keeps non-ascii letters, matching python', () => {

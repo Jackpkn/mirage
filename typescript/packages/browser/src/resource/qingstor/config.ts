@@ -29,3 +29,4 @@ const alias = makeBrowserS3Alias<QingStorConfig, QingStorConfigRedacted>({
 export const resolvedQingStorEndpoint = alias.resolvedEndpoint
 export const qingStorToS3Config = alias.toS3Config
 export const redactQingStorConfig = alias.redact
+export const normalizeQingStorConfig = alias.normalize

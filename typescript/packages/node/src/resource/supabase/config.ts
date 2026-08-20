@@ -86,13 +86,8 @@ export function redactSupabaseConfig(config: SupabaseConfig): SupabaseConfigReda
 export function normalizeSupabaseConfig(input: Record<string, unknown>): SupabaseConfig {
   return normalizeFields(input, {
     rename: {
-      project_ref: 'projectRef',
-      access_key_id: 'accessKeyId',
-      secret_access_key: 'secretAccessKey',
-      session_token: 'sessionToken',
       aws_profile: 'profile',
       endpoint_url: 'endpoint',
-      key_prefix: 'keyPrefix',
       timeout: 'timeoutMs',
     },
     transform: {

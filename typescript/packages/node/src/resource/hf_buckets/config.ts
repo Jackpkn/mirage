@@ -59,7 +59,6 @@ export function redactHfBucketsConfig(config: HfBucketsConfig): HfBucketsConfigR
 export function normalizeHfBucketsConfig(input: Record<string, unknown>): HfBucketsConfig {
   const config = normalizeFields(input, {
     rename: {
-      key_prefix: 'keyPrefix',
       timeout: 'timeoutMs',
     },
     transform: {
@@ -102,8 +101,6 @@ export function redactHfRepoConfig(config: HfRepoConfig): HfRepoConfigRedacted {
 export function normalizeHfRepoConfig(input: Record<string, unknown>): HfRepoConfig {
   const config = normalizeFields(input, {
     rename: {
-      repo_id: 'repoId',
-      key_prefix: 'keyPrefix',
       timeout: 'timeoutMs',
     },
     transform: {
