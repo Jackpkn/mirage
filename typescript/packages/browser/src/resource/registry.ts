@@ -90,12 +90,6 @@ interface TrelloBrowserCtorConfig {
   boardIds?: readonly string[]
   baseUrl?: string
 }
-interface LinearBrowserCtorConfig {
-  apiKey: string
-  workspace?: string
-  teamIds?: readonly string[]
-  baseUrl?: string
-}
 interface LangfuseBrowserCtorConfig {
   publicKey: string
   secretKey: string
@@ -257,14 +251,8 @@ const REGISTRY: Record<string, ResourceFactory> = {
   },
   linear: async (config) => {
     const { LinearResource } = await import('./linear/linear.ts')
-    const norm = normalizeFields(config, {
-      rename: {
-        api_key: 'apiKey',
-        team_ids: 'teamIds',
-        base_url: 'baseUrl',
-      },
-    })
-    return new LinearResource(norm as unknown as LinearBrowserCtorConfig)
+    const { normalizeLinearConfig } = await import('@struktoai/mirage-core/core/linear/config')
+    return new LinearResource(normalizeLinearConfig(config))
   },
   postgres: async (config) => {
     const { PostgresResource } = await import('./postgres/postgres.ts')
@@ -326,10 +314,8 @@ const REGISTRY: Record<string, ResourceFactory> = {
   },
   github: async (config) => {
     const { GitHubResource } = await import('./github/github.ts')
-    const norm = normalizeFields(config, {
-      rename: { base_url: 'baseUrl' },
-    }) as unknown as { token: string; owner: string; repo: string; ref?: string; baseUrl?: string }
-    return GitHubResource.create(norm)
+    const { normalizeGitHubConfig } = await import('@struktoai/mirage-core/core/github/config')
+    return GitHubResource.create(normalizeGitHubConfig(config))
   },
   gcal: async (config) => {
     const { GCalResource } = await import('./gcal/gcal.ts')

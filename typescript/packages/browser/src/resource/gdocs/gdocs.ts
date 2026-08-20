@@ -13,8 +13,6 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { GDocsAccessor } from '@struktoai/mirage-core/accessor/gdocs'
-import { RAMIndexCacheStore } from '@struktoai/mirage-core/cache/index/ram'
-import type { IndexCacheStore } from '@struktoai/mirage-core/cache/index/store'
 import { GDOCS_COMMANDS } from '@struktoai/mirage-core/commands/builtin/gdocs/index'
 import { makeResolveGlob } from '@struktoai/mirage-core/commands/builtin/generic_bind/index'
 import type { RegisteredCommand } from '@struktoai/mirage-core/commands/config'
@@ -24,6 +22,7 @@ import { stat as gdocsStat } from '@struktoai/mirage-core/core/gdocs/stat'
 import { TokenManager } from '@struktoai/mirage-core/core/google/client'
 import { GDOCS_OPS } from '@struktoai/mirage-core/ops/gdocs/index'
 import type { RegisteredOp } from '@struktoai/mirage-core/ops/registry'
+import { BaseResource } from '@struktoai/mirage-core/resource/base'
 import type { Resource } from '@struktoai/mirage-core/resource/base'
 import { GDOCS_PROMPT, GDOCS_WRITE_PROMPT } from '@struktoai/mirage-core/resource/gdocs/prompt'
 import { PathSpec, ResourceName } from '@struktoai/mirage-core/types'
@@ -42,28 +41,23 @@ export interface GDocsResourceState {
   config: GDocsConfigRedacted
 }
 
-export class GDocsResource implements Resource {
+export class GDocsResource extends BaseResource implements Resource {
   readonly kind: string = ResourceName.GDOCS
   readonly cachesReads: boolean = true
-  readonly indexTtl: number = 86_400
+  override readonly indexTtl: number = 86_400
   readonly prompt: string = GDOCS_PROMPT
   readonly writePrompt: string = GDOCS_WRITE_PROMPT
   readonly config: GDocsConfig
   readonly accessor: GDocsAccessor
-  readonly index: IndexCacheStore
 
   constructor(config: GDocsConfig) {
+    super()
     this.config = config
     const tm = new TokenManager(config)
     this.accessor = new GDocsAccessor({ tokenManager: tm })
-    this.index = new RAMIndexCacheStore({ ttl: 86_400 })
   }
 
   open(): Promise<void> {
-    return Promise.resolve()
-  }
-
-  close(): Promise<void> {
     return Promise.resolve()
   }
 
@@ -105,14 +99,14 @@ export class GDocsResource implements Resource {
     return gdocsResolveGlob(this.accessor, effective, this.index)
   }
 
-  getState(): Promise<GDocsResourceState> {
+  override getState(): Promise<GDocsResourceState> {
     return Promise.resolve({
       type: this.kind,
       config: redactGDocsConfig(this.config),
     })
   }
 
-  loadState(_state: GDocsResourceState): Promise<void> {
+  override loadState(_state: GDocsResourceState): Promise<void> {
     return Promise.resolve()
   }
 }

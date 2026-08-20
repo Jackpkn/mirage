@@ -13,8 +13,6 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { NotionAccessor } from '@struktoai/mirage-core/accessor/notion'
-import { RAMIndexCacheStore } from '@struktoai/mirage-core/cache/index/ram'
-import type { IndexCacheStore } from '@struktoai/mirage-core/cache/index/store'
 import { makeResolveGlob } from '@struktoai/mirage-core/commands/builtin/generic_bind/index'
 import { NOTION_COMMANDS } from '@struktoai/mirage-core/commands/builtin/notion/index'
 import type { RegisteredCommand } from '@struktoai/mirage-core/commands/config'
@@ -25,6 +23,7 @@ import { readdir as notionReaddir } from '@struktoai/mirage-core/core/notion/rea
 import { stat as notionStat } from '@struktoai/mirage-core/core/notion/stat'
 import { NOTION_OPS } from '@struktoai/mirage-core/ops/notion/index'
 import type { RegisteredOp } from '@struktoai/mirage-core/ops/registry'
+import { BaseResource } from '@struktoai/mirage-core/resource/base'
 import type { Resource } from '@struktoai/mirage-core/resource/base'
 import { NOTION_PROMPT, NOTION_WRITE_PROMPT } from '@struktoai/mirage-core/resource/notion/prompt'
 import { PathSpec, ResourceName } from '@struktoai/mirage-core/types'
@@ -39,29 +38,24 @@ export interface NotionResourceState {
   config: NotionConfigRedacted
 }
 
-export class NotionResource implements Resource {
+export class NotionResource extends BaseResource implements Resource {
   readonly kind: string = ResourceName.NOTION
   readonly cachesReads: boolean = true
-  readonly indexTtl: number = 600
+  override readonly indexTtl: number = 600
   readonly prompt: string = NOTION_PROMPT
   readonly writePrompt: string = NOTION_WRITE_PROMPT
   readonly config: NotionConfig
   readonly accessor: NotionAccessor
-  readonly index: IndexCacheStore
 
   constructor(config: NotionConfig) {
+    super()
     this.config = config
     const opts: MCPNotionTransportOptions = { authProvider: config.authProvider }
     if (config.serverUrl !== undefined) opts.serverUrl = config.serverUrl
     this.accessor = new NotionAccessor(new MCPNotionTransport(opts))
-    this.index = new RAMIndexCacheStore({ ttl: this.indexTtl })
   }
 
   open(): Promise<void> {
-    return Promise.resolve()
-  }
-
-  close(): Promise<void> {
     return Promise.resolve()
   }
 
@@ -103,14 +97,14 @@ export class NotionResource implements Resource {
     return resolveNotionGlob(this.accessor, effective, this.index)
   }
 
-  getState(): Promise<NotionResourceState> {
+  override getState(): Promise<NotionResourceState> {
     return Promise.resolve({
       type: this.kind,
       config: redactNotionConfig(this.config),
     })
   }
 
-  loadState(_state: NotionResourceState): Promise<void> {
+  override loadState(_state: NotionResourceState): Promise<void> {
     return Promise.resolve()
   }
 }

@@ -13,8 +13,6 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { GmailAccessor } from '@struktoai/mirage-core/accessor/gmail'
-import { RAMIndexCacheStore } from '@struktoai/mirage-core/cache/index/ram'
-import type { IndexCacheStore } from '@struktoai/mirage-core/cache/index/store'
 import { makeResolveGlob } from '@struktoai/mirage-core/commands/builtin/generic_bind/index'
 import { GMAIL_COMMANDS } from '@struktoai/mirage-core/commands/builtin/gmail/index'
 import type { RegisteredCommand } from '@struktoai/mirage-core/commands/config'
@@ -24,6 +22,7 @@ import { stat as gmailStat } from '@struktoai/mirage-core/core/gmail/stat'
 import { TokenManager } from '@struktoai/mirage-core/core/google/client'
 import { GMAIL_OPS } from '@struktoai/mirage-core/ops/gmail/index'
 import type { RegisteredOp } from '@struktoai/mirage-core/ops/registry'
+import { BaseResource } from '@struktoai/mirage-core/resource/base'
 import type { Resource } from '@struktoai/mirage-core/resource/base'
 import { GMAIL_PROMPT, GMAIL_WRITE_PROMPT } from '@struktoai/mirage-core/resource/gmail/prompt'
 import { PathSpec, ResourceName } from '@struktoai/mirage-core/types'
@@ -42,32 +41,27 @@ export interface GmailResourceState {
   config: GmailConfigRedacted
 }
 
-export class GmailResource implements Resource {
+export class GmailResource extends BaseResource implements Resource {
   readonly kind: string = ResourceName.GMAIL
   readonly cachesReads: boolean = true
   // Every listed file carries an exact size: .gmail.json is rendered at
   // readdir from the full message the listing already fetched, and
   // attachments carry the decoded byte count.
   readonly sizesAlwaysKnown: boolean = true
-  readonly indexTtl: number = 86_400
+  override readonly indexTtl: number = 86_400
   readonly prompt: string = GMAIL_PROMPT
   readonly writePrompt: string = GMAIL_WRITE_PROMPT
   readonly config: GmailConfig
   readonly accessor: GmailAccessor
-  readonly index: IndexCacheStore
 
   constructor(config: GmailConfig) {
+    super()
     this.config = config
     const tm = new TokenManager(config)
     this.accessor = new GmailAccessor({ tokenManager: tm })
-    this.index = new RAMIndexCacheStore({ ttl: 86_400 })
   }
 
   open(): Promise<void> {
-    return Promise.resolve()
-  }
-
-  close(): Promise<void> {
     return Promise.resolve()
   }
 
@@ -109,14 +103,14 @@ export class GmailResource implements Resource {
     return gmailResolveGlob(this.accessor, effective, this.index)
   }
 
-  getState(): Promise<GmailResourceState> {
+  override getState(): Promise<GmailResourceState> {
     return Promise.resolve({
       type: this.kind,
       config: redactGmailConfig(this.config),
     })
   }
 
-  loadState(_state: GmailResourceState): Promise<void> {
+  override loadState(_state: GmailResourceState): Promise<void> {
     return Promise.resolve()
   }
 }

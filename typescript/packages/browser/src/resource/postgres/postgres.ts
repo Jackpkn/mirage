@@ -13,8 +13,6 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { PostgresAccessor } from '@struktoai/mirage-core/accessor/postgres'
-import { RAMIndexCacheStore } from '@struktoai/mirage-core/cache/index/ram'
-import type { IndexCacheStore } from '@struktoai/mirage-core/cache/index/store'
 import { makeResolveGlob } from '@struktoai/mirage-core/commands/builtin/generic_bind/index'
 import { POSTGRES_COMMANDS } from '@struktoai/mirage-core/commands/builtin/postgres/index'
 import type { RegisteredCommand } from '@struktoai/mirage-core/commands/config'
@@ -24,6 +22,7 @@ import { readdir as postgresReaddir } from '@struktoai/mirage-core/core/postgres
 import { stat as postgresStat } from '@struktoai/mirage-core/core/postgres/stat'
 import { POSTGRES_OPS } from '@struktoai/mirage-core/ops/postgres/index'
 import type { RegisteredOp } from '@struktoai/mirage-core/ops/registry'
+import { BaseResource } from '@struktoai/mirage-core/resource/base'
 import type { Resource } from '@struktoai/mirage-core/resource/base'
 import {
   redactPostgresConfig,
@@ -54,27 +53,26 @@ export interface PostgresResourceState {
   needs_override: true
 }
 
-export class PostgresResource implements Resource {
+export class PostgresResource extends BaseResource implements Resource {
   readonly kind: string = ResourceName.POSTGRES
   readonly cachesReads: boolean = false
-  readonly indexTtl: number = 0
+  override readonly indexTtl: number = 0
   readonly prompt: string
   readonly config: PostgresConfigResolved
   readonly driver: PgDriver
   readonly accessor: PostgresAccessor
-  readonly index: IndexCacheStore
 
   constructor(options: PostgresResourceOptions | PostgresConfig) {
+    super()
     const { config, prefix, driver } =
       'config' in options ? options : { config: options, prefix: undefined, driver: undefined }
     this.config = resolvePostgresConfig(config)
     this.driver = driver ?? new NeonPgDriver(this.config.dsn)
     this.accessor = new PostgresAccessor(this.driver, this.config)
-    this.index = new RAMIndexCacheStore({ ttl: this.indexTtl })
     this.prompt = POSTGRES_PROMPT.replace('{prefix}', prefix ?? '')
   }
 
-  getState(): PostgresResourceState {
+  override getState(): PostgresResourceState {
     return {
       type: this.kind,
       config: redactPostgresConfig(this.config),
@@ -89,7 +87,7 @@ export class PostgresResource implements Resource {
 
   // The rows live in the database, so a restored mount reaches them
   // through its config alone — there is nothing to take back.
-  loadState(_state: PostgresResourceState): Promise<void> {
+  override loadState(_state: PostgresResourceState): Promise<void> {
     return Promise.resolve()
   }
 
@@ -97,8 +95,9 @@ export class PostgresResource implements Resource {
     return Promise.resolve()
   }
 
-  async close(): Promise<void> {
+  override async close(): Promise<void> {
     await this.driver.close()
+    await super.close()
   }
 
   ops(): readonly RegisteredOp[] {

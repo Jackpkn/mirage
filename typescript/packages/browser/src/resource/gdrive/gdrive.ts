@@ -13,22 +13,23 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { GDriveAccessor } from '@struktoai/mirage-core/accessor/gdrive'
-import { RAMIndexCacheStore } from '@struktoai/mirage-core/cache/index/ram'
-import type { IndexCacheStore } from '@struktoai/mirage-core/cache/index/store'
 import { GDRIVE_COMMANDS } from '@struktoai/mirage-core/commands/builtin/gdrive/index'
 import { makeResolveGlob } from '@struktoai/mirage-core/commands/builtin/generic_bind/index'
 import type { RegisteredCommand } from '@struktoai/mirage-core/commands/config'
 import { read as gdriveRead } from '@struktoai/mirage-core/core/gdrive/read'
 import { readdir as gdriveReaddir } from '@struktoai/mirage-core/core/gdrive/readdir'
 import { stat as gdriveStat } from '@struktoai/mirage-core/core/gdrive/stat'
+import { buildDeltaHook } from '@struktoai/mirage-core/core/gdrive/watch'
 import { TokenManager } from '@struktoai/mirage-core/core/google/client'
 import { GDRIVE_OPS } from '@struktoai/mirage-core/ops/gdrive/index'
 import type { RegisteredOp } from '@struktoai/mirage-core/ops/registry'
+import { BaseResource } from '@struktoai/mirage-core/resource/base'
 import type { Resource } from '@struktoai/mirage-core/resource/base'
 import { GDRIVE_PROMPT } from '@struktoai/mirage-core/resource/gdrive/prompt'
 import { PathSpec, ResourceName } from '@struktoai/mirage-core/types'
 import type { FileStat } from '@struktoai/mirage-core/types'
 import { mountKey, mountPrefixOf } from '@struktoai/mirage-core/utils/key_prefix'
+import { type DeltaHook } from '@struktoai/mirage-core/watch/index'
 import {
   redactGDriveConfig,
   type GDriveConfig,
@@ -42,28 +43,23 @@ export interface GDriveResourceState {
   config: GDriveConfigRedacted
 }
 
-export class GDriveResource implements Resource {
+export class GDriveResource extends BaseResource implements Resource {
   readonly kind: string = ResourceName.GDRIVE
   readonly cachesReads: boolean = true
   readonly supportsSnapshot: boolean = true
-  readonly indexTtl: number = 86_400
+  override readonly indexTtl: number = 86_400
   readonly prompt: string = GDRIVE_PROMPT
   readonly config: GDriveConfig
   readonly accessor: GDriveAccessor
-  readonly index: IndexCacheStore
 
   constructor(config: GDriveConfig) {
+    super()
     this.config = config
     const tm = new TokenManager(config)
     this.accessor = new GDriveAccessor({ tokenManager: tm })
-    this.index = new RAMIndexCacheStore({ ttl: 86_400 })
   }
 
   open(): Promise<void> {
-    return Promise.resolve()
-  }
-
-  close(): Promise<void> {
     return Promise.resolve()
   }
 
@@ -105,14 +101,18 @@ export class GDriveResource implements Resource {
     return gdriveResolveGlob(this.accessor, effective, this.index)
   }
 
-  getState(): Promise<GDriveResourceState> {
+  deltaHook(): DeltaHook {
+    return buildDeltaHook(this.accessor)
+  }
+
+  override getState(): Promise<GDriveResourceState> {
     return Promise.resolve({
       type: this.kind,
       config: redactGDriveConfig(this.config),
     })
   }
 
-  loadState(_state: GDriveResourceState): Promise<void> {
+  override loadState(_state: GDriveResourceState): Promise<void> {
     return Promise.resolve()
   }
 }

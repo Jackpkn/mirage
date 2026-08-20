@@ -15,6 +15,7 @@
 import { makeResolveGlob } from '@struktoai/mirage-core/commands/builtin/generic_bind/index'
 import type { RegisteredCommand } from '@struktoai/mirage-core/commands/config'
 import type { RegisteredOp } from '@struktoai/mirage-core/ops/registry'
+import { BaseResource } from '@struktoai/mirage-core/resource/base'
 import type { FindOptions, Resource } from '@struktoai/mirage-core/resource/base'
 import { ResourceName } from '@struktoai/mirage-core/types'
 import type { FileStat, PathSpec } from '@struktoai/mirage-core/types'
@@ -99,7 +100,7 @@ async function splitAndCreate(
   return handle
 }
 
-export class OPFSResource implements Resource {
+export class OPFSResource extends BaseResource implements Resource {
   readonly kind = ResourceName.OPFS
   // OPFS is a real filesystem: getFile().size is the exact byte count a
   // read returns.
@@ -111,6 +112,7 @@ export class OPFSResource implements Resource {
   private openPromise: Promise<FileSystemDirectoryHandle> | null = null
 
   constructor(options: OPFSResourceOptions = {}) {
+    super()
     this.rootName = options.root ?? ''
     this.accessor = new OPFSAccessor(this)
   }
@@ -119,10 +121,10 @@ export class OPFSResource implements Resource {
     return this.ensureOpen().then(() => undefined)
   }
 
-  close(): Promise<void> {
+  override async close(): Promise<void> {
     this.rootHandle = null
     this.openPromise = null
-    return Promise.resolve()
+    await super.close()
   }
 
   /**
@@ -245,7 +247,7 @@ export class OPFSResource implements Resource {
     return globCore(this.accessor, paths)
   }
 
-  async getState(): Promise<OPFSResourceState> {
+  override async getState(): Promise<OPFSResourceState> {
     const handle = await this.ensureOpen()
     const files: Record<string, Uint8Array> = {}
     await walkFiles(handle, '', files)
@@ -259,7 +261,7 @@ export class OPFSResource implements Resource {
     }
   }
 
-  async loadState(state: OPFSResourceState): Promise<void> {
+  override async loadState(state: OPFSResourceState): Promise<void> {
     const handle = await this.ensureOpen()
     for (const dir of state.dirs) {
       const rel = lstripSlash(dir)

@@ -13,23 +13,23 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { LinearAccessor } from '@struktoai/mirage-core/accessor/linear'
-import { RAMIndexCacheStore } from '@struktoai/mirage-core/cache/index/ram'
-import type { IndexCacheStore } from '@struktoai/mirage-core/cache/index/store'
 import { makeResolveGlob } from '@struktoai/mirage-core/commands/builtin/generic_bind/index'
 import { LINEAR_COMMANDS } from '@struktoai/mirage-core/commands/builtin/linear/index'
 import type { RegisteredCommand } from '@struktoai/mirage-core/commands/config'
 import { HttpLinearTransport } from '@struktoai/mirage-core/core/linear/client'
+import { redactLinearConfig } from '@struktoai/mirage-core/core/linear/config'
+import type { LinearConfig, LinearConfigRedacted } from '@struktoai/mirage-core/core/linear/config'
 import { read as linearRead } from '@struktoai/mirage-core/core/linear/read'
 import { readdir as linearReaddir } from '@struktoai/mirage-core/core/linear/readdir'
 import { stat as linearStat } from '@struktoai/mirage-core/core/linear/stat'
 import { LINEAR_OPS } from '@struktoai/mirage-core/ops/linear/index'
 import type { RegisteredOp } from '@struktoai/mirage-core/ops/registry'
+import { BaseResource } from '@struktoai/mirage-core/resource/base'
 import type { Resource } from '@struktoai/mirage-core/resource/base'
 import { LINEAR_PROMPT, LINEAR_WRITE_PROMPT } from '@struktoai/mirage-core/resource/linear/prompt'
 import { PathSpec, ResourceName } from '@struktoai/mirage-core/types'
 import type { FileStat } from '@struktoai/mirage-core/types'
 import { mountKey, mountPrefixOf } from '@struktoai/mirage-core/utils/key_prefix'
-import { redactLinearConfig, type LinearConfig, type LinearConfigRedacted } from './config.ts'
 
 const resolveLinearGlob = makeResolveGlob(linearReaddir)
 
@@ -38,35 +38,30 @@ export interface LinearResourceState {
   config: LinearConfigRedacted
 }
 
-export class LinearResource implements Resource {
+export class LinearResource extends BaseResource implements Resource {
   readonly kind: string = ResourceName.LINEAR
   readonly cachesReads: boolean = true
   // Every file is sized at its parent's readdir from the listing payload
   // (comments.jsonl via one bounded comments call), so stat always reports
   // the rendered byte length and fskit mounts serve exact reads.
   readonly sizesAlwaysKnown: boolean = true
-  readonly indexTtl: number = 600
+  override readonly indexTtl: number = 600
   readonly prompt: string = LINEAR_PROMPT
   readonly writePrompt: string = LINEAR_WRITE_PROMPT
   readonly config: LinearConfig
   readonly accessor: LinearAccessor
-  readonly index: IndexCacheStore
 
   constructor(config: LinearConfig) {
+    super()
     this.config = config
     const transportOpts: { apiKey: string; baseUrl?: string } = { apiKey: config.apiKey }
     if (config.baseUrl !== undefined) transportOpts.baseUrl = config.baseUrl
     const accessorOpts: { teamIds?: readonly string[] } = {}
     if (config.teamIds !== undefined) accessorOpts.teamIds = config.teamIds
     this.accessor = new LinearAccessor(new HttpLinearTransport(transportOpts), accessorOpts)
-    this.index = new RAMIndexCacheStore({ ttl: this.indexTtl })
   }
 
   open(): Promise<void> {
-    return Promise.resolve()
-  }
-
-  close(): Promise<void> {
     return Promise.resolve()
   }
 
@@ -108,14 +103,14 @@ export class LinearResource implements Resource {
     return resolveLinearGlob(this.accessor, effective, this.index)
   }
 
-  getState(): Promise<LinearResourceState> {
+  override getState(): Promise<LinearResourceState> {
     return Promise.resolve({
       type: this.kind,
       config: redactLinearConfig(this.config),
     })
   }
 
-  loadState(_state: LinearResourceState): Promise<void> {
+  override loadState(_state: LinearResourceState): Promise<void> {
     return Promise.resolve()
   }
 }

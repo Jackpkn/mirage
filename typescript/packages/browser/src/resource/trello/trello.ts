@@ -13,8 +13,6 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { TrelloAccessor } from '@struktoai/mirage-core/accessor/trello'
-import { RAMIndexCacheStore } from '@struktoai/mirage-core/cache/index/ram'
-import type { IndexCacheStore } from '@struktoai/mirage-core/cache/index/store'
 import { makeResolveGlob } from '@struktoai/mirage-core/commands/builtin/generic_bind/index'
 import { TRELLO_COMMANDS } from '@struktoai/mirage-core/commands/builtin/trello/index'
 import type { RegisteredCommand } from '@struktoai/mirage-core/commands/config'
@@ -24,6 +22,7 @@ import { readdir as trelloReaddir } from '@struktoai/mirage-core/core/trello/rea
 import { stat as trelloStat } from '@struktoai/mirage-core/core/trello/stat'
 import type { RegisteredOp } from '@struktoai/mirage-core/ops/registry'
 import { TRELLO_OPS } from '@struktoai/mirage-core/ops/trello/index'
+import { BaseResource } from '@struktoai/mirage-core/resource/base'
 import type { Resource } from '@struktoai/mirage-core/resource/base'
 import { TRELLO_PROMPT, TRELLO_WRITE_PROMPT } from '@struktoai/mirage-core/resource/trello/prompt'
 import { PathSpec, ResourceName } from '@struktoai/mirage-core/types'
@@ -38,17 +37,17 @@ export interface TrelloResourceState {
   config: TrelloConfigRedacted
 }
 
-export class TrelloResource implements Resource {
+export class TrelloResource extends BaseResource implements Resource {
   readonly kind: string = ResourceName.TRELLO
   readonly cachesReads: boolean = true
-  readonly indexTtl: number = 600
+  override readonly indexTtl: number = 600
   readonly prompt: string = TRELLO_PROMPT
   readonly writePrompt: string = TRELLO_WRITE_PROMPT
   readonly config: TrelloConfig
   readonly accessor: TrelloAccessor
-  readonly index: IndexCacheStore
 
   constructor(config: TrelloConfig) {
+    super()
     this.config = config
     const transportOpts: { apiKey: string; apiToken: string; baseUrl?: string } = {
       apiKey: config.apiKey,
@@ -59,14 +58,9 @@ export class TrelloResource implements Resource {
     if (config.workspaceId !== undefined) accessorOpts.workspaceId = config.workspaceId
     if (config.boardIds !== undefined) accessorOpts.boardIds = config.boardIds
     this.accessor = new TrelloAccessor(new HttpTrelloTransport(transportOpts), accessorOpts)
-    this.index = new RAMIndexCacheStore({ ttl: this.indexTtl })
   }
 
   open(): Promise<void> {
-    return Promise.resolve()
-  }
-
-  close(): Promise<void> {
     return Promise.resolve()
   }
 
@@ -108,14 +102,14 @@ export class TrelloResource implements Resource {
     return resolveTrelloGlob(this.accessor, effective, this.index)
   }
 
-  getState(): Promise<TrelloResourceState> {
+  override getState(): Promise<TrelloResourceState> {
     return Promise.resolve({
       type: this.kind,
       config: redactTrelloConfig(this.config),
     })
   }
 
-  loadState(_state: TrelloResourceState): Promise<void> {
+  override loadState(_state: TrelloResourceState): Promise<void> {
     return Promise.resolve()
   }
 }

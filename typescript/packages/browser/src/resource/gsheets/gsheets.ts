@@ -13,8 +13,6 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { GSheetsAccessor } from '@struktoai/mirage-core/accessor/gsheets'
-import { RAMIndexCacheStore } from '@struktoai/mirage-core/cache/index/ram'
-import type { IndexCacheStore } from '@struktoai/mirage-core/cache/index/store'
 import { makeResolveGlob } from '@struktoai/mirage-core/commands/builtin/generic_bind/index'
 import { GSHEETS_COMMANDS } from '@struktoai/mirage-core/commands/builtin/gsheets/index'
 import type { RegisteredCommand } from '@struktoai/mirage-core/commands/config'
@@ -24,6 +22,7 @@ import { readdir as gsheetsReaddir } from '@struktoai/mirage-core/core/gsheets/r
 import { stat as gsheetsStat } from '@struktoai/mirage-core/core/gsheets/stat'
 import { GSHEETS_OPS } from '@struktoai/mirage-core/ops/gsheets/index'
 import type { RegisteredOp } from '@struktoai/mirage-core/ops/registry'
+import { BaseResource } from '@struktoai/mirage-core/resource/base'
 import type { Resource } from '@struktoai/mirage-core/resource/base'
 import {
   GSHEETS_PROMPT,
@@ -45,28 +44,23 @@ export interface GSheetsResourceState {
   config: GSheetsConfigRedacted
 }
 
-export class GSheetsResource implements Resource {
+export class GSheetsResource extends BaseResource implements Resource {
   readonly kind: string = ResourceName.GSHEETS
   readonly cachesReads: boolean = true
-  readonly indexTtl: number = 86_400
+  override readonly indexTtl: number = 86_400
   readonly prompt: string = GSHEETS_PROMPT
   readonly writePrompt: string = GSHEETS_WRITE_PROMPT
   readonly config: GSheetsConfig
   readonly accessor: GSheetsAccessor
-  readonly index: IndexCacheStore
 
   constructor(config: GSheetsConfig) {
+    super()
     this.config = config
     const tm = new TokenManager(config)
     this.accessor = new GSheetsAccessor({ tokenManager: tm })
-    this.index = new RAMIndexCacheStore({ ttl: 86_400 })
   }
 
   open(): Promise<void> {
-    return Promise.resolve()
-  }
-
-  close(): Promise<void> {
     return Promise.resolve()
   }
 
@@ -108,14 +102,14 @@ export class GSheetsResource implements Resource {
     return gsheetsResolveGlob(this.accessor, effective, this.index)
   }
 
-  getState(): Promise<GSheetsResourceState> {
+  override getState(): Promise<GSheetsResourceState> {
     return Promise.resolve({
       type: this.kind,
       config: redactGSheetsConfig(this.config),
     })
   }
 
-  loadState(_state: GSheetsResourceState): Promise<void> {
+  override loadState(_state: GSheetsResourceState): Promise<void> {
     return Promise.resolve()
   }
 }

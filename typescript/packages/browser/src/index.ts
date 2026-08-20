@@ -187,10 +187,10 @@ export {
 } from './resource/trello/config.ts'
 export { LinearResource, type LinearResourceState } from './resource/linear/linear.ts'
 export {
+  normalizeLinearConfig,
   redactLinearConfig,
-  type LinearConfig,
-  type LinearConfigRedacted,
-} from './resource/linear/config.ts'
+} from '@struktoai/mirage-core/core/linear/config'
+export type { LinearConfig, LinearConfigRedacted } from '@struktoai/mirage-core/core/linear/config'
 export { NotionResource, type NotionResourceState } from './resource/notion/notion.ts'
 export {
   redactNotionConfig,

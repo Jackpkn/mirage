@@ -13,8 +13,6 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { GCalAccessor } from '@struktoai/mirage-core/accessor/gcal'
-import { RAMIndexCacheStore } from '@struktoai/mirage-core/cache/index/ram'
-import type { IndexCacheStore } from '@struktoai/mirage-core/cache/index/store'
 import { GCAL_COMMANDS } from '@struktoai/mirage-core/commands/builtin/gcal/index'
 import { makeResolveGlob } from '@struktoai/mirage-core/commands/builtin/generic_bind/index'
 import type { RegisteredCommand } from '@struktoai/mirage-core/commands/config'
@@ -24,6 +22,7 @@ import { stat as gcalStat } from '@struktoai/mirage-core/core/gcal/stat'
 import { TokenManager } from '@struktoai/mirage-core/core/google/client'
 import { GCAL_OPS } from '@struktoai/mirage-core/ops/gcal/index'
 import type { RegisteredOp } from '@struktoai/mirage-core/ops/registry'
+import { BaseResource } from '@struktoai/mirage-core/resource/base'
 import type { Resource } from '@struktoai/mirage-core/resource/base'
 import { GCAL_PROMPT, GCAL_WRITE_PROMPT } from '@struktoai/mirage-core/resource/gcal/prompt'
 import { PathSpec, ResourceName } from '@struktoai/mirage-core/types'
@@ -42,31 +41,26 @@ export interface GCalResourceState {
   config: GCalConfigRedacted
 }
 
-export class GCalResource implements Resource {
+export class GCalResource extends BaseResource implements Resource {
   readonly kind: string = ResourceName.GCAL
   readonly cachesReads: boolean = true
   // Shorter than the other Google mounts: a calendar is edited by other
   // people and a day-long index would keep serving a schedule that has
   // already moved.
-  readonly indexTtl: number = 300
+  override readonly indexTtl: number = 300
   readonly prompt: string = GCAL_PROMPT
   readonly writePrompt: string = GCAL_WRITE_PROMPT
   readonly config: GCalConfig
   readonly accessor: GCalAccessor
-  readonly index: IndexCacheStore
 
   constructor(config: GCalConfig) {
+    super()
     this.config = config
     const tm = new TokenManager(config)
     this.accessor = new GCalAccessor({ tokenManager: tm, config })
-    this.index = new RAMIndexCacheStore({ ttl: 300 })
   }
 
   open(): Promise<void> {
-    return Promise.resolve()
-  }
-
-  close(): Promise<void> {
     return Promise.resolve()
   }
 
@@ -108,14 +102,14 @@ export class GCalResource implements Resource {
     return gcalResolveGlob(this.accessor, effective, this.index)
   }
 
-  getState(): Promise<GCalResourceState> {
+  override getState(): Promise<GCalResourceState> {
     return Promise.resolve({
       type: this.kind,
       config: redactGCalConfig(this.config),
     })
   }
 
-  loadState(_state: GCalResourceState): Promise<void> {
+  override loadState(_state: GCalResourceState): Promise<void> {
     return Promise.resolve()
   }
 }
