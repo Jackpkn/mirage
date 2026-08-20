@@ -29,7 +29,7 @@ from mirage.policy.policies import (Policies, post_execute_gate, post_ops_gate,
 
 from mirage.policy.types import (  # isort: skip
     VALIDITY, Action, ApprovalDecision, ApprovalRequest, Ask, CommandContext,
-    CommandRule, CommandsSpec, Deny, DenyScope, ExecuteResultContext, Grant,
+    CommandRule, AdmissionRules, Deny, DenyScope, ExecuteResultContext, Grant,
     GrantScope, Limit, MountRootQuery, OpsContext, OpsResultContext, Pending,
     SessionCommandsQuery, SessionContext, SessionGrantsQuery)
 
@@ -43,7 +43,7 @@ __all__ = [
     "CallbackApprover",
     "CommandContext",
     "CommandRule",
-    "CommandsSpec",
+    "AdmissionRules",
     "DEFAULT_ASK_REASON",
     "DEFAULT_COMMAND_LIMITS",
     "DEFAULT_DENY_REASON",

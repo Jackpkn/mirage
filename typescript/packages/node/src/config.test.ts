@@ -486,38 +486,47 @@ describe('configToWorkspaceArgs', () => {
   })
 
   it('the permissions document maps to workspace args', async () => {
+    // `mounts:` is infrastructure and `profiles:` is every permission
+    // the deployment states, including the per-mount ones; there is no
+    // workspace `permissions:` block and no `permissions:` on a mount.
     const cfg = loadWorkspaceConfig({
       mounts: {
-        '/repo': { resource: 'ram', permissions: { paths: { hide: ['*.pem', '.env'] } } },
+        '/repo': { resource: 'ram' },
         '/scratch': { resource: 'ram', mode: 'rwx' },
       },
-      permissions: {
-        commands: {
-          deny: [
-            {
-              reason: 'production data is protected',
-              commands: { rm: ['/repo/prod/*'], mv: ['/repo/prod/*'] },
-            },
-            'python3',
-          ],
-        },
-        paths: { hide: ['/scratch/finance'] },
-      },
+      profile: 'reviewer',
       profiles: {
         default: {
           cwd: '/scratch',
           env: { PAGER: 'cat' },
           mounts: { '/repo': 'r', '/scratch': 'rwx' },
+          commands: {
+            deny: [
+              {
+                reason: 'production data is protected',
+                commands: { rm: ['/repo/prod/*'], mv: ['/repo/prod/*'] },
+              },
+              'python3',
+            ],
+          },
+          paths: { hide: ['/scratch/finance'] },
         },
         reviewer: {
-          extends: 'default',
+          mounts: { '/repo': { mode: 'r', paths: { hide: ['/repo/*.pem', '/repo/.env'] } } },
           paths: { hide: ['/repo/docs/internal'] },
           vars: { hide: ['AWS_*', 'SLACK_TOKEN'] },
         },
       },
     })
     const args = await configToWorkspaceArgs(cfg)
-    expect(args.options.permissions).toEqual({
+    expect(args.options.profile).toBe('reviewer')
+    expect(args.options.profiles?.default).toEqual({
+      cwd: '/scratch',
+      env: { PAGER: 'cat' },
+      mounts: new Map([
+        ['/repo', { mode: MountMode.READ }],
+        ['/scratch', { mode: MountMode.EXEC }],
+      ]),
       commands: {
         allow: null,
         ask: [],
@@ -529,23 +538,12 @@ describe('configToWorkspaceArgs', () => {
       },
       paths: { hide: ['/scratch/finance'] },
     })
-    expect(args.options.profiles).toEqual({
-      default: {
-        cwd: '/scratch',
-        env: { PAGER: 'cat' },
-        mounts: new Map([
-          ['/repo', MountMode.READ],
-          ['/scratch', MountMode.EXEC],
-        ]),
-      },
-      reviewer: {
-        extends: 'default',
-        paths: { hide: ['/repo/docs/internal'] },
-        vars: { hide: ['AWS_*', 'SLACK_TOKEN'] },
-      },
-    })
-    expect(args.options.mountPermissions).toEqual({
-      '/repo': { paths: { hide: ['*.pem', '.env'] }, commands: { ask: [], deny: [] } },
+    expect(args.options.profiles?.reviewer).toEqual({
+      mounts: new Map([
+        ['/repo', { mode: MountMode.READ, paths: { hide: ['/repo/*.pem', '/repo/.env'] } }],
+      ]),
+      paths: { hide: ['/repo/docs/internal'] },
+      vars: { hide: ['AWS_*', 'SLACK_TOKEN'] },
     })
     expect(args.resources['/scratch']?.[1]).toBe(MountMode.EXEC)
   })
@@ -557,29 +555,39 @@ describe('configToWorkspaceArgs', () => {
     expect(() =>
       loadWorkspaceConfig({
         mounts: { '/data': { resource: 'ram' } },
-        permissions: { commands: { deny: [{ reason: 'x', path: ['/data/prod/*'] }] } },
+        profiles: {
+          default: { commands: { deny: [{ reason: 'x', path: ['/data/prod/*'] }] } },
+        },
       }),
     ).toThrow(/deny\[0\]: unknown field `path`/)
   })
 
-  it('unshipped fields and a broken profile chain fail at load', () => {
+  it('unshipped and misspelled fields fail at load', () => {
     expect(() =>
       loadWorkspaceConfig({
         mounts: { '/data': { resource: 'ram' } },
         profiles: { a: { hidden_paths: { paths: ['/x'] } } },
       }),
     ).toThrow(/unknown field `hidden_paths`/)
+    // A mount section has no allow list, and a mount block has no
+    // permissions of its own any more.
     expect(() =>
       loadWorkspaceConfig({
-        mounts: { '/data': { resource: 'ram', permissions: { commands: { allow: ['ls'] } } } },
+        mounts: { '/data': { resource: 'ram' } },
+        profiles: { a: { mounts: { '/data': { commands: { allow: ['ls'] } } } } },
       }),
     ).toThrow(/unknown field `allow`/)
+    expect(() =>
+      loadWorkspaceConfig({
+        mounts: { '/data': { resource: 'ram', permissions: { paths: { hide: ['x'] } } } },
+      }),
+    ).toThrow(/unknown mount `\/data` key `permissions`/)
     expect(() =>
       loadWorkspaceConfig({
         mounts: { '/data': { resource: 'ram' } },
         profiles: { orphan: { extends: 'gone' } },
       }),
-    ).toThrow(/extends unknown profile 'gone'/)
+    ).toThrow(/unknown field `extends`/)
   })
 
   it('console redis block builds a factory that mints fresh keys', async () => {

@@ -1,0 +1,212 @@
+{
+  "note": "One nested mount, hidden from the `sealed` session, read every way a command can learn a path is there. The point is agreement: a command that answers from the mount table (tree, tar, zip), from a backend probe (du) or from the dispatcher (ls, cat, find, grep) must give the same answer, and three of them did not. `tree` drew the mount as `[error opening dir]`, `tar` and `zip` printed its name in a `different filesystem` warning, and `du` reported `0 <path>` for a hidden operand where `ls` said it was absent. The default-session cases above the battery are the control: they pin that the mount really is there and really is named, so a battery line passing on an empty tree would fail here first. A new reading command belongs in this list.",
+  "cases": [
+    {
+      "id": "boundary_prep",
+      "seq": 923200,
+      "targets": [
+        "ram-commands"
+      ],
+      "command": "mkdir -p /vault/d/sub && echo public > /vault/d/sub/top.txt && echo SECRET > /vault/d/inner/sec.txt",
+      "expect": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "boundary_default_sees_the_nested_mount",
+      "seq": 923201,
+      "targets": [
+        "ram-commands"
+      ],
+      "command": "ls /vault/d",
+      "expect": {
+        "exit": 0,
+        "stdout": "inner\nsub\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "boundary_default_names_the_crossing",
+      "seq": 923202,
+      "targets": [
+        "ram-commands"
+      ],
+      "command": "tar -cf /vault/a.tar /vault/d",
+      "expect": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": "tar: Removing leading `/' from member names\ntar: vault/d/inner/: file is on a different filesystem; not dumped\n"
+      }
+    },
+    {
+      "id": "boundary_hidden_mount_ls",
+      "seq": 923210,
+      "targets": [
+        "ram-commands"
+      ],
+      "session": "sealed",
+      "command": "ls /vault/d",
+      "expect": {
+        "exit": 0,
+        "stdout": "sub\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "boundary_hidden_mount_ls_recursive",
+      "seq": 923211,
+      "targets": [
+        "ram-commands"
+      ],
+      "session": "sealed",
+      "command": "ls -R /vault/d",
+      "expect": {
+        "exit": 0,
+        "stdout": "/vault/d:\nsub\n\n/vault/d/sub:\ntop.txt\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "boundary_hidden_mount_find",
+      "seq": 923212,
+      "targets": [
+        "ram-commands"
+      ],
+      "session": "sealed",
+      "command": "find /vault/d",
+      "expect": {
+        "exit": 0,
+        "stdout": "/vault/d\n/vault/d/sub\n/vault/d/sub/top.txt\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "boundary_hidden_mount_du",
+      "seq": 923213,
+      "targets": [
+        "ram-commands"
+      ],
+      "session": "sealed",
+      "command": "du -a /vault/d",
+      "expect": {
+        "exit": 0,
+        "stdout": "7\t/vault/d/sub/top.txt\n7\t/vault/d/sub\n7\t/vault/d\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "boundary_hidden_mount_tree",
+      "seq": 923214,
+      "targets": [
+        "ram-commands"
+      ],
+      "session": "sealed",
+      "command": "tree /vault/d",
+      "expect": {
+        "exit": 0,
+        "stdout": "/vault/d\n`-- sub\n    `-- top.txt\n\n2 directories, 1 file\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "boundary_hidden_mount_grep",
+      "seq": 923215,
+      "targets": [
+        "ram-commands"
+      ],
+      "session": "sealed",
+      "command": "grep -r . /vault/d",
+      "expect": {
+        "exit": 0,
+        "stdout": "/vault/d/sub/top.txt:public\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "boundary_hidden_mount_stat",
+      "seq": 923216,
+      "targets": [
+        "ram-commands"
+      ],
+      "session": "sealed",
+      "command": "stat -c '%n' /vault/d/inner",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "stat: /vault/d/inner: No such file or directory\n"
+      }
+    },
+    {
+      "id": "boundary_hidden_mount_cat",
+      "seq": 923217,
+      "targets": [
+        "ram-commands"
+      ],
+      "session": "sealed",
+      "command": "cat /vault/d/inner/sec.txt",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "cat: /vault/d/inner/sec.txt: No such file or directory\n"
+      }
+    },
+    {
+      "id": "boundary_hidden_mount_du_operand",
+      "seq": 923218,
+      "targets": [
+        "ram-commands"
+      ],
+      "session": "sealed",
+      "command": "du /vault/d/inner",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "du: cannot access '/vault/d/inner': No such file or directory\n"
+      }
+    },
+    {
+      "id": "boundary_hidden_mount_wc",
+      "seq": 923219,
+      "targets": [
+        "ram-commands"
+      ],
+      "session": "sealed",
+      "command": "wc -c /vault/d/inner/sec.txt",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "wc: /vault/d/inner/sec.txt: No such file or directory\n"
+      }
+    },
+    {
+      "id": "boundary_hidden_mount_is_never_named_by_tar",
+      "seq": 923230,
+      "targets": [
+        "ram-commands"
+      ],
+      "session": "sealed",
+      "command": "tar -cf /vault/b.tar /vault/d",
+      "expect": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": "tar: Removing leading `/' from member names\n"
+      }
+    },
+    {
+      "id": "boundary_hidden_mount_is_never_named_by_zip",
+      "seq": 923231,
+      "targets": [
+        "ram-commands"
+      ],
+      "session": "sealed",
+      "command": "zip -r /vault/b.zip /vault/d",
+      "expect": {
+        "exit": 0,
+        "stdout": "  adding: vault/d/\n  adding: vault/d/sub/\n  adding: vault/d/sub/top.txt\n",
+        "stderr": ""
+      }
+    }
+  ]
+}

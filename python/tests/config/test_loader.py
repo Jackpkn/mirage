@@ -38,8 +38,7 @@ from mirage.workspace.store import (DiskWorkspaceStateStore,
                                     RedisWorkspaceStateStore)
 
 from mirage.workspace.session.permissions import (  # isort: skip
-    CommandsBlock, MountPermissions, PathsBlock, SessionProfile, VarsBlock,
-    WorkspacePermissions)
+    CommandsBlock, PathsBlock, ProfileMount, SessionProfile, VarsBlock)
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -388,34 +387,40 @@ policy: policy.js
 
 
 def test_permissions_document_maps_to_workspace_kwargs(tmp_path):
+    # `mounts:` is infrastructure and `profiles:` is every permission
+    # the deployment states, including the per-mount ones; there is no
+    # workspace `permissions:` block and no `permissions:` on a mount.
     cfg_file = tmp_path / "ws.yaml"
     cfg_file.write_text("""\
 mounts:
   /repo:
     resource: ram
-    permissions:
-      paths:
-        hide: ["*.pem", ".env"]
   /scratch:
     resource: ram
     mode: rwx
-permissions:
-  commands:
-    deny:
-      - reason: production data is protected
-        commands:
-          rm: ["/repo/prod/*"]
-          mv: ["/repo/prod/*"]
-      - python3
-  paths:
-    hide: ["/scratch/finance"]
+profile: reviewer
 profiles:
   default:
     cwd: /scratch
     env: {PAGER: cat}
-    mounts: {/repo: r, /scratch: rwx}
+    mounts:
+      /repo: r
+      /scratch: rwx
+    commands:
+      deny:
+        - reason: production data is protected
+          commands:
+            rm: ["/repo/prod/*"]
+            mv: ["/repo/prod/*"]
+        - python3
+    paths:
+      hide: ["/scratch/finance"]
   reviewer:
-    extends: default
+    mounts:
+      /repo:
+        mode: r
+        paths:
+          hide: ["/repo/*.pem", "/repo/.env"]
     paths:
       hide: ["/repo/docs/internal"]
     vars:
@@ -423,7 +428,15 @@ profiles:
 """)
     cfg = load_config(cfg_file)
     kwargs = cfg.to_workspace_kwargs()
-    assert kwargs["permissions"] == WorkspacePermissions(
+    assert "permissions" not in kwargs
+    assert kwargs["profile"] == "reviewer"
+    assert kwargs["profiles"]["default"] == SessionProfile(
+        cwd="/scratch",
+        env={"PAGER": "cat"},
+        mounts={
+            "/repo": ProfileMount(mode=MountMode.READ),
+            "/scratch": ProfileMount(mode=MountMode.EXEC),
+        },
         commands=CommandsBlock(deny=(
             CommandRule(reason="production data is protected",
                         commands=("rm", ),
@@ -435,22 +448,15 @@ profiles:
         )),
         paths=PathsBlock(hide=("/scratch/finance", )),
     )
-    assert kwargs["profiles"] == {
-        "default":
-        SessionProfile(cwd="/scratch",
-                       env={"PAGER": "cat"},
-                       mounts={
-                           "/repo": MountMode.READ,
-                           "/scratch": MountMode.EXEC
-                       }),
-        "reviewer":
-        SessionProfile(extends="default",
-                       paths=PathsBlock(hide=("/repo/docs/internal", )),
-                       vars=VarsBlock(hide=("AWS_*", "SLACK_TOKEN"))),
-    }
-    assert kwargs["resources"]["/repo"].permissions == MountPermissions(
-        paths=PathsBlock(hide=("*.pem", ".env")))
-    assert kwargs["resources"]["/scratch"].permissions is None
+    assert kwargs["profiles"]["reviewer"] == SessionProfile(
+        mounts={
+            "/repo":
+            ProfileMount(mode=MountMode.READ,
+                         paths=PathsBlock(hide=("/repo/*.pem", "/repo/.env")))
+        },
+        paths=PathsBlock(hide=("/repo/docs/internal", )),
+        vars=VarsBlock(hide=("AWS_*", "SLACK_TOKEN")),
+    )
 
 
 def test_permissions_document_end_to_end_from_yaml(tmp_path):
@@ -461,16 +467,17 @@ mounts:
   /repo:
     resource: ram
     mode: rwx
-    permissions:
-      paths:
-        hide: [".env"]
-permissions:
-  commands:
-    deny:
-      - reason: no deletes in the repo
-        commands:
-          rm: ["/repo"]
 profiles:
+  default:
+    mounts:
+      /repo:
+        paths:
+          hide: ["/repo/.env"]
+    commands:
+      deny:
+        - reason: no deletes in the repo
+          commands:
+            rm: ["/repo"]
   reviewer:
     cwd: /repo
     mounts: {/repo: r}
@@ -510,14 +517,31 @@ def test_unknown_profile_fields_fail_loud(tmp_path):
                 }
             },
         })
+    # A mount states infrastructure only, and there is no workspace
+    # permissions block: both used to be a second place to write a rule.
+    for bad in ({
+            "permissions": {
+                "commands": {
+                    "allow": ["ls"]
+                }
+            }
+    }, {
+            "profiles": {
+                "a": {
+                    "extends": "default"
+                }
+            }
+    }):
+        with pytest.raises(ValueError):
+            load_config({"mounts": {"/data": {"resource": "ram"}}, **bad})
     with pytest.raises(ValueError):
         load_config({
             "mounts": {
                 "/data": {
                     "resource": "ram",
                     "permissions": {
-                        "commands": {
-                            "allow": ["ls"]
+                        "paths": {
+                            "hide": ["/data/x"]
                         }
                     }
                 }
@@ -525,17 +549,18 @@ def test_unknown_profile_fields_fail_loud(tmp_path):
         })
 
 
-def test_profile_chain_is_resolved_at_load(tmp_path):
-    with pytest.raises(ValueError, match="extends unknown profile 'gone'"):
+def test_a_named_default_profile_must_exist(tmp_path):
+    with pytest.raises(ValueError, match="unknown profile 'gone'"):
         load_config({
             "mounts": {
                 "/data": {
                     "resource": "ram"
                 }
             },
+            "profile": "gone",
             "profiles": {
-                "orphan": {
-                    "extends": "gone"
+                "a": {
+                    "cwd": "/data"
                 }
             },
         })

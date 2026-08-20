@@ -167,7 +167,7 @@ function executableWorkspace(
       mode: MountMode.WRITE,
       ops,
       shellParser: parser,
-      ...(deny ? { permissions: { commands: { deny }, paths: { hide: [] } } } : {}),
+      ...(deny ? { profiles: { default: { commands: { allow: null, ask: [], deny } } } } : {}),
       ...(policies ? { policies } : {}),
     },
   )

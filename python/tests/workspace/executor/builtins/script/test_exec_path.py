@@ -21,8 +21,7 @@ from mirage.resource import RAMResource
 from mirage.types import MountMode
 from mirage.workspace import Workspace
 from mirage.workspace.executor.builtins.script import shebang_words
-from mirage.workspace.session.permissions import (CommandsBlock,
-                                                  WorkspacePermissions)
+from mirage.workspace.session.permissions import CommandsBlock, SessionProfile
 
 
 @pytest.fixture()
@@ -128,9 +127,12 @@ def test_path_guard_sees_the_executed_file():
             "/": (RAMResource(), MountMode.WRITE),
             "/data/": (prod, MountMode.WRITE),
         },
-        permissions=WorkspacePermissions(commands=CommandsBlock(
-            deny=(CommandRule(reason="production scripts are sealed",
-                              paths=("/data/prod/*", )), ))))
+        profiles={
+            "default":
+            SessionProfile(commands=CommandsBlock(
+                deny=(CommandRule(reason="production scripts are sealed",
+                                  paths=("/data/prod/*", )), )))
+        })
     result = _run(ws, "/data/prod/run.sh")
     assert result.exit_code == 1
     assert b"production scripts are sealed" in result.stderr

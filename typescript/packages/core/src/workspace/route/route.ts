@@ -20,14 +20,13 @@ import { NAMESPACE_COMMANDS, SHELL_NAMES } from './constants.ts'
 import { Consumer } from './types.ts'
 
 /**
- * What the session's allow lists say about a tool word. A tier without a
- * list installs everything; a tier with one installs only the names its
+ * What the session's allow list says about a tool word. A role without a
+ * list installs everything; a role with one installs only the names its
  * patterns start with (`headVisible`). This is the raw answer;
  * `commandVisible` and `layers` add the words that are never subjects.
  */
 export function listed(name: string, session: Session): boolean {
-  const tiers = session.commandLayers
-  return tiers.length === 0 || headVisible(name, tiers)
+  return headVisible(name, session.commands)
 }
 
 /**
@@ -44,11 +43,11 @@ export function isTool(name: string, session: Session): boolean {
 }
 
 /**
- * Whether a session can see a command word at all. The document's allow
- * lists (`commands.allow` at the workspace and profile tiers) decide: a
- * tool name no list of a tier starts a pattern with is not installed for
- * the session, so it is 127 at the chokepoint and absent from every
- * enumerator; a word that is not a tool (`isTool`) is always visible.
+ * Whether a session can see a command word at all. The role's allow list
+ * (`commands.allow`) decides: a tool name no pattern of it starts with
+ * is not installed for the session, so it is 127 at the chokepoint and
+ * absent from every enumerator; a word that is not a tool (`isTool`) is
+ * always visible.
  */
 export function commandVisible(name: string, session: Session): boolean {
   return !isTool(name, session) || listed(name, session)

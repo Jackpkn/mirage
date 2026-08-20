@@ -93,12 +93,15 @@ def _norm_prefix(mount_prefix: str) -> str:
     return "/" + stripped if stripped else "/"
 
 
-def _session_mode(mount_prefix: str) -> "MountMode | None":
+def _session_mode(mount_prefix: str) -> "MountMode":
     """The current session's mode cap for this mount.
 
-    Returns ``MountMode.EXEC`` (no narrowing) when no session is bound or
-    the session is unrestricted, ``None`` when the session has mount modes but
-    none for this mount.
+    ``MountMode.EXEC`` (no narrowing) when no session is bound, when the
+    role names no mount, or when it names none for this one: a role's
+    mount sections narrow what the mount already offers and never
+    decide whether it exists. A role that must not reach a mount hides
+    it, which answers ENOENT rather than a permission error naming
+    something the role cannot see.
 
     Args:
         mount_prefix (str): the mount's prefix, e.g. ``/s3``.
@@ -106,12 +109,11 @@ def _session_mode(mount_prefix: str) -> "MountMode | None":
     sess = get_current_session()
     if sess is None or sess.mount_modes is None:
         return MountMode.EXEC
-    return sess.mount_modes.get(_norm_prefix(mount_prefix))
+    return sess.mount_modes.get(_norm_prefix(mount_prefix), MountMode.EXEC)
 
 
 def hidden_paths_active() -> bool:
-    """Whether the current session hides any paths at all, its own or
-    the workspace-bound ones every session carries.
+    """Whether the current session hides any paths at all.
 
     For a summarizing fast path (du -s asks the backend for one total)
     that must not be trusted when hidden leaves could be inside it.
@@ -120,8 +122,7 @@ def hidden_paths_active() -> bool:
         None
     """
     sess = get_current_session()
-    return sess is not None and (sess.hidden_paths is not None
-                                 or sess.bound_hidden is not None)
+    return sess is not None and sess.hidden_paths is not None
 
 
 DEFAULT_UMASK = 0o022
@@ -172,18 +173,15 @@ def session_path_allowed(sess: "Session", virtual: str) -> bool:
         sess (Session): the session asking.
         virtual (str): absolute virtual path.
     """
-    if sess.hidden_paths is not None and path_hidden(sess.hidden_paths,
-                                                     virtual):
-        return False
-    return not (sess.bound_hidden is not None
-                and path_hidden(sess.bound_hidden, virtual))
+    return not (sess.hidden_paths is not None
+                and path_hidden(sess.hidden_paths, virtual))
 
 
 def path_allowed(virtual: str) -> bool:
     """Whether the current session's hidden-paths specs, its own and
     the workspace-bound one, leave this path visible.
 
-    The path twin of ``mount_allowed``: enumeration surfaces filter
+    Enumeration surfaces filter
     names through it and the doors answer ENOENT (EACCES for creates)
     when it says no, so hiding reads as nonexistence, never as a
     denial that leaks the name. True when no session is bound or the
@@ -233,7 +231,7 @@ def get_admission() -> "EntryGate | None":
 def path_rules_active() -> bool:
     """Whether a path rule in force reads the running command's paths.
 
-    The twin of ``hidden_paths_active`` for the rule arms: a backend's
+    The twin of ``hidden_paths_active`` for the deny rules: a backend's
     native find or du classifies the raw tree, so an entry a rule
     refuses would be listed or summed past the gate; the readdir walk
     passes every entry through it instead. False when no admitted
@@ -288,59 +286,16 @@ def redirect_paths_for(node_id: int) -> tuple[PathSpec, ...]:
     return bound[1]
 
 
-def mount_allowed(mount_prefix: str) -> bool:
-    """Whether the current session may touch this mount at all.
-
-    The non-raising twin of ``assert_mount_allowed``, for enumeration:
-    structure merges and fan-outs filter names through it, so a scoped
-    session never learns that an ungranted mount exists. True when no
-    session is bound or the session is unrestricted.
-
-    Args:
-        mount_prefix (str): the mount's prefix, e.g. ``/s3``.
-    """
-    return _session_mode(mount_prefix) is not None
-
-
-def assert_mount_allowed(mount_prefix: str) -> None:
-    """Raise PermissionError if the current session may not touch this mount.
-
-    No-op when no session is bound or the session is unrestricted
-    (``mount_modes is None``). The session's ``mount_modes`` is
-    expected to already include any infrastructure prefixes (observer,
-    ``/dev``) added at session-creation time. A user-defined root mount
-    is governed like any other: a session must be granted ``/`` to
-    touch it.
-
-    Args:
-        mount_prefix (str): the mount's prefix, e.g. ``/s3`` or ``/`` for the
-            cache root.
-
-    Raises:
-        PermissionError: the mount lies outside the session's mounts.
-    """
-    if _session_mode(mount_prefix) is not None:
-        return
-    sess = get_current_session()
-    sid = sess.session_id if sess is not None else "<none>"
-    raise PermissionError(f"session {sid!r} not allowed to "
-                          f"access mount {_norm_prefix(mount_prefix)!r}")
-
-
 def effective_mount_mode(mount_prefix: str,
                          mount_mode: MountMode) -> MountMode:
     """The mount mode after narrowing by the current session's cap.
 
-    The mount's own mode is the ceiling; a session's mode can only weaken
-    it (a READ mount stays read-only whatever the session says). A mount
-    absent from the modes map narrows to READ here; visibility denial
-    is ``assert_mount_allowed``'s job at the dispatch entry points.
+    The mount's own mode is the strongest one available; a role's mode
+    can only weaken it (a READ mount stays read-only whatever the role
+    says). A mount the role does not name keeps its own mode.
 
     Args:
         mount_prefix (str): the mount's prefix, e.g. ``/s3``.
         mount_mode (MountMode): the mount's configured mode.
     """
-    cap = _session_mode(mount_prefix)
-    if cap is None:
-        return MountMode.READ
-    return weaker_mode(mount_mode, cap)
+    return weaker_mode(mount_mode, _session_mode(mount_prefix))

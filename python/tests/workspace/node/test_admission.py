@@ -17,7 +17,7 @@ import errno
 import pytest
 
 from mirage.policy import PolicyDenied
-from mirage.policy.types import CommandRule, CommandsSpec
+from mirage.policy.types import AdmissionRules, CommandRule
 from mirage.resource.ram import RAMResource
 from mirage.shell import parse
 from mirage.types import MountMode
@@ -25,10 +25,10 @@ from mirage.workspace import Workspace
 from mirage.workspace.expand.classify import classify_parts
 from mirage.workspace.node.admission import (Admitted, admit, admit_line,
                                              policy_scopes)
-from mirage.workspace.session import SessionProfile, WorkspacePermissions
+from mirage.workspace.session import SessionProfile
 from mirage.workspace.session.permissions import PathsBlock
 
-DOC = WorkspacePermissions.model_validate({
+DOC = {
     "commands": {
         "allow": [
             "cat", "rm", "ls", "ln", "echo", "head", "grep", "rg", "cd",
@@ -48,13 +48,13 @@ DOC = WorkspacePermissions.model_validate({
             }
         }],
     }
-})
+}
 
 
 def _ws() -> Workspace:
     return Workspace({"/data/": (RAMResource(), MountMode.WRITE)},
                      mode=MountMode.WRITE,
-                     permissions=DOC)
+                     profiles={"default": DOC})
 
 
 def _virtuals(ws: Workspace, name: str, *args: str) -> list[str]:
@@ -368,8 +368,8 @@ def test_the_admitted_gate_judges_what_the_line_did_not_name():
     ask = CommandRule(reason="nod",
                       commands=("grep", ),
                       paths=("/data/asked/*", ))
-    layers = (CommandsSpec(ask=(ask, ), deny=(deny, )), )
-    gate = Admitted(layers=layers,
+    rules = AdmissionRules(ask=(ask, ), deny=(deny, ))
+    gate = Admitted(rules=rules,
                     tokens=("grep", "-r", "x", "/data"),
                     judged=frozenset({"/data"}),
                     granted=(),
@@ -387,13 +387,13 @@ def test_the_admitted_gate_judges_what_the_line_did_not_name():
     # An operand the gate judged passes whatever the rules say about it
     # (the line was admitted on it), and a grant under the asking rule
     # opens its scope to the walk.
-    judged = Admitted(layers=layers,
+    judged = Admitted(rules=rules,
                       tokens=("grep", "x", "/data/asked/a"),
                       judged=frozenset({"/data/asked/a"}),
                       granted=(),
                       scoped=True)
     judged.check("/data/asked/a")
-    granted = Admitted(layers=layers,
+    granted = Admitted(rules=rules,
                        tokens=("grep", "-r", "x", "/data/asked"),
                        judged=frozenset({"/data/asked"}),
                        granted=(ask, ),

@@ -23,6 +23,7 @@ from mirage.context import reset_current_session, set_current_session
 from mirage.policy import (Action, ApprovalRequest, Ask, CallbackApprover,
                            CommandContext, Policy)
 from mirage.policy.constants import DEFAULT_ASK_REASON, DEFAULT_DENY_REASON
+from mirage.policy.errors import PolicyError
 from mirage.policy.types import CommandRule
 from mirage.resource.ram import RAMResource
 from mirage.runtime.base import Runtime
@@ -30,18 +31,15 @@ from mirage.runtime.mixin import LineExecutorMixin
 from mirage.runtime.types import RunResult
 from mirage.types import HiddenPaths, HiddenVars, MountMode
 from mirage.workspace import Workspace
-from mirage.workspace.mount.spec import Mount
 from mirage.workspace.session import SessionProfile
 from mirage.workspace.session.state import seed_var
 
 from mirage.workspace.session.permissions import (  # isort: skip
-    CommandsBlock, MountCommandsBlock, MountPermissions, PathsBlock, VarsBlock,
-    WorkspacePermissions)
+    CommandsBlock, MountCommandsBlock, PathsBlock, ProfileMount, VarsBlock)
 
 
 def test_profile_from_dict_regroups_paths_and_vars():
     p = SessionProfile.model_validate({
-        "extends": "default",
         "cwd": "/scratch",
         "env": {
             "PAGER": "cat"
@@ -57,38 +55,82 @@ def test_profile_from_dict_regroups_paths_and_vars():
             "hide": ["AWS_*"]
         },
     })
-    assert p.extends == "default"
     assert p.cwd == "/scratch"
     assert p.env == {"PAGER": "cat"}
-    assert p.mounts == {"/repo": MountMode.READ, "/scratch": MountMode.EXEC}
+    # A bare mode is sugar for the section that carries only a mode.
+    assert p.mounts == {
+        "/repo": ProfileMount(mode=MountMode.READ),
+        "/scratch": ProfileMount(mode=MountMode.EXEC),
+    }
     assert p.paths == PathsBlock(hide=("/repo/.env", "*.pem"))
     assert p.vars == VarsBlock(hide=("AWS_*", ))
 
 
-def test_profile_unsaid_fields_are_none_so_inheritance_can_tell():
+def test_profile_unsaid_fields_are_none_so_a_reader_can_tell():
     p = SessionProfile()
-    assert (p.extends, p.cwd, p.env, p.mounts, p.paths, p.vars) == (None, ) * 6
+    assert (p.cwd, p.env, p.mounts, p.paths, p.vars,
+            p.commands) == (None, ) * 6
 
 
-def test_profile_mounts_list_form_keeps_each_mounts_own_mode():
-    assert SessionProfile(mounts=["/repo", "scratch"]).mounts == ("/repo",
-                                                                  "/scratch")
-    assert SessionProfile(mounts="/repo").mounts == ("/repo", )
+def test_a_mount_section_carries_a_mode_rules_and_hides():
+    p = SessionProfile.model_validate({
+        "mounts": {
+            "/repo": {
+                "mode": "rw",
+                "commands": {
+                    "deny": ["git push"],
+                    "ask": ["git rebase"]
+                },
+                "paths": {
+                    "hide": ["/repo/.env"]
+                },
+            }
+        }
+    })
+    entry = p.mounts["/repo"]
+    assert entry.mode is MountMode.WRITE
+    assert entry.commands.deny[0].commands == ("git push", )
+    assert entry.commands.ask[0].commands == ("git rebase", )
+    assert entry.paths == PathsBlock(hide=("/repo/.env", ))
+    # What a session can see is the session's property, not an
+    # operand's, so a mount section has no allow list.
+    with pytest.raises(ValidationError):
+        SessionProfile.model_validate(
+            {"mounts": {
+                "/repo": {
+                    "commands": {
+                        "allow": ["ls"]
+                    }
+                }
+            }})
+
+
+def test_profile_mounts_refuses_a_bare_list():
+    # A list used to mean "only these mounts are reachable"; a mount a
+    # role does not name now keeps its own mode, so the list would
+    # quietly drop the confinement it used to carry.
+    with pytest.raises(ValidationError,
+                       match=re.escape(
+                           "mounts must be a mapping of prefix to its "
+                           "settings")):
+        SessionProfile.model_validate({"mounts": ["/repo"]})
 
 
 @pytest.mark.parametrize("mounts,message", [
-    (["/repo", 7], "mounts[1] must be a string"),
     ({
         7: "read"
     }, "mounts keys must be strings"),
+    ("/repo", "mounts must be a mapping of prefix to its settings"),
+    (7, "mounts must be a mapping of prefix to its settings"),
+    ({"/repo"}, "mounts must be a mapping of prefix to its settings"),
     ({
-        "/repo": ["read"]
-    }, "mounts[/repo] must be a mode name or alias"),
+        "/repo": "nope"
+    }, "'nope' is not a valid MountMode"),
     ({
-        "/repo": 7
-    }, "mounts[/repo] must be a mode name or alias"),
-    (7, "mounts must be a mapping or a list of strings"),
-    ({"/repo"}, "mounts must be a mapping or a list of strings"),
+        "/repo": {
+            "mode": 7
+        }
+    }, "mount mode must be a mode name or alias"),
 ])
 def test_profile_mounts_rejects_what_typescript_rejects(mounts, message):
     # The message is asserted, not just the type: a mode that is not a
@@ -101,6 +143,8 @@ def test_profile_mounts_rejects_what_typescript_rejects(mounts, message):
 
 def test_profile_rejects_unknown_and_unshipped_fields():
     for bad in ({
+            "extends": "default"
+    }, {
             "hidden_paths": {}
     }, {
             "hidden_vars": {}
@@ -115,6 +159,12 @@ def test_profile_rejects_unknown_and_unshipped_fields():
     }, {
             "vars": {
                 "mask": []
+            }
+    }, {
+            "mounts": {
+                "/repo": {
+                    "permissions": {}
+                }
             }
     }):
         with pytest.raises(ValidationError):
@@ -143,7 +193,7 @@ def test_profile_commands_block_takes_allow_ask_and_deny():
     })
     assert p.commands is not None
     assert p.commands.allow == ("ls", "git log")
-    # A bare ask entry carries the ask arm's default reason, not deny's.
+    # A bare ask entry carries ask's default reason, not deny's.
     assert p.commands.ask[0] == CommandRule(reason=DEFAULT_ASK_REASON,
                                             commands=("git push", ))
     assert p.commands.ask[1] == CommandRule(reason="sign-off",
@@ -200,8 +250,8 @@ def test_profile_is_frozen():
         p.cwd = "/y"  # type: ignore[misc]
 
 
-def test_workspace_permissions_deny_accepts_rules_and_bare_names():
-    w = WorkspacePermissions.model_validate({
+def test_commands_deny_accepts_rules_and_bare_names():
+    p = SessionProfile.model_validate({
         "commands": {
             "deny": [{
                 "reason": "no deletes",
@@ -216,22 +266,20 @@ def test_workspace_permissions_deny_accepts_rules_and_bare_names():
             "hide": ["/shared/finance"]
         },
     })
-    assert w.commands == CommandsBlock(deny=(
+    assert p.commands == CommandsBlock(deny=(
         CommandRule(
             reason="no deletes", commands=("rm", ), paths=("/repo/*", )),
         CommandRule(reason=DEFAULT_DENY_REASON, commands=("python3", )),
         CommandRule(reason=DEFAULT_DENY_REASON, commands=("shred", )),
     ))
-    assert w.paths == PathsBlock(hide=("/shared/finance", ))
-    assert WorkspacePermissions() == WorkspacePermissions(
-        commands=CommandsBlock(), paths=PathsBlock())
+    assert p.paths == PathsBlock(hide=("/shared/finance", ))
 
 
 @pytest.mark.parametrize("deny", ["rm", {"rm": "no"}, 7])
-def test_workspace_permissions_deny_is_a_list_not_a_scalar(deny):
+def test_commands_deny_is_a_list_not_a_scalar(deny):
     with pytest.raises(ValidationError,
                        match=re.escape("commands.deny must be a list")):
-        WorkspacePermissions.model_validate({"commands": {"deny": deny}})
+        SessionProfile.model_validate({"commands": {"deny": deny}})
 
 
 @pytest.mark.parametrize("rule", [
@@ -254,14 +302,14 @@ def test_deny_rule_refuses_scalar_lists_and_non_string_reasons(rule):
     # `commands: rm` would tuple() into ('r', 'm') and leave rm allowed;
     # the document fails to load instead, as it does in TypeScript.
     with pytest.raises(ValidationError):
-        WorkspacePermissions.model_validate({"commands": {"deny": [rule]}})
+        SessionProfile.model_validate({"commands": {"deny": [rule]}})
 
 
 def test_a_rule_maps_each_command_to_its_own_paths():
     # One command to many paths, never a list of commands beside a list
     # of paths: the document says which command each path belongs to,
     # and compiles one rule per command.
-    w = WorkspacePermissions.model_validate({
+    p = SessionProfile.model_validate({
         "commands": {
             "deny": [{
                 "reason": "prod is protected",
@@ -277,7 +325,7 @@ def test_a_rule_maps_each_command_to_its_own_paths():
             }],
         }
     })
-    assert w.commands.deny == (
+    assert p.commands.deny == (
         CommandRule(reason="prod is protected",
                     commands=("rm", ),
                     paths=("/repo/prod/*", "/shared/*")),
@@ -285,7 +333,7 @@ def test_a_rule_maps_each_command_to_its_own_paths():
                     commands=("mv", ),
                     paths=("/repo/prod/*", )),
     )
-    assert w.commands.ask == (CommandRule(reason=DEFAULT_ASK_REASON,
+    assert p.commands.ask == (CommandRule(reason=DEFAULT_ASK_REASON,
                                           commands=("git push", ),
                                           paths=("/repo/*", )), )
 
@@ -341,99 +389,99 @@ def test_a_rule_maps_each_command_to_its_own_paths():
     (7, "must be a command pattern or a mapping"),
 ])
 def test_a_rule_that_does_not_say_whose_path_it_is_is_refused(bad, message):
-    for doc in (WorkspacePermissions, SessionProfile, MountPermissions):
+    for doc in (SessionProfile, MountCommandsBlock):
+        payload = ({
+            "commands": {
+                "deny": [bad]
+            }
+        } if doc is SessionProfile else {
+            "deny": [bad]
+        })
         with pytest.raises(ValidationError, match=re.escape(message)):
-            doc.model_validate({"commands": {"deny": [bad]}})
+            doc.model_validate(payload)
 
 
 @pytest.mark.parametrize("entry", ["xxx", "secrets/*", "./x", "~/x", "a/b"])
-def test_a_relative_path_is_refused_where_paths_are_absolute(entry):
-    # The workspace and profile tiers speak in virtual paths: `xxx` would
-    # silently read as `/xxx` and `secrets/*` as `/secrets/*`. A name
-    # pattern (no slash) is the one relative spelling with a meaning.
-    for doc in (WorkspacePermissions, SessionProfile):
-        with pytest.raises(ValidationError, match="is relative"):
-            doc.model_validate({"paths": {"hide": [entry]}})
-        with pytest.raises(ValidationError, match="is relative"):
-            doc.model_validate(
-                {"commands": {
-                    "ask": [{
-                        "commands": {
-                            "rm": ["/ok", entry]
-                        }
-                    }]
-                }})
-        with pytest.raises(ValidationError, match="is relative"):
-            doc.model_validate({"commands": {"deny": [{"paths": [entry]}]}})
-        doc.model_validate({"paths": {"hide": ["/" + entry, "*.pem", "?"]}})
-    # The mount tier is relative by definition, to the mount root.
-    m = MountPermissions.model_validate({
-        "paths": {
-            "hide": [entry]
-        },
-        "commands": {
-            "deny": [{
-                "commands": {
-                    "rm": [entry]
+def test_a_relative_path_is_refused_everywhere(entry):
+    # Every path in the document is a virtual path: `xxx` would silently
+    # read as `/xxx` and `secrets/*` as `/secrets/*`. A name pattern (no
+    # slash) is the one relative spelling with a meaning, and it means
+    # the same thing inside a mount section as outside one.
+    with pytest.raises(ValidationError, match="is relative"):
+        SessionProfile.model_validate({"paths": {"hide": [entry]}})
+    with pytest.raises(ValidationError, match="is relative"):
+        SessionProfile.model_validate(
+            {"commands": {
+                "ask": [{
+                    "commands": {
+                        "rm": ["/ok", entry]
+                    }
+                }]
+            }})
+    with pytest.raises(ValidationError, match="is relative"):
+        SessionProfile.model_validate(
+            {"commands": {
+                "deny": [{
+                    "paths": [entry]
+                }]
+            }})
+    with pytest.raises(ValidationError, match="is relative"):
+        SessionProfile.model_validate(
+            {"mounts": {
+                "/repo": {
+                    "paths": {
+                        "hide": [entry]
+                    }
                 }
-            }]
-        },
-    })
-    assert m.paths.hide == (entry, )
-    assert m.commands.deny[0].paths == (entry, )
+            }})
+    SessionProfile.model_validate({"paths": {"hide": ["/" + entry, "*.pem"]}})
 
 
-def test_a_blank_hide_entry_is_refused_at_every_tier():
-    # "" is the root under the subtree rule: it would hide the whole tree.
-    for doc in (WorkspacePermissions, SessionProfile, MountPermissions):
-        with pytest.raises(ValidationError,
-                           match="hide\\[1\\] must name a path"):
-            doc.model_validate({"paths": {"hide": ["/a", ""]}})
-
-
-def test_workspace_permissions_rejects_profile_only_and_unknown_fields():
-    # The workspace tier takes the whole commands block.
-    w = WorkspacePermissions.model_validate(
-        {"commands": {
-            "allow": ["ls", "git"],
-            "ask": ["git push"]
-        }})
-    assert w.commands.allow == ("ls", "git")
-    assert w.commands.ask[0].commands == ("git push", )
-    for bad in ({
-            "mounts": {
-                "/a": "r"
+@pytest.mark.parametrize("entry", ["/other/x", "/repository/x", "/"])
+def test_a_mount_sections_paths_must_lie_under_that_mount(entry):
+    # The section is about that mount, so a path written under it names
+    # something inside it. This is what a rebase used to do by joining,
+    # which turned `/repo/secret` under `/repo` into `/repo/repo/secret`
+    # and protected nothing.
+    for block in ({
+            "paths": {
+                "hide": [entry]
             }
     }, {
             "commands": {
                 "deny": [{
-                    "reason": "x",
-                    "command": ["rm"]
+                    "paths": [entry]
                 }]
             }
-    }, {
-            "vars": {
-                "hide": ["X"]
-            }
     }):
-        with pytest.raises(ValidationError):
-            WorkspacePermissions.model_validate(bad)
+        with pytest.raises(ValidationError, match="outside the mount"):
+            SessionProfile.model_validate({"mounts": {"/repo": block}})
+    # The root itself, anything under it, and a name pattern all pass.
+    ok = SessionProfile.model_validate({
+        "mounts": {
+            "/repo": {
+                "paths": {
+                    "hide": ["/repo", "/repo/a", "*.pem"]
+                }
+            }
+        }
+    })
+    assert ok.mounts["/repo"].paths.hide == ("/repo", "/repo/a", "*.pem")
 
 
-def test_mount_permissions_takes_paths_and_ask_deny_but_no_allow():
-    m = MountPermissions.model_validate({"paths": {"hide": ["*.pem", ".env"]}})
-    assert m.paths == PathsBlock(hide=("*.pem", ".env"))
-    m = MountPermissions.model_validate(
-        {"commands": {
-            "deny": ["git push"],
-            "ask": ["git rebase"]
-        }})
-    assert m.commands.deny[0].commands == ("git push", )
-    assert m.commands.ask[0].commands == ("git rebase", )
-    # What a session can see is the session's property, not an
-    # operand's: a mount tier has no allow list.
-    with pytest.raises(ValidationError):
-        MountPermissions.model_validate({"commands": {"allow": ["ls"]}})
+def test_a_blank_hide_entry_is_refused():
+    # "" is the root under the subtree rule: it would hide the whole tree.
+    with pytest.raises(ValidationError, match="hide\\[1\\] must name a path"):
+        SessionProfile.model_validate({"paths": {"hide": ["/a", ""]}})
+    with pytest.raises(ValidationError, match="hide\\[1\\] must name a path"):
+        SessionProfile.model_validate(
+            {"mounts": {
+                "/a": {
+                    "paths": {
+                        "hide": ["/a/x", ""]
+                    }
+                }
+            }})
 
 
 def _ws() -> Workspace:
@@ -461,6 +509,8 @@ def test_profile_applies_every_narrowing_field():
     sess = ws.create_session("agent", profile=ANALYST)
     assert sess.mount_modes is not None
     assert sess.mount_modes["/a"] == MountMode.WRITE
+    # A mount the role never names is absent from the map and keeps the
+    # mode the workspace gave it; naming one mount is not an allowlist.
     assert "/b" not in sess.mount_modes
     assert sess.hidden_paths == HiddenPaths(paths=("/a/secrets", ))
     assert sess.hidden_vars == HiddenVars(names=("SLACK_TOKEN", ))
@@ -478,10 +528,10 @@ def test_one_profile_serves_many_sessions():
     assert s2.env["ROLE"] == "analyst"
 
 
-def test_explicit_mounts_tighten_the_profile_never_widen_it():
-    # Inline narrowing intersects the profile (design 3.4): a mount the
-    # profile never granted stays ungranted, and a granted one keeps the
-    # weaker of the two modes.
+def test_explicit_mounts_can_only_weaken_a_mode_never_raise_it():
+    # An inline document restricts: a mode both sides state settles at
+    # the weaker one, and a mount only the inline document names is
+    # narrowed from whatever the workspace gave it, never raised.
     ws = _ws()
     sess = ws.create_session("agent",
                              mounts={
@@ -489,10 +539,10 @@ def test_explicit_mounts_tighten_the_profile_never_widen_it():
                                  "/b": "read"
                              },
                              profile=ANALYST)
-    assert sess.mount_modes is not None
-    assert sess.mount_modes["/a"] == MountMode.READ
-    assert "/b" not in sess.mount_modes
+    assert sess.mount_modes == {"/a": MountMode.READ, "/b": MountMode.READ}
     assert sess.hidden_paths == HiddenPaths(paths=("/a/secrets", ))
+    raised = ws.create_session("wider", mounts={"/a": "rwx"}, profile=ANALYST)
+    assert raised.mount_modes["/a"] == MountMode.WRITE
 
 
 def test_profiled_session_is_narrowed_end_to_end():
@@ -528,6 +578,8 @@ def test_profile_env_reaches_the_process_view():
     assert "ROLE=analyst\n" in asyncio.run(run())
 
 
+# Two roles, each the whole document it runs under: there is no
+# inheritance, so reading one is reading everything it may do.
 PROFILES = {
     "default":
     SessionProfile(cwd="/b",
@@ -537,7 +589,8 @@ PROFILES = {
                        "/b": "rwx"
                    }),
     "reviewer":
-    SessionProfile(extends="default",
+    SessionProfile(cwd="/b",
+                   env={"PAGER": "cat"},
                    mounts={
                        "/a": "r",
                        "/b": "rwx"
@@ -561,7 +614,7 @@ def _profiled_ws() -> Workspace:
     )
 
 
-def test_create_session_by_profile_name_resolves_the_chain():
+def test_create_session_by_profile_name_reads_that_whole_document():
     ws = _profiled_ws()
     sess = ws.create_session("agent", profile="reviewer")
     assert sess.mount_modes is not None
@@ -586,9 +639,9 @@ def test_create_session_without_a_profile_takes_the_default_one():
 def test_default_profile_shapes_the_workspace_session_too():
     # The workspace's own session is a session created without a name,
     # so `profiles.default` reaches it: the primary agent starts in the
-    # profile's cwd, sees its exported env and its mount ceilings, and
-    # cannot see what it hides. A workspace with no default profile
-    # leaves that session as it always was.
+    # role's cwd, sees its exported env and its per-mount modes, and
+    # cannot see what it hides. A workspace with no default role leaves
+    # that session as it always was.
     ws = Workspace(
         {
             "/a": (RAMResource(), MountMode.WRITE),
@@ -621,28 +674,71 @@ def test_default_profile_shapes_the_workspace_session_too():
     pwd_out, pager_out, other_exit, vault_exit = asyncio.run(run())
     assert pwd_out == "/b\n"
     assert pager_out == "cat\n"
-    assert other_exit != 0
+    # A mount the role does not name is reachable at its own mode: the
+    # `mounts` mapping narrows, it is not an allowlist.
+    assert other_exit == 0
     assert vault_exit != 0
     plain_ws = _ws()
     plain = plain_ws.get_session(plain_ws.default_session_id)
     assert plain.mount_modes is None and plain.hidden_paths is None
 
 
+def test_a_role_keeps_a_mount_away_by_hiding_it_not_by_omitting_it():
+    # Omission is not a refusal, so exclusion is a hide: the mount reads
+    # as nonexistent rather than as a permission error naming something
+    # the role cannot see.
+    ws = Workspace(
+        {
+            "/a": (RAMResource(), MountMode.WRITE),
+            "/b": (RAMResource(), MountMode.WRITE)
+        },
+        mode=MountMode.WRITE,
+        profiles={
+            "default":
+            SessionProfile(mounts={"/b": "rwx"},
+                           paths=PathsBlock(hide=("/a", ))),
+        },
+    )
+
+    async def run():
+        listed = await ws.execute("ls /a")
+        root = await ws.execute("ls /")
+        return (listed.exit_code, await listed.stderr_str(), await
+                root.stdout_str())
+
+    code, err, root_out = asyncio.run(run())
+    assert code != 0 and "No such file or directory" in err
+    assert "b" in root_out and "a\n" not in root_out
+
+
 def test_create_session_rejects_an_unknown_profile_name():
-    from mirage.policy.errors import PolicyError
     ws = _profiled_ws()
     with pytest.raises(PolicyError, match="unknown profile 'nope'"):
         ws.create_session("agent", profile="nope")
 
 
-def test_workspace_rejects_a_broken_profile_chain_at_construction():
-    from mirage.policy.errors import PolicyError
-    with pytest.raises(PolicyError, match="extends unknown profile 'gone'"):
+def test_workspace_names_a_default_role_by_name():
+    # `profile=` on the workspace picks which role shapes a session
+    # created without one, including its own.
+    ws = Workspace(
+        {
+            "/a": (RAMResource(), MountMode.WRITE),
+            "/b": (RAMResource(), MountMode.WRITE)
+        },
+        mode=MountMode.WRITE,
+        profiles=PROFILES,
+        profile="reviewer",
+    )
+    assert ws.get_session(
+        ws.default_session_id).mount_modes["/a"] == (MountMode.READ)
+    assert ws.create_session("agent").mount_modes["/a"] == MountMode.READ
+    with pytest.raises(PolicyError, match="unknown profile 'gone'"):
         Workspace({"/a": (RAMResource(), MountMode.WRITE)},
-                  profiles={"orphan": SessionProfile(extends="gone")})
+                  profiles=PROFILES,
+                  profile="gone")
 
 
-def test_inline_permissions_tighten_the_named_profile():
+def test_inline_permissions_add_to_the_named_role():
     ws = _profiled_ws()
     sess = ws.create_session("agent",
                              profile="reviewer",
@@ -652,12 +748,26 @@ def test_inline_permissions_tighten_the_named_profile():
                                  paths=PathsBlock(hide=("*.key", )),
                                  vars=VarsBlock(hide=("AWS_*", ))))
     assert sess.mount_modes is not None
+    # The role says read and the inline document says write: the weaker
+    # one wins, which is the role's.
     assert sess.mount_modes["/a"] == MountMode.READ
-    assert "/b" not in sess.mount_modes
     assert sess.hidden_paths == HiddenPaths(paths=("/a/secrets", ),
                                             patterns=("*.key", ))
     assert sess.hidden_vars == HiddenVars(patterns=("AWS_*", ))
     assert sess.cwd == "/a"
+
+
+def test_inline_permissions_may_not_state_an_allow_list():
+    # The one rule about combining two documents: an inline document
+    # restricts, so an allow list there would install a command the role
+    # was never given.
+    ws = _profiled_ws()
+    with pytest.raises(PolicyError, match="not an allow list"):
+        ws.create_session("agent",
+                          profile="reviewer",
+                          permissions={"commands": {
+                              "allow": ["ls"]
+                          }})
 
 
 def test_profile_cwd_is_where_the_session_starts():
@@ -671,7 +781,19 @@ def test_profile_cwd_is_where_the_session_starts():
     assert asyncio.run(run()) == "/b\n"
 
 
-COMMANDS_DOC = WorkspacePermissions.model_validate({
+# One mount section, written the same way by both roles below: rules
+# here reach a line that works inside /repo, by cwd or by operand, which
+# is what a path-scoped rule cannot express (`cd /repo && git commit`
+# names no path).
+REPO_SECTION = {
+    "commands": {
+        "deny": [{
+            "reason": "history is read-only here",
+            "commands": ["git commit", "git reset --hard"]
+        }]
+    }
+}
+COMMANDS_DOC = {
     "commands": {
         "allow": [
             "ls", "cat", "echo", "rm", "git", "python3", "mkdir", "touch",
@@ -686,13 +808,19 @@ COMMANDS_DOC = WorkspacePermissions.model_validate({
             "reason": "frozen",
             "paths": ["/repo/locked/*"]
         }],
-    }
-})
-REVIEWER_COMMANDS = SessionProfile.model_validate({
+    },
+    "mounts": {
+        "/repo": REPO_SECTION
+    },
+}
+REVIEWER_COMMANDS = {
     "commands": {
         "allow": ["ls", "cat", "echo", "git log", "git status", "xargs"]
-    }
-})
+    },
+    "mounts": {
+        "/repo": REPO_SECTION
+    },
+}
 
 
 def _commands_ws() -> Workspace:
@@ -703,19 +831,14 @@ def _commands_ws() -> Workspace:
     repo._store.files["/locked/y"] = b"y\n"
     ws = Workspace(
         {
-            "/repo/":
-            Mount(repo,
-                  MountMode.WRITE,
-                  permissions=MountPermissions(commands=MountCommandsBlock(
-                      deny=[{
-                          "reason": "history is read-only here",
-                          "commands": ["git commit", "git reset --hard"]
-                      }]))),
+            "/repo/": (repo, MountMode.WRITE),
             "/scratch/": (RAMResource(), MountMode.WRITE),
         },
         mode=MountMode.WRITE,
-        permissions=COMMANDS_DOC,
-        profiles={"reviewer": REVIEWER_COMMANDS},
+        profiles={
+            "default": COMMANDS_DOC,
+            "reviewer": REVIEWER_COMMANDS
+        },
     )
     ws.register_cli("git", cli_spec_for("git"))
     return ws
@@ -759,13 +882,13 @@ async def test_allow_list_hides_unlisted_tools_from_dispatch_and_enumerators():
 
 
 @pytest.mark.asyncio
-async def test_profile_allow_list_intersects_with_the_workspace_tier():
+async def test_a_roles_allow_list_is_the_only_one_a_session_reads():
     ws = _commands_ws()
     ws.create_session("rev", profile="reviewer")
     try:
         await ws.execute("mkdir -p /repo/d && touch /repo/d/x")
-        # Both tiers list `cat`; the workspace lists python3, the profile
-        # does not; the profile lists `git log`, so `git` is visible but
+        # The reviewer role lists `cat` and not python3, whatever the
+        # default role lists; it lists `git log`, so `git` is visible but
         # a `git commit` line is covered by nothing (a refusal that names
         # the program, not "command not found").
         assert (await _line(ws, "cat /repo/d/x", "rev"))[0] == 0
@@ -788,16 +911,22 @@ async def test_profile_allow_list_intersects_with_the_workspace_tier():
                            "rev") == (127, "", "rm: command not found\n")
         assert await _line(ws, "f() { rm /repo/d/x; }; f",
                            "rev") == (127, "", "rm: command not found\n")
-        # An inline document tightens further: allow lists intersect.
+        # An inline document restricts what is left: it cannot shorten
+        # the allow list, but a deny rule of its own still speaks.
         ws.create_session("tight",
                           profile="reviewer",
-                          permissions=SessionProfile.model_validate(
-                              {"commands": {
-                                  "allow": ["cat", "git"]
-                              }}))
+                          permissions={
+                              "commands": {
+                                  "deny": [{
+                                      "reason": "read-only session",
+                                      "commands": ["echo"]
+                                  }]
+                              }
+                          })
         assert (await _line(ws, "cat /repo/d/x", "tight"))[0] == 0
-        assert await _line(ws, "ls /repo",
-                           "tight") == (127, "", "ls: command not found\n")
+        assert await _line(
+            ws, "echo hi",
+            "tight") == (126, "", "echo: policy denied: read-only session\n")
         code, _, err = await _line(ws, "git log", "tight")
         assert "not allowed" not in err
     finally:
@@ -805,7 +934,7 @@ async def test_profile_allow_list_intersects_with_the_workspace_tier():
 
 
 @pytest.mark.asyncio
-async def test_deny_rules_by_tier_scope_and_voice():
+async def test_deny_rules_by_source_scope_and_voice():
     ws = _commands_ws()
     try:
         await ws.execute("mkdir -p /repo/d && touch /repo/d/x /scratch/z")
@@ -822,8 +951,8 @@ async def test_deny_rules_by_tier_scope_and_voice():
         with pytest.raises(PermissionError):
             await ws.ops.write("/repo/locked/y", b"changed")
         assert await ws.ops.read("/repo/d/x") == b""
-        # Mount tier: applies when the line works inside the mount (cwd
-        # under it, or a path under it), speaks first, whole command; the
+        # A mount section's rule applies when the line works inside the
+        # mount (cwd under it, or a path under it), whole command; the
         # verb walk reads `-C /repo reset --hard` as `git reset --hard`.
         assert await _line(ws, "cd /repo && git commit -m x") == (
             126, "", "git: policy denied: history is read-only here\n")
@@ -858,7 +987,7 @@ async def test_find_delete_is_gated_at_the_op_door_not_by_a_named_rule():
         await ws.close()
 
 
-LINK_DOC = WorkspacePermissions.model_validate({
+LINK_DOC = {
     "commands": {
         "deny": [{
             "reason": "sealed",
@@ -873,7 +1002,7 @@ LINK_DOC = WorkspacePermissions.model_validate({
             }
         }],
     }
-})
+}
 
 
 @pytest.mark.asyncio
@@ -884,7 +1013,7 @@ async def test_a_command_scoped_path_rule_reads_the_path_the_command_touches():
     # that acts on the link itself (rm, lstat(2)) it is the link.
     ws = Workspace({"/data/": (RAMResource(), MountMode.WRITE)},
                    mode=MountMode.WRITE,
-                   permissions=LINK_DOC)
+                   profiles={"default": LINK_DOC})
     try:
         await ws.execute("echo top > /data/secret && "
                          "ln -s /data/secret /data/link && "
@@ -908,7 +1037,7 @@ async def test_a_command_scoped_path_rule_reads_the_path_the_command_touches():
         await ws.close()
 
 
-SEALED_REDIRECT_DOC = WorkspacePermissions.model_validate({
+SEALED_REDIRECT_DOC = {
     "commands": {
         "deny": [{
             "reason": "sealed",
@@ -922,7 +1051,7 @@ SEALED_REDIRECT_DOC = WorkspacePermissions.model_validate({
             }
         }],
     }
-})
+}
 
 
 @pytest.mark.asyncio
@@ -933,7 +1062,7 @@ async def test_redirect_targets_are_judged_with_the_line():
     # write never truncates.
     ws = Workspace({"/data/": (RAMResource(), MountMode.WRITE)},
                    mode=MountMode.WRITE,
-                   permissions=SEALED_REDIRECT_DOC)
+                   profiles={"default": SEALED_REDIRECT_DOC})
     try:
         await ws.execute("echo top > /data/secret && "
                          "printf 'one\\n' > /data/audit.log")
@@ -957,21 +1086,27 @@ async def test_a_mount_rule_speaks_on_a_walk_from_above():
     # again there, so the child mount's rule must speak on the ancestor
     # operand. A walk elsewhere, or a non-recursive read of the parent,
     # is not its business.
-    child = RAMResource()
     ws = Workspace(
         {
             "/scratch/": (RAMResource(), MountMode.WRITE),
-            "/scratch/child/":
-            Mount(child,
-                  MountMode.WRITE,
-                  permissions=MountPermissions(commands=MountCommandsBlock(
-                      deny=[{
-                          "reason": "boxed",
-                          "commands": ["grep"]
-                      }]))),
+            "/scratch/child/": (RAMResource(), MountMode.WRITE),
             "/elsewhere/": (RAMResource(), MountMode.WRITE),
         },
-        mode=MountMode.WRITE)
+        mode=MountMode.WRITE,
+        profiles={
+            "default": {
+                "mounts": {
+                    "/scratch/child": {
+                        "commands": {
+                            "deny": [{
+                                "reason": "boxed",
+                                "commands": ["grep"]
+                            }]
+                        }
+                    }
+                }
+            }
+        })
     try:
         await ws.execute("echo x > /scratch/a && echo x > /elsewhere/a && "
                          "echo x > /scratch/child/c")
@@ -1011,14 +1146,16 @@ class _Box(Runtime, LineExecutorMixin):
 @pytest.mark.asyncio
 async def test_a_whole_line_runtime_is_gated_like_the_tree():
     # A runtime that captures the raw line runs it under the same
-    # tiers: every parsed command clears visibility, the policy chain
+    # rules: every parsed command clears visibility, the policy chain
     # and the approval door before the runtime sees a byte, so a
     # captured line cannot run what the tree would refuse.
     box = _Box()
     ws = Workspace({"/repo/": (RAMResource(), MountMode.WRITE)},
                    mode=MountMode.WRITE,
-                   permissions=COMMANDS_DOC,
-                   profiles={"reviewer": REVIEWER_COMMANDS},
+                   profiles={
+                       "default": COMMANDS_DOC,
+                       "reviewer": REVIEWER_COMMANDS
+                   },
                    runtimes=[box, "vfs"])
     ws.register_cli("git", cli_spec_for("git"))
     try:
@@ -1044,7 +1181,7 @@ async def test_a_whole_line_runtime_is_gated_like_the_tree():
         await ws.close()
 
 
-LITERAL_DOC = WorkspacePermissions.model_validate({
+LITERAL_DOC = {
     "commands": {
         "deny": [{
             "reason": "no deletes",
@@ -1059,7 +1196,7 @@ LITERAL_DOC = WorkspacePermissions.model_validate({
             "commands": ["git push"]
         }],
     }
-})
+}
 
 
 @pytest.mark.asyncio
@@ -1072,7 +1209,7 @@ async def test_a_whole_line_runtime_reads_only_literal_words():
     box = _Box()
     ws = Workspace({"/repo/": (RAMResource(), MountMode.WRITE)},
                    mode=MountMode.WRITE,
-                   permissions=LITERAL_DOC,
+                   profiles={"default": LITERAL_DOC},
                    runtimes=[box, "vfs"])
     ws.register_cli("git", cli_spec_for("git"))
     try:
@@ -1127,18 +1264,20 @@ async def test_a_bare_listing_in_a_ruled_directory_is_refused():
     # gate, so the gate supplies it itself, typed as `.`.
     ws = Workspace({"/repo/": (RAMResource(), MountMode.WRITE)},
                    mode=MountMode.WRITE,
-                   permissions=WorkspacePermissions.model_validate({
-                       "commands": {
-                           "deny": [{
-                               "reason": "sealed",
-                               "commands": {
-                                   "ls": ["/repo/sealed"],
-                                   "find": ["/repo/sealed"],
-                                   "grep": ["/repo/sealed"]
-                               }
-                           }]
+                   profiles={
+                       "default": {
+                           "commands": {
+                               "deny": [{
+                                   "reason": "sealed",
+                                   "commands": {
+                                       "ls": ["/repo/sealed"],
+                                       "find": ["/repo/sealed"],
+                                       "grep": ["/repo/sealed"]
+                                   }
+                               }]
+                           }
                        }
-                   }))
+                   })
     try:
         await ws.execute("mkdir -p /repo/sealed && echo x > /repo/sealed/f")
         assert await _line(ws,
@@ -1165,7 +1304,7 @@ async def test_a_bare_listing_in_a_ruled_directory_is_refused():
         await ws.close()
 
 
-VEILED_DOC = WorkspacePermissions.model_validate({
+VEILED_DOC = {
     "commands": {
         "allow": ["mkdir", "echo", "touch", "cat", "rm", "ls", "head"],
         "ask": [{
@@ -1187,27 +1326,31 @@ VEILED_DOC = WorkspacePermissions.model_validate({
             "commands": ["head"]
         }],
     }
-})
+}
 
 
 @pytest.mark.asyncio
 async def test_a_hidden_path_reads_as_absent_to_every_rule():
-    # hide outranks every admission arm: a path the session cannot see
+    # hide outranks every rule: a path the session cannot see
     # is dropped before any hook, so a deny never names it, an ask is
     # never raised for it, and the door answers ENOENT as for any
     # absent path. The same lines under a session that sees them meet
     # the rules as usual.
     ws = Workspace({"/repo/": (RAMResource(), MountMode.WRITE)},
                    mode=MountMode.WRITE,
-                   permissions=VEILED_DOC)
+                   profiles={"default": VEILED_DOC})
     try:
         await ws.execute("mkdir -p /repo/private /repo/shared && "
                          "echo k > /repo/private/k && touch /repo/shared/a")
+        # The same rules plus three hides: what the hides cover is gone
+        # before any rule is asked.
         ws.create_session(
             "veiled",
-            profile=SessionProfile(paths=PathsBlock(hide=("/repo/private",
-                                                          "/repo/shared",
-                                                          "/repo/sealed"))))
+            profile=SessionProfile.model_validate({
+                **VEILED_DOC, "paths": {
+                    "hide": ["/repo/private", "/repo/shared", "/repo/sealed"]
+                }
+            }))
         assert await _line(
             ws, "cat /repo/private/k") == (1, "",
                                            "cat: /repo/private/k: private\n")
@@ -1239,7 +1382,7 @@ async def test_a_hidden_path_reads_as_absent_to_every_rule():
         await ws.close()
 
 
-ASK_DOC = WorkspacePermissions.model_validate({
+ASK_DOC = {
     "commands": {
         "ask": [{
             "reason": "sign-off",
@@ -1252,7 +1395,7 @@ ASK_DOC = WorkspacePermissions.model_validate({
             }
         }],
     }
-})
+}
 
 
 class AskWc(Policy):
@@ -1271,7 +1414,7 @@ def _ask_ws(**kwargs) -> Workspace:
             "/scratch/": (RAMResource(), MountMode.WRITE),
         },
         mode=MountMode.WRITE,
-        permissions=ASK_DOC,
+        profiles={"default": ASK_DOC},
         policies=[AskWc()],
         **kwargs,
     )
@@ -1364,8 +1507,8 @@ async def test_a_session_grant_covers_the_rule_and_a_deny_is_never_reopened():
         # Every rm line passes now, in any directory of the session ...
         assert (await _line(ws, "rm /scratch/y"))[0] == 0
         assert (await _line(ws, "cd /scratch && rm z"))[0] == 0
-        # ... except where a deny rule speaks: the deny arm runs before
-        # the ask arm, so no grant can re-open it, and the denied line
+        # ... except where a deny rule speaks: deny outranks ask at the
+        # same anchor depth, so no grant can re-open it, and the denied line
         # raises no request (nothing for the host to answer; the battery
         # cannot see this, so it is pinned here).
         assert await _line(
@@ -1616,31 +1759,34 @@ async def test_the_op_door_stats_a_refused_entry_and_withholds_its_content():
 
 @pytest.mark.asyncio
 async def test_every_permissions_door_accepts_the_plain_document():
-    # The constructor, create_session and Mount validate raw mappings
-    # internally, so the Python API reads like the YAML and the
-    # TypeScript object literal; a built model still passes unchanged.
+    # `profiles`, `create_session(profile=)` and `create_session
+    # (permissions=)` all validate raw mappings internally, so the
+    # Python API reads like the YAML and the TypeScript object literal;
+    # a built model still passes unchanged.
     ws = Workspace(
         {
             "/data/": (RAMResource(), MountMode.WRITE),
-            "/box/":
-            Mount(RAMResource(),
-                  MountMode.WRITE,
-                  permissions={
-                      "commands": {
-                          "deny": [{
-                              "reason": "boxed",
-                              "paths": ["top"]
-                          }]
-                      }
-                  }),
+            "/box/": (RAMResource(), MountMode.WRITE),
         },
         mode=MountMode.WRITE,
-        permissions={
-            "commands": {
-                "deny": [{
-                    "reason": "walled",
-                    "paths": ["/data/w"]
-                }]
+        profiles={
+            "default": {
+                "commands": {
+                    "deny": [{
+                        "reason": "walled",
+                        "paths": ["/data/w"]
+                    }]
+                },
+                "mounts": {
+                    "/box": {
+                        "commands": {
+                            "deny": [{
+                                "reason": "boxed",
+                                "paths": ["/box/top"]
+                            }]
+                        }
+                    }
+                },
             }
         },
     )
@@ -1649,10 +1795,10 @@ async def test_every_permissions_door_accepts_the_plain_document():
                            "cat /data/w") == (1, "", "cat: /data/w: walled\n")
         assert await _line(ws,
                            "cat /box/top") == (1, "", "cat: /box/top: boxed\n")
-        ws.create_session("i", permissions={"commands": {"allow": ["echo"]}})
+        ws.create_session("i", profile={"commands": {"allow": ["echo"]}})
         assert (await _line(ws, "ls /data", "i"))[0] == 127
         ws.create_session("d",
-                          profile={
+                          permissions={
                               "commands": {
                                   "deny": [{
                                       "reason": "no",
@@ -1671,8 +1817,6 @@ async def test_every_permissions_door_accepts_the_plain_document():
 def test_a_misspelled_document_field_fails_at_construction():
     with pytest.raises(ValidationError):
         Workspace({"/data/": RAMResource()}, profiles={"g": {"commandz": {}}})
+    ws = Workspace({"/data/": RAMResource()})
     with pytest.raises(ValidationError):
-        Workspace({"/data/": RAMResource()},
-                  permissions={"command": {
-                      "deny": []
-                  }})
+        ws.create_session("x", permissions={"command": {"deny": []}})

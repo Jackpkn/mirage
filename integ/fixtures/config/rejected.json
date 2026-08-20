@@ -182,16 +182,18 @@
             "resource": "ram"
           }
         },
-        "permissions": {
-          "commands": {
-            "deny": [
-              {
-                "reason": "no",
-                "path": [
-                  "/x"
-                ]
-              }
-            ]
+        "profiles": {
+          "p": {
+            "commands": {
+              "deny": [
+                {
+                  "reason": "no",
+                  "path": [
+                    "/x"
+                  ]
+                }
+              ]
+            }
           }
         }
       }
@@ -204,35 +206,22 @@
             "resource": "ram"
           }
         },
-        "permissions": {
-          "commands": {
-            "deny": [
-              {
-                "reason": "no",
-                "commands": "rm"
-              }
-            ]
+        "profiles": {
+          "p": {
+            "commands": {
+              "deny": [
+                {
+                  "reason": "no",
+                  "commands": "rm"
+                }
+              ]
+            }
           }
         }
       }
     },
     {
-      "name": "permissions: deny is a list, not a scalar",
-      "config": {
-        "mounts": {
-          "/d": {
-            "resource": "ram"
-          }
-        },
-        "permissions": {
-          "commands": {
-            "deny": "rm"
-          }
-        }
-      }
-    },
-    {
-      "name": "profile: mount lists contain only strings",
+      "name": "commands: deny is a list, not a scalar",
       "config": {
         "mounts": {
           "/d": {
@@ -240,7 +229,24 @@
           }
         },
         "profiles": {
-          "a": {
+          "p": {
+            "commands": {
+              "deny": "rm"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "profile: mounts is a mapping, never a bare list",
+      "config": {
+        "mounts": {
+          "/d": {
+            "resource": "ram"
+          }
+        },
+        "profiles": {
+          "p": {
             "mounts": [
               "/d",
               7
@@ -250,7 +256,7 @@
       }
     },
     {
-      "name": "profile: a mount ceiling is a mode name, not a list",
+      "name": "profile: a mount mode is a mode name, not a list",
       "config": {
         "mounts": {
           "/d": {
@@ -258,11 +264,13 @@
           }
         },
         "profiles": {
-          "a": {
+          "p": {
             "mounts": {
-              "/d": [
-                "read"
-              ]
+              "/d": {
+                "mode": [
+                  "read"
+                ]
+              }
             }
           }
         }
@@ -314,9 +322,11 @@
             "resource": "ram"
           }
         },
-        "permissions": {
-          "commands": {
-            "allow": "ls"
+        "profiles": {
+          "p": {
+            "commands": {
+              "allow": "ls"
+            }
           }
         }
       }
@@ -329,12 +339,14 @@
             "resource": "ram"
           }
         },
-        "permissions": {
-          "commands": {
-            "allow": [
-              "ls",
-              " "
-            ]
+        "profiles": {
+          "p": {
+            "commands": {
+              "allow": [
+                "ls",
+                " "
+              ]
+            }
           }
         }
       }
@@ -347,11 +359,13 @@
             "resource": "ram"
           }
         },
-        "permissions": {
-          "commands": {
-            "ask": [
-              ""
-            ]
+        "profiles": {
+          "p": {
+            "commands": {
+              "ask": [
+                ""
+              ]
+            }
           }
         }
       }
@@ -364,40 +378,25 @@
             "resource": "ram"
           }
         },
-        "permissions": {
-          "commands": {
-            "ask": [
-              {
-                "reason": "x",
-                "commands": [
-                  "rm"
-                ],
-                "mount": "/d"
-              }
-            ]
-          }
-        }
-      }
-    },
-    {
-      "name": "mount permissions: no allow list at the mount tier",
-      "config": {
-        "mounts": {
-          "/d": {
-            "resource": "ram",
-            "permissions": {
-              "commands": {
-                "allow": [
-                  "ls"
-                ]
-              }
+        "profiles": {
+          "p": {
+            "commands": {
+              "ask": [
+                {
+                  "reason": "x",
+                  "commands": [
+                    "rm"
+                  ],
+                  "mount": "/d"
+                }
+              ]
             }
           }
         }
       }
     },
     {
-      "name": "profile: extends an unknown profile",
+      "name": "mount section: no allow list, visibility is not per mount",
       "config": {
         "mounts": {
           "/d": {
@@ -405,7 +404,30 @@
           }
         },
         "profiles": {
-          "a": {
+          "p": {
+            "mounts": {
+              "/d": {
+                "commands": {
+                  "allow": [
+                    "ls"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "profile: extends is gone, a role is the whole document",
+      "config": {
+        "mounts": {
+          "/d": {
+            "resource": "ram"
+          }
+        },
+        "profiles": {
+          "p": {
             "extends": "gone"
           }
         }
@@ -526,20 +548,22 @@
             "resource": "ram"
           }
         },
-        "permissions": {
-          "commands": {
-            "deny": [
-              {
-                "reason": "x",
-                "commands": [
-                  "rm",
-                  "mv"
-                ],
-                "paths": [
-                  "/d/a"
-                ]
-              }
-            ]
+        "profiles": {
+          "p": {
+            "commands": {
+              "deny": [
+                {
+                  "reason": "x",
+                  "commands": [
+                    "rm",
+                    "mv"
+                  ],
+                  "paths": [
+                    "/d/a"
+                  ]
+                }
+              ]
+            }
           }
         }
       }
@@ -552,21 +576,23 @@
             "resource": "ram"
           }
         },
-        "permissions": {
-          "commands": {
-            "deny": [
-              {
-                "reason": "x",
-                "commands": {
-                  "rm": [
-                    "/d/a"
+        "profiles": {
+          "p": {
+            "commands": {
+              "deny": [
+                {
+                  "reason": "x",
+                  "commands": {
+                    "rm": [
+                      "/d/a"
+                    ]
+                  },
+                  "paths": [
+                    "/d/b"
                   ]
-                },
-                "paths": [
-                  "/d/b"
-                ]
-              }
-            ]
+                }
+              ]
+            }
           }
         }
       }
@@ -579,13 +605,15 @@
             "resource": "ram"
           }
         },
-        "permissions": {
-          "commands": {
-            "deny": [
-              {
-                "reason": "x"
-              }
-            ]
+        "profiles": {
+          "p": {
+            "commands": {
+              "deny": [
+                {
+                  "reason": "x"
+                }
+              ]
+            }
           }
         }
       }
@@ -598,16 +626,18 @@
             "resource": "ram"
           }
         },
-        "permissions": {
-          "commands": {
-            "deny": [
-              {
-                "reason": "x",
-                "commands": {
-                  "rm": []
+        "profiles": {
+          "p": {
+            "commands": {
+              "deny": [
+                {
+                  "reason": "x",
+                  "commands": {
+                    "rm": []
+                  }
                 }
-              }
-            ]
+              ]
+            }
           }
         }
       }
@@ -620,31 +650,35 @@
             "resource": "ram"
           }
         },
-        "permissions": {
-          "commands": {
-            "deny": [
-              {
-                "reason": "x",
-                "commands": {
-                  "rm": "/d/a"
+        "profiles": {
+          "p": {
+            "commands": {
+              "deny": [
+                {
+                  "reason": "x",
+                  "commands": {
+                    "rm": "/d/a"
+                  }
                 }
-              }
-            ]
+              ]
+            }
           }
         }
       }
     },
     {
-      "name": "permissions: ask is a list, not a scalar",
+      "name": "commands: ask is a list, not a scalar",
       "config": {
         "mounts": {
           "/d": {
             "resource": "ram"
           }
         },
-        "permissions": {
-          "commands": {
-            "ask": "git push"
+        "profiles": {
+          "p": {
+            "commands": {
+              "ask": "git push"
+            }
           }
         }
       }
@@ -657,18 +691,20 @@
             "resource": "ram"
           }
         },
-        "permissions": {
-          "commands": {
-            "deny": [
-              {
-                "reason": "x",
-                "commands": {
-                  " ": [
-                    "/d/a"
-                  ]
+        "profiles": {
+          "p": {
+            "commands": {
+              "deny": [
+                {
+                  "reason": "x",
+                  "commands": {
+                    " ": [
+                      "/d/a"
+                    ]
+                  }
                 }
-              }
-            ]
+              ]
+            }
           }
         }
       }
@@ -681,11 +717,13 @@
             "resource": "ram"
           }
         },
-        "permissions": {
-          "commands": {
-            "deny": [
-              7
-            ]
+        "profiles": {
+          "p": {
+            "commands": {
+              "deny": [
+                7
+              ]
+            }
           }
         }
       }
@@ -698,16 +736,18 @@
             "resource": "ram"
           }
         },
-        "permissions": {
-          "commands": {
-            "deny": [
-              {
-                "reason": 1,
-                "commands": [
-                  "rm"
-                ]
-              }
-            ]
+        "profiles": {
+          "p": {
+            "commands": {
+              "deny": [
+                {
+                  "reason": 1,
+                  "commands": [
+                    "rm"
+                  ]
+                }
+              ]
+            }
           }
         }
       }
@@ -720,24 +760,26 @@
             "resource": "ram"
           }
         },
-        "permissions": {
-          "commands": {
-            "deny": [
-              {
-                "reason": "x",
-                "commands": {
-                  "rm": [
-                    " "
-                  ]
+        "profiles": {
+          "p": {
+            "commands": {
+              "deny": [
+                {
+                  "reason": "x",
+                  "commands": {
+                    "rm": [
+                      " "
+                    ]
+                  }
                 }
-              }
-            ]
+              ]
+            }
           }
         }
       }
     },
     {
-      "name": "permissions: mounts is a profile field",
+      "name": "top level: there is no workspace permissions block",
       "config": {
         "mounts": {
           "/d": {
@@ -752,7 +794,7 @@
       }
     },
     {
-      "name": "profile: an extends cycle",
+      "name": "profile: extends is gone, so a chain cannot be spelled at all",
       "config": {
         "mounts": {
           "/d": {
@@ -770,7 +812,7 @@
       }
     },
     {
-      "name": "profile: the ask arm at the profile tier follows the same grammar",
+      "name": "profile: an ask rule follows the same grammar",
       "config": {
         "mounts": {
           "/d": {
@@ -797,23 +839,132 @@
       }
     },
     {
-      "name": "mount permissions: a rule at the mount tier follows the same grammar",
+      "name": "mount section: a rule there follows the same grammar",
+      "config": {
+        "mounts": {
+          "/d": {
+            "resource": "ram"
+          }
+        },
+        "profiles": {
+          "p": {
+            "mounts": {
+              "/d": {
+                "commands": {
+                  "deny": [
+                    {
+                      "reason": "x",
+                      "commands": {
+                        "rm": []
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "mount block: permissions live in a role, not on a mount",
       "config": {
         "mounts": {
           "/d": {
             "resource": "ram",
             "permissions": {
-              "commands": {
-                "deny": [
-                  {
-                    "reason": "x",
-                    "commands": {
-                      "rm": []
-                    }
-                  }
+              "paths": {
+                "hide": [
+                  "/d/x"
                 ]
               }
             }
+          }
+        }
+      }
+    },
+    {
+      "name": "profile: a path in a mount section must be under that mount",
+      "config": {
+        "mounts": {
+          "/d": {
+            "resource": "ram"
+          }
+        },
+        "profiles": {
+          "p": {
+            "mounts": {
+              "/d": {
+                "paths": {
+                  "hide": [
+                    "/other/x"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "profile: a rule path in a mount section must be under it",
+      "config": {
+        "mounts": {
+          "/d": {
+            "resource": "ram"
+          }
+        },
+        "profiles": {
+          "p": {
+            "mounts": {
+              "/d": {
+                "commands": {
+                  "deny": [
+                    {
+                      "reason": "x",
+                      "paths": [
+                        "/other/x"
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "profile: a relative path is refused, every path is absolute",
+      "config": {
+        "mounts": {
+          "/d": {
+            "resource": "ram"
+          }
+        },
+        "profiles": {
+          "p": {
+            "paths": {
+              "hide": [
+                "secrets/*"
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "top level: profile names a role the document does not define",
+      "config": {
+        "mounts": {
+          "/d": {
+            "resource": "ram"
+          }
+        },
+        "profile": "gone",
+        "profiles": {
+          "p": {
+            "cwd": "/d"
           }
         }
       }

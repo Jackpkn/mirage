@@ -521,10 +521,10 @@ describe('MirageFS — stat attr overlay', () => {
 })
 
 describe('MirageFS — session binding', () => {
-  it('a bound tree enforces the session mount grants', async () => {
+  it("a bound tree enforces the session's view", async () => {
     const ws = await mkWs()
     await ws.execute("echo 'hidden' > /extra/secret.txt")
-    const session = ws.createSession('narrow', { mounts: ['/data'] })
+    const session = ws.createSession('narrow', { profile: { paths: { hide: ['/extra'] } } })
 
     const bound = new MirageFS(ws.fs, { session })
     const [okCode, attr] = await callOp<[number, FuseAttr]>(bound, 'getattr', '/data/greeting.txt')

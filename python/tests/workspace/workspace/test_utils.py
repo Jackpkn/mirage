@@ -14,10 +14,8 @@
 
 import pytest
 
-from mirage.resource.history import HISTORY_PREFIX
 from mirage.workspace.session.session import Session, vars_from_env
-from mirage.workspace.workspace.utils import (command_name, fork_for_call,
-                                              infrastructure_prefixes)
+from mirage.workspace.workspace.utils import command_name, fork_for_call
 
 
 @pytest.mark.parametrize("line,expected", [
@@ -58,11 +56,3 @@ def test_env_override_layers_on_top_of_the_session_env():
     forked = fork_for_call(session, None, {"B": "9", "C": "3"})
     assert forked.env == {"A": "1", "B": "9", "C": "3", "PWD": "/home"}
     assert session.env == {"A": "1", "B": "2", "PWD": "/home"}
-
-
-def test_infrastructure_prefixes_excludes_a_user_defined_root():
-    assert infrastructure_prefixes(False) == {"/dev", HISTORY_PREFIX}
-
-
-def test_infrastructure_prefixes_includes_the_implicit_root():
-    assert infrastructure_prefixes(True) == {"/dev", HISTORY_PREFIX, "/"}

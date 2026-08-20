@@ -102,7 +102,11 @@ async def test_delete_unknown_session_404():
 
 
 @pytest.mark.asyncio
-async def test_create_session_with_mount_list():
+async def test_create_session_refuses_a_bare_mount_list():
+    # A list of prefixes used to mean "only these mounts". A role now
+    # narrows the mounts it names and never decides whether one exists,
+    # so the list would be a silent no-op that still reads like
+    # confinement: the door refuses it instead.
     app = build_app(idle_grace_seconds=10.0)
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport,
@@ -115,12 +119,7 @@ async def test_create_session_with_mount_list():
                 "mounts": ["/"],
             },
         )
-        assert r.status_code == 201, r.text
-
-        registry = app.state.registry
-        sess = registry.get(wid).runner.ws.get_session("agent_a")
-        assert sess.mount_modes is not None
-        assert sess.mount_modes.get("/") == MountMode.EXEC
+        assert r.status_code == 422, r.text
 
 
 @pytest.mark.asyncio

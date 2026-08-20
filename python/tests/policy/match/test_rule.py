@@ -14,7 +14,7 @@
 
 from mirage.policy.match.rule import (RuleMatch, io_refusal, match_io,
                                       match_op, match_rule, rule_scope)
-from mirage.policy.types import (CommandContext, CommandRule, CommandsSpec,
+from mirage.policy.types import (AdmissionRules, CommandContext, CommandRule,
                                  OpsContext)
 from mirage.types import PathSpec
 from mirage.utils.hidden import classify_paths
@@ -255,28 +255,26 @@ def test_io_refusal_applies_the_gate_precedence_to_an_entry():
     deny = CommandRule(reason="locked",
                        commands=("rm", ),
                        paths=("/data/both/locked/*", ))
-    ask_ws = CommandRule(reason="both: needs a nod",
-                         commands=("rm", ),
-                         paths=("/data/both/*", ))
-    ask_profile = CommandRule(reason="profile nod",
-                              commands=("rm", ),
-                              paths=("/data/both/*", ))
-    layers = (CommandsSpec(ask=(ask_ws, ),
-                           deny=(deny, )), CommandsSpec(ask=(ask_profile, )))
+    ask = CommandRule(reason="needs a nod",
+                      commands=("rm", ),
+                      paths=("/data/both/*", ))
+    later = CommandRule(reason="a later nod",
+                        commands=("rm", ),
+                        paths=("/data/both/*", ))
+    rules = AdmissionRules(ask=(ask, later), deny=(deny, ))
     tokens = ("rm", "-r", "/data/both")
-    # deny > ask, whatever the tier order.
-    assert io_refusal(layers, tokens, "/data/both/locked/y",
-                      (ask_ws, )) == "locked"
-    # The first matching ask rule in tier order speaks: refused without
-    # a grant under it, passed with one, and a later tier's rule never
-    # gets a say.
-    assert io_refusal(layers, tokens, "/data/both/a",
-                      ()) == "both: needs a nod"
-    assert io_refusal(layers, tokens, "/data/both/a", (ask_ws, )) is None
-    assert io_refusal(layers, tokens, "/data/both/a",
-                      (ask_profile, )) == "both: needs a nod"
+    # deny > ask, wherever either was written.
+    assert io_refusal(rules, tokens, "/data/both/locked/y",
+                      (ask, )) == "locked"
+    # The first matching ask rule speaks: refused without a grant under
+    # it, passed with one, and the later rule never gets a say.
+    assert io_refusal(rules, tokens, "/data/both/a", ()) == "needs a nod"
+    assert io_refusal(rules, tokens, "/data/both/a", (ask, )) is None
+    assert io_refusal(rules, tokens, "/data/both/a",
+                      (later, )) == "needs a nod"
     # An entry no rule holds passes; so does one a whole-line rule names.
-    assert io_refusal(layers, tokens, "/data/open/a", ()) is None
-    whole = (CommandsSpec(
-        deny=(CommandRule(reason="no", commands=("rm", )), )), )
+    assert io_refusal(rules, tokens, "/data/open/a", ()) is None
+    whole = AdmissionRules(
+        deny=(CommandRule(reason="no", commands=("rm", )), ))
     assert io_refusal(whole, tokens, "/data/x", ()) is None
+    assert io_refusal(None, tokens, "/data/x", ()) is None

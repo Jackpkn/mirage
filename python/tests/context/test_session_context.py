@@ -14,9 +14,8 @@
 
 import pytest
 
-from mirage.context import (assert_mount_allowed, effective_mount_mode,
-                            get_current_session, get_current_session_for,
-                            mount_allowed, reset_current_session,
+from mirage.context import (effective_mount_mode, get_current_session,
+                            get_current_session_for, reset_current_session,
                             set_current_session)
 from mirage.types import MountMode, weaker_mode
 from mirage.workspace.session import Session, SessionManager
@@ -44,7 +43,6 @@ def test_weaker_mode_lattice():
 
 def test_no_session_is_unrestricted():
     assert get_current_session() is None
-    assert_mount_allowed("/anything")
     assert effective_mount_mode("/anything", MountMode.WRITE) \
         == MountMode.WRITE
 
@@ -52,50 +50,32 @@ def test_no_session_is_unrestricted():
 def test_unrestricted_session_keeps_mount_mode():
     token = set_current_session(Session(session_id="free"))
     try:
-        assert_mount_allowed("/s3")
         assert effective_mount_mode("/s3", MountMode.EXEC) == MountMode.EXEC
     finally:
         reset_current_session(token)
 
 
-def test_missing_grant_denies_visibility(bound_session):
-    with pytest.raises(PermissionError, match="not allowed"):
-        assert_mount_allowed("/other")
-
-
-def test_root_mount_is_governed(bound_session):
-    with pytest.raises(PermissionError, match="'/'"):
-        assert_mount_allowed("/")
-
-
-def test_grant_narrows_mount_mode(bound_session):
+def test_a_role_narrows_the_mount_mode(bound_session):
     assert effective_mount_mode("/ro", MountMode.WRITE) == MountMode.READ
     assert effective_mount_mode("/rw", MountMode.EXEC) == MountMode.WRITE
 
 
-def test_grant_cannot_widen_mount_mode(bound_session):
+def test_a_role_cannot_widen_the_mount_mode(bound_session):
     assert effective_mount_mode("/ex", MountMode.READ) == MountMode.READ
     assert effective_mount_mode("/rw", MountMode.READ) == MountMode.READ
 
 
 def test_prefix_normalization(bound_session):
-    assert_mount_allowed("/ro/")
-    assert_mount_allowed("ro")
     assert effective_mount_mode("/ro/", MountMode.WRITE) == MountMode.READ
 
 
-def test_missing_grant_defaults_effective_to_read(bound_session):
-    assert effective_mount_mode("/other", MountMode.EXEC) == MountMode.READ
-
-
-def test_mount_allowed_is_the_non_raising_twin(bound_session):
-    assert mount_allowed("/ro") is True
-    assert mount_allowed("/ro/") is True
-    assert mount_allowed("/other") is False
-
-
-def test_mount_allowed_without_session_permits_everything():
-    assert mount_allowed("/anything") is True
+def test_a_mount_the_role_does_not_name_keeps_its_own_mode(bound_session):
+    # Naming three mounts is not an allowlist: a fourth is reachable at
+    # whatever the workspace gave it. A role that must not touch a mount
+    # hides it, which reads as ENOENT rather than as a permission error
+    # naming something the role cannot see.
+    assert effective_mount_mode("/other", MountMode.EXEC) == MountMode.EXEC
+    assert effective_mount_mode("/", MountMode.WRITE) == MountMode.WRITE
 
 
 def test_ownership_gates_the_binding():
@@ -135,13 +115,15 @@ def test_an_unowned_binding_answers_nobody():
         reset_current_session(token)
 
 
-def test_bound_hides_join_the_sessions_own_in_the_predicate():
+def test_a_roles_hides_reach_the_predicate_as_paths_and_patterns():
+    # One list per session, built by the compiler from the role's own
+    # `paths.hide` and every mount section's, exact entries and glob
+    # patterns told apart once by `classify_paths`.
     from mirage.context import hidden_paths_active, path_allowed
     from mirage.types import HiddenPaths
-    own = HiddenPaths(paths=("/a/secrets", ))
-    bound = HiddenPaths(paths=("/shared/finance", ),
-                        patterns=("/repo/*.pem", ))
-    sess = Session(session_id="agent", hidden_paths=own, bound_hidden=bound)
+    hidden = HiddenPaths(paths=("/a/secrets", "/shared/finance"),
+                         patterns=("/repo/*.pem", ))
+    sess = Session(session_id="agent", hidden_paths=hidden)
     token = set_current_session(sess)
     try:
         assert hidden_paths_active()
@@ -161,8 +143,8 @@ def test_the_explicit_session_predicate_answers_without_a_binding():
     from mirage.context import path_allowed, session_path_allowed
     from mirage.types import HiddenPaths
     sess = Session(session_id="agent",
-                   hidden_paths=HiddenPaths(paths=("/a/secrets", )),
-                   bound_hidden=HiddenPaths(patterns=("*.pem", )))
+                   hidden_paths=HiddenPaths(paths=("/a/secrets", ),
+                                            patterns=("*.pem", )))
     assert get_current_session() is None
     assert not session_path_allowed(sess, "/a/secrets/x")
     assert not session_path_allowed(sess, "/repo/k.pem")
@@ -176,14 +158,13 @@ def test_the_explicit_session_predicate_answers_without_a_binding():
         reset_current_session(token)
 
 
-def test_bound_hides_alone_activate_the_gate():
+def test_a_hide_activates_the_gate_and_a_role_without_one_does_not():
     from mirage.context import hidden_paths_active, path_allowed
     from mirage.types import HiddenPaths
     sess = Session(session_id="agent",
-                   bound_hidden=HiddenPaths(paths=("/repo/.env", )))
+                   hidden_paths=HiddenPaths(paths=("/repo/.env", )))
     token = set_current_session(sess)
     try:
-        assert sess.hidden_paths is None
         assert hidden_paths_active()
         assert not path_allowed("/repo/.env")
         assert path_allowed("/repo/.envrc")

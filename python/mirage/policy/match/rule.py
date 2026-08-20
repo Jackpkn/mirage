@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from mirage.policy.constants import METADATA_OPS, SUBTREE_COMMANDS, SUBTREE_OPS
 from mirage.policy.match.allow import line_tokens
 from mirage.policy.match.pattern import pattern_matches
-from mirage.policy.types import (CommandContext, CommandRule, CommandsSpec,
+from mirage.policy.types import (AdmissionRules, CommandContext, CommandRule,
                                  OpsContext)
 from mirage.types import HiddenPaths
 from mirage.utils.hidden import classify_paths, path_covers, path_hidden
@@ -73,7 +73,8 @@ def match_rule(rule: CommandRule, scope: HiddenPaths | None,
 
     Three questions in order: the rule's command patterns (a prefix
     of the line's tokens; none means every command), the rule's mount
-    (a mount-tier rule applies only to a line working inside it), the
+    (a rule written under a mount section applies only to a line
+    working inside it), the
     rule's paths (none means the whole line; otherwise the first
     operand under them scopes the match).
 
@@ -163,35 +164,34 @@ def match_io(rule: CommandRule, scope: HiddenPaths | None,
     return path_hidden(scope, virtual)
 
 
-def io_refusal(layers: Sequence[CommandsSpec], tokens: Sequence[str],
+def io_refusal(rules: AdmissionRules | None, tokens: Sequence[str],
                virtual: str, granted: Collection[CommandRule]) -> str | None:
     """The reason a command may not touch an entry it reached on its
     own, None when it may.
 
     The same precedence the admission gate applies to a line: the deny
-    rules in tier order, the first that reaches the entry refusing it;
-    then the ask rules in tier order, where the first that reaches it
-    refuses unless the line holds a grant under that rule (the nod the
-    gate took for ``rm -r /x`` covers the entries under ``/x``; a walk
-    that wanders into an asked scope from outside gets no nod
-    mid-command, so it is refused and the agent names the path to be
-    asked).
+    rules first, the first that reaches the entry refusing it; then the
+    ask rules, where the first that reaches it refuses unless the line
+    holds a grant under that rule (the nod the gate took for ``rm -r
+    /x`` covers the entries under ``/x``; a walk that wanders into an
+    asked scope from outside gets no nod mid-command, so it is refused
+    and the agent names the path to be asked).
 
     Args:
-        layers (Sequence[CommandsSpec]): the session's command tiers.
+        rules (AdmissionRules | None): the session's admission rules.
         tokens (Sequence[str]): the line's tokens, command name first.
         virtual (str): absolute virtual path of the entry.
         granted (Collection[CommandRule]): the ask rules the line runs
             under a grant for.
     """
-    for spec in layers:
-        for rule in spec.deny:
-            if match_io(rule, rule_scope(rule), tokens, virtual):
-                return rule.reason
-    for spec in layers:
-        for rule in spec.ask:
-            if match_io(rule, rule_scope(rule), tokens, virtual):
-                return None if rule in granted else rule.reason
+    if rules is None:
+        return None
+    for rule in rules.deny:
+        if match_io(rule, rule_scope(rule), tokens, virtual):
+            return rule.reason
+    for rule in rules.ask:
+        if match_io(rule, rule_scope(rule), tokens, virtual):
+            return None if rule in granted else rule.reason
     return None
 
 

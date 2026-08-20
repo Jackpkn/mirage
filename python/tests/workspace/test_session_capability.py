@@ -28,24 +28,45 @@ def _seed(name: str, body: bytes) -> RAMResource:
     return r
 
 
-def test_session_outside_allowlist_is_denied():
+def test_a_hidden_mount_reads_as_absent():
+    # A role narrows the mounts it names and never decides whether one
+    # exists, so keeping a session away from a mount is a hide, and a
+    # hide answers ENOENT: naming the mount in a refusal would confirm
+    # to the agent exactly what it was not meant to know is there.
     a = _seed("x.txt", b"public")
     b = _seed("secret.txt", b"SECRET")
     ws = Workspace({"/a": a, "/b": b})
-    ws.create_session("agent", mounts=["/a"])
+    ws.create_session("agent", profile={"paths": {"hide": ["/b"]}})
 
     async def run():
         ok = await ws.execute("cat /a/x.txt", session_id="agent")
         denied = await ws.execute("cat /b/secret.txt", session_id="agent")
-        return ok, denied
+        listed = await ws.execute("ls /", session_id="agent")
+        return ok, denied, listed
 
-    ok, denied = asyncio.run(run())
+    ok, denied, listed = asyncio.run(run())
     assert ok.exit_code == 0
     assert b"public" in (ok.stdout or b"")
     assert denied.exit_code != 0
-    stderr = denied.stderr or b""
-    assert b"not allowed" in stderr
-    assert b"/b" in stderr
+    assert (denied.stderr
+            or b"") == (b"cat: /b/secret.txt: No such file or directory\n")
+    assert b"b" not in (listed.stdout or b"").split()
+
+
+def test_a_mount_the_role_does_not_name_stays_reachable():
+    # The other half of the same rule, and the behavior change worth
+    # pinning: naming one mount is not an allowlist over the rest.
+    a = _seed("x.txt", b"public")
+    b = _seed("y.txt", b"also public")
+    ws = Workspace({"/a": a, "/b": b})
+    ws.create_session("agent", mounts={"/a": "read"})
+
+    async def run():
+        return await ws.execute("cat /b/y.txt", session_id="agent")
+
+    io = asyncio.run(run())
+    assert io.exit_code == 0
+    assert b"also public" in (io.stdout or b"")
 
 
 def test_default_session_unrestricted():
@@ -60,10 +81,10 @@ def test_default_session_unrestricted():
     assert b"hi" in (io.stdout or b"")
 
 
-def test_allowed_session_can_write_to_its_mount():
+def test_a_named_mount_keeps_its_write_mode():
     a = _seed("x.txt", b"hi")
     ws = Workspace({"/a": (a, MountMode.WRITE)}, mode=MountMode.WRITE)
-    ws.create_session("agent", mounts=["/a"])
+    ws.create_session("agent", mounts={"/a": "write"})
 
     async def run():
         return await ws.execute("echo new > /a/y.txt", session_id="agent")
@@ -73,10 +94,10 @@ def test_allowed_session_can_write_to_its_mount():
     assert a._store.files.get("/y.txt") == b"new\n"
 
 
-def test_history_view_always_allowed():
+def test_history_view_always_reachable():
     a = _seed("x.txt", b"hi")
     ws = Workspace({"/a": a})
-    ws.create_session("agent", mounts=["/a"])
+    ws.create_session("agent", mounts={"/a": "read"})
 
     async def run():
         await ws.execute("ls /a", session_id="agent")
@@ -87,17 +108,17 @@ def test_history_view_always_allowed():
         f"history view should always be reachable, got {io}")
 
 
-def test_ops_blocks_programmatic_read_outside_allowlist():
+def test_ops_blocks_a_programmatic_read_of_a_hidden_mount():
     a = _seed("x.txt", b"public")
     b = _seed("secret.txt", b"SECRET")
     ws = Workspace({"/a": a, "/b": b})
-    sess = ws.create_session("agent", mounts=["/a"])
+    sess = ws.create_session("agent", profile={"paths": {"hide": ["/b"]}})
 
     async def run():
         token = set_current_session(sess)
         try:
             assert await ws.ops.read("/a/x.txt") == b"public"
-            with pytest.raises(PermissionError, match="not allowed"):
+            with pytest.raises(FileNotFoundError):
                 await ws.ops.read("/b/secret.txt")
         finally:
             reset_current_session(token)
@@ -114,7 +135,7 @@ def _two_mounts_with_secret() -> Workspace:
         "/b": (b, MountMode.WRITE)
     },
                    mode=MountMode.WRITE)
-    ws.create_session("agent", mounts=["/a"])
+    ws.create_session("agent", profile={"paths": {"hide": ["/b"]}})
     return ws
 
 
@@ -130,11 +151,11 @@ def test_pipe_across_mounts_blocks_forbidden_read():
     # (no `pipefail`). Security guarantee: no leak + audit on stderr.
     assert b"SECRET" not in (io.stdout or b""), (
         f"forbidden read must not reach the pipe, got stdout={io.stdout!r}")
-    assert b"not allowed" in (io.stderr or b"")
+    assert b"No such file or directory" in (io.stderr or b"")
     assert b"/b" in (io.stderr or b"")
 
 
-def test_pipe_within_allowed_mount_succeeds():
+def test_pipe_within_a_visible_mount_succeeds():
     ws = _two_mounts_with_secret()
 
     async def run():
@@ -164,7 +185,7 @@ def test_subshell_inherits_session_capability():
 
     io = asyncio.run(run())
     assert io.exit_code != 0
-    assert b"not allowed" in (io.stderr or b"")
+    assert b"No such file or directory" in (io.stderr or b"")
 
 
 def test_and_chain_short_circuits_on_denial():
@@ -202,10 +223,9 @@ def test_redirect_to_forbidden_mount_is_denied():
     io = asyncio.run(run())
     assert io.exit_code != 0
     # A refused redirect target is shell-attributed like GNU
-    # ("bash: line 1: /b/leaked.txt: Permission denied"); the mount
-    # guard's own "not allowed to access mount" prose stays on the
-    # exception (the FUSE bridge still sniffs it) instead of reaching
-    # the user as the path.
+    # ("bash: line 1: /b/leaked.txt: Permission denied"). Creating under
+    # a hidden path is the one op a hide answers out loud, since a
+    # silent success would leave a file the session cannot see.
     assert (io.stderr or b"") == b"/b/leaked.txt: Permission denied\n"
 
 
@@ -236,15 +256,20 @@ def test_cross_mount_copy_into_forbidden_mount_is_denied():
 
     io = asyncio.run(run())
     assert io.exit_code != 0
-    assert b"not allowed" in (io.stderr or b"")
+    # cp stats the destination's parent before writing, and a hidden
+    # parent is absent, so the copy never reaches the create that would
+    # have answered EACCES.
+    assert (io.stderr
+            or b"") == (b"cp: cannot create regular file '/b/leaked.txt': "
+                        b"No such file or directory\n")
 
 
 def test_concurrent_sessions_isolated():
     a = _seed("x.txt", b"A-only\n")
     b = _seed("y.txt", b"B-only\n")
     ws = Workspace({"/a": a, "/b": b})
-    ws.create_session("agent_a", mounts=["/a"])
-    ws.create_session("agent_b", mounts=["/b"])
+    ws.create_session("agent_a", profile={"paths": {"hide": ["/b"]}})
+    ws.create_session("agent_b", profile={"paths": {"hide": ["/a"]}})
 
     async def run():
         results = await asyncio.gather(
@@ -262,7 +287,7 @@ def test_concurrent_sessions_isolated():
     assert b_denied.exit_code != 0
 
 
-def test_background_job_inherits_capability():
+def test_background_job_inherits_the_sessions_view():
     ws = _two_mounts_with_secret()
 
     async def run():
@@ -336,7 +361,7 @@ def test_grant_cannot_widen_read_mount():
     assert io.stderr == b"/a/y.txt: Permission denied\n"
 
 
-def test_user_root_mount_governed_by_grants():
+def test_the_user_root_mount_is_governed_like_any_other():
     root = _seed("root.txt", b"top\n")
     a = _seed("x.txt", b"hi")
     ws = Workspace({
@@ -344,7 +369,15 @@ def test_user_root_mount_governed_by_grants():
         "/a": (a, MountMode.WRITE)
     },
                    mode=MountMode.WRITE)
-    ws.create_session("no_root", mounts={"/a": "write"})
+    ws.create_session("no_root",
+                      profile={
+                          "mounts": {
+                              "/a": "write"
+                          },
+                          "paths": {
+                              "hide": ["/root.txt"]
+                          }
+                      })
     ws.create_session("root_ro", mounts={"/a": "write", "/": "read"})
 
     async def run():
@@ -356,7 +389,7 @@ def test_user_root_mount_governed_by_grants():
 
     denied, read_ok, write_denied = asyncio.run(run())
     assert denied.exit_code != 0
-    assert b"not allowed" in (denied.stderr or b"")
+    assert b"No such file or directory" in (denied.stderr or b"")
     assert read_ok.exit_code == 0 and b"top" in (read_ok.stdout or b"")
     assert write_denied.exit_code != 0
     assert write_denied.stderr == b"/root.txt: Permission denied\n"
@@ -427,7 +460,7 @@ def test_filesystem_alias_roles():
         ws.create_session("bits", mounts={"/a": "w"})
 
 
-def test_tree_does_not_disclose_an_ungranted_nested_mount():
+def test_tree_does_not_disclose_a_hidden_nested_mount():
     """`tree` crosses a mount boundary from the mount table alone.
 
     A crossing entry's row is synthesized as a directory without asking
@@ -438,7 +471,7 @@ def test_tree_does_not_disclose_an_ungranted_nested_mount():
     base = _seed("top.txt", b"public\n")
     private = _seed("secret.txt", b"SECRET\n")
     ws = Workspace({"/base": base, "/base/private": private})
-    ws.create_session("agent", mounts=["/base"])
+    ws.create_session("agent", profile={"paths": {"hide": ["/base/private"]}})
 
     async def run():
         return await ws.execute("tree /base", session_id="agent")
@@ -450,12 +483,12 @@ def test_tree_does_not_disclose_an_ungranted_nested_mount():
     assert out == "/base\n`-- top.txt\n\n1 directory, 1 file\n"
 
 
-def test_tree_still_crosses_a_granted_nested_mount():
-    """The filter must not cost a session the mounts it does hold."""
+def test_tree_still_crosses_a_visible_nested_mount():
+    """The filter must not cost a session the mounts it can see."""
     base = _seed("top.txt", b"public\n")
     inner = _seed("leaf.txt", b"deep\n")
     ws = Workspace({"/base": base, "/base/inner": inner})
-    ws.create_session("agent", mounts=["/base", "/base/inner"])
+    ws.create_session("agent", mounts={"/base": "read"})
 
     async def run():
         return await ws.execute("tree /base", session_id="agent")

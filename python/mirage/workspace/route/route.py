@@ -23,9 +23,9 @@ from mirage.workspace.session import Session
 
 
 def listed(name: str, session: Session) -> bool:
-    """What the session's allow lists say about a tool word.
+    """What the session's allow list says about a tool word.
 
-    A tier without a list installs everything; a tier with one installs
+    A role without a list installs everything; a role with one installs
     only the names its patterns start with (``head_visible``). This is
     the raw answer; ``command_visible`` and ``_layers`` add the words
     that are never subjects.
@@ -34,8 +34,7 @@ def listed(name: str, session: Session) -> bool:
         name (str): expanded command name.
         session (Session): the shell session running the line.
     """
-    layers = session.command_layers
-    return not layers or head_visible(name, layers)
+    return head_visible(name, session.commands)
 
 
 def is_tool(name: str, session: Session) -> bool:
@@ -60,11 +59,10 @@ def is_tool(name: str, session: Session) -> bool:
 def command_visible(name: str, session: Session) -> bool:
     """Whether a session can see a command word at all.
 
-    The document's allow lists (``commands.allow`` at the workspace and
-    profile tiers) decide: a tool name no list of a tier starts a
-    pattern with is not installed for the session, so it is 127 at the
-    chokepoint and absent from every enumerator; a word that is not a
-    tool (``is_tool``) is always visible.
+    The role's allow list (``commands.allow``) decides: a tool name no
+    pattern of it starts with is not installed for the session, so it
+    is 127 at the chokepoint and absent from every enumerator; a word
+    that is not a tool (``is_tool``) is always visible.
 
     Args:
         name (str): expanded command name.

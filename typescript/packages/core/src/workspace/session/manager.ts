@@ -18,8 +18,8 @@ import type { CompiledProfile } from './permissions.ts'
 import { RAMSessionStore } from './ram.ts'
 import { applyProfile, narrow } from './resolve.ts'
 import { CAS_MAX_RETRIES, generationOf, type SessionFields, type SessionStore } from './store.ts'
-import type { CommandsSpec, Grant } from '../../policy/types.ts'
-import type { HiddenPaths, MountMode } from '../../types.ts'
+import type { AdmissionRules, Grant } from '../../policy/types.ts'
+import type { MountMode } from '../../types.ts'
 
 type StoredSession = Parameters<typeof Session.fromJSON>[0]
 
@@ -45,8 +45,6 @@ export class SessionManager {
   // cannot alias the live session (Python needs a deep copy instead).
   private readonly persisted = new Map<string, string>()
 
-  private boundHiddenInternal: HiddenPaths | null = null
-  private boundCommandsInternal: readonly CommandsSpec[] = []
   private defaultProfileInternal: CompiledProfile | null = null
 
   constructor(defaultSessionId: string, store?: SessionStore) {
@@ -64,61 +62,28 @@ export class SessionManager {
    * Shape the default session by the document's default profile. The
    * workspace's own session is a session created without a name, so
    * `profiles.default` reaches it the way it reaches `createSession(id)`:
-   * applied in full now (ceilings, hides, exported env, cwd), and its
+   * applied in full now (modes, hides, exported env, cwd), and its
    * narrowing stamped again after hydration, where a record from before
    * the profile existed would otherwise wake the primary agent
-   * unrestricted. null (no default profile) leaves the session, and
-   * hydration, as they were. Infrastructure prefixes are already folded
-   * into `mountModes` by the caller.
+   * unrestricted. null (no default role) leaves the session, and
+   * hydration, as they were.
    */
   set defaultProfile(compiled: CompiledProfile | null) {
     this.defaultProfileInternal = compiled
     if (compiled !== null) applyProfile(this.defaultSession(), compiled)
   }
 
-  /** What the workspace and its mounts hide from every session. */
-  get boundHidden(): HiddenPaths | null {
-    return this.boundHiddenInternal
-  }
-
   /**
-   * Stamp the workspace-bound hides onto every live session. Set once
-   * by the workspace after its mounts are installed, and applied again
-   * to every session created or hydrated later, so the fact rides the
-   * session object without ever being persisted.
+   * The admission rules one session runs under (SessionCommandsQuery).
+   * The default role's rules for an id this manager does not know, the
+   * empty id of an unbound door included, so a door that names no
+   * session still fails toward refusal.
    */
-  set boundHidden(spec: HiddenPaths | null) {
-    this.boundHiddenInternal = spec
-    for (const session of this.sessions.values()) session.boundHidden = spec
-  }
-
-  /**
-   * The command tiers the workspace and its mounts bind every session
-   * to (mounts in registration order, then the workspace).
-   */
-  get boundCommands(): readonly CommandsSpec[] {
-    return this.boundCommandsInternal
-  }
-
-  /**
-   * Stamp the workspace-bound command tiers onto every live session,
-   * and onto every session created or hydrated later, the way
-   * boundHidden rides the session without being persisted.
-   */
-  set boundCommands(layers: readonly CommandsSpec[]) {
-    this.boundCommandsInternal = layers
-    for (const session of this.sessions.values()) session.boundCommands = layers
-  }
-
-  /**
-   * The command tiers one session runs under (SessionCommandsQuery). The
-   * bound tiers alone for an id this manager does not know, the empty id
-   * of an unbound door included, so a door that names no session still
-   * fails toward refusal.
-   */
-  commandsOf(sessionId: string): readonly CommandsSpec[] {
+  commandsOf(sessionId: string): AdmissionRules | null {
     const session = this.sessions.get(sessionId)
-    return session === undefined ? this.boundCommandsInternal : session.commandLayers
+    return session === undefined
+      ? (this.defaultProfileInternal?.commands ?? null)
+      : session.commands
   }
 
   /**
@@ -230,8 +195,6 @@ export class SessionManager {
         continue
       }
       if (this.sessions.has(sid)) continue
-      stored.boundHidden = this.boundHiddenInternal
-      stored.boundCommands = this.boundCommandsInternal
       this.sessions.set(sid, stored)
       this.persisted.set(sid, JSON.stringify(stored.toJSON()))
     }
@@ -296,8 +259,6 @@ export class SessionManager {
       sessionId,
       mountModes: options.mountModes ?? null,
     })
-    session.boundHidden = this.boundHiddenInternal
-    session.boundCommands = this.boundCommandsInternal
     this.sessions.set(sessionId, session)
     return session
   }

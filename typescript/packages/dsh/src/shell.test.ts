@@ -229,7 +229,12 @@ describe('sandbox policy', () => {
     workspaces.push(ws)
     await ws.fs.writeFile('/allowed/a.txt', 'granted')
     await ws.fs.writeFile('/secret/a.txt', 'classified')
-    ws.createSession('confined', { mounts: { '/allowed': 'exec' } })
+    // Exclusion is a hide: a mount the role does not name keeps its own
+    // mode, so confining a session to /allowed means hiding /secret.
+    ws.createSession('confined', {
+      mounts: { '/allowed': 'exec' },
+      permissions: { paths: { hide: ['/secret'] } },
+    })
     const shell = await attachShell(ws, { sessionId: 'confined' })
     const granted = await shell.run(
       shell.resolve({ command: 'cat /allowed/a.txt', sandboxPolicy: READ_ONLY }),

@@ -92,9 +92,11 @@ async def test_cmdsub_reads_the_named_sessions_cwd():
 
 
 @pytest.mark.asyncio
-async def test_cmdsub_keeps_the_named_sessions_confinement():
+async def test_cmdsub_keeps_the_named_sessions_hides():
+    # A nested eval runs under the same session, so what the role hides
+    # is as absent inside `$()` as outside it.
     ws = _two_mounts()
-    ws.create_session("agent", mounts={"/a": "write"})
+    ws.create_session("agent", profile={"paths": {"hide": ["/b"]}})
     r = await ws.execute("echo $(cat /b/y.txt)", session_id="agent")
     assert "secret" not in (await r.stdout_str())
 

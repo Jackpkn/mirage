@@ -12,127 +12,59 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from collections.abc import Iterable, Mapping
-from typing import Any
+from collections.abc import Mapping
 
 from mirage.policy.errors import PolicyError
-from mirage.policy.match import intersect_patterns
-from mirage.policy.types import CommandRule, CommandsSpec
+from mirage.policy.types import AdmissionRules, CommandRule
 from mirage.types import HiddenPaths, MountMode, weaker_mode
 from mirage.utils.hidden import classify_paths, classify_vars
-from mirage.workspace.session.constants import (DEFAULT_PROFILE,
-                                                PROFILE_INHERITED_FIELDS)
+from mirage.workspace.session.constants import DEFAULT_PROFILE
 from mirage.workspace.session.session import Session, vars_from_env
 from mirage.workspace.session.shell_dirs import set_cwd
 
 from mirage.workspace.session.permissions import (  # isort: skip
-    CommandsBlock, CompiledProfile, MountCommandsBlock, MountPermissions,
-    PathsBlock, SessionProfile, VarsBlock, WorkspacePermissions)
-
-ProfileMounts = dict[str, MountMode] | tuple[str, ...] | None
-
-
-def inherit(profiles: Mapping[str, SessionProfile],
-            name: str) -> SessionProfile:
-    """Resolve a named profile through its ``extends`` chain.
-
-    Field inheritance, root first: a stated field replaces the
-    parent's, an absent one is inherited. Safety comes from the layer
-    intersection at evaluation, not from inheritance, so a child may
-    state fewer hides than its parent. The result names no parent.
-
-    Args:
-        profiles (Mapping[str, SessionProfile]): the workspace's named
-            profiles.
-        name (str): the profile to resolve.
-
-    Raises:
-        PolicyError: an unknown profile name, or a cycle in the chain.
-    """
-    chain: list[SessionProfile] = []
-    seen: list[str] = []
-    current: str | None = name
-    while current is not None:
-        if current in seen:
-            cycle = " -> ".join([*seen, current])
-            raise PolicyError(f"profile extends cycle: {cycle}")
-        if current not in profiles:
-            where = (f"profile {seen[-1]!r} extends unknown profile"
-                     if seen else "unknown profile")
-            raise PolicyError(f"{where} {current!r}")
-        seen.append(current)
-        node = profiles[current]
-        chain.append(node)
-        current = node.extends
-    merged: dict[str, Any] = {}
-    for node in reversed(chain):
-        for field_name in PROFILE_INHERITED_FIELDS:
-            value = getattr(node, field_name)
-            if value is not None:
-                merged[field_name] = value
-    return SessionProfile.model_validate(merged)
+    CommandsBlock, CompiledProfile, MountCommandsBlock, PathsBlock,
+    ProfileMount, SessionProfile, VarsBlock)
 
 
 def resolve_profile(
     profiles: Mapping[str, SessionProfile],
     profile: str | SessionProfile | None,
 ) -> SessionProfile | None:
-    """The profile a session is created from, before inline tightening.
+    """The role a session is created from.
 
-    A name resolves through :func:`inherit`; a profile object that
-    names a parent resolves the same way with itself as the child;
-    None picks ``profiles.default`` when the workspace defines one and
-    leaves the session unrestricted otherwise.
+    A name is looked up as written; a profile object is itself; None
+    picks ``profiles.default`` when the workspace defines one and
+    leaves the session unrestricted otherwise. There is no inheritance
+    chain: a role is the whole document, so nothing is assembled from
+    somewhere else before it is read.
 
     Args:
         profiles (Mapping[str, SessionProfile]): the workspace's named
-            profiles.
+            roles.
         profile (str | SessionProfile | None): what ``create_session``
             was given.
+
+    Raises:
+        PolicyError: the name is not a role the workspace defines.
     """
     if profile is None:
-        if DEFAULT_PROFILE in profiles:
-            return inherit(profiles, DEFAULT_PROFILE)
-        return None
-    if isinstance(profile, str):
-        return inherit(profiles, profile)
-    if profile.extends is None:
+        return profiles.get(DEFAULT_PROFILE)
+    if not isinstance(profile, str):
         return profile
-    return inherit({**profiles, "": profile}, "")
-
-
-def _intersect_mounts(base: ProfileMounts,
-                      inline: ProfileMounts) -> ProfileMounts:
-    """The mounts both sides grant, at the weaker mode.
-
-    A mapping is a set of ceilings, a tuple an allowlist at each
-    mount's own mode. Mapping x mapping: common prefixes at the weaker
-    mode; mapping x tuple: the mapping's entries the list also names;
-    tuple x tuple: the common prefixes; None x anything: the other.
-
-    Args:
-        base (ProfileMounts): the profile's grant.
-        inline (ProfileMounts): the inline grant.
-    """
-    if base is None:
-        return inline
-    if inline is None:
-        return base
-    if isinstance(base, dict) and isinstance(inline, dict):
-        return {
-            p: weaker_mode(m, inline[p])
-            for p, m in base.items() if p in inline
-        }
-    if isinstance(base, dict):
-        return {p: m for p, m in base.items() if p in inline}
-    if isinstance(inline, dict):
-        return {p: m for p, m in inline.items() if p in base}
-    return tuple(p for p in base if p in inline)
+    if profile not in profiles:
+        raise PolicyError(f"unknown profile {profile!r}")
+    return profiles[profile]
 
 
 def _union_hide(a: PathsBlock | VarsBlock | None,
                 b: PathsBlock | VarsBlock | None) -> tuple[str, ...]:
-    """Every entry of both blocks, first spelling wins, order kept."""
+    """Every entry of both blocks, first spelling wins, order kept.
+
+    Args:
+        a (PathsBlock | VarsBlock | None): the role's block.
+        b (PathsBlock | VarsBlock | None): the inline block.
+    """
     out: list[str] = []
     for block in (a, b):
         for entry in (block.hide if block is not None else ()):
@@ -141,44 +73,88 @@ def _union_hide(a: PathsBlock | VarsBlock | None,
     return tuple(out)
 
 
-def _tighten_commands(base: CommandsBlock | None,
-                      inline: CommandsBlock | None) -> CommandsBlock | None:
-    """The commands block both documents grant.
+def _add_commands(base: CommandsBlock | None,
+                  inline: CommandsBlock | None) -> CommandsBlock | None:
+    """The role's commands block with the inline document's rules added.
 
-    Allow lists intersect (a line must be covered by both), ask and
-    deny rules union in base-then-inline order; a side that states no
-    list leaves the other's alone.
+    An inline document may only restrict, so it carries ask and deny
+    rules and never an allow list: a list there would install a command
+    the role does not have, which is the one thing a per-call document
+    must not do.
 
     Args:
-        base (CommandsBlock | None): the profile's block.
-        inline (CommandsBlock | None): the inline block.
+        base (CommandsBlock | None): the role's block.
+        inline (CommandsBlock | None): what ``create_session`` added.
+
+    Raises:
+        PolicyError: the inline document states an allow list.
     """
-    if base is None:
-        return inline
     if inline is None:
         return base
-    if base.allow is None:
-        allow = inline.allow
-    elif inline.allow is None:
-        allow = base.allow
-    else:
-        allow = intersect_patterns(base.allow, inline.allow)
-    return CommandsBlock(allow=allow,
+    if inline.allow is not None:
+        raise PolicyError("inline permissions may add ask and deny rules, "
+                          "not an allow list")
+    if base is None:
+        return inline
+    return CommandsBlock(allow=base.allow,
                          ask=base.ask + inline.ask,
                          deny=base.deny + inline.deny)
 
 
-def tighten(base: SessionProfile | None,
-            inline: SessionProfile | None) -> SessionProfile | None:
-    """Narrow a profile by an inline document (design 3.4).
-
-    Mounts intersect, hides union, allow lists intersect, ask and deny
-    rules union, ``cwd`` and ``env`` are the inline document's when it
-    states them (they are session presets, not permissions). Either
-    side None returns the other unchanged.
+def _add_mount(base: ProfileMount | None,
+               inline: ProfileMount | None) -> ProfileMount:
+    """One mount's entry with the inline document's added: the weaker
+    mode, both rule lists, both hide lists.
 
     Args:
-        base (SessionProfile | None): the resolved profile.
+        base (ProfileMount | None): the role's entry, None when it
+            names no settings for this mount.
+        inline (ProfileMount | None): the inline entry.
+    """
+    if base is None:
+        return inline if inline is not None else ProfileMount()
+    if inline is None:
+        return base
+    mode = base.mode
+    if inline.mode is not None:
+        mode = (inline.mode if mode is None else weaker_mode(
+            mode, inline.mode))
+    ask = _rules_of(base.commands, "ask") + _rules_of(inline.commands, "ask")
+    deny = _rules_of(base.commands, "deny") + _rules_of(
+        inline.commands, "deny")
+    hide = _union_hide(base.paths, inline.paths)
+    return ProfileMount(mode=mode,
+                        commands=(MountCommandsBlock(ask=ask, deny=deny) if
+                                  (ask or deny) else None),
+                        paths=PathsBlock(hide=hide) if hide else None)
+
+
+def _rules_of(block: MountCommandsBlock | None,
+              verb: str) -> tuple[CommandRule, ...]:
+    """One verb's rules in a mount entry's commands block, empty when
+    unstated.
+
+    Args:
+        block (MountCommandsBlock | None): the entry's block.
+        verb (str): ``ask`` or ``deny``.
+    """
+    if block is None:
+        return ()
+    return block.ask if verb == "ask" else block.deny
+
+
+def with_inline(base: SessionProfile | None,
+                inline: SessionProfile | None) -> SessionProfile | None:
+    """A role with the inline document of one ``create_session`` added.
+
+    The one rule about combining two documents: an inline document may
+    add ask and deny rules and hides, never an allow list. Modes take
+    the weaker of the two, ``cwd`` and ``env`` are the inline
+    document's when it states them (they are session presets, not
+    permissions). Either side None returns the other unchanged.
+
+    Args:
+        base (SessionProfile | None): the resolved role.
         inline (SessionProfile | None): what ``create_session`` added.
     """
     if base is None:
@@ -190,157 +166,116 @@ def tighten(base: SessionProfile | None,
     env = None
     if base.env is not None or inline.env is not None:
         env = {**(base.env or {}), **(inline.env or {})}
+    mounts: dict[str, ProfileMount] | None = None
+    if base.mounts is not None or inline.mounts is not None:
+        prefixes = [*(base.mounts or {})]
+        prefixes.extend(p for p in (inline.mounts or {}) if p not in prefixes)
+        mounts = {
+            prefix:
+            _add_mount((base.mounts or {}).get(prefix), (inline.mounts
+                                                         or {}).get(prefix))
+            for prefix in prefixes
+        }
     return SessionProfile(
         cwd=inline.cwd if inline.cwd is not None else base.cwd,
         env=env,
-        mounts=_intersect_mounts(base.mounts, inline.mounts),
+        mounts=mounts,
         paths=(PathsBlock(hide=hide_paths) if
                (base.paths is not None or inline.paths is not None) else None),
         vars=(VarsBlock(hide=hide_vars) if
               (base.vars is not None or inline.vars is not None) else None),
-        commands=_tighten_commands(base.commands, inline.commands),
+        commands=_add_commands(base.commands, inline.commands),
     )
 
 
-def rebase_entries(prefix: str, entries: Iterable[str]) -> tuple[str, ...]:
-    """Mount-relative path entries in absolute terms.
+def _scoped_rules(rules: tuple[CommandRule, ...],
+                  root: str) -> tuple[CommandRule, ...]:
+    """A mount entry's rules, stamped with the mount they belong to.
 
-    Every entry, glob or plain, is joined under the mount root, so a
-    mount-relative rule can never reach outside its mount; a slashless
-    glob stops being a component pattern and becomes anchored under
-    the mount, which is the only reading "relative to the mount root"
-    can have.
-
-    Args:
-        prefix (str): the mount prefix, any slash spelling.
-        entries (Iterable[str]): the entries as written in the block.
-    """
-    root = "/" + prefix.strip("/")
-    base = root.rstrip("/")
-    joined = []
-    for entry in entries:
-        rel = entry.lstrip("/")
-        joined.append(base + "/" + rel if rel else root)
-    return tuple(joined)
-
-
-def rebase(prefix: str, perms: MountPermissions | None) -> tuple[str, ...]:
-    """A mount's hides in absolute terms (``rebase_entries`` of the
-    block's ``paths.hide``).
+    The stamp is what makes the rule apply to a line that *works
+    inside* the mount, by cwd or by operand, which a path-scoped rule
+    cannot express. Paths are already absolute and already checked to
+    lie under the root, so nothing is rewritten here.
 
     Args:
-        prefix (str): the mount prefix, any slash spelling.
-        perms (MountPermissions | None): the mount's block, if any.
-    """
-    if perms is None:
-        return ()
-    return rebase_entries(prefix, perms.paths.hide)
-
-
-def bound_hidden(
-    workspace: WorkspacePermissions | None,
-    mounts: Mapping[str, MountPermissions | None],
-) -> HiddenPaths | None:
-    """What every session of the workspace cannot see.
-
-    The workspace tier's hides plus each mount's rebased hides,
-    compiled once and stamped onto every session by the session
-    manager, joined with the session's own hides in the predicate.
-
-    Args:
-        workspace (WorkspacePermissions | None): the top-level block.
-        mounts (Mapping[str, MountPermissions | None]): each mount's
-            block by prefix.
-    """
-    entries: list[str] = []
-    if workspace is not None:
-        entries.extend(workspace.paths.hide)
-    for prefix, perms in mounts.items():
-        entries.extend(rebase(prefix, perms))
-    return classify_paths(entries)
-
-
-def _scope_rules(rules: Iterable[CommandRule],
-                 root: str) -> tuple[CommandRule, ...]:
-    """A mount tier's rules, scoped to the mount and rebased under it.
-
-    Args:
-        rules (Iterable[CommandRule]): the rules as written.
-        root (str): the mount root, leading slash, no trailing one.
+        rules (tuple[CommandRule, ...]): the rules as written.
+        root (str): the mount prefix, leading slash, no trailing one.
     """
     return tuple(
         CommandRule(reason=rule.reason,
                     commands=rule.commands,
-                    paths=rebase_entries(root, rule.paths),
+                    paths=rule.paths,
                     mount=root) for rule in rules)
 
 
-def compile_commands(block: CommandsBlock | MountCommandsBlock | None,
-                     mount: str = "") -> CommandsSpec | None:
-    """One tier's commands block, compiled; None when there is nothing
-    to evaluate.
+def compile_commands(profile: SessionProfile) -> AdmissionRules | None:
+    """A role's admission rules: its own, plus every mount entry's,
+    in one list; None when the role states none.
 
-    A mount tier's rules are scoped to the mount (``CommandRule.mount``)
-    and their paths rebased under its root, so a mount-relative rule can
-    never reach outside its mount and a bare rule applies to the lines
-    that work inside it.
+    Mount rules come first so the entry closest to the data speaks
+    first when several rules match at the same anchor depth and only
+    the message differs.
 
     Args:
-        block (CommandsBlock | MountCommandsBlock | None): the tier's
-            block as written.
-        mount (str): the mount prefix for a mount tier, empty otherwise.
+        profile (SessionProfile): the resolved role.
     """
-    if block is None:
+    ask: list[CommandRule] = []
+    deny: list[CommandRule] = []
+    for prefix, entry in (profile.mounts or {}).items():
+        root = "/" + prefix.strip("/")
+        ask.extend(_scoped_rules(_rules_of(entry.commands, "ask"), root))
+        deny.extend(_scoped_rules(_rules_of(entry.commands, "deny"), root))
+    block = profile.commands
+    allow = block.allow if block is not None else None
+    if block is not None:
+        ask.extend(block.ask)
+        deny.extend(block.deny)
+    if allow is None and not ask and not deny:
         return None
-    allow = block.allow if isinstance(block, CommandsBlock) else None
-    if allow is None and not block.ask and not block.deny:
-        return None
-    if not mount:
-        return CommandsSpec(allow=allow, ask=block.ask, deny=block.deny)
-    root = "/" + mount.strip("/")
-    return CommandsSpec(allow=None,
-                        ask=_scope_rules(block.ask, root),
-                        deny=_scope_rules(block.deny, root))
+    return AdmissionRules(allow=allow, ask=tuple(ask), deny=tuple(deny))
 
 
-def bound_commands(
-    workspace: WorkspacePermissions | None,
-    mounts: Mapping[str, MountPermissions | None],
-) -> tuple[CommandsSpec, ...]:
-    """The command tiers every session of the workspace runs under:
-    each mount's, in registration order, then the workspace's, so the
-    resource owner speaks first when several rules match.
+def _hidden(profile: SessionProfile) -> HiddenPaths | None:
+    """Every path the role hides: its own entries and each mount
+    entry's, which are absolute like all the rest.
 
     Args:
-        workspace (WorkspacePermissions | None): the top-level block.
-        mounts (Mapping[str, MountPermissions | None]): each mount's
-            block by prefix.
+        profile (SessionProfile): the resolved role.
     """
-    layers: list[CommandsSpec] = []
-    for prefix, perms in mounts.items():
-        spec = compile_commands(perms.commands if perms is not None else None,
-                                mount=prefix)
-        if spec is not None:
-            layers.append(spec)
-    spec = compile_commands(
-        workspace.commands if workspace is not None else None)
-    if spec is not None:
-        layers.append(spec)
-    return tuple(layers)
+    entries: list[str] = []
+    if profile.paths is not None:
+        entries.extend(profile.paths.hide)
+    for entry in (profile.mounts or {}).values():
+        if entry.paths is not None:
+            entries.extend(entry.paths.hide)
+    return classify_paths(entries)
 
 
-def compile_profile(
-    effective: SessionProfile | None, infrastructure: Iterable[str] = ()
-) -> CompiledProfile:
-    """The session fields an effective profile sets.
+def _modes(profile: SessionProfile) -> dict[str, MountMode] | None:
+    """The mode each mount section states, None when none does.
+
+    A mount the role does not name is absent from the map and keeps
+    the mode it declares in the workspace's ``mounts:``; the map only
+    narrows, it never grants.
 
     Args:
-        effective (SessionProfile | None): the resolved and tightened
-            profile; None is an unrestricted session.
-        infrastructure (Iterable[str]): mount prefixes every session may
-            touch (the scratch root, the device mount, the history
-            view); a profile that lists mounts gets them at EXEC beside
-            its own so a ceiling never locks an agent out of them.
+        profile (SessionProfile): the resolved role.
+    """
+    modes = {
+        prefix: entry.mode
+        for prefix, entry in (profile.mounts or {}).items()
+        if entry.mode is not None
+    }
+    return modes or None
+
+
+def compile_profile(effective: SessionProfile | None) -> CompiledProfile:
+    """The session fields a role compiles to.
+
+    Args:
+        effective (SessionProfile | None): the resolved role with any
+            inline document already added; None is an unrestricted
+            session.
     """
     if effective is None:
         return CompiledProfile(mount_modes=None,
@@ -349,40 +284,29 @@ def compile_profile(
                                env=None,
                                cwd=None,
                                commands=None)
-    modes: dict[str, MountMode] | None
-    if effective.mounts is None:
-        modes = None
-    elif isinstance(effective.mounts, dict):
-        modes = dict(effective.mounts)
-    else:
-        modes = {p: MountMode.EXEC for p in effective.mounts}
-    if modes is not None:
-        for prefix in infrastructure:
-            modes.setdefault(prefix, MountMode.EXEC)
     return CompiledProfile(
-        mount_modes=modes,
-        hidden_paths=classify_paths(
-            effective.paths.hide if effective.paths is not None else ()),
+        mount_modes=_modes(effective),
+        hidden_paths=_hidden(effective),
         hidden_vars=classify_vars(
             effective.vars.hide if effective.vars is not None else ()),
         env=dict(effective.env) if effective.env is not None else None,
         cwd=effective.cwd,
-        commands=compile_commands(effective.commands),
+        commands=compile_commands(effective),
     )
 
 
 def narrow(session: Session, compiled: CompiledProfile) -> None:
-    """Stamp a compiled profile's narrowing onto a session.
+    """Stamp a compiled role's narrowing onto a session.
 
-    The four fields no shell line can edit: mount ceilings, hidden
-    paths, hidden variables, the command tier. Applied at creation and
-    again whenever a stored record could carry a stale copy (the
+    The four fields no shell line can edit: the per-mount modes, hidden
+    paths, hidden variables, the admission rules. Applied at creation
+    and again whenever a stored record could carry a stale copy (the
     default session after hydration), so the document, not the store,
     is what an agent runs under.
 
     Args:
         session (Session): the session to narrow.
-        compiled (CompiledProfile): the effective profile.
+        compiled (CompiledProfile): the effective role.
     """
     session.mount_modes = (dict(compiled.mount_modes)
                            if compiled.mount_modes is not None else None)
@@ -392,9 +316,9 @@ def narrow(session: Session, compiled: CompiledProfile) -> None:
 
 
 def apply_profile(session: Session, compiled: CompiledProfile) -> None:
-    """Narrow a fresh session and seed its scratch state from the profile.
+    """Narrow a fresh session and seed its scratch state from the role.
 
-    A profile's env is a *process* environment, the same shape
+    A role's env is a *process* environment, the same shape
     ``ws.env = {...}`` speaks, so every name in it is exported: seeding
     them plain left ``$TOKEN`` expanding while every command, CLI and
     guest runtime in the profiled session saw nothing, since all three
@@ -405,7 +329,7 @@ def apply_profile(session: Session, compiled: CompiledProfile) -> None:
 
     Args:
         session (Session): the session just created.
-        compiled (CompiledProfile): the effective profile.
+        compiled (CompiledProfile): the effective role.
     """
     narrow(session, compiled)
     if compiled.env:

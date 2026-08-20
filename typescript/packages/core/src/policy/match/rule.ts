@@ -15,7 +15,7 @@
 import type { HiddenPaths } from '../../types.ts'
 import { classifyPaths, pathCovers, pathHidden } from '../../utils/hidden.ts'
 import { METADATA_OPS, SUBTREE_COMMANDS, SUBTREE_OPS } from '../constants.ts'
-import type { CommandContext, CommandRule, CommandsSpec, OpsContext } from '../types.ts'
+import type { CommandContext, CommandRule, AdmissionRules, OpsContext } from '../types.ts'
 import { lineTokens } from './allow.ts'
 import { patternMatches } from './pattern.ts'
 
@@ -156,30 +156,27 @@ export function matchIo(
  * The reason a command may not touch an entry it reached on its own,
  * null when it may.
  *
- * The same precedence the admission gate applies to a line: the deny
- * rules in tier order, the first that reaches the entry refusing it;
- * then the ask rules in tier order, where the first that reaches it
- * refuses unless the line holds a grant under that rule (the nod the gate
- * took for `rm -r /x` covers the entries under `/x`; a walk that wanders
- * into an asked scope from outside gets no nod mid-command, so it is
- * refused and the agent names the path to be asked).
+ * The same precedence the admission gate applies to a line: every deny
+ * rule first, the first that reaches the entry refusing it; then the
+ * ask rules, where the first that reaches it refuses unless the line
+ * holds a grant under that rule (the nod the gate took for `rm -r /x`
+ * covers the entries under `/x`; a walk that wanders into an asked
+ * scope from outside gets no nod mid-command, so it is refused and the
+ * agent names the path to be asked).
  */
 export function ioRefusal(
-  layers: readonly CommandsSpec[],
+  rules: AdmissionRules | null,
   tokens: readonly string[],
   virtual: string,
   granted: readonly CommandRule[],
 ): string | null {
-  for (const spec of layers) {
-    for (const rule of spec.deny) {
-      if (matchIo(rule, ruleScope(rule), tokens, virtual)) return rule.reason
-    }
+  if (rules === null) return null
+  for (const rule of rules.deny) {
+    if (matchIo(rule, ruleScope(rule), tokens, virtual)) return rule.reason
   }
-  for (const spec of layers) {
-    for (const rule of spec.ask) {
-      if (matchIo(rule, ruleScope(rule), tokens, virtual)) {
-        return granted.includes(rule) ? null : rule.reason
-      }
+  for (const rule of rules.ask) {
+    if (matchIo(rule, ruleScope(rule), tokens, virtual)) {
+      return granted.includes(rule) ? null : rule.reason
     }
   }
   return null

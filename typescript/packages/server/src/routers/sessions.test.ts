@@ -44,7 +44,11 @@ describe('sessions router', () => {
     await app.close()
   })
 
-  it('accepts mount role grants and rejects bad roles', async () => {
+  it('accepts a mount mode mapping and refuses a bare list', async () => {
+    // A list of prefixes used to mean "only these mounts". A role now
+    // narrows the mounts it names and never decides whether one exists,
+    // so the list would be a silent no-op that still reads like
+    // confinement: the door refuses it instead.
     const app = buildApp()
     await createWs(app, 'grants-ws')
     const created = await app.inject({
@@ -58,13 +62,19 @@ describe('sessions router', () => {
       url: '/v1/workspaces/grants-ws/sessions',
       payload: { sessionId: 'agent_l', mounts: ['/'] },
     })
-    expect(listForm.statusCode).toBe(201)
+    expect(listForm.statusCode).toBe(422)
     const bad = await app.inject({
       method: 'POST',
       url: '/v1/workspaces/grants-ws/sessions',
       payload: { sessionId: 'agent_x', mounts: { '/': 'admin' } },
     })
     expect(bad.statusCode).toBe(422)
+    const unknownRole = await app.inject({
+      method: 'POST',
+      url: '/v1/workspaces/grants-ws/sessions',
+      payload: { sessionId: 'agent_p', profile: 'nope' },
+    })
+    expect(unknownRole.statusCode).toBe(422)
     await app.close()
   })
 

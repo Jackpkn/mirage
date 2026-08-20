@@ -13,7 +13,6 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { varsFromEnv } from '../session/session.ts'
-import { HISTORY_PREFIX } from '../../resource/history/history.ts'
 import type { Session } from '../session/session.ts'
 
 /** First word of a command line, the name diagnostics report ('' when blank). */
@@ -39,20 +38,4 @@ export function forkForCall(
     ...(cwd !== undefined ? { cwd } : {}),
     ...(env !== undefined ? { vars: { ...session.vars, ...varsFromEnv(env) } } : {}),
   })
-}
-
-/**
- * Mount prefixes a session is always allowed to touch.
- *
- * The synthetic scratch root (where text-processing commands like `wc`
- * without a path argument resolve), the device mount, and the history
- * view are infrastructure: they hold no user credentials, and rejecting
- * them would break common shell idioms or the history builtin. A
- * user-defined root mount is NOT infrastructure; sessions must be
- * granted `/` explicitly to touch it.
- */
-export function infrastructurePrefixes(syntheticRoot: boolean): Set<string> {
-  const prefixes = new Set<string>(['/dev', HISTORY_PREFIX])
-  if (syntheticRoot) prefixes.add('/')
-  return prefixes
 }

@@ -14,7 +14,7 @@
 
 import { describe, expect, it } from 'vitest'
 
-import type { CommandRule, CommandsSpec, Grant } from '../../policy/types.ts'
+import type { CommandRule, AdmissionRules, Grant } from '../../policy/types.ts'
 import {
   commandsFromJSON,
   commandsToJSON,
@@ -48,13 +48,13 @@ describe('session record codecs', () => {
   })
 
   it('a command tier round-trips and keeps an absent allow list', () => {
-    const spec: CommandsSpec = {
+    const spec: AdmissionRules = {
       allow: ['ls', 'git log'],
       ask: [{ reason: 'sign-off', commands: ['git push'], paths: [], mount: '' }],
       deny: [{ reason: 'no', commands: ['rm'], paths: [], mount: '' }],
     }
     expect(commandsFromJSON(commandsToJSON(spec))).toEqual(spec)
-    const unlisted: CommandsSpec = {
+    const unlisted: AdmissionRules = {
       allow: null,
       ask: [],
       deny: [{ reason: 'x', commands: [], paths: [], mount: '' }],

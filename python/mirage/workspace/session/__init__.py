@@ -12,16 +12,15 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from mirage.context import (assert_mount_allowed, get_current_session,
-                            get_current_session_for, reset_current_session,
-                            set_current_session)
+from mirage.context import (get_current_session, get_current_session_for,
+                            reset_current_session, set_current_session)
 from mirage.workspace.session.errors import ReadonlyVariableError
 from mirage.workspace.session.manager import SessionManager
 from mirage.workspace.session.permissions import (CommandsBlock,
                                                   CompiledProfile,
-                                                  MountPermissions, PathsBlock,
-                                                  SessionProfile, VarsBlock,
-                                                  WorkspacePermissions)
+                                                  MountCommandsBlock,
+                                                  PathsBlock, ProfileMount,
+                                                  SessionProfile, VarsBlock)
 from mirage.workspace.session.ram import RAMSessionStore
 from mirage.workspace.session.session import Session
 from mirage.workspace.session.state import (ensure_var_visible, env_snapshot,
@@ -38,10 +37,10 @@ __all__ = [
     "SessionProfile",
     "CommandsBlock",
     "CompiledProfile",
-    "MountPermissions",
+    "MountCommandsBlock",
     "PathsBlock",
+    "ProfileMount",
     "VarsBlock",
-    "WorkspacePermissions",
     "session_view",
     "visible_arrays",
     "visible_env",
@@ -51,7 +50,6 @@ __all__ = [
     "SessionFields",
     "SessionManager",
     "SessionStore",
-    "assert_mount_allowed",
     "get_current_session",
     "get_current_session_for",
     "reset_current_session",

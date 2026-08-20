@@ -27,11 +27,7 @@ import type { Approver, Policy } from '../../policy/index.ts'
 import type { PolicyDecision, PolicyFn } from '../../runtime/policy/index.ts'
 import type { RuntimeEntry } from '../../runtime/base.ts'
 import type { NamespaceStore } from '../mount/namespace/store.ts'
-import type {
-  MountPermissions,
-  SessionProfile,
-  WorkspacePermissions,
-} from '../session/permissions.ts'
+import type { SessionProfile } from '../session/permissions.ts'
 import type { SessionStore } from '../session/store.ts'
 import type { WorkspaceStateStore } from '../store/base.ts'
 
@@ -119,26 +115,16 @@ export interface WorkspaceOptions {
    */
   policy?: PolicyFn
   /**
-   * The permissions document, workspace tier (`permissions:` in YAML):
-   * deny rules and hides that bind every session, absolute paths. The
-   * deny rules compile to policies checked after the built-in POSIX
-   * mount-root rules, before flag parsing, mount resolution, runtime
-   * placement and backend I/O; the hides join every session's own.
-   */
-  permissions?: WorkspacePermissions | null
-  /**
-   * Named session profiles (`profiles:` in YAML), the templates
-   * `createSession` picks by name; `default` applies when none is
-   * named. Every `extends` chain resolves at construction, so an
-   * unknown parent or a cycle fails here, not at the first session.
+   * The roles (`profiles:` in YAML). A role is the whole permission
+   * document a session runs under, so there is no workspace-wide block
+   * and no mount-owned block above it.
    */
   profiles?: Readonly<Record<string, SessionProfile>> | null
   /**
-   * Mount-owned permissions by mount prefix (`mounts.<p>.permissions`
-   * in YAML): relative to the mount root, rebased here, binding every
-   * session. The node Workspace fills it from `Mount(permissions)`.
+   * Which role shapes a session created without one, the workspace's own
+   * session included. A name this document does not define is an error.
    */
-  mountPermissions?: Readonly<Record<string, MountPermissions | null>>
+  profile?: string | null
   /**
    * Admission policies registered after the document's deny rules.
    * Code only: each defines the lifecycle hooks it cares about; on a

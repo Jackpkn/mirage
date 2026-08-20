@@ -14,7 +14,7 @@
 
 from mirage.commands.cli.types import CLISpec
 from mirage.io import IOResult
-from mirage.policy.types import CommandsSpec
+from mirage.policy.types import AdmissionRules
 from mirage.resource.ram import RAMResource
 from mirage.types import MountMode
 from mirage.workspace import Workspace
@@ -141,15 +141,14 @@ def test_route_agrees_with_the_first_layer_route_all_reports():
 def test_allow_lists_filter_the_tool_layers_and_spare_grammar_and_functions():
     session, ws = _fixture()
     ws.register_cli("prog", _cli_tree())
-    session.bound_commands = (CommandsSpec(allow=("cat", "prog run", "ln")), )
-    session.commands = CommandsSpec(allow=("cat", "prog", "ln", "sleep"))
+    session.commands = AdmissionRules(allow=("cat", "prog", "ln"))
     reg = ws._registry
-    # Listed at every tier: visible in its layer.
+    # Listed: visible in its layer, whichever layer that is.
     assert route("cat", session, reg) is Consumer.MOUNT
     assert route("prog", session, reg) is Consumer.CLI
     assert route("ln", session, reg) is Consumer.NAMESPACE
-    # Listed at one tier only, or at none: not a command for the session
-    # (sleep is a tool-tier builtin, rm a mount command).
+    # Unlisted: not a command for the session (sleep is a tool-tier
+    # builtin, rm a mount command).
     assert route("sleep", session, reg) is Consumer.UNKNOWN
     assert route("rm", session, reg) is Consumer.UNKNOWN
     assert route_all("rm", session, reg) == []
@@ -171,8 +170,8 @@ def test_allow_lists_filter_the_tool_layers_and_spare_grammar_and_functions():
     # hidden layer stays out of `type -a`.
     session.functions["rm"] = []
     assert route_all("rm", session, reg) == [Consumer.FUNCTION]
-    # No tiers at all: nothing filtered (the function still shadows).
+    # No allow list at all: nothing filtered (the function still
+    # shadows).
     session.commands = None
-    session.bound_commands = ()
     assert route_all("rm", session, reg) == [Consumer.FUNCTION, Consumer.MOUNT]
     assert route("sleep", session, reg) is Consumer.SESSION

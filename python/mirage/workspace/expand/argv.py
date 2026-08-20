@@ -162,7 +162,7 @@ async def expand_argv(
     # touching backends.
     glob_opts = glob_options(session)
     if (policy is WordPolicy.SHELL or glob_opts.needs_shell
-            or scopes_paths(session.command_layers, name)):
+            or scopes_paths(session.commands, name)):
         # A backend's resolve_glob speaks bash's defaults only, so a
         # session that turned on nullglob, failglob or globstar has its
         # mount-command globs expanded here too, and the command receives

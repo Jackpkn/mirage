@@ -18,6 +18,7 @@ export { Approvals, askRule } from './approvals.ts'
 export { CallbackApprover, RecordApprover, requestId, type Approver } from './approver.ts'
 export { MountRootPolicy } from './builtin/mount_root.ts'
 export { PermissionsPolicy } from './builtin/permissions.ts'
+export { Outcome, anchorDepth, decide, ruleDepth, sourceOf, type Decision } from './match/decide.ts'
 export { OutputCapPolicy, resolveProducer, resolveLimit } from './builtin/output_cap.ts'
 export { DEFAULT_ASK_REASON, DEFAULT_DENY_REASON, POLICY_DENIED_EXIT } from './constants.ts'
 export {
@@ -35,7 +36,7 @@ export {
   type ApprovalRequest,
   type Ask,
   type CommandContext,
-  type CommandsSpec,
+  type AdmissionRules,
   type Deny,
   type DenyScope,
   type ExecuteResultContext,

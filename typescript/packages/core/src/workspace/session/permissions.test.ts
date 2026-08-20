@@ -16,68 +16,82 @@ import { describe, expect, it } from 'vitest'
 
 import { DEFAULT_ASK_REASON, DEFAULT_DENY_REASON } from '../../policy/constants.ts'
 import { MountMode } from '../../types.ts'
-import {
-  parseMountPermissions,
-  parseProfileMounts,
-  parseSessionProfile,
-  parseWorkspacePermissions,
-} from './permissions.ts'
+import { parseProfileMount, parseProfileMounts, parseSessionProfile } from './permissions.ts'
+
+const mountSection = (raw: unknown): unknown => parseProfileMount(raw, '/repo', 'mounts[/repo]')
 
 describe('parseSessionProfile', () => {
   it('regroups paths and vars and normalizes mounts', () => {
     const p = parseSessionProfile({
-      extends: 'default',
       cwd: '/scratch',
       env: { PAGER: 'cat' },
       mounts: { '/repo': 'r', 'scratch/': 'rwx' },
       paths: { hide: ['/repo/.env', '*.pem'] },
       vars: { hide: ['AWS_*'] },
     })
-    expect(p.extends).toBe('default')
     expect(p.cwd).toBe('/scratch')
     expect(p.env).toEqual({ PAGER: 'cat' })
+    // A bare mode is sugar for the section that carries only a mode.
     expect(p.mounts).toEqual(
       new Map([
-        ['/repo', MountMode.READ],
-        ['/scratch', MountMode.EXEC],
+        ['/repo', { mode: MountMode.READ }],
+        ['/scratch', { mode: MountMode.EXEC }],
       ]),
     )
     expect(p.paths).toEqual({ hide: ['/repo/.env', '*.pem'] })
     expect(p.vars).toEqual({ hide: ['AWS_*'] })
   })
 
-  it('leaves unsaid fields absent so inheritance can tell', () => {
+  it('leaves unsaid fields absent so a reader can tell', () => {
     expect(parseSessionProfile({})).toEqual({})
   })
 
-  it('accepts the list and string mount forms', () => {
-    expect(parseSessionProfile({ mounts: ['/repo', 'scratch'] }).mounts).toEqual([
-      '/repo',
-      '/scratch',
-    ])
-    expect(parseProfileMounts('/repo')).toEqual(['/repo'])
-    expect(parseProfileMounts(new Map([['/a', 'rw']]))).toEqual(new Map([['/a', MountMode.WRITE]]))
-    expect(parseProfileMounts(null)).toBeNull()
+  it('a mount section carries a mode, rules and hides', () => {
+    const p = parseSessionProfile({
+      mounts: {
+        '/repo': {
+          mode: 'rw',
+          commands: { deny: ['git push'], ask: ['git rebase'] },
+          paths: { hide: ['/repo/.env'] },
+        },
+      },
+    })
+    const entry = p.mounts?.get('/repo')
+    expect(entry?.mode).toBe(MountMode.WRITE)
+    expect(entry?.commands?.deny?.[0]?.commands).toEqual(['git push'])
+    expect(entry?.commands?.ask?.[0]?.commands).toEqual(['git rebase'])
+    expect(entry?.paths).toEqual({ hide: ['/repo/.env'] })
+    // What a session can see is the session's property, not an
+    // operand's, so a mount section has no allow list.
+    expect(() => mountSection({ commands: { allow: ['ls'] } })).toThrow(/unknown field `allow`/)
   })
 
-  it('rejects the mount spellings python rejects', () => {
-    expect(() => parseSessionProfile({ mounts: ['/repo', 7] })).toThrow(
-      /mounts\[1\] must be a string/,
+  it('refuses a bare list of mounts', () => {
+    // A list used to mean "only these mounts are reachable"; a mount a
+    // role does not name now keeps its own mode, so the list would
+    // quietly drop the confinement it used to carry.
+    expect(() => parseSessionProfile({ mounts: ['/repo'] })).toThrow(
+      /mounts must be a mapping of prefix to its settings/,
     )
-    expect(() => parseProfileMounts(new Map([[7, 'read']]))).toThrow(/mounts keys must be strings/)
-    expect(() => parseSessionProfile({ mounts: { '/repo': ['read'] } })).toThrow(
-      /mounts\[\/repo\] must be a mode name or alias/,
-    )
-    // A Set has no own enumerable keys, so Object.entries used to read
-    // it as an empty mapping and the session silently granted nothing.
-    for (const bad of [7, new Set(['/repo']), new Date()]) {
-      expect(() => parseSessionProfile({ mounts: bad })).toThrow(
-        /mounts must be a mapping or a list of strings/,
-      )
-    }
+  })
+
+  it.each([
+    [new Map([[7, 'read']]), /mounts keys must be strings/],
+    ['/repo', /mounts must be a mapping of prefix to its settings/],
+    [7, /mounts must be a mapping of prefix to its settings/],
+    [new Set(['/repo']), /mounts must be a mapping of prefix to its settings/],
+    [{ '/repo': 'nope' }, /invalid mount mode: 'nope'/],
+    [{ '/repo': { mode: 7 } }, /must be a mode name or alias/],
+  ])('rejects the mount spellings python rejects: %j', (mounts, message) => {
+    // The message is asserted, not just the throw: a mode that is not a
+    // string used to reach parseMountMode and come back as a bare type
+    // error, which is not the failure the loader's contract promises.
+    expect(() => parseSessionProfile({ mounts })).toThrow(message)
+    expect(() => parseProfileMounts(mounts)).toThrow(message)
   })
 
   it('rejects unknown and unshipped fields loudly', () => {
+    expect(() => parseSessionProfile({ extends: 'default' })).toThrow(/unknown field `extends`/)
     expect(() => parseSessionProfile({ hidden_paths: {} })).toThrow(/unknown field `hidden_paths`/)
     expect(() => parseSessionProfile({ hiddenPaths: {} })).toThrow(/unknown field/)
     expect(() => parseSessionProfile({ commands: { hide: [] } })).toThrow(/unknown field `hide`/)
@@ -88,51 +102,29 @@ describe('parseSessionProfile', () => {
     expect(() => parseSessionProfile({ mounts: { '/a': 'w' } })).toThrow(/invalid mount mode/)
     expect(() => parseSessionProfile({ env: { A: 1 } })).toThrow(/env.A must be a string/)
     expect(() => parseSessionProfile([])).toThrow(/must be a mapping/)
-  })
-})
-
-describe('parseWorkspacePermissions', () => {
-  it('accepts deny rules and bare names', () => {
-    const w = parseWorkspacePermissions({
-      commands: {
-        deny: [
-          { reason: 'no deletes', commands: { rm: ['/repo/*'] } },
-          'python3',
-          { commands: ['shred'] },
-        ],
-      },
-      paths: { hide: ['/shared/finance'] },
-    })
-    expect(w.commands.deny).toEqual([
-      { reason: 'no deletes', commands: ['rm'], paths: ['/repo/*'] },
-      { reason: DEFAULT_DENY_REASON, commands: ['python3'] },
-      { reason: DEFAULT_DENY_REASON, commands: ['shred'], paths: [] },
-    ])
-    expect(w.paths).toEqual({ hide: ['/shared/finance'] })
-    expect(parseWorkspacePermissions({})).toEqual({
-      commands: { allow: null, ask: [], deny: [] },
-      paths: { hide: [] },
-    })
+    // A mount's own permissions block is gone: the section is the block.
+    expect(() => parseSessionProfile({ mounts: { '/repo': { permissions: {} } } })).toThrow(
+      /unknown field `permissions`/,
+    )
   })
 
-  it('takes allow patterns and ask rules beside deny', () => {
-    const w = parseWorkspacePermissions({
+  it('the commands block takes allow, ask and deny', () => {
+    const p = parseSessionProfile({
       commands: {
         allow: ['ls', 'git log'],
         ask: ['git push', { reason: 'sign-off', commands: { rm: ['/shared/*'] } }],
-        deny: ['shred'],
+        deny: [{ reason: 'no', commands: { rm: ['/repo/*'] } }],
       },
     })
-    expect(w.commands.allow).toEqual(['ls', 'git log'])
-    // A bare ask entry carries the ask arm's default reason, not deny's.
-    expect(w.commands.ask).toEqual([
+    expect(p.commands?.allow).toEqual(['ls', 'git log'])
+    // A bare ask entry carries ask's default reason, not deny's.
+    expect(p.commands?.ask).toEqual([
       { reason: DEFAULT_ASK_REASON, commands: ['git push'] },
       { reason: 'sign-off', commands: ['rm'], paths: ['/shared/*'] },
     ])
+    expect(p.commands?.deny?.[0]?.reason).toBe('no')
     // Unstated allow is null (everything installed), not an empty list.
-    expect(parseWorkspacePermissions({ commands: { deny: ['rm'] } }).commands.allow).toBeNull()
-    const p = parseSessionProfile({ commands: { allow: ['ls'], deny: ['rm'] } })
-    expect(p.commands?.allow).toEqual(['ls'])
+    expect(parseSessionProfile({ commands: { deny: ['rm'] } }).commands?.allow).toBeNull()
   })
 
   it.each([
@@ -146,20 +138,38 @@ describe('parseWorkspacePermissions', () => {
   ])('refuses scalars, blank patterns and the compiler field: %j', (bad) => {
     // A blank pattern is a prefix of every line, so it would allow, ask
     // about or deny every command; `mount` is the compiler's field.
-    expect(() => parseWorkspacePermissions({ commands: bad })).toThrow()
     expect(() => parseSessionProfile({ commands: bad })).toThrow()
+  })
+
+  it('deny accepts rules and bare names', () => {
+    const p = parseSessionProfile({
+      commands: {
+        deny: [
+          { reason: 'no deletes', commands: { rm: ['/repo/*'] } },
+          'python3',
+          { commands: ['shred'] },
+        ],
+      },
+      paths: { hide: ['/shared/finance'] },
+    })
+    expect(p.commands?.deny).toEqual([
+      { reason: 'no deletes', commands: ['rm'], paths: ['/repo/*'] },
+      { reason: DEFAULT_DENY_REASON, commands: ['python3'] },
+      { reason: DEFAULT_DENY_REASON, commands: ['shred'], paths: [] },
+    ])
+    expect(p.paths).toEqual({ hide: ['/shared/finance'] })
   })
 
   it('requires deny itself to be a list', () => {
     for (const deny of ['rm', { rm: 'no' }, 7]) {
-      expect(() => parseWorkspacePermissions({ commands: { deny } })).toThrow(/deny must be a list/)
+      expect(() => parseSessionProfile({ commands: { deny } })).toThrow(/deny must be a list/)
     }
   })
 
   it('maps each command to its own paths, one rule per command', () => {
     // One command to many paths, never a list of commands beside a list
     // of paths: the document says which command each path belongs to.
-    const w = parseWorkspacePermissions({
+    const p = parseSessionProfile({
       commands: {
         deny: [
           {
@@ -170,11 +180,11 @@ describe('parseWorkspacePermissions', () => {
         ask: [{ commands: { 'git push': ['/repo/*'] } }],
       },
     })
-    expect(w.commands.deny).toEqual([
+    expect(p.commands?.deny).toEqual([
       { reason: 'prod is protected', commands: ['rm'], paths: ['/repo/prod/*', '/shared/*'] },
       { reason: 'prod is protected', commands: ['mv'], paths: ['/repo/prod/*'] },
     ])
-    expect(w.commands.ask).toEqual([
+    expect(p.commands?.ask).toEqual([
       { reason: DEFAULT_ASK_REASON, commands: ['git push'], paths: ['/repo/*'] },
     ])
   })
@@ -189,77 +199,78 @@ describe('parseWorkspacePermissions', () => {
     [{ reason: 'x', commands: { ' ': ['/a'] } }, /keys must name a command/],
     [{ reason: 'x', commands: { rm: ['/a', ' '] } }, /commands\[rm\]\[1\] must name a path/],
     [{ reason: 'x', paths: [''] }, /paths\[0\] must name a path/],
+    [{ reason: 1 }, /reason must be a string/],
+    [{ reason: 'x', command: ['rm'] }, /unknown field `command`/],
     [7, /must be a command pattern or a mapping/],
   ])('refuses a rule that does not say which command a path belongs to: %j', (bad, message) => {
-    expect(() => parseWorkspacePermissions({ commands: { deny: [bad] } })).toThrow(message)
+    expect(() => parseSessionProfile({ commands: { deny: [bad] } })).toThrow(message)
     expect(() => parseSessionProfile({ commands: { ask: [bad] } })).toThrow(message)
-    expect(() => parseMountPermissions({ commands: { deny: [bad] } })).toThrow(message)
+    expect(() => mountSection({ commands: { deny: [bad] } })).toThrow(message)
   })
 
   it.each(['xxx', 'secrets/*', './x', '~/x', 'a/b'])(
-    'refuses a relative path where paths are absolute: %s',
+    'refuses a relative path everywhere: %s',
     (entry) => {
-      // The workspace and profile tiers speak in virtual paths: `xxx` would
+      // Every path in the document is a virtual path: `xxx` would
       // silently read as `/xxx` and `secrets/*` as `/secrets/*`. A name
-      // pattern (no slash) is the one relative spelling with a meaning.
-      for (const parse of [parseWorkspacePermissions, parseSessionProfile]) {
-        expect(() => parse({ paths: { hide: [entry] } })).toThrow(/is relative/)
-        expect(() => parse({ commands: { ask: [{ commands: { rm: ['/ok', entry] } }] } })).toThrow(
-          /is relative/,
-        )
-        expect(() => parse({ commands: { deny: [{ paths: [entry] }] } })).toThrow(/is relative/)
-        parse({ paths: { hide: ['/' + entry, '*.pem', '?'] } })
-      }
-      // The mount tier is relative by definition, to the mount root.
-      const m = parseMountPermissions({
-        paths: { hide: [entry] },
-        commands: { deny: [{ commands: { rm: [entry] } }] },
-      })
-      expect(m.paths).toEqual({ hide: [entry] })
-      expect(m.commands?.deny?.[0]?.paths).toEqual([entry])
+      // pattern (no slash) is the one relative spelling with a meaning,
+      // and it means the same thing inside a mount section as outside.
+      expect(() => parseSessionProfile({ paths: { hide: [entry] } })).toThrow(/is relative/)
+      expect(() =>
+        parseSessionProfile({ commands: { ask: [{ commands: { rm: ['/ok', entry] } }] } }),
+      ).toThrow(/is relative/)
+      expect(() => parseSessionProfile({ commands: { deny: [{ paths: [entry] }] } })).toThrow(
+        /is relative/,
+      )
+      expect(() =>
+        parseSessionProfile({ mounts: { '/repo': { paths: { hide: [entry] } } } }),
+      ).toThrow(/is relative/)
+      parseSessionProfile({ paths: { hide: ['/' + entry, '*.pem', '?'] } })
     },
   )
 
-  it('refuses a blank hide entry at every tier', () => {
-    // "" is the root under the subtree rule: it would hide the whole tree.
-    for (const parse of [parseWorkspacePermissions, parseSessionProfile, parseMountPermissions]) {
-      expect(() => parse({ paths: { hide: ['/a', ''] } })).toThrow(/hide\[1\] must name a path/)
-    }
-  })
+  it.each(['/other/x', '/repository/x', '/'])(
+    "a mount section's paths must lie under that mount: %s",
+    (entry) => {
+      // The section is about that mount, so a path written under it
+      // names something inside it. This is what a rebase used to do by
+      // joining, which turned `/repo/secret` under `/repo` into
+      // `/repo/repo/secret` and protected nothing.
+      for (const block of [
+        { paths: { hide: [entry] } },
+        { commands: { deny: [{ paths: [entry] }] } },
+      ]) {
+        expect(() => parseSessionProfile({ mounts: { '/repo': block } })).toThrow(
+          /outside the mount/,
+        )
+      }
+      // The root itself, anything under it, and a name pattern all pass.
+      const ok = parseSessionProfile({
+        mounts: { '/repo': { paths: { hide: ['/repo', '/repo/a', '*.pem'] } } },
+      })
+      expect(ok.mounts?.get('/repo')?.paths?.hide).toEqual(['/repo', '/repo/a', '*.pem'])
+    },
+  )
 
-  it('rejects profile-only, unshipped and unknown fields', () => {
-    expect(() => parseWorkspacePermissions({ mounts: { '/a': 'r' } })).toThrow(
-      /unknown field `mounts`/,
+  it('refuses a blank hide entry, in a role and in a mount section', () => {
+    // "" is the root under the subtree rule: it would hide the whole tree.
+    expect(() => parseSessionProfile({ paths: { hide: ['/a', ''] } })).toThrow(
+      /hide\[1\] must name a path/,
     )
     expect(() =>
-      parseWorkspacePermissions({ commands: { deny: [{ reason: 'x', command: ['rm'] }] } }),
-    ).toThrow(/deny\[0\]: unknown field `command`/)
-    expect(() => parseWorkspacePermissions({ vars: { hide: ['X'] } })).toThrow(
-      /unknown field `vars`/,
-    )
-    expect(() => parseWorkspacePermissions({ commands: { deny: [{ reason: 1 }] } })).toThrow(
-      /reason must be a string/,
-    )
+      parseSessionProfile({ mounts: { '/a': { paths: { hide: ['/a/x', ''] } } } }),
+    ).toThrow(/hide\[1\] must name a path/)
   })
 })
 
-describe('parseMountPermissions', () => {
-  it('takes paths and ask/deny rules but no allow list', () => {
-    expect(parseMountPermissions({ paths: { hide: ['*.pem', '.env'] } })).toEqual({
-      paths: { hide: ['*.pem', '.env'] },
-      commands: { ask: [], deny: [] },
-    })
-    expect(parseMountPermissions({})).toEqual({
-      paths: { hide: [] },
-      commands: { ask: [], deny: [] },
-    })
-    const m = parseMountPermissions({ commands: { deny: ['git push'], ask: ['git rebase'] } })
-    expect(m.commands?.deny).toEqual([{ reason: DEFAULT_DENY_REASON, commands: ['git push'] }])
-    expect(m.commands?.ask).toEqual([{ reason: DEFAULT_ASK_REASON, commands: ['git rebase'] }])
-    // What a session can see is the session's property, not an
-    // operand's: a mount tier has no allow list.
-    expect(() => parseMountPermissions({ commands: { allow: ['ls'] } })).toThrow(
-      /unknown field `allow`/,
+describe('parseProfileMounts', () => {
+  it('normalizes prefixes and takes both mapping forms', () => {
+    expect(parseProfileMounts({ 'repo/': 'rw' })).toEqual(
+      new Map([['/repo', { mode: MountMode.WRITE }]]),
     )
+    expect(parseProfileMounts(new Map([['/a', 'rw']]))).toEqual(
+      new Map([['/a', { mode: MountMode.WRITE }]]),
+    )
+    expect(parseProfileMounts(null)).toBeNull()
   })
 })

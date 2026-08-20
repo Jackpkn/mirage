@@ -732,7 +732,10 @@ async def test_session_bound_fs_enforces_grants():
     )
     await ws.execute("tee /open/ok.txt", stdin=b"visible")
     await ws.execute("tee /secret/no.txt", stdin=b"hidden")
-    session = ws.create_session("narrow", mounts=["/open"])
+    session = ws.create_session("narrow",
+                                profile={"paths": {
+                                    "hide": ["/secret"]
+                                }})
 
     bound = MirageFS(ws.ops, session=session)
     attrs = bound.getattr("/open/ok.txt")

@@ -12,17 +12,16 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import type { CommandRule, CommandsSpec } from '../types.ts'
+import type { CommandRule, AdmissionRules } from '../types.ts'
 import { patternNames, splitPattern } from './pattern.ts'
 
 /**
- * Whether any tier states a command rule at all: an allow list, an ask
+ * Whether the role states a command rule at all: an allow list, an ask
  * or a deny.
  */
-export function hasRules(layers: readonly CommandsSpec[]): boolean {
-  return layers.some(
-    (layer) => layer.allow !== null || layer.ask.length > 0 || layer.deny.length > 0,
-  )
+export function hasRules(rules: AdmissionRules | null): boolean {
+  if (rules === null) return false
+  return rules.allow !== null || rules.ask.length > 0 || rules.deny.length > 0
 }
 
 /**
@@ -48,14 +47,13 @@ function ruleReadsArgs(rule: CommandRule, name: string): boolean {
  * argument to a command no such rule names is nothing a rule would have
  * seen anyway.
  */
-export function readsArgs(layers: readonly CommandsSpec[], name: string): boolean {
-  for (const layer of layers) {
-    for (const pattern of layer.allow ?? []) {
-      if (patternNames(pattern, name) && splitPattern(pattern).length > 1) return true
-    }
-    for (const rule of [...layer.ask, ...layer.deny]) {
-      if (ruleReadsArgs(rule, name)) return true
-    }
+export function readsArgs(rules: AdmissionRules | null, name: string): boolean {
+  if (rules === null) return false
+  for (const pattern of rules.allow ?? []) {
+    if (patternNames(pattern, name) && splitPattern(pattern).length > 1) return true
+  }
+  for (const rule of [...rules.ask, ...rules.deny]) {
+    if (ruleReadsArgs(rule, name)) return true
   }
   return false
 }
@@ -72,13 +70,12 @@ export function readsArgs(layers: readonly CommandsSpec[], name: string): boolea
  * command, the shell expands the glob first, so the gate judges the
  * paths the command will touch.
  */
-export function scopesPaths(layers: readonly CommandsSpec[], name: string): boolean {
-  for (const layer of layers) {
-    for (const rule of [...layer.ask, ...layer.deny]) {
-      if ((rule.paths ?? []).length === 0 && (rule.mount ?? '') === '') continue
-      const commands = rule.commands ?? []
-      if (commands.length === 0 || commands.some((p) => patternNames(p, name))) return true
-    }
+export function scopesPaths(rules: AdmissionRules | null, name: string): boolean {
+  if (rules === null) return false
+  for (const rule of [...rules.ask, ...rules.deny]) {
+    if ((rule.paths ?? []).length === 0 && (rule.mount ?? '') === '') continue
+    const commands = rule.commands ?? []
+    if (commands.length === 0 || commands.some((p) => patternNames(p, name))) return true
   }
   return false
 }

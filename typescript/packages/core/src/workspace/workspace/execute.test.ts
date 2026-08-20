@@ -89,9 +89,11 @@ describe('nested evals run in the live ambient session', () => {
     expect(stdoutStr(io).trim()).toBe('/ram/subdir')
   })
 
-  it('cmdsub keeps the named session confinement', async () => {
+  it("cmdsub keeps the named session's hides", async () => {
+    // A nested eval runs under the same session, so what the role hides
+    // is as absent inside `$()` as outside it.
     const ws = await makeTwoMounts()
-    ws.createSession('agent', { mounts: { '/a': MountMode.WRITE } })
+    ws.createSession('agent', { profile: { paths: { hide: ['/b'] } } })
     const io = await ws.execute('echo $(cat /b/y.txt)', { sessionId: 'agent' })
     expect(stdoutStr(io)).not.toContain('secret')
   })

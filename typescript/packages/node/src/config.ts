@@ -34,13 +34,9 @@ import {
 } from '@struktoai/mirage-core/types'
 import { snakeToCamel } from '@struktoai/mirage-core/utils/normalize'
 import {
-  parseMountPermissions,
   parseSessionProfile,
-  parseWorkspacePermissions,
-  type MountPermissions,
   type SessionProfile,
 } from '@struktoai/mirage-core/workspace/session/permissions'
-import { inherit } from '@struktoai/mirage-core/workspace/session/resolve'
 import type { WorkspaceStateStore } from '@struktoai/mirage-core/workspace/store/base'
 import { RAMWorkspaceStateStore } from '@struktoai/mirage-core/workspace/store/ram'
 import { S3WorkspaceStateStore } from '@struktoai/mirage-core/workspace/store/s3'
@@ -151,8 +147,8 @@ const TOP_LEVEL_KEYS = [
   'clis',
   'runtimes',
   'policy',
-  'permissions',
   'profiles',
+  'profile',
   'mode',
   'consistency',
   'default_session_id',
@@ -170,7 +166,6 @@ const MOUNT_KEYS = [
   'command_limits',
   'backend',
   'mountpoint',
-  'permissions',
 ] as const
 const CACHE_KEYS: Record<string, readonly string[]> = {
   ram: ['type', 'limit', 'max_drain_bytes'],
@@ -333,9 +328,6 @@ function validateConfigKeys(raw: Record<string, unknown>): void {
     for (const [prefix, block] of Object.entries(raw.mounts)) {
       if (!isPlainObject(block)) throw new Error(`mount \`${prefix}\` must be a mapping`)
       rejectUnknownKeys(block, MOUNT_KEYS, `mount \`${prefix}\``)
-      if (block.permissions !== undefined && block.permissions !== null) {
-        parseMountPermissions(block.permissions, `mount \`${prefix}\` permissions`)
-      }
     }
   }
   if (isPlainObject(raw.clis)) {
@@ -344,14 +336,18 @@ function validateConfigKeys(raw: Record<string, unknown>): void {
       rejectUnknownKeys(block, CLI_KEYS, `cli \`${name}\``)
     }
   }
-  // The permissions document validates through the core's own
-  // validators (the same shape the SDK and REST take), so a typo like
-  // `path:` on a deny rule fails here rather than widening the rule.
-  if (raw.permissions !== undefined && raw.permissions !== null) {
-    parseWorkspacePermissions(raw.permissions, 'permissions')
-  }
+  // The roles validate through the core's own validators (the same
+  // shape the SDK and REST take), so a typo like `path:` on a deny rule
+  // fails here rather than widening the rule.
   if (raw.profiles !== undefined && raw.profiles !== null) {
     parseProfiles(raw.profiles)
+  }
+  if (raw.profile !== undefined && raw.profile !== null) {
+    if (typeof raw.profile !== 'string') throw new Error('profile must be a string')
+    const known = isPlainObject(raw.profiles) ? Object.keys(raw.profiles) : []
+    if (!known.includes(raw.profile)) {
+      throw new Error(`unknown profile ${JSON.stringify(raw.profile)}`)
+    }
   }
   validateTypedBlock(raw.cache, CACHE_KEYS, 'cache')
   validateTypedBlock(raw.index, INDEX_KEYS, 'index')
@@ -420,8 +416,9 @@ function parseLimits(
 
 /**
  * Validate the `profiles:` block: every entry through the core profile
- * validator, then every `extends` chain resolved once, so an unknown
- * parent or a cycle is a load error rather than a first-session one.
+ * validator, so a misspelled field is a load error rather than a
+ * first-session one. A role is the whole document it runs under, so
+ * there is no chain to resolve here.
  */
 function parseProfiles(raw: unknown): Record<string, SessionProfile> {
   if (!isPlainObject(raw)) throw new Error('config `profiles` must be a mapping')
@@ -429,7 +426,6 @@ function parseProfiles(raw: unknown): Record<string, SessionProfile> {
   for (const [name, block] of Object.entries(raw)) {
     out[name] = parseSessionProfile(block, `profile \`${name}\``)
   }
-  for (const name of Object.keys(out)) inherit(out, name)
   return out
 }
 
@@ -484,8 +480,6 @@ export interface MountBlock {
   /** vfs (default), fuse, or fskit. Mirrors Python's MountBlock.backend. */
   backend?: string
   mountpoint?: string
-  /** The mount-owned permissions block, validated by the core's parseMountPermissions. */
-  permissions?: unknown
 }
 
 interface RamIndexBlock {
@@ -584,10 +578,10 @@ export interface WorkspaceConfigRaw {
   clis?: Record<string, CLIBlock> | null
   runtimes?: (string | Record<string, unknown>)[] | null
   policy?: string | null
-  /** The workspace-tier permissions document; validated by the core's parseWorkspacePermissions. */
-  permissions?: unknown
-  /** Named session profiles; validated by parseProfiles. */
+  /** The roles (`profiles:`); every entry validated by parseProfiles. */
   profiles?: unknown
+  /** Which role shapes a session created without one. */
+  profile?: unknown
   mode?: string
   consistency?: string
   defaultSessionId?: string
@@ -845,19 +839,12 @@ export async function configToWorkspaceArgs(cfg: WorkspaceConfigRaw): Promise<Wo
   const consistency = coerceConsistency(cfg.consistency)
   const resources: Record<string, [Resource, MountMode, Record<string, Limit>]> = {}
   const kernelMounts: Record<string, [MountBackend, string | undefined]> = {}
-  const mountPermissions: Record<string, MountPermissions> = {}
   for (const [prefix, block] of Object.entries(cfg.mounts)) {
     const r = await buildResource(block.resource, block.config ?? {})
     const m = coerceMountMode(block.mode, wsMode)
     resources[prefix] = [r, m, parseLimits(block.command_limits)]
     const backend = (block.backend ?? MountBackend.VFS) as MountBackend
     if (KERNEL_BACKENDS.includes(backend)) kernelMounts[prefix] = [backend, block.mountpoint]
-    if (block.permissions !== undefined && block.permissions !== null) {
-      mountPermissions[prefix] = parseMountPermissions(
-        block.permissions,
-        `mount \`${prefix}\` permissions`,
-      )
-    }
   }
   const index = buildIndex(cfg.index)
   const stateStore = buildStateStore(cfg.store)
@@ -886,13 +873,12 @@ export async function configToWorkspaceArgs(cfg: WorkspaceConfigRaw): Promise<Wo
       ...(cfg.policy !== undefined && cfg.policy !== null
         ? { policy: loadScriptSource(cfg.policy) }
         : {}),
-      ...(cfg.permissions !== undefined && cfg.permissions !== null
-        ? { permissions: parseWorkspacePermissions(cfg.permissions, 'permissions') }
-        : {}),
       ...(cfg.profiles !== undefined && cfg.profiles !== null
         ? { profiles: parseProfiles(cfg.profiles) }
         : {}),
-      ...(Object.keys(mountPermissions).length > 0 ? { mountPermissions } : {}),
+      ...(cfg.profile !== undefined && cfg.profile !== null
+        ? { profile: cfg.profile as string }
+        : {}),
       ...(cliEntries !== undefined ? { clis: cliEntries } : {}),
     },
     kernelMounts,

@@ -13,30 +13,30 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import type { Policy } from '../base.ts'
-import { lineAllowed } from '../match/allow.ts'
-import { matchOp, matchRule, ruleScope } from '../match/rule.ts'
+import { Outcome, decide } from '../match/decide.ts'
+import { matchOp, ruleScope } from '../match/rule.ts'
 import type { Action, CommandContext, OpsContext, SessionCommandsQuery } from '../types.ts'
 
 /**
- * The permissions document's `commands` blocks, enforced.
+ * The role's `commands` rules, enforced.
  *
  * Seeded by the workspace after `MountRootPolicy` (POSIX messages still
  * win) and before user policies, so a document rule speaks before a
- * coded one when both match. It reads the session's compiled tiers
+ * coded one when both match. It reads the session's compiled rules
  * through the narrow `SessionCommandsQuery` by the session id the door
  * put in the context, never through ambient state: an explicit fact
  * survives the async hop that drops a store. Verdicts render through
  * the one outcome table (`renderDeny`), so an agent cannot tell a
  * document deny from a coded one.
  *
- * `preCommand`: the allow arm (a line no allow list of a tier covers is
- * refused whole, though its head was visible), then the deny arm (the
- * first matching rule in tier order: whole-command or operand-scoped by
- * whether the rule names paths), then the ask arm (the first matching
- * ask rule in tier order raises an Ask, which the approval door answers
- * from the session's grants or the host). `preOps`: the pure path rules
- * of every tier, so FUSE, programmatic ops and the warm cache cannot
- * bypass a path a document protects; there is no ask at the op door.
+ * `preCommand` renders one `decide` call, which is where the law lives:
+ * the allow list first (a line it does not cover is refused whole,
+ * though its head was visible), then the winning rule, refused whole or
+ * per operand by whether it names paths, or taken to the approval door
+ * when it asks. `preOps` walks the deny rules that are pure paths, so
+ * FUSE, programmatic ops and the warm cache cannot bypass a path the
+ * role protects; there is no ask at the op door, which cannot wait on a
+ * host.
  */
 export class PermissionsPolicy implements Policy {
   private readonly sessions: SessionCommandsQuery
@@ -46,37 +46,25 @@ export class PermissionsPolicy implements Policy {
   }
 
   preCommand(ctx: CommandContext): Action | null {
-    const layers = this.sessions.commandsOf(ctx.sessionId ?? '')
-    if (layers.length === 0) return null
-    if (!lineAllowed(ctx, layers)) {
+    const verdict = decide(ctx, this.sessions.commandsOf(ctx.sessionId ?? ''))
+    if (verdict.outcome === Outcome.NOT_ALLOWED) {
       const program = (
         ctx.program !== undefined && ctx.program.length > 0 ? ctx.program : [ctx.command]
       ).join(' ')
       return { kind: 'deny', reason: `${program} is not allowed` }
     }
-    for (const spec of layers) {
-      for (const rule of spec.deny) {
-        const hit = matchRule(rule, ruleScope(rule), ctx)
-        if (hit === null) continue
-        if (hit.operand === null) return { kind: 'deny', reason: rule.reason }
-        return { kind: 'deny', reason: `${hit.operand}: ${rule.reason}`, scope: 'operand' }
-      }
-    }
-    for (const spec of layers) {
-      for (const rule of spec.ask) {
-        if (matchRule(rule, ruleScope(rule), ctx) !== null) {
-          return { kind: 'ask', reason: rule.reason, rule }
-        }
-      }
-    }
-    return null
+    const rule = verdict.rule
+    if (rule === null) return null
+    if (verdict.outcome === Outcome.ASK) return { kind: 'ask', reason: rule.reason, rule }
+    if (verdict.matchedPath === null) return { kind: 'deny', reason: rule.reason }
+    return { kind: 'deny', reason: `${verdict.matchedPath}: ${rule.reason}`, scope: 'operand' }
   }
 
   preOps(ctx: OpsContext): Action | null {
-    for (const spec of this.sessions.commandsOf(ctx.sessionId ?? '')) {
-      for (const rule of spec.deny) {
-        if (matchOp(rule, ruleScope(rule), ctx)) return { kind: 'deny', reason: rule.reason }
-      }
+    const rules = this.sessions.commandsOf(ctx.sessionId ?? '')
+    if (rules === null) return null
+    for (const rule of rules.deny) {
+      if (matchOp(rule, ruleScope(rule), ctx)) return { kind: 'deny', reason: rule.reason }
     }
     return null
   }

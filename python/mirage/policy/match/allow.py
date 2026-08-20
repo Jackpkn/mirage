@@ -12,29 +12,24 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from collections.abc import Sequence
-
 from mirage.policy.match.pattern import pattern_matches, pattern_names
-from mirage.policy.types import CommandContext, CommandsSpec
+from mirage.policy.types import AdmissionRules, CommandContext
 
 
-def head_visible(name: str, layers: Sequence[CommandsSpec]) -> bool:
+def head_visible(name: str, rules: AdmissionRules | None) -> bool:
     """Whether a session can see a command at all.
 
-    A tier without an allow list hides nothing; a tier with one hides
+    A role without an allow list hides nothing; a role with one hides
     every name none of its patterns start with. Grammar-tier builtins
     and shell functions are the caller's exemptions, not this one's.
 
     Args:
         name (str): the command name.
-        layers (Sequence[CommandsSpec]): the session's compiled tiers.
+        rules (AdmissionRules | None): the session's admission rules.
     """
-    for spec in layers:
-        if spec.allow is None:
-            continue
-        if not any(pattern_names(p, name) for p in spec.allow):
-            return False
-    return True
+    if rules is None or rules.allow is None:
+        return True
+    return any(pattern_names(p, name) for p in rules.allow)
 
 
 def line_tokens(ctx: CommandContext) -> tuple[str, ...]:
@@ -47,23 +42,19 @@ def line_tokens(ctx: CommandContext) -> tuple[str, ...]:
     return ctx.tokens or (ctx.command, *ctx.argv)
 
 
-def line_allowed(ctx: CommandContext, layers: Sequence[CommandsSpec]) -> bool:
-    """Whether every tier with an allow list has a pattern for the line.
+def line_allowed(ctx: CommandContext, rules: AdmissionRules | None) -> bool:
+    """Whether the role's allow list has a pattern for the line.
 
-    A word that is not a tool (``ctx.tool`` cleared by the door: shell
-    grammar, the agent's own function, an executed path) is always
-    allowed here; a deny rule is the only thing that can refuse it.
+    A role that states no list installs everything. A word that is not
+    a tool (``ctx.tool`` cleared by the door: shell grammar, the
+    agent's own function, an executed path) is always allowed here; a
+    deny rule is the only thing that can refuse it.
 
     Args:
         ctx (CommandContext): the classified command.
-        layers (Sequence[CommandsSpec]): the session's compiled tiers.
+        rules (AdmissionRules | None): the session's admission rules.
     """
-    if not ctx.tool:
+    if not ctx.tool or rules is None or rules.allow is None:
         return True
     tokens = line_tokens(ctx)
-    for spec in layers:
-        if spec.allow is None:
-            continue
-        if not any(pattern_matches(p, tokens) for p in spec.allow):
-            return False
-    return True
+    return any(pattern_matches(p, tokens) for p in rules.allow)

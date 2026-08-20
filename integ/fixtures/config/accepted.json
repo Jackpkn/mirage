@@ -18,44 +18,6 @@
           "node"
         ],
         "policy": "policy.py",
-        "permissions": {
-          "commands": {
-            "allow": [
-              "ls",
-              "cat",
-              "git",
-              "rm"
-            ],
-            "ask": [
-              "git push",
-              {
-                "reason": "sign-off",
-                "commands": {
-                  "rm": [
-                    "/d/shared/*"
-                  ]
-                }
-              }
-            ],
-            "deny": [
-              {
-                "reason": "no rm here",
-                "commands": {
-                  "rm": [
-                    "/d/*"
-                  ]
-                }
-              },
-              "shred"
-            ]
-          },
-          "paths": {
-            "hide": [
-              "/d/finance",
-              "*.key"
-            ]
-          }
-        },
         "profiles": {
           "default": {
             "cwd": "/d",
@@ -64,13 +26,69 @@
             },
             "mounts": {
               "/d": "rw"
+            },
+            "commands": {
+              "allow": [
+                "ls",
+                "cat",
+                "git",
+                "rm"
+              ],
+              "ask": [
+                "git push",
+                {
+                  "reason": "sign-off",
+                  "commands": {
+                    "rm": [
+                      "/d/shared/*"
+                    ]
+                  }
+                }
+              ],
+              "deny": [
+                {
+                  "reason": "no rm here",
+                  "commands": {
+                    "rm": [
+                      "/d/*"
+                    ]
+                  }
+                },
+                "shred"
+              ]
+            },
+            "paths": {
+              "hide": [
+                "/d/finance",
+                "*.key"
+              ]
             }
           },
           "reviewer": {
-            "extends": "default",
-            "mounts": [
-              "/d"
-            ],
+            "mounts": {
+              "/d": {
+                "mode": "read",
+                "paths": {
+                  "hide": [
+                    "/d/.env",
+                    "*.pem"
+                  ]
+                },
+                "commands": {
+                  "ask": [
+                    "git rebase"
+                  ],
+                  "deny": [
+                    {
+                      "reason": "read-only history",
+                      "commands": [
+                        "git push"
+                      ]
+                    }
+                  ]
+                }
+              }
+            },
             "paths": {
               "hide": [
                 "/d/docs"
@@ -108,7 +126,8 @@
         },
         "store": {
           "type": "ram"
-        }
+        },
+        "profile": "default"
       }
     },
     {
@@ -128,28 +147,7 @@
               }
             },
             "backend": "vfs",
-            "mountpoint": "/mnt/d",
-            "permissions": {
-              "paths": {
-                "hide": [
-                  ".env",
-                  "*.pem"
-                ]
-              },
-              "commands": {
-                "ask": [
-                  "git rebase"
-                ],
-                "deny": [
-                  {
-                    "reason": "read-only history",
-                    "commands": [
-                      "git push"
-                    ]
-                  }
-                ]
-              }
-            }
+            "mountpoint": "/mnt/d"
           }
         }
       }
@@ -328,53 +326,57 @@
       "config": {
         "mounts": {
           "/d": {
-            "resource": "ram",
-            "permissions": {
-              "commands": {
-                "deny": [
-                  {
-                    "reason": "prod",
-                    "commands": {
-                      "rm": [
-                        "prod/*"
-                      ],
-                      "mv": [
-                        "prod/*",
-                        "docs"
-                      ]
-                    }
-                  }
-                ]
-              }
-            }
+            "resource": "ram"
           }
         },
-        "permissions": {
-          "commands": {
-            "ask": [
-              {
+        "profiles": {
+          "p": {
+            "mounts": {
+              "/d": {
                 "commands": {
-                  "git push": [
-                    "/d/*"
+                  "deny": [
+                    {
+                      "reason": "prod",
+                      "commands": {
+                        "rm": [
+                          "/d/prod/*"
+                        ],
+                        "mv": [
+                          "/d/prod/*",
+                          "/d/docs"
+                        ]
+                      }
+                    }
                   ]
                 }
               }
-            ],
-            "deny": [
-              {
-                "reason": "sealed",
-                "paths": [
-                  "/d/sealed/*"
-                ]
-              },
-              {
-                "reason": "no history edits",
-                "commands": [
-                  "git commit",
-                  "git reset --hard"
-                ]
-              }
-            ]
+            },
+            "commands": {
+              "ask": [
+                {
+                  "commands": {
+                    "git push": [
+                      "/d/*"
+                    ]
+                  }
+                }
+              ],
+              "deny": [
+                {
+                  "reason": "sealed",
+                  "paths": [
+                    "/d/sealed/*"
+                  ]
+                },
+                {
+                  "reason": "no history edits",
+                  "commands": [
+                    "git commit",
+                    "git reset --hard"
+                  ]
+                }
+              ]
+            }
           }
         }
       }

@@ -16,7 +16,7 @@ import asyncio
 
 import pytest
 
-from mirage.policy.types import CommandRule, CommandsSpec, Grant
+from mirage.policy.types import AdmissionRules, CommandRule, Grant
 from mirage.resource.ram import RAMResource
 from mirage.types import HiddenPaths, HiddenVars, MountMode
 from mirage.workspace import Workspace
@@ -407,75 +407,38 @@ def test_hydrated_sessions_start_clean():
     assert entries["s2"]["generation"] == 4
 
 
-def test_manager_stamps_bound_hides_on_live_created_and_forked_sessions():
+def test_commands_of_answers_the_sessions_own_rules():
     mgr = SessionManager("default")
     early = mgr.create("early")
-    bound = HiddenPaths(paths=("/shared/finance", ))
-    mgr.bound_hidden = bound
-    assert mgr.bound_hidden is bound
-    assert mgr.get("default").bound_hidden is bound
-    assert early.bound_hidden is bound
-    late = mgr.create("late", mount_modes={"/a": MountMode.READ})
-    assert late.bound_hidden is bound
-    assert late.fork().bound_hidden is bound
-    assert late.hidden_paths is None
-
-
-@pytest.mark.asyncio
-async def test_manager_bound_hides_ride_hydration_but_never_the_store():
-    store = RAMSessionStore()
-    await store.set(
-        "restored", {
-            "session_id": "restored",
-            "cwd": "/w",
-            "env": {},
-            "created_at": 1.0,
-            "hidden_paths": {
-                "paths": ["/own"],
-                "patterns": []
-            },
-        })
-    mgr = SessionManager("default", store=store)
-    bound = HiddenPaths(paths=("/shared/finance", ))
-    mgr.bound_hidden = bound
-    await mgr.ensure_loaded()
-    restored = mgr.get("restored")
-    assert restored.bound_hidden is bound
-    assert restored.hidden_paths == HiddenPaths(paths=("/own", ))
-    assert mgr.get("default").bound_hidden is bound
-    assert "bound_hidden" not in restored.to_dict()
-    await mgr.flush()
-    stored = await store.load()
-    assert "bound_hidden" not in stored["restored"]
-
-
-def test_manager_stamps_bound_command_tiers_and_answers_commands_of():
-    mgr = SessionManager("default")
-    early = mgr.create("early")
-    bound = (CommandsSpec(allow=("ls", "git")), )
-    mgr.bound_commands = bound
-    assert mgr.bound_commands is bound
-    assert mgr.get("default").bound_commands is bound
-    assert early.bound_commands is bound
+    own = AdmissionRules(allow=("ls", ))
     late = mgr.create("late")
-    assert late.bound_commands is bound
-    assert late.fork().bound_commands is bound
-    # commands_of: the bound tiers, then the session's own; the bound
-    # tiers alone for an id the manager does not know (the empty id of
-    # an unbound door included), so it still fails toward refusal.
-    own = CommandsSpec(allow=("ls", ))
     late.commands = own
-    assert mgr.commands_of("late") == (*bound, own)
-    assert mgr.commands_of("early") == bound
-    assert mgr.commands_of("nobody") == bound
-    assert mgr.commands_of("") == bound
+    assert mgr.commands_of("late") is own
+    # A session the role never narrowed states no rules, and so does an
+    # id the manager does not know (the empty id of an unbound door
+    # included), unless a default role says otherwise.
+    assert mgr.commands_of("early") is None
+    assert mgr.commands_of("nobody") is None
+    assert mgr.commands_of("") is None
+    assert early.commands is None
+    # With a default role compiled in, an unknown id answers its rules
+    # rather than nothing, so an unbound door still fails toward refusal.
+    mgr.default_profile = CompiledProfile(
+        mount_modes=None,
+        hidden_paths=None,
+        hidden_vars=None,
+        env=None,
+        cwd=None,
+        commands=AdmissionRules(allow=("cat", )))
+    assert mgr.commands_of("nobody") == AdmissionRules(allow=("cat", ))
+    assert mgr.commands_of("") == AdmissionRules(allow=("cat", ))
 
 
 @pytest.mark.asyncio
-async def test_manager_command_tier_rides_the_record_and_bound_tiers_do_not():
+async def test_manager_admission_rules_ride_the_session_record():
     store = RAMSessionStore()
-    own = CommandsSpec(allow=("ls", "git log"),
-                       deny=(CommandRule(reason="no", commands=("rm", )), ))
+    own = AdmissionRules(allow=("ls", "git log"),
+                         deny=(CommandRule(reason="no", commands=("rm", )), ))
     await store.set(
         "restored", {
             "session_id": "restored",
@@ -505,21 +468,16 @@ async def test_manager_command_tier_rides_the_record_and_bound_tiers_do_not():
             },
         })
     mgr = SessionManager("default", store=store)
-    bound = (CommandsSpec(deny=(
-        CommandRule(reason="ro", commands=("git push", ), mount="/repo"), )), )
-    mgr.bound_commands = bound
     await mgr.ensure_loaded()
     restored = mgr.get("restored")
     assert restored.commands == own
-    assert restored.bound_commands is bound
-    assert mgr.commands_of("restored") == (*bound, own)
-    # The default session adopts its stored tier like its hidden specs.
-    assert mgr.get("default").commands == CommandsSpec(allow=("cat", ))
-    assert "bound_commands" not in restored.to_dict()
+    assert mgr.commands_of("restored") is restored.commands
+    # The default session adopts its stored rules like its hidden paths.
+    assert mgr.get("default").commands == AdmissionRules(allow=("cat", ))
     await mgr.flush()
     stored = await store.load()
-    assert "bound_commands" not in stored["restored"]
     assert stored["restored"]["commands"]["allow"] == ["ls", "git log"]
+    assert stored["restored"]["commands"]["deny"][0]["reason"] == "no"
 
 
 @pytest.mark.asyncio

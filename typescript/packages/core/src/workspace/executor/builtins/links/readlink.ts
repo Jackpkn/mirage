@@ -14,7 +14,6 @@
 
 import { PathSpec } from '../../../../types.ts'
 import { CycleError, norm } from '../../../../utils/path.ts'
-import { MountNotAllowedError } from '../../../../context/session_context.ts'
 import { PolicyDenied } from '../../../../policy/index.ts'
 import type { DispatchFn } from '../../../../runtime/types.ts'
 import type { Namespace } from '../../../mount/namespace/namespace.ts'
@@ -22,11 +21,15 @@ import type { Session } from '../../../session/session.ts'
 import { absPath, fail, result, splitFlags, type Result } from '../shared.ts'
 import { pathExists } from './probe.ts'
 
-// A readlink the door refused (session scope or policy) or answered
-// EINVAL (not a link): both land on GNU readlink's silent exit 1.
+// Any filesystem answer other than a target: a refusal (session view or
+// policy), EINVAL (not a link), ENOENT (absent, which is what a hidden
+// path answers). All of them land on GNU readlink's silent exit 1, so
+// this matches python's `except OSError` rather than naming errnos one
+// at a time — a list would silently print a raw path the first time a
+// door answered with an errno nobody had added yet.
 function readlinkRefused(err: unknown): boolean {
-  if (err instanceof PolicyDenied || err instanceof MountNotAllowedError) return true
-  return (err as { code?: unknown }).code === 'EINVAL'
+  if (err instanceof PolicyDenied) return true
+  return typeof (err as { code?: unknown }).code === 'string'
 }
 
 // Print a symlink's target, GNU readlink semantics.

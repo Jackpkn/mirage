@@ -13,142 +13,41 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { PolicyError } from '../../policy/errors.ts'
-import { intersectPatterns } from '../../policy/match/pattern.ts'
-import type { CommandRule, CommandsSpec } from '../../policy/types.ts'
-import type { HiddenPaths } from '../../types.ts'
-import { MountMode, weakerMode } from '../../types.ts'
+import type { CommandRule, AdmissionRules } from '../../policy/types.ts'
+import type { HiddenPaths, MountMode } from '../../types.ts'
+import { weakerMode } from '../../types.ts'
 import { classifyPaths, classifyVars } from '../../utils/hidden.ts'
 import { stripSlash } from '../../utils/slash.ts'
 import {
-  parseProfileMounts,
   type CommandsBlock,
   type CompiledProfile,
   type MountCommandsBlock,
-  type MountPermissions,
   type PathsBlock,
+  type ProfileMount,
   type SessionProfile,
   type VarsBlock,
-  type WorkspacePermissions,
 } from './permissions.ts'
 import { DEFAULT_PROFILE } from './constants.ts'
 import { varsFromEnv, type Session } from './session.ts'
 import { setCwd } from './shell_dirs.ts'
 
-/** A profile's mounts once every spelling is normalized: ceilings, an allowlist, or unrestricted. */
-export type ProfileMounts = ReadonlyMap<string, MountMode> | readonly string[] | null
-
 /**
- * Resolve a named profile through its `extends` chain.
- *
- * Field inheritance, root first: a stated field replaces the parent's,
- * an absent one is inherited. Safety comes from the layer intersection
- * at evaluation, not from inheritance, so a child may state fewer hides
- * than its parent. The result names no parent. Throws PolicyError on an
- * unknown name or a cycle.
- */
-export function inherit(
-  profiles: Readonly<Record<string, SessionProfile>>,
-  name: string,
-): SessionProfile {
-  const chain: SessionProfile[] = []
-  const seen: string[] = []
-  let current: string | null | undefined = name
-  while (current !== null && current !== undefined) {
-    if (seen.includes(current)) {
-      throw new PolicyError(`profile extends cycle: ${[...seen, current].join(' -> ')}`)
-    }
-    const node: SessionProfile | undefined = Object.prototype.hasOwnProperty.call(profiles, current)
-      ? profiles[current]
-      : undefined
-    if (node === undefined) {
-      const parent = seen.at(-1)
-      const where =
-        parent !== undefined ? `profile '${parent}' extends unknown profile` : 'unknown profile'
-      throw new PolicyError(`${where} '${current}'`)
-    }
-    seen.push(current)
-    chain.push(node)
-    current = node.extends
-  }
-  const merged: {
-    cwd?: string | null
-    env?: Readonly<Record<string, string>> | null
-    mounts?:
-      | ReadonlyMap<string, string>
-      | Readonly<Record<string, string>>
-      | readonly string[]
-      | null
-    paths?: PathsBlock | null
-    vars?: VarsBlock | null
-    commands?: CommandsBlock | null
-  } = {}
-  for (const node of [...chain].reverse()) {
-    if (node.cwd != null) merged.cwd = node.cwd
-    if (node.env != null) merged.env = node.env
-    if (node.mounts != null) merged.mounts = node.mounts
-    if (node.paths != null) merged.paths = node.paths
-    if (node.vars != null) merged.vars = node.vars
-    if (node.commands != null) merged.commands = node.commands
-  }
-  return merged
-}
-
-/**
- * The profile a session is created from, before inline tightening: a
- * name resolves through `inherit`; a profile object that names a
- * parent resolves the same way with itself as the child; null picks
- * `profiles.default` when the workspace defines one and leaves the
- * session unrestricted otherwise.
+ * The role a session is created from. A name is looked up as written; a
+ * profile object is itself; null picks `profiles.default` when the
+ * workspace defines one and leaves the session unrestricted otherwise.
+ * There is no inheritance chain: a role is the whole document, so
+ * nothing is assembled from somewhere else before it is read. Throws
+ * PolicyError on a name the workspace does not define.
  */
 export function resolveProfile(
   profiles: Readonly<Record<string, SessionProfile>>,
   profile: string | SessionProfile | null | undefined,
 ): SessionProfile | null {
-  if (profile === null || profile === undefined) {
-    return Object.prototype.hasOwnProperty.call(profiles, DEFAULT_PROFILE)
-      ? inherit(profiles, DEFAULT_PROFILE)
-      : null
-  }
-  if (typeof profile === 'string') return inherit(profiles, profile)
-  if (profile.extends == null) return profile
-  return inherit({ ...profiles, '': profile }, '')
-}
-
-/**
- * The mounts both sides grant, at the weaker mode. A Map is a set of
- * ceilings, an array an allowlist at each mount's own mode. Map x Map:
- * common prefixes at the weaker mode; Map x array: the Map's entries the
- * list also names; array x array: the common prefixes; null x anything:
- * the other.
- */
-function isCeilings(mounts: ProfileMounts): mounts is ReadonlyMap<string, MountMode> {
-  return mounts instanceof Map
-}
-
-function intersectMounts(base: ProfileMounts, inline: ProfileMounts): ProfileMounts {
-  if (base === null) return inline
-  if (inline === null) return base
-  const baseCeilings = isCeilings(base) ? base : null
-  const inlineCeilings = isCeilings(inline) ? inline : null
-  const baseListed = isCeilings(base) ? null : base
-  const inlineListed = isCeilings(inline) ? null : inline
-  if (baseCeilings !== null && inlineCeilings !== null) {
-    const out = new Map<string, MountMode>()
-    for (const [p, m] of baseCeilings) {
-      const other = inlineCeilings.get(p)
-      if (other !== undefined) out.set(p, weakerMode(m, other))
-    }
-    return out
-  }
-  if (baseCeilings !== null && inlineListed !== null) {
-    return new Map([...baseCeilings].filter(([p]) => inlineListed.includes(p)))
-  }
-  if (inlineCeilings !== null && baseListed !== null) {
-    return new Map([...inlineCeilings].filter(([p]) => baseListed.includes(p)))
-  }
-  if (baseListed !== null && inlineListed !== null)
-    return baseListed.filter((p) => inlineListed.includes(p))
-  return null
+  if (profile === null || profile === undefined) return profiles[DEFAULT_PROFILE] ?? null
+  if (typeof profile !== 'string') return profile
+  const found = profiles[profile]
+  if (found === undefined) throw new PolicyError(`unknown profile ${JSON.stringify(profile)}`)
+  return found
 }
 
 /** Every entry of both blocks, first spelling wins, order kept. */
@@ -163,166 +62,164 @@ function unionHide(
   return out
 }
 
+/** One verb's rules in a mount section's commands block, empty when unstated. */
+function rulesOf(
+  block: MountCommandsBlock | null | undefined,
+  verb: 'ask' | 'deny',
+): readonly CommandRule[] {
+  return (verb === 'ask' ? block?.ask : block?.deny) ?? []
+}
+
 /**
- * The commands block both documents grant: allow lists intersect (a
- * line must be covered by both), ask and deny rules union in
- * base-then-inline order; a side that states no list leaves the other's
- * alone.
+ * The role's commands block with the inline document's rules added. An
+ * inline document may only restrict, so it carries ask and deny rules
+ * and never an allow list: a list there would install a command the
+ * role does not have, which is the one thing a per-call document must
+ * not do.
  */
-function tightenCommands(
+function addCommands(
   base: CommandsBlock | null | undefined,
   inline: CommandsBlock | null | undefined,
 ): CommandsBlock | null {
-  if (base == null) return inline ?? null
-  if (inline == null) return base
-  const baseAllow = base.allow ?? null
-  const inlineAllow = inline.allow ?? null
-  let allow: readonly string[] | null
-  if (baseAllow === null) allow = inlineAllow
-  else if (inlineAllow === null) allow = baseAllow
-  else allow = intersectPatterns(baseAllow, inlineAllow)
+  if (inline === null || inline === undefined) return base ?? null
+  if (inline.allow !== null && inline.allow !== undefined) {
+    throw new PolicyError('inline permissions may add ask and deny rules, not an allow list')
+  }
+  if (base === null || base === undefined) return inline
   return {
-    allow,
+    allow: base.allow ?? null,
     ask: [...(base.ask ?? []), ...(inline.ask ?? [])],
     deny: [...(base.deny ?? []), ...(inline.deny ?? [])],
   }
 }
 
 /**
- * Narrow a profile by an inline document (design 3.4): mounts
- * intersect, hides union, allow lists intersect, ask and deny rules
- * union, `cwd` and `env` are the inline document's when it states them
- * (session presets, not permissions). Either side null returns the
- * other unchanged.
+ * One mount's entry with the inline document's added: the weaker mode,
+ * both rule lists, both hide lists.
  */
-export function tighten(
+function addMount(base: ProfileMount | undefined, inline: ProfileMount | undefined): ProfileMount {
+  if (base === undefined) return inline ?? {}
+  if (inline === undefined) return base
+  let mode = base.mode ?? null
+  if (inline.mode !== null && inline.mode !== undefined) {
+    mode = mode === null ? inline.mode : weakerMode(mode, inline.mode)
+  }
+  const ask = [...rulesOf(base.commands, 'ask'), ...rulesOf(inline.commands, 'ask')]
+  const deny = [...rulesOf(base.commands, 'deny'), ...rulesOf(inline.commands, 'deny')]
+  const hide = unionHide(base.paths, inline.paths)
+  const out: { mode?: MountMode | null; commands?: MountCommandsBlock; paths?: PathsBlock } = {}
+  if (mode !== null) out.mode = mode
+  if (ask.length > 0 || deny.length > 0) out.commands = { ask, deny }
+  if (hide.length > 0) out.paths = { hide }
+  return out
+}
+
+/**
+ * A role with the inline document of one `createSession` added.
+ *
+ * The one rule about combining two documents: an inline document may
+ * add ask and deny rules and hides, never an allow list. Modes take the
+ * weaker of the two, `cwd` and `env` are the inline document's when it
+ * states them (they are session presets, not permissions). Either side
+ * null returns the other unchanged.
+ */
+export function withInline(
   base: SessionProfile | null,
   inline: SessionProfile | null,
 ): SessionProfile | null {
   if (base === null) return inline
   if (inline === null) return base
+  const hidePaths = unionHide(base.paths, inline.paths)
+  const hideVars = unionHide(base.vars, inline.vars)
   const out: {
     cwd?: string | null
     env?: Readonly<Record<string, string>> | null
-    mounts?: ProfileMounts
+    mounts?: ReadonlyMap<string, ProfileMount> | null
     paths?: PathsBlock | null
     vars?: VarsBlock | null
     commands?: CommandsBlock | null
   } = {}
-  const cwd = inline.cwd ?? base.cwd
-  if (cwd != null) out.cwd = cwd
-  if (base.env != null || inline.env != null)
-    out.env = { ...(base.env ?? {}), ...(inline.env ?? {}) }
-  const mounts = intersectMounts(parseProfileMounts(base.mounts), parseProfileMounts(inline.mounts))
-  if (mounts !== null) out.mounts = mounts
-  if (base.paths != null || inline.paths != null)
-    out.paths = { hide: unionHide(base.paths, inline.paths) }
-  if (base.vars != null || inline.vars != null)
-    out.vars = { hide: unionHide(base.vars, inline.vars) }
-  const commands = tightenCommands(base.commands, inline.commands)
-  if (commands !== null) out.commands = commands
+  out.cwd = inline.cwd ?? base.cwd ?? null
+  if (base.env != null || inline.env != null) out.env = { ...base.env, ...inline.env }
+  if (base.mounts != null || inline.mounts != null) {
+    const prefixes = [...(base.mounts?.keys() ?? [])]
+    for (const p of inline.mounts?.keys() ?? []) if (!prefixes.includes(p)) prefixes.push(p)
+    out.mounts = new Map(
+      prefixes.map((prefix): [string, ProfileMount] => [
+        prefix,
+        addMount(base.mounts?.get(prefix), inline.mounts?.get(prefix)),
+      ]),
+    )
+  }
+  if (base.paths != null || inline.paths != null) out.paths = { hide: hidePaths }
+  if (base.vars != null || inline.vars != null) out.vars = { hide: hideVars }
+  out.commands = addCommands(base.commands, inline.commands)
   return out
 }
 
 /**
- * Mount-relative path entries in absolute terms. Every entry, glob or
- * plain, is joined under the mount root, so a mount-relative rule can
- * never reach outside its mount; a slashless glob stops being a
- * component pattern and becomes anchored under the mount, which is the
- * only reading "relative to the mount root" can have.
+ * A mount section's rules, stamped with the mount they belong to. The
+ * stamp is what makes the rule apply to a line that *works inside* the
+ * mount, by cwd or by operand, which a path-scoped rule cannot express.
+ * Paths are already absolute and already checked to lie under the root,
+ * so nothing is rewritten here.
  */
-export function rebaseEntries(prefix: string, entries: readonly string[]): string[] {
-  const root = '/' + stripSlash(prefix)
-  const base = root === '/' ? '' : root
-  return entries.map((entry) => {
-    const rel = entry.replace(/^\/+/, '')
-    return rel === '' ? root : `${base}/${rel}`
-  })
-}
-
-/** A mount's hides in absolute terms (`rebaseEntries` of the block's `paths.hide`). */
-export function rebase(prefix: string, perms: MountPermissions | null | undefined): string[] {
-  if (perms == null) return []
-  return rebaseEntries(prefix, perms.paths.hide)
+function scopeRules(rules: readonly CommandRule[], root: string): CommandRule[] {
+  return rules.map((rule) => ({ ...rule, mount: root }))
 }
 
 /**
- * What every session of the workspace cannot see: the workspace tier's
- * hides plus each mount's rebased hides, compiled once and stamped onto
- * every session by the session manager, joined with the session's own
- * hides in the predicate.
+ * A role's admission rules: its own, plus every mount section's, in one
+ * list; null when the role states none. Mount rules come first so the
+ * section closest to the data speaks first when several rules match at
+ * the same anchor depth and only the message differs.
  */
-export function boundHidden(
-  workspace: WorkspacePermissions | null | undefined,
-  mounts: ReadonlyMap<string, MountPermissions | null | undefined>,
-): HiddenPaths | null {
-  const entries: string[] = []
-  if (workspace != null) entries.push(...workspace.paths.hide)
-  for (const [prefix, perms] of mounts) entries.push(...rebase(prefix, perms))
+export function compileCommands(profile: SessionProfile): AdmissionRules | null {
+  const ask: CommandRule[] = []
+  const deny: CommandRule[] = []
+  for (const [prefix, entry] of profile.mounts ?? new Map<string, ProfileMount>()) {
+    const root = '/' + stripSlash(prefix)
+    ask.push(...scopeRules(rulesOf(entry.commands, 'ask'), root))
+    deny.push(...scopeRules(rulesOf(entry.commands, 'deny'), root))
+  }
+  const block = profile.commands
+  const allow = block?.allow ?? null
+  if (block != null) {
+    ask.push(...(block.ask ?? []))
+    deny.push(...(block.deny ?? []))
+  }
+  if (allow === null && ask.length === 0 && deny.length === 0) return null
+  return { allow, ask, deny }
+}
+
+/**
+ * Every path the role hides: its own entries and each mount section's,
+ * which are absolute like all the rest.
+ */
+function hiddenOf(profile: SessionProfile): HiddenPaths | null {
+  const entries = [...(profile.paths?.hide ?? [])]
+  for (const entry of (profile.mounts ?? new Map<string, ProfileMount>()).values()) {
+    entries.push(...(entry.paths?.hide ?? []))
+  }
   return classifyPaths(entries)
 }
 
-// A mount tier's rules, scoped to the mount and rebased under it.
-function scopeRules(rules: readonly CommandRule[], root: string): CommandRule[] {
-  return rules.map((rule) => ({
-    reason: rule.reason,
-    commands: rule.commands ?? [],
-    paths: rebaseEntries(root, rule.paths ?? []),
-    mount: root,
-  }))
-}
-
 /**
- * One tier's commands block, compiled; null when there is nothing to
- * evaluate. A mount tier's rules are scoped to the mount
- * (`CommandRule.mount`) and their paths rebased under its root, so a
- * mount-relative rule can never reach outside its mount and a bare rule
- * applies to the lines that work inside it.
+ * The mode each mount section states, null when none does. A mount the
+ * role does not name is absent from the map and keeps the mode it
+ * declares in the workspace's `mounts:`; the map only narrows, it never
+ * grants.
  */
-export function compileCommands(
-  block: CommandsBlock | MountCommandsBlock | null | undefined,
-  mount = '',
-): CommandsSpec | null {
-  if (block == null) return null
-  const allow = 'allow' in block ? (block.allow ?? null) : null
-  const ask = block.ask ?? []
-  const deny = block.deny ?? []
-  if (allow === null && ask.length === 0 && deny.length === 0) return null
-  if (mount === '') return { allow, ask, deny }
-  const root = '/' + stripSlash(mount)
-  return { allow: null, ask: scopeRules(ask, root), deny: scopeRules(deny, root) }
-}
-
-/**
- * The command tiers every session of the workspace runs under: each
- * mount's, in registration order, then the workspace's, so the resource
- * owner speaks first when several rules match.
- */
-export function boundCommands(
-  workspace: WorkspacePermissions | null | undefined,
-  mounts: ReadonlyMap<string, MountPermissions | null | undefined>,
-): CommandsSpec[] {
-  const layers: CommandsSpec[] = []
-  for (const [prefix, perms] of mounts) {
-    const spec = compileCommands(perms?.commands, prefix)
-    if (spec !== null) layers.push(spec)
+function modesOf(profile: SessionProfile): Map<string, MountMode> | null {
+  const modes = new Map<string, MountMode>()
+  for (const [prefix, entry] of profile.mounts ?? new Map<string, ProfileMount>()) {
+    if (entry.mode !== null && entry.mode !== undefined) modes.set(prefix, entry.mode)
   }
-  const spec = compileCommands(workspace?.commands)
-  if (spec !== null) layers.push(spec)
-  return layers
+  return modes.size > 0 ? modes : null
 }
 
-/**
- * The session fields an effective profile sets; null is an unrestricted
- * session. `infrastructure` names the mount prefixes every session may
- * touch (the scratch root, the device mount, the history view): a
- * profile that lists mounts gets them at EXEC beside its own so a
- * ceiling never locks an agent out of them.
- */
-export function compileProfile(
-  effective: SessionProfile | null,
-  infrastructure: Iterable<string> = [],
-): CompiledProfile {
+/** The session fields a role compiles to. */
+export function compileProfile(effective: SessionProfile | null): CompiledProfile {
   if (effective === null) {
     return {
       mountModes: null,
@@ -333,31 +230,23 @@ export function compileProfile(
       commands: null,
     }
   }
-  const mounts = parseProfileMounts(effective.mounts)
-  let modes: Map<string, MountMode> | null = null
-  if (isCeilings(mounts)) modes = new Map(mounts)
-  else if (mounts !== null)
-    modes = new Map(mounts.map((p): [string, MountMode] => [p, MountMode.EXEC]))
-  if (modes !== null) {
-    for (const prefix of infrastructure) if (!modes.has(prefix)) modes.set(prefix, MountMode.EXEC)
-  }
   return {
-    mountModes: modes,
-    hiddenPaths: classifyPaths(effective.paths?.hide ?? []),
+    mountModes: modesOf(effective),
+    hiddenPaths: hiddenOf(effective),
     hiddenVars: classifyVars(effective.vars?.hide ?? []),
     env: effective.env ?? null,
     cwd: effective.cwd ?? null,
-    commands: compileCommands(effective.commands),
+    commands: compileCommands(effective),
   }
 }
 
 /**
- * Stamp a compiled profile's narrowing onto a session: the four fields
- * no shell line can edit (mount ceilings, hidden paths, hidden
- * variables, the command tier). Applied at creation and again whenever
- * a stored record could carry a stale copy (the default session after
- * hydration), so the document, not the store, is what an agent runs
- * under.
+ * Stamp a compiled role's narrowing onto a session: the four fields no
+ * shell line can edit (the per-mount modes, hidden paths, hidden
+ * variables, the admission rules). Applied at creation and again
+ * whenever a stored record could carry a stale copy (the default
+ * session after hydration), so the document, not the store, is what an
+ * agent runs under.
  */
 export function narrow(session: Session, compiled: CompiledProfile): void {
   session.mountModes = compiled.mountModes === null ? null : new Map(compiled.mountModes)
@@ -367,8 +256,8 @@ export function narrow(session: Session, compiled: CompiledProfile): void {
 }
 
 /**
- * Narrow a fresh session and seed its scratch state from the profile.
- * A profile's env is a *process* environment, the same shape
+ * Narrow a fresh session and seed its scratch state from the role.
+ * A role's env is a *process* environment, the same shape
  * `ws.env = {...}` speaks, so every name in it is exported: seeding
  * them plain left `$TOKEN` expanding while every command, CLI and
  * guest runtime in the profiled session saw nothing, since all three

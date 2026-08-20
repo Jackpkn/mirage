@@ -134,9 +134,7 @@ export async function expandArgv(
   // matches fail.
   const globOpts = globOptions(session)
   const words =
-    policy === WordPolicy.SHELL ||
-    globNeedsShell(globOpts) ||
-    scopesPaths(session.commandLayers, name)
+    policy === WordPolicy.SHELL || globNeedsShell(globOpts) || scopesPaths(session.commands, name)
       ? await resolveGlobs(classified, registry, false, namespace, globOpts)
       : // A pattern still owes its backend a resolution, so it travels
         // marked and the marks come off there; every other word is done

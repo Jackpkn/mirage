@@ -14,7 +14,7 @@
 
 import { describe, expect, it } from 'vitest'
 
-import type { CommandContext, CommandsSpec } from '../types.ts'
+import type { CommandContext, AdmissionRules } from '../types.ts'
 import { headVisible, lineAllowed, lineTokens } from './allow.ts'
 
 const registry = { isMountRoot: () => false }
@@ -27,36 +27,34 @@ function ctx(
 }
 
 describe('allow lists', () => {
-  it('headVisible needs a pattern in every tier with a list', () => {
-    const layers: CommandsSpec[] = [
-      { allow: ['ls', 'git'], ask: [], deny: [] },
-      { allow: ['ls', 'cat', 'git log'], ask: [], deny: [] },
-    ]
-    // A name must start a pattern of every tier that has a list.
-    expect(headVisible('ls', layers)).toBe(true)
-    expect(headVisible('git', layers)).toBe(true)
-    expect(headVisible('cat', layers)).toBe(false)
-    expect(headVisible('rm', layers)).toBe(false)
-    // A tier without a list hides nothing; no tiers hide nothing.
-    expect(headVisible('rm', [{ allow: null, ask: [], deny: [{ reason: 'x' }] }])).toBe(true)
-    expect(headVisible('rm', [])).toBe(true)
+  it("headVisible answers the role's one allow list", () => {
+    const rules: AdmissionRules = { allow: ['ls', 'git log'], ask: [], deny: [] }
+    // A name is visible when it starts a pattern of the list.
+    expect(headVisible('ls', rules)).toBe(true)
+    expect(headVisible('git', rules)).toBe(true)
+    expect(headVisible('cat', rules)).toBe(false)
+    expect(headVisible('rm', rules)).toBe(false)
+    // A role without a list hides nothing, and neither does no role.
+    expect(headVisible('rm', { allow: null, ask: [], deny: [{ reason: 'x' }] })).toBe(true)
+    expect(headVisible('rm', null)).toBe(true)
   })
 
-  it('lineAllowed intersects the tiers and skips non-tools', () => {
-    const layers: CommandsSpec[] = [
-      { allow: ['ls', 'git'], ask: [], deny: [] },
-      { allow: ['ls', 'git log', 'git status'], ask: [], deny: [] },
-    ]
-    expect(lineAllowed(ctx('ls', { argv: ['-la'], tokens: ['ls', '-la'] }), layers)).toBe(true)
-    expect(lineAllowed(ctx('git', { tokens: ['git', 'log', '-1'] }), layers)).toBe(true)
+  it('lineAllowed reads the whole line and skips non-tools', () => {
+    const rules: AdmissionRules = {
+      allow: ['ls', 'git log', 'git status'],
+      ask: [],
+      deny: [],
+    }
+    expect(lineAllowed(ctx('ls', { argv: ['-la'], tokens: ['ls', '-la'] }), rules)).toBe(true)
+    expect(lineAllowed(ctx('git', { tokens: ['git', 'log', '-1'] }), rules)).toBe(true)
     // The head is visible (some git line is allowed) but this line is
-    // covered by no pattern of the second tier.
-    expect(lineAllowed(ctx('git', { tokens: ['git', 'push'] }), layers)).toBe(false)
+    // covered by no pattern.
+    expect(lineAllowed(ctx('git', { tokens: ['git', 'push'] }), rules)).toBe(false)
     // A word that is not a tool is never refused by an allow list.
-    expect(lineAllowed(ctx('cd', { tokens: ['cd', '/x'], tool: false }), layers)).toBe(true)
+    expect(lineAllowed(ctx('cd', { tokens: ['cd', '/x'], tool: false }), rules)).toBe(true)
     // A context built without the door's tokens reads the raw argv.
     const raw = ctx('git', { argv: ['push'] })
     expect(lineTokens(raw)).toEqual(['git', 'push'])
-    expect(lineAllowed(raw, layers)).toBe(false)
+    expect(lineAllowed(raw, rules)).toBe(false)
   })
 })

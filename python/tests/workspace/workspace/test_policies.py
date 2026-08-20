@@ -23,10 +23,20 @@ from mirage.policy import (CommandRule, ExecuteResultContext, OpsContext,
                            OpsResultContext, PolicyError)
 from mirage.resource.ram import RAMResource
 from mirage.types import Limit, MountMode, OnExceed
-from mirage.workspace.mount.spec import Mount
+from mirage.workspace.session import SessionProfile
 
 from mirage.workspace.session.permissions import (  # isort: skip
-    CommandsBlock, MountPermissions, PathsBlock, WorkspacePermissions)
+    CommandsBlock, PathsBlock)
+
+
+def _role(**blocks) -> dict[str, SessionProfile]:
+    """The workspace's default role, spelled as one document.
+
+    Permissions live in exactly one place now, so what these tests used
+    to pass as `permissions=` is `profiles.default`, which shapes the
+    workspace's own session and every session created without a name.
+    """
+    return {"default": SessionProfile(**blocks)}
 
 
 class NoInterpreters(Policy):
@@ -42,7 +52,7 @@ async def test_workspace_guards_refuse_before_backend_io():
     ws = Workspace(
         {"/data/": RAMResource()},
         mode=MountMode.WRITE,
-        permissions=WorkspacePermissions(commands=CommandsBlock(
+        profiles=_role(commands=CommandsBlock(
             deny=(CommandRule(reason="production data is protected",
                               commands=("rm", ),
                               paths=("/data/prod/*", )), ))),
@@ -101,7 +111,7 @@ async def test_guards_cover_shell_builtins_and_namespace_routes():
     ws = Workspace(
         {"/data/": RAMResource()},
         mode=MountMode.WRITE,
-        permissions=WorkspacePermissions(commands=CommandsBlock(deny=(
+        profiles=_role(commands=CommandsBlock(deny=(
             CommandRule(reason="disabled", commands=("source", )),
             CommandRule(reason="frozen",
                         commands=("touch", ),
@@ -128,7 +138,7 @@ async def test_guards_cover_path_valued_flags():
     ws = Workspace(
         {"/data/": RAMResource()},
         mode=MountMode.WRITE,
-        permissions=WorkspacePermissions(commands=CommandsBlock(
+        profiles=_role(commands=CommandsBlock(
             deny=(CommandRule(reason="prod is protected",
                               commands=("shuf", ),
                               paths=("/data/prod/*", )), ))),
@@ -159,7 +169,7 @@ async def test_path_guards_hold_at_the_programmatic_door():
     ws = Workspace(
         {"/data/": RAMResource()},
         mode=MountMode.WRITE,
-        permissions=WorkspacePermissions(commands=CommandsBlock(deny=(
+        profiles=_role(commands=CommandsBlock(deny=(
             CommandRule(reason="prod is protected", paths=(
                 "/data/prod/*", )), ))),
     )
@@ -563,12 +573,12 @@ async def test_post_execute_sees_the_rightmost_producer():
 
 
 @pytest.mark.asyncio
-async def test_workspace_hides_bind_every_session_including_the_default():
+async def test_role_hides_bind_every_session_including_the_default():
     ram = RAMResource()
     ws = Workspace({"/data/": ram},
                    mode=MountMode.WRITE,
-                   permissions=WorkspacePermissions(paths=PathsBlock(
-                       hide=("/data/finance", "*.key"))))
+                   profiles=_role(paths=PathsBlock(hide=("/data/finance",
+                                                         "*.key"))))
     try:
         await ws.execute("mkdir -p /data/finance /data/pub")
         await ws.ops.write("/data/pub/a.txt", b"a\n")
@@ -578,29 +588,39 @@ async def test_workspace_hides_bind_every_session_including_the_default():
         assert b"finance" not in listing.stdout
         assert b"b.key" not in listing.stdout
         assert b"a.txt" in listing.stdout
-        # ... and neither can one created later, with or without a profile.
+        # ... and neither can one created later from the same role.
         ws.create_session("late")
         gone = await ws.execute("cat /data/pub/b.key", session_id="late")
         assert gone.exit_code != 0
-        assert ws.get_session("late").hidden_paths is None
     finally:
         await ws.close()
 
 
 @pytest.mark.asyncio
-async def test_mount_owned_hides_are_rebased_under_the_mount():
+async def test_a_mount_sections_hides_are_written_in_full():
+    # The section's entries are absolute, checked at load time to lie
+    # under the mount root. They used to be relative and joined onto the
+    # root, which silently doubled a path already written in full
+    # (`/repo/secret` under `/repo` became `/repo/repo/secret`).
     repo = RAMResource()
     other = RAMResource()
     ws = Workspace(
         {
-            "/repo/":
-            Mount(repo,
-                  MountMode.WRITE,
-                  permissions=MountPermissions(paths=PathsBlock(
-                      hide=(".env", "*.pem")))),
+            "/repo/": (repo, MountMode.WRITE),
             "/other/": (other, MountMode.WRITE),
         },
-        mode=MountMode.WRITE)
+        mode=MountMode.WRITE,
+        profiles={
+            "default": {
+                "mounts": {
+                    "/repo": {
+                        "paths": {
+                            "hide": ["/repo/.env", "/repo/*.pem"]
+                        }
+                    }
+                }
+            }
+        })
     try:
         await ws.execute("mkdir -p /repo/certs /other")
         await ws.ops.write("/repo/.env", b"S=1\n")
@@ -610,6 +630,8 @@ async def test_mount_owned_hides_are_rebased_under_the_mount():
         await ws.ops.write("/other/x.pem", b"visible\n")
         listing = await ws.execute("ls -a /repo /repo/certs /other")
         out = listing.stdout.decode()
+        # The section reaches only under its own root, so the same two
+        # names outside the mount are untouched.
         assert ".env" in out.split("/other:")[1]
         assert "x.pem" in out
         assert "k.pem" not in out
@@ -630,8 +652,7 @@ async def test_a_bare_name_under_deny_refuses_with_the_default_reason():
     # is one command name with the default reason.
     ws = Workspace({"/data/": RAMResource()},
                    mode=MountMode.WRITE,
-                   permissions=WorkspacePermissions(commands=CommandsBlock(
-                       deny=("shred", ))))
+                   profiles=_role(commands=CommandsBlock(deny=("shred", ))))
     try:
         result = await ws.execute("shred /data/x")
         assert result.exit_code == 126

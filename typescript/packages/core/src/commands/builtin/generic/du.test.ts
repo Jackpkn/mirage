@@ -383,9 +383,12 @@ describe('duGeneric', () => {
 })
 
 function mountsView(descendants: string[]): MountView {
+  const visible = descendants.filter((d) => !d.endsWith('/hidden'))
   return {
     descendants: (p: string) =>
       descendants.filter((d) => d.startsWith(p.replace(/\/+$/, '') + '/')),
+    visibleDescendants: (p: string) =>
+      visible.filter((d) => d.startsWith(p.replace(/\/+$/, '') + '/')),
     isRoot: () => false,
     rootOf: () => '/',
   }

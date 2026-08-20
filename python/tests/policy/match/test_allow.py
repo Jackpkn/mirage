@@ -13,7 +13,7 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 from mirage.policy.match.allow import head_visible, line_allowed, line_tokens
-from mirage.policy.types import CommandContext, CommandRule, CommandsSpec
+from mirage.policy.types import AdmissionRules, CommandContext, CommandRule
 
 
 class _Registry:
@@ -35,30 +35,28 @@ def _ctx(command: str,
                           tool=tool)
 
 
-def test_head_visible_needs_a_pattern_in_every_tier_with_a_list():
-    layers = (CommandsSpec(allow=("ls", "git")),
-              CommandsSpec(allow=("ls", "cat", "git log")))
-    # A name must start a pattern of every tier that has a list.
-    assert head_visible("ls", layers)
-    assert head_visible("git", layers)
-    assert not head_visible("cat", layers)
-    assert not head_visible("rm", layers)
-    # A tier without a list hides nothing; no tiers hide nothing.
-    assert head_visible("rm", (CommandsSpec(deny=(CommandRule("x"), )), ))
-    assert head_visible("rm", ())
+def test_head_visible_answers_the_roles_one_allow_list():
+    rules = AdmissionRules(allow=("ls", "git log"))
+    # A name is visible when it starts a pattern of the list.
+    assert head_visible("ls", rules)
+    assert head_visible("git", rules)
+    assert not head_visible("cat", rules)
+    assert not head_visible("rm", rules)
+    # A role without a list hides nothing, and neither does no role.
+    assert head_visible("rm", AdmissionRules(deny=(CommandRule("x"), )))
+    assert head_visible("rm", None)
 
 
-def test_line_allowed_intersects_the_tiers_and_skips_non_tools():
-    layers = (CommandsSpec(allow=("ls", "git")),
-              CommandsSpec(allow=("ls", "git log", "git status")))
-    assert line_allowed(_ctx("ls", ("-la", ), tokens=("ls", "-la")), layers)
-    assert line_allowed(_ctx("git", tokens=("git", "log", "-1")), layers)
+def test_line_allowed_reads_the_whole_line_and_skips_non_tools():
+    rules = AdmissionRules(allow=("ls", "git log", "git status"))
+    assert line_allowed(_ctx("ls", ("-la", ), tokens=("ls", "-la")), rules)
+    assert line_allowed(_ctx("git", tokens=("git", "log", "-1")), rules)
     # The head is visible (some git line is allowed) but this line is
-    # covered by no pattern of the second tier.
-    assert not line_allowed(_ctx("git", tokens=("git", "push")), layers)
+    # covered by no pattern.
+    assert not line_allowed(_ctx("git", tokens=("git", "push")), rules)
     # A word that is not a tool is never refused by an allow list.
-    assert line_allowed(_ctx("cd", tokens=("cd", "/x"), tool=False), layers)
+    assert line_allowed(_ctx("cd", tokens=("cd", "/x"), tool=False), rules)
     # A context built without the door's tokens reads the raw argv.
     raw = _ctx("git", ("push", ))
     assert line_tokens(raw) == ("git", "push")
-    assert not line_allowed(raw, layers)
+    assert not line_allowed(raw, rules)

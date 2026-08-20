@@ -16,7 +16,7 @@ import { describe, expect, it } from 'vitest'
 
 import { PathSpec } from '../../types.ts'
 import { classifyPaths } from '../../utils/hidden.ts'
-import type { CommandContext, CommandRule, CommandsSpec, OpsContext } from '../types.ts'
+import type { CommandContext, CommandRule, AdmissionRules, OpsContext } from '../types.ts'
 import { ioRefusal, matchIo, matchOp, matchRule, ruleScope } from './rule.ts'
 
 const registry = { isMountRoot: () => false }
@@ -236,34 +236,33 @@ describe('rules', () => {
 
   it('ioRefusal applies the gate precedence to an entry', () => {
     const deny: CommandRule = { reason: 'locked', commands: ['rm'], paths: ['/data/both/locked/*'] }
-    const askWs: CommandRule = {
-      reason: 'both: needs a nod',
+    const ask: CommandRule = {
+      reason: 'needs a nod',
       commands: ['rm'],
       paths: ['/data/both/*'],
     }
-    const askProfile: CommandRule = {
-      reason: 'profile nod',
+    const later: CommandRule = {
+      reason: 'a later nod',
       commands: ['rm'],
       paths: ['/data/both/*'],
     }
-    const layers: CommandsSpec[] = [
-      { allow: null, ask: [askWs], deny: [deny] },
-      { allow: null, ask: [askProfile], deny: [] },
-    ]
+    const rules: AdmissionRules = { allow: null, ask: [ask, later], deny: [deny] }
     const tokens = ['rm', '-r', '/data/both']
-    // deny > ask, whatever the tier order.
-    expect(ioRefusal(layers, tokens, '/data/both/locked/y', [askWs])).toBe('locked')
-    // The first matching ask rule in tier order speaks: refused without a
-    // grant under it, passed with one, and a later tier's rule never gets
-    // a say.
-    expect(ioRefusal(layers, tokens, '/data/both/a', [])).toBe('both: needs a nod')
-    expect(ioRefusal(layers, tokens, '/data/both/a', [askWs])).toBeNull()
-    expect(ioRefusal(layers, tokens, '/data/both/a', [askProfile])).toBe('both: needs a nod')
+    // deny > ask, wherever either was written.
+    expect(ioRefusal(rules, tokens, '/data/both/locked/y', [ask])).toBe('locked')
+    // The first matching ask rule speaks: refused without a grant under
+    // it, passed with one, and the later rule never gets a say.
+    expect(ioRefusal(rules, tokens, '/data/both/a', [])).toBe('needs a nod')
+    expect(ioRefusal(rules, tokens, '/data/both/a', [ask])).toBeNull()
+    expect(ioRefusal(rules, tokens, '/data/both/a', [later])).toBe('needs a nod')
     // An entry no rule holds passes; so does one a whole-line rule names.
-    expect(ioRefusal(layers, tokens, '/data/open/a', [])).toBeNull()
-    const whole: CommandsSpec[] = [
-      { allow: null, ask: [], deny: [{ reason: 'no', commands: ['rm'] }] },
-    ]
+    expect(ioRefusal(rules, tokens, '/data/open/a', [])).toBeNull()
+    const whole: AdmissionRules = {
+      allow: null,
+      ask: [],
+      deny: [{ reason: 'no', commands: ['rm'] }],
+    }
     expect(ioRefusal(whole, tokens, '/data/x', [])).toBeNull()
+    expect(ioRefusal(null, tokens, '/data/x', [])).toBeNull()
   })
 })

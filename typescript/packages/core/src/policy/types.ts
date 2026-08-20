@@ -53,8 +53,9 @@ export interface Deny {
 /**
  * One admission rule of the permissions document: refuse (or ask about)
  * matching commands, on matching paths when it names any. It is the
- * compiled element of `commands.deny` and `commands.ask` at every tier
- * and reaches the workspace only inside that document; the internal
+ * compiled element of `commands.deny` and `commands.ask` wherever the
+ * role writes one, and reaches the workspace only inside that document;
+ * the internal
  * RulePolicy is what evaluates it. The document writes a rule in one of
  * three shapes, and each compiles to rules of this shape: a list of
  * command patterns (a whole-line rule on each, no paths), a mapping of
@@ -67,14 +68,14 @@ export interface Deny {
  * grammar: an entry with `*`, `?` or `[` is a pattern (repo fnmatch
  * dialect, `*` crossing `/`, a slashless pattern matching any name
  * component), anything else is an exact path and its subtree. An entry
- * holds a token (a blank one would be the root), and at the workspace
- * and profile tiers it is absolute or a name pattern; only the mount
- * tier's entries are relative, to the mount root. Empty
- * `commands` means every command, and a path-scoped rule carries exactly
- * one; empty `paths` refuses the command regardless of its operands.
- * `mount` is set by the compiler for a mount-tier rule (the mount root
- * the rule is scoped to: it applies only to a line whose cwd or paths
- * lie under it), never typed.
+ * holds a token (a blank one would be the root), is absolute or a name
+ * pattern, and inside a mount section must name something under that
+ * mount root. Empty `commands` means every command, and a path-scoped
+ * rule carries exactly one; empty `paths` refuses the command
+ * regardless of its operands. `mount` is set by the compiler for a rule
+ * written under a `mounts.<prefix>` section (the mount root the rule is
+ * scoped to: it applies only to a line whose cwd or paths lie under
+ * it), never typed.
  */
 export interface CommandRule {
   reason: string
@@ -189,14 +190,16 @@ export interface SessionGrantsQuery {
 }
 
 /**
- * One tier's `commands` block, compiled. A session is evaluated over an
- * array of these: the mount tiers in registration order, the workspace
- * tier, then the session's own (profile tightened by the inline
- * document). `allow` intersects across tiers (a line must match one
- * pattern in every tier that has a list), `ask` and `deny` union, in
- * tier order for the message. `allow` null when the tier states no list.
+ * One role's admission rules, compiled: the whole permission document a
+ * session runs under. A session is evaluated against exactly one of
+ * these. It holds the role's allow list, its ask and deny rules, and
+ * the rules its mount sections carry, each stamped with the mount it
+ * was written under so it applies to a line working inside that mount.
+ * There is nothing above it and nothing beside it: two rules that both
+ * match are resolved by anchor depth, then by verb (`policy/match/
+ * decide`). `allow` null when the role states no list.
  */
-export interface CommandsSpec {
+export interface AdmissionRules {
   allow: readonly string[] | null
   ask: readonly CommandRule[]
   deny: readonly CommandRule[]
@@ -205,12 +208,12 @@ export interface CommandsSpec {
 /**
  * The one session question the permissions policy asks. The
  * SessionManager satisfies it structurally, so the policy reads the
- * layers by session id without this package importing the workspace.
+ * rules by session id without this package importing the workspace.
  * An id the manager does not know (or the empty id of an unbound door)
- * answers the bound tiers alone, so it still fails toward refusal.
+ * answers the default role's rules, so it still fails toward refusal.
  */
 export interface SessionCommandsQuery {
-  commandsOf(sessionId: string): readonly CommandsSpec[]
+  commandsOf(sessionId: string): AdmissionRules | null
 }
 
 /** Facts about one classified command, as preCommand hooks see it. */

@@ -24,10 +24,6 @@ import adapters  # noqa: E402
 import harness  # noqa: E402
 
 from mirage.types import ConsistencyPolicy  # noqa: E402
-from mirage.workspace.session import SessionProfile  # noqa: E402
-
-PROFILE_KEYS = frozenset(
-    {"extends", "cwd", "env", "mounts", "paths", "vars", "commands"})
 
 HOST = "python"
 
@@ -81,19 +77,19 @@ async def run_target(target: dict, cases: list[dict], root: Path,
                                        root)
             if mount.get("seed_root"):
                 await harness.seed_mount_root(ws, mount["path"])
-        # Sessions a case can name via its "session" field. Mount grants take
-        # either the mapping form ({"/data": "read"}) or the list form
-        # (["/data"], which inherits the mount's own mode). A profile form is
-        # the permissions document itself ({"mounts": ..., "paths": {"hide":
-        # ...}, "vars": {"hide": ...}, "env": ..., "cwd": ...}), validated by
-        # the same model the YAML door uses; it is told apart by its keys,
-        # which never start with "/".
+        # Sessions a case can name via its "session" field, through the
+        # two doors a host really has. A string names one of the
+        # target's roles (`profile=`), which is the whole document that
+        # session runs under. A mapping is an inline document added to
+        # the default role (`permissions=`): it may add ask and deny
+        # rules and hides, never an allow list, so a session that needs
+        # its own allow list has to be a role. An empty mapping is the
+        # default role with nothing added.
         for session_id, spec in (target.get("sessions") or {}).items():
-            if isinstance(spec, dict) and (set(spec) & PROFILE_KEYS):
-                ws.create_session(session_id,
-                                  profile=SessionProfile.model_validate(spec))
+            if isinstance(spec, str):
+                ws.create_session(session_id, profile=spec)
             else:
-                ws.create_session(session_id, mounts=spec)
+                ws.create_session(session_id, permissions=spec or None)
         primary = target["mounts"][0]["path"]
         for case in selected:
             if "consistency" in case:
