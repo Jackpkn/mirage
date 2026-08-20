@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { describe, expect, it } from 'vitest'
-import { INT_JSON, JSON_NAME, JSONL_NAME, RAW, asciiDigits } from './codec.ts'
+import { DATE, INT_JSON, JSON_NAME, JSONL_NAME, RAW, asciiDigits } from './codec.ts'
 
 describe('hierarchy codec', () => {
   it('RAW takes any nonempty segment', () => {
@@ -48,5 +48,18 @@ describe('hierarchy codec', () => {
     expect(asciiDigits('42')).toBe(true)
     expect(asciiDigits('4x2')).toBe(false)
     expect(asciiDigits('')).toBe(false)
+  })
+})
+
+describe('DATE', () => {
+  it('is shape only, not a calendar check', () => {
+    // The dated-message backends mint their date directories from real
+    // timestamps, so a shaped-but-absent date resolves through the
+    // listing like any other name.
+    expect(DATE.decode('2024-01-15')).toBe('2024-01-15')
+    expect(DATE.decode('2026-02-30')).toBe('2026-02-30')
+    expect(DATE.decode('2024-1-15')).toBeNull()
+    expect(DATE.decode('notadate')).toBeNull()
+    expect(DATE.decode('2024-01-15x')).toBeNull()
   })
 })

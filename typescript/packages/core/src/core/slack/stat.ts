@@ -12,18 +12,19 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { enoent } from '../../utils/errors.ts'
-import { mountKey, mountPrefixOf } from '../../utils/key_prefix.ts'
 import type { SlackAccessor } from '../../accessor/slack.ts'
+import type { IndexEntry } from '../../cache/index/config.ts'
 import type { IndexCacheStore } from '../../cache/index/store.ts'
 import { FileStat, FileType, PathSpec } from '../../types.ts'
-import { readdir as coreReaddir } from './readdir.ts'
 import { epochToIso } from '../../utils/dates.ts'
+import { enoent } from '../../utils/errors.ts'
 import { filetypeFromMimetype } from '../../utils/filetype.ts'
-import { stripSlash } from '../../utils/slash.ts'
-
-const VIRTUAL_DIRS: ReadonlySet<string> = new Set(['', 'channels', 'dms', 'users'])
-const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
+import { mountKey, mountPrefixOf } from '../../utils/key_prefix.ts'
+import { resolveEntry } from '../hierarchy/probe.ts'
+import type { ScopeMatch } from '../hierarchy/scope.ts'
+import { makeStat } from '../hierarchy/stat.ts'
+import { readdir } from './readdir.ts'
+import { detectScope } from './scope.ts'
 
 function slackModified(remoteTime: string): string | null {
   if (remoteTime === '') return null
@@ -32,136 +33,90 @@ function slackModified(remoteTime: string): string | null {
   return epochToIso(ts)
 }
 
-async function lookupWithFallback(
-  accessor: SlackAccessor,
-  virtualKey: string,
-  prefix: string,
-  index: IndexCacheStore,
-) {
-  const result = await index.get(virtualKey)
-  if (result.entry !== undefined && result.entry !== null) return result
-  const parentVirtual = virtualKey.includes('/')
-    ? virtualKey.slice(0, virtualKey.lastIndexOf('/')) || '/'
-    : '/'
-  try {
-    await coreReaddir(
-      accessor,
-      new PathSpec({
-        virtual: parentVirtual,
-        directory: parentVirtual,
-        resolved: false,
-        resourcePath: mountKey(parentVirtual, prefix),
-      }),
-      index,
-    )
-  } catch {
-    // parent listing failed — fall through
-  }
-  return await index.get(virtualKey)
+function channelStat(_match: ScopeMatch, _path: PathSpec, entry: IndexEntry): FileStat {
+  const modified = slackModified(entry.remoteTime)
+  return new FileStat({
+    name: entry.vfsName !== '' ? entry.vfsName : entry.name,
+    type: FileType.DIRECTORY,
+    ...(modified !== null ? { modified } : {}),
+    extra: { channel_id: entry.id },
+  })
 }
 
-export async function stat(
+function userStat(_match: ScopeMatch, _path: PathSpec, entry: IndexEntry): FileStat {
+  return new FileStat({
+    name: entry.vfsName !== '' ? entry.vfsName : entry.name,
+    type: FileType.JSON,
+    ...(entry.size !== null ? { size: entry.size } : {}),
+    extra: { user_id: entry.id },
+  })
+}
+
+function dirStat(_match: ScopeMatch, _path: PathSpec, entry: IndexEntry): FileStat {
+  return new FileStat({ name: entry.vfsName, type: FileType.DIRECTORY })
+}
+
+function chatStat(_match: ScopeMatch, _path: PathSpec, entry: IndexEntry): FileStat {
+  // A denied or empty day lists no chat.jsonl, and the kit reports the
+  // absent entry as ENOENT: slack does not fabricate a sizeless file for a
+  // sealed day (discord deliberately does; see its override).
+  return new FileStat({
+    name: 'chat.jsonl',
+    type: FileType.TEXT,
+    ...(entry.size !== null ? { size: entry.size } : {}),
+  })
+}
+
+function fileBlobStat(_match: ScopeMatch, _path: PathSpec, entry: IndexEntry): FileStat {
+  const mimetype = typeof entry.extra.mimetype === 'string' ? entry.extra.mimetype : ''
+  const modified = slackModified(entry.remoteTime)
+  return new FileStat({
+    name: entry.vfsName !== '' ? entry.vfsName : entry.name,
+    type: filetypeFromMimetype(mimetype),
+    size: entry.size ?? null,
+    ...(modified !== null ? { modified } : {}),
+    extra: { file_id: entry.id },
+  })
+}
+
+/**
+ * Stat a day directory, which resolves beyond the listed window.
+ *
+ * The channel listing synthesizes a bounded window of recent days, but the
+ * history API answers a range query for any date, so a well-formed day under
+ * a channel that exists is a directory whether or not the window lists it. A
+ * bogus channel chain is ENOENT.
+ */
+async function statDay(
   accessor: SlackAccessor,
+  match: ScopeMatch,
   path: PathSpec,
   index?: IndexCacheStore,
 ): Promise<FileStat> {
+  const entry = await resolveEntry(readdir, accessor, path, index)
+  if (entry !== null) {
+    return new FileStat({ name: entry.vfsName, type: FileType.DIRECTORY })
+  }
+  const virtual = path.virtual.replace(/\/+$/, '').split('/').slice(0, -1).join('/')
   const prefix = mountPrefixOf(path.virtual, path.resourcePath)
-  let raw = path.virtual
-  if (prefix !== '' && raw.startsWith(prefix)) {
-    raw = raw.slice(prefix.length) || '/'
+  const channelSpec = new PathSpec({
+    virtual,
+    directory: virtual,
+    resourcePath: mountKey(virtual, prefix),
+  })
+  if ((await resolveEntry(readdir, accessor, channelSpec, index)) === null) {
+    throw enoent(path)
   }
-  const key = stripSlash(raw)
-
-  if (VIRTUAL_DIRS.has(key)) {
-    const name = key !== '' ? key : '/'
-    return new FileStat({ name, type: FileType.DIRECTORY })
-  }
-
-  const parts = key.split('/')
-  const part0 = parts[0] ?? ''
-  const part2 = parts[2] ?? ''
-  const part3 = parts[3] ?? ''
-  const virtualKey = `${prefix}/${key}`
-
-  if (parts.length === 2 && (part0 === 'channels' || part0 === 'dms')) {
-    if (index === undefined) throw enoent(path)
-    const lookup = await lookupWithFallback(accessor, virtualKey, prefix, index)
-    if (lookup.entry === undefined || lookup.entry === null) {
-      throw enoent(path)
-    }
-    return new FileStat({
-      name: lookup.entry.vfsName !== '' ? lookup.entry.vfsName : lookup.entry.name,
-      type: FileType.DIRECTORY,
-      modified: slackModified(lookup.entry.remoteTime),
-      extra: { channel_id: lookup.entry.id },
-    })
-  }
-
-  if (parts.length === 2 && part0 === 'users') {
-    if (index === undefined) throw enoent(path)
-    const lookup = await lookupWithFallback(accessor, virtualKey, prefix, index)
-    if (lookup.entry === undefined || lookup.entry === null) {
-      throw enoent(path)
-    }
-    return new FileStat({
-      name: lookup.entry.vfsName !== '' ? lookup.entry.vfsName : lookup.entry.name,
-      type: FileType.JSON,
-      size: lookup.entry.size,
-      extra: { user_id: lookup.entry.id },
-    })
-  }
-
-  if (parts.length === 3 && (part0 === 'channels' || part0 === 'dms') && DATE_RE.test(part2)) {
-    return new FileStat({ name: part2, type: FileType.DIRECTORY })
-  }
-
-  if (
-    parts.length === 4 &&
-    (part0 === 'channels' || part0 === 'dms') &&
-    DATE_RE.test(part2) &&
-    part3 === 'chat.jsonl'
-  ) {
-    // The day's readdir renders the messages it fetched and stores the
-    // byte length, so stat serves it from the index instead of answering
-    // blind.
-    if (index === undefined) throw enoent(path)
-    const lookup = await lookupWithFallback(accessor, virtualKey, prefix, index)
-    if (lookup.entry === undefined || lookup.entry === null) {
-      throw enoent(path)
-    }
-    return new FileStat({ name: 'chat.jsonl', type: FileType.TEXT, size: lookup.entry.size })
-  }
-
-  if (
-    parts.length === 4 &&
-    (part0 === 'channels' || part0 === 'dms') &&
-    DATE_RE.test(part2) &&
-    part3 === 'files'
-  ) {
-    return new FileStat({ name: 'files', type: FileType.DIRECTORY })
-  }
-
-  if (
-    parts.length === 5 &&
-    (part0 === 'channels' || part0 === 'dms') &&
-    DATE_RE.test(part2) &&
-    part3 === 'files'
-  ) {
-    if (index === undefined) throw enoent(path)
-    const lookup = await lookupWithFallback(accessor, virtualKey, prefix, index)
-    if (lookup.entry === undefined || lookup.entry === null) {
-      throw enoent(path)
-    }
-    const mimetype =
-      typeof lookup.entry.extra.mimetype === 'string' ? lookup.entry.extra.mimetype : ''
-    return new FileStat({
-      name: lookup.entry.vfsName !== '' ? lookup.entry.vfsName : lookup.entry.name,
-      type: filetypeFromMimetype(mimetype),
-      size: lookup.entry.size ?? null,
-      modified: slackModified(lookup.entry.remoteTime),
-      extra: { file_id: lookup.entry.id },
-    })
-  }
-
-  throw enoent(path)
+  return new FileStat({ name: match.slots.day ?? '', type: FileType.DIRECTORY })
 }
+
+export const stat = makeStat<SlackAccessor>(detectScope, readdir, {
+  entryStats: {
+    channel: channelStat,
+    user: userStat,
+    messages: chatStat,
+    files: dirStat,
+    file_blob: fileBlobStat,
+  },
+  overrides: { day: statDay },
+})

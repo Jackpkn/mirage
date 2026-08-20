@@ -24,22 +24,42 @@ import { compareCodePoints } from '../../utils/sort.ts'
 import { resolveEntry, type ReaddirFn } from './probe.ts'
 import { INVALID, ROOT, type DetectFn, type ScopeMatch } from './scope.ts'
 
-export type Lister<A extends Accessor> = (
-  accessor: A,
-  match: ScopeMatch,
-) => Promise<[string, IndexEntry][] | null>
+/**
+ * A listing that also proves descendant listings.
+ *
+ * For a backend whose one fetch answers more than one directory: a
+ * dated-message day fetch yields the day's own children AND the contents of
+ * its `files/` subdirectory, and a mail label listing yields the date
+ * directories AND each date's messages AND each message's attachment
+ * directory. Returning the extra listings as seeds lets the kit cache them,
+ * so entering a seeded directory costs no second identical fetch. `seeds`
+ * keys are paths relative to the listed directory (`files`,
+ * `2026-01-05/Report__17`).
+ */
+export interface DirListing {
+  entries: [string, IndexEntry][]
+  seeds: Readonly<Record<string, [string, IndexEntry][]>>
+}
+
+export type Listed = [string, IndexEntry][] | DirListing
+
+export type Lister<A extends Accessor> = (accessor: A, match: ScopeMatch) => Promise<Listed | null>
 
 export type EntryLister<A extends Accessor> = (
   accessor: A,
   match: ScopeMatch,
   entry: IndexEntry,
-) => Promise<[string, IndexEntry][]>
+) => Promise<Listed>
 
 export type Guard<A extends Accessor> = (
   accessor: A,
   match: ScopeMatch,
   virtual: string,
 ) => Promise<void>
+
+function dropHidden(listed: [string, IndexEntry][]): [string, IndexEntry][] {
+  return listed.filter(([name]) => !name.startsWith('.'))
+}
 
 /**
  * Build a hierarchy readdir: dispatch, guards, index, name joins.
@@ -63,6 +83,18 @@ export type Guard<A extends Accessor> = (
  * ride the parent listing's `IndexEntry.extra` (trello stashes each
  * `card.json` size on the card's directory entry).
  *
+ * A lister may answer a `DirListing` to seed descendant listings its fetch
+ * already proved; entering a seeded directory then reads the index instead of
+ * refetching (the entry-lister branch re-checks the listing after resolving,
+ * because the resolve itself may have run the seeding parent).
+ *
+ * A parent-entry lister (`parentEntryListers`) is for a directory whose
+ * existence is decided by its PARENT's entry rather than its own: a
+ * dated-message day dir is real for any well-formed date under a channel that
+ * exists, including dates the channel's bounded listing window never minted,
+ * so the proof is the channel entry and the fetch takes the date from the
+ * match. A kind appears in at most one of the three tables.
+ *
  * `listers` holds one lister per directory kind; include `root` for a
  * dynamic mount root. `entryListers` holds listers for kinds resolved
  * through their parent's listing; a kind appears in exactly one of the two
@@ -77,6 +109,7 @@ export function makeReaddir<A extends Accessor>(
   options: {
     listers: Readonly<Record<string, Lister<A>>>
     entryListers?: Readonly<Record<string, EntryLister<A>>>
+    parentEntryListers?: Readonly<Record<string, EntryLister<A>>>
     staticRoot?: readonly string[]
     guards?: Readonly<Record<string, Guard<A>>>
     leafError?: 'enoent' | 'enotdir'
@@ -84,10 +117,16 @@ export function makeReaddir<A extends Accessor>(
 ): ReaddirFn<A> {
   const { listers, staticRoot, guards } = options
   const entryListers = options.entryListers ?? {}
+  const parentEntryListers = options.parentEntryListers ?? {}
   const leafError = options.leafError ?? 'enoent'
-  const overlap = Object.keys(listers).filter((kind) => entryListers[kind] !== undefined)
+  const overlap = [
+    ...Object.keys(listers).filter(
+      (kind) => entryListers[kind] !== undefined || parentEntryListers[kind] !== undefined,
+    ),
+    ...Object.keys(entryListers).filter((kind) => parentEntryListers[kind] !== undefined),
+  ]
   if (overlap.length > 0) {
-    throw new Error(`kinds in both lister tables: ${overlap.sort(compareCodePoints).join(', ')}`)
+    throw new Error(`kinds in several lister tables: ${overlap.sort(compareCodePoints).join(', ')}`)
   }
   return async function readdir(
     accessor: A,
@@ -110,7 +149,8 @@ export function makeReaddir<A extends Accessor>(
     }
     const lister = listers[match.kind]
     const entryLister = entryListers[match.kind]
-    if (lister === undefined && entryLister === undefined) {
+    const parentLister = parentEntryListers[match.kind]
+    if (lister === undefined && entryLister === undefined && parentLister === undefined) {
       if (match.scope !== null && match.scope.leaf && leafError === 'enotdir') {
         throw enotdir(pathSpec)
       }
@@ -120,21 +160,32 @@ export function makeReaddir<A extends Accessor>(
     if (guard !== undefined) await guard(accessor, match, virtual)
     const listing = await store.listDir(virtualKey)
     if (listing.entries !== undefined && listing.entries !== null) return listing.entries
-    let listed: [string, IndexEntry][]
-    if (entryLister !== undefined) {
+    let listed: Listed
+    if (entryLister !== undefined || parentLister !== undefined) {
+      const proofKey =
+        parentLister !== undefined
+          ? virtualKey.split('/').slice(0, -1).join('/') || '/'
+          : virtualKey
       const own = await resolveEntry(
         readdir,
         accessor,
         new PathSpec({
-          virtual: virtualKey,
-          directory: virtualKey,
+          virtual: proofKey,
+          directory: proofKey,
           resolved: false,
-          resourcePath: mountKey(virtualKey, prefix),
+          resourcePath: mountKey(proofKey, prefix),
         }),
         store,
       )
       if (own === null) throw enoent(pathSpec)
-      listed = await entryLister(accessor, match, own)
+      // The resolve may have warmed this very listing: a parent's lister
+      // can seed a child listing from the same fetch (DirListing.seeds),
+      // so ask the index again before fetching.
+      const relisted = await store.listDir(virtualKey)
+      if (relisted.entries !== undefined && relisted.entries !== null) return relisted.entries
+      const fetch = entryLister ?? parentLister
+      if (fetch === undefined) throw enoent(pathSpec)
+      listed = await fetch(accessor, match, own)
     } else if (lister !== undefined) {
       const maybe = await lister(accessor, match)
       if (maybe === null) throw enoent(pathSpec)
@@ -142,9 +193,17 @@ export function makeReaddir<A extends Accessor>(
     } else {
       throw enoent(pathSpec)
     }
-    const entries = listed.filter(([name]) => !name.startsWith('.'))
+    let seeds: Readonly<Record<string, [string, IndexEntry][]>> = {}
+    if (!Array.isArray(listed)) {
+      seeds = listed.seeds
+      listed = listed.entries
+    }
+    const entries = dropHidden(listed)
     await store.setDir(virtualKey, entries)
     const stem = rstripSlash(virtualKey)
+    for (const [rel, childEntries] of Object.entries(seeds)) {
+      await store.setDir(`${stem}/${stripSlash(rel)}`, dropHidden(childEntries))
+    }
     return entries.map(([name]) => `${stem}/${name}`)
   }
 }

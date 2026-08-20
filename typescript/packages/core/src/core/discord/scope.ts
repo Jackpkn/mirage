@@ -12,254 +12,56 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { mountPrefixOf } from '../../utils/key_prefix.ts'
-import type { PathSpec } from '../../types.ts'
-import { stripSlash } from '../../utils/slash.ts'
+import { DATE, JSON_NAME } from '../hierarchy/codec.ts'
+import { makeDetectScope, Scope, Slot } from '../hierarchy/scope.ts'
+import { FileType } from '../../types.ts'
 
-type DiscordLevel =
-  | 'root'
-  | 'guild'
-  | 'channel'
-  | 'date'
-  | 'messages'
-  | 'files'
-  | 'file_blob'
-  | 'member'
+const GUILD = [new Slot('guild', undefined, 'guild_id')] as const
+const CHANNEL = [...GUILD, 'channels', new Slot('channel', undefined, 'channel_id')] as const
+const DAY = [...CHANNEL, new Slot('day', DATE)] as const
 
-export interface DiscordScope {
-  level: DiscordLevel
-  useNative: boolean
-  guildName?: string
-  guildId?: string
-  channelName?: string
-  channelId?: string
-  memberName?: string
-  memberId?: string
-  container?: 'channels' | 'members'
-  dateStr?: string
-  resourcePath: string
-}
+// One description of the tree: readdir, stat, read and the search push-down
+// all classify through it, so the file surface and the command surface cannot
+// disagree about what a path means. Every dynamic level is a `name__id`
+// dirname the tree itself mints, so the ids decode from the path and
+// detection needs no index or network round-trip.
+export const SCOPES: readonly Scope[] = [
+  new Scope({ kind: 'guild', segments: GUILD }),
+  new Scope({ kind: 'channels_dir', segments: [...GUILD, 'channels'] }),
+  new Scope({ kind: 'members_dir', segments: [...GUILD, 'members'] }),
+  new Scope({ kind: 'channel', segments: CHANNEL }),
+  new Scope({
+    kind: 'member',
+    segments: [...GUILD, 'members', new Slot('member', JSON_NAME, 'user_id')],
+    leaf: true,
+    filetype: FileType.JSON,
+  }),
+  new Scope({ kind: 'day', segments: DAY }),
+  new Scope({
+    kind: 'messages',
+    segments: [...DAY, 'chat.jsonl'],
+    leaf: true,
+    filetype: FileType.TEXT,
+  }),
+  new Scope({ kind: 'files', segments: [...DAY, 'files'] }),
+  new Scope({
+    kind: 'file_blob',
+    segments: [...DAY, 'files', new Slot('blob')],
+    leaf: true,
+  }),
+]
 
-const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
+export const detectScope = makeDetectScope(SCOPES)
 
-function stripSlashes(s: string): string {
-  return stripSlash(s)
-}
-
-function splitDirname(dirname: string): [string, string | undefined] {
-  const idx = dirname.lastIndexOf('__')
-  if (idx === -1) return [dirname, undefined]
-  const name = dirname.slice(0, idx)
-  const cid = dirname.slice(idx + 2)
-  return [name, cid.length > 0 ? cid : undefined]
-}
-
-export function detectScope(path: PathSpec): DiscordScope {
-  const prefix = mountPrefixOf(path.virtual, path.resourcePath)
-
-  if (path.pattern?.endsWith('.jsonl')) {
-    let dirKey = stripSlashes(path.directory)
-    if (prefix) {
-      const stripped = stripSlashes(prefix) + '/'
-      if (dirKey.startsWith(stripped)) dirKey = dirKey.slice(stripped.length)
-    }
-    const dp = dirKey ? dirKey.split('/') : []
-    if (dp.length === 3 && dp[1] === 'channels' && dp[0] && dp[2]) {
-      const [guildName, guildId] = splitDirname(dp[0])
-      const [channelName, channelId] = splitDirname(dp[2])
-      return {
-        level: 'channel',
-        useNative: true,
-        guildName,
-        ...(guildId !== undefined ? { guildId } : {}),
-        channelName,
-        ...(channelId !== undefined ? { channelId } : {}),
-        container: 'channels',
-        resourcePath: dirKey,
-      }
-    }
-    if (
-      dp.length === 4 &&
-      dp[1] === 'channels' &&
-      dp[0] !== undefined &&
-      dp[2] !== undefined &&
-      dp[3] !== undefined &&
-      DATE_RE.test(dp[3])
-    ) {
-      const [guildName, guildId] = splitDirname(dp[0])
-      const [channelName, channelId] = splitDirname(dp[2])
-      return {
-        level: 'messages',
-        useNative: true,
-        guildName,
-        ...(guildId !== undefined ? { guildId } : {}),
-        channelName,
-        ...(channelId !== undefined ? { channelId } : {}),
-        container: 'channels',
-        dateStr: dp[3],
-        resourcePath: dirKey,
-      }
-    }
-  }
-
-  const key = path.resourcePath
-  if (!key) return { level: 'root', useNative: true, resourcePath: '/' }
-
-  const parts = key.split('/')
-  const [first, second, third, fourth, fifth, sixth] = parts
-
-  if (first === undefined) {
-    return { level: 'guild', useNative: false, resourcePath: key }
-  }
-
-  if (parts.length === 1) {
-    const [guildName, guildId] = splitDirname(first)
-    return {
-      level: 'guild',
-      useNative: true,
-      guildName,
-      ...(guildId !== undefined ? { guildId } : {}),
-      resourcePath: key,
-    }
-  }
-
-  if (parts.length === 2 && second !== undefined) {
-    const [guildName, guildId] = splitDirname(first)
-    if (second === 'channels' || second === 'members') {
-      return {
-        level: 'guild',
-        useNative: second === 'channels',
-        guildName,
-        ...(guildId !== undefined ? { guildId } : {}),
-        container: second,
-        resourcePath: key,
-      }
-    }
-    return {
-      level: 'guild',
-      useNative: false,
-      guildName,
-      ...(guildId !== undefined ? { guildId } : {}),
-      resourcePath: key,
-    }
-  }
-
-  if (parts.length === 3 && second !== undefined && third !== undefined) {
-    const [guildName, guildId] = splitDirname(first)
-    if (second === 'channels') {
-      const [channelName, channelId] = splitDirname(third)
-      return {
-        level: 'channel',
-        useNative: true,
-        guildName,
-        ...(guildId !== undefined ? { guildId } : {}),
-        channelName,
-        ...(channelId !== undefined ? { channelId } : {}),
-        container: 'channels',
-        resourcePath: key,
-      }
-    }
-    if (second === 'members') {
-      const stem = third.endsWith('.json') ? third.slice(0, -5) : third
-      const [memberName, memberId] = splitDirname(stem)
-      return {
-        level: 'member',
-        useNative: false,
-        guildName,
-        ...(guildId !== undefined ? { guildId } : {}),
-        memberName,
-        ...(memberId !== undefined ? { memberId } : {}),
-        container: 'members',
-        resourcePath: key,
-      }
-    }
-  }
-
-  // /<guild>/channels/<ch>/<date>
-  if (
-    parts.length === 4 &&
-    second === 'channels' &&
-    third !== undefined &&
-    fourth !== undefined &&
-    DATE_RE.test(fourth)
-  ) {
-    const [guildName, guildId] = splitDirname(first)
-    const [channelName, channelId] = splitDirname(third)
-    return {
-      level: 'date',
-      useNative: true,
-      guildName,
-      ...(guildId !== undefined ? { guildId } : {}),
-      channelName,
-      ...(channelId !== undefined ? { channelId } : {}),
-      container: 'channels',
-      dateStr: fourth,
-      resourcePath: key,
-    }
-  }
-
-  // /<guild>/channels/<ch>/<date>/chat.jsonl or /<date>/files
-  if (
-    parts.length === 5 &&
-    second === 'channels' &&
-    third !== undefined &&
-    fourth !== undefined &&
-    DATE_RE.test(fourth)
-  ) {
-    const [guildName, guildId] = splitDirname(first)
-    const [channelName, channelId] = splitDirname(third)
-    if (fifth === 'chat.jsonl') {
-      return {
-        level: 'messages',
-        useNative: false,
-        guildName,
-        ...(guildId !== undefined ? { guildId } : {}),
-        channelName,
-        ...(channelId !== undefined ? { channelId } : {}),
-        container: 'channels',
-        dateStr: fourth,
-        resourcePath: key,
-      }
-    }
-    if (fifth === 'files') {
-      return {
-        level: 'files',
-        useNative: true,
-        guildName,
-        ...(guildId !== undefined ? { guildId } : {}),
-        channelName,
-        ...(channelId !== undefined ? { channelId } : {}),
-        container: 'channels',
-        dateStr: fourth,
-        resourcePath: key,
-      }
-    }
-  }
-
-  // /<guild>/channels/<ch>/<date>/files/<blob>
-  if (
-    parts.length === 6 &&
-    second === 'channels' &&
-    third !== undefined &&
-    fourth !== undefined &&
-    DATE_RE.test(fourth) &&
-    fifth === 'files' &&
-    sixth !== undefined
-  ) {
-    const [guildName, guildId] = splitDirname(first)
-    const [channelName, channelId] = splitDirname(third)
-    return {
-      level: 'file_blob',
-      useNative: false,
-      guildName,
-      ...(guildId !== undefined ? { guildId } : {}),
-      channelName,
-      ...(channelId !== undefined ? { channelId } : {}),
-      container: 'channels',
-      dateStr: fourth,
-      resourcePath: key,
-    }
-  }
-
-  return { level: 'guild', useNative: false, resourcePath: key }
-}
+// Kinds the guild search push-down may answer for. A chat.jsonl operand is
+// deliberately absent: `searchGuild` takes a channel but no date, so serving
+// a one-day file from a channel-wide search would report messages the line
+// did not ask for. Same doctrine for `file_blob` and `member`, whose bytes
+// the message search does not carry.
+export const NATIVE_KINDS: ReadonlySet<string> = new Set([
+  'guild',
+  'channels_dir',
+  'channel',
+  'day',
+  'files',
+])

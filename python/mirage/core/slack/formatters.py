@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from mirage.core.slack.files import file_blob_name
-from mirage.core.slack.scope import SlackScope
+from mirage.core.slack.scope import SearchTarget
 from mirage.utils.naming import make_id_name
 from mirage.utils.sanitize import path_safe_name
 
@@ -52,12 +52,12 @@ def user_filename(u: dict[str, Any]) -> str:
     return f"{make_id_name(name, u['id'], path_safe=True)}.json"
 
 
-def build_query(pattern: str, scope: SlackScope) -> str:
+def build_query(pattern: str, scope: SearchTarget) -> str:
     """Compose a Slack search query string for a pushed-down grep/rg call.
 
     Args:
         pattern (str): user-supplied pattern.
-        scope (SlackScope): the Slack-side directory the grep is rooted at.
+        scope (SearchTarget): the Slack-side directory the grep is rooted at.
 
     Returns:
         str: query with optional in:#channel or in:@user prefix.
@@ -71,14 +71,14 @@ def build_query(pattern: str, scope: SlackScope) -> str:
 
 def format_grep_results(
     raw: bytes,
-    scope: SlackScope,
+    scope: SearchTarget,
     prefix: str,
 ) -> list[str]:
     """Format a Slack search.messages JSON response as grep-style lines.
 
     Args:
         raw (bytes): JSON-encoded search.messages response.
-        scope (SlackScope): the rooted scope used to compute relative paths.
+        scope (SearchTarget): the rooted scope used to compute relative paths.
         prefix (str): VFS mount prefix to prepend.
 
     Returns:
@@ -111,14 +111,14 @@ def format_grep_results(
 
 def format_file_grep_results(
     raw: bytes,
-    scope: SlackScope,
+    scope: SearchTarget,
     prefix: str,
 ) -> list[str]:
     """Format a Slack search.files JSON response as grep-style lines.
 
     Args:
         raw (bytes): JSON-encoded search.files response.
-        scope (SlackScope): the rooted scope (must have channel_id).
+        scope (SearchTarget): the rooted scope (must have channel_id).
         prefix (str): VFS mount prefix to prepend.
 
     Returns:

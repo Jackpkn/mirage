@@ -12,47 +12,44 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import posixpath
-
 from mirage.accessor.email import EmailAccessor
-from mirage.cache.index import NULL_INDEX, IndexCacheStore
+from mirage.cache.index import IndexCacheStore
 from mirage.core.email.client import fetch_attachment, fetch_message
+from mirage.core.email.readdir import readdir
 from mirage.core.email.render import message_json_bytes
+from mirage.core.email.scope import detect_scope
+from mirage.core.hierarchy.probe import resolve_entry
+from mirage.core.hierarchy.read import make_read
+from mirage.core.hierarchy.scope import ScopeMatch
 from mirage.types import PathSpec
 from mirage.utils.errors import enoent
-from mirage.utils.key_prefix import mount_prefix_of
 
 
-async def read(
-    accessor: EmailAccessor,
-    path: PathSpec,
-    index: IndexCacheStore = NULL_INDEX,
-) -> bytes:
-    virtual = path.virtual
-    prefix = mount_prefix_of(path.virtual, path.resource_path)
-    key = path.resource_path
-    virtual_key = prefix + "/" + key if prefix else "/" + key
-    result = await index.get(virtual_key)
-    if result.entry is None:
-        raise enoent(virtual)
-    if result.entry.resource_type in ("email/folder", "email/date",
-                                      "email/attachment_dir"):
-        raise IsADirectoryError(virtual)
-    if result.entry.resource_type == "email/attachment":
-        parent_key = posixpath.dirname(virtual_key)
-        parent_result = await index.get(parent_key)
-        if parent_result.entry is None:
-            raise enoent(virtual)
-        uid = parent_result.entry.id
-        parts = virtual_key.strip("/").split("/")
-        folder = parts[1] if prefix else parts[0]
-        filename = result.entry.vfs_name
-        data = await fetch_attachment(accessor, folder, uid, filename)
-        if data is None:
-            raise enoent(virtual)
-        return data
-    parts = virtual_key.strip("/").split("/")
-    folder = parts[1] if prefix else parts[0]
-    uid = result.entry.id
-    msg = await fetch_message(accessor, folder, uid)
+async def _read_message(accessor: EmailAccessor, match: ScopeMatch,
+                        path: PathSpec, index: IndexCacheStore) -> bytes:
+    entry = await resolve_entry(readdir, accessor, path, index)
+    if entry is None:
+        raise enoent(path.virtual)
+    msg = await fetch_message(accessor, match.slots["folder"], entry.id)
     return message_json_bytes(msg)
+
+
+async def _read_attachment(accessor: EmailAccessor, match: ScopeMatch,
+                           path: PathSpec, index: IndexCacheStore) -> bytes:
+    entry = await resolve_entry(readdir, accessor, path, index)
+    if entry is None:
+        raise enoent(path.virtual)
+    data = await fetch_attachment(accessor, match.slots["folder"],
+                                  match.slots["uid"], entry.vfs_name)
+    if data is None:
+        raise enoent(path.virtual)
+    return data
+
+
+read = make_read(
+    detect_scope,
+    readers={
+        "message": _read_message,
+        "attachment": _read_attachment,
+    },
+)

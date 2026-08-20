@@ -12,196 +12,95 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from mirage.core.discord.scope import detect_scope
-from mirage.types import PathSpec
-from mirage.utils.key_prefix import mount_key
+from mirage.core.discord.scope import NATIVE_KINDS, detect_scope
+from mirage.core.hierarchy.scope import INVALID, ROOT
+
+CHAT = "/My Server__G1/channels/general__C1/2024-01-15/chat.jsonl"
 
 
-def _gs(path: str, prefix: str = "", pattern: str | None = None) -> PathSpec:
-    return PathSpec(
-        resource_path=mount_key(path, prefix),
-        virtual=path,
-        directory=path.rsplit("/", 1)[0] + "/" if pattern else path,
-        pattern=pattern,
-        resolved=pattern is None,
-    )
-
-
-# ── root ──────────────────────────────────────
-
-
-def test_root_empty():
-    scope = detect_scope(PathSpec.from_str_path("/"))
-    assert scope.level == "root"
-    assert scope.use_native is True
-    assert scope.resource_path == "/"
-
-
-def test_root_prefix():
-    scope = detect_scope(_gs("/discord/", prefix="/discord"))
-    assert scope.level == "root"
-
-
-# ── guild ─────────────────────────────────────
+def test_root():
+    assert detect_scope("/").kind == ROOT
 
 
 def test_guild():
-    scope = detect_scope(_gs("/discord/myserver__G1", prefix="/discord"))
-    assert scope.level == "guild"
-    assert scope.use_native is True
-    assert scope.guild_name == "myserver"
-    assert scope.guild_id == "G1"
+    match = detect_scope("/My Server__G1")
+    assert match.kind == "guild"
+    assert match.slots == {"guild": "My Server", "guild_id": "G1"}
 
 
-def test_guild_channels():
-    scope = detect_scope(
-        _gs("/discord/myserver__G1/channels", prefix="/discord"))
-    assert scope.level == "guild"
-    assert scope.use_native is True
-    assert scope.container == "channels"
-    assert scope.guild_id == "G1"
+def test_guild_bare_name_is_invalid():
+    # The tree mints every dirname as `name__id`, so a bare name can
+    # never be a listed guild and classifies as invalid outright.
+    assert detect_scope("/My Server").kind == INVALID
 
 
-def test_guild_members_not_native():
-    scope = detect_scope(
-        _gs("/discord/myserver__G1/members", prefix="/discord"))
-    assert scope.level == "guild"
-    assert scope.use_native is False
-    assert scope.container == "members"
-    assert scope.guild_id == "G1"
-
-
-def test_guild_bare_name_has_no_id():
-    scope = detect_scope(_gs("/discord/myserver", prefix="/discord"))
-    assert scope.level == "guild"
-    assert scope.guild_name == "myserver"
-    assert scope.guild_id is None
-
-
-# ── channel ───────────────────────────────────
+def test_containers():
+    assert detect_scope("/My Server__G1/channels").kind == "channels_dir"
+    assert detect_scope("/My Server__G1/members").kind == "members_dir"
+    assert detect_scope("/My Server__G1/nope").kind == INVALID
 
 
 def test_channel():
-    scope = detect_scope(
-        _gs("/discord/myserver__G1/channels/general__C1", prefix="/discord"))
-    assert scope.level == "channel"
-    assert scope.use_native is True
-    assert scope.guild_name == "myserver"
-    assert scope.guild_id == "G1"
-    assert scope.channel_name == "general"
-    assert scope.channel_id == "C1"
-    assert scope.container == "channels"
-
-
-def test_channel_bare_name_has_no_id():
-    scope = detect_scope(
-        _gs("/discord/myserver__G1/channels/general", prefix="/discord"))
-    assert scope.level == "channel"
-    assert scope.channel_name == "general"
-    assert scope.channel_id is None
-
-
-# ── member ────────────────────────────────────
+    match = detect_scope("/My Server__G1/channels/general__C1")
+    assert match.kind == "channel"
+    assert match.slots["channel"] == "general"
+    assert match.slots["channel_id"] == "C1"
 
 
 def test_member_json():
-    scope = detect_scope(
-        _gs("/discord/myserver__G1/members/alice__U1.json", prefix="/discord"))
-    assert scope.level == "member"
-    assert scope.use_native is False
-    assert scope.container == "members"
-    assert scope.guild_id == "G1"
-    assert scope.member_name == "alice"
-    assert scope.member_id == "U1"
-    assert scope.channel_id is None
+    match = detect_scope("/My Server__G1/members/alice__U1.json")
+    assert match.kind == "member"
+    assert match.slots["member"] == "alice"
+    assert match.slots["user_id"] == "U1"
 
 
-# ── date / messages / files ────────────────────
+def test_member_without_suffix_is_invalid():
+    assert detect_scope("/My Server__G1/members/alice__U1").kind == INVALID
 
 
-def test_date_dir():
-    scope = detect_scope(
-        _gs("/discord/myserver__G1/channels/general__C1/2026-04-10",
-            prefix="/discord"))
-    assert scope.level == "date"
-    assert scope.use_native is True
-    assert scope.guild_id == "G1"
-    assert scope.channel_id == "C1"
-    assert scope.date_str == "2026-04-10"
+def test_day_dir():
+    match = detect_scope("/My Server__G1/channels/general__C1/2024-01-15")
+    assert match.kind == "day"
+    assert match.slots["day"] == "2024-01-15"
+
+
+def test_non_date_under_channel_is_invalid():
+    assert detect_scope(
+        "/My Server__G1/channels/general__C1/notadate").kind == INVALID
 
 
 def test_messages_file():
-    scope = detect_scope(
-        _gs("/discord/myserver__G1/channels/general__C1/2026-04-10/chat.jsonl",
-            prefix="/discord"))
-    assert scope.level == "messages"
-    assert scope.use_native is False
-    assert scope.guild_id == "G1"
-    assert scope.channel_id == "C1"
-    assert scope.date_str == "2026-04-10"
+    match = detect_scope(CHAT)
+    assert match.kind == "messages"
+    assert match.scope is not None and match.scope.leaf
 
 
 def test_files_dir():
-    scope = detect_scope(
-        _gs("/discord/myserver__G1/channels/general__C1/2026-04-10/files",
-            prefix="/discord"))
-    assert scope.level == "files"
-    assert scope.use_native is True
-    assert scope.date_str == "2026-04-10"
+    assert detect_scope(
+        "/My Server__G1/channels/general__C1/2024-01-15/files").kind == "files"
 
 
 def test_file_blob():
-    scope = detect_scope(
-        _gs(
-            "/discord/myserver__G1/channels/general__C1/2026-04-10/files/"
-            "img__A1.png",
-            prefix="/discord"))
-    assert scope.level == "file_blob"
-    assert scope.use_native is False
-    assert scope.channel_id == "C1"
-    assert scope.date_str == "2026-04-10"
+    match = detect_scope(
+        "/My Server__G1/channels/general__C1/2024-01-15/files/kept__A1.txt")
+    assert match.kind == "file_blob"
+    assert match.slots["blob"] == "kept__A1.txt"
 
 
-def test_deep_unknown_path_falls_back():
-    scope = detect_scope(_gs("/discord/a/b/c/d/e/f/g", prefix="/discord"))
-    assert scope.level == "guild"
-    assert scope.use_native is False
+def test_deep_unknown_path_is_invalid():
+    assert detect_scope(
+        "/My Server__G1/channels/general__C1/2024-01-15/files/a/b").kind \
+        == INVALID
 
 
-# ── glob patterns ─────────────────────────────
+def test_dot_segment_is_invalid():
+    assert detect_scope("/My Server__G1/channels/.hidden__C1").kind == INVALID
 
 
-def test_glob_jsonl_in_channel():
-    scope = detect_scope(
-        _gs("/discord/myserver__G1/channels/general__C1/*.jsonl",
-            prefix="/discord",
-            pattern="*.jsonl"))
-    assert scope.level == "channel"
-    assert scope.use_native is True
-    assert scope.guild_id == "G1"
-    assert scope.channel_id == "C1"
-
-
-def test_glob_jsonl_in_date_dir():
-    scope = detect_scope(
-        _gs("/discord/myserver__G1/channels/general__C1/2026-04-10/*.jsonl",
-            prefix="/discord",
-            pattern="*.jsonl"))
-    assert scope.level == "messages"
-    assert scope.use_native is True
-    assert scope.date_str == "2026-04-10"
-    assert scope.channel_id == "C1"
-
-
-def test_glob_non_jsonl():
-    scope = detect_scope(
-        _gs("/discord/myserver__G1/members/*.json",
-            prefix="/discord",
-            pattern="*.json"))
-    assert scope.level != "channel"
-
-
-def _spec(path: str, prefix: str = "/discord") -> PathSpec:
-    return PathSpec(resource_path=mount_key(path, prefix),
-                    virtual=path,
-                    directory=path)
+def test_native_kinds_exclude_the_rendered_leaves():
+    # chat.jsonl, member profiles and stored blobs are not answerable by
+    # the guild message search; the containers above them are.
+    assert "messages" not in NATIVE_KINDS
+    assert "member" not in NATIVE_KINDS
+    assert "file_blob" not in NATIVE_KINDS
+    assert {"guild", "channel", "day", "files"} <= NATIVE_KINDS

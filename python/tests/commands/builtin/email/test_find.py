@@ -87,9 +87,6 @@ async def test_type_f_lists_attachments():
     with patch("mirage.core.email.readdir.list_folders",
                new_callable=AsyncMock,
                return_value=["INBOX"]), \
-         patch("mirage.core.email.stat.list_folders",
-               new_callable=AsyncMock,
-               return_value=["INBOX"]), \
          patch("mirage.core.email.readdir.list_message_uids",
                new_callable=AsyncMock,
                return_value=["7"]), \
@@ -109,9 +106,6 @@ async def test_type_f_lists_attachments():
 @pytest.mark.asyncio
 async def test_type_d_lists_attachment_dir_not_attachment():
     with patch("mirage.core.email.readdir.list_folders",
-               new_callable=AsyncMock,
-               return_value=["INBOX"]), \
-         patch("mirage.core.email.stat.list_folders",
                new_callable=AsyncMock,
                return_value=["INBOX"]), \
          patch("mirage.core.email.readdir.list_message_uids",
@@ -150,9 +144,6 @@ async def test_name_with_size_falls_through_to_walk():
          patch("mirage.core.email.readdir.list_folders",
                new_callable=AsyncMock,
                return_value=["INBOX"]), \
-         patch("mirage.core.email.stat.list_folders",
-               new_callable=AsyncMock,
-               return_value=["INBOX"]), \
          patch("mirage.core.email.readdir.list_message_uids",
                new_callable=AsyncMock,
                return_value=[]):
@@ -177,9 +168,6 @@ async def test_second_folder_operand_falls_through_to_walk():
          patch("mirage.core.email.readdir.list_folders",
                new_callable=AsyncMock,
                return_value=["INBOX", "Sent"]), \
-         patch("mirage.core.email.stat.list_folders",
-               new_callable=AsyncMock,
-               return_value=["INBOX", "Sent"]), \
          patch("mirage.core.email.readdir.list_message_uids",
                new_callable=AsyncMock,
                return_value=[]):
@@ -198,9 +186,6 @@ async def test_mount_root_walks_instead_of_reporting_no_match():
     search = AsyncMock(return_value=[])
     with patch("mirage.commands.builtin.email.find.search_messages", search), \
          patch("mirage.core.email.readdir.list_folders",
-               new_callable=AsyncMock,
-               return_value=["INBOX", "Sent"]), \
-         patch("mirage.core.email.stat.list_folders",
                new_callable=AsyncMock,
                return_value=["INBOX", "Sent"]), \
          patch("mirage.core.email.readdir.list_message_uids",

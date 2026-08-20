@@ -16,7 +16,7 @@ import pytest
 
 from mirage.accessor.base import Accessor
 from mirage.cache.index import IndexEntry
-from mirage.core.hierarchy.codec import INT_JSON, JSON_NAME, Codec
+from mirage.core.hierarchy.codec import DATE, INT_JSON, JSON_NAME, Codec
 from mirage.core.hierarchy.scope import (Scope, ScopeMatch, Slot,
                                          make_detect_scope)
 from mirage.types import FileType, PathSpec
@@ -28,6 +28,9 @@ SCOPES = (
           segments=("rooms", Slot("room"), Slot("note", JSON_NAME)),
           leaf=True,
           filetype=FileType.JSON),
+    Scope(kind="room_atts", segments=("rooms", Slot("room"), "atts")),
+    Scope(kind="room_day", segments=("rooms", Slot("room"), Slot("day",
+                                                                 DATE))),
     Scope(kind="revision",
           segments=("rooms", Slot("room"), "revisions", Slot("rev", INT_JSON)),
           leaf=True,

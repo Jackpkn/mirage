@@ -19,7 +19,6 @@ from mirage.core.gmail.messages import (_decode_body, _extract_header,
                                         get_message_processed, get_message_raw,
                                         list_messages)
 from mirage.core.gmail.readdir import _msg_filename
-from mirage.core.gmail.scope import GmailScope
 from mirage.core.google.client import TokenManager
 
 EXCERPT_WINDOW = 120
@@ -107,13 +106,13 @@ async def search_messages(
 
 def format_grep_results(
     rows: list[dict[str, Any]],
-    scope: GmailScope,
+    label_name: str | None,
     prefix: str,
     pattern: str = "",
 ) -> list[str]:
     lines: list[str] = []
     for row in rows:
-        label = row.get("label") or scope.label_name or "INBOX"
+        label = row.get("label") or label_name or "INBOX"
         date = row.get("date", "")
         mid = row.get("id", "")
         # The same builder readdir names the file with, not a second

@@ -16,7 +16,6 @@ import type { DiscordAccessor } from '../../accessor/discord.ts'
 import { channelDirname, guildDirname } from './entry.ts'
 import { offsetPages } from './paginate.ts'
 import { snowflakeToIso } from './readdir.ts'
-import type { DiscordScope } from './scope.ts'
 
 const PAGE_SIZE = 25
 
@@ -79,13 +78,19 @@ function asString(value: unknown): string {
   return typeof value === 'string' ? value : ''
 }
 
+export interface SearchScope {
+  guildId: string
+  guildName?: string
+  channelName?: string
+}
+
 export function formatGrepResults(
   messages: readonly DiscordSearchMessage[],
-  scope: DiscordScope,
+  scope: SearchScope,
   prefix: string,
   channelNames: ReadonlyMap<string, string> = new Map(),
 ): string[] {
-  const guildId = scope.guildId ?? ''
+  const guildId = scope.guildId
   const guildVfs = guildDirname({
     id: guildId,
     ...(scope.guildName !== undefined ? { name: scope.guildName } : {}),

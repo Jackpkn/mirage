@@ -12,29 +12,43 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import type { PathSpec } from '@struktoai/mirage-core/types'
-import { stripSlash } from '@struktoai/mirage-core/utils/slash'
+import { Codec, DATE } from '@struktoai/mirage-core/core/hierarchy/codec'
+import { makeDetectScope, Scope, Slot } from '@struktoai/mirage-core/core/hierarchy/scope'
+import { FileType } from '@struktoai/mirage-core/types'
 
-export interface EmailScope {
-  useNative: boolean
-  folder: string | null
-  resourcePath: string
-}
+const EMAIL_JSON = new Codec({ suffix: '.email.json' })
 
-export function detectScope(path: PathSpec): EmailScope {
-  const key = stripSlash(path.mountPath)
-  if (key === '') {
-    return { useNative: false, folder: null, resourcePath: '/' }
-  }
-  const parts = key.split('/').filter((s) => s !== '')
-  if (parts.length === 0) {
-    return { useNative: false, folder: null, resourcePath: '/' }
-  }
-  if (key.endsWith('.email.json')) {
-    return { useNative: false, folder: parts[0] ?? null, resourcePath: key }
-  }
-  if (parts.length <= 2) {
-    return { useNative: true, folder: parts[0] ?? null, resourcePath: key }
-  }
-  return { useNative: false, folder: parts[0] ?? null, resourcePath: key }
-}
+const FOLDER = [new Slot('folder')] as const
+const DAY = [...FOLDER, new Slot('day', DATE)] as const
+
+// One description of the tree: readdir, stat, read and the search push-down
+// all classify through it, so the file surface and the command surface
+// cannot disagree about what a path means. The message scope is declared
+// before the attachment dir because only the suffix separates the two at
+// that depth.
+const SCOPES: readonly Scope[] = [
+  new Scope({ kind: 'folder', segments: FOLDER }),
+  new Scope({ kind: 'day', segments: DAY }),
+  new Scope({
+    kind: 'message',
+    segments: [...DAY, new Slot('message', EMAIL_JSON, 'uid')],
+    leaf: true,
+    filetype: FileType.JSON,
+  }),
+  new Scope({
+    kind: 'attachment_dir',
+    segments: [...DAY, new Slot('attachment_dir', undefined, 'uid')],
+  }),
+  new Scope({
+    kind: 'attachment',
+    segments: [...DAY, new Slot('attachment_dir', undefined, 'uid'), new Slot('filename')],
+    leaf: true,
+  }),
+]
+
+export const detectScope = makeDetectScope(SCOPES)
+
+// Kinds the mailbox search push-down may answer for: one folder or one of
+// its days. IMAP search selects a folder, so the mount root cannot push
+// down, and a message or attachment names one node.
+export const NATIVE_KINDS: ReadonlySet<string> = new Set(['folder', 'day'])

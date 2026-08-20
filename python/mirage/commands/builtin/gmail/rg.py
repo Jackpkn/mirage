@@ -27,7 +27,7 @@ from mirage.commands.spec import SPECS
 from mirage.commands.spec.types import FlagView
 from mirage.core.gmail.read import read as gmail_read
 from mirage.core.gmail.readdir import readdir as _readdir
-from mirage.core.gmail.scope import detect_scope
+from mirage.core.gmail.scope import NATIVE_KINDS, detect_scope
 from mirage.core.gmail.search import format_grep_results, search_messages
 from mirage.core.gmail.stat import stat as _stat
 from mirage.io.types import ByteSource, IOResult
@@ -46,18 +46,19 @@ async def rg(accessor: GmailAccessor, paths: list[PathSpec], texts: list[str],
     # operand with no reshaping flag may be answered by the search API.
     operand = pushdown_operand(paths, opts.flags, pattern_str, SEARCH_HONORED)
     if operand is not None and fl.as_bool("w"):
-        scope = detect_scope(operand)
-        if scope.use_native:
+        match = detect_scope(operand)
+        if match.kind in NATIVE_KINDS:
             file_prefix = mount_prefix_of(operand.virtual,
                                           operand.resource_path) or ""
             rows = await search_messages(
                 accessor.token_manager,
                 pattern_str,
-                label_name=scope.label_name,
-                date_str=scope.date_str,
+                label_name=match.slots.get("label"),
+                date_str=match.slots.get("day"),
                 max_results=SEARCH_MAX_RESULTS,
             )
-            lines = format_grep_results(rows, scope, file_prefix, pattern_str)
+            lines = format_grep_results(rows, match.slots.get("label"),
+                                        file_prefix, pattern_str)
             if not lines:
                 return b"", IOResult(exit_code=1)
             return format_records(lines), IOResult()

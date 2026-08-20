@@ -12,122 +12,124 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { mountKey, mountPrefixOf } from '../../utils/key_prefix.ts'
 import type { DiscordAccessor } from '../../accessor/discord.ts'
+import type { IndexEntry } from '../../cache/index/config.ts'
 import type { IndexCacheStore } from '../../cache/index/store.ts'
 import { PathSpec } from '../../types.ts'
+import { enoent } from '../../utils/errors.ts'
+import { mountKey, mountPrefixOf } from '../../utils/key_prefix.ts'
+import { resolveEntry } from '../hierarchy/probe.ts'
+import { makeRead, makeReadRange } from '../hierarchy/read.ts'
+import type { ScopeMatch } from '../hierarchy/scope.ts'
 import { downloadFile } from './files.ts'
 import { getHistoryJsonl } from './history.ts'
 import { listMembers } from './members.ts'
-import { readdir as discordReaddir } from './readdir.ts'
+import { readdir } from './readdir.ts'
 import { memberJsonBytes } from './render.ts'
-import { stripSlash } from '../../utils/slash.ts'
-import { sliceWindow } from '../../utils/ranges.ts'
+import { detectScope } from './scope.ts'
 
-function fileNotFound(key: string): Error {
-  const e = new Error(`ENOENT: ${key}`) as Error & { code: string }
-  e.code = 'ENOENT'
-  return e
+async function ancestorEntry(
+  accessor: DiscordAccessor,
+  path: PathSpec,
+  index: IndexCacheStore | undefined,
+  up: number,
+): Promise<IndexEntry | null> {
+  let virtual = path.virtual.replace(/\/+$/, '')
+  for (let i = 0; i < up; i++) virtual = virtual.split('/').slice(0, -1).join('/')
+  const prefix = mountPrefixOf(path.virtual, path.resourcePath)
+  const spec = new PathSpec({
+    virtual,
+    directory: virtual,
+    resourcePath: mountKey(virtual, prefix),
+  })
+  return resolveEntry(readdir, accessor, spec, index)
 }
 
 /**
- * Read a Discord path, optionally only a byte range of it.
+ * Render one day's history; the channel id comes from the listing.
  *
- * Only an attachment has a remote range to ask for. A channel's history and
- * a member profile are rendered here into JSON, so their bytes do not exist
- * until we make them and the window can only be taken afterwards.
- *
- * Args:
- *   accessor: Discord accessor.
- *   path: the path to read.
- *   index: listing cache, consulted for the entry.
- *   options: `{offset, size}`, the byte window, or absent for the whole file.
+ * The typed `name__id` dirname is only trusted once the listing proves it,
+ * so a fabricated channel id is ENOENT rather than a raw API error.
  */
-export async function read(
+async function readChat(
   accessor: DiscordAccessor,
+  match: ScopeMatch,
   path: PathSpec,
   index?: IndexCacheStore,
-  options?: { offset?: number; size?: number },
 ): Promise<Uint8Array> {
-  const offset = options?.offset ?? 0
-  const size = options?.size ?? null
-  const prefix = mountPrefixOf(path.virtual, path.resourcePath)
-  let raw = path.virtual
-  if (prefix !== '' && raw.startsWith(prefix)) {
-    raw = raw.slice(prefix.length) || '/'
+  const entry = await resolveEntry(readdir, accessor, path, index)
+  let channelId: string
+  if (entry !== null) {
+    channelId = entry.id.split(':', 1)[0] ?? ''
+  } else {
+    // A sealed day lists nothing but the file still reads through the
+    // channel, reproducing the API's own answer for the fetch.
+    const channel = await ancestorEntry(accessor, path, index, 2)
+    if (channel === null) throw enoent(path)
+    channelId = channel.id
   }
-  const key = stripSlash(raw)
-  const parts = key.split('/')
-
-  // <guild>/channels/<ch>/<date>/chat.jsonl
-  if (
-    parts.length === 5 &&
-    parts[1] === 'channels' &&
-    parts[4] === 'chat.jsonl' &&
-    parts[0] !== undefined &&
-    parts[2] !== undefined &&
-    parts[3] !== undefined
-  ) {
-    if (index === undefined) throw fileNotFound(key)
-    const chKey = `${parts[0]}/${parts[1]}/${parts[2]}`
-    const chLookup = await index.get(`${prefix}/${chKey}`)
-    if (chLookup.entry === undefined || chLookup.entry === null) throw fileNotFound(key)
-    return sliceWindow(await getHistoryJsonl(accessor, chLookup.entry.id, parts[3]), offset, size)
-  }
-
-  // <guild>/channels/<ch>/<date>/files/<blob>
-  if (parts.length === 6 && parts[1] === 'channels' && parts[4] === 'files') {
-    if (index === undefined) throw fileNotFound(key)
-    const virtualKey = `${prefix}/${key}`
-    let lookup = await index.get(virtualKey)
-    if (lookup.entry === undefined || lookup.entry === null) {
-      // Hydrate via date dir readdir (triggers fetchDay)
-      const dateKey = parts.slice(0, 4).join('/')
-      const dateVk = `${prefix}/${dateKey}`
-      await discordReaddir(
-        accessor,
-        new PathSpec({
-          virtual: dateVk,
-          directory: dateVk,
-          resourcePath: mountKey(dateVk, prefix),
-        }),
-        index,
-      )
-      lookup = await index.get(virtualKey)
-    }
-    if (lookup.entry === undefined || lookup.entry === null) throw fileNotFound(key)
-    const extra = lookup.entry.extra
-    const url =
-      typeof extra.url === 'string' && extra.url !== ''
-        ? extra.url
-        : typeof extra.proxy_url === 'string'
-          ? extra.proxy_url
-          : ''
-    if (url === '') throw fileNotFound(key)
-    return await downloadFile(url, offset, size)
-  }
-
-  // <guild>/members/<user>.json
-  if (
-    parts.length === 3 &&
-    parts[1] === 'members' &&
-    parts[2]?.endsWith('.json') === true &&
-    parts[0] !== undefined
-  ) {
-    if (index === undefined) throw fileNotFound(key)
-    const virtualKey = `${prefix}/${key}`
-    const lookup = await index.get(virtualKey)
-    if (lookup.entry === undefined || lookup.entry === null) throw fileNotFound(key)
-    const guildLookup = await index.get(`${prefix}/${parts[0]}`)
-    if (guildLookup.entry === undefined || guildLookup.entry === null) throw fileNotFound(key)
-    const members = await listMembers(accessor, guildLookup.entry.id)
-    for (const m of members) {
-      if (m.user?.id === lookup.entry.id) {
-        return sliceWindow(memberJsonBytes(m), offset, size)
-      }
-    }
-    throw fileNotFound(key)
-  }
-
-  throw fileNotFound(key)
+  return getHistoryJsonl(accessor, channelId, match.slots.day ?? '')
 }
+
+async function readMember(
+  accessor: DiscordAccessor,
+  match: ScopeMatch,
+  path: PathSpec,
+  index?: IndexCacheStore,
+): Promise<Uint8Array> {
+  const entry = await resolveEntry(readdir, accessor, path, index)
+  if (entry === null) throw enoent(path)
+  const members = await listMembers(accessor, match.slots.guild_id ?? '')
+  for (const m of members) {
+    if (m.user?.id === entry.id) return memberJsonBytes(m)
+  }
+  throw enoent(path)
+}
+
+async function blobUrl(
+  accessor: DiscordAccessor,
+  path: PathSpec,
+  index: IndexCacheStore | undefined,
+): Promise<string> {
+  const entry = await resolveEntry(readdir, accessor, path, index)
+  if (entry === null) throw enoent(path)
+  const extra = entry.extra
+  const direct = typeof extra.url === 'string' ? extra.url : ''
+  const proxy = typeof extra.proxy_url === 'string' ? extra.proxy_url : ''
+  const url = direct !== '' ? direct : proxy
+  if (url === '') throw enoent(path)
+  return url
+}
+
+async function readBlob(
+  accessor: DiscordAccessor,
+  _match: ScopeMatch,
+  path: PathSpec,
+  index?: IndexCacheStore,
+): Promise<Uint8Array> {
+  return downloadFile(await blobUrl(accessor, path, index), 0, null)
+}
+
+async function readBlobRange(
+  accessor: DiscordAccessor,
+  _match: ScopeMatch,
+  path: PathSpec,
+  index: IndexCacheStore | undefined,
+  offset: number,
+  size: number | null,
+): Promise<Uint8Array> {
+  return downloadFile(await blobUrl(accessor, path, index), offset, size)
+}
+
+export const read = makeRead<DiscordAccessor>(detectScope, {
+  messages: readChat,
+  member: readMember,
+  file_blob: readBlob,
+})
+
+// Only an attachment has a remote range to ask for. A channel's history and
+// a member profile are rendered here into JSON, so their bytes do not exist
+// until we make them and the window can only be taken afterwards.
+export const readRange = makeReadRange<DiscordAccessor>(detectScope, read, {
+  file_blob: readBlobRange,
+})

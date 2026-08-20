@@ -19,7 +19,7 @@ import pytest
 
 from mirage.core.slack.config import SlackConfig
 from mirage.core.slack.formatters import build_query, format_file_grep_results
-from mirage.core.slack.scope import SlackScope
+from mirage.core.slack.scope import SearchTarget
 from mirage.core.slack.search import search_files
 
 
@@ -58,11 +58,9 @@ def test_format_file_grep_results_renders_paths():
         },
     }
     raw = json.dumps(raw_payload).encode()
-    scope = SlackScope(use_native=True,
-                       container="channels",
-                       channel_name="general",
-                       channel_id="C001",
-                       target="files")
+    scope = SearchTarget(container="channels",
+                         channel_name="general",
+                         channel_id="C001")
     lines = format_file_grep_results(raw, scope, "/slack")
     assert len(lines) == 1
     line = lines[0]
@@ -73,11 +71,9 @@ def test_format_file_grep_results_renders_paths():
 
 
 def test_build_query_unchanged_for_files():
-    scope = SlackScope(use_native=True,
-                       container="channels",
-                       channel_name="eng",
-                       channel_id="C1",
-                       target="files")
+    scope = SearchTarget(container="channels",
+                         channel_name="eng",
+                         channel_id="C1")
     assert build_query("foo", scope) == "in:#eng foo"
 
 
@@ -95,11 +91,9 @@ def test_format_file_grep_results_emits_exact_path():
         },
     }
     raw = json.dumps(raw_payload).encode()
-    scope = SlackScope(use_native=True,
-                       container="channels",
-                       channel_name="general",
-                       channel_id="C001",
-                       target="files")
+    scope = SearchTarget(container="channels",
+                         channel_name="general",
+                         channel_id="C001")
     lines = format_file_grep_results(raw, scope, "/slack")
     assert len(lines) == 1
     expected_path = ("/slack/channels/general__C001/2024-04-10/files/"
@@ -120,11 +114,9 @@ def test_format_file_grep_results_skips_when_no_scope_channel():
         },
     }
     raw = json.dumps(raw_payload).encode()
-    scope = SlackScope(use_native=True,
-                       container="channels",
-                       channel_name=None,
-                       channel_id=None,
-                       target="files")
+    scope = SearchTarget(container="channels",
+                         channel_name=None,
+                         channel_id=None)
     lines = format_file_grep_results(raw, scope, "/slack")
     assert lines == []
 
@@ -142,12 +134,10 @@ def test_format_file_grep_results_preserves_special_chars():
         },
     }
     raw = json.dumps(raw_payload).encode()
-    scope = SlackScope(
-        use_native=True,
+    scope = SearchTarget(
         container="channels",
         channel_name="general",
         channel_id="C001",
-        target="files",
     )
     lines = format_file_grep_results(raw, scope, "/slack")
     assert len(lines) == 1

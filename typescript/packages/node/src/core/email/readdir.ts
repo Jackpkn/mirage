@@ -13,18 +13,19 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { IndexEntry } from '@struktoai/mirage-core/cache/index/config'
-import type { IndexCacheStore } from '@struktoai/mirage-core/cache/index/store'
-import { PathSpec as PathSpecCtor } from '@struktoai/mirage-core/types'
-import type { PathSpec } from '@struktoai/mirage-core/types'
-import { enoent } from '@struktoai/mirage-core/utils/errors'
-import { mountKey, mountPrefixOf } from '@struktoai/mirage-core/utils/key_prefix'
+import {
+  makeReaddir,
+  type DirListing,
+  type Listed,
+} from '@struktoai/mirage-core/core/hierarchy/readdir'
+import type { ScopeMatch } from '@struktoai/mirage-core/core/hierarchy/scope'
 import { NAME_MAX_BYTES, byteLength, sanitizeLabel } from '@struktoai/mirage-core/utils/sanitize'
 import { compareCodePoints } from '@struktoai/mirage-core/utils/sort'
 import type { EmailAccessor } from '../../accessor/email.ts'
 import { fetchHeaders, listMessageUids, type FetchedMessage } from './client.ts'
 import { listFolders } from './folders.ts'
 import { messageJsonBytes } from './render.ts'
-import type { ParsedAttachment } from './_parse.ts'
+import { detectScope } from './scope.ts'
 
 const TITLE_MAX = 80
 const EPOCH_DATE = '1970-01-01'
@@ -112,130 +113,152 @@ export function dateBucket(message: FetchedMessage): string {
   return parseDate(message.date) ?? parseDate(message.internalDate) ?? EPOCH_DATE
 }
 
-export async function readdir(
-  accessor: EmailAccessor,
-  path: PathSpec,
-  index?: IndexCacheStore,
-): Promise<string[]> {
-  const prefix = mountPrefixOf(path.virtual, path.resourcePath)
-  const key = (path.pattern !== null ? path.dir : path).resourcePath
-  const virtualKey = key !== '' ? `${prefix}/${key}` : prefix !== '' ? prefix : '/'
-  const parts = key === '' ? [] : key.split('/')
-  const depth = parts.length
-
-  if (depth === 0) {
-    if (index !== undefined) {
-      const cached = await index.listDir(virtualKey)
-      if (cached.entries !== undefined && cached.entries !== null) return cached.entries
-    }
-    const folders = await listFolders(accessor)
-    const entries: [string, IndexEntry][] = []
-    for (const folderName of folders) {
-      const entry = new IndexEntry({
-        id: folderName,
-        name: folderName,
-        resourceType: 'email/folder',
-        vfsName: folderName,
-      })
-      entries.push([folderName, entry])
-    }
-    if (index !== undefined) await index.setDir(virtualKey, entries)
-    return entries.map(([name]) => `${prefix}/${name}`)
-  }
-
-  if (depth === 1) {
-    const folderName = parts[0] ?? ''
-    if (index !== undefined) {
-      const cached = await index.listDir(virtualKey)
-      if (cached.entries !== undefined && cached.entries !== null) return cached.entries
-    }
-    if (index === undefined) throw enoent(path.virtual)
-    // An unknown folder must be ENOENT: selecting it over IMAP fails with
-    // "command SEARCH illegal in state AUTH", which leaked to the caller.
-    if (!(await listFolders(accessor)).includes(folderName)) throw enoent(path.virtual)
-    const maxMessages = accessor.config.maxMessages
-    const uids = await listMessageUids(accessor, folderName, 'ALL', maxMessages)
-    const headersList = await fetchHeaders(accessor, folderName, uids)
-    const dateGroups = new Map<string, typeof headersList>()
-    for (const hdr of headersList) {
-      const dateStr = dateBucket(hdr)
-      let bucket = dateGroups.get(dateStr)
-      if (bucket === undefined) {
-        bucket = []
-        dateGroups.set(dateStr, bucket)
-      }
-      bucket.push(hdr)
-    }
-    const sortedDates = [...dateGroups.keys()].sort(compareCodePoints).reverse()
-    const dateEntries: [string, IndexEntry][] = []
-    for (const dateStr of sortedDates) {
-      const dateEntry = new IndexEntry({
-        id: dateStr,
-        name: dateStr,
-        resourceType: 'email/date',
-        vfsName: dateStr,
-      })
-      dateEntries.push([dateStr, dateEntry])
-      const msgEntries: [string, IndexEntry][] = []
-      for (const hdr of dateGroups.get(dateStr) ?? []) {
-        const uid = hdr.uid
-        const subject = hdr.subject || 'No Subject'
-        const filename = msgFilename(subject, uid)
-        const msgEntry = new IndexEntry({
+/** One date directory's children, plus its attachment-dir seeds. */
+function dateChildren(headers: readonly FetchedMessage[]): {
+  children: [string, IndexEntry][]
+  seeds: Record<string, [string, IndexEntry][]>
+} {
+  const children: [string, IndexEntry][] = []
+  const seeds: Record<string, [string, IndexEntry][]> = {}
+  for (const hdr of headers) {
+    const uid = hdr.uid
+    const subject = hdr.subject || 'No Subject'
+    const filename = msgFilename(subject, uid)
+    children.push([
+      filename,
+      new IndexEntry({
+        id: uid,
+        name: subject,
+        resourceType: 'email/message',
+        vfsName: filename,
+        size: messageJsonBytes(hdr).byteLength,
+      }),
+    ])
+    const attachments = hdr.attachments
+    if (attachments.length > 0) {
+      const attDirName = filename.replace('.email.json', '')
+      children.push([
+        attDirName,
+        new IndexEntry({
           id: uid,
-          name: subject,
-          resourceType: 'email/message',
-          vfsName: filename,
-          size: messageJsonBytes(hdr).byteLength,
-        })
-        msgEntries.push([filename, msgEntry])
-        const attachments: ParsedAttachment[] = hdr.attachments
-        if (attachments.length > 0) {
-          const attDirName = filename.replace('.email.json', '')
-          const attDirEntry = new IndexEntry({
-            id: uid,
-            name: attDirName,
-            resourceType: 'email/attachment_dir',
-            vfsName: attDirName,
-          })
-          msgEntries.push([attDirName, attDirEntry])
-          const attEntries: [string, IndexEntry][] = []
-          for (const att of attachments) {
-            const attEntry = new IndexEntry({
+          name: attDirName,
+          resourceType: 'email/attachment_dir',
+          vfsName: attDirName,
+        }),
+      ])
+      seeds[attDirName] = attachments.map(
+        (att) =>
+          [
+            att.filename,
+            new IndexEntry({
               id: att.filename,
               name: att.filename,
               resourceType: 'email/attachment',
               vfsName: att.filename,
               size: att.size,
-            })
-            attEntries.push([att.filename, attEntry])
-          }
-          const attDirVKey = `${virtualKey}/${dateStr}/${attDirName}`
-          await index.setDir(attDirVKey, attEntries)
-        }
-      }
-      const dateVKey = `${virtualKey}/${dateStr}`
-      await index.setDir(dateVKey, msgEntries)
+            }),
+          ] as [string, IndexEntry],
+      )
     }
-    await index.setDir(virtualKey, dateEntries)
-    return dateEntries.map(([name]) => `${prefix}/${key}/${name}`)
   }
-
-  if (depth === 2 || depth === 3) {
-    if (index === undefined) throw enoent(path.virtual)
-    let cached = await index.listDir(virtualKey)
-    if (cached.entries !== undefined && cached.entries !== null) return cached.entries
-    const folderPath = prefix !== '' ? `${prefix}/${parts[0] ?? ''}` : `/${parts[0] ?? ''}`
-    const folderSpec = new PathSpecCtor({
-      virtual: folderPath,
-      directory: folderPath,
-      resourcePath: mountKey(folderPath, prefix),
-    })
-    await readdir(accessor, folderSpec, index)
-    cached = await index.listDir(virtualKey)
-    if (cached.entries !== undefined && cached.entries !== null) return cached.entries
-    throw enoent(path.virtual)
-  }
-
-  throw enoent(path.virtual)
+  return { children, seeds }
 }
+
+async function folderHeaders(
+  accessor: EmailAccessor,
+  folderName: string,
+): Promise<FetchedMessage[]> {
+  const uids = await listMessageUids(accessor, folderName, 'ALL', accessor.config.maxMessages)
+  return fetchHeaders(accessor, folderName, uids)
+}
+
+async function listRoot(accessor: EmailAccessor, _match: ScopeMatch): Promise<Listed | null> {
+  const folders = await listFolders(accessor)
+  return folders.map(
+    (name) =>
+      [
+        name,
+        new IndexEntry({
+          id: name,
+          name,
+          resourceType: 'email/folder',
+          vfsName: name,
+        }),
+      ] as [string, IndexEntry],
+  )
+}
+
+async function listFolder(
+  accessor: EmailAccessor,
+  _match: ScopeMatch,
+  own: IndexEntry,
+): Promise<Listed> {
+  const headersList = await folderHeaders(accessor, own.id)
+  const dateGroups = new Map<string, FetchedMessage[]>()
+  for (const hdr of headersList) {
+    const dateStr = dateBucket(hdr)
+    let bucket = dateGroups.get(dateStr)
+    if (bucket === undefined) {
+      bucket = []
+      dateGroups.set(dateStr, bucket)
+    }
+    bucket.push(hdr)
+  }
+  const sortedDates = [...dateGroups.keys()].sort(compareCodePoints).reverse()
+  const entries: [string, IndexEntry][] = []
+  const seeds: Record<string, [string, IndexEntry][]> = {}
+  for (const dateStr of sortedDates) {
+    entries.push([
+      dateStr,
+      new IndexEntry({
+        id: dateStr,
+        name: dateStr,
+        resourceType: 'email/date',
+        vfsName: dateStr,
+      }),
+    ])
+    const { children, seeds: attSeeds } = dateChildren(dateGroups.get(dateStr) ?? [])
+    seeds[dateStr] = children
+    for (const [attDir, attEntries] of Object.entries(attSeeds)) {
+      seeds[`${dateStr}/${attDir}`] = attEntries
+    }
+  }
+  return { entries, seeds }
+}
+
+async function listDay(
+  accessor: EmailAccessor,
+  match: ScopeMatch,
+  _own: IndexEntry,
+): Promise<Listed> {
+  // Normally served from the folder lister's seed; reached only when the
+  // index evicted the day listing while the date entry survived.
+  const headersList = await folderHeaders(accessor, match.slots.folder ?? '')
+  const day = match.slots.day ?? ''
+  const { children, seeds } = dateChildren(headersList.filter((hdr) => dateBucket(hdr) === day))
+  const listing: DirListing = { entries: children, seeds }
+  return listing
+}
+
+async function listAttachmentDir(
+  accessor: EmailAccessor,
+  match: ScopeMatch,
+  own: IndexEntry,
+): Promise<Listed> {
+  // Same eviction fallback: one header fetch rebuilds the listing.
+  const headersList = await fetchHeaders(accessor, match.slots.folder ?? '', [own.id])
+  for (const hdr of headersList) {
+    const { seeds } = dateChildren([hdr])
+    for (const attEntries of Object.values(seeds)) return attEntries
+  }
+  return []
+}
+
+export const readdir = makeReaddir<EmailAccessor>(detectScope, {
+  listers: { root: listRoot },
+  entryListers: {
+    folder: listFolder,
+    day: listDay,
+    attachment_dir: listAttachmentDir,
+  },
+})

@@ -20,7 +20,7 @@ import { GMAIL_IO } from './io.ts'
 import { read as gmailRead } from '../../../core/gmail/read.ts'
 import { readdir as gmailReaddir } from '../../../core/gmail/readdir.ts'
 import { stat as gmailStat } from '../../../core/gmail/stat.ts'
-import { detectScope } from '../../../core/gmail/scope.ts'
+import { detectScope, NATIVE_KINDS } from '../../../core/gmail/scope.ts'
 import { formatGrepResults, searchMessages } from '../../../core/gmail/search.ts'
 import { IOResult, type ByteSource } from '../../../io/types.ts'
 import { type FileStat, type PathSpec, ResourceName } from '../../../types.ts'
@@ -61,17 +61,18 @@ async function rgCommand(
   // operand with no reshaping flag may be answered by the search API.
   const operand = pushdownOperand(paths, opts.flags, pattern, SEARCH_HONORED)
   if (operand !== null && fl.asBool('w')) {
-    const scope = detectScope(operand)
-    if (scope.useNative) {
+    const match = detectScope(operand)
+    if (NATIVE_KINDS.has(match.kind)) {
+      const labelName = match.slots.label ?? null
       const filePrefix = mountPrefixOf(operand.virtual, operand.resourcePath)
       const rows = await searchMessages(
         accessor.tokenManager,
         pattern,
-        scope.labelName,
-        scope.dateStr,
+        labelName,
+        match.slots.day ?? null,
         SEARCH_MAX_RESULTS,
       )
-      const lines = formatGrepResults(rows, scope, filePrefix, pattern)
+      const lines = formatGrepResults(rows, labelName, filePrefix, pattern)
       if (lines.length === 0) return [new Uint8Array(0), new IOResult({ exitCode: 1 })]
       const out: ByteSource = ENC.encode(lines.join('\n') + '\n')
       return [out, new IOResult()]

@@ -12,156 +12,84 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { mountPrefixOf } from '../../utils/key_prefix.ts'
-import type { PathSpec } from '../../types.ts'
-import { stripSlash } from '../../utils/slash.ts'
+import { Codec, DATE, JSON_NAME } from '../hierarchy/codec.ts'
+import { makeDetectScope, ROOT, Scope, type ScopeMatch, Slot } from '../hierarchy/scope.ts'
+import { FileType } from '../../types.ts'
 
-type SlackTarget = 'date' | 'messages' | 'files'
+/** Whether a segment names a message container. */
+export function isContainer(text: string): boolean {
+  return text === 'channels' || text === 'dms'
+}
 
-export interface SlackScope {
-  useNative: boolean
+// Channels and DMs share every level below the container, so the container
+// is a validated slot rather than two parallel scope families; the decoded
+// value rides the slots the way an id does.
+const CONTAINER = new Codec({ validate: isContainer })
+
+const CHANNEL = [
+  new Slot('container', CONTAINER),
+  new Slot('channel', undefined, 'channel_id'),
+] as const
+const DAY = [...CHANNEL, new Slot('day', DATE)] as const
+
+// One description of the tree: readdir, stat, read and the search push-down
+// all classify through it, so the file surface and the command surface
+// cannot disagree about what a path means.
+export const SCOPES: readonly Scope[] = [
+  new Scope({ kind: 'channels_root', segments: ['channels'], probed: false }),
+  new Scope({ kind: 'dms_root', segments: ['dms'], probed: false }),
+  new Scope({ kind: 'users_root', segments: ['users'], probed: false }),
+  new Scope({
+    kind: 'user',
+    segments: ['users', new Slot('user', JSON_NAME, 'user_id')],
+    leaf: true,
+    filetype: FileType.JSON,
+  }),
+  new Scope({ kind: 'channel', segments: CHANNEL }),
+  new Scope({ kind: 'day', segments: DAY }),
+  new Scope({
+    kind: 'messages',
+    segments: [...DAY, 'chat.jsonl'],
+    leaf: true,
+    filetype: FileType.TEXT,
+  }),
+  new Scope({ kind: 'files', segments: [...DAY, 'files'] }),
+  new Scope({
+    kind: 'file_blob',
+    segments: [...DAY, 'files', new Slot('blob')],
+    leaf: true,
+  }),
+]
+
+export const detectScope = makeDetectScope(SCOPES)
+
+// Kinds the workspace search push-down may answer for. Slack search is
+// workspace-wide, so the root qualifies; a chat.jsonl or blob operand names
+// one day's file, which a channel-wide search cannot stand in for, and the
+// files directory is excluded because search.files has no per-day filter
+// either.
+export const NATIVE_KINDS: ReadonlySet<string> = new Set([
+  ROOT,
+  'channels_root',
+  'dms_root',
+  'channel',
+  'day',
+])
+
+/** The channel coordinates a search push-down carries. */
+export interface SearchTarget {
+  container?: string
   channelName?: string
   channelId?: string
-  container?: string
-  dateStr?: string
-  target?: SlackTarget
-  resourcePath: string
 }
 
-const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
-
-function stripSlashes(s: string): string {
-  return stripSlash(s)
-}
-
-function splitDirname(dirname: string): [string, string | undefined] {
-  const idx = dirname.lastIndexOf('__')
-  if (idx === -1) {
-    return [dirname, undefined]
+/** The coordinates a native search should scope itself to. */
+export function searchTarget(match: ScopeMatch): SearchTarget {
+  if (match.kind === 'channels_root') return { container: 'channels' }
+  if (match.kind === 'dms_root') return { container: 'dms' }
+  return {
+    ...(match.slots.container !== undefined ? { container: match.slots.container } : {}),
+    ...(match.slots.channel !== undefined ? { channelName: match.slots.channel } : {}),
+    ...(match.slots.channel_id !== undefined ? { channelId: match.slots.channel_id } : {}),
   }
-  const name = dirname.slice(0, idx)
-  const cid = dirname.slice(idx + 2)
-  return [name, cid.length > 0 ? cid : undefined]
-}
-
-function deepenedScope(
-  parts: string[],
-  prefix: string,
-  channelName: string,
-  cid: string | undefined,
-  container: string,
-  key: string,
-  base: 'native' | 'non-native',
-): SlackScope {
-  const dateStr = parts[2] ?? ''
-  const useNativeBase = base === 'native'
-  if (parts.length === 2) {
-    return {
-      useNative: true,
-      channelName,
-      ...(cid !== undefined ? { channelId: cid } : {}),
-      container,
-      resourcePath: key,
-    }
-  }
-  if (parts.length === 3 && DATE_RE.test(dateStr)) {
-    return {
-      useNative: useNativeBase,
-      channelName,
-      ...(cid !== undefined ? { channelId: cid } : {}),
-      container,
-      dateStr,
-      target: 'date',
-      resourcePath: key,
-    }
-  }
-  if (parts.length === 4 && DATE_RE.test(dateStr) && parts[3] === 'chat.jsonl') {
-    return {
-      useNative: false,
-      channelName,
-      ...(cid !== undefined ? { channelId: cid } : {}),
-      container,
-      dateStr,
-      target: 'messages',
-      resourcePath: key,
-    }
-  }
-  if (parts.length === 4 && DATE_RE.test(dateStr) && parts[3] === 'files') {
-    return {
-      useNative: true,
-      channelName,
-      ...(cid !== undefined ? { channelId: cid } : {}),
-      container,
-      dateStr,
-      target: 'files',
-      resourcePath: key,
-    }
-  }
-  if (parts.length === 5 && DATE_RE.test(dateStr) && parts[3] === 'files') {
-    return {
-      useNative: false,
-      channelName,
-      ...(cid !== undefined ? { channelId: cid } : {}),
-      container,
-      dateStr,
-      target: 'files',
-      resourcePath: key,
-    }
-  }
-  void prefix
-  return { useNative: false, resourcePath: key }
-}
-
-export function detectScope(path: PathSpec): SlackScope {
-  const prefix = mountPrefixOf(path.virtual, path.resourcePath)
-
-  if (path.pattern !== null && path.pattern !== '') {
-    let dirKey = stripSlashes(path.directory)
-    if (prefix !== '') {
-      const stripped = stripSlashes(prefix) + '/'
-      if (dirKey.startsWith(stripped)) {
-        dirKey = dirKey.slice(stripped.length)
-      }
-    }
-    const dirParts = dirKey !== '' ? dirKey.split('/') : []
-    const [dirRoot, dirEntry] = dirParts
-    if (
-      dirParts.length >= 2 &&
-      dirEntry !== undefined &&
-      (dirRoot === 'channels' || dirRoot === 'dms')
-    ) {
-      const [name, cid] = splitDirname(dirEntry)
-      return deepenedScope(dirParts, prefix, name, cid, dirRoot, dirKey, 'native')
-    }
-  }
-
-  const key = path.resourcePath
-  if (key === '') {
-    return { useNative: true, resourcePath: '/' }
-  }
-
-  const parts = key.split('/')
-  const [root, second] = parts
-  if (root === undefined) {
-    return { useNative: false, resourcePath: key }
-  }
-
-  if (root === 'users') {
-    return { useNative: false, resourcePath: key }
-  }
-
-  if (root !== 'channels' && root !== 'dms') {
-    return { useNative: false, resourcePath: key }
-  }
-
-  if (parts.length === 1) {
-    return { useNative: true, container: root, resourcePath: key }
-  }
-
-  if (second === undefined) {
-    return { useNative: false, resourcePath: key }
-  }
-
-  const [name, cid] = splitDirname(second)
-  return deepenedScope(parts, prefix, name, cid, root, key, 'native')
 }

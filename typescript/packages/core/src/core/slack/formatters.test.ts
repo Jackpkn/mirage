@@ -22,32 +22,28 @@ import {
   formatGrepResults,
   userFilename,
 } from './formatters.ts'
-import type { SlackScope } from './scope.ts'
+import type { SearchTarget } from './scope.ts'
 
 const ENC = new TextEncoder()
 
 describe('buildQuery', () => {
   it('returns pattern unchanged when no container', () => {
-    const scope: SlackScope = { useNative: true, resourcePath: '/' }
+    const scope: SearchTarget = {}
     expect(buildQuery('hi', scope)).toBe('hi')
   })
 
   it('prefixes channels with in:#name', () => {
-    const scope: SlackScope = {
-      useNative: true,
+    const scope: SearchTarget = {
       container: 'channels',
       channelName: 'general',
-      resourcePath: 'channels/general__C1',
     }
     expect(buildQuery('hi', scope)).toBe('in:#general hi')
   })
 
   it('prefixes dms with in:@name', () => {
-    const scope: SlackScope = {
-      useNative: true,
+    const scope: SearchTarget = {
       container: 'dms',
       channelName: 'alice',
-      resourcePath: 'dms/alice__D1',
     }
     expect(buildQuery('hi', scope)).toBe('in:@alice hi')
   })
@@ -69,12 +65,10 @@ describe('formatGrepResults', () => {
         },
       }),
     )
-    const scope: SlackScope = {
-      useNative: true,
+    const scope: SearchTarget = {
       container: 'channels',
       channelName: 'general',
       channelId: 'C1',
-      resourcePath: 'channels/general__C1',
     }
     const lines = formatGrepResults(raw, scope, '/mnt/slack')
     expect(lines).toHaveLength(1)
@@ -89,12 +83,10 @@ describe('formatGrepResults', () => {
         messages: { matches: [{ ts: '1700000000.0', text: 'hi', username: 'alice' }] },
       }),
     )
-    const scope: SlackScope = {
-      useNative: true,
+    const scope: SearchTarget = {
       container: 'channels',
       channelName: 'general',
       channelId: 'C1',
-      resourcePath: 'channels/general__C1',
     }
     const lines = formatGrepResults(raw, scope, '/mnt/slack')
     expect(lines[0]).toContain('/channels/general__C1/')
@@ -103,7 +95,7 @@ describe('formatGrepResults', () => {
 
   it('returns empty when no matches', () => {
     const raw = ENC.encode(JSON.stringify({ messages: { matches: [] } }))
-    const scope: SlackScope = { useNative: true, resourcePath: '/' }
+    const scope: SearchTarget = {}
     expect(formatGrepResults(raw, scope, '/mnt/slack')).toEqual([])
   })
 
@@ -115,12 +107,10 @@ describe('formatGrepResults', () => {
         },
       }),
     )
-    const scope: SlackScope = {
-      useNative: true,
+    const scope: SearchTarget = {
       container: 'channels',
       channelName: 'general',
       channelId: 'C1',
-      resourcePath: 'channels/general__C1',
     }
     const lines = formatGrepResults(raw, scope, '/mnt/slack')
     expect(lines[0]).toContain('[U1] a b c')
@@ -157,12 +147,10 @@ describe('formatFileGrepResults', () => {
         },
       }),
     )
-    const scope: SlackScope = {
-      useNative: true,
+    const scope: SearchTarget = {
       container: 'channels',
       channelName: 'general',
       channelId: 'C1',
-      resourcePath: 'channels/general__C1',
     }
     const lines = formatFileGrepResults(raw, scope, '/mnt/slack')
     expect(lines).toHaveLength(2)
@@ -178,7 +166,7 @@ describe('formatFileGrepResults', () => {
         files: { matches: [{ id: 'F1', name: 'x.txt', timestamp: 1 }] },
       }),
     )
-    const scope: SlackScope = { useNative: true, resourcePath: '/' }
+    const scope: SearchTarget = {}
     expect(formatFileGrepResults(raw, scope, '/mnt/slack')).toEqual([])
   })
 })

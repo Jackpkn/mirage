@@ -12,79 +12,52 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import type { IndexCacheStore } from '@struktoai/mirage-core/cache/index/store'
-import { FileStat, FileType, PathSpec } from '@struktoai/mirage-core/types'
-import { enoent } from '@struktoai/mirage-core/utils/errors'
+import type { IndexEntry } from '@struktoai/mirage-core/cache/index/config'
+import { makeStat } from '@struktoai/mirage-core/core/hierarchy/stat'
+import type { ScopeMatch } from '@struktoai/mirage-core/core/hierarchy/scope'
+import type { PathSpec } from '@struktoai/mirage-core/types'
+import { FileStat, FileType } from '@struktoai/mirage-core/types'
 import { guessType } from '@struktoai/mirage-core/utils/filetype'
-import { mountKey, mountPrefixOf } from '@struktoai/mirage-core/utils/key_prefix'
 import type { EmailAccessor } from '../../accessor/email.ts'
-import { listFolders } from './folders.ts'
 import { readdir } from './readdir.ts'
+import { detectScope } from './scope.ts'
 
-export async function stat(
-  accessor: EmailAccessor,
-  path: PathSpec,
-  index?: IndexCacheStore,
-): Promise<FileStat> {
-  const prefix = mountPrefixOf(path.virtual, path.resourcePath)
-  const key = path.resourcePath
-  if (key === '') return new FileStat({ name: '/', type: FileType.DIRECTORY })
-
-  if (index === undefined) throw enoent(path.virtual)
-  const virtualKey = prefix !== '' ? `${prefix}/${key}` : `/${key}`
-  let result = await index.get(virtualKey)
-  if (result.entry === undefined || result.entry === null) {
-    if (!key.includes('/')) {
-      const folders = await listFolders(accessor)
-      if (folders.includes(key)) return new FileStat({ name: key, type: FileType.DIRECTORY })
-      throw enoent(path.virtual)
-    }
-    // Cold index: populate by listing the parent, mirroring the python
-    // backend's stat fallback.
-    const parentVirtual = virtualKey.slice(0, virtualKey.lastIndexOf('/')) || '/'
-    try {
-      await readdir(
-        accessor,
-        new PathSpec({
-          virtual: parentVirtual,
-          directory: parentVirtual,
-          resolved: false,
-          resourcePath: mountKey(parentVirtual, prefix),
-        }),
-        index,
-      )
-    } catch {
-      throw enoent(path.virtual)
-    }
-    result = await index.get(virtualKey)
-    if (result.entry === undefined || result.entry === null) throw enoent(path.virtual)
-  }
-  const rt = result.entry.resourceType
-  const vfsName = result.entry.vfsName !== '' ? result.entry.vfsName : result.entry.name
-  if (rt === 'email/folder') return new FileStat({ name: vfsName, type: FileType.DIRECTORY })
-  if (rt === 'email/date') return new FileStat({ name: vfsName, type: FileType.DIRECTORY })
-  if (rt === 'email/message') {
-    return new FileStat({
-      name: vfsName,
-      type: FileType.JSON,
-      size: result.entry.size,
-      extra: { uid: result.entry.id },
-    })
-  }
-  if (rt === 'email/attachment_dir') {
-    return new FileStat({
-      name: vfsName,
-      type: FileType.DIRECTORY,
-      extra: { uid: result.entry.id },
-    })
-  }
-  if (rt === 'email/attachment') {
-    return new FileStat({
-      name: vfsName,
-      type: guessType(vfsName),
-      size: result.entry.size,
-      extra: { attachment_id: result.entry.id },
-    })
-  }
-  return new FileStat({ name: vfsName, type: FileType.JSON, extra: { uid: result.entry.id } })
+function dirStat(_match: ScopeMatch, _path: PathSpec, entry: IndexEntry): FileStat {
+  return new FileStat({ name: entry.vfsName, type: FileType.DIRECTORY })
 }
+
+function messageStat(_match: ScopeMatch, _path: PathSpec, entry: IndexEntry): FileStat {
+  return new FileStat({
+    name: entry.vfsName,
+    type: FileType.JSON,
+    size: entry.size,
+    extra: { uid: entry.id },
+  })
+}
+
+function attachmentDirStat(_match: ScopeMatch, _path: PathSpec, entry: IndexEntry): FileStat {
+  return new FileStat({
+    name: entry.vfsName,
+    type: FileType.DIRECTORY,
+    extra: { uid: entry.id },
+  })
+}
+
+function attachmentStat(_match: ScopeMatch, _path: PathSpec, entry: IndexEntry): FileStat {
+  return new FileStat({
+    name: entry.vfsName,
+    type: guessType(entry.vfsName),
+    size: entry.size,
+    extra: { attachment_id: entry.id },
+  })
+}
+
+export const stat = makeStat<EmailAccessor>(detectScope, readdir, {
+  entryStats: {
+    folder: dirStat,
+    day: dirStat,
+    message: messageStat,
+    attachment_dir: attachmentDirStat,
+    attachment: attachmentStat,
+  },
+})

@@ -32,7 +32,7 @@ from mirage.core.slack.formatters import (build_query,
                                           format_grep_results)
 from mirage.core.slack.read import read as slack_read
 from mirage.core.slack.readdir import readdir as _readdir
-from mirage.core.slack.scope import detect_scope
+from mirage.core.slack.scope import NATIVE_KINDS, detect_scope, search_target
 from mirage.core.slack.search import (search_available, search_files,
                                       search_messages)
 from mirage.core.slack.stat import stat as _stat
@@ -55,19 +55,15 @@ async def rg(accessor: SlackAccessor, paths: list[PathSpec], texts: list[str],
     # operand with no reshaping flag may be answered by the search API.
     operand = pushdown_operand(paths, opts.flags, pattern_str, SEARCH_HONORED)
     if operand is not None and fl.as_bool("w"):
-        scope = detect_scope(operand)
-        if (scope.use_native and scope.target != "files"
-                and search_available(accessor.config)):
+        match = detect_scope(operand)
+        if match.kind in NATIVE_KINDS and search_available(accessor.config):
+            target = search_target(match)
             file_prefix = mount_prefix_of(operand.virtual,
                                           operand.resource_path) or ""
-            query = build_query(pattern_str, scope)
-            # Every scope that reaches here searches messages: the guard
-            # above ruled out the files leaf, and a "messages" target is a
-            # chat.jsonl leaf, which is not use_native. What is left is the
-            # channel, container and root scopes and the date directory --
-            # and those carry files too, so only the files half stays
-            # conditional.
-            do_files = scope.target in (None, "date")
+            query = build_query(pattern_str, target)
+            # Every kind that reaches here searches messages, and each of
+            # them (the root, the containers, a channel, a date dir)
+            # carries files too, so both halves run.
             native_lines: list[str] = []
             err: Exception | None = None
             try:
@@ -75,13 +71,12 @@ async def rg(accessor: SlackAccessor, paths: list[PathSpec], texts: list[str],
                                             query,
                                             count=SEARCH_MAX_RESULTS)
                 native_lines.extend(
-                    format_grep_results(raw, scope, file_prefix))
-                if do_files:
-                    raw_f = await search_files(accessor.config,
-                                               query,
-                                               count=SEARCH_MAX_RESULTS)
-                    native_lines.extend(
-                        format_file_grep_results(raw_f, scope, file_prefix))
+                    format_grep_results(raw, target, file_prefix))
+                raw_f = await search_files(accessor.config,
+                                           query,
+                                           count=SEARCH_MAX_RESULTS)
+                native_lines.extend(
+                    format_file_grep_results(raw_f, target, file_prefix))
             except Exception as exc:
                 err = exc
             if err is None:

@@ -19,7 +19,7 @@ import pytest
 
 from mirage.core.slack.config import SlackConfig
 from mirage.core.slack.formatters import format_grep_results
-from mirage.core.slack.scope import SlackScope
+from mirage.core.slack.scope import SearchTarget
 from mirage.core.slack.search import search_messages
 
 
@@ -68,12 +68,10 @@ def test_format_grep_results_path_uses_chat_jsonl():
         },
     }
     raw = json.dumps(raw_payload).encode()
-    scope = SlackScope(
-        use_native=True,
+    scope = SearchTarget(
         container="channels",
         channel_name="general",
         channel_id="C001",
-        target="messages",
     )
     lines = format_grep_results(raw, scope, "/slack")
     assert len(lines) == 1

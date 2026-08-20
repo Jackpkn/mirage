@@ -15,7 +15,6 @@
 import type { TokenManager } from '../google/client.ts'
 import { decodeBody, extractHeader, getMessageRaw, listMessages } from './messages.ts'
 import { msgFilename } from './readdir.ts'
-import type { GmailScope } from './scope.ts'
 
 const EXCERPT_WINDOW = 120
 const EXCERPT_MAX = 240
@@ -106,13 +105,13 @@ export async function searchMessages(
 
 export function formatGrepResults(
   rows: GmailSearchRow[],
-  scope: GmailScope,
+  labelName: string | null,
   prefix: string,
   pattern = '',
 ): string[] {
   const lines: string[] = []
   for (const row of rows) {
-    const label = row.label !== '' ? row.label : (scope.labelName ?? 'INBOX')
+    const label = row.label !== '' ? row.label : (labelName ?? 'INBOX')
     const date = row.date
     const mid = row.id
     // The same builder readdir names the file with, not a second spelling of
