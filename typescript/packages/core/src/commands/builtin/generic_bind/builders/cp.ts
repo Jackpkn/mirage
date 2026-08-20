@@ -15,7 +15,8 @@
 import type { IndexCacheStore } from '../../../../cache/index/store.ts'
 import type { StatOverlay } from '../../../../ops/types.ts'
 import type { Accessor } from '../../../../accessor/base.ts'
-import type { NativeCopy, PathSpec, StatFn } from '../../../../types.ts'
+import type { NativeCopy, PathSpec, PrimitiveCopy, StatFn } from '../../../../types.ts'
+import { pathRulesActive } from '../../../../context/session_context.ts'
 import { walkFind } from '../../../../core/generic/find.ts'
 import { cpGeneric, parseCpFlags } from '../../generic/cp.ts'
 import type { Builder, CommandIO } from '../adapter.ts'
@@ -62,14 +63,28 @@ export const CP_BUILDER: Builder = {
               idx,
             )
     const parsed = parseCpFlags(new FlagView(opts.flags, specOf('cp')))
-    const strategy: NativeCopy = {
-      copy: (src: PathSpec, target: PathSpec) => copy(accessor, src, target),
-      find: findFn,
-      ...(dirCopy === undefined
-        ? {}
-        : { dirCopy: (src: PathSpec, target: PathSpec) => dirCopy(accessor, src, target) }),
-      ...(mkdir === undefined ? {} : { mkdir: (p: PathSpec) => mkdir(accessor, p) }),
-    }
+    // A native copy moves a tree in one backend call and a native find
+    // lists it, neither of which passes an entry through the guard the
+    // way a read does; while a path rule scopes cp, the primitive walk
+    // copies entry by entry (the cross-mount relay's own path), which is
+    // also where GNU's per-entry refusals are worded.
+    const { write } = ops
+    const strategy: NativeCopy | PrimitiveCopy =
+      pathRulesActive() && write !== undefined && mkdir !== undefined
+        ? {
+            readBytes: (p: PathSpec) => ops.readBytes(accessor, p, idx),
+            write: (p: PathSpec, data: Uint8Array) => write(accessor, p, data),
+            mkdir: (p: PathSpec) => mkdir(accessor, p),
+            readdir: (p: PathSpec) => ops.readdir(accessor, p, idx),
+          }
+        : {
+            copy: (src: PathSpec, target: PathSpec) => copy(accessor, src, target),
+            find: findFn,
+            ...(dirCopy === undefined
+              ? {}
+              : { dirCopy: (src: PathSpec, target: PathSpec) => dirCopy(accessor, src, target) }),
+            ...(mkdir === undefined ? {} : { mkdir: (p: PathSpec) => mkdir(accessor, p) }),
+          }
     return cpGeneric(
       paths,
       overlayableStat(ops, accessor, idx, opts.ns?.statOverlay),

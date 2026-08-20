@@ -26,7 +26,8 @@ import harness  # noqa: E402
 from mirage.types import ConsistencyPolicy  # noqa: E402
 from mirage.workspace.session import SessionProfile  # noqa: E402
 
-PROFILE_KEYS = frozenset({"extends", "cwd", "env", "mounts", "paths", "vars"})
+PROFILE_KEYS = frozenset(
+    {"extends", "cwd", "env", "mounts", "paths", "vars", "commands"})
 
 HOST = "python"
 

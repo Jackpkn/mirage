@@ -403,8 +403,9 @@ permissions:
   commands:
     deny:
       - reason: production data is protected
-        commands: [rm, mv]
-        paths: ["/repo/prod/*"]
+        commands:
+          rm: ["/repo/prod/*"]
+          mv: ["/repo/prod/*"]
       - python3
   paths:
     hide: ["/scratch/finance"]
@@ -425,7 +426,10 @@ profiles:
     assert kwargs["permissions"] == WorkspacePermissions(
         commands=CommandsBlock(deny=(
             CommandRule(reason="production data is protected",
-                        commands=("rm", "mv"),
+                        commands=("rm", ),
+                        paths=("/repo/prod/*", )),
+            CommandRule(reason="production data is protected",
+                        commands=("mv", ),
                         paths=("/repo/prod/*", )),
             CommandRule(reason=DEFAULT_DENY_REASON, commands=("python3", )),
         )),
@@ -464,8 +468,8 @@ permissions:
   commands:
     deny:
       - reason: no deletes in the repo
-        commands: [rm]
-        paths: ["/repo"]
+        commands:
+          rm: ["/repo"]
 profiles:
   reviewer:
     cwd: /repo
@@ -513,7 +517,7 @@ def test_unknown_profile_fields_fail_loud(tmp_path):
                     "resource": "ram",
                     "permissions": {
                         "commands": {
-                            "deny": ["rm"]
+                            "allow": ["ls"]
                         }
                     }
                 }

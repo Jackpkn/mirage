@@ -16,7 +16,7 @@ from contextvars import ContextVar, Token
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from mirage.types import MountMode, weaker_mode
+from mirage.types import EntryGate, MountMode, PathSpec, weaker_mode
 from mirage.utils.hidden import path_hidden
 
 if TYPE_CHECKING:
@@ -159,6 +159,26 @@ def dotglob_active() -> bool:
     return sess is not None and bool(sess.shopts.get("dotglob"))
 
 
+def session_path_allowed(sess: "Session", virtual: str) -> bool:
+    """Whether a session's hidden-paths specs, its own and the
+    workspace-bound one, leave this path visible.
+
+    The explicit-session form of ``path_allowed``, for a door that
+    holds the session rather than running under it: the admission
+    gate drops a hidden operand before any policy reads it, so a rule
+    or an ask never names a path the session cannot see.
+
+    Args:
+        sess (Session): the session asking.
+        virtual (str): absolute virtual path.
+    """
+    if sess.hidden_paths is not None and path_hidden(sess.hidden_paths,
+                                                     virtual):
+        return False
+    return not (sess.bound_hidden is not None
+                and path_hidden(sess.bound_hidden, virtual))
+
+
 def path_allowed(virtual: str) -> bool:
     """Whether the current session's hidden-paths specs, its own and
     the workspace-bound one, leave this path visible.
@@ -173,13 +193,99 @@ def path_allowed(virtual: str) -> bool:
         virtual (str): absolute virtual path.
     """
     sess = get_current_session()
-    if sess is None:
-        return True
-    if sess.hidden_paths is not None and path_hidden(sess.hidden_paths,
-                                                     virtual):
-        return False
-    return not (sess.bound_hidden is not None
-                and path_hidden(sess.bound_hidden, virtual))
+    return sess is None or session_path_allowed(sess, virtual)
+
+
+_current_admission: ContextVar["EntryGate | None"] = ContextVar(
+    "mirage_current_admission",
+    default=None,
+)
+
+
+def set_admission(gate: "EntryGate") -> Token[Any]:
+    """Bind the admitted command's entry gate to the current async
+    context, for the run of that one command.
+
+    Set by the dispatcher once the gate let the command through and
+    reset when the command returns, so a nested line (``xargs``,
+    ``find -exec``, ``eval``) binds its own and the outer command gets
+    its gate back, and a pipeline stage in its own task never sees a
+    sibling's.
+
+    Args:
+        gate (EntryGate): the admitted command's gate.
+    """
+    return _current_admission.set(gate)
+
+
+def reset_admission(token: Token[Any]) -> None:
+    """Restore the previous admission binding."""
+    _current_admission.reset(token)
+
+
+def get_admission() -> "EntryGate | None":
+    """The entry gate of the command running in this context, None
+    when no admitted command is bound (a command constructed outside
+    the dispatcher, or a line no gate judged)."""
+    return _current_admission.get()
+
+
+def path_rules_active() -> bool:
+    """Whether a path rule in force reads the running command's paths.
+
+    The twin of ``hidden_paths_active`` for the rule arms: a backend's
+    native find or du classifies the raw tree, so an entry a rule
+    refuses would be listed or summed past the gate; the readdir walk
+    passes every entry through it instead. False when no admitted
+    command is bound.
+
+    Args:
+        None
+    """
+    gate = get_admission()
+    return gate is not None and gate.scoped
+
+
+_redirect_paths: ContextVar[tuple[int, tuple[PathSpec, ...]]
+                            | None] = (ContextVar("mirage_redirect_paths",
+                                                  default=None))
+
+
+def set_redirect_paths(node_id: int, paths: tuple[PathSpec,
+                                                  ...]) -> Token[Any]:
+    """Bind a statement's expanded redirect targets to the command node
+    they belong to, for that node's run.
+
+    The redirect layer expands the targets before the command executes
+    (a ``$()`` in one runs exactly once there), so the admission gate
+    deep in command dispatch cannot re-derive them; it reads them here
+    instead. Keyed by the tree-sitter node id so a nested line expanded
+    on the way to the command (a ``$()`` operand, an ``eval``) never
+    inherits the outer statement's targets.
+
+    Args:
+        node_id (int): the command node the targets belong to.
+        paths (tuple[PathSpec, ...]): the expanded targets.
+    """
+    return _redirect_paths.set((node_id, paths))
+
+
+def reset_redirect_paths(token: Token[Any]) -> None:
+    """Restore the previous redirect-target binding."""
+    _redirect_paths.reset(token)
+
+
+def redirect_paths_for(node_id: int) -> tuple[PathSpec, ...]:
+    """The redirect targets bound to this command node, empty for any
+    other node or when none are bound.
+
+    Args:
+        node_id (int): the command node about to be admitted.
+    """
+    bound = _redirect_paths.get()
+    if bound is None or bound[0] != node_id:
+        return ()
+    return bound[1]
 
 
 def mount_allowed(mount_prefix: str) -> bool:

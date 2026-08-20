@@ -337,6 +337,10 @@ async def test_ls_recursive_unreadable_subdir_is_a_minor_problem():
     assert io.exit_code == LS_MINOR_PROBLEM
     assert b"/dir:" in output
     assert b"a.txt" in output
+    # GNU words a directory it may not read as one it could not open,
+    # not as one it could not reach.
+    assert io.stderr == (b"ls: cannot open directory '/dir/sub': "
+                         b"Permission denied\n")
 
 
 @pytest.mark.asyncio

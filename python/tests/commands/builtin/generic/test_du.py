@@ -854,3 +854,22 @@ async def test_du_still_reports_absence_when_the_descendant_is_ungranted():
         "du: cannot access '/empty': No such file or directory\n")
     assert result.exit_code == 1
     await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_du_names_a_directory_the_walk_could_not_open():
+    # GNU: "du: cannot read directory 'X': Permission denied", the rest
+    # still counted, exit 1; spelled as the operand was typed, after the
+    # unreadable-operand lines, which are known before any walk.
+    compute_size, compute_entries = _make_backend({"/t/open/o": 2})
+    out = await du([_spec("/d/t", "t", raw_path="t")],
+                   compute_size=compute_size,
+                   compute_entries=compute_entries,
+                   flags=DuFlags(),
+                   missing=(("gone", "No such file or directory"), ),
+                   unreadable=lambda: ["/d/t/sealed"])
+    assert out.stdout == b"2\tt/open\n2\tt\n"
+    assert out.stderr == (
+        b"du: cannot access 'gone': No such file or directory\n"
+        b"du: cannot read directory 't/sealed': Permission denied\n")
+    assert out.exit_code == 1

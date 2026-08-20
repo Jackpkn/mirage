@@ -1,0 +1,185 @@
+{
+  "cases": [
+    {
+      "id": "walks_prep",
+      "seq": 923092,
+      "targets": [
+        "ram-commands"
+      ],
+      "command": "mkdir -p /scratch/wk/sealed/deep /scratch/wk/open /scratch/locked && echo s > /scratch/wk/sealed/s && echo d > /scratch/wk/sealed/deep/d && echo o > /scratch/wk/open/o && echo y > /scratch/locked/y",
+      "expect": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "grep_r_below_the_operand_meets_the_rule_guard",
+      "seq": 923093,
+      "targets": [
+        "ram-commands"
+      ],
+      "session": "frozen",
+      "command": "grep -r . /scratch/wk",
+      "expect": {
+        "exit": 2,
+        "stdout": "/scratch/wk/open/o:o\n",
+        "stderr": "grep: /scratch/wk/sealed: Permission denied\n"
+      }
+    },
+    {
+      "id": "grep_r_into_a_children_scope",
+      "seq": 923094,
+      "targets": [
+        "ram-commands"
+      ],
+      "session": "frozen",
+      "command": "grep -r y /scratch/locked",
+      "expect": {
+        "exit": 2,
+        "stdout": "",
+        "stderr": "grep: /scratch/locked/y: Permission denied\n"
+      }
+    },
+    {
+      "id": "ls_R_marks_the_directory_it_may_not_open",
+      "seq": 923095,
+      "targets": [
+        "ram-commands"
+      ],
+      "session": "frozen",
+      "command": "ls -R /scratch/wk",
+      "expect": {
+        "exit": 1,
+        "stdout": "/scratch/wk:\nopen\nsealed\n\n/scratch/wk/open:\no\n",
+        "stderr": "ls: cannot open directory '/scratch/wk/sealed': Permission denied\n"
+      }
+    },
+    {
+      "id": "find_names_the_sealed_directory_and_exits_1",
+      "seq": 923096,
+      "targets": [
+        "ram-commands"
+      ],
+      "session": "frozen",
+      "command": "find /scratch/wk",
+      "expect": {
+        "exit": 1,
+        "stdout": "/scratch/wk\n/scratch/wk/open\n/scratch/wk/open/o\n/scratch/wk/sealed\n",
+        "stderr": "find: '/scratch/wk/sealed': Permission denied\n"
+      }
+    },
+    {
+      "id": "du_counts_what_it_could_and_exits_1",
+      "seq": 923097,
+      "targets": [
+        "ram-commands"
+      ],
+      "session": "frozen",
+      "command": "du -a /scratch/wk",
+      "expect": {
+        "exit": 1,
+        "stdout": "2\t/scratch/wk/open/o\n2\t/scratch/wk/open\n2\t/scratch/wk\n",
+        "stderr": "du: cannot read directory '/scratch/wk/sealed': Permission denied\n"
+      }
+    },
+    {
+      "id": "cp_r_copies_the_rest_and_reports_the_refusal",
+      "seq": 923098,
+      "targets": [
+        "ram-commands"
+      ],
+      "session": "frozen",
+      "command": "cp -r /scratch/wk /scratch/wkcopy",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "cp: cannot access '/scratch/wk/sealed': Permission denied\n"
+      }
+    },
+    {
+      "id": "cp_r_left_the_sealed_contents_behind",
+      "seq": 923099,
+      "targets": [
+        "ram-commands"
+      ],
+      "session": "frozen",
+      "command": "find /scratch/wkcopy",
+      "expect": {
+        "exit": 0,
+        "stdout": "/scratch/wkcopy\n/scratch/wkcopy/open\n/scratch/wkcopy/open/o\n/scratch/wkcopy/sealed\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "tar_keeps_the_entry_and_fails_the_run",
+      "seq": 923100,
+      "targets": [
+        "ram-commands"
+      ],
+      "session": "frozen",
+      "command": "tar -cf /scratch/wk.tar /scratch/wk",
+      "expect": {
+        "exit": 2,
+        "stdout": "",
+        "stderr": "tar: Removing leading `/' from member names\ntar: /scratch/wk/sealed: Cannot open: Permission denied\ntar: Exiting with failure status due to previous errors\n"
+      }
+    },
+    {
+      "id": "tar_wrote_what_it_could",
+      "seq": 923101,
+      "targets": [
+        "ram-commands"
+      ],
+      "session": "frozen",
+      "command": "tar -tf /scratch/wk.tar",
+      "expect": {
+        "exit": 0,
+        "stdout": "scratch/wk/\nscratch/wk/open/\nscratch/wk/open/o\nscratch/wk/sealed/\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "tree_marks_the_directory_inline_and_exits_2",
+      "seq": 923102,
+      "targets": [
+        "ram-commands"
+      ],
+      "session": "frozen",
+      "command": "tree /scratch/wk",
+      "expect": {
+        "exit": 2,
+        "stdout": "/scratch/wk\n|-- open\n|   `-- o\n`-- sealed  [error opening dir]\n\n3 directories, 1 file\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "naming_the_sealed_root_is_the_gates_refusal",
+      "seq": 923103,
+      "targets": [
+        "ram-commands"
+      ],
+      "session": "frozen",
+      "command": "test -d /scratch/wk/sealed && echo there",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "test: /scratch/wk/sealed: walled\n"
+      }
+    },
+    {
+      "id": "an_operand_in_the_scope_is_the_gates_refusal",
+      "seq": 923104,
+      "targets": [
+        "ram-commands"
+      ],
+      "session": "frozen",
+      "command": "cp /scratch/locked/y /scratch/ycopy",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "cp: /scratch/locked/y: frozen\n"
+      }
+    }
+  ]
+}

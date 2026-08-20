@@ -1,0 +1,108 @@
+{
+  "cases": [
+    {
+      "id": "cmd_prep",
+      "seq": 923001,
+      "targets": [
+        "ram-commands"
+      ],
+      "command": "mkdir -p /scratch/locked && echo y > /scratch/locked/y && touch /scratch/z",
+      "expect": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "cmd_unlisted_tool_is_not_a_command",
+      "seq": 923002,
+      "targets": [
+        "ram-commands"
+      ],
+      "command": "sort /scratch/z",
+      "expect": {
+        "exit": 127,
+        "stdout": "",
+        "stderr": "sort: command not found\n"
+      }
+    },
+    {
+      "id": "cmd_unlisted_tool_builtin_is_not_a_command",
+      "seq": 923003,
+      "targets": [
+        "ram-commands"
+      ],
+      "command": "history",
+      "expect": {
+        "exit": 127,
+        "stdout": "",
+        "stderr": "history: command not found\n"
+      }
+    },
+    {
+      "id": "cmd_enumerators_agree_with_dispatch",
+      "seq": 923004,
+      "targets": [
+        "ram-commands"
+      ],
+      "command": "type sort; echo $?; command -v sort; echo $?; which sort; echo $?",
+      "expect": {
+        "exit": 0,
+        "stdout": "1\n1\n1\n",
+        "stderr": "type: sort: not found\n"
+      }
+    },
+    {
+      "id": "cmd_man_lists_only_installed_tools",
+      "seq": 923005,
+      "targets": [
+        "ram-commands"
+      ],
+      "command": "man | grep -c -e '^- cat '; man | grep -c -e '^- sort '",
+      "expect": {
+        "exit": 1,
+        "stdout": "1\n0\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "cmd_man_has_no_page_for_a_hidden_tool",
+      "seq": 923006,
+      "targets": [
+        "ram-commands"
+      ],
+      "command": "man sort",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "man: no entry for sort\n"
+      }
+    },
+    {
+      "id": "cmd_grammar_and_functions_are_not_subjects",
+      "seq": 923007,
+      "targets": [
+        "ram-commands"
+      ],
+      "command": "cd /scratch && [ -f z ] && echo yes; f() { echo in-f; }; f",
+      "expect": {
+        "exit": 0,
+        "stdout": "yes\nin-f\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "cmd_listed_tool_runs",
+      "seq": 923008,
+      "targets": [
+        "ram-commands"
+      ],
+      "command": "cat /scratch/locked/y",
+      "expect": {
+        "exit": 0,
+        "stdout": "y\n",
+        "stderr": ""
+      }
+    }
+  ]
+}

@@ -36,7 +36,7 @@ import {
 class DenySecrets {
   preSession(ctx: SessionContext): Action | null {
     if (ctx.key.startsWith('SECRET')) {
-      return { kind: 'deny', message: 'SECRET_* refused by policy\n' }
+      return { kind: 'deny', reason: 'SECRET_* refused by policy' }
     }
     return null
   }
@@ -106,7 +106,7 @@ describe('sessionView', () => {
     class Capture {
       preSession(ctx: SessionContext): Action | null {
         seen.push(ctx.value)
-        if (ctx.value === 'admin') return { kind: 'deny', message: 'no admin\n' }
+        if (ctx.value === 'admin') return { kind: 'deny', reason: 'no admin' }
         return null
       }
     }

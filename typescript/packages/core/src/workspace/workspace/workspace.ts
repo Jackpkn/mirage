@@ -30,7 +30,8 @@ import type { CLISpec } from '../../commands/cli/types.ts'
 import { runWithTimeout } from '../../commands/builtin/utils/limit.ts'
 import type { CLIInstall } from '../cli/types.ts'
 import { resolveLimit } from '../../policy/index.ts'
-import { RulePolicy } from '../../policy/rule.ts'
+import { PermissionsPolicy } from '../../policy/builtin/permissions.ts'
+import { Approvals } from '../../policy/approvals.ts'
 import { JobTable } from '../../shell/job_table/index.ts'
 import type { ShellParser } from '../../shell/parse.ts'
 import { buildFileCache } from './cache.ts'
@@ -74,6 +75,7 @@ import type { Session } from '../session/session.ts'
 import type { SessionProfile, WorkspacePermissions } from '../session/permissions.ts'
 import {
   applyProfile,
+  boundCommands,
   boundHidden,
   compileProfile,
   inherit,
@@ -191,20 +193,22 @@ export class Workspace {
     // What the workspace and its mounts hide from every session,
     // stamped onto the default session now and onto every session
     // created or hydrated later.
-    this.sessionManager.boundHidden = boundHidden(
-      this.permissions,
-      new Map(Object.entries(options.mountPermissions ?? {})),
-    )
+    const mountPermissions = new Map(Object.entries(options.mountPermissions ?? {}))
+    this.sessionManager.boundHidden = boundHidden(this.permissions, mountPermissions)
+    this.sessionManager.boundCommands = boundCommands(this.permissions, mountPermissions)
     // Admission policies, consulted in registration order after the
-    // built-ins the registry seeds: the document's deny rules first
-    // (compiled by the internal RulePolicy), then Policy instances,
-    // then anything added later through ws.policies.add(). The
-    // runtime policy (policy option) is the line-level counterpart
+    // built-ins the registry seeds: the document's command tiers
+    // (PermissionsPolicy, reading each session's compiled layers from
+    // the manager by the id the door puts in the context), then Policy
+    // instances, then anything added later through ws.policies.add().
+    // The runtime policy (policy option) is the line-level counterpart
     // until it is absorbed as a hook.
-    for (const rule of this.permissions?.commands.deny ?? []) {
-      this.registry.policies.add(new RulePolicy(rule))
-    }
+    this.registry.policies.add(new PermissionsPolicy(this.sessionManager))
     for (const entry of options.policies ?? []) this.registry.policies.add(entry)
+    // The approval door an Ask is taken to (design 3.9): grants live on
+    // the sessions, the host answers through `approver` (the recording
+    // one when none is wired) and reads `ws.approvals`.
+    this.registry.approvals = new Approvals(this.sessionManager, options.approver ?? null)
     // Installed CLIs, fully separate from mounts: a spec name resolves
     // against the named registry and every entry installs through the
     // same fail-loud path as registerCli.
@@ -485,6 +489,15 @@ export class Workspace {
    */
   get policies(): Policies {
     return this.registry.policies
+  }
+
+  /**
+   * The host's door on asked commands: `list()` the requests waiting,
+   * `grant(id, scope)` or `deny(id)` one, and the agent's retry passes
+   * or is refused.
+   */
+  get approvals(): Approvals {
+    return this.registry.approvals
   }
 
   get ops(): OpsRegistry {

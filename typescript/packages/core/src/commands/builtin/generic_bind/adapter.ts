@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import type { Accessor } from '../../../accessor/base.ts'
-import { pathAllowed } from '../../../context/session_context.ts'
+import { getAdmission, pathAllowed } from '../../../context/session_context.ts'
 import type { IndexCacheStore } from '../../../cache/index/store.ts'
 import type { StatOverlay } from '../../../ops/types.ts'
 import type { FindOptions } from '../../../resource/base.ts'
@@ -311,6 +311,144 @@ export function withHiddenGuard<A extends Accessor = Accessor>(ops: CommandIO<A>
     guarded.find = (accessor, path, options) => {
       refuseHidden(path, false)
       return fd(accessor, path, options)
+    }
+  }
+  return guarded
+}
+
+/** Ask the admitted command's gate about each path before a backend op
+ * runs (a rename or copy has two, and a refused destination is as much a
+ * refusal as a refused source). The gate throws at call time and the op's
+ * own return shape passes through untouched; with no gate bound (no
+ * admitted command in this context) the op runs as is. */
+function ruleCheck(...paths: readonly PathSpec[]): void {
+  const gate = getAdmission()
+  if (gate === null) return
+  for (const path of paths) gate.check(path.virtual)
+}
+
+/**
+ * Return `ops` whose content and mutation slots ask the admitted
+ * command's gate before touching a path.
+ *
+ * The rule arms' counterpart of `withHiddenGuard`, wrapped inside it so
+ * a hidden path still answers ENOENT before any rule can name it. The
+ * gate judged the line's operands; this is how a walk (`grep -r`, `find`,
+ * `du`, `cp -r`, `tar`) is held to the same rules on the entries it
+ * reaches below them. `stat` and `exists` stay unguarded, because deny
+ * means present and refused, not absent: a listing shows a refused
+ * entry's name and size, and the read of it is what fails, as GNU reports
+ * an unreadable file. `readdir` asks about the directory being listed,
+ * never filters its names. A backend's native `find`/`du` are not
+ * wrapped: the builders route to the readdir walk while a path rule
+ * scopes the command (`pathRulesActive`), so every entry passes through
+ * here.
+ */
+export function withRuleGuard<A extends Accessor = Accessor>(ops: CommandIO<A>): CommandIO<A> {
+  const guarded: CommandIO<A> = {
+    ...ops,
+    readdir: (accessor, path, index) => {
+      ruleCheck(path)
+      return ops.readdir(accessor, path, index)
+    },
+    readBytes: (accessor, path, index) => {
+      ruleCheck(path)
+      return ops.readBytes(accessor, path, index)
+    },
+    readStream: (accessor, path, index) => {
+      ruleCheck(path)
+      return ops.readStream(accessor, path, index)
+    },
+  }
+  const rr = ops.readRange
+  if (rr !== undefined) {
+    guarded.readRange = (accessor, path, index, offset, size) => {
+      ruleCheck(path)
+      return rr(accessor, path, index, offset, size)
+    }
+  }
+  const w = ops.write
+  if (w !== undefined) {
+    guarded.write = (accessor, path, data) => {
+      ruleCheck(path)
+      return w(accessor, path, data)
+    }
+  }
+  const mk = ops.mkdir
+  if (mk !== undefined) {
+    guarded.mkdir = (accessor, path, parents) => {
+      ruleCheck(path)
+      return mk(accessor, path, parents)
+    }
+  }
+  const ap = ops.append
+  if (ap !== undefined) {
+    guarded.append = (accessor, path, data) => {
+      ruleCheck(path)
+      return ap(accessor, path, data)
+    }
+  }
+  const cr = ops.create
+  if (cr !== undefined) {
+    guarded.create = (accessor, path) => {
+      ruleCheck(path)
+      return cr(accessor, path)
+    }
+  }
+  const ul = ops.unlink
+  if (ul !== undefined) {
+    guarded.unlink = (accessor, path) => {
+      ruleCheck(path)
+      return ul(accessor, path)
+    }
+  }
+  const rd = ops.rmdir
+  if (rd !== undefined) {
+    guarded.rmdir = (accessor, path) => {
+      ruleCheck(path)
+      return rd(accessor, path)
+    }
+  }
+  const rt = ops.rmR
+  if (rt !== undefined) {
+    guarded.rmR = (accessor, path) => {
+      ruleCheck(path)
+      return rt(accessor, path)
+    }
+  }
+  const tr = ops.truncate
+  if (tr !== undefined) {
+    guarded.truncate = (accessor, path, length) => {
+      ruleCheck(path)
+      return tr(accessor, path, length)
+    }
+  }
+  const sa = ops.setAttrs
+  if (sa !== undefined) {
+    guarded.setAttrs = (accessor: A, path: PathSpec, ...rest: unknown[]) => {
+      ruleCheck(path)
+      return sa(accessor, path, ...rest)
+    }
+  }
+  const rn = ops.rename
+  if (rn !== undefined) {
+    guarded.rename = (accessor, src, dst) => {
+      ruleCheck(src, dst)
+      return rn(accessor, src, dst)
+    }
+  }
+  const cp = ops.copy
+  if (cp !== undefined) {
+    guarded.copy = (accessor, src, dst) => {
+      ruleCheck(src, dst)
+      return cp(accessor, src, dst)
+    }
+  }
+  const dc = ops.dirCopy
+  if (dc !== undefined) {
+    guarded.dirCopy = (accessor, src, dst) => {
+      ruleCheck(src, dst)
+      return dc(accessor, src, dst)
     }
   }
   return guarded

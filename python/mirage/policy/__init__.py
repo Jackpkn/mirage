@@ -12,44 +12,73 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+from mirage.policy.approvals import Approvals, ask_rule
+from mirage.policy.approver import (Approver, CallbackApprover, RecordApprover,
+                                    request_id)
 from mirage.policy.base import Policy
 from mirage.policy.builtin import (DEFAULT_COMMAND_LIMITS, FALLBACK_LIMIT,
                                    MountRootPolicy, OutputCapPolicy,
-                                   resolve_across_mounts, resolve_limit,
-                                   resolve_producer)
+                                   PermissionsPolicy, resolve_across_mounts,
+                                   resolve_limit, resolve_producer)
+from mirage.policy.constants import (DEFAULT_ASK_REASON, DEFAULT_DENY_REASON,
+                                     POLICY_DENIED_EXIT)
 from mirage.policy.errors import PolicyDenied, PolicyError
 from mirage.policy.policies import (Policies, post_execute_gate, post_ops_gate,
-                                    pre_ops_gate, pre_session_gate)
-from mirage.policy.types import (DEFAULT_DENY_REASON, VALIDITY, Action,
-                                 CommandContext, CommandRule, Deny,
-                                 ExecuteResultContext, Limit, MountRootQuery,
-                                 OpsContext, OpsResultContext, SessionContext)
+                                    pre_ops_gate, pre_session_gate,
+                                    render_deny, render_pending)
+
+from mirage.policy.types import (  # isort: skip
+    VALIDITY, Action, ApprovalDecision, ApprovalRequest, Ask, CommandContext,
+    CommandRule, CommandsSpec, Deny, DenyScope, ExecuteResultContext, Grant,
+    GrantScope, Limit, MountRootQuery, OpsContext, OpsResultContext, Pending,
+    SessionCommandsQuery, SessionContext, SessionGrantsQuery)
 
 __all__ = [
     "Action",
+    "ApprovalDecision",
+    "ApprovalRequest",
+    "Approvals",
+    "Approver",
+    "Ask",
+    "CallbackApprover",
     "CommandContext",
     "CommandRule",
+    "CommandsSpec",
+    "DEFAULT_ASK_REASON",
     "DEFAULT_COMMAND_LIMITS",
     "DEFAULT_DENY_REASON",
     "Deny",
+    "DenyScope",
     "ExecuteResultContext",
     "FALLBACK_LIMIT",
+    "Grant",
+    "GrantScope",
     "Limit",
     "MountRootPolicy",
     "MountRootQuery",
     "OpsContext",
     "OpsResultContext",
     "OutputCapPolicy",
+    "POLICY_DENIED_EXIT",
+    "Pending",
+    "PermissionsPolicy",
     "Policies",
     "Policy",
     "PolicyDenied",
     "PolicyError",
+    "RecordApprover",
+    "SessionCommandsQuery",
     "SessionContext",
+    "SessionGrantsQuery",
     "VALIDITY",
+    "ask_rule",
     "post_execute_gate",
     "post_ops_gate",
     "pre_ops_gate",
     "pre_session_gate",
+    "render_deny",
+    "render_pending",
+    "request_id",
     "resolve_across_mounts",
     "resolve_producer",
     "resolve_limit",

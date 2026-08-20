@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { describe, expect, it } from 'vitest'
-import { classifyPaths, classifyVars, isGlob, pathHidden, varHidden } from './hidden.ts'
+import { classifyPaths, classifyVars, isGlob, pathCovers, pathHidden, varHidden } from './hidden.ts'
 
 describe('pathHidden', () => {
   it('null and empty specs hide nothing', () => {
@@ -119,5 +119,25 @@ describe('classifyPaths / classifyVars', () => {
     expect(pathHidden(spec, '/a/b.key/c')).toBe(true)
     expect(pathHidden(spec, '/repo/docs/x/y')).toBe(true)
     expect(pathHidden(spec, '/repo/docsx')).toBe(false)
+  })
+})
+
+describe('pathCovers', () => {
+  it('is the directory holding the scope or an ancestor', () => {
+    const spec = { paths: ['/s3/secrets'], patterns: ['/repo/docs/*', '*.pem'] }
+    // An exact entry is covered by itself and by every ancestor; an
+    // anchored pattern by its fixed head and that head's ancestors.
+    for (const virtual of ['/s3/secrets', '/s3', '/', '/repo/docs', '/repo']) {
+      expect(pathCovers(spec, virtual)).toBe(true)
+    }
+    for (const virtual of ['/s3/secrets/a', '/s3/other', '/repo/docs/x', '/x']) {
+      expect(pathCovers(spec, virtual)).toBe(false)
+    }
+    // Without ancestors only the holding directory counts (a destination).
+    expect(pathCovers(spec, '/repo/docs', false)).toBe(true)
+    expect(pathCovers(spec, '/repo', false)).toBe(false)
+    // A component pattern names no place, so nothing is covered by it.
+    expect(pathCovers({ paths: [], patterns: ['*.pem'] }, '/x')).toBe(false)
+    expect(pathCovers(null, '/')).toBe(false)
   })
 })

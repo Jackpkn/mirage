@@ -44,6 +44,7 @@ import {
   type RunResult,
   type RuntimeEntry,
 } from "@struktoai/mirage-node";
+import { parseWorkspacePermissions } from "@struktoai/mirage-core/workspace/session/permissions";
 
 const HOST = "typescript";
 const SUITE_DIR = dirname(fileURLToPath(import.meta.url));
@@ -102,6 +103,7 @@ interface World {
   runtimes?: (string | Record<string, unknown>)[];
   policy?: string;
   policies?: PolicySpec[];
+  permissions?: Record<string, unknown>;
   mounts?: Record<string, MountSpecJson>;
   clis?: Record<string, CliSpecJson>;
 }
@@ -110,7 +112,7 @@ interface PolicySpec {
   name: string;
   command?: string;
   flag?: string;
-  message?: string;
+  reason?: string;
   prefix?: string;
   suffix?: string;
   marker?: string;
@@ -163,7 +165,7 @@ class DenyFlag implements Policy {
   }
   preCommand(ctx: CommandContext): Action | null {
     if (ctx.command === this.spec.command && ctx.argv.includes(this.spec.flag ?? "")) {
-      return { kind: "deny", message: this.spec.message ?? "" };
+      return { kind: "deny", reason: this.spec.reason ?? "" };
     }
     return null;
   }
@@ -176,7 +178,7 @@ class LockWrites implements Policy {
   }
   preOps(ctx: OpsContext): Action | null {
     if (ctx.write && ctx.path.virtual.startsWith(this.prefix)) {
-      return { kind: "deny", message: "locked\n" };
+      return { kind: "deny", reason: "locked" };
     }
     return null;
   }
@@ -189,7 +191,7 @@ class SealReads implements Policy {
   }
   preOps(ctx: OpsContext): Action | null {
     if (!ctx.write && ctx.path.virtual.endsWith(this.suffix)) {
-      return { kind: "deny", message: "sealed\n" };
+      return { kind: "deny", reason: "sealed" };
     }
     return null;
   }
@@ -203,7 +205,7 @@ class RedactReads implements Policy {
   postOps(ctx: OpsResultContext): Action | null {
     const data = ctx.result instanceof Uint8Array ? DEC.decode(ctx.result) : null;
     if (ctx.op === "read" && data !== null && data.includes(this.marker)) {
-      return { kind: "deny", message: "redacted\n" };
+      return { kind: "deny", reason: "redacted" };
     }
     return null;
   }
@@ -395,6 +397,9 @@ async function buildWorkspace(world: World, runId: string): Promise<Workspace> {
   if (world.runtimes !== undefined) options.runtimes = world.runtimes.map(buildEntry);
   if (world.policy !== undefined) options.policy = new ScriptSource(world.policy);
   if (world.policies !== undefined) options.policies = world.policies.map(buildPolicy);
+  if (world.permissions !== undefined) {
+    options.permissions = parseWorkspacePermissions(world.permissions);
+  }
   const ws = new Workspace(mounts, options);
   // The world's script CLIs, the yaml `clis:` shape inline: each entry
   // embeds its program instead of naming a file, the same way a runtime

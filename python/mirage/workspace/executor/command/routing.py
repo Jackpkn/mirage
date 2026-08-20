@@ -13,7 +13,9 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import dataclasses
+from collections.abc import Sequence
 
+from mirage.commands.cli.walk import walk
 from mirage.commands.spec import SPECS, parse_command, parse_to_kwargs
 from mirage.io.types import ByteSource
 from mirage.types import PathSpec
@@ -134,3 +136,31 @@ def merge_scopes(positional: list[PathSpec],
             seen.add(scope.virtual)
             merged.append(scope)
     return merged
+
+
+def program_tokens(registry: MountRegistry, name: str, argv: Sequence[str],
+                   cwd: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """The line as an admission pattern reads it, and the program it runs.
+
+    For an installed CLI head the spec walk names the verb path (global
+    options before the verb dropped, an alias canonicalized) and hands
+    back the leaf's own words, so ``git -C /r push origin`` reads as
+    ``git push origin`` and a rule on ``git push`` catches it; a walk
+    the tree refuses (unknown verb, bare group, usage error) reads the
+    raw words, since the line fails on its own. Anything else is the
+    name and the raw argv, and the program is the bare name.
+
+    Args:
+        registry (MountRegistry): registry holding the CLI installs.
+        name (str): expanded command name.
+        argv (Sequence[str]): the words after it.
+        cwd (str): session working directory, for the walk's PATH-typed
+            group values.
+    """
+    install = registry.clis.get(name)
+    if install is not None:
+        result = walk(name, install.spec, argv, cwd)
+        if result.leaf is not None:
+            program = (name, *result.path)
+            return (*program, *result.argv), program
+    return (name, *argv), (name, )

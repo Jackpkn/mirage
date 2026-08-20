@@ -12,16 +12,20 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { DEFAULT_DENY_REASON, type CommandRule } from '../../policy/types.ts'
+import { DEFAULT_ASK_REASON, DEFAULT_DENY_REASON } from '../../policy/constants.ts'
+import type { CommandRule, CommandsSpec } from '../../policy/types.ts'
 import type { HiddenPaths, HiddenVars } from '../../types.ts'
 import { type MountMode, parseMountMode } from '../../types.ts'
+import { isGlob } from '../../utils/hidden.ts'
 import { stripSlash } from '../../utils/slash.ts'
 
 /**
  * `paths:` of one tier. `hide` entries use the document's one grammar:
  * an entry with `*`, `?` or `[` is a pattern, anything else an exact
- * path and its subtree (`utils/hidden.classifyPaths`). `show` arrives
- * with its enforcement.
+ * path and its subtree (`utils/hidden.classifyPaths`); every entry holds
+ * a token, and the tier that owns the block decides whether it must be
+ * absolute (workspace, profile) or is mount-relative (mount). `show`
+ * arrives with its enforcement.
  */
 export interface PathsBlock {
   readonly hide: readonly string[]
@@ -33,17 +37,37 @@ export interface VarsBlock {
 }
 
 /**
- * `commands:` of the workspace tier. `deny` rules refuse with a reason;
- * a bare string is one command name with the default reason. `allow`
- * and `ask` arrive with their enforcement.
+ * `commands:` of the workspace and profile tiers. `allow` lists the
+ * command patterns the tier installs; a name none of them starts with is
+ * not a command for the session (127, absent from `type` / `which` /
+ * `man`), a line no pattern covers is refused. Grammar-tier shell
+ * builtins and the agent's own functions are not subjects. `ask` rules
+ * are admitted only with a host approval; `deny` rules refuse with a
+ * reason. A bare string in either is one command pattern with the
+ * default reason. `allow` null or absent (unstated) installs everything.
  */
 export interface CommandsBlock {
-  readonly deny: readonly CommandRule[]
+  readonly allow?: readonly string[] | null
+  readonly ask?: readonly CommandRule[]
+  readonly deny?: readonly CommandRule[]
+}
+
+/**
+ * `commands:` of a mount tier: `ask` and `deny` only. A mount rule
+ * applies to a line that works inside the mount (its cwd or one of its
+ * paths lies under the root); its `paths` are mount-relative. There is
+ * no mount-tier `allow`: what a session can see is a property of the
+ * session, and an operand cannot make a command "not found".
+ */
+export interface MountCommandsBlock {
+  readonly ask?: readonly CommandRule[]
+  readonly deny?: readonly CommandRule[]
 }
 
 /** `mounts.<prefix>.permissions`: mount-owned, relative to the mount root, binding every session. */
 export interface MountPermissions {
   readonly paths: PathsBlock
+  readonly commands?: MountCommandsBlock
 }
 
 /** Top-level `permissions:`: workspace-wide, absolute paths, binding every session. */
@@ -84,24 +108,30 @@ export interface SessionProfile {
     | null
   readonly paths?: PathsBlock | null
   readonly vars?: VarsBlock | null
+  readonly commands?: CommandsBlock | null
 }
 
-/** The session fields an effective profile compiles to. */
+/**
+ * The session fields an effective profile compiles to. `commands` is
+ * the profile's own command tier, evaluated after the bound tiers.
+ */
 export interface CompiledProfile {
   readonly mountModes: ReadonlyMap<string, MountMode> | null
   readonly hiddenPaths: HiddenPaths | null
   readonly hiddenVars: HiddenVars | null
   readonly env: Readonly<Record<string, string>> | null
   readonly cwd: string | null
+  readonly commands: CommandsSpec | null
 }
 
 const RULE_FIELDS = ['reason', 'commands', 'paths'] as const
 const PATHS_FIELDS = ['hide'] as const
 const VARS_FIELDS = ['hide'] as const
-const COMMANDS_FIELDS = ['deny'] as const
-const MOUNT_PERMISSIONS_FIELDS = ['paths'] as const
+const COMMANDS_FIELDS = ['allow', 'ask', 'deny'] as const
+const MOUNT_COMMANDS_FIELDS = ['ask', 'deny'] as const
+const MOUNT_PERMISSIONS_FIELDS = ['paths', 'commands'] as const
 const WORKSPACE_PERMISSIONS_FIELDS = ['commands', 'paths'] as const
-const PROFILE_FIELDS = ['extends', 'cwd', 'env', 'mounts', 'paths', 'vars'] as const
+const PROFILE_FIELDS = ['extends', 'cwd', 'env', 'mounts', 'paths', 'vars', 'commands'] as const
 
 // A document mapping, not merely "an object": a Set, a Date or any class
 // instance has no own enumerable string keys, so Object.entries would read
@@ -137,10 +167,36 @@ function asList(raw: unknown, where: string, expected = 'a list'): readonly unkn
   return raw as readonly unknown[]
 }
 
-function stringList(raw: unknown, where: string): readonly string[] {
+// An entry that names something must hold a token: a blank command
+// pattern is a prefix of every line, so a stray "" would allow, ask about
+// or deny every command, and a blank path entry is the root, so it would
+// hide or deny the whole tree. `names` says what an entry names ("a
+// command", "a path"); omitted, blank entries pass.
+function stringList(raw: unknown, where: string, names?: string): readonly string[] {
   return asList(raw, where, 'a list of strings').map((entry, i) => {
     if (typeof entry !== 'string') throw new Error(`${where}[${String(i)}] must be a string`)
+    if (names !== undefined && entry.trim() === '')
+      throw new Error(`${where}[${String(i)}] must name ${names}`)
     return entry
+  })
+}
+
+/**
+ * Refuse a relative path entry where paths are absolute. The workspace
+ * and profile tiers speak in virtual paths, so an entry there is either
+ * absolute or a name pattern (`*.pem`, no slash, matching a path
+ * component anywhere). A plain `xxx` or an anchored `secrets/*` would
+ * otherwise be read from the root (`/xxx`, `/secrets/*`), which is never
+ * what a relative spelling meant; the mount tier is the one place entries
+ * are relative, to the mount root, and it is not checked here.
+ */
+function requireAbsolute(entries: readonly string[], where: string): void {
+  entries.forEach((entry, i) => {
+    if (entry.startsWith('/') || (isGlob(entry) && !entry.includes('/'))) return
+    throw new Error(
+      `${where}[${String(i)}] must be an absolute path or a name pattern at this tier: ` +
+        `${JSON.stringify(entry)} is relative`,
+    )
   })
 }
 
@@ -148,24 +204,95 @@ function normPrefix(prefix: string): string {
   return '/' + stripSlash(prefix)
 }
 
-/** Coerce one `deny` entry: bare string = one command with the default reason. */
-function parseRule(raw: unknown, where: string): CommandRule {
-  if (typeof raw === 'string') return { reason: DEFAULT_DENY_REASON, commands: [raw] }
-  const obj = asObject(raw, where)
-  rejectUnknownKeys(obj, RULE_FIELDS, where)
-  const reason = obj.reason ?? DEFAULT_DENY_REASON
-  if (typeof reason !== 'string') throw new Error(`${where}.reason must be a string`)
-  return {
-    reason,
-    commands: stringList(obj.commands, `${where}.commands`),
-    paths: stringList(obj.paths, `${where}.paths`),
-  }
+/**
+ * The rules of a `commands` mapping: each command on its own paths, one
+ * rule per entry, so the document never states a command beside a path
+ * it was not meant for (`{rm: ['/repo/*'], mv: ['/shared/*']}` scopes
+ * `rm` to the repo and `mv` to the share, nothing else).
+ */
+function scopedRules(
+  commands: Record<string, unknown>,
+  reason: string,
+  where: string,
+): CommandRule[] {
+  const entries = Object.entries(commands)
+  if (entries.length === 0) throw new Error(`${where}.commands must name at least one command`)
+  return entries.map(([pattern, paths]) => {
+    if (pattern.trim() === '') throw new Error(`${where}.commands keys must name a command`)
+    const entries = stringList(paths, `${where}.commands[${pattern}]`, 'a path')
+    if (entries.length === 0) {
+      throw new Error(`${where}.commands[${pattern}] must list at least one path`)
+    }
+    return { reason, commands: [pattern], paths: entries }
+  })
 }
 
-export function parsePathsBlock(raw: unknown, where = 'paths'): PathsBlock {
+/**
+ * Coerce one `deny` or `ask` entry to its rules. A bare string is one
+ * command pattern over the whole line, with the arm's default reason. A
+ * mapping carries `reason` (defaulting) and exactly one of: `commands`
+ * as a list, a whole-line rule on each pattern; `commands` as a mapping,
+ * each command pattern on its own paths (one command to many paths, one
+ * rule per command); `paths` alone, a path rule on every command. A list
+ * of commands beside a list of paths is refused, because it does not say
+ * which command the paths belong to, and a rule naming neither is
+ * refused rather than read as "every command".
+ */
+function parseRule(raw: unknown, where: string, defaultReason: string): CommandRule[] {
+  if (typeof raw === 'string') {
+    return [
+      { reason: defaultReason, commands: stringList([raw], `${where}.commands`, 'a command') },
+    ]
+  }
+  if (!isPlainObject(raw)) throw new Error(`${where} must be a command pattern or a mapping`)
+  rejectUnknownKeys(raw, RULE_FIELDS, where)
+  const reason = raw.reason ?? defaultReason
+  if (typeof reason !== 'string') throw new Error(`${where}.reason must be a string`)
+  const { commands, paths } = raw
+  if (isPlainObject(commands)) {
+    if (paths !== undefined && paths !== null) {
+      throw new Error(`${where} maps each command to its paths, so it takes no paths of its own`)
+    }
+    return scopedRules(commands, reason, where)
+  }
+  const hasCommands = commands !== undefined && commands !== null
+  const hasPaths = paths !== undefined && paths !== null
+  if (hasCommands && hasPaths) {
+    throw new Error(`${where} lists commands beside paths; map each command to its paths instead`)
+  }
+  if (!hasCommands && !hasPaths) throw new Error(`${where} names no command and no path`)
+  return [
+    {
+      reason,
+      commands: stringList(commands, `${where}.commands`, 'a command'),
+      paths: stringList(paths, `${where}.paths`, 'a path'),
+    },
+  ]
+}
+
+function parseRules(raw: unknown, where: string, arm: 'ask' | 'deny'): readonly CommandRule[] {
+  const fallback = arm === 'ask' ? DEFAULT_ASK_REASON : DEFAULT_DENY_REASON
+  return asList(raw, `${where}.${arm}`, 'a list of rules').flatMap((entry, i) =>
+    parseRule(entry, `${where}.${arm}[${String(i)}]`, fallback),
+  )
+}
+
+function parseAllow(raw: unknown, where: string): readonly string[] | null {
+  if (raw === undefined || raw === null) return null
+  return stringList(raw, `${where}.allow`, 'a command')
+}
+
+/**
+ * Validate a `paths:` block. `absolute` is the workspace and profile
+ * tiers' rule (entries are virtual paths or name patterns); the mount
+ * tier leaves it false because its entries are relative to the mount.
+ */
+export function parsePathsBlock(raw: unknown, where = 'paths', absolute = false): PathsBlock {
   const obj = asObject(raw, where)
   rejectUnknownKeys(obj, PATHS_FIELDS, where)
-  return { hide: stringList(obj.hide, `${where}.hide`) }
+  const hide = stringList(obj.hide, `${where}.hide`, 'a path')
+  if (absolute) requireAbsolute(hide, `${where}.hide`)
+  return { hide }
 }
 
 export function parseVarsBlock(raw: unknown, where = 'vars'): VarsBlock {
@@ -177,8 +304,20 @@ export function parseVarsBlock(raw: unknown, where = 'vars'): VarsBlock {
 export function parseCommandsBlock(raw: unknown, where = 'commands'): CommandsBlock {
   const obj = asObject(raw, where)
   rejectUnknownKeys(obj, COMMANDS_FIELDS, where)
-  const deny = asList(obj.deny, `${where}.deny`)
-  return { deny: deny.map((entry, i) => parseRule(entry, `${where}.deny[${String(i)}]`)) }
+  const ask = parseRules(obj.ask, where, 'ask')
+  const deny = parseRules(obj.deny, where, 'deny')
+  // This block is the workspace's or a profile's, never a mount's, so a
+  // rule's paths are virtual paths: absolute, or name patterns.
+  for (const rule of ask) requireAbsolute(rule.paths ?? [], `${where}.ask rule paths`)
+  for (const rule of deny) requireAbsolute(rule.paths ?? [], `${where}.deny rule paths`)
+  return { allow: parseAllow(obj.allow, where), ask, deny }
+}
+
+/** Validate a mount tier's `commands:` block (`ask` and `deny` only). */
+export function parseMountCommandsBlock(raw: unknown, where = 'commands'): MountCommandsBlock {
+  const obj = asObject(raw, where)
+  rejectUnknownKeys(obj, MOUNT_COMMANDS_FIELDS, where)
+  return { ask: parseRules(obj.ask, where, 'ask'), deny: parseRules(obj.deny, where, 'deny') }
 }
 
 /** Validate a `mounts.<prefix>.permissions` block. */
@@ -187,6 +326,10 @@ export function parseMountPermissions(raw: unknown, where = 'permissions'): Moun
   rejectUnknownKeys(obj, MOUNT_PERMISSIONS_FIELDS, where)
   return {
     paths: obj.paths === undefined ? { hide: [] } : parsePathsBlock(obj.paths, `${where}.paths`),
+    commands:
+      obj.commands === undefined
+        ? { ask: [], deny: [] }
+        : parseMountCommandsBlock(obj.commands, `${where}.commands`),
   }
 }
 
@@ -200,9 +343,10 @@ export function parseWorkspacePermissions(
   return {
     commands:
       obj.commands === undefined
-        ? { deny: [] }
+        ? { allow: null, ask: [], deny: [] }
         : parseCommandsBlock(obj.commands, `${where}.commands`),
-    paths: obj.paths === undefined ? { hide: [] } : parsePathsBlock(obj.paths, `${where}.paths`),
+    paths:
+      obj.paths === undefined ? { hide: [] } : parsePathsBlock(obj.paths, `${where}.paths`, true),
   }
 }
 
@@ -243,6 +387,7 @@ export function parseSessionProfile(raw: unknown, where = 'profile'): SessionPro
     mounts?: ReadonlyMap<string, string> | readonly string[] | null
     paths?: PathsBlock | null
     vars?: VarsBlock | null
+    commands?: CommandsBlock | null
   } = {}
   if (obj.extends !== undefined && obj.extends !== null) {
     if (typeof obj.extends !== 'string') throw new Error(`${where}.extends must be a string`)
@@ -263,8 +408,10 @@ export function parseSessionProfile(raw: unknown, where = 'profile'): SessionPro
     out.mounts = parseProfileMounts(obj.mounts, `${where}.mounts`)
   }
   if (obj.paths !== undefined && obj.paths !== null)
-    out.paths = parsePathsBlock(obj.paths, `${where}.paths`)
+    out.paths = parsePathsBlock(obj.paths, `${where}.paths`, true)
   if (obj.vars !== undefined && obj.vars !== null)
     out.vars = parseVarsBlock(obj.vars, `${where}.vars`)
+  if (obj.commands !== undefined && obj.commands !== null)
+    out.commands = parseCommandsBlock(obj.commands, `${where}.commands`)
   return out
 }

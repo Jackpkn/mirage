@@ -18,7 +18,7 @@ from mirage.commands.builtin.utils.limit import guard_output, run_with_timeout
 from mirage.io import IOResult
 from mirage.io.types import ByteSource, materialize
 from mirage.policy import (ExecuteResultContext, Policies, post_execute_gate,
-                           resolve_limit)
+                           render_deny, resolve_limit)
 from mirage.runtime.mixin import LineExecutorMixin
 from mirage.types import Producer
 from mirage.workspace.mount import MountEntry
@@ -66,9 +66,8 @@ async def run_whole_line(
         ExecuteResultContext(producer=producer, exit_code=result.exit_code))
     if deny is not None:
         existing = result.stderr or b""
-        return IOResult(exit_code=deny.exit_code,
-                        stdout=None,
-                        stderr=existing + deny.message.encode())
+        err, code = render_deny(name, deny)
+        return IOResult(exit_code=code, stdout=None, stderr=existing + err)
     stdout, stderr, exit_code = await guard_output(result.stdout or b"",
                                                    result.stderr,
                                                    result.exit_code, bound)

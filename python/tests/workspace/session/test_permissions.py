@@ -18,16 +18,25 @@ import re
 import pytest
 from pydantic import ValidationError
 
-from mirage.policy.types import DEFAULT_DENY_REASON, CommandRule
+from mirage.commands.cli.specs import cli_spec_for
+from mirage.context import reset_current_session, set_current_session
+from mirage.policy import (Action, ApprovalRequest, Ask, CallbackApprover,
+                           CommandContext, Policy)
+from mirage.policy.constants import DEFAULT_ASK_REASON, DEFAULT_DENY_REASON
+from mirage.policy.types import CommandRule
 from mirage.resource.ram import RAMResource
+from mirage.runtime.base import Runtime
+from mirage.runtime.mixin import LineExecutorMixin
+from mirage.runtime.types import RunResult
 from mirage.types import HiddenPaths, HiddenVars, MountMode
 from mirage.workspace import Workspace
+from mirage.workspace.mount.spec import Mount
 from mirage.workspace.session import SessionProfile
-from mirage.workspace.session.permissions import (CommandsBlock,
-                                                  MountPermissions, PathsBlock,
-                                                  VarsBlock,
-                                                  WorkspacePermissions)
 from mirage.workspace.session.state import seed_var
+
+from mirage.workspace.session.permissions import (  # isort: skip
+    CommandsBlock, MountCommandsBlock, MountPermissions, PathsBlock, VarsBlock,
+    WorkspacePermissions)
 
 
 def test_profile_from_dict_regroups_paths_and_vars():
@@ -97,7 +106,7 @@ def test_profile_rejects_unknown_and_unshipped_fields():
             "hidden_vars": {}
     }, {
             "commands": {
-                "deny": []
+                "hide": []
             }
     }, {
             "paths": {
@@ -112,6 +121,79 @@ def test_profile_rejects_unknown_and_unshipped_fields():
             SessionProfile.model_validate(bad)
 
 
+def test_profile_commands_block_takes_allow_ask_and_deny():
+    p = SessionProfile.model_validate({
+        "commands": {
+            "allow": ["ls", "git log"],
+            "ask": [
+                "git push", {
+                    "reason": "sign-off",
+                    "commands": {
+                        "rm": ["/shared/*"]
+                    }
+                }
+            ],
+            "deny": [{
+                "reason": "no",
+                "commands": {
+                    "rm": ["/repo/*"]
+                }
+            }],
+        }
+    })
+    assert p.commands is not None
+    assert p.commands.allow == ("ls", "git log")
+    # A bare ask entry carries the ask arm's default reason, not deny's.
+    assert p.commands.ask[0] == CommandRule(reason=DEFAULT_ASK_REASON,
+                                            commands=("git push", ))
+    assert p.commands.ask[1] == CommandRule(reason="sign-off",
+                                            commands=("rm", ),
+                                            paths=("/shared/*", ))
+    assert p.commands.deny[0].reason == "no"
+    # Unstated allow is None (everything installed), not an empty list.
+    assert SessionProfile.model_validate({
+        "commands": {
+            "deny": ["rm"]
+        }
+    }).commands.allow is None
+
+
+@pytest.mark.parametrize("bad", [
+    {
+        "allow": "ls"
+    },
+    {
+        "allow": ["ls", ""]
+    },
+    {
+        "allow": ["ls", "  "]
+    },
+    {
+        "ask": "git push"
+    },
+    {
+        "ask": [""]
+    },
+    {
+        "deny": [{
+            "reason": "x",
+            "commands": [""]
+        }]
+    },
+    {
+        "ask": [{
+            "reason": "x",
+            "mount": "/repo"
+        }]
+    },
+])
+def test_commands_block_refuses_scalars_blank_patterns_and_mount(bad):
+    # A blank pattern is a prefix of every line, so it would allow, ask
+    # about or deny every command; `mount` is the compiler's field.
+    with pytest.raises(ValidationError):
+        SessionProfile.model_validate({"commands": bad})
+
+
 def test_profile_is_frozen():
     p = SessionProfile(cwd="/x")
     with pytest.raises(ValidationError):
@@ -123,8 +205,9 @@ def test_workspace_permissions_deny_accepts_rules_and_bare_names():
         "commands": {
             "deny": [{
                 "reason": "no deletes",
-                "commands": ["rm"],
-                "paths": ["/repo/*"]
+                "commands": {
+                    "rm": ["/repo/*"]
+                }
             }, "python3", {
                 "commands": ["shred"]
             }]
@@ -174,14 +257,152 @@ def test_deny_rule_refuses_scalar_lists_and_non_string_reasons(rule):
         WorkspacePermissions.model_validate({"commands": {"deny": [rule]}})
 
 
+def test_a_rule_maps_each_command_to_its_own_paths():
+    # One command to many paths, never a list of commands beside a list
+    # of paths: the document says which command each path belongs to,
+    # and compiles one rule per command.
+    w = WorkspacePermissions.model_validate({
+        "commands": {
+            "deny": [{
+                "reason": "prod is protected",
+                "commands": {
+                    "rm": ["/repo/prod/*", "/shared/*"],
+                    "mv": ["/repo/prod/*"]
+                }
+            }],
+            "ask": [{
+                "commands": {
+                    "git push": ["/repo/*"]
+                }
+            }],
+        }
+    })
+    assert w.commands.deny == (
+        CommandRule(reason="prod is protected",
+                    commands=("rm", ),
+                    paths=("/repo/prod/*", "/shared/*")),
+        CommandRule(reason="prod is protected",
+                    commands=("mv", ),
+                    paths=("/repo/prod/*", )),
+    )
+    assert w.commands.ask == (CommandRule(reason=DEFAULT_ASK_REASON,
+                                          commands=("git push", ),
+                                          paths=("/repo/*", )), )
+
+
+@pytest.mark.parametrize("bad,message", [
+    ({
+        "reason": "x",
+        "commands": ["rm", "mv"],
+        "paths": ["/a"]
+    }, "map each command to its paths"),
+    ({
+        "reason": "x",
+        "commands": {
+            "rm": ["/a"]
+        },
+        "paths": ["/b"]
+    }, "takes no paths of its own"),
+    ({
+        "reason": "x"
+    }, "names no command and no path"),
+    ({
+        "reason": "x",
+        "commands": {}
+    }, "must name at least one command"),
+    ({
+        "reason": "x",
+        "commands": {
+            "rm": []
+        }
+    }, "must list at least one path"),
+    ({
+        "reason": "x",
+        "commands": {
+            "rm": "/a"
+        }
+    }, "must be a list of strings"),
+    ({
+        "reason": "x",
+        "commands": {
+            " ": ["/a"]
+        }
+    }, "keys must name a command"),
+    ({
+        "reason": "x",
+        "commands": {
+            "rm": ["/a", " "]
+        }
+    }, "commands[rm][1] must name a path"),
+    ({
+        "reason": "x",
+        "paths": [""]
+    }, "paths[0] must name a path"),
+    (7, "must be a command pattern or a mapping"),
+])
+def test_a_rule_that_does_not_say_whose_path_it_is_is_refused(bad, message):
+    for doc in (WorkspacePermissions, SessionProfile, MountPermissions):
+        with pytest.raises(ValidationError, match=re.escape(message)):
+            doc.model_validate({"commands": {"deny": [bad]}})
+
+
+@pytest.mark.parametrize("entry", ["xxx", "secrets/*", "./x", "~/x", "a/b"])
+def test_a_relative_path_is_refused_where_paths_are_absolute(entry):
+    # The workspace and profile tiers speak in virtual paths: `xxx` would
+    # silently read as `/xxx` and `secrets/*` as `/secrets/*`. A name
+    # pattern (no slash) is the one relative spelling with a meaning.
+    for doc in (WorkspacePermissions, SessionProfile):
+        with pytest.raises(ValidationError, match="is relative"):
+            doc.model_validate({"paths": {"hide": [entry]}})
+        with pytest.raises(ValidationError, match="is relative"):
+            doc.model_validate(
+                {"commands": {
+                    "ask": [{
+                        "commands": {
+                            "rm": ["/ok", entry]
+                        }
+                    }]
+                }})
+        with pytest.raises(ValidationError, match="is relative"):
+            doc.model_validate({"commands": {"deny": [{"paths": [entry]}]}})
+        doc.model_validate({"paths": {"hide": ["/" + entry, "*.pem", "?"]}})
+    # The mount tier is relative by definition, to the mount root.
+    m = MountPermissions.model_validate({
+        "paths": {
+            "hide": [entry]
+        },
+        "commands": {
+            "deny": [{
+                "commands": {
+                    "rm": [entry]
+                }
+            }]
+        },
+    })
+    assert m.paths.hide == (entry, )
+    assert m.commands.deny[0].paths == (entry, )
+
+
+def test_a_blank_hide_entry_is_refused_at_every_tier():
+    # "" is the root under the subtree rule: it would hide the whole tree.
+    for doc in (WorkspacePermissions, SessionProfile, MountPermissions):
+        with pytest.raises(ValidationError,
+                           match="hide\\[1\\] must name a path"):
+            doc.model_validate({"paths": {"hide": ["/a", ""]}})
+
+
 def test_workspace_permissions_rejects_profile_only_and_unknown_fields():
+    # The workspace tier takes the whole commands block.
+    w = WorkspacePermissions.model_validate(
+        {"commands": {
+            "allow": ["ls", "git"],
+            "ask": ["git push"]
+        }})
+    assert w.commands.allow == ("ls", "git")
+    assert w.commands.ask[0].commands == ("git push", )
     for bad in ({
             "mounts": {
                 "/a": "r"
-            }
-    }, {
-            "commands": {
-                "allow": ["ls"]
             }
     }, {
             "commands": {
@@ -199,11 +420,20 @@ def test_workspace_permissions_rejects_profile_only_and_unknown_fields():
             WorkspacePermissions.model_validate(bad)
 
 
-def test_mount_permissions_is_paths_only_in_this_rung():
+def test_mount_permissions_takes_paths_and_ask_deny_but_no_allow():
     m = MountPermissions.model_validate({"paths": {"hide": ["*.pem", ".env"]}})
     assert m.paths == PathsBlock(hide=("*.pem", ".env"))
+    m = MountPermissions.model_validate(
+        {"commands": {
+            "deny": ["git push"],
+            "ask": ["git rebase"]
+        }})
+    assert m.commands.deny[0].commands == ("git push", )
+    assert m.commands.ask[0].commands == ("git rebase", )
+    # What a session can see is the session's property, not an
+    # operand's: a mount tier has no allow list.
     with pytest.raises(ValidationError):
-        MountPermissions.model_validate({"commands": {"deny": ["rm"]}})
+        MountPermissions.model_validate({"commands": {"allow": ["ls"]}})
 
 
 def _ws() -> Workspace:
@@ -439,3 +669,1010 @@ def test_profile_cwd_is_where_the_session_starts():
         return await out.stdout_str()
 
     assert asyncio.run(run()) == "/b\n"
+
+
+COMMANDS_DOC = WorkspacePermissions.model_validate({
+    "commands": {
+        "allow": [
+            "ls", "cat", "echo", "rm", "git", "python3", "mkdir", "touch",
+            "head", "xargs", "wc", "man", "find"
+        ],
+        "deny": [{
+            "reason": "no deletes in the repo",
+            "commands": {
+                "rm": ["/repo/*"]
+            }
+        }, {
+            "reason": "frozen",
+            "paths": ["/repo/locked/*"]
+        }],
+    }
+})
+REVIEWER_COMMANDS = SessionProfile.model_validate({
+    "commands": {
+        "allow": ["ls", "cat", "echo", "git log", "git status", "xargs"]
+    }
+})
+
+
+def _commands_ws() -> Workspace:
+    # The frozen subtree is seeded on the resource: the pure path rule
+    # holds at every op door, the host's `ws.ops` included.
+    repo = RAMResource()
+    repo._store.dirs.add("/locked")
+    repo._store.files["/locked/y"] = b"y\n"
+    ws = Workspace(
+        {
+            "/repo/":
+            Mount(repo,
+                  MountMode.WRITE,
+                  permissions=MountPermissions(commands=MountCommandsBlock(
+                      deny=[{
+                          "reason": "history is read-only here",
+                          "commands": ["git commit", "git reset --hard"]
+                      }]))),
+            "/scratch/": (RAMResource(), MountMode.WRITE),
+        },
+        mode=MountMode.WRITE,
+        permissions=COMMANDS_DOC,
+        profiles={"reviewer": REVIEWER_COMMANDS},
+    )
+    ws.register_cli("git", cli_spec_for("git"))
+    return ws
+
+
+async def _line(ws: Workspace, line: str, sid: str | None = None):
+    r = (await ws.execute(line, session_id=sid)
+         if sid is not None else await ws.execute(line))
+    return r.exit_code, await r.stdout_str(), await r.stderr_str()
+
+
+@pytest.mark.asyncio
+async def test_allow_list_hides_unlisted_tools_from_dispatch_and_enumerators():
+    ws = _commands_ws()
+    try:
+        await ws.execute("mkdir -p /repo/d && touch /repo/d/x")
+        # An unlisted tool is not a command for the session: 127 before
+        # any admission hook, and every enumerator agrees.
+        assert await _line(ws,
+                           "sort /repo/d/x") == (127, "",
+                                                 "sort: command not found\n")
+        assert await _line(ws,
+                           "type sort; echo $?") == (0, "1\n",
+                                                     "type: sort: not found\n")
+        assert await _line(ws, "command -v sort; echo $?") == (0, "1\n", "")
+        assert await _line(ws, "which sort; echo $?") == (0, "1\n", "")
+        code, out, _ = await _line(ws, "man")
+        assert code == 0 and "- cat" in out and "- sort" not in out
+        assert (await _line(ws, "man sort"))[0] == 1
+        # Grammar-tier builtins and functions are not subjects; a listed
+        # tool runs; the workspace's own session is bound like any other.
+        assert await _line(
+            ws, "cd /repo && [ -f d/x ] && echo yes") == (0, "yes\n", "")
+        assert await _line(ws, "f() { echo in-f; }; f") == (0, "in-f\n", "")
+        assert (await _line(ws, "cat /repo/d/x"))[0] == 0
+        # `man` and `history` are tool-tier builtins: hidden when unlisted.
+        assert await _line(ws, "history") == (127, "",
+                                              "history: command not found\n")
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_profile_allow_list_intersects_with_the_workspace_tier():
+    ws = _commands_ws()
+    ws.create_session("rev", profile="reviewer")
+    try:
+        await ws.execute("mkdir -p /repo/d && touch /repo/d/x")
+        # Both tiers list `cat`; the workspace lists python3, the profile
+        # does not; the profile lists `git log`, so `git` is visible but
+        # a `git commit` line is covered by nothing (a refusal that names
+        # the program, not "command not found").
+        assert (await _line(ws, "cat /repo/d/x", "rev"))[0] == 0
+        assert await _line(ws, "python3 -c 1",
+                           "rev") == (127, "", "python3: command not found\n")
+        assert (await _line(ws, "type git", "rev"))[0] == 0
+        assert await _line(
+            ws, "git commit -m x",
+            "rev") == (126, "",
+                       "git: policy denied: git commit is not allowed\n")
+        # The verb walk normalizes the line: options before the verb are
+        # not the verb, so `git -C /repo status` is `git status`.
+        code, _, err = await _line(ws, "git -C /repo status", "rev")
+        assert "not allowed" not in err
+        # Nested runners re-enter the chokepoint: the hidden `rm` stays
+        # hidden inside xargs, eval and a function body.
+        assert await _line(ws, "echo /repo/d/x | xargs rm",
+                           "rev") == (127, "", "rm: command not found\n")
+        assert await _line(ws, "eval 'rm /repo/d/x'",
+                           "rev") == (127, "", "rm: command not found\n")
+        assert await _line(ws, "f() { rm /repo/d/x; }; f",
+                           "rev") == (127, "", "rm: command not found\n")
+        # An inline document tightens further: allow lists intersect.
+        ws.create_session("tight",
+                          profile="reviewer",
+                          permissions=SessionProfile.model_validate(
+                              {"commands": {
+                                  "allow": ["cat", "git"]
+                              }}))
+        assert (await _line(ws, "cat /repo/d/x", "tight"))[0] == 0
+        assert await _line(ws, "ls /repo",
+                           "tight") == (127, "", "ls: command not found\n")
+        code, _, err = await _line(ws, "git log", "tight")
+        assert "not allowed" not in err
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_deny_rules_by_tier_scope_and_voice():
+    ws = _commands_ws()
+    try:
+        await ws.execute("mkdir -p /repo/d && touch /repo/d/x /scratch/z")
+        # Operand-scoped: the GNU voice at 1, the operand as typed.
+        assert await _line(
+            ws,
+            "cd /repo/d && rm x") == (1, "", "rm: x: no deletes in the repo\n")
+        assert (await _line(ws, "rm /scratch/z"))[0] == 0
+        # A pure path rule holds at the command plane for any command
+        # and at the op door for every op, whatever door.
+        assert await _line(
+            ws,
+            "cat /repo/locked/y") == (1, "", "cat: /repo/locked/y: frozen\n")
+        with pytest.raises(PermissionError):
+            await ws.ops.write("/repo/locked/y", b"changed")
+        assert await ws.ops.read("/repo/d/x") == b""
+        # Mount tier: applies when the line works inside the mount (cwd
+        # under it, or a path under it), speaks first, whole command; the
+        # verb walk reads `-C /repo reset --hard` as `git reset --hard`.
+        assert await _line(ws, "cd /repo && git commit -m x") == (
+            126, "", "git: policy denied: history is read-only here\n")
+        assert await _line(ws, "cd /scratch && git -C /repo reset --hard") == (
+            126, "", "git: policy denied: history is read-only here\n")
+        code, _, err = await _line(ws, "cd /scratch && git commit -m x")
+        assert "read-only" not in err
+        code, _, err = await _line(ws, "cd /repo && git reset --soft HEAD")
+        assert "read-only" not in err
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_find_delete_is_gated_at_the_op_door_not_by_a_named_rule():
+    # mirage's find has no -exec; -delete is find's own action, not an
+    # `rm` line, so a rule naming `rm` does not cover it (the same
+    # honest limit as a guest's os.remove), while a pure path rule
+    # does, at the op door the removal clears.
+    ws = _commands_ws()
+    try:
+        await ws.execute("mkdir -p /repo/d && touch /repo/d/x")
+        await ws.execute("find /repo/d -name x -delete")
+        assert (await _line(ws, "cat /repo/d/x"))[0] != 0
+        assert await _line(ws, "find /repo/locked -name y -delete") == (
+            1, "", "find: cannot delete '/repo/locked/y': frozen\n")
+        assert (await _line(ws, "cat /repo/locked/y"))[0] == 1
+        # The same rule holds for the host's own door, read or write.
+        with pytest.raises(PermissionError):
+            await ws.ops.read("/repo/locked/y")
+    finally:
+        await ws.close()
+
+
+LINK_DOC = WorkspacePermissions.model_validate({
+    "commands": {
+        "deny": [{
+            "reason": "sealed",
+            "commands": {
+                "cat": ["/data/secret*"],
+                "head": ["/data/secret*"]
+            }
+        }, {
+            "reason": "keep the link",
+            "commands": {
+                "rm": ["/data/link"]
+            }
+        }],
+    }
+})
+
+
+@pytest.mark.asyncio
+async def test_a_command_scoped_path_rule_reads_the_path_the_command_touches():
+    # A command-scoped rule never runs at the op door, so the command
+    # plane has to see the path the command will actually touch: for a
+    # command that follows links (open(2)) that is the target, for one
+    # that acts on the link itself (rm, lstat(2)) it is the link.
+    ws = Workspace({"/data/": (RAMResource(), MountMode.WRITE)},
+                   mode=MountMode.WRITE,
+                   permissions=LINK_DOC)
+    try:
+        await ws.execute("echo top > /data/secret && "
+                         "ln -s /data/secret /data/link && "
+                         "ln -s /data/secret /data/other")
+        assert await _line(
+            ws, "cat /data/secret") == (1, "", "cat: /data/secret: sealed\n")
+        # Through the link: refused, the operand named as typed.
+        assert await _line(ws,
+                           "cat /data/link") == (1, "",
+                                                 "cat: /data/link: sealed\n")
+        assert await _line(
+            ws,
+            "head -n 1 /data/other") == (1, "", "head: /data/other: sealed\n")
+        # rm removes the link, not the target: the target's rule does
+        # not apply, the link's own does.
+        assert await _line(ws, "rm /data/other") == (0, "", "")
+        assert await _line(
+            ws, "rm /data/link") == (1, "", "rm: /data/link: keep the link\n")
+        assert (await _line(ws, "cat /data/link"))[0] == 1
+    finally:
+        await ws.close()
+
+
+SEALED_REDIRECT_DOC = WorkspacePermissions.model_validate({
+    "commands": {
+        "deny": [{
+            "reason": "sealed",
+            "commands": {
+                "cat": ["/data/secret*"]
+            }
+        }, {
+            "reason": "audit is append-only",
+            "commands": {
+                "echo": ["/data/audit.log"]
+            }
+        }],
+    }
+})
+
+
+@pytest.mark.asyncio
+async def test_redirect_targets_are_judged_with_the_line():
+    # The shell reads `<` and writes `>` on its own fds, outside the
+    # admitted command's gate window, so the targets are judged at the
+    # line's admission: the refused read never happens and the refused
+    # write never truncates.
+    ws = Workspace({"/data/": (RAMResource(), MountMode.WRITE)},
+                   mode=MountMode.WRITE,
+                   permissions=SEALED_REDIRECT_DOC)
+    try:
+        await ws.execute("echo top > /data/secret && "
+                         "printf 'one\\n' > /data/audit.log")
+        assert await _line(
+            ws, "cat < /data/secret") == (1, "", "cat: /data/secret: sealed\n")
+        assert await _line(ws, "echo two > /data/audit.log") == (
+            1, "", "echo: /data/audit.log: audit is append-only\n")
+        # The refused write did not truncate, and clean redirects run.
+        assert await _line(ws, "cat /data/audit.log") == (0, "one\n", "")
+        assert await _line(ws, "cat < /data/audit.log") == (0, "one\n", "")
+        assert await _line(
+            ws, "echo ok > /data/out && cat < /data/out") == (0, "ok\n", "")
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_a_mount_rule_speaks_on_a_walk_from_above():
+    # `grep -r x /scratch` enters /scratch/child: the fan-out reruns
+    # the traversal inside each descendant mount and no admission fires
+    # again there, so the child mount's rule must speak on the ancestor
+    # operand. A walk elsewhere, or a non-recursive read of the parent,
+    # is not its business.
+    child = RAMResource()
+    ws = Workspace(
+        {
+            "/scratch/": (RAMResource(), MountMode.WRITE),
+            "/scratch/child/":
+            Mount(child,
+                  MountMode.WRITE,
+                  permissions=MountPermissions(commands=MountCommandsBlock(
+                      deny=[{
+                          "reason": "boxed",
+                          "commands": ["grep"]
+                      }]))),
+            "/elsewhere/": (RAMResource(), MountMode.WRITE),
+        },
+        mode=MountMode.WRITE)
+    try:
+        await ws.execute("echo x > /scratch/a && echo x > /elsewhere/a && "
+                         "echo x > /scratch/child/c")
+        assert await _line(
+            ws,
+            "grep -r x /scratch") == (126, "", "grep: policy denied: boxed\n")
+        code, out, _ = await _line(ws, "grep -r x /elsewhere")
+        assert (code, out) == (0, "/elsewhere/a:x\n")
+        # Inside the mount the rule needs no ancestor help.
+        assert await _line(
+            ws, "grep x /scratch/child/c") == (126, "",
+                                               "grep: policy denied: boxed\n")
+        # A non-recursive grep of the parent never enters the child.
+        code, _, err = await _line(ws, "grep x /scratch")
+        assert code == 2 and "Is a directory" in err
+    finally:
+        await ws.close()
+
+
+class _Box(Runtime, LineExecutorMixin):
+    """A runtime that takes every line raw, recording what reached it."""
+
+    name = "box"
+    captures = ("*", )
+
+    def __init__(self) -> None:
+        self.lines: list[str] = []
+
+    async def run_line(self, line: str, stdin: bytes | None,
+                       env: dict[str, str], cwd: str) -> RunResult:
+        self.lines.append(line)
+        return RunResult(stdout=b"box:" + line.encode(),
+                         stderr=None,
+                         exit_code=0)
+
+
+@pytest.mark.asyncio
+async def test_a_whole_line_runtime_is_gated_like_the_tree():
+    # A runtime that captures the raw line runs it under the same
+    # tiers: every parsed command clears visibility, the policy chain
+    # and the approval door before the runtime sees a byte, so a
+    # captured line cannot run what the tree would refuse.
+    box = _Box()
+    ws = Workspace({"/repo/": (RAMResource(), MountMode.WRITE)},
+                   mode=MountMode.WRITE,
+                   permissions=COMMANDS_DOC,
+                   profiles={"reviewer": REVIEWER_COMMANDS},
+                   runtimes=[box, "vfs"])
+    ws.register_cli("git", cli_spec_for("git"))
+    try:
+        assert await _line(ws, "sort /repo/x") == (127, "",
+                                                   "sort: command not found\n")
+        assert await _line(
+            ws, "cat /repo/a | sort") == (127, "", "sort: command not found\n")
+        assert await _line(
+            ws,
+            "rm /repo/x") == (1, "", "rm: /repo/x: no deletes in the repo\n")
+        assert await _line(ws, "cat /repo/a; rm -f /repo/x") == (
+            1, "", "rm: /repo/x: no deletes in the repo\n")
+        assert box.lines == []
+        assert await _line(
+            ws, "cat /repo/a | wc -l") == (0, "box:cat /repo/a | wc -l", "")
+        ws.create_session("rev", profile="reviewer")
+        assert await _line(
+            ws, "git add x",
+            "rev") == (126, "", "git: policy denied: git add is not allowed\n")
+        assert (await _line(ws, "git status", "rev"))[0] == 0
+        assert box.lines == ["cat /repo/a | wc -l", "git status"]
+    finally:
+        await ws.close()
+
+
+LITERAL_DOC = WorkspacePermissions.model_validate({
+    "commands": {
+        "deny": [{
+            "reason": "no deletes",
+            "commands": ["rm"]
+        }, {
+            "reason": "sealed",
+            "commands": {
+                "cat": ["/repo/secret*"]
+            }
+        }, {
+            "reason": "no pushes",
+            "commands": ["git push"]
+        }],
+    }
+})
+
+
+@pytest.mark.asyncio
+async def test_a_whole_line_runtime_reads_only_literal_words():
+    # The runtime expands the line, so the gate reads it as typed and
+    # refuses what only the runtime could read where a rule in force
+    # would have read it: the command name under any rule, an argument
+    # where a rule reads that command's arguments, and a line a word
+    # runs that the gate cannot see into.
+    box = _Box()
+    ws = Workspace({"/repo/": (RAMResource(), MountMode.WRITE)},
+                   mode=MountMode.WRITE,
+                   permissions=LITERAL_DOC,
+                   runtimes=[box, "vfs"])
+    ws.register_cli("git", cli_spec_for("git"))
+    try:
+        unread = ("policy denied: cannot read {} before the runtime "
+                  "expands it\n")
+        assert await _line(ws,
+                           "rm /repo/x") == (126, "",
+                                             "rm: policy denied: no deletes\n")
+        assert await _line(ws, "$cmd /repo/x") == (126, "", "$cmd: " +
+                                                   unread.format("$cmd"))
+        assert await _line(ws, "PAYLOAD='rm /repo/x'; eval \"$PAYLOAD\"") == (
+            126, "", '"$PAYLOAD": ' + unread.format('"$PAYLOAD"'))
+        assert await _line(
+            ws, "eval 'rm /repo/x'") == (126, "",
+                                         "rm: policy denied: no deletes\n")
+        assert await _line(ws, 'cat "$f"') == (126, "",
+                                               "cat: " + unread.format('"$f"'))
+        assert await _line(ws,
+                           'git "$verb" origin') == (126, "", "git: " +
+                                                     unread.format('"$verb"'))
+        assert await _line(
+            ws, "ls /repo | xargs rm") == (126, "",
+                                           "rm: policy denied: no deletes\n")
+        assert await _line(ws, "ls /repo | xargs cat") == (
+            126, "",
+            "cat: policy denied: runs on operands the gate cannot read\n")
+        assert await _line(ws, "source /repo/env.sh") == (
+            126, "",
+            "source: policy denied: runs lines the gate cannot read\n")
+        assert await _line(ws, "sh -c 'timeout 5 rm /repo/x'") == (
+            126, "", "rm: policy denied: no deletes\n")
+        assert await _line(
+            ws, "builtin eval 'rm /repo/x'") == (126, "", "rm: policy denied: "
+                                                 "no deletes\n")
+        assert box.lines == []
+        # Literal words, and dynamic ones no rule reads, reach the runtime.
+        for line in ('echo "$HOME" $(date)', "git status", "'cat' /repo/a",
+                     "ls | xargs echo", "command -v rm"):
+            assert (await _line(ws, line))[0] == 0
+        assert box.lines == [
+            'echo "$HOME" $(date)', "git status", "'cat' /repo/a",
+            "ls | xargs echo", "command -v rm"
+        ]
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_a_bare_listing_in_a_ruled_directory_is_refused():
+    # `ls`, `find`, `du`, `tree` and `grep -r` typed bare read the
+    # working directory: the executor injects that operand after the
+    # gate, so the gate supplies it itself, typed as `.`.
+    ws = Workspace({"/repo/": (RAMResource(), MountMode.WRITE)},
+                   mode=MountMode.WRITE,
+                   permissions=WorkspacePermissions.model_validate({
+                       "commands": {
+                           "deny": [{
+                               "reason": "sealed",
+                               "commands": {
+                                   "ls": ["/repo/sealed"],
+                                   "find": ["/repo/sealed"],
+                                   "grep": ["/repo/sealed"]
+                               }
+                           }]
+                       }
+                   }))
+    try:
+        await ws.execute("mkdir -p /repo/sealed && echo x > /repo/sealed/f")
+        assert await _line(ws,
+                           "ls /repo/sealed") == (1, "",
+                                                  "ls: /repo/sealed: sealed\n")
+        assert await _line(ws, "cd /repo/sealed && ls") == (1, "",
+                                                            "ls: .: sealed\n")
+        assert await _line(
+            ws,
+            "cd /repo/sealed && find -name f") == (1, "", "find: .: sealed\n")
+        assert await _line(
+            ws,
+            "cd /repo/sealed && grep -r x") == (1, "",
+                                                "grep: /repo/sealed: sealed\n")
+        # With an operand, or without the recursion that reads the
+        # directory, nothing is implied.
+        assert await _line(ws,
+                           "cd /repo/sealed && ls /repo") == (0, "sealed\n",
+                                                              "")
+        assert await _line(ws,
+                           "cd /repo/sealed && echo x | grep x") == (0, "x\n",
+                                                                     "")
+    finally:
+        await ws.close()
+
+
+VEILED_DOC = WorkspacePermissions.model_validate({
+    "commands": {
+        "allow": ["mkdir", "echo", "touch", "cat", "rm", "ls", "head"],
+        "ask": [{
+            "reason": "sign-off",
+            "commands": {
+                "rm": ["/repo/shared/*"]
+            }
+        }],
+        "deny": [{
+            "reason": "private",
+            "commands": {
+                "cat": ["/repo/private"]
+            }
+        }, {
+            "reason": "sealed",
+            "paths": ["/repo/sealed/*"]
+        }, {
+            "reason": "no heads",
+            "commands": ["head"]
+        }],
+    }
+})
+
+
+@pytest.mark.asyncio
+async def test_a_hidden_path_reads_as_absent_to_every_rule():
+    # hide outranks every admission arm: a path the session cannot see
+    # is dropped before any hook, so a deny never names it, an ask is
+    # never raised for it, and the door answers ENOENT as for any
+    # absent path. The same lines under a session that sees them meet
+    # the rules as usual.
+    ws = Workspace({"/repo/": (RAMResource(), MountMode.WRITE)},
+                   mode=MountMode.WRITE,
+                   permissions=VEILED_DOC)
+    try:
+        await ws.execute("mkdir -p /repo/private /repo/shared && "
+                         "echo k > /repo/private/k && touch /repo/shared/a")
+        ws.create_session(
+            "veiled",
+            profile=SessionProfile(paths=PathsBlock(hide=("/repo/private",
+                                                          "/repo/shared",
+                                                          "/repo/sealed"))))
+        assert await _line(
+            ws, "cat /repo/private/k") == (1, "",
+                                           "cat: /repo/private/k: private\n")
+        assert await _line(
+            ws, "cat /repo/private/k",
+            "veiled") == (1, "",
+                          "cat: /repo/private/k: No such file or directory\n")
+        assert await _line(
+            ws,
+            "cat /repo/sealed/x") == (1, "", "cat: /repo/sealed/x: sealed\n")
+        assert await _line(
+            ws, "cat /repo/sealed/x",
+            "veiled") == (1, "",
+                          "cat: /repo/sealed/x: No such file or directory\n")
+        code, _, err = await _line(ws, "rm /repo/shared/a")
+        assert code == 126 and err.startswith(
+            "rm: requires approval: sign-off")
+        assert await _line(ws, "rm /repo/shared/a", "veiled") == (
+            1, "",
+            "rm: cannot remove '/repo/shared/a': No such file or directory\n")
+        assert [r.session_id
+                for r in ws.approvals.list()] == [ws._session_mgr.default_id]
+        assert await _line(ws, "ls /repo", "veiled") == (0, "", "")
+        # A rule with no path in it still speaks: nothing hidden is named.
+        assert await _line(ws, "head /repo/private/k",
+                           "veiled") == (126, "",
+                                         "head: policy denied: no heads\n")
+    finally:
+        await ws.close()
+
+
+ASK_DOC = WorkspacePermissions.model_validate({
+    "commands": {
+        "ask": [{
+            "reason": "sign-off",
+            "commands": ["rm"]
+        }, "head"],
+        "deny": [{
+            "reason": "no deletes in the repo",
+            "commands": {
+                "rm": ["/repo/*"]
+            }
+        }],
+    }
+})
+
+
+class AskWc(Policy):
+    """A coded condition that asks: every wc line."""
+
+    async def pre_command(self, ctx: CommandContext) -> Action | None:
+        if ctx.command == "wc":
+            return Ask("looks risky")
+        return None
+
+
+def _ask_ws(**kwargs) -> Workspace:
+    ws = Workspace(
+        {
+            "/repo/": (RAMResource(), MountMode.WRITE),
+            "/scratch/": (RAMResource(), MountMode.WRITE),
+        },
+        mode=MountMode.WRITE,
+        permissions=ASK_DOC,
+        policies=[AskWc()],
+        **kwargs,
+    )
+    return ws
+
+
+@pytest.mark.asyncio
+async def test_an_asked_line_is_refused_until_the_host_answers():
+    ws = _ask_ws()
+    try:
+        await ws.execute("mkdir -p /repo/d && touch /repo/d/x /scratch/z")
+        # Asked: 126 in the requires-approval voice, quoting an id; the
+        # request is on ws.approvals with what was asked; a retry quotes
+        # the same id and adds nothing.
+        code, _, err = await _line(ws, "rm /scratch/z")
+        assert code == 126
+        (request, ) = ws.approvals.list()
+        assert err == (f"rm: requires approval: sign-off "
+                       f"(approval {request.id})\n")
+        assert (request.command, request.argv, request.cwd,
+                request.paths) == ("rm", ("/scratch/z", ), "/",
+                                   ("/scratch/z", ))
+        assert request.session_id == ws._session_mgr.default_id
+        assert await _line(ws, "rm /scratch/z") == (126, "", err)
+        assert len(ws.approvals.list()) == 1
+        # The request names the agent of the call that asked, not the
+        # workspace's default agent, so a shared workspace attributes an
+        # approval to whoever raised it.
+        assert request.agent_id == ""
+        by_bob = await ws.execute("rm /scratch/z2", agent_id="bob")
+        assert by_bob.exit_code == 126
+        assert [r.agent_id for r in ws.approvals.list()] == ["", "bob"]
+        # The agent rides with the execution, not the workspace: a line
+        # asked through a nested eval keeps its caller's, and two lines
+        # in flight at once keep their own.
+        nested = await ws.execute("echo $(rm /scratch/z3)", agent_id="carol")
+        assert nested.exit_code == 0
+        await asyncio.gather(
+            ws.execute("rm /scratch/z4", agent_id="dan"),
+            ws.execute("eval 'rm /scratch/z5'", agent_id="eve"))
+        by_agent = {
+            r.command + " " + " ".join(r.argv): r.agent_id
+            for r in ws.approvals.list()
+        }
+        assert by_agent == {
+            "rm /scratch/z": "",
+            "rm /scratch/z2": "bob",
+            "rm /scratch/z3": "carol",
+            "rm /scratch/z4": "dan",
+            "rm /scratch/z5": "eve",
+        }
+        for r in ws.approvals.list():
+            if r.agent_id not in ("", "bob"):
+                await ws.approvals.deny(r.id)
+        (bobs, ) = (r for r in ws.approvals.list() if r.agent_id == "bob")
+        await ws.approvals.deny(bobs.id)
+        # Granted once: the exact retry passes, and the next one asks.
+        await ws.approvals.grant(request.id)
+        assert ws.approvals.list() == ()
+        assert (await _line(ws, "rm /scratch/z"))[0] == 0
+        assert (await _line(ws, "cat /scratch/z"))[0] == 1
+        code, _, err = await _line(ws, "rm /scratch/z")
+        assert code == 126 and "requires approval" in err
+        # A bare pattern asks with the default reason.
+        code, _, err = await _line(ws, "head /repo/d/x")
+        assert code == 126
+        assert err.startswith("head: requires approval: no standing approval")
+        # Denied: the retry is refused once in the deny voice, then the
+        # question is open again.
+        pending = {r.command: r for r in ws.approvals.list()}
+        await ws.approvals.deny(pending["head"].id)
+        assert await _line(ws, "head /repo/d/x") == (
+            126, "", "head: policy denied: no standing approval\n")
+        code, _, err = await _line(ws, "head /repo/d/x")
+        assert code == 126 and "requires approval" in err
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_a_session_grant_covers_the_rule_and_a_deny_is_never_reopened():
+    ws = _ask_ws()
+    try:
+        await ws.execute("mkdir -p /repo/d && touch /repo/d/x /scratch/y "
+                         "/scratch/z")
+        code, _, _ = await _line(ws, "rm /scratch/y")
+        assert code == 126
+        (request, ) = ws.approvals.list()
+        await ws.approvals.grant(request.id, "session")
+        # Every rm line passes now, in any directory of the session ...
+        assert (await _line(ws, "rm /scratch/y"))[0] == 0
+        assert (await _line(ws, "cd /scratch && rm z"))[0] == 0
+        # ... except where a deny rule speaks: the deny arm runs before
+        # the ask arm, so no grant can re-open it, and the denied line
+        # raises no request (nothing for the host to answer; the battery
+        # cannot see this, so it is pinned here).
+        assert await _line(
+            ws,
+            "cd /repo/d && rm x") == (1, "", "rm: x: no deletes in the repo\n")
+        assert ws.approvals.list() == ()
+        # The grant is session state: on the record, and not another
+        # session's.
+        default = ws._session_mgr.get(ws._session_mgr.default_id)
+        assert default.to_dict()["grants"][0]["decision"] == "allow_session"
+        ws.create_session("other")
+        await ws.execute("touch /scratch/w", session_id="other")
+        code, _, err = await _line(ws, "rm /scratch/w", "other")
+        assert code == 126 and "requires approval" in err
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_a_coded_ask_routes_to_the_same_door():
+    ws = _ask_ws()
+    try:
+        await ws.execute("touch /scratch/z")
+        code, _, err = await _line(ws, "wc -c /scratch/z")
+        assert code == 126
+        (request, ) = ws.approvals.list()
+        assert err == (f"wc: requires approval: looks risky "
+                       f"(approval {request.id})\n")
+        # The synthesized rule names the program, so a session grant
+        # covers every wc line.
+        assert request.rule == CommandRule(reason="looks risky",
+                                           commands=("wc", ))
+        await ws.approvals.grant(request.id, "session")
+        assert await _line(ws, "wc -c /scratch/z") == (0, "0 /scratch/z\n", "")
+        assert await _line(ws, "wc -l /scratch/z") == (0, "0 /scratch/z\n", "")
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_a_grant_is_consumed_through_a_fork():
+    ws = _ask_ws()
+    try:
+        await ws.execute("touch /scratch/z")
+        code, _, _ = await _line(ws, "rm /scratch/z")
+        assert code == 126
+        (request, ) = ws.approvals.list()
+        await ws.approvals.grant(request.id)
+        # execute(env=) runs the line in a fork of the session: the once
+        # grant is read and consumed through the manager, so the fork
+        # spends it for the session it forked from.
+        forked = await ws.execute("rm /scratch/z", env={"X": "1"})
+        assert forked.exit_code == 0
+        code, _, err = await _line(ws, "rm /scratch/z")
+        assert code == 126 and "requires approval" in err
+    finally:
+        await ws.close()
+
+
+async def _host_allows_once(request: ApprovalRequest) -> str:
+    return "allow_once"
+
+
+async def _host_denies(request: ApprovalRequest) -> str:
+    return "deny"
+
+
+@pytest.mark.asyncio
+async def test_a_blocking_approver_answers_inside_the_line():
+    ws = _ask_ws(approver=CallbackApprover(_host_allows_once))
+    try:
+        await ws.execute("touch /scratch/z")
+        assert (await _line(ws, "rm /scratch/z"))[0] == 0
+        assert ws.approvals.list() == ()
+    finally:
+        await ws.close()
+    ws = _ask_ws(approver=CallbackApprover(_host_denies))
+    try:
+        await ws.execute("touch /scratch/z")
+        assert await _line(
+            ws, "rm /scratch/z") == (126, "", "rm: policy denied: sign-off\n")
+        assert (await _line(ws, "cat /scratch/z"))[0] == 0
+    finally:
+        await ws.close()
+
+
+# A plain document, passed raw: the constructor validates it, so the
+# whole walk battery also pins the raw-doc door.
+WALK_DOC = {
+    "paths": {
+        "hide": ["/data/t/ghost"]
+    },
+    "commands": {
+        "allow": [
+            "mkdir", "echo", "ls", "cat", "grep", "find", "du", "cp", "tar",
+            "tree", "stat", "rm", "test"
+        ],
+        "ask": [{
+            "reason": "nod",
+            "commands": {
+                "grep": ["/data/t/asked/*"]
+            }
+        }],
+        "deny": [{
+            "reason": "private",
+            "commands": {
+                "grep": ["/data/t/private"],
+                "ls": ["/data/t/private"]
+            }
+        }, {
+            "reason": "sealed",
+            "paths": ["/data/t/sealed"]
+        }, {
+            "reason": "frozen",
+            "paths": ["/data/t/locked/*"]
+        }],
+    }
+}
+
+
+def _walk_ws() -> Workspace:
+    # The rules live on a profile so the tree can be seeded under the
+    # unrestricted default session; every probe runs as "g".
+    ws = Workspace({"/data/": (RAMResource(), MountMode.WRITE)},
+                   mode=MountMode.WRITE,
+                   profiles={"guarded": WALK_DOC})
+    ws.create_session("g", profile="guarded")
+    return ws
+
+
+async def _seed_walk_tree(ws: Workspace) -> None:
+    await ws.execute(
+        "mkdir -p /data/t/private /data/t/sealed/deep /data/t/locked "
+        "/data/t/open /data/t/asked /data/t/ghost && "
+        "echo k > /data/t/private/k && echo s > /data/t/sealed/s && "
+        "echo d > /data/t/sealed/deep/d && echo y > /data/t/locked/y && "
+        "echo o > /data/t/open/o && echo a > /data/t/asked/a && "
+        "echo g > /data/t/ghost/g")
+
+
+@pytest.mark.asyncio
+async def test_a_walk_below_the_operand_meets_the_rule_guard():
+    # The gate judges the operands; the entries a walk reaches below
+    # them pass the same rules at the command's own I/O, and each
+    # walker reports the refusal the way GNU reports an unreadable
+    # entry (pinned on debian:stable-slim): names and sizes still show,
+    # the content is what is refused, and a hidden path is simply not
+    # there.
+    ws = _walk_ws()
+    try:
+        await _seed_walk_tree(ws)
+        code, out, err = await _line(ws, "grep -r . /data/t", "g")
+        assert code == 2
+        assert out == "/data/t/open/o:o\n"
+        assert err == ("grep: /data/t/asked/a: Permission denied\n"
+                       "grep: /data/t/locked/y: Permission denied\n"
+                       "grep: /data/t/private: Permission denied\n"
+                       "grep: /data/t/sealed: Permission denied\n")
+        code, out, err = await _line(ws, "ls -R /data/t", "g")
+        assert code == 1
+        assert "locked:\ny\n" in out and "asked:\na\n" in out
+        assert "ghost" not in out
+        assert err == (
+            "ls: cannot open directory '/data/t/private': Permission denied\n"
+            "ls: cannot open directory '/data/t/sealed': Permission denied\n")
+        code, out, err = await _line(ws, "find /data/t -name '*'", "g")
+        assert code == 1
+        assert "/data/t/sealed\n" in out and "/data/t/sealed/s" not in out
+        assert "/data/t/locked/y\n" in out and "/data/t/private/k\n" in out
+        assert err == "find: '/data/t/sealed': Permission denied\n"
+        code, out, err = await _line(ws, "du -a /data/t", "g")
+        assert code == 1
+        assert "2\t/data/t/locked/y\n" in out and "sealed" not in out
+        assert err == ("du: cannot read directory '/data/t/sealed': "
+                       "Permission denied\n")
+        code, out, err = await _line(ws, "cp -r /data/t /data/copy", "g")
+        assert code == 1
+        assert err == (
+            "cp: cannot access '/data/t/sealed': Permission denied\n"
+            "cp: cannot open '/data/t/locked/y' for reading: "
+            "Permission denied\n")
+        assert (await _line(ws, "cat /data/copy/private/k", "g"))[1] == "k\n"
+        assert (await _line(ws, "test -d /data/copy/sealed", "g"))[0] == 0
+        assert (await _line(ws, "test -e /data/copy/locked/y", "g"))[0] == 1
+        code, out, err = await _line(ws, "tar -cf /data/a.tar /data/t", "g")
+        assert code == 2
+        assert err == ("tar: Removing leading `/' from member names\n"
+                       "tar: /data/t/sealed: Cannot open: Permission denied\n"
+                       "tar: /data/t/locked/y: Cannot open: Permission "
+                       "denied\n"
+                       "tar: Exiting with failure status due to previous "
+                       "errors\n")
+        code, out, err = await _line(ws, "tar -tf /data/a.tar", "g")
+        assert "data/t/sealed/\n" in out and "locked/y" not in out
+        assert "data/t/private/k\n" in out and "ghost" not in out
+        code, out, err = await _line(ws, "tree /data/t", "g")
+        assert code == 2 and err == ""
+        assert "`-- sealed  [error opening dir]\n" in out
+        assert "|   `-- y\n" in out
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_an_asked_scope_reached_by_a_walk_is_refused_until_named():
+    # A walk gets no nod mid-command: the entry is refused without a
+    # request, the agent names the path, the grant covers that line.
+    ws = _walk_ws()
+    try:
+        await _seed_walk_tree(ws)
+        assert await _line(
+            ws, "grep -r a /data/t/asked",
+            "g") == (2, "", "grep: /data/t/asked/a: Permission denied\n")
+        assert ws.approvals.list() == ()
+        code, _, err = await _line(ws, "grep a /data/t/asked/a", "g")
+        assert code == 126 and err.startswith("grep: requires approval: nod")
+        (request, ) = ws.approvals.list()
+        await ws.approvals.grant(request.id)
+        assert await _line(ws, "grep a /data/t/asked/a", "g") == (0, "a\n", "")
+        # A standing grant covers the walk too.
+        code, _, err = await _line(ws, "grep a /data/t/asked/a", "g")
+        (request, ) = ws.approvals.list()
+        await ws.approvals.grant(request.id, "session")
+        assert await _line(ws, "grep -r a /data/t/asked",
+                           "g") == (0, "/data/t/asked/a:a\n", "")
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_the_op_door_stats_a_refused_entry_and_withholds_its_content():
+    ws = _walk_ws()
+    try:
+        await _seed_walk_tree(ws)
+        sess = ws.get_session("g")
+        token = set_current_session(sess)
+        try:
+            assert (await ws.ops.stat("/data/t/locked/y")).size == 2
+            with pytest.raises(PermissionError):
+                await ws.ops.read("/data/t/locked/y")
+            with pytest.raises(FileNotFoundError):
+                await ws.ops.stat("/data/t/ghost/g")
+        finally:
+            reset_current_session(token)
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_every_permissions_door_accepts_the_plain_document():
+    # The constructor, create_session and Mount validate raw mappings
+    # internally, so the Python API reads like the YAML and the
+    # TypeScript object literal; a built model still passes unchanged.
+    ws = Workspace(
+        {
+            "/data/": (RAMResource(), MountMode.WRITE),
+            "/box/":
+            Mount(RAMResource(),
+                  MountMode.WRITE,
+                  permissions={
+                      "commands": {
+                          "deny": [{
+                              "reason": "boxed",
+                              "paths": ["top"]
+                          }]
+                      }
+                  }),
+        },
+        mode=MountMode.WRITE,
+        permissions={
+            "commands": {
+                "deny": [{
+                    "reason": "walled",
+                    "paths": ["/data/w"]
+                }]
+            }
+        },
+    )
+    try:
+        assert await _line(ws,
+                           "cat /data/w") == (1, "", "cat: /data/w: walled\n")
+        assert await _line(ws,
+                           "cat /box/top") == (1, "", "cat: /box/top: boxed\n")
+        ws.create_session("i", permissions={"commands": {"allow": ["echo"]}})
+        assert (await _line(ws, "ls /data", "i"))[0] == 127
+        ws.create_session("d",
+                          profile={
+                              "commands": {
+                                  "deny": [{
+                                      "reason": "no",
+                                      "commands": {
+                                          "cat": ["/data/*"]
+                                      }
+                                  }]
+                              }
+                          })
+        assert await _line(ws, "cat /data/x",
+                           "d") == (1, "", "cat: /data/x: no\n")
+    finally:
+        await ws.close()
+
+
+def test_a_misspelled_document_field_fails_at_construction():
+    with pytest.raises(ValidationError):
+        Workspace({"/data/": RAMResource()}, profiles={"g": {"commandz": {}}})
+    with pytest.raises(ValidationError):
+        Workspace({"/data/": RAMResource()},
+                  permissions={"command": {
+                      "deny": []
+                  }})

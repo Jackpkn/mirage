@@ -9,7 +9,9 @@ from mirage.commands.builtin.generic.archive.walk import (DirProbe, StatFn,
                                                           WalkFn)
 from mirage.commands.builtin.generic.tar.constants import (READ_MODES,
                                                            WRITE_MODES)
-from mirage.commands.builtin.generic.tar.create import plan_create
+from mirage.commands.builtin.generic.tar.create import (CREATE_ERROR_EXIT,
+                                                        ERROR_TRAILER,
+                                                        plan_create)
 from mirage.commands.builtin.generic.tar.types import (CompressionSuffix,
                                                        CreateResult, Member,
                                                        ReadMode, WriteMode)
@@ -19,6 +21,7 @@ from mirage.commands.spec.types import FlagValue, FlagView
 from mirage.io.types import ByteSource, IOResult
 from mirage.ops.types import LinkView, MountView
 from mirage.types import PathSpec
+from mirage.utils.errors import fs_strerror
 
 
 def _compression_suffix(z: bool, j: bool, J: bool) -> CompressionSuffix:
@@ -145,19 +148,35 @@ async def _create_archive(
 ) -> tuple[ByteSource | None, IOResult]:
     buf = io.BytesIO()
     names: list[str] = []
+    # A file the session may not read (a rule refused it below the
+    # operand) is GNU's "Cannot open": the member is left out, the run
+    # fails, and the one trailer closes the notices. The plan's notices
+    # come first, so a directory the scan could not open is reported
+    # before a file the write could not read.
+    notices = [n for n in plan.notices if n != ERROR_TRAILER]
+    exit_code = plan.exit_code
     with tarfile.open(fileobj=buf, mode=_write_mode(mode_suffix)) as tf:
         for member in plan.members:
             data = b""
             if member.path is not None:
-                data = await read_bytes(member.path)
+                try:
+                    data = await read_bytes(member.path)
+                except PermissionError as exc:
+                    shown = member.spelled or member.name
+                    notices.append(f"tar: {shown}: Cannot open: "
+                                   f"{fs_strerror(exc)}")
+                    exit_code = CREATE_ERROR_EXIT
+                    continue
             tf.addfile(_info(member, len(data)), io.BytesIO(data))
             names.append(member.name)
+    if exit_code:
+        notices.append(ERROR_TRAILER)
     archive = buf.getvalue()
     await write_bytes(archive_path, archive)
     stdout = ("\n".join(names) + "\n").encode() if verbose and names else None
     return stdout, IOResult(writes={archive_path.mount_path: archive},
-                            stderr=_stderr(list(plan.notices)),
-                            exit_code=plan.exit_code)
+                            stderr=_stderr(notices),
+                            exit_code=exit_code)
 
 
 async def _list_archive(

@@ -16,6 +16,7 @@ import type { ShellVar } from '../../shell/variable.ts'
 import { sessionEntry, setSessionEntry } from '../session/session.ts'
 import { seedVar, setAttr } from '../session/state.ts'
 import { VarAttr } from '../../shell/variable.ts'
+import { redirectPathsFor, runWithAdmission } from '../../context/session_context.ts'
 import type { Runtime } from '../../runtime/base.ts'
 import type { PolicyDecision } from '../../runtime/policy/index.ts'
 import { mergeSignals } from '../abort.ts'
@@ -40,11 +41,8 @@ import { expandBoundaryGlobs } from '../expand/globs.ts'
 import { type ExecuteFn, expandNode } from '../expand/node.ts'
 import type { TSNodeLike } from '../../shell/types.ts'
 import { handleCommand } from '../executor/command.ts'
-import { pathFlagScopes, positionalScopes } from '../executor/command/routing.ts'
-import { toScope } from '../executor/builtins/scope.ts'
 import { type AliasMark, aliasCommandText } from '../executor/builtins/alias/index.ts'
 import { findSyntaxError } from '../../shell/parse.ts'
-import { resolvePath } from '../../utils/path.ts'
 import { runWithTimeout } from '../../commands/builtin/utils/limit.ts'
 import { PolicyDenied, resolveLimit } from '../../policy/index.ts'
 import { traceCommand } from '../../shell/xtrace.ts'
@@ -70,6 +68,7 @@ import { CycleError } from '../../utils/path.ts'
 import type { Namespace } from '../mount/namespace/namespace.ts'
 import type { MountRegistry } from '../mount/registry.ts'
 import { SLASH_KEEPS_LAST, UNSUPPORTED_BUILTINS, followsLastComponent } from '../route/index.ts'
+import { Admitted, admit } from './admission.ts'
 import type { Session } from '../session/session.ts'
 import { ensureVarVisible, sessionView } from '../session/state.ts'
 import { preSessionGate } from '../../policy/index.ts'
@@ -100,6 +99,8 @@ export async function executeCommand(
   // Parse one line into a tree; only alias expansion needs it. Absent
   // means an alias is stored and printed but never expanded.
   reparse?: (line: string) => TSNodeLike,
+  // The agent the line is attributed to, which an approval request names.
+  agentId = '',
 ): Promise<Result> {
   const name = getCommandName(node)
   const [assignmentNodes, nonPrefixParts] = splitEnvPrefix(getParts(node))
@@ -254,6 +255,7 @@ export async function executeCommand(
       runtimeBindings,
       routingDecision,
       signal,
+      agentId,
     )
   } finally {
     for (const [k, prev] of savedEnvOverrides) {
@@ -289,6 +291,7 @@ async function runCommandBody(
   runtimeBindings?: Record<string, Runtime>,
   routingDecision?: PolicyDecision,
   signalIn?: AbortSignal,
+  agentId = '',
 ): Promise<Result> {
   let stdin = stdinIn
   // A background job's kill channel rides the session; fold it in so
@@ -387,6 +390,8 @@ async function runCommandBody(
       routingDecision,
       signal,
       node.startPosition?.row ?? 0,
+      agentId,
+      redirectPathsFor(node),
     ),
     timeout,
     argv.name !== '' ? argv.name : '?',
@@ -445,6 +450,12 @@ async function runArgv(
   // definition remembers where it was made so a use on the same line
   // does not see it, as bash's line reader would not.
   row = 0,
+  // The agent the line is attributed to, which an approval request names.
+  agentId = '',
+  // The statement's expanded redirect targets, judged with the line
+  // because their I/O runs on the shell's own fds outside the admitted
+  // command's gate window.
+  redirects: readonly PathSpec[] = [],
 ): Promise<Result> {
   const name = argv.name
 
@@ -472,51 +483,93 @@ async function runArgv(
     argv = new Argv(argv.name, expandedWords, boundary)
   }
 
-  const args = [...argv.args]
-  let operands = [...argv.operands]
-
-  // Admission policies. The one chokepoint every command class passes
-  // through: shell builtins, namespace-routed commands (touch/chmod/
-  // ln -s), job builtins, shell functions, and mount commands all
-  // route below, so the hook must fire here, not in handleCommand.
-  // Paths are the operands as typed plus path-valued flags (shuf -o
-  // DEST); refusals win over flag parsing, routing, and runtime
-  // placement.
+  // Visibility and admission. The one chokepoint every command class
+  // passes through: shell builtins, namespace-routed commands (touch/
+  // chmod/ln -s), job builtins, shell functions, and mount commands all
+  // route below, so the gate must fire here, not in handleCommand.
+  // Checked ahead of the BUILTINS table, which runs before route(); the
+  // enumerators read the same visibility filter through layers().
+  // Refusals win over flag parsing, routing, and runtime placement.
+  let admitted: Admitted | null = null
   if (name !== '') {
-    const scopes: PathSpec[] = []
-    for (const p of operands) {
-      if (p instanceof PathSpec) scopes.push(p)
-    }
-    scopes.push(...pathFlagScopes(name, args, session.cwd))
-    if (name.includes('/')) {
-      // A slash-carrying head word is a file the line executes (the
-      // path-execution branch below), and it lives in argv[0], not the
-      // operands, so a path-pattern guard would never see it without
-      // this row.
-      scopes.unshift(toScope(resolvePath(name, session.cwd)))
-    }
-    const deny = await registry.policies.preCommand({
-      command: name,
-      paths: scopes,
-      operands: positionalScopes(name, args, session.cwd, operands),
-      argv: args,
-      cwd: session.cwd,
+    const verdict = await admit(
+      name,
+      [...argv.args],
+      [...argv.operands],
+      session,
       registry,
-    })
-    if (deny !== null) {
-      const err = new TextEncoder().encode(deny.message)
-      const exitCode = deny.exitCode ?? 1
+      namespace,
+      agentId,
+      stdin,
+      redirects,
+    )
+    if (!(verdict instanceof Admitted)) {
       return [
         null,
-        new IOResult({ exitCode, stderr: err }),
+        new IOResult({ exitCode: verdict.exitCode, stderr: verdict.stderr }),
         new ExecutionNode({
-          command: [name, ...args].join(' '),
-          stderr: err,
-          exitCode,
+          command: [name, ...argv.args].join(' '),
+          stderr: verdict.stderr,
+          exitCode: verdict.exitCode,
+          refused: true,
         }),
       ]
     }
+    admitted = verdict
   }
+
+  // The admitted command's gate is bound for its run and handed back
+  // after, so its own I/O can ask about the entries the gate did not see
+  // and a nested line binds its own (see `Admitted`).
+  const route = () =>
+    routeArgv(
+      recurse,
+      dispatch,
+      registry,
+      namespace,
+      executeFn,
+      argv,
+      session,
+      stdin,
+      callStack,
+      jobTable,
+      ensureOpen,
+      runtimeBindings,
+      routingDecision,
+      signal,
+      row,
+    )
+  if (admitted === null) return route()
+  return runWithAdmission(admitted, route)
+}
+
+async function routeArgv(
+  recurse: (
+    n: TSNodeLike,
+    s: Session,
+    i: ByteSource | null,
+    cs: CallStack | null,
+  ) => Promise<Result>,
+  dispatch: DispatchFn,
+  registry: MountRegistry,
+  namespace: Namespace,
+  executeFn: ExecuteFn,
+  argv: Argv,
+  session: Session,
+  stdin: ByteSource | null,
+  callStack: CallStack | null,
+  jobTable: JobTable | null,
+  ensureOpen: ((resource: Resource) => Promise<void>) | undefined,
+  runtimeBindings: Record<string, Runtime> | undefined,
+  routingDecision: PolicyDecision | undefined,
+  signal: AbortSignal | undefined,
+  row: number,
+): Promise<Result> {
+  // The half of `runArgv` past the gate, split out so the gate's verdict
+  // can be bound around it.
+  const name = argv.name
+  const args = [...argv.args]
+  let operands = [...argv.operands]
 
   // Path execution: bash hands a slash-carrying head word to the
   // loader, never to command lookup: no builtin, function, or CLI can

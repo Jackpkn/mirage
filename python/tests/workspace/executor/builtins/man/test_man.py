@@ -22,6 +22,7 @@ from mirage.workspace.cli.registry import CLIRegistry
 from mirage.workspace.executor.builtins.man import (ManEntry, _command_entry,
                                                     _render_man_index,
                                                     _render_page, handle_man)
+from mirage.workspace.session import Session
 
 
 def _mk_cmd(name, spec, filetype=None, resource="ram"):
@@ -67,6 +68,9 @@ def _mk_mount(prefix, kind, cmds=None, general=None):
     mount.resolve_command = MagicMock(side_effect=_resolve)
     mount.all_commands = MagicMock(side_effect=_all)
     return mount
+
+
+_SESSION = Session(session_id="s")
 
 
 def _mk_registry(mounts):
@@ -129,7 +133,7 @@ def test_render_page_placeholder_description():
 
 def test_handle_man_missing_entry():
     reg = _mk_registry([])
-    out, io, node = asyncio.run(handle_man(["nope"], reg))
+    out, io, node = asyncio.run(handle_man(["nope"], reg, _SESSION))
     assert out is None
     assert io.exit_code == 1
     assert io.stderr == b"man: no entry for nope\n"
@@ -141,19 +145,22 @@ def test_handle_man_page_carries_no_resource():
     cat = _mk_cmd("cat", spec)
     m1 = _mk_mount("/a/", "ram", cmds={"cat": cat})
     m2 = _mk_mount("/b/", "s3", cmds={"cat": cat})
-    out, io, _node = asyncio.run(handle_man(["cat"], _mk_registry([m1, m2])))
+    out, io, _node = asyncio.run(
+        handle_man(["cat"], _mk_registry([m1, m2]), _SESSION))
     assert io.exit_code == 0
     assert out.decode() == "# cat\n\ncat files\n"
 
 
 def test_handle_man_documents_bash_and_sh_from_the_bash_spec():
-    out, io, _node = asyncio.run(handle_man(["bash"], _mk_registry([])))
+    out, io, _node = asyncio.run(
+        handle_man(["bash"], _mk_registry([]), _SESSION))
     assert io.exit_code == 0
     text = out.decode()
     assert text.startswith("# bash\n")
     assert "-c" in text
     assert "RESOURCES" not in text
-    sh, io2, _node = asyncio.run(handle_man(["sh"], _mk_registry([])))
+    sh, io2, _node = asyncio.run(handle_man(["sh"], _mk_registry([]),
+                                            _SESSION))
     assert io2.exit_code == 0
     assert sh.decode().startswith("# sh\n")
 
@@ -167,7 +174,7 @@ def test_render_man_index_lists_every_name_once_sorted():
     cat = _mk_cmd("cat", spec_c)
     m1 = _mk_mount("/a/", "ram", cmds={"ls": ls}, general={"bc": bc})
     m2 = _mk_mount("/b/", "s3", cmds={"cat": cat}, general={"bc": bc})
-    text = _render_man_index(_mk_registry([m1, m2]))
+    text = _render_man_index(_mk_registry([m1, m2]), _SESSION)
     assert text == ("# commands\n\n"
                     "- bc \u2014 bc desc\n"
                     "- cat \u2014 cat files\n"
@@ -178,8 +185,8 @@ def test_render_man_index_lists_every_name_once_sorted():
 def test_render_man_index_skips_dev_and_is_empty_with_nothing_to_list():
     cat = _mk_cmd("cat", CommandSpec(description="x"))
     dev = _mk_mount("/dev/", "dev", cmds={"cat": cat})
-    assert _render_man_index(_mk_registry([dev])) == ""
-    assert _render_man_index(_mk_registry([])) == ""
+    assert _render_man_index(_mk_registry([dev]), _SESSION) == ""
+    assert _render_man_index(_mk_registry([]), _SESSION) == ""
 
 
 def _cli_tree() -> CLISpec:
@@ -202,7 +209,8 @@ def _cli_registry(mounts=None):
 
 
 def test_handle_man_renders_an_installed_cli():
-    out, io, _node = asyncio.run(handle_man(["linear"], _cli_registry()))
+    out, io, _node = asyncio.run(
+        handle_man(["linear"], _cli_registry(), _SESSION))
     assert io.exit_code == 0
     text = out.decode()
     assert "Usage: linear" in text
@@ -211,17 +219,17 @@ def test_handle_man_renders_an_installed_cli():
 
 def test_handle_man_descends_a_verb_path_and_resolves_aliases():
     reg = _cli_registry()
-    text = asyncio.run(handle_man(["linear", "issue", "create"],
-                                  reg))[0].decode()
+    text = asyncio.run(handle_man(["linear", "issue", "create"], reg,
+                                  _SESSION))[0].decode()
     assert "Usage: linear issue create" in text
-    aliased = asyncio.run(handle_man(["linear", "i", "create"],
-                                     reg))[0].decode()
+    aliased = asyncio.run(handle_man(["linear", "i", "create"], reg,
+                                     _SESSION))[0].decode()
     assert aliased == text
 
 
 def test_handle_man_unknown_verb_names_the_whole_line():
     out, io, node = asyncio.run(
-        handle_man(["linear", "bogus"], _cli_registry()))
+        handle_man(["linear", "bogus"], _cli_registry(), _SESSION))
     assert out is None
     assert io.exit_code == 1
     assert io.stderr == b"man: no entry for linear bogus\n"
@@ -232,17 +240,17 @@ def test_handle_man_prints_the_cli_before_a_colliding_mount_command():
     spec = CommandSpec(description="mount side")
     mount = _mk_mount("/ram/", "ram", cmds={"linear": _mk_cmd("linear", spec)})
     reg = _cli_registry([mount])
-    text = asyncio.run(handle_man(["linear"], reg))[0].decode()
+    text = asyncio.run(handle_man(["linear"], reg, _SESSION))[0].decode()
     assert text.index("Usage: linear") < text.index("mount side")
 
 
 def test_render_man_index_lists_installed_clis_after_commands():
     cat = _mk_cmd("cat", CommandSpec(description="cat files"))
     mount = _mk_mount("/ram/", "ram", cmds={"cat": cat})
-    text = _render_man_index(_cli_registry([mount]))
+    text = _render_man_index(_cli_registry([mount]), _SESSION)
     assert text == ("# commands\n\n- cat \u2014 cat files\n\n"
                     "# clis\n\n- linear \u2014 Linear API client\n")
 
 
 def test_render_man_index_omits_the_cli_section_when_none_installed():
-    assert "# clis" not in _render_man_index(_mk_registry([]))
+    assert "# clis" not in _render_man_index(_mk_registry([]), _SESSION)

@@ -17,7 +17,11 @@ import { FlagView } from '../../spec/types.ts'
 import { PathSpec } from '../../../types.ts'
 import type { CommandOpts } from '../../config.ts'
 import { UsageError } from '../../errors.ts'
-import { hiddenPathsActive, pathAllowed } from '../../../context/session_context.ts'
+import {
+  hiddenPathsActive,
+  pathAllowed,
+  pathRulesActive,
+} from '../../../context/session_context.ts'
 import { isMissingPath } from '../../../utils/errors.ts'
 import { mountKey, mountPrefixOf } from '../../../utils/key_prefix.ts'
 import { respellRaw } from '../../../utils/path.ts'
@@ -436,7 +440,7 @@ async function duOne(
   if (roots.length > 0) leaves = dropShadowed(leaves, roots)
   const linkTotal = leaves.reduce((acc, [, size]) => acc + size, 0)
 
-  if (flags.s && !flags.S && roots.length === 0 && !hiddenPathsActive()) {
+  if (flags.s && !flags.S && roots.length === 0 && !hiddenPathsActive() && !pathRulesActive()) {
     // The one-total fast path trusts the backend's own sum, which a
     // session hiding paths cannot: hidden leaves would be counted into
     // a total their names never justify, so that session takes the
@@ -515,6 +519,7 @@ export async function runDu(
   computeSize: ComputeSize,
   computeEntries: ComputeEntries,
   truncated?: () => boolean,
+  unreadable?: () => readonly string[],
 ): Promise<DuOutput> {
   const flags = parseDuFlags(opts)
   // -L dereferences: the operand was already rewritten at dispatch, and
@@ -543,6 +548,7 @@ export async function runDu(
     truncated,
     links,
     opts.ns?.mounts ?? null,
+    unreadable,
   )
 }
 
@@ -556,7 +562,11 @@ export async function runDu(
  * prints the rest. `truncated` is read after the walks to ask whether any of
  * them hit its entry cap. `mounts` marks the descendant boundaries: leaves
  * under one are shadowed and dropped from every row and total (see
- * `dropShadowed`).
+ * `dropShadowed`). `unreadable` is read after the walks for the directories a
+ * walk could not open (a rule refused them below the operand): GNU names each
+ * one, counts what it could, and exits 1; the line is spelled as the operand
+ * was typed, and follows the unreadable-operand lines since those are known
+ * before any walk.
  */
 export async function duGeneric(
   paths: PathSpec[],
@@ -567,6 +577,7 @@ export async function duGeneric(
   truncated?: () => boolean,
   links: LinkView | null = null,
   mounts: MountView | null = null,
+  unreadable?: () => readonly string[],
 ): Promise<DuOutput> {
   const fmt = (size: number): string => (flags.h ? humanSize(size) : String(size))
 
@@ -584,6 +595,10 @@ export async function duGeneric(
   const notes = flags.warning === undefined ? [] : [flags.warning]
   notes.push(...missing.map(([raw, detail]) => `du: cannot access '${raw}': ${detail}`))
   let exitCode = missing.length > 0 ? 1 : 0
+  for (const virtual of unreadable?.() ?? []) {
+    notes.push(`du: cannot read directory '${respellUnder(virtual, paths)}': Permission denied`)
+    exitCode = 1
+  }
   if (truncated?.() === true) {
     notes.push(TRUNCATED_NOTE)
     exitCode = 1
@@ -591,4 +606,15 @@ export async function duGeneric(
   const stderr =
     notes.length > 0 ? new TextEncoder().encode(`${notes.join('\n')}\n`) : new Uint8Array(0)
   return { stdout: formatRecords(lines), stderr, exitCode }
+}
+
+// Spell a walked path as the operand it lies under was typed.
+function respellUnder(virtual: string, paths: readonly PathSpec[]): string {
+  for (const path of paths) {
+    const base = rstripSlash(path.virtual) || '/'
+    if (virtual === base || virtual.startsWith(`${rstripSlash(base)}/`)) {
+      return respellRaw([virtual], path.virtual, path.rawPath)[0] ?? virtual
+    }
+  }
+  return virtual
 }

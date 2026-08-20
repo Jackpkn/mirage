@@ -18,6 +18,7 @@ import { varsFromEnv } from './session.ts'
 import { describe, expect, it } from 'vitest'
 import { Session } from './session.ts'
 import { MountMode } from '../../types.ts'
+import type { CommandsSpec, Grant } from '../../policy/types.ts'
 
 describe('Session', () => {
   it('defaults cwd=/ and an env holding only the seeded $PWD', () => {
@@ -243,5 +244,81 @@ describe('a stored session keeps its attributes', () => {
     const json = s.toJSON() as { env: Record<string, string>; var_attrs: Record<string, string> }
     expect('Z' in json.env).toBe(false)
     expect(json.var_attrs.Z).toBe('x')
+  })
+})
+
+describe('the command tier round-trips through the record', () => {
+  it('writes the Python spelling and reads it back', () => {
+    const own: CommandsSpec = {
+      allow: ['ls', 'git log'],
+      ask: [{ reason: 'sign-off', commands: ['git push'], paths: ['/repo/*'], mount: '/repo' }],
+      deny: [{ reason: 'no', commands: ['rm'] }],
+    }
+    const s = new Session({ sessionId: 's1', commands: own })
+    const d = s.toJSON()
+    expect(d.commands).toEqual({
+      allow: ['ls', 'git log'],
+      ask: [{ reason: 'sign-off', commands: ['git push'], paths: ['/repo/*'], mount: '/repo' }],
+      deny: [{ reason: 'no', commands: ['rm'], paths: [] }],
+    })
+    const back = Session.fromJSON(d as Parameters<typeof Session.fromJSON>[0])
+    expect(back.commands).toEqual({
+      allow: ['ls', 'git log'],
+      ask: [{ reason: 'sign-off', commands: ['git push'], paths: ['/repo/*'], mount: '/repo' }],
+      deny: [{ reason: 'no', commands: ['rm'], paths: [], mount: '' }],
+    })
+    // Null means unstated and is not written; a tier without an allow
+    // list writes allow as null, distinct from an empty list.
+    expect('commands' in new Session({ sessionId: 's2' }).toJSON()).toBe(false)
+    const bare = new Session({
+      sessionId: 's3',
+      commands: { allow: null, ask: [], deny: [{ reason: 'x' }] },
+    })
+    expect((bare.toJSON().commands as { allow: unknown }).allow).toBeNull()
+    expect(bare.fork().commands).toBe(bare.commands)
+  })
+})
+
+describe('host grants round-trip through the record', () => {
+  it('writes the Python spelling and reads it back', () => {
+    const rule = { reason: 'sign-off', commands: ['git push'] }
+    const grants: Grant[] = [
+      { decision: 'allow_session', rule, argv: ['git', 'push'], cwd: '/repo' },
+      { decision: 'deny', rule, argv: ['git', 'push', '--force'], cwd: '/repo' },
+    ]
+    const s = new Session({ sessionId: 's1', grants })
+    const d = s.toJSON()
+    expect(d.grants).toEqual([
+      {
+        decision: 'allow_session',
+        rule: { reason: 'sign-off', commands: ['git push'], paths: [] },
+        argv: ['git', 'push'],
+        cwd: '/repo',
+      },
+      {
+        decision: 'deny',
+        rule: { reason: 'sign-off', commands: ['git push'], paths: [] },
+        argv: ['git', 'push', '--force'],
+        cwd: '/repo',
+      },
+    ])
+    const back = Session.fromJSON(d as Parameters<typeof Session.fromJSON>[0])
+    expect(back.grants).toEqual([
+      {
+        decision: 'allow_session',
+        rule: { reason: 'sign-off', commands: ['git push'], paths: [], mount: '' },
+        argv: ['git', 'push'],
+        cwd: '/repo',
+      },
+      {
+        decision: 'deny',
+        rule: { reason: 'sign-off', commands: ['git push'], paths: [], mount: '' },
+        argv: ['git', 'push', '--force'],
+        cwd: '/repo',
+      },
+    ])
+    // Nothing held writes nothing, and a fork carries what is held.
+    expect('grants' in new Session({ sessionId: 's2' }).toJSON()).toBe(false)
+    expect(s.fork().grants).toEqual(grants)
   })
 })

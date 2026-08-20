@@ -34,7 +34,7 @@ import {
 } from './harness.ts'
 
 const TS_HOSTS = ['typescript-node', 'typescript-browser']
-const PROFILE_KEYS = ['extends', 'cwd', 'env', 'mounts', 'paths', 'vars']
+const PROFILE_KEYS = ['extends', 'cwd', 'env', 'mounts', 'paths', 'vars', 'commands']
 
 interface EmitRow {
   target: string
@@ -80,6 +80,14 @@ async function runTarget(
   // from reading as covered.
   if (target.console !== undefined && target.mounts[0].resource !== 'ram') {
     throw new Error(`target ${target.id}: console targets ride ram mounts`)
+  }
+  // The permissions document is only wired into the ram and disk
+  // openers, for the same reason: a target that declares one on any
+  // other resource would run unbound and read as covered.
+  const declaresPermissions =
+    target.permissions !== undefined || target.mounts.some((m) => m.permissions !== undefined)
+  if (declaresPermissions && !['ram', 'disk'].includes(target.mounts[0].resource)) {
+    throw new Error(`target ${target.id}: permissions targets ride ram or disk mounts`)
   }
   const { ws, cleanup } = await ADAPTERS[target.mounts[0].resource](target)
   try {

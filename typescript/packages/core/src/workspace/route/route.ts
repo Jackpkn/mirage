@@ -12,10 +12,47 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import { headVisible } from '../../policy/match/allow.ts'
+import { GRAMMAR_BUILTINS, type ShellBuiltin } from '../../shell/types.ts'
 import type { MountRegistry } from '../mount/registry.ts'
 import type { Session } from '../session/session.ts'
 import { NAMESPACE_COMMANDS, SHELL_NAMES } from './constants.ts'
 import { Consumer } from './types.ts'
+
+/**
+ * What the session's allow lists say about a tool word. A tier without a
+ * list installs everything; a tier with one installs only the names its
+ * patterns start with (`headVisible`). This is the raw answer;
+ * `commandVisible` and `layers` add the words that are never subjects.
+ */
+export function listed(name: string, session: Session): boolean {
+  const tiers = session.commandLayers
+  return tiers.length === 0 || headVisible(name, tiers)
+}
+
+/**
+ * Whether a command word is a tool the allow lists govern. Three kinds
+ * of word are never subjects: the shell's own grammar (the grammar-tier
+ * builtins), a path being executed (its lines are each checked as they
+ * run), and the agent's own function where the function is what runs,
+ * which in this shell means a name no builtin owns (builtins shadow
+ * functions), so a function cannot resurrect a hidden builtin.
+ */
+export function isTool(name: string, session: Session): boolean {
+  if (GRAMMAR_BUILTINS.has(name as ShellBuiltin) || name.includes('/')) return false
+  return !(name in session.functions && !SHELL_NAMES.has(name))
+}
+
+/**
+ * Whether a session can see a command word at all. The document's allow
+ * lists (`commands.allow` at the workspace and profile tiers) decide: a
+ * tool name no list of a tier starts a pattern with is not installed for
+ * the session, so it is 127 at the chokepoint and absent from every
+ * enumerator; a word that is not a tool (`isTool`) is always visible.
+ */
+export function commandVisible(name: string, session: Session): boolean {
+  return !isTool(name, session) || listed(name, session)
+}
 
 /**
  * Yield every layer holding the name, most-preferred first.
@@ -23,14 +60,21 @@ import { Consumer } from './types.ts'
  * The one place precedence is written down: `route` reads the first
  * yield and `routeAll` reads all of them. Lazy on purpose, so the winner
  * costs exactly what it did before the split (a name an installed CLI
- * answers never reaches the mount lookup).
+ * answers never reaches the mount lookup). The document's visibility
+ * filter lives here too, so `type`, `which`, `command -v` and dispatch
+ * agree on what a session can see: an unlisted tool word yields nothing
+ * (grammar and functions are not subjects, and a function named after a
+ * hidden builtin is as unreachable as the builtin).
  */
 function* layers(name: string, session: Session, registry: MountRegistry): Generator<Consumer> {
-  if (SHELL_NAMES.has(name)) yield Consumer.SESSION
-  if (NAMESPACE_COMMANDS.has(name)) yield Consumer.NAMESPACE
-  if (name in session.functions) yield Consumer.FUNCTION
-  if (registry.clis.get(name) !== null) yield Consumer.CLI
-  if (registry.mountForCommand(name) !== null) yield Consumer.MOUNT
+  const installed = listed(name, session)
+  if (SHELL_NAMES.has(name) && (installed || GRAMMAR_BUILTINS.has(name as ShellBuiltin))) {
+    yield Consumer.SESSION
+  }
+  if (installed && NAMESPACE_COMMANDS.has(name)) yield Consumer.NAMESPACE
+  if (name in session.functions && (installed || !SHELL_NAMES.has(name))) yield Consumer.FUNCTION
+  if (installed && registry.clis.get(name) !== null) yield Consumer.CLI
+  if (installed && registry.mountForCommand(name) !== null) yield Consumer.MOUNT
 }
 
 /**

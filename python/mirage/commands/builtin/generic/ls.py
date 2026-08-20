@@ -444,9 +444,14 @@ async def probe_operand(
         if link_row is not None:
             return Operand(path, link_row, []), warnings
         if child_mounts is None or not child_mounts(path.virtual):
+            # GNU words a directory it may not read differently from
+            # one it cannot stat: the entry is there, opening it is
+            # what failed.
+            verb = ("cannot open directory" if isinstance(
+                exc, PermissionError) else "cannot access")
             warnings.append(
                 LsWarning(
-                    f"ls: cannot access '{path.raw_path}': "
+                    f"ls: {verb} '{path.raw_path}': "
                     f"{fs_strerror(exc) or exc}", command_line_arg))
             return Operand(path, None, []), warnings
         # No backend serves it, but the namespace owes it children (a

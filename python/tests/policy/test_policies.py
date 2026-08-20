@@ -16,10 +16,12 @@ import errno
 
 import pytest
 
-from mirage.policy import (Action, CommandContext, CommandRule, Deny,
-                           ExecuteResultContext, MountRootPolicy, OpsContext,
-                           OpsResultContext, Policies, Policy, PolicyError,
-                           post_execute_gate, post_ops_gate, pre_ops_gate)
+from mirage.policy import (Action, Ask, CommandContext, CommandRule, Deny,
+                           DenyScope, ExecuteResultContext, MountRootPolicy,
+                           OpsContext, OpsResultContext, Pending, Policies,
+                           Policy, PolicyError, post_execute_gate,
+                           post_ops_gate, pre_ops_gate, render_deny,
+                           render_pending)
 from mirage.policy.rule import RulePolicy
 from mirage.resource.ram import RAMResource
 from mirage.types import Limit, MountMode, PathSpec, Producer
@@ -30,7 +32,7 @@ class DenyWeird(Policy):
 
     async def pre_command(self, ctx: CommandContext) -> Action | None:
         if ctx.command == "weird":
-            return Deny("nope\n", 3)
+            return Deny("nope")
         return None
 
 
@@ -48,6 +50,34 @@ class IllegalReturn(Policy):
 
 class Silent(Policy):
     pass
+
+
+class AskRm(Policy):
+
+    async def pre_command(self, ctx: CommandContext) -> Action | None:
+        if ctx.command == "rm":
+            return Ask("sign-off")
+        return None
+
+
+class AskAll(Policy):
+
+    async def pre_command(self, ctx: CommandContext) -> Action | None:
+        return Ask("second opinion")
+
+
+class DenyRm(Policy):
+
+    async def pre_command(self, ctx: CommandContext) -> Action | None:
+        if ctx.command == "rm":
+            return Deny("no")
+        return None
+
+
+class AskOnOps(Policy):
+
+    async def pre_ops(self, ctx: OpsContext) -> Action | None:
+        return Ask("cannot wait here")
 
 
 def _registry() -> MountRegistry:
@@ -85,7 +115,7 @@ async def test_registry_seeds_the_mount_root_policy():
     deny = await registry.policies.pre_command(
         _ctx("rm", [_path("/data")], registry))
     assert deny is not None
-    assert "Device or resource busy" in deny.message
+    assert "Device or resource busy" in deny.reason
 
 
 @pytest.mark.asyncio
@@ -96,11 +126,22 @@ async def test_builtin_runs_first_then_user_policies_in_order():
     # Both match `rm /data`; the built-in GNU message wins by order.
     deny = await policies.pre_command(_ctx("rm", [_path("/data")]))
     assert deny is not None
-    assert "Device or resource busy" in deny.message
+    assert "Device or resource busy" in deny.reason
     # Only the user rule matches `rm /data/x`.
     deny = await policies.pre_command(_ctx("rm", [_path("/data/x")]))
     assert deny is not None
-    assert deny.message == "rm: user rule\n"
+    assert deny == Deny("user rule")
+    # The command plane renders a whole-command refusal at 126 and an
+    # operand one in the GNU voice at 1, whoever produced it.
+    assert render_deny("rm", deny) == (b"rm: policy denied: user rule\n", 126)
+    assert render_deny("rm",
+                       Deny("cannot remove 'x'",
+                            DenyScope.OPERAND)) == (b"rm: cannot remove 'x'\n",
+                                                    1)
+    assert render_deny("tar",
+                       Deny("x: Cannot open",
+                            DenyScope.OPERAND)) == (b"tar: x: Cannot open\n",
+                                                    2)
 
 
 @pytest.mark.asyncio
@@ -109,8 +150,7 @@ async def test_policy_instances_and_unoverridden_hooks():
     policies.add(Silent())
     policies.add(DenyWeird())
     deny = await policies.pre_command(_ctx("weird"))
-    assert deny is not None
-    assert deny.exit_code == 3
+    assert deny == Deny("nope")
     assert await policies.pre_command(_ctx("normal")) is None
 
 
@@ -120,9 +160,9 @@ async def test_a_raising_policy_fails_closed():
     policies.add(Raising())
     deny = await policies.pre_command(_ctx("ls"))
     assert deny is not None
-    assert deny.exit_code == 1
-    assert "Raising" in deny.message
-    assert "boom" in deny.message
+    assert deny.scope is DenyScope.COMMAND
+    assert "Raising" in deny.reason
+    assert "boom" in deny.reason
 
 
 @pytest.mark.asyncio
@@ -137,7 +177,7 @@ class DenyReadOps(Policy):
 
     async def pre_ops(self, ctx: OpsContext) -> Action | None:
         if ctx.op == "read":
-            return Deny("no reads\n")
+            return Deny("no reads")
         return None
 
 
@@ -145,7 +185,7 @@ class DenyBigResults(Policy):
 
     async def post_ops(self, ctx: OpsResultContext) -> Action | None:
         if isinstance(ctx.result, bytes) and len(ctx.result) > 8:
-            return Deny("result too large\n")
+            return Deny("result too large")
         return None
 
 
@@ -161,8 +201,7 @@ async def test_pre_ops_first_deny_wins_and_wants_gates():
                      write=False,
                      prefix="/data/")
     deny = await policies.pre_ops(ctx)
-    assert deny is not None
-    assert deny.message == "no reads\n"
+    assert deny == Deny("no reads")
     write_ctx = OpsContext(op="write",
                            path=_path("/data/x"),
                            write=True,
@@ -269,3 +308,34 @@ async def test_post_execute_gate_merges_user_limits():
     assert deny is None
     assert bound is not None
     assert bound.max_lines == 2
+
+
+@pytest.mark.asyncio
+async def test_a_deny_anywhere_in_the_chain_outranks_an_ask():
+    # The loop keeps looking past an Ask for a Deny, whichever order the
+    # two policies were registered in, so an approval can never re-open
+    # a refusal.
+    for order in ([AskRm(), DenyRm()], [DenyRm(), AskRm()]):
+        policies = Policies(order)
+        assert await policies.pre_command(_ctx("rm")) == Deny("no")
+    # With nothing refusing, the first Ask is the answer.
+    policies = Policies([AskRm(), AskAll()])
+    assert await policies.pre_command(_ctx("rm")) == Ask("sign-off")
+    assert await policies.pre_command(_ctx("ls")) == Ask("second opinion")
+
+
+@pytest.mark.asyncio
+async def test_an_ask_is_illegal_off_the_command_plane():
+    policies = Policies([AskOnOps()])
+    with pytest.raises(PolicyError, match="AskOnOps"):
+        await policies.pre_ops(
+            OpsContext(op="write",
+                       path=_path("/data/x"),
+                       write=True,
+                       prefix="/data/"))
+
+
+def test_render_pending_names_the_approval():
+    err, code = render_pending("git", Pending("abc123", "sign-off"))
+    assert err == b"git: requires approval: sign-off (approval abc123)\n"
+    assert code == 126

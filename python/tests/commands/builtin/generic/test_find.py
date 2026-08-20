@@ -960,3 +960,42 @@ async def test_find_no_operands_defaults_to_the_mount_root():
                                 FileStat(name="/", type=FileType.DIRECTORY)))
     assert io.exit_code == 0
     assert stdout == b"/\n/a.txt\n"
+
+
+@pytest.mark.asyncio
+async def test_walk_find_reports_a_directory_it_may_not_open():
+    # The guarded readdir refuses a directory a rule holds: the walk
+    # keeps its row, names it to the caller that collects such
+    # directories, and goes on; a caller that does not collect them is
+    # not left with a silent gap.
+    tree = {"/": ["/open", "/sealed"], "/open": ["/open/o"]}
+    kinds = {
+        "/": FileType.DIRECTORY,
+        "/open": FileType.DIRECTORY,
+        "/sealed": FileType.DIRECTORY,
+        "/open/o": FileType.TEXT,
+    }
+
+    async def readdir(spec, index=None):
+        if spec.virtual == "/sealed":
+            raise PermissionError("/sealed")
+        return tree[spec.virtual]
+
+    async def stat(spec, index=None):
+        return FileStat(name=spec.virtual, type=kinds[spec.virtual])
+
+    unreadable: list[str] = []
+    results = await walk_find(_root_spec(),
+                              readdir=readdir,
+                              stat=stat,
+                              index=None,
+                              args=FindArgs(),
+                              unreadable=unreadable)
+    assert results == ["/", "/open", "/open/o", "/sealed"]
+    assert unreadable == ["/sealed"]
+    with pytest.raises(PermissionError):
+        await walk_find(_root_spec(),
+                        readdir=readdir,
+                        stat=stat,
+                        index=None,
+                        args=FindArgs())

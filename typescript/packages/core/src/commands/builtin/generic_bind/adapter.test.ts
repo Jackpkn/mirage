@@ -14,9 +14,17 @@
 
 import { stripSlash } from '../../../utils/slash.ts'
 import { describe, expect, it } from 'vitest'
+import type { Accessor } from '../../../accessor/base.ts'
 import { FileStat, FileType, PathSpec } from '../../../types.ts'
 import { enoent } from '../../../utils/errors.ts'
-import { dirAwareStat, dirAwareStream, makeResolveGlob, type CommandIO } from './adapter.ts'
+import {
+  dirAwareStat,
+  dirAwareStream,
+  makeResolveGlob,
+  withRuleGuard,
+  type CommandIO,
+} from './adapter.ts'
+import { runWithAdmission } from '../../../context/session_context.ts'
 
 const accessor = {} as never
 
@@ -185,5 +193,78 @@ describe('dirAwareStream', () => {
     const chunks: Uint8Array[] = []
     for await (const chunk of stream(PathSpec.fromStrPath('/f.txt'))) chunks.push(chunk)
     expect(new TextDecoder().decode(chunks[0])).toBe('data')
+  })
+})
+
+describe('withRuleGuard', () => {
+  const spec = (virtual: string): PathSpec =>
+    new PathSpec({
+      virtual,
+      directory: virtual.slice(0, virtual.lastIndexOf('/')) || '/',
+      resourcePath: virtual,
+      resolved: true,
+    })
+
+  it('asks the bound gate and leaves stat alone', async () => {
+    const calls: string[][] = []
+    async function* stream(_a: Accessor, path: PathSpec): AsyncGenerator<Uint8Array> {
+      calls.push(['stream', path.virtual])
+      yield await Promise.resolve(new Uint8Array([1]))
+    }
+    const ops: CommandIO = {
+      readdir: (_a, path) => {
+        calls.push(['readdir', path.virtual])
+        return Promise.resolve(['/data/locked/y'])
+      },
+      readBytes: (_a, path) => {
+        calls.push(['read', path.virtual])
+        return Promise.resolve(new Uint8Array([1]))
+      },
+      readStream: stream,
+      stat: (_a, path) => {
+        calls.push(['stat', path.virtual])
+        return Promise.resolve(new FileStat({ name: 'k', type: FileType.TEXT, size: 1 }))
+      },
+      isMounted: () => true,
+      rename: (_a, src, dst) => {
+        calls.push(['rename', src.virtual, dst.virtual])
+        return Promise.resolve()
+      },
+    }
+    const guarded = withRuleGuard(ops)
+    // No gate bound: every slot runs as is.
+    expect(await guarded.readBytes(accessor, spec('/data/locked/y'))).toEqual(new Uint8Array([1]))
+    const asked: string[] = []
+    const gate = {
+      scoped: true,
+      check: (virtual: string) => {
+        asked.push(virtual)
+        if (virtual === '/data/locked/y') throw new Error(`refused ${virtual}`)
+      },
+    }
+    await runWithAdmission(gate, async () => {
+      // The gate throws at call time, like the hidden guard, so a caller's
+      // `await` inside a try sees it the same way as a rejection.
+      expect(() => guarded.readBytes(accessor, spec('/data/locked/y'))).toThrow('refused')
+      // stat is not a guarded slot: deny is present and refused.
+      expect((await guarded.stat(accessor, spec('/data/locked/y'))).size).toBe(1)
+      // readdir asks about the directory, never filters its names.
+      expect(await guarded.readdir(accessor, spec('/data/locked'))).toEqual(['/data/locked/y'])
+      // A pair op asks about both paths.
+      const rename = guarded.rename
+      if (rename === undefined) throw new Error('rename slot missing')
+      expect(() => rename(accessor, spec('/data/a'), spec('/data/locked/y'))).toThrow('refused')
+      await rename(accessor, spec('/data/a'), spec('/data/b'))
+    })
+    expect(asked).toEqual([
+      '/data/locked/y',
+      '/data/locked',
+      '/data/a',
+      '/data/locked/y',
+      '/data/a',
+      '/data/b',
+    ])
+    expect(calls).not.toContainEqual(['rename', '/data/a', '/data/locked/y'])
+    expect(calls).toContainEqual(['rename', '/data/a', '/data/b'])
   })
 })

@@ -57,6 +57,16 @@ USAGE_EXIT = {
     "python3": 2,
 }
 
+# The exit code of a command refused on one operand before it ran (an
+# admission policy's operand-scoped Deny): 1 for the GNU tools, which
+# report an operand they cannot act on and exit 1, and tar's own fatal
+# code, since tar reports an operand it cannot open and exits 2 (GNU
+# tar 1.35, `Exiting with failure status due to previous errors`).
+# Plain strings for the same no-cycle reason as USAGE_EXIT.
+OPERAND_EXIT = {
+    "tar": 2,
+}
+
 # The interpreter commands answer option errors in CPython's words, not
 # GNU's: python3 is not a GNU tool, and its refusal names the
 # source-selecting options a reader needs. Plain strings for the same

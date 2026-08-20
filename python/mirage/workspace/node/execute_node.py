@@ -356,7 +356,8 @@ async def execute_node(
                                      cs,
                                      job_table,
                                      cancel=cancel,
-                                     routing_decision=routing_decision)
+                                     routing_decision=routing_decision,
+                                     agent_id=agent_id)
 
     # ── pipeline ────────────────────────────────
     if kind == NodeKind.PIPELINE:

@@ -30,8 +30,8 @@ from mirage.observe.observer import Observer
 from mirage.observe.record import OpRecord
 from mirage.observe.store import ObserverStore
 from mirage.ops import Ops
-from mirage.policy import Policies, Policy
-from mirage.policy.rule import RulePolicy
+from mirage.policy import (Approvals, Approver, PermissionsPolicy, Policies,
+                           Policy)
 from mirage.provision import ProvisionResult
 from mirage.resource.history import HISTORY_PREFIX, HistoryViewResource
 from mirage.runtime.base import Runtime
@@ -49,9 +49,10 @@ from mirage.workspace.mount.namespace import Namespace
 from mirage.workspace.mount.namespace.store import NamespaceStore
 from mirage.workspace.session import (Session, SessionManager, SessionProfile,
                                       SessionStore, WorkspacePermissions)
-from mirage.workspace.session.resolve import (apply_profile, bound_hidden,
-                                              compile_profile, inherit,
-                                              resolve_profile, tighten)
+from mirage.workspace.session.resolve import (apply_profile, bound_commands,
+                                              bound_hidden, compile_profile,
+                                              inherit, resolve_profile,
+                                              tighten)
 from mirage.workspace.snapshot import (DriftQueue, apply_state_dict,
                                        build_mount_args, install_fingerprints,
                                        read_tar)
@@ -107,33 +108,30 @@ class Workspace:
         console_factory: ConsoleFactory | None = None,
         runtimes: list[Runtime | str] | None = None,
         policy: PolicyFn | None = None,
-        permissions: WorkspacePermissions | None = None,
-        profiles: Mapping[str, SessionProfile] | None = None,
+        permissions: WorkspacePermissions | Mapping[str, Any] | None = None,
+        profiles: Mapping[str, SessionProfile | Mapping[str, Any]]
+        | None = None,
         policies: list[Policy] | None = None,
+        approver: Approver | None = None,
         clis: dict[str, tuple[str | CLISpec, dict[str, Any] | None]]
         | None = None,
     ) -> None:
         self._registry = MountRegistry()
         # The permissions document, workspace tier: `permissions` binds
         # every session, `profiles` are the named templates a session is
-        # created from. Every named profile resolves once here so an
-        # unknown `extends` or a cycle fails at construction, not at the
-        # first create_session.
-        self._permissions = permissions
-        self._profiles: dict[str, SessionProfile] = dict(profiles or {})
+        # created from. Both accept the plain document a YAML file or the
+        # TypeScript constructor would hold; model_validate is a no-op on
+        # an already-built model. Every named profile resolves once here
+        # so an unknown `extends` or a cycle fails at construction, not
+        # at the first create_session.
+        self._permissions = (WorkspacePermissions.model_validate(permissions)
+                             if permissions is not None else None)
+        self._profiles: dict[str, SessionProfile] = {
+            name: SessionProfile.model_validate(doc)
+            for name, doc in (profiles or {}).items()
+        }
         for name in self._profiles:
             inherit(self._profiles, name)
-        # Admission policies, consulted in registration order after the
-        # built-ins the registry seeds: the document's deny rules first
-        # (compiled by the internal RulePolicy), then Policy instances,
-        # then anything added later through ws.policies.add(). The
-        # runtime policy (policy=) is the line-level counterpart until it
-        # is absorbed as a hook.
-        if permissions is not None:
-            for rule in permissions.commands.deny:
-                self._registry.policies.add(RulePolicy(rule))
-        for entry in policies or []:
-            self._registry.policies.add(entry)
         # One provider scopes every control-plane store by workspace id;
         # the per-plane params (observe / namespace_store / session_store)
         # remain as direct overrides that win over the provider.
@@ -159,9 +157,22 @@ class Workspace:
         self._shared_resources: set[int] = set()
         self._drift = DriftQueue()
         self.job_table = JobTable(console_factory)
-        self._current_agent_id: str | None = agent_id
         self._default_agent_id = agent_id
         self._session_mgr = SessionManager(session_id, store=stores.sessions)
+        # Admission policies, consulted in registration order after the
+        # built-ins the registry seeds: the document's command tiers
+        # (PermissionsPolicy, reading each session's compiled layers
+        # from the manager by the id the door puts in the context), then
+        # Policy instances, then anything added later through
+        # ws.policies.add(). The runtime policy (policy=) is the
+        # line-level counterpart until it is absorbed as a hook.
+        self._registry.policies.add(PermissionsPolicy(self._session_mgr))
+        for entry in policies or []:
+            self._registry.policies.add(entry)
+        # The approval door an Ask is taken to (design 3.9): grants live
+        # on the sessions, the host answers through `approver` (the
+        # recording one when none is wired) and reads `ws.approvals`.
+        self._registry.approvals = Approvals(self._session_mgr, approver)
         self._meta = WorkspaceMeta(self._workspace_id, self._state_store,
                                    self._session_mgr, session_id,
                                    session_id_explicit)
@@ -187,8 +198,13 @@ class Workspace:
         # stamped onto the default session now and onto every session
         # created or hydrated later.
         self._session_mgr.bound_hidden = bound_hidden(
-            permissions, {spec.prefix: spec.permissions
-                          for spec in specs})
+            self._permissions,
+            {spec.prefix: spec.permissions
+             for spec in specs})
+        self._session_mgr.bound_commands = bound_commands(
+            self._permissions,
+            {spec.prefix: spec.permissions
+             for spec in specs})
         # The workspace's own session is a session created without a
         # name, so `profiles.default` shapes it too (design 3.4): the
         # primary agent is not the one agent the document cannot reach.
@@ -266,6 +282,14 @@ class Workspace:
         and adding a policy can only tighten the workspace.
         """
         return self._registry.policies
+
+    @property
+    def approvals(self) -> Approvals:
+        """The host's door on asked commands: ``list()`` the requests
+        waiting, ``grant(id, scope)`` or ``deny(id)`` one, and the
+        agent's retry passes or is refused.
+        """
+        return self._registry.approvals
 
     @property
     def max_drain_bytes(self) -> int | None:
@@ -645,16 +669,16 @@ class Workspace:
         session_id: str,
         mounts: Mapping[str, MountMode | str] | Sequence[str] | None = None,
         *,
-        profile: str | SessionProfile | None = None,
-        permissions: SessionProfile | None = None,
+        profile: str | SessionProfile | Mapping[str, Any] | None = None,
+        permissions: SessionProfile | Mapping[str, Any] | None = None,
     ) -> Session:
         """Create a session from a profile, optionally tightened inline.
 
         The profile is a name from the workspace's ``profiles`` (or the
-        ``default`` one when none is named and one exists), or a
-        SessionProfile object; ``permissions`` and ``mounts`` narrow it
-        further (mounts intersect at the weaker mode, hides union;
-        design 3.4). Nothing here can widen what the profile grants.
+        ``default`` one when none is named and one exists), or a profile
+        document; ``permissions`` and ``mounts`` narrow it further
+        (mounts intersect at the weaker mode, hides union; design 3.4).
+        Nothing here can widen what the profile grants.
 
         Args:
             session_id (str): unique id for the session.
@@ -665,16 +689,20 @@ class Workspace:
                 (or one bare prefix) keeps each mount at its own
                 configured mode. A set or a generator is refused, so
                 the same grant reads the same way in TypeScript.
-            profile (str | SessionProfile | None): the role to create
-                the session from.
-            permissions (SessionProfile | None): an inline document that
-                tightens the profile.
+            profile (str | SessionProfile | Mapping[str, Any] | None):
+                the role to create the session from: a name, a
+                SessionProfile, or its plain document.
+            permissions (SessionProfile | Mapping[str, Any] | None): an
+                inline document that tightens the profile.
 
         Raises:
             PolicyError: an unknown profile name or a broken chain.
         """
+        if isinstance(profile, Mapping):
+            profile = SessionProfile.model_validate(profile)
         base = resolve_profile(self._profiles, profile)
-        inline = permissions
+        inline = (SessionProfile.model_validate(permissions)
+                  if permissions is not None else None)
         if mounts is not None:
             inline = tighten(inline,
                              SessionProfile.model_validate({"mounts": mounts}))

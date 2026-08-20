@@ -41,11 +41,33 @@ class Problem:
             be stat'd at all and each archiver has its own wording.
         fatal (bool): whether the path was unreachable rather than
             merely skipped, which is what decides the exit code.
+        unreadable (bool): whether the path is a directory the walk
+            could not open (a rule refused it below the operand), so
+            its own entry is archived and its contents are not: tar
+            reports it as ``Cannot open`` and fails the run, Info-ZIP
+            stores the directory and says nothing.
     """
 
     path: str
     reason: str = ""
     fatal: bool = False
+    unreadable: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class Walked:
+    """One subtree listing, as the scan's walk reports it.
+
+    Args:
+        paths (tuple[str, ...]): the entries of the asked kind, as
+            absolute virtual paths.
+        unreadable (tuple[str, ...]): directories below the operand the
+            walk could not open, whose contents are therefore not in
+            ``paths``; the same ones whichever kind was asked for.
+    """
+
+    paths: tuple[str, ...]
+    unreadable: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

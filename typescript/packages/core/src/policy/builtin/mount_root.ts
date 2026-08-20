@@ -46,8 +46,11 @@ export function hasParentsFlag(argv: readonly string[]): boolean {
   return false
 }
 
-function deny(message: string, exitCode = 1): Deny {
-  return { kind: 'deny', message, exitCode }
+// Every mount-root refusal is about one operand and speaks in the
+// command's own voice: the door prefixes the command name and picks the
+// exit code from the operand table (1, tar 2).
+function deny(reason: string): Deny {
+  return { kind: 'deny', reason, scope: 'operand' }
 }
 
 // The first of these paths that is a mount root, if any.
@@ -98,8 +101,8 @@ export class MountRootPolicy implements Policy {
         if (isRoot(p.virtual)) {
           return deny(
             cmd === 'rmdir'
-              ? `rmdir: failed to remove '${p.virtual}': Device or resource busy\n`
-              : `rm: cannot remove '${p.virtual}': Device or resource busy\n`,
+              ? `failed to remove '${p.virtual}': Device or resource busy`
+              : `cannot remove '${p.virtual}': Device or resource busy`,
           )
         }
       }
@@ -109,9 +112,7 @@ export class MountRootPolicy implements Policy {
     if (cmd === 'mv') {
       if (ctx.paths[0] !== undefined && isRoot(ctx.paths[0].virtual)) {
         const dst = ctx.paths[1] !== undefined ? ctx.paths[1].virtual : '?'
-        return deny(
-          `mv: cannot move '${ctx.paths[0].virtual}' to '${dst}': Device or resource busy\n`,
-        )
+        return deny(`cannot move '${ctx.paths[0].virtual}' to '${dst}': Device or resource busy`)
       }
       return null
     }
@@ -121,7 +122,7 @@ export class MountRootPolicy implements Policy {
       if (hasParentsFlag(ctx.argv)) return null
       for (const p of ctx.paths) {
         if (isRoot(p.virtual)) {
-          return deny(`mkdir: cannot create directory '${p.virtual}': File exists\n`)
+          return deny(`cannot create directory '${p.virtual}': File exists`)
         }
       }
       return null
@@ -130,7 +131,7 @@ export class MountRootPolicy implements Policy {
     if (cmd === 'touch') {
       for (const p of ctx.paths) {
         if (isRoot(p.virtual)) {
-          return deny(`touch: cannot touch '${p.virtual}': Is a directory\n`)
+          return deny(`cannot touch '${p.virtual}': Is a directory`)
         }
       }
       return null
@@ -140,7 +141,7 @@ export class MountRootPolicy implements Policy {
       const last = ctx.paths[ctx.paths.length - 1]
       if (last !== undefined && isRoot(last.virtual)) {
         const kind = hasSymlinkFlag(ctx.argv) ? 'symbolic link' : 'link'
-        return deny(`ln: failed to create ${kind} '${last.virtual}': File exists\n`)
+        return deny(`failed to create ${kind} '${last.virtual}': File exists`)
       }
       return null
     }
@@ -153,9 +154,8 @@ export class MountRootPolicy implements Policy {
       const root = isCreateMode(ctx.argv) ? firstRoot(isRoot, operands) : null
       if (root !== null) {
         return deny(
-          `tar: ${root.rawPath}: Cannot open: Device or resource busy\n` +
-            `tar: Error is not recoverable: exiting now\n`,
-          2,
+          `${root.rawPath}: Cannot open: Device or resource busy\n` +
+            `tar: Error is not recoverable: exiting now`,
         )
       }
       return null
@@ -166,7 +166,7 @@ export class MountRootPolicy implements Policy {
       // only what follows it is read.
       const root = firstRoot(isRoot, operands.slice(1))
       if (root !== null) {
-        return deny(`zip: cannot read '${root.rawPath}': Device or resource busy\n`)
+        return deny(`cannot read '${root.rawPath}': Device or resource busy`)
       }
       return null
     }
@@ -176,7 +176,7 @@ export class MountRootPolicy implements Policy {
       // ordinary; only the sources are refused.
       const root = firstRoot(isRoot, operands.slice(0, -1))
       if (root !== null) {
-        return deny(`cp: cannot copy '${root.rawPath}': Device or resource busy\n`)
+        return deny(`cannot copy '${root.rawPath}': Device or resource busy`)
       }
       return null
     }

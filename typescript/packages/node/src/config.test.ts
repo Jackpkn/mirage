@@ -496,8 +496,7 @@ describe('configToWorkspaceArgs', () => {
           deny: [
             {
               reason: 'production data is protected',
-              commands: ['rm', 'mv'],
-              paths: ['/repo/prod/*'],
+              commands: { rm: ['/repo/prod/*'], mv: ['/repo/prod/*'] },
             },
             'python3',
           ],
@@ -520,12 +519,11 @@ describe('configToWorkspaceArgs', () => {
     const args = await configToWorkspaceArgs(cfg)
     expect(args.options.permissions).toEqual({
       commands: {
+        allow: null,
+        ask: [],
         deny: [
-          {
-            reason: 'production data is protected',
-            commands: ['rm', 'mv'],
-            paths: ['/repo/prod/*'],
-          },
+          { reason: 'production data is protected', commands: ['rm'], paths: ['/repo/prod/*'] },
+          { reason: 'production data is protected', commands: ['mv'], paths: ['/repo/prod/*'] },
           { reason: 'denied by policy', commands: ['python3'] },
         ],
       },
@@ -547,7 +545,7 @@ describe('configToWorkspaceArgs', () => {
       },
     })
     expect(args.options.mountPermissions).toEqual({
-      '/repo': { paths: { hide: ['*.pem', '.env'] } },
+      '/repo': { paths: { hide: ['*.pem', '.env'] }, commands: { ask: [], deny: [] } },
     })
     expect(args.resources['/scratch']?.[1]).toBe(MountMode.EXEC)
   })
@@ -573,9 +571,9 @@ describe('configToWorkspaceArgs', () => {
     ).toThrow(/unknown field `hidden_paths`/)
     expect(() =>
       loadWorkspaceConfig({
-        mounts: { '/data': { resource: 'ram', permissions: { commands: { deny: ['rm'] } } } },
+        mounts: { '/data': { resource: 'ram', permissions: { commands: { allow: ['ls'] } } } },
       }),
-    ).toThrow(/unknown field `commands`/)
+    ).toThrow(/unknown field `allow`/)
     expect(() =>
       loadWorkspaceConfig({
         mounts: { '/data': { resource: 'ram' } },

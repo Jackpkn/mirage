@@ -237,6 +237,9 @@ async function planZip(
       recurse,
     })
     for (const problem of scan.problems) {
+      // Info-ZIP stores the directory it could not open and says nothing
+      // about it (pinned on debian:stable-slim).
+      if (problem.unreadable === true) continue
       const shown = respellOne(problem.path, base, raw)
       if (problem.fatal === true) warnings.push(NOT_MATCHED + shown)
       else warnings.push(`${shown}: ${problem.reason ?? ''}`)
@@ -295,6 +298,12 @@ export async function zipGeneric(
 
   const items: ZipItem[] = []
   const outputLines: string[] = []
+  // A member the session may not read (a rule refused it below the
+  // operand) aborts the run with zip's name on the refusal and writes no
+  // archive. Deliberate divergence: Info-ZIP writes the rest, echoes
+  // `could not open for reading` beside the adding line, and closes with
+  // a read/skipped summary that needs every member's size and exit 18;
+  // none of that is reproduced.
   for (const member of plan.members) {
     let data = new Uint8Array(0)
     if (member.kind === 'link') {

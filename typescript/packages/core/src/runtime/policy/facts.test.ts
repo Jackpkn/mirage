@@ -15,7 +15,7 @@
 import { describe, expect, it } from 'vitest'
 
 import type { TSNodeLike } from '../../shell/types.ts'
-import { parsedCommands } from './facts.ts'
+import { commandNodes, parsedCommands } from './facts.ts'
 import { policyContextFromPayload, policyContextPayload, type PolicyContext } from './types.ts'
 
 // Mirrors python/tests/runtime/policy/test_facts.py.
@@ -76,5 +76,31 @@ describe('policy context wire schema', () => {
       JSON.parse(JSON.stringify(policyContextPayload(ctx))) as Record<string, unknown>,
     )
     expect(replayed).toEqual(ctx)
+  })
+})
+
+describe('commandNodes', () => {
+  it('walks nested commands in source order', () => {
+    const b = command('b')
+    const substitution: TSNodeLike = {
+      type: 'command_substitution',
+      text: '$(b)',
+      children: [b],
+      namedChildren: [b],
+    }
+    const a: TSNodeLike = {
+      type: 'command',
+      text: 'a $(b)',
+      children: [word('command_name', 'a'), substitution],
+      namedChildren: [word('command_name', 'a'), substitution],
+    }
+    const c = command('c')
+    const root: TSNodeLike = {
+      type: 'program',
+      text: 'a $(b) | c',
+      children: [a, c],
+      namedChildren: [a, c],
+    }
+    expect(commandNodes(root).map((n) => n.text)).toEqual(['a $(b)', 'b', 'c'])
   })
 })

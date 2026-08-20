@@ -40,6 +40,7 @@ import type { SessionManager } from '../session/manager.ts'
 import type { Session } from '../session/session.ts'
 import type { ExecutionNode } from '../types.ts'
 import { failureResult, isControlFlowError } from './failure.ts'
+import { admitLine } from '../node/admission.ts'
 import { runWholeLine } from './line.ts'
 import type { WorkspaceMeta } from './meta.ts'
 import type { PolicyRouter } from './policy.ts'
@@ -227,6 +228,9 @@ async function runLine(
       sessionId: opts.sessionId,
     }
     if (options.signal !== undefined) innerOpts.signal = options.signal
+    // The agent rides with the execution: an approval a nested line
+    // raises is the typed line's agent's, not the workspace default's.
+    if (options.agentId !== undefined) innerOpts.agentId = options.agentId
     // Nested lines never re-route: the evaluator's inner lines keep
     // the typed line's decision (runtime argument, policy, or scripts).
     if (routingDecision !== null) innerOpts.routingDecision = routingDecision
@@ -264,7 +268,16 @@ async function runLine(
     ...(options.sink !== undefined ? { sink: options.sink } : {}),
   }
   try {
-    return await runParsedLine(env, command, options, rootNode, deps, targetSession, stdin)
+    return await runParsedLine(
+      env,
+      command,
+      options,
+      rootNode,
+      deps,
+      targetSession,
+      stdin,
+      (line) => parser.parse(line),
+    )
   } finally {
     // Durable session fields (cwd, env, grants) flush at the end of
     // every execute, success or failure, mirroring Python's finally.
@@ -280,6 +293,7 @@ async function runParsedLine(
   deps: ExecuteNodeDeps,
   targetSession: Session,
   stdin: ByteSource | null,
+  reparse: (line: string) => TSNodeLike,
 ): Promise<ExecuteResult> {
   const callAgentId = options.agentId ?? env.agentId ?? ''
   const effectiveSession = forkForCall(targetSession, options.cwd, options.env)
@@ -295,6 +309,31 @@ async function runParsedLine(
   }
   const lineRuntime = env.runtimes.wholeLineFor(rootNode, deps.routingDecision ?? null)
   if (lineRuntime?.runLine !== undefined) {
+    // A whole line is a command like any other: the same visibility and
+    // admission gate as the tree, per parsed command, before the
+    // runtime sees a byte of it.
+    const refusal = await admitLine(
+      rootNode,
+      effectiveSession,
+      env.registry,
+      env.namespace,
+      callAgentId,
+      reparse,
+    )
+    if (refusal !== null) {
+      targetSession.lastExitCode = refusal.exitCode
+      if (isLine) {
+        await env.observer.logExecution(
+          command,
+          new IOResult({ exitCode: refusal.exitCode, stderr: refusal.stderr }),
+          [],
+          callAgentId,
+          targetSession.sessionId,
+          effectiveSession.cwd,
+        )
+      }
+      return new ExecuteResult(new Uint8Array(), refusal.stderr, refusal.exitCode)
+    }
     const result = await runWholeLine(
       lineRuntime,
       command,

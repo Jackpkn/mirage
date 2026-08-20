@@ -24,14 +24,9 @@ import { homeDir } from '../session/shell_dirs.ts'
 import { expandTemplate, makeInert, substitute } from './brace.ts'
 import { classifyWord } from './classify/index.ts'
 import { BRACE_LITERAL_TYPES, BRACE_WORD_TYPES, SPLIT_TYPES } from './constants.ts'
-import {
-  expandNode,
-  expandNodeMarked,
-  foldedWhitespace,
-  unescapeUnquoted,
-  type ExecuteFn,
-} from './node.ts'
+import { expandNode, expandNodeMarked, foldedWhitespace, type ExecuteFn } from './node.ts'
 import { expandArrayAt, isMultiwordAt } from './variable.ts'
+import { unescapeUnquoted } from '../../shell/escapes.ts'
 import type { TSNodeLike } from '../../shell/types.ts'
 
 // Brace-expand a concatenation or brace_expression into words. Literal

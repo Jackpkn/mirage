@@ -29,7 +29,10 @@ import type { CommandIO } from './adapter.ts'
  *
  * walkFind stands in for a backend's native find op, so it answers in
  * mount-relative keys; both archivers name members from virtual paths, so they
- * are lifted back here the way findGeneric lifts them.
+ * are lifted back here the way findGeneric lifts them. A directory the walk
+ * could not open rides along (as the virtual path the walk recorded), so the
+ * archiver can report it the way GNU does instead of silently leaving its
+ * contents out.
  */
 export function walkOf(
   ops: CommandIO,
@@ -38,16 +41,18 @@ export function walkOf(
 ): WalkFn {
   return async (p, findType) => {
     const prefix = mountPrefixOf(p.virtual, p.resourcePath)
+    const unreadable: string[] = []
     const keys = await walkFind(
       p,
       {
+        unreadable,
         readdir: (spec, i) => ops.readdir(accessor, spec, i),
         stat: (spec, i) => ops.stat(accessor, spec, i),
       },
       { type: findType },
       index,
     )
-    if (prefix === '') return keys
-    return keys.map((key) => (key === '/' ? prefix : prefix + key))
+    const paths = prefix === '' ? keys : keys.map((key) => (key === '/' ? prefix : prefix + key))
+    return { paths, unreadable }
   }
 }

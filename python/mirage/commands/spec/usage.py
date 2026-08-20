@@ -13,9 +13,9 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 from mirage.commands.errors import UsageError
-from mirage.commands.spec.constants import (OLD_OPTION_EXIT, PYTHON_NAMES,
-                                            PYTHON_USAGE, USAGE_EXIT,
-                                            USAGE_HINT_PREFIX)
+from mirage.commands.spec.constants import (OLD_OPTION_EXIT, OPERAND_EXIT,
+                                            PYTHON_NAMES, PYTHON_USAGE,
+                                            USAGE_EXIT, USAGE_HINT_PREFIX)
 from mirage.commands.spec.types import CommandName
 
 
@@ -26,6 +26,15 @@ def usage_exit_code(cmd_name: str) -> int:
         cmd_name (str): command name.
     """
     return USAGE_EXIT.get(cmd_name, 1)
+
+
+def operand_exit_code(cmd_name: str) -> int:
+    """Exit code of a command refused on one operand before it ran.
+
+    Args:
+        cmd_name (str): command name.
+    """
+    return OPERAND_EXIT.get(cmd_name, 1)
 
 
 def python_option_error(cmd_name: str, line: str) -> tuple[bytes, int]:

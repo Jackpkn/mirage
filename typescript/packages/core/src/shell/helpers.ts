@@ -12,6 +12,8 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import { expandTilde } from '../utils/path.ts'
+import { decodeAnsiC, unescapeDquoted, unescapeUnquoted } from './escapes.ts'
 import type { TSNodeLike } from './types.ts'
 import { NodeType as NT, Redirect, RedirectKind } from './types.ts'
 
@@ -49,6 +51,87 @@ export function getParts(node: TSNodeLike): TSNodeLike[] {
     }
   }
   return parts
+}
+
+/**
+ * Whether unquoted text holds a brace expansion (`{a,b}`, `{1..3}`),
+ * which the shell turns into several words.
+ */
+export function braceExpands(text: string): boolean {
+  let start = -1
+  for (let position = 0; position < text.length; position += 1) {
+    const char = text[position]
+    if (char === '{') {
+      start = position
+    } else if (char === '}' && start >= 0) {
+      const body = text.slice(start + 1, position)
+      if (body.includes(',') || body.includes('..')) return true
+      start = -1
+    }
+  }
+  return false
+}
+
+/**
+ * The text a word names before any expansion, or null.
+ *
+ * A word is literal when nothing in it waits on the shell: a plain
+ * word, a number, a quoted string with no expansion inside, or a
+ * concatenation of those. Quotes are removed, escapes resolved and a
+ * leading unquoted `~` expanded the way expansion would (`home` null
+ * leaves it literal, as bash does with no `$HOME`). A word carrying a
+ * parameter, command, arithmetic or process substitution, or a brace
+ * expression, answers null: what it names is known only when it runs.
+ */
+export function literalWord(node: TSNodeLike, home: string | null = null): string | null {
+  const ntype = node.type
+  if (ntype === NT.COMMAND_NAME) {
+    const first = node.namedChildren[0]
+    return first === undefined ? node.text : literalWord(first, home)
+  }
+  if (
+    (ntype === NT.WORD || ntype === NT.NUMBER || ntype === NT.CONCATENATION) &&
+    braceExpands(node.text)
+  ) {
+    return null
+  }
+  if (ntype === NT.WORD || ntype === NT.NUMBER) {
+    return expandTilde(unescapeUnquoted(node.text), home)
+  }
+  if (ntype === NT.RAW_STRING) return node.text.slice(1, -1)
+  if (ntype === NT.ANSI_C_STRING) return decodeAnsiC(node.text.slice(2, -1))
+  if (ntype === NT.TRANSLATED_STRING) {
+    for (const child of node.namedChildren) {
+      if (child.type === NT.STRING) return literalWord(child)
+    }
+    return ''
+  }
+  if (ntype === NT.STRING) {
+    const pieces: string[] = []
+    for (const child of node.children) {
+      if (child.type === NT.DQUOTE) continue
+      if (child.type !== NT.STRING_CONTENT) return null
+      pieces.push(unescapeDquoted(child.text))
+    }
+    return pieces.join('')
+  }
+  if (ntype === NT.CONCATENATION) {
+    const pieces: string[] = []
+    const children = node.children
+    for (let position = 0; position < children.length; position += 1) {
+      const child = children[position]
+      if (child === undefined) continue
+      // The `$` of a `$"..."` is the translation marker, not text.
+      if (child.type === '$' && children[position + 1]?.type === NT.STRING) continue
+      // Only a leading unquoted piece carries a tilde prefix.
+      const piece = literalWord(child, pieces.length === 0 ? home : null)
+      if (piece === null) return null
+      pieces.push(piece)
+    }
+    return pieces.join('')
+  }
+  if (ntype === '$') return '$'
+  return null
 }
 
 /**

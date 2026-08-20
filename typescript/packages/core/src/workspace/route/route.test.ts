@@ -18,7 +18,16 @@ import { IOResult } from '../../io/types.ts'
 import { OpsRegistry } from '../../ops/registry.ts'
 import { RAMResource } from '../../resource/ram/ram.ts'
 import { MountMode } from '../../types.ts'
-import { Consumer, SHELL_CONSUMERS, dereferences, route, routeAll } from './index.ts'
+import {
+  Consumer,
+  SHELL_CONSUMERS,
+  commandVisible,
+  dereferences,
+  readsSubtrees,
+  route,
+  routeAll,
+  walksMounts,
+} from './index.ts'
 import { Session } from '../session/session.ts'
 import { Workspace } from '../workspace/workspace.ts'
 
@@ -156,5 +165,77 @@ describe('find link-policy options', () => {
 
   it('only counts options before the operand', () => {
     expect(dereferences('find', ['find', '/data/link', '-L'])).toBe(false)
+  })
+})
+
+describe('walkers and subtree readers', () => {
+  it('walkers are read off the raw line', () => {
+    // find/du/tree/rg always descend; grep and ls only under a flag,
+    // read raw because admission fires before flag parsing.
+    expect(walksMounts('find', ['find', '/data'])).toBe(true)
+    expect(walksMounts('du', ['du', '/data'])).toBe(true)
+    expect(walksMounts('tree', ['tree'])).toBe(true)
+    expect(walksMounts('rg', ['rg', 'x'])).toBe(true)
+    expect(walksMounts('grep', ['grep', 'x', '/data'])).toBe(false)
+    expect(walksMounts('grep', ['grep', '-rn', 'x', '/data'])).toBe(true)
+    expect(walksMounts('grep', ['grep', '--recursive', 'x'])).toBe(true)
+    expect(walksMounts('grep', ['grep', '--', '-r'])).toBe(false)
+    expect(walksMounts('ls', ['ls', '-R', '/data'])).toBe(true)
+    expect(walksMounts('ls', ['ls', '-l', '/data'])).toBe(false)
+    expect(walksMounts('cat', ['cat', '/data/x'])).toBe(false)
+  })
+
+  it('subtree readers cover the archivers and recursive copy', () => {
+    // tar -c and zip -r and cp -r read below their operands but stop at
+    // a mount boundary, so they read subtrees without walking mounts.
+    expect(readsSubtrees('tar', ['tar', '-cf', '/out.tar', '/data'])).toBe(true)
+    expect(readsSubtrees('tar', ['tar', '-xf', '/out.tar'])).toBe(false)
+    expect(readsSubtrees('zip', ['zip', '-r', '/out.zip', '/data'])).toBe(true)
+    expect(readsSubtrees('cp', ['cp', '-r', '/data', '/copy'])).toBe(true)
+    expect(readsSubtrees('cp', ['cp', '/data/a', '/copy'])).toBe(false)
+    expect(readsSubtrees('grep', ['grep', '-r', 'x', '/data'])).toBe(true)
+    expect(walksMounts('tar', ['tar', '-cf', '/out.tar', '/data'])).toBe(false)
+  })
+})
+
+describe('allow lists', () => {
+  it('filter the tool layers and spare grammar and functions', () => {
+    const { session, ws } = fixture()
+    ws.registerCli('prog', cliTree())
+    session.boundCommands = [{ allow: ['cat', 'prog run', 'ln'], ask: [], deny: [] }]
+    session.commands = { allow: ['cat', 'prog', 'ln', 'sleep'], ask: [], deny: [] }
+    const reg = ws.registry
+    // Listed at every tier: visible in its layer.
+    expect(route('cat', session, reg)).toBe(Consumer.MOUNT)
+    expect(route('prog', session, reg)).toBe(Consumer.CLI)
+    expect(route('ln', session, reg)).toBe(Consumer.NAMESPACE)
+    // Listed at one tier only, or at none: not a command for the
+    // session (sleep is a tool-tier builtin, rm a mount command).
+    expect(route('sleep', session, reg)).toBe(Consumer.UNKNOWN)
+    expect(route('rm', session, reg)).toBe(Consumer.UNKNOWN)
+    expect(routeAll('rm', session, reg)).toEqual([])
+    expect(commandVisible('rm', session)).toBe(false)
+    // Grammar (cd, echo, test, ...) is never a subject.
+    expect(route('cd', session, reg)).toBe(Consumer.SESSION)
+    expect(route('echo', session, reg)).toBe(Consumer.SESSION)
+    expect(commandVisible('cd', session)).toBe(true)
+    // A function is the session's own state, visible where it is what
+    // runs; named after a hidden builtin it is as unreachable as the
+    // builtin, since builtins shadow functions here.
+    session.functions.deploy = []
+    expect(route('deploy', session, reg)).toBe(Consumer.FUNCTION)
+    expect(commandVisible('deploy', session)).toBe(true)
+    session.functions.sleep = []
+    expect(route('sleep', session, reg)).toBe(Consumer.UNKNOWN)
+    expect(commandVisible('sleep', session)).toBe(false)
+    // A function shadowing a hidden CLI or mount command runs, and the
+    // hidden layer stays out of `type -a`.
+    session.functions.rm = []
+    expect(routeAll('rm', session, reg)).toEqual([Consumer.FUNCTION])
+    // No tiers at all: nothing filtered (the function still shadows).
+    session.commands = null
+    session.boundCommands = []
+    expect(routeAll('rm', session, reg)).toEqual([Consumer.FUNCTION, Consumer.MOUNT])
+    expect(route('sleep', session, reg)).toBe(Consumer.SESSION)
   })
 })

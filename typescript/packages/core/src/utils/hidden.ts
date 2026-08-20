@@ -72,6 +72,49 @@ function normAbs(path: string): string {
  * the repo fnmatch dialect, `*` crossing slashes as GNU `find -path`
  * does.
  */
+/**
+ * The fixed directory above an anchored pattern's first glob segment,
+ * normalized (`/x/locked/*` -> `/x/locked`).
+ */
+function patternHead(pattern: string): string {
+  const fixed: string[] = []
+  for (const seg of normAbs(pattern).split('/')) {
+    if (isGlob(seg)) break
+    fixed.push(seg)
+  }
+  return normAbs(fixed.join('/'))
+}
+
+/**
+ * Whether a spec has anything at or under this virtual path.
+ *
+ * Asked for an op that acts on a whole subtree (a rename of a directory,
+ * a recursive remove): `/x/locked/*` protects the children of
+ * `/x/locked`, and moving or removing `/x/locked` or `/x` takes them
+ * along, so the op on the directory or an ancestor counts as touching
+ * the scope. Exact entries and the fixed head of an anchored pattern
+ * are tested; a component pattern (no `/`) names no place, so only a
+ * walk could tell and it is not counted here. With `ancestors` false
+ * only the directory holding the scope counts, which is the question for
+ * a destination: moving into `/x/locked` lands in the scope, moving into
+ * `/x` does not.
+ */
+export function pathCovers(
+  hidden: HiddenPaths | null | undefined,
+  virtual: string,
+  ancestors = true,
+): boolean {
+  if (hidden == null) return false
+  const paths = hidden.paths ?? []
+  const patterns = hidden.patterns ?? []
+  if (paths.length === 0 && patterns.length === 0) return false
+  const norm = normAbs(virtual)
+  const heads = paths.map(normAbs)
+  for (const p of patterns) if (p.includes('/')) heads.push(patternHead(p))
+  if (heads.some((head) => head === norm)) return true
+  return ancestors && heads.some((head) => norm === '/' || head.startsWith(norm + '/'))
+}
+
 export function pathHidden(hidden: HiddenPaths | null | undefined, virtual: string): boolean {
   if (hidden == null) return false
   const paths = hidden.paths ?? []

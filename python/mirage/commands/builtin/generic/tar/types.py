@@ -25,12 +25,16 @@ class Member:
             a directory or a symlink, neither of which has content.
         target (str): a symlink's target, verbatim as stored; empty for
             every other kind.
+        spelled (str): the path as the operand was typed, before the
+            member-name strip: what a diagnostic about the member names
+            (GNU reports ``/t/priv``, not ``t/priv``).
     """
 
     name: str
     kind: MemberKind
     path: PathSpec | None = None
     target: str = ""
+    spelled: str = ""
 
 
 @dataclass(frozen=True, slots=True)

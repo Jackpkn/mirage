@@ -533,7 +533,7 @@
             "name": "deny_flag",
             "command": "grep",
             "flag": "-r",
-            "message": "grep: recursive search is not allowed here\n"
+            "reason": "recursive search is not allowed here"
           }
         ]
       },
@@ -541,9 +541,9 @@
         {
           "command": "grep -r hello /ram",
           "expect": {
-            "exit": 1,
+            "exit": 126,
             "stdout": "",
-            "stderr": "grep: recursive search is not allowed here\n"
+            "stderr": "grep: policy denied: recursive search is not allowed here\n"
           }
         },
         {
@@ -813,7 +813,7 @@
         {
           "command": "echo hi",
           "expect": {
-            "exit": 1,
+            "exit": 126,
             "stdout": "",
             "stderr_contains": "policy Boom failed"
           }

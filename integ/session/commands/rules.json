@@ -1,0 +1,227 @@
+{
+  "cases": [
+    {
+      "id": "cmd_operand_rule_speaks_in_the_gnu_voice",
+      "seq": 923017,
+      "targets": [
+        "ram-commands"
+      ],
+      "command": "cd /repo && rm letters.txt",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "rm: letters.txt: no deletes in the repo\n"
+      }
+    },
+    {
+      "id": "cmd_operand_rule_leaves_other_mounts_alone",
+      "seq": 923018,
+      "targets": [
+        "ram-commands"
+      ],
+      "command": "rm /scratch/z && touch /scratch/z",
+      "expect": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "cmd_bound_path_rule_at_the_command_plane",
+      "seq": 923019,
+      "targets": [
+        "ram-commands"
+      ],
+      "command": "mkdir -p /repo/sealed/deep",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "mkdir: /repo/sealed/deep: sealed until review\n"
+      }
+    },
+    {
+      "id": "cmd_bound_path_rule_at_the_op_door_speaks_eacces",
+      "seq": 923020,
+      "targets": [
+        "ram-commands"
+      ],
+      "command": "> /repo/sealed/x",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "/repo/sealed/x: Permission denied\n"
+      }
+    },
+    {
+      "id": "cmd_redirect_target_is_judged_with_the_line",
+      "seq": 923029,
+      "targets": [
+        "ram-commands"
+      ],
+      "command": "echo hi > /repo/sealed/x",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "echo: /repo/sealed/x: sealed until review\n"
+      }
+    },
+    {
+      "id": "cmd_mount_rule_by_cwd",
+      "seq": 923021,
+      "targets": [
+        "ram-commands"
+      ],
+      "command": "cd /repo && git commit -m x",
+      "expect": {
+        "exit": 126,
+        "stdout": "",
+        "stderr": "git: policy denied: history is read-only here\n"
+      }
+    },
+    {
+      "id": "cmd_mount_rule_by_operand_through_the_verb_walk",
+      "seq": 923022,
+      "targets": [
+        "ram-commands"
+      ],
+      "command": "cd /scratch && git -C /repo reset --hard",
+      "expect": {
+        "exit": 126,
+        "stdout": "",
+        "stderr": "git: policy denied: history is read-only here\n"
+      }
+    },
+    {
+      "id": "cmd_mount_rule_stops_at_the_mount",
+      "seq": 923023,
+      "targets": [
+        "ram-commands"
+      ],
+      "command": "cd /scratch && git commit -m x",
+      "expect": {
+        "exit": 128,
+        "stdout": "",
+        "stderr": "fatal: not a git repository (or any of the parent directories): .git\n"
+      }
+    },
+    {
+      "id": "cmd_mount_rule_pattern_is_a_prefix",
+      "seq": 923024,
+      "targets": [
+        "ram-commands"
+      ],
+      "command": "cd /repo && git reset",
+      "expect": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "cmd_session_path_rule_at_the_command_plane",
+      "seq": 923025,
+      "targets": [
+        "ram-commands"
+      ],
+      "session": "frozen",
+      "command": "cat /scratch/locked/y",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "cat: /scratch/locked/y: frozen\n"
+      }
+    },
+    {
+      "id": "cmd_find_delete_is_gated_at_the_op_door",
+      "seq": 923026,
+      "targets": [
+        "ram-commands"
+      ],
+      "session": "frozen",
+      "command": "find /scratch/locked -name y -delete",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "find: cannot delete '/scratch/locked/y': frozen\n"
+      }
+    },
+    {
+      "id": "cmd_find_delete_clears_where_no_rule_holds",
+      "seq": 923027,
+      "targets": [
+        "ram-commands"
+      ],
+      "command": "find /scratch -name z -delete && ls /scratch",
+      "expect": {
+        "exit": 0,
+        "stdout": "locked\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "cmd_frozen_file_survives",
+      "seq": 923028,
+      "targets": [
+        "ram-commands"
+      ],
+      "command": "cat /scratch/locked/y",
+      "expect": {
+        "exit": 0,
+        "stdout": "y\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "cmd_path_rule_sees_through_a_followed_link",
+      "seq": 923055,
+      "targets": [
+        "ram-commands"
+      ],
+      "command": "mkdir -p /scratch/private && echo k > /scratch/private/k && ln -s /scratch/private/k /scratch/k && cat /scratch/k",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "cat: /scratch/k: private\n"
+      }
+    },
+    {
+      "id": "cmd_no_follow_command_acts_on_the_link_itself",
+      "seq": 923056,
+      "targets": [
+        "ram-commands"
+      ],
+      "command": "ln -s /repo/letters.txt /scratch/lt && rm /scratch/lt && test -e /repo/letters.txt && echo kept",
+      "expect": {
+        "exit": 0,
+        "stdout": "kept\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "cmd_bare_listing_reads_the_working_directory",
+      "seq": 923057,
+      "targets": [
+        "ram-commands"
+      ],
+      "command": "mkdir -p /scratch/private && (cd /scratch/private && ls)",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "ls: .: private\n"
+      }
+    },
+    {
+      "id": "cmd_bare_recursive_grep_reads_the_working_directory",
+      "seq": 923058,
+      "targets": [
+        "ram-commands"
+      ],
+      "command": "mkdir -p /scratch/private && (cd /scratch/private && grep -r k)",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "grep: /scratch/private: private\n"
+      }
+    }
+  ]
+}

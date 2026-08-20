@@ -16,6 +16,7 @@ import asyncio
 
 import pytest
 
+from mirage.policy.types import CommandRule, CommandsSpec, Grant
 from mirage.resource.ram import RAMResource
 from mirage.types import HiddenPaths, HiddenVars, MountMode
 from mirage.workspace import Workspace
@@ -446,3 +447,124 @@ async def test_manager_bound_hides_ride_hydration_but_never_the_store():
     await mgr.flush()
     stored = await store.load()
     assert "bound_hidden" not in stored["restored"]
+
+
+def test_manager_stamps_bound_command_tiers_and_answers_commands_of():
+    mgr = SessionManager("default")
+    early = mgr.create("early")
+    bound = (CommandsSpec(allow=("ls", "git")), )
+    mgr.bound_commands = bound
+    assert mgr.bound_commands is bound
+    assert mgr.get("default").bound_commands is bound
+    assert early.bound_commands is bound
+    late = mgr.create("late")
+    assert late.bound_commands is bound
+    assert late.fork().bound_commands is bound
+    # commands_of: the bound tiers, then the session's own; the bound
+    # tiers alone for an id the manager does not know (the empty id of
+    # an unbound door included), so it still fails toward refusal.
+    own = CommandsSpec(allow=("ls", ))
+    late.commands = own
+    assert mgr.commands_of("late") == (*bound, own)
+    assert mgr.commands_of("early") == bound
+    assert mgr.commands_of("nobody") == bound
+    assert mgr.commands_of("") == bound
+
+
+@pytest.mark.asyncio
+async def test_manager_command_tier_rides_the_record_and_bound_tiers_do_not():
+    store = RAMSessionStore()
+    own = CommandsSpec(allow=("ls", "git log"),
+                       deny=(CommandRule(reason="no", commands=("rm", )), ))
+    await store.set(
+        "restored", {
+            "session_id": "restored",
+            "cwd": "/w",
+            "env": {},
+            "created_at": 1.0,
+            "commands": {
+                "allow": ["ls", "git log"],
+                "ask": [],
+                "deny": [{
+                    "reason": "no",
+                    "commands": ["rm"],
+                    "paths": []
+                }],
+            },
+        })
+    await store.set(
+        "default", {
+            "session_id": "default",
+            "cwd": "/w",
+            "env": {},
+            "created_at": 1.0,
+            "commands": {
+                "allow": ["cat"],
+                "ask": [],
+                "deny": []
+            },
+        })
+    mgr = SessionManager("default", store=store)
+    bound = (CommandsSpec(deny=(
+        CommandRule(reason="ro", commands=("git push", ), mount="/repo"), )), )
+    mgr.bound_commands = bound
+    await mgr.ensure_loaded()
+    restored = mgr.get("restored")
+    assert restored.commands == own
+    assert restored.bound_commands is bound
+    assert mgr.commands_of("restored") == (*bound, own)
+    # The default session adopts its stored tier like its hidden specs.
+    assert mgr.get("default").commands == CommandsSpec(allow=("cat", ))
+    assert "bound_commands" not in restored.to_dict()
+    await mgr.flush()
+    stored = await store.load()
+    assert "bound_commands" not in stored["restored"]
+    assert stored["restored"]["commands"]["allow"] == ["ls", "git log"]
+
+
+@pytest.mark.asyncio
+async def test_manager_grants_live_on_the_registered_session_and_persist():
+    store = RAMSessionStore()
+    mgr = SessionManager("default", store=store)
+    await mgr.ensure_loaded()
+    live = mgr.create("agent")
+    assert mgr.grants_of("agent") == ()
+    rule = CommandRule(reason="sign-off", commands=("git push", ))
+    grant = Grant("allow_session", rule, ("git", "push"), "/repo")
+    # Written by id onto the registered session, so a fork made before
+    # or after reads the same answers through the manager, whatever
+    # its own copy holds; durable at the next flush.
+    fork = live.fork()
+    mgr.set_grants("agent", (grant, ))
+    assert live.grants == (grant, )
+    assert fork.grants == ()
+    assert mgr.grants_of(fork.session_id) == (grant, )
+    await mgr.flush()
+    stored = (await store.load())["agent"]
+    assert stored["grants"][0]["decision"] == "allow_session"
+    # A manager reading that record back holds the grant.
+    again = SessionManager("default", store=store)
+    await again.ensure_loaded()
+    assert again.grants_of("agent") == (grant, )
+    with pytest.raises(KeyError):
+        mgr.grants_of("nobody")
+
+
+@pytest.mark.asyncio
+async def test_manager_default_session_hydrates_its_grants():
+    store = RAMSessionStore()
+    mgr = SessionManager("default", store=store)
+    await mgr.ensure_loaded()
+    rule = CommandRule(reason="sign-off", commands=("git push", ))
+    grant = Grant("allow_session", rule, ("git", "push"), "/repo")
+    mgr.set_grants("default", (grant, ))
+    await mgr.flush()
+    # The default session takes the stored durable fields on reopen;
+    # the grants are among them, so an approved line does not ask
+    # again after a restart and the next flush keeps the grant.
+    again = SessionManager("default", store=store)
+    await again.ensure_loaded()
+    assert again.grants_of("default") == (grant, )
+    await again.flush()
+    assert (await store.load())["default"]["grants"][0]["decision"] == (
+        "allow_session")

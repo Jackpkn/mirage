@@ -19,6 +19,8 @@ export {
   dereferences,
   endOptionsAfterProgram,
   followsLastComponent,
+  readsSubtrees,
+  walksMounts,
 } from './constants.ts'
-export { route, routeAll } from './route.ts'
+export { commandVisible, isTool, route, routeAll } from './route.ts'
 export { Consumer, SHELL_CONSUMERS, WordPolicy, wordPolicy } from './types.ts'

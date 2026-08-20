@@ -1,0 +1,99 @@
+{
+  "cases": [
+    {
+      "id": "hidden_prep",
+      "seq": 923059,
+      "targets": [
+        "ram-commands"
+      ],
+      "command": "mkdir -p /scratch/private /scratch/shared && echo k > /scratch/private/k && touch /scratch/shared/h",
+      "expect": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "hidden_is_the_sessions_own_view",
+      "seq": 923060,
+      "targets": [
+        "ram-commands"
+      ],
+      "command": "cat /scratch/private/k",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "cat: /scratch/private/k: private\n"
+      }
+    },
+    {
+      "id": "hidden_command_rule_reads_as_absent",
+      "seq": 923061,
+      "targets": [
+        "ram-commands"
+      ],
+      "session": "veiled",
+      "command": "cat /scratch/private/k",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "cat: /scratch/private/k: No such file or directory\n"
+      }
+    },
+    {
+      "id": "hidden_pure_path_rule_reads_as_absent",
+      "seq": 923062,
+      "targets": [
+        "ram-commands"
+      ],
+      "session": "veiled",
+      "command": "cat /repo/sealed/x",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "cat: /repo/sealed/x: No such file or directory\n"
+      }
+    },
+    {
+      "id": "hidden_ask_rule_raises_no_request",
+      "seq": 923063,
+      "targets": [
+        "ram-commands"
+      ],
+      "session": "veiled",
+      "command": "rm /scratch/shared/h",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "rm: cannot remove '/scratch/shared/h': No such file or directory\n"
+      }
+    },
+    {
+      "id": "hidden_ask_rule_left_the_file_for_those_who_see_it",
+      "seq": 923064,
+      "targets": [
+        "ram-commands"
+      ],
+      "command": "test -e /scratch/shared/h && echo kept",
+      "expect": {
+        "exit": 0,
+        "stdout": "kept\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "hidden_leaves_rules_without_a_path_in_force",
+      "seq": 923065,
+      "targets": [
+        "ram-commands"
+      ],
+      "session": "veiled",
+      "command": "cd /repo && git commit -m x",
+      "expect": {
+        "exit": 126,
+        "stdout": "",
+        "stderr": "git: policy denied: history is read-only here\n"
+      }
+    }
+  ]
+}

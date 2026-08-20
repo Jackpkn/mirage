@@ -49,5 +49,23 @@
         "content": "invoice 4471\ntotal: 240 usd\n"
       }
     ]
+  },
+  {
+    "account": "alpha@example.com",
+    "folder": "INBOX",
+    "from": "boss@example.com",
+    "to": "alpha@example.com",
+    "subject": "Mail only alpha can see",
+    "date": "Wed, 07 Jan 2026 09:00:00 +0000",
+    "body": "first cli account, own mailbox"
+  },
+  {
+    "account": "beta@example.com",
+    "folder": "INBOX",
+    "from": "boss@example.com",
+    "to": "beta@example.com",
+    "subject": "Mail only beta can see",
+    "date": "Wed, 07 Jan 2026 10:00:00 +0000",
+    "body": "second cli account, own mailbox"
   }
 ]

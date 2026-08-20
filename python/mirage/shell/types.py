@@ -411,6 +411,12 @@ class ShellBuiltin(StrEnum):
     EXPORT = "export"
     UNSET = "unset"
     LOCAL = "local"
+    # declare / typeset / readonly are parser-owned (the declaration
+    # node runs them, they never reach the executor's table); rows here
+    # so `type` reports them and the tiers file them as grammar.
+    DECLARE = "declare"
+    TYPESET = "typeset"
+    READONLY = "readonly"
     SET = "set"
     READ = "read"
     MAPFILE = "mapfile"
@@ -549,6 +555,9 @@ BUILTIN_GROUP: Mapping[ShellBuiltin, BuiltinGroup] = {
     ShellBuiltin.EXPORT: BuiltinGroup.VARIABLES,
     ShellBuiltin.UNSET: BuiltinGroup.VARIABLES,
     ShellBuiltin.LOCAL: BuiltinGroup.VARIABLES,
+    ShellBuiltin.DECLARE: BuiltinGroup.VARIABLES,
+    ShellBuiltin.TYPESET: BuiltinGroup.VARIABLES,
+    ShellBuiltin.READONLY: BuiltinGroup.VARIABLES,
     ShellBuiltin.SET: BuiltinGroup.VARIABLES,
     ShellBuiltin.READ: BuiltinGroup.VARIABLES,
     ShellBuiltin.MAPFILE: BuiltinGroup.VARIABLES,

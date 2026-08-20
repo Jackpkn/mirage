@@ -568,7 +568,7 @@ describe('MirageFS — a policy deny on read surfaces EACCES', () => {
       postOps(ctx: OpsResultContext): Action | null {
         const data = ctx.result instanceof Uint8Array ? new TextDecoder().decode(ctx.result) : null
         if (ctx.op === 'read' && data?.includes('TOPSECRET') === true) {
-          return { kind: 'deny', message: 'redacted\n' }
+          return { kind: 'deny', reason: 'redacted' }
         }
         return null
       },

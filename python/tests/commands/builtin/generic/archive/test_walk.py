@@ -3,6 +3,7 @@ from dataclasses import replace
 import pytest
 
 from mirage.commands.builtin.generic.archive import walk as aw
+from mirage.commands.builtin.generic.archive.types import Walked
 from mirage.ops.types import LinkView, MountView
 from mirage.types import LINK_TARGET_KEY, FileStat, FileType, PathSpec
 from mirage.utils.key_prefix import mount_key
@@ -35,8 +36,14 @@ class _Tree:
     async def walk(self, path, find_type):
         base = path.virtual.rstrip("/") or "/"
         pool = self.dirs if find_type == "d" else self.files
-        return sorted(p for p in pool
-                      if p == base or p.startswith(base.rstrip("/") + "/"))
+        closed = getattr(self, "closed", ())
+        return Walked(paths=tuple(
+            sorted(p for p in pool
+                   if (p == base or p.startswith(base.rstrip("/") + "/"))
+                   and not any(p.startswith(c + "/") for c in closed))),
+                      unreadable=tuple(c for c in closed
+                                       if c.startswith(base.rstrip("/") +
+                                                       "/")))
 
 
 def _links(entries: dict[str, str]) -> LinkView:
@@ -234,3 +241,23 @@ async def test_a_link_across_a_mount_is_refused_not_followed():
                        recurse=True)
     assert [(p.path, p.reason)
             for p in scan.problems] == [("/d/away", aw.OTHER_FILESYSTEM)]
+
+
+@pytest.mark.asyncio
+async def test_a_directory_the_walk_could_not_open_is_one_unreadable_problem():
+    # Its own entry is kept (the archivers store the directory), its
+    # contents are not there, and both listings meeting the same closed
+    # door report it once.
+    tree = _Tree({
+        "/d/a.txt": b"a",
+        "/d/sealed/s": b"s"
+    },
+                 dirs=("/d", "/d/sealed"))
+    tree.closed = ("/d/sealed", )
+    scan = await _scan(tree, _spec("/d"), recurse=True)
+    assert [e.name_path
+            for e in scan.entries] == ["/d", "/d/a.txt", "/d/sealed"]
+    assert scan.problems == (aw.Problem(path="/d/sealed",
+                                        reason="Permission denied",
+                                        unreadable=True), )
+    assert not scan.missing

@@ -41,6 +41,7 @@ from mirage.runtime.policy import ScriptSource  # noqa: E402
 from mirage.runtime.table import build_runtime  # noqa: E402
 from mirage.runtime.types import RunResult  # noqa: E402
 from mirage.types import Limit, PathSpec  # noqa: E402
+from mirage.workspace.session import WorkspacePermissions  # noqa: E402
 
 HOST = "python"
 SUITE_DIR = Path(__file__).parent
@@ -71,11 +72,11 @@ class DenyFlag(Policy):
     def __init__(self, spec: dict[str, Any]) -> None:
         self._command = spec["command"]
         self._flag = spec["flag"]
-        self._message = spec["message"]
+        self._reason = spec["reason"]
 
     async def pre_command(self, ctx: CommandContext) -> Deny | None:
         if ctx.command == self._command and self._flag in ctx.argv:
-            return Deny(message=self._message)
+            return Deny(self._reason)
         return None
 
 
@@ -87,7 +88,7 @@ class LockWrites(Policy):
 
     async def pre_ops(self, ctx: OpsContext) -> Deny | None:
         if ctx.write and ctx.path.virtual.startswith(self._prefix):
-            return Deny(message="locked\n")
+            return Deny("locked")
         return None
 
 
@@ -99,7 +100,7 @@ class SealReads(Policy):
 
     async def pre_ops(self, ctx: OpsContext) -> Deny | None:
         if not ctx.write and ctx.path.virtual.endswith(self._suffix):
-            return Deny(message="sealed\n")
+            return Deny("sealed")
         return None
 
 
@@ -113,7 +114,7 @@ class RedactReads(Policy):
         data = ctx.result if isinstance(ctx.result,
                                         (bytes, bytearray)) else None
         if ctx.op == "read" and data is not None and self._marker in data:
-            return Deny(message="redacted\n")
+            return Deny("redacted")
         return None
 
 
@@ -356,6 +357,9 @@ async def _build_workspace(world: dict[str, Any], run_id: str) -> Workspace:
         kwargs["policy"] = ScriptSource(world["policy"])
     if "policies" in world:
         kwargs["policies"] = [_build_policy(s) for s in world["policies"]]
+    if "permissions" in world:
+        kwargs["permissions"] = WorkspacePermissions.model_validate(
+            world["permissions"])
     ws = Workspace(mounts, mode=MountMode.EXEC, **kwargs)
     if "clis" in world:
         _install_clis(ws, world["clis"])

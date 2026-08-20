@@ -72,6 +72,139 @@
           }
         }
       ]
+    },
+    {
+      "id": "whole_line_literal_words",
+      "note": "A whole-line runtime expands the line itself, so the gate reads it as typed: a word only the runtime could expand is refused where a rule in force would have read it (the command name under any rule, an argument where a rule reads that command's arguments), the lines a word runs (eval, sh -c, xargs, timeout) are admitted in turn, and a line the gate cannot see into (a sourced file) is refused. Literal words, and dynamic ones no rule reads, reach the runtime.",
+      "world": {
+        "runtimes": [
+          {
+            "name": "echobox",
+            "captures": [
+              "*"
+            ]
+          },
+          "vfs"
+        ],
+        "mounts": {
+          "/ram": {
+            "resource": "ram"
+          }
+        },
+        "permissions": {
+          "commands": {
+            "deny": [
+              {
+                "reason": "no deletes",
+                "commands": [
+                  "rm"
+                ]
+              },
+              {
+                "reason": "sealed",
+                "commands": {
+                  "cat": [
+                    "/ram/secret*"
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      },
+      "steps": [
+        {
+          "command": "rm /ram/x",
+          "expect": {
+            "exit": 126,
+            "stderr": "rm: policy denied: no deletes\n"
+          }
+        },
+        {
+          "command": "$cmd /ram/x",
+          "expect": {
+            "exit": 126,
+            "stderr": "$cmd: policy denied: cannot read $cmd before the runtime expands it\n"
+          }
+        },
+        {
+          "command": "PAYLOAD='rm /ram/x'; eval \"$PAYLOAD\"",
+          "expect": {
+            "exit": 126,
+            "stderr": "\"$PAYLOAD\": policy denied: cannot read \"$PAYLOAD\" before the runtime expands it\n"
+          }
+        },
+        {
+          "command": "eval 'rm /ram/x'",
+          "expect": {
+            "exit": 126,
+            "stderr": "rm: policy denied: no deletes\n"
+          }
+        },
+        {
+          "command": "cat \"$f\"",
+          "expect": {
+            "exit": 126,
+            "stderr": "cat: policy denied: cannot read \"$f\" before the runtime expands it\n"
+          }
+        },
+        {
+          "command": "'cat' \"/ram/secret\"",
+          "expect": {
+            "exit": 1,
+            "stderr": "cat: /ram/secret: sealed\n"
+          }
+        },
+        {
+          "command": "ls /ram | xargs rm",
+          "expect": {
+            "exit": 126,
+            "stderr": "rm: policy denied: no deletes\n"
+          }
+        },
+        {
+          "command": "ls /ram | xargs cat",
+          "expect": {
+            "exit": 126,
+            "stderr": "cat: policy denied: runs on operands the gate cannot read\n"
+          }
+        },
+        {
+          "command": "sh -c 'timeout 5 rm /ram/x'",
+          "expect": {
+            "exit": 126,
+            "stderr": "rm: policy denied: no deletes\n"
+          }
+        },
+        {
+          "command": "source /ram/env.sh",
+          "expect": {
+            "exit": 126,
+            "stderr": "source: policy denied: runs lines the gate cannot read\n"
+          }
+        },
+        {
+          "command": "echo \"$HOME\" $(date)",
+          "expect": {
+            "exit": 0,
+            "stdout": "box:echo \"$HOME\" $(date)\n"
+          }
+        },
+        {
+          "command": "ls /ram | xargs echo",
+          "expect": {
+            "exit": 0,
+            "stdout": "box:ls /ram | xargs echo\n"
+          }
+        },
+        {
+          "command": "cat /ram/a",
+          "expect": {
+            "exit": 0,
+            "stdout": "box:cat /ram/a\n"
+          }
+        }
+      ]
     }
   ]
 }

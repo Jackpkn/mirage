@@ -642,6 +642,8 @@ async def walk(
     readdir: ReaddirFn,
     stat: StatFn,
     root: PathSpec,
+    cmd_name: str = "cp",
+    errors: list[str] | None = None,
 ) -> list[tuple[PathSpec, bool]]:
     """List a tree as ``(path, is_dir)`` pairs, parents before children.
 
@@ -650,10 +652,18 @@ async def walk(
     has since vanished (e.g. on S3). Used only by the primitive (no native
     ``copy``) path; backends that inject ``copy``/``find`` never reach it.
 
+    A directory the session may not open, or an entry it may not stat
+    (a rule refused it below the operand), is GNU's ``cannot access`` /
+    ``cannot stat`` line when ``errors`` is given and the walk goes on
+    without its contents; with no channel the refusal propagates rather
+    than leave a silent gap.
+
     Args:
         readdir (Callable): Lists a directory's full child paths.
         stat (Callable): Stats a path; ``.type`` distinguishes directories.
         root (PathSpec): Root of the tree.
+        cmd_name (str): the command the diagnostics name.
+        errors (list[str] | None): where a per-entry refusal is reported.
     """
     info = await stat(root)
     if info.type != FileType.DIRECTORY:
@@ -662,9 +672,24 @@ async def walk(
     queue = [root]
     while queue:
         directory = queue.pop(0)
-        for child_virtual in await readdir(directory):
+        try:
+            children = await readdir(directory)
+        except PermissionError as exc:
+            if errors is None:
+                raise
+            errors.append(f"{cmd_name}: cannot access '{directory.virtual}': "
+                          f"{fs_strerror(exc)}")
+            continue
+        for child_virtual in children:
             child = descendant_path(root, child_virtual)
-            child_info = await stat(child)
+            try:
+                child_info = await stat(child)
+            except PermissionError as exc:
+                if errors is None:
+                    raise
+                errors.append(f"{cmd_name}: cannot stat '{child.virtual}': "
+                              f"{fs_strerror(exc)}")
+                continue
             is_dir = child_info.type == FileType.DIRECTORY
             entries.append((child, is_dir))
             if is_dir:
@@ -879,7 +904,7 @@ async def cp(
             src_base = src.mount_path.rstrip("/")
             dst_base = target.mount_path.rstrip("/")
             if isinstance(strategy, PrimitiveCopy):
-                entries = await walk(strategy.readdir, stat, src)
+                entries = await walk(strategy.readdir, stat, src, "cp", errors)
                 await copy_entries("cp",
                                    strategy,
                                    stat,

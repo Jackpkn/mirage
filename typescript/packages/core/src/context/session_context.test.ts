@@ -16,12 +16,16 @@ import { describe, expect, it } from 'vitest'
 import {
   assertMountAllowed,
   effectiveMountMode,
+  getAdmission,
   getCurrentSession,
   getCurrentSessionFor,
   hiddenPathsActive,
   MountNotAllowedError,
   pathAllowed,
+  pathRulesActive,
+  runWithAdmission,
   runWithSession,
+  sessionPathAllowed,
 } from './session_context.ts'
 import { asyncContextIsolatesTasks } from '../utils/async_context.ts'
 import { MountMode, weakerMode } from '../types.ts'
@@ -185,6 +189,24 @@ describe('bound hides', () => {
     })
   })
 
+  it('the explicit-session predicate answers without a binding', async () => {
+    // A door that holds the session (the admission gate) asks it
+    // directly; the bound form is the same answer for the bound
+    // session, and no session bound means nothing is hidden.
+    const sess = new Session({ sessionId: 'agent', hiddenPaths: { paths: ['/a/secrets'] } })
+    sess.boundHidden = { patterns: ['*.pem'] }
+    expect(getCurrentSession()).toBeNull()
+    expect(sessionPathAllowed(sess, '/a/secrets/x')).toBe(false)
+    expect(sessionPathAllowed(sess, '/repo/k.pem')).toBe(false)
+    expect(sessionPathAllowed(sess, '/a/public')).toBe(true)
+    expect(pathAllowed('/a/secrets/x')).toBe(true)
+    await runWithSession(sess, () => {
+      expect(pathAllowed('/a/secrets/x')).toBe(false)
+      expect(pathAllowed('/a/public')).toBe(true)
+      return Promise.resolve()
+    })
+  })
+
   it('alone activate the gate', async () => {
     const sess = new Session({ sessionId: 'agent' })
     sess.boundHidden = { paths: ['/repo/.env'] }
@@ -200,5 +222,28 @@ describe('bound hides', () => {
       expect(pathAllowed('/repo/.env')).toBe(true)
       return Promise.resolve()
     })
+  })
+})
+
+describe('the admission binding', () => {
+  it('is scoped to one command and hands the outer one back', async () => {
+    const gate = (scoped: boolean) => ({ scoped, check: () => undefined })
+    expect(getAdmission()).toBeNull()
+    expect(pathRulesActive()).toBe(false)
+    const outer = gate(true)
+    await runWithAdmission(outer, async () => {
+      expect(getAdmission()).toBe(outer)
+      expect(pathRulesActive()).toBe(true)
+      // A nested line binds its own and hands the outer one back.
+      const inner = gate(false)
+      await runWithAdmission(inner, () => {
+        expect(getAdmission()).toBe(inner)
+        expect(pathRulesActive()).toBe(false)
+        return Promise.resolve()
+      })
+      expect(getAdmission()).toBe(outer)
+    })
+    expect(getAdmission()).toBeNull()
+    expect(pathRulesActive()).toBe(false)
   })
 })

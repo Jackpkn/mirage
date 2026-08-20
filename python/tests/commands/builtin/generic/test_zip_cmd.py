@@ -3,6 +3,7 @@ import zipfile
 
 import pytest
 
+from mirage.commands.builtin.generic.archive.types import Walked
 from mirage.commands.builtin.generic.zip_cmd import (excluded, member_name,
                                                      zip_cmd)
 from mirage.ops.types import LinkView, MountView
@@ -59,8 +60,14 @@ class _Tree:
     async def walk(self, path, find_type):
         base = path.virtual.rstrip("/") or "/"
         pool = self.dirs if find_type == "d" else self.files
-        return sorted(p for p in pool
-                      if p == base or p.startswith(base.rstrip("/") + "/"))
+        closed = getattr(self, "closed", ())
+        return Walked(paths=tuple(
+            sorted(p for p in pool
+                   if (p == base or p.startswith(base.rstrip("/") + "/"))
+                   and not any(p.startswith(c + "/") for c in closed))),
+                      unreadable=tuple(c for c in closed
+                                       if c.startswith(base.rstrip("/") +
+                                                       "/")))
 
 
 def _links(entries: dict[str, str]) -> LinkView:
@@ -303,3 +310,23 @@ async def test_requires_an_archive_operand():
     tree = _Tree({})
     with pytest.raises(ValueError, match="usage"):
         await _zip(tree, [])
+
+
+@pytest.mark.asyncio
+async def test_a_directory_the_walk_could_not_open_is_stored_in_silence():
+    # Pinned on Info-ZIP 3.0 (debian:stable-slim) over a mode-000
+    # directory: the directory entry is added, its contents are not,
+    # and nothing is said about it.
+    tree = _Tree({
+        "/d/a.txt": b"alpha",
+        "/d/sealed/s": b"s"
+    },
+                 dirs=("/d", "/d/sealed"))
+    tree.closed = ("/d/sealed", )
+    out, io_res = await _zip(
+        tree, [_spec("/out.zip"), _raw("/d", "d")], r=True)
+    assert io_res.exit_code == 0
+    assert io_res.stderr in (None, b"")
+    assert _entries(
+        io_res.writes["/out.zip"]) == ["d/", "d/a.txt", "d/sealed/"]
+    assert "sealed" not in out.decode().replace("  adding: d/sealed/\n", "")

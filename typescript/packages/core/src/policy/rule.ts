@@ -13,18 +13,20 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import type { Policy } from './base.ts'
+import { matchOp, matchRule } from './match/rule.ts'
 import type { Action, CommandContext, CommandRule, OpsContext } from './types.ts'
 import type { HiddenPaths } from '../types.ts'
-import { classifyPaths, pathHidden } from '../utils/hidden.ts'
+import { classifyPaths } from '../utils/hidden.ts'
 
 /**
  * A CommandRule compiled to a policy.
  *
- * Internal: the workspace builds one per rule of the document's
- * `commands.deny`; nothing outside the package constructs it. The
- * rule's paths compile through the same classifier as `paths.hide` and
- * match through the same matcher, so a deny scope and a hide read one
- * grammar.
+ * Internal: the permissions policy evaluates the document's rules
+ * through the same matcher this wraps, and nothing outside the package
+ * constructs one; it survives as the one-rule form for tests and for
+ * code that wants a single rule as a Policy. The rule's paths compile
+ * through the same classifier as `paths.hide` and match through the
+ * same matcher, so a deny scope and a hide read one grammar.
  */
 export class RulePolicy implements Policy {
   readonly rule: CommandRule
@@ -36,22 +38,10 @@ export class RulePolicy implements Policy {
   }
 
   preCommand(ctx: CommandContext): Action | null {
-    const commands = this.rule.commands ?? []
-    if (commands.length > 0 && !commands.includes(ctx.command)) return null
-    if (this.scope === null) {
-      return { kind: 'deny', message: `${ctx.command}: ${this.rule.reason}\n`, exitCode: 1 }
-    }
-    for (const p of ctx.paths) {
-      if (pathHidden(this.scope, p.virtual)) {
-        const display = p.rawPath || p.virtual
-        return {
-          kind: 'deny',
-          message: `${ctx.command}: ${display}: ${this.rule.reason}\n`,
-          exitCode: 1,
-        }
-      }
-    }
-    return null
+    const hit = matchRule(this.rule, this.scope, ctx)
+    if (hit === null) return null
+    if (hit.operand === null) return { kind: 'deny', reason: this.rule.reason }
+    return { kind: 'deny', reason: `${hit.operand}: ${this.rule.reason}`, scope: 'operand' }
   }
 
   preOps(ctx: OpsContext): Action | null {
@@ -59,11 +49,7 @@ export class RulePolicy implements Policy {
     // holds at the op door, so FUSE, programmatic ops, and the warm
     // cache cannot bypass it. Command-scoped rules stay command-layer:
     // an op does not know which command issued it.
-    const commands = this.rule.commands ?? []
-    if (commands.length > 0 || this.scope === null) return null
-    if (pathHidden(this.scope, ctx.path.virtual)) {
-      return { kind: 'deny', message: `${this.rule.reason}\n`, exitCode: 1 }
-    }
+    if (matchOp(this.rule, this.scope, ctx)) return { kind: 'deny', reason: this.rule.reason }
     return null
   }
 }

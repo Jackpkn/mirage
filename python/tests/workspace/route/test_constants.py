@@ -14,7 +14,8 @@
 
 from mirage.types import PathSpec
 from mirage.workspace.route.constants import (NO_FOLLOW_COMMANDS, dereferences,
-                                              reports_link)
+                                              reads_subtrees, reports_link,
+                                              walks_mounts)
 
 
 def test_stat_is_a_no_follow_command():
@@ -109,3 +110,31 @@ def test_find_link_options_are_last_wins():
 def test_find_link_options_only_count_before_the_operand():
     # -L after the start point is a predicate position, not a policy one.
     assert dereferences("find", ["find", "/data/link", "-L"]) is False
+
+
+def test_walkers_are_read_off_the_raw_line():
+    # find/du/tree/rg always descend; grep and ls only under a flag,
+    # read raw because admission fires before flag parsing.
+    assert walks_mounts("find", ["find", "/data"]) is True
+    assert walks_mounts("du", ["du", "/data"]) is True
+    assert walks_mounts("tree", ["tree"]) is True
+    assert walks_mounts("rg", ["rg", "x"]) is True
+    assert walks_mounts("grep", ["grep", "x", "/data"]) is False
+    assert walks_mounts("grep", ["grep", "-rn", "x", "/data"]) is True
+    assert walks_mounts("grep", ["grep", "--recursive", "x"]) is True
+    assert walks_mounts("grep", ["grep", "--", "-r"]) is False
+    assert walks_mounts("ls", ["ls", "-R", "/data"]) is True
+    assert walks_mounts("ls", ["ls", "-l", "/data"]) is False
+    assert walks_mounts("cat", ["cat", "/data/x"]) is False
+
+
+def test_subtree_readers_cover_the_archivers_and_recursive_copy():
+    # tar -c and zip -r and cp -r read below their operands but stop at
+    # a mount boundary, so they read subtrees without walking mounts.
+    assert reads_subtrees("tar", ["tar", "-cf", "/out.tar", "/data"]) is True
+    assert reads_subtrees("tar", ["tar", "-xf", "/out.tar"]) is False
+    assert reads_subtrees("zip", ["zip", "-r", "/out.zip", "/data"]) is True
+    assert reads_subtrees("cp", ["cp", "-r", "/data", "/copy"]) is True
+    assert reads_subtrees("cp", ["cp", "/data/a", "/copy"]) is False
+    assert reads_subtrees("grep", ["grep", "-r", "x", "/data"]) is True
+    assert walks_mounts("tar", ["tar", "-cf", "/out.tar", "/data"]) is False

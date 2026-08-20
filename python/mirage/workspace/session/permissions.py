@@ -16,10 +16,12 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
-from mirage.policy.types import DEFAULT_DENY_REASON, CommandRule
+from mirage.policy.constants import DEFAULT_ASK_REASON, DEFAULT_DENY_REASON
+from mirage.policy.types import CommandRule, CommandsSpec
 from mirage.types import HiddenPaths, HiddenVars, MountMode, parse_mount_mode
+from mirage.utils.hidden import is_glob
 
 _DOC = ConfigDict(extra="forbid", frozen=True)
 
@@ -50,50 +52,156 @@ def _list(value: Any, where: str, expected: str = "a list") -> tuple[Any, ...]:
     return tuple(value)
 
 
-def _string_list(value: Any, where: str) -> tuple[str, ...]:
+def _string_list(value: Any,
+                 where: str,
+                 names: str | None = None) -> tuple[str, ...]:
     """A document list field, refused unless every item is a string.
 
     A scalar ``commands: rm`` would otherwise ``tuple()`` into
     ``('r', 'm')`` and the command it meant to refuse stay allowed, so
-    the document fails to load instead, as it does in TypeScript.
+    the document fails to load instead, as it does in TypeScript. An
+    entry that names something must also hold a token: a blank command
+    pattern is a prefix of every line, so a stray ``""`` would allow,
+    ask about or deny every command, and a blank path entry is the
+    root, so it would hide or deny the whole tree.
 
     Args:
         value (Any): the field as written, None when absent.
         where (str): the field's name, for the message.
+        names (str | None): what a non-blank entry names (``a
+            command``, ``a path``); None accepts blank entries.
     """
     entries = _list(value, where, "a list of strings")
     for i, entry in enumerate(entries):
         if not isinstance(entry, str):
             raise ValueError(f"{where}[{i}] must be a string")
+        if names is not None and not entry.split():
+            raise ValueError(f"{where}[{i}] must name {names}")
     return entries
 
 
-def _rule(entry: Any) -> Any:
-    """Coerce one ``deny`` entry to a CommandRule.
+def _absolute_paths(entries: tuple[str, ...], where: str) -> None:
+    """Refuse a relative path entry where paths are absolute.
 
-    A bare string is one command name with the default reason; a
-    mapping is the rule's fields, ``reason`` defaulting; anything else
-    is handed back for pydantic to report.
+    The workspace and profile tiers speak in virtual paths, so an
+    entry there is either absolute or a name pattern (``*.pem``, no
+    slash, matching a path component anywhere). A plain ``xxx`` or an
+    anchored ``secrets/*`` would otherwise be read from the root
+    (``/xxx``, ``/secrets/*``), which is never what a relative spelling
+    meant; the mount tier is the one place entries are relative, to
+    the mount root, and it is not checked here.
+
+    Args:
+        entries (tuple[str, ...]): the entries as written.
+        where (str): the field's name, for the message.
+    """
+    for i, entry in enumerate(entries):
+        if entry.startswith("/") or (is_glob(entry) and "/" not in entry):
+            continue
+        raise ValueError(f"{where}[{i}] must be an absolute path or a name "
+                         f"pattern at this tier: {entry!r} is relative")
+
+
+def _scoped_rules(commands: Mapping[Any, Any], reason: str,
+                  where: str) -> list[CommandRule]:
+    """The rules of a ``commands`` mapping: each command on its own paths.
+
+    One rule per entry, so the document never states a command beside
+    a path it was not meant for: ``{rm: [/repo/*], mv: [/shared/*]}``
+    scopes ``rm`` to the repo and ``mv`` to the share, nothing else.
+
+    Args:
+        commands (Mapping[Any, Any]): the mapping as written, command
+            pattern to its path entries.
+        reason (str): the rule's reason, shared by every entry.
+        where (str): ``deny rule`` or ``ask rule``, for the messages.
+    """
+    if not commands:
+        raise ValueError(f"{where} commands must name at least one command")
+    rules = []
+    for pattern, paths in commands.items():
+        if not isinstance(pattern, str) or not pattern.split():
+            raise ValueError(f"{where} commands keys must name a command")
+        entries = _string_list(paths,
+                               f"{where} commands[{pattern}]",
+                               names="a path")
+        if not entries:
+            raise ValueError(
+                f"{where} commands[{pattern}] must list at least one path")
+        rules.append(
+            CommandRule(reason=reason, commands=(pattern, ), paths=entries))
+    return rules
+
+
+def _rule(entry: Any, where: str, default_reason: str) -> list[CommandRule]:
+    """Coerce one ``deny`` or ``ask`` entry to its CommandRules.
+
+    A bare string is one command pattern over the whole line, with the
+    arm's default reason. A mapping carries ``reason`` (defaulting) and
+    exactly one of: ``commands`` as a list, a whole-line rule on each
+    pattern; ``commands`` as a mapping, each command pattern on its own
+    paths (one command to many paths, one rule per command); ``paths``
+    alone, a path rule on every command. A list of commands beside a
+    list of paths is refused, because it does not say which command the
+    paths belong to, and a rule naming neither is refused rather than
+    read as "every command".
 
     Args:
         entry (Any): one entry as written in the document.
+        where (str): ``deny rule`` or ``ask rule``, for the messages.
+        default_reason (str): the arm's reason for a rule stating none.
     """
+    if isinstance(entry, CommandRule):
+        # Already compiled: the resolver rebuilds blocks from rules, and
+        # a typed caller may construct the document from them.
+        return [entry]
     if isinstance(entry, str):
-        return CommandRule(reason=DEFAULT_DENY_REASON, commands=(entry, ))
-    if isinstance(entry, Mapping):
-        unknown = sorted(set(entry) - _RULE_FIELDS)
-        if unknown:
-            raise ValueError(
-                f"deny rule has unknown field(s): {', '.join(unknown)}")
-        reason = entry.get("reason", DEFAULT_DENY_REASON)
-        if not isinstance(reason, str):
-            raise ValueError("deny rule reason must be a string")
-        return CommandRule(reason=reason,
-                           commands=_string_list(entry.get("commands"),
-                                                 "deny rule commands"),
-                           paths=_string_list(entry.get("paths"),
-                                              "deny rule paths"))
-    return entry
+        return [
+            CommandRule(reason=default_reason,
+                        commands=_string_list((entry, ),
+                                              f"{where} commands",
+                                              names="a command"))
+        ]
+    if not isinstance(entry, Mapping):
+        raise ValueError(f"{where} must be a command pattern or a mapping")
+    unknown = sorted(set(entry) - _RULE_FIELDS)
+    if unknown:
+        raise ValueError(f"{where} has unknown field(s): {', '.join(unknown)}")
+    reason = entry.get("reason", default_reason)
+    if not isinstance(reason, str):
+        raise ValueError(f"{where} reason must be a string")
+    commands, paths = entry.get("commands"), entry.get("paths")
+    if isinstance(commands, Mapping):
+        if paths is not None:
+            raise ValueError(f"{where} maps each command to its paths, "
+                             "so it takes no paths of its own")
+        return _scoped_rules(commands, reason, where)
+    if commands is not None and paths is not None:
+        raise ValueError(f"{where} lists commands beside paths; map each "
+                         "command to its paths instead")
+    if commands is None and paths is None:
+        raise ValueError(f"{where} names no command and no path")
+    return [
+        CommandRule(reason=reason,
+                    commands=_string_list(commands,
+                                          f"{where} commands",
+                                          names="a command"),
+                    paths=_string_list(paths, f"{where} paths",
+                                       names="a path"))
+    ]
+
+
+def _rules(v: Any, where: str) -> Any:
+    default = DEFAULT_ASK_REASON if where == "ask" else DEFAULT_DENY_REASON
+    return tuple(rule
+                 for entry in _list(v, f"commands.{where}", "a list of rules")
+                 for rule in _rule(entry, f"{where} rule", default))
+
+
+def _patterns(v: Any) -> Any:
+    if v is None:
+        return None
+    return _string_list(v, "commands.allow", names="a command")
 
 
 class PathsBlock(BaseModel):
@@ -101,8 +209,10 @@ class PathsBlock(BaseModel):
 
     ``hide`` entries use the document's one grammar: an entry with
     ``*``, ``?`` or ``[`` is a pattern, anything else an exact path
-    and its subtree (``utils/hidden.classify_paths``). ``show`` arrives
-    with its enforcement.
+    and its subtree (``utils/hidden.classify_paths``); every entry
+    holds a token, and the tier that owns the block decides whether it
+    must be absolute (workspace, profile) or is mount-relative (mount).
+    ``show`` arrives with its enforcement.
 
     Args:
         hide (tuple[str, ...]): what the tier makes nonexistent.
@@ -111,6 +221,11 @@ class PathsBlock(BaseModel):
     model_config = _DOC
 
     hide: tuple[str, ...] = ()
+
+    @field_validator("hide", mode="before")
+    @classmethod
+    def _v_hide(cls, v: Any) -> Any:
+        return _string_list(v, "paths.hide", names="a path")
 
 
 class VarsBlock(BaseModel):
@@ -127,24 +242,82 @@ class VarsBlock(BaseModel):
 
 
 class CommandsBlock(BaseModel):
-    """``commands:`` of the workspace tier.
+    """``commands:`` of the workspace and profile tiers.
 
-    ``deny`` rules refuse with a reason; a bare string is one command
-    name with the default reason. ``allow`` and ``ask`` arrive with
-    their enforcement.
+    ``allow`` lists the command patterns the tier installs; a name none
+    of them starts with is not a command for the session (127, absent
+    from ``type`` / ``which`` / ``man``), a line no pattern covers is
+    refused. Grammar-tier shell builtins and the agent's own functions
+    are not subjects. ``ask`` rules are admitted only with a host
+    approval; ``deny`` rules refuse with a reason. A bare string in
+    either is one command pattern with the default reason.
 
     Args:
+        allow (tuple[str, ...] | None): the tier's allow patterns;
+            None (unstated) installs everything.
+        ask (tuple[CommandRule, ...]): what needs sign-off, in order.
         deny (tuple[CommandRule, ...]): the tier's refusals, in order.
     """
 
     model_config = _DOC
 
+    allow: tuple[str, ...] | None = None
+    ask: tuple[CommandRule, ...] = ()
     deny: tuple[CommandRule, ...] = ()
+
+    @field_validator("allow", mode="before")
+    @classmethod
+    def _v_allow(cls, v: Any) -> Any:
+        return _patterns(v)
+
+    @field_validator("ask", mode="before")
+    @classmethod
+    def _v_ask(cls, v: Any) -> Any:
+        return _rules(v, "ask")
 
     @field_validator("deny", mode="before")
     @classmethod
     def _v_deny(cls, v: Any) -> Any:
-        return tuple(_rule(entry) for entry in _list(v, "commands.deny"))
+        return _rules(v, "deny")
+
+    @model_validator(mode="after")
+    def _v_absolute(self) -> "CommandsBlock":
+        # This block is the workspace's or a profile's, never a mount's,
+        # so a rule's paths are virtual paths: absolute, or name patterns.
+        for arm, rules in (("ask", self.ask), ("deny", self.deny)):
+            for rule in rules:
+                _absolute_paths(rule.paths, f"{arm} rule paths")
+        return self
+
+
+class MountCommandsBlock(BaseModel):
+    """``commands:`` of a mount tier: ``ask`` and ``deny`` only.
+
+    A mount rule applies to a line that works inside the mount (its cwd
+    or one of its paths lies under the root); its ``paths`` are
+    mount-relative. There is no mount-tier ``allow``: what a session
+    can see is a property of the session, and an operand cannot make a
+    command "not found".
+
+    Args:
+        ask (tuple[CommandRule, ...]): what needs sign-off here.
+        deny (tuple[CommandRule, ...]): what is refused here.
+    """
+
+    model_config = _DOC
+
+    ask: tuple[CommandRule, ...] = ()
+    deny: tuple[CommandRule, ...] = ()
+
+    @field_validator("ask", mode="before")
+    @classmethod
+    def _v_ask(cls, v: Any) -> Any:
+        return _rules(v, "ask")
+
+    @field_validator("deny", mode="before")
+    @classmethod
+    def _v_deny(cls, v: Any) -> Any:
+        return _rules(v, "deny")
 
 
 class MountPermissions(BaseModel):
@@ -153,11 +326,13 @@ class MountPermissions(BaseModel):
 
     Args:
         paths (PathsBlock): the mount's hides, mount-relative.
+        commands (MountCommandsBlock): the mount's ask and deny rules.
     """
 
     model_config = _DOC
 
     paths: PathsBlock = PathsBlock()
+    commands: MountCommandsBlock = MountCommandsBlock()
 
 
 class WorkspacePermissions(BaseModel):
@@ -173,6 +348,11 @@ class WorkspacePermissions(BaseModel):
 
     commands: CommandsBlock = CommandsBlock()
     paths: PathsBlock = PathsBlock()
+
+    @model_validator(mode="after")
+    def _v_absolute(self) -> "WorkspacePermissions":
+        _absolute_paths(self.paths.hide, "paths.hide")
+        return self
 
 
 class SessionProfile(BaseModel):
@@ -203,6 +383,8 @@ class SessionProfile(BaseModel):
             unrestricted.
         paths (PathsBlock | None): the profile's hides.
         vars (VarsBlock | None): the profile's hidden variables.
+        commands (CommandsBlock | None): the profile's allow list and
+            ask / deny rules.
     """
 
     model_config = _DOC
@@ -213,6 +395,7 @@ class SessionProfile(BaseModel):
     mounts: dict[str, MountMode] | tuple[str, ...] | None = None
     paths: PathsBlock | None = None
     vars: VarsBlock | None = None
+    commands: CommandsBlock | None = None
 
     @field_validator("mounts", mode="before")
     @classmethod
@@ -236,6 +419,12 @@ class SessionProfile(BaseModel):
         return tuple(
             _norm_prefix(prefix) for prefix in _string_list(v, "mounts"))
 
+    @model_validator(mode="after")
+    def _v_absolute(self) -> "SessionProfile":
+        if self.paths is not None:
+            _absolute_paths(self.paths.hide, "paths.hide")
+        return self
+
 
 @dataclass(frozen=True, slots=True)
 class CompiledProfile:
@@ -249,6 +438,8 @@ class CompiledProfile:
         hidden_vars (HiddenVars | None): the profile's hidden variables.
         env (dict[str, str] | None): variables to seed and export.
         cwd (str | None): the working directory to start in.
+        commands (CommandsSpec | None): the profile's own command
+            tier, evaluated after the bound tiers.
     """
 
     mount_modes: dict[str, MountMode] | None
@@ -256,3 +447,4 @@ class CompiledProfile:
     hidden_vars: HiddenVars | None
     env: dict[str, str] | None
     cwd: str | None
+    commands: CommandsSpec | None = None

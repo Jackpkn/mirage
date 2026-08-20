@@ -12,9 +12,13 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from mirage.types import PathSpec
+from mirage.commands.cli.specs import cli_spec_for
+from mirage.resource.ram import RAMResource
+from mirage.types import MountMode, PathSpec
+from mirage.workspace import Workspace
 from mirage.workspace.executor.command.routing import (merge_scopes,
-                                                       path_flag_scopes)
+                                                       path_flag_scopes,
+                                                       program_tokens)
 
 
 def _path(virtual: str) -> PathSpec:
@@ -38,3 +42,28 @@ def test_path_flag_scopes_reads_path_valued_flags():
 
 def test_path_flag_scopes_unknown_command_is_empty():
     assert path_flag_scopes("nosuchcmd", ["-x", "/a"], "/") == []
+
+
+def test_program_tokens_walks_a_cli_verb_path_and_keeps_the_rest_raw():
+    ws = Workspace(resources={"/ram": (RAMResource(), MountMode.WRITE)})
+    try:
+        ws.register_cli("git", cli_spec_for("git"))
+        reg = ws._registry
+        # Options before the verb are not the verb; an alias reads as
+        # its canonical name; the leaf's own words follow untouched.
+        assert program_tokens(reg, "git",
+                              ["-C", "/r", "reset", "--hard", "HEAD"],
+                              "/") == (("git", "reset", "--hard", "HEAD"),
+                                       ("git", "reset"))
+        assert program_tokens(reg, "git", ["log", "-1"],
+                              "/") == (("git", "log", "-1"), ("git", "log"))
+        # A walk the tree refuses (unknown verb, bare head) reads raw.
+        assert program_tokens(reg, "git", ["frobnicate", "x"],
+                              "/") == (("git", "frobnicate", "x"), ("git", ))
+        assert program_tokens(reg, "git", [], "/") == (("git", ), ("git", ))
+        # Anything else is the name and the raw argv.
+        assert program_tokens(reg, "rm", ["-rf", "/x"],
+                              "/") == (("rm", "-rf", "/x"), ("rm", ))
+    finally:
+        import asyncio
+        asyncio.run(ws.close())

@@ -419,3 +419,39 @@ async def test_tree_draws_a_mount_point_the_parent_never_listed():
         "2 directories, 1 file",
     ]
     assert io.exit_code == 0
+
+
+@pytest.mark.asyncio
+async def test_tree_marks_a_subdirectory_it_may_not_open_and_exits_2():
+    # GNU's inline marker on the directory's own line, nothing on
+    # stderr, the directory still counted, exit 2.
+    readdir, stat = _make_backend({
+        "/r":
+        FileStat(name="r", type=FileType.DIRECTORY),
+        "/r/a":
+        FileStat(name="a", type=FileType.TEXT, size=1),
+        "/r/locked":
+        FileStat(name="locked", type=FileType.DIRECTORY),
+        "/r/locked/y":
+        FileStat(name="y", type=FileType.TEXT, size=1),
+        "/r/sub":
+        FileStat(name="sub", type=FileType.DIRECTORY),
+        "/r/sub/y":
+        FileStat(name="y", type=FileType.TEXT, size=1),
+    })
+
+    async def guarded(p: PathSpec, index=None) -> list[str]:
+        if p.virtual == "/r/locked":
+            raise PermissionError(p.virtual)
+        return await readdir(p, index)
+
+    output, io = await tree(_spec("/r"), readdir=guarded, stat=stat)
+    assert io.exit_code == 2
+    assert io.stderr in (None, b"")
+    assert output == (b"/r\n"
+                      b"|-- a\n"
+                      b"|-- locked  [error opening dir]\n"
+                      b"`-- sub\n"
+                      b"    `-- y\n"
+                      b"\n"
+                      b"3 directories, 2 files\n")

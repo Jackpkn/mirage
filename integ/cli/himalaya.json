@@ -879,10 +879,10 @@
       "targets": [
         "cli-himalaya"
       ],
-      "command": "himalaya message compose --to integ@example.com --subject 'Résumé détaillé' --body 'naïve résumé body'",
+      "command": "himalaya message compose --to integ@example.com --subject 'R\u00e9sum\u00e9 d\u00e9taill\u00e9' --body 'na\u00efve r\u00e9sum\u00e9 body'",
       "expect": {
         "exit": 0,
-        "stdout": "From: integ@example.com\r\nTo: integ@example.com\r\nSubject: =?utf-8?b?UsOpc3Vtw6kgZMOpdGFpbGzDqQ==?=\r\nContent-Type: text/plain; charset=\"utf-8\"\r\nContent-Transfer-Encoding: 8bit\r\nMIME-Version: 1.0\r\n\r\nnaïve résumé body\r\n",
+        "stdout": "From: integ@example.com\r\nTo: integ@example.com\r\nSubject: =?utf-8?b?UsOpc3Vtw6kgZMOpdGFpbGzDqQ==?=\r\nContent-Type: text/plain; charset=\"utf-8\"\r\nContent-Transfer-Encoding: 8bit\r\nMIME-Version: 1.0\r\n\r\nna\u00efve r\u00e9sum\u00e9 body\r\n",
         "stderr": ""
       }
     },
@@ -965,6 +965,114 @@
       "expect": {
         "exit": 0,
         "stdout": "1\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "hm_duo_h1_reads_its_own_account",
+      "seq": 562124,
+      "targets": [
+        "cli-himalaya"
+      ],
+      "command": "h1 envelope list | jq -r '.[].subject'",
+      "expect": {
+        "exit": 0,
+        "stdout": "Mail only alpha can see\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "hm_duo_h2_reads_its_own_account",
+      "seq": 562125,
+      "targets": [
+        "cli-himalaya"
+      ],
+      "command": "h2 envelope list | jq -r '.[].subject'",
+      "expect": {
+        "exit": 0,
+        "stdout": "Mail only beta can see\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "hm_duo_renamed_install_names_itself",
+      "seq": 562126,
+      "targets": [
+        "cli-himalaya"
+      ],
+      "command": "h1 --help | head -1",
+      "expect": {
+        "exit": 0,
+        "stdout": "h1: IMAP/SMTP mail client\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "hm_duo_usage_error_names_the_install",
+      "seq": 562127,
+      "targets": [
+        "cli-himalaya"
+      ],
+      "command": "h2 bogus",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "h2: 'bogus' is not a h2 command. See 'h2 --help'.\n"
+      }
+    },
+    {
+      "id": "hm_duo_deny_keys_on_one_installed_name",
+      "seq": 562128,
+      "targets": [
+        "cli-himalaya"
+      ],
+      "session": "crew",
+      "command": "h2 message send --to x@example.com hi",
+      "expect": {
+        "exit": 126,
+        "stdout": "",
+        "stderr": "h2: policy denied: beta is read-only\n"
+      }
+    },
+    {
+      "id": "hm_duo_the_twin_is_asked_not_denied",
+      "seq": 562129,
+      "targets": [
+        "cli-himalaya"
+      ],
+      "session": "crew",
+      "command": "h1 message send --to x@example.com hi",
+      "expect": {
+        "exit": 126,
+        "stdout": "",
+        "stderr": "h1: requires approval: outbound mail needs a nod (approval 987968c5e0ff)\n"
+      }
+    },
+    {
+      "id": "hm_duo_allow_installs_one_name",
+      "seq": 562130,
+      "targets": [
+        "cli-himalaya"
+      ],
+      "session": "solo",
+      "command": "h2 envelope list",
+      "expect": {
+        "exit": 127,
+        "stdout": "",
+        "stderr": "h2: command not found\n"
+      }
+    },
+    {
+      "id": "hm_duo_the_unlisted_twin_is_invisible",
+      "seq": 562131,
+      "targets": [
+        "cli-himalaya"
+      ],
+      "session": "solo",
+      "command": "type -t h1; type -t h2",
+      "expect": {
+        "exit": 1,
+        "stdout": "cli\n",
         "stderr": ""
       }
     }

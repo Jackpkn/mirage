@@ -12,20 +12,67 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import { operandExitCode } from '../commands/spec/usage.ts'
 import { Limit, type PathSpec } from '../types.ts'
 import type { Policy } from './base.ts'
+import { POLICY_DENIED_EXIT } from './constants.ts'
 import { PolicyDenied, PolicyError } from './errors.ts'
 import {
   VALIDITY,
+  type Ask,
   type CommandContext,
   type Deny,
   type ExecuteResultContext,
   type OpsContext,
   type OpsResultContext,
+  type Pending,
   type SessionContext,
 } from './types.ts'
 
 type Hook = keyof typeof VALIDITY
+
+/**
+ * The command plane's rendering of a refusal: stderr and exit code. The
+ * one place the outcome table for that plane is written down, so a
+ * document rule and a coded policy print alike: a whole-command Deny is
+ * `<subject>: policy denied: <reason>` at 126, an operand Deny keeps the
+ * GNU voice `<subject>: <reason>` at the command's operand-refusal code
+ * (1, tar 2).
+ */
+export function renderDeny(subject: string, deny: Deny): [Uint8Array, number] {
+  if (deny.scope === 'operand') {
+    return [new TextEncoder().encode(`${subject}: ${deny.reason}\n`), operandExitCode(subject)]
+  }
+  return [
+    new TextEncoder().encode(`${subject}: policy denied: ${deny.reason}\n`),
+    POLICY_DENIED_EXIT,
+  ]
+}
+
+/**
+ * The command plane's rendering of an unanswered ask: refused for now
+ * at 126, naming the approval the agent should quote, so the retry
+ * after the host grants it passes.
+ */
+export function renderPending(subject: string, pending: Pending): [Uint8Array, number] {
+  return [
+    new TextEncoder().encode(
+      `${subject}: requires approval: ${pending.reason} (approval ${pending.id})\n`,
+    ),
+    POLICY_DENIED_EXIT,
+  ]
+}
+
+/**
+ * Narrow a hook's answer where VALIDITY admits no Ask, which the loop
+ * already refuses inside; reaching one here is a programming error.
+ */
+function denyOnly(hook: Hook, verdict: Deny | Ask | null): Deny | null {
+  if (verdict !== null && verdict.kind === 'ask') {
+    throw new PolicyError(`${hook} cannot answer with an Ask: ${JSON.stringify(verdict)}`)
+  }
+  return verdict
+}
 
 /**
  * Fire preOps at the op door; a Deny becomes a PolicyDenied (EACCES).
@@ -39,11 +86,12 @@ export async function preOpsGate(
   path: PathSpec,
   write: boolean,
   prefix: string,
+  sessionId = '',
 ): Promise<void> {
   if (!policies.wants('preOps')) return
-  const deny = await policies.preOps({ op, path, write, prefix })
+  const deny = await policies.preOps({ op, path, write, prefix, sessionId })
   if (deny !== null) {
-    throw new PolicyDenied(deny.message.replace(/\n$/, ''), path.virtual)
+    throw new PolicyDenied(deny.reason, path.virtual)
   }
 }
 
@@ -64,7 +112,7 @@ export async function postOpsGate(
   if (!policies.wants('postOps')) return null
   const [deny, bound] = await policies.postOps({ op, path, write, prefix, result })
   if (deny !== null) {
-    throw new PolicyDenied(deny.message.replace(/\n$/, ''), path.virtual)
+    throw new PolicyDenied(deny.reason, path.virtual)
   }
   return bound
 }
@@ -96,7 +144,7 @@ export async function preSessionGate(
   if (!policies?.wants('preSession')) return
   const deny = await policies.preSession(ctx)
   if (deny !== null) {
-    throw new PolicyDenied(deny.message.replace(/\n$/, ''), ctx.key)
+    throw new PolicyDenied(deny.reason, ctx.key)
   }
 }
 
@@ -112,7 +160,7 @@ export async function preSessionGate(
  * is shown, never whether a refusal holds.
  *
  * A policy that throws fails closed: the command is refused with a
- * Deny naming the policy. A policy that returns something the hook may
+ * whole-command Deny naming the policy. A policy that returns something the hook may
  * not return (VALIDITY) throws PolicyError: that is a programming
  * error, not a refusal.
  */
@@ -154,14 +202,17 @@ export class Policies {
   /**
    * One loop for every hook: the first Deny wins (limits are moot once
    * the result is suppressed), Limit actions accumulate and merge
-   * to the tightest value per field.
+   * to the tightest value per field. An Ask is remembered and the
+   * loop goes on looking for a Deny, so a later policy's refusal
+   * outranks an earlier policy's question and an approval can never
+   * re-open a deny; the first Ask is returned when nothing refused.
    */
   private async fire(
     hook: Hook,
     ctx: CommandContext | OpsContext | OpsResultContext | ExecuteResultContext | SessionContext,
-    subject: string,
-  ): Promise<[Deny | null, Limit | null]> {
+  ): Promise<[Deny | Ask | null, Limit | null]> {
     const limits: Limit[] = []
+    let asked: Ask | null = null
     for (const policy of this.policies) {
       const fn = policy[hook]
       if (fn === undefined) continue
@@ -178,14 +229,7 @@ export class Policies {
         )
       } catch (err) {
         const detail = err instanceof Error ? err.message : String(err)
-        return [
-          {
-            kind: 'deny',
-            message: `${subject}: policy ${name} failed: ${detail}\n`,
-            exitCode: 1,
-          },
-          null,
-        ]
+        return [{ kind: 'deny', reason: `policy ${name} failed: ${detail}` }, null]
       }
       if (action === null) continue
       const kind: unknown = typeof action === 'object' ? action.kind : undefined
@@ -196,36 +240,42 @@ export class Policies {
         )
       }
       if (action.kind === 'deny') return [action, null]
+      if (action.kind === 'ask') {
+        asked ??= action
+        continue
+      }
       limits.push(action)
     }
-    return [null, Limit.aggr(limits)]
+    return [asked, Limit.aggr(limits)]
   }
 
-  /** Fire preCommand across the policies; the first Deny wins. */
-  async preCommand(ctx: CommandContext): Promise<Deny | null> {
-    const [deny] = await this.fire('preCommand', ctx, ctx.command)
-    return deny
+  /** Fire preCommand across the policies; the first Deny wins, else the first Ask. */
+  async preCommand(ctx: CommandContext): Promise<Deny | Ask | null> {
+    const [verdict] = await this.fire('preCommand', ctx)
+    return verdict
   }
 
   /** Fire preOps across the policies; the first Deny wins. */
   async preOps(ctx: OpsContext): Promise<Deny | null> {
-    const [deny] = await this.fire('preOps', ctx, ctx.op)
-    return deny
+    const [verdict] = await this.fire('preOps', ctx)
+    return denyOnly('preOps', verdict)
   }
 
   /** Fire postOps; a Deny suppresses the result, Limits merge. */
   async postOps(ctx: OpsResultContext): Promise<[Deny | null, Limit | null]> {
-    return this.fire('postOps', ctx, ctx.op)
+    const [verdict, limit] = await this.fire('postOps', ctx)
+    return [denyOnly('postOps', verdict), limit]
   }
 
   /** Fire postExecute; Limits merge to the boundary bound. */
   async postExecute(ctx: ExecuteResultContext): Promise<[Deny | null, Limit | null]> {
-    return this.fire('postExecute', ctx, ctx.producer.command || 'line')
+    const [verdict, limit] = await this.fire('postExecute', ctx)
+    return [denyOnly('postExecute', verdict), limit]
   }
 
   /** Fire preSession across the policies; the first Deny wins. */
   async preSession(ctx: SessionContext): Promise<Deny | null> {
-    const [deny] = await this.fire('preSession', ctx, ctx.key)
-    return deny
+    const [verdict] = await this.fire('preSession', ctx)
+    return denyOnly('preSession', verdict)
   }
 }

@@ -12,7 +12,7 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from mirage.runtime.policy import parsed_commands
+from mirage.runtime.policy import command_nodes, parsed_commands
 from mirage.shell.parse import parse
 
 
@@ -37,3 +37,8 @@ def test_parsed_commands_tag_installed_cli_heads():
 
 def test_parsed_commands_empty_on_unparsable():
     assert parsed_commands(parse("")) == ()
+
+
+def test_command_nodes_walks_nested_commands_in_source_order():
+    nodes = command_nodes(parse("a $(b) | c; f() { d; }"))
+    assert [n.text.decode() for n in nodes] == ["a $(b)", "b", "c", "d"]

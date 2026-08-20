@@ -3,6 +3,7 @@ from functools import partial
 
 from mirage.accessor.base import Accessor
 from mirage.cache.index import IndexCacheStore
+from mirage.commands.builtin.generic.archive.types import Walked
 from mirage.commands.builtin.generic.archive.walk import DirProbe, WalkFn
 from mirage.commands.builtin.generic.find import parse_find_args, walk_find
 from mirage.commands.builtin.generic_bind.adapter import CommandIO, OperationFn
@@ -13,13 +14,15 @@ logger = logging.getLogger(__name__)
 
 async def _walk(readdir: OperationFn, stat: OperationFn,
                 index: IndexCacheStore, path: PathSpec,
-                find_type: str) -> list[str]:
+                find_type: str) -> Walked:
     """One subtree listing, filtered to files or to directories.
 
     Reuses find's walk so an archiver classifies an entry exactly the
     way find does (through stat, never by name). The two calls a
     directory operand makes share one readdir cache, so the second is
-    answered from the index instead of the backend.
+    answered from the index instead of the backend. A directory the
+    walk could not open rides along, so the archiver can report it the
+    way GNU does instead of silently leaving its contents out.
 
     Args:
         readdir (OperationFn): backend readdir.
@@ -28,11 +31,14 @@ async def _walk(readdir: OperationFn, stat: OperationFn,
         path (PathSpec): the operand to walk.
         find_type (str): "d" or "f".
     """
-    return await walk_find(path,
-                           readdir=readdir,
-                           stat=stat,
-                           index=index,
-                           args=parse_find_args((), type=find_type))
+    unreadable: list[str] = []
+    paths = await walk_find(path,
+                            readdir=readdir,
+                            stat=stat,
+                            index=index,
+                            args=parse_find_args((), type=find_type),
+                            unreadable=unreadable)
+    return Walked(paths=tuple(paths), unreadable=tuple(unreadable))
 
 
 async def _is_dir(stat: OperationFn, readdir: OperationFn, path: PathSpec,

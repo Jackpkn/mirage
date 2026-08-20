@@ -1,0 +1,180 @@
+{
+  "cases": [
+    {
+      "id": "subtree_prep",
+      "seq": 923079,
+      "targets": [
+        "ram-commands"
+      ],
+      "command": "mkdir -p /scratch/other && echo g > /scratch/other/k && touch /scratch/mv1 /scratch/mv2",
+      "expect": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "glob_into_a_denied_subtree_is_judged_expanded",
+      "seq": 923080,
+      "targets": [
+        "ram-commands"
+      ],
+      "command": "cat /scratch/*/k",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "cat: /scratch/private/k: private\n"
+      }
+    },
+    {
+      "id": "glob_that_misses_the_subtree_runs",
+      "seq": 923081,
+      "targets": [
+        "ram-commands"
+      ],
+      "command": "cat /scratch/o*/k",
+      "expect": {
+        "exit": 0,
+        "stdout": "g\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "glob_naming_the_denied_directory",
+      "seq": 923082,
+      "targets": [
+        "ram-commands"
+      ],
+      "command": "ls -d /scratch/priv*",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "ls: /scratch/private: private\n"
+      }
+    },
+    {
+      "id": "glob_under_a_pure_path_rule_is_judged_expanded",
+      "seq": 923083,
+      "targets": [
+        "ram-commands"
+      ],
+      "session": "frozen",
+      "command": "cat /scratch/lock*/y",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "cat: /scratch/locked/y: frozen\n"
+      }
+    },
+    {
+      "id": "subtree_rm_on_the_directory_holding_the_scope",
+      "seq": 923084,
+      "targets": [
+        "ram-commands"
+      ],
+      "session": "granted",
+      "command": "rm -r /scratch/both",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "rm: /scratch/both: both: locked\n"
+      }
+    },
+    {
+      "id": "subtree_rm_kept_the_scope",
+      "seq": 923085,
+      "targets": [
+        "ram-commands"
+      ],
+      "command": "test -e /scratch/both/locked/y && echo kept",
+      "expect": {
+        "exit": 0,
+        "stdout": "kept\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "subtree_rm_on_an_ancestor_of_a_pure_path_scope",
+      "seq": 923086,
+      "targets": [
+        "ram-commands"
+      ],
+      "session": "frozen",
+      "command": "rm -r /scratch/locked",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "rm: /scratch/locked: frozen\n"
+      }
+    },
+    {
+      "id": "subtree_mv_of_the_holding_directory",
+      "seq": 923087,
+      "targets": [
+        "ram-commands"
+      ],
+      "session": "frozen",
+      "command": "mv /scratch/locked /scratch/moved",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "mv: /scratch/locked: frozen\n"
+      }
+    },
+    {
+      "id": "subtree_mv_into_the_holding_directory",
+      "seq": 923088,
+      "targets": [
+        "ram-commands"
+      ],
+      "session": "frozen",
+      "command": "mv /scratch/mv1 /scratch/locked",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "mv: /scratch/locked: frozen\n"
+      }
+    },
+    {
+      "id": "subtree_mv_into_an_ancestor_is_fine",
+      "seq": 923089,
+      "targets": [
+        "ram-commands"
+      ],
+      "session": "frozen",
+      "command": "mv /scratch/mv2 /scratch/other && ls /scratch/other",
+      "expect": {
+        "exit": 0,
+        "stdout": "k\nmv2\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "subtree_rmdir_of_the_holding_directory",
+      "seq": 923090,
+      "targets": [
+        "ram-commands"
+      ],
+      "session": "frozen",
+      "command": "rmdir /scratch/locked",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "rmdir: /scratch/locked: frozen\n"
+      }
+    },
+    {
+      "id": "subtree_left_the_scope_in_place",
+      "seq": 923091,
+      "targets": [
+        "ram-commands"
+      ],
+      "command": "ls /scratch/locked",
+      "expect": {
+        "exit": 0,
+        "stdout": "y\n",
+        "stderr": ""
+      }
+    }
+  ]
+}

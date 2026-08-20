@@ -206,3 +206,80 @@ async def test_dir_aware_stream_streams_files():
     read = dir_aware_stream(_probe_ops(set()), None, None)
     chunks = [c async for c in read(PathSpec.from_str_path("/f.txt"))]
     assert chunks == [b"data"]
+
+
+class _Gate:
+    """An EntryGate that refuses one path and remembers what it was asked."""
+
+    def __init__(self, refused: str) -> None:
+        self.scoped = True
+        self.refused = refused
+        self.asked: list[str] = []
+
+    def check(self, virtual: str) -> None:
+        self.asked.append(virtual)
+        if virtual == self.refused:
+            raise PermissionError(virtual)
+
+
+def _spec(virtual: str) -> PathSpec:
+    return PathSpec(virtual=virtual,
+                    directory=virtual.rsplit("/", 1)[0] or "/",
+                    resource_path=virtual,
+                    resolved=True)
+
+
+@pytest.mark.asyncio
+async def test_rule_guard_asks_the_bound_gate_and_leaves_stat_alone():
+    from mirage.commands.builtin.generic_bind.adapter import with_rule_guard
+    from mirage.context import reset_admission, set_admission
+    calls: list[tuple[str, ...]] = []
+
+    async def read_bytes(accessor, path, index=None):
+        calls.append(("read", path.virtual))
+        return b"x"
+
+    async def stat(accessor, path, index=None):
+        calls.append(("stat", path.virtual))
+        return FileStat(name="k", type=FileType.TEXT, size=1)
+
+    async def readdir(accessor, path, index=None):
+        calls.append(("readdir", path.virtual))
+        return ["/data/locked/y"]
+
+    async def rename(accessor, src, dst):
+        calls.append(("rename", src.virtual, dst.virtual))
+
+    ops = with_rule_guard(
+        CommandIO(readdir=readdir,
+                  read_bytes=read_bytes,
+                  read_stream=read_bytes,
+                  stat=stat,
+                  is_mounted=lambda a: True,
+                  rename=rename))
+    acc = NOOPAccessor()
+    # No gate bound: every slot runs as is.
+    assert await ops.read_bytes(acc, _spec("/data/locked/y")) == b"x"
+    gate = _Gate(refused="/data/locked/y")
+    token = set_admission(gate)
+    try:
+        with pytest.raises(PermissionError):
+            await ops.read_bytes(acc, _spec("/data/locked/y"))
+        # stat is not a guarded slot: deny is present and refused.
+        assert (await ops.stat(acc, _spec("/data/locked/y"))).size == 1
+        # readdir asks about the directory, never filters its names.
+        assert await ops.readdir(acc,
+                                 _spec("/data/locked")) == ["/data/locked/y"]
+        # A pair op asks about both paths.
+        with pytest.raises(PermissionError):
+            await ops.rename(acc, _spec("/data/a"), _spec("/data/locked/y"))
+        await ops.rename(acc, _spec("/data/a"), _spec("/data/b"))
+    finally:
+        reset_admission(token)
+    assert gate.asked == [
+        "/data/locked/y", "/data/locked", "/data/a", "/data/locked/y",
+        "/data/a", "/data/b"
+    ]
+    assert ("read", "/data/locked/y") in calls
+    assert ("rename", "/data/a", "/data/locked/y") not in calls
+    assert ("rename", "/data/a", "/data/b") in calls

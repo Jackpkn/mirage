@@ -17,9 +17,10 @@ import dataclasses
 from typing import Any
 
 from mirage.commands.builtin.utils.limit import run_with_timeout
+from mirage.context import redirect_paths_for, reset_admission, set_admission
 from mirage.io import IOResult
 from mirage.io.types import materialize
-from mirage.policy import CommandContext, PolicyDenied, resolve_limit
+from mirage.policy import PolicyDenied, resolve_limit
 from mirage.policy.types import SessionContext
 from mirage.runtime.policy import PolicyDecision
 from mirage.shell.bytes import encode_text
@@ -29,17 +30,15 @@ from mirage.shell.variable import ShellVar, VarAttr
 from mirage.shell.xtrace import trace_command
 from mirage.types import PathSpec, Producer, word_text
 from mirage.utils.glob_walk import glob_pattern
-from mirage.utils.path import CycleError, resolve_path
+from mirage.utils.path import CycleError
 from mirage.workspace.executor.builtins.alias import alias_command_text
-from mirage.workspace.executor.builtins.scope import _to_scope
 from mirage.workspace.executor.builtins.table import BUILTINS
 from mirage.workspace.executor.builtins.types import BuiltinCall
 from mirage.workspace.executor.command import handle_command
-from mirage.workspace.executor.command.routing import (path_flag_scopes,
-                                                       positional_scopes)
 from mirage.workspace.expand import expand_node
 from mirage.workspace.expand.argv import Argv, expand_argv
 from mirage.workspace.expand.globs import expand_boundary_globs
+from mirage.workspace.node.admission import Admitted, Refusal, admit
 from mirage.workspace.route import (SLASH_KEEPS_LAST, UNSUPPORTED_BUILTINS,
                                     follows_last_component)
 from mirage.workspace.session.state import (ensure_var_visible,
@@ -70,6 +69,7 @@ async def execute_command(
     job_table,
     cancel: asyncio.Event | None = None,
     routing_decision: PolicyDecision | None = None,
+    agent_id: str = "",
 ) -> tuple[Any, IOResult, ExecutionNode]:
     """Dispatch a command node by name."""
     name = get_command_name(node)
@@ -192,7 +192,7 @@ async def execute_command(
                                             namespace, execute_fn, node, parts,
                                             name, session, stdin, call_stack,
                                             job_table, cancel,
-                                            routing_decision)
+                                            routing_decision, agent_id)
     finally:
         for k, prev in saved_env_overrides.items():
             if prev is None:
@@ -216,6 +216,7 @@ async def _dispatch_command_body(
     job_table,
     cancel: asyncio.Event | None = None,
     routing_decision: PolicyDecision | None = None,
+    agent_id: str = "",
 ) -> tuple[Any, IOResult, ExecutionNode]:
     parent = node.parent
     if parent is None or parent.type != NT.REDIRECTED_STATEMENT:
@@ -281,7 +282,9 @@ async def _dispatch_command_body(
                      job_table,
                      cancel,
                      routing_decision,
-                     row=node.start_point[0])
+                     row=node.start_point[0],
+                     agent_id=agent_id,
+                     redirects=redirect_paths_for(node.id))
     # Capture xtrace before the body runs so `set -x` itself is not
     # traced (bash enables tracing only for the following commands).
     xtrace = bool(session.shell_options.get("xtrace"))
@@ -315,12 +318,18 @@ async def _run_argv(
     cancel: asyncio.Event | None = None,
     routing_decision: PolicyDecision | None = None,
     row: int = 0,
+    agent_id: str = "",
+    redirects: tuple[PathSpec, ...] = (),
 ) -> tuple[Any, IOResult, ExecutionNode]:
     """Route one expanded command to its builtin or mount handler.
 
     ``row`` is the command's line within its parse, which only ``alias``
     reads: a definition remembers where it was made so a use on the
     same line does not see it, as bash's line reader would not.
+    ``agent_id`` is the agent the line is attributed to, which an
+    approval request names. ``redirects`` are the statement's expanded
+    redirect targets, judged with the line because their I/O runs on
+    the shell's own fds outside the admitted command's gate window.
     """
     name = argv.name
 
@@ -347,42 +356,75 @@ async def _run_argv(
                                    operands=tuple(boundary),
                                    args=tuple(expanded))
 
-    args = list(argv.args)
-    operands = list(argv.operands)
-
-    # ── admission policies ──────────────────────
+    # ── visibility and admission ────────────────
     # The one chokepoint every command class passes through: shell
     # builtins, namespace-routed commands (touch/chmod/ln -s), job
     # builtins, shell functions, and mount commands all route below, so
-    # the hook must fire here, not in handle_command. Paths are the
-    # operands as typed plus path-valued flags (shuf -o DEST); refusals
-    # win over flag parsing, routing, and runtime placement.
+    # the gate must fire here, not in handle_command. Checked ahead of
+    # the BUILTINS table, which runs before route(); the enumerators
+    # read the same visibility filter through _layers. Refusals win
+    # over flag parsing, routing, and runtime placement.
+    admitted: Admitted | None = None
     if name:
-        scopes = [p for p in operands if isinstance(p, PathSpec)]
-        scopes.extend(path_flag_scopes(name, args, session.cwd))
-        if "/" in name:
-            # A slash-carrying head word is a file the line executes
-            # (the path-execution branch below), and it lives in
-            # argv[0], not the operands, so a path-pattern guard would
-            # never see it without this row.
-            scopes.insert(0, _to_scope(resolve_path(name, session.cwd)))
-        deny = await registry.policies.pre_command(
-            CommandContext(command=name,
-                           paths=tuple(scopes),
-                           operands=tuple(
-                               positional_scopes(name, args, session.cwd,
-                                                 operands)),
-                           argv=tuple(args),
-                           cwd=session.cwd,
-                           registry=registry))
-        if deny is not None:
-            err = deny.message.encode()
-            cmd_str = " ".join([name, *args])
-            return None, IOResult(exit_code=deny.exit_code,
-                                  stderr=err), ExecutionNode(
+        verdict = await admit(name,
+                              list(argv.args),
+                              list(argv.operands),
+                              session,
+                              registry,
+                              namespace,
+                              agent_id,
+                              stdin,
+                              redirects=redirects)
+        if isinstance(verdict, Refusal):
+            cmd_str = " ".join([name, *argv.args])
+            return None, IOResult(exit_code=verdict.exit_code,
+                                  stderr=verdict.stderr), ExecutionNode(
                                       command=cmd_str,
-                                      exit_code=deny.exit_code,
-                                      stderr=err)
+                                      exit_code=verdict.exit_code,
+                                      stderr=verdict.stderr,
+                                      refused=True)
+        admitted = verdict
+
+    # ── run ────────────────────────────────────
+    # The admitted command's gate is bound for its run and reset after,
+    # so its own I/O can ask about the entries the gate did not see and
+    # a nested line binds its own (see ``Admitted``).
+    if admitted is None:
+        return await _route_argv(recurse, dispatch, registry, namespace,
+                                 execute_fn, argv, session, stdin, call_stack,
+                                 job_table, cancel, routing_decision, row)
+    token = set_admission(admitted)
+    try:
+        return await _route_argv(recurse, dispatch, registry, namespace,
+                                 execute_fn, argv, session, stdin, call_stack,
+                                 job_table, cancel, routing_decision, row)
+    finally:
+        reset_admission(token)
+
+
+async def _route_argv(
+    recurse,
+    dispatch,
+    registry,
+    namespace,
+    execute_fn,
+    argv: Argv,
+    session,
+    stdin,
+    call_stack,
+    job_table,
+    cancel: asyncio.Event | None,
+    routing_decision: PolicyDecision | None,
+    row: int,
+) -> tuple[Any, IOResult, ExecutionNode]:
+    """Route one admitted command to its builtin or mount handler.
+
+    The half of ``_run_argv`` past the gate, split out so the gate's
+    verdict can be bound around it.
+    """
+    name = argv.name
+    args = list(argv.args)
+    operands = list(argv.operands)
 
     # ── path execution ─────────────────────────
     # bash hands a slash-carrying head word to the loader, never to

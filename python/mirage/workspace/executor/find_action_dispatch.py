@@ -13,9 +13,11 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 from mirage.commands.spec.types import FlagValue
+from mirage.context import get_current_session
 from mirage.io.stream import materialize
 from mirage.io.types import ByteSource
 from mirage.ops.types import ChildMounts, NamespaceView, StatPath
+from mirage.policy import pre_ops_gate
 from mirage.types import PathSpec
 from mirage.workspace.mount import MountRegistry
 
@@ -83,15 +85,28 @@ async def _apply_find_actions(
                 resolved=True,
             )
             try:
-                # -d so directories emptied by the deepest-first pass are
-                # removable, matching GNU -delete's rmdir behavior.
+                # -delete is find's own action, not an `rm` line, so no
+                # command rule sees it; it is a removal all the same, so
+                # it clears the op door a path rule guards (the same
+                # gate `ws.ops`, FUSE and a redirect clear), by the
+                # session the line runs under. -d so directories emptied
+                # by the deepest-first pass are removable, matching GNU
+                # -delete's rmdir behavior.
+                sess = get_current_session()
+                await pre_ops_gate(registry.policies, "unlink", ps, True,
+                                   mount.prefix,
+                                   sess.session_id if sess is not None else "")
                 _, rm_io = await mount.execute_cmd("rm", [ps], [], {"d": True},
                                                    stdin=None,
                                                    cwd=cwd)
             except (FileNotFoundError, NotADirectoryError, PermissionError,
                     ValueError) as exc:
+                # GNU words it with the errno text; a policy refusal
+                # carries its reason there.
+                why = (exc.strerror or str(exc)) if isinstance(
+                    exc, OSError) else str(exc)
                 errors.append(
-                    f"find: cannot delete '{path}': {exc}\n".encode())
+                    f"find: cannot delete '{path}': {why}\n".encode())
                 continue
             if rm_io.exit_code != 0:
                 err = await materialize(rm_io.stderr) if rm_io.stderr else b""

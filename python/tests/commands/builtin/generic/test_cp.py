@@ -223,10 +223,12 @@ def _make_primitive(files: dict[str, bytes],
                     dirs: set[str],
                     *,
                     read_fails: dict | None = None,
-                    write_fails: dict | None = None):
+                    write_fails: dict | None = None,
+                    readdir_fails: dict | None = None):
     stat, _, _ = _make_backend(files, dirs)
     read_err = read_fails or {}
     write_err = write_fails or {}
+    readdir_err = readdir_fails or {}
 
     async def read_bytes(p) -> bytes:
         if _key(p) in read_err:
@@ -242,6 +244,8 @@ def _make_primitive(files: dict[str, bytes],
         dirs.add(_key(p))
 
     async def readdir(p) -> list[str]:
+        if _key(p) in readdir_err:
+            raise readdir_err[_key(p)]
         base = _key(p) + "/"
         children = {
             base + k[len(base):].split("/", 1)[0]
@@ -690,3 +694,22 @@ async def test_backup_version_scan_failure_aborts_the_overwrite():
     assert io.stderr == (b"cp: cannot backup '/b.txt': "
                          b"Operation not supported\n")
     assert files["/b.txt"] == b"OLD"
+
+
+@pytest.mark.asyncio
+async def test_primitive_recursive_walk_names_a_directory_it_may_not_open():
+    # GNU: "cp: cannot access 'X': Permission denied" for a directory it
+    # could not read, the directory itself still created, the rest of
+    # the tree copied, exit 1.
+    files = {"/src/a.txt": b"A", "/src/sealed/s": b"S", "/src/sub/b": b"B"}
+    dirs = {"/src", "/src/sealed", "/src/sub"}
+    _, io = await _run_primitive(
+        files,
+        dirs, ["/src", "/dst"],
+        recursive=True,
+        readdir_fails={"/src/sealed": PermissionError("/src/sealed")})
+    assert io.exit_code == 1
+    assert io.stderr == (b"cp: cannot access '/src/sealed': "
+                         b"Permission denied\n")
+    assert files["/dst/a.txt"] == b"A" and files["/dst/sub/b"] == b"B"
+    assert "/dst/sealed" in dirs and "/dst/sealed/s" not in files

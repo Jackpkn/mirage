@@ -182,6 +182,45 @@ function reportsLink(name: string, words: readonly (string | PathSpec)[]): boole
   return spec !== undefined && hasOption(words, spec[0], spec[1])
 }
 
+// Commands whose traversal descends into descendant mounts (the
+// executor's fan-out reruns them per mount), always or under a flag.
+// What the admission gate reads to stamp `CommandContext.walks`, so a
+// mount rule can speak on an ancestor operand. `tar` and `zip` walk too
+// but refuse to cross a mount boundary, so they are deliberately
+// absent: a mount rule has nothing to say about a walk that never
+// enters it.
+const WALK_COMMANDS = new Set(['find', 'du', 'tree', 'rg'])
+const WALK_FLAGS: Record<string, [string, string[]]> = {
+  grep: ['rR', ['recursive']],
+  ls: ['R', ['recursive']],
+}
+
+// Commands whose reads exceed the words the gate judged even inside one
+// mount: the walkers above plus the subtree readers that stop at a
+// mount boundary. What the whole-line gate reads: a runtime does its
+// own walking where no entry gate follows, so a path rule that scopes
+// such a command refuses the captured line instead of running it
+// unguarded.
+const SUBTREE_READ_FLAGS: Record<string, [string, string[]]> = {
+  tar: ['c', ['create']],
+  zip: ['r', ['recurse-paths']],
+  cp: ['rR', ['recursive']],
+}
+
+// Whether a command's traversal enters descendant mounts.
+export function walksMounts(name: string, words: readonly (string | PathSpec)[]): boolean {
+  if (WALK_COMMANDS.has(name)) return true
+  const spec = WALK_FLAGS[name]
+  return spec !== undefined && hasOption(words, spec[0], spec[1])
+}
+
+// Whether a command reads below the paths its words name.
+export function readsSubtrees(name: string, words: readonly (string | PathSpec)[]): boolean {
+  if (walksMounts(name, words)) return true
+  const spec = SUBTREE_READ_FLAGS[name]
+  return spec !== undefined && hasOption(words, spec[0], spec[1])
+}
+
 // Commands the router must not resolve the last component for, even
 // under a trailing slash, because none of them acts on the link's
 // target and each says so in its own words. GNU tar strips the slash

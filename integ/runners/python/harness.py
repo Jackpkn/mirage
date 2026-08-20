@@ -327,6 +327,25 @@ def bind_mount(case: dict, mount_path: str) -> dict:
     return bound
 
 
+async def answer_approvals(ws, answer: str) -> None:
+    """The host's side of the ask arm: answer every approval waiting on
+    the workspace the way the case says (``allow_once``, ``allow_session``
+    or ``deny``), so the command that follows finds the grant (or the
+    refusal) the way an agent's retry would. How a case exercises the
+    ask arm, since the battery has no host of its own.
+
+    Args:
+        ws: the workspace the case runs against.
+        answer (str): the decision for every pending request.
+    """
+    for request in ws.approvals.list():
+        if answer == "deny":
+            await ws.approvals.deny(request.id)
+        else:
+            await ws.approvals.grant(
+                request.id, "once" if answer == "allow_once" else "session")
+
+
 async def run_case(ws, case: dict) -> tuple[int, str, str, float, str | None]:
     """Run one case and return what it produced.
 
@@ -357,6 +376,8 @@ async def run_case(ws, case: dict) -> tuple[int, str, str, float, str | None]:
         plan = await ws.execute(case["command"], provision=True)
         return 0, provision_line(
             plan) + "\n", "", time.monotonic() - start, None
+    if case.get("answer") is not None:
+        await answer_approvals(ws, case["answer"])
     result = await ws.execute(case["command"], session_id=case.get("session"))
     elapsed = time.monotonic() - start
     out = await result.stdout_str()

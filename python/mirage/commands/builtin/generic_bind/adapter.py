@@ -25,7 +25,7 @@ from mirage.cache.index import IndexCacheStore
 from mirage.commands.builtin.generic.du import (DEFAULT_MAX_DU_ENTRIES,
                                                 DuEntries)
 from mirage.commands.config import CommandFnResult, CommandOpts, ProvisionFn
-from mirage.context import path_allowed
+from mirage.context import get_admission, path_allowed
 from mirage.ops.types import ChildMounts, StatOverlay
 from mirage.types import FileStat, FileType, PathSpec
 from mirage.utils.errors import MISS_ERRORS, eisdir
@@ -510,6 +510,64 @@ def with_hidden_guard(ops: CommandIO) -> CommandIO:
             changes[slot] = functools.partial(_guarded_call, fn, True)
     if ops.exists is not None:
         changes["exists"] = functools.partial(_guarded_exists, ops.exists)
+    return replace(ops, **changes)
+
+
+_RULE_SLOTS = ("read_bytes", "read_stream", "read_range", "write", "append",
+               "create", "truncate", "set_attrs", "mkdir", "unlink", "rmdir",
+               "rm_r", "rename", "copy", "dir_copy")
+
+
+def _rule_call(fn: OperationFn, *args: Any, **kwargs: Any) -> Any:
+    """Call a backend op after asking the admitted command's gate about
+    each PathSpec positional (a rename or copy has two, and a refused
+    destination is as much a refusal as a refused source).
+
+    Sync on purpose, like ``_guarded_call``: the gate raises at call
+    time and the op's own return shape passes through untouched. With
+    no gate bound (no admitted command in this context) the op runs as
+    is.
+
+    Args:
+        fn (OperationFn): the raw backend op.
+        *args: the call's positionals, PathSpecs among them.
+        **kwargs: forwarded untouched.
+    """
+    gate = get_admission()
+    if gate is not None:
+        for arg in args:
+            if isinstance(arg, PathSpec):
+                gate.check(arg.virtual)
+    return fn(*args, **kwargs)
+
+
+def with_rule_guard(ops: CommandIO) -> CommandIO:
+    """Return ``ops`` whose content and mutation slots ask the admitted
+    command's gate before touching a path.
+
+    The rule arms' counterpart of ``with_hidden_guard``, wrapped inside
+    it so a hidden path still answers ENOENT before any rule can name
+    it. The gate judged the line's operands; this is how a walk (``grep
+    -r``, ``find``, ``du``, ``cp -r``, ``tar``) is held to the same rules
+    on the entries it reaches below them. ``stat`` and ``exists`` stay
+    unguarded, because deny means present and refused, not absent: a
+    listing shows a refused entry's name and size, and the read of it
+    is what fails, as GNU reports an unreadable file. ``readdir`` asks
+    about the directory being listed, never filters its names. A
+    backend's native ``find``/``du`` are not wrapped: the builders
+    route to the readdir walk while a path rule scopes the command
+    (``path_rules_active``), so every entry passes through here.
+
+    Args:
+        ops (CommandIO): the backend's IO adapter.
+    """
+    changes: dict[str, Any] = {
+        "readdir": functools.partial(_rule_call, ops.readdir)
+    }
+    for slot in _RULE_SLOTS:
+        fn = getattr(ops, slot)
+        if fn is not None:
+            changes[slot] = functools.partial(_rule_call, fn)
     return replace(ops, **changes)
 
 

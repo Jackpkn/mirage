@@ -183,7 +183,7 @@ async def to_state_dict(ws) -> dict[str, Any]:
         StateKey.SESSIONS: [s.to_dict() for s in ws._session_mgr.list()],
         StateKey.DEFAULT_SESSION_ID: ws._session_mgr.default_id,
         StateKey.DEFAULT_AGENT_ID: ws._default_agent_id,
-        StateKey.CURRENT_AGENT_ID: ws._current_agent_id,
+        StateKey.CURRENT_AGENT_ID: ws._default_agent_id,
         StateKey.CACHE: {
             CacheKey.LIMIT: cache.cache_limit,
             CacheKey.MAX_DRAIN_BYTES: cache.max_drain_bytes,
@@ -297,9 +297,9 @@ async def apply_state_dict(ws, state: dict[str, Any]) -> None:
         mount.resource.load_state(m[MountKey.RESOURCE_STATE])
 
     await _restore_sessions(ws, state)
-    ws._current_agent_id = state.get(StateKey.CURRENT_AGENT_ID,
-                                     ws._default_agent_id)
-
+    # current_agent_id is not restored: the agent of a line is carried
+    # per execution (the call's agent_id, else the default), never held
+    # on the workspace, so the key only mirrors default_agent_id.
     _restore_cache(ws, state)
     await _restore_history(ws, state)
     _restore_jobs(ws, state)

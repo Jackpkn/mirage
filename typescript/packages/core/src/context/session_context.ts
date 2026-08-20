@@ -17,6 +17,7 @@ import type { SessionManager } from '../workspace/session/manager.ts'
 import type { Session } from '../workspace/session/session.ts'
 import { stripSlash } from '../utils/slash.ts'
 import { pathHidden } from '../utils/hidden.ts'
+import type { EntryGate, PathSpec } from '../types.ts'
 import { MountMode, weakerMode } from '../types.ts'
 
 /**
@@ -164,11 +165,96 @@ export function dotglobActive(): boolean {
   return getCurrentSession()?.shopts.dotglob === true
 }
 
-export function pathAllowed(virtual: string): boolean {
-  const sess = getCurrentSession()
-  if (sess == null) return true
+/**
+ * Whether a session's hidden-paths specs, its own and the workspace-bound
+ * one, leave this path visible. The explicit-session form of
+ * `pathAllowed`, for a door that holds the session rather than running
+ * under it: the admission gate drops a hidden operand before any policy
+ * reads it, so a rule or an ask never names a path the session cannot
+ * see.
+ */
+export function sessionPathAllowed(sess: Session, virtual: string): boolean {
   if (sess.hiddenPaths != null && pathHidden(sess.hiddenPaths, virtual)) return false
   return !(sess.boundHidden != null && pathHidden(sess.boundHidden, virtual))
+}
+
+/**
+ * Whether the current session's hidden-paths specs, its own and the
+ * workspace-bound one, leave this path visible: enumeration surfaces
+ * filter names through it and the doors answer ENOENT (EACCES for
+ * creates) when it says no, so hiding reads as nonexistence, never as a
+ * denial that leaks the name. True when no session is bound.
+ */
+export function pathAllowed(virtual: string): boolean {
+  const sess = getCurrentSession()
+  return sess == null || sessionPathAllowed(sess, virtual)
+}
+
+const admissionStorage = createAsyncContext<EntryGate>()
+
+/**
+ * Bind the admitted command's entry gate for the duration of `fn`: the
+ * run of that one command.
+ *
+ * Bound by the dispatcher once the gate let the command through, so a
+ * nested line (`xargs`, `find -exec`, `eval`) binds its own and the outer
+ * command gets its gate back when it returns, and a pipeline stage in
+ * its own async context never sees a sibling's.
+ */
+export function runWithAdmission<T>(gate: EntryGate, fn: () => Promise<T>): Promise<T> {
+  return Promise.resolve(admissionStorage.run(gate, fn))
+}
+
+/**
+ * The entry gate of the command running in this context, null when no
+ * admitted command is bound (a command constructed outside the
+ * dispatcher, or a line no gate judged).
+ */
+export function getAdmission(): EntryGate | null {
+  return admissionStorage.getStore() ?? null
+}
+
+/**
+ * Whether a path rule in force reads the running command's paths.
+ *
+ * The twin of `hiddenPathsActive` for the rule arms: a backend's native
+ * find or du classifies the raw tree, so an entry a rule refuses would be
+ * listed or summed past the gate; the readdir walk passes every entry
+ * through it instead. False when no admitted command is bound.
+ */
+export function pathRulesActive(): boolean {
+  return getAdmission()?.scoped ?? false
+}
+
+const redirectStorage = createAsyncContext<[object, readonly PathSpec[]]>()
+
+/**
+ * Bind a statement's expanded redirect targets to the command node they
+ * belong to, for the duration of `fn` (that node's run).
+ *
+ * The redirect layer expands the targets before the command executes (a
+ * `$()` in one runs exactly once there), so the admission gate deep in
+ * command dispatch cannot re-derive them; it reads them here instead.
+ * Keyed by the node object itself so a nested line expanded on the way
+ * to the command (a `$()` operand, an `eval`) never inherits the outer
+ * statement's targets.
+ */
+export function runWithRedirectPaths<T>(
+  node: object,
+  paths: readonly PathSpec[],
+  fn: () => Promise<T>,
+): Promise<T> {
+  return Promise.resolve(redirectStorage.run([node, paths], fn))
+}
+
+/**
+ * The redirect targets bound to this command node, empty for any other
+ * node or when none are bound.
+ */
+export function redirectPathsFor(node: object): readonly PathSpec[] {
+  const bound = redirectStorage.getStore()
+  if (bound?.[0] !== node) return []
+  return bound[1]
 }
 
 /**

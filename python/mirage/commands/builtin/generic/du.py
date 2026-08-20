@@ -10,7 +10,7 @@ from mirage.commands.config import CommandOpts
 from mirage.commands.errors import UsageError
 from mirage.commands.spec import SPECS
 from mirage.commands.spec.types import FlagView
-from mirage.context import hidden_paths_active, path_allowed
+from mirage.context import hidden_paths_active, path_allowed, path_rules_active
 from mirage.io.types import IOResult
 from mirage.ops.types import LinkView, MountView, StatPath
 from mirage.types import FileStat, PathSpec
@@ -494,11 +494,13 @@ async def _du_one(
         leaves = drop_shadowed(leaves, roots)
     link_total = sum(size for _, size in leaves)
 
-    if flags.s and not flags.S and not roots and not hidden_paths_active():
+    if (flags.s and not flags.S and not roots and not hidden_paths_active()
+            and not path_rules_active()):
         # The one-total fast path trusts the backend's own sum, which a
         # session hiding paths cannot: hidden leaves would be counted
         # into a total their names never justify, so that session takes
-        # the entries walk below instead.
+        # the entries walk below instead; a path rule likewise, since
+        # the walk is where a refused directory is reported.
         total = await compute_size(path) + link_total
         return [_line(total, flags.h, label)], total
 
@@ -567,6 +569,7 @@ async def run_du(
     links: LinkView | None = None,
     mounts: MountView | None = None,
     stat_path: StatPath | None = None,
+    unreadable: Callable[[], Sequence[str]] | None = None,
 ) -> DuOutput:
     """Run one whole ``du`` invocation, from raw flags to rendered bytes.
 
@@ -595,6 +598,8 @@ async def run_du(
             and total.
         stat_path (StatPath | None): dispatcher-backed stat, which is what
             answers for a directory the bound backend cannot see.
+        unreadable (Callable[[], Sequence[str]] | None): the directories
+            a walk could not open, read after the walks.
 
     Raises:
         UsageError: on a bad depth or a conflicting flag combination.
@@ -619,6 +624,7 @@ async def run_du(
                     flags=flags,
                     missing=missing,
                     truncated=truncated,
+                    unreadable=unreadable,
                     links=links,
                     mounts=mounts)
 
@@ -633,6 +639,7 @@ async def du(
     truncated: Callable[[], bool] | None = None,
     links: LinkView | None = None,
     mounts: MountView | None = None,
+    unreadable: Callable[[], Sequence[str]] | None = None,
 ) -> DuOutput:
     """Render ``du`` output for a list of operands.
 
@@ -654,6 +661,12 @@ async def du(
         mounts (MountView | None): where the mount boundaries are; leaves
             under a descendant mount's root are shadowed and dropped from
             every row and total (see ``drop_shadowed``).
+        unreadable (Callable[[], Sequence[str]] | None): read after the
+            walks for the directories a walk could not open (a rule
+            refused them below the operand). GNU names each one,
+            counts what it could, and exits 1; the line is spelled as
+            the operand was typed, and follows the unreadable-operand
+            lines since those are known before any walk.
     """
     lines: list[str] = []
     totals: list[int] = []
@@ -671,12 +684,30 @@ async def du(
     notes.extend(f"du: cannot access '{raw}': {detail}"
                  for raw, detail in missing)
     exit_code = 1 if missing else 0
+    for virtual in (unreadable() if unreadable is not None else ()):
+        notes.append(f"du: cannot read directory "
+                     f"'{_respell_under(virtual, paths)}': Permission denied")
+        exit_code = 1
     if truncated is not None and truncated():
         notes.append("du: walk stopped early: the reported sizes are "
                      "incomplete")
         exit_code = 1
     stderr = ("\n".join(notes) + "\n").encode() if notes else b""
     return DuOutput(format_records(lines), stderr, exit_code)
+
+
+def _respell_under(virtual: str, paths: Sequence[PathSpec]) -> str:
+    """Spell a walked path as the operand it lies under was typed.
+
+    Args:
+        virtual (str): the absolute virtual path the walk reached.
+        paths (Sequence[PathSpec]): the operands, as parsed.
+    """
+    for path in paths:
+        base = path.virtual.rstrip("/") or "/"
+        if virtual == base or virtual.startswith(base.rstrip("/") + "/"):
+            return respell_raw([virtual], path.virtual, path.raw_path)[0]
+    return virtual
 
 
 async def du_generic(
@@ -688,6 +719,7 @@ async def du_generic(
     compute_size: ComputeSize,
     compute_entries: ComputeEntries,
     truncated: Callable[[], bool] | None = None,
+    unreadable: Callable[[], Sequence[str]] | None = None,
 ) -> tuple[bytes, IOResult]:
     """Run du over the given operands; mirrors duGeneric.
 
@@ -708,6 +740,8 @@ async def du_generic(
         compute_size (ComputeSize): Recursive byte size of one operand.
         compute_entries (ComputeEntries): Per-file breakdown.
         truncated (Callable[[], bool] | None): Whether the walk was cut.
+        unreadable (Callable[[], Sequence[str]] | None): The directories
+            the walk could not open.
     """
     fl = FlagView(opts.flags, spec=SPECS["du"])
     out = await run_du(
@@ -724,6 +758,7 @@ async def du_generic(
         max_depth=fl.as_str("max_depth"),
         separate_dirs=fl.as_bool("separate_dirs"),
         truncated=truncated,
+        unreadable=unreadable,
         links=(None if fl.as_bool("L") else
                opts.ns.links if opts.ns is not None else None),
         mounts=opts.ns.mounts if opts.ns is not None else None,

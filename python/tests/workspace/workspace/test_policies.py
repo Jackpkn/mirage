@@ -33,7 +33,7 @@ class NoInterpreters(Policy):
 
     async def pre_command(self, ctx: CommandContext) -> Action | None:
         if ctx.command == "python3":
-            return Deny("python3: interpreters are off\n")
+            return Deny("interpreters are off")
         return None
 
 
@@ -71,8 +71,10 @@ async def test_policies_add_wins_over_runtime_placement():
     try:
         ws.policies.add(NoInterpreters())
         result = await ws.execute("python3 -c 'print(1)'")
-        assert result.exit_code == 1
-        assert result.stderr == b"python3: interpreters are off\n"
+        # A whole-command refusal is bash's "found but may not run".
+        assert result.exit_code == 126
+        assert result.stderr == (
+            b"python3: policy denied: interpreters are off\n")
     finally:
         await ws.close()
 
@@ -84,8 +86,9 @@ async def test_policies_constructor_param_accepts_instances():
                    policies=[NoInterpreters()])
     try:
         result = await ws.execute("python3 -c 'print(1)'")
-        assert result.exit_code == 1
-        assert result.stderr == b"python3: interpreters are off\n"
+        assert result.exit_code == 126
+        assert result.stderr == (
+            b"python3: policy denied: interpreters are off\n")
     finally:
         await ws.close()
 
@@ -107,8 +110,8 @@ async def test_guards_cover_shell_builtins_and_namespace_routes():
     )
     try:
         result = await ws.execute("source /data/setup.sh")
-        assert result.exit_code == 1
-        assert result.stderr == b"source: disabled\n"
+        assert result.exit_code == 126
+        assert result.stderr == b"source: policy denied: disabled\n"
         result = await ws.execute("touch /data/prod/x")
         assert result.exit_code == 1
         assert b"frozen" in result.stderr
@@ -145,7 +148,7 @@ class ReadOnlyProd(Policy):
 
     async def pre_ops(self, ctx: OpsContext) -> Action | None:
         if ctx.write and ctx.path.virtual.startswith("/data/prod/"):
-            return Deny("prod is read-only\n")
+            return Deny("prod is read-only")
         return None
 
 
@@ -177,7 +180,7 @@ class SuppressProdWrites(Policy):
 
     async def post_ops(self, ctx: OpsResultContext) -> Action | None:
         if ctx.write and ctx.path.virtual.startswith("/data/prod/"):
-            return Deny("write suppressed\n")
+            return Deny("write suppressed")
         return None
 
 
@@ -217,7 +220,7 @@ class SuppressProdReads(Policy):
 
     async def post_ops(self, ctx: OpsResultContext) -> Action | None:
         if not ctx.write and ctx.path.virtual.startswith("/data/prod/"):
-            return Deny("no reads\n")
+            return Deny("no reads")
         return None
 
 
@@ -457,7 +460,7 @@ class DenyReads(Policy):
 
     async def post_ops(self, ctx: OpsResultContext) -> Action | None:
         if ctx.op == "read":
-            return Deny("reads are suppressed\n")
+            return Deny("reads are suppressed")
         return None
 
 
@@ -531,10 +534,9 @@ async def test_a_raising_post_execute_policy_fails_the_line_closed():
     try:
         ws.policies.add(Boom())
         r = await ws.execute("echo hi")
-        assert r.exit_code == 1
+        assert r.exit_code == 126
         err = await r.stderr_str()
-        assert "Boom" in err
-        assert "boom" in err
+        assert err == "echo: policy denied: policy Boom failed: boom\n"
         assert r.stdout is None or await r.stdout_str() == ""
     finally:
         await ws.close()
@@ -632,7 +634,7 @@ async def test_a_bare_name_under_deny_refuses_with_the_default_reason():
                        deny=("shred", ))))
     try:
         result = await ws.execute("shred /data/x")
-        assert result.exit_code == 1
-        assert result.stderr == b"shred: denied by policy\n"
+        assert result.exit_code == 126
+        assert result.stderr == b"shred: policy denied: denied by policy\n"
     finally:
         await ws.close()

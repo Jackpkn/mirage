@@ -39,7 +39,7 @@ import {
   pathExists,
   type BackendKeyFn,
 } from '../utils/copy.ts'
-import { fsStrerror, isFsError, isMissingPath } from '../../../utils/errors.ts'
+import { fsStrerror, isEacces, isFsError, isMissingPath } from '../../../utils/errors.ts'
 import { rstripSlash } from '../../../utils/slash.ts'
 import { norm, parent } from '../../../utils/path.ts'
 import { compareCodePoints } from '../../../utils/sort.ts'
@@ -555,12 +555,18 @@ async function mirrorDirs(
 // List a tree as {path, isDir} pairs, parents before children. The type is
 // captured while the tree is intact so a caller that deletes as it goes (mv)
 // never re-stats a path whose virtual parent has since vanished. Mirrors the
-// Python cp `walk`; used only by the primitive (no native copy) path.
+// Python cp `walk`; used only by the primitive (no native copy) path. A
+// directory the session may not open, or an entry it may not stat (a rule
+// refused it below the operand), is GNU's `cannot access` / `cannot stat`
+// line when `errors` is given and the walk goes on without its contents;
+// with no channel the refusal propagates rather than leave a silent gap.
 export async function cpWalk(
   readdir: ReaddirFn,
   stat: StatFn,
   root: PathSpec,
   index?: IndexCacheStore,
+  cmdName = 'cp',
+  errors?: string[],
 ): Promise<{ path: string; isDir: boolean }[]> {
   const info = await stat(root, index)
   if (info.type !== FileType.DIRECTORY) return [{ path: root.virtual, isDir: false }]
@@ -569,9 +575,24 @@ export async function cpWalk(
   while (queue.length > 0) {
     const directory = queue.shift()
     if (directory === undefined) break
-    for (const child of await readdir(directory)) {
+    let children: string[]
+    try {
+      children = await readdir(directory)
+    } catch (err) {
+      if (errors === undefined || !isEacces(err)) throw err
+      errors.push(`${cmdName}: cannot access '${directory.virtual}': ${String(fsStrerror(err))}`)
+      continue
+    }
+    for (const child of children) {
       const childSpec = descendantPath(root, child)
-      const childInfo = await stat(childSpec, index)
+      let childInfo
+      try {
+        childInfo = await stat(childSpec, index)
+      } catch (err) {
+        if (errors === undefined || !isEacces(err)) throw err
+        errors.push(`${cmdName}: cannot stat '${childSpec.virtual}': ${String(fsStrerror(err))}`)
+        continue
+      }
       const isDir = childInfo.type === FileType.DIRECTORY
       entries.push({ path: child, isDir })
       if (isDir) queue.push(childSpec)
@@ -778,7 +799,7 @@ export async function cpGeneric(
       const srcBase = rstripSlash(src.mountPath)
       const dstBase = rstripSlash(target.mountPath)
       if (isPrimitiveCopy(strategy)) {
-        const entries = await cpWalk(strategy.readdir, stat, src, index)
+        const entries = await cpWalk(strategy.readdir, stat, src, index, 'cp', errors)
         await copyEntries('cp', strategy, stat, src, target, entries, errors, index, {
           policy,
           writes,

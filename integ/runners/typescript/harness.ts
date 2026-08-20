@@ -41,6 +41,9 @@ export interface Mount {
   // Materialise the mount's backing folder even without a fixture --
   // folder-backed services 404 on a root nothing ever created.
   seed_root?: boolean
+  // The mount's own permissions block (`mounts.<p>.permissions` in
+  // YAML), validated by the parser the YAML door uses.
+  permissions?: unknown
   folder?: string
   bucket?: string
   volume?: string
@@ -74,19 +77,26 @@ export interface Target {
   // Scope an installed account CLI to this mount's folder, so the CLI and
   // the mount are pointed at the same place.
   cli_scope?: string
+  // The workspace tier of the permissions document (top-level
+  // `permissions:` in YAML), validated by the parser the YAML door
+  // uses; it binds every session the cases name.
+  permissions?: unknown
   mounts: Mount[]
   // Sessions a case can name via its `session` field. Grants take either the
   // mapping form ({ '/data': 'read' }) or the list form (['/data'], which
-  // inherits the mount's own mode).
+  // inherits the mount's own mode); a profile form is the permissions
+  // document itself.
   sessions?: Record<
     string,
     | Record<string, string>
     | string[]
     | {
         mounts?: Record<string, string> | string[]
-        hidden_paths?: { paths?: string[]; patterns?: string[] }
-        hidden_vars?: { names?: string[]; patterns?: string[] }
+        paths?: { hide?: string[] }
+        vars?: { hide?: string[] }
+        commands?: { allow?: string[]; ask?: unknown[]; deny?: unknown[] }
         env?: Record<string, string>
+        cwd?: string
       }
   >
   // Session environment every case on this target runs under. The
@@ -124,6 +134,11 @@ export interface Case {
   clear_cache?: boolean
   consistency?: 'always' | 'lazy'
   session?: string
+  // The host's answer to every approval waiting on the workspace, given
+  // before the command runs: `allow_once`, `allow_session` or `deny`.
+  // How a case exercises the ask arm, since the battery has no host of
+  // its own.
+  answer?: 'allow_once' | 'allow_session' | 'deny'
   scenario?: ScenarioStep[]
   expect: Expect
   _source?: string
@@ -169,6 +184,11 @@ export interface ExecWorkspace {
     options: { mounts?: Record<string, string> | string[]; profile?: SessionProfile },
   ): unknown
   env: Record<string, string>
+  approvals: {
+    list(): readonly { id: string }[]
+    grant(id: string, scope?: 'once' | 'session'): Promise<void>
+    deny(id: string): Promise<void>
+  }
   close(): Promise<void>
 }
 
@@ -490,6 +510,21 @@ export function bindMount(c: Case, mountPath: string): Case {
  * rather than in place of it, so a case can pin both what the command printed
  * and what it left behind.
  */
+/**
+ * The host's side of the ask arm: answer every approval waiting on the
+ * workspace the way the case says, so the command that follows finds
+ * the grant (or the refusal) the way an agent's retry would.
+ */
+async function answerApprovals(
+  ws: ExecWorkspace,
+  answer: 'allow_once' | 'allow_session' | 'deny',
+): Promise<void> {
+  for (const request of ws.approvals.list()) {
+    if (answer === 'deny') await ws.approvals.deny(request.id)
+    else await ws.approvals.grant(request.id, answer === 'allow_once' ? 'once' : 'session')
+  }
+}
+
 export async function runCase(
   ws: ExecWorkspace,
   c: Case,
@@ -519,6 +554,7 @@ export async function runCase(
       checkOut: null,
     }
   }
+  if (c.answer !== undefined) await answerApprovals(ws, c.answer)
   const result = await ws.execute(c.command, { sessionId: c.session })
   const elapsed = (performance.now() - start) / 1000
   const out = DEC.decode(result.stdout)

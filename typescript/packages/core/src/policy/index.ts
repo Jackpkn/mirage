@@ -14,16 +14,38 @@
 
 export type { Policy } from './base.ts'
 export { PolicyDenied } from './errors.ts'
+export { Approvals, askRule } from './approvals.ts'
+export { CallbackApprover, RecordApprover, requestId, type Approver } from './approver.ts'
 export { MountRootPolicy } from './builtin/mount_root.ts'
+export { PermissionsPolicy } from './builtin/permissions.ts'
 export { OutputCapPolicy, resolveProducer, resolveLimit } from './builtin/output_cap.ts'
-export { Policies, postExecuteGate, postOpsGate, preOpsGate, preSessionGate } from './policies.ts'
-export { DEFAULT_DENY_REASON } from './types.ts'
+export { DEFAULT_ASK_REASON, DEFAULT_DENY_REASON, POLICY_DENIED_EXIT } from './constants.ts'
+export {
+  Policies,
+  postExecuteGate,
+  postOpsGate,
+  preOpsGate,
+  preSessionGate,
+  renderDeny,
+  renderPending,
+} from './policies.ts'
 export {
   type Action,
+  type ApprovalDecision,
+  type ApprovalRequest,
+  type Ask,
   type CommandContext,
+  type CommandsSpec,
+  type Deny,
+  type DenyScope,
   type ExecuteResultContext,
   type CommandRule,
+  type Grant,
+  type GrantScope,
   type OpsContext,
   type OpsResultContext,
+  type Pending,
+  type SessionCommandsQuery,
   type SessionContext,
+  type SessionGrantsQuery,
 } from './types.ts'

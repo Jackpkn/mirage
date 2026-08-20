@@ -1,0 +1,282 @@
+# ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
+
+from mirage.policy.match.rule import (RuleMatch, io_refusal, match_io,
+                                      match_op, match_rule, rule_scope)
+from mirage.policy.types import (CommandContext, CommandRule, CommandsSpec,
+                                 OpsContext)
+from mirage.types import PathSpec
+from mirage.utils.hidden import classify_paths
+
+
+class _Registry:
+
+    def is_mount_root(self, path: str) -> bool:
+        return False
+
+
+def _path(virtual: str, raw: str = "") -> PathSpec:
+    return PathSpec(virtual=virtual,
+                    directory=virtual.rsplit("/", 1)[0] or "/",
+                    resource_path=virtual,
+                    resolved=True,
+                    raw_path=raw)
+
+
+def _ctx(command: str,
+         paths: tuple[PathSpec, ...] = (),
+         cwd: str = "/",
+         tokens: tuple[str, ...] = (),
+         walks: bool = False) -> CommandContext:
+    return CommandContext(command=command,
+                          paths=paths,
+                          argv=(),
+                          cwd=cwd,
+                          registry=_Registry(),
+                          tokens=tokens,
+                          walks=walks)
+
+
+def test_match_rule_by_command_pattern_operand_and_mount():
+    whole = CommandRule(reason="no", commands=("git push", ))
+    assert match_rule(whole, None,
+                      _ctx("git",
+                           tokens=("git", "push",
+                                   "origin"))) == RuleMatch(operand=None)
+    assert match_rule(whole, None, _ctx("git", tokens=("git", "pull"))) is None
+    scoped = CommandRule(reason="no", commands=("rm", ), paths=("/repo/*", ))
+    scope = classify_paths(scoped.paths)
+    hit = match_rule(
+        scoped, scope,
+        _ctx("rm", paths=(_path("/repo/x", raw="x"), ), cwd="/repo"))
+    assert hit == RuleMatch(operand="x")
+    assert match_rule(scoped, scope,
+                      _ctx("rm", paths=(_path("/scratch/x"), ))) is None
+    # A mount-tier rule applies to a line whose cwd or paths lie under
+    # the mount, and to nothing else.
+    mount = CommandRule(reason="ro", commands=("git push", ), mount="/repo")
+    assert match_rule(mount, None,
+                      _ctx("git", tokens=("git", "push"),
+                           cwd="/repo/sub")) is not None
+    assert match_rule(
+        mount, None,
+        _ctx("git",
+             tokens=("git", "push"),
+             cwd="/scratch",
+             paths=(_path("/repo"), ))) is not None
+    assert match_rule(mount, None,
+                      _ctx("git", tokens=("git", "push"),
+                           cwd="/scratch")) is None
+    assert match_rule(mount, None,
+                      _ctx("git", tokens=("git", "push"),
+                           cwd="/repository")) is None
+    # An every-command rule (no patterns) matches whatever line.
+    assert match_rule(CommandRule(reason="locked"), None,
+                      _ctx("ls")) is not None
+
+
+def test_a_walking_command_touches_the_mounts_under_its_operands():
+    # `grep -r x /scratch` enters `/scratch/child`: the fan-out reruns
+    # the traversal inside each descendant mount and no admission fires
+    # again there, so the ancestor operand is where the mount's rule
+    # speaks. A command that does not walk, or an operand that is not
+    # above the root, stays untouched.
+    mount = CommandRule(reason="boxed", mount="/scratch/child")
+    assert match_rule(mount, None,
+                      _ctx("grep", paths=(_path("/scratch"), ),
+                           walks=True)) == RuleMatch(operand=None)
+    assert match_rule(mount, None, _ctx("grep",
+                                        paths=(_path("/scratch"), ))) is None
+    assert match_rule(
+        mount, None,
+        _ctx("grep", paths=(_path("/scratch/file.txt"), ), walks=True)) is None
+
+
+def test_match_op_only_for_pure_path_rules():
+    rule = CommandRule(reason="frozen", paths=("/data/locked/*", ))
+    scope = classify_paths(rule.paths)
+    op = OpsContext(op="write",
+                    path=_path("/data/locked/a"),
+                    write=True,
+                    prefix="/data/")
+    assert match_op(rule, scope, op)
+    assert not match_op(
+        rule, scope,
+        OpsContext(op="write",
+                   path=_path("/data/open/a"),
+                   write=True,
+                   prefix="/data/"))
+    named = CommandRule(reason="x", commands=("rm", ), paths=("/data/*", ))
+    assert not match_op(named, classify_paths(named.paths), op)
+    assert not match_op(CommandRule(reason="x", commands=("rm", )), None, op)
+
+
+def _subtree_ctx(command: str, *operands: str) -> CommandContext:
+    paths = tuple(_path(o, raw=o) for o in operands)
+    return CommandContext(command=command,
+                          paths=paths,
+                          operands=paths,
+                          argv=operands,
+                          cwd="/",
+                          registry=_Registry(),
+                          tokens=(command, *operands))
+
+
+def test_a_subtree_command_on_the_directory_holding_the_scope_matches():
+    # `/x/locked/*` protects the children; `rm -r /x/locked`, `rm -r /x`
+    # and `mv /x/locked elsewhere` take them along, so for rm, rmdir and
+    # mv the operand at or above the holding directory matches.
+    rule = CommandRule(reason="frozen", paths=("/x/locked/*", ))
+    scope = classify_paths(rule.paths)
+    for command in ("rm", "rmdir"):
+        for operand in ("/x/locked", "/x", "/"):
+            assert match_rule(rule, scope, _subtree_ctx(
+                command, operand)) == RuleMatch(operand=operand)
+        assert match_rule(rule, scope, _subtree_ctx(command,
+                                                    "/x/other")) is None
+    assert match_rule(rule, scope,
+                      _subtree_ctx("mv", "/x/locked",
+                                   "/y")) == RuleMatch(operand="/x/locked")
+    assert match_rule(rule, scope,
+                      _subtree_ctx("mv", "/x",
+                                   "/y")) == RuleMatch(operand="/x")
+    # mv's destination matches only as the holding directory itself:
+    # moving into it lands in the scope, moving into an ancestor does not.
+    assert match_rule(rule, scope, _subtree_ctx(
+        "mv", "/z", "/x/locked")) == RuleMatch(operand="/x/locked")
+    assert match_rule(rule, scope, _subtree_ctx("mv", "/z", "/x")) is None
+    # A reader given the same operand is not a whole-line refusal: its
+    # I/O under the scope is the command tier's to refuse, file by file.
+    assert match_rule(rule, scope, _subtree_ctx("cat", "/x/locked")) is None
+    assert match_rule(rule, scope, _subtree_ctx("cp", "/x", "/y")) is None
+    # A command-scoped rule judges its own command the same way.
+    named = CommandRule(reason="locked",
+                        commands=("rm", ),
+                        paths=("/x/locked/*", ))
+    assert match_rule(named, classify_paths(named.paths),
+                      _subtree_ctx("rm", "/x")) == RuleMatch(operand="/x")
+    assert match_rule(named, classify_paths(named.paths),
+                      _subtree_ctx("mv", "/x", "/y")) is None
+
+
+def test_match_op_refuses_a_subtree_op_on_the_directory_holding_the_scope():
+    rule = CommandRule(reason="frozen", paths=("/data/locked/*", ))
+    scope = classify_paths(rule.paths)
+    for op, virtual in (("rename", "/data/locked"), ("rename", "/data"),
+                        ("rmdir", "/data/locked"), ("rm_r", "/data")):
+        assert match_op(
+            rule, scope,
+            OpsContext(op=op, path=_path(virtual), write=True,
+                       prefix="/data/"))
+    # A read or write of the directory itself is not in the scope, and a
+    # subtree op beside the scope is not either.
+    assert not match_op(
+        rule, scope,
+        OpsContext(op="readdir",
+                   path=_path("/data/locked"),
+                   write=False,
+                   prefix="/data/"))
+    assert not match_op(
+        rule, scope,
+        OpsContext(op="rename",
+                   path=_path("/data/other"),
+                   write=True,
+                   prefix="/data/"))
+
+
+def test_match_op_lets_a_metadata_op_through():
+    # Deny is present and refused: the entry stats, the read is refused.
+    rule = CommandRule(reason="frozen", paths=("/data/locked/*", ))
+    scope = classify_paths(rule.paths)
+    for op in ("stat", "exists"):
+        assert not match_op(
+            rule, scope,
+            OpsContext(op=op,
+                       path=_path("/data/locked/a"),
+                       write=False,
+                       prefix="/data/"))
+    assert match_op(
+        rule, scope,
+        OpsContext(op="read",
+                   path=_path("/data/locked/a"),
+                   write=False,
+                   prefix="/data/"))
+
+
+def test_match_io_names_the_line_and_holds_the_entry():
+    pure = CommandRule(reason="sealed", paths=("/data/sealed", ))
+    scope = rule_scope(pure)
+    assert match_io(pure, scope, ("grep", "-r", "x", "/data"),
+                    "/data/sealed/deep/f")
+    assert match_io(pure, scope, ("du", "/data"), "/data/sealed")
+    assert not match_io(pure, scope, ("du", "/data"), "/data/open/f")
+    # A command-scoped rule reads the line's tokens, so a pattern with a
+    # token after the name applies only to the line that carries it.
+    scoped = CommandRule(reason="no",
+                         commands=("grep -r", ),
+                         paths=("/data/private", ))
+    assert match_io(scoped, rule_scope(scoped), ("grep", "-r", "k", "/data"),
+                    "/data/private/k")
+    assert not match_io(scoped, rule_scope(scoped),
+                        ("grep", "k", "/data"), "/data/private/k")
+    assert not match_io(scoped, rule_scope(scoped),
+                        ("cat", "/data"), "/data/private/k")
+    # A whole-line rule spoke at admission and says nothing at an entry;
+    # the directory holding a children pattern is not in it.
+    whole = CommandRule(reason="no", commands=("rm", ))
+    assert not match_io(whole, rule_scope(whole), ("rm", "/data/x"), "/data/x")
+    children = CommandRule(reason="frozen", paths=("/data/locked/*", ))
+    assert not match_io(children, rule_scope(children),
+                        ("ls", "/data"), "/data/locked")
+    assert match_io(children, rule_scope(children), ("ls", "/data"),
+                    "/data/locked/y")
+
+
+def test_rule_scope_is_none_for_a_whole_line_rule_and_remembered():
+    whole = CommandRule(reason="no", commands=("rm", ))
+    assert rule_scope(whole) is None
+    scoped = CommandRule(reason="no", paths=("/data/*", ))
+    assert rule_scope(scoped) is rule_scope(
+        CommandRule(reason="no", paths=("/data/*", )))
+
+
+def test_io_refusal_applies_the_gate_precedence_to_an_entry():
+    deny = CommandRule(reason="locked",
+                       commands=("rm", ),
+                       paths=("/data/both/locked/*", ))
+    ask_ws = CommandRule(reason="both: needs a nod",
+                         commands=("rm", ),
+                         paths=("/data/both/*", ))
+    ask_profile = CommandRule(reason="profile nod",
+                              commands=("rm", ),
+                              paths=("/data/both/*", ))
+    layers = (CommandsSpec(ask=(ask_ws, ),
+                           deny=(deny, )), CommandsSpec(ask=(ask_profile, )))
+    tokens = ("rm", "-r", "/data/both")
+    # deny > ask, whatever the tier order.
+    assert io_refusal(layers, tokens, "/data/both/locked/y",
+                      (ask_ws, )) == "locked"
+    # The first matching ask rule in tier order speaks: refused without
+    # a grant under it, passed with one, and a later tier's rule never
+    # gets a say.
+    assert io_refusal(layers, tokens, "/data/both/a",
+                      ()) == "both: needs a nod"
+    assert io_refusal(layers, tokens, "/data/both/a", (ask_ws, )) is None
+    assert io_refusal(layers, tokens, "/data/both/a",
+                      (ask_profile, )) == "both: needs a nod"
+    # An entry no rule holds passes; so does one a whole-line rule names.
+    assert io_refusal(layers, tokens, "/data/open/a", ()) is None
+    whole = (CommandsSpec(
+        deny=(CommandRule(reason="no", commands=("rm", )), )), )
+    assert io_refusal(whole, tokens, "/data/x", ()) is None

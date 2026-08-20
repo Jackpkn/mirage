@@ -287,6 +287,60 @@ describe('mirage CLI end-to-end', () => {
     await runCli(env, ['workspace', 'delete', created.id])
   }, 30000)
 
+  it('the permissions document binds a daemon workspace', async () => {
+    // The YAML door's `permissions:` block reaches the executor through
+    // the daemon exactly as through the SDK: an unlisted tool is not a
+    // command (127), a deny rule refuses with its reason (126), and the
+    // process exit code follows the inner one.
+    const cfgPath = join(tmp, 'perm-cfg.yaml')
+    writeFileSync(
+      cfgPath,
+      [
+        'mounts:',
+        '  /:',
+        '    resource: ram',
+        '    mode: write',
+        'permissions:',
+        '  commands:',
+        '    allow: [ls, cat, mkdir, touch, rm]',
+        '    deny:',
+        '      - reason: no deletes here',
+        '        commands: [rm]',
+        '',
+      ].join('\n'),
+    )
+    const created = (await runCli(env, ['workspace', 'create', cfgPath, '--id', 'perm-ws'])) as {
+      id: string
+    }
+    expect(created.id).toBe('perm-ws')
+
+    const seeded = await runCliRaw(env, [
+      'execute',
+      '-w',
+      'perm-ws',
+      '-c',
+      'mkdir -p /d && touch /d/x',
+    ])
+    expect(seeded.status).toBe(0)
+
+    const hidden = await runCliRaw(env, ['execute', '-w', 'perm-ws', '-c', 'sort /d/x'])
+    expect(hidden.status).toBe(127)
+    expect((hidden.parsed as { stderr: string }).stderr).toBe('sort: command not found\n')
+
+    const denied = await runCliRaw(env, ['execute', '-w', 'perm-ws', '-c', 'rm /d/x'])
+    expect(denied.status).toBe(126)
+    expect((denied.parsed as { stderr: string }).stderr).toBe(
+      'rm: policy denied: no deletes here\n',
+    )
+
+    const kept = (await runCli(env, ['execute', '-w', 'perm-ws', '-c', 'ls /d'])) as {
+      stdout: string
+    }
+    expect(kept.stdout).toBe('x\n')
+
+    await runCli(env, ['workspace', 'delete', 'perm-ws'])
+  }, 30000)
+
   it('background execution can be waited on', async () => {
     const cfgPath = writeRamConfig(tmp, 'bg-cfg.yaml')
     const created = (await runCli(env, ['workspace', 'create', cfgPath, '--id', 'bg-ws'])) as {

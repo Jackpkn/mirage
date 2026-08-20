@@ -14,10 +14,12 @@
 
 from mirage.commands.cli.types import CLISpec
 from mirage.io import IOResult
+from mirage.policy.types import CommandsSpec
 from mirage.resource.ram import RAMResource
 from mirage.types import MountMode
 from mirage.workspace import Workspace
-from mirage.workspace.route import SHELL_CONSUMERS, Consumer, route, route_all
+from mirage.workspace.route import (SHELL_CONSUMERS, Consumer, command_visible,
+                                    route, route_all)
 from mirage.workspace.session import Session
 
 
@@ -134,3 +136,43 @@ def test_route_agrees_with_the_first_layer_route_all_reports():
         layers = route_all(name, session, ws._registry)
         winner = layers[0] if layers else Consumer.UNKNOWN
         assert route(name, session, ws._registry) is winner
+
+
+def test_allow_lists_filter_the_tool_layers_and_spare_grammar_and_functions():
+    session, ws = _fixture()
+    ws.register_cli("prog", _cli_tree())
+    session.bound_commands = (CommandsSpec(allow=("cat", "prog run", "ln")), )
+    session.commands = CommandsSpec(allow=("cat", "prog", "ln", "sleep"))
+    reg = ws._registry
+    # Listed at every tier: visible in its layer.
+    assert route("cat", session, reg) is Consumer.MOUNT
+    assert route("prog", session, reg) is Consumer.CLI
+    assert route("ln", session, reg) is Consumer.NAMESPACE
+    # Listed at one tier only, or at none: not a command for the session
+    # (sleep is a tool-tier builtin, rm a mount command).
+    assert route("sleep", session, reg) is Consumer.UNKNOWN
+    assert route("rm", session, reg) is Consumer.UNKNOWN
+    assert route_all("rm", session, reg) == []
+    assert not command_visible("rm", session)
+    # Grammar (cd, echo, test, ...) is never a subject.
+    assert route("cd", session, reg) is Consumer.SESSION
+    assert route("echo", session, reg) is Consumer.SESSION
+    assert command_visible("cd", session)
+    # A function is the session's own state, visible where it is what
+    # runs; named after a hidden builtin it is as unreachable as the
+    # builtin, since builtins shadow functions here.
+    session.functions["deploy"] = []
+    assert route("deploy", session, reg) is Consumer.FUNCTION
+    assert command_visible("deploy", session)
+    session.functions["sleep"] = []
+    assert route("sleep", session, reg) is Consumer.UNKNOWN
+    assert not command_visible("sleep", session)
+    # A function shadowing a hidden CLI or mount command runs, and the
+    # hidden layer stays out of `type -a`.
+    session.functions["rm"] = []
+    assert route_all("rm", session, reg) == [Consumer.FUNCTION]
+    # No tiers at all: nothing filtered (the function still shadows).
+    session.commands = None
+    session.bound_commands = ()
+    assert route_all("rm", session, reg) == [Consumer.FUNCTION, Consumer.MOUNT]
+    assert route("sleep", session, reg) is Consumer.SESSION

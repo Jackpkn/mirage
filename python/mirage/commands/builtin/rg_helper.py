@@ -21,7 +21,7 @@ from mirage.commands.builtin.grep_helper import (BINARY_EXTENSIONS,
 from mirage.commands.builtin.utils.types import (_AsyncReadBytes,
                                                  _AsyncReaddir, _AsyncStat)
 from mirage.types import FileType
-from mirage.utils.errors import WALK_ERRORS
+from mirage.utils.errors import WALK_ERRORS, fs_strerror
 from mirage.utils.fnmatch import fnmatch
 
 TYPE_EXTENSIONS: dict[str, list[str]] = {
@@ -91,7 +91,7 @@ async def rg_folder(
         entries = await readdir_fn(path)
     except WALK_ERRORS as exc:
         if warnings is not None:
-            warnings.append(f"rg: {path}: {exc}")
+            warnings.append(f"rg: {path}: {fs_strerror(exc) or exc}")
         return results
 
     pat = compile_pattern(pattern, ignore_case, fixed_string, whole_word)
@@ -101,7 +101,7 @@ async def rg_folder(
             s = await stat_fn(entry)
         except WALK_ERRORS as exc:
             if warnings is not None:
-                warnings.append(f"rg: {entry}: {exc}")
+                warnings.append(f"rg: {entry}: {fs_strerror(exc) or exc}")
             continue
 
         if s.type == FileType.DIRECTORY:
@@ -161,7 +161,7 @@ async def rg_folder(
                 results.append(f"{entry}:{file_count}")
         except WALK_ERRORS as exc:
             if warnings is not None:
-                warnings.append(f"rg: {entry}: {exc}")
+                warnings.append(f"rg: {entry}: {fs_strerror(exc) or exc}")
 
     return results
 
@@ -212,7 +212,7 @@ async def rg_full(
                     read_bytes_fn(path)).decode(errors="replace").splitlines()
         except WALK_ERRORS as exc:
             if warnings is not None:
-                warnings.append(f"rg: {path}: {exc}")
+                warnings.append(f"rg: {path}: {fs_strerror(exc) or exc}")
             return []
         if ((context_before or context_after) and not files_only
                 and not count_only and not only_matching
@@ -257,7 +257,7 @@ async def rg_full(
         entries = await readdir_fn(path)
     except WALK_ERRORS as exc:
         if warnings is not None:
-            warnings.append(f"rg: {path}: {exc}")
+            warnings.append(f"rg: {path}: {fs_strerror(exc) or exc}")
         return results
 
     for entry in entries:
@@ -265,7 +265,7 @@ async def rg_full(
             s = await stat_fn(entry)
         except WALK_ERRORS as exc:
             if warnings is not None:
-                warnings.append(f"rg: {entry}: {exc}")
+                warnings.append(f"rg: {entry}: {fs_strerror(exc) or exc}")
             continue
 
         if s.type == FileType.DIRECTORY:
@@ -330,7 +330,7 @@ async def rg_full(
                             ) if no_filename else f"{entry}:{file_count}")
             except WALK_ERRORS as exc:
                 if warnings is not None:
-                    warnings.append(f"rg: {entry}: {exc}")
+                    warnings.append(f"rg: {entry}: {fs_strerror(exc) or exc}")
                 continue
 
     return results

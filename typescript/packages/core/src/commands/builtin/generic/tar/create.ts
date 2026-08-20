@@ -33,11 +33,11 @@ import type { CreateResult, Member } from './types.ts'
 const USAGE_HINT = "Try 'tar --help' for more information."
 const EMPTY_ARCHIVE = 'tar: Cowardly refusing to create an empty archive'
 const FATAL_TRAILER = 'tar: Error is not recoverable: exiting now'
-const ERROR_TRAILER = 'tar: Exiting with failure status due to previous errors'
+export const ERROR_TRAILER = 'tar: Exiting with failure status due to previous errors'
 const SELF_DUMP = 'archive cannot contain itself; not dumped'
 // The exit GNU gives an operand it could not read, and a -C it could not
 // enter. Both are fatal for the whole run, not per-operand.
-const CREATE_ERROR_EXIT = 2
+export const CREATE_ERROR_EXIT = 2
 
 export type { DirProbe, StatFn, WalkFn }
 
@@ -209,10 +209,17 @@ export async function planCreate(
     const named = scan.entries.map((entry) => {
       const spelled = respellOne(entry.namePath, base, raw)
       announcePrefix(stripPrefix(spelled)[1], dropped, notices)
-      return [memberName(spelled, entry.kind), entry] as const
+      return [memberName(spelled, entry.kind), spelled, entry] as const
     })
     for (const problem of scan.problems) {
       const shown = respellOne(problem.path, base, raw)
+      if (problem.unreadable === true) {
+        // A directory the walk could not open: GNU names it, keeps its
+        // entry, and fails the run.
+        notices.push(`tar: ${shown}: Cannot open: ${problem.reason ?? ''}`)
+        exitCode = CREATE_ERROR_EXIT
+        continue
+      }
       if (problem.fatal !== true) {
         notices.push(`tar: ${shown}: ${problem.reason ?? ''}`)
         continue
@@ -231,14 +238,14 @@ export async function planCreate(
         deps.exclude,
       ),
     )
-    for (const [name, entry] of named) {
+    for (const [name, spelled, entry] of named) {
       if (!keep.has(name)) continue
       const read = entry.read ?? null
       if (read !== null && read.virtual === deps.archive.virtual) {
         notices.push(`tar: ${name}: ${SELF_DUMP}`)
         continue
       }
-      members.push({ name, kind: entry.kind, path: read, target: entry.target ?? '' })
+      members.push({ name, kind: entry.kind, path: read, target: entry.target ?? '', spelled })
     }
   }
   // GNU closes a run that failed an operand with one trailer, after

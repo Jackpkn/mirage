@@ -122,6 +122,53 @@ def path_hidden(hidden: HiddenPaths | None, virtual: str) -> bool:
     return False
 
 
+def _pattern_head(pattern: str) -> str:
+    """The fixed directory above an anchored pattern's first glob
+    segment, normalized (``/x/locked/*`` -> ``/x/locked``).
+
+    Args:
+        pattern (str): an anchored pattern (one with a ``/``).
+    """
+    fixed: list[str] = []
+    for seg in _norm_abs(pattern).split("/"):
+        if is_glob(seg):
+            break
+        fixed.append(seg)
+    return _norm_abs("/".join(fixed))
+
+
+def path_covers(hidden: HiddenPaths | None,
+                virtual: str,
+                ancestors: bool = True) -> bool:
+    """Whether a spec has anything at or under this virtual path.
+
+    Asked for an op that acts on a whole subtree (a rename of a
+    directory, a recursive remove): ``/x/locked/*`` protects the
+    children of ``/x/locked``, and moving or removing ``/x/locked`` or
+    ``/x`` takes them along, so the op on the directory or an ancestor
+    counts as touching the scope. Exact entries and the fixed head of
+    an anchored pattern are tested; a component pattern (no ``/``)
+    names no place, so only a walk could tell and it is not counted
+    here. With ``ancestors`` False only the directory holding the
+    scope counts, which is the question for a destination: moving
+    into ``/x/locked`` lands in the scope, moving into ``/x`` does not.
+
+    Args:
+        hidden (HiddenPaths | None): the spec, None means unrestricted.
+        virtual (str): absolute virtual path of the subtree op.
+        ancestors (bool): whether an ancestor of the scope counts.
+    """
+    if hidden is None or (not hidden.paths and not hidden.patterns):
+        return False
+    norm = _norm_abs(virtual)
+    heads = [_norm_abs(p) for p in hidden.paths]
+    heads.extend(_pattern_head(p) for p in hidden.patterns if "/" in p)
+    if any(head == norm for head in heads):
+        return True
+    return ancestors and any(norm == "/" or head.startswith(norm + "/")
+                             for head in heads)
+
+
 def var_hidden(hidden: HiddenVars | None, name: str) -> bool:
     """Whether the session's spec hides this variable name.
 

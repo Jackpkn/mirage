@@ -13,7 +13,7 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 from mirage.types import HiddenPaths, HiddenVars
-from mirage.utils.hidden import path_hidden, var_hidden
+from mirage.utils.hidden import path_covers, path_hidden, var_hidden
 
 
 def test_none_hides_nothing():
@@ -130,3 +130,20 @@ def test_classified_entries_match_like_the_hand_built_spec():
     assert path_hidden(spec, "/a/b.key/c")
     assert path_hidden(spec, "/repo/docs/x/y")
     assert not path_hidden(spec, "/repo/docsx")
+
+
+def test_path_covers_is_the_directory_holding_the_scope_or_an_ancestor():
+    spec = HiddenPaths(paths=("/s3/secrets", ),
+                       patterns=("/repo/docs/*", "*.pem"))
+    # An exact entry is covered by itself and by every ancestor; an
+    # anchored pattern by its fixed head and that head's ancestors.
+    for virtual in ("/s3/secrets", "/s3", "/", "/repo/docs", "/repo"):
+        assert path_covers(spec, virtual)
+    for virtual in ("/s3/secrets/a", "/s3/other", "/repo/docs/x", "/x"):
+        assert not path_covers(spec, virtual)
+    # Without ancestors only the holding directory counts (a destination).
+    assert path_covers(spec, "/repo/docs", ancestors=False)
+    assert not path_covers(spec, "/repo", ancestors=False)
+    # A component pattern names no place, so nothing is covered by it.
+    assert not path_covers(HiddenPaths(paths=(), patterns=("*.pem", )), "/x")
+    assert not path_covers(None, "/")

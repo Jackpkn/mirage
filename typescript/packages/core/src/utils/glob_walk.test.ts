@@ -30,7 +30,7 @@ import {
   spellMatch,
   unmarkGlobs,
 } from './glob_walk.ts'
-import { unescapeUnquoted } from '../workspace/expand/node.ts'
+import { unescapeUnquoted } from '../shell/escapes.ts'
 import { rstripSlash, stripSlash } from './slash.ts'
 
 const TREE: Record<string, string[]> = {

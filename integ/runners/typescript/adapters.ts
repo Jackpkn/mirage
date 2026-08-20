@@ -91,6 +91,12 @@ import {
   Workspace,
   type ConsoleFactory,
 } from '@struktoai/mirage-node'
+import {
+  parseMountPermissions,
+  parseWorkspacePermissions,
+  type MountPermissions,
+  type WorkspacePermissions,
+} from '@struktoai/mirage-core/workspace/session/permissions'
 import * as lancedb from '@lancedb/lancedb'
 import { QdrantClient } from '@qdrant/js-client-rest'
 import { ChromaClient } from 'chromadb'
@@ -204,6 +210,30 @@ function consoleFactoryFor(target: Target): ConsoleFactory | undefined {
     )
 }
 
+// The permissions document a target declares: the workspace tier
+// (`permissions` on the target) and each mount's own block
+// (`permissions` on the mount), validated by the parsers the YAML door
+// uses so a case runs under exactly what a deployment would write. Only
+// the ram and disk openers consult it (main.ts refuses it on any other
+// resource), the same way the console block rides ram alone.
+function permissionOptions(target: Target): {
+  permissions?: WorkspacePermissions
+  mountPermissions?: Record<string, MountPermissions>
+} {
+  const mountPermissions: Record<string, MountPermissions> = {}
+  for (const m of target.mounts) {
+    if (m.permissions !== undefined) {
+      mountPermissions[m.path] = parseMountPermissions(m.permissions, `mount ${m.path} permissions`)
+    }
+  }
+  return {
+    ...(target.permissions !== undefined
+      ? { permissions: parseWorkspacePermissions(target.permissions) }
+      : {}),
+    ...(Object.keys(mountPermissions).length > 0 ? { mountPermissions } : {}),
+  }
+}
+
 async function openRam(target: Target): Promise<Open> {
   const mounts: Record<string, RAMResource | [RAMResource, MountMode]> = {}
   const built: Record<string, RAMResource> = {}
@@ -224,6 +254,7 @@ async function openRam(target: Target): Promise<Open> {
     mode: MountMode.WRITE,
     ...(target.agentId !== undefined ? { agentId: target.agentId } : {}),
     ...(consoleFactory !== undefined ? { consoleFactory } : {}),
+    ...permissionOptions(target),
   })
   installLocalClis(ws, target)
   return { ws: ws as unknown as ExecWorkspace, cleanup: () => ws.close() }
@@ -238,7 +269,7 @@ async function openDisk(target: Target): Promise<Open> {
     const resource = new DiskResource({ root })
     mounts[m.path] = m.mode === 'read' ? [resource, MountMode.READ] : resource
   }
-  const ws = new Workspace(mounts, { mode: MountMode.WRITE })
+  const ws = new Workspace(mounts, { mode: MountMode.WRITE, ...permissionOptions(target) })
   installLocalClis(ws, target)
   const cleanup = async (): Promise<void> => {
     await ws.close()
@@ -444,6 +475,14 @@ const EMAIL_SMTP_PORT = Number(process.env.EMAIL_SMTP_PORT ?? '3025')
 const EMAIL_API_PORT = Number(process.env.EMAIL_API_PORT ?? '8080')
 const EMAIL_USERNAME = 'integ@example.com'
 const EMAIL_PASSWORD = 'secret'
+// Two more GreenMail accounts, provisioned through the REST API after
+// every reset (the reset restores the startup user list). The mount
+// keeps the primary account; the renamed CLI installs h1 and h2 hold
+// these two, so the mount and the CLIs never share an account.
+const EMAIL_USERNAME_ALPHA = 'alpha@example.com'
+const EMAIL_PASSWORD_ALPHA = 'secret1'
+const EMAIL_USERNAME_BETA = 'beta@example.com'
+const EMAIL_PASSWORD_BETA = 'secret2'
 const EMAIL_SENT_FOLDER = 'Sent'
 // Doubles as the workspace id on the fake notion server.
 const NOTION_TOKEN = 'integ-test'
@@ -459,37 +498,55 @@ async function openEmail(target: Target): Promise<Open> {
     method: 'POST',
   })
   if (!reset.ok) throw new Error(`greenmail reset failed: ${String(reset.status)}`)
+  // The reset restores the startup user list, dropping any
+  // API-provisioned account, so the CLI accounts are created after
+  // every reset rather than once.
+  const extras = [
+    [EMAIL_USERNAME_ALPHA, EMAIL_PASSWORD_ALPHA],
+    [EMAIL_USERNAME_BETA, EMAIL_PASSWORD_BETA],
+  ]
+  for (const [user, password] of extras) {
+    const provision = await fetch(`http://${host}:${String(EMAIL_API_PORT)}/api/user`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: user, login: user, password }),
+    })
+    if (!provision.ok) throw new Error(`greenmail user create failed: ${String(provision.status)}`)
+  }
   if (target.mail !== undefined) {
     const manifest = join(integRoot(), 'fixtures', `${target.mail}.json`)
     const entries = JSON.parse(readFileSync(manifest, 'utf8')) as MailEntry[]
-    const imap = new ImapFlow({
-      host,
-      port: EMAIL_IMAP_PORT,
-      secure: false,
-      auth: { user: EMAIL_USERNAME, pass: EMAIL_PASSWORD },
-      logger: false,
-    })
-    await imap.connect()
-    // GreenMail hands a new account nothing but an INBOX, where every
-    // real provider ships a sent mailbox already made. himalaya files a
-    // copy of each sent message into one, so create it here rather than
-    // leave the copy with nowhere to land.
-    await imap.mailboxCreate(EMAIL_SENT_FOLDER)
-    const known = new Set(['INBOX', EMAIL_SENT_FOLDER])
-    for (const entry of entries) {
-      const folder = entry.folder ?? 'INBOX'
-      if (!known.has(folder)) {
-        await imap.mailboxCreate(folder)
-        known.add(folder)
+    for (const [user, pass] of [[EMAIL_USERNAME, EMAIL_PASSWORD], ...extras]) {
+      const rows = entries.filter((e) => (e.account ?? EMAIL_USERNAME) === user)
+      const imap = new ImapFlow({
+        host,
+        port: EMAIL_IMAP_PORT,
+        secure: false,
+        auth: { user, pass },
+        logger: false,
+      })
+      await imap.connect()
+      // GreenMail hands a new account nothing but an INBOX, where every
+      // real provider ships a sent mailbox already made. himalaya files a
+      // copy of each sent message into one, so create it here rather than
+      // leave the copy with nowhere to land.
+      await imap.mailboxCreate(EMAIL_SENT_FOLDER)
+      const known = new Set(['INBOX', EMAIL_SENT_FOLDER])
+      for (const entry of rows) {
+        const folder = entry.folder ?? 'INBOX'
+        if (!known.has(folder)) {
+          await imap.mailboxCreate(folder)
+          known.add(folder)
+        }
+        await imap.append(
+          folder,
+          buildRfc822(entry),
+          entry.seen === true ? ['\\Seen'] : [],
+          new Date(entry.date),
+        )
       }
-      await imap.append(
-        folder,
-        buildRfc822(entry),
-        entry.seen === true ? ['\\Seen'] : [],
-        new Date(entry.date),
-      )
+      await imap.logout()
     }
-    await imap.logout()
   }
   const mounts: Record<string, EmailResource | RAMResource> = {}
   for (const m of target.mounts) {
@@ -509,20 +566,33 @@ async function openEmail(target: Target): Promise<Open> {
     })
   }
   const ws = new Workspace(mounts, { mode: MountMode.WRITE })
-  if (target.clis?.includes('himalaya') === true) {
-    // Every registerCli in this file installs the same snake_case block
-    // the Python runner does, so the cli facet proves one YAML config
-    // serves both hosts rather than only that each host has some config
-    // it accepts. The registry camelizes onto declared fields.
-    ws.registerCli('himalaya', HIMALAYA, {
-      imap_host: host,
-      imap_port: EMAIL_IMAP_PORT,
-      smtp_host: host,
-      smtp_port: EMAIL_SMTP_PORT,
-      username: EMAIL_USERNAME,
-      password: EMAIL_PASSWORD,
-      use_ssl: false,
-    })
+  // Every registerCli in this file installs the same snake_case block
+  // the Python runner does, so the cli facet proves one YAML config
+  // serves both hosts rather than only that each host has some config
+  // it accepts. The registry camelizes onto declared fields.
+  // h1 and h2 are the same spec installed twice: two head words, two
+  // accounts, and neither shares the mount's account, so a line's
+  // behavior proves which config it ran under.
+  const integ = {
+    imap_host: host,
+    imap_port: EMAIL_IMAP_PORT,
+    smtp_host: host,
+    smtp_port: EMAIL_SMTP_PORT,
+    username: EMAIL_USERNAME,
+    password: EMAIL_PASSWORD,
+    use_ssl: false,
+  }
+  const alpha = { ...integ, username: EMAIL_USERNAME_ALPHA, password: EMAIL_PASSWORD_ALPHA }
+  const beta = { ...integ, username: EMAIL_USERNAME_BETA, password: EMAIL_PASSWORD_BETA }
+  const installs: Record<string, Record<string, unknown>> = {
+    himalaya: integ,
+    h1: alpha,
+    h2: beta,
+  }
+  for (const name of target.clis ?? []) {
+    const config = installs[name]
+    if (config === undefined) throw new Error(`email target: unknown cli ${name}`)
+    ws.registerCli(name, HIMALAYA, config)
   }
   return { ws: ws as unknown as ExecWorkspace, cleanup: () => ws.close() }
 }
@@ -1209,6 +1279,7 @@ function gwsManifest<T>(name: string | undefined): T | undefined {
 }
 
 interface MailEntry {
+  account?: string
   from: string
   to: string
   cc?: string[]

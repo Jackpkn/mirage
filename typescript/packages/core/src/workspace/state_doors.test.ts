@@ -20,9 +20,27 @@ import { CommandSpec, Operand } from '../commands/spec/types.ts'
 import { runWithSession } from '../context/session_context.ts'
 import { IOResult } from '../io/types.ts'
 import { OpsRegistry, type RegisteredOp } from '../ops/registry.ts'
-import type { Action, OpsContext, Policy, SessionContext } from '../policy/index.ts'
+import type {
+  Action,
+  ApprovalDecision,
+  ApprovalRequest,
+  CommandContext,
+  OpsContext,
+  Policy,
+  SessionContext,
+} from '../policy/index.ts'
+import { CallbackApprover } from '../policy/index.ts'
 import { RAMResource } from '../resource/ram/ram.ts'
+import { Runtime } from '../runtime/base.ts'
+import { LINE_EXECUTOR, type LineExecutor } from '../runtime/mixin.ts'
+import type { RunResult } from '../runtime/types.ts'
 import { MountMode, ResourceName } from '../types.ts'
+import { cliSpecFor } from '../commands/cli/specs.ts'
+import {
+  parseSessionProfile,
+  parseWorkspacePermissions,
+  type SessionProfile,
+} from './session/permissions.ts'
 import { getTestParser, stderrStr, stdoutStr } from './fixtures/workspace_fixture.ts'
 import { Workspace } from './workspace/workspace.ts'
 
@@ -35,7 +53,7 @@ class DenyOp implements Policy {
     this.op = op
   }
   preOps(ctx: OpsContext): Action | null {
-    if (ctx.op === this.op) return { kind: 'deny', message: `${this.op} refused by policy\n` }
+    if (ctx.op === this.op) return { kind: 'deny', reason: `${this.op} refused by policy` }
     return null
   }
 }
@@ -207,7 +225,7 @@ describe('name-plane writes go through the door', () => {
 class DenySecretEnv implements Policy {
   preSession(ctx: SessionContext): Action | null {
     if (ctx.plane === 'env' && ctx.key.startsWith('SECRET')) {
-      return { kind: 'deny', message: 'SECRET_* refused by policy\n' }
+      return { kind: 'deny', reason: 'SECRET_* refused by policy' }
     }
     return null
   }
@@ -1026,5 +1044,894 @@ describe('session profiles', () => {
     ws.createSession('late')
     expect((await ws.execute('cat /other/pub/b.key', { sessionId: 'late' })).exitCode).not.toBe(0)
     expect(ws.getSession('late').hiddenPaths).toBeNull()
+  })
+})
+
+describe('command permissions end to end', () => {
+  const COMMANDS_DOC = {
+    commands: {
+      allow: [
+        'ls',
+        'cat',
+        'echo',
+        'rm',
+        'git',
+        'python3',
+        'mkdir',
+        'touch',
+        'head',
+        'xargs',
+        'wc',
+        'man',
+        'find',
+      ],
+      deny: [
+        { reason: 'no deletes in the repo', commands: ['rm'], paths: ['/repo/*'] },
+        { reason: 'frozen', paths: ['/repo/locked/*'] },
+      ],
+    },
+    paths: { hide: [] },
+  }
+  const REVIEWER: SessionProfile = {
+    commands: { allow: ['ls', 'cat', 'echo', 'git log', 'git status', 'xargs'], deny: [] },
+  }
+
+  async function commandsWs(): Promise<Workspace> {
+    const parser = await getTestParser()
+    // The frozen subtree is seeded on the resource: the pure path rule
+    // holds at every op door, the host's `ws.ops` included.
+    const repo = new RAMResource()
+    repo.store.dirs.add('/locked')
+    repo.store.files.set('/locked/y', ENC.encode('y\n'))
+    const ws = new Workspace(
+      { '/repo': repo, '/scratch': new RAMResource() },
+      {
+        mode: MountMode.WRITE,
+        shellParser: parser,
+        permissions: COMMANDS_DOC,
+        mountPermissions: {
+          '/repo': {
+            paths: { hide: [] },
+            commands: {
+              deny: [
+                {
+                  reason: 'history is read-only here',
+                  commands: ['git commit', 'git reset --hard'],
+                },
+              ],
+            },
+          },
+        },
+        profiles: { reviewer: REVIEWER },
+      },
+    )
+    open.push(ws)
+    ws.registerCli('git', cliSpecFor('git'))
+    return ws
+  }
+
+  async function line(
+    ws: Workspace,
+    text: string,
+    sessionId?: string,
+  ): Promise<[number, string, string]> {
+    const r = await ws.execute(text, sessionId === undefined ? {} : { sessionId })
+    return [r.exitCode, stdoutStr(r), stderrStr(r)]
+  }
+
+  it('an allow list hides unlisted tools from dispatch and the enumerators', async () => {
+    const ws = await commandsWs()
+    await ws.execute('mkdir -p /repo/d && touch /repo/d/x')
+    // An unlisted tool is not a command for the session: 127 before any
+    // admission hook, and every enumerator agrees.
+    expect(await line(ws, 'sort /repo/d/x')).toEqual([127, '', 'sort: command not found\n'])
+    expect(await line(ws, 'type sort; echo $?')).toEqual([0, '1\n', 'type: sort: not found\n'])
+    expect(await line(ws, 'command -v sort; echo $?')).toEqual([0, '1\n', ''])
+    expect(await line(ws, 'which sort; echo $?')).toEqual([0, '1\n', ''])
+    const [code, out] = await line(ws, 'man')
+    expect(code).toBe(0)
+    expect(out).toContain('- cat')
+    expect(out).not.toContain('- sort')
+    expect((await line(ws, 'man sort'))[0]).toBe(1)
+    // Grammar-tier builtins and functions are not subjects; a listed
+    // tool runs; the workspace's own session is bound like any other.
+    expect(await line(ws, 'cd /repo && [ -f d/x ] && echo yes')).toEqual([0, 'yes\n', ''])
+    expect(await line(ws, 'f() { echo in-f; }; f')).toEqual([0, 'in-f\n', ''])
+    expect((await line(ws, 'cat /repo/d/x'))[0]).toBe(0)
+    // `history` is a tool-tier builtin: hidden when unlisted.
+    expect(await line(ws, 'history')).toEqual([127, '', 'history: command not found\n'])
+  })
+
+  it('a profile allow list intersects with the workspace tier', async () => {
+    const ws = await commandsWs()
+    ws.createSession('rev', { profile: 'reviewer' })
+    await ws.execute('mkdir -p /repo/d && touch /repo/d/x')
+    // Both tiers list `cat`; the workspace lists python3, the profile
+    // does not; the profile lists `git log`, so `git` is visible but a
+    // `git commit` line is covered by nothing (a refusal that names the
+    // program, not "command not found").
+    expect((await line(ws, 'cat /repo/d/x', 'rev'))[0]).toBe(0)
+    expect(await line(ws, 'python3 -c 1', 'rev')).toEqual([127, '', 'python3: command not found\n'])
+    expect((await line(ws, 'type git', 'rev'))[0]).toBe(0)
+    expect(await line(ws, 'git commit -m x', 'rev')).toEqual([
+      126,
+      '',
+      'git: policy denied: git commit is not allowed\n',
+    ])
+    // The verb walk normalizes the line: options before the verb are
+    // not the verb, so `git -C /repo status` is `git status`.
+    expect((await line(ws, 'git -C /repo status', 'rev'))[2]).not.toContain('not allowed')
+    // Nested runners re-enter the chokepoint: the hidden `rm` stays
+    // hidden inside xargs, eval and a function body.
+    expect(await line(ws, 'echo /repo/d/x | xargs rm', 'rev')).toEqual([
+      127,
+      '',
+      'rm: command not found\n',
+    ])
+    expect(await line(ws, "eval 'rm /repo/d/x'", 'rev')).toEqual([
+      127,
+      '',
+      'rm: command not found\n',
+    ])
+    expect(await line(ws, 'f() { rm /repo/d/x; }; f', 'rev')).toEqual([
+      127,
+      '',
+      'rm: command not found\n',
+    ])
+    // An inline document tightens further: allow lists intersect.
+    ws.createSession('tight', {
+      profile: 'reviewer',
+      permissions: { commands: { allow: ['cat', 'git'], deny: [] } },
+    })
+    expect((await line(ws, 'cat /repo/d/x', 'tight'))[0]).toBe(0)
+    expect(await line(ws, 'ls /repo', 'tight')).toEqual([127, '', 'ls: command not found\n'])
+    expect((await line(ws, 'git log', 'tight'))[2]).not.toContain('not allowed')
+  })
+
+  it('deny rules by tier, scope and voice', async () => {
+    const ws = await commandsWs()
+    await ws.execute('mkdir -p /repo/d && touch /repo/d/x /scratch/z')
+    // Operand-scoped: the GNU voice at 1, the operand as typed.
+    expect(await line(ws, 'cd /repo/d && rm x')).toEqual([1, '', 'rm: x: no deletes in the repo\n'])
+    expect((await line(ws, 'rm /scratch/z'))[0]).toBe(0)
+    // A pure path rule holds at the command plane for any command and
+    // at the op door for every op, whatever door.
+    expect(await line(ws, 'cat /repo/locked/y')).toEqual([1, '', 'cat: /repo/locked/y: frozen\n'])
+    await expect(ws.fs.writeFile('/repo/locked/y', 'changed')).rejects.toThrow()
+    await expect(ws.fs.readFile('/repo/locked/y')).rejects.toThrow()
+    // Mount tier: applies when the line works inside the mount (cwd
+    // under it, or a path under it), speaks first, whole command; the
+    // verb walk reads `-C /repo reset --hard` as `git reset --hard`.
+    expect(await line(ws, 'cd /repo && git commit -m x')).toEqual([
+      126,
+      '',
+      'git: policy denied: history is read-only here\n',
+    ])
+    expect(await line(ws, 'cd /scratch && git -C /repo reset --hard')).toEqual([
+      126,
+      '',
+      'git: policy denied: history is read-only here\n',
+    ])
+    expect((await line(ws, 'cd /scratch && git commit -m x'))[2]).not.toContain('read-only')
+    expect((await line(ws, 'cd /repo && git reset --soft HEAD'))[2]).not.toContain('read-only')
+  })
+
+  it('find -delete is gated at the op door, not by a named rule', async () => {
+    // mirage's find has no -exec; -delete is find's own action, not an
+    // `rm` line, so a rule naming `rm` does not cover it (the same
+    // honest limit as a guest's os.remove), while a pure path rule does,
+    // at the op door the removal clears.
+    const ws = await commandsWs()
+    await ws.execute('mkdir -p /repo/d && touch /repo/d/x')
+    await ws.execute('find /repo/d -name x -delete')
+    expect((await line(ws, 'cat /repo/d/x'))[0]).not.toBe(0)
+    expect(await line(ws, 'find /repo/locked -name y -delete')).toEqual([
+      1,
+      '',
+      "find: cannot delete '/repo/locked/y': frozen\n",
+    ])
+    expect((await line(ws, 'cat /repo/locked/y'))[0]).toBe(1)
+  })
+
+  it('a command-scoped path rule reads the path the command touches', async () => {
+    // A command-scoped rule never runs at the op door, so the command
+    // plane has to see the path the command will actually touch: for a
+    // command that follows links (open(2)) that is the target, for one
+    // that acts on the link itself (rm, lstat(2)) it is the link.
+    const parser = await getTestParser()
+    const ws = new Workspace(
+      { '/data': new RAMResource() },
+      {
+        mode: MountMode.WRITE,
+        shellParser: parser,
+        permissions: {
+          commands: {
+            deny: [
+              { reason: 'sealed', commands: ['cat', 'head'], paths: ['/data/secret*'] },
+              { reason: 'keep the link', commands: ['rm'], paths: ['/data/link'] },
+            ],
+          },
+          paths: { hide: [] },
+        },
+      },
+    )
+    open.push(ws)
+    await ws.execute(
+      'echo top > /data/secret && ln -s /data/secret /data/link && ln -s /data/secret /data/other',
+    )
+    expect(await line(ws, 'cat /data/secret')).toEqual([1, '', 'cat: /data/secret: sealed\n'])
+    // Through the link: refused, the operand named as typed.
+    expect(await line(ws, 'cat /data/link')).toEqual([1, '', 'cat: /data/link: sealed\n'])
+    expect(await line(ws, 'head -n 1 /data/other')).toEqual([1, '', 'head: /data/other: sealed\n'])
+    // rm removes the link, not the target: the target's rule does not
+    // apply, the link's own does.
+    expect(await line(ws, 'rm /data/other')).toEqual([0, '', ''])
+    expect(await line(ws, 'rm /data/link')).toEqual([1, '', 'rm: /data/link: keep the link\n'])
+    expect((await line(ws, 'cat /data/link'))[0]).toBe(1)
+  })
+
+  it('redirect targets are judged with the line', async () => {
+    // The shell reads `<` and writes `>` on its own fds, outside the
+    // admitted command's gate window, so the targets are judged at the
+    // line's admission: the refused read never happens and the refused
+    // write never truncates.
+    const parser = await getTestParser()
+    const ws = new Workspace(
+      { '/data': new RAMResource() },
+      {
+        mode: MountMode.WRITE,
+        shellParser: parser,
+        permissions: {
+          commands: {
+            deny: [
+              { reason: 'sealed', commands: ['cat'], paths: ['/data/secret*'] },
+              { reason: 'audit is append-only', commands: ['echo'], paths: ['/data/audit.log'] },
+            ],
+          },
+          paths: { hide: [] },
+        },
+      },
+    )
+    open.push(ws)
+    await ws.execute("echo top > /data/secret && printf 'one\\n' > /data/audit.log")
+    expect(await line(ws, 'cat < /data/secret')).toEqual([1, '', 'cat: /data/secret: sealed\n'])
+    expect(await line(ws, 'echo two > /data/audit.log')).toEqual([
+      1,
+      '',
+      'echo: /data/audit.log: audit is append-only\n',
+    ])
+    // The refused write did not truncate, and clean redirects run.
+    expect(await line(ws, 'cat /data/audit.log')).toEqual([0, 'one\n', ''])
+    expect(await line(ws, 'cat < /data/audit.log')).toEqual([0, 'one\n', ''])
+    expect(await line(ws, 'echo ok > /data/out && cat < /data/out')).toEqual([0, 'ok\n', ''])
+  })
+
+  it('a mount rule speaks on a walk from above', async () => {
+    // `grep -r x /scratch` enters /scratch/child: the fan-out reruns
+    // the traversal inside each descendant mount and no admission fires
+    // again there, so the child mount's rule must speak on the ancestor
+    // operand. A walk elsewhere, or a non-recursive read of the parent,
+    // is not its business.
+    const parser = await getTestParser()
+    const ws = new Workspace(
+      {
+        '/scratch': new RAMResource(),
+        '/scratch/child': new RAMResource(),
+        '/elsewhere': new RAMResource(),
+      },
+      {
+        mode: MountMode.WRITE,
+        shellParser: parser,
+        mountPermissions: {
+          '/scratch/child': {
+            paths: { hide: [] },
+            commands: { deny: [{ reason: 'boxed', commands: ['grep'] }] },
+          },
+        },
+      },
+    )
+    open.push(ws)
+    await ws.execute('echo x > /scratch/a && echo x > /elsewhere/a && echo x > /scratch/child/c')
+    expect(await line(ws, 'grep -r x /scratch')).toEqual([126, '', 'grep: policy denied: boxed\n'])
+    expect(await line(ws, 'grep -r x /elsewhere')).toEqual([0, '/elsewhere/a:x\n', ''])
+    // Inside the mount the rule needs no ancestor help.
+    expect(await line(ws, 'grep x /scratch/child/c')).toEqual([
+      126,
+      '',
+      'grep: policy denied: boxed\n',
+    ])
+    // A non-recursive grep of the parent never enters the child.
+    const [dirCode, , dirErr] = await line(ws, 'grep x /scratch')
+    expect(dirCode).toBe(2)
+    expect(dirErr).toContain('Is a directory')
+  })
+
+  it('a whole-line runtime is gated like the tree', async () => {
+    // A runtime that captures the raw line runs it under the same
+    // tiers: every parsed command clears visibility, the policy chain
+    // and the approval door before the runtime sees a byte, so a
+    // captured line cannot run what the tree would refuse.
+    const parser = await getTestParser()
+    const box = new Box()
+    const ws = new Workspace(
+      { '/repo': new RAMResource() },
+      {
+        mode: MountMode.WRITE,
+        shellParser: parser,
+        permissions: COMMANDS_DOC,
+        profiles: { reviewer: REVIEWER },
+        runtimes: [box, 'vfs'],
+      },
+    )
+    open.push(ws)
+    ws.registerCli('git', cliSpecFor('git'))
+    expect(await line(ws, 'sort /repo/x')).toEqual([127, '', 'sort: command not found\n'])
+    expect(await line(ws, 'cat /repo/a | sort')).toEqual([127, '', 'sort: command not found\n'])
+    expect(await line(ws, 'rm /repo/x')).toEqual([1, '', 'rm: /repo/x: no deletes in the repo\n'])
+    expect(await line(ws, 'cat /repo/a; rm -f /repo/x')).toEqual([
+      1,
+      '',
+      'rm: /repo/x: no deletes in the repo\n',
+    ])
+    expect(box.lines).toEqual([])
+    expect(await line(ws, 'cat /repo/a | wc -l')).toEqual([0, 'box:cat /repo/a | wc -l', ''])
+    ws.createSession('rev', { profile: 'reviewer' })
+    expect(await line(ws, 'git add x', 'rev')).toEqual([
+      126,
+      '',
+      'git: policy denied: git add is not allowed\n',
+    ])
+    expect((await line(ws, 'git status', 'rev'))[0]).toBe(0)
+    expect(box.lines).toEqual(['cat /repo/a | wc -l', 'git status'])
+  })
+
+  it('a whole-line runtime reads only literal words', async () => {
+    // The runtime expands the line, so the gate reads it as typed and
+    // refuses what only the runtime could read where a rule in force
+    // would have read it: the command name under any rule, an argument
+    // where a rule reads that command's arguments, and a line a word
+    // runs that the gate cannot see into.
+    const parser = await getTestParser()
+    const box = new Box()
+    const ws = new Workspace(
+      { '/repo': new RAMResource() },
+      {
+        mode: MountMode.WRITE,
+        shellParser: parser,
+        permissions: {
+          commands: {
+            deny: [
+              { reason: 'no deletes', commands: ['rm'] },
+              { reason: 'sealed', commands: ['cat'], paths: ['/repo/secret*'] },
+              { reason: 'no pushes', commands: ['git push'] },
+            ],
+          },
+          paths: { hide: [] },
+        },
+        runtimes: [box, 'vfs'],
+      },
+    )
+    open.push(ws)
+    ws.registerCli('git', cliSpecFor('git'))
+    const unread = (raw: string) =>
+      `policy denied: cannot read ${raw} before the runtime expands it\n`
+    expect(await line(ws, 'rm /repo/x')).toEqual([126, '', 'rm: policy denied: no deletes\n'])
+    expect(await line(ws, '$cmd /repo/x')).toEqual([126, '', '$cmd: ' + unread('$cmd')])
+    expect(await line(ws, 'PAYLOAD=\'rm /repo/x\'; eval "$PAYLOAD"')).toEqual([
+      126,
+      '',
+      '"$PAYLOAD": ' + unread('"$PAYLOAD"'),
+    ])
+    expect(await line(ws, "eval 'rm /repo/x'")).toEqual([
+      126,
+      '',
+      'rm: policy denied: no deletes\n',
+    ])
+    expect(await line(ws, 'cat "$f"')).toEqual([126, '', 'cat: ' + unread('"$f"')])
+    expect(await line(ws, 'git "$verb" origin')).toEqual([126, '', 'git: ' + unread('"$verb"')])
+    expect(await line(ws, 'ls /repo | xargs rm')).toEqual([
+      126,
+      '',
+      'rm: policy denied: no deletes\n',
+    ])
+    expect(await line(ws, 'ls /repo | xargs cat')).toEqual([
+      126,
+      '',
+      'cat: policy denied: runs on operands the gate cannot read\n',
+    ])
+    expect(await line(ws, 'source /repo/env.sh')).toEqual([
+      126,
+      '',
+      'source: policy denied: runs lines the gate cannot read\n',
+    ])
+    expect(await line(ws, "sh -c 'timeout 5 rm /repo/x'")).toEqual([
+      126,
+      '',
+      'rm: policy denied: no deletes\n',
+    ])
+    expect(await line(ws, "builtin eval 'rm /repo/x'")).toEqual([
+      126,
+      '',
+      'rm: policy denied: no deletes\n',
+    ])
+    expect(box.lines).toEqual([])
+    // Literal words, and dynamic ones no rule reads, reach the runtime.
+    const passing = [
+      'echo "$HOME" $(date)',
+      'git status',
+      "'cat' /repo/a",
+      'ls | xargs echo',
+      'command -v rm',
+    ]
+    for (const text of passing) expect((await line(ws, text))[0]).toBe(0)
+    expect(box.lines).toEqual(passing)
+  })
+
+  it('a bare listing in a ruled directory is refused', async () => {
+    // `ls`, `find`, `du`, `tree` and `grep -r` typed bare read the
+    // working directory: the executor injects that operand after the
+    // gate, so the gate supplies it itself, typed as `.`.
+    const parser = await getTestParser()
+    const ws = new Workspace(
+      { '/repo': new RAMResource() },
+      {
+        mode: MountMode.WRITE,
+        shellParser: parser,
+        permissions: {
+          commands: {
+            deny: [{ reason: 'sealed', commands: ['ls', 'find', 'grep'], paths: ['/repo/sealed'] }],
+          },
+          paths: { hide: [] },
+        },
+      },
+    )
+    open.push(ws)
+    await ws.execute('mkdir -p /repo/sealed && echo x > /repo/sealed/f')
+    expect(await line(ws, 'ls /repo/sealed')).toEqual([1, '', 'ls: /repo/sealed: sealed\n'])
+    expect(await line(ws, 'cd /repo/sealed && ls')).toEqual([1, '', 'ls: .: sealed\n'])
+    expect(await line(ws, 'cd /repo/sealed && find -name f')).toEqual([1, '', 'find: .: sealed\n'])
+    expect(await line(ws, 'cd /repo/sealed && grep -r x')).toEqual([
+      1,
+      '',
+      'grep: /repo/sealed: sealed\n',
+    ])
+    // With an operand, or without the recursion that reads the
+    // directory, nothing is implied.
+    expect(await line(ws, 'cd /repo/sealed && ls /repo')).toEqual([0, 'sealed\n', ''])
+    expect(await line(ws, 'cd /repo/sealed && echo x | grep x')).toEqual([0, 'x\n', ''])
+  })
+
+  it('a hidden path reads as absent to every rule', async () => {
+    // hide outranks every admission arm: a path the session cannot see
+    // is dropped before any hook, so a deny never names it, an ask is
+    // never raised for it, and the door answers ENOENT as for any
+    // absent path. The same lines under a session that sees them meet
+    // the rules as usual.
+    const parser = await getTestParser()
+    const ws = new Workspace(
+      { '/repo': new RAMResource() },
+      {
+        mode: MountMode.WRITE,
+        shellParser: parser,
+        permissions: {
+          commands: {
+            allow: ['mkdir', 'echo', 'touch', 'cat', 'rm', 'ls', 'head'],
+            ask: [{ reason: 'sign-off', commands: ['rm'], paths: ['/repo/shared/*'] }],
+            deny: [
+              { reason: 'private', commands: ['cat'], paths: ['/repo/private'] },
+              { reason: 'sealed', paths: ['/repo/sealed/*'] },
+              { reason: 'no heads', commands: ['head'] },
+            ],
+          },
+          paths: { hide: [] },
+        },
+      },
+    )
+    open.push(ws)
+    await ws.execute(
+      'mkdir -p /repo/private /repo/shared && echo k > /repo/private/k && touch /repo/shared/a',
+    )
+    ws.createSession('veiled', {
+      profile: { paths: { hide: ['/repo/private', '/repo/shared', '/repo/sealed'] } },
+    })
+    expect(await line(ws, 'cat /repo/private/k')).toEqual([
+      1,
+      '',
+      'cat: /repo/private/k: private\n',
+    ])
+    expect(await line(ws, 'cat /repo/private/k', 'veiled')).toEqual([
+      1,
+      '',
+      'cat: /repo/private/k: No such file or directory\n',
+    ])
+    expect(await line(ws, 'cat /repo/sealed/x')).toEqual([1, '', 'cat: /repo/sealed/x: sealed\n'])
+    expect(await line(ws, 'cat /repo/sealed/x', 'veiled')).toEqual([
+      1,
+      '',
+      'cat: /repo/sealed/x: No such file or directory\n',
+    ])
+    const [code, , err] = await line(ws, 'rm /repo/shared/a')
+    expect(code).toBe(126)
+    expect(err.startsWith('rm: requires approval: sign-off')).toBe(true)
+    expect(await line(ws, 'rm /repo/shared/a', 'veiled')).toEqual([
+      1,
+      '',
+      "rm: cannot remove '/repo/shared/a': No such file or directory\n",
+    ])
+    expect(ws.approvals.list().map((r) => r.sessionId)).toEqual([ws.sessionManager.defaultId])
+    expect(await line(ws, 'ls /repo', 'veiled')).toEqual([0, '', ''])
+    // A rule with no path in it still speaks: nothing hidden is named.
+    expect(await line(ws, 'head /repo/private/k', 'veiled')).toEqual([
+      126,
+      '',
+      'head: policy denied: no heads\n',
+    ])
+  })
+})
+
+/** A runtime that takes every line raw, recording what reached it. */
+class Box extends Runtime implements LineExecutor {
+  readonly [LINE_EXECUTOR] = true as const
+  readonly name = 'box'
+  lines: string[] = []
+
+  constructor() {
+    super({ captures: ['*'] })
+  }
+
+  runLine(
+    line: string,
+    _stdin: Uint8Array | null,
+    _env: Record<string, string>,
+    _cwd: string,
+  ): Promise<RunResult> {
+    this.lines.push(line)
+    return Promise.resolve({ stdout: ENC.encode(`box:${line}`), stderr: null, exitCode: 0 })
+  }
+}
+
+describe('ask end to end', () => {
+  // Through the document parser, as the YAML door reads it: a bare
+  // string under `ask` is one pattern with the default reason.
+  const ASK_DOC = parseWorkspacePermissions({
+    commands: {
+      ask: [{ reason: 'sign-off', commands: ['rm'] }, 'head'],
+      deny: [{ reason: 'no deletes in the repo', commands: { rm: ['/repo/*'] } }],
+    },
+  })
+
+  // A coded condition that asks: every wc line.
+  class AskWc implements Policy {
+    preCommand(ctx: CommandContext): Action | null {
+      if (ctx.command === 'wc') return { kind: 'ask', reason: 'looks risky' }
+      return null
+    }
+  }
+
+  async function askWs(options: { approver?: CallbackApprover } = {}): Promise<Workspace> {
+    const parser = await getTestParser()
+    const ws = new Workspace(
+      { '/repo': new RAMResource(), '/scratch': new RAMResource() },
+      {
+        mode: MountMode.WRITE,
+        shellParser: parser,
+        permissions: ASK_DOC,
+        policies: [new AskWc()],
+        ...(options.approver !== undefined ? { approver: options.approver } : {}),
+      },
+    )
+    open.push(ws)
+    return ws
+  }
+
+  async function line(
+    ws: Workspace,
+    text: string,
+    sessionId?: string,
+  ): Promise<[number, string, string]> {
+    const r = await ws.execute(text, sessionId === undefined ? {} : { sessionId })
+    return [r.exitCode, stdoutStr(r), stderrStr(r)]
+  }
+
+  // The one request a step expects on the door; a missing one is the
+  // test's failure, not a type to thread through.
+  function pendingRequest(ws: Workspace, command?: string): ApprovalRequest {
+    const found = ws.approvals.list().find((r) => command === undefined || r.command === command)
+    if (found === undefined) throw new Error(`no pending approval for ${command ?? 'any command'}`)
+    return found
+  }
+
+  it('an asked line is refused until the host answers', async () => {
+    const ws = await askWs()
+    await ws.execute('mkdir -p /repo/d && touch /repo/d/x /scratch/z')
+    // Asked: 126 in the requires-approval voice, quoting an id; the
+    // request is on ws.approvals with what was asked; a retry quotes the
+    // same id and adds nothing.
+    const [code, , err] = await line(ws, 'rm /scratch/z')
+    expect(code).toBe(126)
+    const request = pendingRequest(ws)
+    expect(err).toBe(`rm: requires approval: sign-off (approval ${request.id})\n`)
+    expect([request.command, request.argv, request.cwd, request.paths]).toEqual([
+      'rm',
+      ['/scratch/z'],
+      '/',
+      ['/scratch/z'],
+    ])
+    expect(request.sessionId).toBe(ws.sessionManager.defaultId)
+    expect(await line(ws, 'rm /scratch/z')).toEqual([126, '', err])
+    expect(ws.approvals.list()).toHaveLength(1)
+    // The request names the agent of the call that asked, not the
+    // workspace's constructor agent, so a shared workspace attributes
+    // an approval to whoever raised it.
+    expect(request.agentId).toBe('')
+    const byBob = await ws.execute('rm /scratch/z2', { agentId: 'bob' })
+    expect(byBob.exitCode).toBe(126)
+    expect(ws.approvals.list().map((r) => r.agentId)).toEqual(['', 'bob'])
+    // The agent rides with the execution, not the workspace: a line
+    // asked through a nested eval keeps its caller's, and two lines in
+    // flight at once keep their own.
+    const nested = await ws.execute('echo $(rm /scratch/z3)', { agentId: 'carol' })
+    expect(nested.exitCode).toBe(0)
+    await Promise.all([
+      ws.execute('rm /scratch/z4', { agentId: 'dan' }),
+      ws.execute("eval 'rm /scratch/z5'", { agentId: 'eve' }),
+    ])
+    const byAgent = Object.fromEntries(
+      ws.approvals.list().map((r) => [[r.command, ...r.argv].join(' '), r.agentId]),
+    )
+    expect(byAgent).toEqual({
+      'rm /scratch/z': '',
+      'rm /scratch/z2': 'bob',
+      'rm /scratch/z3': 'carol',
+      'rm /scratch/z4': 'dan',
+      'rm /scratch/z5': 'eve',
+    })
+    for (const r of ws.approvals.list()) {
+      if (r.agentId !== '' && r.agentId !== 'bob') await ws.approvals.deny(r.id)
+    }
+    const bobs = ws.approvals.list().find((r) => r.agentId === 'bob')
+    if (bobs === undefined) throw new Error('no request from bob')
+    await ws.approvals.deny(bobs.id)
+    // Granted once: the exact retry passes, and the next one asks.
+    await ws.approvals.grant(request.id)
+    expect(ws.approvals.list()).toEqual([])
+    expect((await line(ws, 'rm /scratch/z'))[0]).toBe(0)
+    expect((await line(ws, 'cat /scratch/z'))[0]).toBe(1)
+    const again = await line(ws, 'rm /scratch/z')
+    expect(again[0]).toBe(126)
+    expect(again[2]).toContain('requires approval')
+    // A bare pattern asks with the default reason.
+    const asked = await line(ws, 'head /repo/d/x')
+    expect(asked[0]).toBe(126)
+    expect(asked[2].startsWith('head: requires approval: no standing approval')).toBe(true)
+    // Denied: the retry is refused once in the deny voice, then the
+    // question is open again.
+    await ws.approvals.deny(pendingRequest(ws, 'head').id)
+    expect(await line(ws, 'head /repo/d/x')).toEqual([
+      126,
+      '',
+      'head: policy denied: no standing approval\n',
+    ])
+    const reasked = await line(ws, 'head /repo/d/x')
+    expect(reasked[0]).toBe(126)
+    expect(reasked[2]).toContain('requires approval')
+  })
+
+  it('a session grant covers the rule and a deny is never re-opened', async () => {
+    const ws = await askWs()
+    await ws.execute('mkdir -p /repo/d && touch /repo/d/x /scratch/y /scratch/z')
+    expect((await line(ws, 'rm /scratch/y'))[0]).toBe(126)
+    await ws.approvals.grant(pendingRequest(ws).id, 'session')
+    // Every rm line passes now, in any directory of the session ...
+    expect((await line(ws, 'rm /scratch/y'))[0]).toBe(0)
+    expect((await line(ws, 'cd /scratch && rm z'))[0]).toBe(0)
+    // ... except where a deny rule speaks: the deny arm runs before the
+    // ask arm, so no grant can re-open it, and the denied line raises no
+    // request (nothing for the host to answer; the battery cannot see
+    // this, so it is pinned here).
+    expect(await line(ws, 'cd /repo/d && rm x')).toEqual([1, '', 'rm: x: no deletes in the repo\n'])
+    expect(ws.approvals.list()).toEqual([])
+    // The grant is session state: on the record, and not another
+    // session's.
+    const record = ws.sessionManager.get(ws.sessionManager.defaultId).toJSON() as {
+      grants: { decision: string }[]
+    }
+    expect(record.grants[0]?.decision).toBe('allow_session')
+    ws.createSession('other')
+    await ws.execute('touch /scratch/w', { sessionId: 'other' })
+    const other = await line(ws, 'rm /scratch/w', 'other')
+    expect(other[0]).toBe(126)
+    expect(other[2]).toContain('requires approval')
+  })
+
+  it('a coded ask routes to the same door', async () => {
+    const ws = await askWs()
+    await ws.execute('touch /scratch/z')
+    const [code, , err] = await line(ws, 'wc -c /scratch/z')
+    expect(code).toBe(126)
+    const request = pendingRequest(ws)
+    expect(err).toBe(`wc: requires approval: looks risky (approval ${request.id})\n`)
+    // The synthesized rule names the program, so a session grant covers
+    // every wc line.
+    expect(request.rule).toEqual({ reason: 'looks risky', commands: ['wc'] })
+    await ws.approvals.grant(request.id, 'session')
+    expect(await line(ws, 'wc -c /scratch/z')).toEqual([0, '0 /scratch/z\n', ''])
+    expect(await line(ws, 'wc -l /scratch/z')).toEqual([0, '0 /scratch/z\n', ''])
+  })
+
+  it('a grant is consumed through a fork', async () => {
+    const ws = await askWs()
+    await ws.execute('touch /scratch/z')
+    expect((await line(ws, 'rm /scratch/z'))[0]).toBe(126)
+    await ws.approvals.grant(pendingRequest(ws).id)
+    // execute({env}) runs the line in a fork of the session: the once
+    // grant is read and consumed through the manager, so the fork
+    // spends it for the session it forked from.
+    const forked = await ws.execute('rm /scratch/z', { env: { X: '1' } })
+    expect(forked.exitCode).toBe(0)
+    const again = await line(ws, 'rm /scratch/z')
+    expect(again[0]).toBe(126)
+    expect(again[2]).toContain('requires approval')
+  })
+
+  it('a blocking approver answers inside the line', async () => {
+    const allowOnce = (_r: ApprovalRequest): Promise<ApprovalDecision> =>
+      Promise.resolve('allow_once')
+    const denyIt = (_r: ApprovalRequest): Promise<ApprovalDecision> => Promise.resolve('deny')
+    const yes = await askWs({ approver: new CallbackApprover(allowOnce) })
+    await yes.execute('touch /scratch/z')
+    expect((await line(yes, 'rm /scratch/z'))[0]).toBe(0)
+    expect(yes.approvals.list()).toEqual([])
+    const no = await askWs({ approver: new CallbackApprover(denyIt) })
+    await no.execute('touch /scratch/z')
+    expect(await line(no, 'rm /scratch/z')).toEqual([126, '', 'rm: policy denied: sign-off\n'])
+    expect((await line(no, 'cat /scratch/z'))[0]).toBe(0)
+  })
+})
+
+describe('a walk below the operand meets the rule guard', () => {
+  const WALK_DOC: SessionProfile = parseSessionProfile({
+    paths: { hide: ['/data/t/ghost'] },
+    commands: {
+      allow: [
+        'mkdir',
+        'echo',
+        'ls',
+        'cat',
+        'grep',
+        'find',
+        'du',
+        'cp',
+        'tar',
+        'tree',
+        'stat',
+        'rm',
+        'test',
+      ],
+      ask: [{ reason: 'nod', commands: { grep: ['/data/t/asked/*'] } }],
+      deny: [
+        { reason: 'private', commands: { grep: ['/data/t/private'], ls: ['/data/t/private'] } },
+        { reason: 'sealed', paths: ['/data/t/sealed'] },
+        { reason: 'frozen', paths: ['/data/t/locked/*'] },
+      ],
+    },
+  })
+
+  // The rules live on a profile so the tree can be seeded under the
+  // unrestricted default session; every probe runs as "g".
+  async function walkWs(): Promise<Workspace> {
+    const parser = await getTestParser()
+    const ws = new Workspace(
+      { '/data': new RAMResource() },
+      { mode: MountMode.WRITE, shellParser: parser, profiles: { guarded: WALK_DOC } },
+    )
+    open.push(ws)
+    ws.createSession('g', { profile: 'guarded' })
+    await ws.execute(
+      'mkdir -p /data/t/private /data/t/sealed/deep /data/t/locked ' +
+        '/data/t/open /data/t/asked /data/t/ghost && ' +
+        'echo k > /data/t/private/k && echo s > /data/t/sealed/s && ' +
+        'echo d > /data/t/sealed/deep/d && echo y > /data/t/locked/y && ' +
+        'echo o > /data/t/open/o && echo a > /data/t/asked/a && ' +
+        'echo g > /data/t/ghost/g',
+    )
+    return ws
+  }
+
+  async function line(ws: Workspace, text: string): Promise<[number, string, string]> {
+    const r = await ws.execute(text, { sessionId: 'g' })
+    return [r.exitCode, stdoutStr(r), stderrStr(r)]
+  }
+
+  it('each walker reports the refusal the way GNU reports an unreadable entry', async () => {
+    const ws = await walkWs()
+    const [grepCode, grepOut, grepErr] = await line(ws, 'grep -r . /data/t')
+    expect(grepCode).toBe(2)
+    expect(grepOut).toBe('/data/t/open/o:o\n')
+    expect(grepErr).toBe(
+      'grep: /data/t/asked/a: Permission denied\n' +
+        'grep: /data/t/locked/y: Permission denied\n' +
+        'grep: /data/t/private: Permission denied\n' +
+        'grep: /data/t/sealed: Permission denied\n',
+    )
+    const [lsCode, lsOut, lsErr] = await line(ws, 'ls -R /data/t')
+    expect(lsCode).toBe(1)
+    expect(lsOut).toContain('locked:\ny\n')
+    expect(lsOut).not.toContain('ghost')
+    expect(lsErr).toBe(
+      "ls: cannot open directory '/data/t/private': Permission denied\n" +
+        "ls: cannot open directory '/data/t/sealed': Permission denied\n",
+    )
+    const [findCode, findOut, findErr] = await line(ws, "find /data/t -name '*'")
+    expect(findCode).toBe(1)
+    expect(findOut).toContain('/data/t/sealed\n')
+    expect(findOut).not.toContain('/data/t/sealed/s')
+    expect(findOut).toContain('/data/t/locked/y\n')
+    expect(findErr).toBe("find: '/data/t/sealed': Permission denied\n")
+    const [duCode, duOut, duErr] = await line(ws, 'du -a /data/t')
+    expect(duCode).toBe(1)
+    expect(duOut).toContain('2\t/data/t/locked/y\n')
+    expect(duOut).not.toContain('sealed')
+    expect(duErr).toBe("du: cannot read directory '/data/t/sealed': Permission denied\n")
+    const [cpCode, , cpErr] = await line(ws, 'cp -r /data/t /data/copy')
+    expect(cpCode).toBe(1)
+    expect(cpErr).toBe(
+      "cp: cannot access '/data/t/sealed': Permission denied\n" +
+        "cp: cannot open '/data/t/locked/y' for reading: Permission denied\n",
+    )
+    expect((await line(ws, 'cat /data/copy/private/k'))[1]).toBe('k\n')
+    expect((await line(ws, 'test -d /data/copy/sealed'))[0]).toBe(0)
+    expect((await line(ws, 'test -e /data/copy/locked/y'))[0]).toBe(1)
+    const [tarCode, , tarErr] = await line(ws, 'tar -cf /data/a.tar /data/t')
+    expect(tarCode).toBe(2)
+    expect(tarErr).toBe(
+      "tar: Removing leading `/' from member names\n" +
+        'tar: /data/t/sealed: Cannot open: Permission denied\n' +
+        'tar: /data/t/locked/y: Cannot open: Permission denied\n' +
+        'tar: Exiting with failure status due to previous errors\n',
+    )
+    const [, listOut] = await line(ws, 'tar -tf /data/a.tar')
+    expect(listOut).toContain('data/t/sealed/\n')
+    expect(listOut).not.toContain('locked/y')
+    expect(listOut).toContain('data/t/private/k\n')
+    expect(listOut).not.toContain('ghost')
+    const [treeCode, treeOut, treeErr] = await line(ws, 'tree /data/t')
+    expect(treeCode).toBe(2)
+    expect(treeErr).toBe('')
+    expect(treeOut).toContain('`-- sealed  [error opening dir]\n')
+  })
+
+  it('an asked scope reached by a walk is refused until named', async () => {
+    const ws = await walkWs()
+    expect(await line(ws, 'grep -r a /data/t/asked')).toEqual([
+      2,
+      '',
+      'grep: /data/t/asked/a: Permission denied\n',
+    ])
+    expect(ws.approvals.list()).toEqual([])
+    const [code, , err] = await line(ws, 'grep a /data/t/asked/a')
+    expect(code).toBe(126)
+    expect(err).toContain('grep: requires approval: nod')
+    const [request] = ws.approvals.list()
+    if (request === undefined) throw new Error('no pending request')
+    await ws.approvals.grant(request.id)
+    expect(await line(ws, 'grep a /data/t/asked/a')).toEqual([0, 'a\n', ''])
+    // A standing grant covers the walk too.
+    await line(ws, 'grep a /data/t/asked/a')
+    const [second] = ws.approvals.list()
+    if (second === undefined) throw new Error('no pending request')
+    await ws.approvals.grant(second.id, 'session')
+    expect(await line(ws, 'grep -r a /data/t/asked')).toEqual([0, '/data/t/asked/a:a\n', ''])
+  })
+
+  it('the op door stats a refused entry and withholds its content', async () => {
+    const ws = await walkWs()
+    const sess = ws.getSession('g')
+    await runWithSession(sess, async () => {
+      const st = (await ws.dispatch('stat', '/data/t/locked/y')) as { size?: number }
+      expect(st.size).toBe(2)
+      await expect(ws.dispatch('read', '/data/t/locked/y')).rejects.toThrow('frozen')
+      await expect(ws.dispatch('stat', '/data/t/ghost/g')).rejects.toThrow()
+    })
   })
 })

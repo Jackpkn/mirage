@@ -14,6 +14,7 @@
 
 import { seedVar } from './state.ts'
 import { describe, expect, it } from 'vitest'
+import type { CommandsSpec, Grant } from '../../policy/types.ts'
 import { MountMode } from '../../types.ts'
 import { SessionManager } from './manager.ts'
 import { RAMSessionStore } from './ram.ts'
@@ -173,6 +174,7 @@ describe('SessionManager with a SessionStore', () => {
       hiddenVars: { names: ['SLACK_TOKEN'], patterns: [] },
       env: { PAGER: 'cat' },
       cwd: '/s3',
+      commands: null,
     }
     const dflt = m.get('def')
     expect(dflt.cwd).toBe('/s3')
@@ -333,5 +335,126 @@ describe('SessionManager bound hides', () => {
     await m.flush()
     const stored = await store.load()
     expect(JSON.stringify([...stored.entries()])).not.toContain('bound')
+  })
+})
+
+describe('SessionManager bound command tiers', () => {
+  it('stamps live, created and forked sessions and answers commandsOf', () => {
+    const m = new SessionManager('def')
+    const early = m.create('early')
+    const bound: CommandsSpec[] = [{ allow: ['ls', 'git'], ask: [], deny: [] }]
+    m.boundCommands = bound
+    expect(m.boundCommands).toBe(bound)
+    expect(m.get('def').boundCommands).toBe(bound)
+    expect(early.boundCommands).toBe(bound)
+    const late = m.create('late')
+    expect(late.boundCommands).toBe(bound)
+    expect(late.fork().boundCommands).toBe(bound)
+    // commandsOf: the bound tiers, then the session's own; the bound
+    // tiers alone for an id the manager does not know (the empty id of
+    // an unbound door included), so it still fails toward refusal.
+    const own: CommandsSpec = { allow: ['ls'], ask: [], deny: [] }
+    late.commands = own
+    expect(m.commandsOf('late')).toEqual([...bound, own])
+    expect(m.commandsOf('early')).toEqual(bound)
+    expect(m.commandsOf('nobody')).toEqual(bound)
+    expect(m.commandsOf('')).toEqual(bound)
+  })
+
+  it('the command tier rides the record and the bound tiers do not', async () => {
+    const store = new RAMSessionStore()
+    await store.set('restored', {
+      session_id: 'restored',
+      cwd: '/w',
+      env: {},
+      created_at: 1.0,
+      commands: {
+        allow: ['ls', 'git log'],
+        ask: [],
+        deny: [{ reason: 'no', commands: ['rm'], paths: [] }],
+      },
+    })
+    await store.set('def', {
+      session_id: 'def',
+      cwd: '/w',
+      env: {},
+      created_at: 1.0,
+      commands: { allow: ['cat'], ask: [], deny: [] },
+    })
+    const m = new SessionManager('def', store)
+    const bound: CommandsSpec[] = [
+      { allow: null, ask: [], deny: [{ reason: 'ro', commands: ['git push'], mount: '/repo' }] },
+    ]
+    m.boundCommands = bound
+    await m.ensureLoaded()
+    const restored = m.get('restored')
+    expect(restored.commands).toEqual({
+      allow: ['ls', 'git log'],
+      ask: [],
+      deny: [{ reason: 'no', commands: ['rm'], paths: [], mount: '' }],
+    })
+    expect(restored.boundCommands).toBe(bound)
+    expect(m.commandsOf('restored')).toEqual([...bound, restored.commands])
+    // The default session adopts its stored tier like its hidden specs.
+    expect(m.get('def').commands).toEqual({ allow: ['cat'], ask: [], deny: [] })
+    expect('boundCommands' in restored.toJSON()).toBe(false)
+    await m.flush()
+    const stored = await store.load()
+    const record = stored.get('restored') as { commands: { allow: string[] } }
+    expect(record.commands.allow).toEqual(['ls', 'git log'])
+    expect(JSON.stringify([...stored.entries()])).not.toContain('bound')
+  })
+})
+
+describe('SessionManager host grants', () => {
+  it('live on the registered session and persist', async () => {
+    const store = new RAMSessionStore()
+    const m = new SessionManager('def', store)
+    await m.ensureLoaded()
+    const live = m.create('agent')
+    expect(m.grantsOf('agent')).toEqual([])
+    const grant: Grant = {
+      decision: 'allow_session',
+      rule: { reason: 'sign-off', commands: ['git push'] },
+      argv: ['git', 'push'],
+      cwd: '/repo',
+    }
+    // Written by id onto the registered session, so a fork made before
+    // or after reads the same answers through the manager, whatever
+    // its own copy holds; durable at the next flush.
+    const fork = live.fork()
+    m.setGrants('agent', [grant])
+    expect(live.grants).toEqual([grant])
+    expect(fork.grants).toEqual([])
+    expect(m.grantsOf(fork.sessionId)).toEqual([grant])
+    await m.flush()
+    const stored = (await store.load()).get('agent') as { grants: { decision: string }[] }
+    expect(stored.grants[0]?.decision).toBe('allow_session')
+    // A manager reading that record back holds the grant.
+    const again = new SessionManager('def', store)
+    await again.ensureLoaded()
+    expect(again.grantsOf('agent')).toEqual([
+      { ...grant, rule: { reason: 'sign-off', commands: ['git push'], paths: [], mount: '' } },
+    ])
+    expect(() => m.grantsOf('nobody')).toThrow(/unknown session/)
+  })
+
+  it('hydrate onto the default session', async () => {
+    const store = new RAMSessionStore()
+    const m = new SessionManager('def', store)
+    await m.ensureLoaded()
+    const rule = { reason: 'sign-off', commands: ['git push'], paths: [], mount: '' }
+    const grant: Grant = { decision: 'allow_session', rule, argv: ['git', 'push'], cwd: '/repo' }
+    m.setGrants('def', [grant])
+    await m.flush()
+    // The default session takes the stored durable fields on reopen;
+    // the grants are among them, so an approved line does not ask
+    // again after a restart and the next flush keeps the grant.
+    const again = new SessionManager('def', store)
+    await again.ensureLoaded()
+    expect(again.grantsOf('def')).toEqual([grant])
+    await again.flush()
+    const stored = (await store.load()).get('def') as { grants: { decision: string }[] }
+    expect(stored.grants[0]?.decision).toBe('allow_session')
   })
 })

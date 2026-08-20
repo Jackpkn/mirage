@@ -25,11 +25,19 @@ import { Workspace } from '../workspace/workspace/workspace.ts'
 import type { Policy } from './base.ts'
 import { MountRootPolicy } from './builtin/mount_root.ts'
 import { PolicyDenied } from './errors.ts'
-import { Policies, postExecuteGate, postOpsGate, preOpsGate } from './policies.ts'
+import {
+  Policies,
+  postExecuteGate,
+  postOpsGate,
+  preOpsGate,
+  renderDeny,
+  renderPending,
+} from './policies.ts'
 import { RulePolicy } from './rule.ts'
 import type {
   Action,
   CommandContext,
+  Deny,
   ExecuteResultContext,
   CommandRule,
   OpsContext,
@@ -48,7 +56,7 @@ beforeAll(async () => {
 
 class DenyWeird implements Policy {
   preCommand(ctx: CommandContext): Action | null {
-    if (ctx.command === 'weird') return { kind: 'deny', message: 'nope\n', exitCode: 3 }
+    if (ctx.command === 'weird') return { kind: 'deny', reason: 'nope' }
     return null
   }
 }
@@ -69,15 +77,41 @@ const silent: Policy = {}
 
 class DenyReadOps implements Policy {
   preOps(ctx: OpsContext): Action | null {
-    if (ctx.op === 'read') return { kind: 'deny', message: 'no reads\n', exitCode: 1 }
+    if (ctx.op === 'read') return { kind: 'deny', reason: 'no reads' }
     return null
+  }
+}
+
+class AskRm implements Policy {
+  preCommand(ctx: CommandContext): Action | null {
+    if (ctx.command === 'rm') return { kind: 'ask', reason: 'sign-off' }
+    return null
+  }
+}
+
+class AskAll implements Policy {
+  preCommand(_ctx: CommandContext): Action | null {
+    return { kind: 'ask', reason: 'second opinion' }
+  }
+}
+
+class DenyRm implements Policy {
+  preCommand(ctx: CommandContext): Action | null {
+    if (ctx.command === 'rm') return { kind: 'deny', reason: 'no' }
+    return null
+  }
+}
+
+class AskOnOps implements Policy {
+  preOps(_ctx: OpsContext): Action | null {
+    return { kind: 'ask', reason: 'cannot wait here' }
   }
 }
 
 class DenyBigResults implements Policy {
   postOps(ctx: OpsResultContext): Action | null {
     if (ctx.result instanceof Uint8Array && ctx.result.length > 8) {
-      return { kind: 'deny', message: 'result too large\n', exitCode: 1 }
+      return { kind: 'deny', reason: 'result too large' }
     }
     return null
   }
@@ -86,7 +120,7 @@ class DenyBigResults implements Policy {
 class ReadOnlyProd implements Policy {
   preOps(ctx: OpsContext): Action | null {
     if (ctx.write && ctx.path.virtual.startsWith('/data/prod/')) {
-      return { kind: 'deny', message: 'prod is frozen\n', exitCode: 1 }
+      return { kind: 'deny', reason: 'prod is frozen' }
     }
     return null
   }
@@ -96,7 +130,7 @@ class NoInterpreters implements Policy {
   async preCommand(ctx: CommandContext): Promise<Action | null> {
     await Promise.resolve()
     if (ctx.command === 'python3') {
-      return { kind: 'deny', message: 'python3: interpreters are off\n', exitCode: 1 }
+      return { kind: 'deny', reason: 'interpreters are off' }
     }
     return null
   }
@@ -147,7 +181,7 @@ describe('Policies', () => {
   it('registry seeds the mount-root policy', async () => {
     const reg = registry()
     const deny = await reg.policies.preCommand(ctx('rm', [path('/data')], reg))
-    expect(deny?.message).toContain('Device or resource busy')
+    expect(deny?.reason).toContain('Device or resource busy')
   })
 
   it('builtin runs first, then user policies in order', async () => {
@@ -155,17 +189,27 @@ describe('Policies', () => {
     policies.add(new RulePolicy({ reason: 'user rule', commands: ['rm'] }))
     // Both match `rm /data`; the built-in GNU message wins by order.
     let deny = await policies.preCommand(ctx('rm', [path('/data')]))
-    expect(deny?.message).toContain('Device or resource busy')
+    expect(deny?.reason).toContain('Device or resource busy')
     // Only the user rule matches `rm /data/x`.
     deny = await policies.preCommand(ctx('rm', [path('/data/x')]))
-    expect(deny?.message).toBe('rm: user rule\n')
+    expect(deny).toEqual({ kind: 'deny', reason: 'user rule' })
+    // The command plane renders a whole-command refusal at 126 and an
+    // operand one in the GNU voice at 1, whoever produced it.
+    const text = (r: [Uint8Array, number]) => [new TextDecoder().decode(r[0]), r[1]]
+    expect(text(renderDeny('rm', deny as Deny))).toEqual(['rm: policy denied: user rule\n', 126])
+    expect(
+      text(renderDeny('rm', { kind: 'deny', reason: "cannot remove 'x'", scope: 'operand' })),
+    ).toEqual(["rm: cannot remove 'x'\n", 1])
+    expect(
+      text(renderDeny('tar', { kind: 'deny', reason: 'x: Cannot open', scope: 'operand' })),
+    ).toEqual(['tar: x: Cannot open\n', 2])
   })
 
   it('skips undefined hooks and honors policy instances', async () => {
     const policies = new Policies()
     policies.add(silent)
     policies.add(new DenyWeird())
-    expect((await policies.preCommand(ctx('weird')))?.exitCode).toBe(3)
+    expect(await policies.preCommand(ctx('weird'))).toEqual({ kind: 'deny', reason: 'nope' })
     expect(await policies.preCommand(ctx('normal'))).toBeNull()
   })
 
@@ -173,9 +217,10 @@ describe('Policies', () => {
     const policies = new Policies()
     policies.add(new Raising())
     const deny = await policies.preCommand(ctx('ls'))
-    expect(deny?.exitCode).toBe(1)
-    expect(deny?.message).toContain('Raising')
-    expect(deny?.message).toContain('boom')
+    expect(deny?.kind).toBe('deny')
+    expect(deny).not.toHaveProperty('scope')
+    expect(deny?.reason).toContain('Raising')
+    expect(deny?.reason).toContain('boom')
   })
 
   it('an illegal return throws PolicyError', async () => {
@@ -196,7 +241,7 @@ describe('Policies', () => {
       write: false,
       prefix: '/data/',
     })
-    expect(deny?.message).toBe('no reads\n')
+    expect(deny).toEqual({ kind: 'deny', reason: 'no reads' })
     expect(
       await policies.preOps({ op: 'write', path: path('/data/x'), write: true, prefix: '/data/' }),
     ).toBeNull()
@@ -233,11 +278,11 @@ describe('Policies', () => {
     const entry: Policy & { reason: string } = {
       reason: 'looks like a rule',
       preCommand: (c: CommandContext) =>
-        c.command === 'weird' ? { kind: 'deny', message: 'nope\n', exitCode: 1 } : null,
+        c.command === 'weird' ? { kind: 'deny', reason: 'nope' } : null,
     }
     policies.add(entry)
     expect(await policies.preCommand(ctx('ls'))).toBeNull()
-    expect((await policies.preCommand(ctx('weird')))?.message).toBe('nope\n')
+    expect(await policies.preCommand(ctx('weird'))).toEqual({ kind: 'deny', reason: 'nope' })
   })
 })
 
@@ -271,8 +316,11 @@ describe('workspace policies', () => {
     try {
       ws.policies.add(new NoInterpreters())
       const refused = await ws.execute("python3 -c 'print(1)'")
-      expect(refused.exitCode).toBe(1)
-      expect(new TextDecoder().decode(refused.stderr)).toBe('python3: interpreters are off\n')
+      // A whole-command refusal is bash's "found but may not run".
+      expect(refused.exitCode).toBe(126)
+      expect(new TextDecoder().decode(refused.stderr)).toBe(
+        'python3: policy denied: interpreters are off\n',
+      )
     } finally {
       await ws.close()
     }
@@ -282,8 +330,10 @@ describe('workspace policies', () => {
     const ws = executableWorkspace(undefined, [new NoInterpreters()])
     try {
       const refused = await ws.execute("python3 -c 'print(1)'")
-      expect(refused.exitCode).toBe(1)
-      expect(new TextDecoder().decode(refused.stderr)).toBe('python3: interpreters are off\n')
+      expect(refused.exitCode).toBe(126)
+      expect(new TextDecoder().decode(refused.stderr)).toBe(
+        'python3: policy denied: interpreters are off\n',
+      )
     } finally {
       await ws.close()
     }
@@ -299,8 +349,8 @@ describe('workspace policies', () => {
     ])
     try {
       const refused = await ws.execute('source /data/setup.sh')
-      expect(refused.exitCode).toBe(1)
-      expect(new TextDecoder().decode(refused.stderr)).toBe('source: disabled\n')
+      expect(refused.exitCode).toBe(126)
+      expect(new TextDecoder().decode(refused.stderr)).toBe('source: policy denied: disabled\n')
       const frozen = await ws.execute('touch /data/prod/x')
       expect(frozen.exitCode).toBe(1)
       expect(new TextDecoder().decode(frozen.stderr)).toContain('frozen')
@@ -492,7 +542,7 @@ class Boom implements Policy {
 
 class DenyReads implements Policy {
   postOps(ctx: OpsResultContext): Action | null {
-    return ctx.op === 'read' ? { kind: 'deny', message: 'reads are suppressed\n' } : null
+    return ctx.op === 'read' ? { kind: 'deny', reason: 'reads are suppressed' } : null
   }
 }
 
@@ -552,10 +602,9 @@ describe('Limit end to end', () => {
     try {
       ws.policies.add(new Boom())
       const r = await ws.execute('echo hi')
-      expect(r.exitCode).toBe(1)
+      expect(r.exitCode).toBe(126)
       const err = new TextDecoder().decode(r.stderr)
-      expect(err).toContain('Boom')
-      expect(err).toContain('boom')
+      expect(err).toBe('echo: policy denied: policy Boom failed: boom\n')
     } finally {
       await ws.close()
     }
@@ -577,5 +626,42 @@ describe('Limit end to end', () => {
     } finally {
       await ws.close()
     }
+  })
+})
+
+describe('Ask in the chain', () => {
+  it('a deny anywhere in the chain outranks an ask', async () => {
+    // The loop keeps looking past an Ask for a Deny, whichever order the
+    // two policies were registered in, so an approval can never re-open
+    // a refusal.
+    for (const order of [
+      [new AskRm(), new DenyRm()],
+      [new DenyRm(), new AskRm()],
+    ]) {
+      const policies = new Policies(order)
+      expect(await policies.preCommand(ctx('rm'))).toEqual({ kind: 'deny', reason: 'no' })
+    }
+    // With nothing refusing, the first Ask is the answer.
+    const policies = new Policies([new AskRm(), new AskAll()])
+    expect(await policies.preCommand(ctx('rm'))).toEqual({ kind: 'ask', reason: 'sign-off' })
+    expect(await policies.preCommand(ctx('ls'))).toEqual({
+      kind: 'ask',
+      reason: 'second opinion',
+    })
+  })
+
+  it('an ask is illegal off the command plane', async () => {
+    const policies = new Policies([new AskOnOps()])
+    await expect(
+      policies.preOps({ op: 'write', path: path('/data/x'), write: true, prefix: '/data/' }),
+    ).rejects.toThrow(/AskOnOps/)
+  })
+
+  it('renderPending names the approval', () => {
+    const [err, code] = renderPending('git', { kind: 'pending', id: 'abc123', reason: 'sign-off' })
+    expect(new TextDecoder().decode(err)).toBe(
+      'git: requires approval: sign-off (approval abc123)\n',
+    )
+    expect(code).toBe(126)
   })
 })

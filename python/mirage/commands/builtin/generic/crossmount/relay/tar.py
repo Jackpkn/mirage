@@ -12,6 +12,7 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+from mirage.commands.builtin.generic.archive.types import Walked
 from mirage.commands.builtin.generic.crossmount.types import CrossResult
 from mirage.commands.builtin.generic.crossmount.utils import \
     transfer_primitives
@@ -22,7 +23,7 @@ from mirage.runtime.types import DispatchFn
 from mirage.types import PathSpec
 
 
-async def _no_walk(path: PathSpec, find_type: str) -> list[str]:
+async def _no_walk(path: PathSpec, find_type: str) -> Walked:
     raise ValueError("tar: create never runs on the relay tier")
 
 
