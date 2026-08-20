@@ -13,8 +13,6 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { DiscordAccessor } from '@struktoai/mirage-core/accessor/discord'
-import { RAMIndexCacheStore } from '@struktoai/mirage-core/cache/index/ram'
-import type { IndexCacheStore } from '@struktoai/mirage-core/cache/index/store'
 import { DISCORD_COMMANDS } from '@struktoai/mirage-core/commands/builtin/discord/index'
 import { makeResolveGlob } from '@struktoai/mirage-core/commands/builtin/generic_bind/index'
 import type { RegisteredCommand } from '@struktoai/mirage-core/commands/config'
@@ -24,6 +22,7 @@ import { readdir as discordReaddir } from '@struktoai/mirage-core/core/discord/r
 import { stat as discordStat } from '@struktoai/mirage-core/core/discord/stat'
 import { DISCORD_OPS } from '@struktoai/mirage-core/ops/discord/index'
 import type { RegisteredOp } from '@struktoai/mirage-core/ops/registry'
+import { BaseResource } from '@struktoai/mirage-core/resource/base'
 import type { Resource } from '@struktoai/mirage-core/resource/base'
 import {
   DISCORD_PROMPT,
@@ -41,21 +40,21 @@ export interface DiscordResourceState {
   config: DiscordConfigRedacted
 }
 
-export class DiscordResource implements Resource {
+export class DiscordResource extends BaseResource implements Resource {
   readonly kind: string = ResourceName.DISCORD
   readonly cachesReads: boolean = true
   // Every listed file carries an exact size: chat.jsonl and members/*.json
   // are rendered at readdir from payloads the listing already fetched, and
   // attachments carry Discord's CDN byte count.
   readonly sizesAlwaysKnown: boolean = true
-  readonly indexTtl: number = 600
+  override readonly indexTtl: number = 600
   readonly prompt: string = DISCORD_PROMPT
   readonly writePrompt: string = DISCORD_WRITE_PROMPT
   readonly config: DiscordConfig
   readonly accessor: DiscordAccessor
-  readonly index: IndexCacheStore
 
   constructor(config: DiscordConfig) {
+    super()
     this.config = config
     this.accessor = new DiscordAccessor(
       new BrowserDiscordTransport({
@@ -63,14 +62,9 @@ export class DiscordResource implements Resource {
         ...(config.getHeaders !== undefined ? { getHeaders: config.getHeaders } : {}),
       }),
     )
-    this.index = new RAMIndexCacheStore({ ttl: this.indexTtl })
   }
 
   open(): Promise<void> {
-    return Promise.resolve()
-  }
-
-  close(): Promise<void> {
     return Promise.resolve()
   }
 
@@ -112,14 +106,14 @@ export class DiscordResource implements Resource {
     return resolveDiscordGlob(this.accessor, effective, this.index)
   }
 
-  getState(): Promise<DiscordResourceState> {
+  override getState(): Promise<DiscordResourceState> {
     return Promise.resolve({
       type: this.kind,
       config: redactDiscordConfig(this.config),
     })
   }
 
-  loadState(_state: DiscordResourceState): Promise<void> {
+  override loadState(_state: DiscordResourceState): Promise<void> {
     return Promise.resolve()
   }
 }

@@ -13,8 +13,6 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { LangfuseAccessor } from '@struktoai/mirage-core/accessor/langfuse'
-import { RAMIndexCacheStore } from '@struktoai/mirage-core/cache/index/ram'
-import type { IndexCacheStore } from '@struktoai/mirage-core/cache/index/store'
 import { makeResolveGlob } from '@struktoai/mirage-core/commands/builtin/generic_bind/index'
 import { LANGFUSE_COMMANDS } from '@struktoai/mirage-core/commands/builtin/langfuse/index'
 import type { RegisteredCommand } from '@struktoai/mirage-core/commands/config'
@@ -24,6 +22,7 @@ import { readdir as langfuseReaddir } from '@struktoai/mirage-core/core/langfuse
 import { stat as langfuseStat } from '@struktoai/mirage-core/core/langfuse/stat'
 import { LANGFUSE_OPS } from '@struktoai/mirage-core/ops/langfuse/index'
 import type { RegisteredOp } from '@struktoai/mirage-core/ops/registry'
+import { BaseResource } from '@struktoai/mirage-core/resource/base'
 import type { Resource } from '@struktoai/mirage-core/resource/base'
 import { LANGFUSE_PROMPT } from '@struktoai/mirage-core/resource/langfuse/prompt'
 import { PathSpec, ResourceName } from '@struktoai/mirage-core/types'
@@ -38,16 +37,16 @@ export interface LangfuseResourceState {
   config: LangfuseConfigRedacted
 }
 
-export class LangfuseResource implements Resource {
+export class LangfuseResource extends BaseResource implements Resource {
   readonly kind: string = ResourceName.LANGFUSE
   readonly cachesReads: boolean = true
-  readonly indexTtl: number = 600
+  override readonly indexTtl: number = 600
   readonly prompt: string = LANGFUSE_PROMPT
   readonly config: LangfuseConfig
   readonly accessor: LangfuseAccessor
-  readonly index: IndexCacheStore
 
   constructor(config: LangfuseConfig) {
+    super()
     this.config = config
     const transportOpts: { publicKey: string; secretKey: string; host?: string } = {
       publicKey: config.publicKey,
@@ -69,14 +68,9 @@ export class LangfuseResource implements Resource {
       accessorConfig.defaultFromTimestamp = config.defaultFromTimestamp
     }
     this.accessor = new LangfuseAccessor(new HttpLangfuseTransport(transportOpts), accessorConfig)
-    this.index = new RAMIndexCacheStore({ ttl: this.indexTtl })
   }
 
   open(): Promise<void> {
-    return Promise.resolve()
-  }
-
-  close(): Promise<void> {
     return Promise.resolve()
   }
 
@@ -118,14 +112,14 @@ export class LangfuseResource implements Resource {
     return resolveLangfuseGlob(this.accessor, effective, this.index)
   }
 
-  getState(): Promise<LangfuseResourceState> {
+  override getState(): Promise<LangfuseResourceState> {
     return Promise.resolve({
       type: this.kind,
       config: redactLangfuseConfig(this.config),
     })
   }
 
-  loadState(_state: LangfuseResourceState): Promise<void> {
+  override loadState(_state: LangfuseResourceState): Promise<void> {
     return Promise.resolve()
   }
 }

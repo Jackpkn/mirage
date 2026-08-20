@@ -13,8 +13,6 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { SlackAccessor } from '@struktoai/mirage-core/accessor/slack'
-import { RAMIndexCacheStore } from '@struktoai/mirage-core/cache/index/ram'
-import type { IndexCacheStore } from '@struktoai/mirage-core/cache/index/store'
 import { makeResolveGlob } from '@struktoai/mirage-core/commands/builtin/generic_bind/index'
 import { SLACK_COMMANDS } from '@struktoai/mirage-core/commands/builtin/slack/index'
 import type { RegisteredCommand } from '@struktoai/mirage-core/commands/config'
@@ -24,6 +22,7 @@ import { readdir as slackReaddir } from '@struktoai/mirage-core/core/slack/readd
 import { stat as slackStat } from '@struktoai/mirage-core/core/slack/stat'
 import type { RegisteredOp } from '@struktoai/mirage-core/ops/registry'
 import { SLACK_OPS } from '@struktoai/mirage-core/ops/slack/index'
+import { BaseResource } from '@struktoai/mirage-core/resource/base'
 import type { Resource } from '@struktoai/mirage-core/resource/base'
 import { SLACK_PROMPT, SLACK_WRITE_PROMPT } from '@struktoai/mirage-core/resource/slack/prompt'
 import { PathSpec, ResourceName } from '@struktoai/mirage-core/types'
@@ -38,7 +37,7 @@ export interface SlackResourceState {
   config: SlackConfigRedacted
 }
 
-export class SlackResource implements Resource {
+export class SlackResource extends BaseResource implements Resource {
   readonly kind: string = ResourceName.SLACK
   readonly cachesReads: boolean = true
   // Every listed file carries an exact size: chat.jsonl and users/*.json
@@ -46,14 +45,14 @@ export class SlackResource implements Resource {
   // (users.list is payload-identical to users.info, verified live), and
   // file blobs carry Slack's upload byte count.
   readonly sizesAlwaysKnown: boolean = true
-  readonly indexTtl: number = 600
+  override readonly indexTtl: number = 600
   readonly prompt: string = SLACK_PROMPT
   readonly writePrompt: string = SLACK_WRITE_PROMPT
   readonly config: SlackConfig
   readonly accessor: SlackAccessor
-  readonly index: IndexCacheStore
 
   constructor(config: SlackConfig) {
+    super()
     this.config = config
     this.accessor = new SlackAccessor(
       new BrowserSlackTransport({
@@ -61,14 +60,9 @@ export class SlackResource implements Resource {
         ...(config.getHeaders !== undefined ? { getHeaders: config.getHeaders } : {}),
       }),
     )
-    this.index = new RAMIndexCacheStore({ ttl: this.indexTtl })
   }
 
   open(): Promise<void> {
-    return Promise.resolve()
-  }
-
-  close(): Promise<void> {
     return Promise.resolve()
   }
 
@@ -110,14 +104,14 @@ export class SlackResource implements Resource {
     return resolveSlackGlob(this.accessor, effective, this.index)
   }
 
-  getState(): Promise<SlackResourceState> {
+  override getState(): Promise<SlackResourceState> {
     return Promise.resolve({
       type: this.kind,
       config: redactSlackConfig(this.config),
     })
   }
 
-  loadState(_state: SlackResourceState): Promise<void> {
+  override loadState(_state: SlackResourceState): Promise<void> {
     return Promise.resolve()
   }
 }

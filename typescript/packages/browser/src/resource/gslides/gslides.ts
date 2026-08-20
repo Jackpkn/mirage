@@ -13,8 +13,6 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { GSlidesAccessor } from '@struktoai/mirage-core/accessor/gslides'
-import { RAMIndexCacheStore } from '@struktoai/mirage-core/cache/index/ram'
-import type { IndexCacheStore } from '@struktoai/mirage-core/cache/index/store'
 import { makeResolveGlob } from '@struktoai/mirage-core/commands/builtin/generic_bind/index'
 import { GSLIDES_COMMANDS } from '@struktoai/mirage-core/commands/builtin/gslides/index'
 import type { RegisteredCommand } from '@struktoai/mirage-core/commands/config'
@@ -24,6 +22,7 @@ import { readdir as gslidesReaddir } from '@struktoai/mirage-core/core/gslides/r
 import { stat as gslidesStat } from '@struktoai/mirage-core/core/gslides/stat'
 import { GSLIDES_OPS } from '@struktoai/mirage-core/ops/gslides/index'
 import type { RegisteredOp } from '@struktoai/mirage-core/ops/registry'
+import { BaseResource } from '@struktoai/mirage-core/resource/base'
 import type { Resource } from '@struktoai/mirage-core/resource/base'
 import {
   GSLIDES_PROMPT,
@@ -45,28 +44,23 @@ export interface GSlidesResourceState {
   config: GSlidesConfigRedacted
 }
 
-export class GSlidesResource implements Resource {
+export class GSlidesResource extends BaseResource implements Resource {
   readonly kind: string = ResourceName.GSLIDES
   readonly cachesReads: boolean = true
-  readonly indexTtl: number = 86_400
+  override readonly indexTtl: number = 86_400
   readonly prompt: string = GSLIDES_PROMPT
   readonly writePrompt: string = GSLIDES_WRITE_PROMPT
   readonly config: GSlidesConfig
   readonly accessor: GSlidesAccessor
-  readonly index: IndexCacheStore
 
   constructor(config: GSlidesConfig) {
+    super()
     this.config = config
     const tm = new TokenManager(config)
     this.accessor = new GSlidesAccessor({ tokenManager: tm })
-    this.index = new RAMIndexCacheStore({ ttl: 86_400 })
   }
 
   open(): Promise<void> {
-    return Promise.resolve()
-  }
-
-  close(): Promise<void> {
     return Promise.resolve()
   }
 
@@ -108,14 +102,14 @@ export class GSlidesResource implements Resource {
     return gslidesResolveGlob(this.accessor, effective, this.index)
   }
 
-  getState(): Promise<GSlidesResourceState> {
+  override getState(): Promise<GSlidesResourceState> {
     return Promise.resolve({
       type: this.kind,
       config: redactGSlidesConfig(this.config),
     })
   }
 
-  loadState(_state: GSlidesResourceState): Promise<void> {
+  override loadState(_state: GSlidesResourceState): Promise<void> {
     return Promise.resolve()
   }
 }

@@ -13,8 +13,6 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { MongoDBAccessor } from '@struktoai/mirage-core/accessor/mongodb'
-import { RAMIndexCacheStore } from '@struktoai/mirage-core/cache/index/ram'
-import type { IndexCacheStore } from '@struktoai/mirage-core/cache/index/store'
 import { makeResolveGlob } from '@struktoai/mirage-core/commands/builtin/generic_bind/index'
 import { MONGODB_COMMANDS } from '@struktoai/mirage-core/commands/builtin/mongodb/index'
 import type { RegisteredCommand } from '@struktoai/mirage-core/commands/config'
@@ -24,6 +22,7 @@ import { readdir as mongoReaddir } from '@struktoai/mirage-core/core/mongodb/rea
 import { stat as mongoStat } from '@struktoai/mirage-core/core/mongodb/stat'
 import { MONGODB_OPS } from '@struktoai/mirage-core/ops/mongodb/index'
 import type { RegisteredOp } from '@struktoai/mirage-core/ops/registry'
+import { BaseResource } from '@struktoai/mirage-core/resource/base'
 import type { Resource } from '@struktoai/mirage-core/resource/base'
 import {
   redactMongoDBConfig,
@@ -55,17 +54,17 @@ export interface MongoDBResourceState {
   needs_override: true
 }
 
-export class MongoDBResource implements Resource {
+export class MongoDBResource extends BaseResource implements Resource {
   readonly kind: string = ResourceName.MONGODB
   readonly cachesReads: boolean = false
-  readonly indexTtl: number = 0
+  override readonly indexTtl: number = 0
   readonly prompt: string
   readonly config: MongoDBConfigResolved
   readonly driver: MongoDriver
   readonly accessor: MongoDBAccessor
-  readonly index: IndexCacheStore
 
   constructor(options: MongoDBResourceOptions | MongoDBConfig) {
+    super()
     const { config, prefix, driver, endpoint } =
       'config' in options
         ? options
@@ -73,11 +72,10 @@ export class MongoDBResource implements Resource {
     this.config = resolveMongoDBConfig(config)
     this.driver = driver ?? new HttpMongoDriver({ endpoint: endpoint ?? this.config.uri })
     this.accessor = new MongoDBAccessor(this.driver, this.config)
-    this.index = new RAMIndexCacheStore({ ttl: this.indexTtl })
     this.prompt = MONGODB_PROMPT.replace('{prefix}', prefix ?? '')
   }
 
-  getState(): MongoDBResourceState {
+  override getState(): MongoDBResourceState {
     return {
       type: this.kind,
       config: redactMongoDBConfig(this.config),
@@ -92,7 +90,7 @@ export class MongoDBResource implements Resource {
 
   // The rows live in the database, so a restored mount reaches them
   // through its config alone — there is nothing to take back.
-  loadState(_state: MongoDBResourceState): Promise<void> {
+  override loadState(_state: MongoDBResourceState): Promise<void> {
     return Promise.resolve()
   }
 
@@ -100,8 +98,9 @@ export class MongoDBResource implements Resource {
     return Promise.resolve()
   }
 
-  async close(): Promise<void> {
+  override async close(): Promise<void> {
     await this.driver.close()
+    await super.close()
   }
 
   ops(): readonly RegisteredOp[] {

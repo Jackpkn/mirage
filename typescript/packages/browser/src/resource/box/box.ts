@@ -13,8 +13,6 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { BoxAccessor } from '@struktoai/mirage-core/accessor/box'
-import { RAMIndexCacheStore } from '@struktoai/mirage-core/cache/index/ram'
-import type { IndexCacheStore } from '@struktoai/mirage-core/cache/index/store'
 import { BOX_COMMANDS } from '@struktoai/mirage-core/commands/builtin/box/index'
 import { makeResolveGlob } from '@struktoai/mirage-core/commands/builtin/generic_bind/index'
 import type { RegisteredCommand } from '@struktoai/mirage-core/commands/config'
@@ -22,13 +20,16 @@ import { BoxTokenManager } from '@struktoai/mirage-core/core/box/client'
 import { read as boxRead } from '@struktoai/mirage-core/core/box/read'
 import { readdir as boxReaddir } from '@struktoai/mirage-core/core/box/readdir'
 import { stat as boxStat } from '@struktoai/mirage-core/core/box/stat'
+import { buildDeltaHook } from '@struktoai/mirage-core/core/box/watch'
 import { BOX_OPS } from '@struktoai/mirage-core/ops/box/index'
 import type { RegisteredOp } from '@struktoai/mirage-core/ops/registry'
+import { BaseResource } from '@struktoai/mirage-core/resource/base'
 import type { Resource } from '@struktoai/mirage-core/resource/base'
 import { BOX_PROMPT } from '@struktoai/mirage-core/resource/box/prompt'
 import { PathSpec, ResourceName } from '@struktoai/mirage-core/types'
 import type { FileStat } from '@struktoai/mirage-core/types'
 import { mountKey, mountPrefixOf } from '@struktoai/mirage-core/utils/key_prefix'
+import { type DeltaHook } from '@struktoai/mirage-core/watch/index'
 import { redactBoxConfig, type BoxConfig, type BoxConfigRedacted } from './config.ts'
 
 const boxResolveGlob = makeResolveGlob(boxReaddir)
@@ -38,19 +39,19 @@ export interface BoxResourceState {
   config: BoxConfigRedacted
 }
 
-export class BoxResource implements Resource {
+export class BoxResource extends BaseResource implements Resource {
   readonly kind: string = ResourceName.BOX
   readonly cachesReads: boolean = true
   // Box item listings carry an exact byte `size` for every file (0
   // included); sizeless weblinks are filtered out of listings.
   readonly sizesAlwaysKnown: boolean = true
-  readonly indexTtl: number = 86_400
+  override readonly indexTtl: number = 86_400
   readonly prompt: string = BOX_PROMPT
   readonly config: BoxConfig
   readonly accessor: BoxAccessor
-  readonly index: IndexCacheStore
 
   constructor(config: BoxConfig) {
+    super()
     this.config = config
     // The whole config goes to the token manager, never a hand-picked
     // subset: a field added to BoxConfig would silently stop reaching it
@@ -62,14 +63,9 @@ export class BoxResource implements Resource {
       ...(config.rootFolderId !== undefined ? { rootFolderId: config.rootFolderId } : {}),
       ...(config.contentSearch !== undefined ? { contentSearch: config.contentSearch } : {}),
     })
-    this.index = new RAMIndexCacheStore({ ttl: 86_400 })
   }
 
   open(): Promise<void> {
-    return Promise.resolve()
-  }
-
-  close(): Promise<void> {
     return Promise.resolve()
   }
 
@@ -111,14 +107,18 @@ export class BoxResource implements Resource {
     return boxResolveGlob(this.accessor, effective, this.index)
   }
 
-  getState(): Promise<BoxResourceState> {
+  deltaHook(): DeltaHook {
+    return buildDeltaHook(this.accessor)
+  }
+
+  override getState(): Promise<BoxResourceState> {
     return Promise.resolve({
       type: this.kind,
       config: redactBoxConfig(this.config),
     })
   }
 
-  loadState(_state: BoxResourceState): Promise<void> {
+  override loadState(_state: BoxResourceState): Promise<void> {
     return Promise.resolve()
   }
 }

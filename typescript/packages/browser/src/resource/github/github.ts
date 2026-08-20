@@ -27,13 +27,16 @@ import { read as githubRead } from '@struktoai/mirage-core/core/github/read'
 import { readdir as githubReaddir } from '@struktoai/mirage-core/core/github/readdir'
 import { stat as githubStat } from '@struktoai/mirage-core/core/github/stat'
 import { buildTreeMap as githubBuildTreeMap } from '@struktoai/mirage-core/core/github/tree'
+import { buildDeltaHook } from '@struktoai/mirage-core/core/github/watch'
 import { GITHUB_OPS } from '@struktoai/mirage-core/ops/github/index'
 import type { RegisteredOp } from '@struktoai/mirage-core/ops/registry'
+import { BaseResource } from '@struktoai/mirage-core/resource/base'
 import type { Resource } from '@struktoai/mirage-core/resource/base'
 import { GITHUB_PROMPT } from '@struktoai/mirage-core/resource/github/prompt'
 import { PathSpec, ResourceName } from '@struktoai/mirage-core/types'
 import type { FileStat } from '@struktoai/mirage-core/types'
 import { mountKey, mountPrefixOf } from '@struktoai/mirage-core/utils/key_prefix'
+import type { DeltaHook } from '@struktoai/mirage-core/watch/index'
 import {
   redactGitHubConfig,
   type GitHubConfig,
@@ -49,7 +52,7 @@ export interface GitHubResourceState {
   truncated: boolean
 }
 
-export class GitHubResource implements Resource {
+export class GitHubResource extends BaseResource implements Resource {
   readonly kind: string = ResourceName.GITHUB
   readonly cachesReads: boolean = true
   // The git tree API reports the exact blob size for every file; the
@@ -59,16 +62,16 @@ export class GitHubResource implements Resource {
   // Blob shas are stable per-path markers, so cached reads can be
   // probe-verified under ALWAYS and snapshots carry drift fingerprints.
   readonly supportsSnapshot: boolean = true
-  readonly indexTtl: number = 86_400
+  override readonly indexTtl: number = 86_400
   readonly prompt: string = GITHUB_PROMPT
   readonly config: GitHubConfig
   readonly accessor: GitHubAccessor
-  readonly index: IndexCacheStore
 
   private constructor(config: GitHubConfig, accessor: GitHubAccessor, index: IndexCacheStore) {
+    super()
     this.config = config
     this.accessor = accessor
-    this.index = index
+    this._index = index
   }
 
   static async create(config: GitHubConfig): Promise<GitHubResource> {
@@ -95,10 +98,6 @@ export class GitHubResource implements Resource {
   }
 
   open(): Promise<void> {
-    return Promise.resolve()
-  }
-
-  close(): Promise<void> {
     return Promise.resolve()
   }
 
@@ -140,7 +139,11 @@ export class GitHubResource implements Resource {
     return githubResolveGlob(this.accessor, effective, this.index)
   }
 
-  getState(): Promise<GitHubResourceState> {
+  deltaHook(): DeltaHook {
+    return buildDeltaHook(this.accessor)
+  }
+
+  override getState(): Promise<GitHubResourceState> {
     return Promise.resolve({
       type: this.kind,
       config: redactGitHubConfig(this.config),
@@ -149,7 +152,7 @@ export class GitHubResource implements Resource {
     })
   }
 
-  loadState(_state: GitHubResourceState): Promise<void> {
+  override loadState(_state: GitHubResourceState): Promise<void> {
     return Promise.resolve()
   }
 }

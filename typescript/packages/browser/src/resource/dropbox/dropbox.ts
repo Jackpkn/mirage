@@ -13,8 +13,6 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { DropboxAccessor } from '@struktoai/mirage-core/accessor/dropbox'
-import { RAMIndexCacheStore } from '@struktoai/mirage-core/cache/index/ram'
-import type { IndexCacheStore } from '@struktoai/mirage-core/cache/index/store'
 import { DROPBOX_COMMANDS } from '@struktoai/mirage-core/commands/builtin/dropbox/index'
 import { makeResolveGlob } from '@struktoai/mirage-core/commands/builtin/generic_bind/index'
 import type { RegisteredCommand } from '@struktoai/mirage-core/commands/config'
@@ -22,13 +20,16 @@ import { DropboxTokenManager } from '@struktoai/mirage-core/core/dropbox/client'
 import { read as dropboxRead } from '@struktoai/mirage-core/core/dropbox/read'
 import { readdir as dropboxReaddir } from '@struktoai/mirage-core/core/dropbox/readdir'
 import { stat as dropboxStat } from '@struktoai/mirage-core/core/dropbox/stat'
+import { buildDeltaHook } from '@struktoai/mirage-core/core/dropbox/watch'
 import { DROPBOX_OPS } from '@struktoai/mirage-core/ops/dropbox/index'
 import type { RegisteredOp } from '@struktoai/mirage-core/ops/registry'
+import { BaseResource } from '@struktoai/mirage-core/resource/base'
 import type { Resource } from '@struktoai/mirage-core/resource/base'
 import { DROPBOX_PROMPT } from '@struktoai/mirage-core/resource/dropbox/prompt'
 import { PathSpec, ResourceName } from '@struktoai/mirage-core/types'
 import type { FileStat } from '@struktoai/mirage-core/types'
 import { mountKey, mountPrefixOf } from '@struktoai/mirage-core/utils/key_prefix'
+import { type DeltaHook } from '@struktoai/mirage-core/watch/index'
 import { redactDropboxConfig, type DropboxConfig, type DropboxConfigRedacted } from './config.ts'
 
 const dropboxResolveGlob = makeResolveGlob(dropboxReaddir)
@@ -38,19 +39,19 @@ export interface DropboxResourceState {
   config: DropboxConfigRedacted
 }
 
-export class DropboxResource implements Resource {
+export class DropboxResource extends BaseResource implements Resource {
   readonly kind: string = ResourceName.DROPBOX
   readonly cachesReads: boolean = true
   // list_folder carries an exact byte `size` for every file (0 included).
   // Paper docs 409 on raw download, a loud error, never a silent empty read.
   readonly sizesAlwaysKnown: boolean = true
-  readonly indexTtl: number = 86_400
+  override readonly indexTtl: number = 86_400
   readonly prompt: string = DROPBOX_PROMPT
   readonly config: DropboxConfig
   readonly accessor: DropboxAccessor
-  readonly index: IndexCacheStore
 
   constructor(config: DropboxConfig) {
+    super()
     this.config = config
     const tm = new DropboxTokenManager(config)
     this.accessor = new DropboxAccessor({
@@ -58,14 +59,9 @@ export class DropboxResource implements Resource {
       ...(config.rootPath !== undefined ? { rootPath: config.rootPath } : {}),
       ...(config.contentSearch !== undefined ? { contentSearch: config.contentSearch } : {}),
     })
-    this.index = new RAMIndexCacheStore({ ttl: 86_400 })
   }
 
   open(): Promise<void> {
-    return Promise.resolve()
-  }
-
-  close(): Promise<void> {
     return Promise.resolve()
   }
 
@@ -107,14 +103,18 @@ export class DropboxResource implements Resource {
     return dropboxResolveGlob(this.accessor, effective, this.index)
   }
 
-  getState(): Promise<DropboxResourceState> {
+  deltaHook(): DeltaHook {
+    return buildDeltaHook(this.accessor)
+  }
+
+  override getState(): Promise<DropboxResourceState> {
     return Promise.resolve({
       type: this.kind,
       config: redactDropboxConfig(this.config),
     })
   }
 
-  loadState(_state: DropboxResourceState): Promise<void> {
+  override loadState(_state: DropboxResourceState): Promise<void> {
     return Promise.resolve()
   }
 }

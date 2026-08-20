@@ -13,8 +13,6 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { S3Accessor } from '@struktoai/mirage-core/accessor/s3'
-import { RAMIndexCacheStore } from '@struktoai/mirage-core/cache/index/ram'
-import type { IndexCacheStore } from '@struktoai/mirage-core/cache/index/store'
 import { makeResolveGlob } from '@struktoai/mirage-core/commands/builtin/generic_bind/index'
 import { S3_COMMANDS } from '@struktoai/mirage-core/commands/builtin/s3/index'
 import type { RegisteredCommand } from '@struktoai/mirage-core/commands/config'
@@ -41,13 +39,16 @@ import {
 import { truncate as truncateCore } from '@struktoai/mirage-core/core/s3/truncate'
 import { unlink as unlinkCore } from '@struktoai/mirage-core/core/s3/unlink'
 import { write as writeCore } from '@struktoai/mirage-core/core/s3/write'
+import { buildDeltaHook } from '@struktoai/mirage-core/core/s3/watch'
 import type { RegisteredOp } from '@struktoai/mirage-core/ops/registry'
 import { S3_OPS } from '@struktoai/mirage-core/ops/s3/index'
+import { BaseResource } from '@struktoai/mirage-core/resource/base'
 import type { FindOptions, Resource } from '@struktoai/mirage-core/resource/base'
 import { s3StorageId } from '@struktoai/mirage-core/resource/s3/storage_id'
 import { PathSpec, ResourceName } from '@struktoai/mirage-core/types'
 import type { FileStat } from '@struktoai/mirage-core/types'
 import { mountKey, mountPrefixOf } from '@struktoai/mirage-core/utils/key_prefix'
+import { type DeltaHook } from '@struktoai/mirage-core/watch/index'
 import { redactConfig, type S3Config, type S3ConfigRedacted } from './config.ts'
 
 const globCore = makeResolveGlob(readdirCore, S3_SCOPE_ERROR)
@@ -63,7 +64,7 @@ export interface S3ResourceState {
   config: S3ConfigRedacted
 }
 
-export class S3Resource implements Resource {
+export class S3Resource extends BaseResource implements Resource {
   readonly supportsSnapshot: boolean = true
   readonly kind: string = ResourceName.S3
   readonly cachesReads: boolean = true
@@ -71,31 +72,26 @@ export class S3Resource implements Resource {
   // fetching. Every sibling browser resource says so; s3 was the one that
   // did not, and its node twin has always declared it.
   readonly sizesAlwaysKnown: boolean = true
-  readonly indexTtl: number = 600
+  override readonly indexTtl: number = 600
   readonly prompt: string = S3_BROWSER_PROMPT
   readonly config: S3Config
   readonly accessor: S3Accessor
-  readonly index: IndexCacheStore
 
   constructor(config: S3Config) {
+    super()
     this.config = config
     this.accessor = new S3Accessor(this.config)
-    this.index = new RAMIndexCacheStore({ ttl: this.indexTtl })
   }
 
   // Without this, two mounts of one bucket at different prefixes are two
   // storages, so `mv` between them copies an object over itself and then
   // unlinks the source. Node has always declared it; the shared helper keeps
   // the two runtimes from computing different identities for one bucket.
-  storageId(): string {
+  override storageId(): string {
     return s3StorageId(this.kind, this.config)
   }
 
   open(): Promise<void> {
-    return Promise.resolve()
-  }
-
-  close(): Promise<void> {
     return Promise.resolve()
   }
 
@@ -201,14 +197,18 @@ export class S3Resource implements Resource {
     return globCore(this.accessor, effective, this.index)
   }
 
-  getState(): Promise<S3ResourceState> {
+  deltaHook(): DeltaHook {
+    return buildDeltaHook(this.accessor)
+  }
+
+  override getState(): Promise<S3ResourceState> {
     return Promise.resolve({
       type: this.kind,
       config: redactConfig(this.config),
     })
   }
 
-  loadState(_state: S3ResourceState): Promise<void> {
+  override loadState(_state: S3ResourceState): Promise<void> {
     return Promise.resolve()
   }
 
