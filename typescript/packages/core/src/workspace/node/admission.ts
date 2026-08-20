@@ -18,11 +18,20 @@ import { PolicyDenied, askRule, renderDeny, renderPending } from '../../policy/i
 import type { CommandContext, CommandRule, CommandsSpec } from '../../policy/index.ts'
 import { ioRefusal } from '../../policy/match/rule.ts'
 import { hasRules, readsArgs, scopesPaths } from '../../policy/match/reads.ts'
+import type { ValueType } from '../../commands/spec/types.ts'
 import { commandNodes } from '../../runtime/policy/index.ts'
-import { getParts, getText, literalWord, splitEnvPrefix } from '../../shell/helpers.ts'
+import {
+  getParts,
+  getRedirects,
+  getText,
+  literalWord,
+  splitEnvPrefix,
+} from '../../shell/helpers.ts'
+import { NodeType, RedirectKind } from '../../shell/types.ts'
 import type { TSNodeLike } from '../../shell/types.ts'
 import { PathSpec } from '../../types.ts'
 import type { EntryGate } from '../../types.ts'
+import { isGlob } from '../../utils/hidden.ts'
 import { CycleError, resolvePath } from '../../utils/path.ts'
 import { toScope } from '../executor/builtins/scope.ts'
 import { followPaths } from '../executor/builtins/links/links.ts'
@@ -34,9 +43,21 @@ import {
   programTokens,
 } from '../executor/command/routing.ts'
 import { classifyParts } from '../expand/classify/parts.ts'
+import { classifyBarePath } from '../expand/classify/path.ts'
+import { specForCommand, specWordBases, specWordKinds } from '../expand/spec_hints.ts'
 import type { Namespace } from '../mount/namespace/namespace.ts'
 import type { MountRegistry } from '../mount/registry.ts'
-import { SLASH_KEEPS_LAST, commandVisible, followsLastComponent, isTool } from '../route/index.ts'
+import {
+  SLASH_KEEPS_LAST,
+  WordPolicy,
+  commandVisible,
+  followsLastComponent,
+  isTool,
+  readsSubtrees,
+  route,
+  walksMounts,
+  wordPolicy,
+} from '../route/index.ts'
 import type { Session } from '../session/session.ts'
 import { homeDir } from '../session/shell_dirs.ts'
 import { innerLines, innerReadable, wordValue, type Word } from './inner_lines.ts'
@@ -111,10 +132,16 @@ export class Admitted implements EntryGate {
  * itself, `-L` turns following back on), the same one the router
  * applies to the operands before the handler runs, so a rule sees
  * exactly the path the command will touch. A loop is left to that later
- * step to report; here the typed paths stand. Last comes the operand a
- * bare `ls`/`find`/`du`/`tree`/`grep -r` implies, the working directory,
+ * step to report; here the typed paths stand. Then the operand a bare
+ * `ls`/`find`/`du`/`tree`/`grep -r` implies, the working directory,
  * which the executor injects after the gate and which a rule on that
- * directory has to see.
+ * directory has to see. Last come the statement's redirect targets:
+ * `cat < /data/secret` reads the file and `echo x > /data/secret`
+ * truncates it, on the shell's own fds outside the admitted command's
+ * gate window, so the admission is the one place a rule can see them. A
+ * redirect always dereferences (the shell opens the target), so its
+ * link targets ride along whatever the command's own follow policy
+ * says.
  */
 export function policyScopes(
   name: string,
@@ -123,6 +150,7 @@ export function policyScopes(
   namespace: Namespace | null,
   cwd: string,
   implied: PathSpec | null = null,
+  redirects: readonly PathSpec[] = [],
 ): PathSpec[] {
   const scopes: PathSpec[] = []
   for (const p of operands) {
@@ -157,6 +185,25 @@ export function policyScopes(
   }
   if (implied !== null && !scopes.some((p) => p.virtual === implied.virtual)) {
     scopes.push(implied)
+  }
+  if (redirects.length > 0) {
+    const targets: (string | PathSpec)[] = [...redirects]
+    if (namespace !== null && namespace.nodes.size > 0) {
+      let followed: (string | PathSpec)[] = []
+      try {
+        followed = followPaths(namespace, [...redirects], true)
+      } catch (err) {
+        if (!(err instanceof CycleError)) throw err
+      }
+      targets.push(...followed.filter((p) => p instanceof PathSpec))
+    }
+    const seen = new Set(scopes.map((p) => p.virtual))
+    for (const item of targets) {
+      if (item instanceof PathSpec && !seen.has(item.virtual)) {
+        seen.add(item.virtual)
+        scopes.push(item)
+      }
+    }
   }
   return scopes
 }
@@ -197,6 +244,7 @@ export async function admit(
   namespace: Namespace | null,
   agentId = '',
   stdin: ByteSource | null = null,
+  redirects: readonly PathSpec[] = [],
 ): Promise<Refusal | Admitted> {
   if (!commandVisible(name, session)) {
     return { stderr: new TextEncoder().encode(`${name}: command not found\n`), exitCode: 127 }
@@ -208,7 +256,10 @@ export async function admit(
       : null
   const ctx: CommandContext = {
     command: name,
-    paths: seen(session, policyScopes(name, args, operands, namespace, session.cwd, implied)),
+    paths: seen(
+      session,
+      policyScopes(name, args, operands, namespace, session.cwd, implied, redirects),
+    ),
     operands: seen(session, positionalScopes(name, [...args], session.cwd, [...operands])),
     argv: [...args],
     cwd: session.cwd,
@@ -218,6 +269,7 @@ export async function admit(
     tokens,
     program,
     tool: isTool(name, session),
+    walks: walksMounts(name, [name, ...args]),
   }
   const asked = await registry.policies.preCommand(ctx)
   // An Ask is the chain's answer only after every Deny had its say; the
@@ -252,9 +304,42 @@ function unreadable(raw: string): string {
 }
 
 /**
+ * The spec's per-position classification hints for a literal line, the
+ * way `expandArgv` computes them for an expanded one. Without them a
+ * bare filename operand stays text (`cat secret` from `/data` yields no
+ * `/data/secret` scope) and a chdir option (tar's `-C`) resolves later
+ * words against the wrong base, so a rule and the run would disagree
+ * about the paths the line names.
+ */
+function wordHints(
+  line: readonly string[],
+  session: Session,
+  registry: MountRegistry,
+): [(ValueType | null)[] | null, (string | null)[] | null] {
+  const consumed = registry.matchCommandPrefix([...line])
+  const joined = line.slice(0, consumed).join(' ')
+  if (
+    Object.hasOwn(session.functions, joined) ||
+    wordPolicy(route(joined, session, registry)) !== WordPolicy.MOUNT
+  ) {
+    return [null, null]
+  }
+  const spec = specForCommand(joined, registry, session.cwd)
+  if (spec === null) return [null, null]
+  const extra: (ValueType | null)[] = new Array<ValueType | null>(consumed - 1).fill('str')
+  const wordKinds = [...extra, ...specWordKinds(spec, [...line.slice(consumed)])]
+  const bases = specWordBases(spec, [...line.slice(consumed)], session.cwd)
+  const wordBases =
+    bases === null ? null : [...new Array<string | null>(consumed - 1).fill(null), ...bases]
+  return [wordKinds, wordBases]
+}
+
+/**
  * Admit one command of a whole line on the words the gate read, then
  * whatever lines the command runs in turn. `open` says the runtime
- * appends operands the gate cannot read (`xargs`, `find -exec`).
+ * appends operands the gate cannot read (`xargs`, `find -exec`);
+ * `redirectWords` are the statement's redirect targets, as the gate
+ * reads them.
  */
 async function admitWords(
   words: readonly Word[],
@@ -265,13 +350,20 @@ async function admitWords(
   agentId: string,
   layers: readonly CommandsSpec[],
   reparse: (line: string) => TSNodeLike,
+  redirectWords: readonly Word[] = [],
 ): Promise<Refusal | null> {
   const head = words[0]
   if (head === undefined) return null
   if (head.text === null && hasRules(layers)) return refuse(head.raw, unreadable(head.raw))
   const name = wordValue(head)
   const args = words.slice(1).map(wordValue)
-  const classified = classifyParts([name, ...args], registry, session.cwd)
+  const line = [name, ...args]
+  const [wordKinds, wordBases] = wordHints(line, session, registry)
+  const classified = classifyParts(line, registry, session.cwd, wordKinds, wordBases)
+  const redirects = redirectWords
+    .filter((w) => w.text !== null)
+    .map((w) => classifyBarePath(wordValue(w), registry, session.cwd))
+    .filter((p): p is PathSpec => p instanceof PathSpec)
   const verdict = await admit(
     name,
     args,
@@ -280,9 +372,23 @@ async function admitWords(
     registry,
     namespace,
     agentId,
+    null,
+    redirects,
   )
   if (!(verdict instanceof Admitted)) return verdict
-  const unread = words.slice(1).find((w) => w.text === null)?.raw
+  if (verdict.scoped) {
+    // The runtime walks and globs on its own, where no entry gate
+    // follows an I/O below the judged words, so a command a path or
+    // mount rule reads must not reach it with either in hand.
+    if (readsSubtrees(name, line)) {
+      return refuse(name, 'walks a tree the gate cannot follow')
+    }
+    const globby = [...classified.slice(1), ...redirects].some(
+      (p) => p instanceof PathSpec && isGlob(p.rawPath || p.virtual),
+    )
+    if (globby) return refuse(name, 'expands a pattern only the runtime can read')
+  }
+  const unread = [...words.slice(1), ...redirectWords].find((w) => w.text === null)?.raw
   if ((unread !== undefined || open) && readsArgs(layers, name)) {
     return refuse(
       name,
@@ -326,8 +432,16 @@ async function admitWords(
  * that run other words (`eval`, `sh -c`, `xargs`, `env` ... see
  * `innerLines`) have those lines admitted in turn, and a line the gate
  * cannot read at all (a sourced file, a script, `eval "$p"`) is refused
- * under any command rule. With no rule in force nothing is refused on
- * this account: the words are admitted as typed, which is all a coded
+ * under any command rule. A statement's redirect targets are read as
+ * words of its command, so `cat < /data/secret` is judged on the file
+ * it opens. A command a path or mount rule reads is refused outright
+ * when its I/O would pass the judged words — a walk (`find`,
+ * `grep -r`, `tar -c`) or a glob only the runtime expands — because
+ * every line executor acts outside the entry gate (a remote sandbox's
+ * own disk, a host process), so a walk the gate cannot follow does not
+ * run; a runtime whose I/O rides the dispatcher could relax this by
+ * carrying the gate. With no rule in force nothing is refused on this
+ * account: the words are admitted as typed, which is all a coded
  * policy ever saw. `reparse` parses the text a word runs (`eval`,
  * `sh -c`) the way the line reader parsed the line.
  */
@@ -357,8 +471,34 @@ export async function admitLine(
       agentId,
       layers,
       reparse,
+      redirectWords(node, home),
     )
     if (refusal !== null) return refusal
   }
   return null
+}
+
+/**
+ * The redirect targets of the statement holding a command, as the gate
+ * reads its words: the raw text and the literal it names, null when
+ * only the runtime can expand it (refused wherever a rule reads the
+ * command's arguments, like any other word). Heredoc and herestring
+ * bodies are content, not paths, and a numeric target is an fd
+ * duplication; neither names a file.
+ */
+function redirectWords(node: TSNodeLike, home: string | null): Word[] {
+  const parent = node.parent
+  if (parent === undefined || parent === null) return []
+  if (parent.type !== NodeType.REDIRECTED_STATEMENT) return []
+  const body = parent.namedChildren[0]
+  if (body === undefined || body.startIndex !== node.startIndex) return []
+  const [, redirects] = getRedirects(parent)
+  const words: Word[] = []
+  for (const r of redirects) {
+    if (r.kind === RedirectKind.HEREDOC || r.kind === RedirectKind.HERESTRING) continue
+    if (typeof r.target === 'number' || r.targetNode === null) continue
+    const target = r.targetNode as TSNodeLike
+    words.push({ raw: String(r.target), text: literalWord(target, home) })
+  }
+  return words
 }

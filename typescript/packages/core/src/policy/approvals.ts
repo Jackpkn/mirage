@@ -133,11 +133,16 @@ export class Approvals {
     const argv = [ctx.command, ...ctx.argv]
     const sessionId = ctx.sessionId ?? ''
     const held = this.grants(sessionId)
+    // An exact-line grant answers the rule it was asked under, like a
+    // session grant: one that outlives a rule change (a persisted store
+    // reopened under an edited profile) must not answer the new rule's
+    // ask, and a stale denial must not speak in its voice.
     for (const grant of held) {
       if (
         EXACT_LINE_DECISIONS.has(grant.decision) &&
         sameWords(grant.argv, argv) &&
-        grant.cwd === ctx.cwd
+        grant.cwd === ctx.cwd &&
+        sameRule(grant.rule, rule)
       ) {
         this.set(
           sessionId,

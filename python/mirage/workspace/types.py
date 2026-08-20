@@ -33,6 +33,10 @@ class ExecutionNode:
         paths (list[PathSpec]): Classified path operands of a leaf mount
             command. Transient (not serialized): lets the lazy-stream drain
             respell filesystem errors as typed, like the eager chokepoint.
+        refused (bool): The admission gate refused the line, so it never
+            ran. Transient: the redirect layer reads it to leave output
+            targets untouched, where an ordinary failure still creates
+            and truncates them as bash's open-before-exec would.
     """
 
     command: str | None = None
@@ -42,6 +46,7 @@ class ExecutionNode:
     children: list["ExecutionNode"] = field(default_factory=list)
     records: list[OpRecord] = field(default_factory=list)
     paths: list[PathSpec] = field(default_factory=list)
+    refused: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {}

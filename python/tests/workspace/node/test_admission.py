@@ -217,6 +217,91 @@ async def test_admit_line_reads_literal_words_and_refuses_the_unreadable():
 
 
 @pytest.mark.asyncio
+async def test_admit_line_classifies_bare_operands_with_the_spec():
+    # `cat secret` from /data names /data/secret only through cat's
+    # spec: the bare word has no path shape for the heuristics, and the
+    # runtime resolves it against the cwd exactly as the spec hints do.
+    ws = _ws()
+    try:
+        await ws.execute("cd /data")
+        session = ws._session_mgr.get(ws._session_mgr.default_id)
+        registry, namespace = ws._registry, ws._namespace
+        refusal = await admit_line(parse("cat secret"), session, registry,
+                                   namespace)
+        assert refusal is not None
+        assert (refusal.exit_code,
+                refusal.stderr) == (1, b"cat: secret: sealed\n")
+        assert await admit_line(parse("cat open"), session, registry,
+                                namespace) is None
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_admit_line_refuses_a_walk_or_a_glob_under_a_path_rule():
+    # Every line executor acts outside the entry gate (a sandbox's own
+    # disk), so a command a path rule reads must not reach it with a
+    # walk or a pattern in hand: the walk would read entries the gate
+    # never judged, and only the runtime would see the matches.
+    ws = _ws()
+    try:
+        session = ws._session_mgr.get(ws._session_mgr.default_id)
+        registry, namespace = ws._registry, ws._namespace
+
+        async def line(text: str):
+            refusal = await admit_line(parse(text), session, registry,
+                                       namespace)
+            return None if refusal is None else (refusal.exit_code,
+                                                 refusal.stderr.decode())
+
+        assert await line("grep -r x /data") == (
+            126, "grep: policy denied: walks a tree the gate cannot follow\n")
+        assert await line("rg x /data") == (
+            126, "rg: policy denied: walks a tree the gate cannot follow\n")
+        assert await line("cat /data/se*") == (
+            126, "cat: policy denied: expands a pattern only the runtime can "
+            "read\n")
+        # The judged words still pass: a named clean path, a command no
+        # path rule reads, a walker the rules leave alone.
+        assert await line("grep x /data/open.txt") is None
+        assert await line("echo /data/*") is None
+        assert await line("head -n 1 /data/open.txt") is None
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_admit_line_reads_redirect_targets_as_words_of_the_command():
+    # The shell opens a redirect target on its own fds, outside the
+    # admitted command's gate window, so the gate judges it with the
+    # line: `cat < /data/secret` reads the file it protects, and a
+    # target only the runtime can expand is unread like any word.
+    ws = _ws()
+    try:
+        session = ws._session_mgr.get(ws._session_mgr.default_id)
+        registry, namespace = ws._registry, ws._namespace
+
+        async def line(text: str):
+            refusal = await admit_line(parse(text), session, registry,
+                                       namespace)
+            return None if refusal is None else (refusal.exit_code,
+                                                 refusal.stderr.decode())
+
+        assert await line("cat < /data/secret") == (
+            1, "cat: /data/secret: sealed\n")
+        assert await line("head -c 1 /data/open > /data/secret2") is None
+        assert await line("cat /data/open > /data/secret2") == (
+            1, "cat: /data/secret2: sealed\n")
+        assert await line("cat < $F") == (
+            126, 'cat: policy denied: cannot read $F before the runtime '
+            "expands it\n")
+        assert await line("echo hi > $F") is None
+        assert await line("cat /data/open <<< 'body'") is None
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
 async def test_a_hidden_path_is_no_path_to_any_policy():
     # A session that cannot see a path must not learn of it from a
     # rule: the gate drops the operand before any hook, the rule does

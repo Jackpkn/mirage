@@ -191,6 +191,34 @@ describe('Approvals', () => {
     )
   })
 
+  it('an exact-line grant answers only the rule it was asked under', async () => {
+    // The rules changed under a held grant (a persisted store reopened
+    // under an edited profile): the same line asked under the new rule
+    // is a new question, so the old approval does not authorize it and
+    // the old denial does not speak in its voice.
+    const sessions = new Sessions()
+    const door = new Approvals(sessions)
+    const edited: Ask = {
+      kind: 'ask',
+      reason: 'fresh sign-off',
+      rule: { reason: 'fresh sign-off', commands: ['git push'] },
+    }
+    const pending = (await door.resolve(ctx(), ASK)) as Pending
+    expect(pending.kind).toBe('pending')
+    await door.grant(pending.id)
+    expect((await door.resolve(ctx(), edited))?.kind).toBe('pending')
+    expect(sessions.grants.get('s')).toHaveLength(1)
+    // The rule it was asked under is the one it answers, once.
+    expect(await door.resolve(ctx(), ASK)).toBeNull()
+    expect(sessions.grants.get('s')).toHaveLength(0)
+
+    const deniedDoor = new Approvals(new Sessions())
+    const asked = (await deniedDoor.resolve(ctx(), ASK)) as Pending
+    await deniedDoor.deny(asked.id)
+    expect((await deniedDoor.resolve(ctx(), edited))?.kind).toBe('pending')
+    expect(await deniedDoor.resolve(ctx(), ASK)).toEqual({ kind: 'deny', reason: 'sign-off' })
+  })
+
   it('unknown or answered ids are refused', async () => {
     const door = new Approvals(new Sessions())
     await expect(door.grant('nothing')).rejects.toThrow(/no pending approval/)

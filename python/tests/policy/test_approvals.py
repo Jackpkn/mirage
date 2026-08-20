@@ -157,6 +157,34 @@ async def test_record_flow_session_and_deny():
 
 
 @pytest.mark.asyncio
+async def test_an_exact_line_grant_answers_only_the_rule_it_was_asked_under():
+    # The rules changed under a held grant (a persisted store reopened
+    # under an edited profile): the same line asked under the new rule
+    # is a new question, so the old approval does not authorize it and
+    # the old denial does not speak in its voice.
+    sessions = Sessions()
+    door = Approvals(sessions)
+    ctx = _ctx()
+    edited = Ask("fresh sign-off",
+                 CommandRule(reason="fresh sign-off", commands=("git push", )))
+    pending = await door.resolve(ctx, ASK)
+    assert isinstance(pending, Pending)
+    await door.grant(pending.id)
+    assert isinstance(await door.resolve(ctx, edited), Pending)
+    assert len(sessions.grants["s"]) == 1
+    # The rule it was asked under is the one it answers, once.
+    assert await door.resolve(ctx, ASK) is None
+    assert sessions.grants["s"] == ()
+
+    denied_door = Approvals(Sessions())
+    pending = await denied_door.resolve(ctx, ASK)
+    assert isinstance(pending, Pending)
+    await denied_door.deny(pending.id)
+    assert isinstance(await denied_door.resolve(ctx, edited), Pending)
+    assert await denied_door.resolve(ctx, ASK) == Deny("sign-off")
+
+
+@pytest.mark.asyncio
 async def test_unknown_or_answered_ids_are_refused():
     door = Approvals(Sessions())
     with pytest.raises(KeyError):

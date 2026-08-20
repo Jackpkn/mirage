@@ -12,6 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import { runWithRedirectPaths } from '../../context/session_context.ts'
 import { fsStrerror, isFsError } from '../../utils/errors.ts'
 import { stripSlash } from '../../utils/slash.ts'
 import type { ByteSource } from '../../io/types.ts'
@@ -118,13 +119,30 @@ export async function handleRedirect(
   let stdoutData: Uint8Array
   let stderrData: Uint8Array
   let io: IOResult
+  let refused = false
   if (command === null) {
     stdoutData = new Uint8Array()
     stderrData = new Uint8Array()
     io = new IOResult({ exitCode: 0 })
   } else {
-    const [stdout, execIo] = await executeNode(command, session, cmdStdin, callStack)
+    // The expanded targets ride to the command's admission gate: the
+    // reads and writes below run on the shell's own fds outside the
+    // admitted command's gate window, so the gate must judge the
+    // targets with the line. Bound to this node so a nested line
+    // expanded on the way never inherits them.
+    const targets = redirects
+      .filter(
+        (r) =>
+          r.kind !== RedirectKind.HEREDOC &&
+          r.kind !== RedirectKind.HERESTRING &&
+          typeof r.target !== 'number',
+      )
+      .map((r) => ensureScope(r.target))
+    const [stdout, execIo, execNode] = await runWithRedirectPaths(command, targets, () =>
+      executeNode(command, session, cmdStdin, callStack),
+    )
     io = execIo
+    refused = execNode.refused
     stdoutData =
       ((await applyBarrier(stdout, io, BarrierPolicy.VALUE)) as Uint8Array | null) ??
       new Uint8Array()
@@ -159,6 +177,16 @@ export async function handleRedirect(
 
     // other numeric dups (3>&1, ...) are not simulated
     if (typeof r.target === 'number') continue
+
+    if (refused) {
+      // The gate refused the line, so it performs no file I/O: the
+      // target is neither created nor truncated (bash's open-before-exec
+      // would; a policy refusal must leave the protected file alone),
+      // and the refusal flows to the caller on the shell's own streams,
+      // which the fd dups above still route (`cmd 2>&1` reads as bash
+      // routes it).
+      continue
+    }
 
     const scope = ensureScope(r.target)
     const path = scope.virtual
@@ -212,7 +240,7 @@ export async function handleRedirect(
   }
 
   io.stderr = outStderr.byteLength > 0 ? outStderr : null
-  const execNode = new ExecutionNode({ command: 'redirect', exitCode: io.exitCode })
+  const execNode = new ExecutionNode({ command: 'redirect', exitCode: io.exitCode, refused })
   const outSource: ByteSource | null = outStdout.byteLength > 0 ? outStdout : null
   return [outSource, io, execNode]
 }

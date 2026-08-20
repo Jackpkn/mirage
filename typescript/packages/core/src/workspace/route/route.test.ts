@@ -23,8 +23,10 @@ import {
   SHELL_CONSUMERS,
   commandVisible,
   dereferences,
+  readsSubtrees,
   route,
   routeAll,
+  walksMounts,
 } from './index.ts'
 import { Session } from '../session/session.ts'
 import { Workspace } from '../workspace/workspace.ts'
@@ -163,6 +165,36 @@ describe('find link-policy options', () => {
 
   it('only counts options before the operand', () => {
     expect(dereferences('find', ['find', '/data/link', '-L'])).toBe(false)
+  })
+})
+
+describe('walkers and subtree readers', () => {
+  it('walkers are read off the raw line', () => {
+    // find/du/tree/rg always descend; grep and ls only under a flag,
+    // read raw because admission fires before flag parsing.
+    expect(walksMounts('find', ['find', '/data'])).toBe(true)
+    expect(walksMounts('du', ['du', '/data'])).toBe(true)
+    expect(walksMounts('tree', ['tree'])).toBe(true)
+    expect(walksMounts('rg', ['rg', 'x'])).toBe(true)
+    expect(walksMounts('grep', ['grep', 'x', '/data'])).toBe(false)
+    expect(walksMounts('grep', ['grep', '-rn', 'x', '/data'])).toBe(true)
+    expect(walksMounts('grep', ['grep', '--recursive', 'x'])).toBe(true)
+    expect(walksMounts('grep', ['grep', '--', '-r'])).toBe(false)
+    expect(walksMounts('ls', ['ls', '-R', '/data'])).toBe(true)
+    expect(walksMounts('ls', ['ls', '-l', '/data'])).toBe(false)
+    expect(walksMounts('cat', ['cat', '/data/x'])).toBe(false)
+  })
+
+  it('subtree readers cover the archivers and recursive copy', () => {
+    // tar -c and zip -r and cp -r read below their operands but stop at
+    // a mount boundary, so they read subtrees without walking mounts.
+    expect(readsSubtrees('tar', ['tar', '-cf', '/out.tar', '/data'])).toBe(true)
+    expect(readsSubtrees('tar', ['tar', '-xf', '/out.tar'])).toBe(false)
+    expect(readsSubtrees('zip', ['zip', '-r', '/out.zip', '/data'])).toBe(true)
+    expect(readsSubtrees('cp', ['cp', '-r', '/data', '/copy'])).toBe(true)
+    expect(readsSubtrees('cp', ['cp', '/data/a', '/copy'])).toBe(false)
+    expect(readsSubtrees('grep', ['grep', '-r', 'x', '/data'])).toBe(true)
+    expect(walksMounts('tar', ['tar', '-cf', '/out.tar', '/data'])).toBe(false)
   })
 })
 

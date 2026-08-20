@@ -37,13 +37,15 @@ def _path(virtual: str, raw: str = "") -> PathSpec:
 def _ctx(command: str,
          paths: tuple[PathSpec, ...] = (),
          cwd: str = "/",
-         tokens: tuple[str, ...] = ()) -> CommandContext:
+         tokens: tuple[str, ...] = (),
+         walks: bool = False) -> CommandContext:
     return CommandContext(command=command,
                           paths=paths,
                           argv=(),
                           cwd=cwd,
                           registry=_Registry(),
-                          tokens=tokens)
+                          tokens=tokens,
+                          walks=walks)
 
 
 def test_match_rule_by_command_pattern_operand_and_mount():
@@ -82,6 +84,23 @@ def test_match_rule_by_command_pattern_operand_and_mount():
     # An every-command rule (no patterns) matches whatever line.
     assert match_rule(CommandRule(reason="locked"), None,
                       _ctx("ls")) is not None
+
+
+def test_a_walking_command_touches_the_mounts_under_its_operands():
+    # `grep -r x /scratch` enters `/scratch/child`: the fan-out reruns
+    # the traversal inside each descendant mount and no admission fires
+    # again there, so the ancestor operand is where the mount's rule
+    # speaks. A command that does not walk, or an operand that is not
+    # above the root, stays untouched.
+    mount = CommandRule(reason="boxed", mount="/scratch/child")
+    assert match_rule(mount, None,
+                      _ctx("grep", paths=(_path("/scratch"), ),
+                           walks=True)) == RuleMatch(operand=None)
+    assert match_rule(mount, None, _ctx("grep",
+                                        paths=(_path("/scratch"), ))) is None
+    assert match_rule(
+        mount, None,
+        _ctx("grep", paths=(_path("/scratch/file.txt"), ), walks=True)) is None
 
 
 def test_match_op_only_for_pure_path_rules():

@@ -257,6 +257,14 @@ export interface CommandContext {
    * refuses them, though a deny rule still can. Absent reads as true.
    */
   tool?: boolean
+  /**
+   * Whether the command descends its directory operands (`find`, `du`,
+   * `tree`, `rg`, `grep -r`, `ls -R`), so a mount whose root sits under
+   * one of its paths is a mount the line works inside: the executor's
+   * fan-out reruns the traversal in each descendant mount, and no
+   * admission fires again there. Absent reads as false.
+   */
+  walks?: boolean
 }
 
 /** Facts about one VFS op, as preOps hooks see it. Fires at the op

@@ -74,6 +74,22 @@ describe('rules', () => {
     expect(matchRule({ reason: 'locked' }, null, ctx('ls'))).not.toBeNull()
   })
 
+  it('a walking command touches the mounts under its operands', () => {
+    // `grep -r x /scratch` enters `/scratch/child`: the fan-out reruns
+    // the traversal inside each descendant mount and no admission fires
+    // again there, so the ancestor operand is where the mount's rule
+    // speaks. A command that does not walk, or an operand that is not
+    // above the root, stays untouched.
+    const mount: CommandRule = { reason: 'boxed', mount: '/scratch/child' }
+    expect(matchRule(mount, null, ctx('grep', { paths: [path('/scratch')], walks: true }))).toEqual(
+      { operand: null },
+    )
+    expect(matchRule(mount, null, ctx('grep', { paths: [path('/scratch')] }))).toBeNull()
+    expect(
+      matchRule(mount, null, ctx('grep', { paths: [path('/scratch/file.txt')], walks: true })),
+    ).toBeNull()
+  })
+
   it('matchOp only for pure path rules', () => {
     const rule: CommandRule = { reason: 'frozen', paths: ['/data/locked/*'] }
     const scope = classifyPaths(rule.paths ?? [])

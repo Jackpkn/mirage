@@ -17,6 +17,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from mirage.commands.spec.types import ValueType
 from mirage.context.session_context import session_path_allowed
 from mirage.io.types import ByteSource
 from mirage.policy import (Ask, CommandContext, CommandRule, CommandsSpec,
@@ -25,9 +26,12 @@ from mirage.policy import (Ask, CommandContext, CommandRule, CommandsSpec,
 from mirage.policy.match import has_rules, io_refusal, reads_args, scopes_paths
 from mirage.runtime.policy import command_nodes
 from mirage.shell import parse
-from mirage.shell.helpers import (get_parts, get_text, literal_word,
-                                  split_env_prefix)
+from mirage.shell.helpers import (get_parts, get_redirects, get_text,
+                                  literal_word, split_env_prefix)
+from mirage.shell.types import NodeType as NT
+from mirage.shell.types import RedirectKind
 from mirage.types import PathSpec
+from mirage.utils.hidden import is_glob
 from mirage.utils.path import CycleError, resolve_path
 from mirage.workspace.executor.builtins.links.links import follow_paths
 from mirage.workspace.executor.builtins.scope import _to_scope
@@ -37,11 +41,17 @@ from mirage.workspace.executor.command.routing import (CWD_DEFAULT_RAW,
                                                        positional_scopes,
                                                        program_tokens)
 from mirage.workspace.expand.classify import classify_parts
+from mirage.workspace.expand.classify.path import classify_bare_path
+from mirage.workspace.expand.spec_hints import (spec_for_command,
+                                                spec_word_bases,
+                                                spec_word_kinds)
 from mirage.workspace.mount import MountRegistry
 from mirage.workspace.mount.namespace import Namespace
 from mirage.workspace.node.inner_lines import Word, inner_lines
-from mirage.workspace.route import (SLASH_KEEPS_LAST, command_visible,
-                                    follows_last_component, is_tool)
+from mirage.workspace.route import (SLASH_KEEPS_LAST, WordPolicy,
+                                    command_visible, follows_last_component,
+                                    is_tool, reads_subtrees, route,
+                                    walks_mounts, word_policy)
 from mirage.workspace.session import Session
 from mirage.workspace.session.shell_dirs import home_dir
 
@@ -111,12 +121,13 @@ class Admitted:
 
 
 def policy_scopes(
-    name: str,
-    args: list[str],
-    operands: Sequence[str | PathSpec],
-    namespace: Namespace | None,
-    cwd: str,
-    implied: PathSpec | None = None,
+        name: str,
+        args: list[str],
+        operands: Sequence[str | PathSpec],
+        namespace: Namespace | None,
+        cwd: str,
+        implied: PathSpec | None = None,
+        redirects: Sequence[PathSpec] = (),
 ) -> list[PathSpec]:
     """The paths a path-pattern guard reads for a line.
 
@@ -130,10 +141,16 @@ def policy_scopes(
     turns following back on), the same one the router applies to the
     operands before the handler runs, so a rule sees exactly the path
     the command will touch. A loop is left to that later step to
-    report; here the typed paths stand. Last comes the operand a bare
+    report; here the typed paths stand. Then the operand a bare
     ``ls``/``find``/``du``/``tree``/``grep -r`` implies, the working
     directory, which the executor injects after the gate and which a
-    rule on that directory has to see.
+    rule on that directory has to see. Last come the statement's
+    redirect targets: ``cat < /data/secret`` reads the file and ``echo
+    x > /data/secret`` truncates it, on the shell's own fds outside the
+    admitted command's gate window, so the admission is the one place a
+    rule can see them. A redirect always dereferences (the shell opens
+    the target), so its link targets ride along whatever the command's
+    own follow policy says.
 
     Args:
         name (str): command name.
@@ -144,6 +161,8 @@ def policy_scopes(
         cwd (str): session working directory.
         implied (PathSpec | None): the working-directory operand the
             command reads when typed bare, None when it names a path.
+        redirects (Sequence[PathSpec]): the statement's expanded
+            redirect targets, empty when it has none.
     """
     scopes = [p for p in operands if isinstance(p, PathSpec)]
     scopes.extend(path_flag_scopes(name, args, cwd))
@@ -171,6 +190,19 @@ def policy_scopes(
             for p in scopes
     }:
         scopes.append(implied)
+    if redirects:
+        targets: list[str | PathSpec] = list(redirects)
+        if namespace is not None and namespace.nodes:
+            try:
+                followed = follow_paths(namespace, list(redirects), True)
+            except CycleError:
+                followed = []
+            targets.extend(p for p in followed if isinstance(p, PathSpec))
+        seen = {p.virtual for p in scopes}
+        for item in targets:
+            if isinstance(item, PathSpec) and item.virtual not in seen:
+                seen.add(item.virtual)
+                scopes.append(item)
     return scopes
 
 
@@ -191,14 +223,15 @@ def _seen(session: Session, specs: list[PathSpec]) -> tuple[PathSpec, ...]:
 
 
 async def admit(
-    name: str,
-    args: list[str],
-    operands: Sequence[str | PathSpec],
-    session: Session,
-    registry: MountRegistry,
-    namespace: Namespace | None,
-    agent_id: str = "",
-    stdin: ByteSource | None = None,
+        name: str,
+        args: list[str],
+        operands: Sequence[str | PathSpec],
+        session: Session,
+        registry: MountRegistry,
+        namespace: Namespace | None,
+        agent_id: str = "",
+        stdin: ByteSource | None = None,
+        redirects: Sequence[PathSpec] = (),
 ) -> Refusal | Admitted:
     """The command plane's admission of one command: visibility, then
     the policy chain, then the approval door.
@@ -227,6 +260,8 @@ async def admit(
             approval request.
         stdin (ByteSource | None): the line's stdin, which decides
             whether a bare ``rg`` reads the working directory.
+        redirects (Sequence[PathSpec]): the statement's expanded
+            redirect targets, empty when it has none.
     """
     if not command_visible(name, session):
         return Refusal(f"{name}: command not found\n".encode(), 127)
@@ -238,7 +273,7 @@ async def admit(
                          paths=_seen(
                              session,
                              policy_scopes(name, args, operands, namespace,
-                                           session.cwd, implied)),
+                                           session.cwd, implied, redirects)),
                          operands=_seen(
                              session,
                              positional_scopes(name, args, session.cwd,
@@ -250,7 +285,8 @@ async def admit(
                          agent_id=agent_id,
                          tokens=tokens,
                          program=program,
-                         tool=is_tool(name, session))
+                         tool=is_tool(name, session),
+                         walks=walks_mounts(name, [name, *args]))
     asked = await registry.policies.pre_command(ctx)
     # An Ask is the chain's answer only after every Deny had its say;
     # the door answers it from the session's grants or the host, so a
@@ -283,14 +319,47 @@ def _unreadable(raw: str) -> str:
     return f"cannot read {raw} before the runtime expands it"
 
 
+def _word_hints(
+    line: list[str], session: Session, registry: MountRegistry
+) -> tuple[list[ValueType | None] | None, list[str | None] | None]:
+    """The spec's per-position classification hints for a literal line,
+    the way ``expand_argv`` computes them for an expanded one.
+
+    Without them a bare filename operand stays text (``cat secret``
+    from ``/data`` yields no ``/data/secret`` scope) and a chdir option
+    (tar's ``-C``) resolves later words against the wrong base, so a
+    rule and the run would disagree about the paths the line names.
+
+    Args:
+        line (list[str]): the literal words, name first.
+        session (Session): the session running the line.
+        registry (MountRegistry): registry holding the specs.
+    """
+    consumed = registry.match_command_prefix(line)
+    joined = " ".join(line[:consumed])
+    if (joined in session.functions or word_policy(
+            route(joined, session, registry)) is not WordPolicy.MOUNT):
+        return None, None
+    spec = spec_for_command(joined, registry, session.cwd)
+    if not spec:
+        return None, None
+    extra: list[ValueType | None] = ["str"] * (consumed - 1)
+    word_kinds = extra + spec_word_kinds(spec, line[consumed:])
+    bases = spec_word_bases(spec, line[consumed:], session.cwd)
+    head: list[str | None] = [None] * (consumed - 1)
+    word_bases = None if bases is None else head + bases
+    return word_kinds, word_bases
+
+
 async def _admit_words(
-    words: list[Word],
-    open_: bool,
-    session: Session,
-    registry: MountRegistry,
-    namespace: Namespace | None,
-    agent_id: str,
-    layers: tuple[CommandsSpec, ...],
+        words: list[Word],
+        open_: bool,
+        session: Session,
+        registry: MountRegistry,
+        namespace: Namespace | None,
+        agent_id: str,
+        layers: tuple[CommandsSpec, ...],
+        redirect_words: tuple[Word, ...] = (),
 ) -> Refusal | None:
     """Admit one command of a whole line on the words the gate read,
     then whatever lines the command runs in turn.
@@ -305,18 +374,49 @@ async def _admit_words(
         namespace (Namespace | None): the link table.
         agent_id (str): the agent the line is attributed to.
         layers (tuple[CommandsSpec, ...]): the session's command tiers.
+        redirect_words (tuple[Word, ...]): the statement's redirect
+            targets, as the gate reads them.
     """
     head = words[0]
     if head.text is None and has_rules(layers):
         return _refuse(head.raw, _unreadable(head.raw))
     name = head.value
     args = [w.value for w in words[1:]]
-    classified = classify_parts([name, *args], registry, session.cwd)
-    verdict = await admit(name, args, classified[1:], session, registry,
-                          namespace, agent_id)
+    line = [name, *args]
+    word_kinds, word_bases = _word_hints(line, session, registry)
+    classified = classify_parts(line,
+                                registry,
+                                session.cwd,
+                                word_kinds=word_kinds,
+                                word_bases=word_bases)
+    targets = [
+        classify_bare_path(w.value, registry, session.cwd)
+        for w in redirect_words if w.text is not None
+    ]
+    redirects = tuple(p for p in targets if isinstance(p, PathSpec))
+    verdict = await admit(name,
+                          args,
+                          classified[1:],
+                          session,
+                          registry,
+                          namespace,
+                          agent_id,
+                          redirects=redirects)
     if isinstance(verdict, Refusal):
         return verdict
-    unread = next((w.raw for w in words[1:] if w.text is None), None)
+    if verdict.scoped:
+        # The runtime walks and globs on its own, where no entry gate
+        # follows an I/O below the judged words, so a command a path or
+        # mount rule reads must not reach it with either in hand.
+        if reads_subtrees(name, line):
+            return _refuse(name, "walks a tree the gate cannot follow")
+        if any(
+                is_glob(p.raw_path or p.virtual)
+                for p in (*classified[1:], *redirects)
+                if isinstance(p, PathSpec)):
+            return _refuse(name, "expands a pattern only the runtime can read")
+    unread = next(
+        (w.raw for w in (*words[1:], *redirect_words) if w.text is None), None)
     if (unread is not None or open_) and reads_args(layers, name):
         return _refuse(
             name,
@@ -360,9 +460,17 @@ async def admit_line(
     (``eval``, ``sh -c``, ``xargs``, ``env`` ... see ``inner_lines``)
     have those lines admitted in turn, and a line the gate cannot read
     at all (a sourced file, a script, ``eval "$p"``) is refused under
-    any command rule. With no rule in force nothing is refused on this
-    account: the words are admitted as typed, which is all a coded
-    policy ever saw.
+    any command rule. A statement's redirect targets are read as words
+    of its command, so ``cat < /data/secret`` is judged on the file it
+    opens. A command a path or mount rule reads is refused outright
+    when its I/O would pass the judged words -- a walk (``find``,
+    ``grep -r``, ``tar -c``) or a glob only the runtime expands --
+    because every line executor acts outside the entry gate (a remote
+    sandbox's own disk, a host process), so a walk the gate cannot
+    follow does not run; a runtime whose I/O rides the dispatcher could
+    relax this by carrying the gate. With no rule in force nothing is
+    refused on this account: the words are admitted as typed, which is
+    all a coded policy ever saw.
 
     Args:
         ast (Any): the parsed tree-sitter root node.
@@ -381,8 +489,39 @@ async def admit_line(
         ]
         if not words:
             continue
-        refusal = await _admit_words(words, False, session, registry,
-                                     namespace, agent_id, layers)
+        refusal = await _admit_words(words,
+                                     False,
+                                     session,
+                                     registry,
+                                     namespace,
+                                     agent_id,
+                                     layers,
+                                     redirect_words=_redirect_words(
+                                         node, home))
         if refusal is not None:
             return refusal
     return None
+
+
+def _redirect_words(node: Any, home: str | None) -> tuple[Word, ...]:
+    """The redirect targets of the statement holding a command, as the
+    gate reads its words: the raw text and the literal it names, None
+    when only the runtime can expand it (refused wherever a rule reads
+    the command's arguments, like any other word). Heredoc and
+    herestring bodies are content, not paths, and a numeric target is
+    an fd duplication; neither names a file.
+
+    Args:
+        node (Any): the command's tree-sitter node.
+        home (str | None): the home directory a leading ``~`` names.
+    """
+    parent = node.parent
+    if (parent is None or parent.type != NT.REDIRECTED_STATEMENT
+            or not parent.named_children or parent.named_children[0] != node):
+        return ()
+    _, redirects = get_redirects(parent)
+    return tuple(
+        Word(str(r.target), literal_word(r.target_node, home))
+        for r in redirects
+        if r.kind not in (RedirectKind.HEREDOC, RedirectKind.HERESTRING)
+        and not isinstance(r.target, int) and r.target_node is not None)

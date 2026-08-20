@@ -12,6 +12,8 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+from collections.abc import Sequence
+
 from mirage.commands.spec import SPECS
 from mirage.commands.spec.compile import compile_spec
 from mirage.types import PathSpec
@@ -161,6 +163,57 @@ def end_options_after_program(name: str, words: list[str]) -> list[str]:
 # -l and -d suppress that and show the link's own row instead.
 NO_FOLLOW_FLAGS = {"ls": ("ld", ())}
 
+# Commands whose traversal descends into descendant mounts (the
+# executor's fan-out reruns them per mount), always or under a flag.
+# What the admission gate reads to stamp ``CommandContext.walks``, so a
+# mount rule can speak on an ancestor operand. ``tar`` and ``zip`` walk
+# too but refuse to cross a mount boundary, so they are deliberately
+# absent: a mount rule has nothing to say about a walk that never
+# enters it.
+WALK_COMMANDS = frozenset({"find", "du", "tree", "rg"})
+WALK_FLAGS = {"grep": ("rR", ("recursive", )), "ls": ("R", ("recursive", ))}
+
+# Commands whose reads exceed the words the gate judged even inside one
+# mount: the walkers above plus the subtree readers that stop at a
+# mount boundary. What the whole-line gate reads: a runtime does its
+# own walking where no entry gate follows, so a path rule that scopes
+# such a command refuses the captured line instead of running it
+# unguarded.
+SUBTREE_READ_FLAGS = {
+    "tar": ("c", ("create", )),
+    "zip": ("r", ("recurse-paths", )),
+    "cp": ("rR", ("recursive", )),
+}
+
+
+def walks_mounts(name: str, words: Sequence[str | PathSpec]) -> bool:
+    """Whether a command's traversal enters descendant mounts.
+
+    Args:
+        name (str): command name.
+        words (Sequence[str | PathSpec]): the command's raw words,
+            name first.
+    """
+    if name in WALK_COMMANDS:
+        return True
+    spec = WALK_FLAGS.get(name)
+    return spec is not None and _has_option(words, spec[0], spec[1])
+
+
+def reads_subtrees(name: str, words: Sequence[str | PathSpec]) -> bool:
+    """Whether a command reads below the paths its words name.
+
+    Args:
+        name (str): command name.
+        words (Sequence[str | PathSpec]): the command's raw words,
+            name first.
+    """
+    if walks_mounts(name, words):
+        return True
+    spec = SUBTREE_READ_FLAGS.get(name)
+    return spec is not None and _has_option(words, spec[0], spec[1])
+
+
 # Commands the router must not resolve the last component for, even
 # under a trailing slash, because none of them acts on the link's
 # target and each says so in its own words. GNU tar strips the slash
@@ -178,7 +231,7 @@ NO_FOLLOW_FLAGS = {"ls": ("ld", ())}
 SLASH_KEEPS_LAST = {"tar", "rm", "rmdir", "mv", "unlink", "mkdir"}
 
 
-def _has_option(words: list[str | PathSpec], shorts: str,
+def _has_option(words: Sequence[str | PathSpec], shorts: str,
                 longs: tuple[str, ...]) -> bool:
     """Whether any of the given options appears among a command's words.
 
@@ -187,7 +240,8 @@ def _has_option(words: list[str | PathSpec], shorts: str,
     inspected, so a format string like ``-c '%L'`` cannot trip it.
 
     Args:
-        words (list[str | PathSpec]): the command's raw words, name first.
+        words (Sequence[str | PathSpec]): the command's raw words,
+            name first.
         shorts (str): short option letters, any of which counts.
         longs (tuple[str, ...]): long option names, without the dashes.
     """

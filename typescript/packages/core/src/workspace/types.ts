@@ -23,6 +23,7 @@ export interface ExecutionNodeInit {
   children?: ExecutionNode[]
   records?: OpRecord[]
   paths?: PathSpec[]
+  refused?: boolean
 }
 
 export class ExecutionNode {
@@ -36,6 +37,11 @@ export class ExecutionNode {
   // serialized): lets the lazy-stream drain respell filesystem errors as
   // typed, like the eager chokepoint.
   paths: PathSpec[]
+  // The admission gate refused the line, so it never ran. Transient:
+  // the redirect layer reads it to leave output targets untouched,
+  // where an ordinary failure still creates and truncates them as
+  // bash's open-before-exec would.
+  refused: boolean
 
   constructor(init: ExecutionNodeInit = {}) {
     this.command = init.command ?? null
@@ -45,6 +51,7 @@ export class ExecutionNode {
     this.children = init.children ?? []
     this.records = init.records ?? []
     this.paths = init.paths ?? []
+    this.refused = init.refused ?? false
   }
 
   toJSON(): Record<string, unknown> {

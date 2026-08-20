@@ -41,6 +41,11 @@ def _argv(inner: InnerLine) -> list[str]:
         ("timeout", ["-s", "KILL", "5", "rm", "/x"], [("argv", ["rm", "/x"
                                                                 ], False)]),
         ("nohup", ["rm", "/x"], [("argv", ["rm", "/x"], False)]),
+        # bash runs the named builtin with the words as given, so
+        # `builtin eval 'rm /x'` is eval's line, admitted in turn.
+        ("builtin", ["eval", "rm /x"], [("argv", ["eval", "rm /x"], False)]),
+        ("builtin", ["--", "echo", "hi"], [("argv", ["echo", "hi"], False)]),
+        ("builtin", [], []),
         ("nice", ["-n", "5", "rm", "/x"], [("argv", ["rm", "/x"], False)]),
         ("time", ["-p", "rm", "/x"], [("argv", ["rm", "/x"], False)]),
         # Operands the runtime appends: stdin items, matched paths.

@@ -35,11 +35,16 @@ function under(path: string, root: string): boolean {
   return root === '/' || path === root || path.startsWith(root + '/')
 }
 
-// Whether a line works inside a mount: its cwd is under the root or one
-// of its paths is.
+// Whether a line works inside a mount: its cwd is under the root, one
+// of its paths is, or the command walks a directory holding the root
+// (`grep -r x /scratch` enters `/scratch/child`: the fan-out reruns the
+// traversal inside each descendant mount and no admission fires again
+// there, so the ancestor operand is the one place the mount's rule can
+// speak).
 function touches(mount: string, ctx: CommandContext): boolean {
   if (under(ctx.cwd, mount)) return true
-  return ctx.paths.some((p) => under(p.virtual, mount))
+  if (ctx.paths.some((p) => under(p.virtual, mount))) return true
+  return (ctx.walks ?? false) && ctx.paths.some((p) => under(mount, p.virtual))
 }
 
 /**

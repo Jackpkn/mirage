@@ -236,6 +236,92 @@ describe('admission', () => {
       Admitted,
     )
   })
+
+  it('admitLine classifies bare operands with the spec', async () => {
+    // `cat secret` from /data names /data/secret only through cat's
+    // spec: the bare word has no path shape for the heuristics, and the
+    // runtime resolves it against the cwd exactly as the spec hints do.
+    const w = await ws()
+    await w.execute('cd /data')
+    const parser = await getTestParser()
+    const session = w.sessionManager.get(w.sessionManager.defaultId)
+    const line = (text: string) =>
+      admitLine(parser.parse(text), session, w.registry, w.namespace, '', (t) => parser.parse(t))
+    const sealed = await line('cat secret')
+    expect([sealed?.exitCode, DEC.decode(sealed?.stderr)]).toEqual([1, 'cat: secret: sealed\n'])
+    expect(await line('cat open')).toBeNull()
+  })
+
+  it('admitLine refuses a walk or a glob under a path rule', async () => {
+    // Every line executor acts outside the entry gate (a sandbox's own
+    // disk), so a command a path rule reads must not reach it with a
+    // walk or a pattern in hand: the walk would read entries the gate
+    // never judged, and only the runtime would see the matches.
+    const w = await ws()
+    const parser = await getTestParser()
+    const session = w.sessionManager.get(w.sessionManager.defaultId)
+    const line = async (text: string) => {
+      const refusal = await admitLine(
+        parser.parse(text),
+        session,
+        w.registry,
+        w.namespace,
+        '',
+        (t) => parser.parse(t),
+      )
+      return refusal === null ? null : [refusal.exitCode, DEC.decode(refusal.stderr)]
+    }
+    expect(await line('grep -r x /data')).toEqual([
+      126,
+      'grep: policy denied: walks a tree the gate cannot follow\n',
+    ])
+    expect(await line('rg x /data')).toEqual([
+      126,
+      'rg: policy denied: walks a tree the gate cannot follow\n',
+    ])
+    expect(await line('cat /data/se*')).toEqual([
+      126,
+      'cat: policy denied: expands a pattern only the runtime can read\n',
+    ])
+    // The judged words still pass: a named clean path, a command no
+    // path rule reads, a walker the rules leave alone.
+    expect(await line('grep x /data/open.txt')).toBeNull()
+    expect(await line('echo /data/*')).toBeNull()
+    expect(await line('head -n 1 /data/open.txt')).toBeNull()
+  })
+
+  it('admitLine reads redirect targets as words of the command', async () => {
+    // The shell opens a redirect target on its own fds, outside the
+    // admitted command's gate window, so the gate judges it with the
+    // line: `cat < /data/secret` reads the file it protects, and a
+    // target only the runtime can expand is unread like any word.
+    const w = await ws()
+    const parser = await getTestParser()
+    const session = w.sessionManager.get(w.sessionManager.defaultId)
+    const line = async (text: string) => {
+      const refusal = await admitLine(
+        parser.parse(text),
+        session,
+        w.registry,
+        w.namespace,
+        '',
+        (t) => parser.parse(t),
+      )
+      return refusal === null ? null : [refusal.exitCode, DEC.decode(refusal.stderr)]
+    }
+    expect(await line('cat < /data/secret')).toEqual([1, 'cat: /data/secret: sealed\n'])
+    expect(await line('head -c 1 /data/open > /data/secret2')).toBeNull()
+    expect(await line('cat /data/open > /data/secret2')).toEqual([
+      1,
+      'cat: /data/secret2: sealed\n',
+    ])
+    expect(await line('cat < $F')).toEqual([
+      126,
+      'cat: policy denied: cannot read $F before the runtime expands it\n',
+    ])
+    expect(await line('echo hi > $F')).toBeNull()
+    expect(await line("cat /data/open <<< 'body'")).toBeNull()
+  })
   it('the admitted gate judges what the line did not name', () => {
     const deny: CommandRule = { reason: 'sealed', paths: ['/data/sealed'] }
     const ask: CommandRule = { reason: 'nod', commands: ['grep'], paths: ['/data/asked/*'] }

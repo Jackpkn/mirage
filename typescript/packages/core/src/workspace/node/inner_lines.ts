@@ -204,6 +204,14 @@ function nohupInner(args: readonly Word[]): InnerLine[] {
   return asArgv(first !== undefined && wordValue(first) === '--' ? args.slice(1) : args)
 }
 
+// `builtin shell-builtin [ARG]...`: the named builtin runs with the
+// words as given (bash takes no options here but still honors a leading
+// `--`), so `builtin eval 'rm x'` is `eval`'s line.
+function builtinInner(args: readonly Word[]): InnerLine[] {
+  const first = args[0]
+  return asArgv(first !== undefined && wordValue(first) === '--' ? args.slice(1) : args)
+}
+
 // `sh`/`bash`: `-c` names the program; a script file or a program read
 // from stdin is a line the gate cannot read.
 function shellInner(args: readonly Word[]): InnerLine[] {
@@ -221,8 +229,9 @@ function shellInner(args: readonly Word[]): InnerLine[] {
  * that hands a constructed line back to the evaluator: `eval`, `source`,
  * `command`, `env`, `timeout`, `xargs`, `mapfile -C`, `sh`/`bash`, an
  * executed path) plus the classic prefix runners a real shell has and
- * the workspace shell does not (`exec`, `nohup`, `nice`, `time`, `find
- * -exec`). A whole-line runtime is a real shell, so anything else that
+ * the workspace shell does not (`builtin`, `exec`, `nohup`, `nice`,
+ * `time`, `find -exec`). A whole-line runtime is a real shell, so
+ * anything else that
  * can run a command (an interpreter's `-c`, `make`, `git` hooks) is the
  * runtime's own world: the allow list is the closed form there.
  */
@@ -239,6 +248,8 @@ export function innerLines(head: string, args: readonly Word[]): InnerLine[] {
       return shellInner(args)
     case 'command':
       return commandInner(args)
+    case 'builtin':
+      return builtinInner(args)
     case 'exec':
       return execInner(args)
     case 'env':

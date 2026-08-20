@@ -16,7 +16,7 @@ import type { ShellVar } from '../../shell/variable.ts'
 import { sessionEntry, setSessionEntry } from '../session/session.ts'
 import { seedVar, setAttr } from '../session/state.ts'
 import { VarAttr } from '../../shell/variable.ts'
-import { runWithAdmission } from '../../context/session_context.ts'
+import { redirectPathsFor, runWithAdmission } from '../../context/session_context.ts'
 import type { Runtime } from '../../runtime/base.ts'
 import type { PolicyDecision } from '../../runtime/policy/index.ts'
 import { mergeSignals } from '../abort.ts'
@@ -391,6 +391,7 @@ async function runCommandBody(
       signal,
       node.startPosition?.row ?? 0,
       agentId,
+      redirectPathsFor(node),
     ),
     timeout,
     argv.name !== '' ? argv.name : '?',
@@ -451,6 +452,10 @@ async function runArgv(
   row = 0,
   // The agent the line is attributed to, which an approval request names.
   agentId = '',
+  // The statement's expanded redirect targets, judged with the line
+  // because their I/O runs on the shell's own fds outside the admitted
+  // command's gate window.
+  redirects: readonly PathSpec[] = [],
 ): Promise<Result> {
   const name = argv.name
 
@@ -496,6 +501,7 @@ async function runArgv(
       namespace,
       agentId,
       stdin,
+      redirects,
     )
     if (!(verdict instanceof Admitted)) {
       return [
@@ -505,6 +511,7 @@ async function runArgv(
           command: [name, ...argv.args].join(' '),
           stderr: verdict.stderr,
           exitCode: verdict.exitCode,
+          refused: true,
         }),
       ]
     }

@@ -1270,6 +1270,82 @@ describe('command permissions end to end', () => {
     expect((await line(ws, 'cat /data/link'))[0]).toBe(1)
   })
 
+  it('redirect targets are judged with the line', async () => {
+    // The shell reads `<` and writes `>` on its own fds, outside the
+    // admitted command's gate window, so the targets are judged at the
+    // line's admission: the refused read never happens and the refused
+    // write never truncates.
+    const parser = await getTestParser()
+    const ws = new Workspace(
+      { '/data': new RAMResource() },
+      {
+        mode: MountMode.WRITE,
+        shellParser: parser,
+        permissions: {
+          commands: {
+            deny: [
+              { reason: 'sealed', commands: ['cat'], paths: ['/data/secret*'] },
+              { reason: 'audit is append-only', commands: ['echo'], paths: ['/data/audit.log'] },
+            ],
+          },
+          paths: { hide: [] },
+        },
+      },
+    )
+    open.push(ws)
+    await ws.execute("echo top > /data/secret && printf 'one\\n' > /data/audit.log")
+    expect(await line(ws, 'cat < /data/secret')).toEqual([1, '', 'cat: /data/secret: sealed\n'])
+    expect(await line(ws, 'echo two > /data/audit.log')).toEqual([
+      1,
+      '',
+      'echo: /data/audit.log: audit is append-only\n',
+    ])
+    // The refused write did not truncate, and clean redirects run.
+    expect(await line(ws, 'cat /data/audit.log')).toEqual([0, 'one\n', ''])
+    expect(await line(ws, 'cat < /data/audit.log')).toEqual([0, 'one\n', ''])
+    expect(await line(ws, 'echo ok > /data/out && cat < /data/out')).toEqual([0, 'ok\n', ''])
+  })
+
+  it('a mount rule speaks on a walk from above', async () => {
+    // `grep -r x /scratch` enters /scratch/child: the fan-out reruns
+    // the traversal inside each descendant mount and no admission fires
+    // again there, so the child mount's rule must speak on the ancestor
+    // operand. A walk elsewhere, or a non-recursive read of the parent,
+    // is not its business.
+    const parser = await getTestParser()
+    const ws = new Workspace(
+      {
+        '/scratch': new RAMResource(),
+        '/scratch/child': new RAMResource(),
+        '/elsewhere': new RAMResource(),
+      },
+      {
+        mode: MountMode.WRITE,
+        shellParser: parser,
+        mountPermissions: {
+          '/scratch/child': {
+            paths: { hide: [] },
+            commands: { deny: [{ reason: 'boxed', commands: ['grep'] }] },
+          },
+        },
+      },
+    )
+    open.push(ws)
+    await ws.execute('echo x > /scratch/a && echo x > /elsewhere/a && echo x > /scratch/child/c')
+    expect(await line(ws, 'grep -r x /scratch')).toEqual([126, '', 'grep: policy denied: boxed\n'])
+    expect(await line(ws, 'grep -r x /elsewhere')).toEqual([0, '/elsewhere/a:x\n', ''])
+    // Inside the mount the rule needs no ancestor help.
+    expect(await line(ws, 'grep x /scratch/child/c')).toEqual([
+      126,
+      '',
+      'grep: policy denied: boxed\n',
+    ])
+    // A non-recursive grep of the parent never enters the child.
+    const [dirCode, , dirErr] = await line(ws, 'grep x /scratch')
+    expect(dirCode).toBe(2)
+    expect(dirErr).toContain('Is a directory')
+  })
+
   it('a whole-line runtime is gated like the tree', async () => {
     // A runtime that captures the raw line runs it under the same
     // tiers: every parsed command clears visibility, the policy chain
@@ -1369,6 +1445,11 @@ describe('command permissions end to end', () => {
       'source: policy denied: runs lines the gate cannot read\n',
     ])
     expect(await line(ws, "sh -c 'timeout 5 rm /repo/x'")).toEqual([
+      126,
+      '',
+      'rm: policy denied: no deletes\n',
+    ])
+    expect(await line(ws, "builtin eval 'rm /repo/x'")).toEqual([
       126,
       '',
       'rm: policy denied: no deletes\n',

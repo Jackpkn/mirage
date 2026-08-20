@@ -130,9 +130,13 @@ class Approvals:
         rule = ask_rule(ctx, ask)
         argv = (ctx.command, *ctx.argv)
         held = self._grants(ctx.session_id)
+        # An exact-line grant answers the rule it was asked under, like
+        # a session grant: one that outlives a rule change (a persisted
+        # store reopened under an edited profile) must not answer the
+        # new rule's ask, and a stale denial must not speak in its voice.
         for grant in held:
             if (grant.decision in EXACT_LINE_DECISIONS and grant.argv == argv
-                    and grant.cwd == ctx.cwd):
+                    and grant.cwd == ctx.cwd and grant.rule == rule):
                 self._set(ctx.session_id,
                           tuple(g for g in held if g is not grant))
                 if grant.decision == "deny":

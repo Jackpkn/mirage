@@ -215,6 +215,14 @@ def _nohup_inner(args: Sequence[Word]) -> list[InnerLine]:
     return [InnerLine(argv=rest)] if rest else []
 
 
+def _builtin_inner(args: Sequence[Word]) -> list[InnerLine]:
+    """``builtin shell-builtin [ARG]...``: the named builtin runs with
+    the words as given (bash takes no options here but still honors a
+    leading ``--``), so ``builtin eval 'rm x'`` is ``eval``'s line."""
+    rest = tuple(args[1:] if args and args[0].value == "--" else args)
+    return [InnerLine(argv=rest)] if rest else []
+
+
 def _shell_inner(args: Sequence[Word]) -> list[InnerLine]:
     """``sh``/``bash``: ``-c`` names the program; a script file or a
     program read from stdin is a line the gate cannot read."""
@@ -235,7 +243,8 @@ def inner_lines(head: str, args: Sequence[Word]) -> list[InnerLine]:
     ``eval``, ``source``, ``command``, ``env``, ``timeout``, ``xargs``,
     ``mapfile -C``, ``sh``/``bash``, an executed path) plus the classic
     prefix runners a real shell has and the workspace shell does not
-    (``exec``, ``nohup``, ``nice``, ``time``, ``find -exec``). A
+    (``builtin``, ``exec``, ``nohup``, ``nice``, ``time``,
+    ``find -exec``). A
     whole-line runtime is a real shell, so anything else that can run a
     command (an interpreter's ``-c``, ``make``, ``git`` hooks) is the
     runtime's own world: the allow list is the closed form there.
@@ -255,6 +264,8 @@ def inner_lines(head: str, args: Sequence[Word]) -> list[InnerLine]:
         return _shell_inner(args)
     if head == "command":
         return _command_inner(args)
+    if head == "builtin":
+        return _builtin_inner(args)
     if head == "exec":
         return _exec_inner(args)
     if head == "env":

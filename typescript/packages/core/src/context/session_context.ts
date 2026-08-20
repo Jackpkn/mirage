@@ -17,7 +17,7 @@ import type { SessionManager } from '../workspace/session/manager.ts'
 import type { Session } from '../workspace/session/session.ts'
 import { stripSlash } from '../utils/slash.ts'
 import { pathHidden } from '../utils/hidden.ts'
-import type { EntryGate } from '../types.ts'
+import type { EntryGate, PathSpec } from '../types.ts'
 import { MountMode, weakerMode } from '../types.ts'
 
 /**
@@ -224,6 +224,37 @@ export function getAdmission(): EntryGate | null {
  */
 export function pathRulesActive(): boolean {
   return getAdmission()?.scoped ?? false
+}
+
+const redirectStorage = createAsyncContext<[object, readonly PathSpec[]]>()
+
+/**
+ * Bind a statement's expanded redirect targets to the command node they
+ * belong to, for the duration of `fn` (that node's run).
+ *
+ * The redirect layer expands the targets before the command executes (a
+ * `$()` in one runs exactly once there), so the admission gate deep in
+ * command dispatch cannot re-derive them; it reads them here instead.
+ * Keyed by the node object itself so a nested line expanded on the way
+ * to the command (a `$()` operand, an `eval`) never inherits the outer
+ * statement's targets.
+ */
+export function runWithRedirectPaths<T>(
+  node: object,
+  paths: readonly PathSpec[],
+  fn: () => Promise<T>,
+): Promise<T> {
+  return Promise.resolve(redirectStorage.run([node, paths], fn))
+}
+
+/**
+ * The redirect targets bound to this command node, empty for any other
+ * node or when none are bound.
+ */
+export function redirectPathsFor(node: object): readonly PathSpec[] {
+  const bound = redirectStorage.getStore()
+  if (bound?.[0] !== node) return []
+  return bound[1]
 }
 
 /**

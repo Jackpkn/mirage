@@ -17,7 +17,7 @@ import dataclasses
 from typing import Any
 
 from mirage.commands.builtin.utils.limit import run_with_timeout
-from mirage.context import reset_admission, set_admission
+from mirage.context import redirect_paths_for, reset_admission, set_admission
 from mirage.io import IOResult
 from mirage.io.types import materialize
 from mirage.policy import PolicyDenied, resolve_limit
@@ -283,7 +283,8 @@ async def _dispatch_command_body(
                      cancel,
                      routing_decision,
                      row=node.start_point[0],
-                     agent_id=agent_id)
+                     agent_id=agent_id,
+                     redirects=redirect_paths_for(node.id))
     # Capture xtrace before the body runs so `set -x` itself is not
     # traced (bash enables tracing only for the following commands).
     xtrace = bool(session.shell_options.get("xtrace"))
@@ -318,6 +319,7 @@ async def _run_argv(
     routing_decision: PolicyDecision | None = None,
     row: int = 0,
     agent_id: str = "",
+    redirects: tuple[PathSpec, ...] = (),
 ) -> tuple[Any, IOResult, ExecutionNode]:
     """Route one expanded command to its builtin or mount handler.
 
@@ -325,7 +327,9 @@ async def _run_argv(
     reads: a definition remembers where it was made so a use on the
     same line does not see it, as bash's line reader would not.
     ``agent_id`` is the agent the line is attributed to, which an
-    approval request names.
+    approval request names. ``redirects`` are the statement's expanded
+    redirect targets, judged with the line because their I/O runs on
+    the shell's own fds outside the admitted command's gate window.
     """
     name = argv.name
 
@@ -362,15 +366,23 @@ async def _run_argv(
     # over flag parsing, routing, and runtime placement.
     admitted: Admitted | None = None
     if name:
-        verdict = await admit(name, list(argv.args), list(argv.operands),
-                              session, registry, namespace, agent_id, stdin)
+        verdict = await admit(name,
+                              list(argv.args),
+                              list(argv.operands),
+                              session,
+                              registry,
+                              namespace,
+                              agent_id,
+                              stdin,
+                              redirects=redirects)
         if isinstance(verdict, Refusal):
             cmd_str = " ".join([name, *argv.args])
             return None, IOResult(exit_code=verdict.exit_code,
                                   stderr=verdict.stderr), ExecutionNode(
                                       command=cmd_str,
                                       exit_code=verdict.exit_code,
-                                      stderr=verdict.stderr)
+                                      stderr=verdict.stderr,
+                                      refused=True)
         admitted = verdict
 
     # ── run ────────────────────────────────────

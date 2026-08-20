@@ -340,6 +340,12 @@ class CommandContext:
             function is what runs, and an executed path: none of those
             is tool use, so an allow list never refuses them, though a
             deny rule still can.
+        walks (bool): whether the command descends its directory
+            operands (``find``, ``du``, ``tree``, ``rg``, ``grep -r``,
+            ``ls -R``), so a mount whose root sits under one of its
+            paths is a mount the line works inside: the executor's
+            fan-out reruns the traversal in each descendant mount, and
+            no admission fires again there.
     """
 
     command: str
@@ -353,6 +359,7 @@ class CommandContext:
     tokens: tuple[str, ...] = ()
     program: tuple[str, ...] = ()
     tool: bool = True
+    walks: bool = False
 
 
 @dataclass(frozen=True, slots=True)

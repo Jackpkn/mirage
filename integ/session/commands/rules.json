@@ -45,11 +45,24 @@
       "targets": [
         "ram-commands"
       ],
-      "command": "echo hi > /repo/sealed/x",
+      "command": "> /repo/sealed/x",
       "expect": {
         "exit": 1,
         "stdout": "",
         "stderr": "/repo/sealed/x: Permission denied\n"
+      }
+    },
+    {
+      "id": "cmd_redirect_target_is_judged_with_the_line",
+      "seq": 923029,
+      "targets": [
+        "ram-commands"
+      ],
+      "command": "echo hi > /repo/sealed/x",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "echo: /repo/sealed/x: sealed until review\n"
       }
     },
     {

@@ -16,7 +16,7 @@ from contextvars import ContextVar, Token
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from mirage.types import EntryGate, MountMode, weaker_mode
+from mirage.types import EntryGate, MountMode, PathSpec, weaker_mode
 from mirage.utils.hidden import path_hidden
 
 if TYPE_CHECKING:
@@ -244,6 +244,48 @@ def path_rules_active() -> bool:
     """
     gate = get_admission()
     return gate is not None and gate.scoped
+
+
+_redirect_paths: ContextVar[tuple[int, tuple[PathSpec, ...]]
+                            | None] = (ContextVar("mirage_redirect_paths",
+                                                  default=None))
+
+
+def set_redirect_paths(node_id: int, paths: tuple[PathSpec,
+                                                  ...]) -> Token[Any]:
+    """Bind a statement's expanded redirect targets to the command node
+    they belong to, for that node's run.
+
+    The redirect layer expands the targets before the command executes
+    (a ``$()`` in one runs exactly once there), so the admission gate
+    deep in command dispatch cannot re-derive them; it reads them here
+    instead. Keyed by the tree-sitter node id so a nested line expanded
+    on the way to the command (a ``$()`` operand, an ``eval``) never
+    inherits the outer statement's targets.
+
+    Args:
+        node_id (int): the command node the targets belong to.
+        paths (tuple[PathSpec, ...]): the expanded targets.
+    """
+    return _redirect_paths.set((node_id, paths))
+
+
+def reset_redirect_paths(token: Token[Any]) -> None:
+    """Restore the previous redirect-target binding."""
+    _redirect_paths.reset(token)
+
+
+def redirect_paths_for(node_id: int) -> tuple[PathSpec, ...]:
+    """The redirect targets bound to this command node, empty for any
+    other node or when none are bound.
+
+    Args:
+        node_id (int): the command node about to be admitted.
+    """
+    bound = _redirect_paths.get()
+    if bound is None or bound[0] != node_id:
+        return ()
+    return bound[1]
 
 
 def mount_allowed(mount_prefix: str) -> bool:

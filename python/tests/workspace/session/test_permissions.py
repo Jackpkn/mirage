@@ -908,6 +908,89 @@ async def test_a_command_scoped_path_rule_reads_the_path_the_command_touches():
         await ws.close()
 
 
+SEALED_REDIRECT_DOC = WorkspacePermissions.model_validate({
+    "commands": {
+        "deny": [{
+            "reason": "sealed",
+            "commands": {
+                "cat": ["/data/secret*"]
+            }
+        }, {
+            "reason": "audit is append-only",
+            "commands": {
+                "echo": ["/data/audit.log"]
+            }
+        }],
+    }
+})
+
+
+@pytest.mark.asyncio
+async def test_redirect_targets_are_judged_with_the_line():
+    # The shell reads `<` and writes `>` on its own fds, outside the
+    # admitted command's gate window, so the targets are judged at the
+    # line's admission: the refused read never happens and the refused
+    # write never truncates.
+    ws = Workspace({"/data/": (RAMResource(), MountMode.WRITE)},
+                   mode=MountMode.WRITE,
+                   permissions=SEALED_REDIRECT_DOC)
+    try:
+        await ws.execute("echo top > /data/secret && "
+                         "printf 'one\\n' > /data/audit.log")
+        assert await _line(
+            ws, "cat < /data/secret") == (1, "", "cat: /data/secret: sealed\n")
+        assert await _line(ws, "echo two > /data/audit.log") == (
+            1, "", "echo: /data/audit.log: audit is append-only\n")
+        # The refused write did not truncate, and clean redirects run.
+        assert await _line(ws, "cat /data/audit.log") == (0, "one\n", "")
+        assert await _line(ws, "cat < /data/audit.log") == (0, "one\n", "")
+        assert await _line(
+            ws, "echo ok > /data/out && cat < /data/out") == (0, "ok\n", "")
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_a_mount_rule_speaks_on_a_walk_from_above():
+    # `grep -r x /scratch` enters /scratch/child: the fan-out reruns
+    # the traversal inside each descendant mount and no admission fires
+    # again there, so the child mount's rule must speak on the ancestor
+    # operand. A walk elsewhere, or a non-recursive read of the parent,
+    # is not its business.
+    child = RAMResource()
+    ws = Workspace(
+        {
+            "/scratch/": (RAMResource(), MountMode.WRITE),
+            "/scratch/child/":
+            Mount(child,
+                  MountMode.WRITE,
+                  permissions=MountPermissions(commands=MountCommandsBlock(
+                      deny=[{
+                          "reason": "boxed",
+                          "commands": ["grep"]
+                      }]))),
+            "/elsewhere/": (RAMResource(), MountMode.WRITE),
+        },
+        mode=MountMode.WRITE)
+    try:
+        await ws.execute("echo x > /scratch/a && echo x > /elsewhere/a && "
+                         "echo x > /scratch/child/c")
+        assert await _line(
+            ws,
+            "grep -r x /scratch") == (126, "", "grep: policy denied: boxed\n")
+        code, out, _ = await _line(ws, "grep -r x /elsewhere")
+        assert (code, out) == (0, "/elsewhere/a:x\n")
+        # Inside the mount the rule needs no ancestor help.
+        assert await _line(
+            ws, "grep x /scratch/child/c") == (126, "",
+                                               "grep: policy denied: boxed\n")
+        # A non-recursive grep of the parent never enters the child.
+        code, _, err = await _line(ws, "grep x /scratch")
+        assert code == 2 and "Is a directory" in err
+    finally:
+        await ws.close()
+
+
 class _Box(Runtime, LineExecutorMixin):
     """A runtime that takes every line raw, recording what reached it."""
 
@@ -1021,6 +1104,9 @@ async def test_a_whole_line_runtime_reads_only_literal_words():
             "source: policy denied: runs lines the gate cannot read\n")
         assert await _line(ws, "sh -c 'timeout 5 rm /repo/x'") == (
             126, "", "rm: policy denied: no deletes\n")
+        assert await _line(
+            ws, "builtin eval 'rm /repo/x'") == (126, "", "rm: policy denied: "
+                                                 "no deletes\n")
         assert box.lines == []
         # Literal words, and dynamic ones no rule reads, reach the runtime.
         for line in ('echo "$HOME" $(date)', "git status", "'cat' /repo/a",

@@ -49,8 +49,12 @@ def _under(path: str, root: str) -> bool:
 
 
 def _touches(mount: str, ctx: CommandContext) -> bool:
-    """Whether a line works inside a mount: its cwd is under the root
-    or one of its paths is.
+    """Whether a line works inside a mount: its cwd is under the root,
+    one of its paths is, or the command walks a directory holding the
+    root (``grep -r x /scratch`` enters ``/scratch/child``: the fan-out
+    reruns the traversal inside each descendant mount and no admission
+    fires again there, so the ancestor operand is the one place the
+    mount's rule can speak).
 
     Args:
         mount (str): the mount root.
@@ -58,7 +62,9 @@ def _touches(mount: str, ctx: CommandContext) -> bool:
     """
     if _under(ctx.cwd, mount):
         return True
-    return any(_under(p.virtual, mount) for p in ctx.paths)
+    if any(_under(p.virtual, mount) for p in ctx.paths):
+        return True
+    return ctx.walks and any(_under(mount, p.virtual) for p in ctx.paths)
 
 
 def match_rule(rule: CommandRule, scope: HiddenPaths | None,

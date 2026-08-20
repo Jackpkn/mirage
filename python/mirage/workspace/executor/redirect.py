@@ -17,6 +17,7 @@ from enum import Enum, auto
 
 import tree_sitter
 
+from mirage.context import reset_redirect_paths, set_redirect_paths
 from mirage.io import IOResult
 from mirage.io.stream import materialize
 from mirage.io.types import ByteSource
@@ -127,13 +128,28 @@ async def handle_redirect(
     if refusal is not None:
         return refusal
 
+    refused = False
     if command is None:
         stdout_data = b""
         stderr_data = b""
         io = IOResult(exit_code=0)
     else:
-        stdout, io, _ = await execute_node(command, session, cmd_stdin,
-                                           call_stack)
+        # The expanded targets ride to the command's admission gate: the
+        # reads and writes below run on the shell's own fds outside the
+        # admitted command's gate window, so the gate must judge the
+        # targets with the line. Bound to this node's id so a nested
+        # line expanded on the way never inherits them.
+        targets = tuple(
+            _ensure_scope(r.target) for r in redirects
+            if r.kind not in (RedirectKind.HEREDOC, RedirectKind.HERESTRING)
+            and not isinstance(r.target, int))
+        token = set_redirect_paths(command.id, targets)
+        try:
+            stdout, io, exec_node = await execute_node(command, session,
+                                                       cmd_stdin, call_stack)
+        finally:
+            reset_redirect_paths(token)
+        refused = exec_node.refused
         barriered = await apply_barrier(stdout, io, BarrierPolicy.VALUE)
         if isinstance(barriered, memoryview):
             barriered = bytes(barriered)
@@ -163,6 +179,15 @@ async def handle_redirect(
 
         # other numeric dups (3>&1, ...) are not simulated
         if isinstance(r.target, int):
+            continue
+
+        if refused:
+            # The gate refused the line, so it performs no file I/O: the
+            # target is neither created nor truncated (bash's
+            # open-before-exec would; a policy refusal must leave the
+            # protected file alone), and the refusal flows to the caller
+            # on the shell's own streams, which the fd dups above still
+            # route (`cmd 2>&1` reads as bash routes it).
             continue
 
         scope = _ensure_scope(r.target)
@@ -206,7 +231,9 @@ async def handle_redirect(
 
     result_stdout = bytes(out_stdout)
     io.stderr = bytes(out_stderr) if out_stderr else None
-    exec_node = ExecutionNode(command="redirect", exit_code=io.exit_code)
+    exec_node = ExecutionNode(command="redirect",
+                              exit_code=io.exit_code,
+                              refused=refused)
     return result_stdout if result_stdout else None, io, exec_node
 
 
