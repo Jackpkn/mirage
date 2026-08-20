@@ -136,10 +136,12 @@ def make_readdir(
     async def readdir(accessor: A,
                       path_spec: PathSpec,
                       index: IndexCacheStore = NULL_INDEX) -> list[str]:
-        if index is NULL_INDEX:
+        if index is NULL_INDEX or index is None:
             # Entry resolution and the parent-listing warm both read what
             # readdir just wrote, so a caller with no cache still needs
-            # one for the duration of the call.
+            # one for the duration of the call. None arrives from bare
+            # commands built outside a workspace (the TS twin's ?? treats
+            # null and undefined alike).
             index = RAMIndexCacheStore()
         virtual = path_spec.virtual
         prefix = mount_prefix_of(path_spec.virtual, path_spec.resource_path)

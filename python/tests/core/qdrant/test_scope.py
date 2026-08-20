@@ -1,4 +1,7 @@
-from mirage.core.qdrant.scope import ScopeLevel, detect_scope
+from mirage.accessor.qdrant import QdrantAccessor
+from mirage.core.hierarchy.scope import INVALID, ROOT, make_detect_scope
+from mirage.core.qdrant.scope import (detect_for, filters_of, scopes_for,
+                                      table_of)
 from mirage.resource.qdrant.config import QdrantConfig
 from mirage.types import PathSpec
 
@@ -20,54 +23,82 @@ def _ps(path: str) -> PathSpec:
                     resource_path=path.strip("/"))
 
 
+def _detect(config: QdrantConfig):
+    return make_detect_scope(scopes_for(config))
+
+
 def test_root_multi_collection():
-    s = detect_scope(_ps("/"), _cfg())
-    assert s.level == ScopeLevel.ROOT
+    match = _detect(_cfg())(_ps("/"))
+    assert match.kind == ROOT
 
 
 def test_collection_group_dir():
-    s = detect_scope(_ps("/animals"), _cfg())
-    assert s.level == ScopeLevel.GROUP_DIR
-    assert s.table == "animals"
-    assert s.filters == {}
+    config = _cfg()
+    match = _detect(config)(_ps("/animals"))
+    assert match.kind == "group"
+    assert table_of(config, match) == "animals"
+    assert filters_of(config, match) == {}
 
 
 def test_nested_group_dir():
-    s = detect_scope(_ps("/animals/cat"), _cfg())
-    assert s.level == ScopeLevel.GROUP_DIR
-    assert s.filters == {"label": "cat"}
+    config = _cfg()
+    match = _detect(config)(_ps("/animals/cat"))
+    assert match.kind == "group"
+    assert filters_of(config, match) == {"label": "cat"}
 
 
 def test_leaf_group_dir():
-    s = detect_scope(_ps("/animals/cat/big"), _cfg())
-    assert s.level == ScopeLevel.GROUP_DIR
-    assert s.filters == {"label": "cat", "kind": "big"}
+    config = _cfg()
+    match = _detect(config)(_ps("/animals/cat/big"))
+    assert match.kind == "group"
+    assert filters_of(config, match) == {"label": "cat", "kind": "big"}
 
 
 def test_row_json():
-    s = detect_scope(_ps("/animals/cat/big/3.json"), _cfg())
-    assert s.level == ScopeLevel.ROW
-    assert s.row_id == "3"
-    assert s.kind == "json"
-    assert s.filters == {"label": "cat", "kind": "big"}
+    config = _cfg()
+    match = _detect(config)(_ps("/animals/cat/big/3.json"))
+    assert match.kind == "row_json"
+    assert match.slots["row_id"] == "3"
+    assert filters_of(config, match) == {"label": "cat", "kind": "big"}
 
 
 def test_row_text():
-    s = detect_scope(_ps("/animals/cat/big/3.txt"), _cfg())
-    assert s.level == ScopeLevel.ROW
-    assert s.row_id == "3"
-    assert s.kind == "txt"
+    match = _detect(_cfg())(_ps("/animals/cat/big/3.txt"))
+    assert match.kind == "row_text"
+    assert match.slots["row_id"] == "3"
 
 
 def test_row_blob():
-    s = detect_scope(_ps("/animals/cat/big/3.png"), _cfg())
-    assert s.level == ScopeLevel.ROW
-    assert s.row_id == "3"
-    assert s.kind == "blob"
+    match = _detect(_cfg())(_ps("/animals/cat/big/3.png"))
+    assert match.kind == "row_blob"
+    assert match.slots["row_id"] == "3"
+
+
+def test_text_needs_text_field():
+    match = _detect(_cfg(text_field=None))(_ps("/animals/cat/big/3.txt"))
+    assert match.kind == INVALID
+
+
+def test_blob_needs_blob_field():
+    match = _detect(_cfg(blob_field=None))(_ps("/animals/cat/big/3.png"))
+    assert match.kind == INVALID
+
+
+def test_too_deep_is_invalid():
+    match = _detect(_cfg())(_ps("/animals/cat/big/3.json/extra"))
+    assert match.kind == INVALID
 
 
 def test_single_collection_pin_elides_collection():
-    s = detect_scope(_ps("/cat/big"), _cfg(collection="animals"))
-    assert s.level == ScopeLevel.GROUP_DIR
-    assert s.table == "animals"
-    assert s.filters == {"label": "cat", "kind": "big"}
+    config = _cfg(collection="animals")
+    match = _detect(config)(_ps("/cat/big"))
+    assert match.kind == "group"
+    assert table_of(config, match) == "animals"
+    assert filters_of(config, match) == {"label": "cat", "kind": "big"}
+
+
+def test_detect_for_caches_per_accessor():
+    accessor = QdrantAccessor(_cfg())
+    assert detect_for(accessor) is detect_for(accessor)
+    other = QdrantAccessor(_cfg(collection="animals", group_by=["label"]))
+    assert detect_for(other)(_ps("/cat/3.json")).kind == "row_json"

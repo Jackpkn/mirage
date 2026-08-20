@@ -45,6 +45,13 @@ def test_dynamic_level_joins_names_under_the_virtual_key(accessor):
     assert out == ["/h/rooms/red", "/h/rooms/blue"]
 
 
+def test_a_none_index_gets_a_call_local_store(accessor):
+    # Bare commands built outside a workspace bind index=None; the kit
+    # substitutes a call-local store exactly as it does for NULL_INDEX.
+    out = asyncio.run(READDIR(accessor, spec("/rooms"), index=None))
+    assert out == ["/h/rooms/red", "/h/rooms/blue"]
+
+
 def test_guard_runs_before_the_index_probe(accessor):
     index = RAMIndexCacheStore()
     asyncio.run(READDIR(accessor, spec("/rooms/red"), index=index))

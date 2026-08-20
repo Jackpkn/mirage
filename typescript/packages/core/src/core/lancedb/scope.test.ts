@@ -15,18 +15,34 @@
 import { stripSlash } from '../../utils/slash.ts'
 import { describe, expect, it } from 'vitest'
 
-import { resolveLanceDBConfig } from '../../resource/lancedb/config.ts'
+import { LanceDBAccessor } from '../../accessor/lancedb.ts'
+import {
+  resolveLanceDBConfig,
+  type LanceDBConfig,
+  type LanceDBConfigResolved,
+} from '../../resource/lancedb/config.ts'
 import { PathSpec } from '../../types.ts'
-import { ScopeLevel, detectScope } from './scope.ts'
+import { INVALID, ROOT, makeDetectScope, type DetectFn } from '../hierarchy/scope.ts'
+import type { LanceDriver } from './_driver.ts'
+import { detectFor, filtersOf, scopesFor, tableOf } from './scope.ts'
 
-const config = resolveLanceDBConfig({
-  uri: '/tmp/db',
-  groupBy: ['label', 'kind'],
-  idColumn: 'id',
-  blobColumn: 'image_bytes',
-  blobExt: 'png',
-  vectorColumn: 'vector',
-})
+function cfg(over: Partial<LanceDBConfig> = {}): LanceDBConfigResolved {
+  return resolveLanceDBConfig({
+    uri: '/tmp/db',
+    groupBy: ['label', 'kind'],
+    idColumn: 'id',
+    blobColumn: 'image_bytes',
+    blobExt: 'png',
+    vectorColumn: 'vector',
+    ...over,
+  })
+}
+
+const config = cfg()
+
+function detect(c: LanceDBConfigResolved): DetectFn {
+  return makeDetectScope(scopesFor(c))
+}
 
 function ps(p: string): PathSpec {
   return new PathSpec({ resourcePath: stripSlash(p), virtual: p, directory: p })
@@ -34,42 +50,65 @@ function ps(p: string): PathSpec {
 
 describe('lancedb scope', () => {
   it('root in multi-table mode', () => {
-    expect(detectScope(ps('/'), config).level).toBe(ScopeLevel.ROOT)
+    expect(detect(config)(ps('/')).kind).toBe(ROOT)
   })
 
   it('table is a group dir', () => {
-    const s = detectScope(ps('/animals'), config)
-    expect(s.level).toBe(ScopeLevel.GROUP_DIR)
-    expect(s.table).toBe('animals')
-    expect(s.filters).toEqual({})
+    const match = detect(config)(ps('/animals'))
+    expect(match.kind).toBe('group')
+    expect(tableOf(config, match)).toBe('animals')
+    expect(filtersOf(config, match)).toEqual({})
   })
 
   it('nested group dir binds a filter', () => {
-    expect(detectScope(ps('/animals/cat'), config).filters).toEqual({ label: 'cat' })
+    const match = detect(config)(ps('/animals/cat'))
+    expect(match.kind).toBe('group')
+    expect(filtersOf(config, match)).toEqual({ label: 'cat' })
   })
 
   it('row card', () => {
-    const s = detectScope(ps('/animals/cat/big/3.md'), config)
-    expect(s.level).toBe(ScopeLevel.ROW)
-    expect(s.rowId).toBe('3')
-    expect(s.blob).toBe(false)
-    expect(s.filters).toEqual({ label: 'cat', kind: 'big' })
+    const match = detect(config)(ps('/animals/cat/big/3.md'))
+    expect(match.kind).toBe('row_card')
+    expect(match.slots.row_id).toBe('3')
+    expect(filtersOf(config, match)).toEqual({ label: 'cat', kind: 'big' })
   })
 
   it('row blob', () => {
-    const s = detectScope(ps('/animals/cat/big/3.png'), config)
-    expect(s.blob).toBe(true)
+    const match = detect(config)(ps('/animals/cat/big/3.png'))
+    expect(match.kind).toBe('row_blob')
+    expect(match.slots.row_id).toBe('3')
   })
 
-  it('single-table pin elides the table level', () => {
-    const pinned = resolveLanceDBConfig({
-      uri: '/tmp/db',
-      table: 'animals',
-      groupBy: ['label', 'kind'],
-      idColumn: 'id',
-    })
-    const s = detectScope(ps('/cat/big'), pinned)
-    expect(s.level).toBe(ScopeLevel.GROUP_DIR)
-    expect(s.filters).toEqual({ label: 'cat', kind: 'big' })
+  it('blob leaf needs a blob column', () => {
+    const blobless = resolveLanceDBConfig({ uri: '/tmp/db', groupBy: ['label', 'kind'] })
+    const match = detect(blobless)(ps('/animals/cat/big/3.png'))
+    expect(match.kind).toBe(INVALID)
+  })
+
+  it('too-deep paths are invalid', () => {
+    expect(detect(config)(ps('/animals/cat/big/3.md/extra')).kind).toBe(INVALID)
+  })
+
+  it('pinned table elides the table segment', () => {
+    const pinned = cfg({ table: 'animals' })
+    const match = detect(pinned)(ps('/cat/big'))
+    expect(match.kind).toBe('group')
+    expect(tableOf(pinned, match)).toBe('animals')
+    expect(filtersOf(pinned, match)).toEqual({ label: 'cat', kind: 'big' })
+  })
+
+  it('pinned flat table serves rows at the root', () => {
+    const flat = detect(cfg({ table: 'animals', groupBy: [] }))
+    expect(flat(ps('/')).kind).toBe(ROOT)
+    expect(flat(ps('/3.md')).kind).toBe('row_card')
+    expect(flat(ps('/whatever')).kind).toBe(INVALID)
+  })
+
+  it('detectFor caches per accessor', () => {
+    const driver = {} as LanceDriver
+    const accessor = new LanceDBAccessor(driver, config)
+    expect(detectFor(accessor)).toBe(detectFor(accessor))
+    const other = new LanceDBAccessor(driver, cfg({ groupBy: ['label'] }))
+    expect(detectFor(other)(ps('/animals/cat/3.md')).kind).toBe('row_card')
   })
 })

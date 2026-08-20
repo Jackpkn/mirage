@@ -15,18 +15,33 @@
 import { stripSlash } from '../../utils/slash.ts'
 import { describe, expect, it } from 'vitest'
 
-import { resolveQdrantConfig } from '../../resource/qdrant/config.ts'
+import { QdrantAccessor } from '../../accessor/qdrant.ts'
+import {
+  resolveQdrantConfig,
+  type QdrantConfig,
+  type QdrantConfigResolved,
+} from '../../resource/qdrant/config.ts'
 import { PathSpec } from '../../types.ts'
-import { ScopeLevel, detectScope } from './scope.ts'
+import { INVALID, ROOT, makeDetectScope, type DetectFn } from '../hierarchy/scope.ts'
+import { detectFor, filtersOf, scopesFor, tableOf } from './scope.ts'
 
-const config = resolveQdrantConfig({
-  groupBy: ['label', 'kind'],
-  idField: 'id',
-  textField: 'name',
-  blobField: 'image_bytes',
-  blobExt: 'png',
-  vectorField: 'vector',
-})
+function cfg(over: Partial<QdrantConfig> = {}): QdrantConfigResolved {
+  return resolveQdrantConfig({
+    groupBy: ['label', 'kind'],
+    idField: 'id',
+    textField: 'name',
+    blobField: 'image_bytes',
+    blobExt: 'png',
+    vectorField: 'vector',
+    ...over,
+  })
+}
+
+const config = cfg()
+
+function detect(c: QdrantConfigResolved): DetectFn {
+  return makeDetectScope(scopesFor(c))
+}
 
 function ps(p: string): PathSpec {
   return new PathSpec({ resourcePath: stripSlash(p), virtual: p, directory: p })
@@ -34,46 +49,64 @@ function ps(p: string): PathSpec {
 
 describe('qdrant scope', () => {
   it('root in multi-collection mode', () => {
-    expect(detectScope(ps('/'), config).level).toBe(ScopeLevel.ROOT)
+    expect(detect(config)(ps('/')).kind).toBe(ROOT)
   })
 
   it('collection is a group dir', () => {
-    const s = detectScope(ps('/animals'), config)
-    expect(s.level).toBe(ScopeLevel.GROUP_DIR)
-    expect(s.table).toBe('animals')
-    expect(s.filters).toEqual({})
+    const match = detect(config)(ps('/animals'))
+    expect(match.kind).toBe('group')
+    expect(tableOf(config, match)).toBe('animals')
+    expect(filtersOf(config, match)).toEqual({})
   })
 
   it('nested group dir binds a filter', () => {
-    expect(detectScope(ps('/animals/cat'), config).filters).toEqual({ label: 'cat' })
+    const match = detect(config)(ps('/animals/cat'))
+    expect(match.kind).toBe('group')
+    expect(filtersOf(config, match)).toEqual({ label: 'cat' })
   })
 
   it('row json', () => {
-    const s = detectScope(ps('/animals/cat/big/3.json'), config)
-    expect(s.level).toBe(ScopeLevel.ROW)
-    expect(s.rowId).toBe('3')
-    expect(s.kind).toBe('json')
-    expect(s.filters).toEqual({ label: 'cat', kind: 'big' })
+    const match = detect(config)(ps('/animals/cat/big/3.json'))
+    expect(match.kind).toBe('row_json')
+    expect(match.slots.row_id).toBe('3')
+    expect(filtersOf(config, match)).toEqual({ label: 'cat', kind: 'big' })
   })
 
   it('row text', () => {
-    const s = detectScope(ps('/animals/cat/big/3.txt'), config)
-    expect(s.kind).toBe('txt')
+    const match = detect(config)(ps('/animals/cat/big/3.txt'))
+    expect(match.kind).toBe('row_text')
+    expect(match.slots.row_id).toBe('3')
   })
 
   it('row blob', () => {
-    const s = detectScope(ps('/animals/cat/big/3.png'), config)
-    expect(s.kind).toBe('blob')
+    const match = detect(config)(ps('/animals/cat/big/3.png'))
+    expect(match.kind).toBe('row_blob')
+    expect(match.slots.row_id).toBe('3')
   })
 
-  it('single-collection pin elides the collection level', () => {
-    const pinned = resolveQdrantConfig({
-      collection: 'animals',
-      groupBy: ['label', 'kind'],
-      idField: 'id',
-    })
-    const s = detectScope(ps('/cat/big'), pinned)
-    expect(s.level).toBe(ScopeLevel.GROUP_DIR)
-    expect(s.filters).toEqual({ label: 'cat', kind: 'big' })
+  it('text and blob leaves need their config fields', () => {
+    const bare = resolveQdrantConfig({ groupBy: ['label', 'kind'] })
+    expect(detect(bare)(ps('/animals/cat/big/3.txt')).kind).toBe(INVALID)
+    expect(detect(bare)(ps('/animals/cat/big/3.png')).kind).toBe(INVALID)
+    expect(detect(bare)(ps('/animals/cat/big/3.json')).kind).toBe('row_json')
+  })
+
+  it('too-deep paths are invalid', () => {
+    expect(detect(config)(ps('/animals/cat/big/3.json/extra')).kind).toBe(INVALID)
+  })
+
+  it('pinned collection elides the collection segment', () => {
+    const pinned = cfg({ collection: 'animals' })
+    const match = detect(pinned)(ps('/cat/big'))
+    expect(match.kind).toBe('group')
+    expect(tableOf(pinned, match)).toBe('animals')
+    expect(filtersOf(pinned, match)).toEqual({ label: 'cat', kind: 'big' })
+  })
+
+  it('detectFor caches per accessor', () => {
+    const accessor = new QdrantAccessor(config)
+    expect(detectFor(accessor)).toBe(detectFor(accessor))
+    const other = new QdrantAccessor(cfg({ collection: 'animals', groupBy: ['label'] }))
+    expect(detectFor(other)(ps('/cat/3.json')).kind).toBe('row_json')
   })
 })

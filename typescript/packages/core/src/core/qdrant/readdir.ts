@@ -15,32 +15,20 @@
 import type { QdrantAccessor } from '../../accessor/qdrant.ts'
 import { IndexEntry } from '../../cache/index/config.ts'
 import type { IndexCacheStore } from '../../cache/index/store.ts'
+import type { QdrantConfigResolved } from '../../resource/qdrant/config.ts'
 import type { QdrantRow } from './client.ts'
 import { PathSpec } from '../../types.ts'
-import { enoent } from '../../utils/errors.ts'
-import { rstripSlash } from '../../utils/slash.ts'
+import { perAccessor } from '../hierarchy/bind.ts'
+import type { ReaddirFn } from '../hierarchy/probe.ts'
+import { makeReaddir, type Lister } from '../hierarchy/readdir.ts'
+import { ROOT, type ScopeMatch } from '../hierarchy/scope.ts'
 import { blobBytes, renderJson, renderText } from './render.ts'
-import { ScopeLevel, detectScope } from './scope.ts'
+import { detectFor, filtersOf, tableOf } from './scope.ts'
 
-function rowFiles(rows: QdrantRow[], config: QdrantAccessor['config']): string[] {
-  const names: string[] = []
-  for (const row of rows) {
-    const id = String(row[config.idField])
-    names.push(`${id}.json`)
-    if (
-      config.textField !== null &&
-      row[config.textField] !== null &&
-      row[config.textField] !== undefined
-    )
-      names.push(`${id}.txt`)
-    if (
-      config.blobField !== null &&
-      row[config.blobField] !== null &&
-      row[config.blobField] !== undefined
-    )
-      names.push(`${id}.${config.blobExt}`)
-  }
-  return names
+const GROUP_TYPE = 'qdrant/group'
+
+function dirEntry(name: string): IndexEntry {
+  return new IndexEntry({ id: name, name, resourceType: GROUP_TYPE, vfsName: name })
 }
 
 function blobSize(value: unknown): number | null {
@@ -54,7 +42,7 @@ function blobSize(value: unknown): number | null {
   }
 }
 
-function rowEntries(rows: QdrantRow[], config: QdrantAccessor['config']): [string, IndexEntry][] {
+function rowEntries(rows: QdrantRow[], config: QdrantConfigResolved): [string, IndexEntry][] {
   // The scroll already carries every payload, so each file's exact rendered
   // size is free here; stat serves it from the index instead of refetching
   // one row per file.
@@ -108,44 +96,63 @@ function rowEntries(rows: QdrantRow[], config: QdrantAccessor['config']): [strin
   return entries
 }
 
+async function children(
+  accessor: QdrantAccessor,
+  table: string,
+  filters: Record<string, string>,
+): Promise<[string, IndexEntry][] | null> {
+  const config = accessor.config
+  if (!(await accessor.tableExists(table))) return null
+  const depth = Object.keys(filters).length
+  if (depth < config.groupBy.length) {
+    const names = await accessor.distinct(
+      table,
+      config.groupBy[depth] ?? '',
+      filters,
+      config.maxRows,
+    )
+    return names.map((name): [string, IndexEntry] => [name, dirEntry(name)])
+  }
+  const rows = await accessor.rowsMatching(table, filters, [config.idField], config.maxRows)
+  return rowEntries(rows, config)
+}
+
+async function listRoot(
+  accessor: QdrantAccessor,
+  _match: ScopeMatch,
+): Promise<[string, IndexEntry][] | null> {
+  const config = accessor.config
+  if (config.collection === null) {
+    const tables = await accessor.listTables()
+    return tables.map((name): [string, IndexEntry] => [name, dirEntry(name)])
+  }
+  return children(accessor, config.collection, {})
+}
+
+async function listGroup(
+  accessor: QdrantAccessor,
+  match: ScopeMatch,
+): Promise<[string, IndexEntry][] | null> {
+  const config = accessor.config
+  return children(accessor, tableOf(config, match), filtersOf(config, match))
+}
+
+const LISTERS: Record<string, Lister<QdrantAccessor>> = {
+  [ROOT]: listRoot,
+  group: listGroup,
+}
+
+function buildReaddir(accessor: QdrantAccessor): ReaddirFn<QdrantAccessor> {
+  return makeReaddir(detectFor(accessor), { listers: LISTERS })
+}
+
+export const readdirFor = perAccessor(buildReaddir)
+
 export async function readdir(
   accessor: QdrantAccessor,
   path: PathSpec | string,
   index?: IndexCacheStore,
 ): Promise<string[]> {
   const spec = typeof path === 'string' ? PathSpec.fromStrPath(path) : path
-  const config = accessor.config
-  const scope = detectScope(spec, config)
-  const base = rstripSlash(spec.virtual)
-
-  if (scope.level === ScopeLevel.ROOT) {
-    const tables = await accessor.listTables()
-    return tables.map((name) => `${base}/${name}`)
-  }
-
-  if (scope.level === ScopeLevel.GROUP_DIR && scope.table !== null) {
-    const depth = Object.keys(scope.filters).length
-    const total = config.groupBy.length
-    let names: string[]
-    if (depth < total) {
-      names = await accessor.distinct(
-        scope.table,
-        config.groupBy[depth] ?? '',
-        scope.filters,
-        config.maxRows,
-      )
-    } else {
-      const rows = await accessor.rowsMatching(
-        scope.table,
-        scope.filters,
-        [config.idField],
-        config.maxRows,
-      )
-      names = rowFiles(rows, config)
-      if (index !== undefined) await index.setDir(base, rowEntries(rows, config))
-    }
-    return names.map((name) => `${base}/${name}`)
-  }
-
-  throw enoent(spec.virtual)
+  return readdirFor(accessor)(accessor, spec, index)
 }

@@ -12,100 +12,86 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from dataclasses import dataclass, field
-from enum import Enum
-from typing import Literal, TypeAlias
-
+from mirage.accessor.lancedb import LanceDBAccessor
+from mirage.core.hierarchy.bind import per_accessor
+from mirage.core.hierarchy.codec import Codec
+from mirage.core.hierarchy.scope import (DetectFn, Scope, ScopeMatch, Segment,
+                                         Slot, make_detect_scope)
 from mirage.resource.lancedb.config import LanceDBConfig
-from mirage.types import PathSpec
+from mirage.types import FileType
+from mirage.utils.filetype import image_type_for_extension
+
+CARD = Codec(suffix=".md")
 
 
-class ScopeLevel(str, Enum):
-    ROOT = "root"
-    GROUP_DIR = "group_dir"
-    ROW = "row"
-    UNKNOWN = "unknown"
+def scopes_for(config: LanceDBConfig) -> tuple[Scope, ...]:
+    """The mount's scope table, shaped by its config.
 
+    The tree is a function of the mount config, not of the backend: a
+    pinned ``table`` removes the leading table segment, every
+    ``group_by`` column adds one directory level, and ``blob_column``
+    adds a second leaf suffix beside the ``.md`` card. Group slots are
+    named positionally (``g0``, ``g1``, ...) so a column named ``table``
+    cannot collide with the table slot; ``filters_of`` maps them back to
+    column names. Every partial depth shares the one ``group`` kind, and
+    its lister derives the depth from the slots, so the lister table
+    stays static while the scope table varies per mount.
 
-@dataclass(frozen=True)
-class LanceDBRootScope:
-    resource_path: str = "/"
-    level: Literal[ScopeLevel.ROOT] = field(default=ScopeLevel.ROOT,
-                                            init=False)
-
-
-@dataclass(frozen=True)
-class LanceDBGroupScope:
-    table: str
-    filters: dict[str, str] = field(default_factory=dict)
-    resource_path: str = "/"
-    level: Literal[ScopeLevel.GROUP_DIR] = field(default=ScopeLevel.GROUP_DIR,
-                                                 init=False)
-
-
-@dataclass(frozen=True)
-class LanceDBRowScope:
-    table: str
-    row_id: str
-    blob: bool
-    filters: dict[str, str] = field(default_factory=dict)
-    resource_path: str = "/"
-    level: Literal[ScopeLevel.ROW] = field(default=ScopeLevel.ROW, init=False)
-
-
-@dataclass(frozen=True)
-class LanceDBUnknownScope:
-    resource_path: str = "/"
-    level: Literal[ScopeLevel.UNKNOWN] = field(default=ScopeLevel.UNKNOWN,
-                                               init=False)
-
-
-LanceDBScope: TypeAlias = (LanceDBRootScope | LanceDBGroupScope
-                           | LanceDBRowScope | LanceDBUnknownScope)
-
-
-def _parse_row_file(name: str,
-                    config: LanceDBConfig) -> tuple[str, bool] | None:
-    if name.endswith(".md"):
-        return name[:-len(".md")], False
+    Args:
+        config (LanceDBConfig): the mount's config.
+    """
+    prefix: tuple[Segment, ...] = () if config.table else (Slot("table"), )
+    groups = tuple(Slot(f"g{i}") for i in range(len(config.group_by)))
+    scopes = [
+        Scope(kind="group", segments=prefix + groups[:depth])
+        for depth in range(len(groups) + 1) if depth or prefix
+    ]
+    full = prefix + groups
+    scopes.append(
+        Scope(kind="row_card",
+              segments=full + (Slot("row_id", CARD), ),
+              leaf=True,
+              filetype=FileType.TEXT))
     if config.blob_column:
-        suffix = "." + config.blob_ext
-        if name.endswith(suffix):
-            return name[:-len(suffix)], True
-    return None
+        blob = Codec(suffix="." + config.blob_ext)
+        scopes.append(
+            Scope(kind="row_blob",
+                  segments=full + (Slot("row_id", blob), ),
+                  leaf=True,
+                  filetype=image_type_for_extension(config.blob_ext)))
+    return tuple(scopes)
 
 
-def detect_scope(path: PathSpec, config: LanceDBConfig) -> LanceDBScope:
-    raw = path.mount_path
-    key = raw.strip("/")
-    segs = key.split("/") if key else []
+def _detect(accessor: LanceDBAccessor) -> DetectFn:
+    return make_detect_scope(scopes_for(accessor.config))
 
+
+detect_for = per_accessor(_detect)
+
+
+def table_of(config: LanceDBConfig, match: ScopeMatch) -> str:
+    """The table a match addresses: pinned, or the path's first slot.
+
+    Args:
+        config (LanceDBConfig): the mount's config.
+        match (ScopeMatch): a match from this mount's classifier.
+    """
     if config.table:
-        table = config.table
-        rest = segs
-    else:
-        if not segs:
-            return LanceDBRootScope(resource_path=raw)
-        table = segs[0]
-        rest = segs[1:]
+        return config.table
+    return match.slots["table"]
 
-    gb = config.group_by
-    n = len(gb)
 
-    if len(rest) <= n:
-        filters = {gb[i]: rest[i] for i in range(len(rest))}
-        return LanceDBGroupScope(table=table,
-                                 filters=filters,
-                                 resource_path=raw)
+def filters_of(config: LanceDBConfig, match: ScopeMatch) -> dict[str, str]:
+    """The match's group filters, keyed back to column names.
 
-    if len(rest) == n + 1:
-        filters = {gb[i]: rest[i] for i in range(n)}
-        parsed = _parse_row_file(rest[n], config)
-        if parsed is not None:
-            return LanceDBRowScope(table=table,
-                                   filters=filters,
-                                   row_id=parsed[0],
-                                   blob=parsed[1],
-                                   resource_path=raw)
-
-    return LanceDBUnknownScope(resource_path=raw)
+    Args:
+        config (LanceDBConfig): the mount's config.
+        match (ScopeMatch): a match from this mount's classifier.
+    """
+    filters: dict[str, str] = {}
+    for i, column in enumerate(config.group_by):
+        value = match.slots.get(f"g{i}")
+        if value is None:
+            break
+        filters[column] = value
+    return filters
