@@ -10,12 +10,20 @@ TS_SRC = [
     REPO / "typescript/packages/node/src",
     REPO / "typescript/packages/browser/src",
 ]
-# `normalizeFields(input, {rename: {...}})` and the shared `const RENAME`
-# maps the S3-alias families feed it.
+# `normalizeFields(input, {rename: {...}})` and the shared rename-map
+# constants the S3-alias families feed it. The declaration matters as much
+# as the map: `export const`, a type annotation between the name and the
+# `=`, and a camelCase name are all forms in use, and a pattern that misses
+# one lets a redundant entry through in silence -- which is exactly what
+# `export const S3_BROWSER_RENAME` did to the first version of this gate.
 RENAME_PROP_RE = re.compile(r"rename:\s*\{([^{}]*)\}", re.S)
-RENAME_CONST_RE = re.compile(r"^const \w*RENAME\w*[^=\n]*=\s*\{([^{}]*)\}",
-                             re.M | re.S)
-PAIR_RE = re.compile(r"([A-Za-z0-9_]+)\s*:\s*'([A-Za-z0-9_]+)'")
+RENAME_CONST_RE = re.compile(
+    r"^(?:export\s+)?const\s+\w*rename\w*[^=\n]*=\s*\{([^{}]*)\}",
+    re.M | re.S | re.I)
+# The key may be bare or quoted (either style); the value is a string
+# literal, so it is always quoted.
+PAIR_RE = re.compile(
+    r"""['"]?([A-Za-z0-9_]+)['"]?\s*:\s*['"]([A-Za-z0-9_]+)['"]""")
 SNAKE_RE = re.compile(r"_([a-z0-9])")
 
 
@@ -64,6 +72,61 @@ def source_files() -> list[Path]:
     return sorted(out)
 
 
+# One fixture per declaration form the codebase actually uses, plus the
+# negatives. The first version of this gate matched only lines beginning
+# with `const` and only bare keys, so `export const S3_BROWSER_RENAME` --
+# added in the same change -- was invisible to it. A pattern this gate
+# cannot see is worse than no gate: it reports success over a blind spot.
+SELFTEST_CASES: tuple[tuple[str, str, bool], ...] = (
+    ("a bare const map",
+     "const RENAME: Record<string, string> = {\n  api_key: 'apiKey',\n}\n",
+     True),
+    ("an exported const map",
+     "export const S3_RENAME: Record<string, string> = {\n"
+     "  api_key: 'apiKey',\n}\n", True),
+    ("a camelCase map name", "const renameMap = {\n  api_key: 'apiKey',\n}\n",
+     True),
+    ("a single-quoted key", "normalizeFields(input, {\n  rename: {\n"
+     "    'api_key': 'apiKey',\n  },\n})\n", True),
+    ("a double-quoted key", 'normalizeFields(input, {\n  rename: {\n'
+     '    "api_key": "apiKey",\n  },\n})\n', True),
+    ("an inline rename property",
+     "normalizeFields(input, {\n  rename: { api_key: 'apiKey' },\n})\n", True),
+    ("a multi-line rename property", "normalizeFields(input, {\n  rename: {\n"
+     "    board_ids: 'boardIds',\n  },\n})\n", True),
+    ("a load-bearing override", "normalizeFields(input, {\n"
+     "  rename: { endpoint_url: 'endpoint' },\n})\n", False),
+    ("load-bearing overrides in a const",
+     "export const R = {\n  timeout: 'timeoutMs',\n"
+     "  aws_profile: 'profile',\n  path_style: 'forcePathStyle',\n}\n", False),
+    ("an object that is not a rename map", "const opts = { mode: 'fast' }\n",
+     False),
+)
+
+
+def selftest() -> int:
+    """Prove the gate can see every declaration form before trusting it.
+
+    Returns:
+        0 when every fixture is classified as expected.
+    """
+    failures = 0
+    for name, source, expected in SELFTEST_CASES:
+        found = bool(redundant_pairs(source))
+        if found == expected:
+            print(f"  ok   {name}")
+            continue
+        failures += 1
+        want = "flagged" if expected else "ignored"
+        print(f"  FAIL {name}: should be {want}, was not")
+    if failures:
+        print(f"\n{failures} selftest case(s) failed; the gate is blind to "
+              "a form in use.")
+        return 1
+    print(f"\nselftest OK: {len(SELFTEST_CASES)} declaration forms covered")
+    return 0
+
+
 def main() -> int:
     """Fail when a rename map restates what `snakeToCamel` already does.
 
@@ -76,6 +139,8 @@ def main() -> int:
     Returns:
         0 when every surviving rename entry is a real override.
     """
+    if "--selftest" in sys.argv[1:]:
+        return selftest()
     offenders: list[tuple[Path, list[tuple[str, str]]]] = []
     for path in source_files():
         if path.name == "normalize.test.ts":

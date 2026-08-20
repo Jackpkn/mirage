@@ -98,8 +98,14 @@ jobs:
       # configuration -- it is a second place for one fact to be wrong, and it
       # buries the handful that are real overrides (`endpoint_url`, `timeout`,
       # `aws_profile`) in a wall of noise. 95 had accumulated.
+      # --selftest first: the gate's own patterns are what it trusts, and the
+      # first version matched neither `export const` nor a quoted key, so it
+      # reported success over a blind spot. The fixtures cover every
+      # declaration form in use.
       - name: Redundant config renames
-        run: ./python/.venv/bin/python scripts/check_normalize_renames.py
+        run: |
+          ./python/.venv/bin/python scripts/check_normalize_renames.py --selftest
+          ./python/.venv/bin/python scripts/check_normalize_renames.py
 
       # The docs build parses frontmatter as YAML and stops on the first page
       # it cannot read, so an unquoted description holding ": " fails the
