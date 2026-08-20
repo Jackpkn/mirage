@@ -15,6 +15,7 @@
 from collections.abc import AsyncIterator
 
 from mirage.accessor.github import GitHubAccessor
+from mirage.core.github.repo import ensure_ref
 from mirage.core.github.tree import fetch_tree
 from mirage.types import PathSpec, WalkEntry
 from mirage.utils.key_prefix import mount_prefix_of
@@ -58,12 +59,13 @@ class GitHubWalk:
         """
         accessor = self._accessor
         prefix = mount_prefix_of(root.virtual, root.resource_path)
+        ref = await ensure_ref(accessor)
         tree, truncated = await fetch_tree(accessor.config, accessor.owner,
-                                           accessor.repo, accessor.ref)
+                                           accessor.repo, ref)
         if truncated:
             raise IncompleteWalkError(
                 f"github tree for {accessor.owner}/{accessor.repo}"
-                f"@{accessor.ref} was truncated; cannot diff a partial tree")
+                f"@{ref} was truncated; cannot diff a partial tree")
         # A complete tree for the ref is exactly what the accessor holds,
         # and find/du/grep's scope counter read it directly. Discarding it
         # here left them answering from the tree the mount was built with

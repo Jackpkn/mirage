@@ -15,23 +15,27 @@
 import asyncio
 
 from mirage.accessor.base import Accessor
+from mirage.core.github.config import GitHubConfig
 from mirage.core.github.tree_entry import TreeEntry
 
 
 class GitHubAccessor(Accessor):
 
     def __init__(self,
-                 config,
-                 owner,
-                 repo,
-                 ref,
+                 config: GitHubConfig,
+                 owner: str,
+                 repo: str,
+                 ref: str | None = None,
                  default_branch: str | None = None,
                  tree: dict[str, TreeEntry] | None = None,
-                 truncated=False):
+                 truncated: bool = False) -> None:
         self.config = config
         self.owner = owner
         self.repo = repo
-        self.ref = ref
+        # None until resolved: an unpinned mount follows the repository's
+        # default branch, which costs a request to learn, so the ref is
+        # settled on the first read that needs one (`ensure_ref`).
+        self.ref: str | None = ref
         # None until hydrated: the mount is constructed without touching
         # the network, so the repo's default branch is fetched on the
         # first read that needs it (`ensure_default_branch`).

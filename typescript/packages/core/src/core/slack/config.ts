@@ -36,7 +36,5 @@ export function redactSlackConfig(config: SlackConfig): SlackConfigRedacted {
 }
 
 export function normalizeSlackConfig(input: Record<string, unknown>): SlackConfig {
-  return normalizeFields(input, {
-    rename: { search_token: 'searchToken', base_url: 'baseUrl' },
-  }) as unknown as SlackConfig
+  return normalizeFields(input) as unknown as SlackConfig
 }

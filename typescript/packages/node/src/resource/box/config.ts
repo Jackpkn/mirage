@@ -70,13 +70,6 @@ export function redactBoxConfig(config: BoxConfig): BoxConfigRedacted {
 export function normalizeBoxConfig(input: Record<string, unknown>): BoxConfig {
   return normalizeFields(input, {
     rename: {
-      root_folder_id: 'rootFolderId',
-      content_search: 'contentSearch',
-      client_id: 'clientId',
-      client_secret: 'clientSecret',
-      refresh_token: 'refreshToken',
-      enterprise_id: 'enterpriseId',
-      access_token: 'accessToken',
       developer_token: 'accessToken',
     },
   }) as unknown as BoxConfig

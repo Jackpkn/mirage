@@ -27,21 +27,43 @@ from mirage.core.gmail.messages import (_extract_attachments, _extract_header,
 from mirage.types import PathSpec
 from mirage.utils.errors import enoent
 from mirage.utils.key_prefix import mount_key, mount_prefix_of
-from mirage.utils.sanitize import sanitize_label
+from mirage.utils.sanitize import NAME_MAX_BYTES, byte_len, sanitize_label
 
 logger = logging.getLogger(__name__)
 
 TITLE_MAX = 80
+MSG_SUFFIX = ".gmail.json"
 
 _sanitize = partial(sanitize_label, fallback="No_Subject", max_len=TITLE_MAX)
 
 
+def _subject(subject: str, msg_id: str) -> str:
+    """Sanitize a subject to fit what the id and suffix leave of NAME_MAX.
+
+    80 characters is 240 bytes of CJK, which overflows the 255-byte
+    NAME_MAX once the id and `.gmail.json` are added; the filesystem
+    rejects the name outright. Both the message file and its attachment
+    directory take the file's (stricter) budget so one subject renders
+    the same in both, rather than the directory getting the eleven bytes
+    the suffix would have used.
+
+    Args:
+        subject (str): raw subject header.
+        msg_id (str): the Gmail message id the name embeds.
+
+    Returns:
+        str: the sanitized subject segment.
+    """
+    fixed = len("__") + byte_len(msg_id) + len(MSG_SUFFIX)
+    return _sanitize(subject, max_bytes=NAME_MAX_BYTES - fixed)
+
+
 def _msg_filename(subject: str, msg_id: str) -> str:
-    return f"{_sanitize(subject)}__{msg_id}.gmail.json"
+    return f"{_subject(subject, msg_id)}__{msg_id}{MSG_SUFFIX}"
 
 
 def _attach_dir_name(subject: str, msg_id: str) -> str:
-    return f"{_sanitize(subject)}__{msg_id}"
+    return f"{_subject(subject, msg_id)}__{msg_id}"
 
 
 def _attachment_filename(_attachment_id: str, filename: str) -> str:

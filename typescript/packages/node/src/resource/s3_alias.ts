@@ -52,16 +52,14 @@ export interface S3AliasConfig {
   proxy?: string
 }
 
-// Every provider accepts the same snake_case spelling of its fields, and
-// Python states timeouts in seconds where TypeScript uses milliseconds.
+// Only the entries `snakeToCamel` would get wrong: python spells the profile
+// `aws_profile`, the endpoint `endpoint_url`, path style `path_style`, and
+// states timeouts in seconds where TypeScript uses milliseconds. Every other
+// field maps by default, so it does not belong here.
 const RENAME: Record<string, string> = {
-  access_key_id: 'accessKeyId',
-  secret_access_key: 'secretAccessKey',
-  session_token: 'sessionToken',
   aws_profile: 'profile',
   endpoint_url: 'endpoint',
   path_style: 'forcePathStyle',
-  key_prefix: 'keyPrefix',
   timeout: 'timeoutMs',
 }
 

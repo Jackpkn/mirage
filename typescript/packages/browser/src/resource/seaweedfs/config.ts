@@ -27,3 +27,4 @@ const alias = makeBrowserS3Alias<SeaweedFSConfig, SeaweedFSConfigRedacted>({
 
 export const seaweedfsToS3Config = alias.toS3Config
 export const redactSeaweedFSConfig = alias.redact
+export const normalizeSeaweedFSConfig = alias.normalize

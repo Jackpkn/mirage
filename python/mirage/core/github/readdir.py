@@ -17,6 +17,7 @@ import logging
 from mirage.accessor.github import GitHubAccessor
 from mirage.cache.index import (NULL_INDEX, IndexCacheStore, IndexEntry,
                                 LookupStatus)
+from mirage.core.github.repo import ensure_ref
 from mirage.core.github.tree import (ensure_live_index, fetch_dir_tree,
                                      refill_index)
 from mirage.types import PathSpec
@@ -120,7 +121,7 @@ async def _resolve_dir_sha(
     stem = prefix.rstrip("/")
     rest = norm[len(stem):] if stem and norm.startswith(stem) else norm
     parts = [p for p in rest.strip("/").split("/") if p]
-    current_sha = accessor.ref
+    current_sha = await ensure_ref(accessor)
     current_path = stem
     for part in parts:
         entries = await fetch_dir_tree(accessor.config, accessor.owner,

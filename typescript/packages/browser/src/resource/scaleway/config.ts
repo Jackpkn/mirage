@@ -29,3 +29,4 @@ const alias = makeBrowserS3Alias<ScalewayConfig, ScalewayConfigRedacted>({
 export const resolvedScalewayEndpoint = alias.resolvedEndpoint
 export const scalewayToS3Config = alias.toS3Config
 export const redactScalewayConfig = alias.redact
+export const normalizeScalewayConfig = alias.normalize

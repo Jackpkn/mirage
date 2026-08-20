@@ -29,3 +29,4 @@ const alias = makeBrowserS3Alias<TencentConfig, TencentConfigRedacted>({
 export const resolvedTencentEndpoint = alias.resolvedEndpoint
 export const tencentToS3Config = alias.toS3Config
 export const redactTencentConfig = alias.redact
+export const normalizeTencentConfig = alias.normalize

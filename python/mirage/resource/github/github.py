@@ -81,7 +81,9 @@ class GitHubResource(BaseResource):
             repo (str | None): repository name; falls back to
                 ``config.repo``.
             ref (str | None): branch, tag or commit the mount is pinned
-                to; falls back to ``config.ref``.
+                to; falls back to ``config.ref``, and when neither names
+                one the mount follows the repository's default branch,
+                resolved on first read by ``ensure_ref``.
             default_branch (str | None): the repo's default branch, for
                 ``is_default_branch``. Fetched on first use when None.
             tree (dict[str, TreeEntry] | None): the recursive git tree,
@@ -130,8 +132,12 @@ class GitHubResource(BaseResource):
     def is_default_branch(self) -> bool | None:
         """Whether the mount is pinned to the repo's default branch.
 
-        ``None`` means not known yet, not "no": the default branch is
-        fetched on first use, and until something calls
+        An unpinned mount answers True without a request: naming no ref
+        *means* following the default branch, so the two agree whatever
+        that branch turns out to be.
+
+        Otherwise ``None`` means not known yet, not "no": the default
+        branch is fetched on first use, and until something calls
         :func:`mirage.core.github.repo.ensure_default_branch` there is
         nothing to compare ``ref`` against. Answering ``False`` there
         would be a wrong answer rather than an absent one, and an
@@ -146,6 +152,8 @@ class GitHubResource(BaseResource):
         Returns:
             bool | None: the comparison, or None if not yet hydrated.
         """
+        if self.accessor.ref is None:
+            return True
         if self.accessor.default_branch is None:
             return None
         return self.accessor.ref == self.accessor.default_branch

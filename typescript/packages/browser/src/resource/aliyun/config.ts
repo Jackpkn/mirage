@@ -29,3 +29,4 @@ const alias = makeBrowserS3Alias<AliyunConfig, AliyunConfigRedacted>({
 export const resolvedAliyunEndpoint = alias.resolvedEndpoint
 export const aliyunToS3Config = alias.toS3Config
 export const redactAliyunConfig = alias.redact
+export const normalizeAliyunConfig = alias.normalize

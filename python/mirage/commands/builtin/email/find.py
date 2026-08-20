@@ -27,7 +27,7 @@ from mirage.commands.registry import command
 from mirage.commands.spec import SPECS
 from mirage.commands.spec.types import FlagView
 from mirage.core.email.client import fetch_headers
-from mirage.core.email.readdir import _date_bucket, _sanitize
+from mirage.core.email.readdir import _date_bucket, _msg_filename
 from mirage.core.email.readdir import readdir as _readdir
 from mirage.core.email.search import search_messages
 from mirage.core.email.stat import stat as _stat
@@ -163,9 +163,12 @@ async def _find_server_side(
     results: list[str] = []
     for h in headers:
         date_str = _date_bucket(h)
-        subject = _sanitize(h.get("subject", "No Subject"))
         uid = h.get("uid", "")
-        filename = f"{subject}__{uid}.email.json"
+        # The same builder readdir names the file with, not a second
+        # spelling of it: the subject's budget depends on the uid and the
+        # suffix, so a hit composed from a bare `_sanitize` pointed at a
+        # path that does not exist once a long subject was trimmed.
+        filename = _msg_filename(h.get("subject", "No Subject"), uid)
         if fnmatch(filename, name_pattern):
             vfs_path = "/".join(p
                                 for p in [prefix, folder, date_str, filename]

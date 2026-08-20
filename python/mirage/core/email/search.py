@@ -16,7 +16,7 @@ from typing import Any
 
 from mirage.accessor.email import EmailAccessor
 from mirage.core.email.client import fetch_message, list_message_uids
-from mirage.core.email.readdir import _date_bucket, _sanitize
+from mirage.core.email.readdir import _date_bucket, _msg_filename
 from mirage.core.email.render import message_json_text
 from mirage.core.email.scope import EmailScope
 
@@ -77,9 +77,12 @@ async def search_messages(
 
 def _build_vfs_path(prefix: str, folder: str, msg: dict[str, Any]) -> str:
     date_str = _date_bucket(msg)
-    subject = _sanitize(msg.get("subject", "No Subject"))
     uid = msg.get("uid", "")
-    filename = f"{subject}__{uid}.email.json"
+    # The same builder readdir names the file with, not a second spelling of
+    # it: the subject's budget depends on the uid and the suffix, so a hit
+    # composed here from a bare `_sanitize` pointed at a path that does not
+    # exist as soon as a long subject was trimmed differently.
+    filename = _msg_filename(msg.get("subject", "No Subject"), uid)
     parts = [prefix, folder, date_str, filename]
     return "/".join(p for p in parts if p)
 

@@ -34,13 +34,5 @@ export function redactLangfuseConfig(config: LangfuseConfig): LangfuseConfigReda
 }
 
 export function normalizeLangfuseConfig(input: Record<string, unknown>): LangfuseConfig {
-  return normalizeFields(input, {
-    rename: {
-      public_key: 'publicKey',
-      secret_key: 'secretKey',
-      default_trace_limit: 'defaultTraceLimit',
-      default_search_limit: 'defaultSearchLimit',
-      default_from_timestamp: 'defaultFromTimestamp',
-    },
-  }) as unknown as LangfuseConfig
+  return normalizeFields(input) as unknown as LangfuseConfig
 }

@@ -12,17 +12,26 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { sanitizeLabel } from '../../utils/sanitize.ts'
+import { NAME_MAX_BYTES, byteLength, sanitizeLabel } from '../../utils/sanitize.ts'
 
 const TITLE_MAX_CHARS = 100
+const SUFFIX = '.gslide.json'
+const DATE_LEN = 10
 
-const sanitizeTitle = (title: string): string =>
-  sanitizeLabel(title, { fallback: 'Untitled', maxLen: TITLE_MAX_CHARS })
+const sanitizeTitle = (title: string, maxBytes: number): string =>
+  sanitizeLabel(title, { fallback: 'Untitled', maxLen: TITLE_MAX_CHARS, maxBytes })
 
+/**
+ * Build a filename from title, doc ID, and modified date.
+ *
+ * The title takes whatever of the 255-byte NAME_MAX the date, the id and the
+ * suffix leave, rather than a flat character count: those are the same number
+ * only for ASCII, and a 100-character CJK title rendered a name ext4 and APFS
+ * reject outright. The id never gives, so the name keeps addressing the
+ * document -- same rule as gcal's event filenames.
+ */
 export function makeFilename(title: string, docId: string, modifiedTime = ''): string {
-  const datePrefix = modifiedTime.length >= 10 ? modifiedTime.slice(0, 10) : ''
-  if (datePrefix !== '') {
-    return `${datePrefix}_${sanitizeTitle(title)}__${docId}.gslide.json`
-  }
-  return `${sanitizeTitle(title)}__${docId}.gslide.json`
+  const lead = modifiedTime.length >= DATE_LEN ? `${modifiedTime.slice(0, DATE_LEN)}_` : ''
+  const fixed = byteLength(lead) + 2 + byteLength(docId) + SUFFIX.length
+  return `${lead}${sanitizeTitle(title, NAME_MAX_BYTES - fixed)}__${docId}${SUFFIX}`
 }

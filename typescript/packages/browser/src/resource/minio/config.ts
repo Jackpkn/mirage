@@ -27,3 +27,4 @@ const alias = makeBrowserS3Alias<MinIOConfig, MinIOConfigRedacted>({
 
 export const minioToS3Config = alias.toS3Config
 export const redactMinIOConfig = alias.redact
+export const normalizeMinIOConfig = alias.normalize

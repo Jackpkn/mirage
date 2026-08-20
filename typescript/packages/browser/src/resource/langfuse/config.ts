@@ -14,6 +14,7 @@
 
 import { redactConfigWithSchema, secretStr, z } from '@struktoai/mirage-core/resource/secrets'
 import type { ConfigOf, RedactedConfig } from '@struktoai/mirage-core/resource/secrets'
+import { normalizeFields } from '@struktoai/mirage-core/utils/normalize'
 
 const LangfuseConfigSchema = z.object({
   publicKey: z.string(),
@@ -30,4 +31,15 @@ export type LangfuseConfigRedacted = RedactedConfig<LangfuseConfig, 'secretKey'>
 
 export function redactLangfuseConfig(config: LangfuseConfig): LangfuseConfigRedacted {
   return redactConfigWithSchema(LangfuseConfigSchema, config) as unknown as LangfuseConfigRedacted
+}
+
+/**
+ * Translate a python-style config blob to this one's camelCase.
+ *
+ * No rename map: every field's camelCase spelling is what `snakeToCamel`
+ * already produces, and restating those only creates a second place to be
+ * wrong. Mirrors node's `normalizeLangfuseConfig`.
+ */
+export function normalizeLangfuseConfig(input: Record<string, unknown>): LangfuseConfig {
+  return normalizeFields(input) as unknown as LangfuseConfig
 }

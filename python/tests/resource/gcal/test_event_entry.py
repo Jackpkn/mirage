@@ -52,7 +52,8 @@ def test_long_ascii_title_is_trimmed_to_name_max():
 
 def test_long_cjk_title_is_trimmed_by_bytes_not_characters():
     # 3 bytes per character: a character-counted budget would overflow
-    # NAME_MAX, which is the bug gdocs' sanitize_title still has.
+    # NAME_MAX. gdocs/gsheets/gslides had exactly that bug until
+    # sanitize_label grew a byte budget.
     name = make_event_filename(EVENT_ID, "0900-1030", "会" * 200)
     raw = name.encode()
     assert len(raw) <= NAME_MAX_BYTES

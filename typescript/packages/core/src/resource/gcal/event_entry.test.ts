@@ -56,7 +56,8 @@ describe('gcal event entry naming', () => {
 
   it('trims a long CJK title by bytes, not characters', () => {
     // 3 bytes per character: a character-counted budget would overflow
-    // NAME_MAX, which is the bug gdocs' sanitizeTitle still has.
+    // NAME_MAX. gdocs/gsheets/gslides had exactly that bug until
+    // sanitizeLabel grew a byte budget.
     const name = makeEventFilename(EVENT_ID, '0900-1030', '会'.repeat(200))
     expect(byteLength(name)).toBeLessThanOrEqual(NAME_MAX_BYTES)
     expect(name).not.toContain('�')

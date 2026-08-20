@@ -35,5 +35,5 @@ export function redactDiscordConfig(config: DiscordConfig): DiscordConfigRedacte
 }
 
 export function normalizeDiscordConfig(input: Record<string, unknown>): DiscordConfig {
-  return normalizeFields(input, {}) as unknown as DiscordConfig
+  return normalizeFields(input) as unknown as DiscordConfig
 }

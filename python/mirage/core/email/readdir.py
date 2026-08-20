@@ -25,16 +25,22 @@ from mirage.core.email.render import message_json_bytes
 from mirage.types import PathSpec
 from mirage.utils.errors import enoent
 from mirage.utils.key_prefix import mount_key, mount_prefix_of
-from mirage.utils.sanitize import sanitize_label
+from mirage.utils.sanitize import NAME_MAX_BYTES, byte_len, sanitize_label
 
 TITLE_MAX = 80
 EPOCH_DATE = "1970-01-01"
+MSG_SUFFIX = ".email.json"
 
 _sanitize = partial(sanitize_label, fallback="No_Subject", max_len=TITLE_MAX)
 
 
 def _msg_filename(subject: str, uid: str) -> str:
-    return f"{_sanitize(subject)}__{uid}.email.json"
+    # 80 characters is 240 bytes of CJK, which overflows the 255-byte
+    # NAME_MAX once the uid and `.email.json` are added, so the subject
+    # takes what they leave rather than a flat character count.
+    fixed = len("__") + byte_len(uid) + len(MSG_SUFFIX)
+    label = _sanitize(subject, max_bytes=NAME_MAX_BYTES - fixed)
+    return f"{label}__{uid}{MSG_SUFFIX}"
 
 
 def _parse_date(value: str) -> str | None:

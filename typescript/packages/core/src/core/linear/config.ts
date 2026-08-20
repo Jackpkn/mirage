@@ -37,11 +37,5 @@ export function redactLinearConfig(config: LinearConfig): LinearConfigRedacted {
 }
 
 export function normalizeLinearConfig(input: Record<string, unknown>): LinearConfig {
-  return normalizeFields(input, {
-    rename: {
-      api_key: 'apiKey',
-      team_ids: 'teamIds',
-      base_url: 'baseUrl',
-    },
-  }) as unknown as LinearConfig
+  return normalizeFields(input) as unknown as LinearConfig
 }

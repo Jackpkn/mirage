@@ -18,6 +18,7 @@ import { PathSpec as PathSpecCtor } from '@struktoai/mirage-core/types'
 import type { PathSpec } from '@struktoai/mirage-core/types'
 import { enoent } from '@struktoai/mirage-core/utils/errors'
 import { mountKey, mountPrefixOf } from '@struktoai/mirage-core/utils/key_prefix'
+import { NAME_MAX_BYTES, byteLength, sanitizeLabel } from '@struktoai/mirage-core/utils/sanitize'
 import { compareCodePoints } from '@struktoai/mirage-core/utils/sort'
 import type { EmailAccessor } from '../../accessor/email.ts'
 import { fetchHeaders, listMessageUids, type FetchedMessage } from './client.ts'
@@ -26,20 +27,26 @@ import { messageJsonBytes } from './render.ts'
 import type { ParsedAttachment } from './_parse.ts'
 
 const TITLE_MAX = 80
-const UNSAFE = /[^\w\s\-.]/g
-const MULTI_UNDERSCORE = /_+/g
 const EPOCH_DATE = '1970-01-01'
+const MSG_SUFFIX = '.email.json'
 
-export function sanitize(text: string): string {
-  if (text.trim() === '') return 'No_Subject'
-  let cleaned = text.replace(UNSAFE, '_').replace(/ /g, '_')
-  cleaned = cleaned.replace(MULTI_UNDERSCORE, '_').replace(/^_+|_+$/g, '')
-  if (cleaned.length > TITLE_MAX) cleaned = `${cleaned.slice(0, TITLE_MAX - 3)}...`
-  return cleaned
-}
+// Routed through the shared sanitizer rather than a local copy of it. The
+// copy's `\w` was JS's ASCII-only one where python's is unicode, so every
+// accented or CJK subject came back as a row of underscores here and intact
+// there; it also measured the budget in UTF-16 units instead of code points.
+const sanitize = (text: string, maxBytes?: number): string =>
+  sanitizeLabel(text, {
+    fallback: 'No_Subject',
+    maxLen: TITLE_MAX,
+    ...(maxBytes !== undefined ? { maxBytes } : {}),
+  })
 
-function msgFilename(subject: string, uid: string): string {
-  return `${sanitize(subject)}__${uid}.email.json`
+// 80 characters is 240 bytes of CJK, which overflows the 255-byte NAME_MAX
+// once the uid and `.email.json` are added, so the subject takes what they
+// leave rather than a flat character count.
+export function msgFilename(subject: string, uid: string): string {
+  const fixed = 2 + byteLength(uid) + MSG_SUFFIX.length
+  return `${sanitize(subject, NAME_MAX_BYTES - fixed)}__${uid}${MSG_SUFFIX}`
 }
 
 // RFC 5322's obsolete zone names, the set `parsedate_to_datetime` knows.

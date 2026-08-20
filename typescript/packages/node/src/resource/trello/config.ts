@@ -33,13 +33,5 @@ export function redactTrelloConfig(config: TrelloConfig): TrelloConfigRedacted {
 }
 
 export function normalizeTrelloConfig(input: Record<string, unknown>): TrelloConfig {
-  return normalizeFields(input, {
-    rename: {
-      api_key: 'apiKey',
-      api_token: 'apiToken',
-      workspace_id: 'workspaceId',
-      board_ids: 'boardIds',
-      base_url: 'baseUrl',
-    },
-  }) as unknown as TrelloConfig
+  return normalizeFields(input) as unknown as TrelloConfig
 }

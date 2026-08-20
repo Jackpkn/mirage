@@ -27,3 +27,4 @@ const alias = makeBrowserS3Alias<CephConfig, CephConfigRedacted>({
 
 export const cephToS3Config = alias.toS3Config
 export const redactCephConfig = alias.redact
+export const normalizeCephConfig = alias.normalize

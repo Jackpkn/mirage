@@ -75,15 +75,5 @@ export function redactGoogleConfig(config: GoogleConfig): GoogleConfigRedacted {
 }
 
 export function normalizeGoogleConfig(input: Record<string, unknown>): GoogleConfig {
-  return normalizeFields(input, {
-    rename: {
-      client_id: 'clientId',
-      client_secret: 'clientSecret',
-      refresh_token: 'refreshToken',
-      api_base: 'apiBase',
-      folder_id: 'folderId',
-      time_zone: 'timeZone',
-      min_access_role: 'minAccessRole',
-    },
-  }) as unknown as GoogleConfig
+  return normalizeFields(input) as unknown as GoogleConfig
 }

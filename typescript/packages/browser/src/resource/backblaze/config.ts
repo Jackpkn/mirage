@@ -29,3 +29,4 @@ const alias = makeBrowserS3Alias<BackblazeConfig, BackblazeConfigRedacted>({
 export const resolvedBackblazeEndpoint = alias.resolvedEndpoint
 export const backblazeToS3Config = alias.toS3Config
 export const redactBackblazeConfig = alias.redact
+export const normalizeBackblazeConfig = alias.normalize

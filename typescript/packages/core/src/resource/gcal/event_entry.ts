@@ -16,6 +16,7 @@ import { enoent } from '../../utils/errors.ts'
 import { makeIdName } from '../../utils/naming.ts'
 import {
   NAME_MAX_BYTES,
+  byteLength,
   sanitizeName,
   stripTrailingUnderscores,
   truncateBytes,
@@ -30,8 +31,6 @@ const UNTITLED = 'untitled'
 // A freeBusyReader calendar returns availability with no summary at all, so
 // there is no title to sanitize and "busy" is the honest rendering.
 const BUSY = 'busy'
-
-const UTF8 = new TextEncoder()
 
 /** Pick the title segment for an event filename. */
 export function eventTitle(summary: string | null, freeBusy = false): string {
@@ -48,7 +47,7 @@ export function eventTitle(summary: string | null, freeBusy = false): string {
  * 255-byte NAME_MAX is left rather than a fixed character count.
  */
 export function makeEventFilename(eventId: string, hhmm: string, title: string): string {
-  const fixed = UTF8.encode(eventId).length + 2 + hhmm.length + 1 + EVENT_SUFFIX.length
+  const fixed = byteLength(eventId) + 2 + hhmm.length + 1 + EVENT_SUFFIX.length
   const trimmed = stripTrailingUnderscores(truncateBytes(title, NAME_MAX_BYTES - fixed))
   if (trimmed === '') {
     // The title is what gives, never the id: trimming the id would make the

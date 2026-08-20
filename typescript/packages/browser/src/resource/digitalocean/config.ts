@@ -29,3 +29,4 @@ const alias = makeBrowserS3Alias<DigitalOceanConfig, DigitalOceanConfigRedacted>
 export const resolvedDigitalOceanEndpoint = alias.resolvedEndpoint
 export const digitalOceanToS3Config = alias.toS3Config
 export const redactDigitalOceanConfig = alias.redact
+export const normalizeDigitalOceanConfig = alias.normalize

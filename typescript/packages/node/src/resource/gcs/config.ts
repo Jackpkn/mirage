@@ -81,13 +81,9 @@ export function redactGcsConfig(config: GCSConfig): GCSConfigRedacted {
 export function normalizeGcsConfig(input: Record<string, unknown>): GCSConfig {
   return normalizeFields(input, {
     rename: {
-      access_key_id: 'accessKeyId',
-      secret_access_key: 'secretAccessKey',
-      session_token: 'sessionToken',
       aws_profile: 'profile',
       endpoint_url: 'endpoint',
       path_style: 'forcePathStyle',
-      key_prefix: 'keyPrefix',
       timeout: 'timeoutMs',
     },
     transform: {

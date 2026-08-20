@@ -38,10 +38,5 @@ export function redactSshConfig(config: SSHConfig): SSHConfigRedacted {
 }
 
 export function normalizeSshConfig(input: Record<string, unknown>): SSHConfig {
-  return normalizeFields(input, {
-    rename: {
-      identity_file: 'identityFile',
-      known_hosts: 'knownHosts',
-    },
-  }) as unknown as SSHConfig
+  return normalizeFields(input) as unknown as SSHConfig
 }

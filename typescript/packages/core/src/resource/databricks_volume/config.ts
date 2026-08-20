@@ -61,8 +61,6 @@ export function redactDatabricksVolumeConfig(
 export function normalizeDatabricksVolumeConfig(
   input: Record<string, unknown>,
 ): DatabricksVolumeConfig {
-  const renamed = normalizeFields(input, {
-    rename: { root_path: 'rootPath' },
-  })
+  const renamed = normalizeFields(input)
   return DatabricksVolumeConfigSchema.parse(renamed) as DatabricksVolumeConfig
 }

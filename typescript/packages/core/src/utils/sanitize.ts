@@ -20,9 +20,15 @@ const MAX_LEN = 100
 // characters is the same number only for ASCII: a 100-character CJK title is
 // 300 bytes.
 export const NAME_MAX_BYTES = 255
+const ELLIPSIS = '...'
 
 const UTF8 = new TextEncoder()
 const UTF8_DECODER = new TextDecoder('utf-8')
+
+/** Measure a string the way the filesystem does: in UTF-8 bytes. */
+export function byteLength(text: string): number {
+  return UTF8.encode(text).length
+}
 
 /**
  * Trim a string to fit a byte budget without splitting a character.
@@ -48,6 +54,13 @@ export function truncateBytes(text: string, budget: number): string {
 export function stripTrailingUnderscores(value: string): string {
   let end = value.length
   while (end > 0 && value[end - 1] === '_') end -= 1
+  return value.slice(0, end)
+}
+
+/** python's `str.rstrip("_.")`, so a byte cut cannot leave `Foo.....`. */
+function stripTrailingUnderscoresAndDots(value: string): string {
+  let end = value.length
+  while (end > 0 && (value[end - 1] === '_' || value[end - 1] === '.')) end -= 1
   return value.slice(0, end)
 }
 
@@ -101,8 +114,20 @@ export function pathSafeName(name: string): string {
  *
  * Unlike `sanitizeName` this ellipsizes rather than hard-cutting, so a
  * truncated name reads as truncated.
+ *
+ * Two budgets apply, and both have to: `maxLen` is the readable length a
+ * backend wants, while `maxBytes` is what the filesystem will actually
+ * accept. They are the same number only for ASCII, so a 100-character CJK
+ * title passed a 100-character budget untouched and rendered a 300-byte
+ * filename, which ext4 and APFS reject with ENAMETOOLONG. Pass the bytes the
+ * *rest* of the filename does not already use -- see `makeFilename` in the
+ * gdocs/gsheets/gslides entries and `makeEventFilename` in gcal, which is
+ * where the fixed overhead is known.
  */
-export function sanitizeLabel(text: string, options: { fallback: string; maxLen: number }): string {
+export function sanitizeLabel(
+  text: string,
+  options: { fallback: string; maxLen: number; maxBytes?: number },
+): string {
   if (text.trim() === '') return options.fallback
   let cleaned = text.replace(UNSAFE_CHARS, '_').replace(/ /g, '_').replace(MULTI_UNDERSCORE, '_')
   cleaned = stripUnderscores(cleaned)
@@ -112,7 +137,14 @@ export function sanitizeLabel(text: string, options: { fallback: string; maxLen:
   // encodes as U+FFFD in the filename.
   const points = Array.from(cleaned)
   if (points.length > options.maxLen) {
-    cleaned = `${points.slice(0, options.maxLen - 3).join('')}...`
+    cleaned = `${points.slice(0, options.maxLen - ELLIPSIS.length).join('')}${ELLIPSIS}`
+  }
+  const maxBytes = options.maxBytes ?? NAME_MAX_BYTES
+  if (byteLength(cleaned) > maxBytes) {
+    const head = stripTrailingUnderscoresAndDots(
+      truncateBytes(cleaned, Math.max(maxBytes - ELLIPSIS.length, 0)),
+    )
+    cleaned = head !== '' ? `${head}${ELLIPSIS}` : truncateBytes(cleaned, maxBytes)
   }
   return cleaned
 }

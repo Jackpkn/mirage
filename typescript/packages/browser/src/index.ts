@@ -31,6 +31,7 @@ export { OPFSAccessor } from './accessor/opfs.ts'
 export { OPFS_COMMANDS } from './commands/builtin/opfs/index.ts'
 export { S3Resource, S3_BROWSER_PROMPT, type S3ResourceState } from './resource/s3/s3.ts'
 export {
+  normalizeS3Config,
   redactConfig as redactS3Config,
   type S3BrowserOperation,
   type S3BrowserPresignedUrlProvider,
@@ -165,12 +166,14 @@ export {
 } from './resource/qingstor/config.ts'
 export { SlackResource, type SlackResourceState } from './resource/slack/slack.ts'
 export {
+  normalizeSlackConfig,
   redactSlackConfig,
   type SlackConfig,
   type SlackConfigRedacted,
 } from './resource/slack/config.ts'
 export { DiscordResource, type DiscordResourceState } from './resource/discord/discord.ts'
 export {
+  normalizeDiscordConfig,
   redactDiscordConfig,
   type DiscordConfig,
   type DiscordConfigRedacted,
@@ -181,6 +184,7 @@ export { MongoDBResource, type MongoDBResourceOptions } from './resource/mongodb
 export { HttpMongoDriver, type HttpMongoDriverOptions } from './resource/mongodb/http_driver.ts'
 export { TrelloResource, type TrelloResourceState } from './resource/trello/trello.ts'
 export {
+  normalizeTrelloConfig,
   redactTrelloConfig,
   type TrelloConfig,
   type TrelloConfigRedacted,
@@ -193,12 +197,14 @@ export {
 export type { LinearConfig, LinearConfigRedacted } from '@struktoai/mirage-core/core/linear/config'
 export { NotionResource, type NotionResourceState } from './resource/notion/notion.ts'
 export {
+  normalizeNotionConfig,
   redactNotionConfig,
   type NotionConfig,
   type NotionConfigRedacted,
 } from './resource/notion/config.ts'
 export { LangfuseResource, type LangfuseResourceState } from './resource/langfuse/langfuse.ts'
 export {
+  normalizeLangfuseConfig,
   redactLangfuseConfig,
   type LangfuseConfig,
   type LangfuseConfigRedacted,

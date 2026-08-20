@@ -85,3 +85,37 @@ async def test_a_tree_passed_to_the_constructor_counts_as_hydrated(tree_calls):
     resource = GitHubResource(CONFIG, "o", "r", "main", tree=dict(TREE))
     await ensure_tree(resource.accessor)
     assert tree_calls == []
+
+
+@pytest.fixture
+def default_branch(monkeypatch):
+
+    async def _fetch(config, owner, repo):
+        return "master"
+
+    monkeypatch.setattr("mirage.core.github.repo.fetch_default_branch", _fetch)
+
+
+@pytest.mark.asyncio
+async def test_a_mount_naming_no_ref_reads_the_repos_default_branch(
+        tree_calls, default_branch):
+    # The config used to default `ref` to the literal string "main", so a
+    # repository whose default branch is anything else 404d on the one
+    # request the whole mount is built on and the mount read as empty.
+    resource = GitHubResource(
+        GitHubConfig(token="ghp_test", owner="o", repo="r"))
+    assert resource.accessor.ref is None
+    await ensure_tree(resource.accessor)
+    assert tree_calls == [("o", "r", "master")]
+
+
+@pytest.mark.asyncio
+async def test_an_unpinned_mount_is_on_the_default_branch_before_any_fetch(
+        tree_calls):
+    # Naming no ref *means* following the default branch, so the two agree
+    # whatever it turns out to be -- no request, and not the "not known
+    # yet" None a pinned mount answers.
+    resource = GitHubResource(
+        GitHubConfig(token="ghp_test", owner="o", repo="r"))
+    assert resource.is_default_branch is True
+    assert GitHubResource(CONFIG, "o", "r", "dev").is_default_branch is None

@@ -12,7 +12,7 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from mirage.utils.sanitize import sanitize_label
+from mirage.utils.sanitize import NAME_MAX_BYTES, byte_len, sanitize_label
 
 
 def test_sanitize_label_replaces_unsafe_and_spaces():
@@ -60,8 +60,38 @@ def test_sanitize_label_budget_counts_code_points():
 
 
 def test_sanitize_label_ellipsizes_on_code_point_boundary():
+    # A byte budget wide enough to stay out of the way, so this pins the
+    # character budget alone.
     label = "\U00010400" * 120
-    result = sanitize_label(label, fallback="X", max_len=100)
+    result = sanitize_label(label, fallback="X", max_len=100, max_bytes=10_000)
     assert len(result) == 100
     assert result.endswith("...")
     assert "\ufffd" not in result
+
+
+def test_sanitize_label_honors_the_byte_ceiling_within_the_char_budget():
+    # 100 astral code points is 400 bytes, so a name the character budget
+    # accepts is one ext4 and APFS reject with ENAMETOOLONG. The default
+    # budget is NAME_MAX, and the cut still lands on a code-point boundary.
+    label = "\U00010400" * 120
+    result = sanitize_label(label, fallback="X", max_len=100)
+    assert len(result) < 100
+    assert byte_len(result) <= NAME_MAX_BYTES
+    assert result.endswith("...")
+    assert "\ufffd" not in result
+
+
+def test_sanitize_label_byte_budget_is_the_callers_remaining_room():
+    # What the gdocs/gmail filenames pass: NAME_MAX minus the id, the
+    # separators and the suffix.
+    result = sanitize_label("会" * 200, fallback="X", max_len=100, max_bytes=60)
+    assert byte_len(result) <= 60
+    assert result.endswith("...")
+    assert "\ufffd" not in result
+
+
+def test_sanitize_label_drops_the_ellipsis_when_it_cannot_fit():
+    # Three dots and nothing is not a name; a budget this small yields
+    # whatever of the label actually fits.
+    assert sanitize_label("abcdef", fallback="X", max_len=100,
+                          max_bytes=2) == "ab"
