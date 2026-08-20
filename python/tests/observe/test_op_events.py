@@ -47,6 +47,14 @@ async def _line_events_of_second_command() -> list[dict]:
     return await ws.observer.line_events(commands[1]["line_id"])
 
 
+async def _facade_write_then_read() -> tuple[list[dict], list[dict]]:
+    ws = Workspace({"/ram": RAMResource()}, mode=MountMode.WRITE)
+    await ws.ops.write("/ram/a.txt", b"hello")
+    immediate = await ws.op_history()
+    await asyncio.sleep(0)
+    return immediate, await ws.op_history()
+
+
 async def _records_and_line_id() -> tuple[list[str | None], str]:
     ws = await _ws_after("echo hi > /ram/x.txt")
     commands = await ws.observer.command_events()
@@ -93,6 +101,12 @@ def test_nested_eval_ops_carry_the_top_level_line_id():
     ]
     assert [o["op"] for o in ops] == ["write", "read"]
     assert ops[1]["line_id"] == commands[1]["line_id"]
+
+
+def test_a_facade_write_is_readable_without_yielding():
+    immediate, after_yield = asyncio.run(_facade_write_then_read())
+    assert [e["op"] for e in immediate] == ["write"]
+    assert immediate == after_yield
 
 
 def test_op_records_carry_the_line_id():
