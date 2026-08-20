@@ -12,13 +12,20 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+from collections.abc import Awaitable, Callable
+
 from mirage.accessor.qdrant import QdrantAccessor
 from mirage.cache.index import NULL_INDEX, IndexCacheStore
+from mirage.core.hierarchy.bind import per_accessor
+from mirage.core.hierarchy.readdir import Guard
+from mirage.core.hierarchy.scope import ScopeMatch
+from mirage.core.hierarchy.stat import StatHook, make_stat
 from mirage.core.qdrant.query import table_exists
 from mirage.core.qdrant.read import read
-from mirage.core.qdrant.scope import (QdrantGroupScope, QdrantRowScope,
-                                      ScopeLevel, detect_scope)
+from mirage.core.qdrant.readdir import readdir_for
+from mirage.core.qdrant.scope import detect_for, table_of
 from mirage.types import FileStat, FileType, PathSpec
+from mirage.utils.errors import enoent
 from mirage.utils.filetype import image_type_for_extension
 
 
@@ -27,37 +34,54 @@ def _name_of(path: PathSpec) -> str:
     return stripped.rsplit("/", 1)[-1] or "/"
 
 
-async def stat(
-    accessor: QdrantAccessor,
-    path: PathSpec,
-    index: IndexCacheStore = NULL_INDEX,
-) -> FileStat:
+async def _table_guard(accessor: QdrantAccessor, match: ScopeMatch,
+                       virtual: str) -> None:
+    if not await table_exists(accessor, table_of(accessor.config, match)):
+        raise enoent(virtual)
+
+
+async def _stat_row(accessor: QdrantAccessor, match: ScopeMatch,
+                    path: PathSpec, index: IndexCacheStore) -> FileStat:
     config = accessor.config
-    scope = detect_scope(path, config)
-
-    if scope.level == ScopeLevel.UNKNOWN:
-        raise FileNotFoundError(path.virtual)
-
-    if (isinstance(scope, (QdrantGroupScope, QdrantRowScope))
-            and not await table_exists(accessor, scope.table)):
-        raise FileNotFoundError(path.virtual)
-
-    if scope.level in (ScopeLevel.ROOT, ScopeLevel.GROUP_DIR):
-        return FileStat(name=_name_of(path), type=FileType.DIRECTORY)
-
-    if not isinstance(scope, QdrantRowScope):
-        raise FileNotFoundError(path.virtual)
-    if scope.kind == "blob":
+    if not await table_exists(accessor, table_of(config, match)):
+        raise enoent(path.virtual)
+    if match.kind == "row_blob":
         file_type = image_type_for_extension(config.blob_ext)
     else:
         file_type = FileType.TEXT
     # The row-dir readdir seeds exact rendered sizes; a cold index falls
     # back to rendering the row, so the size is exact either way.
-    if index is not None:
-        lookup = await index.get(path.virtual.rstrip("/"))
-        if lookup.entry is not None and lookup.entry.size is not None:
-            return FileStat(name=_name_of(path),
-                            size=lookup.entry.size,
-                            type=file_type)
+    lookup = await index.get(path.virtual.rstrip("/"))
+    if lookup.entry is not None and lookup.entry.size is not None:
+        return FileStat(name=_name_of(path),
+                        size=lookup.entry.size,
+                        type=file_type)
     data = await read(accessor, path, index)
     return FileStat(name=_name_of(path), size=len(data), type=file_type)
+
+
+GUARDS: dict[str, Guard[QdrantAccessor]] = {"group": _table_guard}
+
+OVERRIDES: dict[str, StatHook[QdrantAccessor]] = {
+    "row_json": _stat_row,
+    "row_text": _stat_row,
+    "row_blob": _stat_row,
+}
+
+
+def _build(accessor: QdrantAccessor) -> Callable[..., Awaitable[FileStat]]:
+    return make_stat(detect_for(accessor),
+                     readdir_for(accessor),
+                     guards=GUARDS,
+                     overrides=OVERRIDES)
+
+
+stat_for = per_accessor(_build)
+
+
+async def stat(
+    accessor: QdrantAccessor,
+    path: PathSpec,
+    index: IndexCacheStore = NULL_INDEX,
+) -> FileStat:
+    return await stat_for(accessor)(accessor, path, index)

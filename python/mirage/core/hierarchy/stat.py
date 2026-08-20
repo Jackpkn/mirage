@@ -90,10 +90,12 @@ def make_stat(
     async def stat(accessor: A,
                    path: PathSpec,
                    index: IndexCacheStore = NULL_INDEX) -> FileStat:
-        if index is NULL_INDEX:
+        if index is NULL_INDEX or index is None:
             # Entry resolution and listed_size read what the probe's
             # parent listing just wrote, so a caller with no cache still
-            # needs one for the duration of the call.
+            # needs one for the duration of the call. None arrives from
+            # bare commands built outside a workspace (the TS twin's ??
+            # treats null and undefined alike).
             index = RAMIndexCacheStore()
         virtual = path.virtual
         match = detect(path)

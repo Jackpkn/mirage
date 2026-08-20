@@ -17,20 +17,25 @@ import type { IndexCacheStore } from '../../cache/index/store.ts'
 import type { LanceRow } from './_driver.ts'
 import { PathSpec } from '../../types.ts'
 import { decodeBase64 } from '../../utils/base64.ts'
+import { enoent } from '../../utils/errors.ts'
+import { perAccessor } from '../hierarchy/bind.ts'
+import { makeRead, type Reader } from '../hierarchy/read.ts'
+import type { ScopeMatch } from '../hierarchy/scope.ts'
 import { renderCard } from './render.ts'
-import { type LanceDBScope, ScopeLevel, detectScope } from './scope.ts'
+import { detectFor, tableOf } from './scope.ts'
 
-function notFound(p: string): Error {
-  const err = new Error(p) as Error & { code?: string }
-  err.code = 'ENOENT'
-  return err
-}
-
-async function resolveRow(accessor: LanceDBAccessor, scope: LanceDBScope): Promise<LanceRow> {
+async function rowOf(
+  accessor: LanceDBAccessor,
+  match: ScopeMatch,
+  virtual: string,
+): Promise<LanceRow> {
   const config = accessor.config
-  if (scope.table === null || scope.rowId === null) throw notFound(scope.resourcePath)
-  const row = await accessor.driver.rowRecord(scope.table, config.idColumn, scope.rowId)
-  if (row === null) throw notFound(scope.resourcePath)
+  const row = await accessor.driver.rowRecord(
+    tableOf(config, match),
+    config.idColumn,
+    match.slots.row_id ?? '',
+  )
+  if (row === null) throw enoent(virtual)
   return row
 }
 
@@ -40,19 +45,42 @@ function blobBytes(value: unknown): Uint8Array {
   throw new Error('blob column is not bytes or base64 string')
 }
 
+async function readCard(
+  accessor: LanceDBAccessor,
+  match: ScopeMatch,
+  path: PathSpec,
+): Promise<Uint8Array> {
+  const row = await rowOf(accessor, match, path.virtual)
+  return renderCard(row, accessor.config)
+}
+
+async function readBlob(
+  accessor: LanceDBAccessor,
+  match: ScopeMatch,
+  path: PathSpec,
+): Promise<Uint8Array> {
+  const config = accessor.config
+  if (config.blobColumn === null) throw enoent(path.virtual)
+  const row = await rowOf(accessor, match, path.virtual)
+  return blobBytes(row[config.blobColumn])
+}
+
+const READERS: Record<string, Reader<LanceDBAccessor>> = {
+  row_card: readCard,
+  row_blob: readBlob,
+}
+
+function buildRead(accessor: LanceDBAccessor) {
+  return makeRead(detectFor(accessor), READERS)
+}
+
+const readFor = perAccessor(buildRead)
+
 export async function read(
   accessor: LanceDBAccessor,
   path: PathSpec | string,
-  _index?: IndexCacheStore,
+  index?: IndexCacheStore,
 ): Promise<Uint8Array> {
   const spec = typeof path === 'string' ? PathSpec.fromStrPath(path) : path
-  const config = accessor.config
-  const scope = detectScope(spec, config)
-  if (scope.level !== ScopeLevel.ROW) throw notFound(spec.virtual)
-  const row = await resolveRow(accessor, scope)
-  if (scope.blob) {
-    if (config.blobColumn === null) throw notFound(spec.virtual)
-    return blobBytes(row[config.blobColumn])
-  }
-  return renderCard(row, config)
+  return readFor(accessor)(accessor, spec, index)
 }

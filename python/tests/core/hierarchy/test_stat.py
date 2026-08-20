@@ -73,6 +73,14 @@ def test_leaf_proves_existence_through_the_parent_listing(accessor):
         asyncio.run(STAT(accessor, spec("/rooms/red/nope.json"), index=index))
 
 
+def test_a_none_index_gets_a_call_local_store(accessor):
+    # Bare commands built outside a workspace bind index=None; the kit
+    # substitutes a call-local store exactly as it does for NULL_INDEX.
+    st = asyncio.run(STAT(accessor, spec("/rooms/red/a.json"), index=None))
+    assert st.type == FileType.JSON
+    assert st.size == 7
+
+
 def test_invalid_shapes_are_enoent(accessor):
     with pytest.raises(FileNotFoundError):
         asyncio.run(STAT(accessor, spec("/halls")))
