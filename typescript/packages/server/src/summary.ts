@@ -36,10 +36,20 @@ function userMounts(ws: Workspace) {
   return ws.mounts().filter((m) => !isAutoPrefix(m.prefix))
 }
 
-function describeResource(resource: Resource): string {
+/**
+ * Shorten a resource's prompt to the description budget.
+ *
+ * The budget counts characters, which python's `len` reads as code points and
+ * `String.length` reads as UTF-16 units. Measuring in units would ellipsize a
+ * prompt python leaves whole and could cut a surrogate pair in half, so this
+ * measures and slices `Array.from` -- the same fix `sanitizeLabel` carries.
+ */
+export function describeResource(resource: Resource): string {
   const raw = resource.prompt ?? ''
-  if (raw.length <= DESCRIPTION_MAX) return raw
-  return raw.slice(0, DESCRIPTION_MAX - 1).trimEnd() + '\u2026'
+  const points = Array.from(raw)
+  if (points.length <= DESCRIPTION_MAX) return raw
+  const cut = points.slice(0, DESCRIPTION_MAX - 1).join('')
+  return cut.trimEnd() + '\u2026'
 }
 
 async function buildInternals(ws: Workspace): Promise<WorkspaceInternals> {
