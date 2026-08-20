@@ -16,6 +16,7 @@ from collections.abc import Awaitable, Callable, Mapping
 
 from mirage.cache.context import invalidate_after_unlink
 from mirage.cache.index import NULL_INDEX, IndexCacheStore, IndexEntry
+from mirage.cache.index.ram import RAMIndexCacheStore
 from mirage.core.hierarchy.probe import A, ReaddirFn, resolve_entry
 from mirage.core.hierarchy.scope import INVALID, DetectFn, ScopeMatch
 from mirage.types import PathSpec
@@ -46,6 +47,11 @@ def make_unlink(
     async def unlink(accessor: A,
                      path: PathSpec,
                      index: IndexCacheStore = NULL_INDEX) -> None:
+        if index is NULL_INDEX:
+            # Entry resolution reads what its parent-listing warm just
+            # wrote, so a caller with no cache still needs one for the
+            # duration of the call.
+            index = RAMIndexCacheStore()
         match = detect(path)
         deleter = deleters.get(match.kind)
         if deleter is None:

@@ -16,14 +16,17 @@ from collections.abc import Awaitable, Callable, Mapping
 from typing import Literal
 
 from mirage.cache.index import NULL_INDEX, IndexCacheStore, IndexEntry
-from mirage.core.hierarchy.probe import A, ReaddirFn
+from mirage.cache.index.ram import RAMIndexCacheStore
+from mirage.core.hierarchy.probe import A, ReaddirFn, resolve_entry
 from mirage.core.hierarchy.scope import INVALID, ROOT, DetectFn, ScopeMatch
 from mirage.types import PathSpec
 from mirage.utils.errors import enoent, enotdir
-from mirage.utils.key_prefix import mount_prefix_of
+from mirage.utils.key_prefix import mount_key, mount_prefix_of
 
 Lister = Callable[[A, ScopeMatch],
                   Awaitable[list[tuple[str, IndexEntry]] | None]]
+EntryLister = Callable[[A, ScopeMatch, IndexEntry],
+                       Awaitable[list[tuple[str, IndexEntry]]]]
 Guard = Callable[[A, ScopeMatch, str], Awaitable[None]]
 
 
@@ -31,6 +34,7 @@ def make_readdir(
     detect: DetectFn,
     *,
     listers: Mapping[str, Lister[A]],
+    entry_listers: Mapping[str, EntryLister[A]] | None = None,
     static_root: tuple[str, ...] | None = None,
     guards: Mapping[str, Guard[A]] | None = None,
     leaf_error: Literal["enoent", "enotdir"] = "enoent",
@@ -46,15 +50,25 @@ def make_readdir(
     path that stat, read and child readdir all report absent.
     A lister may answer None instead of a listing: the directory's
     container does not exist, reported as ENOENT on the virtual path.
-    That is for backends whose containers are proven by a parent
-    listing the lister fetches anyway (trello finds a board by its
-    ``label__id`` dirname in the workspace's board list), where a
-    separate guard would pay the same call twice.
+
+    An entry lister is for a directory whose existence and contents are
+    already proven by its parent's listing: the kit resolves the
+    directory's own index entry through ``resolve_entry`` (warming
+    parent listings, each one cached) and hands it over, so entering a
+    directory a traversal just listed costs no API call at all. A
+    container lister that instead re-fetched its ancestor chain per
+    directory made a recursive walk quadratic in listing payloads. The
+    facts a child listing needs beyond the API's own answers ride the
+    parent listing's ``IndexEntry.extra`` (trello stashes each
+    ``card.json`` size on the card's directory entry).
 
     Args:
         detect (DetectFn): the backend's scope classifier.
         listers (Mapping[str, Lister]): one lister per directory kind;
             include ``root`` for a dynamic mount root.
+        entry_listers (Mapping[str, EntryLister]): listers for kinds
+            resolved through their parent's listing; a kind appears in
+            exactly one of the two tables.
         static_root (tuple[str, ...] | None): fixed top-level names, for
             backends whose root never changes; bypasses the index.
         guards (Mapping[str, Guard]): existence checks that run before
@@ -64,9 +78,19 @@ def make_readdir(
             raises; fixed hierarchies historically answer ENOENT.
     """
 
+    resolved = entry_listers if entry_listers is not None else {}
+    overlap = set(listers) & set(resolved)
+    if overlap:
+        raise ValueError(f"kinds in both lister tables: {sorted(overlap)}")
+
     async def readdir(accessor: A,
                       path_spec: PathSpec,
                       index: IndexCacheStore = NULL_INDEX) -> list[str]:
+        if index is NULL_INDEX:
+            # Entry resolution and the parent-listing warm both read what
+            # readdir just wrote, so a caller with no cache still needs
+            # one for the duration of the call.
+            index = RAMIndexCacheStore()
         virtual = path_spec.virtual
         prefix = mount_prefix_of(path_spec.virtual, path_spec.resource_path)
         path = (path_spec.dir if path_spec.pattern else path_spec).mount_path
@@ -78,7 +102,8 @@ def make_readdir(
         if match.kind == ROOT and static_root is not None:
             return [f"{prefix}/{d}" for d in static_root]
         lister = listers.get(match.kind)
-        if lister is None:
+        entry_lister = resolved.get(match.kind)
+        if lister is None and entry_lister is None:
             if (match.scope is not None and match.scope.leaf
                     and leaf_error == "enotdir"):
                 raise enotdir(virtual)
@@ -89,9 +114,21 @@ def make_readdir(
         listing = await index.list_dir(virtual_key)
         if listing.entries is not None:
             return listing.entries
-        listed = await lister(accessor, match)
-        if listed is None:
-            raise enoent(virtual)
+        if entry_lister is not None:
+            own = await resolve_entry(
+                readdir, accessor,
+                PathSpec(virtual=virtual_key,
+                         directory=virtual_key,
+                         resource_path=mount_key(virtual_key, prefix)), index)
+            if own is None:
+                raise enoent(virtual)
+            listed = await entry_lister(accessor, match, own)
+        else:
+            assert lister is not None
+            maybe = await lister(accessor, match)
+            if maybe is None:
+                raise enoent(virtual)
+            listed = maybe
         entries = [(name, entry) for name, entry in listed
                    if not name.startswith(".")]
         await index.set_dir(virtual_key, entries)

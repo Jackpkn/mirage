@@ -244,6 +244,42 @@ describe('trello readdir cards', () => {
     ])
   })
 
+  it('entering a card dir reuses the traversal listings', async () => {
+    // The old find chain re-fetched every ancestor listing per card dir,
+    // which made a recursive walk quadratic in listing payloads.
+    const idx = new RAMIndexCacheStore()
+    const t = new FakeTransport((path) => {
+      if (path === '/members/me/organizations') return [{ id: 'w1', displayName: 'Acme' }]
+      if (path === '/organizations/w1/boards') return [{ id: 'b1', name: 'Roadmap' }]
+      if (path === '/boards/b1/lists') return [{ id: 'l1', name: 'Doing' }]
+      if (path === '/lists/l1/cards') {
+        return [
+          { id: 'c1', name: 'one' },
+          { id: 'c2', name: 'two' },
+          { id: 'c3', name: 'three' },
+        ]
+      }
+      return []
+    })
+    const accessor = new TrelloAccessor(t)
+    const listed = await readdir(
+      accessor,
+      spec(
+        '/mnt/trello/workspaces/Acme__w1/boards/Roadmap__b1/lists/Doing__l1/cards',
+        '/mnt/trello',
+      ),
+      idx,
+    )
+    expect(listed).toHaveLength(3)
+    for (const cardDir of listed) {
+      await readdir(accessor, spec(cardDir, '/mnt/trello'), idx)
+    }
+    expect(t.calls.filter((c) => c.path === '/lists/l1/cards')).toHaveLength(1)
+    expect(t.calls.filter((c) => c.path === '/members/me/organizations')).toHaveLength(1)
+    expect(t.calls.filter((c) => c.path === '/organizations/w1/boards')).toHaveLength(1)
+    expect(t.calls.filter((c) => c.path === '/boards/b1/lists')).toHaveLength(1)
+  })
+
   it('returns card.json + comments.jsonl under a card', async () => {
     const idx = new RAMIndexCacheStore()
     const t = new FakeTransport((path) => {

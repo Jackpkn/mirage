@@ -118,9 +118,55 @@ async def test_readdir_card_dir_carries_sized_card_json(accessor, index):
 
 
 @pytest.mark.asyncio
+async def test_readdir_traversal_never_refetches_a_listing(accessor, index):
+    # Entering a directory a traversal just listed resolves through the
+    # cached parent listing; the old find chain re-fetched every ancestor
+    # listing per directory, which made a recursive walk quadratic in
+    # listing payloads.
+    cards = [{"id": f"c{i}", "name": f"Card {i}"} for i in range(3)]
+    base = "/workspaces/Engineering__ws1/boards/Roadmap__b1/lists/Doing__l1"
+    with patch("mirage.core.trello.readdir.list_workspaces",
+               new_callable=AsyncMock,
+               return_value=[{
+                   "id": "ws1",
+                   "displayName": "Engineering"
+               }]) as ws_mock, \
+         patch("mirage.core.trello.readdir.list_workspace_boards",
+               new_callable=AsyncMock,
+               return_value=[{
+                   "id": "b1",
+                   "name": "Roadmap"
+               }]) as boards_mock, \
+         patch("mirage.core.trello.readdir.list_board_lists",
+               new_callable=AsyncMock,
+               return_value=[{
+                   "id": "l1",
+                   "name": "Doing"
+               }]) as lists_mock, \
+         patch("mirage.core.trello.readdir.list_list_cards",
+               new_callable=AsyncMock,
+               return_value=cards) as cards_mock:
+        listed = await readdir(
+            accessor,
+            PathSpec(resource_path=f"{base.strip('/')}/cards",
+                     virtual=f"{base}/cards",
+                     directory=f"{base}/cards"), index)
+        for card_dir in listed:
+            await readdir(
+                accessor,
+                PathSpec(resource_path=card_dir.strip("/"),
+                         virtual=card_dir,
+                         directory=card_dir), index)
+    assert ws_mock.await_count == 1
+    assert boards_mock.await_count == 1
+    assert lists_mock.await_count == 1
+    assert cards_mock.await_count == 1
+
+
+@pytest.mark.asyncio
 async def test_readdir_unknown_workspace_raises(accessor, index):
-    # The lister answers None when no listed workspace carries the typed
-    # `label__id` dirname, and the kit reports it as ENOENT.
+    # No listed workspace carries the typed `label__id` dirname, so the
+    # kit's entry resolution comes back empty and reports ENOENT.
     with patch("mirage.core.trello.readdir.list_workspaces",
                new_callable=AsyncMock,
                return_value=[{

@@ -124,6 +124,26 @@ describe('notion stat', () => {
     expect(result.extra.database_id).toBe(DB_ID)
   })
 
+  it('resolves an existing database dir with no index supplied', async () => {
+    // A caller with no cache gets a call-local one, so the entry
+    // resolution can read the parent listing it just warmed instead of
+    // reporting every existing node as absent.
+    const transport = new FakeTransport()
+    transport.enqueue('API-post-search', {
+      results: [{ id: 'ds1', object: 'data_source', parent: { database_id: DB_ID } }],
+      has_more: false,
+      next_cursor: null,
+    })
+    transport.enqueue(
+      'API-retrieve-a-database',
+      databaseBody(DB_ID, 'Tasks', '2024-04-05T00:00:00Z'),
+    )
+    const result = await stat(makeAccessor(transport), spec(`/databases/Tasks__${DB_ID}/`))
+    expect(result.type).toBe(FileType.DIRECTORY)
+    expect(result.modified).toBe('2024-04-05T00:00:00Z')
+    expect(result.extra.database_id).toBe(DB_ID)
+  })
+
   it('returns a json stat for database.json without any API call', async () => {
     const transport = new FakeTransport()
     const idx = new RAMIndexCacheStore()

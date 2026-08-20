@@ -55,6 +55,16 @@ function pickString(record: Record<string, unknown>, key: string): string {
   return typeof value === 'string' ? value : ''
 }
 
+function extraSize(entry: IndexEntry): number | null {
+  const value = entry.extra.json_size
+  return typeof value === 'number' ? value : null
+}
+
+function extraString(entry: IndexEntry, key: string): string {
+  const value = entry.extra[key]
+  return typeof value === 'string' ? value : ''
+}
+
 async function filteredTeams(accessor: LinearAccessor): Promise<Record<string, unknown>[]> {
   let teams = await listTeams(accessor.transport)
   if (accessor.teamIds !== null && accessor.teamIds.length > 0) {
@@ -64,37 +74,6 @@ async function filteredTeams(accessor: LinearAccessor): Promise<Record<string, u
   return teams
 }
 
-/**
- * The team the slots name, null when no listing carries it.
- *
- * Existence is proven against the team listing by the full `label__id`
- * dirname, never by calling the API with the typed id: a bogus id must read
- * as ENOENT, not as a Linear API error.
- */
-export async function findTeam(
-  accessor: LinearAccessor,
-  slots: Readonly<Record<string, string>>,
-): Promise<Record<string, unknown> | null> {
-  const target = `${slots.team ?? ''}__${slots.team_id ?? ''}`
-  for (const team of await filteredTeams(accessor)) {
-    if (teamDirname(team) === target) return team
-  }
-  return null
-}
-
-/** The issue the slots name, validated through its team. */
-export async function findIssue(
-  accessor: LinearAccessor,
-  slots: Readonly<Record<string, string>>,
-): Promise<Record<string, unknown> | null> {
-  if ((await findTeam(accessor, slots)) === null) return null
-  const target = `${slots.issue ?? ''}__${slots.issue_id ?? ''}`
-  for (const issue of await listTeamIssues(accessor.transport, slots.team_id ?? '')) {
-    if (issueDirname(issue) === target) return issue
-  }
-  return null
-}
-
 async function listTeamsDir(
   accessor: LinearAccessor,
   _match: ScopeMatch,
@@ -102,6 +81,9 @@ async function listTeamsDir(
   const entries: [string, IndexEntry][] = []
   for (const team of await filteredTeams(accessor)) {
     const dirname = teamDirname(team)
+    // team.json renders the team object this listing already fetched, so
+    // its exact size rides the directory entry, and the key/name ride
+    // along for the project renders below it.
     entries.push([
       dirname,
       new IndexEntry({
@@ -113,7 +95,7 @@ async function listTeamsDir(
         extra: {
           team_key: pickString(team, 'key'),
           team_name: pickString(team, 'name'),
-          team_json_size: toJsonBytes(normalizeTeam(team)).length,
+          json_size: toJsonBytes(normalizeTeam(team)).length,
         },
       }),
     ])
@@ -121,47 +103,50 @@ async function listTeamsDir(
   return entries
 }
 
-async function listTeam(
-  accessor: LinearAccessor,
-  match: ScopeMatch,
-): Promise<[string, IndexEntry][] | null> {
-  const team = await findTeam(accessor, match.slots)
-  if (team === null) return null
-  const teamId = pickString(team, 'id')
-  // team.json renders the team object this find already fetched, so its
-  // exact size is free here.
+function listTeam(
+  _accessor: LinearAccessor,
+  _match: ScopeMatch,
+  entry: IndexEntry,
+): Promise<[string, IndexEntry][]> {
   const entries: [string, IndexEntry][] = [
     [
       'team.json',
       new IndexEntry({
-        id: teamId,
+        id: entry.id,
         name: 'team.json',
         resourceType: 'linear/team_json',
-        remoteTime: pickString(team, 'updatedAt'),
+        remoteTime: entry.remoteTime,
         vfsName: 'team.json',
-        size: toJsonBytes(normalizeTeam(team)).length,
+        size: extraSize(entry),
       }),
     ],
   ]
   for (const name of TEAM_DIRS) {
+    // A project render carries its team's key and name, which only the
+    // team listing knows.
+    const extra =
+      name === 'projects'
+        ? { team_key: extraString(entry, 'team_key'), team_name: extraString(entry, 'team_name') }
+        : {}
     entries.push([
       name,
       new IndexEntry({
-        id: teamId,
+        id: entry.id,
         name,
         resourceType: `linear/${name}_dir`,
         vfsName: name,
+        extra,
       }),
     ])
   }
-  return entries
+  return Promise.resolve(entries)
 }
 
 async function listMembers(
   accessor: LinearAccessor,
   match: ScopeMatch,
-): Promise<[string, IndexEntry][] | null> {
-  if ((await findTeam(accessor, match.slots)) === null) return null
+  _entry: IndexEntry,
+): Promise<[string, IndexEntry][]> {
   const users = await listTeamMembers(accessor.transport, match.slots.team_id ?? '')
   return users.map((user): [string, IndexEntry] => {
     const filename = memberFilename(user)
@@ -182,8 +167,8 @@ async function listMembers(
 async function listIssues(
   accessor: LinearAccessor,
   match: ScopeMatch,
-): Promise<[string, IndexEntry][] | null> {
-  if ((await findTeam(accessor, match.slots)) === null) return null
+  _entry: IndexEntry,
+): Promise<[string, IndexEntry][]> {
   const issues = await listTeamIssues(accessor.transport, match.slots.team_id ?? '')
   return issues.map((issue): [string, IndexEntry] => {
     const dirname = issueDirname(issue)
@@ -197,7 +182,7 @@ async function listIssues(
         vfsName: dirname,
         extra: {
           issue_key: pickString(issue, 'identifier'),
-          issue_json_size: toJsonBytes(normalizeIssue(issue)).length,
+          json_size: toJsonBytes(normalizeIssue(issue)).length,
         },
       }),
     ]
@@ -206,18 +191,16 @@ async function listIssues(
 
 async function listIssue(
   accessor: LinearAccessor,
-  match: ScopeMatch,
-): Promise<[string, IndexEntry][] | null> {
-  const issue = await findIssue(accessor, match.slots)
-  if (issue === null) return null
-  // issue.json renders the issue this find already fetched; comments.jsonl
-  // costs the one bounded comments call, paid only when this directory is
-  // entered.
-  const normalized = normalizeIssue(issue)
-  const issueId = pickString(issue, 'id')
-  const remoteTime = pickString(issue, 'updatedAt')
+  _match: ScopeMatch,
+  entry: IndexEntry,
+): Promise<[string, IndexEntry][]> {
+  // issue.json renders the issue the team listing already fetched;
+  // comments.jsonl costs the one bounded comments call, paid only when
+  // this directory is entered.
+  const issueId = entry.id
+  const issueKey = extraString(entry, 'issue_key')
   const comments = await listIssueComments(accessor.transport, issueId)
-  const rows = comments.map((c) => normalizeComment(c, issueId, normalized.issue_key))
+  const rows = comments.map((c) => normalizeComment(c, issueId, issueKey !== '' ? issueKey : null))
   let commentsTime = ''
   for (const row of rows) {
     const updated = typeof row.updated_at === 'string' ? row.updated_at : ''
@@ -230,9 +213,9 @@ async function listIssue(
         id: issueId,
         name: 'issue.json',
         resourceType: 'linear/issue_json',
-        remoteTime,
+        remoteTime: entry.remoteTime,
         vfsName: 'issue.json',
-        size: toJsonBytes(normalized).length,
+        size: extraSize(entry),
       }),
     ],
     [
@@ -241,7 +224,7 @@ async function listIssue(
         id: issueId,
         name: 'comments.jsonl',
         resourceType: 'linear/comments',
-        remoteTime: commentsTime !== '' ? commentsTime : remoteTime,
+        remoteTime: commentsTime !== '' ? commentsTime : entry.remoteTime,
         vfsName: 'comments.jsonl',
         size: jsonlBytesByCreatedAt(rows).length,
       }),
@@ -252,9 +235,8 @@ async function listIssue(
 async function listProjects(
   accessor: LinearAccessor,
   match: ScopeMatch,
-): Promise<[string, IndexEntry][] | null> {
-  const team = await findTeam(accessor, match.slots)
-  if (team === null) return null
+  entry: IndexEntry,
+): Promise<[string, IndexEntry][]> {
   const teamId = match.slots.team_id ?? ''
   const projects = await listTeamProjects(accessor.transport, teamId)
   const teamIssues = await listTeamIssues(accessor.transport, teamId)
@@ -272,8 +254,8 @@ async function listProjects(
     }
     const rendered = normalizeProject(project, {
       teamId,
-      teamKey: pickString(team, 'key') || null,
-      teamName: pickString(team, 'name') || null,
+      teamKey: extraString(entry, 'team_key') || null,
+      teamName: extraString(entry, 'team_name') || null,
       issues: projectIssues,
     })
     const filename = projectFilename(project)
@@ -294,8 +276,8 @@ async function listProjects(
 async function listCycles(
   accessor: LinearAccessor,
   match: ScopeMatch,
-): Promise<[string, IndexEntry][] | null> {
-  if ((await findTeam(accessor, match.slots)) === null) return null
+  _entry: IndexEntry,
+): Promise<[string, IndexEntry][]> {
   const teamId = match.slots.team_id ?? ''
   const cycles = await listTeamCycles(accessor.transport, teamId)
   return cycles.map((cycle): [string, IndexEntry] => {
@@ -317,8 +299,8 @@ async function listCycles(
 async function listDocuments(
   accessor: LinearAccessor,
   match: ScopeMatch,
-): Promise<[string, IndexEntry][] | null> {
-  if ((await findTeam(accessor, match.slots)) === null) return null
+  _entry: IndexEntry,
+): Promise<[string, IndexEntry][]> {
   const documents = await listTeamDocuments(accessor.transport, match.slots.team_id ?? '')
   return documents.map((document): [string, IndexEntry] => {
     const filename = documentFilename(document)
@@ -339,6 +321,8 @@ async function listDocuments(
 export const readdir = makeReaddir<LinearAccessor>(detectScope, {
   listers: {
     teams: listTeamsDir,
+  },
+  entryListers: {
     team: listTeam,
     members: listMembers,
     issues: listIssues,

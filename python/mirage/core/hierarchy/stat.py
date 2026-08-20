@@ -15,6 +15,7 @@
 from collections.abc import Awaitable, Callable, Mapping
 
 from mirage.cache.index import NULL_INDEX, IndexCacheStore, IndexEntry
+from mirage.cache.index.ram import RAMIndexCacheStore
 from mirage.core.hierarchy.probe import (A, ReaddirFn, assert_listed,
                                          listed_size, resolve_entry)
 from mirage.core.hierarchy.readdir import Guard
@@ -89,6 +90,11 @@ def make_stat(
     async def stat(accessor: A,
                    path: PathSpec,
                    index: IndexCacheStore = NULL_INDEX) -> FileStat:
+        if index is NULL_INDEX:
+            # Entry resolution and listed_size read what the probe's
+            # parent listing just wrote, so a caller with no cache still
+            # needs one for the duration of the call.
+            index = RAMIndexCacheStore()
         virtual = path.virtual
         match = detect(path)
         if match.kind == ROOT:

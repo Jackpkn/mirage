@@ -15,6 +15,7 @@
 import type { Accessor } from '../../accessor/base.ts'
 import { invalidateAfterUnlink } from '../../cache/context.ts'
 import type { IndexEntry } from '../../cache/index/config.ts'
+import { RAMIndexCacheStore } from '../../cache/index/ram.ts'
 import type { IndexCacheStore } from '../../cache/index/store.ts'
 import type { PathSpec } from '../../types.ts'
 import { eisdir, enoent } from '../../utils/errors.ts'
@@ -51,6 +52,9 @@ export function makeUnlink<A extends Accessor>(
     path: PathSpec,
     index?: IndexCacheStore,
   ): Promise<void> {
+    // Entry resolution reads what its parent-listing warm just wrote, so
+    // a caller with no cache still needs one for the duration of the call.
+    const store = index ?? new RAMIndexCacheStore()
     const match = detect(path)
     const deleter = deleters[match.kind]
     if (deleter === undefined) {
@@ -59,14 +63,14 @@ export function makeUnlink<A extends Accessor>(
       }
       throw enoent(path.virtual)
     }
-    const entry = await resolveEntry(readdir, accessor, path, index)
-    if (entry === null || index === undefined) throw enoent(path.virtual)
+    const entry = await resolveEntry(readdir, accessor, path, store)
+    if (entry === null) throw enoent(path.virtual)
     await deleter(accessor, match, entry)
     const prefix = mountPrefixOf(path.virtual, path.resourcePath)
     const key = stripSlash(path.resourcePath)
     const virtualKey = key !== '' ? `${prefix}/${key}` : prefix !== '' ? prefix : '/'
     const parentDir = virtualKey.slice(0, virtualKey.lastIndexOf('/')) || '/'
-    await index.invalidateDir(parentDir)
+    await store.invalidateDir(parentDir)
     await invalidateAfterUnlink(virtualKey)
   }
 }

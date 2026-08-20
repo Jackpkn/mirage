@@ -20,7 +20,7 @@ import { FileType, PathSpec } from '../../types.ts'
 import { enoent } from '../../utils/errors.ts'
 import { stripSlash } from '../../utils/slash.ts'
 import { JSON_NAME } from './codec.ts'
-import { makeReaddir, type Guard, type Lister } from './readdir.ts'
+import { makeReaddir, type EntryLister, type Guard, type Lister } from './readdir.ts'
 import { Slot, Scope, makeDetectScope } from './scope.ts'
 
 const SCOPES: readonly Scope[] = [
@@ -158,5 +158,66 @@ describe('hierarchy makeReaddir', () => {
     await expect(readdir(new FakeAccessor(), spec('/rooms/red/a.json'))).rejects.toMatchObject({
       code: 'ENOTDIR',
     })
+  })
+})
+
+const entryNotes: EntryLister<FakeAccessor> = (accessor, _match, entry) => {
+  accessor.calls.push(`entry-notes:${entry.id}`)
+  return Promise.resolve([
+    [
+      'note.json',
+      new IndexEntry({
+        id: entry.id,
+        name: 'note.json',
+        resourceType: 'fake/note',
+        vfsName: 'note.json',
+      }),
+    ],
+  ])
+}
+
+const ENTRY_READDIR = makeReaddir<FakeAccessor>(detectScope, {
+  listers: { rooms: listRooms },
+  entryListers: { room: entryNotes },
+  staticRoot: ['rooms'],
+})
+
+describe('hierarchy makeReaddir entry listers', () => {
+  it('resolves the directory through the parent listing', async () => {
+    // The kit warms the parent listing once and hands the directory's own
+    // entry to the lister; the lister never re-fetches its ancestors.
+    const accessor = new FakeAccessor()
+    const index = new RAMIndexCacheStore()
+    const out = await ENTRY_READDIR(accessor, spec('/rooms/red'), index)
+    expect(out).toEqual(['/h/rooms/red/note.json'])
+    expect(accessor.calls).toEqual(['rooms', 'entry-notes:red'])
+    await ENTRY_READDIR(accessor, spec('/rooms/blue'), index)
+    // The second room resolves from the already-cached rooms listing.
+    expect(accessor.calls).toEqual(['rooms', 'entry-notes:red', 'entry-notes:blue'])
+  })
+
+  it('reports an unlisted container as ENOENT', async () => {
+    const accessor = new FakeAccessor()
+    await expect(ENTRY_READDIR(accessor, spec('/rooms/ghost'))).rejects.toMatchObject({
+      code: 'ENOENT',
+    })
+    expect(accessor.calls).toEqual(['rooms'])
+  })
+
+  it('works without an index', async () => {
+    // A caller with no cache gets a call-local one, so the parent warm
+    // still feeds the entry resolution.
+    const out = await ENTRY_READDIR(new FakeAccessor(), spec('/rooms/red'))
+    expect(out).toEqual(['/h/rooms/red/note.json'])
+  })
+
+  it('refuses a kind named in both lister tables at build', () => {
+    expect(() =>
+      makeReaddir<FakeAccessor>(detectScope, {
+        listers: { room: listNotes },
+        entryListers: { room: entryNotes },
+        staticRoot: ['rooms'],
+      }),
+    ).toThrow('kinds in both lister tables')
   })
 })

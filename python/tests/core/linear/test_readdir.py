@@ -72,7 +72,7 @@ async def test_readdir_teams(accessor, index):
     assert team_entry.entry is not None
     assert team_entry.entry.extra["team_key"] == "ENG"
     assert team_entry.entry.extra["team_name"] == "Engineering"
-    assert team_entry.entry.extra["team_json_size"] == len(
+    assert team_entry.entry.extra["json_size"] == len(
         to_json_bytes(normalize_team(teams[0])))
 
 
@@ -189,8 +189,8 @@ async def test_readdir_issue_folder(accessor, index):
     issue_file = await index.get(
         "/teams/ENG__Engineering__TEAM1/issues/ENG-123__ISSUE1/issue.json")
     assert issue_file.entry is not None
-    # issue.json is sized from the issue the find already fetched, never
-    # from a per-issue refetch.
+    # issue.json is sized from the issue the team listing already fetched,
+    # never from a per-issue refetch.
     assert issue_file.entry.size == len(to_json_bytes(normalize_issue(issue)))
     comments_file = await index.get(
         "/teams/ENG__Engineering__TEAM1/issues/ENG-123__ISSUE1/comments.jsonl")
