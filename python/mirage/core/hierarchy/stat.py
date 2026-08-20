@@ -28,6 +28,31 @@ StatHook = Callable[[A, ScopeMatch, PathSpec, IndexCacheStore],
 EntryStatFn = Callable[[ScopeMatch, PathSpec, IndexEntry], FileStat]
 
 
+def entry_stat(id_field: str, filetype: FileType) -> EntryStatFn:
+    """The shape most id-addressed nodes share, keyed by an id field.
+
+    Name from the entry's ``vfs_name``, size and modified straight off
+    the listing, and the entry's id under ``id_field`` in ``extra``. A
+    kind whose shape differs writes its own ``EntryStatFn`` instead.
+
+    Args:
+        id_field (str): the ``extra`` key the entry's id rides under.
+        filetype (FileType): the node's rendered type.
+    """
+
+    def build(match: ScopeMatch, path: PathSpec,
+              entry: IndexEntry) -> FileStat:
+        return FileStat(
+            name=entry.vfs_name,
+            type=filetype,
+            size=entry.size,
+            modified=entry.remote_time or None,
+            extra={id_field: entry.id},
+        )
+
+    return build
+
+
 def make_stat(
     detect: DetectFn,
     readdir: ReaddirFn[A],

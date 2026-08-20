@@ -12,82 +12,69 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import logging
-
 from mirage.accessor.gcal import GCalAccessor
-from mirage.cache.index import NULL_INDEX, IndexCacheStore
-from mirage.core.gcal.day import valid_day
-from mirage.core.gcal.readdir import (CALENDAR_JSON, EVENT, calendar_index,
-                                      normalize, readdir)
+from mirage.cache.index import IndexCacheStore, IndexEntry
+from mirage.core.gcal.readdir import calendar_index, readdir
+from mirage.core.gcal.scope import detect_scope
+from mirage.core.hierarchy.probe import resolve_entry
+from mirage.core.hierarchy.scope import ScopeMatch
+from mirage.core.hierarchy.stat import make_stat
 from mirage.types import FileStat, FileType, PathSpec
 from mirage.utils.errors import enoent
-from mirage.utils.key_prefix import mount_key
-
-logger = logging.getLogger(__name__)
 
 
-async def stat(
-    accessor: GCalAccessor,
-    path: PathSpec,
-    index: IndexCacheStore = NULL_INDEX,
-) -> FileStat:
-    """Stat one node of the calendar tree.
+def _dir_stat(match: ScopeMatch, path: PathSpec,
+              entry: IndexEntry) -> FileStat:
+    return FileStat(name=entry.vfs_name, type=FileType.DIRECTORY)
 
-    A well-formed day directory resolves whether or not it holds an event:
-    the range query over that day is positive proof of what is there, so an
-    event-free day is an empty directory rather than a miss. Only a
-    malformed date, or one under a calendar that does not exist, is ENOENT.
+
+def _file_stat(match: ScopeMatch, path: PathSpec,
+               entry: IndexEntry) -> FileStat:
+    return FileStat(
+        name=entry.vfs_name,
+        type=FileType.JSON,
+        modified=entry.remote_time,
+        size=entry.size,
+        extra={
+            "event_id": entry.id,
+            **entry.extra
+        },
+    )
+
+
+async def _stat_day(accessor: GCalAccessor, match: ScopeMatch, path: PathSpec,
+                    index: IndexCacheStore) -> FileStat:
+    """Stat a day directory, which resolves whether or not it is listed.
+
+    A well-formed day under a calendar that exists is a directory whether
+    or not it holds an event: the range query over that day is positive
+    proof of what is there, so an event-free day (or one outside the
+    default listing window) is an empty directory rather than a miss.
 
     Args:
         accessor (GCalAccessor): the mount's accessor.
+        match (ScopeMatch): a match holding ``calendar`` and ``day``.
         path (PathSpec): the path to stat.
         index (IndexCacheStore): the mount's index cache.
-
-    Returns:
-        FileStat: the node's stat row.
     """
-    prefix, key, virtual_key = normalize(path)
-    if not key:
-        return FileStat(name="/", type=FileType.DIRECTORY)
-
-    result = await index.get(virtual_key)
-    if result.entry is None:
-        parent_virtual = virtual_key.rsplit("/", 1)[0] or "/"
-        try:
-            await readdir(
-                accessor,
-                PathSpec(virtual=parent_virtual,
-                         directory=parent_virtual,
-                         resource_path=mount_key(parent_virtual, prefix)),
-                index=index,
-            )
-        except FileNotFoundError as exc:
-            logger.debug("gcal stat populate failed for %s: %s",
-                         parent_virtual, exc)
-        result = await index.get(virtual_key)
-
-    if result.entry is None:
-        parts = key.split("/")
-        if len(parts) == 2 and valid_day(parts[1]):
-            # Outside the default window, or a day with nothing on it. Ask
-            # the calendar list rather than the index: the index only knows
-            # the calendar once the ROOT has been listed, which a stat of a
-            # day two levels down never triggers.
-            if parts[0] not in await calendar_index(accessor):
-                raise enoent(path.virtual)
-            return FileStat(name=parts[1], type=FileType.DIRECTORY)
+    entry = await resolve_entry(readdir, accessor, path, index)
+    if entry is not None:
+        return FileStat(name=entry.vfs_name, type=FileType.DIRECTORY)
+    # Ask the calendar list rather than the index: the index only knows
+    # the calendar once the ROOT has been listed, which a stat of a day
+    # two levels down never triggers.
+    if match.slots["calendar"] not in await calendar_index(accessor):
         raise enoent(path.virtual)
+    return FileStat(name=match.slots["day"], type=FileType.DIRECTORY)
 
-    entry = result.entry
-    if entry.resource_type in (EVENT, CALENDAR_JSON):
-        return FileStat(
-            name=entry.vfs_name,
-            type=FileType.JSON,
-            modified=entry.remote_time,
-            size=entry.size,
-            extra={
-                "event_id": entry.id,
-                **entry.extra
-            },
-        )
-    return FileStat(name=entry.vfs_name, type=FileType.DIRECTORY)
+
+stat = make_stat(
+    detect_scope,
+    readdir,
+    entry_stats={
+        "calendar": _dir_stat,
+        "calendar_json": _file_stat,
+        "event": _file_stat,
+    },
+    overrides={"day": _stat_day},
+)

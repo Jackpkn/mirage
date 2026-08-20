@@ -17,8 +17,9 @@ import { describe, expect, it } from 'vitest'
 import { IndexEntry } from '../../cache/index/config.ts'
 import { RAMIndexCacheStore } from '../../cache/index/ram.ts'
 import { FileType, PathSpec } from '../../types.ts'
+import type { NotionAccessor } from '../../accessor/notion.ts'
 import type { NotionTransport } from './client.ts'
-import { stat, type NotionStatAccessor } from './stat.ts'
+import { stat } from './stat.ts'
 
 class FakeTransport implements NotionTransport {
   public readonly invocations: { name: string; args: Record<string, unknown> }[] = []
@@ -42,7 +43,7 @@ class FakeTransport implements NotionTransport {
   }
 }
 
-function makeAccessor(transport: NotionTransport): NotionStatAccessor {
+function makeAccessor(transport: NotionTransport): NotionAccessor {
   return { transport }
 }
 
@@ -101,31 +102,50 @@ describe('notion stat', () => {
     expect(transport.invocations).toHaveLength(0)
   })
 
-  it('falls back to getDatabase when index has no database entry', async () => {
+  it('resolves an uncached database dir through the databases listing', async () => {
     const transport = new FakeTransport()
+    transport.enqueue('API-post-search', {
+      results: [{ id: 'ds1', object: 'data_source', parent: { database_id: DB_ID } }],
+      has_more: false,
+      next_cursor: null,
+    })
     transport.enqueue(
       'API-retrieve-a-database',
       databaseBody(DB_ID, 'Tasks', '2024-04-05T00:00:00Z'),
     )
     const segment = `Tasks__${DB_ID}`
-    const result = await stat(makeAccessor(transport), spec(`/databases/${segment}/`), undefined)
+    const result = await stat(
+      makeAccessor(transport),
+      spec(`/databases/${segment}/`),
+      new RAMIndexCacheStore(),
+    )
     expect(result.type).toBe(FileType.DIRECTORY)
     expect(result.modified).toBe('2024-04-05T00:00:00Z')
     expect(result.extra.database_id).toBe(DB_ID)
-    expect(transport.invocations[0]?.name).toBe('API-retrieve-a-database')
-    expect(transport.invocations[0]?.args).toEqual({ database_id: DB_ID })
   })
 
   it('returns a json stat for database.json without any API call', async () => {
     const transport = new FakeTransport()
+    const idx = new RAMIndexCacheStore()
     const segment = `Tasks__${DB_ID}`
+    await idx.put(
+      `/databases/${segment}/database.json`,
+      new IndexEntry({
+        id: `${DB_ID}:database`,
+        name: 'database.json',
+        resourceType: 'file',
+        vfsName: 'database.json',
+        size: 42,
+      }),
+    )
     const result = await stat(
       makeAccessor(transport),
       spec(`/databases/${segment}/database.json`),
-      undefined,
+      idx,
     )
     expect(result.name).toBe('database.json')
     expect(result.type).toBe(FileType.JSON)
+    expect(result.size).toBe(42)
     expect(result.extra.database_id).toBe(DB_ID)
     expect(transport.invocations).toHaveLength(0)
   })
@@ -138,14 +158,15 @@ describe('notion stat', () => {
     expect(transport.invocations).toHaveLength(0)
   })
 
-  it('returns a directory stat for a page dir without any API call', async () => {
+  it('throws ENOENT for a page dir the pages listing does not carry', async () => {
+    // The old stat accepted any well-shaped page dir unseen; the kit
+    // resolves through the parent listing, so an unlisted one is absent.
     const transport = new FakeTransport()
+    transport.enqueue('API-post-search', { results: [], has_more: false, next_cursor: null })
     const segment = `Page__${PAGE_ID}`
-    const result = await stat(makeAccessor(transport), spec(`/pages/${segment}/`), undefined)
-    expect(result.name).toBe(segment)
-    expect(result.type).toBe(FileType.DIRECTORY)
-    expect(result.extra.page_id).toBe(PAGE_ID)
-    expect(transport.invocations).toHaveLength(0)
+    await expect(
+      stat(makeAccessor(transport), spec(`/pages/${segment}/`), new RAMIndexCacheStore()),
+    ).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
   it('uses the cached index entry name for a page dir', async () => {
@@ -172,14 +193,21 @@ describe('notion stat', () => {
 
   it('returns a json stat for page.json without any API call', async () => {
     const transport = new FakeTransport()
+    const idx = new RAMIndexCacheStore()
     const segment = `Page__${PAGE_ID}`
-    const result = await stat(
-      makeAccessor(transport),
-      spec(`/pages/${segment}/page.json`),
-      undefined,
+    await idx.put(
+      `/pages/${segment}/page.json`,
+      new IndexEntry({
+        id: `${PAGE_ID}:page`,
+        name: 'page.json',
+        resourceType: 'file',
+        vfsName: 'page.json',
+      }),
     )
+    const result = await stat(makeAccessor(transport), spec(`/pages/${segment}/page.json`), idx)
     expect(result.name).toBe('page.json')
     expect(result.type).toBe(FileType.JSON)
+    expect(result.size).toBeNull()
     expect(transport.invocations).toHaveLength(0)
   })
 
@@ -212,12 +240,23 @@ describe('notion stat', () => {
 
   it('honors a path prefix', async () => {
     const transport = new FakeTransport()
+    const idx = new RAMIndexCacheStore()
     const segment = `Page__${PAGE_ID}`
+    await idx.put(
+      `/notion/pages/${segment}`,
+      new IndexEntry({
+        id: PAGE_ID,
+        name: segment,
+        resourceType: 'notion/page',
+        remoteTime: '',
+        vfsName: segment,
+      }),
+    )
     const virtual = `/notion/pages/${segment}/`
     const result = await stat(
       makeAccessor(transport),
       new PathSpec({ virtual, directory: virtual, resourcePath: mountKey(virtual, '/notion') }),
-      undefined,
+      idx,
     )
     expect(result.name).toBe(segment)
     expect(result.type).toBe(FileType.DIRECTORY)

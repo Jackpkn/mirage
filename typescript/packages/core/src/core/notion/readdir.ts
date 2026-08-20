@@ -12,11 +12,10 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { mountKey, mountPrefixOf } from '../../utils/key_prefix.ts'
+import type { NotionAccessor } from '../../accessor/notion.ts'
 import { IndexEntry } from '../../cache/index/config.ts'
-import type { IndexCacheStore } from '../../cache/index/store.ts'
-import { PathSpec } from '../../types.ts'
-import type { NotionTransport } from './client.ts'
+import { makeReaddir } from '../hierarchy/readdir.ts'
+import type { ScopeMatch } from '../hierarchy/scope.ts'
 import {
   dataSourceSegmentName,
   databaseSegmentName,
@@ -33,13 +32,8 @@ import {
   searchDataSources,
   searchTopLevelPages,
 } from './pages.ts'
-import { parseSegment, sanitizeName } from './pathing.ts'
-import { stripSlash } from '../../utils/slash.ts'
-import { enoent } from '../../utils/errors.ts'
-
-export interface NotionReaddirAccessor {
-  readonly transport: NotionTransport
-}
+import { sanitizeName } from './pathing.ts'
+import { detectScope } from './scope.ts'
 
 function pickString(record: Record<string, unknown>, key: string): string {
   const value = record[key]
@@ -56,249 +50,174 @@ function asArray(value: unknown): unknown[] {
   return Array.isArray(value) ? value : []
 }
 
-export async function readdir(
-  accessor: NotionReaddirAccessor,
-  path: PathSpec,
-  index?: IndexCacheStore,
-): Promise<string[]> {
-  const prefix = mountPrefixOf(path.virtual, path.resourcePath)
-  let p = path.pattern !== null ? path.directory : path.virtual
-  if (prefix !== '' && p.startsWith(prefix)) {
-    p = p.slice(prefix.length) || '/'
-  }
-  const key = stripSlash(p)
-  const idxKey = key !== '' ? `/${key}` : '/'
-
-  if (key === '') {
-    return [`${prefix}/pages`, `${prefix}/databases`]
-  }
-
-  if (key === 'pages') {
-    if (index !== undefined) {
-      const listing = await index.listDir(idxKey)
-      if (listing.entries !== undefined && listing.entries !== null) {
-        return listing.entries.map((entry) => `${prefix}${entry}`)
-      }
-    }
-    const pages = await searchTopLevelPages(accessor.transport)
-    const entries: [string, IndexEntry][] = []
-    for (const page of pages) {
-      const dirname = pageSegmentName(page)
-      entries.push([
-        dirname,
-        new IndexEntry({
-          id: pickString(page, 'id'),
-          name: dirname,
-          resourceType: 'notion/page',
-          remoteTime: pickString(page, 'last_edited_time'),
-          vfsName: dirname,
-        }),
-      ])
-    }
-    if (index !== undefined) await index.setDir(idxKey, entries)
-    return entries.map(([name]) => `${prefix}/pages/${name}`)
-  }
-
-  if (key === 'databases') {
-    if (index !== undefined) {
-      const listing = await index.listDir(idxKey)
-      if (listing.entries !== undefined && listing.entries !== null) {
-        return listing.entries.map((entry) => `${prefix}${entry}`)
-      }
-    }
-    // Search answers with data sources since 2025-09-03, so the set of
-    // databases is their distinct parents. Each one still costs a retrieve,
-    // because only the database object carries the title and url this
-    // directory is named and rendered from.
-    const owners: string[] = []
-    for (const dataSource of await searchDataSources(accessor.transport)) {
-      const owner = pickString(asRecord(dataSource.parent), 'database_id')
-      if (owner !== '' && !owners.includes(owner)) owners.push(owner)
-    }
-    const entries: [string, IndexEntry][] = []
-    for (const databaseId of owners) {
-      const database = await getDatabase(accessor.transport, databaseId)
-      const name = databaseSegmentName(database)
-      entries.push([
-        name,
-        new IndexEntry({
-          id: databaseId,
-          name,
-          resourceType: 'notion/database',
-          remoteTime: pickString(database, 'last_edited_time'),
-          vfsName: name,
-          extra: {
-            database_json_size: toJsonBytes(normalizeDatabase(database)).byteLength,
-          },
-        }),
-      ])
-    }
-    if (index !== undefined) await index.setDir(idxKey, entries)
-    return entries.map(([name]) => `${prefix}/databases/${name}`)
-  }
-
-  const parts = key.split('/')
-  const lastSegment = parts[parts.length - 1] ?? ''
-
-  if (parts[0] === 'databases' && parts.length === 2) {
-    let parsedDatabase: { id: string; title: string }
-    try {
-      parsedDatabase = parseSegment(lastSegment)
-    } catch {
-      throw enoent(p)
-    }
-    if (index !== undefined) {
-      const listing = await index.listDir(idxKey)
-      if (listing.entries !== undefined && listing.entries !== null) {
-        return listing.entries.map((entry) => `${prefix}${entry}`)
-      }
-    }
-    let databaseJsonSize: number | null = null
-    if (index !== undefined) {
-      let dirLookup = await index.get(idxKey)
-      if (dirLookup.entry === undefined || dirLookup.entry === null) {
-        const parentVirtual = `${prefix}/databases`
-        await readdir(
-          accessor,
-          new PathSpec({
-            virtual: parentVirtual,
-            directory: parentVirtual,
-            resourcePath: mountKey(parentVirtual, prefix),
-          }),
-          index,
-        )
-        dirLookup = await index.get(idxKey)
-      }
-      const stored = dirLookup.entry?.extra.database_json_size
-      if (typeof stored === 'number') databaseJsonSize = stored
-    }
-    const database = await getDatabase(accessor.transport, parsedDatabase.id)
-    const entries: [string, IndexEntry][] = [
-      [
-        'database.json',
-        new IndexEntry({
-          id: `${parsedDatabase.id}:database`,
-          name: 'database.json',
-          resourceType: 'file',
-          vfsName: 'database.json',
-          size: databaseJsonSize,
-        }),
-      ],
+async function listPagesRoot(
+  accessor: NotionAccessor,
+  _match: ScopeMatch,
+): Promise<[string, IndexEntry][]> {
+  const pages = await searchTopLevelPages(accessor.transport)
+  return pages.map((page): [string, IndexEntry] => {
+    const dirname = pageSegmentName(page)
+    return [
+      dirname,
+      new IndexEntry({
+        id: pickString(page, 'id'),
+        name: dirname,
+        resourceType: 'notion/page',
+        remoteTime: pickString(page, 'last_edited_time'),
+        vfsName: dirname,
+      }),
     ]
-    for (const stub of asArray(database.data_sources)) {
-      const record = asRecord(stub)
-      const segment = dataSourceSegmentName(record)
-      entries.push([
-        segment,
-        new IndexEntry({
-          id: pickString(record, 'id'),
-          name: segment,
-          resourceType: 'notion/data_source',
-          remoteTime: pickString(database, 'last_edited_time'),
-          vfsName: segment,
-        }),
-      ])
-    }
-    if (index !== undefined) await index.setDir(idxKey, entries)
-    return entries.map(([name]) => `${prefix}/${key}/${name}`)
-  }
-
-  if (parts[0] === 'databases' && parts.length === 3) {
-    let parsedSource: { id: string; title: string }
-    try {
-      parsedSource = parseSegment(lastSegment)
-    } catch {
-      throw enoent(p)
-    }
-    if (index !== undefined) {
-      const listing = await index.listDir(idxKey)
-      if (listing.entries !== undefined && listing.entries !== null) {
-        return listing.entries.map((entry) => `${prefix}${entry}`)
-      }
-    }
-    const dataSource = await getDataSource(accessor.transport, parsedSource.id)
-    const rows = await queryDataSource(accessor.transport, parsedSource.id)
-    const entries: [string, IndexEntry][] = [
-      [
-        'data_source.json',
-        new IndexEntry({
-          id: `${parsedSource.id}:data_source`,
-          name: 'data_source.json',
-          resourceType: 'file',
-          vfsName: 'data_source.json',
-          size: toJsonBytes(normalizeDataSource(dataSource)).byteLength,
-        }),
-      ],
-    ]
-    for (const row of rows) {
-      if (row.object !== 'page') continue
-      const segment = pageSegmentName(row)
-      entries.push([
-        segment,
-        new IndexEntry({
-          id: pickString(row, 'id'),
-          name: segment,
-          resourceType: 'notion/page',
-          remoteTime: pickString(row, 'last_edited_time'),
-          vfsName: segment,
-        }),
-      ])
-    }
-    if (index !== undefined) await index.setDir(idxKey, entries)
-    return entries.map(([name]) => `${prefix}/${key}/${name}`)
-  }
-
-  // A row page sits two levels below its database (database, then data
-  // source), so a page directory under `databases/` starts at depth 4.
-  if (
-    (parts[0] === 'pages' && parts.length >= 2) ||
-    (parts[0] === 'databases' && parts.length >= 4)
-  ) {
-    let parsed: { id: string; title: string }
-    try {
-      parsed = parseSegment(lastSegment)
-    } catch {
-      throw enoent(p)
-    }
-    if (index !== undefined) {
-      const listing = await index.listDir(idxKey)
-      if (listing.entries !== undefined && listing.entries !== null) {
-        return listing.entries.map((entry) => `${prefix}${entry}`)
-      }
-    }
-    const refs = await getChildPages(accessor.transport, parsed.id)
-    // database.json's size is stashed by the parent listing, but
-    // page.json renders from getPage plus the *recursive* block tree
-    // while this listing only holds one level of children, so sizing it
-    // here would cost an extra call pair per page. It stays size-unknown
-    // until a read hydrates it.
-    const entries: [string, IndexEntry][] = [
-      [
-        'page.json',
-        new IndexEntry({
-          id: `${parsed.id}:page`,
-          name: 'page.json',
-          resourceType: 'file',
-          vfsName: 'page.json',
-        }),
-      ],
-    ]
-    for (const ref of refs) {
-      const dirname = `${sanitizeName(ref.title)}__${ref.id}`
-      entries.push([
-        dirname,
-        new IndexEntry({
-          id: ref.id,
-          name: dirname,
-          resourceType: 'notion/page',
-          remoteTime: ref.lastEditedTime,
-          vfsName: dirname,
-        }),
-      ])
-    }
-    if (index !== undefined) await index.setDir(idxKey, entries)
-    return entries.map(([name]) => `${prefix}/${key}/${name}`)
-  }
-
-  return []
+  })
 }
+
+async function listDatabasesRoot(
+  accessor: NotionAccessor,
+  _match: ScopeMatch,
+): Promise<[string, IndexEntry][]> {
+  // Search answers with data sources since 2025-09-03, so the set of
+  // databases is their distinct parents. Each one still costs a retrieve,
+  // because only the database object carries the title and url this
+  // directory is named and rendered from.
+  const owners: string[] = []
+  for (const dataSource of await searchDataSources(accessor.transport)) {
+    const owner = pickString(asRecord(dataSource.parent), 'database_id')
+    if (owner !== '' && !owners.includes(owner)) owners.push(owner)
+  }
+  const entries: [string, IndexEntry][] = []
+  for (const databaseId of owners) {
+    const database = await getDatabase(accessor.transport, databaseId)
+    const name = databaseSegmentName(database)
+    entries.push([
+      name,
+      new IndexEntry({
+        id: databaseId,
+        name,
+        resourceType: 'notion/database',
+        remoteTime: pickString(database, 'last_edited_time'),
+        vfsName: name,
+      }),
+    ])
+  }
+  return entries
+}
+
+async function listPage(
+  accessor: NotionAccessor,
+  match: ScopeMatch,
+): Promise<[string, IndexEntry][]> {
+  const pageId = match.slots.page_id ?? ''
+  const refs = await getChildPages(accessor.transport, pageId)
+  // page.json renders from getPage plus the *recursive* block tree while
+  // this listing only holds one level of children, so sizing it here would
+  // cost an extra call pair per page. It stays size-unknown until a read
+  // hydrates it.
+  const entries: [string, IndexEntry][] = [
+    [
+      'page.json',
+      new IndexEntry({
+        id: `${pageId}:page`,
+        name: 'page.json',
+        resourceType: 'file',
+        vfsName: 'page.json',
+      }),
+    ],
+  ]
+  for (const ref of refs) {
+    const dirname = `${sanitizeName(ref.title)}__${ref.id}`
+    entries.push([
+      dirname,
+      new IndexEntry({
+        id: ref.id,
+        name: dirname,
+        resourceType: 'notion/page',
+        remoteTime: ref.lastEditedTime,
+        vfsName: dirname,
+      }),
+    ])
+  }
+  return entries
+}
+
+async function listDatabase(
+  accessor: NotionAccessor,
+  match: ScopeMatch,
+): Promise<[string, IndexEntry][]> {
+  const databaseId = match.slots.database_id ?? ''
+  const database = await getDatabase(accessor.transport, databaseId)
+  // database.json renders the database object this listing already
+  // fetched, so its exact size is free here.
+  const entries: [string, IndexEntry][] = [
+    [
+      'database.json',
+      new IndexEntry({
+        id: `${databaseId}:database`,
+        name: 'database.json',
+        resourceType: 'file',
+        vfsName: 'database.json',
+        size: toJsonBytes(normalizeDatabase(database)).byteLength,
+      }),
+    ],
+  ]
+  for (const stub of asArray(database.data_sources)) {
+    const record = asRecord(stub)
+    const segment = dataSourceSegmentName(record)
+    entries.push([
+      segment,
+      new IndexEntry({
+        id: pickString(record, 'id'),
+        name: segment,
+        resourceType: 'notion/data_source',
+        remoteTime: pickString(database, 'last_edited_time'),
+        vfsName: segment,
+      }),
+    ])
+  }
+  return entries
+}
+
+async function listDataSource(
+  accessor: NotionAccessor,
+  match: ScopeMatch,
+): Promise<[string, IndexEntry][]> {
+  const dataSourceId = match.slots.data_source_id ?? ''
+  const dataSource = await getDataSource(accessor.transport, dataSourceId)
+  const rows = await queryDataSource(accessor.transport, dataSourceId)
+  const entries: [string, IndexEntry][] = [
+    [
+      'data_source.json',
+      new IndexEntry({
+        id: `${dataSourceId}:data_source`,
+        name: 'data_source.json',
+        resourceType: 'file',
+        vfsName: 'data_source.json',
+        size: toJsonBytes(normalizeDataSource(dataSource)).byteLength,
+      }),
+    ],
+  ]
+  for (const row of rows) {
+    if (row.object !== 'page') continue
+    const segment = pageSegmentName(row)
+    entries.push([
+      segment,
+      new IndexEntry({
+        id: pickString(row, 'id'),
+        name: segment,
+        resourceType: 'notion/page',
+        remoteTime: pickString(row, 'last_edited_time'),
+        vfsName: segment,
+      }),
+    ])
+  }
+  return entries
+}
+
+export const readdir = makeReaddir<NotionAccessor>(detectScope, {
+  listers: {
+    pages: listPagesRoot,
+    databases: listDatabasesRoot,
+    page: listPage,
+    database: listDatabase,
+    data_source: listDataSource,
+  },
+  staticRoot: ['pages', 'databases'],
+})

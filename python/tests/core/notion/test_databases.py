@@ -21,7 +21,6 @@ from mirage.accessor.notion import NotionAccessor
 from mirage.cache.index.ram import RAMIndexCacheStore
 from mirage.core.notion import read as notion_read
 from mirage.core.notion import readdir as notion_readdir
-from mirage.core.notion import stat as notion_stat
 from mirage.core.notion.config import NotionConfig
 from mirage.core.notion.normalize import normalize_database, to_json_bytes
 from mirage.core.notion.read import read
@@ -225,33 +224,64 @@ async def test_readdir_database_row_lists_page_json_and_child_pages(
 
 
 @pytest.mark.asyncio
-async def test_stat_database_dir_uses_database_metadata(accessor, monkeypatch):
+async def test_stat_database_dir_resolves_through_the_listing(
+        accessor, monkeypatch):
     monkeypatch.setattr(
-        notion_stat,
-        "get_database",
-        AsyncMock(return_value={"last_edited_time": "2026-01-03T00:00:00Z"}),
+        notion_readdir,
+        "search_data_sources",
+        AsyncMock(return_value=[{
+            "id": SOURCE_ID,
+            "parent": {
+                "type": "database_id",
+                "database_id": DATABASE_ID
+            },
+        }]),
     )
-    result = await stat(accessor, PathSpec.from_str_path(DB_DIR))
+    monkeypatch.setattr(notion_readdir, "get_database",
+                        AsyncMock(return_value=DATABASE))
+    result = await stat(accessor, PathSpec.from_str_path(DB_DIR),
+                        RAMIndexCacheStore())
     assert result.name == f"Tasks__{DATABASE_ID}"
     assert result.type == FileType.DIRECTORY
-    assert result.modified == "2026-01-03T00:00:00Z"
+    assert result.modified == "2026-01-02T00:00:00Z"
     assert result.extra == {"database_id": DATABASE_ID}
 
 
 @pytest.mark.asyncio
 async def test_stat_data_source_dir(accessor, monkeypatch):
-    monkeypatch.setattr(notion_stat, "get_data_source",
-                        AsyncMock(return_value=DATA_SOURCE))
-    result = await stat(accessor, PathSpec.from_str_path(SOURCE_DIR))
+    monkeypatch.setattr(notion_readdir, "get_database",
+                        AsyncMock(return_value=DATABASE))
+    result = await stat(accessor, PathSpec.from_str_path(SOURCE_DIR),
+                        RAMIndexCacheStore())
     assert result.name == f"Tasks__{SOURCE_ID}"
     assert result.type == FileType.DIRECTORY
     assert result.extra == {"data_source_id": SOURCE_ID}
 
 
 @pytest.mark.asyncio
-async def test_stat_database_row_dir(accessor):
+async def test_stat_database_row_dir(accessor, monkeypatch):
+    monkeypatch.setattr(notion_readdir, "get_data_source",
+                        AsyncMock(return_value=DATA_SOURCE))
+    monkeypatch.setattr(
+        notion_readdir,
+        "query_data_source",
+        AsyncMock(return_value=[{
+            "object": "page",
+            "id": ROW_ID,
+            "properties": {
+                "Name": {
+                    "type": "title",
+                    "title": [{
+                        "plain_text": "Row-A"
+                    }],
+                }
+            },
+            "last_edited_time": "2026-01-02T00:00:00Z",
+        }]),
+    )
     result = await stat(
-        accessor, PathSpec.from_str_path(f"{SOURCE_DIR}/Row-A__{ROW_ID}"))
+        accessor, PathSpec.from_str_path(f"{SOURCE_DIR}/Row-A__{ROW_ID}"),
+        RAMIndexCacheStore())
     assert result.name == f"Row-A__{ROW_ID}"
     assert result.type == FileType.DIRECTORY
     assert result.extra == {"page_id": ROW_ID}

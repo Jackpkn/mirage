@@ -13,61 +13,50 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 from mirage.accessor.notion import NotionAccessor
-from mirage.cache.index import NULL_INDEX, IndexCacheStore
+from mirage.cache.index import IndexCacheStore
+from mirage.core.hierarchy.read import make_read
+from mirage.core.hierarchy.scope import ScopeMatch
+from mirage.core.notion.config import NotionConfig
 from mirage.core.notion.normalize import (normalize_data_source,
                                           normalize_database, normalize_page,
                                           to_json_bytes)
 from mirage.core.notion.pages import (get_data_source, get_database, get_page,
                                       list_block_tree)
-from mirage.core.notion.pathing import split_suffix_id
+from mirage.core.notion.scope import detect_scope
 from mirage.types import PathSpec
-from mirage.utils.errors import enoent
 
 
-async def read_page_json(config, page_id: str) -> bytes:
+async def read_page_json(config: NotionConfig, page_id: str) -> bytes:
     page = await get_page(config, page_id)
     blocks = await list_block_tree(config, page_id)
     normalized = normalize_page(page, blocks)
     return to_json_bytes(normalized)
 
 
-async def read(
-    accessor: NotionAccessor,
-    path_spec: PathSpec,
-    index: IndexCacheStore = NULL_INDEX,
-) -> bytes:
-    virtual = path_spec.virtual
-    path = path_spec.mount_path
+async def _read_page_json(accessor: NotionAccessor, match: ScopeMatch,
+                          path: PathSpec, index: IndexCacheStore) -> bytes:
+    return await read_page_json(accessor.config, match.slots["page_id"])
 
-    key = path.strip("/")
-    parts = key.split("/")
 
-    if not key or key in ("pages", "databases"):
-        raise IsADirectoryError(virtual)
+async def _read_database_json(accessor: NotionAccessor, match: ScopeMatch,
+                              path: PathSpec, index: IndexCacheStore) -> bytes:
+    database = await get_database(accessor.config, match.slots["database_id"])
+    return to_json_bytes(normalize_database(database))
 
-    if len(parts) >= 3 and parts[0] == "pages" and parts[-1] == "page.json":
-        _, page_id = split_suffix_id(parts[-2])
-        return await read_page_json(accessor.config, page_id)
 
-    if (len(parts) == 3 and parts[0] == "databases"
-            and parts[-1] == "database.json"):
-        _, database_id = split_suffix_id(parts[-2])
-        database = await get_database(accessor.config, database_id)
-        return to_json_bytes(normalize_database(database))
+async def _read_data_source_json(accessor: NotionAccessor, match: ScopeMatch,
+                                 path: PathSpec,
+                                 index: IndexCacheStore) -> bytes:
+    data_source = await get_data_source(accessor.config,
+                                        match.slots["data_source_id"])
+    return to_json_bytes(normalize_data_source(data_source))
 
-    if (len(parts) == 4 and parts[0] == "databases"
-            and parts[-1] == "data_source.json"):
-        _, data_source_id = split_suffix_id(parts[-2])
-        data_source = await get_data_source(accessor.config, data_source_id)
-        return to_json_bytes(normalize_data_source(data_source))
 
-    if (len(parts) >= 5 and parts[0] == "databases"
-            and parts[-1] == "page.json"):
-        _, page_id = split_suffix_id(parts[-2])
-        return await read_page_json(accessor.config, page_id)
-
-    if (len(parts) >= 2 and parts[0] in ("pages", "databases")
-            and not parts[-1].endswith(".json")):
-        raise IsADirectoryError(virtual)
-
-    raise enoent(virtual)
+read = make_read(
+    detect_scope,
+    readers={
+        "page_json": _read_page_json,
+        "database_json": _read_database_json,
+        "data_source_json": _read_data_source_json,
+    },
+)

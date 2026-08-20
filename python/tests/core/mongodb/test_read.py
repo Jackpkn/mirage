@@ -153,6 +153,8 @@ async def test_read_unknown_path_raises(accessor, index):
 
 @pytest.mark.asyncio
 async def test_read_kind_dir_path_raises(accessor, index):
+    # A probed directory shape is no proof the node exists, so the read
+    # reports absence rather than EISDIR.
     with pytest.raises(FileNotFoundError):
         await read(accessor, _path("/sample_mflix/collections"), index)
 

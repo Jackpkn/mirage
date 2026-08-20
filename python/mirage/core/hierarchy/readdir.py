@@ -22,7 +22,8 @@ from mirage.types import PathSpec
 from mirage.utils.errors import enoent, enotdir
 from mirage.utils.key_prefix import mount_prefix_of
 
-Lister = Callable[[A, ScopeMatch], Awaitable[list[tuple[str, IndexEntry]]]]
+Lister = Callable[[A, ScopeMatch],
+                  Awaitable[list[tuple[str, IndexEntry]] | None]]
 Guard = Callable[[A, ScopeMatch, str], Awaitable[None]]
 
 
@@ -43,6 +44,12 @@ def make_readdir(
     A dot-prefixed name is dropped from the listing: the classifier
     refuses every dot-leading segment, so listing one would advertise a
     path that stat, read and child readdir all report absent.
+    A lister may answer None instead of a listing: the directory's
+    container does not exist, reported as ENOENT on the virtual path.
+    That is for backends whose containers are proven by a parent
+    listing the lister fetches anyway (trello finds a board by its
+    ``label__id`` dirname in the workspace's board list), where a
+    separate guard would pay the same call twice.
 
     Args:
         detect (DetectFn): the backend's scope classifier.
@@ -82,8 +89,10 @@ def make_readdir(
         listing = await index.list_dir(virtual_key)
         if listing.entries is not None:
             return listing.entries
-        entries = [(name, entry)
-                   for name, entry in await lister(accessor, match)
+        listed = await lister(accessor, match)
+        if listed is None:
+            raise enoent(virtual)
+        entries = [(name, entry) for name, entry in listed
                    if not name.startswith(".")]
         await index.set_dir(virtual_key, entries)
         stem = virtual_key.rstrip("/")

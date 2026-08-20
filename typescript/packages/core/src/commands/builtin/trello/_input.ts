@@ -12,11 +12,12 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { readBytes } from '../../../core/trello/read.ts'
-import type { TrelloTransport } from '../../../core/trello/client.ts'
+import type { TrelloAccessor } from '../../../accessor/trello.ts'
+import { read } from '../../../core/trello/read.ts'
 import { readStdinAsync } from '../utils/stream.ts'
 import type { CommandOpts } from '../../config.ts'
 import { mountKey } from '../../../utils/key_prefix.ts'
+import { PathSpec } from '../../../types.ts'
 
 const DEC = new TextDecoder('utf-8', { fatal: false })
 
@@ -33,13 +34,18 @@ export interface ResolveTextInputOptions {
 }
 
 export async function resolveTextInput(
-  transport: TrelloTransport,
+  accessor: TrelloAccessor,
   opts: ResolveTextInputOptions,
 ): Promise<string> {
   if (opts.inlineText !== null && opts.inlineText !== '') return opts.inlineText
   if (opts.filePath !== null && opts.filePath !== '') {
     const key = mountKey(opts.filePath, opts.mountPrefix)
-    const data = await readBytes(transport, key !== '' ? `/${key}` : '/', opts.filePath)
+    const spec = new PathSpec({
+      virtual: opts.filePath,
+      directory: opts.filePath,
+      resourcePath: key,
+    })
+    const data = await read(accessor, spec)
     return DEC.decode(data)
   }
   const raw = await readStdinAsync(opts.stdin)

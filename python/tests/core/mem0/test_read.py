@@ -72,9 +72,10 @@ async def test_read_falls_back_to_get_when_no_cache():
 
 
 @pytest.mark.asyncio
-async def test_read_missing_path_enoent():
+async def test_read_root_is_eisdir():
+    # A matched directory kind is a real node being read as a file.
     acc = _accessor()
-    with pytest.raises(FileNotFoundError):
+    with pytest.raises(IsADirectoryError):
         await read(
             acc, PathSpec(virtual="/mem", directory="/mem", resource_path=""),
             RAMIndexCacheStore())

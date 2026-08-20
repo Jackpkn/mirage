@@ -20,6 +20,7 @@ import pytest
 from mirage.cache.index import IndexEntry
 from mirage.cache.index.ram import RAMIndexCacheStore
 from mirage.core.hierarchy.readdir import make_readdir
+from mirage.core.hierarchy.scope import ScopeMatch
 from mirage.core.hierarchy.unlink import make_unlink
 from mirage.utils.errors import enoent
 from tests.core.hierarchy.conftest import (FakeAccessor, detect_scope,
@@ -35,7 +36,8 @@ READDIR = make_readdir(
 )
 
 
-async def _delete(accessor: FakeAccessor, entry: IndexEntry) -> None:
+async def _delete(accessor: FakeAccessor, match: ScopeMatch,
+                  entry: IndexEntry) -> None:
     accessor.calls.append(f"delete:{entry.id}")
 
 

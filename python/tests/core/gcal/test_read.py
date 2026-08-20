@@ -59,9 +59,14 @@ async def test_calendar_json_states_the_mount_wide_zone_not_the_calendars(
     assert body["bucketTimeZone"] == "Asia/Hong_Kong"
 
 
-async def test_reading_a_directory_raises(api, accessor, index):
-    with pytest.raises(IsADirectoryError):
+async def test_reading_a_calendar_dir_reports_absence(api, accessor, index):
+    # A probed directory shape is no proof the node exists, so the read
+    # reports absence; the mount root, which exists by construction, is
+    # the one EISDIR.
+    with pytest.raises(FileNotFoundError):
         await read(accessor, spec("/primary"), index)
+    with pytest.raises(IsADirectoryError):
+        await read(accessor, spec("/"), index)
 
 
 async def test_unknown_calendar_is_enoent(api, accessor, index):

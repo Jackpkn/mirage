@@ -12,10 +12,12 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { mountPrefixOf } from '../../utils/key_prefix.ts'
 import type { TrelloAccessor } from '../../accessor/trello.ts'
-import type { IndexCacheStore } from '../../cache/index/store.ts'
 import type { PathSpec } from '../../types.ts'
+import { enoent } from '../../utils/errors.ts'
+import { makeRead } from '../hierarchy/read.ts'
+import type { ScopeMatch } from '../hierarchy/scope.ts'
+import { jsonlBytesByCreatedAt } from '../render/json.ts'
 import {
   getBoard,
   getCard,
@@ -24,7 +26,6 @@ import {
   listBoardMembers,
   listCardComments,
   listWorkspaces,
-  type TrelloTransport,
 } from './client.ts'
 import {
   normalizeBoard,
@@ -36,124 +37,82 @@ import {
   normalizeWorkspace,
   toJsonBytes,
 } from './normalize.ts'
-import { splitSuffixId } from './pathing.ts'
-import { stripSlash } from '../../utils/slash.ts'
-import { enoent } from '../../utils/errors.ts'
-import { jsonlBytesByCreatedAt } from '../render/json.ts'
+import { detectScope } from './scope.ts'
 
-export async function readBytes(
-  transport: TrelloTransport,
-  path: string,
-  virtual: string = path,
-): Promise<Uint8Array> {
-  const key = stripSlash(path)
-  const parts = key.split('/')
-
-  if (parts.length === 3 && parts[0] === 'workspaces' && parts[2] === 'workspace.json') {
-    const [, wsId] = splitSuffixId(parts[1] ?? '')
-    const workspaces = await listWorkspaces(transport)
-    for (const ws of workspaces) {
-      if (ws.id === wsId) return toJsonBytes(normalizeWorkspace(ws))
-    }
-    throw enoent(virtual)
-  }
-
-  if (
-    parts.length === 5 &&
-    parts[0] === 'workspaces' &&
-    parts[2] === 'boards' &&
-    parts[4] === 'board.json'
-  ) {
-    const [, boardId] = splitSuffixId(parts[3] ?? '')
-    const board = await getBoard(transport, boardId)
-    return toJsonBytes(normalizeBoard(board))
-  }
-
-  if (
-    parts.length === 6 &&
-    parts[0] === 'workspaces' &&
-    parts[2] === 'boards' &&
-    parts[4] === 'members'
-  ) {
-    const [, boardId] = splitSuffixId(parts[3] ?? '')
-    const [, memberId] = splitSuffixId(parts[5] ?? '', '.json')
-    const members = await listBoardMembers(transport, boardId)
-    for (const member of members) {
-      if (member.id === memberId) return toJsonBytes(normalizeMember(member))
-    }
-    throw enoent(virtual)
-  }
-
-  if (
-    parts.length === 6 &&
-    parts[0] === 'workspaces' &&
-    parts[2] === 'boards' &&
-    parts[4] === 'labels'
-  ) {
-    const [, boardId] = splitSuffixId(parts[3] ?? '')
-    const [, labelId] = splitSuffixId(parts[5] ?? '', '.json')
-    const labels = await listBoardLabels(transport, boardId)
-    for (const label of labels) {
-      if (label.id === labelId) return toJsonBytes(normalizeLabel(label))
-    }
-    throw enoent(virtual)
-  }
-
-  if (
-    parts.length === 7 &&
-    parts[0] === 'workspaces' &&
-    parts[2] === 'boards' &&
-    parts[4] === 'lists' &&
-    parts[6] === 'list.json'
-  ) {
-    const [, boardId] = splitSuffixId(parts[3] ?? '')
-    const [, listId] = splitSuffixId(parts[5] ?? '')
-    const lists = await listBoardLists(transport, boardId)
-    for (const lst of lists) {
-      if (lst.id === listId) return toJsonBytes(normalizeList(lst))
-    }
-    throw enoent(virtual)
-  }
-
-  if (
-    parts.length === 9 &&
-    parts[0] === 'workspaces' &&
-    parts[2] === 'boards' &&
-    parts[4] === 'lists' &&
-    parts[6] === 'cards' &&
-    parts[8] === 'card.json'
-  ) {
-    const [, cardId] = splitSuffixId(parts[7] ?? '')
-    const card = await getCard(transport, cardId)
-    return toJsonBytes(normalizeCard(card))
-  }
-
-  if (
-    parts.length === 9 &&
-    parts[0] === 'workspaces' &&
-    parts[2] === 'boards' &&
-    parts[4] === 'lists' &&
-    parts[6] === 'cards' &&
-    parts[8] === 'comments.jsonl'
-  ) {
-    const [, cardId] = splitSuffixId(parts[7] ?? '')
-    const comments = await listCardComments(transport, cardId)
-    const rows = comments.map((c) => normalizeComment(c, cardId))
-    return jsonlBytesByCreatedAt(rows)
-  }
-
-  throw enoent(virtual)
-}
-
-export async function read(
+async function readWorkspaceJson(
   accessor: TrelloAccessor,
+  match: ScopeMatch,
   path: PathSpec,
-  _index?: IndexCacheStore,
 ): Promise<Uint8Array> {
-  const prefix = mountPrefixOf(path.virtual, path.resourcePath)
-  let p = path.virtual
-  if (prefix !== '' && p.startsWith(prefix)) {
-    p = p.slice(prefix.length) || '/'
+  const workspaceId = match.slots.workspace_id ?? ''
+  for (const workspace of await listWorkspaces(accessor.transport)) {
+    if (workspace.id === workspaceId) return toJsonBytes(normalizeWorkspace(workspace))
   }
-  return readBytes(accessor.transport, p, path.virtual)
+  throw enoent(path.virtual)
 }
+
+async function readBoardJson(accessor: TrelloAccessor, match: ScopeMatch): Promise<Uint8Array> {
+  const board = await getBoard(accessor.transport, match.slots.board_id ?? '')
+  return toJsonBytes(normalizeBoard(board))
+}
+
+async function readMember(
+  accessor: TrelloAccessor,
+  match: ScopeMatch,
+  path: PathSpec,
+): Promise<Uint8Array> {
+  const memberId = match.slots.member_id ?? ''
+  const members = await listBoardMembers(accessor.transport, match.slots.board_id ?? '')
+  for (const member of members) {
+    if (member.id === memberId) return toJsonBytes(normalizeMember(member))
+  }
+  throw enoent(path.virtual)
+}
+
+async function readLabel(
+  accessor: TrelloAccessor,
+  match: ScopeMatch,
+  path: PathSpec,
+): Promise<Uint8Array> {
+  const labelId = match.slots.label_id ?? ''
+  const labels = await listBoardLabels(accessor.transport, match.slots.board_id ?? '')
+  for (const label of labels) {
+    if (label.id === labelId) return toJsonBytes(normalizeLabel(label))
+  }
+  throw enoent(path.virtual)
+}
+
+async function readListJson(
+  accessor: TrelloAccessor,
+  match: ScopeMatch,
+  path: PathSpec,
+): Promise<Uint8Array> {
+  const listId = match.slots.list_id ?? ''
+  const lists = await listBoardLists(accessor.transport, match.slots.board_id ?? '')
+  for (const lst of lists) {
+    if (lst.id === listId) return toJsonBytes(normalizeList(lst))
+  }
+  throw enoent(path.virtual)
+}
+
+async function readCardJson(accessor: TrelloAccessor, match: ScopeMatch): Promise<Uint8Array> {
+  const card = await getCard(accessor.transport, match.slots.card_id ?? '')
+  return toJsonBytes(normalizeCard(card))
+}
+
+async function readComments(accessor: TrelloAccessor, match: ScopeMatch): Promise<Uint8Array> {
+  const cardId = match.slots.card_id ?? ''
+  const comments = await listCardComments(accessor.transport, cardId)
+  const rows = comments.map((c) => normalizeComment(c, cardId))
+  return jsonlBytesByCreatedAt(rows)
+}
+
+export const read = makeRead<TrelloAccessor>(detectScope, {
+  workspace_json: readWorkspaceJson,
+  board_json: readBoardJson,
+  member: readMember,
+  label: readLabel,
+  list_json: readListJson,
+  card_json: readCardJson,
+  comments_jsonl: readComments,
+})

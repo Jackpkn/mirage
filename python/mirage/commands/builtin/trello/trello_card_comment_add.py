@@ -43,7 +43,7 @@ async def trello_card_comment_add(
     if not card_id:
         raise ValueError("--card_id is required")
     text = await resolve_text_input(
-        config,
+        accessor,
         inline_text=fl.as_str("text"),
         file_path=file_operand(fl, "text_file"),
         stdin=opts.stdin,

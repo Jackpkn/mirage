@@ -133,7 +133,7 @@ describe('hierarchy makeReaddir', () => {
     // The classifier refuses every dot-leading segment, so a listing must
     // not advertise one (a quoted postgres schema can be named ".foo").
     const hiddenRooms: Lister<FakeAccessor> = async (accessor, match) => {
-      const rooms = await listRooms(accessor, match)
+      const rooms = (await listRooms(accessor, match)) ?? []
       const entry = rooms[0]?.[1]
       if (entry === undefined) throw new Error('fixture rooms empty')
       return [['.secret', entry], ...rooms]

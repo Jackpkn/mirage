@@ -18,8 +18,13 @@ import { deleteFile } from '../google/drive.ts'
 import { makeUnlink } from '../hierarchy/unlink.ts'
 import { readdir } from './readdir.ts'
 import { detectScope } from './scope.ts'
+import type { ScopeMatch } from '../hierarchy/scope.ts'
 
-async function del(accessor: GSheetsAccessor, entry: IndexEntry): Promise<void> {
+async function del(
+  accessor: GSheetsAccessor,
+  _match: ScopeMatch,
+  entry: IndexEntry,
+): Promise<void> {
   await deleteFile(accessor.tokenManager, entry.id)
 }
 

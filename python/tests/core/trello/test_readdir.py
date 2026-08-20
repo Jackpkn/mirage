@@ -17,7 +17,6 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from mirage.accessor.trello import TrelloAccessor
-from mirage.cache.index import IndexEntry
 from mirage.cache.index.ram import RAMIndexCacheStore
 from mirage.core.trello.normalize import (normalize_card, normalize_workspace,
                                           to_json_bytes)
@@ -45,37 +44,28 @@ async def test_readdir_root(accessor, index):
 
 
 @pytest.mark.asyncio
-async def test_readdir_workspaces_seeds_sized_workspace_json(accessor, index):
+async def test_readdir_workspace_dir_carries_sized_workspace_json(
+        accessor, index):
     ws = {"id": "ws1", "displayName": "Engineering"}
     with patch("mirage.core.trello.readdir.list_workspaces",
                new_callable=AsyncMock,
                return_value=[ws]):
-        await readdir(
+        result = await readdir(
             accessor,
-            PathSpec(resource_path="workspaces",
-                     virtual="/workspaces",
-                     directory="/workspaces"), index)
-    lookup = await index.get("/workspaces/Engineering__ws1/workspace.json")
-    assert lookup.entry is not None
-    assert lookup.entry.size == len(to_json_bytes(normalize_workspace(ws)))
-    listing = await index.list_dir("/workspaces/Engineering__ws1")
-    assert listing.entries == [
+            PathSpec(resource_path="workspaces/Engineering__ws1",
+                     virtual="/workspaces/Engineering__ws1",
+                     directory="/workspaces/Engineering__ws1"), index)
+    assert result == [
         "/workspaces/Engineering__ws1/workspace.json",
         "/workspaces/Engineering__ws1/boards",
     ]
+    lookup = await index.get("/workspaces/Engineering__ws1/workspace.json")
+    assert lookup.entry is not None
+    assert lookup.entry.size == len(to_json_bytes(normalize_workspace(ws)))
 
 
 @pytest.mark.asyncio
-async def test_readdir_cards_seeds_sized_card_json(accessor, index):
-    await index.put(
-        "/workspaces/Engineering__ws1/boards/Roadmap__b1/lists/Doing__l1",
-        IndexEntry(
-            id="l1",
-            name="Doing",
-            resource_type="trello/list",
-            vfs_name="Doing__l1",
-        ),
-    )
+async def test_readdir_card_dir_carries_sized_card_json(accessor, index):
     card = {
         "id": "c1",
         "name": "Fix login",
@@ -89,20 +79,60 @@ async def test_readdir_cards_seeds_sized_card_json(accessor, index):
         "dateLastActivity": "2026-04-05T00:00:00.000Z",
     }
     base = "/workspaces/Engineering__ws1/boards/Roadmap__b1/lists/Doing__l1"
-    with patch("mirage.core.trello.readdir.list_list_cards",
+    with patch("mirage.core.trello.readdir.list_workspaces",
+               new_callable=AsyncMock,
+               return_value=[{
+                   "id": "ws1",
+                   "displayName": "Engineering"
+               }]), \
+         patch("mirage.core.trello.readdir.list_workspace_boards",
+               new_callable=AsyncMock,
+               return_value=[{
+                   "id": "b1",
+                   "name": "Roadmap"
+               }]), \
+         patch("mirage.core.trello.readdir.list_board_lists",
+               new_callable=AsyncMock,
+               return_value=[{
+                   "id": "l1",
+                   "name": "Doing"
+               }]), \
+         patch("mirage.core.trello.readdir.list_list_cards",
                new_callable=AsyncMock,
                return_value=[card]):
-        await readdir(
+        result = await readdir(
             accessor,
-            PathSpec(resource_path=f"{base.strip('/')}/cards",
-                     virtual=f"{base}/cards",
-                     directory=f"{base}/cards"), index)
+            PathSpec(resource_path=f"{base.strip('/')}/cards/Fix_login__c1",
+                     virtual=f"{base}/cards/Fix_login__c1",
+                     directory=f"{base}/cards/Fix_login__c1"), index)
+    assert result == [
+        f"{base}/cards/Fix_login__c1/card.json",
+        f"{base}/cards/Fix_login__c1/comments.jsonl",
+    ]
     lookup = await index.get(f"{base}/cards/Fix_login__c1/card.json")
     assert lookup.entry is not None
     assert lookup.entry.size == len(to_json_bytes(normalize_card(card)))
     comments = await index.get(f"{base}/cards/Fix_login__c1/comments.jsonl")
     assert comments.entry is not None
     assert comments.entry.size is None
+
+
+@pytest.mark.asyncio
+async def test_readdir_unknown_workspace_raises(accessor, index):
+    # The lister answers None when no listed workspace carries the typed
+    # `label__id` dirname, and the kit reports it as ENOENT.
+    with patch("mirage.core.trello.readdir.list_workspaces",
+               new_callable=AsyncMock,
+               return_value=[{
+                   "id": "ws1",
+                   "displayName": "Engineering"
+               }]):
+        with pytest.raises(FileNotFoundError):
+            await readdir(
+                accessor,
+                PathSpec(resource_path="workspaces/Ghost__nope/boards",
+                         virtual="/workspaces/Ghost__nope/boards",
+                         directory="/workspaces/Ghost__nope/boards"), index)
 
 
 @pytest.mark.asyncio

@@ -21,7 +21,6 @@ import type { RegisteredCommand } from '@struktoai/mirage-core/commands/config'
 import { HttpTrelloTransport } from '@struktoai/mirage-core/core/trello/client'
 import { read as trelloRead } from '@struktoai/mirage-core/core/trello/read'
 import { readdir as trelloReaddir } from '@struktoai/mirage-core/core/trello/readdir'
-import type { TrelloReaddirFilter } from '@struktoai/mirage-core/core/trello/readdir'
 import { stat as trelloStat } from '@struktoai/mirage-core/core/trello/stat'
 import type { RegisteredOp } from '@struktoai/mirage-core/ops/registry'
 import { TRELLO_OPS } from '@struktoai/mirage-core/ops/trello/index'
@@ -32,15 +31,7 @@ import type { FileStat } from '@struktoai/mirage-core/types'
 import { mountKey, mountPrefixOf } from '@struktoai/mirage-core/utils/key_prefix'
 import { redactTrelloConfig, type TrelloConfig, type TrelloConfigRedacted } from './config.ts'
 
-const resolveTrelloGlob = (
-  accessor: TrelloAccessor,
-  paths: readonly PathSpec[],
-  index: IndexCacheStore | undefined,
-  filter: TrelloReaddirFilter,
-): Promise<PathSpec[]> =>
-  makeResolveGlob((a: TrelloAccessor, p: PathSpec, i?: IndexCacheStore) =>
-    trelloReaddir(a, p, i, filter),
-  )(accessor, paths, index)
+const resolveTrelloGlob = makeResolveGlob(trelloReaddir)
 
 export interface TrelloResourceState {
   type: string
@@ -64,7 +55,10 @@ export class TrelloResource implements Resource {
       apiToken: config.apiToken,
     }
     if (config.baseUrl !== undefined) transportOpts.baseUrl = config.baseUrl
-    this.accessor = new TrelloAccessor(new HttpTrelloTransport(transportOpts))
+    const accessorOpts: { workspaceId?: string; boardIds?: readonly string[] } = {}
+    if (config.workspaceId !== undefined) accessorOpts.workspaceId = config.workspaceId
+    if (config.boardIds !== undefined) accessorOpts.boardIds = config.boardIds
+    this.accessor = new TrelloAccessor(new HttpTrelloTransport(transportOpts), accessorOpts)
     this.index = new RAMIndexCacheStore({ ttl: this.indexTtl })
   }
 
@@ -84,19 +78,12 @@ export class TrelloResource implements Resource {
     return TRELLO_OPS
   }
 
-  private filter(): TrelloReaddirFilter {
-    const out: TrelloReaddirFilter = {}
-    if (this.config.workspaceId !== undefined) out.workspaceId = this.config.workspaceId
-    if (this.config.boardIds !== undefined) out.boardIds = this.config.boardIds
-    return out
-  }
-
   readFile(p: PathSpec): Promise<Uint8Array> {
     return trelloRead(this.accessor, p, this.index)
   }
 
   readdir(p: PathSpec): Promise<string[]> {
-    return trelloReaddir(this.accessor, p, this.index, this.filter())
+    return trelloReaddir(this.accessor, p, this.index)
   }
 
   stat(p: PathSpec): Promise<FileStat> {
@@ -118,7 +105,7 @@ export class TrelloResource implements Resource {
                 }),
           )
         : paths
-    return resolveTrelloGlob(this.accessor, effective, this.index, this.filter())
+    return resolveTrelloGlob(this.accessor, effective, this.index)
   }
 
   getState(): Promise<TrelloResourceState> {

@@ -15,8 +15,20 @@
 import { Accessor } from './base.ts'
 import type { LinearTransport } from '../core/linear/client.ts'
 
+/**
+ * The mount's handle: the transport plus the configured team filter. The
+ * filter lives here rather than being threaded per call because the python
+ * twin reads it off `accessor.config`, and a team outside it must be
+ * invisible on every surface, not only on the listings that remembered to
+ * pass it.
+ */
 export class LinearAccessor extends Accessor {
-  constructor(public readonly transport: LinearTransport) {
+  readonly transport: LinearTransport
+  readonly teamIds: readonly string[] | null
+
+  constructor(transport: LinearTransport, options: { teamIds?: readonly string[] } = {}) {
     super()
+    this.transport = transport
+    this.teamIds = options.teamIds ?? null
   }
 }

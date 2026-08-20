@@ -17,12 +17,12 @@ from collections.abc import Awaitable, Callable, Mapping
 from mirage.cache.context import invalidate_after_unlink
 from mirage.cache.index import NULL_INDEX, IndexCacheStore, IndexEntry
 from mirage.core.hierarchy.probe import A, ReaddirFn, resolve_entry
-from mirage.core.hierarchy.scope import INVALID, DetectFn
+from mirage.core.hierarchy.scope import INVALID, DetectFn, ScopeMatch
 from mirage.types import PathSpec
 from mirage.utils.errors import enoent
 from mirage.utils.key_prefix import mount_prefix_of
 
-DeleteFn = Callable[[A, IndexEntry], Awaitable[None]]
+DeleteFn = Callable[[A, ScopeMatch, IndexEntry], Awaitable[None]]
 
 
 def make_unlink(
@@ -32,7 +32,10 @@ def make_unlink(
 
     A deleter owns only the backend delete call; classification, the
     id-resolving parent listing, the directory refusal and the cache
-    invalidation happen here, identically for every backend.
+    invalidation happen here, identically for every backend. The match
+    rides along because a delete addressed inside a container needs the
+    container's slots (gcal deletes an event from a calendar), while a
+    globally-id-addressed backend just ignores it.
 
     Args:
         detect (DetectFn): the backend's scope classifier.
@@ -53,7 +56,7 @@ def make_unlink(
         entry = await resolve_entry(readdir, accessor, path, index)
         if entry is None:
             raise enoent(path)
-        await deleter(accessor, entry)
+        await deleter(accessor, match, entry)
         prefix = mount_prefix_of(path.virtual, path.resource_path)
         key = path.resource_path.strip("/")
         virtual_key = prefix + "/" + key if key else prefix or "/"

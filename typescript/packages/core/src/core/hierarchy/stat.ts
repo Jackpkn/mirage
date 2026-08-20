@@ -34,6 +34,24 @@ export type StatHook<A extends Accessor> = (
 export type EntryStatFn = (match: ScopeMatch, path: PathSpec, entry: IndexEntry) => FileStat
 
 /**
+ * The shape most id-addressed nodes share, keyed by an id field: name from
+ * the entry's `vfsName`, size and modified straight off the listing, and the
+ * entry's id under `idField` in `extra`. A kind whose shape differs writes
+ * its own `EntryStatFn` instead.
+ */
+export function entryStat(idField: string, filetype: FileType): EntryStatFn {
+  return function build(_match: ScopeMatch, _path: PathSpec, entry: IndexEntry): FileStat {
+    return new FileStat({
+      name: entry.vfsName,
+      type: filetype,
+      size: entry.size,
+      modified: entry.remoteTime !== '' ? entry.remoteTime : null,
+      extra: { [idField]: entry.id },
+    })
+  }
+}
+
+/**
  * Build a hierarchy stat: existence probes and shapes per scope.
  *
  * Directories answer as themselves once proven to exist; leaves prove

@@ -12,13 +12,11 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { mountKey, mountPrefixOf } from '../../utils/key_prefix.ts'
 import type { LinearAccessor } from '../../accessor/linear.ts'
 import { IndexEntry } from '../../cache/index/config.ts'
-import type { IndexCacheStore } from '../../cache/index/store.ts'
-import { PathSpec } from '../../types.ts'
+import { makeReaddir } from '../hierarchy/readdir.ts'
+import type { ScopeMatch } from '../hierarchy/scope.ts'
 import {
-  getIssue,
   listIssueComments,
   listTeamCycles,
   listTeamDocuments,
@@ -47,89 +45,194 @@ import {
   projectFilename,
   teamDirname,
 } from './pathing.ts'
-import { stripSlash } from '../../utils/slash.ts'
-import { enoent } from '../../utils/errors.ts'
+import { detectScope } from './scope.ts'
 import { jsonlBytesByCreatedAt } from '../render/json.ts'
 
-export interface LinearReaddirFilter {
-  teamIds?: readonly string[]
-}
+export const TEAM_DIRS = ['members', 'issues', 'projects', 'cycles', 'documents'] as const
 
 function pickString(record: Record<string, unknown>, key: string): string {
   const value = record[key]
   return typeof value === 'string' ? value : ''
 }
 
-function makeVirtualKey(prefix: string, key: string): string {
-  if (key === '') return prefix !== '' ? prefix : '/'
-  return `${prefix}/${key}`
+async function filteredTeams(accessor: LinearAccessor): Promise<Record<string, unknown>[]> {
+  let teams = await listTeams(accessor.transport)
+  if (accessor.teamIds !== null && accessor.teamIds.length > 0) {
+    const allowed = new Set(accessor.teamIds)
+    teams = teams.filter((t) => allowed.has(pickString(t, 'id')))
+  }
+  return teams
 }
 
-async function ensureLookup(
+/**
+ * The team the slots name, null when no listing carries it.
+ *
+ * Existence is proven against the team listing by the full `label__id`
+ * dirname, never by calling the API with the typed id: a bogus id must read
+ * as ENOENT, not as a Linear API error.
+ */
+export async function findTeam(
   accessor: LinearAccessor,
-  index: IndexCacheStore,
-  filter: LinearReaddirFilter,
-  prefix: string,
-  parentKey: string,
-  virtualKey: string,
-): Promise<IndexEntry> {
-  let lookup = await index.get(virtualKey)
-  if (lookup.entry === undefined || lookup.entry === null) {
-    const parentPath = `${prefix}/${parentKey}`
-    await readdir(
-      accessor,
-      new PathSpec({
-        virtual: parentPath,
-        directory: parentPath,
-        resourcePath: mountKey(parentPath, prefix),
+  slots: Readonly<Record<string, string>>,
+): Promise<Record<string, unknown> | null> {
+  const target = `${slots.team ?? ''}__${slots.team_id ?? ''}`
+  for (const team of await filteredTeams(accessor)) {
+    if (teamDirname(team) === target) return team
+  }
+  return null
+}
+
+/** The issue the slots name, validated through its team. */
+export async function findIssue(
+  accessor: LinearAccessor,
+  slots: Readonly<Record<string, string>>,
+): Promise<Record<string, unknown> | null> {
+  if ((await findTeam(accessor, slots)) === null) return null
+  const target = `${slots.issue ?? ''}__${slots.issue_id ?? ''}`
+  for (const issue of await listTeamIssues(accessor.transport, slots.team_id ?? '')) {
+    if (issueDirname(issue) === target) return issue
+  }
+  return null
+}
+
+async function listTeamsDir(
+  accessor: LinearAccessor,
+  _match: ScopeMatch,
+): Promise<[string, IndexEntry][]> {
+  const entries: [string, IndexEntry][] = []
+  for (const team of await filteredTeams(accessor)) {
+    const dirname = teamDirname(team)
+    entries.push([
+      dirname,
+      new IndexEntry({
+        id: pickString(team, 'id'),
+        name: pickString(team, 'name') || pickString(team, 'key') || pickString(team, 'id'),
+        resourceType: 'linear/team',
+        remoteTime: pickString(team, 'updatedAt'),
+        vfsName: dirname,
+        extra: {
+          team_key: pickString(team, 'key'),
+          team_name: pickString(team, 'name'),
+          team_json_size: toJsonBytes(normalizeTeam(team)).length,
+        },
       }),
-      index,
-      filter,
-    )
-    lookup = await index.get(virtualKey)
+    ])
   }
-  if (lookup.entry === undefined || lookup.entry === null) {
-    throw enoent(virtualKey)
-  }
-  return lookup.entry
+  return entries
 }
 
-// issue.json is sized from the payload the issues listing already fetched
-// (stored on the issue entry by the parent readdir); comments.jsonl costs the
-// one bounded comments call, paid only when this directory is entered.
-async function sizeIssueFiles(
+async function listTeam(
   accessor: LinearAccessor,
-  index: IndexCacheStore,
-  virtualKey: string,
-  entry: IndexEntry,
-): Promise<void> {
-  const issueId = entry.id
-  let issueJsonSize =
-    typeof entry.extra.issue_json_size === 'number' ? entry.extra.issue_json_size : null
-  let issueKey = typeof entry.extra.issue_key === 'string' ? entry.extra.issue_key : null
-  if (issueJsonSize === null) {
-    const issue = await getIssue(accessor.transport, issueId)
-    const normalized = normalizeIssue(issue)
-    issueJsonSize = toJsonBytes(normalized).length
-    issueKey = normalized.issue_key
+  match: ScopeMatch,
+): Promise<[string, IndexEntry][] | null> {
+  const team = await findTeam(accessor, match.slots)
+  if (team === null) return null
+  const teamId = pickString(team, 'id')
+  // team.json renders the team object this find already fetched, so its
+  // exact size is free here.
+  const entries: [string, IndexEntry][] = [
+    [
+      'team.json',
+      new IndexEntry({
+        id: teamId,
+        name: 'team.json',
+        resourceType: 'linear/team_json',
+        remoteTime: pickString(team, 'updatedAt'),
+        vfsName: 'team.json',
+        size: toJsonBytes(normalizeTeam(team)).length,
+      }),
+    ],
+  ]
+  for (const name of TEAM_DIRS) {
+    entries.push([
+      name,
+      new IndexEntry({
+        id: teamId,
+        name,
+        resourceType: `linear/${name}_dir`,
+        vfsName: name,
+      }),
+    ])
   }
+  return entries
+}
+
+async function listMembers(
+  accessor: LinearAccessor,
+  match: ScopeMatch,
+): Promise<[string, IndexEntry][] | null> {
+  if ((await findTeam(accessor, match.slots)) === null) return null
+  const users = await listTeamMembers(accessor.transport, match.slots.team_id ?? '')
+  return users.map((user): [string, IndexEntry] => {
+    const filename = memberFilename(user)
+    return [
+      filename,
+      new IndexEntry({
+        id: pickString(user, 'id'),
+        name: pickString(user, 'name') || pickString(user, 'displayName') || pickString(user, 'id'),
+        resourceType: 'linear/user',
+        remoteTime: pickString(user, 'updatedAt'),
+        vfsName: filename,
+        size: toJsonBytes(normalizeUser(user)).length,
+      }),
+    ]
+  })
+}
+
+async function listIssues(
+  accessor: LinearAccessor,
+  match: ScopeMatch,
+): Promise<[string, IndexEntry][] | null> {
+  if ((await findTeam(accessor, match.slots)) === null) return null
+  const issues = await listTeamIssues(accessor.transport, match.slots.team_id ?? '')
+  return issues.map((issue): [string, IndexEntry] => {
+    const dirname = issueDirname(issue)
+    return [
+      dirname,
+      new IndexEntry({
+        id: pickString(issue, 'id'),
+        name: pickString(issue, 'identifier') || pickString(issue, 'id'),
+        resourceType: 'linear/issue',
+        remoteTime: pickString(issue, 'updatedAt'),
+        vfsName: dirname,
+        extra: {
+          issue_key: pickString(issue, 'identifier'),
+          issue_json_size: toJsonBytes(normalizeIssue(issue)).length,
+        },
+      }),
+    ]
+  })
+}
+
+async function listIssue(
+  accessor: LinearAccessor,
+  match: ScopeMatch,
+): Promise<[string, IndexEntry][] | null> {
+  const issue = await findIssue(accessor, match.slots)
+  if (issue === null) return null
+  // issue.json renders the issue this find already fetched; comments.jsonl
+  // costs the one bounded comments call, paid only when this directory is
+  // entered.
+  const normalized = normalizeIssue(issue)
+  const issueId = pickString(issue, 'id')
+  const remoteTime = pickString(issue, 'updatedAt')
   const comments = await listIssueComments(accessor.transport, issueId)
-  const rows = comments.map((c) => normalizeComment(c, issueId, issueKey))
+  const rows = comments.map((c) => normalizeComment(c, issueId, normalized.issue_key))
   let commentsTime = ''
   for (const row of rows) {
     const updated = typeof row.updated_at === 'string' ? row.updated_at : ''
     if (updated > commentsTime) commentsTime = updated
   }
-  await index.setDir(virtualKey, [
+  return [
     [
       'issue.json',
       new IndexEntry({
         id: issueId,
         name: 'issue.json',
         resourceType: 'linear/issue_json',
-        remoteTime: entry.remoteTime,
+        remoteTime,
         vfsName: 'issue.json',
-        size: issueJsonSize,
+        size: toJsonBytes(normalized).length,
       }),
     ],
     [
@@ -138,279 +241,111 @@ async function sizeIssueFiles(
         id: issueId,
         name: 'comments.jsonl',
         resourceType: 'linear/comments',
-        remoteTime: commentsTime || entry.remoteTime,
+        remoteTime: commentsTime !== '' ? commentsTime : remoteTime,
         vfsName: 'comments.jsonl',
         size: jsonlBytesByCreatedAt(rows).length,
       }),
     ],
-  ])
+  ]
 }
 
-export async function readdir(
+async function listProjects(
   accessor: LinearAccessor,
-  path: PathSpec,
-  index?: IndexCacheStore,
-  filter: LinearReaddirFilter = {},
-): Promise<string[]> {
-  const prefix = mountPrefixOf(path.virtual, path.resourcePath)
-  let p = path.pattern !== null ? path.directory : path.virtual
-  if (prefix !== '' && p.startsWith(prefix)) {
-    p = p.slice(prefix.length) || '/'
-  }
-  const key = stripSlash(p)
-  const virtualKey = makeVirtualKey(prefix, key)
-
-  if (key === '') {
-    return [`${prefix}/teams`]
-  }
-
-  if (key === 'teams') {
-    if (index !== undefined) {
-      const listing = await index.listDir(virtualKey)
-      if (listing.entries !== undefined && listing.entries !== null) {
-        return listing.entries
-      }
+  match: ScopeMatch,
+): Promise<[string, IndexEntry][] | null> {
+  const team = await findTeam(accessor, match.slots)
+  if (team === null) return null
+  const teamId = match.slots.team_id ?? ''
+  const projects = await listTeamProjects(accessor.transport, teamId)
+  const teamIssues = await listTeamIssues(accessor.transport, teamId)
+  return projects.map((project): [string, IndexEntry] => {
+    const projectId = pickString(project, 'id')
+    const projectIssues: NormalizedProjectIssue[] = []
+    for (const issue of teamIssues) {
+      const projField = issue.project
+      const projObj =
+        projField !== null && typeof projField === 'object'
+          ? (projField as Record<string, unknown>)
+          : {}
+      if (projObj.id !== projectId) continue
+      projectIssues.push(buildProjectIssue(issue))
     }
-    let teams = await listTeams(accessor.transport)
-    if (filter.teamIds !== undefined && filter.teamIds.length > 0) {
-      const allowed = new Set(filter.teamIds)
-      teams = teams.filter((t) => allowed.has(pickString(t, 'id')))
-    }
-    const entries: [string, IndexEntry][] = []
-    const names: string[] = []
-    for (const team of teams) {
-      const dirname = teamDirname(team)
-      entries.push([
-        dirname,
-        new IndexEntry({
-          id: pickString(team, 'id'),
-          name: pickString(team, 'name') || pickString(team, 'key') || pickString(team, 'id'),
-          resourceType: 'linear/team',
-          remoteTime: pickString(team, 'updatedAt'),
-          vfsName: dirname,
-          extra: {
-            team_key: typeof team.key === 'string' ? team.key : null,
-            team_name: typeof team.name === 'string' ? team.name : null,
-            team_json_size: toJsonBytes(normalizeTeam(team)).length,
-          },
-        }),
-      ])
-      names.push(`${prefix}/teams/${dirname}`)
-    }
-    if (index !== undefined) await index.setDir(virtualKey, entries)
-    return names
-  }
-
-  const parts = key.split('/')
-
-  if (parts.length === 2 && parts[0] === 'teams') {
-    if (index !== undefined) {
-      await ensureLookup(accessor, index, filter, prefix, 'teams', virtualKey)
-    }
+    const rendered = normalizeProject(project, {
+      teamId,
+      teamKey: pickString(team, 'key') || null,
+      teamName: pickString(team, 'name') || null,
+      issues: projectIssues,
+    })
+    const filename = projectFilename(project)
     return [
-      `${prefix}/${key}/team.json`,
-      `${prefix}/${key}/members`,
-      `${prefix}/${key}/issues`,
-      `${prefix}/${key}/projects`,
-      `${prefix}/${key}/cycles`,
-      `${prefix}/${key}/documents`,
+      filename,
+      new IndexEntry({
+        id: projectId,
+        name: pickString(project, 'name') || projectId,
+        resourceType: 'linear/project',
+        remoteTime: pickString(project, 'updatedAt'),
+        vfsName: filename,
+        size: toJsonBytes(rendered).length,
+      }),
     ]
-  }
-
-  if (parts.length === 3 && parts[0] === 'teams' && parts[2] === 'members') {
-    if (index === undefined) throw enoent(path)
-    const teamKey = makeVirtualKey(prefix, parts.slice(0, 2).join('/'))
-    const team = await ensureLookup(accessor, index, filter, prefix, 'teams', teamKey)
-    const listing = await index.listDir(virtualKey)
-    if (listing.entries !== undefined && listing.entries !== null) {
-      return listing.entries
-    }
-    const users = await listTeamMembers(accessor.transport, team.id)
-    const entries: [string, IndexEntry][] = []
-    const names: string[] = []
-    for (const user of users) {
-      const filename = memberFilename(user)
-      entries.push([
-        filename,
-        new IndexEntry({
-          id: pickString(user, 'id'),
-          name:
-            pickString(user, 'name') || pickString(user, 'displayName') || pickString(user, 'id'),
-          resourceType: 'linear/user',
-          remoteTime: pickString(user, 'updatedAt'),
-          vfsName: filename,
-          size: toJsonBytes(normalizeUser(user)).length,
-        }),
-      ])
-      names.push(`${prefix}/${key}/${filename}`)
-    }
-    await index.setDir(virtualKey, entries)
-    return names
-  }
-
-  if (parts.length === 3 && parts[0] === 'teams' && parts[2] === 'issues') {
-    if (index === undefined) throw enoent(path)
-    const teamKey = makeVirtualKey(prefix, parts.slice(0, 2).join('/'))
-    const team = await ensureLookup(accessor, index, filter, prefix, 'teams', teamKey)
-    const listing = await index.listDir(virtualKey)
-    if (listing.entries !== undefined && listing.entries !== null) {
-      return listing.entries
-    }
-    const issues = await listTeamIssues(accessor.transport, team.id)
-    const entries: [string, IndexEntry][] = []
-    const names: string[] = []
-    for (const issue of issues) {
-      const dirname = issueDirname(issue)
-      entries.push([
-        dirname,
-        new IndexEntry({
-          id: pickString(issue, 'id'),
-          name: pickString(issue, 'identifier') || pickString(issue, 'id'),
-          resourceType: 'linear/issue',
-          remoteTime: pickString(issue, 'updatedAt'),
-          vfsName: dirname,
-          extra: {
-            issue_key: typeof issue.identifier === 'string' ? issue.identifier : null,
-            issue_json_size: toJsonBytes(normalizeIssue(issue)).length,
-          },
-        }),
-      ])
-      names.push(`${prefix}/${key}/${dirname}`)
-    }
-    await index.setDir(virtualKey, entries)
-    return names
-  }
-
-  if (parts.length === 4 && parts[0] === 'teams' && parts[2] === 'issues') {
-    if (index !== undefined) {
-      const parentKey = parts.slice(0, 3).join('/')
-      const entry = await ensureLookup(accessor, index, filter, prefix, parentKey, virtualKey)
-      const listing = await index.listDir(virtualKey)
-      if (listing.entries === undefined || listing.entries === null) {
-        await sizeIssueFiles(accessor, index, virtualKey, entry)
-      }
-    }
-    return [`${prefix}/${key}/issue.json`, `${prefix}/${key}/comments.jsonl`]
-  }
-
-  if (parts.length === 3 && parts[0] === 'teams' && parts[2] === 'projects') {
-    if (index === undefined) throw enoent(path)
-    const teamKey = makeVirtualKey(prefix, parts.slice(0, 2).join('/'))
-    const team = await ensureLookup(accessor, index, filter, prefix, 'teams', teamKey)
-    const listing = await index.listDir(virtualKey)
-    if (listing.entries !== undefined && listing.entries !== null) {
-      return listing.entries
-    }
-    const projects = await listTeamProjects(accessor.transport, team.id)
-    let teamKeyName = typeof team.extra.team_key === 'string' ? team.extra.team_key : null
-    let teamName = typeof team.extra.team_name === 'string' ? team.extra.team_name : null
-    if (!('team_key' in team.extra)) {
-      const teams = await listTeams(accessor.transport)
-      const teamNode = teams.find((t) => t.id === team.id) ?? {}
-      teamKeyName = typeof teamNode.key === 'string' ? teamNode.key : null
-      teamName = typeof teamNode.name === 'string' ? teamNode.name : null
-    }
-    const teamIssues = await listTeamIssues(accessor.transport, team.id)
-    const entries: [string, IndexEntry][] = []
-    const names: string[] = []
-    for (const project of projects) {
-      const projectId = pickString(project, 'id')
-      const projectIssues: NormalizedProjectIssue[] = []
-      for (const issue of teamIssues) {
-        const projField = issue.project
-        const projObj =
-          projField !== null && typeof projField === 'object'
-            ? (projField as Record<string, unknown>)
-            : {}
-        if (projObj.id !== projectId) continue
-        projectIssues.push(buildProjectIssue(issue))
-      }
-      const rendered = normalizeProject(project, {
-        teamId: team.id,
-        teamKey: teamKeyName,
-        teamName: teamName,
-        issues: projectIssues,
-      })
-      const filename = projectFilename(project)
-      entries.push([
-        filename,
-        new IndexEntry({
-          id: projectId,
-          name: pickString(project, 'name') || projectId,
-          resourceType: 'linear/project',
-          remoteTime: pickString(project, 'updatedAt'),
-          vfsName: filename,
-          size: toJsonBytes(rendered).length,
-        }),
-      ])
-      names.push(`${prefix}/${key}/${filename}`)
-    }
-    await index.setDir(virtualKey, entries)
-    return names
-  }
-
-  if (parts.length === 3 && parts[0] === 'teams' && parts[2] === 'cycles') {
-    if (index === undefined) throw enoent(path)
-    const teamKey = makeVirtualKey(prefix, parts.slice(0, 2).join('/'))
-    const team = await ensureLookup(accessor, index, filter, prefix, 'teams', teamKey)
-    const listing = await index.listDir(virtualKey)
-    if (listing.entries !== undefined && listing.entries !== null) {
-      return listing.entries
-    }
-    const cycles = await listTeamCycles(accessor.transport, team.id)
-    const entries: [string, IndexEntry][] = []
-    const names: string[] = []
-    for (const cycle of cycles) {
-      const filename = cycleFilename(cycle)
-      entries.push([
-        filename,
-        new IndexEntry({
-          id: pickString(cycle, 'id'),
-          name: pickString(cycle, 'name') || pickString(cycle, 'id'),
-          resourceType: 'linear/cycle',
-          remoteTime: pickString(cycle, 'updatedAt'),
-          vfsName: filename,
-          size: toJsonBytes(normalizeCycle(cycle, team.id)).length,
-        }),
-      ])
-      names.push(`${prefix}/${key}/${filename}`)
-    }
-    await index.setDir(virtualKey, entries)
-    return names
-  }
-
-  if (parts.length === 3 && parts[0] === 'teams' && parts[2] === 'documents') {
-    if (index === undefined) throw enoent(path)
-    const teamKey = makeVirtualKey(prefix, parts.slice(0, 2).join('/'))
-    const team = await ensureLookup(accessor, index, filter, prefix, 'teams', teamKey)
-    const listing = await index.listDir(virtualKey)
-    if (listing.entries !== undefined && listing.entries !== null) {
-      return listing.entries
-    }
-    const documents = await listTeamDocuments(accessor.transport, team.id)
-    const entries: [string, IndexEntry][] = []
-    const names: string[] = []
-    for (const document of documents) {
-      const filename = documentFilename(document)
-      entries.push([
-        filename,
-        new IndexEntry({
-          id: pickString(document, 'id'),
-          name: pickString(document, 'title') || pickString(document, 'id'),
-          resourceType: 'linear/document',
-          remoteTime: pickString(document, 'updatedAt'),
-          vfsName: filename,
-          size: toJsonBytes(normalizeDocument(document)).length,
-        }),
-      ])
-      names.push(`${prefix}/${key}/${filename}`)
-    }
-    await index.setDir(virtualKey, entries)
-    return names
-  }
-
-  // An unrecognized path is not an empty directory: returning [] made `ls` and
-  // `tree` report a bogus path as a real-but-empty one, and left `rg` without a
-  // message.
-  throw enoent(virtualKey)
+  })
 }
+
+async function listCycles(
+  accessor: LinearAccessor,
+  match: ScopeMatch,
+): Promise<[string, IndexEntry][] | null> {
+  if ((await findTeam(accessor, match.slots)) === null) return null
+  const teamId = match.slots.team_id ?? ''
+  const cycles = await listTeamCycles(accessor.transport, teamId)
+  return cycles.map((cycle): [string, IndexEntry] => {
+    const filename = cycleFilename(cycle)
+    return [
+      filename,
+      new IndexEntry({
+        id: pickString(cycle, 'id'),
+        name: pickString(cycle, 'name') || pickString(cycle, 'id'),
+        resourceType: 'linear/cycle',
+        remoteTime: pickString(cycle, 'updatedAt'),
+        vfsName: filename,
+        size: toJsonBytes(normalizeCycle(cycle, teamId)).length,
+      }),
+    ]
+  })
+}
+
+async function listDocuments(
+  accessor: LinearAccessor,
+  match: ScopeMatch,
+): Promise<[string, IndexEntry][] | null> {
+  if ((await findTeam(accessor, match.slots)) === null) return null
+  const documents = await listTeamDocuments(accessor.transport, match.slots.team_id ?? '')
+  return documents.map((document): [string, IndexEntry] => {
+    const filename = documentFilename(document)
+    return [
+      filename,
+      new IndexEntry({
+        id: pickString(document, 'id'),
+        name: pickString(document, 'title') || pickString(document, 'id'),
+        resourceType: 'linear/document',
+        remoteTime: pickString(document, 'updatedAt'),
+        vfsName: filename,
+        size: toJsonBytes(normalizeDocument(document)).length,
+      }),
+    ]
+  })
+}
+
+export const readdir = makeReaddir<LinearAccessor>(detectScope, {
+  listers: {
+    teams: listTeamsDir,
+    team: listTeam,
+    members: listMembers,
+    issues: listIssues,
+    issue: listIssue,
+    projects: listProjects,
+    cycles: listCycles,
+    documents: listDocuments,
+  },
+  staticRoot: ['teams'],
+})

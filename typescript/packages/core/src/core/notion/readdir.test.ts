@@ -18,7 +18,8 @@ import { RAMIndexCacheStore } from '../../cache/index/ram.ts'
 import { PathSpec } from '../../types.ts'
 import type { NotionTransport } from './client.ts'
 import { normalizeDatabase, toJsonBytes } from './normalize.ts'
-import { readdir, type NotionReaddirAccessor } from './readdir.ts'
+import type { NotionAccessor } from '../../accessor/notion.ts'
+import { readdir } from './readdir.ts'
 
 class FakeTransport implements NotionTransport {
   public readonly invocations: { name: string; args: Record<string, unknown> }[] = []
@@ -43,7 +44,7 @@ class FakeTransport implements NotionTransport {
   }
 }
 
-function makeAccessor(transport: NotionTransport): NotionReaddirAccessor {
+function makeAccessor(transport: NotionTransport): NotionAccessor {
   return { transport }
 }
 
@@ -91,10 +92,13 @@ describe('notion readdir root', () => {
     expect(out).toEqual(['/notion/pages', '/notion/databases'])
   })
 
-  it('returns an empty list for an unknown top-level dir', async () => {
+  it('throws ENOENT for an unknown top-level dir', async () => {
+    // Returning [] made `ls` and `tree` report a bogus path as
+    // real-but-empty, and left `rg` without a message.
     const transport = new FakeTransport()
-    const out = await readdir(makeAccessor(transport), spec('/no-id-here/'), undefined)
-    expect(out).toEqual([])
+    await expect(
+      readdir(makeAccessor(transport), spec('/no-id-here/'), undefined),
+    ).rejects.toMatchObject({ code: 'ENOENT' })
     expect(transport.invocations).toHaveLength(0)
   })
 })

@@ -21,9 +21,13 @@ import { eisdir, enoent } from '../../utils/errors.ts'
 import { mountPrefixOf } from '../../utils/key_prefix.ts'
 import { stripSlash } from '../../utils/slash.ts'
 import { resolveEntry, type ReaddirFn } from './probe.ts'
-import { INVALID, type DetectFn } from './scope.ts'
+import { INVALID, type DetectFn, type ScopeMatch } from './scope.ts'
 
-export type DeleteFn<A extends Accessor> = (accessor: A, entry: IndexEntry) => Promise<void>
+export type DeleteFn<A extends Accessor> = (
+  accessor: A,
+  match: ScopeMatch,
+  entry: IndexEntry,
+) => Promise<void>
 
 /**
  * Build a hierarchy unlink: classify, resolve, delete, invalidate.
@@ -31,7 +35,10 @@ export type DeleteFn<A extends Accessor> = (accessor: A, entry: IndexEntry) => P
  * A deleter owns only the backend delete call; classification, the
  * id-resolving parent listing, the directory refusal and the cache
  * invalidation happen here, identically for every backend. `deleters` holds
- * one deleter per leaf kind.
+ * one deleter per leaf kind. The match rides along because a delete
+ * addressed inside a container needs the container's slots (gcal deletes an
+ * event from a calendar), while a globally-id-addressed backend just
+ * ignores it.
  */
 export function makeUnlink<A extends Accessor>(
   detect: DetectFn,
@@ -54,7 +61,7 @@ export function makeUnlink<A extends Accessor>(
     }
     const entry = await resolveEntry(readdir, accessor, path, index)
     if (entry === null || index === undefined) throw enoent(path.virtual)
-    await deleter(accessor, entry)
+    await deleter(accessor, match, entry)
     const prefix = mountPrefixOf(path.virtual, path.resourcePath)
     const key = stripSlash(path.resourcePath)
     const virtualKey = key !== '' ? `${prefix}/${key}` : prefix !== '' ? prefix : '/'

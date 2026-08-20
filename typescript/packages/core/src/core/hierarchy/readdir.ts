@@ -25,7 +25,7 @@ import { INVALID, ROOT, type DetectFn, type ScopeMatch } from './scope.ts'
 export type Lister<A extends Accessor> = (
   accessor: A,
   match: ScopeMatch,
-) => Promise<[string, IndexEntry][]>
+) => Promise<[string, IndexEntry][] | null>
 
 export type Guard<A extends Accessor> = (
   accessor: A,
@@ -42,6 +42,12 @@ export type Guard<A extends Accessor> = (
  * for every backend. A dot-prefixed name is dropped from the listing: the
  * classifier refuses every dot-leading segment, so listing one would
  * advertise a path that stat, read and child readdir all report absent.
+ * A lister may answer null instead of a listing: the directory's container
+ * does not exist, reported as ENOENT on the virtual path. That is for
+ * backends whose containers are proven by a parent listing the lister
+ * fetches anyway (trello finds a board by its `label__id` dirname in the
+ * workspace's board list), where a separate guard would pay the same call
+ * twice.
  *
  * `listers` holds one lister per directory kind; include `root` for a
  * dynamic mount root. `staticRoot` names fixed top-level entries, for
@@ -89,7 +95,9 @@ export function makeReaddir<A extends Accessor>(
       const listing = await index.listDir(virtualKey)
       if (listing.entries !== undefined && listing.entries !== null) return listing.entries
     }
-    const entries = (await lister(accessor, match)).filter(([name]) => !name.startsWith('.'))
+    const listed = await lister(accessor, match)
+    if (listed === null) throw enoent(pathSpec)
+    const entries = listed.filter(([name]) => !name.startsWith('.'))
     if (index !== undefined) await index.setDir(virtualKey, entries)
     const stem = rstripSlash(virtualKey)
     return entries.map(([name]) => `${stem}/${name}`)

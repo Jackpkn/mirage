@@ -34,10 +34,19 @@ class Slot:
             ``KEY__name__id`` keeps ``KEY__name`` as the label), the label
             stored under ``name`` and the id under ``id_key``. A payload
             with no ``__`` or an empty half does not match the scope.
+        variadic (bool): the slot stands for a run of one or more
+            consecutive segments instead of exactly one. Segments before
+            it anchor at the start of the path, segments after it at the
+            end, every segment in the run must decode, and the stored
+            value comes from the run's DEEPEST segment: notion's pages
+            nest arbitrarily, and ``pages/a__1/b__2/page.json`` stores
+            ``page=b, page_id=2`` because the innermost page is the one
+            the path addresses. At most one variadic slot per scope.
     """
     name: str
     codec: Codec = RAW
     id_key: str | None = None
+    variadic: bool = False
 
 
 Segment = str | Slot
@@ -87,6 +96,81 @@ class ScopeMatch:
     scope: Scope | None = None
 
 
+def decode_slot(slot: Slot, part: str) -> dict[str, str] | None:
+    """Decode one path segment through a slot, None when it does not fit.
+
+    Args:
+        slot (Slot): the dynamic segment.
+        part (str): raw path segment.
+    """
+    decoded = slot.codec.decode(part)
+    if decoded is None:
+        return None
+    if slot.id_key is not None:
+        label, sep, ident = decoded.rpartition("__")
+        if not sep or not label or not ident:
+            return None
+        return {slot.name: label, slot.id_key: ident}
+    return {slot.name: decoded}
+
+
+def variadic_slot(segments: tuple[Segment, ...]) -> tuple[int, Slot] | None:
+    """The scope's variadic slot and its position, None when it has none.
+
+    Args:
+        segments (tuple[Segment, ...]): one scope's path shape.
+    """
+    found: tuple[int, Slot] | None = None
+    for i, segment in enumerate(segments):
+        if isinstance(segment, Slot) and segment.variadic:
+            if found is not None:
+                raise ValueError("a scope holds at most one variadic slot")
+            found = (i, segment)
+    return found
+
+
+def _match_run(segments: tuple[Segment, ...],
+               parts: list[str]) -> dict[str, str] | None:
+    slots: dict[str, str] = {}
+    for segment, part in zip(segments, parts):
+        if isinstance(segment, str):
+            if part != segment:
+                return None
+            continue
+        values = decode_slot(segment, part)
+        if values is None:
+            return None
+        slots.update(values)
+    return slots
+
+
+def _match_segments(segments: tuple[Segment, ...],
+                    parts: list[str]) -> dict[str, str] | None:
+    found = variadic_slot(segments)
+    if found is None:
+        if len(segments) != len(parts):
+            return None
+        return _match_run(segments, parts)
+    if len(parts) < len(segments):
+        return None
+    at, slot = found
+    tail_len = len(segments) - at - 1
+    head = _match_run(segments[:at], parts[:at])
+    if head is None:
+        return None
+    tail = _match_run(segments[at + 1:], parts[len(parts) - tail_len:])
+    if tail is None:
+        return None
+    values: dict[str, str] | None = None
+    for part in parts[at:len(parts) - tail_len]:
+        values = decode_slot(slot, part)
+        if values is None:
+            return None
+    if values is None:
+        return None
+    return {**head, **values, **tail}
+
+
 def match_scope(scopes: tuple[Scope, ...],
                 parts: list[str]) -> tuple[Scope, dict[str, str]] | None:
     """Match path segments against the table, first declared scope wins.
@@ -96,30 +180,8 @@ def match_scope(scopes: tuple[Scope, ...],
         parts (list[str]): non-empty path segments.
     """
     for scope in scopes:
-        if len(scope.segments) != len(parts):
-            continue
-        slots: dict[str, str] = {}
-        matched = True
-        for segment, part in zip(scope.segments, parts):
-            if isinstance(segment, str):
-                if part != segment:
-                    matched = False
-                    break
-                continue
-            decoded = segment.codec.decode(part)
-            if decoded is None:
-                matched = False
-                break
-            if segment.id_key is not None:
-                label, sep, ident = decoded.rpartition("__")
-                if not sep or not label or not ident:
-                    matched = False
-                    break
-                slots[segment.name] = label
-                slots[segment.id_key] = ident
-                continue
-            slots[segment.name] = decoded
-        if matched:
+        slots = _match_segments(scope.segments, parts)
+        if slots is not None:
             return scope, slots
     return None
 
@@ -151,6 +213,8 @@ def make_detect_scope(scopes: tuple[Scope, ...]) -> DetectFn:
         scopes (tuple[Scope, ...]): the backend's scope table, matched in
             declaration order.
     """
+    for scope in scopes:
+        variadic_slot(scope.segments)
 
     def detect_scope(path: PathSpec | str) -> ScopeMatch:
         raw = path.mount_path if isinstance(path, PathSpec) else path

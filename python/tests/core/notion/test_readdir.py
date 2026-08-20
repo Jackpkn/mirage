@@ -85,6 +85,9 @@ async def test_pages_listing_stores_remote_time():
     index = RAMIndexCacheStore()
     spec = _spec("/notion/pages", "/notion")
     await readdir_mod.readdir(_ACCESSOR, spec, index)
-    lookup = await index.get(f"/pages/Top1__{TOP_ID}")
+    # The index is keyed by the full virtual path (the kit standard, and
+    # what invalidation walks), not the mount-relative key the old
+    # bespoke readdir used.
+    lookup = await index.get(f"/notion/pages/Top1__{TOP_ID}")
     assert lookup.entry is not None
     assert lookup.entry.remote_time == "2026-01-02T00:00:00.000Z"

@@ -170,6 +170,7 @@ async def test_read_unknown_service_is_enoent(accessor, index):
 
 
 @pytest.mark.asyncio
-async def test_read_directory_is_enoent(accessor, index):
-    with pytest.raises(FileNotFoundError):
+async def test_read_directory_is_eisdir(accessor, index):
+    # A matched directory kind is a real node being read as a file.
+    with pytest.raises(IsADirectoryError):
         await read(accessor, spec("services"), index)

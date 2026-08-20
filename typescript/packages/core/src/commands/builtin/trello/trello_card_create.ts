@@ -51,7 +51,7 @@ async function trelloCardCreateCommand(
   const descFile = fl.asStr('desc_file') ?? null
   let desc: string | undefined
   if (inlineDesc !== null || descFile !== null || opts.stdin !== null) {
-    desc = await resolveTextInput(accessor.transport, {
+    desc = await resolveTextInput(accessor, {
       inlineText: inlineDesc,
       filePath: descFile,
       mountPrefix: opts.mountPrefix ?? '',

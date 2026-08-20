@@ -86,7 +86,7 @@ const READDIR = makeReaddir<FakeAccessor>(detectScope, {
   staticRoot: ['rooms'],
 })
 
-const del: DeleteFn<FakeAccessor> = (accessor, entry) => {
+const del: DeleteFn<FakeAccessor> = (accessor, _match, entry) => {
   accessor.calls.push(`delete:${entry.id}`)
   return Promise.resolve()
 }

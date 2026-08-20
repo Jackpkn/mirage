@@ -17,7 +17,7 @@ import { describe, expect, it } from 'vitest'
 import { TrelloAccessor } from '../../accessor/trello.ts'
 import { PathSpec } from '../../types.ts'
 import type { TrelloTransport } from './client.ts'
-import { read, readBytes } from './read.ts'
+import { read } from './read.ts'
 
 class FakeTransport implements TrelloTransport {
   constructor(private readonly responder: (path: string) => unknown) {}
@@ -30,13 +30,13 @@ function spec(virtual: string, prefix = ''): PathSpec {
   return new PathSpec({ virtual, directory: virtual, resourcePath: mountKey(virtual, prefix) })
 }
 
-describe('trello readBytes', () => {
+describe('trello read', () => {
   it('reads workspace.json', async () => {
     const t = new FakeTransport((path) => {
       if (path === '/members/me/organizations') return [{ id: 'w1', displayName: 'Acme' }]
       return []
     })
-    const bytes = await readBytes(t, '/workspaces/Acme__w1/workspace.json')
+    const bytes = await read(new TrelloAccessor(t), spec('/workspaces/Acme__w1/workspace.json'))
     const parsed = JSON.parse(new TextDecoder().decode(bytes)) as Record<string, unknown>
     expect(parsed).toEqual({ workspace_id: 'w1', workspace_name: 'Acme' })
   })
@@ -48,7 +48,10 @@ describe('trello readBytes', () => {
       }
       return null
     })
-    const bytes = await readBytes(t, '/workspaces/Acme__w1/boards/Roadmap__b1/board.json')
+    const bytes = await read(
+      new TrelloAccessor(t),
+      spec('/workspaces/Acme__w1/boards/Roadmap__b1/board.json'),
+    )
     expect(JSON.parse(new TextDecoder().decode(bytes))).toMatchObject({
       board_id: 'b1',
       board_name: 'Roadmap',
@@ -62,9 +65,9 @@ describe('trello readBytes', () => {
       }
       return null
     })
-    const bytes = await readBytes(
-      t,
-      '/workspaces/Acme__w1/boards/Roadmap__b1/lists/Doing__l1/cards/fix_bug__c1/card.json',
+    const bytes = await read(
+      new TrelloAccessor(t),
+      spec('/workspaces/Acme__w1/boards/Roadmap__b1/lists/Doing__l1/cards/fix_bug__c1/card.json'),
     )
     expect(JSON.parse(new TextDecoder().decode(bytes))).toMatchObject({
       card_id: 'c1',
@@ -92,9 +95,11 @@ describe('trello readBytes', () => {
       }
       return []
     })
-    const bytes = await readBytes(
-      t,
-      '/workspaces/Acme__w1/boards/Roadmap__b1/lists/Doing__l1/cards/fix_bug__c1/comments.jsonl',
+    const bytes = await read(
+      new TrelloAccessor(t),
+      spec(
+        '/workspaces/Acme__w1/boards/Roadmap__b1/lists/Doing__l1/cards/fix_bug__c1/comments.jsonl',
+      ),
     )
     const lines = new TextDecoder().decode(bytes).trim().split('\n')
     expect((JSON.parse(lines[0] ?? '') as { text: string }).text).toBe('first')
@@ -103,19 +108,19 @@ describe('trello readBytes', () => {
 
   it('throws ENOENT for unknown path', async () => {
     const t = new FakeTransport(() => null)
-    await expect(readBytes(t, '/nonsense')).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(read(new TrelloAccessor(t), spec('/nonsense'))).rejects.toMatchObject({
+      code: 'ENOENT',
+    })
   })
 
   it('throws ENOENT when workspace id missing', async () => {
     const t = new FakeTransport(() => [])
-    await expect(readBytes(t, '/workspaces/Acme__w1/workspace.json')).rejects.toMatchObject({
-      code: 'ENOENT',
-    })
+    await expect(
+      read(new TrelloAccessor(t), spec('/workspaces/Acme__w1/workspace.json')),
+    ).rejects.toMatchObject({ code: 'ENOENT' })
   })
-})
 
-describe('trello read (PathSpec)', () => {
-  it('strips prefix and delegates to readBytes', async () => {
+  it('resolves a prefixed mount path through the classifier', async () => {
     const t = new FakeTransport((path) => {
       if (path === '/members/me/organizations') return [{ id: 'w1', displayName: 'Acme' }]
       return []

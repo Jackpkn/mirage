@@ -12,13 +12,12 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-
+from mirage.accessor.trello import TrelloAccessor
 from mirage.commands.builtin.utils.stream import \
     resolve_text_input as _resolve_text_input
 from mirage.commands.spec.types import FlagView
-from mirage.core.trello.read import read_bytes
+from mirage.core.trello.read import read
 from mirage.io.types import ByteSource
-from mirage.resource.trello.config import TrelloConfig
 from mirage.types import PathSpec
 
 
@@ -39,18 +38,18 @@ def file_operand(fl: FlagView, name: str) -> PathSpec | None:
     return paths[0] if paths else None
 
 
-async def _read_file(config: TrelloConfig, path: PathSpec) -> bytes:
+async def _read_file(accessor: TrelloAccessor, path: PathSpec) -> bytes:
     """Read one ``--*_file`` operand out of the trello mount.
 
     The core reader keys off the mount-relative path and quotes the
     virtual one in an ENOENT, so the operand has to arrive as a spec:
     handing it the virtual path makes every read miss.
     """
-    return await read_bytes(config, path.resource_path, path.virtual)
+    return await read(accessor, path)
 
 
 async def resolve_text_input(
-    config: TrelloConfig,
+    accessor: TrelloAccessor,
     *,
     inline_text: str | None,
     file_path: PathSpec | None,
@@ -58,7 +57,7 @@ async def resolve_text_input(
     error_message: str,
 ) -> str:
     return await _resolve_text_input(_read_file,
-                                     config,
+                                     accessor,
                                      inline_text=inline_text,
                                      file_path=file_path,
                                      stdin=stdin,

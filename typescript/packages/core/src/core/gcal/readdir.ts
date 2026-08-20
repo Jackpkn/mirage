@@ -34,9 +34,10 @@ import {
   daysCovered,
   eventSpan,
   shiftDay,
-  validDay,
   windowBounds,
 } from './day.ts'
+import { ROOT } from '../hierarchy/scope.ts'
+import { detectScope } from './scope.ts'
 import { listCalendars, listEvents } from './client.ts'
 import { compareCodePoints } from '../../utils/sort.ts'
 import { compactJsonBytes } from '../render/json.ts'
@@ -177,10 +178,17 @@ export async function readdir(
   index?: IndexCacheStore,
 ): Promise<string[]> {
   const [prefix, key, virtualKey] = normalize(path)
+  // Bespoke below the classifier: the date-glob push-down filters the
+  // events query itself, and a globbed listing must not be cached as the
+  // directory, which the kit readdir has no notion of.
+  const match = detectScope(key)
+  if (match.kind !== ROOT && match.kind !== 'calendar' && match.kind !== 'day') {
+    throw enoent(path.virtual)
+  }
   const calendars = await calendarIndex(accessor)
   const tz = bucketZone(accessor, calendars)
 
-  if (key === '') {
+  if (match.kind === ROOT) {
     const entries: [string, IndexEntry][] = [...calendars.entries()]
       .sort((a, b) => compareCodePoints(a[0], b[0]))
       .map(([name, entry]) => [
@@ -196,15 +204,13 @@ export async function readdir(
     return entries.map(([name]) => `${prefix}/${name}`)
   }
 
-  const parts = key.split('/')
-  const [calName = '', day = ''] = parts
-  const entry = calendars.get(calName)
-  if (entry === undefined || parts.length > 2) throw enoent(path.virtual)
+  const entry = calendars.get(match.slots.calendar ?? '')
+  if (entry === undefined) throw enoent(path.virtual)
   const calId = entry.id
   if (typeof calId !== 'string') throw enoent(path.virtual)
   const freeBusy = entry.accessRole === FREE_BUSY_ROLE
 
-  if (parts.length === 1) {
+  if (match.kind === 'calendar') {
     const [timeMin, timeMax, first, last] = daySpan(path.pattern, accessor.today(tz), tz)
     const events = await listEvents(accessor.tokenManager, calId, timeMin, timeMax, tz)
     const seen = new Set<string>()
@@ -250,7 +256,7 @@ export async function readdir(
     return rows.map(([name]) => `${prefix}/${key}/${name}`)
   }
 
-  if (!validDay(day)) throw enoent(path.virtual)
+  const day = match.slots.day ?? ''
   const [timeMin, timeMax] = dayBounds(day, tz)
   const events = await listEvents(accessor.tokenManager, calId, timeMin, timeMax, tz)
   const rows = eventEntries(events, day, tz, freeBusy)

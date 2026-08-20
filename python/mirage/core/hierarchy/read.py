@@ -16,7 +16,7 @@ from collections.abc import Awaitable, Callable, Mapping
 
 from mirage.cache.index import NULL_INDEX, IndexCacheStore
 from mirage.core.hierarchy.probe import A
-from mirage.core.hierarchy.scope import DetectFn, ScopeMatch
+from mirage.core.hierarchy.scope import ROOT, DetectFn, ScopeMatch
 from mirage.types import PathSpec
 from mirage.utils.errors import enoent
 
@@ -62,6 +62,15 @@ def make_read(
             return await window(accessor, match, path, index, limit, offset)
         reader = readers.get(match.kind)
         if reader is None:
+            # A directory that exists by construction (the root, or a
+            # probed=False scope) read as a file is EISDIR. Everything
+            # else is reported absent: a matched shape alone is no proof
+            # the node exists, and GNU says "No such file" for a missing
+            # name, "Is a directory" only for a real one.
+            if match.kind == ROOT or (match.scope is not None
+                                      and not match.scope.leaf
+                                      and not match.scope.probed):
+                raise IsADirectoryError(path.virtual)
             raise enoent(path.virtual)
         return await reader(accessor, match, path, index)
 
