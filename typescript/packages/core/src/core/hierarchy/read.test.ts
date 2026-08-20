@@ -17,7 +17,13 @@ import { Accessor } from '../../accessor/base.ts'
 import { FileType, PathSpec } from '../../types.ts'
 import { stripSlash } from '../../utils/slash.ts'
 import { JSON_NAME } from './codec.ts'
-import { makeRead, type Reader, type WindowedReader } from './read.ts'
+import {
+  makeRead,
+  makeReadRange,
+  type RangedReader,
+  type Reader,
+  type WindowedReader,
+} from './read.ts'
 import { Slot, Scope, makeDetectScope } from './scope.ts'
 
 const SCOPES: readonly Scope[] = [
@@ -96,6 +102,38 @@ describe('hierarchy makeRead', () => {
 
   it('lets a plain reader ignore the window', async () => {
     const out = await READ(new FakeAccessor(), spec('/rooms/red/a.json'), undefined, { limit: 3 })
+    expect(new TextDecoder().decode(out)).toBe('red:a')
+  })
+})
+
+const readNoteRange: RangedReader<FakeAccessor> = (_accessor, match, _path, _index, offset, size) =>
+  Promise.resolve(
+    new TextEncoder().encode(`ranged:${match.slots.note ?? ''}:${String(offset)}:${String(size)}`),
+  )
+
+describe('hierarchy makeReadRange', () => {
+  it('pushes the window to a ranged reader', async () => {
+    const readRange = makeReadRange<FakeAccessor>(detectScope, READ, { note: readNoteRange })
+    const out = await readRange(new FakeAccessor(), spec('/rooms/red/a.json'), undefined, {
+      offset: 2,
+      size: 5,
+    })
+    expect(new TextDecoder().decode(out)).toBe('ranged:a:2:5')
+  })
+
+  it('slices the full read for an unranged kind', async () => {
+    const readRange = makeReadRange<FakeAccessor>(detectScope, READ, {})
+    const out = await readRange(new FakeAccessor(), spec('/rooms/red/a.json'), undefined, {
+      offset: 1,
+      size: 3,
+    })
+    // The full read rendered "red:a"; the window is taken after the fact.
+    expect(new TextDecoder().decode(out)).toBe('ed:')
+  })
+
+  it('defaults to the whole file', async () => {
+    const readRange = makeReadRange<FakeAccessor>(detectScope, READ, {})
+    const out = await readRange(new FakeAccessor(), spec('/rooms/red/a.json'))
     expect(new TextDecoder().decode(out)).toBe('red:a')
   })
 })

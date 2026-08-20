@@ -13,6 +13,7 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import dataclass, field
 from typing import Literal
 
 from mirage.cache.index import NULL_INDEX, IndexCacheStore, IndexEntry
@@ -23,11 +24,41 @@ from mirage.types import PathSpec
 from mirage.utils.errors import enoent, enotdir
 from mirage.utils.key_prefix import mount_key, mount_prefix_of
 
-Lister = Callable[[A, ScopeMatch],
-                  Awaitable[list[tuple[str, IndexEntry]] | None]]
-EntryLister = Callable[[A, ScopeMatch, IndexEntry],
-                       Awaitable[list[tuple[str, IndexEntry]]]]
+
+@dataclass(frozen=True, slots=True)
+class DirListing:
+    """A listing that also proves descendant listings.
+
+    For a backend whose one fetch answers more than one directory: a
+    dated-message day fetch yields the day's own children AND the
+    contents of its ``files/`` subdirectory, and a mail label listing
+    yields the date directories AND each date's messages AND each
+    message's attachment directory. Returning the extra listings as
+    seeds lets the kit cache them, so entering a seeded directory costs
+    no second identical fetch.
+
+    Args:
+        entries (list[tuple[str, IndexEntry]]): the listed directory's
+            own children.
+        seeds (Mapping[str, list[tuple[str, IndexEntry]]]): descendant
+            listings the same fetch proved, keyed by path relative to
+            the listed directory (``files``, ``2026-01-05/Report__17``).
+    """
+    entries: list[tuple[str, IndexEntry]]
+    seeds: Mapping[str, list[tuple[str,
+                                   IndexEntry]]] = field(default_factory=dict)
+
+
+Listed = list[tuple[str, IndexEntry]] | DirListing
+Lister = Callable[[A, ScopeMatch], Awaitable["Listed | None"]]
+EntryLister = Callable[[A, ScopeMatch, IndexEntry], Awaitable[Listed]]
 Guard = Callable[[A, ScopeMatch, str], Awaitable[None]]
+
+
+def _drop_hidden(
+        listed: list[tuple[str, IndexEntry]]) -> list[tuple[str, IndexEntry]]:
+    return [(name, entry) for name, entry in listed
+            if not name.startswith(".")]
 
 
 def make_readdir(
@@ -35,6 +66,7 @@ def make_readdir(
     *,
     listers: Mapping[str, Lister[A]],
     entry_listers: Mapping[str, EntryLister[A]] | None = None,
+    parent_entry_listers: Mapping[str, EntryLister[A]] | None = None,
     static_root: tuple[str, ...] | None = None,
     guards: Mapping[str, Guard[A]] | None = None,
     leaf_error: Literal["enoent", "enotdir"] = "enoent",
@@ -50,6 +82,11 @@ def make_readdir(
     path that stat, read and child readdir all report absent.
     A lister may answer None instead of a listing: the directory's
     container does not exist, reported as ENOENT on the virtual path.
+    A lister may answer a ``DirListing`` to seed descendant listings its
+    fetch already proved; entering a seeded directory then reads the
+    index instead of refetching (the entry-lister branch re-checks the
+    listing after resolving, because the resolve itself may have run the
+    seeding parent).
 
     An entry lister is for a directory whose existence and contents are
     already proven by its parent's listing: the kit resolves the
@@ -62,13 +99,22 @@ def make_readdir(
     parent listing's ``IndexEntry.extra`` (trello stashes each
     ``card.json`` size on the card's directory entry).
 
+    A parent-entry lister is for a directory whose existence is decided
+    by its PARENT's entry rather than its own: a dated-message day dir
+    is real for any well-formed date under a channel that exists,
+    including dates the channel's bounded listing window never minted,
+    so the proof is the channel entry and the fetch takes the date from
+    the match.
+
     Args:
         detect (DetectFn): the backend's scope classifier.
         listers (Mapping[str, Lister]): one lister per directory kind;
             include ``root`` for a dynamic mount root.
         entry_listers (Mapping[str, EntryLister]): listers for kinds
-            resolved through their parent's listing; a kind appears in
-            exactly one of the two tables.
+            resolved through their parent's listing.
+        parent_entry_listers (Mapping[str, EntryLister]): listers handed
+            the parent directory's entry instead of their own; a kind
+            appears in at most one of the three tables.
         static_root (tuple[str, ...] | None): fixed top-level names, for
             backends whose root never changes; bypasses the index.
         guards (Mapping[str, Guard]): existence checks that run before
@@ -79,9 +125,13 @@ def make_readdir(
     """
 
     resolved = entry_listers if entry_listers is not None else {}
-    overlap = set(listers) & set(resolved)
+    parented = (parent_entry_listers
+                if parent_entry_listers is not None else {})
+    tables = [set(listers), set(resolved), set(parented)]
+    overlap = ((tables[0] & tables[1]) | (tables[0] & tables[2])
+               | (tables[1] & tables[2]))
     if overlap:
-        raise ValueError(f"kinds in both lister tables: {sorted(overlap)}")
+        raise ValueError(f"kinds in several lister tables: {sorted(overlap)}")
 
     async def readdir(accessor: A,
                       path_spec: PathSpec,
@@ -103,7 +153,8 @@ def make_readdir(
             return [f"{prefix}/{d}" for d in static_root]
         lister = listers.get(match.kind)
         entry_lister = resolved.get(match.kind)
-        if lister is None and entry_lister is None:
+        parent_lister = parented.get(match.kind)
+        if lister is None and entry_lister is None and parent_lister is None:
             if (match.scope is not None and match.scope.leaf
                     and leaf_error == "enotdir"):
                 raise enotdir(virtual)
@@ -114,25 +165,44 @@ def make_readdir(
         listing = await index.list_dir(virtual_key)
         if listing.entries is not None:
             return listing.entries
-        if entry_lister is not None:
+        if entry_lister is not None or parent_lister is not None:
+            proof_key = virtual_key
+            if parent_lister is not None:
+                proof_key = virtual_key.rsplit("/", 1)[0] or "/"
             own = await resolve_entry(
                 readdir, accessor,
-                PathSpec(virtual=virtual_key,
-                         directory=virtual_key,
-                         resource_path=mount_key(virtual_key, prefix)), index)
+                PathSpec(virtual=proof_key,
+                         directory=proof_key,
+                         resource_path=mount_key(proof_key, prefix)), index)
             if own is None:
                 raise enoent(virtual)
-            listed = await entry_lister(accessor, match, own)
+            # The resolve may have warmed this very listing: a parent's
+            # lister can seed a child listing from the same fetch
+            # (DirListing.seeds), so ask the index again before fetching.
+            relisted = await index.list_dir(virtual_key)
+            if relisted.entries is not None:
+                return relisted.entries
+            if entry_lister is not None:
+                listed = await entry_lister(accessor, match, own)
+            else:
+                assert parent_lister is not None
+                listed = await parent_lister(accessor, match, own)
         else:
             assert lister is not None
             maybe = await lister(accessor, match)
             if maybe is None:
                 raise enoent(virtual)
             listed = maybe
-        entries = [(name, entry) for name, entry in listed
-                   if not name.startswith(".")]
+        seeds: Mapping[str, list[tuple[str, IndexEntry]]] = {}
+        if isinstance(listed, DirListing):
+            seeds = listed.seeds
+            listed = listed.entries
+        entries = _drop_hidden(listed)
         await index.set_dir(virtual_key, entries)
         stem = virtual_key.rstrip("/")
+        for rel, child_entries in seeds.items():
+            await index.set_dir(f"{stem}/{rel.strip('/')}",
+                                _drop_hidden(child_entries))
         return [f"{stem}/{name}" for name, _ in entries]
 
     return readdir

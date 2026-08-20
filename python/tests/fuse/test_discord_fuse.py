@@ -19,27 +19,43 @@ import pytest
 
 from mirage import Workspace
 from mirage.cache.index import IndexEntry
+from mirage.core.discord.entry import (channel_dirname, channel_entry,
+                                       guild_dirname, guild_entry,
+                                       history_entry, member_entry,
+                                       member_filename)
 from mirage.fuse.fs import MirageFS
 from mirage.ops import Ops
 from mirage.resource.discord import DiscordConfig, DiscordResource
 from mirage.types import FileType, MountMode
 
-GUILD = "TestGuild"
-CHANNEL = "general"
+GUILD_PAYLOAD = {"id": "G1", "name": "TestGuild"}
+CHANNEL_PAYLOAD = {"id": "C1", "name": "general", "type": 0}
+MEMBER_PAYLOAD = {"user": {"id": "U1", "username": "alice"}, "roles": []}
+
+# Every dynamic level is a `name__id` dirname the tree itself mints, so
+# the fixture mints them the same way; a bare name is not a path the
+# classifier recognizes.
+GUILD = guild_dirname(GUILD_PAYLOAD)
+CHANNEL = channel_dirname(CHANNEL_PAYLOAD)
+MEMBER = member_filename(MEMBER_PAYLOAD)
 DATE = "2024-01-15"
 FILE = "chat.jsonl"
-GUILD_PATH = f"{GUILD}"
 CHANNEL_PATH = f"{GUILD}/channels/{CHANNEL}"
-DATE_DIR_PATH = f"{GUILD}/channels/{CHANNEL}/{DATE}"
-FILE_PATH = f"{GUILD}/channels/{CHANNEL}/{DATE}/{FILE}"
-MEMBER_PATH = f"{GUILD}/members/alice.json"
+DATE_DIR_PATH = f"{CHANNEL_PATH}/{DATE}"
+FILE_PATH = f"{DATE_DIR_PATH}/{FILE}"
+MEMBER_PATH = f"{GUILD}/members/{MEMBER}"
 
 PREFIX = "/discord"
 
 FAKE_JSONL = (b'{"id":"1","content":"hello","author":{"username":"alice"}}\n'
               b'{"id":"2","content":"world","author":{"username":"bob"}}\n')
 
-FAKE_MEMBER = b'{"user":{"id":"U1","username":"alice"},"roles":[]}'
+# The day lister records chat.jsonl's exact rendered size, so a sizeless
+# entry is the sealed-day case, which is what getattr reports 0 for.
+CHAT_ENTRY = IndexEntry(id=f"{CHANNEL_PAYLOAD['id']}:{DATE}:chat",
+                        name=FILE,
+                        resource_type="discord/chat_jsonl",
+                        vfs_name=FILE)
 
 
 def _run(coro):
@@ -55,79 +71,25 @@ def _make_world() -> tuple[DiscordResource, Workspace]:
     resource = DiscordResource(config=config)
     ws = Workspace({f"{PREFIX}/": resource}, mode=MountMode.READ)
     index = resource.index
+    _run(index.put(f"{PREFIX}/{GUILD}", guild_entry(GUILD_PAYLOAD)))
+    _run(index.put(f"{PREFIX}/{CHANNEL_PATH}", channel_entry(CHANNEL_PAYLOAD)))
     _run(
-        index.put(
-            f"{PREFIX}/{GUILD}",
-            IndexEntry(id="G1",
-                       name=GUILD,
-                       resource_type="discord/guild",
-                       vfs_name=GUILD)))
+        index.put(f"{PREFIX}/{DATE_DIR_PATH}",
+                  history_entry(CHANNEL_PAYLOAD["id"], DATE)))
+    _run(index.put(f"{PREFIX}/{FILE_PATH}", CHAT_ENTRY))
+    _run(index.put(f"{PREFIX}/{MEMBER_PATH}", member_entry(MEMBER_PAYLOAD)))
+    # A seeded listing answers readdir without a lister, so the mount
+    # serves these directories without reaching the API.
     _run(
-        index.put(
-            f"{PREFIX}/{CHANNEL_PATH}",
-            IndexEntry(id="C1",
-                       name=CHANNEL,
-                       resource_type="discord/channel",
-                       vfs_name=CHANNEL)))
+        index.set_dir(f"{PREFIX}/{GUILD}/channels",
+                      [(CHANNEL, channel_entry(CHANNEL_PAYLOAD))]))
     _run(
-        index.put(
-            f"{PREFIX}/{DATE_DIR_PATH}",
-            IndexEntry(id="C1:2024-01-15",
-                       name="2024-01-15",
-                       resource_type="discord/history",
-                       vfs_name=DATE)))
+        index.set_dir(f"{PREFIX}/{CHANNEL_PATH}",
+                      [(DATE, history_entry(CHANNEL_PAYLOAD["id"], DATE))]))
+    _run(index.set_dir(f"{PREFIX}/{DATE_DIR_PATH}", [(FILE, CHAT_ENTRY)]))
     _run(
-        index.put(
-            f"{PREFIX}/{FILE_PATH}",
-            IndexEntry(id="C1:2024-01-15:chat",
-                       name="chat.jsonl",
-                       resource_type="discord/chat_jsonl",
-                       vfs_name=FILE)))
-    _run(
-        index.put(
-            f"{PREFIX}/{MEMBER_PATH}",
-            IndexEntry(id="U1",
-                       name="alice",
-                       resource_type="discord/member",
-                       vfs_name="alice.json")))
-    _run(
-        index.put(
-            f"{PREFIX}/{GUILD}/members",
-            IndexEntry(id="G1:members",
-                       name="members",
-                       resource_type="discord/virtual_dir")))
-    _run(
-        index.set_dir(f"{PREFIX}/{GUILD}/channels", [
-            (CHANNEL,
-             IndexEntry(id="C1",
-                        name=CHANNEL,
-                        resource_type="discord/channel",
-                        vfs_name=CHANNEL)),
-        ]))
-    _run(
-        index.set_dir(f"{PREFIX}/{CHANNEL_PATH}", [
-            (DATE,
-             IndexEntry(id="C1:2024-01-15",
-                        name="2024-01-15",
-                        resource_type="discord/history",
-                        vfs_name=DATE)),
-        ]))
-    _run(
-        index.set_dir(f"{PREFIX}/{DATE_DIR_PATH}", [
-            (FILE,
-             IndexEntry(id="C1:2024-01-15:chat",
-                        name="chat.jsonl",
-                        resource_type="discord/chat_jsonl",
-                        vfs_name=FILE)),
-        ]))
-    _run(
-        index.set_dir(f"{PREFIX}/{GUILD}/members", [
-            ("alice.json",
-             IndexEntry(id="U1",
-                        name="alice",
-                        resource_type="discord/member",
-                        vfs_name="alice.json")),
-        ]))
+        index.set_dir(f"{PREFIX}/{GUILD}/members",
+                      [(MEMBER, member_entry(MEMBER_PAYLOAD))]))
     return resource, ws
 
 
@@ -171,7 +133,7 @@ def test_ops_readdir_dates(ops):
 def test_ops_readdir_members(ops):
     entries = _run(ops.readdir(f"{PREFIX}/{GUILD}/members/"))
     names = [e.rsplit("/", 1)[-1] for e in entries]
-    assert "alice.json" in names
+    assert MEMBER in names
 
 
 # ── ops.stat ─────────────────────────────────────

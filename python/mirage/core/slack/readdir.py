@@ -16,18 +16,17 @@ import logging
 from datetime import datetime, timedelta, timezone
 
 from mirage.accessor.slack import SlackAccessor
-from mirage.cache.index import NULL_INDEX, IndexCacheStore, IndexEntry
+from mirage.cache.index import IndexEntry
+from mirage.core.hierarchy.readdir import DirListing, Listed, make_readdir
+from mirage.core.hierarchy.scope import ScopeMatch
 from mirage.core.slack.channels import list_channels, list_dms
 from mirage.core.slack.client import slack_get
 from mirage.core.slack.files import file_blob_name
 from mirage.core.slack.formatters import (channel_dirname, dm_dirname,
                                           user_filename)
 from mirage.core.slack.history import fetch_messages_for_day, messages_to_jsonl
-from mirage.core.slack.scope import SlackScope, detect_scope
+from mirage.core.slack.scope import detect_scope
 from mirage.core.slack.users import list_users, user_json_bytes
-from mirage.types import PathSpec
-from mirage.utils.errors import enoent
-from mirage.utils.key_prefix import mount_key, mount_prefix_of
 
 logger = logging.getLogger(__name__)
 
@@ -78,251 +77,92 @@ async def _latest_message_ts(config, channel_id: str) -> float | None:
     return None
 
 
-def _normalize_path(path: PathSpec) -> tuple[PathSpec, str, str, str]:
-    prefix = mount_prefix_of(path.virtual, path.resource_path) or ""
-    raw = path.directory if path.pattern else path.virtual
-    if prefix and raw.startswith(prefix):
-        raw = raw[len(prefix):] or "/"
-    key = raw.strip("/")
-    virtual_key = prefix + "/" + key if key else prefix or "/"
-    return path, prefix, key, virtual_key
-
-
-async def _readdir_root(prefix: str) -> list[str]:
-    return [f"{prefix}/channels", f"{prefix}/dms", f"{prefix}/users"]
-
-
-async def _readdir_channels(
-    accessor: SlackAccessor,
-    prefix: str,
-    virtual_key: str,
-    index: IndexCacheStore = NULL_INDEX,
-) -> list[str]:
-    listing = await index.list_dir(virtual_key)
-    if listing.entries is not None:
-        return listing.entries
+async def _list_channels_root(accessor: SlackAccessor,
+                              match: ScopeMatch) -> Listed:
     channels = await list_channels(accessor.config)
     entries: list[tuple[str, IndexEntry]] = []
-    names: list[str] = []
     for ch in channels:
         dirname = channel_dirname(ch)
-        entry = IndexEntry(
-            id=ch["id"],
-            name=ch.get("name", ""),
-            resource_type="slack/channel",
-            vfs_name=dirname,
-            remote_time=str(ch.get("created", 0)),
-        )
-        entries.append((dirname, entry))
-        names.append(f"{prefix}/channels/{dirname}")
-    await index.set_dir(virtual_key, entries)
-    return names
+        entries.append((dirname,
+                        IndexEntry(
+                            id=ch["id"],
+                            name=ch.get("name", ""),
+                            resource_type="slack/channel",
+                            vfs_name=dirname,
+                            remote_time=str(ch.get("created", 0)),
+                        )))
+    return entries
 
 
-async def _readdir_dms(
-    accessor: SlackAccessor,
-    prefix: str,
-    virtual_key: str,
-    index: IndexCacheStore = NULL_INDEX,
-) -> list[str]:
-    listing = await index.list_dir(virtual_key)
-    if listing.entries is not None:
-        return listing.entries
+async def _list_dms_root(accessor: SlackAccessor, match: ScopeMatch) -> Listed:
     dms = await list_dms(accessor.config)
     users = await list_users(accessor.config)
     user_map = {u["id"]: u.get("name", u["id"]) for u in users}
     entries: list[tuple[str, IndexEntry]] = []
-    names: list[str] = []
     for dm in dms:
         dirname = dm_dirname(dm, user_map)
         uid = dm.get("user", "")
-        entry = IndexEntry(
-            id=dm["id"],
-            name=user_map.get(uid, uid),
-            resource_type="slack/dm",
-            vfs_name=dirname,
-            remote_time=str(dm.get("created", 0)),
-        )
-        entries.append((dirname, entry))
-        names.append(f"{prefix}/dms/{dirname}")
-    await index.set_dir(virtual_key, entries)
-    return names
+        entries.append((dirname,
+                        IndexEntry(
+                            id=dm["id"],
+                            name=user_map.get(uid, uid),
+                            resource_type="slack/dm",
+                            vfs_name=dirname,
+                            remote_time=str(dm.get("created", 0)),
+                        )))
+    return entries
 
 
-async def _readdir_users(
-    accessor: SlackAccessor,
-    prefix: str,
-    virtual_key: str,
-    index: IndexCacheStore = NULL_INDEX,
-) -> list[str]:
-    listing = await index.list_dir(virtual_key)
-    if listing.entries is not None:
-        return listing.entries
+async def _list_users_root(accessor: SlackAccessor,
+                           match: ScopeMatch) -> Listed:
     users = await list_users(accessor.config)
     entries: list[tuple[str, IndexEntry]] = []
-    names: list[str] = []
     for u in users:
         filename = user_filename(u)
-        entry = IndexEntry(
-            id=u["id"],
-            name=u.get("name", ""),
-            resource_type="slack/user",
-            vfs_name=filename,
-            size=len(user_json_bytes(u)),
-        )
-        entries.append((filename, entry))
-        names.append(f"{prefix}/users/{filename}")
-    await index.set_dir(virtual_key, entries)
-    return names
+        entries.append((filename,
+                        IndexEntry(
+                            id=u["id"],
+                            name=u.get("name", ""),
+                            resource_type="slack/user",
+                            vfs_name=filename,
+                            size=len(user_json_bytes(u)),
+                        )))
+    return entries
 
 
-async def _readdir_channel_dates(
-    accessor: SlackAccessor,
-    path: PathSpec,
-    prefix: str,
-    key: str,
-    virtual_key: str,
-    container: str,
-    index: IndexCacheStore = NULL_INDEX,
-) -> list[str]:
-    lookup = await index.get(virtual_key)
-    if lookup.entry is None:
-        parent_str = prefix + "/" + container
-        parent = PathSpec(virtual=parent_str,
-                          directory=parent_str,
-                          resource_path=mount_key(parent_str, prefix))
-        await readdir(accessor, parent, index)
-        lookup = await index.get(virtual_key)
-    if lookup.entry is None:
-        raise enoent(path)
-    listing = await index.list_dir(virtual_key)
-    if listing.entries is not None:
-        return listing.entries
-    created = int(lookup.entry.remote_time or 0)
-    latest_ts = await _latest_message_ts(accessor.config, lookup.entry.id)
+async def _list_channel_days(accessor: SlackAccessor, match: ScopeMatch,
+                             own: IndexEntry) -> Listed:
+    created = int(own.remote_time or 0)
+    latest_ts = await _latest_message_ts(accessor.config, own.id)
     if latest_ts and created:
         dates = _date_range(latest_ts, created)
     elif latest_ts:
         dates = _date_range(latest_ts, int(latest_ts))
     else:
         dates = []
-    entries: list[tuple[str, IndexEntry]] = []
-    names: list[str] = []
-    for d in dates:
-        entry = IndexEntry(
-            id=f"{lookup.entry.id}:{d}",
-            name=d,
-            resource_type="slack/date_dir",
-            vfs_name=d,
-        )
-        entries.append((d, entry))
-        names.append(f"{prefix}/{key}/{d}")
-    await index.set_dir(virtual_key, entries)
-    return names
+    return [(d,
+             IndexEntry(
+                 id=f"{own.id}:{d}",
+                 name=d,
+                 resource_type="slack/date_dir",
+                 vfs_name=d,
+                 extra={"channel_id": own.id},
+             )) for d in dates]
 
 
-async def _readdir_date_contents(
-    accessor: SlackAccessor,
-    path: PathSpec,
-    prefix: str,
-    key: str,
-    virtual_key: str,
-    container: str,
-    chan_seg: str,
-    date_str: str,
-    index: IndexCacheStore = NULL_INDEX,
-) -> list[str]:
-    cached = await index.list_dir(virtual_key)
-    if cached.entries is not None:
-        return cached.entries
-    parent_vk = f"{prefix}/{container}/{chan_seg}"
-    parent_lookup = await index.get(parent_vk)
-    if parent_lookup.entry is None:
-        parent_str = f"{prefix}/{container}/{chan_seg}"
-        parent = PathSpec(virtual=parent_str,
-                          directory=parent_str,
-                          resource_path=mount_key(parent_str, prefix))
-        await readdir(accessor, parent, index)
-        parent_lookup = await index.get(parent_vk)
-    if parent_lookup.entry is None:
-        raise enoent(path)
-    channel_id = parent_lookup.entry.id
-    await _fetch_day(accessor, channel_id, date_str, virtual_key, index)
-    cached = await index.list_dir(virtual_key)
-    if cached.entries is not None:
-        return cached.entries
-    raise enoent(path)
+async def _day_listing(accessor: SlackAccessor, channel_id: str,
+                       date_str: str) -> DirListing:
+    """One history fetch, answering the day dir and its files subdir.
 
+    A soft history error (not_in_channel, missing_scope, ...) seals an
+    empty day: the dir lists nothing, and stat serves chat.jsonl with
+    the size left unknown.
 
-async def _readdir_files_dir(
-    accessor: SlackAccessor,
-    path: PathSpec,
-    prefix: str,
-    key: str,
-    virtual_key: str,
-    container: str,
-    chan_seg: str,
-    date_str: str,
-    index: IndexCacheStore = NULL_INDEX,
-) -> list[str]:
-    cached = await index.list_dir(virtual_key)
-    if cached.entries is not None:
-        return cached.entries
-    date_str_path = f"{prefix}/{container}/{chan_seg}/{date_str}"
-    date_path = PathSpec(virtual=date_str_path,
-                         directory=date_str_path,
-                         resource_path=mount_key(date_str_path, prefix))
-    await readdir(accessor, date_path, index)
-    cached = await index.list_dir(virtual_key)
-    if cached.entries is not None:
-        return cached.entries
-    raise enoent(path)
-
-
-async def readdir(
-    accessor: SlackAccessor,
-    path: PathSpec,
-    index: IndexCacheStore = NULL_INDEX,
-) -> list[str]:
-    path, prefix, key, virtual_key = _normalize_path(path)
-
-    if not key:
-        return await _readdir_root(prefix)
-
-    scope = detect_scope(path)
-    container = scope.container
-
-    if key == "channels":
-        return await _readdir_channels(accessor, prefix, virtual_key, index)
-    if key == "dms":
-        return await _readdir_dms(accessor, prefix, virtual_key, index)
-    if key == "users":
-        return await _readdir_users(accessor, prefix, virtual_key, index)
-
-    parts = key.split("/")
-    if container in ("channels", "dms") and len(parts) == 2:
-        return await _readdir_channel_dates(accessor, path, prefix, key,
-                                            virtual_key, container, index)
-    if container in ("channels", "dms") and scope.target == "date":
-        return await _readdir_date_contents(accessor, path, prefix, key,
-                                            virtual_key, container, parts[1],
-                                            parts[2], index)
-    if container in ("channels", "dms") and scope.target == "files":
-        return await _readdir_files_dir(accessor, path, prefix, key,
-                                        virtual_key, container, parts[1],
-                                        parts[2], index)
-    # An unrecognized path is not an empty directory: returning [] made
-    # `ls` and `tree` report a bogus path as a real-but-empty one.
-    raise enoent(path.virtual)
-
-
-async def _fetch_day(
-    accessor: SlackAccessor,
-    channel_id: str,
-    date_str: str,
-    date_vkey: str,
-    index: IndexCacheStore = NULL_INDEX,
-) -> None:
+    Args:
+        accessor (SlackAccessor): slack accessor.
+        channel_id (str): the channel or DM id.
+        date_str (str): the day, ``YYYY-MM-DD``.
+    """
     try:
         messages = await fetch_messages_for_day(accessor.config, channel_id,
                                                 date_str)
@@ -330,8 +170,7 @@ async def _fetch_day(
         if any(code in str(e) for code in _SOFT_HISTORY_ERRORS):
             logger.debug("slack: history denied for %s/%s (%s); empty day",
                          channel_id, date_str, e)
-            await index.set_dir(date_vkey, [])
-            return
+            return DirListing(entries=[])
         raise
     chat_entry = IndexEntry(
         id=f"{channel_id}:{date_str}:chat",
@@ -345,11 +184,11 @@ async def _fetch_day(
         name="files",
         resource_type="slack/files_dir",
         vfs_name="files",
+        extra={
+            "channel_id": channel_id,
+            "date": date_str
+        },
     )
-    await index.set_dir(date_vkey, [
-        ("chat.jsonl", chat_entry),
-        ("files", files_entry),
-    ])
     file_entries: list[tuple[str, IndexEntry]] = []
     for msg in messages:
         for fmeta in msg.get("files", []) or []:
@@ -385,7 +224,42 @@ async def _fetch_day(
                          date_str,
                      },
                  )))
-    await index.set_dir(date_vkey + "/files", file_entries)
+    return DirListing(
+        entries=[("chat.jsonl", chat_entry), ("files", files_entry)],
+        seeds={"files": file_entries},
+    )
 
 
-__all__ = ["readdir", "VIRTUAL_ROOTS", "SlackScope"]
+async def _list_day(accessor: SlackAccessor, match: ScopeMatch,
+                    channel: IndexEntry) -> Listed:
+    # The proof is the channel entry, not the day's own: any well-formed
+    # date under a real channel fetches, including dates outside the
+    # bounded window the channel listing mints.
+    return await _day_listing(accessor, channel.id, match.slots["day"])
+
+
+async def _list_files(accessor: SlackAccessor, match: ScopeMatch,
+                      own: IndexEntry) -> Listed:
+    # Normally served from the day lister's seed; reached only when the
+    # index evicted the files listing while the day's entries survived.
+    channel_id = own.extra.get("channel_id") or own.id.split(":", 1)[0]
+    listing = await _day_listing(accessor, channel_id, match.slots["day"])
+    return listing.seeds.get("files", [])
+
+
+readdir = make_readdir(
+    detect_scope,
+    listers={
+        "channels_root": _list_channels_root,
+        "dms_root": _list_dms_root,
+        "users_root": _list_users_root,
+    },
+    entry_listers={
+        "channel": _list_channel_days,
+        "files": _list_files,
+    },
+    parent_entry_listers={"day": _list_day},
+    static_root=VIRTUAL_ROOTS,
+)
+
+__all__ = ["readdir", "VIRTUAL_ROOTS"]

@@ -184,7 +184,7 @@ async def test_stat_not_found(accessor, index):
 @pytest.mark.asyncio
 async def test_stat_unknown_top_level_raises(accessor, index):
     with patch(
-            "mirage.core.gmail.stat.list_labels",
+            "mirage.core.gmail.readdir.list_labels",
             new_callable=AsyncMock,
             return_value=[{
                 "type": "system",
@@ -203,7 +203,7 @@ async def test_stat_unknown_top_level_raises(accessor, index):
 @pytest.mark.asyncio
 async def test_stat_real_label_via_api(accessor, index):
     with patch(
-            "mirage.core.gmail.stat.list_labels",
+            "mirage.core.gmail.readdir.list_labels",
             new_callable=AsyncMock,
             return_value=[{
                 "type": "system",
@@ -222,12 +222,13 @@ async def test_stat_real_label_via_api(accessor, index):
 @pytest.mark.asyncio
 async def test_stat_propagates_parent_refresh_failure(accessor, index):
     failure = RuntimeError("gmail unavailable")
-    with patch("mirage.core.gmail.stat._readdir",
+    with patch("mirage.core.gmail.readdir.list_labels",
                new_callable=AsyncMock,
                side_effect=failure):
         with pytest.raises(RuntimeError, match="gmail unavailable"):
             await stat(
                 accessor,
-                PathSpec.from_str_path("/INBOX/missing.gmail.json"),
+                PathSpec.from_str_path(
+                    "/INBOX/2026-04-12/missing__x1.gmail.json"),
                 index,
             )

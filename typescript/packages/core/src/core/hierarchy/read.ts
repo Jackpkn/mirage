@@ -16,6 +16,7 @@ import type { Accessor } from '../../accessor/base.ts'
 import type { IndexCacheStore } from '../../cache/index/store.ts'
 import type { PathSpec } from '../../types.ts'
 import { eisdir, enoent } from '../../utils/errors.ts'
+import { sliceWindow } from '../../utils/ranges.ts'
 import { ROOT, type DetectFn, type ScopeMatch } from './scope.ts'
 
 export type Reader<A extends Accessor> = (
@@ -84,5 +85,49 @@ export function makeRead<A extends Accessor>(
       throw enoent(path)
     }
     return reader(accessor, match, path, index)
+  }
+}
+
+export type RangedReader<A extends Accessor> = (
+  accessor: A,
+  match: ScopeMatch,
+  path: PathSpec,
+  index: IndexCacheStore | undefined,
+  offset: number,
+  size: number | null,
+) => Promise<Uint8Array>
+
+/**
+ * Build a byte-ranged read over a hierarchy read.
+ *
+ * A rendered file has no remote range to ask for — its bytes do not exist
+ * until the read renders them — so the window is sliced after the fact. A
+ * stored blob does (discord and slack attachments serve HTTP range
+ * requests), and downloading the whole file to keep a slice would defeat the
+ * ranged read; those kinds name a ranged reader in `ranged` and push the
+ * byte window to the source.
+ */
+export function makeReadRange<A extends Accessor>(
+  detect: DetectFn,
+  read: (accessor: A, path: PathSpec, index?: IndexCacheStore) => Promise<Uint8Array>,
+  ranged: Readonly<Record<string, RangedReader<A>>>,
+): (
+  accessor: A,
+  path: PathSpec,
+  index?: IndexCacheStore,
+  options?: { offset?: number; size?: number },
+) => Promise<Uint8Array> {
+  return async function readRange(
+    accessor: A,
+    path: PathSpec,
+    index?: IndexCacheStore,
+    options?: { offset?: number; size?: number },
+  ): Promise<Uint8Array> {
+    const offset = options?.offset ?? 0
+    const size = options?.size ?? null
+    const match = detect(path)
+    const fn = ranged[match.kind]
+    if (fn !== undefined) return fn(accessor, match, path, index, offset, size)
+    return sliceWindow(await read(accessor, path, index), offset, size)
   }
 }

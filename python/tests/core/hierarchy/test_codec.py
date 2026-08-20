@@ -12,8 +12,8 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from mirage.core.hierarchy.codec import (INT_JSON, JSON_NAME, JSONL_NAME, RAW,
-                                         ascii_digits)
+from mirage.core.hierarchy.codec import (DATE, INT_JSON, JSON_NAME, JSONL_NAME,
+                                         RAW, ascii_digits)
 
 
 def test_raw_takes_any_nonempty_segment():
@@ -48,3 +48,14 @@ def test_ascii_digits_guard():
     assert ascii_digits("42")
     assert not ascii_digits("4x2")
     assert not ascii_digits("")
+
+
+def test_date_is_shape_only():
+    # Shape only, not a calendar check: the dated-message backends mint
+    # their date directories from real timestamps, so a shaped-but-absent
+    # date resolves through the listing like any other name.
+    assert DATE.decode("2024-01-15") == "2024-01-15"
+    assert DATE.decode("2026-02-30") == "2026-02-30"
+    assert DATE.decode("2024-1-15") is None
+    assert DATE.decode("notadate") is None
+    assert DATE.decode("2024-01-15x") is None

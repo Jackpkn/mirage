@@ -204,10 +204,12 @@ describe('read unknown', () => {
     ).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
-  it('throws ENOENT for root', async () => {
+  it('throws EISDIR for root', async () => {
+    // The root exists by construction, so reading it as a file is the one
+    // shape the kit reports as a directory rather than absent.
     const t = new FakeTransport(() => ({ ok: true }))
     await expect(
       read(new SlackAccessor(t), spec('/mnt/slack', '/mnt/slack')),
-    ).rejects.toMatchObject({ code: 'ENOENT' })
+    ).rejects.toMatchObject({ code: 'EISDIR' })
   })
 })

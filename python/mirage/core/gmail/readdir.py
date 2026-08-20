@@ -12,27 +12,25 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import logging
 from datetime import datetime, timezone
 from functools import partial
 from typing import Any
 
 from mirage.accessor.gmail import GmailAccessor
-from mirage.cache.index import NULL_INDEX, IndexCacheStore, IndexEntry
+from mirage.cache.index import IndexEntry
 from mirage.core.gmail.date_query import date_dir_to_gmail_query
 from mirage.core.gmail.labels import list_labels
 from mirage.core.gmail.messages import (_extract_attachments, _extract_header,
                                         get_message_raw, list_messages,
                                         message_json_bytes)
-from mirage.types import PathSpec
-from mirage.utils.errors import enoent
-from mirage.utils.key_prefix import mount_key, mount_prefix_of
+from mirage.core.gmail.scope import detect_scope
+from mirage.core.hierarchy.readdir import DirListing, Listed, make_readdir
+from mirage.core.hierarchy.scope import ScopeMatch
 from mirage.utils.sanitize import NAME_MAX_BYTES, byte_len, sanitize_label
-
-logger = logging.getLogger(__name__)
 
 TITLE_MAX = 80
 MSG_SUFFIX = ".gmail.json"
+MAX_MESSAGES = 50
 
 _sanitize = partial(sanitize_label, fallback="No_Subject", max_len=TITLE_MAX)
 
@@ -75,225 +73,152 @@ def _date_from_internal(internal_date: str) -> str:
     return datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d")
 
 
-async def _build_date_groups(
-    accessor: GmailAccessor,
-    msg_ids: list[dict[str, Any]],
-    index: IndexCacheStore,
-    virtual_key: str,
-    write_dates: bool,
-) -> list[tuple[str, IndexEntry]]:
-    date_groups: dict[str, list[dict[str, Any]]] = {}
+def _attachment_entries(
+        payload: dict[str, Any]) -> list[tuple[str, IndexEntry]]:
+    entries: list[tuple[str, IndexEntry]] = []
+    for att in _extract_attachments(payload):
+        att_name = _attachment_filename(att["attachment_id"], att["filename"])
+        entries.append((att_name,
+                        IndexEntry(
+                            id=att["attachment_id"],
+                            name=att["filename"],
+                            resource_type="gmail/attachment",
+                            vfs_name=att_name,
+                            size=att["size"],
+                        )))
+    return entries
+
+
+def _date_children(
+    raws: list[dict[str, Any]]
+) -> tuple[list[tuple[str, IndexEntry]], dict[str, list[tuple[str,
+                                                              IndexEntry]]]]:
+    """One date directory's children, plus its attachment-dir seeds.
+
+    Args:
+        raws (list[dict]): the date's full message payloads.
+    """
+    children: list[tuple[str, IndexEntry]] = []
+    seeds: dict[str, list[tuple[str, IndexEntry]]] = {}
+    for raw in raws:
+        mid = raw["id"]
+        headers = raw.get("payload", {}).get("headers", [])
+        subject = _extract_header(headers, "Subject") or "No Subject"
+        filename = _msg_filename(subject, mid)
+        size_estimate = raw.get("sizeEstimate")
+        # The listing already fetched the full message, so the exact
+        # rendered .gmail.json length is free; sizeEstimate is the
+        # source message size and stays in extra.
+        children.append((filename,
+                         IndexEntry(
+                             id=mid,
+                             name=subject,
+                             resource_type="gmail/message",
+                             vfs_name=filename,
+                             size=len(message_json_bytes(raw)),
+                             extra={"size_estimate": size_estimate}
+                             if size_estimate is not None else {},
+                         )))
+        att_entries = _attachment_entries(raw.get("payload", {}))
+        if att_entries:
+            att_dir = _attach_dir_name(subject, mid)
+            children.append((att_dir,
+                             IndexEntry(
+                                 id=mid,
+                                 name=att_dir,
+                                 resource_type="gmail/attachment_dir",
+                                 vfs_name=att_dir,
+                             )))
+            seeds[att_dir] = att_entries
+    return children, seeds
+
+
+async def _group_by_date(
+        accessor: GmailAccessor,
+        msg_ids: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    groups: dict[str, list[dict[str, Any]]] = {}
     for m in msg_ids:
-        mid = m["id"]
-        raw = await get_message_raw(accessor.token_manager, mid)
-        internal_date = raw.get("internalDate", "0")
-        date_str = _date_from_internal(internal_date)
-        date_groups.setdefault(date_str, []).append(raw)
-    date_entries: list[tuple[str, IndexEntry]] = []
-    for date_str in sorted(date_groups.keys(), reverse=True):
-        date_entry = IndexEntry(
-            id=date_str,
-            name=date_str,
-            resource_type="gmail/date",
-            vfs_name=date_str,
-        )
-        date_entries.append((date_str, date_entry))
-        date_children: list[tuple[str, IndexEntry]] = []
-        for raw in date_groups[date_str]:
-            mid = raw["id"]
-            headers = raw.get("payload", {}).get("headers", [])
-            subject = _extract_header(headers, "Subject") or "No Subject"
-            filename = _msg_filename(subject, mid)
-            size_estimate = raw.get("sizeEstimate")
-            # The listing already fetched the full message, so the exact
-            # rendered .gmail.json length is free; sizeEstimate is the
-            # source message size and stays in extra.
-            msg_entry = IndexEntry(
-                id=mid,
-                name=subject,
-                resource_type="gmail/message",
-                vfs_name=filename,
-                size=len(message_json_bytes(raw)),
-                extra={"size_estimate": size_estimate}
-                if size_estimate is not None else {},
-            )
-            date_children.append((filename, msg_entry))
-            attachments = _extract_attachments(raw.get("payload", {}))
-            if attachments:
-                att_dir = _attach_dir_name(subject, mid)
-                att_dir_entry = IndexEntry(
-                    id=mid,
-                    name=att_dir,
-                    resource_type="gmail/attachment_dir",
-                    vfs_name=att_dir,
-                )
-                date_children.append((att_dir, att_dir_entry))
-                att_entries: list[tuple[str, IndexEntry]] = []
-                for att in attachments:
-                    att_name = _attachment_filename(att["attachment_id"],
-                                                    att["filename"])
-                    att_entry = IndexEntry(
-                        id=att["attachment_id"],
-                        name=att["filename"],
-                        resource_type="gmail/attachment",
-                        vfs_name=att_name,
-                        size=att["size"],
-                    )
-                    att_entries.append((att_name, att_entry))
-                att_vkey = virtual_key + "/" + date_str + "/" + att_dir
-                if write_dates:
-                    await index.set_dir(att_vkey, att_entries)
-        if write_dates:
-            await index.set_dir(virtual_key + "/" + date_str, date_children)
-    return date_entries
+        raw = await get_message_raw(accessor.token_manager, m["id"])
+        date_str = _date_from_internal(raw.get("internalDate", "0"))
+        groups.setdefault(date_str, []).append(raw)
+    return groups
 
 
-async def readdir(
-    accessor: GmailAccessor,
-    path_spec: PathSpec,
-    index: IndexCacheStore = NULL_INDEX,
-) -> list[str]:
-    virtual = path_spec.virtual
-    prefix = mount_prefix_of(path_spec.virtual, path_spec.resource_path)
-    path = (path_spec.dir if path_spec.pattern else path_spec).mount_path
-    key = path.strip("/")
-    virtual_key = prefix + "/" + key if key else prefix or "/"
-    parts = key.split("/") if key else []
-    depth = len(parts)
+async def _list_root(accessor: GmailAccessor, match: ScopeMatch) -> Listed:
+    labels = await list_labels(accessor.token_manager)
+    entries: list[tuple[str, IndexEntry]] = []
+    for lb in labels:
+        if lb.get("type") == "system":
+            name = lb["id"]
+        else:
+            name = lb.get("name", lb["id"])
+        entries.append((name,
+                        IndexEntry(
+                            id=lb["id"],
+                            name=name,
+                            resource_type="gmail/label",
+                            vfs_name=name,
+                        )))
+    return entries
 
-    if depth == 0:
-        cached = await index.list_dir(virtual_key)
-        if cached.entries is not None:
-            return cached.entries
-        labels = await list_labels(accessor.token_manager)
-        entries = []
-        for lb in labels:
-            if lb.get("type") == "system":
-                name = lb["id"]
-            else:
-                name = lb.get("name", lb["id"])
-            entry = IndexEntry(
-                id=lb["id"],
-                name=name,
-                resource_type="gmail/label",
-                vfs_name=name,
-            )
-            entries.append((name, entry))
-        await index.set_dir(virtual_key, entries)
-        return [f"{prefix}/{name}" for name, _ in entries]
 
-    if depth == 1:
-        label_name = parts[0]
-        cached = await index.list_dir(virtual_key)
-        if cached.entries is not None:
-            return cached.entries
-        label_key = prefix + "/" + label_name if prefix else "/" + label_name
-        result = await index.get(label_key)
-        if result.entry is None:
-            # Auto-bootstrap: populate label index.
-            try:
-                root = PathSpec(
-                    virtual=prefix or "/",
-                    directory=prefix or "/",
-                    resource_path=mount_key(prefix or "/", prefix),
-                )
-                await readdir(accessor, root, index)
-                result = await index.get(label_key)
-            except Exception as e:
-                logger.debug(
-                    "gmail readdir: bootstrap failed for %s: %s",
-                    label_key,
-                    e,
-                )
-        if result.entry is None:
-            raise enoent(virtual)
-        label_id = result.entry.id
-        msg_ids = await list_messages(
-            accessor.token_manager,
-            label_id=label_id,
-            max_results=50,
-        )
-        date_entries = await _build_date_groups(
-            accessor,
-            msg_ids,
-            index,
-            virtual_key,
-            write_dates=True,
-        )
-        await index.set_dir(virtual_key, date_entries)
-        return [f"{prefix}/{key}/{name}" for name, _ in date_entries]
+async def _list_label(accessor: GmailAccessor, match: ScopeMatch,
+                      own: IndexEntry) -> Listed:
+    msg_ids = await list_messages(
+        accessor.token_manager,
+        label_id=own.id,
+        max_results=MAX_MESSAGES,
+    )
+    groups = await _group_by_date(accessor, msg_ids)
+    entries: list[tuple[str, IndexEntry]] = []
+    seeds: dict[str, list[tuple[str, IndexEntry]]] = {}
+    for date_str in sorted(groups.keys(), reverse=True):
+        entries.append((date_str,
+                        IndexEntry(
+                            id=date_str,
+                            name=date_str,
+                            resource_type="gmail/date",
+                            vfs_name=date_str,
+                            extra={"label_id": own.id},
+                        )))
+        children, att_seeds = _date_children(groups[date_str])
+        seeds[date_str] = children
+        for att_dir, att_entries in att_seeds.items():
+            seeds[f"{date_str}/{att_dir}"] = att_entries
+    return DirListing(entries=entries, seeds=seeds)
 
-    if depth == 2:
-        cached = await index.list_dir(virtual_key)
-        if cached.entries is not None:
-            return cached.entries
-        label_name = parts[0]
-        date_str = parts[1]
-        date_query = date_dir_to_gmail_query(date_str)
-        if date_query is not None:
-            label_key = (prefix + "/" + label_name if prefix else "/" +
-                         label_name)
-            label_result = await index.get(label_key)
-            if label_result.entry is None:
-                try:
-                    root = PathSpec(
-                        virtual=prefix or "/",
-                        directory=prefix or "/",
-                        resource_path=mount_key(prefix or "/", prefix),
-                    )
-                    await readdir(accessor, root, index)
-                    label_result = await index.get(label_key)
-                except Exception as e:
-                    logger.debug(
-                        "gmail readdir: date-dir bootstrap failed for %s: %s",
-                        label_key,
-                        e,
-                    )
-            if label_result.entry is not None:
-                label_id = label_result.entry.id
-                label_vkey = label_key
-                msg_ids = await list_messages(
-                    accessor.token_manager,
-                    label_id=label_id,
-                    query=date_query,
-                    max_results=50,
-                )
-                await _build_date_groups(
-                    accessor,
-                    msg_ids,
-                    index,
-                    label_vkey,
-                    write_dates=True,
-                )
-                if not msg_ids:
-                    await index.set_dir(virtual_key, [])
-                cached = await index.list_dir(virtual_key)
-                if cached.entries is not None:
-                    return cached.entries
-                raise enoent(virtual)
-        label_path = prefix + "/" + parts[0] if prefix else "/" + parts[0]
-        await readdir(
-            accessor,
-            PathSpec.from_str_path(label_path, mount_key(label_path, prefix)),
-            index)
-        cached = await index.list_dir(virtual_key)
-        if cached.entries is not None:
-            return cached.entries
-        raise enoent(virtual)
 
-    if depth == 3:
-        cached = await index.list_dir(virtual_key)
-        if cached.entries is not None:
-            return cached.entries
-        date_path = (prefix + "/" + parts[0] + "/" +
-                     parts[1] if prefix else "/" + parts[0] + "/" + parts[1])
-        await readdir(
-            accessor,
-            PathSpec.from_str_path(date_path, mount_key(date_path, prefix)),
-            index)
-        cached = await index.list_dir(virtual_key)
-        if cached.entries is not None:
-            return cached.entries
-        raise enoent(virtual)
+async def _list_day(accessor: GmailAccessor, match: ScopeMatch,
+                    label: IndexEntry) -> Listed:
+    # The proof is the label entry, not the day's own: a date query
+    # answers for any well-formed day, including days the label's
+    # bounded recent listing never minted.
+    date_query = date_dir_to_gmail_query(match.slots["day"])
+    if date_query is None:
+        return []
+    msg_ids = await list_messages(
+        accessor.token_manager,
+        label_id=label.id,
+        query=date_query,
+        max_results=MAX_MESSAGES,
+    )
+    groups = await _group_by_date(accessor, msg_ids)
+    children, att_seeds = _date_children(groups.get(match.slots["day"], []))
+    return DirListing(entries=children, seeds=att_seeds)
 
-    raise enoent(virtual)
+
+async def _list_attachment_dir(accessor: GmailAccessor, match: ScopeMatch,
+                               own: IndexEntry) -> Listed:
+    raw = await get_message_raw(accessor.token_manager, own.id)
+    return _attachment_entries(raw.get("payload", {}))
+
+
+readdir = make_readdir(
+    detect_scope,
+    listers={"root": _list_root},
+    entry_listers={
+        "label": _list_label,
+        "attachment_dir": _list_attachment_dir,
+    },
+    parent_entry_listers={"day": _list_day},
+)

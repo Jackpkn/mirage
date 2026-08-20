@@ -12,39 +12,38 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from dataclasses import dataclass
+from mirage.core.hierarchy.codec import DATE, Codec
+from mirage.core.hierarchy.scope import Scope, Slot, make_detect_scope
+from mirage.types import FileType
 
-from mirage.types import PathSpec
+EMAIL_JSON = Codec(suffix=".email.json")
 
+_FOLDER = (Slot("folder"), )
+_DAY = _FOLDER + (Slot("day", DATE), )
 
-@dataclass
-class EmailScope:
-    use_native: bool
-    folder: str | None = None
-    resource_path: str = "/"
+# One description of the tree: readdir, stat, read and the search
+# push-down all classify through it, so the file surface and the command
+# surface cannot disagree about what a path means. The message scope is
+# declared before the attachment dir because only the suffix separates
+# the two at that depth.
+SCOPES = (
+    Scope(kind="folder", segments=_FOLDER),
+    Scope(kind="day", segments=_DAY),
+    Scope(kind="message",
+          segments=_DAY + (Slot("message", EMAIL_JSON, id_key="uid"), ),
+          leaf=True,
+          filetype=FileType.JSON),
+    Scope(kind="attachment_dir",
+          segments=_DAY + (Slot("attachment_dir", id_key="uid"), )),
+    Scope(kind="attachment",
+          segments=_DAY +
+          (Slot("attachment_dir", id_key="uid"), Slot("filename")),
+          leaf=True),
+)
 
+detect_scope = make_detect_scope(SCOPES)
 
-def detect_scope(path: PathSpec) -> EmailScope:
-    key = path.mount_path.strip("/")
-    if not key:
-        return EmailScope(use_native=False, resource_path="/")
-    parts = [x for x in key.split("/") if x]
-    if not parts:
-        return EmailScope(use_native=False, resource_path="/")
-    if key.endswith(".email.json"):
-        return EmailScope(
-            use_native=False,
-            folder=parts[0],
-            resource_path=key,
-        )
-    if len(parts) <= 2:
-        return EmailScope(
-            use_native=True,
-            folder=parts[0],
-            resource_path=key,
-        )
-    return EmailScope(
-        use_native=False,
-        folder=parts[0],
-        resource_path=key,
-    )
+# Kinds the mailbox search push-down may answer for: one folder or one
+# of its days. IMAP search selects a folder, so the mount root cannot
+# push down, and a message or attachment names one node.
+NATIVE_KINDS = frozenset({"folder", "day"})

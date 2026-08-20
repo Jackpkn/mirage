@@ -12,45 +12,44 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { mountKey, mountPrefixOf } from '../../utils/key_prefix.ts'
 import type { GmailAccessor } from '../../accessor/gmail.ts'
 import type { IndexCacheStore } from '../../cache/index/store.ts'
-import { entryOrWarm } from '../../cache/index/warm.ts'
-import { PathSpec } from '../../types.ts'
+import type { PathSpec } from '../../types.ts'
+import { enoent } from '../../utils/errors.ts'
+import { resolveEntry } from '../hierarchy/probe.ts'
+import { makeRead } from '../hierarchy/read.ts'
+import type { ScopeMatch } from '../hierarchy/scope.ts'
 import { getAttachment, getMessageRaw, messageJsonBytes } from './messages.ts'
 import { readdir } from './readdir.ts'
-import { gnuDirname } from '../../utils/path.ts'
-import { eisdir, enoent } from '../../utils/errors.ts'
+import { detectScope } from './scope.ts'
 
-export async function read(
+async function readMessage(
   accessor: GmailAccessor,
+  _match: ScopeMatch,
   path: PathSpec,
   index?: IndexCacheStore,
 ): Promise<Uint8Array> {
-  const prefix = mountPrefixOf(path.virtual, path.resourcePath)
-  const key = path.resourcePath
-  if (index === undefined) throw enoent(path.virtual)
-  const virtualKey = prefix !== '' ? `${prefix}/${key}` : `/${key}`
-  const parentKey = gnuDirname(virtualKey)
-  const entry = await entryOrWarm(
-    index,
-    virtualKey,
-    parentKey !== virtualKey
-      ? () => readdir(accessor, PathSpec.fromStrPath(parentKey, mountKey(parentKey, prefix)), index)
-      : null,
-  )
-  if (entry === null) throw enoent(path.virtual)
-  const rt = entry.resourceType
-  if (rt === 'gmail/label' || rt === 'gmail/date' || rt === 'gmail/attachment_dir') {
-    throw eisdir(path.virtual)
-  }
-  if (rt === 'gmail/attachment') {
-    const parentResult = await index.get(parentKey)
-    if (parentResult.entry === undefined || parentResult.entry === null) {
-      throw enoent(path.virtual)
-    }
-    return getAttachment(accessor.tokenManager, parentResult.entry.id, entry.id)
-  }
+  const entry = await resolveEntry(readdir, accessor, path, index)
+  if (entry === null) throw enoent(path)
   const raw = await getMessageRaw(accessor.tokenManager, entry.id)
   return messageJsonBytes(raw)
 }
+
+async function readAttachment(
+  accessor: GmailAccessor,
+  match: ScopeMatch,
+  path: PathSpec,
+  index?: IndexCacheStore,
+): Promise<Uint8Array> {
+  // The message id decodes from the attachment dir's `subject__id`
+  // segment; the attachment id only exists in the listing, so the entry
+  // stays the proof of existence AND the id source.
+  const entry = await resolveEntry(readdir, accessor, path, index)
+  if (entry === null) throw enoent(path)
+  return getAttachment(accessor.tokenManager, match.slots.message_id ?? '', entry.id)
+}
+
+export const read = makeRead<GmailAccessor>(detectScope, {
+  message: readMessage,
+  attachment: readAttachment,
+})

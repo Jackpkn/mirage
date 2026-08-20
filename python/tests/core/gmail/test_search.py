@@ -14,13 +14,9 @@
 
 from typing import Any
 
-from mirage.core.gmail.scope import GmailScope
 from mirage.core.gmail.search import format_grep_results
 
-SCOPE = GmailScope(use_native=True,
-                   label_name="INBOX",
-                   date_str=None,
-                   resource_path="/")
+LABEL = "INBOX"
 
 EMOJI = "\U0001F600"
 
@@ -50,7 +46,7 @@ def test_no_match_budget_counts_code_points():
     # typescript twin cut to 117 -- splitting the 118th surrogate pair.
     body = EMOJI * 200
     excerpt = _excerpt(
-        format_grep_results([_row(body)], SCOPE, "/gmail", "zzz"))
+        format_grep_results([_row(body)], LABEL, "/gmail", "zzz"))
     assert excerpt == f"note {body}"
     assert len(excerpt) == 205
     assert "�" not in excerpt
@@ -59,7 +55,7 @@ def test_no_match_budget_counts_code_points():
 def test_match_window_cuts_on_code_point_boundaries():
     pad = EMOJI * 200
     excerpt = _excerpt(
-        format_grep_results([_row(f"{pad} needle {pad}")], SCOPE, "/gmail",
+        format_grep_results([_row(f"{pad} needle {pad}")], LABEL, "/gmail",
                             "needle"))
     assert excerpt == f"...{EMOJI * 119} needle {EMOJI * 119}..."
     assert "�" not in excerpt
@@ -68,12 +64,12 @@ def test_match_window_cuts_on_code_point_boundaries():
 def test_match_window_on_ascii():
     body = "a" * 300 + " needle " + "b" * 300
     excerpt = _excerpt(
-        format_grep_results([_row(body)], SCOPE, "/gmail", "needle"))
+        format_grep_results([_row(body)], LABEL, "/gmail", "needle"))
     assert excerpt == f"...{'a' * 119} needle {'b' * 119}..."
 
 
 def test_empty_pattern_falls_back_to_the_snippet():
-    lines = format_grep_results([_row("body")], SCOPE, "/gmail")
+    lines = format_grep_results([_row("body")], LABEL, "/gmail")
     assert lines == [
         "/gmail/INBOX/2026-08-19/note__m1.gmail.json:[a@b.c] fallback snippet"
     ]

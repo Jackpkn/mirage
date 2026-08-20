@@ -17,7 +17,7 @@ import asyncio
 import pytest
 
 from mirage.cache.index import IndexCacheStore
-from mirage.core.hierarchy.read import make_read
+from mirage.core.hierarchy.read import make_read, make_read_range
 from mirage.core.hierarchy.scope import ScopeMatch
 from mirage.types import PathSpec
 from tests.core.hierarchy.conftest import FakeAccessor, detect_scope, spec
@@ -69,4 +69,37 @@ def test_windowed_reader_receives_the_window(accessor):
 
 def test_plain_reader_ignores_the_window(accessor):
     out = asyncio.run(READ(accessor, spec("/rooms/red/a.json"), limit=3))
+    assert out == b"red:a"
+
+
+async def _read_note_range(accessor: FakeAccessor, match: ScopeMatch,
+                           path: PathSpec, index: IndexCacheStore, offset: int,
+                           size: int | None) -> bytes:
+    return f"ranged:{match.slots['note']}:{offset}:{size}".encode()
+
+
+READ_RANGE = make_read_range(detect_scope,
+                             READ,
+                             ranged={"tagged": _read_note_range})
+
+
+def test_ranged_reader_pushes_the_window_to_the_source(accessor):
+    # "tagged" names a ranged reader, so the window reaches it verbatim.
+    ranged = make_read_range(detect_scope,
+                             READ,
+                             ranged={"note": _read_note_range})
+    out = asyncio.run(
+        ranged(accessor, spec("/rooms/red/a.json"), offset=2, size=5))
+    assert out == b"ranged:a:2:5"
+
+
+def test_unranged_kind_slices_the_full_read(accessor):
+    out = asyncio.run(
+        READ_RANGE(accessor, spec("/rooms/red/a.json"), offset=1, size=3))
+    # The full read rendered "red:a"; the window is taken after the fact.
+    assert out == b"ed:"
+
+
+def test_ranged_read_defaults_to_the_whole_file(accessor):
+    out = asyncio.run(READ_RANGE(accessor, spec("/rooms/red/a.json")))
     assert out == b"red:a"

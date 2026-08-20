@@ -12,164 +12,133 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { mountKey, mountPrefixOf } from '../../utils/key_prefix.ts'
 import type { DiscordAccessor } from '../../accessor/discord.ts'
+import type { IndexEntry } from '../../cache/index/config.ts'
 import type { IndexCacheStore } from '../../cache/index/store.ts'
 import { FileStat, FileType, PathSpec } from '../../types.ts'
-import { readdir as coreReaddir, snowflakeToIso } from './readdir.ts'
-import { isMissingPath } from '../../utils/errors.ts'
+import { enoent } from '../../utils/errors.ts'
 import { filetypeFromMimetype } from '../../utils/filetype.ts'
-import { stripSlash } from '../../utils/slash.ts'
+import { mountKey, mountPrefixOf } from '../../utils/key_prefix.ts'
+import { resolveEntry } from '../hierarchy/probe.ts'
+import type { ScopeMatch } from '../hierarchy/scope.ts'
+import { entryStat, makeStat } from '../hierarchy/stat.ts'
+import { readdir, snowflakeToIso } from './readdir.ts'
+import { detectScope } from './scope.ts'
 
-const VIRTUAL_DIRS: ReadonlySet<string> = new Set(['channels', 'members'])
-
-function fileNotFound(key: string): Error {
-  const e = new Error(`ENOENT: ${key}`) as Error & { code: string }
-  e.code = 'ENOENT'
-  return e
+function dirStat(_match: ScopeMatch, _path: PathSpec, entry: IndexEntry): FileStat {
+  return new FileStat({ name: entry.vfsName, type: FileType.DIRECTORY })
 }
 
-async function lookupWithFallback(
+function guildStat(_match: ScopeMatch, _path: PathSpec, entry: IndexEntry): FileStat {
+  return new FileStat({
+    name: entry.vfsName !== '' ? entry.vfsName : entry.name,
+    type: FileType.DIRECTORY,
+    extra: { guild_id: entry.id },
+  })
+}
+
+function channelStat(_match: ScopeMatch, _path: PathSpec, entry: IndexEntry): FileStat {
+  const modified = snowflakeToIso(entry.remoteTime)
+  return new FileStat({
+    name: entry.vfsName !== '' ? entry.vfsName : entry.name,
+    type: FileType.DIRECTORY,
+    ...(modified !== null ? { modified } : {}),
+    extra: { channel_id: entry.id },
+  })
+}
+
+function fileBlobStat(_match: ScopeMatch, _path: PathSpec, entry: IndexEntry): FileStat {
+  const mimetype = typeof entry.extra.content_type === 'string' ? entry.extra.content_type : ''
+  return new FileStat({
+    name: entry.vfsName !== '' ? entry.vfsName : entry.name,
+    ...(entry.size !== null ? { size: entry.size } : {}),
+    type: filetypeFromMimetype(mimetype),
+    extra: { content_type: mimetype, attachment_id: entry.id },
+  })
+}
+
+/**
+ * Raise ENOENT unless the path's channel ancestor exists. `up` is how many
+ * trailing segments to drop to reach the channel (1 for a day dir, 2 for its
+ * children).
+ */
+async function channelProven(
   accessor: DiscordAccessor,
-  virtualKey: string,
-  prefix: string,
-  index: IndexCacheStore,
-) {
-  const result = await index.get(virtualKey)
-  if (result.entry !== undefined && result.entry !== null) return result
-  const parentVirtual = virtualKey.includes('/')
-    ? virtualKey.slice(0, virtualKey.lastIndexOf('/')) || '/'
-    : '/'
-  try {
-    await coreReaddir(
-      accessor,
-      new PathSpec({
-        virtual: parentVirtual,
-        directory: parentVirtual,
-        resolved: false,
-        resourcePath: mountKey(parentVirtual, prefix),
-      }),
-      index,
-    )
-  } catch (err) {
-    // Only a genuinely absent parent falls through to not-found. Auth,
-    // rate-limit and transport failures must propagate instead of reading
-    // back as ENOENT, which is what the Python side catches too.
-    if (!isMissingPath(err)) throw err
+  path: PathSpec,
+  index: IndexCacheStore | undefined,
+  up: number,
+): Promise<void> {
+  let virtual = path.virtual.replace(/\/+$/, '')
+  for (let i = 0; i < up; i++) virtual = virtual.split('/').slice(0, -1).join('/')
+  const prefix = mountPrefixOf(path.virtual, path.resourcePath)
+  const spec = new PathSpec({
+    virtual,
+    directory: virtual,
+    resourcePath: mountKey(virtual, prefix),
+  })
+  if ((await resolveEntry(readdir, accessor, spec, index)) === null) {
+    throw enoent(path)
   }
-  return await index.get(virtualKey)
 }
 
-export async function stat(
+/**
+ * Stat a day directory, which resolves beyond the listed window.
+ *
+ * The channel listing synthesizes a bounded window of recent days, but the
+ * history API answers a range query for any date, so a well-formed day under
+ * a channel that exists is a directory whether or not the window lists it. A
+ * bogus channel chain is ENOENT.
+ */
+async function statDay(
   accessor: DiscordAccessor,
+  match: ScopeMatch,
   path: PathSpec,
   index?: IndexCacheStore,
 ): Promise<FileStat> {
-  const prefix = mountPrefixOf(path.virtual, path.resourcePath)
-  let raw = path.virtual
-  if (prefix !== '' && raw.startsWith(prefix)) {
-    raw = raw.slice(prefix.length) || '/'
+  const entry = await resolveEntry(readdir, accessor, path, index)
+  if (entry !== null) {
+    return new FileStat({ name: entry.vfsName, type: FileType.DIRECTORY })
   }
-  const key = stripSlash(raw)
+  await channelProven(accessor, path, index, 1)
+  return new FileStat({ name: match.slots.day ?? '', type: FileType.DIRECTORY })
+}
 
-  if (key === '') {
-    return new FileStat({ name: '/', type: FileType.DIRECTORY })
-  }
-
-  const parts = key.split('/')
-  const part1 = parts[1] ?? ''
-  const part3 = parts[3] ?? ''
-  const virtualKey = `${prefix}/${key}`
-
-  if (parts.length === 1) {
-    if (index === undefined) throw fileNotFound(raw)
-    const lookup = await lookupWithFallback(accessor, virtualKey, prefix, index)
-    if (lookup.entry === undefined || lookup.entry === null) {
-      throw fileNotFound(raw)
-    }
-    return new FileStat({
-      name: lookup.entry.vfsName !== '' ? lookup.entry.vfsName : lookup.entry.name,
-      type: FileType.DIRECTORY,
-      extra: { guild_id: lookup.entry.id },
-    })
-  }
-
-  if (parts.length === 2 && VIRTUAL_DIRS.has(part1)) {
-    return new FileStat({ name: part1, type: FileType.DIRECTORY })
-  }
-
-  if (parts.length === 3 && part1 === 'channels') {
-    if (index === undefined) throw fileNotFound(raw)
-    const lookup = await lookupWithFallback(accessor, virtualKey, prefix, index)
-    if (lookup.entry === undefined || lookup.entry === null) {
-      throw fileNotFound(raw)
-    }
-    return new FileStat({
-      name: lookup.entry.vfsName !== '' ? lookup.entry.vfsName : lookup.entry.name,
-      type: FileType.DIRECTORY,
-      modified: snowflakeToIso(lookup.entry.remoteTime),
-      extra: { channel_id: lookup.entry.id },
-    })
-  }
-
-  if (parts.length === 3 && part1 === 'members') {
-    if (index === undefined) throw fileNotFound(raw)
-    const lookup = await lookupWithFallback(accessor, virtualKey, prefix, index)
-    if (lookup.entry === undefined || lookup.entry === null) {
-      throw fileNotFound(raw)
-    }
-    return new FileStat({
-      name: lookup.entry.vfsName !== '' ? lookup.entry.vfsName : lookup.entry.name,
-      ...(lookup.entry.size !== null ? { size: lookup.entry.size } : {}),
-      type: FileType.JSON,
-      extra: { user_id: lookup.entry.id },
-    })
-  }
-
-  // <guild>/channels/<ch>/<date>
-  const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
-  if (parts.length === 4 && part1 === 'channels' && DATE_RE.test(part3)) {
-    return new FileStat({ name: part3, type: FileType.DIRECTORY })
-  }
-
-  // <guild>/channels/<ch>/<date>/chat.jsonl
-  if (
-    parts.length === 5 &&
-    part1 === 'channels' &&
-    DATE_RE.test(part3) &&
-    parts[4] === 'chat.jsonl'
-  ) {
-    if (index === undefined) return new FileStat({ name: 'chat.jsonl', type: FileType.TEXT })
-    const lookup = await lookupWithFallback(accessor, virtualKey, prefix, index)
-    // A day whose history could not be listed (403/404/429) seals an empty
-    // date dir; the file still stats, with the size left unknown.
-    const size = lookup.entry?.size
+/**
+ * Stat chat.jsonl, which survives a sealed day.
+ *
+ * A day whose history could not be listed (403/404/429) seals an empty date
+ * dir; the file still stats, with the size left unknown.
+ */
+async function statChat(
+  accessor: DiscordAccessor,
+  _match: ScopeMatch,
+  path: PathSpec,
+  index?: IndexCacheStore,
+): Promise<FileStat> {
+  const entry = await resolveEntry(readdir, accessor, path, index)
+  if (entry !== null) {
     return new FileStat({
       name: 'chat.jsonl',
-      ...(size !== undefined && size !== null ? { size } : {}),
       type: FileType.TEXT,
+      ...(entry.size !== null ? { size: entry.size } : {}),
     })
   }
-
-  // <guild>/channels/<ch>/<date>/files
-  if (parts.length === 5 && part1 === 'channels' && DATE_RE.test(part3) && parts[4] === 'files') {
-    return new FileStat({ name: 'files', type: FileType.DIRECTORY })
-  }
-
-  // <guild>/channels/<ch>/<date>/files/<blob>
-  if (parts.length === 6 && part1 === 'channels' && DATE_RE.test(part3) && parts[4] === 'files') {
-    if (index === undefined) throw fileNotFound(raw)
-    const lookup = await lookupWithFallback(accessor, virtualKey, prefix, index)
-    if (lookup.entry === undefined || lookup.entry === null) throw fileNotFound(raw)
-    const extra = lookup.entry.extra
-    const mime = typeof extra.content_type === 'string' ? extra.content_type : ''
-    return new FileStat({
-      name: lookup.entry.vfsName !== '' ? lookup.entry.vfsName : lookup.entry.name,
-      ...(lookup.entry.size !== null ? { size: lookup.entry.size } : {}),
-      type: filetypeFromMimetype(mime),
-      extra: { content_type: mime, attachment_id: lookup.entry.id },
-    })
-  }
-
-  throw fileNotFound(raw)
+  await channelProven(accessor, path, index, 2)
+  return new FileStat({ name: 'chat.jsonl', type: FileType.TEXT })
 }
+
+export const stat = makeStat<DiscordAccessor>(detectScope, readdir, {
+  entryStats: {
+    guild: guildStat,
+    channels_dir: dirStat,
+    members_dir: dirStat,
+    channel: channelStat,
+    member: entryStat('user_id', FileType.JSON),
+    files: dirStat,
+    file_blob: fileBlobStat,
+  },
+  overrides: {
+    day: statDay,
+    messages: statChat,
+  },
+})

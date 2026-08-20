@@ -12,123 +12,103 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { mountKey } from '../../utils/key_prefix.ts'
 import { describe, expect, it } from 'vitest'
-import { detectScope } from './scope.ts'
-import { PathSpec } from '../../types.ts'
+
+import { INVALID, ROOT } from '../hierarchy/scope.ts'
+import { detectScope, NATIVE_KINDS, searchTarget } from './scope.ts'
 
 describe('detectScope', () => {
-  it('root → useNative=true, resourcePath /', () => {
-    const s = detectScope(new PathSpec({ resourcePath: '', virtual: '/', directory: '/' }))
-    expect(s.useNative).toBe(true)
-    expect(s.resourcePath).toBe('/')
+  it('classifies the root, which slack search answers workspace-wide', () => {
+    expect(detectScope('/').kind).toBe(ROOT)
+    expect(NATIVE_KINDS.has(ROOT)).toBe(true)
   })
 
-  it('/channels → container=channels, useNative=true', () => {
-    const s = detectScope(
-      new PathSpec({
-        resourcePath: 'channels',
-        virtual: '/channels',
-        directory: '/channels',
-      }),
-    )
-    expect(s.useNative).toBe(true)
-    expect(s.container).toBe('channels')
+  it('classifies the containers', () => {
+    expect(detectScope('/channels').kind).toBe('channels_root')
+    expect(detectScope('/dms').kind).toBe('dms_root')
+    expect(detectScope('/users').kind).toBe('users_root')
   })
 
-  it('/channels/general__C123 → channelName=general, channelId=C123', () => {
-    const s = detectScope(
-      new PathSpec({
-        resourcePath: 'channels/general__C123',
-        virtual: '/channels/general__C123',
-        directory: '/channels/general__C123',
-      }),
-    )
-    expect(s.channelName).toBe('general')
-    expect(s.channelId).toBe('C123')
-    expect(s.container).toBe('channels')
-    expect(s.useNative).toBe(true)
+  it('classifies a channel dir and decodes both dirname halves', () => {
+    const match = detectScope('/channels/general__C001')
+    expect(match.kind).toBe('channel')
+    expect(match.slots).toEqual({
+      container: 'channels',
+      channel: 'general',
+      channel_id: 'C001',
+    })
   })
 
-  it('/channels/general__C123/2026-04-24 → date scope, useNative=true', () => {
-    const s = detectScope(
-      new PathSpec({
-        resourcePath: 'channels/general__C123/2026-04-24',
-        virtual: '/channels/general__C123/2026-04-24',
-        directory: '/channels/general__C123/2026-04-24',
-      }),
-    )
-    expect(s.dateStr).toBe('2026-04-24')
-    expect(s.target).toBe('date')
-    expect(s.useNative).toBe(true)
+  it('classifies a dm dir under the same kind', () => {
+    const match = detectScope('/dms/alice__D001')
+    expect(match.kind).toBe('channel')
+    expect(match.slots.container).toBe('dms')
+    expect(match.slots.channel_id).toBe('D001')
   })
 
-  it('/channels/<chan>/<date>/chat.jsonl → messages target, useNative=false', () => {
-    const s = detectScope(
-      new PathSpec({
-        resourcePath: 'channels/general__C123/2026-04-24/chat.jsonl',
-        virtual: '/channels/general__C123/2026-04-24/chat.jsonl',
-        directory: '/channels/general__C123/2026-04-24/chat.jsonl',
-      }),
-    )
-    expect(s.dateStr).toBe('2026-04-24')
-    expect(s.target).toBe('messages')
-    expect(s.useNative).toBe(false)
+  it('refuses a bare channel name', () => {
+    // The tree mints every dirname as `name__id`, so a bare name can never
+    // be a listed channel and classifies as invalid outright.
+    expect(detectScope('/channels/general').kind).toBe(INVALID)
   })
 
-  it('/channels/<chan>/<date>/files → files target, useNative=true', () => {
-    const s = detectScope(
-      new PathSpec({
-        resourcePath: 'channels/general__C123/2026-04-24/files',
-        virtual: '/channels/general__C123/2026-04-24/files',
-        directory: '/channels/general__C123/2026-04-24/files',
-      }),
-    )
-    expect(s.target).toBe('files')
-    expect(s.useNative).toBe(true)
+  it('classifies a user file', () => {
+    const match = detectScope('/users/alice__U001.json')
+    expect(match.kind).toBe('user')
+    expect(match.slots).toEqual({ user: 'alice', user_id: 'U001' })
+    expect(NATIVE_KINDS.has('user')).toBe(false)
   })
 
-  it('/channels/<chan>/<date>/files/<blob> → files target, useNative=false', () => {
-    const s = detectScope(
-      new PathSpec({
-        resourcePath: 'channels/general__C123/2026-04-24/files/foo__F1.pdf',
-        virtual: '/channels/general__C123/2026-04-24/files/foo__F1.pdf',
-        directory: '/channels/general__C123/2026-04-24/files/foo__F1.pdf',
-      }),
-    )
-    expect(s.target).toBe('files')
-    expect(s.useNative).toBe(false)
+  it('classifies a day directory', () => {
+    const match = detectScope('/channels/general__C001/2024-04-10')
+    expect(match.kind).toBe('day')
+    expect(match.slots.day).toBe('2024-04-10')
+    expect(NATIVE_KINDS.has('day')).toBe(true)
   })
 
-  it('/users → useNative=false, resourcePath=users', () => {
-    const s = detectScope(
-      new PathSpec({ resourcePath: 'users', virtual: '/users', directory: '/users' }),
-    )
-    expect(s.useNative).toBe(false)
-    expect(s.resourcePath).toBe('users')
+  it('refuses a non-date under a channel', () => {
+    expect(detectScope('/channels/general__C001/notadate').kind).toBe(INVALID)
   })
 
-  it('handles dirname without __id (just name)', () => {
-    const s = detectScope(
-      new PathSpec({
-        resourcePath: 'channels/general',
-        virtual: '/channels/general',
-        directory: '/channels/general',
-      }),
-    )
-    expect(s.channelName).toBe('general')
-    expect(s.channelId).toBeUndefined()
+  it('classifies chat.jsonl, which the push-down never answers', () => {
+    const match = detectScope('/channels/general__C001/2024-04-10/chat.jsonl')
+    expect(match.kind).toBe('messages')
+    expect(NATIVE_KINDS.has('messages')).toBe(false)
   })
 
-  it('respects PathSpec.prefix', () => {
-    const s = detectScope(
-      new PathSpec({
-        virtual: '/slack/channels/general__C1',
-        directory: '/slack/channels/general__C1',
-        resourcePath: mountKey('/slack/channels/general__C1', '/slack'),
-      }),
-    )
-    expect(s.channelName).toBe('general')
-    expect(s.channelId).toBe('C1')
+  it('classifies the files dir, which search.files cannot day-filter', () => {
+    expect(detectScope('/channels/general__C001/2024-04-10/files').kind).toBe('files')
+    expect(NATIVE_KINDS.has('files')).toBe(false)
+  })
+
+  it('classifies a file blob', () => {
+    const match = detectScope('/dms/bob__D001/2024-04-10/files/report__F1.pdf')
+    expect(match.kind).toBe('file_blob')
+    expect(match.slots.blob).toBe('report__F1.pdf')
+    expect(NATIVE_KINDS.has('file_blob')).toBe(false)
+  })
+
+  it('refuses unknown roots', () => {
+    expect(detectScope('/nope').kind).toBe(INVALID)
+    expect(detectScope('/nope/deeper').kind).toBe(INVALID)
+  })
+})
+
+describe('searchTarget', () => {
+  it('carries the channel coordinates', () => {
+    const target = searchTarget(detectScope('/channels/general__C001/2024-04-10'))
+    expect(target).toEqual({
+      container: 'channels',
+      channelName: 'general',
+      channelId: 'C001',
+    })
+  })
+
+  it('carries only the container at a container root', () => {
+    expect(searchTarget(detectScope('/dms'))).toEqual({ container: 'dms' })
+  })
+
+  it('is workspace-wide at the root', () => {
+    expect(searchTarget(detectScope('/'))).toEqual({})
   })
 })

@@ -117,7 +117,8 @@ describe('DiscordIndexEntry', () => {
     expect(entry.name).toBe('2026-04-25')
     expect(entry.resourceType).toBe(DiscordResourceType.HISTORY)
     expect(entry.resourceType).toBe('discord/history')
-    expect(entry.vfsName).toBe('2026-04-25.jsonl')
+    expect(entry.vfsName).toBe('2026-04-25')
+    expect(entry.extra).toEqual({ channel_id: 'C1' })
   })
 })
 

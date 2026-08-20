@@ -115,11 +115,8 @@ describe('searchGuild', () => {
 
 describe('formatGrepResults', () => {
   const scope = {
-    level: 'guild' as const,
-    useNative: true,
     guildId: 'G1',
     guildName: 'My Server',
-    resourcePath: 'My Server__G1',
   }
 
   it('builds full VFS path with prefix, sanitized guild and channel dirs', () => {
@@ -172,7 +169,7 @@ describe('formatGrepResults', () => {
           content: 'msg',
         },
       ],
-      { ...scope, level: 'channel', channelId: 'C3', channelName: 'eng' },
+      { ...scope, channelName: 'eng' },
       '/discord',
     )
     expect(lines).toEqual([

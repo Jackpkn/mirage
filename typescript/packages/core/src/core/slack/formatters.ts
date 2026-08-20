@@ -14,7 +14,7 @@
 
 import { pathSafeName, sanitizeName } from '../../utils/sanitize.ts'
 import { makeIdName } from '../../utils/naming.ts'
-import type { SlackScope } from './scope.ts'
+import type { SearchTarget } from './scope.ts'
 
 const DEC = new TextDecoder('utf-8', { fatal: false })
 
@@ -78,7 +78,7 @@ interface SearchFilesPayload {
   files?: { matches?: SearchFileMatch[] }
 }
 
-export function buildQuery(pattern: string, scope: SlackScope): string {
+export function buildQuery(pattern: string, scope: SearchTarget): string {
   if (
     scope.container === 'channels' &&
     scope.channelName !== undefined &&
@@ -99,7 +99,7 @@ function tsToDate(ts: string | number | undefined): string {
   return new Date(tsFloat * 1000).toISOString().slice(0, 10)
 }
 
-export function formatGrepResults(raw: Uint8Array, scope: SlackScope, prefix: string): string[] {
+export function formatGrepResults(raw: Uint8Array, scope: SearchTarget, prefix: string): string[] {
   const payload = JSON.parse(DEC.decode(raw)) as SearchMessagePayload
   const matches = payload.messages?.matches ?? []
   const lines: string[] = []
@@ -123,7 +123,7 @@ export function formatGrepResults(raw: Uint8Array, scope: SlackScope, prefix: st
 
 export function formatFileGrepResults(
   raw: Uint8Array,
-  scope: SlackScope,
+  scope: SearchTarget,
   prefix: string,
 ): string[] {
   const payload = JSON.parse(DEC.decode(raw)) as SearchFilesPayload

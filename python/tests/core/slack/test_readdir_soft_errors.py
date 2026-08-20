@@ -19,7 +19,7 @@ import pytest
 from mirage.accessor.slack import SlackAccessor
 from mirage.cache.index import RAMIndexCacheStore
 from mirage.core.slack.config import SlackConfig
-from mirage.core.slack.readdir import _fetch_day, _latest_message_ts, readdir
+from mirage.core.slack.readdir import _latest_message_ts, readdir
 from mirage.types import PathSpec
 from mirage.utils.key_prefix import mount_key
 
@@ -65,21 +65,42 @@ async def test_latest_message_ts_reraises_unrelated_errors(config):
 
 
 @pytest.mark.asyncio
-async def test_fetch_day_seals_empty_dir_on_not_in_channel(config, index):
+async def test_day_listing_seals_empty_dir_on_not_in_channel(config, index):
     err = RuntimeError(
         "Slack API error (conversations.history): not_in_channel")
     accessor = SlackAccessor(config=config)
+    channels_page = {
+        "channels": [{
+            "id": "C_INACCESSIBLE",
+            "name": "foo",
+            "created": 1
+        }],
+        "response_metadata": {
+            "next_cursor": ""
+        },
+    }
+
+    async def fake_get(_cfg, method, params=None, token=None):
+        if method == "conversations.list":
+            return channels_page
+        raise AssertionError(f"unexpected {method}")
 
     async def fake_history(_cfg, channel_id, date_str):
         raise err
 
-    with patch("mirage.core.slack.readdir.fetch_messages_for_day",
+    day = "/slack/channels/foo__C_INACCESSIBLE/2026-05-10"
+    with patch("mirage.core.slack.paginate.slack_get", new=fake_get), \
+         patch("mirage.core.slack.readdir.fetch_messages_for_day",
                new=fake_history):
-        await _fetch_day(accessor, "C_INACCESSIBLE", "2026-05-10",
-                         "/slack/channels/foo__C_INACCESSIBLE/2026-05-10",
-                         index)
-    listing = await index.list_dir(
-        "/slack/channels/foo__C_INACCESSIBLE/2026-05-10")
+        names = await readdir(
+            accessor,
+            PathSpec(resource_path=mount_key(day, "/slack"),
+                     virtual=day,
+                     directory=day),
+            index,
+        )
+    assert names == []
+    listing = await index.list_dir(day)
     assert listing.entries == []
 
 

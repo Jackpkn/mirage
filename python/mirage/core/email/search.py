@@ -18,7 +18,6 @@ from mirage.accessor.email import EmailAccessor
 from mirage.core.email.client import fetch_message, list_message_uids
 from mirage.core.email.readdir import _date_bucket, _msg_filename
 from mirage.core.email.render import message_json_text
-from mirage.core.email.scope import EmailScope
 
 
 def build_search_criteria(
@@ -89,13 +88,12 @@ def _build_vfs_path(prefix: str, folder: str, msg: dict[str, Any]) -> str:
 
 async def search_and_format(
     accessor: EmailAccessor,
-    scope: EmailScope,
+    folder: str,
     pattern: str,
     prefix: str,
     max_results: int | None = None,
 ) -> list[tuple[str, str]]:
     """Run native search and return (vfs_path, message_json) pairs."""
-    folder = scope.folder or ""
     if not folder:
         return []
     uids = await search_messages(accessor,

@@ -13,77 +13,109 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 from mirage.accessor.slack import SlackAccessor
-from mirage.cache.index import NULL_INDEX, IndexCacheStore
+from mirage.cache.index import IndexCacheStore, IndexEntry
+from mirage.core.hierarchy.probe import resolve_entry
+from mirage.core.hierarchy.read import make_read, make_read_range
+from mirage.core.hierarchy.scope import ScopeMatch
 from mirage.core.slack import files as slack_files
 from mirage.core.slack.history import get_history_jsonl
+from mirage.core.slack.readdir import readdir
+from mirage.core.slack.scope import detect_scope
 from mirage.core.slack.users import get_user_profile, user_json_bytes
 from mirage.types import PathSpec
 from mirage.utils.errors import enoent
-from mirage.utils.key_prefix import mount_prefix_of
-from mirage.utils.ranges import slice_window
+from mirage.utils.key_prefix import mount_key, mount_prefix_of
 
 
-async def read(
-    accessor: SlackAccessor,
-    path: PathSpec,
-    index: IndexCacheStore = NULL_INDEX,
-    offset: int = 0,
-    size: int | None = None,
-) -> bytes:
-    """Read a Slack path, optionally only a byte range of it.
+async def _ancestor_entry(accessor: SlackAccessor, path: PathSpec,
+                          index: IndexCacheStore,
+                          up: int) -> IndexEntry | None:
+    virtual = path.virtual.rstrip("/")
+    for _ in range(up):
+        virtual = virtual.rsplit("/", 1)[0]
+    prefix = mount_prefix_of(path.virtual, path.resource_path)
+    spec = PathSpec(virtual=virtual,
+                    directory=virtual,
+                    resource_path=mount_key(virtual, prefix))
+    return await resolve_entry(readdir, accessor, spec, index)
 
-    Only an uploaded file has a remote range to ask for. A channel's
-    history and a user profile are rendered here into JSON, so their
-    bytes do not exist until we make them and the window can only be
-    taken afterwards.
+
+async def _read_chat(accessor: SlackAccessor, match: ScopeMatch,
+                     path: PathSpec, index: IndexCacheStore) -> bytes:
+    """Render one day's history; the channel id comes from the listing.
+
+    The typed ``name__id`` dirname is only trusted once the listing
+    proves it, so a fabricated channel id is ENOENT rather than a raw
+    API error.
 
     Args:
-        accessor (SlackAccessor): Slack accessor.
-        path (PathSpec): the path to read.
-        index (IndexCacheStore): listing cache, consulted for the entry.
-        offset (int): first byte to read.
-        size (int | None): how many bytes, or None for the rest.
+        accessor (SlackAccessor): slack accessor.
+        match (ScopeMatch): a match holding the day chain.
+        path (PathSpec): the chat.jsonl path.
+        index (IndexCacheStore): index cache.
     """
-    virtual = path.virtual
-    prefix = mount_prefix_of(path.virtual, path.resource_path) if isinstance(
-        path, PathSpec) else ""
-    raw = path.virtual if isinstance(path, PathSpec) else path
-    if prefix and raw.startswith(prefix):
-        raw = raw[len(prefix):] or "/"
-    key = raw.strip("/")
-    parts = key.split("/")
+    entry = await resolve_entry(readdir, accessor, path, index)
+    if entry is not None:
+        channel_id = entry.id.split(":", 1)[0]
+    else:
+        # A sealed day lists nothing but the file still reads through
+        # the channel, reproducing the API's own answer for the fetch.
+        channel = await _ancestor_entry(accessor, path, index, up=2)
+        if channel is None:
+            raise enoent(path.virtual)
+        channel_id = channel.id
+    return await get_history_jsonl(accessor.config, channel_id,
+                                   match.slots["day"])
 
-    if (len(parts) == 4 and parts[0] in ("channels", "dms")
-            and parts[3] == "chat.jsonl"):
-        parent_key = f"{parts[0]}/{parts[1]}"
-        virtual_key = prefix + "/" + parent_key
-        lookup = await index.get(virtual_key)
-        if lookup.entry is None:
-            raise enoent(virtual)
-        channel_id = lookup.entry.id
-        date_str = parts[2]
-        history = await get_history_jsonl(accessor.config, channel_id,
-                                          date_str)
-        return slice_window(history, offset, size)
 
-    if (len(parts) == 5 and parts[0] in ("channels", "dms")
-            and parts[3] == "files"):
-        virtual_key = prefix + "/" + key
-        lookup = await index.get(virtual_key)
-        if lookup.entry is None or not lookup.entry.extra:
-            raise enoent(virtual)
-        url = lookup.entry.extra.get("url_private_download")
-        if not url:
-            raise enoent(virtual)
-        return await slack_files.download_file(accessor.config, url, offset,
-                                               size)
+async def _read_user(accessor: SlackAccessor, match: ScopeMatch,
+                     path: PathSpec, index: IndexCacheStore) -> bytes:
+    entry = await resolve_entry(readdir, accessor, path, index)
+    if entry is None:
+        raise enoent(path.virtual)
+    user = await get_user_profile(accessor.config, entry.id)
+    return user_json_bytes(user)
 
-    if len(parts) == 2 and parts[0] == "users":
-        virtual_key = prefix + "/" + key
-        lookup = await index.get(virtual_key)
-        if lookup.entry is None:
-            raise enoent(virtual)
-        user = await get_user_profile(accessor.config, lookup.entry.id)
-        return slice_window(user_json_bytes(user), offset, size)
 
-    raise enoent(virtual)
+async def _blob_url(accessor: SlackAccessor, path: PathSpec,
+                    index: IndexCacheStore) -> str:
+    entry = await resolve_entry(readdir, accessor, path, index)
+    if entry is None:
+        raise enoent(path.virtual)
+    url = entry.extra.get("url_private_download")
+    if not isinstance(url, str) or not url:
+        raise enoent(path.virtual)
+    return url
+
+
+async def _read_blob(accessor: SlackAccessor, match: ScopeMatch,
+                     path: PathSpec, index: IndexCacheStore) -> bytes:
+    url = await _blob_url(accessor, path, index)
+    return await slack_files.download_file(accessor.config, url, 0, None)
+
+
+async def _read_blob_range(accessor: SlackAccessor, match: ScopeMatch,
+                           path: PathSpec, index: IndexCacheStore, offset: int,
+                           size: int | None) -> bytes:
+    url = await _blob_url(accessor, path, index)
+    return await slack_files.download_file(accessor.config, url, offset, size)
+
+
+read = make_read(
+    detect_scope,
+    readers={
+        "messages": _read_chat,
+        "user": _read_user,
+        "file_blob": _read_blob,
+    },
+)
+
+# Only an uploaded file has a remote range to ask for. A channel's
+# history and a user profile are rendered here into JSON, so their bytes
+# do not exist until we make them and the window can only be taken
+# afterwards.
+read_range = make_read_range(
+    detect_scope,
+    read,
+    ranged={"file_blob": _read_blob_range},
+)

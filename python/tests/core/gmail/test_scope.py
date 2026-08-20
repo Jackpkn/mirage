@@ -12,73 +12,61 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from mirage.core.gmail.scope import detect_scope
-from mirage.types import PathSpec
-from mirage.utils.key_prefix import mount_key
+from mirage.core.gmail.scope import NATIVE_KINDS, detect_scope
+from mirage.core.hierarchy.scope import INVALID, ROOT
 
 
-def _gs(path: str,
-        prefix: str = "",
-        pattern: str | None = None,
-        directory: str | None = None) -> PathSpec:
-    return PathSpec(
-        resource_path=mount_key(path, prefix),
-        virtual=path,
-        directory=directory
-        or (path.rsplit("/", 1)[0] + "/" if "/" in path else "/"),
-        pattern=pattern,
-    )
-
-
-def test_root_empty():
-    scope = detect_scope(PathSpec.from_str_path("/"))
-    assert scope.use_native is True
-    assert scope.label_name is None
-
-
-def test_root_with_prefix():
-    scope = detect_scope(_gs("/gmail/", prefix="/gmail"))
-    assert scope.use_native is True
+def test_root():
+    match = detect_scope("/")
+    assert match.kind == ROOT
+    assert ROOT in NATIVE_KINDS
 
 
 def test_label_dir():
-    scope = detect_scope(_gs("/gmail/INBOX", prefix="/gmail"))
-    assert scope.use_native is True
-    assert scope.label_name == "INBOX"
-    assert scope.date_str is None
+    match = detect_scope("/INBOX")
+    assert match.kind == "label"
+    assert match.slots == {"label": "INBOX"}
+    assert "label" in NATIVE_KINDS
 
 
-def test_label_date_dir():
-    scope = detect_scope(_gs("/gmail/INBOX/2026-04-10", prefix="/gmail"))
-    assert scope.use_native is True
-    assert scope.label_name == "INBOX"
-    assert scope.date_str == "2026-04-10"
+def test_day_dir():
+    match = detect_scope("/INBOX/2026-04-12")
+    assert match.kind == "day"
+    assert match.slots == {"label": "INBOX", "day": "2026-04-12"}
+    assert "day" in NATIVE_KINDS
 
 
-def test_specific_message_file():
-    scope = detect_scope(
-        _gs("/gmail/INBOX/2026-04-10/Hello__abc123.gmail.json",
-            prefix="/gmail"))
-    assert scope.use_native is False
-    assert scope.label_name == "INBOX"
+def test_non_date_under_label_is_invalid():
+    assert detect_scope("/INBOX/notadate").kind == INVALID
 
 
-def test_attachment_path():
-    scope = detect_scope(
-        _gs("/gmail/INBOX/2026-04-10/Hello__abc123/file.pdf", prefix="/gmail"))
-    assert scope.use_native is False
+def test_message_file():
+    match = detect_scope("/INBOX/2026-04-12/Test_Email__msg1.gmail.json")
+    assert match.kind == "message"
+    assert match.slots["message"] == "Test_Email"
+    assert match.slots["message_id"] == "msg1"
+    assert "message" not in NATIVE_KINDS
 
 
-def test_glob_in_date_dir():
-    spec = PathSpec(
-        resource_path=mount_key("/gmail/INBOX/2026-04-10/*.gmail.json",
-                                "/gmail"),
-        virtual="/gmail/INBOX/2026-04-10/*.gmail.json",
-        directory="/gmail/INBOX/2026-04-10/",
-        pattern="*.gmail.json",
-        resolved=False,
-    )
-    scope = detect_scope(spec)
-    assert scope.use_native is True
-    assert scope.label_name == "INBOX"
-    assert scope.date_str == "2026-04-10"
+def test_attachment_dir():
+    match = detect_scope("/INBOX/2026-04-12/Test_Email__msg1")
+    assert match.kind == "attachment_dir"
+    assert match.slots["message_id"] == "msg1"
+
+
+def test_attachment_file():
+    match = detect_scope("/INBOX/2026-04-12/Test_Email__msg1/report.pdf")
+    assert match.kind == "attachment"
+    assert match.slots["message_id"] == "msg1"
+    assert match.slots["filename"] == "report.pdf"
+    assert "attachment" not in NATIVE_KINDS
+
+
+def test_bare_name_at_message_depth_is_invalid():
+    # Without the `__id` half the segment can be neither a message file
+    # nor an attachment dir.
+    assert detect_scope("/INBOX/2026-04-12/loose-file").kind == INVALID
+
+
+def test_deep_unknown_path_is_invalid():
+    assert detect_scope("/INBOX/2026-04-12/A__m1/b/c").kind == INVALID

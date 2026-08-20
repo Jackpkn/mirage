@@ -24,7 +24,7 @@ import { resolveGlobOf } from '../generic_bind/index.ts'
 import { SLACK_IO } from './io.ts'
 import { read as slackRead } from '../../../core/slack/read.ts'
 import { readdir as slackReaddir } from '../../../core/slack/readdir.ts'
-import { detectScope } from '../../../core/slack/scope.ts'
+import { detectScope, NATIVE_KINDS, searchTarget } from '../../../core/slack/scope.ts'
 import { searchFiles, searchMessages } from '../../../core/slack/search.ts'
 import { stat as slackStat } from '../../../core/slack/stat.ts'
 import { IOResult } from '../../../io/types.ts'
@@ -78,27 +78,21 @@ async function grepCommand(
   // the per-message scan; see SEARCH_HONORED above.
   const operand = pushdownOperand(paths, opts.flags, pattern, SEARCH_HONORED)
   if (pattern !== null && operand !== null && fl.asBool('w')) {
-    const scope = detectScope(operand)
-    if (
-      scope.useNative &&
-      scope.target !== 'files' &&
-      (accessor.transport.searchAvailable?.() ?? true)
-    ) {
+    const match = detectScope(operand)
+    if (NATIVE_KINDS.has(match.kind) && (accessor.transport.searchAvailable?.() ?? true)) {
+      const target = searchTarget(match)
       const filePrefix = mountPrefixOf(operand.virtual, operand.resourcePath)
-      const query = buildQuery(pattern, scope)
+      const query = buildQuery(pattern, target)
       const count = SEARCH_MAX_RESULTS
-      // Every scope that reaches here searches messages: the guard above
-      // ruled out the files leaf, and a 'messages' target is a chat.jsonl
-      // leaf, which is not useNative. What is left is the channel, container
-      // and root scopes and the date directory — and those carry files too,
-      // so only the files half stays conditional.
-      const doFiles = scope.target === undefined || scope.target === 'date'
+      // Every kind that reaches here searches messages, and each of them
+      // (the root, the containers, a channel, a date dir) carries files
+      // too, so both halves run.
       try {
         const raw = await searchMessages(accessor, query, count)
-        const nativeLines: string[] = [...formatGrepResults(raw, scope, filePrefix)]
-        if (doFiles) {
+        const nativeLines: string[] = [...formatGrepResults(raw, target, filePrefix)]
+        {
           const rawF = await searchFiles(accessor, query, count)
-          nativeLines.push(...formatFileGrepResults(rawF, scope, filePrefix))
+          nativeLines.push(...formatFileGrepResults(rawF, target, filePrefix))
         }
         if (nativeLines.length === 0) return [new Uint8Array(0), new IOResult({ exitCode: 1 })]
         return [ENC.encode(nativeLines.join('\n') + '\n'), new IOResult()]

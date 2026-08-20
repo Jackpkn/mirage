@@ -12,86 +12,127 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { enoent } from '../../utils/errors.ts'
-import { mountPrefixOf } from '../../utils/key_prefix.ts'
 import type { SlackAccessor } from '../../accessor/slack.ts'
+import type { IndexEntry } from '../../cache/index/config.ts'
 import type { IndexCacheStore } from '../../cache/index/store.ts'
-import type { PathSpec } from '../../types.ts'
+import { PathSpec } from '../../types.ts'
+import { enoent } from '../../utils/errors.ts'
+import { mountKey, mountPrefixOf } from '../../utils/key_prefix.ts'
+import { resolveEntry } from '../hierarchy/probe.ts'
+import { makeRead, makeReadRange } from '../hierarchy/read.ts'
+import type { ScopeMatch } from '../hierarchy/scope.ts'
 import { getHistoryJsonl } from './history.ts'
+import { readdir } from './readdir.ts'
 import { getUserProfile, userJsonBytes } from './users.ts'
-import { stripSlash } from '../../utils/slash.ts'
-import { sliceWindow } from '../../utils/ranges.ts'
+import { detectScope } from './scope.ts'
 
-/**
- * Read a Slack path, optionally only a byte range of it.
- *
- * Only an uploaded file has a remote range to ask for. A channel's history
- * and a user profile are rendered here into JSON, so their bytes do not
- * exist until we make them and the window can only be taken afterwards.
- *
- * Args:
- *   accessor: Slack accessor.
- *   path: the path to read.
- *   index: listing cache, consulted for the entry.
- *   options: `{offset, size}`, the byte window, or absent for the whole file.
- */
-export async function read(
+async function channelEntry(
   accessor: SlackAccessor,
   path: PathSpec,
-  index?: IndexCacheStore,
-  options?: { offset?: number; size?: number },
-): Promise<Uint8Array> {
-  const offset = options?.offset ?? 0
-  const size = options?.size ?? null
+  index: IndexCacheStore | undefined,
+): Promise<IndexEntry | null> {
+  const virtual = path.virtual.replace(/\/+$/, '').split('/').slice(0, -2).join('/')
   const prefix = mountPrefixOf(path.virtual, path.resourcePath)
-  let raw = path.virtual
-  if (prefix !== '' && raw.startsWith(prefix)) {
-    raw = raw.slice(prefix.length) || '/'
-  }
-  const key = stripSlash(raw)
-  const parts = key.split('/')
-  const part0 = parts[0] ?? ''
-  const part1 = parts[1] ?? ''
-  const part2 = parts[2] ?? ''
-  const part3 = parts[3] ?? ''
-
-  if (parts.length === 4 && (part0 === 'channels' || part0 === 'dms') && part3 === 'chat.jsonl') {
-    if (index === undefined) throw enoent(path)
-    const parentKey = `${prefix}/${part0}/${part1}`
-    const lookup = await index.get(parentKey)
-    if (lookup.entry === undefined || lookup.entry === null) {
-      throw enoent(path)
-    }
-    return sliceWindow(await getHistoryJsonl(accessor, lookup.entry.id, part2), offset, size)
-  }
-
-  if (parts.length === 5 && (part0 === 'channels' || part0 === 'dms') && part3 === 'files') {
-    if (index === undefined) throw enoent(path)
-    const virtualKey = `${prefix}/${key}`
-    const lookup = await index.get(virtualKey)
-    if (lookup.entry === undefined || lookup.entry === null) {
-      throw enoent(path)
-    }
-    const url = lookup.entry.extra.url_private_download
-    if (typeof url !== 'string' || url === '') {
-      throw enoent(path)
-    }
-    if (accessor.transport.downloadFile === undefined) {
-      throw new Error('slack: transport does not support file download')
-    }
-    return await accessor.transport.downloadFile(url, offset, size)
-  }
-
-  if (parts.length === 2 && part0 === 'users') {
-    if (index === undefined) throw enoent(path)
-    const virtualKey = `${prefix}/${key}`
-    const lookup = await index.get(virtualKey)
-    if (lookup.entry === undefined || lookup.entry === null) {
-      throw enoent(path)
-    }
-    const user = await getUserProfile(accessor, lookup.entry.id)
-    return sliceWindow(userJsonBytes(user), offset, size)
-  }
-
-  throw enoent(path)
+  const spec = new PathSpec({
+    virtual,
+    directory: virtual,
+    resourcePath: mountKey(virtual, prefix),
+  })
+  return resolveEntry(readdir, accessor, spec, index)
 }
+
+/**
+ * Render one day's history; the channel id comes from the listing.
+ *
+ * The typed `name__id` dirname is only trusted once the listing proves it,
+ * so a fabricated channel id is ENOENT rather than a raw API error.
+ */
+async function readChat(
+  accessor: SlackAccessor,
+  match: ScopeMatch,
+  path: PathSpec,
+  index?: IndexCacheStore,
+): Promise<Uint8Array> {
+  const entry = await resolveEntry(readdir, accessor, path, index)
+  let channelId: string
+  if (entry !== null) {
+    channelId = entry.id.split(':', 1)[0] ?? ''
+  } else {
+    // A sealed day lists nothing but the file still reads through the
+    // channel, reproducing the API's own answer for the fetch.
+    const channel = await channelEntry(accessor, path, index)
+    if (channel === null) throw enoent(path)
+    channelId = channel.id
+  }
+  return getHistoryJsonl(accessor, channelId, match.slots.day ?? '')
+}
+
+async function readUser(
+  accessor: SlackAccessor,
+  _match: ScopeMatch,
+  path: PathSpec,
+  index?: IndexCacheStore,
+): Promise<Uint8Array> {
+  const entry = await resolveEntry(readdir, accessor, path, index)
+  if (entry === null) throw enoent(path)
+  const user = await getUserProfile(accessor, entry.id)
+  return userJsonBytes(user)
+}
+
+async function blobUrl(
+  accessor: SlackAccessor,
+  path: PathSpec,
+  index: IndexCacheStore | undefined,
+): Promise<string> {
+  const entry = await resolveEntry(readdir, accessor, path, index)
+  if (entry === null) throw enoent(path)
+  const url =
+    typeof entry.extra.url_private_download === 'string' ? entry.extra.url_private_download : ''
+  if (url === '') throw enoent(path)
+  return url
+}
+
+async function downloadBlob(
+  accessor: SlackAccessor,
+  url: string,
+  offset: number,
+  size: number | null,
+): Promise<Uint8Array> {
+  if (accessor.transport.downloadFile === undefined) {
+    throw new Error('slack transport does not support file downloads')
+  }
+  return accessor.transport.downloadFile(url, offset, size)
+}
+
+async function readBlob(
+  accessor: SlackAccessor,
+  _match: ScopeMatch,
+  path: PathSpec,
+  index?: IndexCacheStore,
+): Promise<Uint8Array> {
+  return downloadBlob(accessor, await blobUrl(accessor, path, index), 0, null)
+}
+
+async function readBlobRange(
+  accessor: SlackAccessor,
+  _match: ScopeMatch,
+  path: PathSpec,
+  index: IndexCacheStore | undefined,
+  offset: number,
+  size: number | null,
+): Promise<Uint8Array> {
+  return downloadBlob(accessor, await blobUrl(accessor, path, index), offset, size)
+}
+
+export const read = makeRead<SlackAccessor>(detectScope, {
+  messages: readChat,
+  user: readUser,
+  file_blob: readBlob,
+})
+
+// Only an uploaded file has a remote range to ask for. A channel's history
+// and a user profile are rendered here into JSON, so their bytes do not
+// exist until we make them and the window can only be taken afterwards.
+export const readRange = makeReadRange<SlackAccessor>(detectScope, read, {
+  file_blob: readBlobRange,
+})
