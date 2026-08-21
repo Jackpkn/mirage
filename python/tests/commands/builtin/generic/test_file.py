@@ -1,7 +1,7 @@
 import pytest
 
 from mirage.commands.builtin.generic.file import file_cmd
-from mirage.types import FileStat, FileType, PathSpec
+from mirage.types import ContentType, FileStat, FileType, PathSpec
 
 
 def _spec(path: str) -> PathSpec:
@@ -10,14 +10,17 @@ def _spec(path: str) -> PathSpec:
                     resource_path=path.strip("/"))
 
 
-def _make_backend(files: dict[str, tuple[bytes, FileType]], dirs: set[str]):
+def _make_backend(files: dict[str, tuple[bytes, ContentType]], dirs: set[str]):
 
     async def stat_fn(p: PathSpec) -> FileStat:
         if p.virtual in dirs:
             return FileStat(name=p.virtual, type=FileType.DIRECTORY, size=0)
         if p.virtual in files:
             data, ftype = files[p.virtual]
-            return FileStat(name=p.virtual, type=ftype, size=len(data))
+            return FileStat(name=p.virtual,
+                            type=FileType.FILE,
+                            content=ftype,
+                            size=len(data))
         raise FileNotFoundError(p.virtual)
 
     async def read_bytes(p: PathSpec) -> bytes:
@@ -29,7 +32,7 @@ def _make_backend(files: dict[str, tuple[bytes, FileType]], dirs: set[str]):
 @pytest.mark.asyncio
 async def test_file_single_text():
     stat_fn, read_bytes = _make_backend(
-        {"/a.txt": (b"hello world\n", FileType.TEXT)}, set())
+        {"/a.txt": (b"hello world\n", ContentType.TEXT)}, set())
     out, io = await file_cmd([_spec("/a.txt")],
                              read_bytes=read_bytes,
                              stat_fn=stat_fn)
@@ -41,8 +44,8 @@ async def test_file_single_text():
 async def test_file_multiple_paths_one_line_each():
     stat_fn, read_bytes = _make_backend(
         {
-            "/a.txt": (b"hello\n", FileType.TEXT),
-            "/b.json": (b'{"k": 1}\n', FileType.JSON),
+            "/a.txt": (b"hello\n", ContentType.TEXT),
+            "/b.json": (b'{"k": 1}\n', ContentType.JSON),
         }, set())
     out, _io = await file_cmd(
         [_spec("/a.txt"), _spec("/b.json")],
@@ -64,7 +67,7 @@ async def test_file_directory_reported_without_read():
 @pytest.mark.asyncio
 async def test_file_brief_drops_path_prefix():
     stat_fn, read_bytes = _make_backend(
-        {"/a.txt": (b"hello\n", FileType.TEXT)}, set())
+        {"/a.txt": (b"hello\n", ContentType.TEXT)}, set())
     out, _io = await file_cmd([_spec("/a.txt")],
                               read_bytes=read_bytes,
                               stat_fn=stat_fn,

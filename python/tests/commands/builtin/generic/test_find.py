@@ -12,7 +12,8 @@ from mirage.commands.builtin.generic.find import (FindArgs, apply_mount_prefix,
 from mirage.commands.errors import FindParseError
 from mirage.ops.types import LinkView
 from mirage.resource.ram import RAMResource
-from mirage.types import FileStat, FileType, FindType, MountMode, PathSpec
+from mirage.types import (ContentType, FileStat, FileType, FindType, MountMode,
+                          PathSpec)
 from mirage.workspace import Workspace
 
 
@@ -124,7 +125,11 @@ async def test_apply_mtime_filter_keeps_within_window():
     iso = now.isoformat()
 
     async def stat(_spec: PathSpec) -> FileStat:
-        return FileStat(name="a.txt", size=1, modified=iso, type=FileType.TEXT)
+        return FileStat(name="a.txt",
+                        size=1,
+                        modified=iso,
+                        type=FileType.FILE,
+                        content=ContentType.TEXT)
 
     out = await apply_mtime_filter(
         ["/a.txt"],
@@ -138,8 +143,11 @@ async def test_apply_mtime_filter_keeps_within_window():
 @pytest.mark.asyncio
 async def test_apply_mtime_filter_stats_the_mounted_virtual_path():
     now = datetime.now(tz=timezone.utc)
-    stat = AsyncMock(return_value=FileStat(
-        name="a.txt", size=1, modified=now.isoformat(), type=FileType.TEXT))
+    stat = AsyncMock(return_value=FileStat(name="a.txt",
+                                           size=1,
+                                           modified=now.isoformat(),
+                                           type=FileType.FILE,
+                                           content=ContentType.TEXT))
 
     out = await apply_mtime_filter(
         ["/a.txt"],
@@ -163,7 +171,8 @@ async def test_apply_mtime_filter_drops_outside_window():
         return FileStat(name="a.txt",
                         size=1,
                         modified=old.isoformat(),
-                        type=FileType.TEXT)
+                        type=FileType.FILE,
+                        content=ContentType.TEXT)
 
     out = await apply_mtime_filter(
         ["/a.txt"],
@@ -181,7 +190,8 @@ async def test_apply_mtime_filter_drops_entries_with_no_modified_time():
         return FileStat(name="a.txt",
                         size=1,
                         modified=None,
-                        type=FileType.TEXT)
+                        type=FileType.FILE,
+                        content=ContentType.TEXT)
 
     out = await apply_mtime_filter(
         ["/a.txt"],
@@ -205,7 +215,8 @@ async def test_apply_mtime_filter_honours_a_reported_utc_offset():
         return FileStat(name="a.txt",
                         size=1,
                         modified=moment.isoformat(),
-                        type=FileType.TEXT)
+                        type=FileType.FILE,
+                        content=ContentType.TEXT)
 
     out = await apply_mtime_filter(
         ["/a.txt"],
@@ -224,7 +235,8 @@ async def test_apply_mtime_filter_drops_a_malformed_timestamp():
         return FileStat(name="a.txt",
                         size=1,
                         modified="not-a-date",
-                        type=FileType.TEXT)
+                        type=FileType.FILE,
+                        content=ContentType.TEXT)
 
     out = await apply_mtime_filter(
         ["/a.txt"],
@@ -338,16 +350,27 @@ async def test_walk_find_empty_matches_empty_files_and_dirs():
 
     async def stat(spec: PathSpec, _index):
         stats = {
-            "/": FileStat(name="/", type=FileType.DIRECTORY),
-            "/empty.txt": FileStat(name="empty.txt",
-                                   size=0,
-                                   type=FileType.TEXT),
-            "/full.txt": FileStat(name="full.txt", size=1, type=FileType.TEXT),
-            "/empty-dir": FileStat(name="empty-dir", type=FileType.DIRECTORY),
-            "/full-dir": FileStat(name="full-dir", type=FileType.DIRECTORY),
-            "/full-dir/a.txt": FileStat(name="a.txt",
-                                        size=1,
-                                        type=FileType.TEXT),
+            "/":
+            FileStat(name="/", type=FileType.DIRECTORY),
+            "/empty.txt":
+            FileStat(name="empty.txt",
+                     size=0,
+                     type=FileType.FILE,
+                     content=ContentType.TEXT),
+            "/full.txt":
+            FileStat(name="full.txt",
+                     size=1,
+                     type=FileType.FILE,
+                     content=ContentType.TEXT),
+            "/empty-dir":
+            FileStat(name="empty-dir", type=FileType.DIRECTORY),
+            "/full-dir":
+            FileStat(name="full-dir", type=FileType.DIRECTORY),
+            "/full-dir/a.txt":
+            FileStat(name="a.txt",
+                     size=1,
+                     type=FileType.FILE,
+                     content=ContentType.TEXT),
         }
         return stats[spec.virtual]
 
@@ -368,7 +391,8 @@ async def test_walk_find_not_negates_predicate():
             return FileStat(name="/", type=FileType.DIRECTORY)
         return FileStat(name=spec.virtual.rsplit("/", 1)[-1],
                         size=1,
-                        type=FileType.TEXT)
+                        type=FileType.FILE,
+                        content=ContentType.TEXT)
 
     results = await walk_find(_root_spec(),
                               readdir=readdir,
@@ -526,8 +550,11 @@ async def test_find_file_start_point_is_reported_not_walked():
         [_file_spec()],
         (),
         find_core=_unreached_core,
-        stat_path=_stat_path(FileStat(name="a.txt", size=6,
-                                      type=FileType.TEXT)),
+        stat_path=_stat_path(
+            FileStat(name="a.txt",
+                     size=6,
+                     type=FileType.FILE,
+                     content=ContentType.TEXT)),
     )
     assert io.exit_code == 0
     assert stdout == b"/mnt/a.txt\n"
@@ -535,7 +562,10 @@ async def test_find_file_start_point_is_reported_not_walked():
 
 @pytest.mark.asyncio
 async def test_find_file_start_point_type_filters():
-    start = FileStat(name="a.txt", size=6, type=FileType.TEXT)
+    start = FileStat(name="a.txt",
+                     size=6,
+                     type=FileType.FILE,
+                     content=ContentType.TEXT)
     for ftype, expected in (("f", b"/mnt/a.txt\n"), ("d", b""), ("l", b"")):
         stdout, io = await find([_file_spec()], ("-type", ftype),
                                 find_core=_unreached_core,
@@ -546,7 +576,10 @@ async def test_find_file_start_point_type_filters():
 
 @pytest.mark.asyncio
 async def test_find_file_start_point_depth_and_size():
-    start = FileStat(name="a.txt", size=6, type=FileType.TEXT)
+    start = FileStat(name="a.txt",
+                     size=6,
+                     type=FileType.FILE,
+                     content=ContentType.TEXT)
     cases = [
         ({
             "maxdepth": "0"
@@ -603,8 +636,11 @@ async def test_find_file_start_point_respells_the_operand():
         [spec],
         (),
         find_core=_unreached_core,
-        stat_path=_stat_path(FileStat(name="a.txt", size=6,
-                                      type=FileType.TEXT)),
+        stat_path=_stat_path(
+            FileStat(name="a.txt",
+                     size=6,
+                     type=FileType.FILE,
+                     content=ContentType.TEXT)),
     )
     assert stdout == b"/other/link.txt\n"
 
@@ -867,7 +903,10 @@ def _stat_map(stats: dict[str, FileStat | None]):
 
 
 _DIR_STAT = FileStat(name="d", type=FileType.DIRECTORY)
-_FILE_STAT = FileStat(name="f", size=6, type=FileType.TEXT)
+_FILE_STAT = FileStat(name="f",
+                      size=6,
+                      type=FileType.FILE,
+                      content=ContentType.TEXT)
 
 # GNU findutils 4.10.0, pinned on debian:stable-slim:
 #   find A B           -> A's rows, then B's rows (operand order, never
@@ -973,7 +1012,7 @@ async def test_walk_find_reports_a_directory_it_may_not_open():
         "/": FileType.DIRECTORY,
         "/open": FileType.DIRECTORY,
         "/sealed": FileType.DIRECTORY,
-        "/open/o": FileType.TEXT,
+        "/open/o": FileType.FILE,
     }
 
     async def readdir(spec, index=None):

@@ -18,20 +18,20 @@ from typing import Any, cast
 from agents import Runner, TResponseInputItem
 from openai import AsyncOpenAI
 
-from mirage.types import FileType
+from mirage.types import ContentType
 from mirage.workspace.workspace import Workspace
 
 _VISION_TYPES = {
-    FileType.IMAGE_PNG,
-    FileType.IMAGE_JPEG,
-    FileType.IMAGE_GIF,
+    ContentType.IMAGE_PNG,
+    ContentType.IMAGE_JPEG,
+    ContentType.IMAGE_GIF,
 }
 
 _MIMETYPE_FOR = {
-    FileType.IMAGE_PNG: "image/png",
-    FileType.IMAGE_JPEG: "image/jpeg",
-    FileType.IMAGE_GIF: "image/gif",
-    FileType.PDF: "application/pdf",
+    ContentType.IMAGE_PNG: "image/png",
+    ContentType.IMAGE_JPEG: "image/jpeg",
+    ContentType.IMAGE_GIF: "image/gif",
+    ContentType.PDF: "application/pdf",
 }
 
 
@@ -56,14 +56,14 @@ class MirageRunner:
     async def _block_for_path(self, path: str) -> dict[str, Any]:
         st = await self._ws.ops.stat(path)
         data = await self._ws.ops.read(path)
-        if st.type in _VISION_TYPES:
-            mime = _MIMETYPE_FOR[st.type]
+        if st.content in _VISION_TYPES:
+            mime = _MIMETYPE_FOR[st.content]
             b64 = base64.b64encode(data).decode("ascii")
             return {
                 "type": "input_image",
                 "image_url": f"data:{mime};base64,{b64}",
             }
-        if st.type == FileType.PDF:
+        if st.content == ContentType.PDF:
             if self._client is None:
                 self._client = AsyncOpenAI()
             filename = path.rsplit("/", 1)[-1]

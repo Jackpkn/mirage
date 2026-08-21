@@ -14,7 +14,7 @@
 
 import pytest
 
-from mirage.types import FileStat, FileType, PathSpec
+from mirage.types import ContentType, FileStat, FileType, PathSpec
 from mirage.workspace.executor.builtins.dirs import handle_cd
 from mirage.workspace.session import Session
 from mirage.workspace.session.session import vars_from_env
@@ -28,7 +28,9 @@ def dispatcher(dirs=(), files=()):
         if scope.virtual in dirs:
             return FileStat(name=scope.virtual, type=FileType.DIRECTORY), None
         if scope.virtual in files:
-            return FileStat(name=scope.virtual, type=FileType.TEXT), None
+            return FileStat(name=scope.virtual,
+                            type=FileType.FILE,
+                            content=ContentType.TEXT), None
         raise FileNotFoundError(scope.virtual)
 
     return dispatch, seen

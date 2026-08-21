@@ -19,7 +19,7 @@ import pytest
 from mirage.accessor.gmail import GmailAccessor
 from mirage.cache.index import IndexEntry, RAMIndexCacheStore
 from mirage.core.gmail.stat import stat
-from mirage.types import FileType, PathSpec
+from mirage.types import ContentType, FileType, PathSpec
 from mirage.utils.key_prefix import mount_key
 
 
@@ -131,7 +131,7 @@ async def test_stat_message(accessor, index):
         index,
     )
     assert result.name == "Test_Email__msg1.gmail.json"
-    assert result.type == FileType.JSON
+    assert result.content == ContentType.JSON
     assert result.extra["message_id"] == "msg1"
     # rendered .gmail.json length is unknown until read; the source
     # estimate is surfaced via extra only

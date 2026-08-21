@@ -18,7 +18,7 @@ from mirage.accessor.base import NOOPAccessor
 from mirage.commands.builtin.generic_bind.adapter import (CommandIO, Operation,
                                                           dir_aware_stat,
                                                           dir_aware_stream)
-from mirage.types import FileStat, FileType, PathSpec
+from mirage.types import ContentType, FileStat, FileType, PathSpec
 from mirage.utils.glob_walk import DEFAULT_MAX_GLOB_MATCHES
 
 TREE = {
@@ -94,7 +94,7 @@ def _probe_ops(missing: set[str],
             raise FileNotFoundError(path.virtual)
         if path.virtual in typed:
             return FileStat(name=path.virtual, type=FileType.DIRECTORY)
-        return FileStat(name=path.virtual, size=0)
+        return FileStat(type=FileType.FILE, name=path.virtual, size=0)
 
     async def readdir(_accessor, path, _index):
         target = path.virtual.rstrip("/") or "/"
@@ -241,7 +241,10 @@ async def test_rule_guard_asks_the_bound_gate_and_leaves_stat_alone():
 
     async def stat(accessor, path, index=None):
         calls.append(("stat", path.virtual))
-        return FileStat(name="k", type=FileType.TEXT, size=1)
+        return FileStat(name="k",
+                        type=FileType.FILE,
+                        content=ContentType.TEXT,
+                        size=1)
 
     async def readdir(accessor, path, index=None):
         calls.append(("readdir", path.virtual))

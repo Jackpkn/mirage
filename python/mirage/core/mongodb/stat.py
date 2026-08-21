@@ -22,7 +22,7 @@ from mirage.core.mongodb.client import count_documents, get_indexes, is_view
 from mirage.core.mongodb.readdir import database_guard, entity_guard, readdir
 from mirage.core.mongodb.scope import detect_scope, entity_kind
 from mirage.core.mongodb.types import EntityKind
-from mirage.types import FileStat, FileType, PathSpec
+from mirage.types import ContentType, FileStat, FileType, PathSpec
 
 
 def _database_extra(match: ScopeMatch) -> dict[str, str]:
@@ -80,7 +80,8 @@ async def _documents_stat(accessor: MongoDBAccessor, match: ScopeMatch,
         } for idx in indexes]
     return FileStat(
         name="documents.jsonl",
-        type=FileType.TEXT,
+        type=FileType.FILE,
+        content=ContentType.TEXT,
         extra={
             "database": database,
             "name": name,

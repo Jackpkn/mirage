@@ -19,7 +19,7 @@ from mirage.cache.index import IndexEntry
 from mirage.cache.index.ram import RAMIndexCacheStore
 from mirage.core.trello.stat import stat
 from mirage.resource.trello.config import TrelloConfig
-from mirage.types import FileType, PathSpec
+from mirage.types import ContentType, FileType, PathSpec
 
 
 @pytest.fixture
@@ -107,7 +107,7 @@ async def test_stat_card_json(accessor, index):
             "/lists/Backlog__l1/cards/Fix_login__c1/card.json"),
         index,
     )
-    assert result.type == FileType.JSON
+    assert result.content == ContentType.JSON
     assert result.size == 42
     assert result.extra["card_id"] == "c1"
 
@@ -131,7 +131,7 @@ async def test_stat_comments_jsonl(accessor, index):
             "/lists/Backlog__l1/cards/Fix_login__c1/comments.jsonl"),
         index,
     )
-    assert result.type == FileType.TEXT
+    assert result.content == ContentType.TEXT
     assert result.size is None
 
 

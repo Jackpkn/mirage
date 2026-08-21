@@ -15,7 +15,7 @@
 from mirage.core.hierarchy.codec import Codec
 from mirage.core.hierarchy.scope import Scope, Slot, make_detect_scope
 from mirage.core.jaeger.client import is_trace_id
-from mirage.types import FileType
+from mirage.types import ContentType
 
 OPERATIONS_FILE = "operations.json"
 TOP_LEVEL_DIRS = ["services"]
@@ -33,13 +33,13 @@ SCOPES = (
     Scope(kind="operations",
           segments=("services", Slot("service"), OPERATIONS_FILE),
           leaf=True,
-          filetype=FileType.JSON),
+          filetype=ContentType.JSON),
     Scope(kind="traces", segments=("services", Slot("service"), "traces")),
     Scope(kind="trace",
           segments=("services", Slot("service"), "traces",
                     Slot("trace_id", TRACE_FILE)),
           leaf=True,
-          filetype=FileType.JSON),
+          filetype=ContentType.JSON),
 )
 
 detect_scope = make_detect_scope(SCOPES)

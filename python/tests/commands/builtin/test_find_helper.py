@@ -1,7 +1,7 @@
 from mirage.commands.builtin.find_helper import (expand_printf,
                                                  printf_needs_stat,
                                                  unrespell_raw)
-from mirage.types import FileStat, FileType, PathSpec
+from mirage.types import ContentType, FileStat, FileType, PathSpec
 
 
 def _spec(virtual: str, raw: str | None = None) -> PathSpec:
@@ -12,10 +12,17 @@ def _spec(virtual: str, raw: str | None = None) -> PathSpec:
                     raw_path=raw if raw is not None else virtual)
 
 
-def _stat(size: int = 6, file_type: FileType = FileType.TEXT) -> FileStat:
+def _stat(size: int = 6,
+          file_type: ContentType | FileType = ContentType.TEXT) -> FileStat:
+    if isinstance(file_type, FileType):
+        return FileStat(name="a",
+                        size=size,
+                        type=file_type,
+                        modified="2026-08-16T13:45:30+00:00")
     return FileStat(name="a",
                     size=size,
-                    type=file_type,
+                    type=FileType.FILE,
+                    content=file_type,
                     modified="2026-08-16T13:45:30+00:00")
 
 
@@ -56,7 +63,11 @@ def test_expand_stat_directives():
 def test_expand_reported_mode_over_default():
     warnings: list[str] = []
     search = _spec("/data")
-    st = FileStat(name="a", size=6, type=FileType.TEXT, mode=0o600)
+    st = FileStat(name="a",
+                  size=6,
+                  type=FileType.FILE,
+                  content=ContentType.TEXT,
+                  mode=0o600)
     assert expand_printf("%m %M\n", "/data/a.txt", search, st,
                          warnings) == "600 -rw-------\n"
     d = FileStat(name="sub", size=0, type=FileType.DIRECTORY, mode=0o700)

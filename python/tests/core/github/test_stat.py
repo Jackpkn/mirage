@@ -22,7 +22,7 @@ from mirage.cache.index import IndexEntry
 from mirage.cache.index.ram import RAMIndexCacheStore
 from mirage.core.github.stat import stat
 from mirage.core.github.tree_entry import TreeEntry
-from mirage.types import FileType, PathSpec
+from mirage.types import ContentType, FileType, PathSpec
 
 
 def _index_from_tree(tree: dict[str, TreeEntry]) -> RAMIndexCacheStore:
@@ -79,7 +79,7 @@ async def test_stat_file(tree):
                  directory="/src/main.py"), index)
     assert result.name == "main.py"
     assert result.size == 120
-    assert result.type == FileType.TEXT
+    assert result.content == ContentType.TEXT
     assert result.extra == {"sha": "bbb"}
 
 

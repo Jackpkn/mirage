@@ -15,7 +15,7 @@
 from mirage.core.google.constants import CORPUS
 from mirage.core.gsheets.constants import FILE_NAME
 from mirage.core.hierarchy.scope import Scope, Slot, make_detect_scope
-from mirage.types import FileType
+from mirage.types import ContentType
 
 # One description of the tree: readdir, stat, read and unlink all classify
 # through it, so the file surface and the write surface cannot disagree
@@ -26,7 +26,7 @@ SCOPES = (
           segments=(Slot("corpus",
                          CORPUS), Slot("name", FILE_NAME, id_key="file_id")),
           leaf=True,
-          filetype=FileType.JSON),
+          filetype=ContentType.JSON),
 )
 
 detect_scope = make_detect_scope(SCOPES)

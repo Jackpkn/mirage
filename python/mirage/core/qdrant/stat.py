@@ -24,7 +24,7 @@ from mirage.core.qdrant.query import table_exists
 from mirage.core.qdrant.read import read
 from mirage.core.qdrant.readdir import readdir_for
 from mirage.core.qdrant.scope import detect_for, table_of
-from mirage.types import FileStat, FileType, PathSpec
+from mirage.types import ContentType, FileStat, FileType, PathSpec
 from mirage.utils.errors import enoent
 from mirage.utils.filetype import image_type_for_extension
 
@@ -48,16 +48,20 @@ async def _stat_row(accessor: QdrantAccessor, match: ScopeMatch,
     if match.kind == "row_blob":
         file_type = image_type_for_extension(config.blob_ext)
     else:
-        file_type = FileType.TEXT
+        file_type = ContentType.TEXT
     # The row-dir readdir seeds exact rendered sizes; a cold index falls
     # back to rendering the row, so the size is exact either way.
     lookup = await index.get(path.virtual.rstrip("/"))
     if lookup.entry is not None and lookup.entry.size is not None:
         return FileStat(name=_name_of(path),
                         size=lookup.entry.size,
-                        type=file_type)
+                        type=FileType.FILE,
+                        content=file_type)
     data = await read(accessor, path, index)
-    return FileStat(name=_name_of(path), size=len(data), type=file_type)
+    return FileStat(name=_name_of(path),
+                    size=len(data),
+                    type=FileType.FILE,
+                    content=file_type)
 
 
 GUARDS: dict[str, Guard[QdrantAccessor]] = {"group": _table_guard}

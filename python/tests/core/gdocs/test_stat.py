@@ -20,7 +20,7 @@ from mirage.accessor.gdocs import GDocsAccessor
 from mirage.cache.index import IndexEntry
 from mirage.cache.index.ram import RAMIndexCacheStore
 from mirage.core.gdocs.stat import stat
-from mirage.types import FileType, PathSpec
+from mirage.types import ContentType, FileType, PathSpec
 from mirage.utils.key_prefix import mount_key
 
 
@@ -87,7 +87,7 @@ async def test_stat_doc(accessor, index):
         index,
     )
     assert result.name == "2026-04-01_My_Doc__doc1.gdoc.json"
-    assert result.type == FileType.JSON
+    assert result.content == ContentType.JSON
     assert result.modified == "2026-04-01T00:00:00.000Z"
     assert result.extra["doc_id"] == "doc1"
     assert result.extra["doc_name"] == "My Doc"
@@ -144,7 +144,7 @@ async def test_stat_cache_miss_falls_back_via_readdir(accessor, index):
             PathSpec(resource_path=mount_key(target, "/gdocs"),
                      virtual=target,
                      directory=target), index)
-    assert result.type == FileType.JSON
+    assert result.content == ContentType.JSON
     assert result.extra["doc_id"] == "doc1"
     assert result.size is None
     assert result.extra["source_size"] == 1234

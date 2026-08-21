@@ -4,7 +4,7 @@ import pytest
 
 from mirage.core.dify import stat as core_stat
 from mirage.ops.dify import OPS
-from mirage.types import FileType
+from mirage.types import ContentType
 
 
 def _op(name: str):
@@ -35,6 +35,6 @@ async def test_stat_op_delegates_to_core(monkeypatch, dify_accessor,
     result = await stat(dify_accessor, guide_path, index=dify_index)
 
     assert result.name == "quickstart"
-    assert result.type == FileType.TEXT
+    assert result.content == ContentType.TEXT
     assert result.size is None
     assert result.extra["source_size"] == 12

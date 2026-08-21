@@ -14,13 +14,13 @@
 
 from mirage.core.hierarchy.codec import JSON_NAME
 from mirage.core.hierarchy.scope import Scope, Slot, make_detect_scope
-from mirage.types import FileType
+from mirage.types import ContentType
 
 # The mount is one flat directory of memory files; which memories exist
 # is a function of the configured scope filter, not of the path.
 SCOPES = (Scope(kind="memory",
                 segments=(Slot("memory_id", JSON_NAME), ),
                 leaf=True,
-                filetype=FileType.JSON), )
+                filetype=ContentType.JSON), )
 
 detect_scope = make_detect_scope(SCOPES)

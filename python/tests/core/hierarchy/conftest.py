@@ -19,7 +19,7 @@ from mirage.cache.index import IndexEntry
 from mirage.core.hierarchy.codec import DATE, INT_JSON, JSON_NAME, Codec
 from mirage.core.hierarchy.scope import (Scope, ScopeMatch, Slot,
                                          make_detect_scope)
-from mirage.types import FileType, PathSpec
+from mirage.types import ContentType, PathSpec
 
 SCOPES = (
     Scope(kind="rooms", segments=("rooms", ), probed=False),
@@ -27,18 +27,18 @@ SCOPES = (
     Scope(kind="note",
           segments=("rooms", Slot("room"), Slot("note", JSON_NAME)),
           leaf=True,
-          filetype=FileType.JSON),
+          filetype=ContentType.JSON),
     Scope(kind="room_atts", segments=("rooms", Slot("room"), "atts")),
     Scope(kind="room_day", segments=("rooms", Slot("room"), Slot("day",
                                                                  DATE))),
     Scope(kind="revision",
           segments=("rooms", Slot("room"), "revisions", Slot("rev", INT_JSON)),
           leaf=True,
-          filetype=FileType.JSON),
+          filetype=ContentType.JSON),
     Scope(kind="tagged",
           segments=("tags", Slot("tag", Codec(validate=str.islower))),
           leaf=True,
-          filetype=FileType.TEXT),
+          filetype=ContentType.TEXT),
 )
 
 detect_scope = make_detect_scope(SCOPES)

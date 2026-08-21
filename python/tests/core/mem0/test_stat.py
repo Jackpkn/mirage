@@ -7,7 +7,7 @@ from mirage.core.mem0.read import read
 from mirage.core.mem0.readdir import readdir
 from mirage.core.mem0.stat import stat
 from mirage.resource.mem0.config import Mem0Config
-from mirage.types import FileType, PathSpec
+from mirage.types import ContentType, FileType, PathSpec
 
 
 class FakeClient:
@@ -74,7 +74,7 @@ async def test_stat_memory_from_cache_has_times():
                      directory="/mem",
                      resource_path="aaa.json")
     s = await stat(acc, fpath, index)
-    assert s.type == FileType.JSON
+    assert s.content == ContentType.JSON
     assert s.name == "aaa.json"
     assert s.modified == "2026-06-15T00:34:22-07:00"
     assert s.extra["created_at"] == "2026-06-15T00:34:18-07:00"

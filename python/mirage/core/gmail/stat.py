@@ -19,7 +19,7 @@ from mirage.core.gmail.scope import detect_scope
 from mirage.core.hierarchy.probe import resolve_entry
 from mirage.core.hierarchy.scope import ScopeMatch
 from mirage.core.hierarchy.stat import make_stat
-from mirage.types import FileStat, FileType, PathSpec
+from mirage.types import ContentType, FileStat, FileType, PathSpec
 from mirage.utils.errors import enoent
 from mirage.utils.filetype import guess_type
 from mirage.utils.key_prefix import mount_key, mount_prefix_of
@@ -38,7 +38,8 @@ def _message_stat(match: ScopeMatch, path: PathSpec,
                   entry: IndexEntry) -> FileStat:
     return FileStat(
         name=entry.vfs_name,
-        type=FileType.JSON,
+        type=FileType.FILE,
+        content=ContentType.JSON,
         size=entry.size,
         extra={
             "message_id": entry.id,
@@ -60,7 +61,8 @@ def _attachment_stat(match: ScopeMatch, path: PathSpec,
                      entry: IndexEntry) -> FileStat:
     return FileStat(
         name=entry.vfs_name,
-        type=guess_type(entry.vfs_name),
+        type=FileType.FILE,
+        content=guess_type(entry.vfs_name),
         size=entry.size,
         extra={"attachment_id": entry.id},
     )

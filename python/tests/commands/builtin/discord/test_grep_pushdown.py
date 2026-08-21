@@ -21,7 +21,7 @@ from mirage.commands.builtin.discord.rg import rg
 from mirage.commands.config import CommandOpts
 from mirage.commands.errors import UsageError
 from mirage.io.types import IOResult, materialize
-from mirage.types import FileStat, FileType, PathSpec
+from mirage.types import ContentType, FileStat, FileType, PathSpec
 from mirage.utils.key_prefix import mount_key
 
 
@@ -232,7 +232,8 @@ async def test_discord_grep_falls_back_when_native_raises():
     ), patch(
             "mirage.commands.builtin.discord.grep._stat",
             new=AsyncMock(return_value=FileStat(name="2026-04-10.jsonl",
-                                                type=FileType.TEXT)),
+                                                type=FileType.FILE,
+                                                content=ContentType.TEXT)),
     ):
         out, io = await grep(accessor, paths, ['hello'],
                              CommandOpts(flags={'w': True}))
@@ -297,7 +298,8 @@ async def test_discord_grep_multi_pattern_skips_native_search():
     ), patch(
             "mirage.commands.builtin.discord.grep._stat",
             new=AsyncMock(return_value=FileStat(name="2026-04-10.jsonl",
-                                                type=FileType.TEXT)),
+                                                type=FileType.FILE,
+                                                content=ContentType.TEXT)),
     ):
         _, io = await grep(accessor, paths, [],
                            CommandOpts(flags={
@@ -370,7 +372,8 @@ async def test_discord_rg_multi_pattern_skips_native_search():
     ), patch(
             "mirage.commands.builtin.discord.rg._stat",
             new=AsyncMock(return_value=FileStat(name="2026-04-10.jsonl",
-                                                type=FileType.TEXT)),
+                                                type=FileType.FILE,
+                                                content=ContentType.TEXT)),
     ):
         _, io = await rg(accessor, paths, [],
                          CommandOpts(flags={
@@ -424,8 +427,9 @@ async def test_discord_grep_file_blob_skips_native_search():
             new=AsyncMock(return_value=b"quarter,amount\n"),
     ), patch(
             "mirage.commands.builtin.discord.grep._stat",
-            new=AsyncMock(
-                return_value=FileStat(name="img__A1.png", type=FileType.TEXT)),
+            new=AsyncMock(return_value=FileStat(name="img__A1.png",
+                                                type=FileType.FILE,
+                                                content=ContentType.TEXT)),
     ):
         out, io = await grep(accessor, paths, ['quarter'],
                              CommandOpts(flags={'w': True}))

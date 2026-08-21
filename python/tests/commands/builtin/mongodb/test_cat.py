@@ -24,7 +24,7 @@ from mirage.commands.builtin.generic_bind import CommandIO
 from mirage.commands.builtin.mongodb.cat import cat
 from mirage.commands.config import CommandOpts
 from mirage.resource.mongodb.config import MongoDBConfig
-from mirage.types import FileStat, PathSpec
+from mirage.types import FileStat, FileType, PathSpec
 
 
 @pytest.fixture
@@ -38,7 +38,7 @@ def _path(s: str = "/db1/collections/coll1/documents.jsonl") -> PathSpec:
 
 
 async def _fake_stat(_accessor, path, index=None):
-    return FileStat(name=path.virtual, size=None)
+    return FileStat(type=FileType.FILE, name=path.virtual, size=None)
 
 
 async def _unused(*_args, **_kwargs):

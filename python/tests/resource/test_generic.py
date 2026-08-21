@@ -25,7 +25,7 @@ from mirage.commands.config import command
 from mirage.commands.spec import CommandSpec
 from mirage.io.types import IOResult
 from mirage.resource.generic import GenericResource
-from mirage.types import FileStat, FileType, PathSpec
+from mirage.types import ContentType, FileStat, FileType, PathSpec
 
 PAGES = {
     "guides": {
@@ -85,7 +85,10 @@ async def stat(
     name = path.virtual.rstrip("/").rsplit("/", 1)[-1] or "/"
     if isinstance(node, dict):
         return FileStat(name=name, size=None, type=FileType.DIRECTORY)
-    return FileStat(name=name, size=len(node.encode()), type=FileType.TEXT)
+    return FileStat(name=name,
+                    size=len(node.encode()),
+                    type=FileType.FILE,
+                    content=ContentType.TEXT)
 
 
 @command("wiki_hello", resource="wiki", spec=CommandSpec())

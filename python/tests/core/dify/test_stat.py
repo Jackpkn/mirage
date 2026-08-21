@@ -3,7 +3,7 @@ from types import SimpleNamespace
 import pytest
 
 from mirage.cache.index import RAMIndexCacheStore
-from mirage.types import FileType, PathSpec
+from mirage.types import ContentType, FileType, PathSpec
 from mirage.utils.key_prefix import mount_key
 
 
@@ -62,7 +62,7 @@ async def test_stat_light_uses_index_entry_without_detail_call(monkeypatch):
     item = await stat.stat_light(accessor(), path, index)
 
     assert item.name == "quickstart"
-    assert item.type == FileType.TEXT
+    assert item.content == ContentType.TEXT
     assert item.size is None
     assert item.extra["source_size"] == 123
     assert item.modified == "2024-05-21T09:00:00+00:00"

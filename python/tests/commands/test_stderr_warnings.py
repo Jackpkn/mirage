@@ -19,7 +19,7 @@ import pytest
 from mirage.commands.builtin.grep_helper import compile_pattern, grep_recursive
 from mirage.commands.builtin.rg_helper import rg_full
 from mirage.resource.ram import RAMResource
-from mirage.types import FileStat, FileType, MountMode, PathSpec
+from mirage.types import ContentType, FileStat, FileType, MountMode, PathSpec
 from mirage.workspace import Workspace
 
 
@@ -54,9 +54,17 @@ async def test_grep_helper_collects_warnings_on_unreadable_file():
     readdir = _make_readdir({"/": ["/good.txt", "/bad.txt"]})
     stat_fn = _make_stat({
         "/good.txt":
-        FileStat(name="good.txt", size=12, modified=None, type=FileType.TEXT),
+        FileStat(name="good.txt",
+                 size=12,
+                 modified=None,
+                 type=FileType.FILE,
+                 content=ContentType.TEXT),
         "/bad.txt":
-        FileStat(name="bad.txt", size=10, modified=None, type=FileType.TEXT),
+        FileStat(name="bad.txt",
+                 size=10,
+                 modified=None,
+                 type=FileType.FILE,
+                 content=ContentType.TEXT),
     })
 
     async def async_readdir(path):
@@ -132,9 +140,17 @@ async def test_rg_helper_collects_warnings_on_unreadable_file():
     readdir = _make_readdir({"/": ["/good.py", "/bad.py"]})
     stat_fn = _make_stat({
         "/good.py":
-        FileStat(name="good.py", size=12, modified=None, type=FileType.TEXT),
+        FileStat(name="good.py",
+                 size=12,
+                 modified=None,
+                 type=FileType.FILE,
+                 content=ContentType.TEXT),
         "/bad.py":
-        FileStat(name="bad.py", size=10, modified=None, type=FileType.TEXT),
+        FileStat(name="bad.py",
+                 size=10,
+                 modified=None,
+                 type=FileType.FILE,
+                 content=ContentType.TEXT),
     })
 
     async def async_readdir(path):

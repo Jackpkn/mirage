@@ -12,11 +12,14 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from mirage.types import FileStat
+from mirage.types import FileStat, FileType
 from mirage.workspace.mount.namespace.namespace import NodeMeta
 from mirage.workspace.mount.namespace.overlay import merge_overlay_stat
 
-BASE = FileStat(name="f.txt", size=3, modified="2026-01-01T00:00:00Z")
+BASE = FileStat(type=FileType.FILE,
+                name="f.txt",
+                size=3,
+                modified="2026-01-01T00:00:00Z")
 
 
 def test_none_meta_returns_stat_unchanged():
@@ -57,13 +60,13 @@ def test_observed_mtime_defers_to_backend():
 
 def test_observed_mtime_fills_missing_backend_mtime():
     meta = NodeMeta(observed_mtime=1767312000.0)
-    bare = FileStat(name="f.txt", size=3)
+    bare = FileStat(type=FileType.FILE, name="f.txt", size=3)
     merged = merge_overlay_stat(meta, bare)
     assert merged.modified == "2026-01-02T00:00:00Z"
 
 
 def test_explicit_mtime_beats_observed():
     meta = NodeMeta(mtime=1767312000.0, observed_mtime=1767398400.0)
-    bare = FileStat(name="f.txt", size=3)
+    bare = FileStat(type=FileType.FILE, name="f.txt", size=3)
     merged = merge_overlay_stat(meta, bare)
     assert merged.modified == "2026-01-02T00:00:00Z"

@@ -5,7 +5,8 @@ import pytest
 from mirage.commands.builtin.generic.archive import walk as aw
 from mirage.commands.builtin.generic.archive.types import Walked
 from mirage.ops.types import LinkView, MountView
-from mirage.types import LINK_TARGET_KEY, FileStat, FileType, PathSpec
+from mirage.types import (LINK_TARGET_KEY, ContentType, FileStat, FileType,
+                          PathSpec)
 from mirage.utils.key_prefix import mount_key
 from mirage.utils.path import CycleError
 
@@ -29,7 +30,8 @@ class _Tree:
             return FileStat(name=key, type=FileType.DIRECTORY)
         if key in self.files:
             return FileStat(name=key,
-                            type=FileType.TEXT,
+                            type=FileType.FILE,
+                            content=ContentType.TEXT,
                             size=len(self.files[key]))
         raise FileNotFoundError(key)
 

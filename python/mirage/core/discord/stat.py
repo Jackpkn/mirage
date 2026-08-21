@@ -20,7 +20,7 @@ from mirage.core.discord.scope import detect_scope
 from mirage.core.hierarchy.probe import resolve_entry
 from mirage.core.hierarchy.scope import ScopeMatch
 from mirage.core.hierarchy.stat import entry_stat, make_stat
-from mirage.types import FileStat, FileType, PathSpec
+from mirage.types import ContentType, FileStat, FileType, PathSpec
 from mirage.utils.errors import enoent
 from mirage.utils.filetype import filetype_from_mimetype
 from mirage.utils.key_prefix import mount_key, mount_prefix_of
@@ -56,7 +56,8 @@ def _file_blob_stat(match: ScopeMatch, path: PathSpec,
     return FileStat(
         name=entry.vfs_name or entry.name,
         size=entry.size,
-        type=filetype_from_mimetype(mimetype),
+        type=FileType.FILE,
+        content=filetype_from_mimetype(mimetype),
         extra={
             "content_type": mimetype,
             "attachment_id": entry.id,
@@ -123,9 +124,15 @@ async def _stat_chat(accessor: DiscordAccessor, match: ScopeMatch,
     """
     entry = await resolve_entry(readdir, accessor, path, index)
     if entry is not None:
-        return FileStat(name="chat.jsonl", type=FileType.TEXT, size=entry.size)
+        return FileStat(name="chat.jsonl",
+                        type=FileType.FILE,
+                        content=ContentType.TEXT,
+                        size=entry.size)
     await _channel_proven(accessor, path, index, up=2)
-    return FileStat(name="chat.jsonl", type=FileType.TEXT, size=None)
+    return FileStat(name="chat.jsonl",
+                    type=FileType.FILE,
+                    content=ContentType.TEXT,
+                    size=None)
 
 
 stat = make_stat(
@@ -136,7 +143,7 @@ stat = make_stat(
         "channels_dir": _dir_stat,
         "members_dir": _dir_stat,
         "channel": _channel_stat,
-        "member": entry_stat("user_id", FileType.JSON),
+        "member": entry_stat("user_id", ContentType.JSON),
         "files": _dir_stat,
         "file_blob": _file_blob_stat,
     },

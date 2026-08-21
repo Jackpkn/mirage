@@ -26,7 +26,7 @@ from mirage.core.discord.entry import (channel_dirname, channel_entry,
 from mirage.fuse.fs import MirageFS
 from mirage.ops import Ops
 from mirage.resource.discord import DiscordConfig, DiscordResource
-from mirage.types import FileType, MountMode
+from mirage.types import ContentType, FileType, MountMode
 
 GUILD_PAYLOAD = {"id": "G1", "name": "TestGuild"}
 CHANNEL_PAYLOAD = {"id": "C1", "name": "general", "type": 0}
@@ -151,7 +151,7 @@ def test_ops_stat_channel(ops):
 
 def test_ops_stat_file(ops):
     s = _run(ops.stat(f"{PREFIX}/{FILE_PATH}"))
-    assert s.type == FileType.TEXT
+    assert s.content == ContentType.TEXT
     assert s.name == FILE
 
 

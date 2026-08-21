@@ -3,7 +3,7 @@ from dataclasses import dataclass
 import pytest
 
 from mirage.core.generic.find import make_search_backed_find, relative_depth
-from mirage.types import FileStat, PathSpec
+from mirage.types import FileStat, FileType, PathSpec
 
 KEYS = ["/", "/guides", "/guides/quickstart", "/api", "/api/reference"]
 
@@ -37,7 +37,8 @@ class Ops:
 
     async def stat(self, accessor, spec, index):
         self.stat_calls += 1
-        return FileStat(name=spec.mount_path.rsplit("/", 1)[-1],
+        return FileStat(type=FileType.FILE,
+                        name=spec.mount_path.rsplit("/", 1)[-1],
                         size=SIZES.get(spec.mount_path))
 
 

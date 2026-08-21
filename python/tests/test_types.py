@@ -15,19 +15,19 @@
 import pytest
 from pydantic import ValidationError
 
-from mirage.types import (Aggr, FileStat, Limit, MountMode, OnExceed, PathSpec,
-                          parse_mount_mode, word_text)
+from mirage.types import (Aggr, FileStat, FileType, Limit, MountMode, OnExceed,
+                          PathSpec, parse_mount_mode, word_text)
 
 
 def test_filestat_defaults():
-    fs = FileStat(name="foo.txt")
+    fs = FileStat(type=FileType.FILE, name="foo.txt")
     assert fs.name == "foo.txt"
     assert fs.size is None
     assert fs.extra == {}
 
 
 def test_filestat_immutable():
-    fs = FileStat(name="foo.txt")
+    fs = FileStat(type=FileType.FILE, name="foo.txt")
     with pytest.raises(ValidationError):
         fs.name = "bar.txt"
 
