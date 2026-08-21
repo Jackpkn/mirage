@@ -15,7 +15,7 @@
 from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Any, ClassVar, Literal, Protocol
+from typing import Any, ClassVar, Protocol
 
 from mirage.types import Limit, PathSpec, Producer
 
@@ -203,75 +203,6 @@ class Ask:
 # Limit.aggr). Each hook accepts a fixed set of kinds (VALIDITY),
 # enforced loud.
 Action = Deny | Limit | Ask
-
-# The host's answer to an approval request. ``allow_once`` admits the
-# exact line one time, ``allow_session`` admits every line the rule
-# covers for the rest of the session, ``deny`` refuses the retry with
-# the ask's reason in the deny voice.
-ApprovalDecision = Literal["allow_once", "allow_session", "deny"]
-
-# How far a host grant reaches through ``Approvals.grant``: ``once`` is
-# ``allow_once``, ``session`` is ``allow_session``.
-GrantScope = Literal["once", "session"]
-
-
-@dataclass(frozen=True, slots=True)
-class Grant:
-    """The host's standing answer to an asked line, held on the session
-    until the run it answers.
-
-    ``allow_once`` and ``deny`` answer one retry of the exact line (the
-    expanded words and the cwd of the request) and are consumed by it;
-    ``allow_session`` answers every line the rule covers for the rest
-    of the session and stays. Session state like functions and cwd:
-    persisted with the session record, read through the session
-    manager so a fork or a background copy shares it, never inherited
-    by another session. Consulted only after the deny rules, so a grant
-    never re-opens a deny.
-
-    Args:
-        decision (ApprovalDecision): the host's answer.
-        rule (CommandRule): the rule the answer is for; for a coded Ask
-            the door synthesizes one over the program that asked.
-        argv (tuple[str, ...]): the line as expanded, command name
-            first, for the exact-line decisions.
-        cwd (str): the working directory of the request.
-    """
-
-    decision: ApprovalDecision
-    rule: CommandRule
-    argv: tuple[str, ...]
-    cwd: str
-
-
-@dataclass(frozen=True, slots=True)
-class ApprovalRequest:
-    """One asked line, as the approver sees it.
-
-    Args:
-        id (str): stable for the exact line in the session (a digest
-            of session, cwd and words), so a retry asks the same
-            question and the host answers it once.
-        session_id (str): the session running the line.
-        agent_id (str): the agent the workspace attributes the line to.
-        command (str): the command name.
-        argv (tuple[str, ...]): the words after the name, as expanded.
-        cwd (str): the session working directory.
-        paths (tuple[str, ...]): the virtual paths the line names.
-        reason (str): the ask's reason.
-        rule (CommandRule): the rule that asked, synthesized for a
-            coded Ask.
-    """
-
-    id: str
-    session_id: str
-    agent_id: str
-    command: str
-    argv: tuple[str, ...]
-    cwd: str
-    paths: tuple[str, ...]
-    reason: str
-    rule: CommandRule
 
 
 class Scope(StrEnum):

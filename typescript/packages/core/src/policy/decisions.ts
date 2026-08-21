@@ -79,9 +79,7 @@ function sameRule(a: CommandRule, b: CommandRule): boolean {
 
 function sameLine(record: Decision, argv: readonly string[], cwd: string): boolean {
   const words = [record.command, ...record.argv]
-  return (
-    record.cwd === cwd && words.length === argv.length && words.every((w, i) => w === argv[i])
-  )
+  return record.cwd === cwd && words.length === argv.length && words.every((w, i) => w === argv[i])
 }
 
 /**
@@ -268,7 +266,7 @@ export class Decisions {
     }
     if (this.onAsk === null) return { kind: 'pending', id: record.id, reason: rule.reason }
     const answered = await this.onAsk(record)
-    if (answered === null || answered.outcome === null) {
+    if (answered?.outcome == null) {
       return { kind: 'pending', id: record.id, reason: rule.reason }
     }
     await this.answer(record.id, answered.outcome, answered.scope, answered.note)

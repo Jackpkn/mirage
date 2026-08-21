@@ -36,14 +36,12 @@ describe('checkRules', () => {
     // The whole point of the check: `rm` reads as guarded in the
     // document and is not guarded at all, because it was never
     // installed, so nothing ever reaches the rule.
-    expect(() =>
-      checkRules(rules({ allow: ['ls', 'cat'], deny: [rule({ reason: 'no', commands: ['rm'] })] })),
-    ).toThrow(/never installs/)
-    expect(() =>
-      checkRules(
-        rules({ allow: ['ls'], ask: [rule({ reason: 'sign-off', commands: ['rm'] })] }),
-      ),
-    ).toThrow(/never installs/)
+    expect(() => {
+      checkRules(rules({ allow: ['ls', 'cat'], deny: [rule({ reason: 'no', commands: ['rm'] })] }))
+    }).toThrow(/never installs/)
+    expect(() => {
+      checkRules(rules({ allow: ['ls'], ask: [rule({ reason: 'sign-off', commands: ['rm'] })] }))
+    }).toThrow(/never installs/)
   })
 
   it('passes a rule on an installed builtin', () => {
@@ -59,32 +57,32 @@ describe('checkRules', () => {
   })
 
   it('refuses an ask an outranking deny covers', () => {
-    expect(() =>
+    expect(() => {
       checkRules(
         rules({
           ask: [rule({ reason: 'sign-off', commands: ['rm'] })],
           deny: [rule({ reason: 'no', commands: ['rm'] })],
         }),
-      ),
-    ).toThrow(/can never fire/)
+      )
+    }).toThrow(/can never fire/)
     // A shorter deny pattern covers a longer ask.
-    expect(() =>
+    expect(() => {
       checkRules(
         rules({
           ask: [rule({ reason: 'sign-off', commands: ['git push'] })],
           deny: [rule({ reason: 'no', commands: ['git'] })],
         }),
-      ),
-    ).toThrow(/can never fire/)
+      )
+    }).toThrow(/can never fire/)
     // A deny naming no commands refuses everything.
-    expect(() =>
+    expect(() => {
       checkRules(
         rules({
           ask: [rule({ reason: 'sign-off', commands: ['rm'] })],
           deny: [rule({ reason: 'no' })],
         }),
-      ),
-    ).toThrow(/can never fire/)
+      )
+    }).toThrow(/can never fire/)
   })
 
   it('allows a deny that leaves the ask work', () => {
@@ -119,16 +117,15 @@ describe('checkRules', () => {
         deny: [rule({ reason: 'no', commands: ['rm'], mount: '/repo' })],
       }),
     )
-    expect(() =>
+    expect(() => {
       checkRules(
         rules({
           ask: [rule({ reason: 'sign-off', commands: ['rm'], mount: '/repo' })],
           deny: [rule({ reason: 'no', commands: ['rm'], mount: '/repo' })],
         }),
-      ),
-    ).toThrow(/can never fire/)
+      )
+    }).toThrow(/can never fire/)
   })
-
 
   it('leaves a deny at a different anchor to the run', () => {
     // A top-level deny does shadow a mount-scoped ask on the same
@@ -145,14 +142,14 @@ describe('checkRules', () => {
   })
 
   it('reads a wildcard token in a deny as covering whatever the ask names', () => {
-    expect(() =>
+    expect(() => {
       checkRules(
         rules({
           ask: [rule({ reason: 'sign-off', commands: ['git push'] })],
           deny: [rule({ reason: 'no', commands: ['git *'] })],
         }),
-      ),
-    ).toThrow(/can never fire/)
+      )
+    }).toThrow(/can never fire/)
   })
 
   it('passes when there is nothing to check', () => {
@@ -165,9 +162,9 @@ describe('checkCliVerbs', () => {
   const verbs = new Map<string, ReadonlySet<string>>([['git', new Set(['status', 'push'])]])
 
   it('refuses a rule naming a verb its CLI does not have', () => {
-    expect(() =>
-      checkCliVerbs(rules({ deny: [rule({ reason: 'no', commands: ['git shove'] })] }), verbs),
-    ).toThrow(/no verb for/)
+    expect(() => {
+      checkCliVerbs(rules({ deny: [rule({ reason: 'no', commands: ['git shove'] })] }), verbs)
+    }).toThrow(/no verb for/)
   })
 
   it('passes a known verb, a wildcard, an unclaimed head word and a bare name', () => {

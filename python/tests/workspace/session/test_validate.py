@@ -16,11 +16,10 @@ import pytest
 
 from mirage import Workspace
 from mirage.commands.cli.types import CLISpec
-from mirage.resource.ram import RAMResource
-from mirage.types import MountMode
-
 from mirage.policy.errors import PolicyError
 from mirage.policy.types import AdmissionRules, CommandRule
+from mirage.resource.ram import RAMResource
+from mirage.types import MountMode
 from mirage.workspace.session.validate import check_cli_verbs, check_rules
 
 
@@ -39,8 +38,7 @@ def test_a_rule_on_a_builtin_the_allow_list_omits_is_refused():
     with pytest.raises(PolicyError, match="never installs"):
         check_rules(
             _rules(allow=("ls", ),
-                   ask=(CommandRule(reason="sign-off",
-                                    commands=("rm", )), )))
+                   ask=(CommandRule(reason="sign-off", commands=("rm", )), )))
 
 
 def test_a_rule_on_an_installed_builtin_passes():
@@ -106,8 +104,7 @@ def test_a_mount_scoped_deny_does_not_kill_a_rule_outside_it():
     # ask still has work everywhere else.
     check_rules(
         _rules(ask=(CommandRule(reason="sign-off", commands=("rm", )), ),
-               deny=(CommandRule(reason="no",
-                                 commands=("rm", ),
+               deny=(CommandRule(reason="no", commands=("rm", ),
                                  mount="/repo"), )))
     # Written under the same mount, it does kill it.
     with pytest.raises(PolicyError, match="can never fire"):
@@ -151,8 +148,9 @@ def test_a_rule_naming_a_verb_its_cli_does_not_have_is_refused():
     verbs = {"git": frozenset({"status", "push"})}
     with pytest.raises(PolicyError, match="no verb for"):
         check_cli_verbs(
-            _rules(deny=(CommandRule(reason="no",
-                                     commands=("git shove", )), )), verbs)
+            _rules(
+                deny=(CommandRule(reason="no", commands=("git shove", )), )),
+            verbs)
     # A verb it does have, a wildcard, and a head word no CLI claims all
     # pass: the last may be a command, a function, or a later install.
     check_cli_verbs(
@@ -180,19 +178,28 @@ def test_create_session_reads_the_verbs_of_an_installed_cli():
     # check passed everything.
     ws = Workspace({"/data/": RAMResource()}, mode=MountMode.WRITE)
     try:
-        ws.register_cli("prog",
-                        CLISpec(name="prog",
-                                subcommands=(CLISpec(name="run", fn=_noop), )))
-        doc = {"commands": {"deny": [{
-            "reason": "no",
-            "commands": ["prog walk"],
-        }]}}
+        ws.register_cli(
+            "prog",
+            CLISpec(name="prog", subcommands=(CLISpec(name="run",
+                                                      fn=_noop), )))
+        doc = {
+            "commands": {
+                "deny": [{
+                    "reason": "no",
+                    "commands": ["prog walk"],
+                }]
+            }
+        }
         with pytest.raises(PolicyError, match="no verb for"):
             ws.create_session("bad", permissions=doc)
-        ok = {"commands": {"deny": [{
-            "reason": "no",
-            "commands": ["prog run"],
-        }]}}
+        ok = {
+            "commands": {
+                "deny": [{
+                    "reason": "no",
+                    "commands": ["prog run"],
+                }]
+            }
+        }
         ws.create_session("good", permissions=ok)
     finally:
         pass

@@ -185,6 +185,5 @@ def check_cli_verbs(rules: AdmissionRules | None,
                 if tokens[1] == "*" or tokens[1] in verbs[tokens[0]]:
                     continue
                 raise PolicyError(
-                    UNKNOWN_VERB.format(verb=verb,
-                                        line=pattern,
+                    UNKNOWN_VERB.format(verb=verb, line=pattern,
                                         cli=tokens[0]))

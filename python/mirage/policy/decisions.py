@@ -178,8 +178,8 @@ class Decisions:
                                                outcome=outcome,
                                                scope=scope,
                                                note=note)
-                self._set(key, (*records[:index], answered,
-                                *records[index + 1:]))
+                self._set(key,
+                          (*records[:index], answered, *records[index + 1:]))
                 await self._flush()
                 return
         raise KeyError(decision_id)
@@ -327,13 +327,13 @@ class Decisions:
             if record.scope is Scope.ONCE and covers(record, rule, argv, cwd):
                 return record
         for record in held:
-            if record.scope is Scope.SESSION and covers(record, rule, argv,
-                                                        cwd):
+            if record.scope is Scope.SESSION and covers(
+                    record, rule, argv, cwd):
                 return record
         return None
 
-    async def _spend(self, session_id: str,
-                     spent: tuple[Decision, ...]) -> None:
+    async def _spend(self, session_id: str, spent: tuple[Decision,
+                                                         ...]) -> None:
         """Drop the ONCE answers this line just used up.
 
         Args:
