@@ -15,7 +15,6 @@
 import asyncio
 import json
 import os
-import sys
 
 from dotenv import load_dotenv
 
@@ -51,16 +50,15 @@ async def main():
         },
             mode=MountMode.READ,
     ) as ws:
-        vos = sys.modules["os"]
         print("=== VFS MODE: open() reads from S3 transparently ===\n")
 
         print("--- os.listdir() root ---")
-        root = vos.listdir("/s3")
+        root = os.listdir("/s3")
         for e in root:
             print(f"  {e}")
 
         print("\n--- os.path.isdir() on prefix ---")
-        print(f"  /s3/data: {vos.path.isdir('/s3/data')}")
+        print(f"  /s3/data: {os.path.isdir('/s3/data')}")
 
         print("\n--- open() + read ---")
         with open("/s3/data/example.jsonl") as f:
@@ -71,13 +69,13 @@ async def main():
                 print(f"  [{i}] {json.dumps(rec)[:100]}...")
 
         print("\n--- os.listdir() ---")
-        entries = vos.listdir("/s3/data")
+        entries = os.listdir("/s3/data")
         for e in entries:
             print(f"  {e}")
 
         print("\n--- os.path.exists() ---")
-        print(f"  example.jsonl: {vos.path.exists('/s3/data/example.jsonl')}")
-        print(f"  nonexistent: {vos.path.exists('/s3/data/nope.txt')}")
+        print(f"  example.jsonl: {os.path.exists('/s3/data/example.jsonl')}")
+        print(f"  nonexistent: {os.path.exists('/s3/data/nope.txt')}")
 
         print("\n--- VFS commands ---")
         result = await ws.execute("grep -c mirage /s3/data/example.jsonl")
@@ -87,16 +85,16 @@ async def main():
         print(f"  key_prefix = {deep_config.key_prefix!r}\n")
 
         print("--- os.listdir('/deep') ---")
-        for e in vos.listdir("/deep"):
+        for e in os.listdir("/deep"):
             print(f"  {e}")
 
         print("\n--- os.path.exists / isdir / getsize ---")
         print(f"  /deep/example.jsonl  exists: "
-              f"{vos.path.exists('/deep/example.jsonl')}")
+              f"{os.path.exists('/deep/example.jsonl')}")
         print(f"  /deep/example.json   isdir : "
-              f"{vos.path.isdir('/deep/example.json')}")
+              f"{os.path.isdir('/deep/example.json')}")
         print(f"  /deep/example.json   size  : "
-              f"{vos.path.getsize('/deep/example.json')} bytes")
+              f"{os.path.getsize('/deep/example.json')} bytes")
 
         print("\n--- open() + read first 3 records ---")
         with open("/deep/example.jsonl") as f:

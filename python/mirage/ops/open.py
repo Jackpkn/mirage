@@ -20,6 +20,7 @@ from typing import IO, TypeAlias, cast
 
 from mirage.ops import Ops
 from mirage.ops.file import MirageFile
+from mirage.ops.host_io import in_host_io
 
 OpenPath: TypeAlias = (str | bytes | int | os.PathLike[str]
                        | os.PathLike[bytes])
@@ -47,7 +48,12 @@ class MountedOpen:
         opener: Callable[[str, int], int] | None = None,
     ) -> OpenResult:
         path = os.fspath(file) if isinstance(file, os.PathLike) else file
-        if isinstance(path, str) and self._ops.is_mounted(path):
+        # A backend serving an op is reaching for a physical file, which
+        # on a disk mount rooted at its own prefix is spelled exactly
+        # like the virtual one; routing it would hand the read back to
+        # the backend doing it (see ops/host_io.py).
+        if (isinstance(path, str) and not in_host_io()
+                and self._ops.is_mounted(path)):
             if not closefd:
                 raise ValueError("Cannot use closefd=False with file name")
             if opener is not None:

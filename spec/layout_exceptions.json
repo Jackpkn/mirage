@@ -33,6 +33,7 @@
   "ops": {
    "python_only": {
     "file": "MirageFile: a sync file object over the Ops facade for embedding python code (with open-style usage). An npm consumer holds promises, not file objects, so there is nothing to mirror.",
+    "host_io": "The re-entrancy bypass the two patched doors (ops/open, ops/os_patch) read, so a backend serving an op reaches the host instead of being handed its own physical path back. Nothing to mirror for the same reason os_patch has nothing: node is never monkeypatched.",
     "open": "The open() constructor for MirageFile; same embedding convenience as ops/file.",
     "os_patch": "Patches the host interpreter's builtins.open/os functions onto a workspace, a CPython-only trick with no npm analogue."
    }

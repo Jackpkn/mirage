@@ -15,7 +15,6 @@
 import asyncio
 import json
 import os
-import sys
 
 from dotenv import load_dotenv
 
@@ -36,7 +35,6 @@ resource = SeaweedFSResource(config)
 
 async def main():
     with Workspace({"/seaweedfs/": resource}, mode=MountMode.WRITE) as ws:
-        vos = sys.modules["os"]
         print(f"=== VFS MODE: open() reads SeaweedFS at {config.endpoint_url} "
               f"transparently ===\n")
 
@@ -52,14 +50,14 @@ async def main():
         await ws.ops.write("/seaweedfs/notes.txt", b"hello from seaweedfs\n")
 
         print("--- os.listdir() root ---")
-        for e in vos.listdir("/seaweedfs"):
+        for e in os.listdir("/seaweedfs"):
             print(f"  {e}")
 
         print("\n--- os.path.isdir() on prefix ---")
-        print(f"  /seaweedfs/data: {vos.path.isdir('/seaweedfs/data')}")
+        print(f"  /seaweedfs/data: {os.path.isdir('/seaweedfs/data')}")
 
         print("\n--- os.listdir() data ---")
-        for e in vos.listdir("/seaweedfs/data"):
+        for e in os.listdir("/seaweedfs/data"):
             print(f"  {e}")
 
         print("\n--- open() + read example.jsonl (first 3 lines) ---")
@@ -72,11 +70,11 @@ async def main():
 
         print("\n--- os.path.exists() ---")
         print(f"  example.jsonl: "
-              f"{vos.path.exists('/seaweedfs/data/example.jsonl')}")
-        print(f"  nonexistent: {vos.path.exists('/seaweedfs/data/nope.txt')}")
+              f"{os.path.exists('/seaweedfs/data/example.jsonl')}")
+        print(f"  nonexistent: {os.path.exists('/seaweedfs/data/nope.txt')}")
 
         print("\n--- os.path.getsize() ---")
-        print(f"  notes.txt: {vos.path.getsize('/seaweedfs/notes.txt')} bytes")
+        print(f"  notes.txt: {os.path.getsize('/seaweedfs/notes.txt')} bytes")
 
         print("\n--- VFS commands ---")
         result = await ws.execute("grep -c queue-operation "

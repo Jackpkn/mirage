@@ -16,7 +16,6 @@ import asyncio
 import errno
 import os
 import posixpath
-import stat
 import threading
 import time
 from dataclasses import asdict, dataclass, field
@@ -29,7 +28,7 @@ from mirage.fuse.platform.macos import is_macos_metadata
 from mirage.ops import Ops
 from mirage.runtime.handles import FileTable, merge_writes
 from mirage.types import FileStat, FileType
-from mirage.utils.stat_view import DIR_MODE, FILE_MODE, mtime_ns
+from mirage.utils.stat_view import DIR_MODE, FILE_MODE, LINK_MODE, mtime_ns
 from mirage.workspace.session.session import Session
 
 # How long prefetched bytes for size-unknown files outlive their handle, so a
@@ -242,7 +241,7 @@ class MountCore:
 
     def link_stat(self, target: str) -> dict[str, Any]:
         entry = self.file_stat(len(target.encode()))
-        entry["st_mode"] = stat.S_IFLNK | 0o777
+        entry["st_mode"] = LINK_MODE
         return entry
 
     def drain_ops(self) -> list[dict[str, Any]]:

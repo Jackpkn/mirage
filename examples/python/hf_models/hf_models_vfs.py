@@ -15,7 +15,6 @@
 import asyncio
 import json
 import os
-import sys
 
 from dotenv import load_dotenv
 
@@ -33,11 +32,10 @@ resource = HfModelsResource(config)
 
 async def main():
     with Workspace({"/m/": resource}, mode=MountMode.READ) as ws:
-        vos = sys.modules["os"]
         print(f"=== VFS: {resource.accessor.bucket_uri} ===")
 
         print("\n--- os.listdir('/m') ---")
-        root_entries = vos.listdir("/m")
+        root_entries = os.listdir("/m")
         for e in root_entries:
             print(f"  {e}")
 
@@ -54,7 +52,7 @@ async def main():
         if weight_files:
             print("\n--- weights present (sizes only, not downloaded) ---")
             for wf in weight_files[:5]:
-                size = vos.path.getsize(f"/m/{wf}")
+                size = os.path.getsize(f"/m/{wf}")
                 print(f"  {wf}: {size:>12,} bytes")
 
         print("\n--- shell view ---")

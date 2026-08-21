@@ -188,6 +188,21 @@ class TestMirageFile:
                         errors="replace") as f:
             assert f.read() == "caf�"
 
+    def test_the_locale_encoding_sentinel_is_not_a_codec_name(self):
+        # What `pathlib.read_text()` passes on any interpreter that is
+        # not in UTF-8 mode: io.open reads it as "the platform default",
+        # and looking it up as a codec raises LookupError.
+        ops, _ = make_ops_with_dir()
+        _write(ops, "/data/dir/f.txt", "caf\u00e9".encode())
+        with MirageFile(ops, "/data/dir/f.txt", encoding="locale") as f:
+            assert f.read() == "caf\u00e9"
+
+    def test_the_locale_sentinel_writes_the_same_bytes_as_the_default(self):
+        ops, _ = make_ops_with_dir()
+        with MirageFile(ops, "/data/dir/f.txt", "w", encoding="locale") as f:
+            f.write("caf\u00e9")
+        assert _read(ops, "/data/dir/f.txt") == "caf\u00e9".encode()
+
     @pytest.mark.parametrize("argument", ["encoding", "errors", "newline"])
     def test_binary_mode_rejects_text_arguments(self, argument):
         ops, _ = make_ops_with_dir()

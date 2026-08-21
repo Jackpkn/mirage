@@ -30,6 +30,7 @@ from mirage.io.types import ByteSource, IOResult
 from mirage.observe.context import (push_mount_prefix, push_revisions,
                                     reset_revisions, with_mount_prefix,
                                     with_revisions)
+from mirage.ops.host_io import host_io, with_host_io
 from mirage.ops.registry import RegisteredOp
 from mirage.ops.types import NamespaceView, ReaddirPath, SessionView, StatPath
 from mirage.policy import resolve_limit
@@ -76,6 +77,7 @@ def _wrap_cmd_streams(
         wrapped = with_mount_prefix(mount_prefix, source)
         if revisions:
             wrapped = with_revisions(revisions, wrapped)
+        wrapped = with_host_io(wrapped)
         if isinstance(obj, CachableAsyncIterator):
             obj.replace_source(wrapped)
             wrapped = obj
@@ -88,6 +90,25 @@ def _wrap_cmd_streams(
     for k, v in list(io.writes.items()):
         io.writes[k] = _wrap(v)
     return stream, io
+
+
+def _wrap_op_stream(result: Any) -> Any:
+    """Hold the host-I/O bypass around an op result that streams.
+
+    An op that returns an async iterator has not run its body yet: the
+    backend opens the file on the first ``__anext__``, after the frame
+    that called it (and its ``host_io`` scope) is gone. Same reason
+    ``_wrap_cmd_streams`` re-establishes the recorder state.
+
+    Args:
+        result (Any): whatever the op returned.
+    """
+    if isinstance(result, CachableAsyncIterator):
+        result.replace_source(with_host_io(result.source))
+        return result
+    if hasattr(result, "__aiter__"):
+        return with_host_io(result)
+    return result
 
 
 class MountEntry:
@@ -571,9 +592,10 @@ class MountEntry:
                     mount_override=self.command_limits.get(cmd_name))
                 cmd_timeout = (resolved_limit.timeout_seconds
                                if resolved_limit is not None else None)
-                result = await run_with_timeout(
-                    cmd.fn(self.resource.accessor, paths, texts, opts),
-                    cmd_timeout, cmd_name)
+                with host_io():
+                    result = await run_with_timeout(
+                        cmd.fn(self.resource.accessor, paths, texts, opts),
+                        cmd_timeout, cmd_name)
                 if result is not None:
                     stream, io = _wrap_cmd_streams(result, mount_prefix,
                                                    self.revisions or None)
@@ -655,12 +677,19 @@ class MountEntry:
         revs_token = push_revisions(self.revisions or None)
         try:
             for op in levels:
-                result = op.fn(self.resource.accessor, scope, *args, **kwargs)
-                if inspect.isawaitable(result):
-                    result = await run_with_timeout(result, op_timeout,
-                                                    op_name)
+                # The backend's own paths are host paths, so the process
+                # patch (ops/os_patch.py, ops/open.py) must not answer
+                # them: a disk mount rooted at its own virtual prefix
+                # spells the two the same, and routing the physical one
+                # hands the op back to the backend serving it.
+                with host_io():
+                    result = op.fn(self.resource.accessor, scope, *args,
+                                   **kwargs)
+                    if inspect.isawaitable(result):
+                        result = await run_with_timeout(
+                            result, op_timeout, op_name)
                 if result is not None:
-                    return result
+                    return _wrap_op_stream(result)
             return None
         finally:
             reset_revisions(revs_token)

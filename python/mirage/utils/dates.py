@@ -211,6 +211,24 @@ def iso_timestamp(value: str | None) -> float | None:
     return parsed.timestamp()
 
 
+def timestamp_iso(epoch: float | None) -> str | None:
+    """Spell an epoch seconds value the way the setattr op reads times.
+
+    The inverse of ``iso_timestamp``. A guest hands `os.utime` epoch
+    floats and the op takes ISO text, so the conversion lives here
+    rather than in each runtime surface.
+
+    Args:
+        epoch (float | None): seconds since the epoch, or None.
+
+    Returns:
+        str | None: UTC ISO text, or None when there is no time.
+    """
+    if epoch is None:
+        return None
+    return datetime.fromtimestamp(epoch, timezone.utc).isoformat()
+
+
 def in_mtime_window(timestamp: float | None, mtime_min: float | None,
                     mtime_max: float | None) -> bool:
     if mtime_min is None and mtime_max is None:

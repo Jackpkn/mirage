@@ -15,7 +15,6 @@
 import asyncio
 import json
 import os
-import sys
 
 from dotenv import load_dotenv
 
@@ -34,23 +33,22 @@ resource = GmailResource(config=config)
 
 async def main():
     with Workspace({"/gmail/": resource}, mode=MountMode.READ) as ws:
-        vos = sys.modules["os"]
         print("=== VFS MODE ===\n")
 
         print("--- os.listdir() labels ---")
-        labels = vos.listdir("/gmail")
+        labels = os.listdir("/gmail")
         for label in labels:
             print(f"  {label}")
 
         print("\n--- os.listdir() INBOX dates ---")
-        dates = vos.listdir("/gmail/INBOX")
+        dates = os.listdir("/gmail/INBOX")
         for d in dates[:5]:
             print(f"  {d}")
 
         if dates:
             first_date = dates[0]
             print(f"\n--- os.listdir() {first_date} messages ---")
-            messages = vos.listdir(f"/gmail/INBOX/{first_date}")
+            messages = os.listdir(f"/gmail/INBOX/{first_date}")
             for msg in messages[:5]:
                 print(f"  {msg}")
 
@@ -66,7 +64,7 @@ async def main():
                     print(f"  from: {parsed.get('from', 'N/A')}")
 
                 print("\n--- os.path.exists() ---")
-                print(f"  {first}: {vos.path.exists(path)}")
+                print(f"  {first}: {os.path.exists(path)}")
 
         print("\n--- bash history ---")
         with open("/.bash_history") as f:

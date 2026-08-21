@@ -15,7 +15,6 @@
 import asyncio
 import json
 import os
-import sys
 
 from dotenv import load_dotenv
 
@@ -30,16 +29,15 @@ resource = LinearResource(config=config)
 
 async def main():
     with Workspace({"/linear/": resource}, mode=MountMode.READ) as ws:
-        vos = sys.modules["os"]
         print("=== VFS MODE ===\n")
 
         print("--- os.listdir() root ---")
-        entries = vos.listdir("/linear")
+        entries = os.listdir("/linear")
         for e in entries:
             print(f"  {e}")
 
         print("\n--- os.listdir() teams ---")
-        teams = vos.listdir("/linear/teams")
+        teams = os.listdir("/linear/teams")
         for t in teams[:5]:
             print(f"  {t}")
 
@@ -48,7 +46,7 @@ async def main():
             team_path = f"/linear/teams/{team}"
 
             print(f"\n--- os.listdir() {team} ---")
-            contents = vos.listdir(team_path)
+            contents = os.listdir(team_path)
             for c in contents:
                 print(f"  {c}")
 
@@ -59,8 +57,8 @@ async def main():
                 print(f"  key: {data.get('team_key')}")
 
             issues_path = f"{team_path}/issues"
-            if vos.path.isdir(issues_path):
-                issues = vos.listdir(issues_path)
+            if os.path.isdir(issues_path):
+                issues = os.listdir(issues_path)
                 print(f"\n--- os.listdir() issues ({len(issues)}) ---")
                 for i in issues[:5]:
                     print(f"  {i}")

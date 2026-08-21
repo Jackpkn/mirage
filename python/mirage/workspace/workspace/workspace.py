@@ -15,7 +15,7 @@
 import asyncio
 import logging
 from collections.abc import AsyncIterator, Callable, Mapping, Sequence
-from types import ModuleType, TracebackType
+from types import TracebackType
 from typing import Any, Literal, overload
 
 from mirage.bridge.sync import run_async_from_sync
@@ -219,7 +219,8 @@ class Workspace:
         # invented by assignment, so an unpatch without a patch raised
         # AttributeError instead of restoring nothing.
         self._original_open: Callable[..., Any] | None = None
-        self._original_os: ModuleType | None = None
+        self._original_io_open: Callable[..., Any] | None = None
+        self._original_os_names: dict[str, Callable[..., Any]] | None = None
         self._vfs_loop: asyncio.AbstractEventLoop | None = None
 
         self._runtimes, self._policy_router = wire_runtime_world(

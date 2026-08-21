@@ -15,7 +15,6 @@
 import asyncio
 import json
 import os
-import sys
 
 from dotenv import load_dotenv
 
@@ -34,18 +33,17 @@ resource = GSlidesResource(config=config)
 
 async def main() -> None:
     with Workspace({"/gslides/": resource}, mode=MountMode.READ) as ws:
-        vos = sys.modules["os"]
         print(
             "=== VFS MODE: open() reads from Google Slides transparently ===\n"
         )
 
         print("--- os.listdir() root ---")
-        dirs = vos.listdir("/gslides")
+        dirs = os.listdir("/gslides")
         for d in dirs:
             print(f"  {d}")
 
         print("\n--- os.listdir() owned ---")
-        presentations = vos.listdir("/gslides/owned")
+        presentations = os.listdir("/gslides/owned")
         for p in presentations[:5]:
             print(f"  {p}")
 
@@ -63,10 +61,9 @@ async def main() -> None:
                 print(f"  preview: {content[:200]}...")
 
             print("\n--- os.path.exists() ---")
-            print(f"  {first}: {vos.path.exists(path)}")
+            print(f"  {first}: {os.path.exists(path)}")
             print(
-                f"  nonexistent: {vos.path.exists('/gslides/owned/nope.json')}"
-            )
+                f"  nonexistent: {os.path.exists('/gslides/owned/nope.json')}")
 
         print("\n--- bash history ---")
         with open("/.bash_history") as f:

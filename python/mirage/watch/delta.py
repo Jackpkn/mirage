@@ -15,6 +15,7 @@
 import json
 from datetime import datetime, timezone
 
+from mirage.ops.host_io import with_host_io
 from mirage.types import (Delta, FileChangeKind, FileEvent, FileMetadata,
                           PathSpec, WalkEntry, WalkFn)
 from mirage.watch.constants import DIR_FINGERPRINT
@@ -64,7 +65,10 @@ class ListingDeltaHook:
         """
         snapshot: dict[str, str] = {}
         entries: dict[str, WalkEntry] = {}
-        async for entry in self._walk(root):
+        # The walk reads the backend, so its own paths are host paths:
+        # a disk mount rooted at its own prefix spells them like virtual
+        # ones, and the process patch must not answer them (host_io).
+        async for entry in with_host_io(self._walk(root)):
             entries[entry.virtual] = entry
             if entry.is_dir:
                 snapshot[entry.virtual] = DIR_FINGERPRINT

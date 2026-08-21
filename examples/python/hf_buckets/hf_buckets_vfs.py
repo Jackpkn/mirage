@@ -14,7 +14,6 @@
 
 import asyncio
 import os
-import sys
 
 from dotenv import load_dotenv
 
@@ -32,22 +31,21 @@ resource = HfBucketsResource(config)
 
 async def main():
     with Workspace({"/hf/": resource}, mode=MountMode.READ) as ws:
-        vos = sys.modules["os"]
         print("=== VFS: open() reads from HF Bucket transparently ===")
 
         print("\n--- os.listdir('/hf') ---")
-        root_entries = vos.listdir("/hf")
+        root_entries = os.listdir("/hf")
         for e in root_entries:
             print(f"  {e}")
 
         data_dir = "/hf"
-        if "data" in root_entries and vos.path.isdir("/hf/data"):
+        if "data" in root_entries and os.path.isdir("/hf/data"):
             data_dir = "/hf/data"
             print(f"\n--- os.listdir('{data_dir}') ---")
-            for e in vos.listdir(data_dir):
+            for e in os.listdir(data_dir):
                 print(f"  {e}")
 
-        entries = vos.listdir(data_dir)
+        entries = os.listdir(data_dir)
         target = None
         for entry in entries:
             if entry.endswith(".jsonl") or entry.endswith(".json"):

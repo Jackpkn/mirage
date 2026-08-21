@@ -20,8 +20,9 @@ from stat import S_IFDIR, S_IFREG
 import pytest
 
 from mirage.types import FileStat, FileType
-from mirage.utils.stat_view import (DIR_MODE, FILE_MODE, content_size, is_dir,
-                                    mtime_ns)
+from mirage.utils.stat_view import (DIR_MODE, FILE_MODE, LINK_MODE,
+                                    content_size, is_dir, is_link, mtime_ns,
+                                    posix_mode)
 
 NAIVE = "2026-01-02T03:04:05"
 UTC_NS = int(
@@ -95,3 +96,35 @@ def test_known_size_passes_through():
 def test_mode_constants_carry_type_bits():
     assert DIR_MODE == (S_IFDIR | 0o755)
     assert FILE_MODE == (S_IFREG | 0o644)
+
+
+def test_posix_mode_defaults_by_kind():
+    file_st = FileStat(name="f", type=FileType.TEXT)
+    dir_st = FileStat(name="d", type=FileType.DIRECTORY)
+    assert posix_mode(file_st) == FILE_MODE
+    assert posix_mode(dir_st) == DIR_MODE
+
+
+def test_posix_mode_takes_the_overlay_bits_and_keeps_the_kind():
+    st = FileStat(name="d", type=FileType.DIRECTORY, mode=0o700)
+    assert posix_mode(st) == (S_IFDIR | 0o700)
+    st = FileStat(name="f", type=FileType.TEXT, mode=0o600)
+    assert posix_mode(st) == (S_IFREG | 0o600)
+
+
+def test_posix_mode_reports_a_link_as_lrwxrwxrwx():
+    st = FileStat(name="l", type=FileType.SYMLINK)
+    assert posix_mode(st) == LINK_MODE
+    # A chmod -h stores bits the overlay keeps, but no POSIX system
+    # consults the bits on a symlink, so none of them are reported.
+    st = FileStat(name="l", type=FileType.SYMLINK, mode=0o600)
+    assert posix_mode(st) == LINK_MODE
+
+
+def test_is_link_reads_the_kind():
+    assert is_link(FileStat(name="l", type=FileType.SYMLINK)) is True
+    assert is_link(FileStat(name="f", type=FileType.TEXT)) is False
+
+
+def test_link_mode_is_lrwxrwxrwx():
+    assert LINK_MODE == 0o120777

@@ -15,7 +15,6 @@
 import asyncio
 import json
 import os
-import sys
 
 from dotenv import load_dotenv
 
@@ -35,19 +34,18 @@ resource = GCSResource(config)
 
 async def main():
     with Workspace({"/gcs/": resource}, mode=MountMode.READ) as ws:
-        vos = sys.modules["os"]
         print("=== VFS MODE: open() reads from GCS transparently ===\n")
 
         print("--- os.listdir() root ---")
-        root = vos.listdir("/gcs")
+        root = os.listdir("/gcs")
         for e in root:
             print(f"  {e}")
 
         print("\n--- os.path.isdir() on prefix ---")
-        print(f"  /gcs/data: {vos.path.isdir('/gcs/data')}")
+        print(f"  /gcs/data: {os.path.isdir('/gcs/data')}")
 
         print("\n--- os.listdir() data ---")
-        entries = vos.listdir("/gcs/data")
+        entries = os.listdir("/gcs/data")
         for e in entries:
             print(f"  {e}")
 
@@ -67,8 +65,8 @@ async def main():
                 print(f"  [{i}] {json.dumps(rec)[:100]}...")
 
         print("\n--- os.path.exists() ---")
-        print(f"  example.json: {vos.path.exists('/gcs/data/example.json')}")
-        print(f"  nonexistent: {vos.path.exists('/gcs/data/nope.txt')}")
+        print(f"  example.json: {os.path.exists('/gcs/data/example.json')}")
+        print(f"  nonexistent: {os.path.exists('/gcs/data/nope.txt')}")
 
         print("\n--- VFS commands ---")
         result = await ws.execute("grep -c mirage /gcs/data/example.jsonl")

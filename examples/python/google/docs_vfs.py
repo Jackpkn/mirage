@@ -15,7 +15,6 @@
 import asyncio
 import json
 import os
-import sys
 
 from dotenv import load_dotenv
 
@@ -34,17 +33,16 @@ resource = GDocsResource(config=config)
 
 async def main():
     with Workspace({"/gdocs/": resource}, mode=MountMode.READ) as ws:
-        vos = sys.modules["os"]
         print(
             "=== VFS MODE: open() reads from Google Docs transparently ===\n")
 
         print("--- os.listdir() root ---")
-        dirs = vos.listdir("/gdocs")
+        dirs = os.listdir("/gdocs")
         for d in dirs:
             print(f"  {d}")
 
         print("\n--- os.listdir() owned ---")
-        docs = vos.listdir("/gdocs/owned")
+        docs = os.listdir("/gdocs/owned")
         for doc in docs[:5]:
             print(f"  {doc}")
 
@@ -59,9 +57,8 @@ async def main():
                 print(f"  content preview: {content[:200]}...")
 
             print("\n--- os.path.exists() ---")
-            print(f"  {first}: {vos.path.exists(path)}")
-            print(
-                f"  nonexistent: {vos.path.exists('/gdocs/owned/nope.json')}")
+            print(f"  {first}: {os.path.exists(path)}")
+            print(f"  nonexistent: {os.path.exists('/gdocs/owned/nope.json')}")
 
         print("\n--- bash history ---")
         with open("/.bash_history") as f:
