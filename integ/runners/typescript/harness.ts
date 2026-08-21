@@ -130,6 +130,11 @@ export interface Case {
   // How a case exercises the ask arm, since the battery has no host of
   // its own.
   answer?: 'allow_once' | 'allow_session' | 'deny'
+  // Why this case's verdict is out of reach of `ws.explain`, which reads
+  // the command plane and the line as typed: a runtime-expanded glob, a
+  // refusal from the op door below the gate, a function the same line
+  // defines. Named rather than silently omitted.
+  explain_blind?: string
   scenario?: ScenarioStep[]
   expect: Expect
   _source?: string
@@ -150,6 +155,11 @@ export interface ProvisionInfo {
 
 interface ProvisionExec {
   execute(cmd: string, opts: { provision: true }): Promise<ProvisionInfo>
+}
+
+export interface ExplainRow {
+  exitCode: number
+  stderr: string
 }
 
 export interface ExecResult {
@@ -179,6 +189,7 @@ export interface ExecWorkspace {
     pending(): readonly { id: string }[]
     answer(id: string, outcome: Outcome, scope?: Scope): Promise<void>
   }
+  explain(line: string, sessionId?: string): Promise<readonly ExplainRow[]>
   close(): Promise<void>
 }
 
@@ -501,37 +512,141 @@ export function bindMount(c: Case, mountPath: string): Case {
  * and what it left behind.
  */
 /**
+ * What each of the battery's words answers with. DENY is ONCE because a
+ * refusal answers the one retry it was given for; a session-wide deny
+ * would be a rule, which is the document's job and not a host's.
+ */
+const ANSWERS = new Map<string, readonly [Outcome, Scope]>([
+  ['allow_once', [Outcome.ALLOW, Scope.ONCE]],
+  ['allow_session', [Outcome.ALLOW, Scope.SESSION]],
+  ['deny', [Outcome.DENY, Scope.ONCE]],
+])
+
+/**
  * The host's side of the ask arm: answer every approval waiting on the
  * workspace the way the case says, so the command that follows finds
- * the answer (or the refusal) the way an agent's retry would. The case
- * keeps the three words as its own vocabulary; they map onto an outcome
- * and a scope here.
+ * the answer (or the refusal) the way an agent's retry would.
+ *
+ * The word is looked up before anything is answered, so a case that
+ * misspells one fails loudly here. The literal union on `Case` is a
+ * compile-time promise about a value that arrives from JSON, so it does
+ * not reach this far on its own; without the lookup every word that was
+ * not `allow_once` fell through to a session-wide allow, and a typo
+ * passed the case while testing the most permissive answer there is.
  */
-async function answerDecisions(
-  ws: ExecWorkspace,
-  answer: 'allow_once' | 'allow_session' | 'deny',
-): Promise<void> {
+async function answerDecisions(ws: ExecWorkspace, answer: string): Promise<void> {
+  const pair = ANSWERS.get(answer)
+  if (pair === undefined) {
+    throw new Error(
+      `case answer must be one of ${[...ANSWERS.keys()].join(', ')}, got ${answer}`,
+    )
+  }
+  const [outcome, scope] = pair
   for (const record of ws.decisions.pending()) {
-    if (answer === 'deny') await ws.decisions.answer(record.id, Outcome.DENY)
-    else {
-      await ws.decisions.answer(
-        record.id,
-        Outcome.ALLOW,
-        answer === 'allow_once' ? Scope.ONCE : Scope.SESSION,
-      )
+    await ws.decisions.answer(record.id, outcome, scope)
+  }
+}
+
+/**
+ * Every reason a document's rules can speak with.
+ *
+ * These are what a refusal the policy layer wrote looks like on the wire,
+ * and they are distinctive enough ("sealed until review") to tell one
+ * apart from an ordinary command failure, which is what `explainNotes`
+ * needs to check the direction a prediction cannot check on its own.
+ */
+export function ruleReasons(doc: unknown): string[] {
+  const found = new Set<string>()
+  const stack: unknown[] = [doc]
+  while (stack.length > 0) {
+    const node = stack.pop()
+    if (Array.isArray(node)) {
+      stack.push(...node)
+    } else if (node !== null && typeof node === 'object') {
+      const rec = node as Record<string, unknown>
+      if (typeof rec['reason'] === 'string') found.add(rec['reason'])
+      stack.push(...Object.values(rec))
     }
   }
+  return [...found].sort()
+}
+
+/**
+ * What `explain` says would refuse this line, null when it says the line
+ * runs. The first refusal wins, because that is the one the run reports:
+ * a line is refused by its first refusing command.
+ */
+async function predictedRefusal(
+  ws: ExecWorkspace,
+  c: Case,
+): Promise<[number, string] | null> {
+  const said = await ws.explain(c.command, c.session ?? '')
+  for (const expl of said) {
+    if (expl.exitCode !== 0) return [expl.exitCode, expl.stderr]
+  }
+  return null
+}
+
+/**
+ * Where the dry run and the run disagreed, empty when they agree.
+ *
+ * Three properties, checked against every policy case rather than only
+ * the unit tests, because each is a promise the whole surface makes and
+ * none of them is visible in a golden.
+ *
+ * A dry run must record no question, or a host fields requests for lines
+ * nobody typed. A refusal it predicts must be the refusal that arrives.
+ * And the harder direction: a refusal that arrives must have been
+ * predicted, which is checked by looking for one of the document's own
+ * rule reasons in what the run printed. That last one is the direction a
+ * prediction cannot check on its own, and it is where the bugs were:
+ * reading a line without its redirect target answered ALLOW for a line
+ * the run refused.
+ *
+ * The message is looked for on either stream because the line's own
+ * redirections still apply to the run and not to the prediction:
+ * `rm /denied 2>&1` is refused on stdout.
+ */
+export function explainNotes(
+  predicted: [number, string] | null,
+  recorded: number,
+  exitCode: number,
+  out: string,
+  err: string,
+  reasons: readonly string[],
+): string[] {
+  const notes: string[] = []
+  if (recorded !== 0) {
+    notes.push(`explain: recorded ${recorded} question(s), must record none`)
+  }
+  const spoke = reasons.find((r) => r !== '' && (err.includes(r) || out.includes(r)))
+  if (predicted === null) {
+    if (spoke !== undefined) {
+      notes.push(`explain: said the line runs, but a rule refused it with ${JSON.stringify(spoke)}`)
+    }
+    return notes
+  }
+  const [code, text] = predicted
+  if (code !== exitCode) notes.push(`explain: predicted exit ${code}, run exited ${exitCode}`)
+  if (text !== '' && !err.includes(text) && !out.includes(text)) {
+    notes.push(
+      `explain: predicted stderr ${JSON.stringify(text)}, run wrote ${JSON.stringify(err)}`,
+    )
+  }
+  return notes
 }
 
 export async function runCase(
   ws: ExecWorkspace,
   c: Case,
+  reasons: readonly string[] = [],
 ): Promise<{
   exitCode: number
   out: string
   err: string
   elapsed: number
   checkOut: string | null
+  notes: string[]
 }> {
   if (c.clear_cache === true) {
     // A full clear means the file cache AND every mount's index cache:
@@ -550,19 +665,32 @@ export async function runCase(
       err: '',
       elapsed: (performance.now() - start) / 1000,
       checkOut: null,
+      notes: [],
     }
   }
   if (c.answer !== undefined) await answerDecisions(ws, c.answer)
+  const checks = reasons.length > 0 && c.explain_blind === undefined
+  let predicted: [number, string] | null = null
+  let recorded = 0
+  if (checks) {
+    const before = ws.decisions.pending().length
+    predicted = await predictedRefusal(ws, c)
+    // Counted here, not after the run: the run records its own question,
+    // and charging that to the dry run would fail every ask case.
+    recorded = ws.decisions.pending().length - before
+  }
   const result = await ws.execute(c.command, { sessionId: c.session })
   const elapsed = (performance.now() - start) / 1000
   const out = DEC.decode(result.stdout)
+  const err = DEC.decode(result.stderr)
   const checkOut = c.check !== undefined ? await statCheck(ws, c.check) : null
   return {
     exitCode: result.exitCode,
     out,
-    err: DEC.decode(result.stderr),
+    err,
     elapsed,
     checkOut,
+    notes: checks ? explainNotes(predicted, recorded, result.exitCode, out, err, reasons) : [],
   }
 }
 
@@ -573,8 +701,9 @@ export function compare(
   err: string,
   elapsed: number,
   checkOut: string | null = null,
+  notes: readonly string[] = [],
 ): string[] {
-  const diffs: string[] = []
+  const diffs: string[] = [...notes]
   if (exitCode !== c.expect.exit) diffs.push(`exit: expected ${c.expect.exit}, got ${exitCode}`)
   if (out !== c.expect.stdout)
     diffs.push(`stdout: expected ${JSON.stringify(c.expect.stdout)}, got ${JSON.stringify(out)}`)

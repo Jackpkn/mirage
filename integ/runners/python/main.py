@@ -36,7 +36,8 @@ def _emit_or_record(emit: list[dict] | None,
                     out: str,
                     err: str,
                     elapsed: float,
-                    check_out: str | None = None) -> None:
+                    check_out: str | None = None,
+                    notes: list[str] | None = None) -> None:
     if emit is not None:
         emit.append({
             "target": target_id,
@@ -49,7 +50,8 @@ def _emit_or_record(emit: list[dict] | None,
     elif report is not None:
         report.record(
             target_id, case["id"],
-            harness.compare(case, exit_code, out, err, elapsed, check_out))
+            harness.compare(case, exit_code, out, err, elapsed, check_out,
+                            notes))
 
 
 async def run_consistency_case(target: dict, case: dict,
@@ -91,14 +93,23 @@ async def run_target(target: dict, cases: list[dict], root: Path,
             else:
                 ws.create_session(session_id, permissions=spec or None)
         primary = target["mounts"][0]["path"]
+        # Only a target carrying a permissions document has a verdict
+        # for `explain` to predict, and only there is the extra dry run
+        # per case worth its time. The reasons double as the tell that a
+        # refusal came from the policy layer rather than from the
+        # command itself.
+        reasons = harness.rule_reasons({
+            "profiles": target.get("profiles"),
+            "sessions": target.get("sessions"),
+        })
         for case in selected:
             if "consistency" in case:
                 continue
             bound = harness.bind_mount(case, primary)
-            exit_code, out, err, elapsed, check_out = await harness.run_case(
-                ws, bound)
+            ran = await harness.run_case(ws, bound, reasons)
+            exit_code, out, err, elapsed, check_out, notes = ran
             _emit_or_record(emit, report, target["id"], bound, exit_code, out,
-                            err, elapsed, check_out)
+                            err, elapsed, check_out, notes)
     finally:
         await cleanup()
     for case in selected:

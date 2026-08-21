@@ -85,6 +85,7 @@
         "ram-commands"
       ],
       "command": "cd /scratch && [ -f z ] && echo yes; f() { echo in-f; }; f",
+      "explain_blind": "the line defines the function it then calls, which the dry run reads as an uninstalled word",
       "expect": {
         "exit": 0,
         "stdout": "yes\nin-f\n",

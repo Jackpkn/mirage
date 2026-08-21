@@ -18,6 +18,7 @@ import subprocess
 import tempfile
 import time
 from dataclasses import dataclass, field
+from enum import StrEnum
 from pathlib import Path
 
 from mirage.policy import Scope
@@ -329,29 +330,150 @@ def bind_mount(case: dict, mount_path: str) -> dict:
     return bound
 
 
+class Answer(StrEnum):
+    """The battery's word for a host answer.
+
+    Deliberately not the library's vocabulary: a case says one word
+    where the workspace takes an outcome and a scope, so the pairing
+    lives in ANSWERS rather than in every case file.
+    """
+
+    ALLOW_ONCE = "allow_once"
+    ALLOW_SESSION = "allow_session"
+    DENY = "deny"
+
+
+# What each word answers with. DENY is ONCE because a refusal answers
+# the one retry it was given for; a session-wide deny would be a rule,
+# which is the document's job and not a host's.
+ANSWERS: dict[Answer, tuple[Outcome, Scope]] = {
+    Answer.ALLOW_ONCE: (Outcome.ALLOW, Scope.ONCE),
+    Answer.ALLOW_SESSION: (Outcome.ALLOW, Scope.SESSION),
+    Answer.DENY: (Outcome.DENY, Scope.ONCE),
+}
+
+
 async def answer_decisions(ws, answer: str) -> None:
     """The host's side of the ask arm: answer every question waiting on
-    the workspace the way the case says (``allow_once``, ``allow_session``
-    or ``deny``), so the command that follows finds the answer (or the
-    refusal) the way an agent's retry would. How a case exercises the
-    ask arm, since the battery has no host of its own. The case keeps
-    the three words as its own vocabulary; they map onto an outcome and
-    a scope here.
+    the workspace the way the case says, so the command that follows
+    finds the answer (or the refusal) the way an agent's retry would.
+    How a case exercises the ask arm, since the battery has no host of
+    its own.
+
+    The word is resolved through the enum before anything is answered,
+    so a case that misspells one fails loudly here. Reading it as an
+    open string cost the opposite: every word that was not
+    ``allow_once`` fell through to a session-wide allow, so a typo
+    passed the case while testing the most permissive answer there is.
 
     Args:
         ws: the workspace the case runs against.
-        answer (str): the answer for every waiting record.
+        answer (str): the case's word for every waiting record.
+
+    Raises:
+        ValueError: the case names a word outside the vocabulary.
     """
+    outcome, scope = ANSWERS[Answer(answer)]
     for record in ws.decisions.pending():
-        if answer == "deny":
-            await ws.decisions.answer(record.id, Outcome.DENY)
-        else:
-            await ws.decisions.answer(
-                record.id, Outcome.ALLOW,
-                Scope.ONCE if answer == "allow_once" else Scope.SESSION)
+        await ws.decisions.answer(record.id, outcome, scope)
 
 
-async def run_case(ws, case: dict) -> tuple[int, str, str, float, str | None]:
+async def predicted_refusal(ws, case: dict) -> tuple[int, str] | None:
+    """What ``explain`` says would refuse this line, None when it says
+    the line runs.
+
+    The first refusal wins, because that is the one the run reports:
+    a line is refused by its first refusing command.
+
+    Args:
+        ws: the workspace the case runs against.
+        case (dict): the case as loaded from disk.
+    """
+    said = await ws.explain(case["command"], case.get("session") or "")
+    for expl in said:
+        if expl.exit_code != 0:
+            return expl.exit_code, expl.stderr
+    return None
+
+
+def rule_reasons(doc: dict) -> tuple[str, ...]:
+    """Every reason a document's rules can speak with.
+
+    These are what a refusal the policy layer wrote looks like on the
+    wire, and they are distinctive enough ("sealed until review") to
+    tell one apart from an ordinary command failure, which is what
+    ``explain_notes`` needs to check the direction a prediction cannot
+    check on its own.
+
+    Args:
+        doc (dict): the target's permissions document.
+    """
+    found: list[str] = []
+    stack: list[object] = [doc]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, dict):
+            reason = node.get("reason")
+            if isinstance(reason, str):
+                found.append(reason)
+            stack.extend(node.values())
+        elif isinstance(node, list):
+            stack.extend(node)
+    return tuple(sorted(set(found)))
+
+
+def explain_notes(predicted: tuple[int, str] | None, recorded: int,
+                  exit_code: int, out: str, err: str,
+                  reasons: tuple[str, ...]) -> list[str]:
+    """Where the dry run and the run disagreed, empty when they agree.
+
+    Three properties, checked against every policy case rather than only
+    the unit tests, because each is a promise the whole surface makes and
+    none of them is visible in a golden.
+
+    A dry run must record no question, or a host fields requests for
+    lines nobody typed. A refusal it predicts must be the refusal that
+    arrives. And the harder direction: a refusal that arrives must have
+    been predicted, which is checked by looking for one of the
+    document's own rule reasons in what the run printed. That last one
+    is the direction a prediction cannot check on its own, and it is
+    where the bugs were: reading a line without its redirect target
+    answered ALLOW for a line the run refused.
+
+    The message is looked for on either stream because the line's own
+    redirections still apply to the run and not to the prediction:
+    ``rm /denied 2>&1`` is refused on stdout.
+
+    Args:
+        predicted (tuple[int, str] | None): what explain foresaw.
+        recorded (int): questions the ledger gained during explain.
+        exit_code (int): what the run exited with.
+        out (str): the run's stdout.
+        err (str): the run's stderr.
+        reasons (tuple[str, ...]): every reason the document can speak
+            with.
+    """
+    notes: list[str] = []
+    if recorded:
+        notes.append(
+            f"explain: recorded {recorded} question(s), must record none")
+    spoke = next((r for r in reasons if r and (r in err or r in out)), None)
+    if predicted is None:
+        if spoke is not None:
+            notes.append(f"explain: said the line runs, but a rule refused it "
+                         f"with {spoke!r}")
+        return notes
+    code, text = predicted
+    if code != exit_code:
+        notes.append(f"explain: predicted exit {code}, run exited {exit_code}")
+    if text and text not in err and text not in out:
+        notes.append(f"explain: predicted stderr {text!r}, run wrote {err!r}")
+    return notes
+
+
+async def run_case(
+    ws, case: dict, reasons: tuple[str, ...] = ()
+) -> tuple[int, str, str, float, str | None, list[str]]:
     """Run one case and return what it produced.
 
     The post-condition a case declares under ``check`` is returned beside
@@ -361,10 +483,17 @@ async def run_case(ws, case: dict) -> tuple[int, str, str, float, str | None]:
     Args:
         ws: the workspace the case runs against.
         case (dict): the case as loaded from disk.
+        reasons (tuple[str, ...]): every reason the target's document
+            can speak with; non-empty turns on the ``ws.explain``
+            cross-check, which is worth its extra dry run only where a
+            verdict exists to predict. A case whose verdict the command
+            plane cannot reach says so in ``explain_blind`` and is left
+            out, never silently.
 
     Returns:
-        tuple: exit code, stdout, stderr, elapsed seconds, and the stat
-        line for the case's ``check`` (None when it declares none).
+        tuple: exit code, stdout, stderr, elapsed seconds, the stat line
+        for the case's ``check`` (None when it declares none), and any
+        notes on where the dry run disagreed with the run.
     """
     if case.get("clear_cache"):
         # A full clear means the file cache AND every mount's index cache:
@@ -380,17 +509,29 @@ async def run_case(ws, case: dict) -> tuple[int, str, str, float, str | None]:
     if case.get("provision"):
         plan = await ws.execute(case["command"], provision=True)
         return 0, provision_line(
-            plan) + "\n", "", time.monotonic() - start, None
+            plan) + "\n", "", time.monotonic() - start, None, []
     if case.get("answer") is not None:
         await answer_decisions(ws, case["answer"])
+    predicted = None
+    recorded = 0
+    if reasons and not case.get("explain_blind"):
+        before = len(ws.decisions.pending())
+        predicted = await predicted_refusal(ws, case)
+        # Counted here, not after the run: the run records its own
+        # question, and charging that to the dry run would fail every
+        # ask case.
+        recorded = len(ws.decisions.pending()) - before
     result = await ws.execute(case["command"], session_id=case.get("session"))
     elapsed = time.monotonic() - start
     out = await result.stdout_str()
     err = await result.stderr_str()
+    notes = (explain_notes(predicted, recorded, result.exit_code, out, err,
+                           reasons)
+             if reasons and not case.get("explain_blind") else [])
     check_out = None
     if case.get("check") is not None:
         check_out = await stat_check(ws, case["check"])
-    return result.exit_code, out, err, elapsed, check_out
+    return result.exit_code, out, err, elapsed, check_out, notes
 
 
 async def run_scenario(read_ws, mutate, steps: list[dict]) -> tuple[int, str]:
@@ -412,9 +553,10 @@ def compare(case: dict,
             out: str,
             err: str,
             elapsed: float,
-            check_out: str | None = None) -> list[str]:
+            check_out: str | None = None,
+            notes: list[str] | None = None) -> list[str]:
     expect = case["expect"]
-    diffs: list[str] = []
+    diffs: list[str] = list(notes or [])
     if exit_code != expect["exit"]:
         diffs.append(f"exit: expected {expect['exit']}, got {exit_code}")
     if out != expect["stdout"]:
