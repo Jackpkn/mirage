@@ -151,6 +151,21 @@ class MirageOSAccess(OSAccess):
         self._ensure_dir(path)
         return super().path_is_dir(path)
 
+    def path_is_symlink(self, path: PurePosixPath) -> bool:
+        """Whether `path` is a symlink, asking the mount's name plane.
+
+        Monty's own tree holds no links, so the base answer is always
+        False for a mounted path: a link the shell made was invisible
+        to `Path.is_symlink()` before this. Creation stays out of reach,
+        because monty 0.0.19's OSAccess has no symlink verb to override.
+
+        Args:
+            path (PurePosixPath): the guest path to test.
+        """
+        if self._vfs.is_link(str(path)):
+            return True
+        return bool(super().path_is_symlink(path))
+
     def path_stat(self, path: PurePosixPath):
         self._ensure_file(path)
         self._ensure_dir(path)

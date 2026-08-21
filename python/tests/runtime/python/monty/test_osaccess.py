@@ -27,9 +27,11 @@ class FakeDispatch:
 
     def __init__(self,
                  files: dict[str, bytes],
-                 supports_append: bool = True) -> None:
+                 supports_append: bool = True,
+                 links: dict[str, str] | None = None) -> None:
         self.files = files
         self.supports_append = supports_append
+        self.links = dict(links or {})
         self.writes: list[tuple[str, bytes]] = []
         self.appends: list[tuple[str, bytes]] = []
         self.created: list[str] = []
@@ -101,6 +103,11 @@ class FakeDispatch:
                 self.files[dst] = self.files.pop(virtual)
             self.renamed.append((virtual, dst))
             return None, None
+        if op == "readlink":
+            found = self.links.get(virtual)
+            if found is None:
+                raise OSError(errno.EINVAL, "not a symbolic link", virtual)
+            return found, None
         raise ValueError(f"unexpected op {op}")
 
 
@@ -409,3 +416,17 @@ def test_monty_rename_within_one_mount_still_dispatches():
                     "Path('/a/f.txt').rename('/a/g.txt')")))
     assert result.exit_code == 0, result.stderr
     assert dispatch.renamed == [("/a/f.txt", "/a/g.txt")]
+
+
+def test_monty_is_symlink_reads_the_name_plane():
+    # Monty's own tree holds no links, so this answered False for every
+    # link the shell made before the verb was served.
+    dispatch = FakeDispatch({"/s3/t.txt": b"x"}, links={"/s3/l": "t.txt"})
+    runtime = MontyRuntime()
+    runtime.attach(dispatch, PrefixResolver(lambda: []))
+    code = (
+        "from pathlib import Path\n"
+        "print(Path('/s3/l').is_symlink(), Path('/s3/t.txt').is_symlink())")
+    result = asyncio.run(runtime.run(RunArgs(code=code)))
+    assert result.exit_code == 0, result.stderr
+    assert result.stdout == b"True False\n"

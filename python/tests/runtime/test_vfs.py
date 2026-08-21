@@ -180,6 +180,42 @@ def test_flush_falls_back_to_a_whole_write_and_remembers_the_mount():
     assert ops == ["append", "write", "write"]
 
 
+def test_symlink_sends_the_target_verbatim():
+    vfs = RecordingVFS(prefixes=["/data/"])
+    vfs.symlink("/data/l", "../up/t.txt")
+    assert vfs.calls == [("symlink", "/data/l", {"target": "../up/t.txt"})]
+
+
+def test_readlink_returns_the_stored_target():
+
+    class LinkVFS(RecordingVFS):
+
+        def _raw(self, op, path, **kwargs):
+            super()._raw(op, path, **kwargs)
+            return "../up/t.txt"
+
+    assert LinkVFS(prefixes=["/data/"]).readlink("/data/l") == "../up/t.txt"
+
+
+def test_setattr_passes_every_field_so_the_door_reads_the_whole_set():
+    vfs = RecordingVFS(prefixes=["/data/"])
+    vfs.setattr("/data/f.txt", mode=0o600, mtime="1970-01-01T00:03:20+00:00")
+    assert vfs.calls == [("setattr", "/data/f.txt", {
+        "mode": 0o600,
+        "uid": None,
+        "gid": None,
+        "atime": None,
+        "mtime": "1970-01-01T00:03:20+00:00",
+        "nofollow": False,
+    })]
+
+
+def test_setattr_forwards_nofollow_for_the_dash_h_family():
+    vfs = RecordingVFS(prefixes=["/data/"])
+    vfs.setattr("/data/l", uid=4242, nofollow=True)
+    assert vfs.calls[0][2]["nofollow"] is True
+
+
 @pytest.mark.asyncio
 async def test_call_hops_from_a_worker_thread_to_the_workspace_loop():
     dispatch = RecordingDispatch()

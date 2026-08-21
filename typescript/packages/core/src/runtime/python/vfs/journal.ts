@@ -13,6 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { concatBytes, type RuntimeVFS } from '../../vfs.ts'
+import type { SetAttrFields } from '../../../types.ts'
 
 /**
  * One guest mutation, recorded in the order the script performed it.
@@ -28,6 +29,8 @@ export type MirageMutation =
   | { readonly kind: 'unlink'; readonly path: string }
   | { readonly kind: 'rmdir'; readonly path: string }
   | { readonly kind: 'rename'; readonly path: string; readonly dst: string }
+  | { readonly kind: 'symlink'; readonly path: string; readonly target: string }
+  | { readonly kind: 'setattr'; readonly path: string; readonly attrs: SetAttrFields }
 
 /**
  * The write-ahead log a pyodide guest records into.
@@ -52,6 +55,20 @@ export interface MutationJournal {
   markUnlink(path: string): void
   markRmdir(path: string): void
   markRename(src: string, dst: string): void
+  /**
+   * Args:
+   *   path: guest-absolute path of the link.
+   *   target: what it points at, stored verbatim.
+   */
+  markSymlink(path: string, target: string): void
+  /**
+   * Args:
+   *   path: guest-absolute path whose metadata changed.
+   *   attrs: only the fields the guest wrote, already in the op's own
+   *     terms (ISO stamps), because the unit Emscripten passes is the
+   *     caller's fact and not the journal's.
+   */
+  markSetattr(path: string, attrs: SetAttrFields): void
   /** Drain the journal: every mutation in guest order, cleared. */
   takeMutations(): MirageMutation[]
 }
@@ -96,6 +113,12 @@ export function createJournal(): MutationJournal {
     markRename(src, dst) {
       journal.push({ kind: 'rename', path: src, dst })
     },
+    markSymlink(path, target) {
+      journal.push({ kind: 'symlink', path, target })
+    },
+    markSetattr(path, attrs) {
+      journal.push({ kind: 'setattr', path, attrs })
+    },
     takeMutations() {
       return journal.splice(0, journal.length)
     },
@@ -126,5 +149,9 @@ export async function applyMutation(vfs: RuntimeVFS, mutation: MirageMutation): 
       return vfs.rmdir(mutation.path)
     case 'rename':
       return vfs.rename(mutation.path, mutation.dst)
+    case 'symlink':
+      return vfs.symlink(mutation.path, mutation.target)
+    case 'setattr':
+      return vfs.setattr(mutation.path, mutation.attrs)
   }
 }

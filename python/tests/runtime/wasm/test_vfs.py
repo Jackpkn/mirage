@@ -40,13 +40,16 @@ class FakeVFS(RuntimeVFS):
                  files=None,
                  dirs=None,
                  prefixes=(),
+                 links=None,
                  modified="2026-07-15T00:00:00Z"):
         super().__init__(dispatch=None,
                          loop=None,
                          resolver=PrefixResolver(lambda: list(prefixes)))
         self.files = dict(files or {})
         self.dirs = set(dirs or ())
+        self.links = dict(links or {})
         self.modified = modified
+        self.attrs = []
         self.calls = []
 
     def _raw(self, op, path, **kwargs):
@@ -98,6 +101,19 @@ class FakeVFS(RuntimeVFS):
             # The real door merges child-mount names into readdir; the
             # double rides the same helper so it cannot drift from it.
             return sorted(merge_readdir(out, self.prefixes(), None, path))
+        if op == "symlink":
+            self.links[path] = kwargs["target"]
+            return None
+        if op == "readlink":
+            found = self.links.get(path)
+            if found is None:
+                # The door's own answer for a path the node table holds
+                # no link for, whether or not anything else is there.
+                raise OSError(host_errno.EINVAL, "not a symbolic link", path)
+            return found
+        if op == "setattr":
+            self.attrs.append((path, kwargs))
+            return {}
         raise NotImplementedError(op)
 
 
@@ -246,3 +262,86 @@ def test_stat_reads_offsetless_stamps_as_utc():
         else:
             os.environ["TZ"] = previous
         time.tzset()
+
+
+def test_lstat_reports_a_link_as_a_link_sized_by_its_target():
+    bridge = FakeVFS(files={"/data/t.txt": b"x" * 40},
+                     links={"/data/l": "t.txt"},
+                     prefixes=["/data/"])
+    fs = WasmVFS(None, bridge)
+    st = fs.lstat("/data/l")
+    assert st.is_link is True
+    assert st.is_dir is False
+    assert st.size == len("t.txt")
+
+
+def test_lstat_of_a_plain_path_answers_exactly_as_stat():
+    bridge = FakeVFS(files={"/data/f.txt": b"1234"}, prefixes=["/data/"])
+    fs = WasmVFS(None, bridge)
+    assert fs.lstat("/data/f.txt") == fs.stat("/data/f.txt")
+
+
+def test_stat_follows_a_link_because_the_door_resolves_it():
+    # The dispatcher resolves link prefixes for a following op, so the
+    # core never sees the link path: `stat` is the target's row.
+    bridge = FakeVFS(files={"/data/l": b"target-bytes"}, prefixes=["/data/"])
+    fs = WasmVFS(None, bridge)
+    st = fs.stat("/data/l")
+    assert st.is_link is False
+    assert st.size == len(b"target-bytes")
+
+
+def test_symlink_and_readlink_round_trip_the_target_verbatim():
+    bridge = FakeVFS(prefixes=["/data/"])
+    fs = WasmVFS(None, bridge)
+    fs.symlink("/data/l", "../up/t.txt")
+    assert bridge.links == {"/data/l": "../up/t.txt"}
+    assert fs.readlink("/data/l") == "../up/t.txt"
+
+
+def test_readlink_of_a_plain_path_is_einval():
+    bridge = FakeVFS(files={"/data/f.txt": b"x"}, prefixes=["/data/"])
+    fs = WasmVFS(None, bridge)
+    with pytest.raises(OSError) as caught:
+        fs.readlink("/data/f.txt")
+    assert caught.value.errno == host_errno.EINVAL
+
+
+def test_readlink_on_a_build_path_is_einval_not_read_only(tmp_path):
+    # Reading is not the mutation `_deny_build` guards, and the build
+    # holds no links, so the refusal is readlink's own.
+    (tmp_path / "lib").mkdir()
+    (tmp_path / "lib" / "os.py").write_text("stdlib")
+    fs = WasmVFS(WasmFsConfig(host_root=str(tmp_path)), FakeVFS())
+    with pytest.raises(OSError) as caught:
+        fs.readlink("/lib/os.py")
+    assert caught.value.errno == host_errno.EINVAL
+
+
+def test_setattr_passes_every_field_including_nofollow():
+    bridge = FakeVFS(files={"/data/f.txt": b"x"}, prefixes=["/data/"])
+    fs = WasmVFS(None, bridge)
+    fs.setattr("/data/f.txt",
+               atime="1970-01-01T00:01:40+00:00",
+               mtime=None,
+               nofollow=True)
+    assert bridge.attrs == [("/data/f.txt", {
+        "mode": None,
+        "uid": None,
+        "gid": None,
+        "atime": "1970-01-01T00:01:40+00:00",
+        "mtime": None,
+        "nofollow": True,
+    })]
+
+
+def test_a_mutation_of_a_build_file_stays_refused(tmp_path):
+    # Only a path the build actually holds is refused; a new name under
+    # the build tree routes to the bridge, exactly as a new file does.
+    (tmp_path / "lib").mkdir()
+    (tmp_path / "lib" / "os.py").write_text("stdlib")
+    fs = WasmVFS(WasmFsConfig(host_root=str(tmp_path)), FakeVFS())
+    with pytest.raises(PermissionError):
+        fs.symlink("/lib/os.py", "elsewhere.py")
+    with pytest.raises(PermissionError):
+        fs.setattr("/lib/os.py", atime=None, mtime="x", nofollow=False)

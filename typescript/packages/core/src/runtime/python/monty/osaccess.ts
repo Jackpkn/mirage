@@ -106,6 +106,12 @@ export class MirageOSAccess {
           () => true,
           () => false,
         )
+      // Monty's own tree holds no links, so declining would answer
+      // False for one the shell made; the mount's name plane is the
+      // only place the fact lives. Creation stays out of reach: the
+      // binding emits no symlink verb to serve.
+      case 'Path.is_symlink':
+        return vfs.isLink(path)
       case 'Path.is_file':
         return vfs.entryFor(path).then(
           (e) => e !== null && !e.isDir,

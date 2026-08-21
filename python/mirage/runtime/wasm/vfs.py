@@ -146,6 +146,46 @@ class WasmVFS:
                          size=content_size(fs),
                          mtime_ns=0 if ns is None else ns)
 
+    def lstat(self, path: str) -> GuestStat:
+        """Stat a guest path without following a trailing symlink.
+
+        The link's own row is the node table's, not a backend's, so it
+        is reached through the readlink op and nothing else: a link
+        sizes as its target string and every other path answers exactly
+        as `stat` does. A build path can never be a link, so it takes
+        the ordinary path.
+
+        Args:
+            path (str): guest-absolute path.
+
+        Raises:
+            FileNotFoundError: the path exists on neither side.
+        """
+        if self._serving_build(path) is not None:
+            return self.stat(path)
+        target = self._readlink_or_none(path)
+        if target is None:
+            return self.stat(path)
+        return GuestStat(is_dir=False,
+                         size=len(target.encode()),
+                         mtime_ns=0,
+                         is_link=True)
+
+    def _readlink_or_none(self, path: str) -> str | None:
+        """The link target at `path`, or None when it is not a link.
+
+        Args:
+            path (str): guest-absolute path.
+        """
+        try:
+            return str(self._core_call("readlink", path))
+        except OSError as exc:
+            # EINVAL is the node table's "not a link"; a miss answers it
+            # too, and the stat that follows is the one that reports it.
+            if exc.errno not in (host_errno.EINVAL, host_errno.ENOENT):
+                raise
+            return None
+
     def stat_or_none(self, path: str) -> GuestStat | None:
         try:
             return self.stat(path)
@@ -203,6 +243,54 @@ class WasmVFS:
                 raise OSError(host_errno.EXDEV, "cross-device rename", src)
             raise PermissionError(READONLY_HINT)
         self._require_core().rename(src, dst)
+
+    def symlink(self, path: str, target: str) -> None:
+        """Create a symlink at `path` pointing at `target`.
+
+        Args:
+            path (str): guest-absolute path of the link.
+            target (str): what the link points to, stored as typed.
+        """
+        self._deny_build(path)
+        self._core_call("symlink", path, target=target)
+
+    def readlink(self, path: str) -> str:
+        """The target of the symlink at `path`.
+
+        Args:
+            path (str): guest-absolute path of the link.
+
+        Raises:
+            OSError: EINVAL when the path is not a link, which is what
+                readlink(2) answers and what the node table reports. A
+                build path answers that too rather than the read-only
+                refusal: reading is not the mutation `_deny_build`
+                guards, and the build holds no links.
+        """
+        if self._serving_build(path) is not None:
+            raise OSError(host_errno.EINVAL, "not a symbolic link", path)
+        return str(self._core_call("readlink", path))
+
+    def setattr(self, path: str, *, atime: str | None, mtime: str | None,
+                nofollow: bool) -> None:
+        """Write timestamps, in the namespace overlay where needed.
+
+        Times are the only attributes preview1 can express: it has no
+        chmod or chown call at all. A mount whose backend cannot hold a
+        stamp still answers, because the door overlays what the backend
+        declines.
+
+        Args:
+            path (str): guest-absolute path.
+            atime (str | None): ISO access time, None to leave it.
+            mtime (str | None): ISO modification time, None to leave it.
+            nofollow (bool): stamp the link itself, not its target.
+        """
+        self._deny_build(path)
+        self._require_core().setattr(path,
+                                     atime=atime,
+                                     mtime=mtime,
+                                     nofollow=nofollow)
 
     def flush(self, path: str, base_len: int, low_write: int,
               buf: bytes | bytearray) -> None:

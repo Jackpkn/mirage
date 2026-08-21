@@ -13,6 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { FileStat, FileType, PathSpec } from '../../../../types.ts'
+import { isMissError } from '../../../../utils/errors.ts'
 import { gnuBasename } from '../../../../utils/path.ts'
 import { rstripSlash } from '../../../../utils/slash.ts'
 import type { StatOverlay } from '../../../../ops/types.ts'
@@ -28,18 +29,6 @@ export async function statOrNull(dispatch: DispatchFn, path: PathSpec): Promise<
   } catch {
     return null
   }
-}
-
-// What an existence probe reads as "nothing here": the path is absent, or
-// a component of it is not traversable. Deliberately narrower than a walk's
-// tolerance, because a permission or missing-capability error is not
-// absence, and mapping it to one would report a path that exists as
-// missing. Mirrors python MISS_ERRORS.
-function isMissError(exc: unknown): boolean {
-  const code = (exc as { code?: string }).code
-  if (code === 'ENOENT' || code === 'ENOTDIR' || code === 'EISDIR') return true
-  const msg = exc instanceof Error ? exc.message : String(exc)
-  return /not found|no such file|not a directory|is a directory/i.test(msg)
 }
 
 // What a path is, asked on both channels a backend can answer on.

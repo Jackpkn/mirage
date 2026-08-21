@@ -119,4 +119,28 @@ describe('MirageOSAccess path operations', () => {
     expect(await access.handle('Path.is_file', ['/ram/d/nope'])).toBe(false)
     expect(await access.handle('Path.exists', ['/ram/nope/deep'])).toBe(false)
   })
+
+  // Monty's own tree holds no links, so declining this verb answered
+  // False for a link the shell made.
+  it('answers is_symlink from the parent listing mark', async () => {
+    const dispatch = vi.fn<BridgeDispatchFn>((op, path) => {
+      if (op === 'readdir' && path === '/ram/d/') {
+        return Promise.resolve([
+          { path: '/ram/d/l', size: 0, isDir: false, isLink: true },
+          { path: '/ram/d/f', size: 1, isDir: false },
+        ])
+      }
+      return Promise.reject(new Error(`unexpected ${op} ${path}`))
+    })
+    const access = accessOn(dispatch)
+    expect(await access.handle('Path.is_symlink', ['/ram/d/l'])).toBe(true)
+    expect(await access.handle('Path.is_symlink', ['/ram/d/f'])).toBe(false)
+  })
+
+  // A path under no mount reaches monty's own tree, links included.
+  it('declines is_symlink outside every mount', () => {
+    const dispatch = vi.fn<BridgeDispatchFn>(() => Promise.resolve(undefined))
+    const access = accessOn(dispatch)
+    expect(access.handle('Path.is_symlink', ['/tmp/l'])).toBe(NOT_HANDLED)
+  })
 })

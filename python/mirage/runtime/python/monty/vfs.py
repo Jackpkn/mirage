@@ -60,6 +60,28 @@ class MontyVFS:
                 ValueError):
             return None
 
+    def is_link(self, virtual: str) -> bool:
+        """Whether the mount's name plane holds a symlink at `virtual`.
+
+        Answered through the readlink op rather than a listing, because
+        a python readdir row carries no link mark: the door resolves
+        entries by stat, and stat follows. One dispatch per question,
+        which is what every other predicate here costs too.
+
+        Args:
+            virtual (str): the path to test.
+        """
+        if self._core is None:
+            return False
+        try:
+            self._core.readlink(virtual)
+        except OSError:
+            # EINVAL for a path that is not a link, ENOENT for one that
+            # is not there: `is_symlink` is False either way, which is
+            # what pathlib answers for both.
+            return False
+        return True
+
     def write(self, virtual: str, data: bytes) -> None:
         if self._core is None:
             return

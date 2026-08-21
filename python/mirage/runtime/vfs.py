@@ -34,8 +34,11 @@ class RuntimeVFS:
     """The mount-facing op vocabulary a sandboxed runtime encodes into.
 
     One instruction set (read/write/append/stat/readdir/create/truncate/
-    unlink/mkdir/rmdir/rename), one routing table, one place that knows
-    an append may have to become a whole-file write. Encoders hold one
+    unlink/mkdir/rmdir/rename/symlink/readlink/setattr), one routing
+    table, one place that knows an append may have to become a
+    whole-file write. The last three reach the name plane rather than a
+    backend, which is what lets a guest create a link or chmod a file on
+    a mount whose store has neither. Encoders hold one
     of these; they never inherit it, because a monty encoder must
     inherit the binding's own OSAccess and a wasm encoder is a table of
     preview1 host functions.
@@ -216,6 +219,73 @@ class RuntimeVFS:
         if self.mount_of(src) != self.mount_of(dst):
             raise CrossMountError(src, dst)
         self.call("rename", src, dst=PathSpec.from_str_path(dst))
+
+    def symlink(self, path: str, target: str) -> None:
+        """Create a namespace symlink at `path` pointing at `target`.
+
+        A link is namespace state, so no backend stores one and the
+        target is kept verbatim as the guest typed it. The dispatcher
+        answers this op from the node table itself, which is why a
+        runtime can serve `os.symlink` at all: the door a surface
+        already holds reaches the name plane, not just a mount.
+
+        Args:
+            path (str): guest-absolute path of the link to create.
+            target (str): link target, stored as typed.
+        """
+        self.call("symlink", path, target=target)
+
+    def readlink(self, path: str) -> str:
+        """The target of the symlink at `path`.
+
+        Args:
+            path (str): guest-absolute path of the link.
+
+        Returns:
+            str: the stored target.
+
+        Raises:
+            OSError: EINVAL when `path` is not a link, which is what the
+                node table answers and what POSIX readlink says.
+        """
+        return str(self.call("readlink", path))
+
+    def setattr(self,
+                path: str,
+                *,
+                mode: int | None = None,
+                uid: int | str | None = None,
+                gid: int | str | None = None,
+                atime: str | None = None,
+                mtime: str | None = None,
+                nofollow: bool = False) -> None:
+        """Write metadata fields, natively where the backend can hold them.
+
+        Every field is passed, unset ones as None, because the door
+        reads the whole set and stores in the namespace overlay whatever
+        the backend cannot keep. A mount with no setattr op therefore
+        still answers: chmod on an s3 or dropbox mount lands in the name
+        plane and stat reports it back. Stored, not enforced; mount mode
+        is the access control.
+
+        Args:
+            path (str): guest-absolute virtual path.
+            mode (int | None): permission bits (e.g. 0o644).
+            uid (int | str | None): owner id or name.
+            gid (int | str | None): group id or name.
+            atime (str | None): ISO access time.
+            mtime (str | None): ISO modification time.
+            nofollow (bool): write the link entry's own attrs rather
+                than its target's (a guest's AT_SYMLINK_NOFOLLOW).
+        """
+        self.call("setattr",
+                  path,
+                  mode=mode,
+                  uid=uid,
+                  gid=gid,
+                  atime=atime,
+                  mtime=mtime,
+                  nofollow=nofollow)
 
     def append(self, path: str, data: bytes, whole: bytes) -> None:
         """Extend `path` by `data`, falling back to writing `whole`.

@@ -15,6 +15,7 @@
 import struct
 
 from mirage.errors import FsCondition, classify
+from mirage.runtime.verbs import refusal_of
 
 # WASI preview1 wire numbers, from wasi-libc's errno.h (alphabetical
 # numbering). These are NOT the host's POSIX values and must never be
@@ -87,11 +88,30 @@ ENOENT = wasi_errno(FsCondition.ENOENT)
 ENOTDIR = wasi_errno(FsCondition.ENOTDIR)
 ENOTSUP = wasi_errno(FsCondition.ENOTSUP)
 
+# Which refusal a hard link gets is the verb table's decision, not this
+# surface's; rendering it in preview1 numbers is. preview1 spells the
+# verb `path_link` and the table keys it `link`, so mapping the name is
+# all the host does with this. A verb absent from every table is
+# refused there too, so the fallback is unreachable.
+LINK_REFUSAL = wasi_errno(refusal_of("link") or FsCondition.EPERM)
+
 # filetypes
 FT_UNKNOWN = 0
 FT_CHR = 2
 FT_DIR = 3
 FT_REG = 4
+FT_SYMLINK = 7
+
+# lookupflags: whether a path's trailing symlink is resolved. Unset is
+# how a guest spells lstat, so a verb that reads it cannot dereference.
+LOOKUP_SYMLINK_FOLLOW = 1
+
+# fstflags for path_filestat_set_times: which stamp the call writes and
+# whether the value comes from the argument or from the host clock.
+FST_ATIM = 1
+FST_ATIM_NOW = 2
+FST_MTIM = 4
+FST_MTIM_NOW = 8
 
 # path_open oflags
 OFLAG_CREAT = 1

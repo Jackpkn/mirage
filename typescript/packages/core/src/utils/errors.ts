@@ -166,6 +166,21 @@ export function isNoMount(err: unknown): boolean {
   return (err as { noMount?: unknown }).noMount === true
 }
 
+// What an existence probe reads as "nothing here": the path is absent, or
+// a component of it is not traversable. Wider than isMissingPath below,
+// which is the ENOENT-only swallow set, and still deliberately narrower
+// than a walk's tolerance, because a permission or missing-capability
+// error is not absence and mapping it to one would report a path that
+// exists as missing. Mirrors python MISS_ERRORS, and lives here for the
+// same reason that tuple does: the door and the executor's probes both
+// read it and neither may import the other.
+export function isMissError(exc: unknown): boolean {
+  const code = (exc as { code?: string }).code
+  if (code === 'ENOENT' || code === 'ENOTDIR' || code === 'EISDIR') return true
+  const msg = exc instanceof Error ? exc.message : String(exc)
+  return /not found|no such file|not a directory|is a directory/i.test(msg)
+}
+
 // True when the error means the path is simply not there: a stamped ENOENT,
 // or a path outside every mount. This is the whole swallow set for the
 // exists-family probes, mirroring Python's `(FileNotFoundError, ValueError)`.

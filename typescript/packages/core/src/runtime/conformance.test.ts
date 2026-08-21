@@ -23,6 +23,7 @@ import { PyodideRuntime } from './python/pyodide.ts'
 import { QuickJsRuntime } from './js/quickjs.ts'
 import type { BridgeDispatchFn, RunArgs } from './types.ts'
 import { PrefixResolver } from './resolver.ts'
+import { DIR_MODE, FILE_MODE } from '../utils/stat_view.ts'
 
 // The runtime conformance suite: one capability table, executed against
 // every runtime in that runtime's own idiom, with the outcome verified
@@ -156,6 +157,16 @@ const MONTY_ROWS: Row[] = [
     setup: ['echo -n a > /data/keep.txt'],
     checks: [['cat /data/keep.txt', 'aZ']],
     broken: MONTY_OPEN_UNSUPPORTED,
+  },
+  {
+    // Monty's own tree holds no links, so this reads the mount's name
+    // plane or answers False for a link the shell made. Creation is out
+    // of reach: the binding emits no symlink verb.
+    capability: 'lstat',
+    spelling: 'Path.is_symlink',
+    line: `python3 -c "from pathlib import Path; print(Path('/data/l').is_symlink(), Path('/data/t.txt').is_symlink())"`,
+    setup: ['echo -n x > /data/t.txt', 'ln -s t.txt /data/l'],
+    lineOut: 'True False',
   },
 ]
 
@@ -292,6 +303,40 @@ const PYODIDE_ROWS: Row[] = [
     setup: ['echo -n a > /data/keep.txt'],
     checks: [['cat /data/keep.txt', 'aZ']],
   },
+  {
+    // A link is namespace state, so the mount need not be able to store
+    // one: the op reaches the node table. The callback used to refuse
+    // with EPERM because no mount op could express a link at all.
+    capability: 'symlink',
+    spelling: 'os.symlink',
+    line: `python3 -c "import os; os.symlink('t.txt', '/data/made')"`,
+    setup: ['echo -n hi > /data/t.txt'],
+    checks: [
+      ['readlink /data/made', 't.txt'],
+      ['cat /data/made', 'hi'],
+    ],
+  },
+  {
+    capability: 'readlink',
+    spelling: 'os.readlink',
+    line: `python3 -c "import os; print(os.readlink('/data/lr'))"`,
+    setup: ['echo -n x > /data/t.txt', 'ln -s t.txt /data/lr'],
+    lineOut: 't.txt',
+  },
+  {
+    capability: 'lstat',
+    spelling: 'os.path.islink',
+    line: `python3 -c "import os; print(os.path.islink('/data/li'), os.path.islink('/data/t.txt'))"`,
+    setup: ['echo -n x > /data/t.txt', 'ln -s t.txt /data/li'],
+    lineOut: 'True False',
+  },
+  {
+    capability: 'utime',
+    spelling: 'os.utime',
+    line: `python3 -c "import os; os.utime('/data/t.txt', (100.0, 200.0))"`,
+    setup: ['echo -n x > /data/t.txt'],
+    checks: [['stat -c %Y /data/t.txt', '200']],
+  },
 ]
 
 const QUICKJS_ROWS: Row[] = [
@@ -379,6 +424,17 @@ const QUICKJS_ROWS: Row[] = [
     line: `node -e "const w = std.open('/data/keep.txt', 'a'); w.puts('Z'); w.close()"`,
     setup: ['echo -n a > /data/keep.txt'],
     checks: [['cat /data/keep.txt', 'aZ']],
+  },
+  {
+    // The only metadata verb this engine has: qjs-wasi's `os` module
+    // ships no symlink, readlink or lstat at all (probed live against
+    // the real binary), so the shim does not invent them and utimes is
+    // the whole setattr surface. Stamps are milliseconds both ways.
+    capability: 'utime',
+    spelling: 'os.utimes',
+    line: `node -e "const rc = os.utimes('/data/t.txt', 100000, 200000); if (rc !== 0) throw new Error('rc ' + rc)"`,
+    setup: ['echo -n x > /data/t.txt'],
+    checks: [['stat -c %Y /data/t.txt', '200']],
   },
 ]
 
@@ -539,10 +595,11 @@ function makeCountingBridge(seed: Record<string, string>): CountingBridge {
     }
     if (op === 'stat') {
       const hit = files.get(path)
-      if (hit !== undefined) return Promise.resolve({ size: hit.length, isDir: false, mtimeMs: 0 })
+      if (hit !== undefined)
+        return Promise.resolve({ size: hit.length, isDir: false, mtimeMs: 0, mode: FILE_MODE })
       const dir = path.replace(/\/$/, '')
       const isDir = dirs.has(dir) || [...files.keys()].some((p) => p.startsWith(dir + '/'))
-      if (isDir) return Promise.resolve({ size: 0, isDir: true, mtimeMs: 0 })
+      if (isDir) return Promise.resolve({ size: 0, isDir: true, mtimeMs: 0, mode: DIR_MODE })
       return Promise.reject(new Error(`ENOENT ${path}`))
     }
     if (op === 'readdir') {

@@ -25,6 +25,7 @@ export class MirageFsSeed implements FSLike {
   readonly dirs: string[] = []
   readonly files = new Map<string, Uint8Array>()
   readonly unreadable = new Set<string>()
+  readonly links = new Map<string, string>()
 
   mkdirTree(path: string): void {
     this.dirs.push(path)
@@ -32,6 +33,17 @@ export class MirageFsSeed implements FSLike {
 
   writeFile(path: string, bytes: Uint8Array): void {
     this.files.set(path, bytes)
+  }
+
+  /**
+   * Note a namespace symlink and what it points at.
+   *
+   * Args:
+   *   path: guest-absolute path of the link.
+   *   target: the stored target, verbatim as it was typed.
+   */
+  symlink(path: string, target: string): void {
+    this.links.set(path, target)
   }
 
   /**

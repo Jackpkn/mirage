@@ -58,7 +58,7 @@ The engine runs under WebAssembly capability isolation: it sees only what
 the run passes it. Host files and the network are invisible.
 
 Workspace mounts are visible with no setup: `std.open('/data/f.txt', 'r')`
-reads the mount, `os.readdir('/data')` lists it, and `os.stat`/`os.mkdir`/`os.rename`/`os.remove` stat and mutate it (0 or -errno in WASI numbering, like the real engine), bridged through the
+reads the mount, `os.readdir('/data')` lists it, and `os.stat`/`os.mkdir`/`os.rename`/`os.remove`/`os.utimes` stat and mutate it (0 or -errno in WASI numbering, like the real engine), bridged through the
 workspace dispatch so the code sees exactly what `cat` sees, with the same
 cache and write modes. Writes are visible to every command once the file is
 closed, and a read-only mount (or a session narrowed to read) fails the

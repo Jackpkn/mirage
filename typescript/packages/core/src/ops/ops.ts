@@ -16,29 +16,12 @@ import { OpReport } from '../io/types.ts'
 import { OpRecord } from '../observe/record.ts'
 import { NO_FOLLOW_OPS, type NamespaceLinks } from './config.ts'
 import type { OpKwargs } from './registry.ts'
-import type { FileStat } from '../types.ts'
+import type { FileStat, SetAttrFields } from '../types.ts'
 import { FileType, PathSpec } from '../types.ts'
 import { exdev, isMissingPath } from '../utils/errors.ts'
 import type { DispatchFn } from '../runtime/types.ts'
 
 export type OpSink = (rec: OpRecord) => Promise<void>
-
-/**
- * The metadata fields `setattr` takes, all optional.
- *
- * Spelled the way the op and the CommandOpts bag spell them, so one
- * fact keeps one name from a shell line down to a guest's chmod.
- * `nofollow` is not a field but the AT_SYMLINK_NOFOLLOW bit: it writes
- * the link entry's own attrs rather than its target's.
- */
-export interface SetAttrFields {
-  mode?: number
-  uid?: number | string
-  gid?: number | string
-  atime?: string
-  mtime?: string
-  nofollow?: boolean
-}
 
 interface MountOwner {
   readonly prefix: string

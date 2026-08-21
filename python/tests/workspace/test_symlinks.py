@@ -12,8 +12,12 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import errno
+
 import pytest
 
+from mirage.policy import Deny
+from mirage.policy.base import Policy
 from mirage.resource.ram import RAMResource
 from mirage.types import MountMode
 from mirage.workspace import Workspace
@@ -1178,3 +1182,95 @@ async def test_mv_resolves_a_link_prefix_before_refusing_the_last():
     assert r.stderr.decode() == ("mv: cannot move '/data/alias/dlink/' to "
                                  "'/data/out': Not a directory\n")
     assert (await ws.execute("readlink /data/base/dlink")).exit_code == 0
+
+
+# readlink(2) splits its two misses and callers read them differently:
+# EINVAL means "there, but not a link", ENOENT means "not there". Pinned
+# against real Linux (python:3.13-slim): a file, a directory and a mount
+# root all answer EINVAL, and a missing path answers ENOENT whether or
+# not its parent exists.
+@pytest.mark.asyncio
+async def test_readlink_answers_the_target_for_a_link():
+    ws = _ws()
+    await ws.execute("echo hi > /data/a.txt")
+    await ws.execute("ln -s a.txt /data/l")
+    assert await ws.ops.readlink("/data/l") == "a.txt"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", ["/data/a.txt", "/data/d", "/data"])
+async def test_readlink_of_something_that_is_there_is_einval(path: str):
+    ws = _ws()
+    await ws.execute("echo hi > /data/a.txt")
+    await ws.execute("mkdir /data/d")
+    with pytest.raises(OSError) as caught:
+        await ws.ops.readlink(path)
+    assert caught.value.errno == errno.EINVAL
+    assert not isinstance(caught.value, FileNotFoundError)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path",
+                         ["/data/missing", "/data/d/deep/missing", "/nomount"])
+async def test_readlink_of_something_absent_is_enoent(path: str):
+    # FileNotFoundError, not a bare OSError: a guest's `except
+    # FileNotFoundError` is what has to catch this.
+    ws = _ws()
+    await ws.execute("mkdir /data/d")
+    with pytest.raises(FileNotFoundError) as caught:
+        await ws.ops.readlink(path)
+    assert caught.value.errno == errno.ENOENT
+
+
+@pytest.mark.asyncio
+async def test_readlink_reads_the_listing_channel_for_a_marker_less_dir():
+    # A prefix store keeps no directory object, so stat misses what
+    # readdir lists: reading only the first channel would report an
+    # implicit directory as absent.
+    ws = _ws()
+    await ws.execute("mkdir /data/d")
+    await ws.execute("echo x > /data/d/under.txt")
+    mount = ws._registry.try_mount_for("/data/d")
+    original = mount.execute_op
+
+    async def only_readdir(op_name, path, *args, **kwargs):
+        if op_name == "stat":
+            raise FileNotFoundError(path)
+        return await original(op_name, path, *args, **kwargs)
+
+    mount.execute_op = only_readdir
+    with pytest.raises(OSError) as caught:
+        await ws.ops.readlink("/data/d")
+    assert caught.value.errno == errno.EINVAL
+    # And the listing has to be non-empty to count: those stores answer
+    # a missing prefix with [] rather than raising, so an empty one is
+    # the absence case. Two different answers with stat silenced is what
+    # proves the listing is the channel being read.
+    await ws.execute("mkdir /data/hollow")
+    with pytest.raises(FileNotFoundError):
+        await ws.ops.readlink("/data/hollow")
+
+
+@pytest.mark.asyncio
+async def test_readlink_does_not_probe_past_a_policy_that_denies_stat():
+    """The probe reads on the caller's behalf, never past a refusal.
+
+    A policy that denies ``stat`` must not be reachable through a
+    readlink. A channel that refuses is not evidence of absence either,
+    so the errno collapses to the EINVAL every miss answered before the
+    split rather than claiming a path is gone.
+    """
+
+    class NoStat(Policy):
+
+        async def pre_ops(self, ctx):
+            if ctx.op in ("stat", "readdir"):
+                return Deny(reason="no probing")
+            return None
+
+    ws = Workspace({"/data": (RAMResource(), MountMode.WRITE)},
+                   mode=MountMode.WRITE,
+                   policies=[NoStat()])
+    with pytest.raises(OSError) as caught:
+        await ws.ops.readlink("/data/missing")
+    assert caught.value.errno == errno.EINVAL

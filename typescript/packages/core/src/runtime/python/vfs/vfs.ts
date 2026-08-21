@@ -13,7 +13,9 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { NO_WRITE, planFlush } from '../../handles/index.ts'
-import { BLKSIZE, SEEK_CUR, SEEK_END } from './constants.ts'
+import { epochToIso } from '../../../utils/dates.ts'
+import type { SetAttrFields } from '../../../types.ts'
+import { BLKSIZE, LINK_MODE, SEEK_CUR, SEEK_END } from './constants.ts'
 import { errnoError } from './errors.ts'
 import type { MutationJournal } from './journal.ts'
 import type { MirageFsSeed } from './seed.ts'
@@ -29,6 +31,44 @@ import type {
   SetAttr,
   StreamOps,
 } from './types.ts'
+
+const ENC = new TextEncoder()
+
+/**
+ * The metadata a `setattr` actually changes, or null when it changes
+ * none of it.
+ *
+ * Emscripten hands this callback more than a guest's chmod and utime:
+ * a stamp arrives beside a resize and beside a mode, and a write that
+ * moved no field would still journal an op. Sending one costs a
+ * dispatch and, worse, splits two writes the journal would otherwise
+ * coalesce. Comparing against the node costs one read.
+ *
+ * The one case comparing cannot catch is a create, whose finalizing
+ * chmod does lower a real mode; `MirageFs.fresh` is what suppresses
+ * that one.
+ *
+ * `ctime` is never included: no POSIX call sets it directly, so a mount
+ * has nothing to write it to. `size` is not metadata here either, it is
+ * the resize branch's bytes.
+ *
+ * Args:
+ *   node: the node as it stands before the write.
+ *   attr: the fields Emscripten passed, times as epoch ms.
+ */
+export function changedAttrs(node: FSNode, attr: SetAttr): SetAttrFields | null {
+  const fields: SetAttrFields = {}
+  if (attr.mode !== undefined && (attr.mode & 0o7777) !== (node.mode & 0o7777)) {
+    fields.mode = attr.mode & 0o7777
+  }
+  if (attr.atime !== undefined && attr.atime !== node.atime) {
+    fields.atime = epochToIso(attr.atime / 1000)
+  }
+  if (attr.mtime !== undefined && attr.mtime !== node.mtime) {
+    fields.mtime = epochToIso(attr.mtime / 1000)
+  }
+  return Object.keys(fields).length === 0 ? null : fields
+}
 
 /**
  * An Emscripten filesystem backed by a mirage mount.
@@ -56,6 +96,10 @@ export class MirageFs {
   private readonly journal: MutationJournal
   private readonly tree: NodeTree
   private readonly mountOf: (path: string) => string | null
+  // The file node FS.open just created, whose finalizing chmod is the
+  // filesystem's own and not a guest metadata write. Cleared by the
+  // first setattr, so it can never outlive the create it belongs to.
+  private fresh: FSNode | null = null
 
   /**
    * Args:
@@ -89,6 +133,7 @@ export class MirageFs {
       rmdir: this.rmdir.bind(this),
       readdir: this.readdir.bind(this),
       symlink: this.symlink.bind(this),
+      readlink: this.readlink.bind(this),
     }
     const streamOps: StreamOps = {
       open: this.streamOpen.bind(this),
@@ -112,7 +157,13 @@ export class MirageFs {
   }
 
   private getattr(node: FSNode): FSAttr {
-    const size = this.host.isDir(node.mode) ? BLKSIZE : (node.usedBytes ?? 0)
+    // A link sizes as its target string, which is what lstat reports on
+    // every POSIX system and what MEMFS answers for its own links.
+    const size = this.host.isLink(node.mode)
+      ? ENC.encode(node.link ?? '').length
+      : this.host.isDir(node.mode)
+        ? BLKSIZE
+        : (node.usedBytes ?? 0)
     return {
       dev: 1,
       ino: node.id,
@@ -131,10 +182,24 @@ export class MirageFs {
   }
 
   private setattr(node: FSNode, attr: SetAttr): void {
+    // Read the changes before applying them, and only outside a create:
+    // the same callback carries a guest's chmod and the chmod Emscripten
+    // itself performs to finalize a new file, and the two are the same
+    // shape. `fresh` is what tells them apart; the comparison then drops
+    // a stamp write that changes nothing.
+    const finalizing = this.fresh === node
+    this.fresh = null
+    const fields = finalizing ? null : changedAttrs(node, attr)
     if (attr.mode !== undefined) node.mode = attr.mode
     if (attr.atime !== undefined) node.atime = attr.atime
     if (attr.mtime !== undefined) node.mtime = attr.mtime
     if (attr.ctime !== undefined) node.ctime = attr.ctime
+    if (fields !== null) {
+      // A link's own attrs go to the link, since the tree resolved to
+      // the link node itself and the target's row is not what changed.
+      if (this.host.isLink(node.mode)) fields.nofollow = true
+      this.journal.markSetattr(this.tree.pathOf(node), fields)
+    }
     if (attr.size === undefined) return
     const old = node.contents ?? new Uint8Array(0)
     const next = new Uint8Array(attr.size)
@@ -161,10 +226,17 @@ export class MirageFs {
     node.rdev = rdev
     const path = this.tree.pathOf(node)
     if (this.host.isDir(mode)) this.journal.markMkdir(path)
-    // An empty write is what carries a file that is created and never
-    // written (`Path.touch()`, `open(p,'w').close()`) through to the
-    // mount. A later close for the same path coalesces over it.
-    else this.journal.markWrite(path, new Uint8Array(0))
+    else {
+      // An empty write is what carries a file that is created and never
+      // written (`Path.touch()`, `open(p,'w').close()`) through to the
+      // mount. A later close for the same path coalesces over it.
+      this.journal.markWrite(path, new Uint8Array(0))
+      // FS.open finalizes a new file with a chmod of its own, right
+      // here and on this node. Only a file is marked: a directory gets
+      // no such call, so a marker left on one would swallow the guest's
+      // next chmod instead.
+      this.fresh = node
+    }
     return node
   }
 
@@ -198,11 +270,35 @@ export class MirageFs {
     return ['.', '..', ...this.tree.childNames(node)]
   }
 
-  private symlink(): FSNode {
-    // Links are namespace state in mirage, not backend state, so no mount
-    // op can express one. Refusing is honest; MEMFS would accept it and
-    // the link would vanish at the end of the run.
-    throw errnoError(this.host, this.errno, 'EPERM')
+  /**
+   * Create a symlink node and record it for the mounts.
+   *
+   * A link is namespace state, which is exactly why this can be served:
+   * the op reaches the node table rather than a backend, so a link lands
+   * on an s3 or notion mount whose store has no such thing. The target
+   * is stored as typed and never resolved here.
+   *
+   * Args:
+   *   parent: directory the link is created in.
+   *   name: the link's own name.
+   *   target: what it points at, verbatim.
+   */
+  private symlink(parent: FSNode, name: string, target: string): FSNode {
+    const node = this.tree.makeNode(parent, name, LINK_MODE)
+    node.link = target
+    this.journal.markSymlink(this.tree.pathOf(node), target)
+    return node
+  }
+
+  /**
+   * The target of a symlink node.
+   *
+   * Args:
+   *   node: the node to read.
+   */
+  private readlink(node: FSNode): string {
+    if (!this.host.isLink(node.mode)) throw errnoError(this.host, this.errno, 'EINVAL')
+    return node.link ?? ''
   }
 
   private streamOpen(stream: FSStream): void {

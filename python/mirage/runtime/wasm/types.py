@@ -24,8 +24,12 @@ class GuestStat:
         size (int): size in bytes.
         mtime_ns (int): modification time in epoch nanoseconds, 0 when
             the source reports none.
+        is_link (bool): whether the path is a symlink. Only ever true
+            for a stat the guest asked not to follow, since every other
+            answer is the target's.
     """
 
     is_dir: bool
     size: int
     mtime_ns: int
+    is_link: bool = False

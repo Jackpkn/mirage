@@ -23,14 +23,34 @@ export interface FSLike {
    * when nothing will write to it.
    */
   markUnreadable?(path: string): void
+  /**
+   * Note a namespace symlink and its target. A target that cannot hold
+   * links omits them, which is what every seed did before links were
+   * reachable at all.
+   */
+  symlink?(path: string, target: string): void
 }
 
 async function preloadEntry(fs: FSLike, vfs: RuntimeVFS, entry: VFSEntry): Promise<void> {
-  // A namespace symlink is skipped, not followed: stat reports the
-  // target, so a directory link would copy its whole subtree here and a
-  // cyclic one would never terminate. The guest sees exactly what a
-  // seed can hold, which has never included links.
-  if (entry.isLink === true) return
+  // A namespace symlink is copied as a link, never followed: stat
+  // reports the target, so a directory link would copy its whole
+  // subtree here and a cyclic one would never terminate. The target is
+  // one readlink, which the walk pays only for the entries the
+  // namespace already marked.
+  if (entry.isLink === true) {
+    if (fs.symlink === undefined) return
+    try {
+      fs.symlink(entry.path, await vfs.readlink(entry.path))
+    } catch (err) {
+      // A link the namespace listed and then would not resolve: leaving
+      // it out is the honest seed, since inventing a target would make
+      // the guest read some other file's bytes.
+      console.warn(
+        `mirage preload: cannot read link ${entry.path}: ${err instanceof Error ? err.message : String(err)}`,
+      )
+    }
+    return
+  }
   if (entry.isDir) {
     fs.mkdirTree(entry.path)
     const next = entry.path.endsWith('/') ? entry.path : entry.path + '/'

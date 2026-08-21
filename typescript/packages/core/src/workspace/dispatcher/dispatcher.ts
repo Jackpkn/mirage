@@ -19,8 +19,17 @@ import { CacheManager } from '../../cache/manager.ts'
 import { applyOpLimit, runWithTimeout } from '../../commands/builtin/utils/limit.ts'
 import { getExtension } from '../../commands/resolve.ts'
 import { IOResult, type OpReport } from '../../io/types.ts'
-import { eacces, eaccesReadOnly, einval, enoent } from '../../utils/errors.ts'
-import { Policies, postOpsGate, preOpsGate } from '../../policy/index.ts'
+import {
+  eacces,
+  eaccesReadOnly,
+  einval,
+  enoent,
+  isMissError,
+  isMissingOp,
+  type FsError,
+} from '../../utils/errors.ts'
+import { Policies, PolicyDenied, postOpsGate, preOpsGate } from '../../policy/index.ts'
+import { PolicyError } from '../../policy/errors.ts'
 import { mountKey } from '../../utils/key_prefix.ts'
 import { ownerPrefix, rstripSlash } from '../../utils/slash.ts'
 import { record, runWithMountPrefix, runWithRevisions } from '../../observe/context.ts'
@@ -436,7 +445,7 @@ export class Dispatcher {
       result = null
     } else {
       const found = this.namespace.readlink(path.virtual)
-      if (found === null) throw einval(path)
+      if (found === null) throw await this.readlinkMiss(path)
       target = found
       result = found
     }
@@ -451,6 +460,109 @@ export class Dispatcher {
     const bound = await postOpsGate(this.policies, opName, path, write, owner ?? '', result)
     if (bound !== null) return (await applyOpLimit(result, bound)) as string | null
     return result
+  }
+
+  /**
+   * The error a readlink of something that is not a link answers.
+   *
+   * readlink(2) splits the two misses and callers read them differently:
+   * a path that is there but is not a link is EINVAL, and one that is
+   * not there at all is ENOENT, which is the code a guest's
+   * `except FileNotFoundError` catches. The node table only knows the
+   * first half, so absence is probed here and only here, on the failure
+   * path, where one extra round trip buys the right errno. Mirrors
+   * Python's Dispatcher._readlink_miss.
+   */
+  private async readlinkMiss(path: PathSpec): Promise<FsError> {
+    return (await this.pathPresent(path)) ? einval(path) : enoent(path)
+  }
+
+  /**
+   * Whether anything at all is at `path`, on every channel.
+   *
+   * Absence takes both channels a backend can answer on: on a prefix
+   * store a directory is not an object but the set of keys under it, so
+   * `stat` misses what `readdir` would list, and a listing has to be
+   * non-empty to count because those stores answer a missing prefix with
+   * `[]`. The namespace is asked first, since a directory that exists
+   * only because a mount or a link sits below it is structure no backend
+   * can see. Mirrors `resolvePathStat`, which cannot be reused here: it
+   * dispatches, and the door is what dispatch is inside of. Mirrors
+   * Python's Dispatcher._path_present.
+   */
+  private async pathPresent(path: PathSpec): Promise<boolean> {
+    if (namespaceStat(this.namespace.mountPrefixes(), this.namespace, path.virtual) !== null) {
+      return true
+    }
+    let resolved: [Resource, PathSpec, MountMode]
+    try {
+      resolved = await this.namespace.resolve(path.virtual, false)
+    } catch {
+      // No mount serves the path and the namespace knows no structure
+      // there, which is exactly the absence being probed for.
+      return false
+    }
+    try {
+      if ((await this.probeOp('stat', resolved)) !== null) return true
+      const entries = await this.probeOp('readdir', resolved)
+      return Array.isArray(entries) && entries.length > 0
+    } catch (err) {
+      if (!(err instanceof PolicyDenied) && !(err instanceof PolicyError)) throw err
+      // A channel that refuses to answer is not evidence of absence.
+      // Reporting "present" keeps the answer at the EINVAL every miss
+      // gave before the split, which asserts nothing the policy is
+      // withholding; reporting absence would assert a fact this door was
+      // not allowed to check.
+      return true
+    }
+  }
+
+  /**
+   * Run one read op for a probe, or null when it found nothing.
+   *
+   * The probe reads on the caller's behalf but not at its request, so it
+   * passes the same admission gate the op would at the door: a policy
+   * that denies `stat` must not be reachable through a readlink. That
+   * refusal is raised, not swallowed, because only the caller knows what
+   * to answer when a channel goes dark.
+   *
+   * The index and the path's filetype are the two kwargs that decide
+   * which registered op answers, so a probe that omitted them would ask
+   * a different question than the door does and report a rendered path
+   * as absent. Python needs no twin of that half: its dispatcher routes
+   * through `Mount.execute_op`, which stamps both itself.
+   *
+   * Args:
+   *   opName: the op to run, `stat` or `readdir`.
+   *   resolved: what the namespace resolved the path to.
+   */
+  private async probeOp(
+    opName: string,
+    resolved: [Resource, PathSpec, MountMode],
+  ): Promise<unknown> {
+    const [resource, scope] = resolved
+    const mount = this.namespace.tryMountFor(scope.virtual)
+    await preOpsGate(this.policies, opName, scope, false, mount?.prefix ?? '', sessionId())
+    const filetype = getExtension(scope.virtual)
+    try {
+      return await this.opsRegistry.call(
+        opName,
+        resource.kind,
+        resource.accessor ?? NOOP_ACCESSOR_INSTANCE,
+        scope,
+        [],
+        {
+          ...(resource.index !== undefined ? { index: resource.index } : {}),
+          ...(filetype !== null ? { filetype } : {}),
+        },
+      )
+    } catch (err) {
+      // The "nothing here" set exactly, plus a backend with no such op:
+      // a miss on one channel is not absence on its own, so the caller
+      // tries the other.
+      if (isMissError(err) || isMissingOp(err, opName)) return null
+      throw err
+    }
   }
 
   /**

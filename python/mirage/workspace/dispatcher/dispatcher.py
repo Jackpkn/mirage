@@ -29,8 +29,9 @@ from mirage.ops.config import NO_FOLLOW_OPS, STAMP_WRITE_OPS
 from mirage.ops.namespace_view import (merge_readdir, namespace_listing,
                                        namespace_stat)
 from mirage.policy import post_ops_gate, pre_ops_gate
+from mirage.policy.errors import PolicyDenied, PolicyError
 from mirage.types import ConsistencyPolicy, FileStat, PathSpec, ResourceName
-from mirage.utils.errors import no_mount
+from mirage.utils.errors import MISS_ERRORS, no_mount
 from mirage.utils.key_prefix import mount_key
 from mirage.utils.path import owner_prefix
 from mirage.utils.ranges import slice_window
@@ -403,8 +404,7 @@ class Dispatcher:
         else:
             found = self._namespace.readlink(path.virtual)
             if found is None:
-                raise OSError(errno.EINVAL, os.strerror(errno.EINVAL),
-                              path.virtual)
+                raise await self._readlink_miss(path)
             target = found
             result = found
         record(op, path.virtual, ResourceName.RAM.value,
@@ -415,6 +415,86 @@ class Dispatcher:
         if bound is not None:
             return await apply_op_limit(result, bound)
         return result
+
+    async def _readlink_miss(self, path: PathSpec) -> OSError:
+        """The error a readlink of something that is not a link answers.
+
+        readlink(2) splits the two misses and callers read them
+        differently: a path that is there but is not a link is EINVAL,
+        and one that is not there at all is ENOENT, which is the code a
+        guest's ``except FileNotFoundError`` catches. The node table
+        only knows the first half, so absence is probed here and only
+        here, on the failure path, where one extra round trip buys the
+        right errno.
+
+        Args:
+            path (PathSpec): the path the readlink named.
+        """
+        if await self._path_present(path):
+            return OSError(errno.EINVAL, os.strerror(errno.EINVAL),
+                           path.virtual)
+        return FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT),
+                                 path.virtual)
+
+    async def _path_present(self, path: PathSpec) -> bool:
+        """Whether anything at all is at `path`, on every channel.
+
+        Absence takes both channels a backend can answer on: on a prefix
+        store a directory is not an object but the set of keys under it,
+        so ``stat`` misses what ``readdir`` would list, and a listing
+        has to be non-empty to count because those stores answer a
+        missing prefix with ``[]``. The namespace is asked first, since
+        a directory that exists only because a mount or a link sits
+        below it is structure no backend can see. Mirrors
+        ``resolve_path_stat``, which cannot be reused here: it dispatches,
+        and the door is what dispatch is inside of.
+
+        Args:
+            path (PathSpec): the path to probe.
+        """
+        prefixes = [m.prefix for m in self._namespace.registry.mounts()]
+        if namespace_stat(prefixes, self._namespace, path.virtual) is not None:
+            return True
+        mount = self._namespace.try_mount_for(path.virtual)
+        if mount is None:
+            return False
+        try:
+            if await self._probe_op("stat", mount, path) is not None:
+                return True
+            return bool(await self._probe_op("readdir", mount, path))
+        except (PolicyError, PolicyDenied):
+            # A channel that refuses to answer is not evidence of
+            # absence. Reporting "present" keeps the answer at the EINVAL
+            # every miss gave before the split, which asserts nothing the
+            # policy is withholding; reporting absence would assert a
+            # fact this door was not allowed to check.
+            return True
+
+    async def _probe_op(self, op: str, mount: MountEntry,
+                        path: PathSpec) -> Any:
+        """Run one read op for a probe, or None when it found nothing.
+
+        The probe reads on the caller's behalf but not at its request, so
+        it passes the same admission gate the op would at the door: a
+        policy that denies ``stat`` must not be reachable through a
+        readlink. That refusal is raised, not swallowed, because only the
+        caller knows what to answer when a channel goes dark.
+
+        Args:
+            op (str): ``stat`` or ``readdir``.
+            mount (MountEntry): the mount owning the path.
+            path (PathSpec): the path to probe.
+        """
+        if not mount.supports_op(op, path.virtual):
+            return None
+        await pre_ops_gate(self._namespace.registry.policies, op, path, False,
+                           mount.prefix, _session_id())
+        try:
+            return await mount.execute_op(op, path.virtual)
+        except MISS_ERRORS:
+            # The "nothing here" set exactly: a miss on one channel is
+            # not absence on its own, so the caller tries the other.
+            return None
 
     async def _apply_setattr(self, mount: MountEntry, path: PathSpec,
                              kwargs: dict[str, Any]) -> dict[str, Any]:

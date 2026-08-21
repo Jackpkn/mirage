@@ -12,6 +12,8 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import errno
+
 from mirage.runtime.python.monty.vfs import MontyVFS
 from mirage.runtime.resolver import PrefixResolver
 from mirage.runtime.vfs import RuntimeVFS
@@ -25,11 +27,14 @@ class CountingCore(RuntimeVFS):
         files (dict[str, bytes]): the paths the mount holds.
     """
 
-    def __init__(self, files: dict[str, bytes]) -> None:
+    def __init__(self,
+                 files: dict[str, bytes],
+                 links: dict[str, str] | None = None) -> None:
         super().__init__(dispatch=None,
                          loop=None,
                          resolver=PrefixResolver(lambda: []))
         self.files = files
+        self.links = dict(links or {})
         self.calls: list[tuple[str, str]] = []
 
     def _raw(self, op, path, **kwargs):
@@ -54,6 +59,11 @@ class CountingCore(RuntimeVFS):
             if not names:
                 raise FileNotFoundError(path)
             return sorted(names)
+        if op == "readlink":
+            found = self.links.get(path)
+            if found is None:
+                raise OSError(errno.EINVAL, "not a symbolic link", path)
+            return found
         return None
 
     def ops(self, name: str) -> list[str]:
@@ -134,3 +144,16 @@ def test_an_unwired_view_answers_none_and_swallows_no_mutation():
     assert vfs.readdir("/s3") is None
     vfs.write("/s3/a.txt", b"x")
     vfs.unlink("/s3/a.txt")
+
+
+def test_is_link_reads_the_name_plane():
+    # Monty's own tree holds no links, so the readlink op is the only
+    # place the fact lives; a python readdir row carries no mark.
+    core = CountingCore({"/ram/t.txt": b"x"}, links={"/ram/l": "t.txt"})
+    vfs = MontyVFS(core)
+    assert vfs.is_link("/ram/l") is True
+    assert vfs.is_link("/ram/t.txt") is False
+
+
+def test_is_link_is_false_without_a_workspace():
+    assert MontyVFS(None).is_link("/ram/l") is False

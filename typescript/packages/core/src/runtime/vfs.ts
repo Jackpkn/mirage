@@ -18,6 +18,7 @@ import { normDir } from '../utils/slash.ts'
 import { planFlush } from './handles/index.ts'
 import { PrefixResolver, type MountResolver } from './resolver.ts'
 import type { BridgeDispatchFn } from './types.ts'
+import type { SetAttrFields } from '../types.ts'
 
 /** One directory entry as the mounts report it. */
 export interface VFSEntry {
@@ -35,6 +36,11 @@ export interface VFSStat {
   size: number
   isDir: boolean
   mtimeMs: number
+  // The full st_mode, type bits included, so a chmod the shell made is
+  // what a guest's stat reports. A guest that has no mode field on its
+  // own wire (preview1's filestat carries only a filetype) reads the
+  // type bits and drops the rest.
+  mode: number
 }
 
 export function concatBytes(head: Uint8Array, tail: Uint8Array): Uint8Array {
@@ -48,8 +54,11 @@ export function concatBytes(head: Uint8Array, tail: Uint8Array): Uint8Array {
  * The mount-facing op vocabulary a sandboxed runtime encodes into.
  *
  * One instruction set (read/write/append/stat/readdir/create/truncate/
- * unlink/mkdir/rmdir/rename), one routing table, one place that knows
- * an append may have to become a whole-file write. Encoders hold one of these; they
+ * unlink/mkdir/rmdir/rename/symlink/readlink/setattr), one routing
+ * table, one place that knows an append may have to become a
+ * whole-file write. The last three reach the name plane rather than a
+ * backend, which is what lets a guest create a link or stamp a time on
+ * a mount whose store has neither. Encoders hold one of these; they
  * never inherit it, because a monty encoder is the binding's own `os`
  * callback and a quickjs encoder is a table of host functions.
  *
@@ -117,7 +126,8 @@ export class RuntimeVFS {
       typeof st !== 'object' ||
       typeof st.size !== 'number' ||
       typeof st.isDir !== 'boolean' ||
-      typeof st.mtimeMs !== 'number'
+      typeof st.mtimeMs !== 'number' ||
+      typeof st.mode !== 'number'
     ) {
       throw new TypeError(`runtime vfs: stat ${path} bad shape`)
     }
@@ -186,6 +196,54 @@ export class RuntimeVFS {
   async rename(src: string, dst: string): Promise<void> {
     if (this.mountOf(src) !== this.mountOf(dst)) throw new CrossMountError(src, dst)
     await this.dispatch('rename', src, undefined, dst)
+  }
+
+  /**
+   * Create a namespace symlink at `path` pointing at `target`.
+   *
+   * A link is namespace state, so no backend stores one and the target
+   * is kept verbatim as the guest typed it. The dispatcher answers this
+   * op from the node table itself, which is why a runtime can serve
+   * `os.symlink` at all: the door a surface already holds reaches the
+   * name plane, not just a mount.
+   *
+   * Args:
+   *   path: guest-absolute path of the link to create.
+   *   target: link target, stored as typed.
+   */
+  async symlink(path: string, target: string): Promise<void> {
+    await this.dispatch('symlink', path, undefined, target)
+  }
+
+  /**
+   * The target of the symlink at `path`.
+   *
+   * Throws EINVAL when `path` is not a link, which is what the node
+   * table answers and what POSIX readlink says.
+   */
+  async readlink(path: string): Promise<string> {
+    const out = await this.dispatch('readlink', path)
+    if (typeof out !== 'string') {
+      throw new TypeError(`runtime vfs: readlink ${path} expected string, got ${typeof out}`)
+    }
+    return out
+  }
+
+  /**
+   * Write metadata fields, natively where the backend can hold them.
+   *
+   * The door reads the whole set and stores in the namespace overlay
+   * whatever the backend cannot keep, so a mount with no setattr op
+   * still answers: a utime on an s3 or dropbox mount lands in the name
+   * plane and stat reports it back. Stored, not enforced; the mount
+   * mode is the access control.
+   *
+   * Args:
+   *   path: guest-absolute virtual path.
+   *   attrs: the fields to write, unset ones omitted.
+   */
+  async setattr(path: string, attrs: SetAttrFields): Promise<void> {
+    await this.dispatch('setattr', path, undefined, undefined, attrs)
   }
 
   /**

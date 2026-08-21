@@ -21,7 +21,7 @@ import { PolicyDenied, PolicyError } from '../policy/errors.ts'
 import type { Action, OpsContext, OpsResultContext } from '../policy/types.ts'
 import { RAMResource } from '../resource/ram/ram.ts'
 import { FileType, Limit, MountMode, OnExceed } from '../types.ts'
-import { enotdir } from '../utils/errors.ts'
+import { enoent, enotdir } from '../utils/errors.ts'
 import { Workspace } from '../workspace/workspace/workspace.ts'
 
 const DEC = new TextDecoder()
@@ -669,5 +669,97 @@ describe('Ops.setattr', () => {
     await ws.fs.symlink('/data/dir/link', 'f.txt')
     await ws.fs.setattr('/data/dir/link', { uid: 9 })
     expect((await ws.fs.stat('/data/dir/f.txt')).uid).toBe(9)
+  })
+})
+
+// readlink(2) splits its two misses and callers read them differently:
+// EINVAL means "there, but not a link", ENOENT means "not there". Pinned
+// against real Linux (python:3.13-slim): a file, a directory and a mount
+// root all answer EINVAL, and a missing path answers ENOENT whether or
+// not its parent exists.
+describe('Ops.readlink', () => {
+  const codeOf = async (ws: Workspace, path: string): Promise<string> => {
+    try {
+      await ws.fs.readlink(path)
+      return 'ok'
+    } catch (err) {
+      return String((err as { code?: string }).code)
+    }
+  }
+
+  it('answers the target for a link', async () => {
+    const ws = mkWorkspace()
+    await ws.fs.writeFile('/data/f.txt', 'x')
+    await ws.fs.symlink('/data/l', 'f.txt')
+    expect(await ws.fs.readlink('/data/l')).toBe('f.txt')
+  })
+
+  it('answers EINVAL for a path that is there but is not a link', async () => {
+    const ws = mkWorkspace()
+    await ws.fs.writeFile('/data/f.txt', 'x')
+    await ws.fs.mkdir('/data/d')
+    expect(await codeOf(ws, '/data/f.txt')).toBe('EINVAL')
+    expect(await codeOf(ws, '/data/d')).toBe('EINVAL')
+    expect(await codeOf(ws, '/data')).toBe('EINVAL')
+  })
+
+  it('answers ENOENT for a path that is not there', async () => {
+    const ws = mkWorkspace()
+    await ws.fs.mkdir('/data/d')
+    expect(await codeOf(ws, '/data/missing')).toBe('ENOENT')
+    expect(await codeOf(ws, '/data/d/deep/missing')).toBe('ENOENT')
+  })
+
+  // A store that keeps no directory object answers stat with a miss and
+  // readdir with keys, so absence takes both channels: reading only the
+  // first would report an implicit directory as ENOENT.
+  it('reads the listing channel when a backend has no directory object', async () => {
+    const resource = new RAMResource()
+    const ops = new OpsRegistry()
+    for (const op of resource.ops()) ops.register(op)
+    const ws = new Workspace({ '/data': resource }, { mode: MountMode.WRITE, ops })
+    await ws.fs.mkdir('/data/d')
+    await ws.fs.writeFile('/data/d/under.txt', 'x')
+    // Registered after the writes, so only the probe sees the miss: a
+    // prefix store answers stat with nothing for a directory and
+    // readdir with the keys under it.
+    ops.register({
+      name: 'stat',
+      resource: resource.kind,
+      filetype: null,
+      fn: () => {
+        throw enoent('/data/d')
+      },
+      write: false,
+    })
+    expect(await codeOf(ws, '/data/d')).toBe('EINVAL')
+    // And the listing has to be non-empty to count: those stores answer
+    // a missing prefix with [] rather than raising, so an empty one is
+    // the absence case. Two different answers with stat silenced is what
+    // proves the listing is the channel being read.
+    await ws.fs.mkdir('/data/hollow')
+    expect(await codeOf(ws, '/data/hollow')).toBe('ENOENT')
+  })
+
+  // The probe reads on the caller's behalf, never past a refusal: a
+  // channel that will not answer is not evidence of absence, so the
+  // errno collapses to the EINVAL every miss gave before the split.
+  it('does not probe past a policy that denies stat', async () => {
+    const resource = new RAMResource()
+    const ops = new OpsRegistry()
+    for (const op of resource.ops()) ops.register(op)
+    const noProbe: Policy = {
+      preOps: (ctx: OpsContext) =>
+        Promise.resolve(
+          ctx.op === 'stat' || ctx.op === 'readdir'
+            ? { kind: 'deny' as const, reason: 'no probing' }
+            : null,
+        ),
+    }
+    const ws = new Workspace(
+      { '/data': resource },
+      { mode: MountMode.WRITE, ops, policies: [noProbe] },
+    )
+    expect(await codeOf(ws, '/data/missing')).toBe('EINVAL')
   })
 })
