@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from mirage.runtime.vfs import RuntimeVFS
-from mirage.runtime.wasm.abi import FT_DIR, FT_REG
+from mirage.runtime.wasm.abi import FT_DIR, FT_REG, FT_SYMLINK
 from mirage.runtime.wasm.build import BuildDir
 from mirage.runtime.wasm.config import WasmFsConfig
 from mirage.runtime.wasm.constants import READONLY_HINT
@@ -37,7 +37,7 @@ class WasmVFS:
 
     Its second job is shape. `RuntimeVFS` answers in mirage's terms
     (`FileStat`, virtual paths); preview1 asks in its own (`GuestStat`,
-    `FT_DIR`/`FT_REG` pairs, errno). Translating between them is why
+    `(name, filetype)` pairs, errno). Translating between them is why
     quickjs still builds one of these even with no build directory to
     route to.
 
@@ -302,6 +302,10 @@ class WasmVFS:
         Core entries arrive kind-resolved (the door stats what the
         backend does not slash-mark), so a guest's ``d_type`` is real
         instead of FT_UNKNOWN paid off with one lazy stat per entry.
+        A link is reported as one: preview1 has the filetype, the door
+        marks the row, and a guest that reads ``d_type`` (CPython's
+        ``scandir`` does) then answers ``is_symlink`` without a call of
+        its own.
 
         Args:
             path (str): guest-absolute path.
@@ -318,6 +322,9 @@ class WasmVFS:
         for entry in self._require_core().readdir(path):
             base = entry.path.rstrip("/").rsplit("/", 1)[-1]
             if not base:
+                continue
+            if entry.is_link:
+                entries[base] = FT_SYMLINK
                 continue
             entries[base] = FT_DIR if entry.is_dir else FT_REG
         return sorted(entries.items())

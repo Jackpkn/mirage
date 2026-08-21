@@ -41,16 +41,98 @@ describe('RuntimeVFS transport', () => {
     expect(Array.from(bytes)).toEqual([9, 9])
   })
 
-  it('forwards readdir to dispatch readdir and returns entries', async () => {
-    const dispatch = vi.fn<BridgeDispatchFn>(() =>
-      Promise.resolve([
-        { path: '/ram/a.txt', size: 4, isDir: false },
-        { path: '/ram/sub', size: 0, isDir: true },
-      ]),
-    )
+  it('resolves each readdir name through stat', async () => {
+    const dispatch = vi.fn<BridgeDispatchFn>((op, path) => {
+      if (op === 'readdir') return Promise.resolve(['/ram/a.txt', '/ram/sub'])
+      return Promise.resolve({
+        size: path === '/ram/a.txt' ? 4 : 0,
+        isDir: path === '/ram/sub',
+        mtimeMs: 0,
+        mode: 0,
+      })
+    })
     const entries = await new RuntimeVFS(dispatch).readdir('/ram/')
-    expect(entries).toHaveLength(2)
-    expect(entries[0]).toEqual({ path: '/ram/a.txt', size: 4, isDir: false })
+    expect(entries).toEqual([
+      { path: '/ram/a.txt', size: 4, isDir: false },
+      { path: '/ram/sub', size: 0, isDir: true },
+    ])
+  })
+
+  // A backend that slash-marks its directories has already said what the
+  // entry is, so the door does not pay a stat to hear it again.
+  it('takes a trailing slash as the answer and skips the stat', async () => {
+    const dispatch = vi.fn<BridgeDispatchFn>((op) => {
+      if (op === 'readdir') return Promise.resolve(['/ram/sub/'])
+      throw new Error('stat should not be called')
+    })
+    expect(await new RuntimeVFS(dispatch).readdir('/ram/')).toEqual([
+      { path: '/ram/sub/', size: 0, isDir: true },
+    ])
+  })
+
+  // A dangling link, or an entry that vanished between the listing and
+  // the stat, must not fail the whole listing.
+  it('degrades a missing entry to a zero row', async () => {
+    const dispatch = vi.fn<BridgeDispatchFn>((op) => {
+      if (op === 'readdir') return Promise.resolve(['/ram/gone'])
+      return Promise.reject(Object.assign(new Error('nope'), { code: 'ENOENT' }))
+    })
+    expect(await new RuntimeVFS(dispatch).readdir('/ram/')).toEqual([
+      { path: '/ram/gone', size: 0, isDir: false },
+    ])
+  })
+
+  it('propagates a stat failure that is not a missing path', async () => {
+    const dispatch = vi.fn<BridgeDispatchFn>((op) => {
+      if (op === 'readdir') return Promise.resolve(['/ram/a.txt'])
+      return Promise.reject(new Error('401 Unauthorized'))
+    })
+    await expect(new RuntimeVFS(dispatch).readdir('/ram/')).rejects.toThrow('401 Unauthorized')
+  })
+
+  // The mark is the name plane's, since stat follows a link and no
+  // backend listing reports one.
+  it('marks the names the resolver calls links', async () => {
+    const dispatch = vi.fn<BridgeDispatchFn>((op) => {
+      if (op === 'readdir') return Promise.resolve(['/ram/lnk', '/ram/a.txt'])
+      return Promise.resolve({ size: 2, isDir: false, mtimeMs: 0, mode: 0 })
+    })
+    const resolver = new PrefixResolver(
+      () => ['/ram/'],
+      () => new Set(['lnk']),
+    )
+    expect(await new RuntimeVFS(dispatch, resolver).readdir('/ram/')).toEqual([
+      { path: '/ram/lnk', size: 2, isDir: false, isLink: true },
+      { path: '/ram/a.txt', size: 2, isDir: false },
+    ])
+  })
+
+  // Every shape a backend answers in reaches the same mark: the name is
+  // the part they agree on.
+  it('marks a link whatever shape the entry arrived in', async () => {
+    const dispatch = vi.fn<BridgeDispatchFn>((op) => {
+      if (op === 'readdir') return Promise.resolve(['lnk', '/ram/dirlink/'])
+      return Promise.reject(Object.assign(new Error('nope'), { code: 'ENOENT' }))
+    })
+    const resolver = new PrefixResolver(
+      () => ['/ram/'],
+      () => new Set(['lnk', 'dirlink']),
+    )
+    expect(await new RuntimeVFS(dispatch, resolver).readdir('/ram/')).toEqual([
+      { path: 'lnk', size: 0, isDir: false, isLink: true },
+      { path: '/ram/dirlink/', size: 0, isDir: true, isLink: true },
+    ])
+  })
+
+  it('marks nothing when no link source was supplied', async () => {
+    const dispatch = vi.fn<BridgeDispatchFn>((op) => {
+      if (op === 'readdir') return Promise.resolve(['/ram/lnk'])
+      return Promise.resolve({ size: 0, isDir: false, mtimeMs: 0, mode: 0 })
+    })
+    const entries = await new RuntimeVFS(dispatch, new PrefixResolver(() => ['/ram/'])).readdir(
+      '/ram/',
+    )
+    expect(entries).toEqual([{ path: '/ram/lnk', size: 0, isDir: false }])
   })
 
   // The target rides the `dst` slot: it is the op's second string and a
@@ -102,7 +184,7 @@ describe('RuntimeVFS transport', () => {
     await expect(new RuntimeVFS(dispatch).readdir('/x')).rejects.toThrow(TypeError)
   })
 
-  it('throws TypeError when readdir entry has bad shape', async () => {
+  it('throws TypeError when a readdir entry is not a name', async () => {
     const dispatch = vi.fn<BridgeDispatchFn>(() =>
       Promise.resolve([{ path: '/x' }] as unknown as never[]),
     )

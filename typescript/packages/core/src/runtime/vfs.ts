@@ -14,7 +14,7 @@
 
 import { isMissingOp, isMissingPath } from '../utils/errors.ts'
 import { CrossMountError } from './errors.ts'
-import { normDir } from '../utils/slash.ts'
+import { normDir, rstripSlash } from '../utils/slash.ts'
 import { planFlush } from './handles/index.ts'
 import { PrefixResolver, type MountResolver } from './resolver.ts'
 import type { BridgeDispatchFn } from './types.ts'
@@ -41,6 +41,19 @@ export interface VFSStat {
   // own wire (preview1's filestat carries only a filetype) reads the
   // type bits and drops the rest.
   mode: number
+}
+
+/**
+ * An entry's final path segment.
+ *
+ * What a link mark is compared on, because backends disagree on entry
+ * shape (bare names, trailing-slash names, full paths) and the name is
+ * the part they agree on. The same normalization `mergeReaddir`
+ * dedupes on.
+ */
+function baseName(entry: string): string {
+  const trimmed = rstripSlash(entry)
+  return trimmed.slice(trimmed.lastIndexOf('/') + 1)
 }
 
 export function concatBytes(head: Uint8Array, tail: Uint8Array): Uint8Array {
@@ -134,23 +147,55 @@ export class RuntimeVFS {
     return st
   }
 
+  /**
+   * List a directory as resolved entries (Python's `readdir` shape).
+   *
+   * A backend that slash-marks directories skips the stat; every other
+   * entry is classified by the stat the readdir just populated the
+   * index with, so the lookup is RAM, not another API call. An entry
+   * that vanished between list and stat (or a dangling link) rides as
+   * a size-0 file instead of failing the whole listing: the guest's
+   * own open reports the miss.
+   *
+   * The link mark comes from the name plane, since stat follows and no
+   * backend listing reports a link. One table read per listing, and it
+   * only ever marks a name the listing itself returned, so a link the
+   * session hides stays hidden: the dispatcher filtered it out of the
+   * entries above and an unmatched mark marks nothing.
+   */
   async readdir(path: string): Promise<VFSEntry[]> {
     const out = await this.dispatch('readdir', path)
     if (!Array.isArray(out)) {
       throw new TypeError(`runtime vfs: readdir ${path} expected array`)
     }
-    for (const e of out) {
-      if (
-        e === null ||
-        typeof e !== 'object' ||
-        typeof (e as VFSEntry).path !== 'string' ||
-        typeof (e as VFSEntry).size !== 'number' ||
-        typeof (e as VFSEntry).isDir !== 'boolean'
-      ) {
-        throw new TypeError(`runtime vfs: readdir ${path} bad entry shape`)
-      }
-    }
-    return out as VFSEntry[]
+    // After the listing, not before: a directory that will not list
+    // (ENOENT, or a link cycle the namespace refuses to resolve) must
+    // fail as readdir, not as the mark read.
+    const links = this.resolver.linkChildren(path)
+    return await Promise.all(
+      out.map(async (raw): Promise<VFSEntry> => {
+        if (typeof raw !== 'string') {
+          throw new TypeError(`runtime vfs: readdir ${path} bad entry shape`)
+        }
+        const linked = links.has(baseName(raw)) ? { isLink: true } : {}
+        // Backends that mark directories with a trailing slash skip the
+        // stat; unmarked entries (e.g. RAM) need one to learn dir-ness.
+        if (raw.endsWith('/')) return { path: raw, size: 0, isDir: true, ...linked }
+        let st: VFSStat
+        try {
+          st = await this.stat(raw)
+        } catch (err) {
+          // A dangling link, or an entry that vanished between list and
+          // stat, must not fail the whole listing; the guest's own open
+          // reports the miss. Anything else (authorization, a timeout, a
+          // backend bug) propagates, or pyodide's syncMounts would
+          // replace a healthy snapshot with a silently degraded one.
+          if (!isMissingPath(err)) throw err
+          return { path: raw, size: 0, isDir: false, ...linked }
+        }
+        return { path: raw, size: st.size, isDir: st.isDir, ...linked }
+      }),
+    )
   }
 
   /**

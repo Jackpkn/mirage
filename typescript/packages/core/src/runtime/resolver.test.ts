@@ -36,4 +36,22 @@ describe('PrefixResolver', () => {
     expect(resolver.ownerOf('/database')).toBeNull()
     expect(new PrefixResolver(() => []).ownerOf('/data')).toBeNull()
   })
+
+  it('linkChildren reflects the live source, per directory', () => {
+    const links = new Map([['/data', new Set(['lnk'])]])
+    const resolver = new PrefixResolver(
+      () => ['/data/'],
+      (directory) => links.get(directory) ?? new Set(),
+    )
+    expect(resolver.linkChildren('/data')).toEqual(new Set(['lnk']))
+    expect(resolver.linkChildren('/other')).toEqual(new Set())
+    links.set('/data', new Set(['lnk', 'later']))
+    expect(resolver.linkChildren('/data')).toEqual(new Set(['lnk', 'later']))
+  })
+
+  // No node table means no name can be a link, which is the answer a
+  // resolver built outside a workspace owes.
+  it('linkChildren answers nothing without a link source', () => {
+    expect(new PrefixResolver(() => ['/data/']).linkChildren('/data')).toEqual(new Set())
+  })
 })

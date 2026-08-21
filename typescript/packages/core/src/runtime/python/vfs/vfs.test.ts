@@ -93,13 +93,26 @@ describe('MirageFs', () => {
         store.set(dst, moved)
       }
       if (op === 'readdir') {
-        const files = [...store.keys()]
-          .filter((k) => k.startsWith(path))
-          .map((k) => ({ path: k, size: store.get(k)?.length ?? 0, isDir: false }))
-        const linked = [...links.keys()]
-          .filter((k) => k.startsWith(path))
-          .map((k) => ({ path: k, size: 0, isDir: false, isLink: true }))
-        return Promise.resolve([...files, ...linked])
+        const listed = [...store.keys(), ...links.keys()].filter((k) => k.startsWith(path))
+        return Promise.resolve(listed)
+      }
+      if (op === 'stat') {
+        const found = store.get(path)
+        if (found === undefined) {
+          // A link, whose mark rides the resolver, or a path that went
+          // away between the listing and the stat.
+          return Promise.reject(
+            Object.assign(new Error(`no such file: ${path}`), {
+              code: 'ENOENT',
+            }),
+          )
+        }
+        return Promise.resolve({
+          size: found.length,
+          isDir: false,
+          mtimeMs: 0,
+          mode: 0o100644,
+        })
       }
       if (op === 'symlink' && dst !== undefined) links.set(path, dst)
       if (op === 'readlink') {
@@ -110,7 +123,20 @@ describe('MirageFs', () => {
       if (op === 'setattr' && fields !== undefined) attrs.push([path, fields])
       return Promise.resolve(undefined)
     }
-    vfs = new RuntimeVFS(dispatch, new PrefixResolver(() => mounts))
+    // The link source is the double's own name plane, which is what a
+    // workspace hands its runtimes: link names per directory.
+    vfs = new RuntimeVFS(
+      dispatch,
+      new PrefixResolver(
+        () => mounts,
+        (directory) =>
+          new Set(
+            [...links.keys()]
+              .filter((k) => k.startsWith(directory) && !k.slice(directory.length).includes('/'))
+              .map((k) => k.slice(directory.length)),
+          ),
+      ),
+    )
     journal = createJournal()
   }, 60_000)
 

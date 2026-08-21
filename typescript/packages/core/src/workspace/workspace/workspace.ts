@@ -18,7 +18,6 @@ import { IOResult } from '../../io/types.ts'
 import { type EventDict, Observer } from '../../observe/observer.ts'
 import type { OpRecord } from '../../observe/record.ts'
 import { type OpKwargs, OpsRegistry } from '../../ops/registry.ts'
-import { isMissingPath } from '../../utils/errors.ts'
 import { contentSize, isDir as statIsDir, mtimeMs, posixMode } from '../../utils/stat_view.ts'
 import type { Resource } from '../../resource/base.ts'
 import { HISTORY_PREFIX, HistoryViewResource } from '../../resource/history/history.ts'
@@ -57,7 +56,6 @@ import type { ProvisionResult } from '../../provision/types.ts'
 import { Ops } from '../../ops/ops.ts'
 import type { MountEntry } from '../mount/mount.ts'
 import { MountRegistry } from '../mount/registry.ts'
-import type { VFSEntry } from '../../runtime/vfs.ts'
 import { PrefixResolver } from '../../runtime/resolver.ts'
 import type { BridgeDispatchFn } from '../../runtime/types.ts'
 import { MontyUnavailableError } from '../../runtime/python/monty/index.ts'
@@ -161,7 +159,10 @@ export class Workspace {
     this.shellParserFactory = options.shellParserFactory ?? null
     this.agentId = options.agentId ?? null
     this.watchManager = new WatchManager(this.registry)
-    const sandboxResolver = new PrefixResolver(() => this.sandboxVisibleMounts())
+    const sandboxResolver = new PrefixResolver(
+      () => this.sandboxVisibleMounts(),
+      (directory) => this.namespace.linkNamesUnder(directory),
+    )
     this.runtimes = new Runtimes({
       registry: this.registry,
       entries: options.runtimes,
@@ -433,37 +434,12 @@ export class Workspace {
           await this.dispatch('setattr', path, [], attrs as Record<string, unknown>)
           return undefined
         }
-        case 'readdir': {
-          const entries = ((await this.dispatch('readdir', path)) as string[] | null) ?? []
-          return await Promise.all(
-            entries.map(async (entry): Promise<VFSEntry> => {
-              // Backends that mark directories with a trailing slash
-              // skip the stat; unmarked entries (e.g. RAM) need one to
-              // learn dir-ness.
-              if (entry.endsWith('/')) return { path: entry, size: 0, isDir: true }
-              const isLink = this.namespace.isLink(entry)
-              let stat: FileStat
-              try {
-                stat = (await this.dispatch('stat', entry)) as FileStat
-              } catch (err) {
-                // A dangling link, or an entry that vanished between
-                // list and stat, must not fail the whole listing; the
-                // guest's own open reports the miss. Anything else
-                // (authorization, a timeout, a backend bug) propagates,
-                // or pyodide's syncMounts would replace a healthy
-                // snapshot with a silently degraded one.
-                if (!isMissingPath(err)) throw err
-                return { path: entry, size: 0, isDir: false, ...(isLink ? { isLink } : {}) }
-              }
-              return {
-                path: entry,
-                size: contentSize(stat),
-                isDir: statIsDir(stat),
-                ...(isLink ? { isLink } : {}),
-              }
-            }),
-          )
-        }
+        case 'readdir':
+          // The names as the door merged them, nothing resolved: the
+          // runtime door (`RuntimeVFS.readdir`) stats each entry and
+          // marks the links, so a row is built in one tier and in one
+          // shape in both languages.
+          return ((await this.dispatch('readdir', path)) as string[] | null) ?? []
       }
     }
   }

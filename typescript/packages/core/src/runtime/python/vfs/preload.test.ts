@@ -14,7 +14,7 @@
 
 import { describe, expect, it, vi } from 'vitest'
 import { preloadInto } from './preload.ts'
-import { RuntimeVFS } from '../../vfs.ts'
+import { RuntimeVFS, type VFSStat } from '../../vfs.ts'
 import type { BridgeDispatchFn } from '../../types.ts'
 import { PrefixResolver } from '../../resolver.ts'
 
@@ -51,15 +51,32 @@ function makeFakeFS(withLinks = true): FakeFS {
   }
 }
 
+// The door builds each row from a name plus one stat, so a double
+// standing in for the bridge has to answer both.
+function fileStat(size: number): VFSStat {
+  return { size, isDir: false, mtimeMs: 0, mode: 0o100644 }
+}
+
+function dirStat(): VFSStat {
+  return { size: 0, isDir: true, mtimeMs: 0, mode: 0o040755 }
+}
+
+// A resolver whose name plane holds exactly these link names.
+function linksOn(names: string[]): PrefixResolver {
+  return new PrefixResolver(
+    () => ['/ram/'],
+    () => new Set(names),
+  )
+}
+
 describe('preloadInto', () => {
   it('creates the prefix directory and writes flat files', async () => {
     const dispatch = vi.fn<BridgeDispatchFn>((op, path) => {
       if (op === 'readdir' && path === '/ram/') {
-        return Promise.resolve([
-          { path: '/ram/a.txt', size: 5, isDir: false },
-          { path: '/ram/b.bin', size: 3, isDir: false },
-        ])
+        return Promise.resolve(['/ram/a.txt', '/ram/b.bin'])
       }
+      if (op === 'stat' && path === '/ram/a.txt') return Promise.resolve(fileStat(5))
+      if (op === 'stat' && path === '/ram/b.bin') return Promise.resolve(fileStat(3))
       if (op === 'read' && path === '/ram/a.txt')
         return Promise.resolve(new TextEncoder().encode('hello'))
       if (op === 'read' && path === '/ram/b.bin') return Promise.resolve(new Uint8Array([1, 2, 3]))
@@ -76,10 +93,10 @@ describe('preloadInto', () => {
 
   it('recurses into subdirectories', async () => {
     const dispatch = vi.fn<BridgeDispatchFn>((op, path) => {
-      if (op === 'readdir' && path === '/ram/')
-        return Promise.resolve([{ path: '/ram/sub', size: 0, isDir: true }])
-      if (op === 'readdir' && path === '/ram/sub/')
-        return Promise.resolve([{ path: '/ram/sub/c.txt', size: 1, isDir: false }])
+      if (op === 'readdir' && path === '/ram/') return Promise.resolve(['/ram/sub'])
+      if (op === 'stat' && path === '/ram/sub') return Promise.resolve(dirStat())
+      if (op === 'readdir' && path === '/ram/sub/') return Promise.resolve(['/ram/sub/c.txt'])
+      if (op === 'stat' && path === '/ram/sub/c.txt') return Promise.resolve(fileStat(1))
       if (op === 'read' && path === '/ram/sub/c.txt') return Promise.resolve(new Uint8Array([7]))
       return Promise.reject(new Error(`unexpected ${op} ${path}`))
     })
@@ -93,8 +110,8 @@ describe('preloadInto', () => {
 
   it('is idempotent: re-running overwrites with the mount content', async () => {
     const dispatch = vi.fn<BridgeDispatchFn>((op, path) => {
-      if (op === 'readdir' && path === '/ram/')
-        return Promise.resolve([{ path: '/ram/x', size: 1, isDir: false }])
+      if (op === 'readdir' && path === '/ram/') return Promise.resolve(['/ram/x'])
+      if (op === 'stat' && path === '/ram/x') return Promise.resolve(fileStat(1))
       if (op === 'read' && path === '/ram/x') return Promise.resolve(new Uint8Array([42]))
       return Promise.reject(new Error(`unexpected ${op} ${path}`))
     })
@@ -133,11 +150,10 @@ describe('preloadInto', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     const dispatch = vi.fn<BridgeDispatchFn>((op, path) => {
       if (op === 'readdir' && path === '/ram/') {
-        return Promise.resolve([
-          { path: '/ram/ok.txt', size: 2, isDir: false },
-          { path: '/ram/bad.txt', size: 4, isDir: false },
-        ])
+        return Promise.resolve(['/ram/ok.txt', '/ram/bad.txt'])
       }
+      if (op === 'stat' && path === '/ram/ok.txt') return Promise.resolve(fileStat(2))
+      if (op === 'stat' && path === '/ram/bad.txt') return Promise.resolve(fileStat(4))
       if (op === 'read' && path === '/ram/ok.txt') return Promise.resolve(new Uint8Array([1, 2]))
       if (op === 'read' && path === '/ram/bad.txt') return Promise.reject(new Error('unreadable'))
       return Promise.reject(new Error(`unexpected ${op} ${path}`))
@@ -156,11 +172,10 @@ describe('preloadInto', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     const dispatch = vi.fn<BridgeDispatchFn>((op, path) => {
       if (op === 'readdir' && path === '/ram/') {
-        return Promise.resolve([
-          { path: '/ram/ok.txt', size: 1, isDir: false },
-          { path: '/ram/bad', size: 0, isDir: true },
-        ])
+        return Promise.resolve(['/ram/ok.txt', '/ram/bad'])
       }
+      if (op === 'stat' && path === '/ram/ok.txt') return Promise.resolve(fileStat(1))
+      if (op === 'stat' && path === '/ram/bad') return Promise.resolve(dirStat())
       if (op === 'read' && path === '/ram/ok.txt') return Promise.resolve(new Uint8Array([7]))
       if (op === 'readdir' && path === '/ram/bad/') return Promise.reject(new Error('subtree fail'))
       return Promise.reject(new Error(`unexpected ${op} ${path}`))
@@ -191,11 +206,10 @@ describe('preloadInto', () => {
   it('lets a nested mount root readdir failure fail the whole collection', async () => {
     const dispatch = vi.fn<BridgeDispatchFn>((op, path) => {
       if (op === 'readdir' && path === '/ram/') {
-        return Promise.resolve([
-          { path: '/ram/ok.txt', size: 1, isDir: false },
-          { path: '/ram/inner', size: 0, isDir: true },
-        ])
+        return Promise.resolve(['/ram/ok.txt', '/ram/inner'])
       }
+      if (op === 'stat' && path === '/ram/ok.txt') return Promise.resolve(fileStat(1))
+      if (op === 'stat' && path === '/ram/inner') return Promise.resolve(dirStat())
       if (op === 'read' && path === '/ram/ok.txt') return Promise.resolve(new Uint8Array([7]))
       if (op === 'readdir' && path === '/ram/inner/') return Promise.reject(new Error('inner boom'))
       return Promise.reject(new Error(`unexpected ${op} ${path}`))
@@ -210,14 +224,15 @@ describe('preloadInto', () => {
   // would never terminate.
   it('copies a link as a link and does not walk it', async () => {
     const dispatch = vi.fn<BridgeDispatchFn>((op, path) => {
-      if (op === 'readdir' && path === '/ram/') {
-        return Promise.resolve([{ path: '/ram/loop', size: 0, isDir: true, isLink: true }])
-      }
+      if (op === 'readdir' && path === '/ram/') return Promise.resolve(['/ram/loop'])
+      // A link to a directory stats as one, which is exactly why the
+      // mark has to be consulted before the row's isDir.
+      if (op === 'stat' && path === '/ram/loop') return Promise.resolve(dirStat())
       if (op === 'readlink' && path === '/ram/loop') return Promise.resolve('/ram')
       return Promise.reject(new Error(`unexpected ${op} ${path}`))
     })
     const fs = makeFakeFS()
-    await preloadInto(fs, new RuntimeVFS(dispatch), '/ram/')
+    await preloadInto(fs, new RuntimeVFS(dispatch, linksOn(['loop'])), '/ram/')
     expect(fs._links.get('/ram/loop')).toBe('/ram')
     expect(fs._dirs.has('/ram/loop')).toBe(false)
   })
@@ -225,14 +240,13 @@ describe('preloadInto', () => {
   it('skips a link the namespace listed but will not resolve', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     const dispatch = vi.fn<BridgeDispatchFn>((op, path) => {
-      if (op === 'readdir' && path === '/ram/') {
-        return Promise.resolve([{ path: '/ram/l', size: 0, isDir: false, isLink: true }])
-      }
+      if (op === 'readdir' && path === '/ram/') return Promise.resolve(['/ram/l'])
+      if (op === 'stat' && path === '/ram/l') return Promise.resolve(fileStat(0))
       if (op === 'readlink') return Promise.reject(new Error('link vanished'))
       return Promise.reject(new Error(`unexpected ${op} ${path}`))
     })
     const fs = makeFakeFS()
-    await preloadInto(fs, new RuntimeVFS(dispatch), '/ram/')
+    await preloadInto(fs, new RuntimeVFS(dispatch, linksOn(['l'])), '/ram/')
     expect(fs._links.size).toBe(0)
     expect(warn).toHaveBeenCalled()
     warn.mockRestore()
@@ -242,13 +256,12 @@ describe('preloadInto', () => {
   // readlink, which is what every seed did before links were reachable.
   it('does not read a link target when the target cannot hold one', async () => {
     const dispatch = vi.fn<BridgeDispatchFn>((op, path) => {
-      if (op === 'readdir' && path === '/ram/') {
-        return Promise.resolve([{ path: '/ram/l', size: 0, isDir: false, isLink: true }])
-      }
+      if (op === 'readdir' && path === '/ram/') return Promise.resolve(['/ram/l'])
+      if (op === 'stat' && path === '/ram/l') return Promise.resolve(fileStat(0))
       return Promise.reject(new Error(`unexpected ${op} ${path}`))
     })
     const fs = makeFakeFS(false)
-    await preloadInto(fs, new RuntimeVFS(dispatch), '/ram/')
+    await preloadInto(fs, new RuntimeVFS(dispatch, linksOn(['l'])), '/ram/')
     expect(fs._links.size).toBe(0)
     expect(dispatch).not.toHaveBeenCalledWith('readlink', '/ram/l')
   })

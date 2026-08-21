@@ -225,7 +225,8 @@ class Workspace:
 
         self._runtimes, self._policy_router = wire_runtime_world(
             self._registry, self.dispatch,
-            PrefixResolver(self._ops.mount_prefixes), runtimes)
+            PrefixResolver(self._ops.mount_prefixes,
+                           self._namespace.link_names_under), runtimes)
         reject_config_script("policy", policy)
         self._policy = policy
 

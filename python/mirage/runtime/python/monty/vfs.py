@@ -63,10 +63,17 @@ class MontyVFS:
     def is_link(self, virtual: str) -> bool:
         """Whether the mount's name plane holds a symlink at `virtual`.
 
-        Answered through the readlink op rather than a listing, because
-        a python readdir row carries no link mark: the door resolves
-        entries by stat, and stat follows. One dispatch per question,
-        which is what every other predicate here costs too.
+        Answered through the readlink op, not through the parent's
+        listing, even though a readdir row now carries the mark. Two
+        reasons, and both are about this tier rather than about the
+        mark. The predicate arrives for one path with no listing in
+        hand, and every other predicate here materializes that path
+        alone, so reading the parent would trade one dispatch for a
+        readdir plus a stat per sibling (the TS twin reads the row
+        because its own `exists` and `is_file` already go through that
+        listing). And readlink is the gated channel: the node table has
+        no session, so a mark read outside an admitted listing would
+        answer for a path the door hides.
 
         Args:
             virtual (str): the path to test.

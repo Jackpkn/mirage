@@ -33,10 +33,12 @@ from mirage.workspace.session import Session
 class ListingVFS(RuntimeVFS):
     """Core double for the readdir lifting: canned listing and stats."""
 
-    def __init__(self, listing, stats):
+    def __init__(self, listing, stats, links=()):
+        names = set(links)
         super().__init__(dispatch=None,
                          loop=None,
-                         resolver=PrefixResolver(lambda: []))
+                         resolver=PrefixResolver(lambda: [],
+                                                 lambda _dir: names))
         self._listing = list(listing)
         self._stats = dict(stats)
         self.stat_calls = []
@@ -160,6 +162,44 @@ def test_readdir_stats_unmarked_directories():
     )
     assert vfs.readdir("/data/") == [
         VFSEntry(path="/data/sub", size=0, is_dir=True),
+    ]
+
+
+def test_readdir_marks_the_names_the_resolver_calls_links():
+    # The mark is the name plane's: stat follows a link, so a live link
+    # to a file reads as that file and nothing in the row says otherwise.
+    vfs = ListingVFS(
+        listing=["/data/lnk", "/data/a.txt"],
+        stats={
+            "/data/lnk": FileStat(name="lnk", size=5, type=FileType.TEXT),
+            "/data/a.txt": FileStat(name="a.txt", size=5, type=FileType.TEXT),
+        },
+        links=["lnk"],
+    )
+    assert vfs.readdir("/data/") == [
+        VFSEntry(path="/data/lnk", size=5, is_dir=False, is_link=True),
+        VFSEntry(path="/data/a.txt", size=5, is_dir=False),
+    ]
+
+
+def test_readdir_marks_a_link_whatever_shape_the_entry_arrived_in():
+    # Backends answer with bare names, trailing-slash names and full
+    # paths; the final segment is the part they agree on.
+    vfs = ListingVFS(
+        listing=["lnk", "/data/dirlink/"],
+        stats={},
+        links=["lnk", "dirlink"],
+    )
+    assert vfs.readdir("/data/") == [
+        VFSEntry(path="lnk", size=0, is_dir=False, is_link=True),
+        VFSEntry(path="/data/dirlink/", size=0, is_dir=True, is_link=True),
+    ]
+
+
+def test_readdir_marks_nothing_without_a_link_source():
+    vfs = ListingVFS(listing=["/data/lnk"], stats={})
+    assert vfs.readdir("/data/") == [
+        VFSEntry(path="/data/lnk", size=0, is_dir=False),
     ]
 
 
