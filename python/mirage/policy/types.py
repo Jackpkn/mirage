@@ -12,6 +12,7 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any, ClassVar, Literal, Protocol
@@ -45,6 +46,20 @@ class DenyScope(StrEnum):
 
     COMMAND = "command"
     OPERAND = "operand"
+
+
+class Outcome(StrEnum):
+    """What the role's rules say about one line.
+
+    RUN is silence: no rule spoke. NOT_ALLOWED is the allow list
+    refusing a line whose head it installed. DENY and ASK name the rule
+    that spoke.
+    """
+
+    RUN = "run"
+    NOT_ALLOWED = "not_allowed"
+    DENY = "deny"
+    ASK = "ask"
 
 
 @dataclass(frozen=True, slots=True)
@@ -284,6 +299,12 @@ class AdmissionRules:
     allow: tuple[str, ...] | None = None
     ask: tuple[CommandRule, ...] = ()
     deny: tuple[CommandRule, ...] = ()
+
+
+# The rules that apply to one line, each with the verb it carries, deny
+# before ask and in the order written. Built once per line by ``decide``
+# and read again at every subject of it.
+LiveRules = Sequence[tuple[Outcome, CommandRule]]
 
 
 class SessionCommandsQuery(Protocol):

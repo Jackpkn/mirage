@@ -207,14 +207,49 @@ def with_inline(base: SessionProfile | None,
     )
 
 
+def _root_of(prefix: str) -> str:
+    """One spelling for a mount prefix: leading slash, no trailing one.
+
+    Args:
+        prefix (str): the prefix as the document spells it.
+    """
+    return "/" + prefix.strip("/")
+
+
+def _anchored(entries: tuple[str, ...], root: str) -> tuple[str, ...]:
+    """A mount section's path entries, anchored to the mount they are
+    written under.
+
+    An absolute entry already names something inside the root
+    (``_under_mount`` refuses one that does not) and is left as written.
+    A name pattern (``*.pem``, no slash) anchors nothing, and both
+    places a mount section's entries are read from have lost the
+    section by then: the session's hidden set is one list for every
+    mount, and the op door matches a rule's paths without consulting
+    ``rule.mount``. Left raw, ``mounts./repo.paths.hide: ["*.pem"]``
+    hid ``/other/key.pem`` too, and a path-only deny under ``/repo``
+    refused a read of it. The dialect's ``*`` crosses ``/``, so
+    ``/repo/*.pem`` is every ``.pem`` at any depth below ``/repo`` and
+    nothing outside it; anchoring also gives the entry the mount's own
+    anchor depth, which is what it was always worth.
+
+    Args:
+        entries (tuple[str, ...]): the entries as written.
+        root (str): the mount root, leading slash, no trailing one.
+    """
+    return tuple(e if e.startswith("/") else f"{root.rstrip('/')}/{e}"
+                 for e in entries)
+
+
 def _scoped_rules(rules: tuple[CommandRule, ...],
                   root: str) -> tuple[CommandRule, ...]:
-    """A mount entry's rules, stamped with the mount they belong to.
+    """A mount entry's rules, stamped with the mount they belong to and
+    anchored to it.
 
     The stamp is what makes the rule apply to a line that *works
     inside* the mount, by cwd or by operand, which a path-scoped rule
-    cannot express. Paths are already absolute and already checked to
-    lie under the root, so nothing is rewritten here.
+    cannot express. The anchor is for the entries the stamp cannot
+    reach: the op door reads a rule's paths alone (:func:`_anchored`).
 
     Args:
         rules (tuple[CommandRule, ...]): the rules as written.
@@ -223,7 +258,7 @@ def _scoped_rules(rules: tuple[CommandRule, ...],
     return tuple(
         CommandRule(reason=rule.reason,
                     commands=rule.commands,
-                    paths=rule.paths,
+                    paths=_anchored(rule.paths, root),
                     mount=root) for rule in rules)
 
 
@@ -241,7 +276,7 @@ def compile_commands(profile: SessionProfile) -> AdmissionRules | None:
     ask: list[CommandRule] = []
     deny: list[CommandRule] = []
     for prefix, entry in (profile.mounts or {}).items():
-        root = "/" + prefix.strip("/")
+        root = _root_of(prefix)
         ask.extend(_scoped_rules(_rules_of(entry.commands, "ask"), root))
         deny.extend(_scoped_rules(_rules_of(entry.commands, "deny"), root))
     block = profile.commands
@@ -255,8 +290,10 @@ def compile_commands(profile: SessionProfile) -> AdmissionRules | None:
 
 
 def _hidden(profile: SessionProfile) -> HiddenPaths | None:
-    """Every path the role hides: its own entries and each mount
-    entry's, which are absolute like all the rest.
+    """Every path the role hides: its own entries, and each mount
+    entry's anchored to the mount it was written under, since the set
+    is one list for the whole session and nothing in it remembers which
+    section an entry came from (:func:`_anchored`).
 
     Args:
         profile (SessionProfile): the resolved role.
@@ -264,9 +301,9 @@ def _hidden(profile: SessionProfile) -> HiddenPaths | None:
     entries: list[str] = []
     if profile.paths is not None:
         entries.extend(profile.paths.hide)
-    for entry in (profile.mounts or {}).values():
+    for prefix, entry in (profile.mounts or {}).items():
         if entry.paths is not None:
-            entries.extend(entry.paths.hide)
+            entries.extend(_anchored(entry.paths.hide, _root_of(prefix)))
     return classify_paths(entries)
 
 

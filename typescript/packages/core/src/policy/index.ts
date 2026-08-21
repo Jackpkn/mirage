@@ -18,9 +18,19 @@ export { Approvals, askRule } from './approvals.ts'
 export { CallbackApprover, RecordApprover, requestId, type Approver } from './approver.ts'
 export { MountRootPolicy } from './builtin/mount_root.ts'
 export { PermissionsPolicy } from './builtin/permissions.ts'
-export { Outcome, decide, sourceOf, type Decision } from './match/decide.ts'
+export { decide, outranks, ruleAt, sourceOf } from './match/decide.ts'
+export { type Decision } from './config.ts'
 export { anchorDepth } from '../utils/hidden.ts'
-export { coversDepth, hiddenDepth } from './match/rule.ts'
+export {
+  betterMatch,
+  coversDepth,
+  hiddenDepth,
+  matchedOperand,
+  ruleApplies,
+  ruleReach,
+  subjects,
+  type Subject,
+} from './match/rule.ts'
 export { OutputCapPolicy, resolveProducer, resolveLimit } from './builtin/output_cap.ts'
 export { DEFAULT_ASK_REASON, DEFAULT_DENY_REASON, POLICY_DENIED_EXIT } from './constants.ts'
 export {
@@ -47,6 +57,7 @@ export {
   type GrantScope,
   type OpsContext,
   type OpsResultContext,
+  Outcome,
   type Pending,
   type SessionCommandsQuery,
   type SessionContext,

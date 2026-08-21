@@ -12,9 +12,22 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+from mirage.policy.types import Outcome
+
 # A whole-command refusal exits as bash does for a command it found but
 # may not run.
 POLICY_DENIED_EXIT = 126
+
+# Which verb wins when two rules speak about the same subject at the
+# same anchor depth: deny before ask. Both gates order by it, which is
+# what keeps the entry gate from contradicting the admission gate.
+DENY_FIRST = 0
+ASK_SECOND = 1
+
+# The same ordering as the outcome a rule produces, for the gate that
+# has already named the verb. The allow list is not a rule, so RUN and
+# NOT_ALLOWED never tie against one and are absent.
+VERB_ORDER = {Outcome.DENY: DENY_FIRST, Outcome.ASK: ASK_SECOND}
 
 # The reason a bare command pattern under ``commands.deny`` carries, and
 # the one a bare pattern under ``commands.ask`` carries.

@@ -221,6 +221,74 @@
       }
     },
     {
+      "id": "conflict_multi_operand_prep",
+      "seq": 923245,
+      "targets": [
+        "ram-commands"
+      ],
+      "command": "mkdir -p /scratch/vaultc /scratch/outbox/deep /scratch/openc && echo s > /scratch/vaultc/secret && echo o > /scratch/openc/o",
+      "expect": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "conflict_the_sources_deny_outranks_the_destinations_deeper_ask",
+      "seq": 923246,
+      "targets": [
+        "ram-commands"
+      ],
+      "session": "courier",
+      "command": "cp /scratch/vaultc/secret /scratch/outbox/deep/out",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "cp: /scratch/vaultc/secret: courier sealed\n"
+      }
+    },
+    {
+      "id": "conflict_mv_reads_both_operands_the_same_way",
+      "seq": 923247,
+      "targets": [
+        "ram-commands"
+      ],
+      "session": "courier",
+      "command": "mv /scratch/vaultc/secret /scratch/outbox/deep/moved",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "mv: /scratch/vaultc/secret: courier sealed\n"
+      }
+    },
+    {
+      "id": "conflict_the_destination_still_asks_on_a_source_no_rule_holds",
+      "seq": 923248,
+      "targets": [
+        "ram-commands"
+      ],
+      "session": "courier",
+      "command": "cp /scratch/openc/o /scratch/outbox/deep/out",
+      "expect": {
+        "exit": 126,
+        "stdout": "",
+        "stderr": "cp: requires approval: outbox nod (approval 69487f1bef15)\n"
+      }
+    },
+    {
+      "id": "conflict_the_sealed_file_never_left",
+      "seq": 923249,
+      "targets": [
+        "ram-commands"
+      ],
+      "command": "test -e /scratch/vaultc/secret && test ! -e /scratch/outbox/deep/out && echo kept",
+      "expect": {
+        "exit": 0,
+        "stdout": "kept\n",
+        "stderr": ""
+      }
+    },
+    {
       "id": "conflict_a_hidden_path_outranks_the_ask_and_the_deny",
       "seq": 923078,
       "targets": [

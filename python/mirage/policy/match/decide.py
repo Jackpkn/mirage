@@ -12,57 +12,57 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from dataclasses import dataclass
-from enum import StrEnum
-
+from mirage.policy.config import Decision
+from mirage.policy.constants import VERB_ORDER
 from mirage.policy.match.allow import line_allowed
-from mirage.policy.match.rule import (ASK_SECOND, DENY_FIRST, better_match,
-                                      match_rule, rule_scope)
-from mirage.policy.types import AdmissionRules, CommandContext, CommandRule
+from mirage.policy.match.rule import (Subject, better_match, matched_operand,
+                                      rule_applies, rule_reach, rule_scope,
+                                      subjects)
+from mirage.policy.types import (AdmissionRules, CommandContext, CommandRule,
+                                 LiveRules, Outcome)
 
 
-class Outcome(StrEnum):
-    """What the role's rules say about one line.
+def outranks(current: tuple[int, int], verb: int, depth: int) -> bool:
+    """Whether one subject's verdict outranks the line's best so far:
+    the stronger verb first, then the deeper anchor.
 
-    RUN is silence: no rule spoke. NOT_ALLOWED is the allow list
-    refusing a line whose head it installed. DENY and ASK name the rule
-    that spoke.
-    """
-
-    RUN = "run"
-    NOT_ALLOWED = "not_allowed"
-    DENY = "deny"
-    ASK = "ask"
-
-
-@dataclass(frozen=True, slots=True)
-class Decision:
-    """The role's answer about one line, and what produced it.
+    The mirror image of :func:`better_match`, and deliberately so. Two
+    rules about *one* subject are a question of specificity, so depth
+    leads there. Two subjects of one line are a question of severity:
+    every path a line names has to survive it, so a deny anywhere
+    refuses the line however deeply another path was carved out.
 
     Args:
-        outcome (Outcome): which verb spoke.
-        rule (CommandRule | None): the rule that spoke; None on RUN and
-            on NOT_ALLOWED, which is the allow list rather than a rule.
-        matched_path (str | None): the operand a path-scoped rule
-            matched, as typed, which the GNU voice prints
-            (``rm: letters.txt: <reason>``); None when the rule reaches
-            the whole line.
-        source (str): where in the document the rule was written, for a
-            host reading a verdict: ``top`` or ``mounts./repo``. Empty
-            on RUN.
+        current (tuple[int, int]): the chosen (verb, depth) so far.
+        verb (int): the candidate subject's verb.
+        depth (int): the candidate subject's anchor depth.
     """
+    best_verb, best_depth = current
+    if verb != best_verb:
+        return verb < best_verb
+    return depth > best_depth
 
-    outcome: Outcome
-    rule: CommandRule | None = None
-    matched_path: str | None = None
-    source: str = ""
 
+def rule_at(live: LiveRules,
+            subject: Subject) -> tuple[Outcome, CommandRule, int] | None:
+    """The rule that speaks about one subject of a line, None when none
+    does: the deepest anchor, deny before ask at equal depth, the
+    earlier rule on a full tie.
 
-# Which verb wins when two rules match at the same anchor depth. Deny
-# before ask, and the allow list is not a rule so it never ties. The
-# ordering itself lives in ``match.rule`` because the entry gate reads
-# by it too.
-_VERB_ORDER = {Outcome.DENY: DENY_FIRST, Outcome.ASK: ASK_SECOND}
+    Args:
+        live (LiveRules): the rules that apply to this line, deny
+            before ask, in the order written.
+        subject (Subject): one subject of the line.
+    """
+    best: tuple[int, int] | None = None
+    chosen: tuple[Outcome, CommandRule, int] | None = None
+    for outcome, rule in live:
+        depth = rule_reach(rule, rule_scope(rule), subject)
+        if depth is None or not better_match(best, depth, VERB_ORDER[outcome]):
+            continue
+        best = (depth, VERB_ORDER[outcome])
+        chosen = (outcome, rule, depth)
+    return chosen
 
 
 def decide(ctx: CommandContext, rules: AdmissionRules | None) -> Decision:
@@ -73,18 +73,27 @@ def decide(ctx: CommandContext, rules: AdmissionRules | None) -> Decision:
     wherever it was written: it is off the path axis entirely, so one
     in a mount section scores 0 exactly as a top-level one does.
     Writing it under ``mounts./repo`` scopes it to lines working inside
-    that mount (``match_rule`` reads ``rule.mount``); it does not make
-    it more specific than a rule about the whole session. That is what
-    keeps "denied generally, asked inside one mount" inexpressible for
-    a pathless rule, which in practice means an account CLI: such a CLI
-    reaches a service and touches no mount, so scoping it to one was
-    never meaningful.
+    that mount (``rule_applies`` reads ``rule.mount``); it does not
+    make it more specific than a rule about the whole session. That is
+    what keeps "denied generally, asked inside one mount" inexpressible
+    for a pathless rule, which in practice means an account CLI: such a
+    CLI reaches a service and touches no mount, so scoping it to one
+    was never meaningful.
 
     A rule carrying paths is read by anchor depth, the deeper entry
     winning, ties broken by verb. The depth is the matched entry's, not
     the rule's deepest, so an entry that says nothing about this
     operand cannot lend it specificity. The allow list is asked first,
     since a line no list covers never reaches a rule.
+
+    All of which is settled *per subject*, and only then across them
+    (:func:`outranks`), because a line names more than one path and a
+    carve-out written for one of them must not answer for the rest:
+    with ``deny cp /protected/*`` and a deeper ``ask cp /review/deep/*``,
+    ``cp /protected/secret /review/deep/out`` is the source's deny, and
+    reading one best match for the whole line answered it with the
+    destination's ask instead, so a nod meant for the destination
+    carried the protected file out.
 
     ``PermissionsPolicy`` renders this into the outcome table and
     ``explain`` reports it, so the two cannot disagree about what a
@@ -98,21 +107,25 @@ def decide(ctx: CommandContext, rules: AdmissionRules | None) -> Decision:
         return Decision(Outcome.RUN)
     if not line_allowed(ctx, rules):
         return Decision(Outcome.NOT_ALLOWED, source="commands.allow")
+    live: LiveRules = [(outcome, rule)
+                       for outcome, written in ((Outcome.DENY, rules.deny),
+                                                (Outcome.ASK, rules.ask))
+                       for rule in written if rule_applies(rule, ctx)]
     best: tuple[int, int] | None = None
     chosen = Decision(Outcome.RUN)
-    for outcome, written in ((Outcome.DENY, rules.deny), (Outcome.ASK,
-                                                          rules.ask)):
-        for rule in written:
-            hit = match_rule(rule, rule_scope(rule), ctx)
-            if hit is None:
-                continue
-            if not better_match(best, hit.depth, _VERB_ORDER[outcome]):
-                continue
-            best = (hit.depth, _VERB_ORDER[outcome])
-            chosen = Decision(outcome=outcome,
-                              rule=rule,
-                              matched_path=hit.operand,
-                              source=source_of(rule))
+    for subject in subjects(ctx):
+        spoke = rule_at(live, subject)
+        if spoke is None:
+            continue
+        outcome, rule, depth = spoke
+        verb = VERB_ORDER[outcome]
+        if best is not None and not outranks(best, verb, depth):
+            continue
+        best = (verb, depth)
+        chosen = Decision(outcome=outcome,
+                          rule=rule,
+                          matched_path=matched_operand(rule, subject),
+                          source=source_of(rule))
     return chosen
 
 

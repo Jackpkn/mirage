@@ -793,11 +793,16 @@ def test_clis_block_refuses_unknown_keys():
         })
 
 
+# The accepted half of the shared contract, one file per subject:
+# every config block that is not a permission verb, then a verb each.
+ACCEPTED_FIXTURES = ("blocks", "allow", "ask", "deny")
+
+
 def _shared_fixture_cases(name: str) -> list[dict]:
-    # integ/fixtures/config/{rejected,accepted}.json are the contract: the
-    # TypeScript suite (packages/server/src/config.test.ts) reads the same
-    # two files, so a config that loads in one language and not the other
-    # fails a test until both loaders agree.
+    # integ/fixtures/config/*.json are the contract: the TypeScript suite
+    # (packages/node/src/config.test.ts) reads the same files, so a
+    # config that loads in one language and not the other fails a test
+    # until both loaders agree.
     fixture = (Path(__file__).parents[3] / "integ" / "fixtures" / "config" /
                f"{name}.json")
     cases = json.loads(fixture.read_text())["cases"]
@@ -856,8 +861,9 @@ def test_shared_rejection_fixture_is_refused():
             load_config(case["config"])
 
 
-def test_shared_acceptance_fixture_is_accepted():
+@pytest.mark.parametrize("fixture", ACCEPTED_FIXTURES)
+def test_shared_acceptance_fixture_is_accepted(fixture: str):
     # Every key of every block, so a field added to a model here and
     # never mirrored into the TypeScript key tables fails there.
-    for case in _shared_fixture_cases("accepted"):
+    for case in _shared_fixture_cases(fixture):
         load_config(case["config"])

@@ -12,8 +12,9 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from mirage.policy.match.rule import (RuleMatch, io_refusal, match_io,
-                                      match_op, match_rule, rule_scope)
+from mirage.policy.match.rule import (RuleMatch, Subject, io_refusal, match_io,
+                                      match_op, match_rule, rule_reach,
+                                      rule_scope, subjects)
 from mirage.policy.types import (AdmissionRules, CommandContext, CommandRule,
                                  OpsContext)
 from mirage.types import PathSpec
@@ -172,6 +173,43 @@ def test_a_subtree_command_on_the_directory_holding_the_scope_matches():
                                                              depth=2)
     assert match_rule(named, classify_paths(named.paths),
                       _subtree_ctx("mv", "/x", "/y")) is None
+
+
+def test_subjects_are_the_lines_paths_then_its_subtree_operands():
+    # A reader is asked one question per path: does it lie inside a
+    # scope. A subtree command is asked a second, per operand: does it
+    # hold one. `mv`'s destination is the operand where an ancestor of
+    # the scope does not count.
+    read = subjects(_subtree_ctx("cat", "/a", "/b"))
+    assert [(s.path.virtual, s.holds) for s in read] == [("/a", False),
+                                                         ("/b", False)]
+    moved = subjects(_subtree_ctx("mv", "/a", "/b"))
+    assert [(s.path.virtual, s.holds, s.ancestors) for s in moved] == [
+        ("/a", False, True),
+        ("/b", False, True),
+        ("/a", True, True),
+        ("/b", True, False),
+    ]
+    # A line naming no path is one subject, itself.
+    bare = subjects(_ctx("git", tokens=("git", "push")))
+    assert len(bare) == 1 and bare[0].path is None
+
+
+def test_rule_reach_scores_the_entry_that_reached_and_no_other():
+    inside = CommandRule(reason="x", paths=("/a/*", "/deep/b/c/*"))
+    scope = rule_scope(inside)
+    assert rule_reach(inside, scope, Subject(_path("/a/x"))) == 1
+    assert rule_reach(inside, scope, Subject(_path("/deep/b/c/x"))) == 3
+    assert rule_reach(inside, scope, Subject(_path("/elsewhere"))) is None
+    # A rule naming no paths reaches every subject at depth 0, which is
+    # off the path axis, and a line's own subject only through one.
+    pathless = CommandRule(reason="x")
+    assert rule_reach(pathless, None, Subject(_path("/a/x"))) == 0
+    assert rule_reach(pathless, None, Subject(None)) == 0
+    assert rule_reach(inside, scope, Subject(None)) is None
+    # Holding the scope is the subtree operand's question alone.
+    assert rule_reach(inside, scope, Subject(_path("/"))) is None
+    assert rule_reach(inside, scope, Subject(_path("/"), holds=True)) == 3
 
 
 def test_match_op_refuses_a_subtree_op_on_the_directory_holding_the_scope():

@@ -17,7 +17,16 @@ import { describe, expect, it } from 'vitest'
 import { PathSpec } from '../../types.ts'
 import { classifyPaths } from '../../utils/hidden.ts'
 import type { CommandContext, CommandRule, AdmissionRules, OpsContext } from '../types.ts'
-import { ioRefusal, matchIo, matchOp, matchRule, ruleScope } from './rule.ts'
+import {
+  ioRefusal,
+  matchIo,
+  matchOp,
+  matchRule,
+  ruleReach,
+  ruleScope,
+  subjects,
+  type Subject,
+} from './rule.ts'
 
 const registry = { isMountRoot: () => false }
 
@@ -36,6 +45,10 @@ function ctx(
   extra: Partial<Omit<CommandContext, 'command' | 'registry'>> = {},
 ): CommandContext {
   return { command, paths: [], argv: [], cwd: '/', registry, ...extra }
+}
+
+function subject(virtual: string): Subject {
+  return { path: path(virtual), holds: false, ancestors: true }
 }
 
 describe('rules', () => {
@@ -160,6 +173,46 @@ describe('rules', () => {
       depth: 2,
     })
     expect(matchRule(named, namedScope, subtreeCtx('mv', '/x', '/y'))).toBeNull()
+  })
+
+  it("subjects are the line's paths, then its subtree operands", () => {
+    // A reader is asked one question per path: does it lie inside a
+    // scope. A subtree command is asked a second, per operand: does it
+    // hold one. `mv`'s destination is the operand where an ancestor of
+    // the scope does not count.
+    expect(subjects(subtreeCtx('cat', '/a', '/b')).map((s) => [s.path?.virtual, s.holds])).toEqual([
+      ['/a', false],
+      ['/b', false],
+    ])
+    expect(
+      subjects(subtreeCtx('mv', '/a', '/b')).map((s) => [s.path?.virtual, s.holds, s.ancestors]),
+    ).toEqual([
+      ['/a', false, true],
+      ['/b', false, true],
+      ['/a', true, true],
+      ['/b', true, false],
+    ])
+    // A line naming no path is one subject, itself.
+    const bare = subjects(ctx('git', { tokens: ['git', 'push'] }))
+    expect(bare.length).toBe(1)
+    expect(bare[0]?.path).toBeNull()
+  })
+
+  it('ruleReach scores the entry that reached and no other', () => {
+    const inside: CommandRule = { reason: 'x', paths: ['/a/*', '/deep/b/c/*'] }
+    const scope = ruleScope(inside)
+    expect(ruleReach(inside, scope, subject('/a/x'))).toBe(1)
+    expect(ruleReach(inside, scope, subject('/deep/b/c/x'))).toBe(3)
+    expect(ruleReach(inside, scope, subject('/elsewhere'))).toBeNull()
+    // A rule naming no paths reaches every subject at depth 0, which is
+    // off the path axis, and a line's own subject only through one.
+    const pathless: CommandRule = { reason: 'x' }
+    expect(ruleReach(pathless, null, subject('/a/x'))).toBe(0)
+    expect(ruleReach(pathless, null, { path: null, holds: false, ancestors: true })).toBe(0)
+    expect(ruleReach(inside, scope, { path: null, holds: false, ancestors: true })).toBeNull()
+    // Holding the scope is the subtree operand's question alone.
+    expect(ruleReach(inside, scope, subject('/'))).toBeNull()
+    expect(ruleReach(inside, scope, { ...subject('/'), holds: true })).toBe(3)
   })
 
   it('matchOp refuses a subtree op on the directory holding the scope', () => {

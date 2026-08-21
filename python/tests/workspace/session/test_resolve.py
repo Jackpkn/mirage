@@ -1,9 +1,11 @@
 import pytest
 
 from mirage.policy.errors import PolicyError
-from mirage.policy.types import AdmissionRules, CommandRule
+from mirage.policy.match.rule import match_op, rule_scope
+from mirage.policy.types import AdmissionRules, CommandRule, OpsContext
 from mirage.shell.variable import VarAttr
-from mirage.types import HiddenPaths, HiddenVars, MountMode
+from mirage.types import HiddenPaths, HiddenVars, MountMode, PathSpec
+from mirage.utils.hidden import path_hidden
 from mirage.workspace.session.session import Session
 
 from mirage.workspace.session.permissions import (  # isort: skip
@@ -163,6 +165,35 @@ def test_compile_commands_lists_mount_rules_before_the_role_s_own():
     assert rules.ask[0].mount == "/repo" and not rules.ask[0].paths
 
 
+def test_compile_commands_anchors_a_name_pattern_to_its_mount():
+    rules = compile_commands(
+        SessionProfile(
+            mounts={
+                "/repo":
+                ProfileMount(commands=MountCommandsBlock(
+                    deny=(CommandRule(reason="no pems", paths=("*.pem", )), )))
+            }))
+    assert rules is not None
+    rule = rules.deny[0]
+    assert rule.paths == ("/repo/*.pem", )
+    # The stamp scopes the rule at admission, but the op door reads the
+    # paths alone, so a raw name pattern refused a read in every other
+    # mount too.
+    scope = rule_scope(rule)
+    assert match_op(rule, scope, _read_op("/repo/deep/key.pem"))
+    assert not match_op(rule, scope, _read_op("/other/key.pem"))
+
+
+def _read_op(virtual: str) -> OpsContext:
+    return OpsContext(op="read",
+                      path=PathSpec(virtual=virtual,
+                                    directory=virtual.rsplit("/", 1)[0],
+                                    resource_path=virtual,
+                                    raw_path=virtual),
+                      write=False,
+                      prefix="/other")
+
+
 def test_compile_commands_is_none_when_the_role_states_no_rules():
     assert compile_commands(SessionProfile()) is None
     assert compile_commands(SessionProfile(commands=CommandsBlock())) is None
@@ -200,9 +231,16 @@ def test_compile_profile_collects_the_hides_of_every_mount_section():
                            "/scratch":
                            ProfileMount(mode=MountMode.READ),
                        }))
+    # The set is one list for the whole session, so a name pattern
+    # written under a mount has to carry the mount with it: raw,
+    # ``*.pem`` would hide ``/scratch/key.pem`` too.
     assert out.hidden_paths == HiddenPaths(paths=("/shared/finance",
                                                   "/repo/.env"),
-                                           patterns=("*.pem", ))
+                                           patterns=("/repo/*.pem", ))
+    assert path_hidden(out.hidden_paths, "/repo/deep/key.pem")
+    assert not path_hidden(out.hidden_paths, "/scratch/key.pem")
+    role = compile_profile(SessionProfile(paths=PathsBlock(hide=("*.pem", ))))
+    assert path_hidden(role.hidden_paths, "/scratch/key.pem")
 
 
 def test_compile_profile_of_a_bare_or_absent_role_states_nothing():

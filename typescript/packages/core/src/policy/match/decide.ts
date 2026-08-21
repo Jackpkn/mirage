@@ -12,48 +12,61 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import type { CommandContext, CommandRule, AdmissionRules } from '../types.ts'
+import type { Decision } from '../config.ts'
+import { VERB_ORDER } from '../constants.ts'
+import {
+  Outcome,
+  type CommandContext,
+  type CommandRule,
+  type AdmissionRules,
+  type LiveRules,
+} from '../types.ts'
 import { lineAllowed } from './allow.ts'
-import { ASK_SECOND, betterMatch, DENY_FIRST, matchRule, ruleScope } from './rule.ts'
+import {
+  betterMatch,
+  matchedOperand,
+  ruleApplies,
+  ruleReach,
+  ruleScope,
+  subjects,
+  type Subject,
+} from './rule.ts'
 
 /**
- * What the role's rules say about one line. RUN is silence: no rule
- * spoke. NOT_ALLOWED is the allow list refusing a line whose head it
- * installed. DENY and ASK name the rule that spoke.
+ * Whether one subject's verdict outranks the line's best so far: the
+ * stronger verb first, then the deeper anchor.
+ *
+ * The mirror image of `betterMatch`, and deliberately so. Two rules
+ * about *one* subject are a question of specificity, so depth leads
+ * there. Two subjects of one line are a question of severity: every path
+ * a line names has to survive it, so a deny anywhere refuses the line
+ * however deeply another path was carved out.
  */
-export enum Outcome {
-  RUN = 'run',
-  NOT_ALLOWED = 'not_allowed',
-  DENY = 'deny',
-  ASK = 'ask',
+export function outranks(current: readonly [number, number], verb: number, depth: number): boolean {
+  const [bestVerb, bestDepth] = current
+  if (verb !== bestVerb) return verb < bestVerb
+  return depth > bestDepth
 }
 
-/** The role's answer about one line, and what produced it. */
-export interface Decision {
-  /** Which verb spoke. */
-  readonly outcome: Outcome
-  /** The rule that spoke; null on RUN and on NOT_ALLOWED, which is the allow list rather than a rule. */
-  readonly rule: CommandRule | null
-  /**
-   * The operand a path-scoped rule matched, as typed, which the GNU
-   * voice prints (`rm: letters.txt: <reason>`); null when the rule
-   * reaches the whole line.
-   */
-  readonly matchedPath: string | null
-  /**
-   * Where in the document the rule was written, for a host reading a
-   * verdict: `top` or `mounts./repo`. Empty on RUN.
-   */
-  readonly source: string
-}
-
-// Which verb wins when two rules match at the same anchor depth. Deny
-// before ask, and the allow list is not a rule so it never ties. The
-// ordering itself lives in `match/rule` because the entry gate reads by
-// it too.
-const VERB_ORDER: Readonly<Record<string, number>> = {
-  [Outcome.DENY]: DENY_FIRST,
-  [Outcome.ASK]: ASK_SECOND,
+/**
+ * The rule that speaks about one subject of a line, null when none does:
+ * the deepest anchor, deny before ask at equal depth, the earlier rule
+ * on a full tie.
+ */
+export function ruleAt(
+  live: LiveRules,
+  subject: Subject,
+): readonly [Outcome, CommandRule, number] | null {
+  let best: [number, number] | null = null
+  let chosen: readonly [Outcome, CommandRule, number] | null = null
+  for (const [outcome, rule] of live) {
+    const depth = ruleReach(rule, ruleScope(rule), subject)
+    const verb = VERB_ORDER[outcome] ?? 0
+    if (depth === null || !betterMatch(best, depth, verb)) continue
+    best = [depth, verb]
+    chosen = [outcome, rule, depth]
+  }
+  return chosen
 }
 
 /**
@@ -72,7 +85,7 @@ export function sourceOf(rule: CommandRule): string {
  * wherever it was written: it is off the path axis entirely, so one in a
  * mount section scores 0 exactly as a top-level one does. Writing it
  * under `mounts./repo` scopes it to lines working inside that mount
- * (`matchRule` reads `rule.mount`); it does not make it more specific
+ * (`ruleApplies` reads `rule.mount`); it does not make it more specific
  * than a rule about the whole session. That is what keeps "denied
  * generally, asked inside one mount" inexpressible for a pathless rule,
  * which in practice means an account CLI: such a CLI reaches a service
@@ -83,6 +96,15 @@ export function sourceOf(rule: CommandRule): string {
  * the rule's deepest, so an entry that says nothing about this operand
  * cannot lend it specificity. The allow list is asked first, since a
  * line no list covers never reaches a rule.
+ *
+ * All of which is settled *per subject*, and only then across them
+ * (`outranks`), because a line names more than one path and a carve-out
+ * written for one of them must not answer for the rest: with `deny cp
+ * /protected/*` and a deeper `ask cp /review/deep/*`, `cp
+ * /protected/secret /review/deep/out` is the source's deny, and reading
+ * one best match for the whole line answered it with the destination's
+ * ask instead, so a nod meant for the destination carried the protected
+ * file out.
  *
  * `PermissionsPolicy` renders this into the outcome table and `explain`
  * reports it, so the two cannot disagree about what a line would do.
@@ -97,24 +119,29 @@ export function decide(ctx: CommandContext, rules: AdmissionRules | null): Decis
       source: 'commands.allow',
     }
   }
-  let best: [number, number] | null = null
-  let chosen: Decision = { outcome: Outcome.RUN, rule: null, matchedPath: null, source: '' }
+  const live: (readonly [Outcome, CommandRule])[] = []
   for (const [outcome, written] of [
     [Outcome.DENY, rules.deny],
     [Outcome.ASK, rules.ask],
   ] as const) {
     for (const rule of written) {
-      const hit = matchRule(rule, ruleScope(rule), ctx)
-      if (hit === null) continue
-      const verb = VERB_ORDER[outcome] ?? 0
-      if (!betterMatch(best, hit.depth, verb)) continue
-      best = [hit.depth, verb]
-      chosen = {
-        outcome,
-        rule,
-        matchedPath: hit.operand ?? null,
-        source: sourceOf(rule),
-      }
+      if (ruleApplies(rule, ctx)) live.push([outcome, rule])
+    }
+  }
+  let best: [number, number] | null = null
+  let chosen: Decision = { outcome: Outcome.RUN, rule: null, matchedPath: null, source: '' }
+  for (const subject of subjects(ctx)) {
+    const spoke = ruleAt(live, subject)
+    if (spoke === null) continue
+    const [outcome, rule, depth] = spoke
+    const verb = VERB_ORDER[outcome] ?? 0
+    if (best !== null && !outranks(best, verb, depth)) continue
+    best = [verb, depth]
+    chosen = {
+      outcome,
+      rule,
+      matchedPath: matchedOperand(rule, subject),
+      source: sourceOf(rule),
     }
   }
   return chosen

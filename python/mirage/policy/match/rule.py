@@ -16,20 +16,15 @@ import functools
 from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 
-from mirage.policy.constants import METADATA_OPS, SUBTREE_COMMANDS, SUBTREE_OPS
+from mirage.policy.constants import (ASK_SECOND, DENY_FIRST, METADATA_OPS,
+                                     SUBTREE_COMMANDS, SUBTREE_OPS)
 from mirage.policy.match.allow import line_tokens
 from mirage.policy.match.pattern import pattern_matches
 from mirage.policy.types import (AdmissionRules, CommandContext, CommandRule,
                                  OpsContext)
-from mirage.types import HiddenPaths
+from mirage.types import HiddenPaths, PathSpec
 from mirage.utils.hidden import (anchor_depth, classify_paths, path_covers,
                                  path_hidden)
-
-# Which verb wins when two rules speak at the same anchor depth: deny
-# before ask. Both gates order by it, which is what keeps the entry
-# gate from contradicting the admission gate.
-DENY_FIRST = 0
-ASK_SECOND = 1
 
 
 def better_match(current: tuple[int, int] | None, depth: int,
@@ -81,6 +76,58 @@ class RuleMatch:
     depth: int = 0
 
 
+@dataclass(frozen=True, slots=True)
+class Subject:
+    """One thing a line's rules are read against.
+
+    A line is judged subject by subject, because the paths a command
+    names are not one question: ``cp /sealed/x /wip/y`` reads one file
+    and writes another, and a nod for the destination says nothing
+    about the source.
+
+    Args:
+        path (PathSpec | None): the path, None for the line itself,
+            which is the only subject of a line naming no path and is
+            reached only by a rule naming no paths.
+        holds (bool): whether this subject would take a whole subtree
+            along (``rm -r /x``, ``mv /x /y``), so a rule anchored
+            below it speaks about it.
+        ancestors (bool): whether an ancestor of the rule's scope
+            counts as holding it; False for ``mv``'s destination, which
+            lands in the scope only when it is that directory itself.
+    """
+
+    path: PathSpec | None
+    holds: bool = False
+    ancestors: bool = True
+
+
+def subjects(ctx: CommandContext) -> tuple[Subject, ...]:
+    """What a line's rules are read against, in the order they are read.
+
+    Every path the line names first, each asked whether it lies inside
+    a rule's scope; then the operands of a subtree command, asked the
+    second question, whether they hold one. The two orders together are
+    what a single rule sees, so the first subject a rule reaches is the
+    operand its refusal names. A line naming no path is one subject,
+    itself.
+
+    Args:
+        ctx (CommandContext): the classified command.
+    """
+    if not ctx.paths:
+        return (Subject(None), )
+    subs = [Subject(p) for p in ctx.paths]
+    if ctx.command in SUBTREE_COMMANDS:
+        operands = list(ctx.operands)
+        dst = (operands.pop()
+               if ctx.command == "mv" and len(operands) > 1 else None)
+        subs.extend(Subject(p, holds=True) for p in operands)
+        if dst is not None:
+            subs.append(Subject(dst, holds=True, ancestors=False))
+    return tuple(subs)
+
+
 def _under(path: str, root: str) -> bool:
     return root == "/" or path == root or path.startswith(root + "/")
 
@@ -104,16 +151,81 @@ def _touches(mount: str, ctx: CommandContext) -> bool:
     return ctx.walks and any(_under(mount, p.virtual) for p in ctx.paths)
 
 
+def rule_applies(rule: CommandRule, ctx: CommandContext) -> bool:
+    """Whether a rule speaks about a line at all, before any of the
+    line's subjects is read.
+
+    Two questions: the rule's command patterns (a prefix of the line's
+    tokens; none means every command), and the rule's mount (a rule
+    written under a mount section applies only to a line working inside
+    it).
+
+    Args:
+        rule (CommandRule): the rule.
+        ctx (CommandContext): the classified command.
+    """
+    if rule.commands:
+        tokens = line_tokens(ctx)
+        if not any(pattern_matches(p, tokens) for p in rule.commands):
+            return False
+    return not rule.mount or _touches(rule.mount, ctx)
+
+
+def rule_reach(rule: CommandRule, scope: HiddenPaths | None,
+               subject: Subject) -> int | None:
+    """How deep a rule reaches at one subject of a line, None when it
+    says nothing about that subject.
+
+    A rule naming no paths reaches every subject at depth 0: it is off
+    the path axis, so any entry naming a place outranks it. A rule
+    carrying paths reaches a subject lying inside them, or, for a
+    subtree operand, one holding them (``rm -r /x`` takes
+    ``/x/locked/*`` along, and ``mv``'s destination lands in the scope
+    only when it is that directory itself). The depth is the deepest
+    entry that actually reached, never the rule's deepest entry.
+
+    Args:
+        rule (CommandRule): the rule.
+        scope (HiddenPaths | None): the rule's paths, classified once
+            through ``classify_paths``; None when the rule names none.
+        subject (Subject): one subject of the line.
+    """
+    if scope is None:
+        return 0
+    if subject.path is None:
+        return None
+    virtual = subject.path.virtual
+    if path_hidden(scope, virtual):
+        return hidden_depth(rule, virtual)
+    if subject.holds and path_covers(scope, virtual, subject.ancestors):
+        return covers_depth(rule, virtual, subject.ancestors)
+    return None
+
+
+def matched_operand(rule: CommandRule, subject: Subject) -> str | None:
+    """The operand a rule's refusal names, as typed: the subject it
+    reached, or None when the rule names no paths and so refuses the
+    whole line.
+
+    Args:
+        rule (CommandRule): the rule that spoke.
+        subject (Subject): the subject it reached.
+    """
+    if not rule.paths or subject.path is None:
+        return None
+    return subject.path.raw_path or subject.path.virtual
+
+
 def match_rule(rule: CommandRule, scope: HiddenPaths | None,
                ctx: CommandContext) -> RuleMatch | None:
-    """Whether a rule applies to a line, and to which operand.
+    """Whether one rule applies to a line, and to which operand: the
+    first subject it reaches, which is what a single rule read as a
+    policy of its own has to answer.
 
-    Three questions in order: the rule's command patterns (a prefix
-    of the line's tokens; none means every command), the rule's mount
-    (a rule written under a mount section applies only to a line
-    working inside it), the
-    rule's paths (none means the whole line; otherwise the first
-    operand under them scopes the match).
+    ``decide`` does not use this, because a line is more than its first
+    match: it reads every rule at every subject
+    (:func:`subjects`, :func:`rule_reach`) so one operand's ask cannot
+    speak for another operand's deny.
 
     Args:
         rule (CommandRule): the rule.
@@ -121,50 +233,13 @@ def match_rule(rule: CommandRule, scope: HiddenPaths | None,
             through ``classify_paths``; None when the rule names none.
         ctx (CommandContext): the classified command.
     """
-    if rule.commands:
-        tokens = line_tokens(ctx)
-        if not any(pattern_matches(p, tokens) for p in rule.commands):
-            return None
-    if rule.mount and not _touches(rule.mount, ctx):
+    if not rule_applies(rule, ctx):
         return None
-    if scope is None:
-        return RuleMatch(operand=None)
-    for p in ctx.paths:
-        if path_hidden(scope, p.virtual):
-            return RuleMatch(operand=p.raw_path or p.virtual,
-                             depth=hidden_depth(rule, p.virtual))
-    return _subtree_match(rule, scope, ctx)
-
-
-def _subtree_match(rule: CommandRule, scope: HiddenPaths,
-                   ctx: CommandContext) -> RuleMatch | None:
-    """The operand of a subtree command that holds the scope, if any.
-
-    ``rm -r /x`` and ``mv /x /y`` take ``/x/locked/*`` along, so for
-    the commands in ``SUBTREE_COMMANDS`` an operand at or above the
-    directory holding the scope matches like an operand inside it.
-    ``mv``'s last operand is its destination, which only matches when
-    it is that directory itself (moving into ``/x/locked`` lands in
-    the scope; moving into ``/x`` does not).
-
-    Args:
-        rule (CommandRule): the rule, read for the entry that matched.
-        scope (HiddenPaths): the rule's classified paths.
-        ctx (CommandContext): the classified command.
-    """
-    if ctx.command not in SUBTREE_COMMANDS:
-        return None
-    operands = list(ctx.operands)
-    dst = (operands.pop()
-           if ctx.command == "mv" and len(operands) > 1 else None)
-    for p in operands:
-        if path_covers(scope, p.virtual):
-            return RuleMatch(operand=p.raw_path or p.virtual,
-                             depth=covers_depth(rule, p.virtual))
-    if dst is not None and path_covers(scope, dst.virtual, ancestors=False):
-        return RuleMatch(operand=dst.raw_path or dst.virtual,
-                         depth=covers_depth(rule, dst.virtual,
-                                            ancestors=False))
+    for subject in subjects(ctx):
+        depth = rule_reach(rule, scope, subject)
+        if depth is None:
+            continue
+        return RuleMatch(operand=matched_operand(rule, subject), depth=depth)
     return None
 
 

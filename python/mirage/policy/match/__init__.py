@@ -12,21 +12,27 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+from mirage.policy.config import Decision
 from mirage.policy.match.allow import head_visible, line_allowed, line_tokens
-from mirage.policy.match.decide import Decision, Outcome, decide
+from mirage.policy.match.decide import decide, outranks, rule_at, source_of
 from mirage.policy.match.pattern import (intersect_patterns, pattern_matches,
                                          pattern_names, split_pattern)
 from mirage.policy.match.reads import has_rules, reads_args, scopes_paths
-from mirage.policy.match.rule import (RuleMatch, covers_depth, hidden_depth,
-                                      io_refusal, match_io, match_op,
-                                      match_rule, rule_scope)
+from mirage.policy.types import Outcome
 from mirage.utils.hidden import anchor_depth
+
+from mirage.policy.match.rule import (  # isort: skip
+    RuleMatch, Subject, better_match, covers_depth, hidden_depth, io_refusal,
+    match_io, match_op, match_rule, matched_operand, rule_applies, rule_reach,
+    rule_scope, subjects)
 
 __all__ = [
     "Decision",
     "Outcome",
     "RuleMatch",
+    "Subject",
     "anchor_depth",
+    "better_match",
     "covers_depth",
     "decide",
     "has_rules",
@@ -39,10 +45,17 @@ __all__ = [
     "match_io",
     "match_op",
     "match_rule",
+    "matched_operand",
+    "outranks",
     "pattern_matches",
     "pattern_names",
     "reads_args",
+    "rule_applies",
+    "rule_at",
+    "rule_reach",
     "rule_scope",
     "scopes_paths",
+    "source_of",
     "split_pattern",
+    "subjects",
 ]

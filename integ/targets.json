@@ -2415,6 +2415,57 @@
               }
             ]
           }
+        },
+        "courier": {
+          "commands": {
+            "ask": [
+              {
+                "reason": "outbox nod",
+                "commands": {
+                  "cp": [
+                    "/scratch/outbox/deep/*"
+                  ],
+                  "mv": [
+                    "/scratch/outbox/deep/*"
+                  ]
+                }
+              }
+            ],
+            "deny": [
+              {
+                "reason": "courier sealed",
+                "commands": {
+                  "cp": [
+                    "/scratch/vaultc/*"
+                  ],
+                  "mv": [
+                    "/scratch/vaultc/*"
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        "anchored": {
+          "mounts": {
+            "/scratch": {
+              "paths": {
+                "hide": [
+                  "*.key"
+                ]
+              },
+              "commands": {
+                "deny": [
+                  {
+                    "reason": "anchored pem",
+                    "paths": [
+                      "*.pem"
+                    ]
+                  }
+                ]
+              }
+            }
+          }
         }
       },
       "profile": "default",

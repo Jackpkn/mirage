@@ -117,7 +117,13 @@ export interface WorkspaceOptions {
   /**
    * The roles (`profiles:` in YAML). A role is the whole permission
    * document a session runs under, so there is no workspace-wide block
-   * and no mount-owned block above it.
+   * and no mount-owned block above it. Each is a parsed profile, not the
+   * document as written: run the document through `parseSessionProfile`
+   * first (the config loader already does). Python validates here
+   * instead, because pydantic can tell a built model from a document and
+   * a plain interface cannot; parsing twice is not a no-op, since a
+   * mapping-form rule compiles to commands beside paths, which the
+   * document grammar refuses.
    */
   profiles?: Readonly<Record<string, SessionProfile>> | null
   /**

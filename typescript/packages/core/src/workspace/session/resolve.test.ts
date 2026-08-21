@@ -16,7 +16,10 @@ import { describe, expect, it } from 'vitest'
 
 import { DEFAULT_ASK_REASON } from '../../policy/constants.ts'
 import { PolicyError } from '../../policy/errors.ts'
-import { MountMode } from '../../types.ts'
+import { matchOp, ruleScope } from '../../policy/match/rule.ts'
+import type { OpsContext } from '../../policy/types.ts'
+import { MountMode, PathSpec } from '../../types.ts'
+import { pathHidden } from '../../utils/hidden.ts'
 import { parseSessionProfile, type SessionProfile } from './permissions.ts'
 import {
   applyProfile,
@@ -28,6 +31,20 @@ import {
 } from './resolve.ts'
 import { Session } from './session.ts'
 import { VarAttr } from '../../shell/variable.ts'
+
+function readOp(virtual: string): OpsContext {
+  return {
+    op: 'read',
+    path: new PathSpec({
+      virtual,
+      directory: virtual.slice(0, virtual.lastIndexOf('/')) || '/',
+      resourcePath: virtual,
+      rawPath: virtual,
+    }),
+    write: false,
+    prefix: '/other',
+  }
+}
 
 const PROFILES: Record<string, SessionProfile> = {
   default: parseSessionProfile({
@@ -184,6 +201,22 @@ describe('compileCommands', () => {
     expect(rules?.ask[0]?.paths).toBeUndefined()
   })
 
+  it('anchors a name pattern to its mount', () => {
+    const rules = compileCommands(
+      parseSessionProfile({
+        mounts: { '/repo': { commands: { deny: [{ reason: 'no pems', paths: ['*.pem'] }] } } },
+      }),
+    )
+    const rule = rules?.deny[0] ?? { reason: 'missing' }
+    expect(rule.paths).toEqual(['/repo/*.pem'])
+    // The stamp scopes the rule at admission, but the op door reads the
+    // paths alone, so a raw name pattern refused a read in every other
+    // mount too.
+    const scope = ruleScope(rule)
+    expect(matchOp(rule, scope, readOp('/repo/deep/key.pem'))).toBe(true)
+    expect(matchOp(rule, scope, readOp('/other/key.pem'))).toBe(false)
+  })
+
   it('is null when the role states no rules', () => {
     expect(compileCommands({})).toBeNull()
     expect(compileCommands(parseSessionProfile({ commands: {} }))).toBeNull()
@@ -214,7 +247,7 @@ describe('compileProfile', () => {
     expect(out.cwd).toBe('/scratch')
   })
 
-  it('collects the hides of every mount section', () => {
+  it('collects the hides of every mount section, anchored to it', () => {
     const out = compileProfile(
       parseSessionProfile({
         paths: { hide: ['/shared/finance'] },
@@ -224,10 +257,18 @@ describe('compileProfile', () => {
         },
       }),
     )
+    // The set is one list for the whole session, so a name pattern
+    // written under a mount has to carry the mount with it: raw, `*.pem`
+    // would hide `/scratch/key.pem` too.
     expect(out.hiddenPaths).toEqual({
       paths: ['/shared/finance', '/repo/.env'],
-      patterns: ['*.pem'],
+      patterns: ['/repo/*.pem'],
     })
+    expect(pathHidden(out.hiddenPaths, '/repo/deep/key.pem')).toBe(true)
+    expect(pathHidden(out.hiddenPaths, '/scratch/key.pem')).toBe(false)
+    // The role's own hide is not a mount section's and stays global.
+    const role = compileProfile(parseSessionProfile({ paths: { hide: ['*.pem'] } }))
+    expect(pathHidden(role.hiddenPaths, '/scratch/key.pem')).toBe(true)
   })
 
   it('of a bare or absent role states nothing', () => {

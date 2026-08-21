@@ -37,6 +37,18 @@ interface MountRootQuery {
 export type DenyScope = 'command' | 'operand'
 
 /**
+ * What the role's rules say about one line. RUN is silence: no rule
+ * spoke. NOT_ALLOWED is the allow list refusing a line whose head it
+ * installed. DENY and ASK name the rule that spoke.
+ */
+export enum Outcome {
+  RUN = 'run',
+  NOT_ALLOWED = 'not_allowed',
+  DENY = 'deny',
+  ASK = 'ask',
+}
+
+/**
  * Refuse the command, op or session write, with a reason. Rendered by
  * the door it fires at: the command plane prints it in the scope's voice
  * (DenyScope), the op doors throw EACCES with it, the session door
@@ -204,6 +216,13 @@ export interface AdmissionRules {
   ask: readonly CommandRule[]
   deny: readonly CommandRule[]
 }
+
+/**
+ * The rules that apply to one line, each with the verb it carries, deny
+ * before ask and in the order written. Built once per line by `decide`
+ * and read again at every subject of it.
+ */
+export type LiveRules = readonly (readonly [Outcome, CommandRule])[]
 
 /**
  * The one session question the permissions policy asks. The

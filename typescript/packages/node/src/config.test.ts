@@ -907,10 +907,13 @@ describe('CLI to daemon round trip', () => {
   })
 })
 
-// integ/fixtures/config/{rejected,accepted}.json are the contract: the
-// python suite (tests/config/test_loader.py) reads the same two files, so
-// a config that loads in one language and not the other fails a test
-// until both loaders agree.
+// integ/fixtures/config/*.json are the contract: the python suite
+// (tests/config/test_loader.py) reads the same files, so a config that
+// loads in one language and not the other fails a test until both
+// loaders agree. The accepted half is one file per subject: every config
+// block that is not a permission verb, then a verb each.
+const ACCEPTED_FIXTURES = ['blocks', 'allow', 'ask', 'deny'] as const
+
 function fixtureCases(name: string): { name: string; config: Record<string, unknown> }[] {
   const path = fileURLToPath(
     new URL(`../../../../integ/fixtures/config/${name}.json`, import.meta.url),
@@ -934,12 +937,12 @@ describe('shared rejection fixture', () => {
   })
 })
 
-describe('shared acceptance fixture', () => {
+describe.each(ACCEPTED_FIXTURES)('shared acceptance fixture: %s', (fixture) => {
   // The key tables are copied by hand from Python's models, so the drift
   // this catches is a field added there and never mirrored here: every
-  // key of every block appears in the fixture, and an unmirrored one
+  // key of every block appears in the accepted set, and an unmirrored one
   // comes back as `unknown ... key`.
-  const cases = fixtureCases('accepted')
+  const cases = fixtureCases(fixture)
 
   it('has cases', () => {
     expect(cases.length).toBeGreaterThan(0)

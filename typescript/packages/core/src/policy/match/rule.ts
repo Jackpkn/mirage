@@ -12,18 +12,18 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import type { HiddenPaths } from '../../types.ts'
+import type { HiddenPaths, PathSpec } from '../../types.ts'
 import { anchorDepth, classifyPaths, pathCovers, pathHidden } from '../../utils/hidden.ts'
-import { METADATA_OPS, SUBTREE_COMMANDS, SUBTREE_OPS } from '../constants.ts'
+import {
+  ASK_SECOND,
+  DENY_FIRST,
+  METADATA_OPS,
+  SUBTREE_COMMANDS,
+  SUBTREE_OPS,
+} from '../constants.ts'
 import type { CommandContext, CommandRule, AdmissionRules, OpsContext } from '../types.ts'
 import { lineTokens } from './allow.ts'
 import { patternMatches } from './pattern.ts'
-
-// Which verb wins when two rules speak at the same anchor depth: deny
-// before ask. Both gates order by it, which is what keeps the entry
-// gate from contradicting the admission gate.
-export const DENY_FIRST = 0
-export const ASK_SECOND = 1
 
 /**
  * Whether a match beats the best one so far: deeper anchor first, then
@@ -65,6 +65,53 @@ export interface RuleMatch {
   depth: number
 }
 
+/**
+ * One thing a line's rules are read against.
+ *
+ * A line is judged subject by subject, because the paths a command names
+ * are not one question: `cp /sealed/x /wip/y` reads one file and writes
+ * another, and a nod for the destination says nothing about the source.
+ */
+export interface Subject {
+  /**
+   * The path, null for the line itself, which is the only subject of a
+   * line naming no path and is reached only by a rule naming no paths.
+   */
+  readonly path: PathSpec | null
+  /**
+   * Whether this subject would take a whole subtree along (`rm -r /x`,
+   * `mv /x /y`), so a rule anchored below it speaks about it.
+   */
+  readonly holds: boolean
+  /**
+   * Whether an ancestor of the rule's scope counts as holding it; false
+   * for `mv`'s destination, which lands in the scope only when it is
+   * that directory itself.
+   */
+  readonly ancestors: boolean
+}
+
+/**
+ * What a line's rules are read against, in the order they are read.
+ *
+ * Every path the line names first, each asked whether it lies inside a
+ * rule's scope; then the operands of a subtree command, asked the second
+ * question, whether they hold one. The two orders together are what a
+ * single rule sees, so the first subject a rule reaches is the operand
+ * its refusal names. A line naming no path is one subject, itself.
+ */
+export function subjects(ctx: CommandContext): readonly Subject[] {
+  if (ctx.paths.length === 0) return [{ path: null, holds: false, ancestors: true }]
+  const subs: Subject[] = ctx.paths.map((p) => ({ path: p, holds: false, ancestors: true }))
+  if (SUBTREE_COMMANDS.has(ctx.command)) {
+    const operands = [...(ctx.operands ?? [])]
+    const dst = ctx.command === 'mv' && operands.length > 1 ? operands.pop() : undefined
+    for (const p of operands) subs.push({ path: p, holds: true, ancestors: true })
+    if (dst !== undefined) subs.push({ path: dst, holds: true, ancestors: false })
+  }
+  return subs
+}
+
 function under(path: string, root: string): boolean {
   return root === '/' || path === root || path.startsWith(root + '/')
 }
@@ -82,32 +129,78 @@ function touches(mount: string, ctx: CommandContext): boolean {
 }
 
 /**
- * Whether a rule applies to a line, and to which operand. Three
- * questions in order: the rule's command patterns (a prefix of the
- * line's tokens; none means every command), the rule's mount (a
- * mount-tier rule applies only to a line working inside it), the rule's
- * paths (none means the whole line; otherwise the first operand under
- * them scopes the match). `scope` is the rule's paths classified once
- * through `classifyPaths`, null when the rule names none.
+ * Whether a rule speaks about a line at all, before any of the line's
+ * subjects is read. Two questions: the rule's command patterns (a prefix
+ * of the line's tokens; none means every command), and the rule's mount
+ * (a rule written under a mount section applies only to a line working
+ * inside it).
+ */
+export function ruleApplies(rule: CommandRule, ctx: CommandContext): boolean {
+  const commands = rule.commands ?? []
+  if (commands.length > 0) {
+    const tokens = lineTokens(ctx)
+    if (!commands.some((p) => patternMatches(p, tokens))) return false
+  }
+  return rule.mount === undefined || rule.mount === '' || touches(rule.mount, ctx)
+}
+
+/**
+ * How deep a rule reaches at one subject of a line, null when it says
+ * nothing about that subject.
+ *
+ * A rule naming no paths reaches every subject at depth 0: it is off the
+ * path axis, so any entry naming a place outranks it. A rule carrying
+ * paths reaches a subject lying inside them, or, for a subtree operand,
+ * one holding them (`rm -r /x` takes `/x/locked/*` along, and `mv`'s
+ * destination lands in the scope only when it is that directory itself).
+ * The depth is the deepest entry that actually reached, never the rule's
+ * deepest entry.
+ */
+export function ruleReach(
+  rule: CommandRule,
+  scope: HiddenPaths | null,
+  subject: Subject,
+): number | null {
+  if (scope === null) return 0
+  if (subject.path === null) return null
+  const virtual = subject.path.virtual
+  if (pathHidden(scope, virtual)) return hiddenDepth(rule, virtual)
+  if (subject.holds && pathCovers(scope, virtual, subject.ancestors)) {
+    return coversDepth(rule, virtual, subject.ancestors)
+  }
+  return null
+}
+
+/**
+ * The operand a rule's refusal names, as typed: the subject it reached,
+ * or null when the rule names no paths and so refuses the whole line.
+ */
+export function matchedOperand(rule: CommandRule, subject: Subject): string | null {
+  if ((rule.paths ?? []).length === 0 || subject.path === null) return null
+  return subject.path.rawPath || subject.path.virtual
+}
+
+/**
+ * Whether one rule applies to a line, and to which operand: the first
+ * subject it reaches, which is what a single rule read as a policy of
+ * its own has to answer.
+ *
+ * `decide` does not use this, because a line is more than its first
+ * match: it reads every rule at every subject (`subjects`, `ruleReach`)
+ * so one operand's ask cannot speak for another operand's deny.
  */
 export function matchRule(
   rule: CommandRule,
   scope: HiddenPaths | null,
   ctx: CommandContext,
 ): RuleMatch | null {
-  const commands = rule.commands ?? []
-  if (commands.length > 0) {
-    const tokens = lineTokens(ctx)
-    if (!commands.some((p) => patternMatches(p, tokens))) return null
+  if (!ruleApplies(rule, ctx)) return null
+  for (const subject of subjects(ctx)) {
+    const depth = ruleReach(rule, scope, subject)
+    if (depth === null) continue
+    return { operand: matchedOperand(rule, subject), depth }
   }
-  if (rule.mount !== undefined && rule.mount !== '' && !touches(rule.mount, ctx)) return null
-  if (scope === null) return { operand: null, depth: 0 }
-  for (const p of ctx.paths) {
-    if (pathHidden(scope, p.virtual)) {
-      return { operand: p.rawPath || p.virtual, depth: hiddenDepth(rule, p.virtual) }
-    }
-  }
-  return subtreeMatch(rule, scope, ctx)
+  return null
 }
 
 const entryScopes = new Map<string, HiddenPaths | null>()
@@ -148,34 +241,6 @@ export function coversDepth(rule: CommandRule, virtual: string, ancestors = true
     if (pathCovers(entryScope(entry), virtual, ancestors)) best = Math.max(best, anchorDepth(entry))
   }
   return best
-}
-
-/**
- * The operand of a subtree command that holds the scope, if any. `rm -r
- * /x` and `mv /x /y` take `/x/locked/*` along, so for the commands in
- * SUBTREE_COMMANDS an operand at or above the directory holding the
- * scope matches like an operand inside it. `mv`'s last operand is its
- * destination, which only matches when it is that directory itself
- * (moving into `/x/locked` lands in the scope; moving into `/x` does
- * not).
- */
-function subtreeMatch(
-  rule: CommandRule,
-  scope: HiddenPaths,
-  ctx: CommandContext,
-): RuleMatch | null {
-  if (!SUBTREE_COMMANDS.has(ctx.command)) return null
-  const operands = [...(ctx.operands ?? [])]
-  const dst = ctx.command === 'mv' && operands.length > 1 ? operands.pop() : undefined
-  for (const p of operands) {
-    if (pathCovers(scope, p.virtual)) {
-      return { operand: p.rawPath || p.virtual, depth: coversDepth(rule, p.virtual) }
-    }
-  }
-  if (dst !== undefined && pathCovers(scope, dst.virtual, false)) {
-    return { operand: dst.rawPath || dst.virtual, depth: coversDepth(rule, dst.virtual, false) }
-  }
-  return null
 }
 
 /**

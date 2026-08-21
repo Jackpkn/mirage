@@ -171,15 +171,45 @@ export function withInline(
   return out
 }
 
+/** One spelling for a mount prefix: leading slash, no trailing one. */
+function rootOf(prefix: string): string {
+  return '/' + stripSlash(prefix)
+}
+
 /**
- * A mount section's rules, stamped with the mount they belong to. The
- * stamp is what makes the rule apply to a line that *works inside* the
- * mount, by cwd or by operand, which a path-scoped rule cannot express.
- * Paths are already absolute and already checked to lie under the root,
- * so nothing is rewritten here.
+ * A mount section's path entries, anchored to the mount they are written
+ * under.
+ *
+ * An absolute entry already names something inside the root (`underMount`
+ * refuses one that does not) and is left as written. A name pattern
+ * (`*.pem`, no slash) anchors nothing, and both places a mount section's
+ * entries are read from have lost the section by then: the session's
+ * hidden set is one list for every mount, and the op door matches a
+ * rule's paths without consulting `rule.mount`. Left raw,
+ * `mounts./repo.paths.hide: ["*.pem"]` hid `/other/key.pem` too, and a
+ * path-only deny under `/repo` refused a read of it. The dialect's `*`
+ * crosses `/`, so `/repo/*.pem` is every `.pem` at any depth below
+ * `/repo` and nothing outside it; anchoring also gives the entry the
+ * mount's own anchor depth, which is what it was always worth.
+ */
+function anchored(entries: readonly string[], root: string): string[] {
+  const head = root === '/' ? '' : root
+  return entries.map((e) => (e.startsWith('/') ? e : `${head}/${e}`))
+}
+
+/**
+ * A mount section's rules, stamped with the mount they belong to and
+ * anchored to it. The stamp is what makes the rule apply to a line that
+ * *works inside* the mount, by cwd or by operand, which a path-scoped
+ * rule cannot express. The anchor is for the entries the stamp cannot
+ * reach: the op door reads a rule's paths alone (`anchored`).
  */
 function scopeRules(rules: readonly CommandRule[], root: string): CommandRule[] {
-  return rules.map((rule) => ({ ...rule, mount: root }))
+  return rules.map((rule) =>
+    rule.paths === undefined
+      ? { ...rule, mount: root }
+      : { ...rule, paths: anchored(rule.paths, root), mount: root },
+  )
 }
 
 /**
@@ -192,7 +222,7 @@ export function compileCommands(profile: SessionProfile): AdmissionRules | null 
   const ask: CommandRule[] = []
   const deny: CommandRule[] = []
   for (const [prefix, entry] of profile.mounts ?? new Map<string, ProfileMount>()) {
-    const root = '/' + stripSlash(prefix)
+    const root = rootOf(prefix)
     ask.push(...scopeRules(rulesOf(entry.commands, 'ask'), root))
     deny.push(...scopeRules(rulesOf(entry.commands, 'deny'), root))
   }
@@ -207,13 +237,15 @@ export function compileCommands(profile: SessionProfile): AdmissionRules | null 
 }
 
 /**
- * Every path the role hides: its own entries and each mount section's,
- * which are absolute like all the rest.
+ * Every path the role hides: its own entries, and each mount section's
+ * anchored to the mount it was written under, since the set is one list
+ * for the whole session and nothing in it remembers which section an
+ * entry came from (`anchored`).
  */
 function hiddenOf(profile: SessionProfile): HiddenPaths | null {
   const entries = [...(profile.paths?.hide ?? [])]
-  for (const entry of (profile.mounts ?? new Map<string, ProfileMount>()).values()) {
-    entries.push(...(entry.paths?.hide ?? []))
+  for (const [prefix, entry] of profile.mounts ?? new Map<string, ProfileMount>()) {
+    entries.push(...anchored(entry.paths?.hide ?? [], rootOf(prefix)))
   }
   return classifyPaths(entries)
 }

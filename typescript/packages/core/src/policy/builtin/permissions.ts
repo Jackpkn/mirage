@@ -13,9 +13,15 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import type { Policy } from '../base.ts'
-import { Outcome, decide } from '../match/decide.ts'
+import { decide } from '../match/decide.ts'
 import { matchOp, ruleScope } from '../match/rule.ts'
-import type { Action, CommandContext, OpsContext, SessionCommandsQuery } from '../types.ts'
+import {
+  Outcome,
+  type Action,
+  type CommandContext,
+  type OpsContext,
+  type SessionCommandsQuery,
+} from '../types.ts'
 
 /**
  * The role's `commands` rules, enforced.
