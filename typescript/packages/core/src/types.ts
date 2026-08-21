@@ -13,6 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import type { IndexCacheStore } from './cache/index/store.ts'
+import type { CommandRule } from './policy/types.ts'
 import type { FindOptions } from './resource/base.ts'
 import { rstripSlash, stripSlash } from './utils/slash.ts'
 
@@ -132,6 +133,13 @@ export interface HiddenVars {
  */
 export interface EntryGate {
   readonly scoped: boolean
+  /**
+   * The ask rules this line runs under a grant for. Read by the op
+   * doors, which see the same entries from below and would otherwise
+   * re-derive a verdict that knows nothing of the nod the gate already
+   * took.
+   */
+  readonly granted: readonly CommandRule[]
   check(virtual: string): void
 }
 

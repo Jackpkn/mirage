@@ -214,6 +214,24 @@ export function redirectPathsFor(node: object): readonly PathSpec[] {
 }
 
 /**
+ * Whether a path is a redirect target the command door already judged
+ * for the statement writing it now.
+ *
+ * The op doors ask this, and unlike `redirectPathsFor` it takes no node,
+ * because by the time the shell writes the file the node has returned
+ * and a door sees only a path. The binding is what keeps that honest: it
+ * exists only while one statement's targets are being written, and a
+ * statement whose targets a rule refused never reaches the write at all.
+ * So a bound target is one the line was admitted with, and re-deriving a
+ * verdict for it from a door that knows neither the line nor the nod it
+ * holds can only get it wrong.
+ */
+export function redirectTargetJudged(virtual: string): boolean {
+  const bound = redirectStorage.getStore()
+  return bound?.[1].some((p) => p.virtual === virtual) ?? false
+}
+
+/**
  * The mount mode after narrowing by the current session's role. The
  * mount's own mode is the strongest one available; a role's mode can
  * only weaken it (a READ mount stays read-only whatever the role says).

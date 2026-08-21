@@ -286,6 +286,26 @@ def redirect_paths_for(node_id: int) -> tuple[PathSpec, ...]:
     return bound[1]
 
 
+def redirect_target_judged(virtual: str) -> bool:
+    """Whether a path is a redirect target the command door already
+    judged for the statement writing it now.
+
+    The op doors ask this, and unlike :func:`redirect_paths_for` it
+    takes no node id, because by the time the shell writes the file the
+    node has returned and a door sees only a path. The binding is what
+    keeps that honest: it exists only while one statement's targets are
+    being written, and a statement whose targets a rule refused never
+    reaches the write at all. So a bound target is one the line was
+    admitted with, and re-deriving a verdict for it from a door that
+    knows neither the line nor the nod it holds can only get it wrong.
+
+    Args:
+        virtual (str): absolute virtual path of the op.
+    """
+    bound = _redirect_paths.get()
+    return bound is not None and any(p.virtual == virtual for p in bound[1])
+
+
 def effective_mount_mode(mount_prefix: str,
                          mount_mode: MountMode) -> MountMode:
     """The mount mode after narrowing by the current session's cap.

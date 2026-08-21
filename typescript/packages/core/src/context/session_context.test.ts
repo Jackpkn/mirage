@@ -208,7 +208,7 @@ describe('hides', () => {
 
 describe('the admission binding', () => {
   it('is scoped to one command and hands the outer one back', async () => {
-    const gate = (scoped: boolean) => ({ scoped, check: () => undefined })
+    const gate = (scoped: boolean) => ({ scoped, granted: [], check: () => undefined })
     expect(getAdmission()).toBeNull()
     expect(pathRulesActive()).toBe(false)
     const outer = gate(true)

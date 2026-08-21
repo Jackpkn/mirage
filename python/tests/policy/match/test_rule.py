@@ -13,8 +13,8 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 from mirage.policy.match.rule import (RuleMatch, Subject, io_refusal, match_io,
-                                      match_op, match_rule, rule_reach,
-                                      rule_scope, subjects)
+                                      match_op, match_rule, op_refusal,
+                                      rule_reach, rule_scope, subjects)
 from mirage.policy.types import (AdmissionRules, CommandContext, CommandRule,
                                  OpsContext)
 from mirage.types import PathSpec
@@ -123,6 +123,38 @@ def test_match_op_only_for_pure_path_rules():
     named = CommandRule(reason="x", commands=("rm", ), paths=("/data/*", ))
     assert not match_op(named, classify_paths(named.paths), op)
     assert not match_op(CommandRule(reason="x", commands=("rm", )), None, op)
+
+
+def test_op_refusal_reads_depth_before_verb_and_honours_a_grant():
+    broad = CommandRule(reason="repo is sealed", paths=("/repo/*", ))
+    carve = CommandRule(reason="outbox nod", paths=("/repo/outbox/*", ))
+    rules = AdmissionRules(deny=(broad, ), ask=(carve, ))
+    inside = OpsContext(op="write",
+                        path=_path("/repo/outbox/a"),
+                        write=True,
+                        prefix="/repo/")
+    # The deeper ask wins where both reach, exactly as the command door
+    # ranks them, so a broad deny cannot overrule an approved carve-out.
+    assert op_refusal(rules, inside, ()) == "outbox nod"
+    assert op_refusal(rules, inside, (carve, )) is None
+    # Outside the carve-out the deny is what is left, and a grant for
+    # the ask says nothing about it.
+    outside = OpsContext(op="write",
+                         path=_path("/repo/sealed/a"),
+                         write=True,
+                         prefix="/repo/")
+    assert op_refusal(rules, outside, (carve, )) == "repo is sealed"
+    # A metadata op is reached by neither: deny is present and refused.
+    stat = OpsContext(op="stat",
+                      path=_path("/repo/outbox/a"),
+                      write=False,
+                      prefix="/repo/")
+    assert op_refusal(rules, stat, ()) is None
+    # No rules at all, and a rule naming a command, are both silent.
+    assert op_refusal(None, inside, ()) is None
+    named = AdmissionRules(deny=(
+        CommandRule(reason="x", commands=("rm", ), paths=("/repo/*", )), ))
+    assert op_refusal(named, inside, ()) is None
 
 
 def _subtree_ctx(command: str, *operands: str) -> CommandContext:

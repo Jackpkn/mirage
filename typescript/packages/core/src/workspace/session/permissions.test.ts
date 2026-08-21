@@ -261,6 +261,23 @@ describe('parseSessionProfile', () => {
       parseSessionProfile({ mounts: { '/a': { paths: { hide: ['/a/x', ''] } } } }),
     ).toThrow(/hide\[1\] must name a path/)
   })
+
+  it("the root mount's section holds every path under it", () => {
+    // A workspace mounted at `/` has one section to write, and `root +
+    // '/'` is `'//'` there, which no path starts with, so the boundary
+    // check used to leave it able to name nothing but `/` itself.
+    const profile = parseSessionProfile({
+      mounts: {
+        '/': {
+          paths: { hide: ['/secret', '*.pem'] },
+          commands: { deny: [{ reason: 'sealed', paths: ['/secret/*'] }] },
+        },
+      },
+    })
+    const root = profile.mounts?.get('/')
+    expect(root?.paths?.hide).toEqual(['/secret', '*.pem'])
+    expect(root?.commands?.deny?.[0]?.paths).toEqual(['/secret/*'])
+  })
 })
 
 describe('parseProfileMounts', () => {

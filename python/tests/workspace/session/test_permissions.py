@@ -469,6 +469,29 @@ def test_a_mount_sections_paths_must_lie_under_that_mount(entry):
     assert ok.mounts["/repo"].paths.hide == ("/repo", "/repo/a", "*.pem")
 
 
+def test_the_root_mounts_section_holds_every_path_under_it():
+    # A workspace mounted at `/` has one section to write, and `root +
+    # "/"` is `"//"` there, which no path starts with, so the boundary
+    # check used to leave it able to name nothing but `/` itself.
+    profile = SessionProfile.model_validate({
+        "mounts": {
+            "/": {
+                "paths": {
+                    "hide": ["/secret", "*.pem"]
+                },
+                "commands": {
+                    "deny": [{
+                        "reason": "sealed",
+                        "paths": ["/secret/*"]
+                    }],
+                },
+            }
+        }
+    })
+    assert profile.mounts["/"].paths.hide == ("/secret", "*.pem")
+    assert profile.mounts["/"].commands.deny[0].paths == ("/secret/*", )
+
+
 def test_a_blank_hide_entry_is_refused():
     # "" is the root under the subtree rule: it would hide the whole tree.
     with pytest.raises(ValidationError, match="hide\\[1\\] must name a path"):

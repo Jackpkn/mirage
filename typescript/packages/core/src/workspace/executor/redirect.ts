@@ -225,19 +225,30 @@ export async function handleRedirect(
     }
   }
 
-  for (const [path, data] of fileBufs) {
-    const scope = fileScopes.get(path)
-    if (scope === undefined) continue
-    try {
-      await createFile(dispatch, session, scope, data)
-      io.writes[path] = data
-    } catch (err) {
-      if (!isFsError(err)) throw err
-      outStderr = concat([outStderr, redirectErrorLine(scope, err)])
-      io.exitCode = 1
-      break
+  const writeFiles = async (): Promise<void> => {
+    for (const [path, data] of fileBufs) {
+      const scope = fileScopes.get(path)
+      if (scope === undefined) continue
+      try {
+        await createFile(dispatch, session, scope, data)
+        io.writes[path] = data
+      } catch (err) {
+        if (!isFsError(err)) throw err
+        outStderr = concat([outStderr, redirectErrorLine(scope, err)])
+        io.exitCode = 1
+        break
+      }
     }
   }
+  // Bound again for the writes, because the admission that judged these
+  // targets ended with the command and the op doors below see them from
+  // underneath: with no line and no grant behind it, a door re-deriving a
+  // verdict here would refuse the very carve-out the command was admitted
+  // under. Only a redirect that had a command has been judged at all, so
+  // the bare `> file` form binds nothing and is judged by the door on its
+  // own.
+  if (command === null) await writeFiles()
+  else await runWithRedirectPaths(command, [...fileScopes.values()], writeFiles)
 
   io.stderr = outStderr.byteLength > 0 ? outStderr : null
   const execNode = new ExecutionNode({ command: 'redirect', exitCode: io.exitCode, refused })

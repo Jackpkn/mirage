@@ -237,6 +237,7 @@ describe('withRuleGuard', () => {
     const asked: string[] = []
     const gate = {
       scoped: true,
+      granted: [],
       check: (virtual: string) => {
         asked.push(virtual)
         if (virtual === '/data/locked/y') throw new Error(`refused ${virtual}`)

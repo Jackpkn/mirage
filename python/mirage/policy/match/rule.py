@@ -371,15 +371,23 @@ def io_refusal(rules: AdmissionRules | None, tokens: Sequence[str],
     return rule.reason
 
 
-def match_op(rule: CommandRule, scope: HiddenPaths | None,
-             ctx: OpsContext) -> bool:
-    """Whether a rule refuses an op: only a pure path rule can, since an
-    op does not know which command issued it. The op's path is tested
-    against the scope, and an op that moves or removes a whole subtree
-    (``SUBTREE_OPS``) is also refused on the directory holding the
-    scope or on any ancestor, since it would take the scope along. A
-    metadata op (``METADATA_OPS``) passes: deny is present and refused,
-    so the entry stats and its content is what the door withholds.
+def op_reach(rule: CommandRule, scope: HiddenPaths | None,
+             ctx: OpsContext) -> int | None:
+    """The anchor depth at which a rule reaches an op, None when it does
+    not reach it at all.
+
+    Only a pure path rule can, since an op does not know which command
+    issued it. The op's path is tested against the scope, and an op that
+    moves or removes a whole subtree (``SUBTREE_OPS``) is also reached on
+    the directory holding the scope or on any ancestor, since it would
+    take the scope along. A metadata op (``METADATA_OPS``) is reached by
+    nothing: deny is present and refused, so the entry stats and its
+    content is what the door withholds.
+
+    The op-door twin of :func:`rule_reach`, and the same shape: the
+    depth is the one the arm that matched measures, so a rule cannot
+    lend an operand specificity from an entry that said nothing about
+    it.
 
     Args:
         rule (CommandRule): the rule.
@@ -387,7 +395,65 @@ def match_op(rule: CommandRule, scope: HiddenPaths | None,
         ctx (OpsContext): the op about to run.
     """
     if rule.commands or scope is None or ctx.op in METADATA_OPS:
-        return False
-    if path_hidden(scope, ctx.path.virtual):
-        return True
-    return ctx.op in SUBTREE_OPS and path_covers(scope, ctx.path.virtual)
+        return None
+    virtual = ctx.path.virtual
+    if path_hidden(scope, virtual):
+        return hidden_depth(rule, virtual)
+    if ctx.op in SUBTREE_OPS and path_covers(scope, virtual):
+        return covers_depth(rule, virtual)
+    return None
+
+
+def match_op(rule: CommandRule, scope: HiddenPaths | None,
+             ctx: OpsContext) -> bool:
+    """Whether a rule refuses an op. The boolean case of
+    :func:`op_reach`.
+
+    Args:
+        rule (CommandRule): the rule.
+        scope (HiddenPaths | None): the rule's classified paths.
+        ctx (OpsContext): the op about to run.
+    """
+    return op_reach(rule, scope, ctx) is not None
+
+
+def op_refusal(rules: AdmissionRules | None, ctx: OpsContext,
+               granted: Collection[CommandRule]) -> str | None:
+    """The reason an op may not run, None when it may.
+
+    The op-door twin of :func:`io_refusal`, and the same law: anchor
+    depth first, deny before ask at equal depth, and an ask satisfied
+    by a grant the line already holds. Reading every deny before any
+    ask instead let a broad deny on ``/repo/*`` overrule an approved
+    ask on ``/repo/outbox/*``, so the carve-out the command door had
+    just admitted the line under could not authorize the redirect it
+    was written for: the write reached this door and was refused there.
+
+    An op reached with no admitted command behind it (FUSE, the cache,
+    the host's own facade) holds no grant, so an ask that wins here is
+    a refusal like a deny: there is no line to ask about and this door
+    cannot wait on a host.
+
+    Args:
+        rules (AdmissionRules | None): the session's admission rules.
+        ctx (OpsContext): the op about to run.
+        granted (Collection[CommandRule]): the ask rules the running
+            line holds a grant under, empty when no command is bound.
+    """
+    if rules is None:
+        return None
+    best: tuple[int, int] | None = None
+    chosen: tuple[CommandRule, int] | None = None
+    for verb, written in ((DENY_FIRST, rules.deny), (ASK_SECOND, rules.ask)):
+        for rule in written:
+            depth = op_reach(rule, rule_scope(rule), ctx)
+            if depth is None or not better_match(best, depth, verb):
+                continue
+            best = (depth, verb)
+            chosen = (rule, verb)
+    if chosen is None:
+        return None
+    rule, verb = chosen
+    if verb == ASK_SECOND and rule in granted:
+        return None
+    return rule.reason

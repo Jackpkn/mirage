@@ -244,23 +244,76 @@ export function coversDepth(rule: CommandRule, virtual: string, ancestors = true
 }
 
 /**
- * Whether a rule refuses an op: only a pure path rule can, since an op
- * does not know which command issued it. The op's path is tested against
- * the scope, and an op that moves or removes a whole subtree
- * (SUBTREE_OPS) is also refused on the directory holding the scope or on
- * any ancestor, since it would take the scope along. A metadata op
- * (METADATA_OPS) passes: deny is present and refused, so the entry stats
- * and its content is what the door withholds.
+ * The anchor depth at which a rule reaches an op, null when it does not
+ * reach it at all.
+ *
+ * Only a pure path rule can, since an op does not know which command
+ * issued it. The op's path is tested against the scope, and an op that
+ * moves or removes a whole subtree (SUBTREE_OPS) is also reached on the
+ * directory holding the scope or on any ancestor, since it would take
+ * the scope along. A metadata op (METADATA_OPS) is reached by nothing:
+ * deny is present and refused, so the entry stats and its content is
+ * what the door withholds.
+ *
+ * The op-door twin of `ruleReach`, and the same shape: the depth is the
+ * one the arm that matched measures, so a rule cannot lend an operand
+ * specificity from an entry that said nothing about it.
  */
+export function opReach(
+  rule: CommandRule,
+  scope: HiddenPaths | null,
+  ctx: OpsContext,
+): number | null {
+  if ((rule.commands ?? []).length > 0 || scope === null || METADATA_OPS.has(ctx.op)) return null
+  const virtual = ctx.path.virtual
+  if (pathHidden(scope, virtual)) return hiddenDepth(rule, virtual)
+  if (SUBTREE_OPS.has(ctx.op) && pathCovers(scope, virtual)) return coversDepth(rule, virtual)
+  return null
+}
+
+/** Whether a rule refuses an op. The boolean case of `opReach`. */
 export function matchOp(rule: CommandRule, scope: HiddenPaths | null, ctx: OpsContext): boolean {
-  // A metadata op passes: deny is present and refused, so the entry
-  // stats and its content is what the door withholds.
-  if ((rule.commands ?? []).length > 0 || scope === null || METADATA_OPS.has(ctx.op)) return false
-  if (pathHidden(scope, ctx.path.virtual)) return true
-  // An op that moves or removes a whole subtree is also refused on the
-  // directory holding the scope or on any ancestor: it would take the
-  // scope along.
-  return SUBTREE_OPS.has(ctx.op) && pathCovers(scope, ctx.path.virtual)
+  return opReach(rule, scope, ctx) !== null
+}
+
+/**
+ * The reason an op may not run, null when it may.
+ *
+ * The op-door twin of `ioRefusal`, and the same law: anchor depth first,
+ * deny before ask at equal depth, and an ask satisfied by a grant the
+ * line already holds. Reading every deny before any ask instead let a
+ * broad deny on `/repo/*` overrule an approved ask on `/repo/outbox/*`,
+ * so the carve-out the command door had just admitted the line under
+ * could not authorize the redirect it was written for: the write reached
+ * this door and was refused there.
+ *
+ * An op reached with no admitted command behind it (FUSE, the cache, the
+ * host's own facade) holds no grant, so an ask that wins here is a
+ * refusal like a deny: there is no line to ask about and this door
+ * cannot wait on a host.
+ */
+export function opRefusal(
+  rules: AdmissionRules | null,
+  ctx: OpsContext,
+  granted: readonly CommandRule[],
+): string | null {
+  if (rules === null) return null
+  let best: [number, number] | null = null
+  let chosen: { rule: CommandRule; verb: number } | null = null
+  for (const [verb, written] of [
+    [DENY_FIRST, rules.deny],
+    [ASK_SECOND, rules.ask],
+  ] as const) {
+    for (const rule of written) {
+      const depth = opReach(rule, ruleScope(rule), ctx)
+      if (depth === null || !betterMatch(best, depth, verb)) continue
+      best = [depth, verb]
+      chosen = { rule, verb }
+    }
+  }
+  if (chosen === null) return null
+  if (chosen.verb === ASK_SECOND && granted.includes(chosen.rule)) return null
+  return chosen.rule.reason
 }
 
 const scopes = new WeakMap<CommandRule, HiddenPaths | null>()

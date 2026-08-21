@@ -113,11 +113,18 @@ def _under_mount(entries: tuple[str, ...], root: str, where: str) -> None:
     carries no anchor and is left alone; it means the same thing here
     as anywhere else.
 
+    The root mount contains everything, and has to be spelled out:
+    ``root + "/"`` is ``"//"`` there, which no path starts with, so a
+    workspace mounted at ``/`` could write a section for its one mount
+    and then name nothing inside it.
+
     Args:
         entries (tuple[str, ...]): the entries as written.
         root (str): the mount prefix, leading slash, no trailing one.
         where (str): the field's name, for the message.
     """
+    if root == "/":
+        return
     for i, entry in enumerate(entries):
         if not entry.startswith("/"):
             continue

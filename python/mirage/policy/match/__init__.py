@@ -25,8 +25,8 @@ from mirage.utils.hidden import anchor_depth
 
 from mirage.policy.match.rule import (  # isort: skip
     RuleMatch, Subject, better_match, covers_depth, hidden_depth, io_refusal,
-    match_io, match_op, match_rule, matched_operand, rule_applies, rule_reach,
-    rule_scope, subjects)
+    match_io, match_op, match_rule, matched_operand, op_reach, op_refusal,
+    rule_applies, rule_reach, rule_scope, subjects)
 
 __all__ = [
     "Decision",
@@ -49,6 +49,8 @@ __all__ = [
     "match_rule",
     "matched_operand",
     "node_visible",
+    "op_reach",
+    "op_refusal",
     "outranks",
     "pattern_matches",
     "pattern_names",

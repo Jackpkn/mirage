@@ -12,9 +12,10 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import { getAdmission, redirectTargetJudged } from '../../context/session_context.ts'
 import type { Policy } from '../base.ts'
 import { decide } from '../match/decide.ts'
-import { matchOp, ruleScope } from '../match/rule.ts'
+import { opRefusal } from '../match/rule.ts'
 import {
   Outcome,
   type Action,
@@ -69,11 +70,13 @@ export class PermissionsPolicy implements Policy {
   }
 
   preOps(ctx: OpsContext): Action | null {
-    const rules = this.sessions.commandsOf(ctx.sessionId ?? '')
-    if (rules === null) return null
-    for (const rule of rules.deny) {
-      if (matchOp(rule, ruleScope(rule), ctx)) return { kind: 'deny', reason: rule.reason }
-    }
-    return null
+    if (redirectTargetJudged(ctx.path.virtual)) return null
+    // The grants belong to the line, not the session: a once grant is
+    // spent as the command is admitted, so by the time its own walk
+    // reaches this door the session holds nothing and only the bound
+    // gate still remembers the nod.
+    const granted = getAdmission()?.granted ?? []
+    const reason = opRefusal(this.sessions.commandsOf(ctx.sessionId ?? ''), ctx, granted)
+    return reason === null ? null : { kind: 'deny', reason }
   }
 }

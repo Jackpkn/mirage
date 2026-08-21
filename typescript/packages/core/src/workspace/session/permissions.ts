@@ -213,8 +213,14 @@ function requireAbsolute(entries: readonly string[], where: string): void {
  * mount's rules are about that mount, so a path under `mounts./repo`
  * names something inside `/repo`. A name pattern carries no anchor and
  * is left alone; it means the same thing here as anywhere else.
+ *
+ * The root mount contains everything, and has to be spelled out:
+ * `root + '/'` is `'//'` there, which no path starts with, so a
+ * workspace mounted at `/` could write a section for its one mount and
+ * then name nothing inside it.
  */
 function requireUnderMount(entries: readonly string[], root: string, where: string): void {
+  if (root === '/') return
   entries.forEach((entry, i) => {
     if (!entry.startsWith('/')) return
     if (entry === root || entry.startsWith(root + '/')) return

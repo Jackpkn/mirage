@@ -12,8 +12,10 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+from mirage.context.session_context import (get_admission,
+                                            redirect_target_judged)
 from mirage.policy.base import Policy
-from mirage.policy.match import Outcome, decide, match_op, rule_scope
+from mirage.policy.match import Outcome, decide, op_refusal
 from mirage.policy.types import (Action, Ask, CommandContext, Deny, DenyScope,
                                  OpsContext, SessionCommandsQuery)
 
@@ -64,10 +66,14 @@ class PermissionsPolicy(Policy):
                     DenyScope.OPERAND)
 
     async def pre_ops(self, ctx: OpsContext) -> Action | None:
-        rules = self._sessions.commands_of(ctx.session_id)
-        if rules is None:
+        if redirect_target_judged(ctx.path.virtual):
             return None
-        for rule in rules.deny:
-            if match_op(rule, rule_scope(rule), ctx):
-                return Deny(rule.reason)
-        return None
+        # The grants belong to the line, not the session: a once grant
+        # is spent as the command is admitted, so by the time its own
+        # walk reaches this door the session holds nothing and only the
+        # bound gate still remembers the nod.
+        gate = get_admission()
+        granted = gate.granted if gate is not None else ()
+        reason = op_refusal(self._sessions.commands_of(ctx.session_id), ctx,
+                            granted)
+        return Deny(reason) if reason is not None else None

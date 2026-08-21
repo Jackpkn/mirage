@@ -21,6 +21,7 @@ import {
   ioRefusal,
   matchIo,
   matchOp,
+  opRefusal,
   matchRule,
   ruleReach,
   ruleScope,
@@ -104,6 +105,47 @@ describe('rules', () => {
     expect(
       matchRule(mount, null, ctx('grep', { paths: [path('/scratch/file.txt')], walks: true })),
     ).toBeNull()
+  })
+
+  it('opRefusal reads depth before verb and honours a grant', () => {
+    const broad: CommandRule = { reason: 'repo is sealed', paths: ['/repo/*'] }
+    const carve: CommandRule = { reason: 'outbox nod', paths: ['/repo/outbox/*'] }
+    const rules: AdmissionRules = { allow: null, deny: [broad], ask: [carve] }
+    const inside: OpsContext = {
+      op: 'write',
+      path: path('/repo/outbox/a'),
+      write: true,
+      prefix: '/repo/',
+    }
+    // The deeper ask wins where both reach, exactly as the command door
+    // ranks them, so a broad deny cannot overrule an approved carve-out.
+    expect(opRefusal(rules, inside, [])).toBe('outbox nod')
+    expect(opRefusal(rules, inside, [carve])).toBeNull()
+    // Outside the carve-out the deny is what is left, and a grant for
+    // the ask says nothing about it.
+    const outside: OpsContext = {
+      op: 'write',
+      path: path('/repo/sealed/a'),
+      write: true,
+      prefix: '/repo/',
+    }
+    expect(opRefusal(rules, outside, [carve])).toBe('repo is sealed')
+    // A metadata op is reached by neither: deny is present and refused.
+    const stat: OpsContext = {
+      op: 'stat',
+      path: path('/repo/outbox/a'),
+      write: false,
+      prefix: '/repo/',
+    }
+    expect(opRefusal(rules, stat, [])).toBeNull()
+    // No rules at all, and a rule naming a command, are both silent.
+    expect(opRefusal(null, inside, [])).toBeNull()
+    const named: AdmissionRules = {
+      allow: null,
+      ask: [],
+      deny: [{ reason: 'x', commands: ['rm'], paths: ['/repo/*'] }],
+    }
+    expect(opRefusal(named, inside, [])).toBeNull()
   })
 
   it('matchOp only for pure path rules', () => {

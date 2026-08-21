@@ -23,6 +23,8 @@ from pydantic import BaseModel, ConfigDict, Field, NonNegativeInt
 if TYPE_CHECKING:
     import aiohttp
 
+    from mirage.policy.types import CommandRule
+
 
 class Aggr:
     """Declares how one Limit field aggregates across stacked limits.
@@ -318,10 +320,18 @@ class EntryGate(Protocol):
             paths at all; a native walk (a backend's own find or du)
             yields to the guarded readdir walk while it is set, so each
             entry passes the gate.
+        granted (tuple[CommandRule, ...]): the ask rules this line runs
+            under a grant for. Read by the op doors, which see the same
+            entries from below and would otherwise re-derive a verdict
+            that knows nothing of the nod the gate already took.
     """
 
     @property
     def scoped(self) -> bool:
+        ...
+
+    @property
+    def granted(self) -> "tuple[CommandRule, ...]":
         ...
 
     def check(self, virtual: str) -> None:
