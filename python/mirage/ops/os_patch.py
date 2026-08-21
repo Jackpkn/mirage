@@ -28,6 +28,7 @@ from mirage.bridge.sync import run_async_from_sync
 from mirage.errors import FsCondition
 from mirage.errors.posix import gnu_phrase, posix_errno
 from mirage.ops import Ops
+from mirage.ops.host_io import in_host_io
 from mirage.runtime.verbs import REFUSED_VERBS, ROUTED_VERBS
 from mirage.types import FileStat
 from mirage.utils.dates import iso_timestamp, timestamp_iso
@@ -270,11 +271,17 @@ class _OsRouter:
     def _virtual(self, path: Any) -> str | None:
         """The mounted virtual path this argument names, else None.
 
+        A backend serving an op is answered None whatever it spelled:
+        the path it is reaching for is a physical one, and on a disk
+        mount rooted at its own prefix the two spellings are the same
+        string. Routing it would hand the op back to the backend that
+        is running it (see ``ops/host_io.py``).
+
         Args:
             path (Any): whatever the caller passed in the path slot.
         """
         spelled = _spelled(path)
-        if spelled is None:
+        if spelled is None or in_host_io():
             return None
         return spelled if self._ops.is_mounted(spelled) else None
 
@@ -842,10 +849,22 @@ class _OsRouter:
             return
         self._run(self._ops.symlink(virtual, _real_os.fsdecode(src)))
 
-    def readlink(self, path: Any, *, dir_fd: int | None = None) -> str:
+    def readlink(self, path: Any, *, dir_fd: int | None = None) -> str | bytes:
+        """The target a link holds, as the caller spelled the path.
+
+        The union is CPython's own: ``os.readlink`` answers bytes for a
+        bytes path, which is a host spelling no mount serves, so the
+        host's answer is handed back untouched rather than coerced (a
+        ``str()`` of it reads as ``"b'target'"``). A mounted path is
+        always a str and the node table stores the target as one.
+
+        Args:
+            path (Any): the link to read.
+            dir_fd (int | None): honored only off a mount.
+        """
         virtual = self._virtual(path)
         if virtual is None:
-            return str(self._host.readlink(path, dir_fd=dir_fd))
+            return cast(str | bytes, self._host.readlink(path, dir_fd=dir_fd))
         return str(self._run(self._ops.readlink(virtual)))
 
     def truncate(self, path: Any, length: int) -> None:

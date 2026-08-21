@@ -150,6 +150,11 @@ async def main():
         Path(f"{host}/from_host.txt").write_text("host bytes\n")
         print(f"  host path still reads: "
               f"{Path(f'{host}/from_host.txt').read_text().strip()}")
+        os.symlink(f"{host}/from_host.txt", f"{host}/host_link")
+        # A bytes path is a host spelling no mount serves, and
+        # os.readlink answers one with bytes, not with a str of them.
+        read = os.readlink(os.fsencode(f"{host}/host_link"))
+        print(f"  host readlink(bytes): {os.path.basename(read)!r}")
 
         records = ws.ops.records
         total = sum(r.bytes for r in records)

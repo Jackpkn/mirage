@@ -346,6 +346,19 @@ class TestLinks:
             patched.readlink("/data/dir/a.txt")
         assert caught.value.errno == errno.EINVAL
 
+    def test_readlink_off_the_mount_answers_as_the_caller_spelled_it(
+            self, tmp_path):
+        _, patched = seeded()
+        target = tmp_path / "target.txt"
+        target.write_text("t")
+        link = tmp_path / "link"
+        link.symlink_to(target)
+        # A bytes path is a host spelling no mount serves, and
+        # os.readlink answers one with bytes; coercing it with str()
+        # handed back "b'/tmp/...'".
+        assert patched.readlink(str(link)) == str(target)
+        assert patched.readlink(os.fsencode(link)) == os.fsencode(target)
+
     def test_walk_survives_a_broken_link(self):
         # Classifying it means following it, which raises; os.walk reads
         # that as "not a directory" rather than ending the walk.

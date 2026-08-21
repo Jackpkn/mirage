@@ -109,8 +109,16 @@ jobs:
           run() {
             python3 integ/check_example.py "$1" --variant python || bad=1
           }
+          # One truth file, a second interpreter mode: with UTF-8 mode
+          # off, pathlib passes io.open's "locale" sentinel, which is
+          # not a codec name and is what every read_text() sends on a
+          # host whose LC_CTYPE is already a UTF-8 locale.
+          variant() {
+            python3 integ/check_example.py "$1" --variant "$2" || bad=1
+          }
           run integ/truth/python/ram.json
           run integ/truth/python/ram_vfs.json
+          variant integ/truth/python/ram_vfs.json python_utf8_off
           run integ/truth/python/ram_python.json
           run integ/truth/python/disk.json
           run integ/truth/python/disk_vfs.json
