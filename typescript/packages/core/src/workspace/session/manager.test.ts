@@ -14,7 +14,8 @@
 
 import { seedVar } from './state.ts'
 import { describe, expect, it } from 'vitest'
-import type { AdmissionRules, Grant } from '../../policy/types.ts'
+import type { AdmissionRules, Decision } from '../../policy/types.ts'
+import { Outcome, Scope } from '../../policy/types.ts'
 import { MountMode } from '../../types.ts'
 import { SessionManager } from './manager.ts'
 import { RAMSessionStore } from './ram.ts'
@@ -368,55 +369,70 @@ describe('SessionManager admission rules', () => {
   })
 })
 
-describe('SessionManager host grants', () => {
+describe('SessionManager decision ledger', () => {
+  const RULE = { reason: 'sign-off', commands: ['git push'], paths: [], mount: '' }
+
+  function record(id: string, sessionId: string): Decision {
+    return {
+      id,
+      sessionId,
+      agentId: 'a',
+      command: 'git',
+      argv: ['push'],
+      cwd: '/repo',
+      paths: [],
+      reason: 'sign-off',
+      rule: RULE,
+      outcome: Outcome.ALLOW,
+      scope: Scope.SESSION,
+      note: '',
+    }
+  }
+
   it('live on the registered session and persist', async () => {
     const store = new RAMSessionStore()
     const m = new SessionManager('def', store)
     await m.ensureLoaded()
     const live = m.create('agent')
-    expect(m.grantsOf('agent')).toEqual([])
-    const grant: Grant = {
-      decision: 'allow_session',
-      rule: { reason: 'sign-off', commands: ['git push'] },
-      argv: ['git', 'push'],
-      cwd: '/repo',
-    }
+    expect(m.decisionsOf('agent')).toEqual([])
+    const entry = record('d1', 'agent')
     // Written by id onto the registered session, so a fork made before
     // or after reads the same answers through the manager, whatever
     // its own copy holds; durable at the next flush.
     const fork = live.fork()
-    m.setGrants('agent', [grant])
-    expect(live.grants).toEqual([grant])
-    expect(fork.grants).toEqual([])
-    expect(m.grantsOf(fork.sessionId)).toEqual([grant])
+    m.setDecisions('agent', [entry])
+    expect(live.decisions).toEqual([entry])
+    expect(fork.decisions).toEqual([])
+    expect(m.decisionsOf(fork.sessionId)).toEqual([entry])
+    expect(m.decisionSessions()).toEqual(['agent'])
     await m.flush()
-    const stored = (await store.load()).get('agent') as { grants: { decision: string }[] }
-    expect(stored.grants[0]?.decision).toBe('allow_session')
-    // A manager reading that record back holds the grant.
+    const stored = (await store.load()).get('agent') as {
+      decisions: { outcome: string; scope: string }[]
+    }
+    expect(stored.decisions[0]?.outcome).toBe('allow')
+    expect(stored.decisions[0]?.scope).toBe('session')
+    // A manager reading that record back holds the answer.
     const again = new SessionManager('def', store)
     await again.ensureLoaded()
-    expect(again.grantsOf('agent')).toEqual([
-      { ...grant, rule: { reason: 'sign-off', commands: ['git push'], paths: [], mount: '' } },
-    ])
-    expect(() => m.grantsOf('nobody')).toThrow(/unknown session/)
+    expect(again.decisionsOf('agent')).toEqual([entry])
+    expect(() => m.decisionsOf('nobody')).toThrow(/unknown session/)
   })
 
   it('hydrate onto the default session', async () => {
     const store = new RAMSessionStore()
     const m = new SessionManager('def', store)
     await m.ensureLoaded()
-    const rule = { reason: 'sign-off', commands: ['git push'], paths: [], mount: '' }
-    const grant: Grant = { decision: 'allow_session', rule, argv: ['git', 'push'], cwd: '/repo' }
-    m.setGrants('def', [grant])
+    const entry = record('d2', 'def')
+    m.setDecisions('def', [entry])
     await m.flush()
     // The default session takes the stored durable fields on reopen;
-    // the grants are among them, so an approved line does not ask
-    // again after a restart and the next flush keeps the grant.
+    // the records are among them, so an approved line does not ask
+    // again after a restart and the next flush keeps the answer.
     const again = new SessionManager('def', store)
     await again.ensureLoaded()
-    expect(again.grantsOf('def')).toEqual([grant])
+    expect(again.decisionsOf('def')).toEqual([entry])
     await again.flush()
-    const stored = (await store.load()).get('def') as { grants: { decision: string }[] }
-    expect(stored.grants[0]?.decision).toBe('allow_session')
+    const stored = (await store.load()).get('def') as { decisions: { scope: string }[] }
+    expect(stored.decisions[0]?.scope).toBe('session')
   })
 })

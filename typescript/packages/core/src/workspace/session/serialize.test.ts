@@ -14,12 +14,13 @@
 
 import { describe, expect, it } from 'vitest'
 
-import type { CommandRule, AdmissionRules, Grant } from '../../policy/types.ts'
+import type { CommandRule, AdmissionRules, Decision } from '../../policy/types.ts'
+import { Outcome, Scope } from '../../policy/types.ts'
 import {
   commandsFromJSON,
   commandsToJSON,
-  grantFromJSON,
-  grantToJSON,
+  decisionFromJSON,
+  decisionToJSON,
   ruleFromJSON,
   ruleToJSON,
 } from './serialize.ts'
@@ -64,15 +65,27 @@ describe('session record codecs', () => {
     expect(commandsFromJSON(data)).toEqual(unlisted)
   })
 
-  it('a grant round-trips', () => {
+  it('a decision round-trips', () => {
     const rule: CommandRule = { reason: 'sign-off', commands: ['git push'], paths: [], mount: '' }
-    const grant: Grant = { decision: 'allow_session', rule, argv: ['git', 'push'], cwd: '/repo' }
-    expect(grantFromJSON(grantToJSON(grant))).toEqual(grant)
-    expect(grantToJSON(grant)).toEqual({
-      decision: 'allow_session',
-      rule: { reason: 'sign-off', commands: ['git push'], paths: [] },
-      argv: ['git', 'push'],
+    const record: Decision = {
+      id: 'd1',
+      sessionId: 'agent',
+      agentId: 'a',
+      command: 'git',
+      argv: ['push'],
       cwd: '/repo',
-    })
+      paths: ['/repo'],
+      reason: 'sign-off',
+      rule,
+      outcome: Outcome.ALLOW,
+      scope: Scope.SESSION,
+      note: 'ok',
+    }
+    expect(decisionFromJSON(decisionToJSON(record))).toEqual(record)
+    // A record still waiting has no outcome.
+    const waiting: Decision = { ...record, id: 'd2', outcome: null, scope: Scope.ONCE, note: '' }
+    expect(decisionFromJSON(decisionToJSON(waiting))).toEqual(waiting)
+    expect(decisionToJSON(record).outcome).toBe('allow')
+    expect(decisionToJSON(record).scope).toBe('session')
   })
 })

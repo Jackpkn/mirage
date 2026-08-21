@@ -12,11 +12,10 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from mirage.policy.config import Decision
 from mirage.policy.constants import ASK_SECOND, DENY_FIRST
 from mirage.policy.match.decide import decide, outranks, source_of
 from mirage.policy.types import (AdmissionRules, CommandContext, CommandRule,
-                                 Outcome)
+                                 Outcome, Ruling)
 from mirage.types import PathSpec
 
 
@@ -46,12 +45,15 @@ def _ctx(command: str, *paths: str, cwd: str = "/") -> CommandContext:
 
 
 def test_silence_and_the_allow_list_answer_before_any_rule():
-    assert decide(_ctx("ls"), None) == Decision(Outcome.RUN)
-    assert decide(_ctx("ls"), AdmissionRules()) == Decision(Outcome.RUN)
+    assert decide(_ctx("ls"), None) == Ruling(Outcome.ALLOW)
+    assert decide(_ctx("ls"), AdmissionRules()) == Ruling(Outcome.ALLOW)
     listed = AdmissionRules(allow=("cat", ))
-    assert decide(_ctx("cat", "/x"), listed).outcome is Outcome.RUN
+    assert decide(_ctx("cat", "/x"), listed).outcome is Outcome.ALLOW
     refused = decide(_ctx("rm", "/x"), listed)
-    assert refused.outcome is Outcome.NOT_ALLOWED
+    # The allow list refuses as DENY like any rule; the empty ``rule``
+    # is the only thing separating it from one, and is what leaves the
+    # refusal with no operator reason to print.
+    assert refused.outcome is Outcome.DENY
     assert refused.rule is None
     assert refused.source == "commands.allow"
 
@@ -78,11 +80,11 @@ def test_one_operands_ask_never_answers_for_another_operands_deny():
                       commands=("cp", ),
                       paths=("/review/deep/*", ))
     rules = AdmissionRules(ask=(ask, ), deny=(deny, ))
-    verdict = decide(_ctx("cp", "/protected/secret", "/review/deep/out"),
-                     rules)
-    assert verdict.outcome is Outcome.DENY
-    assert verdict.rule is deny
-    assert verdict.matched_path == "/protected/secret"
+    decision = decide(_ctx("cp", "/protected/secret", "/review/deep/out"),
+                      rules)
+    assert decision.outcome is Outcome.DENY
+    assert decision.rule is deny
+    assert decision.matched_path == "/protected/secret"
     # Each operand on its own still reads as it always did.
     assert decide(_ctx("cp", "/protected/secret", "/elsewhere/out"),
                   rules).rule is deny
@@ -116,15 +118,15 @@ def test_a_pathless_rule_reaches_every_subject_at_depth_zero():
     assert whole.matched_path is None
 
 
-def test_the_verdict_reports_the_rule_and_where_it_was_written():
+def test_the_decision_reports_the_rule_and_where_it_was_written():
     top = CommandRule(reason="top", commands=("rm", ), paths=("/a/*", ))
     inside = CommandRule(reason="mount",
                          commands=("rm", ),
                          paths=("/a/b/*", ),
                          mount="/a")
-    verdict = decide(_ctx("rm", "/a/b/x"), AdmissionRules(deny=(top, inside)))
-    assert verdict.rule is inside
-    assert verdict.source == "mounts./a"
+    decision = decide(_ctx("rm", "/a/b/x"), AdmissionRules(deny=(top, inside)))
+    assert decision.rule is inside
+    assert decision.source == "mounts./a"
     assert source_of(top) == "top"
 
 
@@ -145,12 +147,12 @@ def test_every_subjects_ask_is_reported_not_just_the_winner():
                        commands=("cp", ),
                        paths=("/deep/b/*", ))
     rules = AdmissionRules(ask=(source, dest))
-    verdict = decide(_ctx("cp", "/a/x", "/deep/b/y"), rules)
-    # The deeper anchor is still the verdict, which is what the agent is
+    decision = decide(_ctx("cp", "/a/x", "/deep/b/y"), rules)
+    # The deeper anchor is still the decision, which is what the agent is
     # told; both are what the door has to collect.
-    assert verdict.outcome is Outcome.ASK
-    assert verdict.rule is dest
-    assert verdict.asks == (source, dest)
+    assert decision.outcome is Outcome.ASK
+    assert decision.rule is dest
+    assert decision.asks == (source, dest)
     # One rule covering two operands is one question, not two.
     both = CommandRule(reason="either", commands=("cp", ), paths=("/a/*", ))
     one = decide(_ctx("cp", "/a/x", "/a/y"), AdmissionRules(ask=(both, )))

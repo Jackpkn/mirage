@@ -16,7 +16,7 @@ import asyncio
 import copy
 from collections.abc import Mapping
 
-from mirage.policy.types import AdmissionRules, Grant
+from mirage.policy.types import AdmissionRules, Decision
 from mirage.types import MountMode
 from mirage.workspace.record.types import CAS_MAX_RETRIES, generation_of
 from mirage.workspace.session.permissions import CompiledProfile
@@ -99,8 +99,14 @@ class SessionManager:
                     if self._default_profile is not None else None)
         return session.commands
 
-    def grants_of(self, session_id: str) -> tuple[Grant, ...]:
-        """The host grants one session holds (SessionGrantsQuery).
+    def decision_sessions(self) -> tuple[str, ...]:
+        """Every session id holding ledger records
+        (SessionDecisionsQuery)."""
+        return tuple(sid for sid, s in self._sessions.items() if s.decisions)
+
+    def decisions_of(self, session_id: str) -> tuple[Decision, ...]:
+        """The ledger records one session holds
+        (SessionDecisionsQuery).
 
         Read off the registered session, never a fork, so a line
         running in a background copy sees the same answers.
@@ -108,17 +114,18 @@ class SessionManager:
         Args:
             session_id (str): the session.
         """
-        return self.get(session_id).grants
+        return self.get(session_id).decisions
 
-    def set_grants(self, session_id: str, grants: tuple[Grant, ...]) -> None:
-        """Replace one session's host grants (SessionGrantsQuery);
-        durable at the next flush.
+    def set_decisions(self, session_id: str, records: tuple[Decision,
+                                                            ...]) -> None:
+        """Replace one session's ledger records
+        (SessionDecisionsQuery); durable at the next flush.
 
         Args:
             session_id (str): the session.
-            grants (tuple[Grant, ...]): the new list.
+            records (tuple[Decision, ...]): the new list.
         """
-        self.get(session_id).grants = grants
+        self.get(session_id).decisions = records
 
     @property
     def default_id(self) -> str:
@@ -203,8 +210,8 @@ class SessionManager:
                     # The host's standing answers are session state
                     # like cwd: dropped here, an approved line would
                     # ask again after a restart and the next flush
-                    # would erase the grant from the store.
-                    default.grants = stored.grants
+                    # would erase the record from the store.
+                    default.decisions = stored.decisions
                     default.generation = stored.generation
                     # Hydrated sessions start clean: baseline what the
                     # store holds so the next flush skips them.

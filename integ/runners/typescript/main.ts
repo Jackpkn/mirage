@@ -27,6 +27,7 @@ import {
   missingEnv,
   parseAllowSkip,
   bindMount,
+  ruleReasons,
   runCase,
   runScenario,
   seedFixture,
@@ -124,11 +125,16 @@ async function runTarget(
         ws.createSession(sessionId, {})
       }
     }
+    // Only a target carrying a permissions document has a verdict for
+    // `explain` to predict, and only there is the extra dry run per case
+    // worth its time. The reasons double as the tell that a refusal came
+    // from the policy layer rather than from the command itself.
+    const reasons = ruleReasons({ profiles: target.profiles, sessions: target.sessions })
     for (const c of cases) {
       if (!c.targets.includes(target.id)) continue
       if (c.consistency !== undefined) continue
       const bound = bindMount(c, target.mounts[0].path)
-      const { exitCode, out, err, elapsed, checkOut } = await runCase(ws, bound)
+      const { exitCode, out, err, elapsed, checkOut, notes } = await runCase(ws, bound, reasons)
       if (emit !== null) {
         emit.push({
           target: target.id,
@@ -139,7 +145,11 @@ async function runTarget(
           check: checkOut,
         })
       } else if (report !== null) {
-        report.record(target.id, bound.id, compare(bound, exitCode, out, err, elapsed, checkOut))
+        report.record(
+          target.id,
+          bound.id,
+          compare(bound, exitCode, out, err, elapsed, checkOut, notes),
+        )
       }
     }
   } finally {

@@ -23,7 +23,7 @@ import type { Resource } from '../../resource/base.ts'
 import type { ConsoleFactory } from '../../shell/job_table/index.ts'
 import type { ShellParser } from '../../shell/parse.ts'
 import type { Limit, ConsistencyPolicy, DriftPolicy, MountMode } from '../../types.ts'
-import type { Approver, Policy } from '../../policy/index.ts'
+import type { AskHandler, Policy } from '../../policy/index.ts'
 import type { PolicyDecision, PolicyFn } from '../../runtime/policy/index.ts'
 import type { RuntimeEntry } from '../../runtime/base.ts'
 import type { NamespaceStore } from '../mount/namespace/store.ts'
@@ -140,10 +140,10 @@ export interface WorkspaceOptions {
   policies?: readonly Policy[]
   /**
    * How the host answers an asked line (design 3.9): a blocking
-   * `CallbackApprover`, or nothing for the recording default the host
-   * reads through `ws.approvals`.
+   * a coroutine over the ledger's own record, or nothing for the
+   * recording default the host reads through `ws.decisions`.
    */
-  approver?: Approver
+  onAsk?: AskHandler
   /**
    * Installed CLIs, fully separate from mounts: key = installed head
    * word, value = a registered CLISpec name (the YAML `cli:` key) or a

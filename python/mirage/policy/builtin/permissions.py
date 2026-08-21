@@ -51,18 +51,18 @@ class PermissionsPolicy(Policy):
         self._sessions = sessions
 
     async def pre_command(self, ctx: CommandContext) -> Action | None:
-        verdict = decide(ctx, self._sessions.commands_of(ctx.session_id))
-        if verdict.outcome is Outcome.NOT_ALLOWED:
+        decision = decide(ctx, self._sessions.commands_of(ctx.session_id))
+        if decision.outcome is Outcome.ALLOW:
+            return None
+        rule = decision.rule
+        if rule is None:
             program = " ".join(ctx.program or (ctx.command, ))
             return Deny(f"{program} is not allowed")
-        rule = verdict.rule
-        if rule is None:
-            return None
-        if verdict.outcome is Outcome.ASK:
-            return Ask(rule.reason, rule, verdict.asks)
-        if verdict.matched_path is None:
+        if decision.outcome is Outcome.ASK:
+            return Ask(rule.reason, rule, decision.asks)
+        if decision.matched_path is None:
             return Deny(rule.reason)
-        return Deny(f"{verdict.matched_path}: {rule.reason}",
+        return Deny(f"{decision.matched_path}: {rule.reason}",
                     DenyScope.OPERAND)
 
     async def pre_ops(self, ctx: OpsContext) -> Action | None:

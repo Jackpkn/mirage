@@ -14,8 +14,15 @@
 
 import { sessionPathAllowed } from '../../context/session_context.ts'
 import type { ByteSource } from '../../io/types.ts'
-import { PolicyDenied, askRule, renderDeny, renderPending } from '../../policy/index.ts'
-import type { CommandContext, CommandRule, AdmissionRules } from '../../policy/index.ts'
+import {
+  Outcome,
+  PolicyDenied,
+  Scope,
+  askRule,
+  renderDeny,
+  renderPending,
+} from '../../policy/index.ts'
+import type { Ask, CommandContext, CommandRule, AdmissionRules, Deny } from '../../policy/index.ts'
 import { ioRefusal } from '../../policy/match/rule.ts'
 import { hasRules, readsArgs, scopesPaths } from '../../policy/match/reads.ts'
 import type { ValueType } from '../../commands/spec/types.ts'
@@ -76,6 +83,12 @@ export interface Refusal {
 function norm(virtual: string): string {
   return virtual.replace(/\/+$/, '') || '/'
 }
+
+/**
+ * The nodes a redirected statement may wrap whose last command is the
+ * one the redirect binds to.
+ */
+const REDIRECT_CHAIN: ReadonlySet<string> = new Set([NodeType.LIST, NodeType.PIPELINE])
 
 /**
  * A command the gate let through, and what its own I/O may touch.
@@ -235,7 +248,50 @@ function seen(session: Session, specs: readonly PathSpec[]): PathSpec[] {
  * request; `stdin` decides whether a bare `rg` reads the working
  * directory.
  */
-export async function admit(
+/**
+ * One command's literal words, classified the way the runtime would
+ * classify them, so the gate and the run name the same paths.
+ */
+export function classifiedWords(
+  name: string,
+  args: readonly string[],
+  session: Session,
+  registry: MountRegistry,
+): (string | PathSpec)[] {
+  const line = [name, ...args]
+  const [wordKinds, wordBases] = wordHints(line, session, registry)
+  return classifyParts(line, registry, session.cwd, wordKinds, wordBases)
+}
+
+/**
+ * The paths a statement's redirect targets name.
+ *
+ * Shared by admission and by the dry run, because a rule reads a
+ * redirect the same way in both: a target only the runtime can expand
+ * names no path here, and one that is not path-shaped is not a file.
+ */
+export function redirectPaths(
+  words: readonly Word[],
+  registry: MountRegistry,
+  cwd: string,
+): PathSpec[] {
+  return words
+    .filter((w) => w.text !== null)
+    .map((w) => classifyBarePath(wordValue(w), registry, cwd))
+    .filter((p): p is PathSpec => p instanceof PathSpec)
+}
+
+/**
+ * Everything the gate decides about one command before anything is
+ * spent on it: visibility, the classified context, and the policy
+ * chain's answer.
+ *
+ * Split out of `admit` so a dry run can have the answer without the
+ * consequences. Nothing here records a request, consumes a grant or
+ * reaches the host, which is what makes it safe for `explain`;
+ * `admit` adds exactly those and renders.
+ */
+export async function gate(
   name: string,
   args: readonly string[],
   operands: readonly (string | PathSpec)[],
@@ -245,7 +301,7 @@ export async function admit(
   agentId = '',
   stdin: ByteSource | null = null,
   redirects: readonly PathSpec[] = [],
-): Promise<Refusal | Admitted> {
+): Promise<Refusal | [CommandContext, Deny | Ask | null]> {
   if (!commandVisible(name, session)) {
     return { stderr: new TextEncoder().encode(`${name}: command not found\n`), exitCode: 127 }
   }
@@ -271,26 +327,54 @@ export async function admit(
     tool: isTool(name, session),
     walks: walksMounts(name, [name, ...args]),
   }
-  const asked = await registry.policies.preCommand(ctx)
+  return [ctx, await registry.policies.preCommand(ctx)]
+}
+
+export async function admit(
+  name: string,
+  args: readonly string[],
+  operands: readonly (string | PathSpec)[],
+  session: Session,
+  registry: MountRegistry,
+  namespace: Namespace | null,
+  agentId = '',
+  stdin: ByteSource | null = null,
+  redirects: readonly PathSpec[] = [],
+): Promise<Refusal | Admitted> {
+  const gated = await gate(
+    name,
+    args,
+    operands,
+    session,
+    registry,
+    namespace,
+    agentId,
+    stdin,
+    redirects,
+  )
+  if (!Array.isArray(gated)) return gated
+  const [ctx, asked] = gated
   // An Ask is the chain's answer only after every Deny had its say; the
   // door answers it from the session's grants or the host, so a grant
   // never re-opens a deny.
-  const verdict =
-    asked !== null && asked.kind === 'ask' ? await registry.approvals.resolve(ctx, asked) : asked
-  if (verdict === null) {
-    const granted = session.grants.filter((g) => g.decision === 'allow_session').map((g) => g.rule)
+  const action =
+    asked !== null && asked.kind === 'ask' ? await registry.decisions.resolve(ctx, asked) : asked
+  if (action === null) {
+    const granted = session.decisions
+      .filter((r) => r.scope === Scope.SESSION && r.outcome === Outcome.ALLOW)
+      .map((r) => r.rule)
     if (asked !== null && asked.kind === 'ask') granted.unshift(askRule(ctx, asked))
     const rules = session.commands
     return new Admitted({
       rules,
-      tokens,
+      tokens: ctx.tokens ?? [],
       judged: new Set(ctx.paths.map((p) => norm(p.virtual))),
       granted,
       scoped: scopesPaths(rules, name),
     })
   }
   const [stderr, exitCode] =
-    verdict.kind === 'pending' ? renderPending(name, verdict) : renderDeny(name, verdict)
+    action.kind === 'pending' ? renderPending(name, action) : renderDeny(name, action)
   return { stderr, exitCode }
 }
 
@@ -358,12 +442,8 @@ async function admitWords(
   const name = wordValue(head)
   const args = words.slice(1).map(wordValue)
   const line = [name, ...args]
-  const [wordKinds, wordBases] = wordHints(line, session, registry)
-  const classified = classifyParts(line, registry, session.cwd, wordKinds, wordBases)
-  const redirects = redirectWords
-    .filter((w) => w.text !== null)
-    .map((w) => classifyBarePath(wordValue(w), registry, session.cwd))
-    .filter((p): p is PathSpec => p instanceof PathSpec)
+  const classified = classifiedWords(name, args, session, registry)
+  const redirects = redirectPaths(redirectWords, registry, session.cwd)
   const verdict = await admit(
     name,
     args,
@@ -471,7 +551,7 @@ export async function admitLine(
       agentId,
       rules,
       reparse,
-      redirectWords(node, home),
+      statementRedirects(node, home),
     )
     if (refusal !== null) return refusal
   }
@@ -485,13 +565,30 @@ export async function admitLine(
  * command's arguments, like any other word). Heredoc and herestring
  * bodies are content, not paths, and a numeric target is an fd
  * duplication; neither names a file.
+ *
+ * A redirect binds to one command, and which one is a question about
+ * the tree rather than the statement: `a && b > f` and `a | b > f` both
+ * parse as a redirected_statement wrapping the whole list, so reading
+ * only its first child answered `a` and left `b`, the command bash
+ * actually opens the file for, with no target at all. The walk climbs
+ * the last-command chain instead, which is bash's own rule for a list
+ * and a pipeline. A compound (`{ }`, a loop, a subshell) redirects
+ * every command inside it, which is not a chain, so none is claimed
+ * here and the op door judges the write.
  */
-function redirectWords(node: TSNodeLike, home: string | null): Word[] {
-  const parent = node.parent
+export function statementRedirects(node: TSNodeLike, home: string | null): Word[] {
+  let owner = node
+  let parent = owner.parent
+  while (parent !== undefined && parent !== null && REDIRECT_CHAIN.has(parent.type)) {
+    const last = parent.namedChildren[parent.namedChildren.length - 1]
+    if (last === undefined || last.startIndex !== owner.startIndex) return []
+    owner = parent
+    parent = owner.parent
+  }
   if (parent === undefined || parent === null) return []
   if (parent.type !== NodeType.REDIRECTED_STATEMENT) return []
   const body = parent.namedChildren[0]
-  if (body === undefined || body.startIndex !== node.startIndex) return []
+  if (body === undefined || body.startIndex !== owner.startIndex) return []
   const [, redirects] = getRedirects(parent)
   const words: Word[] = []
   for (const r of redirects) {

@@ -18,7 +18,7 @@ import type { CompiledProfile } from './permissions.ts'
 import { RAMSessionStore } from './ram.ts'
 import { applyProfile, narrow } from './resolve.ts'
 import { CAS_MAX_RETRIES, generationOf, type SessionFields, type SessionStore } from './store.ts'
-import type { AdmissionRules, Grant } from '../../policy/types.ts'
+import type { AdmissionRules, Decision } from '../../policy/types.ts'
 import type { MountMode } from '../../types.ts'
 
 type StoredSession = Parameters<typeof Session.fromJSON>[0]
@@ -87,17 +87,22 @@ export class SessionManager {
   }
 
   /**
-   * The host grants one session holds (SessionGrantsQuery). Read off the
+   * The ledger records one session holds (SessionDecisionsQuery). Read off the
    * registered session, never a fork, so a line running in a background
    * copy sees the same answers.
    */
-  grantsOf(sessionId: string): readonly Grant[] {
-    return this.get(sessionId).grants
+  decisionsOf(sessionId: string): readonly Decision[] {
+    return this.get(sessionId).decisions
   }
 
-  /** Replace one session's host grants (SessionGrantsQuery); durable at the next flush. */
-  setGrants(sessionId: string, grants: readonly Grant[]): void {
-    this.get(sessionId).grants = grants
+  /** Every session id holding ledger records (SessionDecisionsQuery). */
+  decisionSessions(): readonly string[] {
+    return [...this.sessions.entries()].filter(([, s]) => s.decisions.length > 0).map(([id]) => id)
+  }
+
+  /** Replace one session's ledger records (SessionDecisionsQuery); durable at the next flush. */
+  setDecisions(sessionId: string, records: readonly Decision[]): void {
+    this.get(sessionId).decisions = records
   }
 
   get store(): SessionStore {
@@ -183,7 +188,7 @@ export class SessionManager {
         // dropped here, an approved line would ask again after a
         // restart and the next flush would erase the grant from the
         // store.
-        dflt.grants = stored.grants
+        dflt.decisions = stored.decisions
         dflt.generation = stored.generation
         // Hydrated sessions start clean: baseline what the store
         // holds so the next flush skips them.

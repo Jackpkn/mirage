@@ -53,20 +53,20 @@ export class PermissionsPolicy implements Policy {
   }
 
   preCommand(ctx: CommandContext): Action | null {
-    const verdict = decide(ctx, this.sessions.commandsOf(ctx.sessionId ?? ''))
-    if (verdict.outcome === Outcome.NOT_ALLOWED) {
+    const decision = decide(ctx, this.sessions.commandsOf(ctx.sessionId ?? ''))
+    if (decision.outcome === Outcome.ALLOW) return null
+    const rule = decision.rule
+    if (rule === null) {
       const program = (
         ctx.program !== undefined && ctx.program.length > 0 ? ctx.program : [ctx.command]
       ).join(' ')
       return { kind: 'deny', reason: `${program} is not allowed` }
     }
-    const rule = verdict.rule
-    if (rule === null) return null
-    if (verdict.outcome === Outcome.ASK) {
-      return { kind: 'ask', reason: rule.reason, rule, rules: verdict.asks }
+    if (decision.outcome === Outcome.ASK) {
+      return { kind: 'ask', reason: rule.reason, rule, rules: decision.asks }
     }
-    if (verdict.matchedPath === null) return { kind: 'deny', reason: rule.reason }
-    return { kind: 'deny', reason: `${verdict.matchedPath}: ${rule.reason}`, scope: 'operand' }
+    if (decision.matchedPath === null) return { kind: 'deny', reason: rule.reason }
+    return { kind: 'deny', reason: `${decision.matchedPath}: ${rule.reason}`, scope: 'operand' }
   }
 
   preOps(ctx: OpsContext): Action | null {

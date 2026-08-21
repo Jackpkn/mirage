@@ -14,18 +14,17 @@
 
 from dataclasses import replace
 
-from mirage.policy.config import Decision
 from mirage.policy.constants import VERB_ORDER
 from mirage.policy.match.allow import line_allowed
 from mirage.policy.match.rule import (Subject, better_match, matched_operand,
                                       rule_applies, rule_reach, rule_scope,
                                       subjects)
 from mirage.policy.types import (AdmissionRules, CommandContext, CommandRule,
-                                 LiveRules, Outcome)
+                                 LiveRules, Outcome, Ruling)
 
 
 def outranks(current: tuple[int, int], verb: int, depth: int) -> bool:
-    """Whether one subject's verdict outranks the line's best so far:
+    """Whether one subject's decision outranks the line's best so far:
     the stronger verb first, then the deeper anchor.
 
     The mirror image of :func:`better_match`, and deliberately so. Two
@@ -67,7 +66,7 @@ def rule_at(live: LiveRules,
     return chosen
 
 
-def decide(ctx: CommandContext, rules: AdmissionRules | None) -> Decision:
+def decide(ctx: CommandContext, rules: AdmissionRules | None) -> Ruling:
     """The role's answer about one line: the whole law, in one place.
 
     Two rules, because a command name and a path are not the same kind
@@ -100,7 +99,7 @@ def decide(ctx: CommandContext, rules: AdmissionRules | None) -> Decision:
     Ranking across subjects is the whole answer for a deny, which
     refuses the line, and only half of it for an ask, which is a
     question the host still has to answer. So every ask that won a
-    subject of its own is reported (``Decision.asks``) and the door
+    subject of its own is reported (``Ruling.asks``) and the door
     requires all of them: with ``ask cp /a/*`` and a deeper
     ``ask cp /deep/b/*``, ``cp /a/x /deep/b/y`` used to present the
     deeper one alone, and a nod for the destination ran the line
@@ -115,15 +114,15 @@ def decide(ctx: CommandContext, rules: AdmissionRules | None) -> Decision:
         rules (AdmissionRules | None): the session's admission rules.
     """
     if rules is None:
-        return Decision(Outcome.RUN)
+        return Ruling(Outcome.ALLOW)
     if not line_allowed(ctx, rules):
-        return Decision(Outcome.NOT_ALLOWED, source="commands.allow")
+        return Ruling(Outcome.DENY, source="commands.allow")
     live: LiveRules = [(outcome, rule)
                        for outcome, written in ((Outcome.DENY, rules.deny),
                                                 (Outcome.ASK, rules.ask))
                        for rule in written if rule_applies(rule, ctx)]
     best: tuple[int, int] | None = None
-    chosen = Decision(Outcome.RUN)
+    chosen = Ruling(Outcome.ALLOW)
     asked: list[CommandRule] = []
     for subject in subjects(ctx):
         spoke = rule_at(live, subject)
@@ -136,10 +135,10 @@ def decide(ctx: CommandContext, rules: AdmissionRules | None) -> Decision:
         if best is not None and not outranks(best, verb, depth):
             continue
         best = (verb, depth)
-        chosen = Decision(outcome=outcome,
-                          rule=rule,
-                          matched_path=matched_operand(rule, subject),
-                          source=source_of(rule))
+        chosen = Ruling(outcome=outcome,
+                        rule=rule,
+                        matched_path=matched_operand(rule, subject),
+                        source=source_of(rule))
     if chosen.outcome is not Outcome.ASK:
         return chosen
     return replace(chosen, asks=tuple(asked))

@@ -46,12 +46,15 @@ function ctx(command: string, ...paths: string[]): CommandContext {
 
 describe('decide', () => {
   it('answers with silence and with the allow list before any rule', () => {
-    expect(decide(ctx('ls'), null).outcome).toBe(Outcome.RUN)
-    expect(decide(ctx('ls'), { allow: null, ask: [], deny: [] }).outcome).toBe(Outcome.RUN)
+    expect(decide(ctx('ls'), null).outcome).toBe(Outcome.ALLOW)
+    expect(decide(ctx('ls'), { allow: null, ask: [], deny: [] }).outcome).toBe(Outcome.ALLOW)
     const listed: AdmissionRules = { allow: ['cat'], ask: [], deny: [] }
-    expect(decide(ctx('cat', '/x'), listed).outcome).toBe(Outcome.RUN)
+    expect(decide(ctx('cat', '/x'), listed).outcome).toBe(Outcome.ALLOW)
     const refused = decide(ctx('rm', '/x'), listed)
-    expect(refused.outcome).toBe(Outcome.NOT_ALLOWED)
+    // The allow list refuses as DENY like any rule; the empty `rule` is
+    // the only thing separating it from one, and is what leaves the
+    // refusal with no operator reason to print.
+    expect(refused.outcome).toBe(Outcome.DENY)
     expect(refused.rule).toBeNull()
     expect(refused.source).toBe('commands.allow')
   })
@@ -73,10 +76,10 @@ describe('decide', () => {
     const deny: CommandRule = { reason: 'protected', commands: ['cp'], paths: ['/protected/*'] }
     const ask: CommandRule = { reason: 'review nod', commands: ['cp'], paths: ['/review/deep/*'] }
     const rules: AdmissionRules = { allow: null, ask: [ask], deny: [deny] }
-    const verdict = decide(ctx('cp', '/protected/secret', '/review/deep/out'), rules)
-    expect(verdict.outcome).toBe(Outcome.DENY)
-    expect(verdict.rule).toBe(deny)
-    expect(verdict.matchedPath).toBe('/protected/secret')
+    const decision = decide(ctx('cp', '/protected/secret', '/review/deep/out'), rules)
+    expect(decision.outcome).toBe(Outcome.DENY)
+    expect(decision.rule).toBe(deny)
+    expect(decision.matchedPath).toBe('/protected/secret')
     // Each operand on its own still reads as it always did.
     expect(decide(ctx('cp', '/protected/secret', '/elsewhere/out'), rules).rule).toBe(deny)
     expect(decide(ctx('cp', '/review/deep/x', '/elsewhere/out'), rules).rule).toBe(ask)
@@ -116,9 +119,9 @@ describe('decide', () => {
       paths: ['/a/b/*'],
       mount: '/a',
     }
-    const verdict = decide(ctx('rm', '/a/b/x'), { allow: null, ask: [], deny: [top, inside] })
-    expect(verdict.rule).toBe(inside)
-    expect(verdict.source).toBe('mounts./a')
+    const decision = decide(ctx('rm', '/a/b/x'), { allow: null, ask: [], deny: [top, inside] })
+    expect(decision.rule).toBe(inside)
+    expect(decision.source).toBe('mounts./a')
     expect(sourceOf(top)).toBe('top')
   })
 
@@ -135,12 +138,12 @@ describe('decide', () => {
     const source: CommandRule = { reason: 'source nod', commands: ['cp'], paths: ['/a/*'] }
     const dest: CommandRule = { reason: 'dest nod', commands: ['cp'], paths: ['/deep/b/*'] }
     const rules: AdmissionRules = { allow: null, ask: [source, dest], deny: [] }
-    const verdict = decide(ctx('cp', '/a/x', '/deep/b/y'), rules)
-    // The deeper anchor is still the verdict, which is what the agent is
+    const decision = decide(ctx('cp', '/a/x', '/deep/b/y'), rules)
+    // The deeper anchor is still the decision, which is what the agent is
     // told; both are what the door has to collect.
-    expect(verdict.outcome).toBe(Outcome.ASK)
-    expect(verdict.rule).toBe(dest)
-    expect(verdict.asks).toEqual([source, dest])
+    expect(decision.outcome).toBe(Outcome.ASK)
+    expect(decision.rule).toBe(dest)
+    expect(decision.asks).toEqual([source, dest])
     // One rule covering two operands is one question, not two.
     const both: CommandRule = { reason: 'either', commands: ['cp'], paths: ['/a/*'] }
     const one = decide(ctx('cp', '/a/x', '/a/y'), { allow: null, ask: [both], deny: [] })

@@ -24,6 +24,7 @@ from mirage.commands.spec.types import Operand, Option
 from mirage.config import load_config
 from mirage.io import IOResult
 from mirage.io.types import materialize
+from mirage.policy.match import Outcome
 from mirage.resource.ram import RAMResource
 from mirage.runtime.js.quickjs import QUICKJS_HOME_ENV
 from mirage.runtime.types import ScriptSource
@@ -135,9 +136,9 @@ async def test_command_tiers_key_on_the_installed_name():
         err = await materialize(io.stderr) if io.stderr else b""
         assert io.exit_code == 126
         assert err.startswith(b"h1: requires approval: outbound needs a nod")
-        (request, ) = ws.approvals.list()
+        (request, ) = ws.decisions.pending()
         assert request.command == "h1"
-        await ws.approvals.grant(request.id)
+        await ws.decisions.answer(request.id, Outcome.ALLOW)
         io = await ws.execute("h1 message send -t x hi", session_id="c")
         out = await materialize(io.stdout) if io.stdout else b""
         assert (io.exit_code, out) == (0, b"sent[one] to=x: hi\n")
