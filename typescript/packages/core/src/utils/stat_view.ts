@@ -20,8 +20,13 @@ import { isoTimestamp } from './dates.ts'
 // st_mode); mirrors mirage/utils/stat_view.py.
 const S_IFDIR = 0o040000
 const S_IFREG = 0o100000
+const S_IFLNK = 0o120000
 export const DIR_MODE = S_IFDIR | 0o755
 export const FILE_MODE = S_IFREG | 0o644
+// A link is always lrwxrwxrwx: the bits on a symlink are not consulted
+// by any POSIX system, so this is the one mode every translator reports
+// for one (the FUSE attr fold, find's -type l row, a guest's lstat).
+export const LINK_MODE = S_IFLNK | 0o777
 
 /**
  * A FileStat's mtime as epoch milliseconds, null when unknown.
@@ -43,6 +48,33 @@ export function mtimeMs(st: FileStat): number | null {
 /** Whether a FileStat describes a directory. */
 export function isDir(st: FileStat): boolean {
   return st.type === FileType.DIRECTORY
+}
+
+/** Whether a FileStat describes a symlink. */
+export function isLink(st: FileStat): boolean {
+  return st.type === FileType.SYMLINK
+}
+
+/**
+ * The st_mode a stat consumer should report for one FileStat.
+ *
+ * The type bits come from the entry's kind and the permission bits from
+ * the namespace overlay when a chmod put one there, which is what makes
+ * a metadata write visible to a guest and to a mount alike. A backend
+ * that reports no mode keeps the default rw-r--r-- / rwxr-xr-x pair;
+ * there are no permissions to read on an object store.
+ *
+ * A link is the exception in both halves: its type bits are S_IFLNK and
+ * its permission bits are always 0777, because no POSIX system consults
+ * the bits on a symlink. An overlay mode a `chmod -h` wrote is
+ * therefore not reported here (ownership is, since `chown -h` does
+ * change what `ls -l` shows). Mirrors python's posix_mode.
+ */
+export function posixMode(st: FileStat): number {
+  if (isLink(st)) return LINK_MODE
+  const base = isDir(st) ? DIR_MODE : FILE_MODE
+  if (st.mode === null) return base
+  return (base & ~0o7777) | (st.mode & 0o7777)
 }
 
 /**

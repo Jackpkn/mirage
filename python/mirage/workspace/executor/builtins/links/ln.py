@@ -31,11 +31,18 @@ async def handle_ln(
 ) -> Result:
     """ln -s TARGET LINK: create a namespace symbolic link.
 
-    Flags: -f overwrite an existing link, -v report the link, -r store
-    the target relative to the link's directory (GNU --relative). -n
+    Flags: -f remove the destination first (GNU's own algorithm, so it
+    replaces a regular file too), -v report the link, -r store the
+    target relative to the link's directory (GNU --relative). -n
     (--no-dereference) and -T (--no-target-directory) are accepted no-ops:
     a namespace link name is never dereferenced nor treated as a directory
     to descend into, so both are already the effective behavior.
+
+    Divergence: GNU reads a directory destination as "link inside it"
+    (``ln -s f.txt d`` creates ``d/f.txt``), and mirage refuses the name
+    instead. Refusing is the safe half of that gap: the version before
+    the door owned the existence rule buried the directory under a link
+    node.
 
     The write itself is a dispatch op, so session grants and admission
     policies fire at the door; this handler keeps only the GNU operand
@@ -73,15 +80,35 @@ async def handle_ln(
         except CycleError:
             pass
         target_typed = posixpath.relpath(target_abs, link_dir)
-    exists = namespace.is_link(link_abs) and "f" not in flags
-    if namespace.is_mount_root(link_abs) or exists:
+    if namespace.is_mount_root(link_abs):
         return fail(
             "ln", f"ln: failed to create symbolic link "
             f"'{word_text(operands[1])}': File exists\n")
+    link_spec = PathSpec.from_str_path(link_abs)
+    if "f" in flags:
+        # GNU -f is "remove the destination, then link", which is why it
+        # replaces a regular file and not only a link. The door refuses
+        # an occupied name (symlink(2)'s EEXIST), so the removal is what
+        # makes the flag work rather than a formality; a destination
+        # that is not there is what -f is for, so its miss is the
+        # expected case and not an error.
+        try:
+            await dispatch("unlink", link_spec)
+        except FileNotFoundError:
+            pass
+        except IsADirectoryError:
+            return fail(
+                "ln", f"ln: {word_text(operands[1])}: "
+                f"cannot overwrite directory\n")
     try:
-        await dispatch("symlink",
-                       PathSpec.from_str_path(link_abs),
-                       target=target_typed)
+        await dispatch("symlink", link_spec, target=target_typed)
+    except FileExistsError:
+        # The door owns the existence rule (it is the only layer that
+        # can see both the node table and the backend); ln owns the
+        # wording.
+        return fail(
+            "ln", f"ln: failed to create symbolic link "
+            f"'{word_text(operands[1])}': File exists\n")
     except PermissionError:
         return fail(
             "ln", f"ln: failed to create symbolic link "

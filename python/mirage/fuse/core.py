@@ -239,8 +239,26 @@ class MountCore:
         parent = path.rsplit("/", 1)[0] or "/"
         return posixpath.relpath(virtual_target, parent)
 
-    def link_stat(self, target: str) -> dict[str, Any]:
+    def link_stat(self, target: str, virtual: str) -> dict[str, Any]:
+        """The attrs a namespace link reports, from its own node row.
+
+        Built from the target string alone, every link over a mount
+        answered the mount's construction time and the mounting user, so
+        what ``chown -h`` and ``touch -h`` wrote was invisible through
+        the kernel. The row is the same one the door answers a no-follow
+        stat with. Size stays the displayable target's length (what this
+        mount's readlink returns), and the mode is always lrwxrwxrwx: a
+        symlink's permission bits are not consulted by any POSIX system.
+
+        Args:
+            target (str): the target as this mount presents it.
+            virtual (str): the link's virtual path, for the node row.
+        """
         entry = self.file_stat(len(target.encode()))
+        links = self._ops.links
+        row = None if links is None else links.link_stat_at(virtual)
+        if row is not None:
+            entry = self._apply_stat_attrs(entry, row)
         entry["st_mode"] = LINK_MODE
         return entry
 
@@ -338,7 +356,7 @@ class MountCore:
         # namespace links, so stat on a link path reports the target.
         target = self.link_target(path)
         if target is not None:
-            return self.link_stat(target)
+            return self.link_stat(target, self.resolve(path))
         s = self._run(self._ops.stat(self.resolve(path)))
         if s.type == FileType.DIRECTORY:
             return self._apply_stat_attrs(self.dir_stat(), s)

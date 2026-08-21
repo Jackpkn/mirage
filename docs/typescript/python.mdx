@@ -150,7 +150,7 @@ None. No V8 flag, no [JSPI](https://github.com/WebAssembly/js-promise-integratio
 
 - Live external edits: a change made to the resource from outside mid-run is not seen until the next run re-collects the prefix.
 - Concurrent writers: last write wins; no conflict detection.
-- Symlinks: links are namespace state in Mirage, so `os.symlink` is refused with `EPERM` rather than accepted and lost at the end of the run.
+- Directory links are not walked into: `os.symlink` and `os.readlink` are served, and a link the shell made is collected as a link rather than as a copy of its target, so nothing under a directory link is in the tree the run reads.
 
 ## What you cannot do
 

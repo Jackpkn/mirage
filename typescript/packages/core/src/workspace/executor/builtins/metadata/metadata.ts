@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { PolicyDenied } from '../../../../policy/index.ts'
-import type { FileStat } from '../../../../types.ts'
+import type { FileStat, SetAttrFields } from '../../../../types.ts'
 import { FileType, PathSpec } from '../../../../types.ts'
 import type { DispatchFn } from '../../../../runtime/types.ts'
 import type { Namespace } from '../../../mount/namespace/namespace.ts'
@@ -112,14 +112,6 @@ export function isReadOnlyError(err: unknown): boolean {
   // text happens to contain "read-only".
   if (err instanceof PolicyDenied) return false
   return err instanceof Error && err.message.includes('read-only')
-}
-
-export interface SetAttrFields {
-  mode?: number
-  uid?: number | string
-  gid?: number | string
-  atime?: string
-  mtime?: string
 }
 
 // Route one attribute write through the op door. The door applies what

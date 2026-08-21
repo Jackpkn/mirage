@@ -113,6 +113,26 @@ describe('MountCore', () => {
     expect(new TextDecoder().decode(body)).toBe('rewritten, longer than before\n')
   })
 
+  it('reports a link with the node row its own stamps live on', async () => {
+    // A link has no backend inode, so the node table is the only place
+    // its stamps live. Built from the target string alone, getattr
+    // answered the mount's construction time for every link, so a
+    // no-follow touch through the mount was invisible right after it
+    // landed.
+    const ws = new Workspace({ '/data/': new RAMResource() }, { mode: MountMode.WRITE })
+    await ws.execute("echo 'hello' > /data/greeting.txt")
+    await ws.execute('ln -s greeting.txt /data/lk')
+    await ws.dispatch('setattr', '/data/lk', [], {
+      mtime: '2020-01-02T03:04:05Z',
+      nofollow: true,
+    })
+    const core = new MountCore(ws.fs)
+    const attrs = await core.getattr('/data/lk')
+    expect(attrs.mode).toBe(0o120777)
+    expect(attrs.size).toBe('greeting.txt'.length)
+    expect(attrs.mtime.getTime()).toBe(Date.parse('2020-01-02T03:04:05Z'))
+  })
+
   it('throws EINVAL from readlink on a regular file', async () => {
     const core = await mkCore()
     let code: string | undefined

@@ -481,6 +481,38 @@
           }
         }
       ]
+    },
+    {
+      "id": "is_symlink_reads_the_name_plane",
+      "world": {
+        "runtimes": [
+          "monty",
+          "vfs"
+        ],
+        "mounts": {
+          "/ram": {
+            "resource": "ram",
+            "files": {
+              "t.txt": "hello\n"
+            }
+          }
+        }
+      },
+      "steps": [
+        {
+          "command": "ln -s t.txt /ram/l",
+          "expect": {
+            "exit": 0
+          }
+        },
+        {
+          "command": "python3 -c \"from pathlib import Path; print(Path('/ram/l').is_symlink(), Path('/ram/t.txt').is_symlink())\"",
+          "expect": {
+            "exit": 0,
+            "stdout": "True False\n"
+          }
+        }
+      ]
     }
   ]
 }

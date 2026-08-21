@@ -18,9 +18,11 @@ import { PrefixResolver } from '../../resolver.ts'
 import { RuntimeVFS } from '../../vfs.ts'
 import { applyMutation, createJournal, type MutationJournal } from './journal.ts'
 import { preloadInto } from './preload.ts'
-import { MirageFs } from './vfs.ts'
+import { changedAttrs, MirageFs } from './vfs.ts'
 import { MirageFsSeed } from './seed.ts'
 import type { BridgeDispatchFn } from '../../types.ts'
+import type { FSNode } from './types.ts'
+import type { SetAttrFields } from '../../../types.ts'
 
 const enc = new TextEncoder()
 const dec = new TextDecoder()
@@ -39,6 +41,8 @@ describe('MirageFs', () => {
   const mounts: string[] = []
   const store = new Map<string, Uint8Array>()
   const unreadable = new Set<string>()
+  const links = new Map<string, string>()
+  const attrs: [string, SetAttrFields][] = []
   let counter = 0
 
   // Mirrors what PyodideRuntime.syncMounts does, including collecting the
@@ -65,7 +69,7 @@ describe('MirageFs', () => {
 
   beforeAll(async () => {
     py = await loadPyodideRuntime()
-    const dispatch: BridgeDispatchFn = (op, path, bytes, dst) => {
+    const dispatch: BridgeDispatchFn = (op, path, bytes, dst, fields) => {
       calls.push(bytes ? { op, path, bytes: new Uint8Array(bytes) } : { op, path })
       if (op === 'read') {
         if (unreadable.has(path)) return Promise.reject(new Error('backend unavailable'))
@@ -89,12 +93,21 @@ describe('MirageFs', () => {
         store.set(dst, moved)
       }
       if (op === 'readdir') {
-        return Promise.resolve(
-          [...store.keys()]
-            .filter((k) => k.startsWith(path))
-            .map((k) => ({ path: k, size: store.get(k)?.length ?? 0, isDir: false })),
-        )
+        const files = [...store.keys()]
+          .filter((k) => k.startsWith(path))
+          .map((k) => ({ path: k, size: store.get(k)?.length ?? 0, isDir: false }))
+        const linked = [...links.keys()]
+          .filter((k) => k.startsWith(path))
+          .map((k) => ({ path: k, size: 0, isDir: false, isLink: true }))
+        return Promise.resolve([...files, ...linked])
       }
+      if (op === 'symlink' && dst !== undefined) links.set(path, dst)
+      if (op === 'readlink') {
+        const target = links.get(path)
+        if (target === undefined) return Promise.reject(new Error(`not a link: ${path}`))
+        return Promise.resolve(target)
+      }
+      if (op === 'setattr' && fields !== undefined) attrs.push([path, fields])
       return Promise.resolve(undefined)
     }
     vfs = new RuntimeVFS(dispatch, new PrefixResolver(() => mounts))
@@ -106,6 +119,8 @@ describe('MirageFs', () => {
     mounts.length = 0
     store.clear()
     unreadable.clear()
+    links.clear()
+    attrs.length = 0
     journal.takeMutations()
     counter += 1
   })
@@ -348,5 +363,179 @@ import os
 _size = os.stat('${p}sized.txt').st_size
 `)
     expect(py.globals.get('_size')).toBe(9)
+  })
+
+  // A link is namespace state, so the mount that gets it need not be
+  // able to store one: the op reaches the node table. Before this the
+  // callback refused with EPERM, which is what MEMFS-backed pyodide
+  // guests had to work around.
+  it('creates a symlink the guest asked for', async () => {
+    const p = prefix()
+    store.set(`${p}t.txt`, enc.encode('TARGET'))
+    await mountPrefix(p)
+    await py.runPythonAsync(`
+import os
+os.symlink('t.txt', '${p}link')
+_is = os.path.islink('${p}link')
+_target = os.readlink('${p}link')
+`)
+    expect(py.globals.get('_is')).toBe(true)
+    expect(py.globals.get('_target')).toBe('t.txt')
+    await drain()
+    expect(links.get(`${p}link`)).toBe('t.txt')
+  })
+
+  // lstat sizes a link at its target string, which is what every POSIX
+  // system reports and what the mount's own row says.
+  it('lstats a created link as a link', async () => {
+    const p = prefix()
+    await mountPrefix(p)
+    await py.runPythonAsync(`
+import os, stat
+os.symlink('some/where', '${p}l')
+_st = os.lstat('${p}l')
+_islnk = stat.S_ISLNK(_st.st_mode)
+_size = _st.st_size
+`)
+    expect(py.globals.get('_islnk')).toBe(true)
+    expect(py.globals.get('_size')).toBe('some/where'.length)
+  })
+
+  // The seed carries links now, so one the shell made is visible to the
+  // guest instead of missing: preload used to skip every link entry.
+  it('serves a seeded link to the guest', async () => {
+    const p = prefix()
+    store.set(`${p}real.txt`, enc.encode('CONTENT'))
+    links.set(`${p}seeded`, 'real.txt')
+    await mountPrefix(p)
+    await py.runPythonAsync(`
+import os
+_is = os.path.islink('${p}seeded')
+_target = os.readlink('${p}seeded')
+`)
+    expect(py.globals.get('_is')).toBe(true)
+    expect(py.globals.get('_target')).toBe('real.txt')
+  })
+
+  it('refuses readlink on a path that is not a link', async () => {
+    const p = prefix()
+    store.set(`${p}plain.txt`, enc.encode('x'))
+    await mountPrefix(p)
+    await py.runPythonAsync(`
+import errno, os
+try:
+    os.readlink('${p}plain.txt')
+    _errno = 0
+except OSError as exc:
+    _errno = exc.errno
+_einval = errno.EINVAL
+`)
+    expect(py.globals.get('_errno')).toBe(py.globals.get('_einval'))
+  })
+
+  // A guest utime reached only the private node table before this, so a
+  // stamp the script wrote vanished with the run.
+  it('sends a guest utime to the mount', async () => {
+    const p = prefix()
+    store.set(`${p}stamped.txt`, enc.encode('x'))
+    await mountPrefix(p)
+    await py.runPythonAsync(`
+import os
+os.utime('${p}stamped.txt', (100.0, 200.0))
+`)
+    await drain()
+    expect(attrs).toEqual([
+      [`${p}stamped.txt`, { atime: '1970-01-01T00:01:40Z', mtime: '1970-01-01T00:03:20Z' }],
+    ])
+  })
+
+  // A truncating open reaches setattr too (Emscripten routes the resize
+  // through it), and that must not turn into a metadata write the guest
+  // never asked for: the bytes are the mutation, the stamp is not.
+  it('does not journal a metadata write for a truncating open', async () => {
+    const p = prefix()
+    store.set(`${p}w.txt`, enc.encode('OLD'))
+    await mountPrefix(p)
+    await py.runPythonAsync(`
+f = open('${p}w.txt', 'w')
+f.write('NEW')
+f.close()
+`)
+    await drain()
+    expect(attrs.map(([path]) => path)).toEqual([])
+  })
+
+  // Emscripten finalizes a new file with a chmod of its own, on the same
+  // callback a guest's chmod arrives on. Journaling it would send a
+  // metadata write nobody asked for, store the filesystem's default mode
+  // over the mount's, and split the two coalesced writes a create makes.
+  it('does not journal a metadata write for a created file', async () => {
+    const p = prefix()
+    await mountPrefix(p)
+    await py.runPythonAsync(`
+f = open('${p}fresh.txt', 'wb')
+f.write(b'hi')
+f.close()
+`)
+    await drain()
+    expect(attrs).toEqual([])
+    expect(dec.decode(store.get(`${p}fresh.txt`))).toBe('hi')
+  })
+
+  // The marker that suppresses the create's own chmod must not swallow
+  // the guest's next one.
+  it('still sends a chmod made right after a create', async () => {
+    const p = prefix()
+    await mountPrefix(p)
+    await py.runPythonAsync(`
+import os
+open('${p}made.txt', 'wb').close()
+os.chmod('${p}made.txt', 0o640)
+`)
+    await drain()
+    expect(attrs).toEqual([[`${p}made.txt`, { mode: 0o640 }]])
+  })
+
+  it('sends a guest chmod to the mount as permission bits', async () => {
+    const p = prefix()
+    store.set(`${p}moded.txt`, enc.encode('x'))
+    await mountPrefix(p)
+    await py.runPythonAsync(`
+import os
+os.chmod('${p}moded.txt', 0o600)
+`)
+    await drain()
+    expect(attrs).toEqual([[`${p}moded.txt`, { mode: 0o600 }]])
+  })
+})
+
+// The comparison half of the same decision: Emscripten bumps a stamp on
+// writes that change nothing, and a mount should not hear about those.
+describe('changedAttrs', () => {
+  const nodeAt = (mode: number, atime: number, mtime: number): FSNode =>
+    ({ mode, atime, mtime }) as FSNode
+
+  it('answers null when nothing moved', () => {
+    const node = nodeAt(0o100644, 1000, 2000)
+    expect(changedAttrs(node, { mode: 0o100644, atime: 1000, mtime: 2000 })).toBeNull()
+  })
+
+  it('reports permission bits only, without the type bits', () => {
+    const node = nodeAt(0o100644, 0, 0)
+    expect(changedAttrs(node, { mode: 0o100600 })).toEqual({ mode: 0o600 })
+  })
+
+  it('renders each stamp as ISO from epoch milliseconds', () => {
+    const node = nodeAt(0o100644, 0, 0)
+    expect(changedAttrs(node, { atime: 100_000, mtime: 200_000 })).toEqual({
+      atime: '1970-01-01T00:01:40Z',
+      mtime: '1970-01-01T00:03:20Z',
+    })
+  })
+
+  // No POSIX call sets ctime, so a mount has nothing to write it to.
+  it('never reports ctime, and never reports size as metadata', () => {
+    const node = nodeAt(0o100644, 0, 0)
+    expect(changedAttrs(node, { ctime: 5, size: 9 })).toBeNull()
   })
 })

@@ -367,6 +367,24 @@ class TestLinks:
             patched.readlink("/data/dir/a.txt")
         assert caught.value.errno == errno.EINVAL
 
+    def test_readlink_of_a_missing_path_is_enoent(self):
+        # The other half of readlink(2)'s split, and the half a caller's
+        # `except FileNotFoundError` is written against: EINVAL for both
+        # meant that clause never fired.
+        _, patched = seeded()
+        with pytest.raises(FileNotFoundError) as caught:
+            patched.readlink("/data/dir/gone.txt")
+        assert caught.value.errno == errno.ENOENT
+
+    def test_lstat_of_a_missing_path_stays_enoent(self):
+        # lstat probes readlink first, so the ENOENT above has to reach
+        # the caller rather than being read as "not a link".
+        _, patched = seeded()
+        with pytest.raises(FileNotFoundError):
+            patched.lstat("/data/dir/gone.txt")
+        assert patched.path.islink("/data/dir/gone.txt") is False
+        assert patched.path.lexists("/data/dir/gone.txt") is False
+
     def test_readlink_off_the_mount_answers_as_the_caller_spelled_it(
             self, tmp_path):
         _, patched = seeded()

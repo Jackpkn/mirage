@@ -178,3 +178,29 @@ describe('MontyVFS negative cache', () => {
     expect(await vfs.read('/ram/x')).toEqual(new TextEncoder().encode('back'))
   })
 })
+
+// The link mark rides the parent's listing, which the door already
+// resolved, so a predicate the guest asks per path adds no dispatch of
+// its own. Monty's own tree holds no links, so declining would answer
+// False for one the shell made.
+describe('MontyVFS.isLink', () => {
+  const listing = (entries: unknown[]): BridgeDispatchFn =>
+    vi.fn<BridgeDispatchFn>((op) =>
+      op === 'readdir' ? Promise.resolve(entries) : Promise.resolve(undefined),
+    )
+
+  it('reads the mark off the parent listing', async () => {
+    const vfs = viewOn(listing([{ path: '/ram/link', size: 0, isDir: false, isLink: true }]))
+    expect(await vfs.isLink('/ram/link')).toBe(true)
+  })
+
+  it('answers false for an entry with no mark', async () => {
+    const vfs = viewOn(listing([{ path: '/ram/f', size: 1, isDir: false }]))
+    expect(await vfs.isLink('/ram/f')).toBe(false)
+  })
+
+  it('answers false when the parent will not list', async () => {
+    const dispatch = vi.fn<BridgeDispatchFn>(() => Promise.reject(new Error('no such dir')))
+    expect(await viewOn(dispatch).isLink('/ram/gone/l')).toBe(false)
+  })
+})

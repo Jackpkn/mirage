@@ -12,7 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { DIR_MODE, FILE_MODE } from './constants.ts'
+import { DIR_MODE, FILE_MODE, LINK_MODE } from './constants.ts'
 import { fsError } from './errors.ts'
 import type { MirageFsSeed } from './seed.ts'
 import type { FSNode, NodeHost, NodeOps, StreamOps } from './types.ts'
@@ -81,6 +81,10 @@ export class NodeTree {
       node.contents = bytes
       node.usedBytes = bytes.length
     }
+    for (const [path, target] of seed.links) {
+      const node = this.placeFile(path, LINK_MODE)
+      if (node !== null) node.link = target
+    }
   }
 
   /**
@@ -96,6 +100,7 @@ export class NodeTree {
     node.node_ops = this.nodeOps
     node.stream_ops = this.streamOps
     if (this.host.isDir(mode)) node.children = new Map()
+    else if (this.host.isLink(mode)) node.link = ''
     else {
       node.contents = new Uint8Array(0)
       node.usedBytes = 0
@@ -171,13 +176,20 @@ export class NodeTree {
     return cur
   }
 
-  private placeFile(path: string): FSNode | null {
+  /**
+   * Create a leaf node at `path`, building the directories above it.
+   *
+   * Args:
+   *   path: guest-absolute path of the leaf.
+   *   mode: type and permission bits, a regular file by default.
+   */
+  private placeFile(path: string, mode: number = FILE_MODE): FSNode | null {
     const rel = this.relative(path)
     if (rel === null) return null
     const cut = rel.lastIndexOf('/')
     const name = cut < 0 ? rel : rel.slice(cut + 1)
     if (name === '') return null
     const parent = cut <= 0 ? this.rootNode() : this.ensureDir(rel.slice(0, cut))
-    return this.makeNode(parent, name, FILE_MODE)
+    return this.makeNode(parent, name, mode)
   }
 }

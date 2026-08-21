@@ -364,9 +364,10 @@ class _OsRouter:
         try:
             return str(self._run(self._ops.readlink(virtual)))
         except OSError as exc:
-            # EINVAL is the node table's "not a link", which is the
-            # answer for an ordinary file and for a missing path alike;
-            # the caller's own stat reports the absence.
+            # EINVAL is the door's "there, but not a link". A missing
+            # path raises ENOENT instead, exactly as readlink(2) does,
+            # and that is the answer lstat owes its caller, so it is not
+            # swallowed here.
             if exc.errno == errno.EINVAL:
                 return None
             raise

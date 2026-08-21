@@ -380,3 +380,25 @@ async def test_checking_out_a_link_over_a_regular_file_replaces_it(git_rw):
     await git_rw.execute("rm /repo/thing")
     listing = await git_rw.execute("ls /repo/thing")
     assert b"No such file or directory" in (listing.stderr or b"")
+
+
+@pytest.mark.asyncio
+async def test_checking_out_a_link_that_moved_retargets_it(git_rw):
+    # A branch that points the same link somewhere else: symlink(2) does
+    # not overwrite, so the checkout removes the old name before writing
+    # the new one. Relying on the node table to replace the entry in
+    # place left the checkout refused with EEXIST and the link pointing
+    # at the other branch's target.
+    assert (await run(git_rw, "checkout -b first"))[0] == 0
+    await git_rw.execute("ln -s a.txt /repo/lk")
+    assert (await run(git_rw, "add lk"))[0] == 0
+    assert (await run(git_rw, "commit -m first"))[0] == 0
+    assert (await run(git_rw, "checkout -b second"))[0] == 0
+    await git_rw.execute("printf 'other\\n' > /repo/b.txt")
+    await git_rw.execute("ln -sf b.txt /repo/lk")
+    assert (await run(git_rw, "add -A"))[0] == 0
+    assert (await run(git_rw, "commit -m second"))[0] == 0
+    assert (await run(git_rw, "checkout first"))[0] == 0
+    assert (await git_rw.execute("readlink /repo/lk")).stdout == b"a.txt\n"
+    assert (await run(git_rw, "checkout second"))[0] == 0
+    assert (await git_rw.execute("readlink /repo/lk")).stdout == b"b.txt\n"

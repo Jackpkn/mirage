@@ -378,6 +378,26 @@ export type FileType = (typeof FileType)[keyof typeof FileType]
 // target travels with the stat row.
 export const LINK_TARGET_KEY = 'link_target'
 
+/**
+ * The metadata fields a `setattr` writes, all optional.
+ *
+ * Spelled the way the op, the CommandOpts bag and the guest bridge
+ * spell them, so one fact keeps one name from a shell line down to a
+ * guest's utime. `nofollow` is not a field but the AT_SYMLINK_NOFOLLOW
+ * bit: it writes the link entry's own attrs rather than its target's.
+ * Lives here rather than beside either consumer because the ops facade
+ * and the runtime bridge both take it and neither may import the
+ * other.
+ */
+export interface SetAttrFields {
+  mode?: number
+  uid?: number | string
+  gid?: number | string
+  atime?: string
+  mtime?: string
+  nofollow?: boolean
+}
+
 export interface FileStatInit {
   name: string
   size?: number | null

@@ -19,10 +19,20 @@ import { CacheManager } from '../../cache/manager.ts'
 import { applyOpLimit, runWithTimeout } from '../../commands/builtin/utils/limit.ts'
 import { getExtension } from '../../commands/resolve.ts'
 import { IOResult, type OpReport } from '../../io/types.ts'
-import { eacces, eaccesReadOnly, einval, enoent } from '../../utils/errors.ts'
-import { Policies, postOpsGate, preOpsGate } from '../../policy/index.ts'
+import {
+  eacces,
+  eaccesReadOnly,
+  eexist,
+  einval,
+  enoent,
+  isMissError,
+  isMissingOp,
+  type FsError,
+} from '../../utils/errors.ts'
+import { Policies, PolicyDenied, postOpsGate, preOpsGate } from '../../policy/index.ts'
+import { PolicyError } from '../../policy/errors.ts'
 import { mountKey } from '../../utils/key_prefix.ts'
-import { ownerPrefix, rstripSlash } from '../../utils/slash.ts'
+import { normDir, ownerPrefix, rstripSlash } from '../../utils/slash.ts'
 import { record, runWithMountPrefix, runWithRevisions } from '../../observe/context.ts'
 import type { OpRecord } from '../../observe/record.ts'
 import type { OpsRegistry } from '../../ops/registry.ts'
@@ -31,7 +41,14 @@ import { NO_FOLLOW_OPS, STAMP_WRITE_OPS } from '../../ops/config.ts'
 import { mergeReaddir, namespaceListing, namespaceStat } from '../../ops/namespace_view.ts'
 import { isMissingPath } from '../../utils/errors.ts'
 import { cachesReads, type Resource } from '../../resource/base.ts'
-import { ConsistencyPolicy, FileStat, MountMode, PathSpec, ResourceName } from '../../types.ts'
+import {
+  ConsistencyPolicy,
+  FileStat,
+  FileType,
+  MountMode,
+  PathSpec,
+  ResourceName,
+} from '../../types.ts'
 import type { DispatchFn } from '../../runtime/types.ts'
 import type { DriftQueue } from '../snapshot/drift.ts'
 import type { Namespace } from '../mount/namespace/namespace.ts'
@@ -42,6 +59,7 @@ import {
   DISPATCH_READ_OPS,
   DISPATCH_WRITE_OPS,
   HIDDEN_CREATE_OPS,
+  LINK_ENTRY_OPS,
   NAMESPACE_TABLE_OPS,
   POLICY_WRITE_OPS,
   SETATTR_KEYS,
@@ -176,15 +194,11 @@ export class Dispatcher {
     if (opName === 'rename' && dstArg instanceof PathSpec && !pathAllowed(dstArg.virtual)) {
       throw eacces(dstArg.virtual)
     }
-    // An unlink of a link is the removal half of `symlink`, and the door owns
-    // both: a link has no backend entry, so forwarding it reaches a backend
-    // that has never heard of the name and answers ENOENT with the link still
-    // there. An unlink of anything else is an ordinary backend write.
-    if (
-      NAMESPACE_TABLE_OPS.has(opName) ||
-      (opName === 'unlink' && this.namespace.isLink(path.virtual))
-    ) {
-      return [await this.namespaceTableOp(opName, path, kwargs ?? {}, report), new IOResult()]
+    if (this.tableAnswers(opName, path.virtual, kwargs)) {
+      return [
+        await this.namespaceTableOp(opName, path, args ?? [], kwargs ?? {}, report),
+        new IOResult(),
+      ]
     }
     // `nofollow` is the caller's AT_SYMLINK_NOFOLLOW: an op that acts on
     // a link entry itself (chown -h writing the link's own attrs) keeps
@@ -386,6 +400,12 @@ export class Dispatcher {
       await this.invalidateAfterWriteByPath(p.virtual, observed)
       if (renameDst !== null) {
         await this.invalidateAfterWriteByPath(renameDst.virtual)
+        // rename(2) replaces the destination, so a node the table holds
+        // at that name does not survive the move. A link left there
+        // shadowed the file that had just landed: the listing showed the
+        // new file, every read followed the old link, and the moved
+        // content was reachable under no name at all.
+        await this.namespace.unlink(renameDst.virtual)
       }
     }
     if (opName === 'stat' && result instanceof FileStat) {
@@ -402,41 +422,87 @@ export class Dispatcher {
   }
 
   /**
+   * Whether the node table answers this op instead of a backend.
+   *
+   * `symlink` and `readlink` always, because a link exists nowhere else.
+   * The rest only when the path itself is a link, and then for the same
+   * reason the create and the read are the door's: forwarding reaches a
+   * backend that has never heard of the name. A no-follow stat is the
+   * read half of that fact (lstat asks for the link's own row, which
+   * only the table holds); a following stat never arrives here, since
+   * the follow below rewrote it to the target. Mirrors Python's
+   * Dispatcher._table_answers.
+   */
+  private tableAnswers(
+    opName: string,
+    virtual: string,
+    kwargs: Record<string, unknown> | undefined,
+  ): boolean {
+    if (NAMESPACE_TABLE_OPS.has(opName)) return true
+    if (!LINK_ENTRY_OPS.has(opName)) return false
+    if (opName === 'stat' && kwargs?.nofollow !== true) return false
+    return this.namespace.isLink(virtual)
+  }
+
+  /**
    * Answer a node-table op at the door itself, gated like a backend.
    *
    * A symlink is namespace state with no backend behind it, so the door
-   * owns both directions. Admission still fires exactly as for a
-   * backend write: the link's turf is the longest mount prefix above it
+   * owns every verb that names one. Admission still fires exactly as for
+   * a backend write: the link's turf is the longest mount prefix above it
    * (the same ownership rule the link read filter uses), session grants
    * and both gates run, and the write leaves an OpRecord — a scoped
    * kernel mount refuses exactly like a scoped shell. A link above
    * every mount is bare namespace structure and clears the gates with
-   * an empty prefix. Also answers the `unlink` of a path the node table holds
-   * a link for. Mirrors Python's Dispatcher._namespace_table_op.
+   * an empty prefix. Also answers the `unlink`, `rename` and no-follow
+   * `stat` of a path the node table holds a link for. Mirrors Python's
+   * Dispatcher._namespace_table_op.
    */
   private async namespaceTableOp(
     opName: string,
     path: PathSpec,
+    args: readonly unknown[],
     kwargs: OpKwargs,
     report: OpReport | undefined,
-  ): Promise<string | null> {
+  ): Promise<string | FileStat | null> {
     const start = performance.now()
     const owner = ownerPrefix(this.namespace.mountPrefixes(), path.virtual)
     const write = POLICY_WRITE_OPS.has(opName)
     await preOpsGate(this.policies, opName, path, write, owner ?? '', sessionId())
     let target: string
-    let result: string | null
+    let result: string | FileStat | null = null
     if (opName === 'unlink') {
       target = this.namespace.readlink(path.virtual) ?? ''
       await this.namespace.unlink(path.virtual)
-      result = null
+    } else if (opName === 'rename') {
+      target = this.namespace.readlink(path.virtual) ?? ''
+      const dst = args[0]
+      if (!(dst instanceof PathSpec)) throw new Error('rename op requires dst')
+      // The destination is a create there, gated like the source, the
+      // way the backend path gates both ends of a rename. It is then
+      // replaced as rename(2) replaces it: any node the table holds at
+      // that name (a link, an attr overlay) goes.
+      await preOpsGate(this.policies, opName, dst, true, owner ?? '', sessionId())
+      await this.namespace.unlink(dst.virtual)
+      await this.namespace.rename(path.virtual, dst.virtual)
     } else if (opName === 'symlink') {
       target = String(kwargs.target)
+      // symlink(2) refuses an occupied name, and the door is the only
+      // place that can tell: the node table sees a link, and a probe
+      // sees the file or directory a backend holds. Left unchecked, the
+      // new node shadowed live data (the bytes stayed, the name read as
+      // a link) and could bury a mount root, which is the one name a
+      // deployment configured.
+      if (await this.pathPresent(path)) throw eexist(path)
       await this.namespace.symlink(path.virtual, target, Date.now() / 1000)
-      result = null
+    } else if (opName === 'stat') {
+      const row = this.namespace.linkStatAt(path.virtual)
+      if (row === null) throw enoent(path)
+      target = this.namespace.readlink(path.virtual) ?? ''
+      result = row
     } else {
       const found = this.namespace.readlink(path.virtual)
-      if (found === null) throw einval(path)
+      if (found === null) throw await this.readlinkMiss(path)
       target = found
       result = found
     }
@@ -451,6 +517,145 @@ export class Dispatcher {
     const bound = await postOpsGate(this.policies, opName, path, write, owner ?? '', result)
     if (bound !== null) return (await applyOpLimit(result, bound)) as string | null
     return result
+  }
+
+  /**
+   * The error a readlink of something that is not a link answers.
+   *
+   * readlink(2) splits the two misses and callers read them differently:
+   * a path that is there but is not a link is EINVAL, and one that is
+   * not there at all is ENOENT, which is the code a guest's
+   * `except FileNotFoundError` catches. The node table only knows the
+   * first half, so absence is probed here and only here, on the failure
+   * path, where one extra round trip buys the right errno. Mirrors
+   * Python's Dispatcher._readlink_miss.
+   */
+  private async readlinkMiss(path: PathSpec): Promise<FsError> {
+    return (await this.pathPresent(path)) ? einval(path) : enoent(path)
+  }
+
+  /**
+   * Whether anything at all is at `path`.
+   *
+   * Four channels, asked in the order of what they prove. The namespace
+   * goes first: a link, and a directory that exists only because a
+   * mount or a link sits below it, are structure no backend can see,
+   * and a mount root is the deployment's own configuration. Then the
+   * backend's row, which settles a file. A directory row settles
+   * nothing, because an API tree synthesizes its directories: a
+   * postgres schema lists `tables/` and `views/` before anything has
+   * asked whether that schema is there, and a grouping mount stats
+   * every path under a live collection as a directory. So a directory
+   * is proven the way the hierarchy kit itself proves one, by appearing
+   * in its parent's listing, which is also the only way a prefix store
+   * can answer for a directory that is nothing but a set of keys.
+   * Cannot reuse `resolvePathStat`: that dispatches, and the door is
+   * what dispatch is inside of. Mirrors Python's
+   * Dispatcher._path_present.
+   */
+  private async pathPresent(path: PathSpec): Promise<boolean> {
+    if (this.namespace.isLink(path.virtual)) return true
+    if (namespaceStat(this.namespace.mountPrefixes(), this.namespace, path.virtual) !== null) {
+      return true
+    }
+    let resolved: [Resource, PathSpec, MountMode]
+    try {
+      resolved = await this.namespace.resolve(path.virtual, false)
+    } catch {
+      // No mount serves the path and the namespace knows no structure
+      // there, which is exactly the absence being probed for.
+      return false
+    }
+    const mount = this.namespace.tryMountFor(path.virtual)
+    if (mount !== null && normDir(mount.prefix) === normDir(path.virtual)) return true
+    try {
+      const row = (await this.probeOp('stat', resolved)) as FileStat | null
+      if (row !== null && row.type !== FileType.DIRECTORY) return true
+      return await this.listedByParent(path)
+    } catch (err) {
+      if (!(err instanceof PolicyDenied) && !(err instanceof PolicyError)) throw err
+      // A channel that refuses to answer is not evidence of absence.
+      // Reporting "present" keeps the answer at the EINVAL every miss
+      // gave before the split, which asserts nothing the policy is
+      // withholding; reporting absence would assert a fact this door was
+      // not allowed to check.
+      return true
+    }
+  }
+
+  /**
+   * Whether the path's own name is in its parent's listing.
+   *
+   * Compared on the final segment, because backends disagree on entry
+   * shape: bare names, a trailing slash to mark a directory, or full
+   * paths. The same normalization `mergeReaddir` dedupes on. Mirrors
+   * Python's Dispatcher._listed_by_parent.
+   */
+  private async listedByParent(path: PathSpec): Promise<boolean> {
+    const trimmed = rstripSlash(path.virtual)
+    const cut = trimmed.lastIndexOf('/')
+    const name = trimmed.slice(cut + 1)
+    if (cut < 0 || name === '') return false
+    let resolved: [Resource, PathSpec, MountMode]
+    try {
+      resolved = await this.namespace.resolve(trimmed.slice(0, cut) || '/', false)
+    } catch {
+      return false
+    }
+    const entries = await this.probeOp('readdir', resolved)
+    if (!Array.isArray(entries)) return false
+    return entries.some((entry) => {
+      const segments = rstripSlash(String(entry)).split('/')
+      return segments[segments.length - 1] === name
+    })
+  }
+
+  /**
+   * Run one read op for a probe, or null when it found nothing.
+   *
+   * The probe reads on the caller's behalf but not at its request, so it
+   * passes the same admission gate the op would at the door: a policy
+   * that denies `stat` must not be reachable through a readlink. That
+   * refusal is raised, not swallowed, because only the caller knows what
+   * to answer when a channel goes dark.
+   *
+   * The index and the path's filetype are the two kwargs that decide
+   * which registered op answers, so a probe that omitted them would ask
+   * a different question than the door does and report a rendered path
+   * as absent. Python needs no twin of that half: its dispatcher routes
+   * through `Mount.execute_op`, which stamps both itself.
+   *
+   * Args:
+   *   opName: the op to run, `stat` or `readdir`.
+   *   resolved: what the namespace resolved the path to.
+   */
+  private async probeOp(
+    opName: string,
+    resolved: [Resource, PathSpec, MountMode],
+  ): Promise<unknown> {
+    const [resource, scope] = resolved
+    const mount = this.namespace.tryMountFor(scope.virtual)
+    await preOpsGate(this.policies, opName, scope, false, mount?.prefix ?? '', sessionId())
+    const filetype = getExtension(scope.virtual)
+    try {
+      return await this.opsRegistry.call(
+        opName,
+        resource.kind,
+        resource.accessor ?? NOOP_ACCESSOR_INSTANCE,
+        scope,
+        [],
+        {
+          ...(resource.index !== undefined ? { index: resource.index } : {}),
+          ...(filetype !== null ? { filetype } : {}),
+        },
+      )
+    } catch (err) {
+      // The "nothing here" set exactly, plus a backend with no such op:
+      // a miss on one channel is not absence on its own, so the caller
+      // tries the other.
+      if (isMissError(err) || isMissingOp(err, opName)) return null
+      throw err
+    }
   }
 
   /**

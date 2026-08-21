@@ -49,6 +49,14 @@ export const POLICY_WRITE_OPS: ReadonlySet<string> = new Set([
 // directions (create and readlink) rather than a router to a mount.
 export const NAMESPACE_TABLE_OPS: ReadonlySet<string> = new Set(['symlink', 'readlink'])
 
+// Ops the node table answers when the path itself is a link, and only
+// then. The name is the whole of what exists there, so forwarding one
+// reaches a backend that has never heard of it: an unlink answered
+// ENOENT with the link still in the table, and a rename moved nothing.
+// `stat` joins them only under `nofollow`, which is how a caller spells
+// lstat; a following stat arrives already resolved to its target.
+export const LINK_ENTRY_OPS: ReadonlySet<string> = new Set(['unlink', 'rename', 'stat'])
+
 // The attribute fields a setattr op can carry, in one place so the
 // requested/residual split and the overlay write read the same names.
 export const SETATTR_KEYS = ['mode', 'uid', 'gid', 'atime', 'mtime'] as const

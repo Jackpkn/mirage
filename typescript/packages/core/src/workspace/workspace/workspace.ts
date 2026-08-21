@@ -19,7 +19,7 @@ import { type EventDict, Observer } from '../../observe/observer.ts'
 import type { OpRecord } from '../../observe/record.ts'
 import { type OpKwargs, OpsRegistry } from '../../ops/registry.ts'
 import { isMissingPath } from '../../utils/errors.ts'
-import { contentSize, isDir as statIsDir, mtimeMs } from '../../utils/stat_view.ts'
+import { contentSize, isDir as statIsDir, mtimeMs, posixMode } from '../../utils/stat_view.ts'
 import type { Resource } from '../../resource/base.ts'
 import { HISTORY_PREFIX, HistoryViewResource } from '../../resource/history/history.ts'
 import { resourceStateRequiresOverride } from '../../resource/secrets.ts'
@@ -367,7 +367,7 @@ export class Workspace {
   // by the current session all come from the Dispatcher. Reads are raw
   // bytes (no filetype rendering), matching the Python WasmVFS.
   private buildWorkspaceBridge(): BridgeDispatchFn {
-    return async (op, path, bytes, dst) => {
+    return async (op, path, bytes, dst, attrs) => {
       switch (op) {
         case 'read':
           return (await this.dispatch('read', path)) as Uint8Array
@@ -395,6 +395,7 @@ export class Workspace {
             size: contentSize(st),
             isDir: statIsDir(st),
             mtimeMs: mtimeMs(st) ?? 0,
+            mode: posixMode(st),
           }
         }
         case 'create':
@@ -415,6 +416,21 @@ export class Workspace {
         case 'rename': {
           if (dst === undefined) throw new Error('rename op requires dst')
           await this.dispatch('rename', path, [PathSpec.fromStrPath(dst)])
+          return undefined
+        }
+        case 'symlink': {
+          // The target is not a PathSpec: a link stores what was typed,
+          // relative or dangling, and resolving it here would record a
+          // different link than the guest asked for.
+          if (dst === undefined) throw new Error('symlink op requires dst')
+          await this.dispatch('symlink', path, [], { target: dst })
+          return undefined
+        }
+        case 'readlink':
+          return (await this.dispatch('readlink', path)) as string
+        case 'setattr': {
+          if (attrs === undefined) throw new Error('setattr op requires attrs')
+          await this.dispatch('setattr', path, [], attrs as Record<string, unknown>)
           return undefined
         }
         case 'readdir': {

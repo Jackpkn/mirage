@@ -30,7 +30,7 @@ import {
   setattrLink,
   setattrVia,
 } from './metadata.ts'
-import type { SetAttrFields } from './metadata.ts'
+import type { SetAttrFields } from '../../../../types.ts'
 
 // touch: set access/modification times, creating missing files. GNU flags:
 // -a/-m select which times, -c no-create, -h no-dereference (writes the

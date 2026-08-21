@@ -269,8 +269,18 @@ async def prepare_mv(
         if src.raw_path.endswith("/"):
             return items, None, None, await _slashed_link_refusal(
                 namespace, dispatch, src, dst, stat)
-        await namespace.unlink(target_dst)
-        await namespace.rename(src.virtual, target_dst)
+        # The move is a node-table rename, which the door answers: a
+        # link has no backend entry for the generic mv to move. Reaching
+        # the table directly from here would skip the admission gates
+        # every other mv passes, so the dispatch is the point.
+        try:
+            await dispatch("rename",
+                           src,
+                           dst=PathSpec.from_str_path(target_dst))
+        except PermissionError:
+            return items, None, None, fail(
+                "mv", f"mv: cannot move '{src.raw_path}' to "
+                f"'{dst.raw_path}': Permission denied\n")
         return items, None, None, ok("mv")
 
     post_rename: tuple[str, str] | None = None

@@ -66,6 +66,28 @@ open('/ram/notes.txt', 'w').write('hello')              # writes flush back to R
     ```
     Anything that goes through Python's `open()` works (PIL, numpy, pandas, json, pickle).
   </Tab>
+  <Tab title="Symlinks & metadata">
+    ```python
+    import os
+
+    os.symlink('report.json', '/ram/latest.json')
+    print(os.readlink('/ram/latest.json'), os.path.islink('/ram/latest.json'))
+
+    os.utime('/ram/report.json', (1767225600, 1767225600))
+    os.chmod('/ram/report.json', 0o600)
+    ```
+    A link is namespace state, so no backend has to be able to store one:
+    the op reaches the name plane and a link lands on an S3 or Notion mount
+    the same way it lands on a RAM one. Links the shell made are collected
+    with the prefix, as links rather than as copies of their targets, so a
+    cyclic one is safe to walk past. A `chmod` or `utime` a backend cannot
+    keep is stored in the namespace overlay and reported back by `stat`, and
+    an `lstat` reads the link's own row rather than its target's, so a
+    `follow_symlinks=False` stamp is visible right after it is written.
+    `os.rename` moves a link by its own name instead of following it, and
+    `os.symlink` onto a name that is taken raises `FileExistsError`, both as
+    POSIX has them.
+  </Tab>
   <Tab title="Cross-mount">
     ```python
     # Read from one mount, write to another, same Python code:
@@ -87,7 +109,6 @@ open('/ram/notes.txt', 'w').write('hello')              # writes flush back to R
 |---|---|---|
 | **External edits show up mid-run**, someone else edits the GDoc while your script runs | The tree is collected before the run and served synchronously after that | Each run re-collects, so the next one sees the edit |
 | **Huge mounts**, collecting a 100GB S3 bucket | Every byte is held in memory for the run | Mount a narrower prefix |
-| **Symlinks**, `os.symlink` inside the guest | Links are namespace state in Mirage, so no mount op can carry one | Refused with `EPERM` rather than silently lost at the end of the run |
 | **Concurrent writers**, two Python processes write the same path | Last `close()` wins, no conflict detection | Out of scope for v1 |
 | **Browser-only resources from Node**, OPFS | OPFS isn't a thing in Node | Run in a browser-side Mirage |
 

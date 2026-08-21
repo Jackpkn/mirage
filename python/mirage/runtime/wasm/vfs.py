@@ -22,8 +22,9 @@ from mirage.runtime.wasm.build import BuildDir
 from mirage.runtime.wasm.config import WasmFsConfig
 from mirage.runtime.wasm.constants import READONLY_HINT
 from mirage.runtime.wasm.types import GuestStat
+from mirage.types import FileStat
 from mirage.utils.path import owner_prefix
-from mirage.utils.stat_view import content_size, is_dir, mtime_ns
+from mirage.utils.stat_view import content_size, is_dir, is_link, mtime_ns
 
 
 class WasmVFS:
@@ -138,13 +139,43 @@ class WasmVFS:
         build = self._serving_build(path)
         if build is not None:
             return build.stat(path)
-        fs = self._core_call("stat", path)
+        return self._guest_stat(self._core_call("stat", path))
+
+    def lstat(self, path: str) -> GuestStat:
+        """Stat a guest path without following a trailing symlink.
+
+        A link's own row is the node table's, not a backend's, and the
+        door serves it under `nofollow`: the row carries the target's
+        byte length as the size, the link's own mtime, and whatever a
+        `chown -h` or a no-follow `utime` wrote, none of which a row
+        rebuilt here from the target string could report. Every other
+        path answers exactly as `stat` does. A build path can never be
+        a link, so it takes the ordinary path.
+
+        Args:
+            path (str): guest-absolute path.
+
+        Raises:
+            FileNotFoundError: the path exists on neither side.
+        """
+        if self._serving_build(path) is not None:
+            return self.stat(path)
+        return self._guest_stat(self._core_call("stat", path, nofollow=True))
+
+    @staticmethod
+    def _guest_stat(fs: FileStat) -> GuestStat:
+        """Translate one mirage stat row into a preview1 filestat.
+
+        Args:
+            fs (FileStat): the row the door answered with.
+        """
         ns = mtime_ns(fs)
         # The filestat record has no validity channel, so an unknown
         # mtime and epoch zero both encode as 0 on this wire.
         return GuestStat(is_dir=is_dir(fs),
                          size=content_size(fs),
-                         mtime_ns=0 if ns is None else ns)
+                         mtime_ns=0 if ns is None else ns,
+                         is_link=is_link(fs))
 
     def stat_or_none(self, path: str) -> GuestStat | None:
         try:
@@ -203,6 +234,54 @@ class WasmVFS:
                 raise OSError(host_errno.EXDEV, "cross-device rename", src)
             raise PermissionError(READONLY_HINT)
         self._require_core().rename(src, dst)
+
+    def symlink(self, path: str, target: str) -> None:
+        """Create a symlink at `path` pointing at `target`.
+
+        Args:
+            path (str): guest-absolute path of the link.
+            target (str): what the link points to, stored as typed.
+        """
+        self._deny_build(path)
+        self._core_call("symlink", path, target=target)
+
+    def readlink(self, path: str) -> str:
+        """The target of the symlink at `path`.
+
+        Args:
+            path (str): guest-absolute path of the link.
+
+        Raises:
+            OSError: EINVAL when the path is not a link, which is what
+                readlink(2) answers and what the node table reports. A
+                build path answers that too rather than the read-only
+                refusal: reading is not the mutation `_deny_build`
+                guards, and the build holds no links.
+        """
+        if self._serving_build(path) is not None:
+            raise OSError(host_errno.EINVAL, "not a symbolic link", path)
+        return str(self._core_call("readlink", path))
+
+    def setattr(self, path: str, *, atime: str | None, mtime: str | None,
+                nofollow: bool) -> None:
+        """Write timestamps, in the namespace overlay where needed.
+
+        Times are the only attributes preview1 can express: it has no
+        chmod or chown call at all. A mount whose backend cannot hold a
+        stamp still answers, because the door overlays what the backend
+        declines.
+
+        Args:
+            path (str): guest-absolute path.
+            atime (str | None): ISO access time, None to leave it.
+            mtime (str | None): ISO modification time, None to leave it.
+            nofollow (bool): stamp the link itself, not its target.
+        """
+        self._deny_build(path)
+        self._require_core().setattr(path,
+                                     atime=atime,
+                                     mtime=mtime,
+                                     nofollow=nofollow)
 
     def flush(self, path: str, base_len: int, low_write: int,
               buf: bytes | bytearray) -> None:

@@ -15,6 +15,7 @@
 import { SPECS, parseCommand } from '../../../../commands/spec/index.ts'
 import type { FileStat } from '../../../../types.ts'
 import { FileType, PathSpec } from '../../../../types.ts'
+import { isEacces } from '../../../../utils/errors.ts'
 import { CycleError, gnuBasename } from '../../../../utils/path.ts'
 import { rstripSlash } from '../../../../utils/slash.ts'
 import type { DispatchFn } from '../../../../runtime/types.ts'
@@ -232,8 +233,21 @@ export async function prepareMv(
       const early = await slashedLinkRefusal(namespace, dispatch, src, dst, stat)
       return { items, postUnlink: null, postRename: null, early }
     }
-    await namespace.unlink(targetDst)
-    await namespace.rename(src.virtual, targetDst)
+    // The move is a node-table rename, which the door answers: a link
+    // has no backend entry for the generic mv to move. Reaching the
+    // table directly from here would skip the admission gates every
+    // other mv passes, so the dispatch is the point.
+    try {
+      await dispatch('rename', src, [PathSpec.fromStrPath(targetDst)])
+    } catch (err) {
+      // PolicyDenied and a read-only mount both stamp EACCES.
+      if (!isEacces(err)) throw err
+      const early: Result = fail(
+        'mv',
+        `mv: cannot move '${src.rawPath}' to '${dst.rawPath}': Permission denied\n`,
+      )
+      return { items, postUnlink: null, postRename: null, early }
+    }
     const early: Result = ok('mv')
     return { items, postUnlink: null, postRename: null, early }
   }

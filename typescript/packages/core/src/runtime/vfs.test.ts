@@ -53,6 +53,36 @@ describe('RuntimeVFS transport', () => {
     expect(entries[0]).toEqual({ path: '/ram/a.txt', size: 4, isDir: false })
   })
 
+  // The target rides the `dst` slot: it is the op's second string and a
+  // link stores it verbatim, so there is nothing a separate slot would
+  // say.
+  it('forwards symlink to dispatch symlink with the target', async () => {
+    const dispatch = vi.fn<BridgeDispatchFn>(() => Promise.resolve(undefined))
+    await new RuntimeVFS(dispatch).symlink('/ram/link', '../t.txt')
+    expect(dispatch).toHaveBeenCalledWith('symlink', '/ram/link', undefined, '../t.txt')
+  })
+
+  it('forwards readlink and returns the target', async () => {
+    const dispatch = vi.fn<BridgeDispatchFn>(() => Promise.resolve('../t.txt'))
+    const out = await new RuntimeVFS(dispatch).readlink('/ram/link')
+    expect(dispatch).toHaveBeenCalledWith('readlink', '/ram/link')
+    expect(out).toBe('../t.txt')
+  })
+
+  it('refuses a readlink answer that is not a string', async () => {
+    const dispatch = vi.fn<BridgeDispatchFn>(() => Promise.resolve(7))
+    await expect(new RuntimeVFS(dispatch).readlink('/ram/link')).rejects.toThrow(/expected string/)
+  })
+
+  it('forwards setattr with the fields it was given', async () => {
+    const dispatch = vi.fn<BridgeDispatchFn>(() => Promise.resolve(undefined))
+    await new RuntimeVFS(dispatch).setattr('/ram/f', { mode: 0o600, nofollow: true })
+    expect(dispatch).toHaveBeenCalledWith('setattr', '/ram/f', undefined, undefined, {
+      mode: 0o600,
+      nofollow: true,
+    })
+  })
+
   it('rethrows dispatch errors', async () => {
     const dispatch = vi.fn<BridgeDispatchFn>(() => Promise.reject(new Error('boom')))
     await expect(new RuntimeVFS(dispatch).read('/x')).rejects.toThrow(/boom/)

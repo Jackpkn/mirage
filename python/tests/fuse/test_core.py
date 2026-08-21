@@ -113,6 +113,31 @@ async def test_readlink_on_non_link_raises_einval(seeded):
 
 
 @pytest.mark.asyncio
+async def test_getattr_of_a_link_reports_the_nodes_own_row():
+    # A link has no backend inode, so the node table is the only place
+    # its stamps live. Built from the target string alone, getattr
+    # answered the mount's construction time for every link, so a
+    # `touch -h` through the mount was invisible right after it landed.
+    ws = Workspace({"/": RAMResource()}, mode=MountMode.WRITE)
+    await ws.execute("tee /a.txt", stdin=b"hello")
+    await ws.execute("ln -s a.txt /link")
+    core = MountCore(ws.ops)
+    await ws.dispatch("setattr",
+                      PathSpec.from_str_path("/link"),
+                      mode=None,
+                      uid=None,
+                      gid=None,
+                      atime=None,
+                      mtime="2020-01-02T03:04:05Z",
+                      nofollow=True)
+    attrs = core.getattr("/link")
+    assert attrs["st_mode"] == stat.S_IFLNK | 0o777
+    assert attrs["st_size"] == len("a.txt")
+    assert attrs["st_mtime"] == mtime_ns(
+        FileStat(name="link", modified="2020-01-02T03:04:05Z"))
+
+
+@pytest.mark.asyncio
 async def test_xattrs_round_trip(seeded):
     seeded.setxattr("/a.txt", "user.tag", b"v1")
     assert seeded.getxattr("/a.txt", "user.tag") == b"v1"

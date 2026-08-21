@@ -21,22 +21,33 @@ import { PrefixResolver } from '../../resolver.ts'
 interface FakeFS {
   mkdirTree(path: string): void
   writeFile(path: string, bytes: Uint8Array): void
+  symlink?(path: string, target: string): void
   _dirs: Set<string>
   _files: Map<string, Uint8Array>
+  _links: Map<string, string>
 }
 
-function makeFakeFS(): FakeFS {
+function makeFakeFS(withLinks = true): FakeFS {
   const dirs = new Set<string>()
   const files = new Map<string, Uint8Array>()
+  const links = new Map<string, string>()
   return {
     _dirs: dirs,
     _files: files,
+    _links: links,
     mkdirTree(path) {
       dirs.add(path)
     },
     writeFile(path, bytes) {
       files.set(path, bytes)
     },
+    ...(withLinks
+      ? {
+          symlink(path: string, target: string) {
+            links.set(path, target)
+          },
+        }
+      : {}),
   }
 }
 
@@ -192,5 +203,53 @@ describe('preloadInto', () => {
     const fs = makeFakeFS()
     const vfs = new RuntimeVFS(dispatch, new PrefixResolver(() => ['/ram/', '/ram/inner/']))
     await expect(preloadInto(fs, vfs, '/ram/')).rejects.toThrow(/inner boom/)
+  })
+
+  // A link is copied as a link, never followed: stat reports the target,
+  // so a directory link would copy its whole subtree and a cyclic one
+  // would never terminate.
+  it('copies a link as a link and does not walk it', async () => {
+    const dispatch = vi.fn<BridgeDispatchFn>((op, path) => {
+      if (op === 'readdir' && path === '/ram/') {
+        return Promise.resolve([{ path: '/ram/loop', size: 0, isDir: true, isLink: true }])
+      }
+      if (op === 'readlink' && path === '/ram/loop') return Promise.resolve('/ram')
+      return Promise.reject(new Error(`unexpected ${op} ${path}`))
+    })
+    const fs = makeFakeFS()
+    await preloadInto(fs, new RuntimeVFS(dispatch), '/ram/')
+    expect(fs._links.get('/ram/loop')).toBe('/ram')
+    expect(fs._dirs.has('/ram/loop')).toBe(false)
+  })
+
+  it('skips a link the namespace listed but will not resolve', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const dispatch = vi.fn<BridgeDispatchFn>((op, path) => {
+      if (op === 'readdir' && path === '/ram/') {
+        return Promise.resolve([{ path: '/ram/l', size: 0, isDir: false, isLink: true }])
+      }
+      if (op === 'readlink') return Promise.reject(new Error('link vanished'))
+      return Promise.reject(new Error(`unexpected ${op} ${path}`))
+    })
+    const fs = makeFakeFS()
+    await preloadInto(fs, new RuntimeVFS(dispatch), '/ram/')
+    expect(fs._links.size).toBe(0)
+    expect(warn).toHaveBeenCalled()
+    warn.mockRestore()
+  })
+
+  // A target that cannot hold links omits them without paying for the
+  // readlink, which is what every seed did before links were reachable.
+  it('does not read a link target when the target cannot hold one', async () => {
+    const dispatch = vi.fn<BridgeDispatchFn>((op, path) => {
+      if (op === 'readdir' && path === '/ram/') {
+        return Promise.resolve([{ path: '/ram/l', size: 0, isDir: false, isLink: true }])
+      }
+      return Promise.reject(new Error(`unexpected ${op} ${path}`))
+    })
+    const fs = makeFakeFS(false)
+    await preloadInto(fs, new RuntimeVFS(dispatch), '/ram/')
+    expect(fs._links.size).toBe(0)
+    expect(dispatch).not.toHaveBeenCalledWith('readlink', '/ram/l')
   })
 })
