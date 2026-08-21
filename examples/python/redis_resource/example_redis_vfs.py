@@ -14,7 +14,6 @@
 
 import asyncio
 import os
-import sys
 
 import redis as sync_redis
 
@@ -39,11 +38,10 @@ resource = RedisResource(url=REDIS_URL, key_prefix=KEY_PREFIX)
 ws = Workspace({"/data": resource}, mode=MountMode.WRITE)
 
 with ws:
-    vos = sys.modules["os"]
     print("=== VFS MODE ===\n")
 
     print("--- os.listdir() ---")
-    entries = vos.listdir("/data")
+    entries = os.listdir("/data")
     for e in entries:
         print(f"  {e}")
 
@@ -52,14 +50,14 @@ with ws:
         print(f"  {f.read().strip()}")
 
     print("\n--- os.path.exists() ---")
-    print(f"  hello.txt: {vos.path.exists('/data/hello.txt')}")
-    print(f"  nope.txt: {vos.path.exists('/data/nope.txt')}")
+    print(f"  hello.txt: {os.path.exists('/data/hello.txt')}")
+    print(f"  nope.txt: {os.path.exists('/data/nope.txt')}")
 
     print("\n--- os.path.isdir() ---")
-    print(f"  /data/sub: {vos.path.isdir('/data/sub')}")
+    print(f"  /data/sub: {os.path.isdir('/data/sub')}")
 
     print("\n--- os.listdir() sub ---")
-    for e in vos.listdir("/data/sub"):
+    for e in os.listdir("/data/sub"):
         print(f"  {e}")
 
     records = ws.ops.records

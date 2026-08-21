@@ -15,7 +15,6 @@
 import asyncio
 import json
 import os
-import sys
 
 from dotenv import load_dotenv
 
@@ -34,16 +33,15 @@ resource = LangfuseResource(config=config)
 
 async def main():
     with Workspace({"/langfuse/": resource}, mode=MountMode.READ) as ws:
-        vos = sys.modules["os"]
         print("=== VFS MODE: open() reads from Langfuse ===\n")
 
         print("--- os.listdir() top-level ---")
-        top_level = vos.listdir("/langfuse")
+        top_level = os.listdir("/langfuse")
         for entry in top_level:
             print(f"  {entry}")
 
         print("\n--- os.listdir() traces ---")
-        traces = vos.listdir("/langfuse/traces")
+        traces = os.listdir("/langfuse/traces")
         for t in traces[:5]:
             print(f"  {t}")
         if len(traces) > 5:
@@ -69,24 +67,24 @@ async def main():
                 print(f"  {line[:120]}")
 
         print("\n--- os.listdir() sessions ---")
-        sessions = vos.listdir("/langfuse/sessions")
+        sessions = os.listdir("/langfuse/sessions")
         for s in sessions:
             print(f"  {s}")
 
         print("\n--- os.listdir() prompts ---")
-        prompts = vos.listdir("/langfuse/prompts")
+        prompts = os.listdir("/langfuse/prompts")
         for p in prompts:
             print(f"  {p}")
 
         print("\n--- os.listdir() datasets ---")
-        datasets = vos.listdir("/langfuse/datasets")
+        datasets = os.listdir("/langfuse/datasets")
         for d in datasets:
             print(f"  {d}")
 
         if datasets:
             ds = datasets[0]
             print(f"\n--- os.listdir() datasets/{ds} ---")
-            items = vos.listdir(f"/langfuse/datasets/{ds}")
+            items = os.listdir(f"/langfuse/datasets/{ds}")
             for item in items:
                 print(f"  {item}")
 

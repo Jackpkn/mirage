@@ -14,7 +14,6 @@
 
 import asyncio
 import os
-import sys
 
 from dotenv import load_dotenv
 
@@ -34,23 +33,22 @@ async def main():
         ref="main",
     )
     with Workspace({"/github/": resource}, mode=MountMode.READ) as ws:
-        vos = sys.modules["os"]
         print("=== VFS MODE: open() reads from GitHub transparently ===\n")
 
         print("--- os.listdir() root ---")
-        entries = vos.listdir("/github")
+        entries = os.listdir("/github")
         for e in entries[:10]:
             print(f"  {e}")
         if len(entries) > 10:
             print(f"  ... ({len(entries)} total)")
 
         print("\n--- os.listdir() mirage/ ---")
-        core = vos.listdir("/github/python/mirage")
+        core = os.listdir("/github/python/mirage")
         for c in core[:10]:
             print(f"  {c}")
 
         print("\n--- os.listdir() mirage/core/ ---")
-        core_dirs = vos.listdir("/github/python/mirage/core")
+        core_dirs = os.listdir("/github/python/mirage/core")
         for d in core_dirs[:10]:
             print(f"  {d}")
         if len(core_dirs) > 10:
@@ -71,15 +69,15 @@ async def main():
                 print(f"  {line.rstrip()}")
 
         print("\n--- os.path.isdir() checks ---")
-        core_isdir = vos.path.isdir("/github/python/mirage/core")
+        core_isdir = os.path.isdir("/github/python/mirage/core")
         print(f"  /github/python/mirage/core: {core_isdir}")
-        is_dir = vos.path.isdir("/github/python/pyproject.toml")
+        is_dir = os.path.isdir("/github/python/pyproject.toml")
         print(f"  /github/python/pyproject.toml: {is_dir}")
 
         print("\n--- os.path.isfile() checks ---")
-        is_file = vos.path.isfile("/github/python/pyproject.toml")
+        is_file = os.path.isfile("/github/python/pyproject.toml")
         print(f"  /github/python/pyproject.toml: {is_file}")
-        core_isfile = vos.path.isfile("/github/python/mirage/core")
+        core_isfile = os.path.isfile("/github/python/mirage/core")
         print(f"  /github/python/mirage/core: {core_isfile}")
 
         records = ws.ops.records

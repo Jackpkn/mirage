@@ -15,7 +15,6 @@
 import asyncio
 import json
 import os
-import sys
 
 from dotenv import load_dotenv
 
@@ -34,12 +33,11 @@ resource = GoogleDriveResource(config=config)
 
 async def main():
     with Workspace({"/gdrive/": resource}, mode=MountMode.READ) as ws:
-        vos = sys.modules["os"]
         print(
             "=== VFS MODE: open() reads from Google Drive transparently ===\n")
 
         print("--- os.listdir() root ---")
-        entries = vos.listdir("/gdrive")
+        entries = os.listdir("/gdrive")
         for e in entries[:10]:
             print(f"  {e}")
 
@@ -83,8 +81,8 @@ async def main():
 
         print("\n--- os.path.exists() ---")
         if gdoc:
-            print(f"  {gdoc}: {vos.path.exists(f'/gdrive/{gdoc}')}")
-        print(f"  nonexistent: {vos.path.exists('/gdrive/nope.txt')}")
+            print(f"  {gdoc}: {os.path.exists(f'/gdrive/{gdoc}')}")
+        print(f"  nonexistent: {os.path.exists('/gdrive/nope.txt')}")
 
         print("\n--- bash history ---")
         with open("/.bash_history") as f:

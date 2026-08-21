@@ -23,6 +23,23 @@ import type { DispatchFn } from '../runtime/types.ts'
 
 export type OpSink = (rec: OpRecord) => Promise<void>
 
+/**
+ * The metadata fields `setattr` takes, all optional.
+ *
+ * Spelled the way the op and the CommandOpts bag spell them, so one
+ * fact keeps one name from a shell line down to a guest's chmod.
+ * `nofollow` is not a field but the AT_SYMLINK_NOFOLLOW bit: it writes
+ * the link entry's own attrs rather than its target's.
+ */
+export interface SetAttrFields {
+  mode?: number
+  uid?: number | string
+  gid?: number | string
+  atime?: string
+  mtime?: string
+  nofollow?: boolean
+}
+
 interface MountOwner {
   readonly prefix: string
   readonly kind: string
@@ -137,7 +154,11 @@ export class Ops {
     kwargs: OpKwargs = {},
   ): Promise<unknown> {
     const start = Date.now()
-    const followed = this.links !== null && !NO_FOLLOW_OPS.has(op) ? this.links.follow(path) : path
+    // `nofollow` is the caller's AT_SYMLINK_NOFOLLOW and suppresses
+    // both follows, so an op meant for a link entry itself (chmod -h, a
+    // guest's lchown) still records the link's own path.
+    const skipFollow = NO_FOLLOW_OPS.has(op) || kwargs.nofollow === true
+    const followed = this.links !== null && !skipFollow ? this.links.follow(path) : path
     const owner = this.ownerOf(followed)
     const report = new OpReport()
     let result: unknown
@@ -289,6 +310,25 @@ export class Ops {
   /** The stored target of the link at `path`; EINVAL when not a link. */
   async readlink(path: string): Promise<string> {
     return (await this.through('readlink', path)) as string
+  }
+
+  /**
+   * Write metadata fields, natively where the backend can hold them.
+   *
+   * Every field is passed, unset ones as undefined, because the door
+   * reads the whole set and stores in the namespace overlay whatever
+   * the backend cannot keep. A mount with no setattr op therefore still
+   * answers: a chmod on an s3 or dropbox mount lands in the name plane
+   * and stat reports it back. Stored, not enforced; the mount mode is
+   * the access control. Returns what the backend could not keep.
+   * Mirrors Python's Ops.setattr.
+   */
+  async setattr(path: string, attrs: SetAttrFields = {}): Promise<Record<string, number | string>> {
+    const { nofollow = false, ...fields } = attrs
+    return (await this.through('setattr', path, [], { ...fields, nofollow })) as Record<
+      string,
+      number | string
+    >
   }
 
   async truncate(path: string, length: number): Promise<void> {

@@ -15,7 +15,6 @@
 import asyncio
 import json
 import os
-import sys
 
 from dotenv import load_dotenv
 
@@ -34,18 +33,17 @@ resource = GSheetsResource(config=config)
 
 async def main():
     with Workspace({"/gsheets/": resource}, mode=MountMode.READ) as ws:
-        vos = sys.modules["os"]
         print(
             "=== VFS MODE: open() reads from Google Sheets transparently ===\n"
         )
 
         print("--- os.listdir() root ---")
-        dirs = vos.listdir("/gsheets")
+        dirs = os.listdir("/gsheets")
         for d in dirs:
             print(f"  {d}")
 
         print("\n--- os.listdir() owned ---")
-        sheets = vos.listdir("/gsheets/owned")
+        sheets = os.listdir("/gsheets/owned")
         for s in sheets[:5]:
             print(f"  {s}")
 
@@ -63,10 +61,9 @@ async def main():
                 print(f"  preview: {content[:200]}...")
 
             print("\n--- os.path.exists() ---")
-            print(f"  {first}: {vos.path.exists(path)}")
+            print(f"  {first}: {os.path.exists(path)}")
             print(
-                f"  nonexistent: {vos.path.exists('/gsheets/owned/nope.json')}"
-            )
+                f"  nonexistent: {os.path.exists('/gsheets/owned/nope.json')}")
 
         print("\n--- bash history ---")
         with open("/.bash_history") as f:

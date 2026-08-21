@@ -15,7 +15,6 @@
 import asyncio
 import json
 import os
-import sys
 
 from dotenv import load_dotenv
 
@@ -33,16 +32,15 @@ resource = TrelloResource(config=config)
 
 async def main():
     with Workspace({"/trello/": resource}, mode=MountMode.READ) as ws:
-        vos = sys.modules["os"]
         print("=== VFS MODE ===\n")
 
         print("--- os.listdir() root ---")
-        entries = vos.listdir("/trello")
+        entries = os.listdir("/trello")
         for e in entries:
             print(f"  {e}")
 
         print("\n--- os.listdir() workspaces ---")
-        workspaces = vos.listdir("/trello/workspaces")
+        workspaces = os.listdir("/trello/workspaces")
         for w in workspaces[:5]:
             print(f"  {w}")
 
@@ -51,7 +49,7 @@ async def main():
             ws_path = f"/trello/workspaces/{workspace}"
 
             print(f"\n--- os.listdir() {workspace} ---")
-            contents = vos.listdir(ws_path)
+            contents = os.listdir(ws_path)
             for c in contents:
                 print(f"  {c}")
 
@@ -62,8 +60,8 @@ async def main():
                 print(f"  id: {data.get('workspace_id')}")
 
             boards_path = f"{ws_path}/boards"
-            if vos.path.isdir(boards_path):
-                boards = vos.listdir(boards_path)
+            if os.path.isdir(boards_path):
+                boards = os.listdir(boards_path)
                 print(f"\n--- os.listdir() boards ({len(boards)}) ---")
                 for b in boards[:5]:
                     print(f"  {b}")
@@ -77,8 +75,8 @@ async def main():
                         print(f"  id: {data.get('board_id')}")
 
                     lists_path = f"{board_dir}/lists"
-                    if vos.path.isdir(lists_path):
-                        lists = vos.listdir(lists_path)
+                    if os.path.isdir(lists_path):
+                        lists = os.listdir(lists_path)
                         print(f"\n--- os.listdir() lists ({len(lists)}) ---")
                         for li in lists[:5]:
                             print(f"  {li}")
@@ -86,8 +84,8 @@ async def main():
                         if lists:
                             list_dir = f"{lists_path}/{lists[0]}"
                             cards_path = f"{list_dir}/cards"
-                            if vos.path.isdir(cards_path):
-                                cards = vos.listdir(cards_path)
+                            if os.path.isdir(cards_path):
+                                cards = os.listdir(cards_path)
                                 msg = (f"\n--- os.listdir() "
                                        f"cards ({len(cards)}) ---")
                                 print(msg)

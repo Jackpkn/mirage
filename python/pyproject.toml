@@ -406,7 +406,6 @@ module = [
     "mirage.ops.gsheets.read",
     "mirage.ops.gslides.read",
     "mirage.ops.ops",
-    "mirage.ops.os_patch",
     "mirage.ops.registry",
     "mirage.resource",
     "mirage.resource.box.box",

@@ -12,7 +12,7 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from stat import S_IFDIR, S_IFREG
+from stat import S_IFDIR, S_IFLNK, S_IFREG
 
 from mirage.types import FileStat, FileType
 from mirage.utils.dates import iso_timestamp
@@ -22,6 +22,10 @@ from mirage.utils.dates import iso_timestamp
 # st_mode); mirrors utils/stat_view.ts.
 DIR_MODE = S_IFDIR | 0o755
 FILE_MODE = S_IFREG | 0o644
+# A link is always lrwxrwxrwx: the bits on a symlink are not consulted
+# by any POSIX system, so this is the one mode every translator reports
+# for one (FUSE's link_stat, find's -type l row, a guest's lstat).
+LINK_MODE = S_IFLNK | 0o777
 
 
 def mtime_ns(st: FileStat) -> int | None:
@@ -42,6 +46,24 @@ def mtime_ns(st: FileStat) -> int | None:
     if seconds is None:
         return None
     return int(seconds * 1_000_000_000)
+
+
+def posix_mode(st: FileStat) -> int:
+    """The st_mode a stat consumer should report for one FileStat.
+
+    The type bits come from the entry's kind and the permission bits
+    from the namespace overlay when a chmod put one there, which is what
+    makes a metadata write visible to a guest and to a mount alike. A
+    backend that reports no mode keeps the default rw-r--r-- / rwxr-xr-x
+    pair; there are no permissions to read on an object store.
+
+    Args:
+        st (FileStat): the stat to translate.
+    """
+    base = DIR_MODE if is_dir(st) else FILE_MODE
+    if st.mode is None:
+        return base
+    return (base & ~0o7777) | (st.mode & 0o7777)
 
 
 def is_dir(st: FileStat) -> bool:

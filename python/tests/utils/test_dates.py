@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from mirage.utils.dates import parse_date_expr
+from mirage.utils.dates import iso_timestamp, parse_date_expr, timestamp_iso
 
 NOW = datetime(2026, 8, 16, 13, 45, 30)
 
@@ -61,3 +61,15 @@ def test_invalid_returns_none():
 def test_number_attached_to_unit():
     assert parse_date_expr("2days",
                            now=NOW) == datetime(2026, 8, 18, 13, 45, 30)
+
+
+def test_timestamp_iso_round_trips_through_iso_timestamp():
+    assert iso_timestamp(timestamp_iso(1_700_000_123.5)) == 1_700_000_123.5
+
+
+def test_timestamp_iso_spells_utc():
+    assert timestamp_iso(0) == "1970-01-01T00:00:00+00:00"
+
+
+def test_timestamp_iso_passes_none_through():
+    assert timestamp_iso(None) is None

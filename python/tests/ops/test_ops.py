@@ -244,6 +244,55 @@ class TestCreateTruncate:
         assert run(ops.read("/data/dir/f.txt")) == b"hello"
 
 
+class TestSetattr:
+
+    def test_setattr_lands_where_stat_reads_it(self):
+        ops, _ = make_ops()
+        run(ops.mkdir("/data/dir"))
+        run(ops.write("/data/dir/f.txt", b"hello"))
+        run(ops.setattr("/data/dir/f.txt", mode=0o600, uid=4242))
+        st = run(ops.stat("/data/dir/f.txt"))
+        assert st.mode == 0o600
+        assert st.uid == 4242
+
+    def test_setattr_returns_what_the_backend_could_not_keep(self):
+        # RAM holds attrs itself, so nothing is left for the overlay and
+        # the residual is empty; a mount with no setattr op gets every
+        # field back from the door instead.
+        ops, _ = make_ops()
+        run(ops.mkdir("/data/dir"))
+        run(ops.write("/data/dir/f.txt", b"hello"))
+        assert run(ops.setattr("/data/dir/f.txt", mode=0o640)) == {}
+        assert run(ops.stat("/data/dir/f.txt")).mode == 0o640
+
+    def test_setattr_on_a_link_entry_lands_in_the_overlay(self):
+        # A link has no backend inode, so the door keeps its attrs
+        # whatever the owning mount can do.
+        ops, _ = make_ops()
+        run(ops.mkdir("/data/dir"))
+        run(ops.write("/data/dir/f.txt", b"hello"))
+        run(ops.symlink("/link", "/data/dir/f.txt"))
+        assert run(ops.setattr("/link", mode=0o640, nofollow=True)) == {
+            "mode": 0o640
+        }
+
+    def test_setattr_writes_a_link_entry_under_nofollow(self):
+        ops, _ = make_ops()
+        run(ops.mkdir("/data/dir"))
+        run(ops.write("/data/dir/f.txt", b"hello"))
+        run(ops.symlink("/data/dir/link", "f.txt"))
+        run(ops.setattr("/data/dir/link", uid=7, nofollow=True))
+        assert run(ops.stat("/data/dir/f.txt")).uid is None
+
+    def test_setattr_follows_a_link_by_default(self):
+        ops, _ = make_ops()
+        run(ops.mkdir("/data/dir"))
+        run(ops.write("/data/dir/f.txt", b"hello"))
+        run(ops.symlink("/data/dir/link", "f.txt"))
+        run(ops.setattr("/data/dir/link", uid=9))
+        assert run(ops.stat("/data/dir/f.txt")).uid == 9
+
+
 class TestIsMounted:
 
     def test_mounted(self):

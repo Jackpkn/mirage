@@ -26,6 +26,13 @@ from mirage.runtime.handles.mode import parse_mode
 
 T = TypeVar("T")
 logger = logging.getLogger(__name__)
+# `io.open`'s own sentinel for "whatever the platform default is". It is
+# not a codec name, and pathlib passes it for every `read_text()` on an
+# interpreter that is not in UTF-8 mode (which is any interpreter whose
+# LC_CTYPE is already a UTF-8 locale, so: the normal case), so looking
+# the caller's word up as a codec raised LookupError on the ordinary
+# path the moment `io.open` was patched.
+LOCALE_ENCODING = "locale"
 
 
 class MirageFile:
@@ -59,7 +66,14 @@ class MirageFile:
                 raise ValueError("binary mode doesn't take a newline argument")
         elif newline not in (None, "", "\n", "\r", "\r\n"):
             raise ValueError(f"illegal newline value: {newline!r}")
-        self._encoding = encoding if encoding is not None else "utf-8"
+        # The sentinel resolves to mirage's own default rather than to
+        # `locale.getencoding()`, so `open(p).read()` and
+        # `Path(p).read_text()` agree about one file's bytes; a mount
+        # stores utf-8 whatever the host's locale happens to be.
+        if encoding is None or encoding == LOCALE_ENCODING:
+            self._encoding = "utf-8"
+        else:
+            self._encoding = encoding
         self._errors = errors if errors is not None else "strict"
         self._newline = newline
         codecs.lookup(self._encoding)

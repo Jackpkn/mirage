@@ -176,7 +176,10 @@ class Ops:
         structure, invalidation); the facade's own share is the record.
         The path is link-followed here first so the record carries the
         resolved path; the door's second follow of an already-resolved
-        path is a no-op.
+        path is a no-op. ``nofollow`` is the caller's
+        AT_SYMLINK_NOFOLLOW and suppresses both follows, so an op meant
+        for a link entry itself (``chmod -h``, a guest's ``lchown``)
+        still records the link's own path.
 
         Whether the op is a write is the door's call too: it reads that
         off the op name, so there is nothing for a caller here to
@@ -188,7 +191,8 @@ class Ops:
             **kwargs: op arguments, by the op function's names.
         """
         start = int(time.monotonic() * 1000)
-        if self._links is not None and op not in NO_FOLLOW_OPS:
+        if (self._links is not None and op not in NO_FOLLOW_OPS
+                and not kwargs.get("nofollow")):
             path = self._links.follow(path)
         owner = self._owner(path)
         report = OpReport()
@@ -422,6 +426,47 @@ class Ops:
             OSError: EINVAL when the path is not a link.
         """
         return await self._call("readlink", path)
+
+    async def setattr(self,
+                      path: str,
+                      *,
+                      mode: int | None = None,
+                      uid: int | str | None = None,
+                      gid: int | str | None = None,
+                      atime: str | None = None,
+                      mtime: str | None = None,
+                      nofollow: bool = False) -> dict[str, int | str]:
+        """Write metadata fields, natively where the backend can hold them.
+
+        Every field is passed, unset ones as None, because the door
+        reads the whole set and stores in the namespace overlay whatever
+        the backend cannot keep. A mount with no setattr op therefore
+        still answers: a chmod on an s3 or dropbox mount lands in the
+        name plane and stat reports it back. Stored, not enforced; the
+        mount mode is the access control.
+
+        Args:
+            path (str): Virtual path.
+            mode (int | None): permission bits (e.g. 0o644).
+            uid (int | str | None): owner id or name.
+            gid (int | str | None): group id or name.
+            atime (str | None): ISO access time.
+            mtime (str | None): ISO modification time.
+            nofollow (bool): write the link entry's own attrs rather
+                than its target's (the ``-h`` family).
+
+        Returns:
+            dict[str, int | str]: the fields the backend could not keep,
+                which the door stored in the overlay instead.
+        """
+        return await self._call("setattr",
+                                path,
+                                mode=mode,
+                                uid=uid,
+                                gid=gid,
+                                atime=atime,
+                                mtime=mtime,
+                                nofollow=nofollow)
 
     async def truncate(self, path: str, length: int) -> None:
         """Truncate file to given length.

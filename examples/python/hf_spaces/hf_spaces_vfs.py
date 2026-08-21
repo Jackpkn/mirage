@@ -14,7 +14,6 @@
 
 import asyncio
 import os
-import sys
 
 from dotenv import load_dotenv
 
@@ -32,11 +31,10 @@ resource = HfSpacesResource(config)
 
 async def main():
     with Workspace({"/s/": resource}, mode=MountMode.READ) as ws:
-        vos = sys.modules["os"]
         print(f"=== VFS: {resource.accessor.bucket_uri} ===")
 
         print("\n--- os.listdir('/s') ---")
-        root_entries = vos.listdir("/s")
+        root_entries = os.listdir("/s")
         for e in root_entries:
             print(f"  {e}")
 

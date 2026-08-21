@@ -637,3 +637,37 @@ describe('Ops rename is bounded by the mount', () => {
     expect(await ws.fs.readFileText('/a/x.txt')).toBe('bytes')
   })
 })
+
+describe('Ops.setattr', () => {
+  it('lands where stat reads it', async () => {
+    const ws = mkWorkspace()
+    await ws.fs.mkdir('/data/dir')
+    await ws.fs.writeFile('/data/dir/f.txt', 'hello')
+    await ws.fs.setattr('/data/dir/f.txt', { mode: 0o600, uid: 4242 })
+    const st = await ws.fs.stat('/data/dir/f.txt')
+    expect(st.mode).toBe(0o600)
+    expect(st.uid).toBe(4242)
+  })
+
+  it('writes the link entry itself under nofollow', async () => {
+    const ws = mkWorkspace()
+    await ws.fs.mkdir('/data/dir')
+    await ws.fs.writeFile('/data/dir/f.txt', 'hello')
+    await ws.fs.symlink('/data/dir/link', 'f.txt')
+    // A link has no backend inode, so the door keeps its attrs and the
+    // target is left alone.
+    expect(await ws.fs.setattr('/data/dir/link', { mode: 0o640, nofollow: true })).toEqual({
+      mode: 0o640,
+    })
+    expect((await ws.fs.stat('/data/dir/f.txt')).mode ?? null).toBeNull()
+  })
+
+  it('follows a link by default', async () => {
+    const ws = mkWorkspace()
+    await ws.fs.mkdir('/data/dir')
+    await ws.fs.writeFile('/data/dir/f.txt', 'hello')
+    await ws.fs.symlink('/data/dir/link', 'f.txt')
+    await ws.fs.setattr('/data/dir/link', { uid: 9 })
+    expect((await ws.fs.stat('/data/dir/f.txt')).uid).toBe(9)
+  })
+})

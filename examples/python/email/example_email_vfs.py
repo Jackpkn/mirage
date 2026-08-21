@@ -15,7 +15,6 @@
 import asyncio
 import json
 import os
-import sys
 
 from dotenv import load_dotenv
 
@@ -36,11 +35,10 @@ resource = EmailResource(config=config)
 
 async def main():
     with Workspace({"/email/": resource}, mode=MountMode.READ) as ws:
-        vos = sys.modules["os"]
         print("=== VFS MODE ===\n")
 
         print("--- os.listdir() folders ---")
-        folders = vos.listdir("/email")
+        folders = os.listdir("/email")
         for f in folders:
             print(f"  {f}")
 
@@ -52,14 +50,14 @@ async def main():
             return
 
         print(f"\n--- os.listdir() {folder} dates ---")
-        dates = vos.listdir(f"/email/{folder}")
+        dates = os.listdir(f"/email/{folder}")
         for d in dates[:5]:
             print(f"  {d}")
 
         if dates:
             first_date = dates[0]
             print(f"\n--- os.listdir() {first_date} messages ---")
-            messages = vos.listdir(f"/email/{folder}/{first_date}")
+            messages = os.listdir(f"/email/{folder}/{first_date}")
             for msg in messages[:5]:
                 print(f"  {msg}")
 
@@ -75,9 +73,9 @@ async def main():
                     print(f"  from: {parsed.get('from', 'N/A')}")
 
                 print("\n--- os.path.exists() ---")
-                print(f"  {first}: {vos.path.exists(path)}")
+                print(f"  {first}: {os.path.exists(path)}")
                 nope = f"/email/{folder}/nope.txt"
-                print(f"  nope.txt: {vos.path.exists(nope)}")
+                print(f"  nope.txt: {os.path.exists(nope)}")
 
         records = ws.ops.records
         total = sum(r.bytes for r in records)
