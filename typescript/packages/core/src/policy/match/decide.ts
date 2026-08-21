@@ -13,9 +13,8 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import type { CommandContext, CommandRule, AdmissionRules } from '../types.ts'
-import { isGlob } from '../../utils/hidden.ts'
 import { lineAllowed } from './allow.ts'
-import { matchRule, ruleScope } from './rule.ts'
+import { ASK_SECOND, betterMatch, DENY_FIRST, matchRule, ruleScope } from './rule.ts'
 
 /**
  * What the role's rules say about one line. RUN is silence: no rule
@@ -48,62 +47,13 @@ export interface Decision {
   readonly source: string
 }
 
-/**
- * How specific a path entry is: the number of literal components before
- * its first wildcard.
- *
- * The one measure the path axis orders by. `/repo/sealed/*` is 2,
- * `/repo/*` and the plain subtree `/repo` are 1, and a slashless name
- * pattern like `*.key` is 0, since it anchors nothing. Every pattern the
- * document allows has an answer, so two rules about one path are always
- * comparable and nothing is ever guessed.
- */
-export function anchorDepth(entry: string): number {
-  let depth = 0
-  for (const part of entry.replace(/^\/+|\/+$/g, '').split('/')) {
-    if (part === '' || isGlob(part)) break
-    depth += 1
-  }
-  return depth
-}
-
-/**
- * A rule's place on the path axis: the depth of its deepest path entry,
- * or 0 when it names none.
- *
- * A rule naming no path is not on this axis at all, **wherever it is
- * written**, so one in a mount section scores 0 exactly as a top-level
- * one does and the two are separated by verb alone. Writing it under
- * `mounts./repo` scopes it to lines working inside that mount
- * (`matchRule` reads `rule.mount`); it does not make it more specific
- * than a rule about the whole session. That is what keeps "denied
- * generally, asked inside one mount" inexpressible for a pathless rule,
- * which in practice means an account CLI: such a CLI reaches a service
- * and touches no mount, so scoping it to one was never meaningful.
- */
-export function ruleDepth(rule: CommandRule): number {
-  const paths = rule.paths ?? []
-  return paths.length === 0 ? 0 : Math.max(...paths.map(anchorDepth))
-}
-
 // Which verb wins when two rules match at the same anchor depth. Deny
-// before ask, and the allow list is not a rule so it never ties.
-const VERB_ORDER: Readonly<Record<string, number>> = { [Outcome.DENY]: 0, [Outcome.ASK]: 1 }
-
-/**
- * Whether a match beats the best one so far: deeper anchor first, then
- * the stronger verb, then the earlier rule (which is why this is
- * strict).
- */
-function better(
-  current: readonly [number, number] | null,
-  depth: number,
-  outcome: Outcome,
-): boolean {
-  if (current === null) return true
-  const [bestDepth, bestVerb] = current
-  if (depth !== bestDepth) return depth > bestDepth
-  return (VERB_ORDER[outcome] ?? 0) < bestVerb
+// before ask, and the allow list is not a rule so it never ties. The
+// ordering itself lives in `match/rule` because the entry gate reads by
+// it too.
+const VERB_ORDER: Readonly<Record<string, number>> = {
+  [Outcome.DENY]: DENY_FIRST,
+  [Outcome.ASK]: ASK_SECOND,
 }
 
 /**
@@ -119,9 +69,20 @@ export function sourceOf(rule: CommandRule): string {
  *
  * Two rules, because a command name and a path are not the same kind of
  * thing. A rule naming no path is read by verb, deny before ask,
- * wherever it was written. A rule carrying paths is read by anchor
- * depth, the deeper entry winning, ties broken by verb. The allow list
- * is asked first, since a line no list covers never reaches a rule.
+ * wherever it was written: it is off the path axis entirely, so one in a
+ * mount section scores 0 exactly as a top-level one does. Writing it
+ * under `mounts./repo` scopes it to lines working inside that mount
+ * (`matchRule` reads `rule.mount`); it does not make it more specific
+ * than a rule about the whole session. That is what keeps "denied
+ * generally, asked inside one mount" inexpressible for a pathless rule,
+ * which in practice means an account CLI: such a CLI reaches a service
+ * and touches no mount, so scoping it to one was never meaningful.
+ *
+ * A rule carrying paths is read by anchor depth, the deeper entry
+ * winning, ties broken by verb. The depth is the matched entry's, not
+ * the rule's deepest, so an entry that says nothing about this operand
+ * cannot lend it specificity. The allow list is asked first, since a
+ * line no list covers never reaches a rule.
  *
  * `PermissionsPolicy` renders this into the outcome table and `explain`
  * reports it, so the two cannot disagree about what a line would do.
@@ -145,9 +106,9 @@ export function decide(ctx: CommandContext, rules: AdmissionRules | null): Decis
     for (const rule of written) {
       const hit = matchRule(rule, ruleScope(rule), ctx)
       if (hit === null) continue
-      const depth = ruleDepth(rule)
-      if (!better(best, depth, outcome)) continue
-      best = [depth, VERB_ORDER[outcome] ?? 0]
+      const verb = VERB_ORDER[outcome] ?? 0
+      if (!betterMatch(best, hit.depth, verb)) continue
+      best = [hit.depth, verb]
       chosen = {
         outcome,
         rule,

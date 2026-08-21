@@ -16,9 +16,9 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 from mirage.policy.match.allow import line_allowed
-from mirage.policy.match.rule import match_rule, rule_scope
+from mirage.policy.match.rule import (ASK_SECOND, DENY_FIRST, better_match,
+                                      match_rule, rule_scope)
 from mirage.policy.types import AdmissionRules, CommandContext, CommandRule
-from mirage.utils.hidden import is_glob
 
 
 class Outcome(StrEnum):
@@ -58,70 +58,11 @@ class Decision:
     source: str = ""
 
 
-def anchor_depth(entry: str) -> int:
-    """How specific a path entry is: the number of literal components
-    before its first wildcard.
-
-    The one measure the path axis orders by. ``/repo/sealed/*`` is 2,
-    ``/repo/*`` and the plain subtree ``/repo`` are 1, and a slashless
-    name pattern like ``*.key`` is 0, since it anchors nothing. Every
-    pattern the document allows has an answer, so two rules about one
-    path are always comparable and nothing is ever guessed.
-
-    Args:
-        entry (str): a path entry as written in the document.
-    """
-    depth = 0
-    for part in entry.strip("/").split("/"):
-        if not part or is_glob(part):
-            break
-        depth += 1
-    return depth
-
-
-def rule_depth(rule: CommandRule) -> int:
-    """A rule's place on the path axis: the depth of its deepest path
-    entry, or 0 when it names none.
-
-    A rule naming no path is not on this axis at all, **wherever it is
-    written**, so one in a mount section scores 0 exactly as a top-level
-    one does and the two are separated by verb alone. Writing it under
-    ``mounts./repo`` scopes it to lines working inside that mount
-    (``match_rule`` reads ``rule.mount``); it does not make it more
-    specific than a rule about the whole session. That is what keeps
-    "denied generally, asked inside one mount" inexpressible for a
-    pathless rule, which in practice means an account CLI: such a CLI
-    reaches a service and touches no mount, so scoping it to one was
-    never meaningful.
-
-    Args:
-        rule (CommandRule): an ask or deny rule.
-    """
-    return max((anchor_depth(entry) for entry in rule.paths), default=0)
-
-
 # Which verb wins when two rules match at the same anchor depth. Deny
-# before ask, and the allow list is not a rule so it never ties.
-_VERB_ORDER = {Outcome.DENY: 0, Outcome.ASK: 1}
-
-
-def _better(current: tuple[int, int] | None, depth: int,
-            outcome: Outcome) -> bool:
-    """Whether a match beats the best one so far: deeper anchor first,
-    then the stronger verb, then the earlier rule (which is why this is
-    strict).
-
-    Args:
-        current (tuple[int, int] | None): the best (depth, verb) so far.
-        depth (int): the candidate's anchor depth.
-        outcome (Outcome): the candidate's verb.
-    """
-    if current is None:
-        return True
-    best_depth, best_verb = current
-    if depth != best_depth:
-        return depth > best_depth
-    return _VERB_ORDER[outcome] < best_verb
+# before ask, and the allow list is not a rule so it never ties. The
+# ordering itself lives in ``match.rule`` because the entry gate reads
+# by it too.
+_VERB_ORDER = {Outcome.DENY: DENY_FIRST, Outcome.ASK: ASK_SECOND}
 
 
 def decide(ctx: CommandContext, rules: AdmissionRules | None) -> Decision:
@@ -129,10 +70,21 @@ def decide(ctx: CommandContext, rules: AdmissionRules | None) -> Decision:
 
     Two rules, because a command name and a path are not the same kind
     of thing. A rule naming no path is read by verb, deny before ask,
-    wherever it was written. A rule carrying paths is read by anchor
-    depth, the deeper entry winning, ties broken by verb. The allow
-    list is asked first, since a line no list covers never reaches a
-    rule.
+    wherever it was written: it is off the path axis entirely, so one
+    in a mount section scores 0 exactly as a top-level one does.
+    Writing it under ``mounts./repo`` scopes it to lines working inside
+    that mount (``match_rule`` reads ``rule.mount``); it does not make
+    it more specific than a rule about the whole session. That is what
+    keeps "denied generally, asked inside one mount" inexpressible for
+    a pathless rule, which in practice means an account CLI: such a CLI
+    reaches a service and touches no mount, so scoping it to one was
+    never meaningful.
+
+    A rule carrying paths is read by anchor depth, the deeper entry
+    winning, ties broken by verb. The depth is the matched entry's, not
+    the rule's deepest, so an entry that says nothing about this
+    operand cannot lend it specificity. The allow list is asked first,
+    since a line no list covers never reaches a rule.
 
     ``PermissionsPolicy`` renders this into the outcome table and
     ``explain`` reports it, so the two cannot disagree about what a
@@ -154,10 +106,9 @@ def decide(ctx: CommandContext, rules: AdmissionRules | None) -> Decision:
             hit = match_rule(rule, rule_scope(rule), ctx)
             if hit is None:
                 continue
-            depth = rule_depth(rule)
-            if not _better(best, depth, outcome):
+            if not better_match(best, hit.depth, _VERB_ORDER[outcome]):
                 continue
-            best = (depth, _VERB_ORDER[outcome])
+            best = (hit.depth, _VERB_ORDER[outcome])
             chosen = Decision(outcome=outcome,
                               rule=rule,
                               matched_path=hit.operand,

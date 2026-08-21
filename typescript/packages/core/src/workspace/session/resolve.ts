@@ -77,14 +77,26 @@ function rulesOf(
  * role does not have, which is the one thing a per-call document must
  * not do.
  */
+/**
+ * Refuse an allow list in an inline document.
+ *
+ * The refusal belongs to *where the document was written*, not to
+ * whether a role happened to resolve, so both paths into `withInline`
+ * run it: a workspace with no default role must not quietly accept a
+ * list a workspace with one refuses.
+ */
+export function refuseAllow(inline: CommandsBlock | null | undefined): void {
+  if (inline?.allow !== null && inline?.allow !== undefined) {
+    throw new PolicyError('inline permissions may add ask and deny rules, not an allow list')
+  }
+}
+
 function addCommands(
   base: CommandsBlock | null | undefined,
   inline: CommandsBlock | null | undefined,
 ): CommandsBlock | null {
   if (inline === null || inline === undefined) return base ?? null
-  if (inline.allow !== null && inline.allow !== undefined) {
-    throw new PolicyError('inline permissions may add ask and deny rules, not an allow list')
-  }
+  refuseAllow(inline)
   if (base === null || base === undefined) return inline
   return {
     allow: base.allow ?? null,
@@ -118,17 +130,19 @@ function addMount(base: ProfileMount | undefined, inline: ProfileMount | undefin
  * A role with the inline document of one `createSession` added.
  *
  * The one rule about combining two documents: an inline document may
- * add ask and deny rules and hides, never an allow list. Modes take the
- * weaker of the two, `cwd` and `env` are the inline document's when it
- * states them (they are session presets, not permissions). Either side
- * null returns the other unchanged.
+ * add ask and deny rules and hides, never an allow list, and that holds
+ * even when there is no role to add to. Modes take the weaker of the
+ * two, `cwd` and `env` are the inline document's when it states them
+ * (they are session presets, not permissions). Either side null returns
+ * the other unchanged.
  */
 export function withInline(
   base: SessionProfile | null,
   inline: SessionProfile | null,
 ): SessionProfile | null {
-  if (base === null) return inline
   if (inline === null) return base
+  refuseAllow(inline.commands)
+  if (base === null) return inline
   const hidePaths = unionHide(base.paths, inline.paths)
   const hideVars = unionHide(base.vars, inline.vars)
   const out: {

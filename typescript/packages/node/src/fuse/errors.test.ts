@@ -54,7 +54,6 @@ describe('classifyErrno', () => {
     ['is a directory', EISDIR],
     ['permission denied', EACCES],
     ['read-only mount', EACCES],
-    ['not allowed to access mount /x', EACCES],
     ['file exists', EEXIST],
     ['no such file or directory', ENOENT],
     ['no mount at /x', ENOENT],

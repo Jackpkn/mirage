@@ -166,6 +166,61 @@
       }
     },
     {
+      "id": "conflict_depth_prep",
+      "seq": 923241,
+      "targets": [
+        "ram-commands"
+      ],
+      "command": "mkdir -p /scratch/span/sealed /scratch/deep/a/b/c /scratch/carve/open /scratch/carve/other && echo s > /scratch/span/sealed/s && echo d > /scratch/deep/a/b/c/x && echo o > /scratch/carve/open/o && echo t > /scratch/carve/other/t",
+      "expect": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "conflict_an_unrelated_entry_does_not_lend_a_rule_its_depth",
+      "seq": 923242,
+      "targets": [
+        "ram-commands"
+      ],
+      "session": "spanner",
+      "command": "cat /scratch/span/sealed/s",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "cat: /scratch/span/sealed/s: span sealed\n"
+      }
+    },
+    {
+      "id": "conflict_the_unrelated_entry_still_speaks_where_it_anchors",
+      "seq": 923243,
+      "targets": [
+        "ram-commands"
+      ],
+      "session": "spanner",
+      "command": "cat /scratch/deep/a/b/c/x",
+      "expect": {
+        "exit": 126,
+        "stdout": "",
+        "stderr": "cat: requires approval: span review (approval 18558a102920)\n"
+      }
+    },
+    {
+      "id": "conflict_the_deeper_ask_admits_the_line_over_the_broad_deny",
+      "seq": 923244,
+      "targets": [
+        "ram-commands"
+      ],
+      "session": "carver",
+      "command": "rm -r /scratch/carve",
+      "expect": {
+        "exit": 126,
+        "stdout": "",
+        "stderr": "rm: requires approval: carve nod (approval 4b76fdb133ff)\n"
+      }
+    },
+    {
       "id": "conflict_a_hidden_path_outranks_the_ask_and_the_deny",
       "seq": 923078,
       "targets": [

@@ -22,7 +22,36 @@ from mirage.policy.match.pattern import pattern_matches
 from mirage.policy.types import (AdmissionRules, CommandContext, CommandRule,
                                  OpsContext)
 from mirage.types import HiddenPaths
-from mirage.utils.hidden import classify_paths, path_covers, path_hidden
+from mirage.utils.hidden import (anchor_depth, classify_paths, path_covers,
+                                 path_hidden)
+
+# Which verb wins when two rules speak at the same anchor depth: deny
+# before ask. Both gates order by it, which is what keeps the entry
+# gate from contradicting the admission gate.
+DENY_FIRST = 0
+ASK_SECOND = 1
+
+
+def better_match(current: tuple[int, int] | None, depth: int,
+                 verb: int) -> bool:
+    """Whether a match beats the best one so far: deeper anchor first,
+    then the stronger verb, then the earlier rule (which is why this is
+    strict).
+
+    Shared by ``decide`` and :func:`io_refusal` so a line and the
+    entries it reaches mid-walk are read by one law.
+
+    Args:
+        current (tuple[int, int] | None): the best (depth, verb) so far.
+        depth (int): the candidate's anchor depth.
+        verb (int): ``DENY_FIRST`` or ``ASK_SECOND``.
+    """
+    if current is None:
+        return True
+    best_depth, best_verb = current
+    if depth != best_depth:
+        return depth > best_depth
+    return verb < best_verb
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,9 +68,17 @@ class RuleMatch:
     Args:
         operand (str | None): the operand as typed that a path-scoped
             rule matched; None when the rule reaches the whole line.
+        depth (int): the anchor depth of the deepest entry that
+            actually covered the operand, which is what the path axis
+            orders by. Scoring the rule's deepest entry instead would
+            lend an unrelated entry's depth to this match: an ask on
+            ``/repo/*`` and ``/else/very/deep/*`` would outrank a deny
+            anchored at ``/repo/private/*`` and reopen it. 0 when the
+            rule names no paths, which is off the path axis entirely.
     """
 
     operand: str | None
+    depth: int = 0
 
 
 def _under(path: str, root: str) -> bool:
@@ -94,11 +131,12 @@ def match_rule(rule: CommandRule, scope: HiddenPaths | None,
         return RuleMatch(operand=None)
     for p in ctx.paths:
         if path_hidden(scope, p.virtual):
-            return RuleMatch(operand=p.raw_path or p.virtual)
-    return _subtree_match(scope, ctx)
+            return RuleMatch(operand=p.raw_path or p.virtual,
+                             depth=hidden_depth(rule, p.virtual))
+    return _subtree_match(rule, scope, ctx)
 
 
-def _subtree_match(scope: HiddenPaths,
+def _subtree_match(rule: CommandRule, scope: HiddenPaths,
                    ctx: CommandContext) -> RuleMatch | None:
     """The operand of a subtree command that holds the scope, if any.
 
@@ -110,6 +148,7 @@ def _subtree_match(scope: HiddenPaths,
     the scope; moving into ``/x`` does not).
 
     Args:
+        rule (CommandRule): the rule, read for the entry that matched.
         scope (HiddenPaths): the rule's classified paths.
         ctx (CommandContext): the classified command.
     """
@@ -120,10 +159,56 @@ def _subtree_match(scope: HiddenPaths,
            if ctx.command == "mv" and len(operands) > 1 else None)
     for p in operands:
         if path_covers(scope, p.virtual):
-            return RuleMatch(operand=p.raw_path or p.virtual)
+            return RuleMatch(operand=p.raw_path or p.virtual,
+                             depth=covers_depth(rule, p.virtual))
     if dst is not None and path_covers(scope, dst.virtual, ancestors=False):
-        return RuleMatch(operand=dst.raw_path or dst.virtual)
+        return RuleMatch(operand=dst.raw_path or dst.virtual,
+                         depth=covers_depth(rule, dst.virtual,
+                                            ancestors=False))
     return None
+
+
+@functools.lru_cache(maxsize=1024)
+def _entry_scope(entry: str) -> HiddenPaths | None:
+    """One document entry, classified alone so it can be scored on its
+    own; remembered, since a rule is re-read on every line.
+
+    Args:
+        entry (str): one entry of a rule's ``paths``.
+    """
+    return classify_paths((entry, ))
+
+
+def hidden_depth(rule: CommandRule, virtual: str) -> int:
+    """The anchor depth of the deepest entry of a rule that holds this
+    path, 0 when none does.
+
+    Args:
+        rule (CommandRule): the rule that matched.
+        virtual (str): absolute virtual path the rule matched on.
+    """
+    return max((anchor_depth(e)
+                for e in rule.paths if path_hidden(_entry_scope(e), virtual)),
+               default=0)
+
+
+def covers_depth(rule: CommandRule,
+                 virtual: str,
+                 ancestors: bool = True) -> int:
+    """The anchor depth of the deepest entry of a rule that sits at or
+    under this path, 0 when none does.
+
+    The subtree counterpart of :func:`hidden_depth`, for an operand
+    that would take the scope along rather than lie inside it.
+
+    Args:
+        rule (CommandRule): the rule that matched.
+        virtual (str): absolute virtual path of the subtree operand.
+        ancestors (bool): whether an ancestor of the scope counts.
+    """
+    return max((anchor_depth(e) for e in rule.paths
+                if path_covers(_entry_scope(e), virtual, ancestors)),
+               default=0)
 
 
 @functools.lru_cache(maxsize=1024)
@@ -169,13 +254,19 @@ def io_refusal(rules: AdmissionRules | None, tokens: Sequence[str],
     """The reason a command may not touch an entry it reached on its
     own, None when it may.
 
-    The same precedence the admission gate applies to a line: the deny
-    rules first, the first that reaches the entry refusing it; then the
-    ask rules, where the first that reaches it refuses unless the line
-    holds a grant under that rule (the nod the gate took for ``rm -r
-    /x`` covers the entries under ``/x``; a walk that wanders into an
-    asked scope from outside gets no nod mid-command, so it is refused
-    and the agent names the path to be asked).
+    The same law the admission gate applies to a line, and literally
+    the same comparison (:func:`better_match`): anchor depth first,
+    deny before ask at equal depth. Reading every deny before any ask
+    instead would let a broad deny on ``/repo/*`` overrule an approved
+    ask on ``/repo/sealed/*`` that the gate had just admitted the line
+    under, so the carve-out would survive admission and then refuse
+    every entry it was written for.
+
+    The winning rule then answers: a deny refuses, an ask refuses
+    unless the line holds a grant under it (the nod the gate took for
+    ``rm -r /x`` covers the entries under ``/x``; a walk that wanders
+    into an asked scope from outside gets no nod mid-command, so it is
+    refused and the agent names the path to be asked).
 
     Args:
         rules (AdmissionRules | None): the session's admission rules.
@@ -186,13 +277,23 @@ def io_refusal(rules: AdmissionRules | None, tokens: Sequence[str],
     """
     if rules is None:
         return None
-    for rule in rules.deny:
-        if match_io(rule, rule_scope(rule), tokens, virtual):
-            return rule.reason
-    for rule in rules.ask:
-        if match_io(rule, rule_scope(rule), tokens, virtual):
-            return None if rule in granted else rule.reason
-    return None
+    best: tuple[int, int] | None = None
+    chosen: tuple[CommandRule, int] | None = None
+    for verb, written in ((DENY_FIRST, rules.deny), (ASK_SECOND, rules.ask)):
+        for rule in written:
+            if not match_io(rule, rule_scope(rule), tokens, virtual):
+                continue
+            depth = hidden_depth(rule, virtual)
+            if not better_match(best, depth, verb):
+                continue
+            best = (depth, verb)
+            chosen = (rule, verb)
+    if chosen is None:
+        return None
+    rule, verb = chosen
+    if verb == ASK_SECOND and rule in granted:
+        return None
+    return rule.reason
 
 
 def match_op(rule: CommandRule, scope: HiddenPaths | None,

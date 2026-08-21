@@ -2366,6 +2366,55 @@
               "/vault/d/inner"
             ]
           }
+        },
+        "spanner": {
+          "commands": {
+            "ask": [
+              {
+                "reason": "span review",
+                "commands": {
+                  "cat": [
+                    "/scratch/span/*",
+                    "/scratch/deep/a/b/c/*"
+                  ]
+                }
+              }
+            ],
+            "deny": [
+              {
+                "reason": "span sealed",
+                "commands": {
+                  "cat": [
+                    "/scratch/span/sealed/*"
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        "carver": {
+          "commands": {
+            "ask": [
+              {
+                "reason": "carve nod",
+                "commands": {
+                  "rm": [
+                    "/scratch/carve/open/*"
+                  ]
+                }
+              }
+            ],
+            "deny": [
+              {
+                "reason": "carve locked",
+                "commands": {
+                  "rm": [
+                    "/scratch/carve/*"
+                  ]
+                }
+              }
+            ]
+          }
         }
       },
       "profile": "default",

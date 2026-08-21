@@ -60,7 +60,9 @@ def test_match_rule_by_command_pattern_operand_and_mount():
     hit = match_rule(
         scoped, scope,
         _ctx("rm", paths=(_path("/repo/x", raw="x"), ), cwd="/repo"))
-    assert hit == RuleMatch(operand="x")
+    # The depth is the matched entry's, which is what the path axis
+    # orders by.
+    assert hit == RuleMatch(operand="x", depth=1)
     assert match_rule(scoped, scope,
                       _ctx("rm", paths=(_path("/scratch/x"), ))) is None
     # A mount-tier rule applies to a line whose cwd or paths lie under
@@ -142,19 +144,20 @@ def test_a_subtree_command_on_the_directory_holding_the_scope_matches():
     for command in ("rm", "rmdir"):
         for operand in ("/x/locked", "/x", "/"):
             assert match_rule(rule, scope, _subtree_ctx(
-                command, operand)) == RuleMatch(operand=operand)
+                command, operand)) == RuleMatch(operand=operand, depth=2)
         assert match_rule(rule, scope, _subtree_ctx(command,
                                                     "/x/other")) is None
     assert match_rule(rule, scope,
                       _subtree_ctx("mv", "/x/locked",
-                                   "/y")) == RuleMatch(operand="/x/locked")
+                                   "/y")) == RuleMatch(operand="/x/locked",
+                                                       depth=2)
     assert match_rule(rule, scope,
                       _subtree_ctx("mv", "/x",
-                                   "/y")) == RuleMatch(operand="/x")
+                                   "/y")) == RuleMatch(operand="/x", depth=2)
     # mv's destination matches only as the holding directory itself:
     # moving into it lands in the scope, moving into an ancestor does not.
     assert match_rule(rule, scope, _subtree_ctx(
-        "mv", "/z", "/x/locked")) == RuleMatch(operand="/x/locked")
+        "mv", "/z", "/x/locked")) == RuleMatch(operand="/x/locked", depth=2)
     assert match_rule(rule, scope, _subtree_ctx("mv", "/z", "/x")) is None
     # A reader given the same operand is not a whole-line refusal: its
     # I/O under the scope is the command tier's to refuse, file by file.
@@ -165,7 +168,8 @@ def test_a_subtree_command_on_the_directory_holding_the_scope_matches():
                         commands=("rm", ),
                         paths=("/x/locked/*", ))
     assert match_rule(named, classify_paths(named.paths),
-                      _subtree_ctx("rm", "/x")) == RuleMatch(operand="/x")
+                      _subtree_ctx("rm", "/x")) == RuleMatch(operand="/x",
+                                                             depth=2)
     assert match_rule(named, classify_paths(named.paths),
                       _subtree_ctx("mv", "/x", "/y")) is None
 
@@ -278,3 +282,24 @@ def test_io_refusal_applies_the_gate_precedence_to_an_entry():
         deny=(CommandRule(reason="no", commands=("rm", )), ))
     assert io_refusal(whole, tokens, "/data/x", ()) is None
     assert io_refusal(None, tokens, "/data/x", ()) is None
+
+
+def test_io_refusal_orders_by_anchor_depth_like_the_admission_gate():
+    # A broad deny with an approved ask carved out of it. The gate
+    # admits `rm -r /repo` under the deeper ask, so the entry gate has
+    # to read the same way: taking every deny before any ask would
+    # refuse every entry the carve-out was written for, leaving a line
+    # that was admitted unable to touch anything.
+    deny = CommandRule(reason="ro repo",
+                       commands=("rm", ),
+                       paths=("/repo/*", ))
+    ask = CommandRule(reason="sealed",
+                      commands=("rm", ),
+                      paths=("/repo/sealed/*", ))
+    rules = AdmissionRules(ask=(ask, ), deny=(deny, ))
+    tokens = ("rm", "-r", "/repo")
+    assert io_refusal(rules, tokens, "/repo/sealed/secret", (ask, )) is None
+    # Without the grant the deeper ask still wins, and asks.
+    assert io_refusal(rules, tokens, "/repo/sealed/secret", ()) == "sealed"
+    # Outside the carve-out the broad deny is what is left.
+    assert io_refusal(rules, tokens, "/repo/other/x", (ask, )) == "ro repo"

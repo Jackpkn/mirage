@@ -135,6 +135,12 @@ describe('withInline', () => {
     expect(() => withInline(base, parseSessionProfile({ commands: { allow: ['wc'] } }))).toThrow(
       'not an allow list',
     )
+    // And with no role to add to: the refusal belongs to where the
+    // document was written, so a workspace that happens to declare no
+    // default role must not quietly accept what one with a role refuses.
+    expect(() => withInline(null, parseSessionProfile({ commands: { allow: ['wc'] } }))).toThrow(
+      'not an allow list',
+    )
   })
 
   it('leaves a stated block alone when the other is bare', () => {

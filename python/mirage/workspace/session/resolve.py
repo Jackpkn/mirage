@@ -73,6 +73,25 @@ def _union_hide(a: PathsBlock | VarsBlock | None,
     return tuple(out)
 
 
+def refuse_allow(inline: CommandsBlock | None) -> None:
+    """Refuse an allow list in an inline document.
+
+    The refusal belongs to *where the document was written*, not to
+    whether a role happened to resolve, so both paths into
+    ``with_inline`` run it: a workspace with no default role must not
+    quietly accept a list a workspace with one refuses.
+
+    Args:
+        inline (CommandsBlock | None): what ``create_session`` added.
+
+    Raises:
+        PolicyError: the inline document states an allow list.
+    """
+    if inline is not None and inline.allow is not None:
+        raise PolicyError("inline permissions may add ask and deny rules, "
+                          "not an allow list")
+
+
 def _add_commands(base: CommandsBlock | None,
                   inline: CommandsBlock | None) -> CommandsBlock | None:
     """The role's commands block with the inline document's rules added.
@@ -91,9 +110,7 @@ def _add_commands(base: CommandsBlock | None,
     """
     if inline is None:
         return base
-    if inline.allow is not None:
-        raise PolicyError("inline permissions may add ask and deny rules, "
-                          "not an allow list")
+    refuse_allow(inline)
     if base is None:
         return inline
     return CommandsBlock(allow=base.allow,
@@ -148,19 +165,21 @@ def with_inline(base: SessionProfile | None,
     """A role with the inline document of one ``create_session`` added.
 
     The one rule about combining two documents: an inline document may
-    add ask and deny rules and hides, never an allow list. Modes take
-    the weaker of the two, ``cwd`` and ``env`` are the inline
-    document's when it states them (they are session presets, not
-    permissions). Either side None returns the other unchanged.
+    add ask and deny rules and hides, never an allow list, and that
+    holds even when there is no role to add to. Modes take the weaker
+    of the two, ``cwd`` and ``env`` are the inline document's when it
+    states them (they are session presets, not permissions). Either
+    side None returns the other unchanged.
 
     Args:
         base (SessionProfile | None): the resolved role.
         inline (SessionProfile | None): what ``create_session`` added.
     """
-    if base is None:
-        return inline
     if inline is None:
         return base
+    refuse_allow(inline.commands)
+    if base is None:
+        return inline
     hide_paths = _union_hide(base.paths, inline.paths)
     hide_vars = _union_hide(base.vars, inline.vars)
     env = None

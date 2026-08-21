@@ -178,6 +178,30 @@ async def test_the_deeper_anchor_wins_and_deny_breaks_a_tie():
 
 
 @pytest.mark.asyncio
+async def test_an_unrelated_entry_does_not_lend_a_rule_its_depth():
+    # The rule is scored by the entry that covered this operand, not by
+    # its deepest entry. Scoring the deepest would let `/else/very/deep/*`
+    # -- which says nothing about /repo -- carry the ask past a deny
+    # anchored right at /repo/private, and an approval would then reopen
+    # exactly what the deny sealed.
+    ask = CommandRule(reason="review",
+                      commands=("cat", ),
+                      paths=("/repo/*", "/else/very/deep/*"))
+    deny = CommandRule(reason="private",
+                       commands=("cat", ),
+                       paths=("/repo/private/*", ))
+    policy = PermissionsPolicy(
+        _Sessions({"s": AdmissionRules(ask=(ask, ), deny=(deny, ))}))
+    assert await policy.pre_command(
+        _ctx("cat", "/repo/private/x", paths=(_path("/repo/private/x"), ))
+    ) == Deny("/repo/private/x: private", DenyScope.OPERAND)
+    # The unrelated entry still speaks where it does anchor.
+    answer = await policy.pre_command(
+        _ctx("cat", "/else/very/deep/x", paths=(_path("/else/very/deep/x"), )))
+    assert isinstance(answer, Ask) and answer.reason == "review"
+
+
+@pytest.mark.asyncio
 async def test_a_pathless_rule_is_read_by_verb_wherever_it_is_written():
     # The command axis, and the one thing it deliberately cannot say.
     # A rule naming no path scores nothing on the path axis even when a

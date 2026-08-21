@@ -169,6 +169,28 @@ describe('PermissionsPolicy', () => {
     ).toMatchObject({ kind: 'ask', reason: 'nod here' })
   })
 
+  it('an unrelated entry does not lend a rule its depth', () => {
+    // The rule is scored by the entry that covered this operand, not by
+    // its deepest entry. Scoring the deepest would let
+    // `/else/very/deep/*` -- which says nothing about /repo -- carry the
+    // ask past a deny anchored right at /repo/private, and an approval
+    // would then reopen exactly what the deny sealed.
+    const ask: CommandRule = {
+      reason: 'review',
+      commands: ['cat'],
+      paths: ['/repo/*', '/else/very/deep/*'],
+    }
+    const deny: CommandRule = { reason: 'private', commands: ['cat'], paths: ['/repo/private/*'] }
+    const p = new PermissionsPolicy(new Sessions({ s: { allow: null, ask: [ask], deny: [deny] } }))
+    expect(
+      p.preCommand(ctx('cat', ['/repo/private/x'], { paths: [path('/repo/private/x')] })),
+    ).toEqual({ kind: 'deny', reason: '/repo/private/x: private', scope: 'operand' })
+    // The unrelated entry still speaks where it does anchor.
+    expect(
+      p.preCommand(ctx('cat', ['/else/very/deep/x'], { paths: [path('/else/very/deep/x')] })),
+    ).toMatchObject({ kind: 'ask', reason: 'review' })
+  })
+
   it('a pathless rule is read by verb wherever it is written', () => {
     // The command axis, and the one thing it deliberately cannot say.
     // A rule naming no path scores nothing on the path axis even when a

@@ -118,6 +118,12 @@ def test_with_inline_adds_ask_and_deny_but_refuses_an_allow_list():
     with pytest.raises(PolicyError, match="not an allow list"):
         with_inline(base,
                     SessionProfile(commands=CommandsBlock(allow=("wc", ))))
+    # And with no role to add to: the refusal belongs to where the
+    # document was written, so a workspace that happens to declare no
+    # default role must not quietly accept what one with a role refuses.
+    with pytest.raises(PolicyError, match="not an allow list"):
+        with_inline(None,
+                    SessionProfile(commands=CommandsBlock(allow=("wc", ))))
 
 
 def test_with_inline_leaves_a_stated_block_alone_when_the_other_is_bare():

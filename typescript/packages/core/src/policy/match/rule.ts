@@ -13,11 +13,36 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import type { HiddenPaths } from '../../types.ts'
-import { classifyPaths, pathCovers, pathHidden } from '../../utils/hidden.ts'
+import { anchorDepth, classifyPaths, pathCovers, pathHidden } from '../../utils/hidden.ts'
 import { METADATA_OPS, SUBTREE_COMMANDS, SUBTREE_OPS } from '../constants.ts'
 import type { CommandContext, CommandRule, AdmissionRules, OpsContext } from '../types.ts'
 import { lineTokens } from './allow.ts'
 import { patternMatches } from './pattern.ts'
+
+// Which verb wins when two rules speak at the same anchor depth: deny
+// before ask. Both gates order by it, which is what keeps the entry
+// gate from contradicting the admission gate.
+export const DENY_FIRST = 0
+export const ASK_SECOND = 1
+
+/**
+ * Whether a match beats the best one so far: deeper anchor first, then
+ * the stronger verb, then the earlier rule (which is why this is
+ * strict).
+ *
+ * Shared by `decide` and `ioRefusal` so a line and the entries it
+ * reaches mid-walk are read by one law.
+ */
+export function betterMatch(
+  current: readonly [number, number] | null,
+  depth: number,
+  verb: number,
+): boolean {
+  if (current === null) return true
+  const [bestDepth, bestVerb] = current
+  if (depth !== bestDepth) return depth > bestDepth
+  return verb < bestVerb
+}
 
 /**
  * A rule that applies to a line, and how far it reaches. `matchRule`
@@ -29,6 +54,15 @@ import { patternMatches } from './pattern.ts'
  */
 export interface RuleMatch {
   operand: string | null
+  /**
+   * The anchor depth of the deepest entry that actually covered the
+   * operand, which is what the path axis orders by. Scoring the rule's
+   * deepest entry instead would lend an unrelated entry's depth to this
+   * match: an ask on `/repo/*` and `/else/very/deep/*` would outrank a
+   * deny anchored at `/repo/private/*` and reopen it. 0 when the rule
+   * names no paths, which is off the path axis entirely.
+   */
+  depth: number
 }
 
 function under(path: string, root: string): boolean {
@@ -67,11 +101,53 @@ export function matchRule(
     if (!commands.some((p) => patternMatches(p, tokens))) return null
   }
   if (rule.mount !== undefined && rule.mount !== '' && !touches(rule.mount, ctx)) return null
-  if (scope === null) return { operand: null }
+  if (scope === null) return { operand: null, depth: 0 }
   for (const p of ctx.paths) {
-    if (pathHidden(scope, p.virtual)) return { operand: p.rawPath || p.virtual }
+    if (pathHidden(scope, p.virtual)) {
+      return { operand: p.rawPath || p.virtual, depth: hiddenDepth(rule, p.virtual) }
+    }
   }
-  return subtreeMatch(scope, ctx)
+  return subtreeMatch(rule, scope, ctx)
+}
+
+const entryScopes = new Map<string, HiddenPaths | null>()
+
+/**
+ * One document entry, classified alone so it can be scored on its own;
+ * remembered, since a rule is re-read on every line.
+ */
+function entryScope(entry: string): HiddenPaths | null {
+  const known = entryScopes.get(entry)
+  if (known !== undefined) return known
+  const scope = classifyPaths([entry])
+  entryScopes.set(entry, scope)
+  return scope
+}
+
+/**
+ * The anchor depth of the deepest entry of a rule that holds this path,
+ * 0 when none does.
+ */
+export function hiddenDepth(rule: CommandRule, virtual: string): number {
+  let best = 0
+  for (const entry of rule.paths ?? []) {
+    if (pathHidden(entryScope(entry), virtual)) best = Math.max(best, anchorDepth(entry))
+  }
+  return best
+}
+
+/**
+ * The anchor depth of the deepest entry of a rule that sits at or under
+ * this path, 0 when none does. The subtree counterpart of
+ * `hiddenDepth`, for an operand that would take the scope along rather
+ * than lie inside it.
+ */
+export function coversDepth(rule: CommandRule, virtual: string, ancestors = true): number {
+  let best = 0
+  for (const entry of rule.paths ?? []) {
+    if (pathCovers(entryScope(entry), virtual, ancestors)) best = Math.max(best, anchorDepth(entry))
+  }
+  return best
 }
 
 /**
@@ -83,15 +159,21 @@ export function matchRule(
  * (moving into `/x/locked` lands in the scope; moving into `/x` does
  * not).
  */
-function subtreeMatch(scope: HiddenPaths, ctx: CommandContext): RuleMatch | null {
+function subtreeMatch(
+  rule: CommandRule,
+  scope: HiddenPaths,
+  ctx: CommandContext,
+): RuleMatch | null {
   if (!SUBTREE_COMMANDS.has(ctx.command)) return null
   const operands = [...(ctx.operands ?? [])]
   const dst = ctx.command === 'mv' && operands.length > 1 ? operands.pop() : undefined
   for (const p of operands) {
-    if (pathCovers(scope, p.virtual)) return { operand: p.rawPath || p.virtual }
+    if (pathCovers(scope, p.virtual)) {
+      return { operand: p.rawPath || p.virtual, depth: coversDepth(rule, p.virtual) }
+    }
   }
   if (dst !== undefined && pathCovers(scope, dst.virtual, false)) {
-    return { operand: dst.rawPath || dst.virtual }
+    return { operand: dst.rawPath || dst.virtual, depth: coversDepth(rule, dst.virtual, false) }
   }
   return null
 }
@@ -156,10 +238,16 @@ export function matchIo(
  * The reason a command may not touch an entry it reached on its own,
  * null when it may.
  *
- * The same precedence the admission gate applies to a line: every deny
- * rule first, the first that reaches the entry refusing it; then the
- * ask rules, where the first that reaches it refuses unless the line
- * holds a grant under that rule (the nod the gate took for `rm -r /x`
+ * The same law the admission gate applies to a line, and literally the
+ * same comparison (`betterMatch`): anchor depth first, deny before ask
+ * at equal depth. Reading every deny before any ask instead would let a
+ * broad deny on `/repo/*` overrule an approved ask on `/repo/sealed/*`
+ * that the gate had just admitted the line under, so the carve-out
+ * would survive admission and then refuse every entry it was written
+ * for.
+ *
+ * The winning rule then answers: a deny refuses, an ask refuses unless
+ * the line holds a grant under it (the nod the gate took for `rm -r /x`
  * covers the entries under `/x`; a walk that wanders into an asked
  * scope from outside gets no nod mid-command, so it is refused and the
  * agent names the path to be asked).
@@ -171,13 +259,21 @@ export function ioRefusal(
   granted: readonly CommandRule[],
 ): string | null {
   if (rules === null) return null
-  for (const rule of rules.deny) {
-    if (matchIo(rule, ruleScope(rule), tokens, virtual)) return rule.reason
-  }
-  for (const rule of rules.ask) {
-    if (matchIo(rule, ruleScope(rule), tokens, virtual)) {
-      return granted.includes(rule) ? null : rule.reason
+  let best: [number, number] | null = null
+  let chosen: { rule: CommandRule; verb: number } | null = null
+  for (const [verb, written] of [
+    [DENY_FIRST, rules.deny],
+    [ASK_SECOND, rules.ask],
+  ] as const) {
+    for (const rule of written) {
+      if (!matchIo(rule, ruleScope(rule), tokens, virtual)) continue
+      const depth = hiddenDepth(rule, virtual)
+      if (!betterMatch(best, depth, verb)) continue
+      best = [depth, verb]
+      chosen = { rule, verb }
     }
   }
-  return null
+  if (chosen === null) return null
+  if (chosen.verb === ASK_SECOND && granted.includes(chosen.rule)) return null
+  return chosen.rule.reason
 }

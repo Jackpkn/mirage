@@ -166,6 +166,26 @@ async def test_create_session_rejects_bad_role():
 
 
 @pytest.mark.asyncio
+async def test_create_session_rejects_an_unknown_profile():
+    # PolicyError is not a ValueError, so naming an unknown role used to
+    # escape the handler as a 500: the caller's typo read as our bug.
+    app = build_app(idle_grace_seconds=10.0)
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport,
+                           base_url="http://test") as client:
+        wid = await _create_workspace(client)
+        r = await client.post(
+            f"/v1/workspaces/{wid}/sessions",
+            json={
+                "session_id": "agent_d",
+                "profile": "nope",
+            },
+        )
+        assert r.status_code == 422, r.text
+        assert "nope" in r.text
+
+
+@pytest.mark.asyncio
 async def test_session_isolated_per_workspace():
     app = build_app(idle_grace_seconds=10.0)
     transport = ASGITransport(app=app)

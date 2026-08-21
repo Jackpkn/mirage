@@ -15,6 +15,8 @@
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
+from mirage.policy.errors import PolicyError
+
 router = APIRouter(prefix="/v1/workspaces/{workspace_id}/sessions")
 
 
@@ -58,7 +60,11 @@ async def create_session(workspace_id: str, req: CreateSessionRequest,
         sess = entry.runner.ws.create_session(sid,
                                               mounts=req.mounts or None,
                                               profile=req.profile)
-    except ValueError as exc:
+    except (ValueError, PolicyError) as exc:
+        # An unknown profile name and a refused inline document are
+        # both the caller's mistake, and PolicyError is not a
+        # ValueError, so naming it here is what keeps them 422 rather
+        # than 500.
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     await entry.runner.call(entry.runner.ws.flush_sessions())
     return SessionResponse(session_id=sess.session_id, cwd=sess.cwd)
