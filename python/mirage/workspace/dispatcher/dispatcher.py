@@ -30,10 +30,11 @@ from mirage.ops.namespace_view import (merge_readdir, namespace_listing,
                                        namespace_stat)
 from mirage.policy import post_ops_gate, pre_ops_gate
 from mirage.policy.errors import PolicyDenied, PolicyError
-from mirage.types import ConsistencyPolicy, FileStat, PathSpec, ResourceName
+from mirage.types import (ConsistencyPolicy, FileStat, FileType, PathSpec,
+                          ResourceName)
 from mirage.utils.errors import MISS_ERRORS, no_mount
 from mirage.utils.key_prefix import mount_key
-from mirage.utils.path import owner_prefix
+from mirage.utils.path import norm_dir, owner_prefix
 from mirage.utils.ranges import slice_window
 from mirage.workspace.mount import MountEntry
 from mirage.workspace.mount.namespace import Namespace
@@ -493,17 +494,23 @@ class Dispatcher:
                                  path.virtual)
 
     async def _path_present(self, path: PathSpec) -> bool:
-        """Whether anything at all is at `path`, on every channel.
+        """Whether anything at all is at `path`.
 
-        Absence takes both channels a backend can answer on: on a prefix
-        store a directory is not an object but the set of keys under it,
-        so ``stat`` misses what ``readdir`` would list, and a listing
-        has to be non-empty to count because those stores answer a
-        missing prefix with ``[]``. The namespace is asked first, since a
-        link, and a directory that exists only because a mount or a link
-        sits below it, are structure no backend can see. Mirrors
-        ``resolve_path_stat``, which cannot be reused here: it dispatches,
-        and the door is what dispatch is inside of.
+        Four channels, asked in the order of what they prove. The
+        namespace goes first: a link, and a directory that exists only
+        because a mount or a link sits below it, are structure no
+        backend can see, and a mount root is the deployment's own
+        configuration. Then the backend's row, which settles a file. A
+        directory row settles nothing, because an API tree synthesizes
+        its directories: a postgres schema lists ``tables/`` and
+        ``views/`` before anything has asked whether that schema is
+        there, and a grouping mount stats every path under a live
+        collection as a directory. So a directory is proven the way the
+        hierarchy kit itself proves one, by appearing in its parent's
+        listing, which is also the only way a prefix store can answer
+        for a directory that is nothing but a set of keys. Cannot reuse
+        ``resolve_path_stat``: that dispatches, and the door is what
+        dispatch is inside of.
 
         Args:
             path (PathSpec): the path to probe.
@@ -516,10 +523,13 @@ class Dispatcher:
         mount = self._namespace.try_mount_for(path.virtual)
         if mount is None:
             return False
+        if norm_dir(mount.prefix) == norm_dir(path.virtual):
+            return True
         try:
-            if await self._probe_op("stat", mount, path) is not None:
+            row = await self._probe_op("stat", mount, path)
+            if row is not None and row.type is not FileType.DIRECTORY:
                 return True
-            return bool(await self._probe_op("readdir", mount, path))
+            return await self._listed_by_parent(path)
         except (PolicyError, PolicyDenied):
             # A channel that refuses to answer is not evidence of
             # absence. Reporting "present" keeps the answer at the EINVAL
@@ -527,6 +537,27 @@ class Dispatcher:
             # policy is withholding; reporting absence would assert a
             # fact this door was not allowed to check.
             return True
+
+    async def _listed_by_parent(self, path: PathSpec) -> bool:
+        """Whether the path's own name is in its parent's listing.
+
+        Compared on the final segment, because backends disagree on
+        entry shape: bare names, a trailing slash to mark a directory,
+        or full paths. The same normalization ``merge_readdir`` dedupes
+        on.
+
+        Args:
+            path (PathSpec): the path to look for.
+        """
+        parent, _, name = path.virtual.rstrip("/").rpartition("/")
+        mount = self._namespace.try_mount_for(parent or "/")
+        if not name or mount is None:
+            return False
+        listing = await self._probe_op("readdir", mount,
+                                       PathSpec.from_str_path(parent or "/"))
+        return any(
+            str(entry).rstrip("/").rsplit("/", 1)[-1] == name
+            for entry in listing or ())
 
     async def _probe_op(self, op: str, mount: MountEntry,
                         path: PathSpec) -> Any:

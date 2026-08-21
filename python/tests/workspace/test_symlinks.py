@@ -19,7 +19,7 @@ import pytest
 from mirage.policy import Deny
 from mirage.policy.base import Policy
 from mirage.resource.ram import RAMResource
-from mirage.types import MountMode
+from mirage.types import FileStat, FileType, MountMode
 from mirage.workspace import Workspace
 
 
@@ -1224,28 +1224,34 @@ async def test_readlink_of_something_absent_is_enoent(path: str):
 
 @pytest.mark.asyncio
 async def test_readlink_reads_the_listing_channel_for_a_marker_less_dir():
-    # A prefix store keeps no directory object, so stat misses what
-    # readdir lists: reading only the first channel would report an
-    # implicit directory as absent.
+    # A prefix store keeps no directory object, so stat misses what the
+    # parent's listing reports: reading only the first channel would
+    # report an implicit directory as absent.
     ws = _ws()
     await ws.execute("mkdir /data/d")
     await ws.execute("echo x > /data/d/under.txt")
     mount = ws._registry.try_mount_for("/data/d")
     original = mount.execute_op
 
-    async def only_readdir(op_name, path, *args, **kwargs):
+    async def prefix_store(op_name, path, *args, **kwargs):
         if op_name == "stat":
             raise FileNotFoundError(path)
-        return await original(op_name, path, *args, **kwargs)
+        entries = await original(op_name, path, *args, **kwargs)
+        if op_name != "readdir":
+            return entries
+        # A name with no keys under it is in no listing either, which is
+        # how such a store says a directory is not there. Two different
+        # answers with stat silenced is what proves the listing is the
+        # channel being read.
+        return [
+            e for e in entries
+            if str(e).rstrip("/").rsplit("/", 1)[-1] != "hollow"
+        ]
 
-    mount.execute_op = only_readdir
+    mount.execute_op = prefix_store
     with pytest.raises(OSError) as caught:
         await ws.ops.readlink("/data/d")
     assert caught.value.errno == errno.EINVAL
-    # And the listing has to be non-empty to count: those stores answer
-    # a missing prefix with [] rather than raising, so an empty one is
-    # the absence case. Two different answers with stat silenced is what
-    # proves the listing is the channel being read.
     await ws.execute("mkdir /data/hollow")
     with pytest.raises(FileNotFoundError):
         await ws.ops.readlink("/data/hollow")
@@ -1292,6 +1298,37 @@ async def test_ln_refuses_a_name_a_file_already_holds():
     assert r.stderr.decode() == ("ln: failed to create symbolic link "
                                  "'/data/a.txt': File exists\n")
     assert (await ws.execute("cat /data/a.txt")).stdout == b"hi\n"
+
+
+@pytest.mark.asyncio
+async def test_ln_into_a_synthesized_tree_is_not_an_occupied_name():
+    """A directory an API tree invents is not evidence the name is taken.
+
+    Those trees answer for a path nobody has created: a postgres schema
+    directory lists ``tables/`` and ``views/`` before anything asks
+    whether the schema is there, and a grouping mount stats every path
+    under a live collection as a directory. Refusing on either reading
+    denied the ordinary case of adding a link inside a mounted tree.
+    """
+    ws = _ws()
+    mount = ws._registry.try_mount_for("/data")
+    original = mount.execute_op
+
+    async def synthesized(op_name, path, *args, **kwargs):
+        if op_name == "stat":
+            return FileStat(name=path.rsplit("/", 1)[-1],
+                            type=FileType.DIRECTORY)
+        if op_name == "readdir":
+            return ["tables", "views"]
+        return await original(op_name, path, *args, **kwargs)
+
+    mount.execute_op = synthesized
+    r = await ws.execute("ln -s /data/x /data/meta_link")
+    assert r.exit_code == 0
+    assert not r.stderr
+    mount.execute_op = original
+    assert (await
+            ws.execute("readlink /data/meta_link")).stdout == b"/data/x\n"
 
 
 @pytest.mark.asyncio

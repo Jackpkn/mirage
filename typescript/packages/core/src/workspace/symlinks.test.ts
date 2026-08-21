@@ -21,7 +21,8 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { OpsRegistry } from '../ops/registry.ts'
 import { RAMResource } from '../resource/ram/ram.ts'
 import { createShellParser, type ShellParser } from '../shell/parse.ts'
-import { MountMode } from '../types.ts'
+import { rstripSlash } from '../utils/slash.ts'
+import { FileStat, FileType, MountMode } from '../types.ts'
 import type { Action, OpsContext } from '../policy/index.ts'
 import { applyStateDict, toStateDict } from './snapshot/state.ts'
 import { Workspace } from './workspace/workspace.ts'
@@ -93,6 +94,36 @@ describe('symlinks (namespace-backed)', () => {
     expect(r.exitCode).toBe(1)
     expect(dec(r.stderr)).toBe("ln: failed to create symbolic link '/data/a.txt': File exists\n")
     expect(dec((await ws.execute('cat /data/a.txt')).stdout)).toBe('hi\n')
+    await ws.close()
+  })
+
+  it('ln into a synthesized tree is not an occupied name', async () => {
+    // A directory an API tree invents is not evidence the name is taken.
+    // Those trees answer for a path nobody created: a postgres schema
+    // directory lists tables/ and views/ before anything asks whether
+    // the schema is there, and a grouping mount stats every path under a
+    // live collection as a directory. Refusing on either reading denied
+    // the ordinary case of adding a link inside a mounted tree.
+    const ram = new RAMResource()
+    const ops = new OpsRegistry()
+    ops.registerResource(ram)
+    const real = ops.call.bind(ops)
+    ops.call = async (name, kind, accessor, path, args, kwargs) => {
+      if (name === 'stat') {
+        return new FileStat({
+          name: rstripSlash(path.virtual).split('/').pop() ?? '/',
+          type: FileType.DIRECTORY,
+        })
+      }
+      if (name === 'readdir') return ['tables', 'views']
+      return real(name, kind, accessor, path, args, kwargs)
+    }
+    const ws = new Workspace({ '/data': ram }, { mode: MountMode.WRITE, ops, shellParser: parser })
+    const r = await ws.execute('ln -s /data/x /data/meta_link')
+    expect(r.exitCode).toBe(0)
+    expect(dec(r.stderr)).toBe('')
+    ops.call = real
+    expect(dec((await ws.execute('readlink /data/meta_link')).stdout)).toBe('/data/x\n')
     await ws.close()
   })
 

@@ -710,19 +710,23 @@ describe('Ops.readlink', () => {
     expect(await codeOf(ws, '/data/d/deep/missing')).toBe('ENOENT')
   })
 
-  // A store that keeps no directory object answers stat with a miss and
-  // readdir with keys, so absence takes both channels: reading only the
-  // first would report an implicit directory as ENOENT.
+  // A store that keeps no directory object answers stat with a miss, so
+  // absence takes the parent's listing too: reading only the first
+  // channel would report an implicit directory as ENOENT.
   it('reads the listing channel when a backend has no directory object', async () => {
     const resource = new RAMResource()
     const ops = new OpsRegistry()
+    const realReaddir = resource.ops().find((op) => op.name === 'readdir')?.fn
+    if (realReaddir === undefined) throw new Error('RAMResource has no readdir op')
     for (const op of resource.ops()) ops.register(op)
     const ws = new Workspace({ '/data': resource }, { mode: MountMode.WRITE, ops })
     await ws.fs.mkdir('/data/d')
     await ws.fs.writeFile('/data/d/under.txt', 'x')
-    // Registered after the writes, so only the probe sees the miss: a
-    // prefix store answers stat with nothing for a directory and
-    // readdir with the keys under it.
+    // Registered after the writes, so only the probe sees them: a prefix
+    // store answers stat with nothing for a directory, and a name with
+    // no keys under it is in no listing either, which is how such a
+    // store says a directory is not there. Two different answers with
+    // stat silenced is what proves the listing is the channel read.
     ops.register({
       name: 'stat',
       resource: resource.kind,
@@ -732,11 +736,17 @@ describe('Ops.readlink', () => {
       },
       write: false,
     })
+    ops.register({
+      name: 'readdir',
+      resource: resource.kind,
+      filetype: null,
+      fn: async (accessor, path, args, kwargs) => {
+        const entries = (await realReaddir(accessor, path, args, kwargs)) as string[]
+        return entries.filter((entry) => !entry.replace(/\/+$/, '').endsWith('hollow'))
+      },
+      write: false,
+    })
     expect(await codeOf(ws, '/data/d')).toBe('EINVAL')
-    // And the listing has to be non-empty to count: those stores answer
-    // a missing prefix with [] rather than raising, so an empty one is
-    // the absence case. Two different answers with stat silenced is what
-    // proves the listing is the channel being read.
     await ws.fs.mkdir('/data/hollow')
     expect(await codeOf(ws, '/data/hollow')).toBe('ENOENT')
   })

@@ -32,7 +32,7 @@ import {
 import { Policies, PolicyDenied, postOpsGate, preOpsGate } from '../../policy/index.ts'
 import { PolicyError } from '../../policy/errors.ts'
 import { mountKey } from '../../utils/key_prefix.ts'
-import { ownerPrefix, rstripSlash } from '../../utils/slash.ts'
+import { normDir, ownerPrefix, rstripSlash } from '../../utils/slash.ts'
 import { record, runWithMountPrefix, runWithRevisions } from '../../observe/context.ts'
 import type { OpRecord } from '../../observe/record.ts'
 import type { OpsRegistry } from '../../ops/registry.ts'
@@ -41,7 +41,14 @@ import { NO_FOLLOW_OPS, STAMP_WRITE_OPS } from '../../ops/config.ts'
 import { mergeReaddir, namespaceListing, namespaceStat } from '../../ops/namespace_view.ts'
 import { isMissingPath } from '../../utils/errors.ts'
 import { cachesReads, type Resource } from '../../resource/base.ts'
-import { ConsistencyPolicy, FileStat, MountMode, PathSpec, ResourceName } from '../../types.ts'
+import {
+  ConsistencyPolicy,
+  FileStat,
+  FileType,
+  MountMode,
+  PathSpec,
+  ResourceName,
+} from '../../types.ts'
 import type { DispatchFn } from '../../runtime/types.ts'
 import type { DriftQueue } from '../snapshot/drift.ts'
 import type { Namespace } from '../mount/namespace/namespace.ts'
@@ -528,17 +535,23 @@ export class Dispatcher {
   }
 
   /**
-   * Whether anything at all is at `path`, on every channel.
+   * Whether anything at all is at `path`.
    *
-   * Absence takes both channels a backend can answer on: on a prefix
-   * store a directory is not an object but the set of keys under it, so
-   * `stat` misses what `readdir` would list, and a listing has to be
-   * non-empty to count because those stores answer a missing prefix with
-   * `[]`. The namespace is asked first, since a link, and a directory
-   * that exists only because a mount or a link sits below it, are
-   * structure no backend can see. Mirrors `resolvePathStat`, which
-   * cannot be reused here: it dispatches, and the door is what dispatch
-   * is inside of. Mirrors Python's Dispatcher._path_present.
+   * Four channels, asked in the order of what they prove. The namespace
+   * goes first: a link, and a directory that exists only because a
+   * mount or a link sits below it, are structure no backend can see,
+   * and a mount root is the deployment's own configuration. Then the
+   * backend's row, which settles a file. A directory row settles
+   * nothing, because an API tree synthesizes its directories: a
+   * postgres schema lists `tables/` and `views/` before anything has
+   * asked whether that schema is there, and a grouping mount stats
+   * every path under a live collection as a directory. So a directory
+   * is proven the way the hierarchy kit itself proves one, by appearing
+   * in its parent's listing, which is also the only way a prefix store
+   * can answer for a directory that is nothing but a set of keys.
+   * Cannot reuse `resolvePathStat`: that dispatches, and the door is
+   * what dispatch is inside of. Mirrors Python's
+   * Dispatcher._path_present.
    */
   private async pathPresent(path: PathSpec): Promise<boolean> {
     if (this.namespace.isLink(path.virtual)) return true
@@ -553,10 +566,12 @@ export class Dispatcher {
       // there, which is exactly the absence being probed for.
       return false
     }
+    const mount = this.namespace.tryMountFor(path.virtual)
+    if (mount !== null && normDir(mount.prefix) === normDir(path.virtual)) return true
     try {
-      if ((await this.probeOp('stat', resolved)) !== null) return true
-      const entries = await this.probeOp('readdir', resolved)
-      return Array.isArray(entries) && entries.length > 0
+      const row = (await this.probeOp('stat', resolved)) as FileStat | null
+      if (row !== null && row.type !== FileType.DIRECTORY) return true
+      return await this.listedByParent(path)
     } catch (err) {
       if (!(err instanceof PolicyDenied) && !(err instanceof PolicyError)) throw err
       // A channel that refuses to answer is not evidence of absence.
@@ -566,6 +581,33 @@ export class Dispatcher {
       // not allowed to check.
       return true
     }
+  }
+
+  /**
+   * Whether the path's own name is in its parent's listing.
+   *
+   * Compared on the final segment, because backends disagree on entry
+   * shape: bare names, a trailing slash to mark a directory, or full
+   * paths. The same normalization `mergeReaddir` dedupes on. Mirrors
+   * Python's Dispatcher._listed_by_parent.
+   */
+  private async listedByParent(path: PathSpec): Promise<boolean> {
+    const trimmed = rstripSlash(path.virtual)
+    const cut = trimmed.lastIndexOf('/')
+    const name = trimmed.slice(cut + 1)
+    if (cut < 0 || name === '') return false
+    let resolved: [Resource, PathSpec, MountMode]
+    try {
+      resolved = await this.namespace.resolve(trimmed.slice(0, cut) || '/', false)
+    } catch {
+      return false
+    }
+    const entries = await this.probeOp('readdir', resolved)
+    if (!Array.isArray(entries)) return false
+    return entries.some((entry) => {
+      const segments = rstripSlash(String(entry)).split('/')
+      return segments[segments.length - 1] === name
+    })
   }
 
   /**
