@@ -21,6 +21,7 @@ from typing import Any, Callable, Literal
 # yapf: disable
 from mirage.runtime.errors import CrossMountError
 from mirage.runtime.handles import FileHandle, FileTable
+from mirage.runtime.types import VFSStat
 from mirage.runtime.wasm.abi import (EBADF, EEXIST, EINVAL, EISDIR, ENOENT,
                                      ENOTDIR, FDFLAG_APPEND, FST_ATIM,
                                      FST_ATIM_NOW, FST_MTIM, FST_MTIM_NOW,
@@ -32,7 +33,6 @@ from mirage.runtime.wasm.abi import (EBADF, EEXIST, EINVAL, EISDIR, ENOENT,
                                      pack_filestat, pack_prestat, pack_u32,
                                      pack_u64, unpack_iovs)
 # yapf: enable
-from mirage.runtime.wasm.types import GuestStat
 from mirage.runtime.wasm.vfs import WasmVFS
 from mirage.utils.dates import timestamp_iso
 
@@ -59,11 +59,11 @@ else:
     ValType = _ValType
 
 
-def _filetype(st: GuestStat) -> int:
+def _filetype(st: VFSStat) -> int:
     """The preview1 filetype for one guest stat.
 
     Args:
-        st (GuestStat): the stat to classify.
+        st (VFSStat): the stat to classify.
     """
     if st.is_link:
         return FT_SYMLINK
@@ -121,7 +121,7 @@ class FdEntry:
         preopen (bool): the preopened root dir, which close refuses.
         dirents (list[tuple[str, int]] | None): a dir fd's cached
             listing, filled on the first fd_readdir.
-        stat (GuestStat | None): a file's stat at open, for mtime.
+        stat (VFSStat | None): a file's stat at open, for mtime.
     """
 
     kind: FdKind
@@ -129,7 +129,7 @@ class FdEntry:
     path: str = ""
     preopen: bool = False
     dirents: list[tuple[str, int]] | None = None
-    stat: GuestStat | None = None
+    stat: VFSStat | None = None
 
 
 class WasiFs:

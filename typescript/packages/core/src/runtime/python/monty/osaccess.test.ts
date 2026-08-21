@@ -14,6 +14,7 @@
 
 import { describe, expect, it, vi, type Mock } from 'vitest'
 import type { BridgeDispatchFn } from '../../types.ts'
+import { FileStat, FileType } from '../../../types.ts'
 import { RuntimeVFS } from '../../vfs.ts'
 import { MirageOSAccess } from './index.ts'
 import { MontyVFS } from './vfs.ts'
@@ -49,12 +50,13 @@ function listing(names: string[], dirs: string[] = []): Mock<BridgeDispatchFn> {
   return vi.fn<BridgeDispatchFn>((op, path) => {
     if (op === 'readdir') return Promise.resolve(names)
     if (op === 'stat' && names.includes(path)) {
-      return Promise.resolve({
-        size: 1,
-        isDir: dirs.includes(path),
-        mtimeMs: 0,
-        mode: dirs.includes(path) ? 0o040755 : 0o100644,
-      })
+      return Promise.resolve(
+        new FileStat({
+          name: path,
+          size: 1,
+          type: dirs.includes(path) ? FileType.DIRECTORY : FileType.TEXT,
+        }),
+      )
     }
     return Promise.reject(Object.assign(new Error(`gone: ${path}`), { code: 'ENOENT' }))
   })
@@ -131,7 +133,7 @@ describe('MirageOSAccess path operations', () => {
     const dispatch = vi.fn<BridgeDispatchFn>((op, path) => {
       if (op === 'readdir' && path === '/ram/d/') return Promise.resolve(['/ram/d/a'])
       if (op === 'stat' && path === '/ram/d/a') {
-        return Promise.resolve({ size: 1, isDir: false, mtimeMs: 0, mode: 0o100644 })
+        return Promise.resolve(new FileStat({ name: path, size: 1, type: FileType.TEXT }))
       }
       return Promise.reject(Object.assign(new Error('gone'), { code: 'ENOENT' }))
     })

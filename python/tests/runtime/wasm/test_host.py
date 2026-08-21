@@ -22,7 +22,10 @@ from mirage.runtime.wasm.abi import (  # noqa: E402  # isort: skip
     FST_ATIM, FST_ATIM_NOW, FST_MTIM, FST_MTIM_NOW, FT_DIR, FT_REG, FT_SYMLINK)
 from mirage.runtime.wasm.host import (  # noqa: E402  # isort: skip
     WasiFs, _filetype, _spec, _stamp)
-from mirage.runtime.wasm.types import GuestStat  # noqa: E402
+from mirage.runtime.types import VFSStat  # noqa: E402
+
+from mirage.utils.stat_view import (  # noqa: E402  # isort: skip
+    DIR_MODE, FILE_MODE, LINK_MODE)
 
 # End-to-end host-function behavior (path_open buffering, fd table,
 # errno answers inside a real guest) is covered by the live wasi and
@@ -45,10 +48,16 @@ def test_spec_covers_every_fs_import_of_the_shipped_guests():
 
 
 def test_filetype_reads_the_kind_link_first():
-    link = GuestStat(is_dir=False, size=3, mtime_ns=0, is_link=True)
+    link = VFSStat(size=3,
+                   is_dir=False,
+                   mode=LINK_MODE,
+                   mtime_ns=0,
+                   is_link=True)
     assert _filetype(link) == FT_SYMLINK
-    assert _filetype(GuestStat(is_dir=True, size=0, mtime_ns=0)) == FT_DIR
-    assert _filetype(GuestStat(is_dir=False, size=1, mtime_ns=0)) == FT_REG
+    assert _filetype(VFSStat(size=0, is_dir=True, mode=DIR_MODE,
+                             mtime_ns=0)) == FT_DIR
+    assert _filetype(VFSStat(size=1, is_dir=False, mode=FILE_MODE,
+                             mtime_ns=0)) == FT_REG
 
 
 def test_stamp_omits_a_field_no_flag_selected():

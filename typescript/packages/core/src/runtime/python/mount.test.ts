@@ -15,6 +15,7 @@
 import { describe, expect, it } from 'vitest'
 import { PyodideRuntime } from './pyodide.ts'
 import type { BridgeDispatchFn } from '../types.ts'
+import { FileStat, FileType } from '../../types.ts'
 import { PrefixResolver } from '../resolver.ts'
 
 function makeBridge(): {
@@ -62,10 +63,12 @@ function makeBridge(): {
     if (op === 'stat') {
       const found = files.get(path)
       if (found !== undefined) {
-        return Promise.resolve({ size: found.length, isDir: false, mtimeMs: 0, mode: 0o100644 })
+        return Promise.resolve(
+          new FileStat({ name: path, size: found.length, type: FileType.TEXT }),
+        )
       }
       const deeper = [...files.keys()].some((p) => p.startsWith(path + '/'))
-      if (deeper) return Promise.resolve({ size: 0, isDir: true, mtimeMs: 0, mode: 0o040755 })
+      if (deeper) return Promise.resolve(new FileStat({ name: path, type: FileType.DIRECTORY }))
       return Promise.reject(Object.assign(new Error(`no such file: ${path}`), { code: 'ENOENT' }))
     }
     // The real door merges child mounts and directories into readdir
@@ -287,7 +290,7 @@ describe('PyodideRuntime mount visibility', () => {
       if (op === 'read') return Promise.resolve(new Uint8Array())
       if (op === 'readdir') return Promise.resolve(['/ram/log.txt'])
       if (op === 'stat') {
-        return Promise.resolve({ size: 4, isDir: false, mtimeMs: 0, mode: 0o100644 })
+        return Promise.resolve(new FileStat({ name: path, size: 4, type: FileType.TEXT }))
       }
       if (op === 'write' && bytes !== undefined) writes.push(new Uint8Array(bytes))
       return Promise.resolve(undefined)

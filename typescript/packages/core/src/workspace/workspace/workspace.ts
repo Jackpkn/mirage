@@ -18,7 +18,6 @@ import { IOResult } from '../../io/types.ts'
 import { type EventDict, Observer } from '../../observe/observer.ts'
 import type { OpRecord } from '../../observe/record.ts'
 import { type OpKwargs, OpsRegistry } from '../../ops/registry.ts'
-import { contentSize, isDir as statIsDir, mtimeMs, posixMode } from '../../utils/stat_view.ts'
 import type { Resource } from '../../resource/base.ts'
 import { HISTORY_PREFIX, HistoryViewResource } from '../../resource/history/history.ts'
 import { resourceStateRequiresOverride } from '../../resource/secrets.ts'
@@ -46,7 +45,7 @@ import {
 } from '../snapshot/state.ts'
 import { readSnapshotTar } from '../snapshot/tar_io.ts'
 import type { WorkspaceStateDict } from '../snapshot/types.ts'
-import type { FileEvent, FileStat } from '../../types.ts'
+import type { FileEvent } from '../../types.ts'
 import { ConsistencyPolicy, DriftPolicy, MountMode, PathSpec } from '../../types.ts'
 import type { Policies } from '../../policy/index.ts'
 import type { PolicyFn } from '../../runtime/policy/index.ts'
@@ -386,19 +385,18 @@ export class Workspace {
           await this.dispatch('append', path, [buf])
           return undefined
         }
-        case 'stat': {
-          const st = (await this.dispatch('stat', path)) as FileStat
-          // One translator: bare Date.parse read an offset-less stamp
-          // as LOCAL time here while the fuse fold read it as UTC.
-          // VFSStat has no validity channel, so an unknown mtime and
-          // epoch zero both encode as 0 on this wire.
-          return {
-            size: contentSize(st),
-            isDir: statIsDir(st),
-            mtimeMs: mtimeMs(st) ?? 0,
-            mode: posixMode(st),
-          }
-        }
+        case 'stat':
+          // The mount's own row, nothing projected: the runtime door
+          // builds the one VFSStat both languages read, so the two
+          // tiers cannot drift into two translations of one fact.
+          // `nofollow` is the only attrs field a stat carries, and it
+          // is the caller's lstat; the dispatcher consumes it.
+          return await this.dispatch(
+            'stat',
+            path,
+            [],
+            attrs?.nofollow === true ? { nofollow: true } : undefined,
+          )
         case 'create':
           await this.dispatch('create', path)
           return undefined

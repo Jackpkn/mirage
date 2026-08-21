@@ -22,7 +22,7 @@ import { changedAttrs, MirageFs } from './vfs.ts'
 import { MirageFsSeed } from './seed.ts'
 import type { BridgeDispatchFn } from '../../types.ts'
 import type { FSNode } from './types.ts'
-import type { SetAttrFields } from '../../../types.ts'
+import { FileStat, FileType, type SetAttrFields } from '../../../types.ts'
 
 const enc = new TextEncoder()
 const dec = new TextDecoder()
@@ -107,12 +107,9 @@ describe('MirageFs', () => {
             }),
           )
         }
-        return Promise.resolve({
-          size: found.length,
-          isDir: false,
-          mtimeMs: 0,
-          mode: 0o100644,
-        })
+        return Promise.resolve(
+          new FileStat({ name: path, size: found.length, type: FileType.TEXT }),
+        )
       }
       if (op === 'symlink' && dst !== undefined) links.set(path, dst)
       if (op === 'readlink') {

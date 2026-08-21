@@ -20,13 +20,13 @@ import pytest
 
 from mirage.ops.namespace_view import merge_readdir
 from mirage.runtime.resolver import PrefixResolver
+from mirage.runtime.types import VFSStat
 from mirage.runtime.vfs import RuntimeVFS
 from mirage.runtime.wasm.abi import FT_DIR, FT_REG, FT_SYMLINK
 from mirage.runtime.wasm.config import WasmFsConfig
-from mirage.runtime.wasm.types import GuestStat
 from mirage.runtime.wasm.vfs import WasmVFS
 from mirage.types import FileStat, FileType
-from mirage.utils.stat_view import mtime_ns
+from mirage.utils.stat_view import FILE_MODE, mtime_ns
 
 # The stamp a link's own row carries, deliberately not the stamp the
 # double gives a file, so a test can tell which row it was answered.
@@ -199,8 +199,9 @@ def test_stat_maps_filestat_fields():
                      prefixes=["/data/"])
     fs = WasmVFS(core=bridge)
     st = fs.stat("/data/f.txt")
-    assert st == GuestStat(is_dir=False, size=5,
-                           mtime_ns=st.mtime_ns) and st.mtime_ns > 0
+    assert st == VFSStat(
+        size=5, is_dir=False, mode=FILE_MODE,
+        mtime_ns=st.mtime_ns) and st.mtime_ns > 0
     assert fs.stat("/data/sub").is_dir is True
     assert fs.stat_or_none("/data/nope") is None
 

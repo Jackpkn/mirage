@@ -84,6 +84,41 @@ LinkChildrenSource: TypeAlias = Callable[[str], set[str]]
 
 
 @dataclass(frozen=True, slots=True)
+class VFSStat:
+    """One path's metadata, in the shape every guest encoder needs
+    (TS ``VFSStat``).
+
+    Built once at the door out of the mount's own ``FileStat``, so a
+    surface projects rather than translates: preview1 keeps the type
+    bits and drops the rest, monty fills a ``StatResult``, Emscripten
+    fills an ``FSAttr``.
+
+    Args:
+        size (int): rendered content bytes, 0 for a directory and for
+            an unknown size.
+        is_dir (bool): the path is a directory.
+        mode (int): the full st_mode, type bits included, so a chmod
+            the shell made is what a guest's stat reports. ``is_dir``
+            and ``is_link`` are this field's type bits spelled out;
+            mode is the authority and they are the convenience.
+        mtime_ns (int): modification time in epoch nanoseconds, 0 when
+            the source reports none. Nanoseconds here and milliseconds
+            in TypeScript, on purpose: epoch nanoseconds are past
+            2**53, so a JS number cannot hold them exactly, while a
+            python int can and preview1 asks in them.
+        is_link (bool): the path is a symlink. Only ever true for a
+            stat the caller asked not to follow, since every other
+            answer is the target's.
+    """
+
+    size: int
+    is_dir: bool
+    mode: int
+    mtime_ns: int
+    is_link: bool = False
+
+
+@dataclass(frozen=True, slots=True)
 class VFSEntry:
     """One directory entry as the mounts report it (TS ``VFSEntry``).
 
@@ -103,12 +138,23 @@ class VFSEntry:
             backend listing reports a link and stat follows, so a
             directory link would otherwise read as a plain directory
             and a cyclic one would recurse a whole-tree walk forever.
+        mode (int | None): the entry's full st_mode, None when this row
+            carries no stat. A backend that slash-marks its directories
+            is listed without one, which is the whole point of the
+            mark, so the row says "not known" rather than inventing a
+            default the guest cannot tell from a real answer.
+        mtime_ns (int | None): modification time in epoch nanoseconds,
+            None on the same rows and for the same reason. 0 is a real
+            answer here (1970-01-01T00:00:00Z, and what an unknown
+            mtime collapses to once a stat did happen).
     """
 
     path: str
     size: int
     is_dir: bool
     is_link: bool = False
+    mode: int | None = None
+    mtime_ns: int | None = None
 
 
 @dataclass(frozen=True, slots=True)

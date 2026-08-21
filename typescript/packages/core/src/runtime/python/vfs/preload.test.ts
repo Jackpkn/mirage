@@ -14,7 +14,8 @@
 
 import { describe, expect, it, vi } from 'vitest'
 import { preloadInto } from './preload.ts'
-import { RuntimeVFS, type VFSStat } from '../../vfs.ts'
+import { RuntimeVFS } from '../../vfs.ts'
+import { FileStat, FileType } from '../../../types.ts'
 import type { BridgeDispatchFn } from '../../types.ts'
 import { PrefixResolver } from '../../resolver.ts'
 
@@ -53,12 +54,12 @@ function makeFakeFS(withLinks = true): FakeFS {
 
 // The door builds each row from a name plus one stat, so a double
 // standing in for the bridge has to answer both.
-function fileStat(size: number): VFSStat {
-  return { size, isDir: false, mtimeMs: 0, mode: 0o100644 }
+function fileStat(size: number): FileStat {
+  return new FileStat({ name: 'f', size, type: FileType.TEXT })
 }
 
-function dirStat(): VFSStat {
-  return { size: 0, isDir: true, mtimeMs: 0, mode: 0o040755 }
+function dirStat(): FileStat {
+  return new FileStat({ name: 'd', type: FileType.DIRECTORY })
 }
 
 // A resolver whose name plane holds exactly these link names.

@@ -23,10 +23,11 @@ from mirage.context import (get_current_session, reset_current_session,
 from mirage.observe.context import RecordingScope, record
 from mirage.runtime.errors import CrossMountError
 from mirage.runtime.resolver import PrefixResolver
-from mirage.runtime.types import VFSEntry
+from mirage.runtime.types import VFSEntry, VFSStat
 from mirage.runtime.vfs import RuntimeVFS
 from mirage.types import FileStat, FileType
 from mirage.utils.errors import OperationNotSupportedError
+from mirage.utils.stat_view import DIR_MODE, FILE_MODE, LINK_MODE
 from mirage.workspace.session import Session
 
 
@@ -142,7 +143,11 @@ def test_readdir_lifts_names_into_entries():
     )
     assert vfs.readdir("/data/") == [
         VFSEntry(path="/data/sub/", size=0, is_dir=True),
-        VFSEntry(path="/data/a.txt", size=4, is_dir=False),
+        VFSEntry(path="/data/a.txt",
+                 size=4,
+                 is_dir=False,
+                 mode=FILE_MODE,
+                 mtime_ns=0),
         VFSEntry(path="/data/ghost.txt", size=0, is_dir=False),
     ]
     # A slash-marked directory skips the stat; a vanished entry (or a
@@ -161,7 +166,11 @@ def test_readdir_stats_unmarked_directories():
         },
     )
     assert vfs.readdir("/data/") == [
-        VFSEntry(path="/data/sub", size=0, is_dir=True),
+        VFSEntry(path="/data/sub",
+                 size=0,
+                 is_dir=True,
+                 mode=DIR_MODE,
+                 mtime_ns=0),
     ]
 
 
@@ -177,9 +186,84 @@ def test_readdir_marks_the_names_the_resolver_calls_links():
         links=["lnk"],
     )
     assert vfs.readdir("/data/") == [
-        VFSEntry(path="/data/lnk", size=5, is_dir=False, is_link=True),
-        VFSEntry(path="/data/a.txt", size=5, is_dir=False),
+        VFSEntry(path="/data/lnk",
+                 size=5,
+                 is_dir=False,
+                 is_link=True,
+                 mode=FILE_MODE,
+                 mtime_ns=0),
+        VFSEntry(path="/data/a.txt",
+                 size=5,
+                 is_dir=False,
+                 mode=FILE_MODE,
+                 mtime_ns=0),
     ]
+
+
+def test_stat_projects_one_struct_for_every_surface():
+    # The projection is the door's, so preview1, monty and Emscripten
+    # read the same five facts instead of translating a FileStat three
+    # ways. mode carries the type bits, which is what a wire with no
+    # mode field of its own reads the kind out of.
+    vfs = ListingVFS(
+        listing=[],
+        stats={
+            "/data/a.txt":
+            FileStat(name="a.txt",
+                     size=4,
+                     type=FileType.TEXT,
+                     mode=0o700,
+                     modified="2026-07-15T00:00:00Z"),
+        },
+    )
+    st = vfs.stat("/data/a.txt")
+    assert st == VFSStat(size=4,
+                         is_dir=False,
+                         mode=(FILE_MODE & ~0o7777) | 0o700,
+                         mtime_ns=st.mtime_ns)
+    assert st.mtime_ns > 0
+
+
+def test_stat_reports_an_unknown_stamp_as_epoch_zero():
+    vfs = ListingVFS(listing=[],
+                     stats={"/data/a.txt": FileStat(name="a.txt", size=1)})
+    assert vfs.stat("/data/a.txt").mtime_ns == 0
+
+
+def test_stat_nofollow_asks_the_door_for_the_link_row():
+    # lstat is one door question now, not a surface reaching past it:
+    # the flag rides the dispatch, which answers a link's own row from
+    # the node table and gates it exactly as it gates readlink.
+    vfs = ListingVFS(
+        listing=[],
+        stats={
+            "/data/lnk": FileStat(name="lnk", size=8, type=FileType.SYMLINK),
+        },
+    )
+    st = vfs.stat("/data/lnk", nofollow=True)
+    assert (st.is_link, st.mode, st.size) == (True, LINK_MODE, 8)
+
+
+def test_readdir_carries_the_metadata_only_where_it_stated():
+    # A row that stat'd reports its mode and stamp, so a guest seeding
+    # a whole tree from one listing needs no second stat per file. A
+    # slash-marked row never asked, and says so with None rather than a
+    # default the guest cannot tell from an answer.
+    vfs = ListingVFS(
+        listing=["/data/sub/", "/data/a.txt"],
+        stats={
+            "/data/a.txt":
+            FileStat(name="a.txt",
+                     size=4,
+                     type=FileType.TEXT,
+                     mode=0o600,
+                     modified="2026-07-15T00:00:00Z"),
+        },
+    )
+    marked, stated = vfs.readdir("/data/")
+    assert (marked.mode, marked.mtime_ns) == (None, None)
+    assert stated.mode == (FILE_MODE & ~0o7777) | 0o600
+    assert stated.mtime_ns is not None and stated.mtime_ns > 0
 
 
 def test_readdir_marks_a_link_whatever_shape_the_entry_arrived_in():

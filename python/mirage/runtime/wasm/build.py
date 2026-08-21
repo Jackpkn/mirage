@@ -15,8 +15,8 @@
 import os
 from pathlib import Path
 
+from mirage.runtime.types import VFSStat
 from mirage.runtime.wasm.abi import FT_DIR, FT_REG
-from mirage.runtime.wasm.types import GuestStat
 
 
 class BuildDir:
@@ -52,17 +52,22 @@ class BuildDir:
         """
         return path == "/" or self.target(path).exists()
 
-    def stat(self, path: str) -> GuestStat:
+    def stat(self, path: str) -> VFSStat:
         """Stat a build path.
+
+        The host's own st_mode is reported as it stands, type bits
+        included: these are real files on this machine, so there is
+        nothing to synthesize.
 
         Args:
             path (str): guest-absolute path.
         """
         host = self.target(path)
         st = os.stat(host)
-        return GuestStat(is_dir=host.is_dir(),
-                         size=st.st_size,
-                         mtime_ns=st.st_mtime_ns)
+        return VFSStat(size=st.st_size,
+                       is_dir=host.is_dir(),
+                       mode=st.st_mode,
+                       mtime_ns=st.st_mtime_ns)
 
     def read(self, path: str) -> bytes:
         """Read a build file.
