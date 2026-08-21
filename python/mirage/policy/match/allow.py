@@ -12,8 +12,29 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from mirage.policy.match.pattern import pattern_matches, pattern_names
+from collections.abc import Sequence
+
+from mirage.policy.match.pattern import pattern_matches, pattern_reaches
 from mirage.policy.types import AdmissionRules, CommandContext
+
+
+def node_visible(path: Sequence[str], rules: AdmissionRules | None) -> bool:
+    """Whether a session can see one node of a program tree.
+
+    A role without an allow list hides nothing; a role with one hides
+    every node no pattern of it reaches. Only a CLI's verbs can be
+    narrowed this way, and only because the walk canonicalizes them
+    (an alias resolved, the global options before the verb dropped)
+    before any pattern is read. A flag has no such normal form, so a
+    pattern never means to speak about one.
+
+    Args:
+        path (Sequence[str]): the node's canonical words, head first.
+        rules (AdmissionRules | None): the session's admission rules.
+    """
+    if rules is None or rules.allow is None:
+        return True
+    return any(pattern_reaches(p, path) for p in rules.allow)
 
 
 def head_visible(name: str, rules: AdmissionRules | None) -> bool:
@@ -22,14 +43,13 @@ def head_visible(name: str, rules: AdmissionRules | None) -> bool:
     A role without an allow list hides nothing; a role with one hides
     every name none of its patterns start with. Grammar-tier builtins
     and shell functions are the caller's exemptions, not this one's.
+    The head-word case of :func:`node_visible`.
 
     Args:
         name (str): the command name.
         rules (AdmissionRules | None): the session's admission rules.
     """
-    if rules is None or rules.allow is None:
-        return True
-    return any(pattern_names(p, name) for p in rules.allow)
+    return node_visible((name, ), rules)
 
 
 def line_tokens(ctx: CommandContext) -> tuple[str, ...]:

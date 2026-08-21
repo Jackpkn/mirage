@@ -12,6 +12,8 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+from dataclasses import replace
+
 from mirage.policy.config import Decision
 from mirage.policy.constants import VERB_ORDER
 from mirage.policy.match.allow import line_allowed
@@ -95,6 +97,15 @@ def decide(ctx: CommandContext, rules: AdmissionRules | None) -> Decision:
     destination's ask instead, so a nod meant for the destination
     carried the protected file out.
 
+    Ranking across subjects is the whole answer for a deny, which
+    refuses the line, and only half of it for an ask, which is a
+    question the host still has to answer. So every ask that won a
+    subject of its own is reported (``Decision.asks``) and the door
+    requires all of them: with ``ask cp /a/*`` and a deeper
+    ``ask cp /deep/b/*``, ``cp /a/x /deep/b/y`` used to present the
+    deeper one alone, and a nod for the destination ran the line
+    without the source ever being asked about.
+
     ``PermissionsPolicy`` renders this into the outcome table and
     ``explain`` reports it, so the two cannot disagree about what a
     line would do.
@@ -113,11 +124,14 @@ def decide(ctx: CommandContext, rules: AdmissionRules | None) -> Decision:
                        for rule in written if rule_applies(rule, ctx)]
     best: tuple[int, int] | None = None
     chosen = Decision(Outcome.RUN)
+    asked: list[CommandRule] = []
     for subject in subjects(ctx):
         spoke = rule_at(live, subject)
         if spoke is None:
             continue
         outcome, rule, depth = spoke
+        if outcome is Outcome.ASK and rule not in asked:
+            asked.append(rule)
         verb = VERB_ORDER[outcome]
         if best is not None and not outranks(best, verb, depth):
             continue
@@ -126,7 +140,9 @@ def decide(ctx: CommandContext, rules: AdmissionRules | None) -> Decision:
                           rule=rule,
                           matched_path=matched_operand(rule, subject),
                           source=source_of(rule))
-    return chosen
+    if chosen.outcome is not Outcome.ASK:
+        return chosen
+    return replace(chosen, asks=tuple(asked))
 
 
 def source_of(rule: CommandRule) -> str:

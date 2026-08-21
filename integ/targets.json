@@ -2429,6 +2429,17 @@
                     "/scratch/outbox/deep/*"
                   ]
                 }
+              },
+              {
+                "reason": "staging nod",
+                "commands": {
+                  "cp": [
+                    "/scratch/stage/*"
+                  ],
+                  "mv": [
+                    "/scratch/stage/*"
+                  ]
+                }
               }
             ],
             "deny": [

@@ -13,17 +13,32 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import type { CommandContext, AdmissionRules } from '../types.ts'
-import { patternMatches, patternNames } from './pattern.ts'
+import { patternMatches, patternReaches } from './pattern.ts'
+
+/**
+ * Whether a session can see one node of a program tree.
+ *
+ * A role without an allow list hides nothing; a role with one hides every
+ * node no pattern of it reaches. Only a CLI's verbs can be narrowed this
+ * way, and only because the walk canonicalizes them (an alias resolved,
+ * the global options before the verb dropped) before any pattern is read.
+ * A flag has no such normal form, so a pattern never means to speak about
+ * one.
+ */
+export function nodeVisible(path: readonly string[], rules: AdmissionRules | null): boolean {
+  if (rules?.allow == null) return true
+  return rules.allow.some((p) => patternReaches(p, path))
+}
 
 /**
  * Whether a session can see a command at all. A role without an allow
  * list hides nothing; a role with one hides every name none of its
  * patterns start with. Grammar builtins and shell functions are the
- * caller's exemptions, not this one's.
+ * caller's exemptions, not this one's. The head-word case of
+ * `nodeVisible`.
  */
 export function headVisible(name: string, rules: AdmissionRules | null): boolean {
-  if (rules?.allow == null) return true
-  return rules.allow.some((p) => patternNames(p, name))
+  return nodeVisible([name], rules)
 }
 
 /**

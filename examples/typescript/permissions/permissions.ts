@@ -17,7 +17,7 @@ import { MountMode, RAMResource, Workspace, parseSessionProfile } from '@strukto
 // An incident-response workspace: the service tree, the runbooks the
 // oncall works from, and the credentials nobody reads by hand.
 //
-// Two roles read the same three mounts and see three different
+// Three roles read the same three mounts and see three different
 // filesystems. Every refusal below comes from one of two orderings, and
 // the point of the example is that they are different orderings:
 //
@@ -34,6 +34,12 @@ import { MountMode, RAMResource, Workspace, parseSessionProfile } from '@strukto
 // ENOENT, so the role never learns the name; a denied path stays in the
 // listing and fails when read. /vault is denied for the oncall and
 // hidden for the auditor, which is the same three files seen two ways.
+//
+// The third role, the commander, states no allow list, which is how a
+// role says "every tool". That is the opposite of a deny list and worth
+// seeing beside one: the list is not a filter over some default set, it
+// IS the set, so omitting it installs everything and an empty one
+// installs nothing. Its rules still run.
 
 const PROFILES = {
   oncall: {
@@ -91,6 +97,19 @@ const PROFILES = {
     // two different answers to `ls /vault`.
     paths: { hide: ['/vault'] },
   },
+  commander: {
+    commands: {
+      // No allow list, which installs every command mirage ships, this
+      // role's own `sort` and `wc` included. `allow: ['*']` says the
+      // same thing out loud; `allow: []` says the opposite and installs
+      // nothing. What it does not say is "unrestricted": the deny below
+      // still runs, and so would an ask.
+      deny: [{ reason: 'credentials are never read by hand', paths: ['/vault/*'] }],
+    },
+    // No mount section either, so every mount stays at the mode the
+    // workspace declared. A role narrows by naming; naming nothing
+    // narrows nothing.
+  },
 }
 
 const SEED = [
@@ -122,6 +141,14 @@ const LINES: [string, string, string][] = [
   ['auditor', 'ls /vault', 'hidden here, so the mount is not there at all'],
   ['auditor', 'cat /repo/.env', "the hide was the other role's, not the workspace's"],
   ['auditor', 'rm /runbook/steps.md', 'no rm in this allow list'],
+  ['commander', 'sort /repo/service.py', 'no allow list, so every tool is installed'],
+  ['commander', 'wc -l /runbook/steps.md', 'including the ones no other role names'],
+  ['commander', 'cat /vault/aws.token', 'and it is still not unrestricted: the deny runs'],
+  [
+    'commander',
+    'rm /repo/service.py',
+    "no mount section, so /repo keeps the workspace's write mode",
+  ],
 ]
 
 // The approval id is a digest of the session, cwd and words; it is
@@ -139,7 +166,7 @@ function answer(out: string, err: string, code: number): string {
     const first = err.replace(APPROVAL_ID, '(approval ...)').split('\n')[0]
     return `[${code}] ${first}`
   }
-  return `[${code}] ` + out.split(/\s+/).filter(Boolean).join(' ')
+  return `[${code}] ${out.split(/\s+/).filter(Boolean).join(' ')}`.trimEnd()
 }
 
 function pad(text: string, width: number): string {
@@ -156,10 +183,12 @@ async function main(): Promise<void> {
       // model to tell a document from an already-parsed one, so the
       // document is validated here rather than in the constructor. The
       // YAML loader makes the same call.
-      profiles: {
-        oncall: parseSessionProfile(PROFILES.oncall, 'profile `oncall`'),
-        auditor: parseSessionProfile(PROFILES.auditor, 'profile `auditor`'),
-      },
+      profiles: Object.fromEntries(
+        Object.entries(PROFILES).map(([name, doc]) => [
+          name,
+          parseSessionProfile(doc, `profile \`${name}\``),
+        ]),
+      ),
     },
   )
 
@@ -167,14 +196,14 @@ async function main(): Promise<void> {
   // own view and the only place this seeding could run.
   for (const line of SEED) await ws.execute(line)
 
-  for (const role of ['oncall', 'auditor']) ws.createSession(role, { profile: role })
+  for (const role of Object.keys(PROFILES)) ws.createSession(role, { profile: role })
 
   for (const [role, line, note] of LINES) {
     const res = await ws.execute(line, { sessionId: role })
     const out = res.stdout === null ? '' : dec.decode(res.stdout)
     const err = res.stderr === null ? '' : dec.decode(res.stderr)
-    console.log(`${pad(role, 8)} ${pad(line, 42)} ${answer(out, err, res.exitCode)}`)
-    console.log(`${pad('', 8)} ${pad('', 42)} ${note}`)
+    console.log(`${pad(role, 10)} ${pad(line, 42)} ${answer(out, err, res.exitCode)}`)
+    console.log(`${pad('', 10)} ${pad('', 42)} ${note}`)
   }
 }
 

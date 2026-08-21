@@ -145,12 +145,20 @@ class Ask:
         rule (CommandRule | None): the document rule that asked; None
             for a coded condition, for which the door keys a session
             grant on the program that asked.
+        rules (tuple[CommandRule, ...]): every rule the line has to be
+            granted, ``rule`` among them and usually alone: a line whose
+            operands were each asked about by a different rule carries
+            them all. The door asks about them one at a time and runs
+            the line only once each is answered, so a nod given for one
+            operand cannot carry another. Empty for a coded Ask, whose
+            one rule the door synthesizes.
     """
 
     kind: ClassVar[str] = "ask"
 
     reason: str
     rule: CommandRule | None = None
+    rules: tuple[CommandRule, ...] = ()
 
 
 # The closed vocabulary of policy answers: a hook returns an Action to

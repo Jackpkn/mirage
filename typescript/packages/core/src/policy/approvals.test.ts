@@ -275,4 +275,59 @@ describe('Approvals', () => {
       'pending',
     )
   })
+
+  it('answers every rule of a line before it runs', async () => {
+    const source: CommandRule = { reason: 'source nod', commands: ['cp'] }
+    const dest: CommandRule = { reason: 'dest nod', commands: ['cp'] }
+    const ask: Ask = { kind: 'ask', reason: dest.reason, rule: dest, rules: [source, dest] }
+    const sessions = new Sessions()
+    const door = new Approvals(sessions)
+    const line = ctx(['cp', '/a/x', '/deep/b/y'], { program: ['cp'] })
+    // The rules are put one at a time, in the order the subjects were
+    // read, so the reason names the rule actually being asked about.
+    const first = (await door.resolve(line, ask)) as Pending
+    expect(first.kind).toBe('pending')
+    expect(first.reason).toBe('source nod')
+    await door.grant(first.id, 'session')
+    // One nod does not carry the other subject: the line still stops.
+    const second = (await door.resolve(line, ask)) as Pending
+    expect(second.kind).toBe('pending')
+    expect(second.reason).toBe('dest nod')
+    await door.grant(second.id, 'session')
+    expect(await door.resolve(line, ask)).toBeNull()
+  })
+
+  it('does not spend a once grant while another rule is pending', async () => {
+    const source: CommandRule = { reason: 'source nod', commands: ['cp'] }
+    const dest: CommandRule = { reason: 'dest nod', commands: ['cp'] }
+    const ask: Ask = { kind: 'ask', reason: dest.reason, rule: dest, rules: [source, dest] }
+    const sessions = new Sessions()
+    const door = new Approvals(sessions)
+    const line = ctx(['cp', '/a/x', '/deep/b/y'], { program: ['cp'] })
+    const first = (await door.resolve(line, ask)) as Pending
+    await door.grant(first.id)
+    // Spending the source's nod here would ask about it again on the
+    // retry, and the line could never be answered.
+    const second = (await door.resolve(line, ask)) as Pending
+    expect(second.reason).toBe('dest nod')
+    expect(sessions.grantsOf('s')).toEqual([
+      { decision: 'allow_once', rule: source, argv: ['cp', '/a/x', '/deep/b/y'], cwd: '/repo' },
+    ])
+    await door.grant(second.id)
+    expect(await door.resolve(line, ask)).toBeNull()
+    // Both are spent together, and only then.
+    expect(sessions.grantsOf('s')).toEqual([])
+    expect((await door.resolve(line, ask))?.kind).toBe('pending')
+  })
+
+  it("refuses the line in the denied rule's own voice", async () => {
+    const source: CommandRule = { reason: 'source nod', commands: ['cp'] }
+    const dest: CommandRule = { reason: 'dest nod', commands: ['cp'] }
+    const ask: Ask = { kind: 'ask', reason: dest.reason, rule: dest, rules: [source, dest] }
+    const door = new Approvals(new Sessions())
+    const line = ctx(['cp', '/a/x', '/deep/b/y'], { program: ['cp'] })
+    const pending = (await door.resolve(line, ask)) as Pending
+    await door.deny(pending.id)
+    expect(await door.resolve(line, ask)).toEqual({ kind: 'deny', reason: 'source nod' })
+  })
 })

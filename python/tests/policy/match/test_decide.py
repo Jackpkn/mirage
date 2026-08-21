@@ -135,3 +135,32 @@ def test_outranks_reads_the_verb_first_where_better_match_reads_depth():
     assert not outranks((DENY_FIRST, 0), ASK_SECOND, 3)
     assert outranks((DENY_FIRST, 1), DENY_FIRST, 2)
     assert not outranks((DENY_FIRST, 2), DENY_FIRST, 2)
+
+
+def test_every_subjects_ask_is_reported_not_just_the_winner():
+    source = CommandRule(reason="source nod",
+                         commands=("cp", ),
+                         paths=("/a/*", ))
+    dest = CommandRule(reason="dest nod",
+                       commands=("cp", ),
+                       paths=("/deep/b/*", ))
+    rules = AdmissionRules(ask=(source, dest))
+    verdict = decide(_ctx("cp", "/a/x", "/deep/b/y"), rules)
+    # The deeper anchor is still the verdict, which is what the agent is
+    # told; both are what the door has to collect.
+    assert verdict.outcome is Outcome.ASK
+    assert verdict.rule is dest
+    assert verdict.asks == (source, dest)
+    # One rule covering two operands is one question, not two.
+    both = CommandRule(reason="either", commands=("cp", ), paths=("/a/*", ))
+    one = decide(_ctx("cp", "/a/x", "/a/y"), AdmissionRules(ask=(both, )))
+    assert one.asks == (both, )
+    # A deny anywhere refuses the line, so there is nothing to ask about.
+    stopped = decide(
+        _ctx("cp", "/a/x", "/deep/b/y"),
+        AdmissionRules(ask=(dest, ),
+                       deny=(CommandRule(reason="no",
+                                         commands=("cp", ),
+                                         paths=("/a/*", )), )))
+    assert stopped.outcome is Outcome.DENY
+    assert stopped.asks == ()

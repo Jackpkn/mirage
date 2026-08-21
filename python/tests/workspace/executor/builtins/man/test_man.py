@@ -18,6 +18,7 @@ from unittest.mock import MagicMock
 from mirage.commands.cli.types import CLISpec
 from mirage.commands.config import RegisteredCommand
 from mirage.commands.spec.types import CommandSpec, Option
+from mirage.policy.types import AdmissionRules
 from mirage.workspace.cli.registry import CLIRegistry
 from mirage.workspace.executor.builtins.man import (ManEntry, _command_entry,
                                                     _render_man_index,
@@ -193,13 +194,22 @@ def _cli_tree() -> CLISpec:
     return CLISpec(
         name="linear",
         description="Linear API client",
-        subcommands=(CLISpec(name="issue",
-                             description="Manage issues",
-                             aliases=("i", ),
-                             subcommands=(CLISpec(name="create",
-                                                  description="Create one",
-                                                  fn=lambda: None), )), ),
+        subcommands=(
+            CLISpec(name="issue",
+                    description="Manage issues",
+                    aliases=("i", ),
+                    subcommands=(CLISpec(name="create",
+                                         description="Create one",
+                                         fn=lambda: None), )),
+            CLISpec(name="team", description="Manage one", fn=lambda: None),
+        ),
     )
+
+
+def _scoped(*allow: str) -> Session:
+    session = Session(session_id="scoped")
+    session.commands = AdmissionRules(allow=allow)
+    return session
 
 
 def _cli_registry(mounts=None):
@@ -225,6 +235,29 @@ def test_handle_man_descends_a_verb_path_and_resolves_aliases():
     aliased = asyncio.run(handle_man(["linear", "i", "create"], reg,
                                      _SESSION))[0].decode()
     assert aliased == text
+
+
+def test_handle_man_lists_only_the_verbs_the_allow_list_reaches():
+    reg = _cli_registry()
+    session = _scoped("linear issue create")
+    top = asyncio.run(handle_man(["linear"], reg, session))[0].decode()
+    assert "issue" in top
+    assert "team" not in top
+    # The same narrowing one level down, where the pattern names the
+    # only leaf the role holds.
+    inner = asyncio.run(handle_man(["linear", "issue"], reg,
+                                   session))[0].decode()
+    assert "create" in inner
+    # A verb no pattern reaches has no page, in man's own words.
+    out, io, node = asyncio.run(handle_man(["linear", "team"], reg, session))
+    assert out is None
+    assert io.exit_code == 1
+    assert io.stderr == b"man: no entry for linear team\n"
+    assert node.exit_code == 1
+    # A session with no list still reads the whole tree, and so does the
+    # head word for the narrowed one: some line of it runs.
+    assert "team" in asyncio.run(handle_man(["linear"], reg,
+                                            _SESSION))[0].decode()
 
 
 def test_handle_man_unknown_verb_names_the_whole_line():

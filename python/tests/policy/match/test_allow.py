@@ -12,7 +12,8 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from mirage.policy.match.allow import head_visible, line_allowed, line_tokens
+from mirage.policy.match.allow import (head_visible, line_allowed, line_tokens,
+                                       node_visible)
 from mirage.policy.types import AdmissionRules, CommandContext, CommandRule
 
 
@@ -45,6 +46,24 @@ def test_head_visible_answers_the_roles_one_allow_list():
     # A role without a list hides nothing, and neither does no role.
     assert head_visible("rm", AdmissionRules(deny=(CommandRule("x"), )))
     assert head_visible("rm", None)
+
+
+def test_node_visible_narrows_a_tree_one_verb_at_a_time():
+    rules = AdmissionRules(allow=("ls", "linear issue list"))
+    # The head is visible because some line of it is allowed, and so is
+    # every node on the way down to that line.
+    assert node_visible(("linear", ), rules)
+    assert node_visible(("linear", "issue"), rules)
+    assert node_visible(("linear", "issue", "list"), rules)
+    # A sibling of that path is not, at either depth.
+    assert not node_visible(("linear", "team"), rules)
+    assert not node_visible(("linear", "issue", "create"), rules)
+    # head_visible is the one-word case, and agrees.
+    assert head_visible("linear", rules) == node_visible(("linear", ), rules)
+    # A role without a list hides no node of any tree.
+    assert node_visible(("linear", "team"), None)
+    assert node_visible(("linear", "team"),
+                        AdmissionRules(deny=(CommandRule("x"), )))
 
 
 def test_line_allowed_reads_the_whole_line_and_skips_non_tools():

@@ -54,6 +54,37 @@ export function askRule(ctx: CommandContext, ask: Ask): CommandRule {
 }
 
 /**
+ * The grant standing behind one rule of a line, null when the host has
+ * not answered it.
+ *
+ * An exact-line grant answers the rule it was asked under, like a
+ * session grant: one that outlives a rule change (a persisted store
+ * reopened under an edited profile) must not answer the new rule's ask,
+ * and a stale denial must not speak in its voice.
+ */
+function answerFor(
+  held: readonly Grant[],
+  rule: CommandRule,
+  argv: readonly string[],
+  cwd: string,
+): Grant | null {
+  for (const grant of held) {
+    if (
+      EXACT_LINE_DECISIONS.has(grant.decision) &&
+      sameWords(grant.argv, argv) &&
+      grant.cwd === cwd &&
+      sameRule(grant.rule, rule)
+    ) {
+      return grant
+    }
+  }
+  for (const grant of held) {
+    if (grant.decision === 'allow_session' && sameRule(grant.rule, rule)) return grant
+  }
+  return null
+}
+
+/**
  * The workspace's approval door: turns an Ask into run, refuse or
  * pending, and is the host's handle on what is pending.
  *
@@ -124,36 +155,47 @@ export class Approvals {
   }
 
   /**
-   * The executor's branch for an Ask: a held grant answers it, else the
+   * The executor's branch for an Ask: held grants answer it, else the
    * approver is asked now. Resolves to null to run the line, a Deny to
    * refuse it, a Pending when the host has not decided.
+   *
+   * Every rule the ask names has to be answered, because each won a
+   * subject of its own and a nod covers the subject it was given for.
+   * They are asked one at a time, the retry of the line raising the
+   * next, and an exact-line grant is only spent once the whole line is
+   * answered: spending one while another is still pending would make the
+   * first question come back on every retry.
    */
   async resolve(ctx: CommandContext, ask: Ask): Promise<Deny | Pending | null> {
-    const rule = askRule(ctx, ask)
+    const rules = ask.rules !== undefined && ask.rules.length > 0 ? ask.rules : [askRule(ctx, ask)]
     const argv = [ctx.command, ...ctx.argv]
     const sessionId = ctx.sessionId ?? ''
     const held = this.grants(sessionId)
-    // An exact-line grant answers the rule it was asked under, like a
-    // session grant: one that outlives a rule change (a persisted store
-    // reopened under an edited profile) must not answer the new rule's
-    // ask, and a stale denial must not speak in its voice.
-    for (const grant of held) {
-      if (
-        EXACT_LINE_DECISIONS.has(grant.decision) &&
-        sameWords(grant.argv, argv) &&
-        grant.cwd === ctx.cwd &&
-        sameRule(grant.rule, rule)
-      ) {
-        this.set(
-          sessionId,
-          held.filter((g) => g !== grant),
-        )
-        return grant.decision === 'deny' ? { kind: 'deny', reason: ask.reason } : null
-      }
+    const answers = rules.map((rule) => [rule, answerFor(held, rule, argv, ctx.cwd)] as const)
+    const spent = answers
+      .map(([, grant]) => grant)
+      .filter((grant): grant is Grant => grant !== null && EXACT_LINE_DECISIONS.has(grant.decision))
+    const refused = answers.find(([, grant]) => grant !== null && grant.decision === 'deny')
+    if (refused !== undefined) {
+      this.spend(sessionId, held, spent)
+      return { kind: 'deny', reason: refused[0].reason }
     }
-    for (const grant of held) {
-      if (grant.decision === 'allow_session' && sameRule(grant.rule, rule)) return null
+    for (const [rule, grant] of answers) {
+      if (grant !== null) continue
+      const verdict = await this.askHost(ctx, rule, argv)
+      if (verdict !== null) return verdict
     }
+    this.spend(sessionId, held, spent)
+    return null
+  }
+
+  /** Put one rule of a line to the approver, null when it said yes. */
+  private async askHost(
+    ctx: CommandContext,
+    rule: CommandRule,
+    argv: readonly string[],
+  ): Promise<Deny | Pending | null> {
+    const sessionId = ctx.sessionId ?? ''
     const request: ApprovalRequest = {
       id: await requestId(sessionId, ctx.cwd, argv),
       sessionId,
@@ -162,17 +204,25 @@ export class Approvals {
       argv: [...ctx.argv],
       cwd: ctx.cwd,
       paths: ctx.paths.map((p) => p.virtual),
-      reason: ask.reason,
+      reason: rule.reason,
       rule,
     }
     const decision = await this.approverImpl.approve(request)
-    if (decision === null) return { kind: 'pending', id: request.id, reason: ask.reason }
+    if (decision === null) return { kind: 'pending', id: request.id, reason: rule.reason }
+    if (decision === 'deny') return { kind: 'deny', reason: rule.reason }
     if (decision === 'allow_session') {
-      this.add(sessionId, { decision: 'allow_session', rule, argv, cwd: ctx.cwd })
-      return null
+      this.add(sessionId, { decision: 'allow_session', rule, argv: [...argv], cwd: ctx.cwd })
     }
-    if (decision === 'deny') return { kind: 'deny', reason: ask.reason }
     return null
+  }
+
+  /** Drop the exact-line grants this line just used up. */
+  private spend(sessionId: string, held: readonly Grant[], spent: readonly Grant[]): void {
+    if (spent.length === 0) return
+    this.set(
+      sessionId,
+      held.filter((g) => !spent.includes(g)),
+    )
   }
 
   private take(approvalId: string): ApprovalRequest {

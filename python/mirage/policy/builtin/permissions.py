@@ -57,7 +57,7 @@ class PermissionsPolicy(Policy):
         if rule is None:
             return None
         if verdict.outcome is Outcome.ASK:
-            return Ask(rule.reason, rule)
+            return Ask(rule.reason, rule, verdict.asks)
         if verdict.matched_path is None:
             return Deny(rule.reason)
         return Deny(f"{verdict.matched_path}: {rule.reason}",

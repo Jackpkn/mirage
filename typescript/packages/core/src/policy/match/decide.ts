@@ -106,17 +106,28 @@ export function sourceOf(rule: CommandRule): string {
  * ask instead, so a nod meant for the destination carried the protected
  * file out.
  *
+ * Ranking across subjects is the whole answer for a deny, which refuses
+ * the line, and only half of it for an ask, which is a question the host
+ * still has to answer. So every ask that won a subject of its own is
+ * reported (`Decision.asks`) and the door requires all of them: with
+ * `ask cp /a/*` and a deeper `ask cp /deep/b/*`, `cp /a/x /deep/b/y` used
+ * to present the deeper one alone, and a nod for the destination ran the
+ * line without the source ever being asked about.
+ *
  * `PermissionsPolicy` renders this into the outcome table and `explain`
  * reports it, so the two cannot disagree about what a line would do.
  */
 export function decide(ctx: CommandContext, rules: AdmissionRules | null): Decision {
-  if (rules === null) return { outcome: Outcome.RUN, rule: null, matchedPath: null, source: '' }
+  if (rules === null) {
+    return { outcome: Outcome.RUN, rule: null, matchedPath: null, source: '', asks: [] }
+  }
   if (!lineAllowed(ctx, rules)) {
     return {
       outcome: Outcome.NOT_ALLOWED,
       rule: null,
       matchedPath: null,
       source: 'commands.allow',
+      asks: [],
     }
   }
   const live: (readonly [Outcome, CommandRule])[] = []
@@ -129,11 +140,19 @@ export function decide(ctx: CommandContext, rules: AdmissionRules | null): Decis
     }
   }
   let best: [number, number] | null = null
-  let chosen: Decision = { outcome: Outcome.RUN, rule: null, matchedPath: null, source: '' }
+  let chosen: Decision = {
+    outcome: Outcome.RUN,
+    rule: null,
+    matchedPath: null,
+    source: '',
+    asks: [],
+  }
+  const asked: CommandRule[] = []
   for (const subject of subjects(ctx)) {
     const spoke = ruleAt(live, subject)
     if (spoke === null) continue
     const [outcome, rule, depth] = spoke
+    if (outcome === Outcome.ASK && !asked.includes(rule)) asked.push(rule)
     const verb = VERB_ORDER[outcome] ?? 0
     if (best !== null && !outranks(best, verb, depth)) continue
     best = [verb, depth]
@@ -142,7 +161,9 @@ export function decide(ctx: CommandContext, rules: AdmissionRules | null): Decis
       rule,
       matchedPath: matchedOperand(rule, subject),
       source: sourceOf(rule),
+      asks: [],
     }
   }
-  return chosen
+  if (chosen.outcome !== Outcome.ASK) return chosen
+  return { ...chosen, asks: asked }
 }

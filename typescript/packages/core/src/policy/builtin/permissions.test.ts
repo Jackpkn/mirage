@@ -119,7 +119,7 @@ describe('PermissionsPolicy', () => {
     // deny rules ran first and had no opinion.
     expect(
       p.preCommand(ctx('git', ['push'], { cwd: '/scratch', program: ['git', 'push'] })),
-    ).toEqual({ kind: 'ask', reason: 'sign-off', rule: ASK_PUSH })
+    ).toEqual({ kind: 'ask', reason: 'sign-off', rule: ASK_PUSH, rules: [ASK_PUSH] })
     // Operand-scoped rule: the operand as typed, in the GNU voice.
     expect(p.preCommand(ctx('rm', ['x'], { paths: [path('/repo/x', 'x')], cwd: '/repo' }))).toEqual(
       {
@@ -152,6 +152,7 @@ describe('PermissionsPolicy', () => {
       kind: 'ask',
       reason: 'needs a nod',
       rule: shallow,
+      rules: [shallow],
     })
     // The other way round: an ask anchored deeper than a deny wins, so a
     // role can carve an exception out of a broad refusal.
@@ -238,7 +239,7 @@ describe('PermissionsPolicy', () => {
       p.preCommand(
         ctx('git', ['push', 'origin', 'main'], { cwd: '/scratch', program: ['git', 'push'] }),
       ),
-    ).toEqual({ kind: 'ask', reason: 'sign-off', rule: ASK_PUSH })
+    ).toEqual({ kind: 'ask', reason: 'sign-off', rule: ASK_PUSH, rules: [ASK_PUSH] })
     // Deny runs first: on the mount the same line is refused, and a
     // grant could never re-open it because no Ask is raised.
     expect(p.preCommand(ctx('git', ['push'], { cwd: '/repo', program: ['git', 'push'] }))).toEqual({
@@ -254,7 +255,7 @@ describe('PermissionsPolicy', () => {
     const door = new PermissionsPolicy(new Sessions({ s: shared }))
     expect(
       door.preCommand(ctx('rm', ['/repo/shared/a'], { paths: [path('/repo/shared/a')] })),
-    ).toEqual({ kind: 'ask', reason: 'shared', rule: shared.ask[0] })
+    ).toEqual({ kind: 'ask', reason: 'shared', rule: shared.ask[0], rules: [shared.ask[0]] })
     expect(door.preCommand(ctx('rm', ['/repo/b'], { paths: [path('/repo/b')] }))).toBeNull()
   })
 

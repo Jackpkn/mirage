@@ -112,6 +112,15 @@ export interface Ask {
   /** Why the line needs sign-off, shown to the agent and the host. */
   reason: string
   rule?: CommandRule
+  /**
+   * Every rule the line has to be granted, `rule` among them and usually
+   * alone: a line whose operands were each asked about by a different
+   * rule carries them all. The door asks about them one at a time and
+   * runs the line only once each is answered, so a nod given for one
+   * operand cannot carry another. Absent for a coded Ask, whose one rule
+   * the door synthesizes.
+   */
+  rules?: readonly CommandRule[]
 }
 
 /**

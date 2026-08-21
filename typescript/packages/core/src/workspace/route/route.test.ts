@@ -26,6 +26,7 @@ import {
   readsSubtrees,
   route,
   routeAll,
+  verbVisible,
   walksMounts,
 } from './index.ts'
 import { Session } from '../session/session.ts'
@@ -199,6 +200,24 @@ describe('walkers and subtree readers', () => {
 })
 
 describe('allow lists', () => {
+  it('verbVisible answers below the head word commandVisible answers', () => {
+    const { session, ws } = fixture()
+    ws.registerCli('prog', cliTree())
+    session.commands = { allow: ['prog run'], ask: [], deny: [] }
+    // Dispatch routes by the head word, which stays visible: one line
+    // of the tree runs.
+    expect(commandVisible('prog', session)).toBe(true)
+    expect(route('prog', session, ws.registry)).toBe(Consumer.CLI)
+    expect(verbVisible('prog', [], session)).toBe(true)
+    expect(verbVisible('prog', ['run'], session)).toBe(true)
+    // A verb the list does not reach is not this session's to discover,
+    // though the head word it hangs off is.
+    expect(verbVisible('prog', ['stop'], session)).toBe(false)
+    // No list: every verb of every tree.
+    session.commands = null
+    expect(verbVisible('prog', ['stop'], session)).toBe(true)
+  })
+
   it('filter the tool layers and spare grammar and functions', () => {
     const { session, ws } = fixture()
     ws.registerCli('prog', cliTree())

@@ -126,7 +126,8 @@ async def test_a_deny_rule_speaks_by_scope_and_by_where_it_was_written():
     # deny rules ran first and had no opinion.
     assert await policy.pre_command(
         _ctx("git", "push", cwd="/scratch",
-             program=("git", "push"))) == Ask("sign-off", ASK_PUSH)
+             program=("git", "push"))) == Ask("sign-off", ASK_PUSH,
+                                              (ASK_PUSH, ))
     # Operand-scoped rule: the operand as typed, in the GNU voice.
     assert await policy.pre_command(
         _ctx("rm", "x", paths=(_path("/repo/x", raw="x"), ),
@@ -159,7 +160,8 @@ async def test_the_deeper_anchor_wins_and_deny_breaks_a_tie():
     # Outside the deeper rule's anchor the shallow one is what is left.
     assert await policy.pre_command(
         _ctx("rm", "/repo/x",
-             paths=(_path("/repo/x"), ))) == Ask("needs a nod", shallow)
+             paths=(_path("/repo/x"), ))) == Ask("needs a nod", shallow,
+                                                 (shallow, ))
     # The other way round: an ask anchored deeper than a deny wins, so a
     # role can carve an exception out of a broad refusal.
     flipped = PermissionsPolicy(
@@ -247,7 +249,8 @@ async def test_an_ask_rule_speaks_after_every_deny():
              "origin",
              "main",
              cwd="/scratch",
-             program=("git", "push"))) == Ask("sign-off", ASK_PUSH)
+             program=("git", "push"))) == Ask("sign-off", ASK_PUSH,
+                                              (ASK_PUSH, ))
     # Deny runs first: on the mount the same line is refused, and a
     # grant could never re-open it because no Ask is raised.
     assert await policy.pre_command(
@@ -259,7 +262,7 @@ async def test_an_ask_rule_speaks_after_every_deny():
     door = PermissionsPolicy(_Sessions({"s": shared}))
     assert await door.pre_command(
         _ctx("rm", "/repo/shared/a", paths=(_path("/repo/shared/a"), ))
-    ) == Ask("shared", shared.ask[0])
+    ) == Ask("shared", shared.ask[0], (shared.ask[0], ))
     assert await door.pre_command(
         _ctx("rm", "/repo/b", paths=(_path("/repo/b"), ))) is None
 

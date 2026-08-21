@@ -255,3 +255,65 @@ async def test_without_sessions_grants_live_in_memory():
     await door.grant(pending.id, "session")
     assert await door.resolve(_ctx(), ASK) is None
     assert isinstance(await door.resolve(_ctx(session_id="t"), ASK), Pending)
+
+
+@pytest.mark.asyncio
+async def test_every_rule_of_a_line_is_answered_before_it_runs():
+    source = CommandRule(reason="source nod", commands=("cp", ))
+    dest = CommandRule(reason="dest nod", commands=("cp", ))
+    ask = Ask(dest.reason, dest, (source, dest))
+    sessions = Sessions()
+    door = Approvals(sessions)
+    ctx = _ctx(("cp", "/a/x", "/deep/b/y"), program=("cp", ))
+    # The rules are put one at a time, in the order the subjects were
+    # read, so the reason names the rule actually being asked about.
+    first = await door.resolve(ctx, ask)
+    assert isinstance(first, Pending)
+    assert first.reason == "source nod"
+    await door.grant(first.id, scope="session")
+    # One nod does not carry the other subject: the line still stops.
+    second = await door.resolve(ctx, ask)
+    assert isinstance(second, Pending)
+    assert second.reason == "dest nod"
+    await door.grant(second.id, scope="session")
+    assert await door.resolve(ctx, ask) is None
+
+
+@pytest.mark.asyncio
+async def test_a_once_grant_is_not_spent_while_another_rule_is_pending():
+    source = CommandRule(reason="source nod", commands=("cp", ))
+    dest = CommandRule(reason="dest nod", commands=("cp", ))
+    ask = Ask(dest.reason, dest, (source, dest))
+    sessions = Sessions()
+    door = Approvals(sessions)
+    ctx = _ctx(("cp", "/a/x", "/deep/b/y"), program=("cp", ))
+    first = await door.resolve(ctx, ask)
+    assert isinstance(first, Pending)
+    await door.grant(first.id)
+    # Spending the source's nod here would ask about it again on the
+    # retry, and the line could never be answered.
+    second = await door.resolve(ctx, ask)
+    assert isinstance(second, Pending)
+    assert second.reason == "dest nod"
+    assert sessions.grants["s"] == (Grant("allow_once", source,
+                                          ("cp", "/a/x", "/deep/b/y"),
+                                          "/repo"), )
+    await door.grant(second.id)
+    assert await door.resolve(ctx, ask) is None
+    # Both are spent together, and only then.
+    assert sessions.grants["s"] == ()
+    assert isinstance(await door.resolve(ctx, ask), Pending)
+
+
+@pytest.mark.asyncio
+async def test_a_denial_of_one_rule_refuses_the_line_in_its_own_voice():
+    source = CommandRule(reason="source nod", commands=("cp", ))
+    dest = CommandRule(reason="dest nod", commands=("cp", ))
+    ask = Ask(dest.reason, dest, (source, dest))
+    sessions = Sessions()
+    door = Approvals(sessions)
+    ctx = _ctx(("cp", "/a/x", "/deep/b/y"), program=("cp", ))
+    pending = await door.resolve(ctx, ask)
+    assert isinstance(pending, Pending)
+    await door.deny(pending.id)
+    assert await door.resolve(ctx, ask) == Deny("source nod")

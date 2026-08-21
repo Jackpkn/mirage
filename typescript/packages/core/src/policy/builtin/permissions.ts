@@ -61,7 +61,9 @@ export class PermissionsPolicy implements Policy {
     }
     const rule = verdict.rule
     if (rule === null) return null
-    if (verdict.outcome === Outcome.ASK) return { kind: 'ask', reason: rule.reason, rule }
+    if (verdict.outcome === Outcome.ASK) {
+      return { kind: 'ask', reason: rule.reason, rule, rules: verdict.asks }
+    }
     if (verdict.matchedPath === null) return { kind: 'deny', reason: rule.reason }
     return { kind: 'deny', reason: `${verdict.matchedPath}: ${rule.reason}`, scope: 'operand' }
   }

@@ -19,7 +19,7 @@ from mirage.resource.ram import RAMResource
 from mirage.types import MountMode
 from mirage.workspace import Workspace
 from mirage.workspace.route import (SHELL_CONSUMERS, Consumer, command_visible,
-                                    route, route_all)
+                                    route, route_all, verb_visible)
 from mirage.workspace.session import Session
 
 
@@ -136,6 +136,24 @@ def test_route_agrees_with_the_first_layer_route_all_reports():
         layers = route_all(name, session, ws._registry)
         winner = layers[0] if layers else Consumer.UNKNOWN
         assert route(name, session, ws._registry) is winner
+
+
+def test_verb_visible_answers_below_the_head_word_command_visible_answers():
+    session, ws = _fixture()
+    ws.register_cli("prog", _cli_tree())
+    session.commands = AdmissionRules(allow=("prog run", ))
+    # Dispatch routes by the head word, which stays visible: one line of
+    # the tree runs.
+    assert command_visible("prog", session)
+    assert route("prog", session, ws._registry) is Consumer.CLI
+    assert verb_visible("prog", (), session)
+    assert verb_visible("prog", ("run", ), session)
+    # A verb the list does not reach is not this session's to discover,
+    # though the head word it hangs off is.
+    assert not verb_visible("prog", ("stop", ), session)
+    # No list: every verb of every tree.
+    session.commands = None
+    assert verb_visible("prog", ("stop", ), session)
 
 
 def test_allow_lists_filter_the_tool_layers_and_spare_grammar_and_functions():

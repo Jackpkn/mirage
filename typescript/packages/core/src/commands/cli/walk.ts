@@ -89,13 +89,19 @@ export function nodeHelp(
   name: string,
   node: CLISpec,
   style: UsageStyle = UsageStyle.ARGPARSE,
+  visible?: (verb: string) => boolean,
 ): string {
-  return renderHelp(name, listedNode(node), rowsOf(node), style)
+  return renderHelp(name, listedNode(node), rowsOf(node, visible), style)
 }
 
-// The node's child rows, as the renderer lists them.
-function rowsOf(node: CLISpec): [string, string][] {
-  return node.subcommands.map((child) => [verbDisplay(child), child.description ?? ''])
+// The node's child rows, as the renderer lists them. `visible` filters on
+// a child's canonical name; only `man` passes one, since it renders for a
+// session, and a line that reaches `--help` or the bare-group refusal was
+// admitted whole, so there is nothing left to filter there.
+function rowsOf(node: CLISpec, visible?: (verb: string) => boolean): [string, string][] {
+  return node.subcommands
+    .filter((child) => visible === undefined || visible(child.name))
+    .map((child) => [verbDisplay(child), child.description ?? ''])
 }
 
 // The node as the renderer shows it, with `--help` filled in. --help is a

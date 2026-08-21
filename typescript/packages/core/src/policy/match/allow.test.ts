@@ -15,7 +15,7 @@
 import { describe, expect, it } from 'vitest'
 
 import type { CommandContext, AdmissionRules } from '../types.ts'
-import { headVisible, lineAllowed, lineTokens } from './allow.ts'
+import { headVisible, lineAllowed, lineTokens, nodeVisible } from './allow.ts'
 
 const registry = { isMountRoot: () => false }
 
@@ -37,6 +37,25 @@ describe('allow lists', () => {
     // A role without a list hides nothing, and neither does no role.
     expect(headVisible('rm', { allow: null, ask: [], deny: [{ reason: 'x' }] })).toBe(true)
     expect(headVisible('rm', null)).toBe(true)
+  })
+
+  it('nodeVisible narrows a tree one verb at a time', () => {
+    const rules: AdmissionRules = { allow: ['ls', 'linear issue list'], ask: [], deny: [] }
+    // The head is visible because some line of it is allowed, and so is
+    // every node on the way down to that line.
+    expect(nodeVisible(['linear'], rules)).toBe(true)
+    expect(nodeVisible(['linear', 'issue'], rules)).toBe(true)
+    expect(nodeVisible(['linear', 'issue', 'list'], rules)).toBe(true)
+    // A sibling of that path is not, at either depth.
+    expect(nodeVisible(['linear', 'team'], rules)).toBe(false)
+    expect(nodeVisible(['linear', 'issue', 'create'], rules)).toBe(false)
+    // headVisible is the one-word case, and agrees.
+    expect(headVisible('linear', rules)).toBe(nodeVisible(['linear'], rules))
+    // A role without a list hides no node of any tree.
+    expect(nodeVisible(['linear', 'team'], null)).toBe(true)
+    expect(nodeVisible(['linear', 'team'], { allow: null, ask: [], deny: [{ reason: 'x' }] })).toBe(
+      true,
+    )
   })
 
   it('lineAllowed reads the whole line and skips non-tools', () => {

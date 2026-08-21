@@ -22,5 +22,5 @@ export {
   readsSubtrees,
   walksMounts,
 } from './constants.ts'
-export { commandVisible, isTool, route, routeAll } from './route.ts'
+export { commandVisible, isTool, route, routeAll, verbVisible } from './route.ts'
 export { Consumer, SHELL_CONSUMERS, WordPolicy, wordPolicy } from './types.ts'

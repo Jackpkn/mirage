@@ -12,7 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { headVisible } from '../../policy/match/allow.ts'
+import { headVisible, nodeVisible } from '../../policy/match/allow.ts'
 import { GRAMMAR_BUILTINS, type ShellBuiltin } from '../../shell/types.ts'
 import type { MountRegistry } from '../mount/registry.ts'
 import type { Session } from '../session/session.ts'
@@ -51,6 +51,22 @@ export function isTool(name: string, session: Session): boolean {
  */
 export function commandVisible(name: string, session: Session): boolean {
   return !isTool(name, session) || listed(name, session)
+}
+
+/**
+ * Whether a session can see one node of an installed CLI's tree.
+ *
+ * `commandVisible` answers for a word, which is all dispatch needs: a CLI
+ * is routed by its head word and the verbs after it are the program's own
+ * operand. Discovery needs the finer answer, because a role allowed
+ * `linear issue list` is not allowed `linear team`, and a manual that
+ * lists the second is advertising a line that cannot run. `isTool`'s
+ * exemptions have nothing to say here: shell grammar and functions are
+ * single words, so a verb path only ever belongs to a CLI whose head word
+ * already passed.
+ */
+export function verbVisible(head: string, path: readonly string[], session: Session): boolean {
+  return nodeVisible([head, ...path], session.commands)
 }
 
 /**

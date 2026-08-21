@@ -13,6 +13,7 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 from collections.abc import Sequence
+from functools import partial
 
 from mirage.commands.cli.types import CLISpec
 from mirage.commands.cli.walk import find_node, node_help
@@ -25,7 +26,7 @@ from mirage.workspace.executor.builtins.man.types import ManEntry
 from mirage.workspace.executor.builtins.shared import Result
 from mirage.workspace.executor.builtins.types import BuiltinCall
 from mirage.workspace.mount.registry import DEV_PREFIX, MountRegistry
-from mirage.workspace.route import command_visible
+from mirage.workspace.route import command_visible, verb_visible
 from mirage.workspace.session import Session
 from mirage.workspace.types import ExecutionNode
 
@@ -157,9 +158,23 @@ def _render_section(title: str, entries: Sequence[ManEntry]) -> str:
     return "\n".join(lines)
 
 
-def _render_cli_entry(head: str, verbs: Sequence[str],
-                      spec: CLISpec) -> str | None:
-    """The page for one node of an installed CLI, None when verbs miss.
+def _child_visible(head: str, path: tuple[str, ...], session: Session,
+                   verb: str) -> bool:
+    """Whether the session can see one child of the node being rendered.
+
+    Args:
+        head (str): installed head word, as typed.
+        path (tuple[str, ...]): canonical verbs down to the node.
+        session (Session): the session reading the manual.
+        verb (str): the child's canonical name.
+    """
+    return verb_visible(head, (*path, verb), session)
+
+
+def _render_cli_entry(head: str, verbs: Sequence[str], spec: CLISpec,
+                      session: Session) -> str | None:
+    """The page for one node of an installed CLI, None when verbs miss
+    or the session cannot see the node they name.
 
     The page is the node's own ``--help``, rendered by the one renderer
     that serves ``--help`` and the bare-group refusal, so a CLI's manual
@@ -167,19 +182,30 @@ def _render_cli_entry(head: str, verbs: Sequence[str],
     ``man linear`` lists the verbs and ``man linear issue create`` is
     the page for one leaf.
 
+    The allow list narrows a tree the same way it narrows the bare
+    listing, one level down: a role holding ``linear issue list`` reads
+    a manual for that verb and nothing else, because a row it cannot
+    run is an advertisement for a 126.
+
     Args:
         head (str): installed head word, as typed.
         verbs (Sequence[str]): verb words after the head, aliases
             allowed.
         spec (CLISpec): the installed program tree.
+        session (Session): the session reading the manual.
     """
     found = find_node(spec, verbs)
     if found is None:
         return None
     node, path = found
+    if not verb_visible(head, path, session):
+        return None
     # The root's dialect, so a manual page reads exactly like the
     # --help it renders from.
-    return node_help(" ".join((head, ) + path), node, spec.usage_style)
+    return node_help(" ".join((head, ) + path),
+                     node,
+                     spec.usage_style,
+                     visible=partial(_child_visible, head, path, session))
 
 
 def _render_man_index(registry: MountRegistry, session: Session) -> str:
@@ -203,9 +229,9 @@ def _render_man_index(registry: MountRegistry, session: Session) -> str:
 
 
 def _cli_man(
-    install: CLIInstall, verbs: Sequence[str], cmd_str: str,
-    registry: MountRegistry
-) -> tuple[ByteSource | None, IOResult, ExecutionNode]:
+        install: CLIInstall, verbs: Sequence[str], cmd_str: str,
+        registry: MountRegistry,
+        session: Session) -> tuple[ByteSource | None, IOResult, ExecutionNode]:
     """The page (or pages) for an installed head word.
 
     A CLI may not take a general command's name, but a mount can
@@ -218,9 +244,10 @@ def _cli_man(
             allowed.
         cmd_str (str): the line, for the execution node.
         registry (MountRegistry): registry holding the mounts.
+        session (Session): the session reading the manual.
     """
     head = install.name
-    entry = _render_cli_entry(head, verbs, install.spec)
+    entry = _render_cli_entry(head, verbs, install.spec, session)
     if entry is None:
         typed = " ".join([head, *verbs])
         err = f"man: no entry for {typed}\n".encode()
@@ -251,7 +278,7 @@ async def handle_man(
     # args[0]. A word the session cannot see has no page.
     install = registry.clis.get(name)
     if install is not None and command_visible(name, session):
-        return _cli_man(install, args[1:], cmd_str, registry)
+        return _cli_man(install, args[1:], cmd_str, registry, session)
     entry = None
     if command_visible(name, session):
         entry = _command_entry(name, registry) or _builtin_entry(name)

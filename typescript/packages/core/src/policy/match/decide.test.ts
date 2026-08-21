@@ -130,4 +130,28 @@ describe('decide', () => {
     expect(outranks([DENY_FIRST, 1], DENY_FIRST, 2)).toBe(true)
     expect(outranks([DENY_FIRST, 2], DENY_FIRST, 2)).toBe(false)
   })
+
+  it("reports every subject's ask, not just the winner", () => {
+    const source: CommandRule = { reason: 'source nod', commands: ['cp'], paths: ['/a/*'] }
+    const dest: CommandRule = { reason: 'dest nod', commands: ['cp'], paths: ['/deep/b/*'] }
+    const rules: AdmissionRules = { allow: null, ask: [source, dest], deny: [] }
+    const verdict = decide(ctx('cp', '/a/x', '/deep/b/y'), rules)
+    // The deeper anchor is still the verdict, which is what the agent is
+    // told; both are what the door has to collect.
+    expect(verdict.outcome).toBe(Outcome.ASK)
+    expect(verdict.rule).toBe(dest)
+    expect(verdict.asks).toEqual([source, dest])
+    // One rule covering two operands is one question, not two.
+    const both: CommandRule = { reason: 'either', commands: ['cp'], paths: ['/a/*'] }
+    const one = decide(ctx('cp', '/a/x', '/a/y'), { allow: null, ask: [both], deny: [] })
+    expect(one.asks).toEqual([both])
+    // A deny anywhere refuses the line, so there is nothing to ask about.
+    const stopped = decide(ctx('cp', '/a/x', '/deep/b/y'), {
+      allow: null,
+      ask: [dest],
+      deny: [{ reason: 'no', commands: ['cp'], paths: ['/a/*'] }],
+    })
+    expect(stopped.outcome).toBe(Outcome.DENY)
+    expect(stopped.asks).toEqual([])
+  })
 })

@@ -301,6 +301,46 @@
         "stdout": "",
         "stderr": "rm: cannot remove '/scratch/shared/h': No such file or directory\nrm: cannot remove '/repo/sealed/x': No such file or directory\n"
       }
+    },
+    {
+      "id": "conflict_two_asks_prep",
+      "seq": 923255,
+      "targets": [
+        "ram-commands"
+      ],
+      "command": "mkdir -p /scratch/stage && echo s > /scratch/stage/a",
+      "expect": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "conflict_each_operands_ask_is_put_on_its_own",
+      "seq": 923256,
+      "targets": [
+        "ram-commands"
+      ],
+      "session": "courier",
+      "command": "cp /scratch/stage/a /scratch/outbox/deep/out2",
+      "expect": {
+        "exit": 126,
+        "stdout": "",
+        "stderr": "cp: requires approval: staging nod (approval 6b6e0a5b765b)\n"
+      }
+    },
+    {
+      "id": "conflict_neither_ask_let_the_copy_through",
+      "seq": 923257,
+      "targets": [
+        "ram-commands"
+      ],
+      "command": "test ! -e /scratch/outbox/deep/out2 && echo kept",
+      "expect": {
+        "exit": 0,
+        "stdout": "kept\n",
+        "stderr": ""
+      }
     }
   ]
 }

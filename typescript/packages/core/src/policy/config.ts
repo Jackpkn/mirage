@@ -31,4 +31,13 @@ export interface Decision {
    * verdict: `top` or `mounts./repo`. Empty on RUN.
    */
   readonly source: string
+  /**
+   * Every ask that won a subject of its own, `rule` among them, in the
+   * order the subjects were read. Only ASK fills it, and the line runs
+   * only once each has been answered: one nod covers the subject it was
+   * given for and no other, so a deeper ask on a destination cannot
+   * carry a source past the ask written for it. One entry is the
+   * ordinary case.
+   */
+  readonly asks: readonly CommandRule[]
 }
