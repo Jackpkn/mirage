@@ -21,9 +21,10 @@ from mirage.commands.spec.types import ValueType
 from mirage.context.session_context import session_path_allowed
 from mirage.io.types import ByteSource
 from mirage.policy import (AdmissionRules, Ask, CommandContext, CommandRule,
-                           Deny, Pending, PolicyDenied, ask_rule, render_deny,
-                           render_pending)
-from mirage.policy.match import has_rules, io_refusal, reads_args, scopes_paths
+                           Deny, Pending, PolicyDenied, Scope, ask_rule,
+                           render_deny, render_pending)
+from mirage.policy.match import (Outcome, has_rules, io_refusal, reads_args,
+                                 scopes_paths)
 from mirage.runtime.policy import command_nodes
 from mirage.shell import parse
 from mirage.shell.helpers import (get_parts, get_redirects, get_text,
@@ -222,46 +223,43 @@ def _seen(session: Session, specs: list[PathSpec]) -> tuple[PathSpec, ...]:
     return tuple(p for p in specs if session_path_allowed(session, p.virtual))
 
 
-async def admit(
-        name: str,
-        args: list[str],
-        operands: Sequence[str | PathSpec],
-        session: Session,
-        registry: MountRegistry,
-        namespace: Namespace | None,
-        agent_id: str = "",
-        stdin: ByteSource | None = None,
-        redirects: Sequence[PathSpec] = (),
-) -> Refusal | Admitted:
-    """The command plane's admission of one command: visibility, then
-    the policy chain, then the approval door.
+async def gate(
+    name: str,
+    args: list[str],
+    operands: Sequence[str | PathSpec],
+    session: Session,
+    registry: MountRegistry,
+    namespace: Namespace | None,
+    agent_id: str = "",
+    stdin: ByteSource | None = None,
+    redirects: Sequence[PathSpec] = (),
+) -> Refusal | tuple[CommandContext, Deny | Ask | None]:
+    """Everything the gate decides about one command before anything is
+    spent on it: visibility, the classified context, and the policy
+    chain's answer.
 
-    The one gate every command class passes through, in the tree
-    (``_run_argv``, once the words are expanded) and for a line a
-    runtime takes whole (``admit_line``, per parsed command). A word
-    the session's allow lists do not install is bash's "command not
-    found" before any admission hook, so an unlisted tool never leaks
-    a deny reason; a path the session cannot see is dropped before any
-    hook, so a rule never names it and the door answers ENOENT; a Deny
-    renders in the outcome table's voice; an Ask is answered by the
-    door from the session's grants or the host. A command that gets
-    through comes back as its ``Admitted`` gate, which its own I/O
-    consults for the entries the gate did not see.
+    Split out of :func:`admit` so a dry run can have the answer without
+    the consequences. Nothing here records a request, consumes a grant
+    or reaches the host, which is what makes it safe for
+    ``explain``; :func:`admit` adds exactly those and renders.
 
     Args:
         name (str): command name, expanded.
         args (list[str]): the words after it.
         operands (Sequence[str | PathSpec]): the same words, classified.
         session (Session): the session running the line.
-        registry (MountRegistry): registry holding the policies, the
-            approval door and the CLI installs.
+        registry (MountRegistry): registry holding the policies and the
+            CLI installs.
         namespace (Namespace | None): the link table.
-        agent_id (str): the agent the line is attributed to, for an
-            approval request.
+        agent_id (str): the agent the line is attributed to.
         stdin (ByteSource | None): the line's stdin, which decides
             whether a bare ``rg`` reads the working directory.
         redirects (Sequence[PathSpec]): the statement's expanded
             redirect targets, empty when it has none.
+
+    Returns:
+        A Refusal when the session cannot see the head word, else the
+        context and whatever the policy chain answered.
     """
     if not command_visible(name, session):
         return Refusal(f"{name}: command not found\n".encode(), 127)
@@ -287,26 +285,75 @@ async def admit(
                          program=program,
                          tool=is_tool(name, session),
                          walks=walks_mounts(name, [name, *args]))
-    asked = await registry.policies.pre_command(ctx)
+    return ctx, await registry.policies.pre_command(ctx)
+
+
+async def admit(
+        name: str,
+        args: list[str],
+        operands: Sequence[str | PathSpec],
+        session: Session,
+        registry: MountRegistry,
+        namespace: Namespace | None,
+        agent_id: str = "",
+        stdin: ByteSource | None = None,
+        redirects: Sequence[PathSpec] = (),
+) -> Refusal | Admitted:
+    """The command plane's admission of one command: visibility, then
+    the policy chain, then the decision ledger.
+
+    The one gate every command class passes through, in the tree
+    (``_run_argv``, once the words are expanded) and for a line a
+    runtime takes whole (``admit_line``, per parsed command). A word
+    the session's allow lists do not install is bash's "command not
+    found" before any admission hook, so an unlisted tool never leaks
+    a deny reason; a path the session cannot see is dropped before any
+    hook, so a rule never names it and the door answers ENOENT; a Deny
+    renders in the outcome table's voice; an Ask is answered by the
+    door from the session's grants or the host. A command that gets
+    through comes back as its ``Admitted`` gate, which its own I/O
+    consults for the entries the gate did not see.
+
+    Args:
+        name (str): command name, expanded.
+        args (list[str]): the words after it.
+        operands (Sequence[str | PathSpec]): the same words, classified.
+        session (Session): the session running the line.
+        registry (MountRegistry): registry holding the policies, the
+            decision ledger and the CLI installs.
+        namespace (Namespace | None): the link table.
+        agent_id (str): the agent the line is attributed to, for an
+            ledger record.
+        stdin (ByteSource | None): the line's stdin, which decides
+            whether a bare ``rg`` reads the working directory.
+        redirects (Sequence[PathSpec]): the statement's expanded
+            redirect targets, empty when it has none.
+    """
+    gated = await gate(name, args, operands, session, registry, namespace,
+                       agent_id, stdin, redirects)
+    if isinstance(gated, Refusal):
+        return gated
+    ctx, asked = gated
     # An Ask is the chain's answer only after every Deny had its say;
-    # the door answers it from the session's grants or the host, so a
-    # grant never re-opens a deny.
-    verdict: Deny | Pending | None = (await registry.approvals.resolve(
+    # the ledger answers it from the session's records or the host, so
+    # an answer never re-opens a deny.
+    action: Deny | Pending | None = (await registry.decisions.resolve(
         ctx, asked) if isinstance(asked, Ask) else asked)
-    if verdict is None:
+    if action is None:
         granted = [
-            g.rule for g in session.grants if g.decision == "allow_session"
+            r.rule for r in session.decisions
+            if r.scope is Scope.SESSION and r.outcome is Outcome.ALLOW
         ]
         if isinstance(asked, Ask):
             granted.insert(0, ask_rule(ctx, asked))
         rules = session.commands
         return Admitted(rules=rules,
-                        tokens=tokens,
+                        tokens=ctx.tokens,
                         judged=frozenset(_norm(p.virtual) for p in ctx.paths),
                         granted=tuple(granted),
                         scoped=scopes_paths(rules, name))
-    err, code = (render_pending(name, verdict) if isinstance(verdict, Pending)
-                 else render_deny(name, verdict))
+    err, code = (render_pending(name, action)
+                 if isinstance(action, Pending) else render_deny(name, action))
     return Refusal(err, code)
 
 
@@ -351,6 +398,26 @@ def _word_hints(
     return word_kinds, word_bases
 
 
+def classified_words(name: str, args: list[str], session: Session,
+                     registry: MountRegistry) -> list[str | PathSpec]:
+    """One command's literal words, classified the way the runtime would
+    classify them, so the gate and the run name the same paths.
+
+    Args:
+        name (str): the head word.
+        args (list[str]): the words after it.
+        session (Session): the session running the line.
+        registry (MountRegistry): registry holding the specs.
+    """
+    line = [name, *args]
+    word_kinds, word_bases = _word_hints(line, session, registry)
+    return classify_parts(line,
+                          registry,
+                          session.cwd,
+                          word_kinds=word_kinds,
+                          word_bases=word_bases)
+
+
 async def _admit_words(
         words: list[Word],
         open_: bool,
@@ -370,7 +437,7 @@ async def _admit_words(
             cannot read (``xargs``, ``find -exec``).
         session (Session): the session running the line.
         registry (MountRegistry): registry holding the policies, the
-            approval door and the CLI installs.
+            decision ledger and the CLI installs.
         namespace (Namespace | None): the link table.
         agent_id (str): the agent the line is attributed to.
         rules (AdmissionRules | None): the session's admission rules.
@@ -383,28 +450,23 @@ async def _admit_words(
     name = head.value
     args = [w.value for w in words[1:]]
     line = [name, *args]
-    word_kinds, word_bases = _word_hints(line, session, registry)
-    classified = classify_parts(line,
-                                registry,
-                                session.cwd,
-                                word_kinds=word_kinds,
-                                word_bases=word_bases)
+    classified = classified_words(name, args, session, registry)
     targets = [
         classify_bare_path(w.value, registry, session.cwd)
         for w in redirect_words if w.text is not None
     ]
     redirects = tuple(p for p in targets if isinstance(p, PathSpec))
-    verdict = await admit(name,
-                          args,
-                          classified[1:],
-                          session,
-                          registry,
-                          namespace,
-                          agent_id,
-                          redirects=redirects)
-    if isinstance(verdict, Refusal):
-        return verdict
-    if verdict.scoped:
+    action = await admit(name,
+                         args,
+                         classified[1:],
+                         session,
+                         registry,
+                         namespace,
+                         agent_id,
+                         redirects=redirects)
+    if isinstance(action, Refusal):
+        return action
+    if action.scoped:
         # The runtime walks and globs on its own, where no entry gate
         # follows an I/O below the judged words, so a command a path or
         # mount rule reads must not reach it with either in hand.
@@ -476,7 +538,7 @@ async def admit_line(
         ast (Any): the parsed tree-sitter root node.
         session (Session): the session running the line.
         registry (MountRegistry): registry holding the policies, the
-            approval door and the CLI installs.
+            decision ledger and the CLI installs.
         namespace (Namespace | None): the link table.
         agent_id (str): the agent the line is attributed to.
     """

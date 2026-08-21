@@ -17,6 +17,7 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } 
 import { tmpdir } from 'node:os'
 import { dirname, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { Outcome, Scope } from '@struktoai/mirage-core/policy/index'
 import type { SessionProfile } from '@struktoai/mirage-core/workspace/session/permissions'
 
 // integ/runtime holds the runtime suite (its own schema and runners,
@@ -174,10 +175,9 @@ export interface ExecWorkspace {
     options: { profile?: string | SessionProfile; permissions?: SessionProfile },
   ): unknown
   env: Record<string, string>
-  approvals: {
-    list(): readonly { id: string }[]
-    grant(id: string, scope?: 'once' | 'session'): Promise<void>
-    deny(id: string): Promise<void>
+  decisions: {
+    pending(): readonly { id: string }[]
+    answer(id: string, outcome: Outcome, scope?: Scope): Promise<void>
   }
   close(): Promise<void>
 }
@@ -503,15 +503,23 @@ export function bindMount(c: Case, mountPath: string): Case {
 /**
  * The host's side of the ask arm: answer every approval waiting on the
  * workspace the way the case says, so the command that follows finds
- * the grant (or the refusal) the way an agent's retry would.
+ * the answer (or the refusal) the way an agent's retry would. The case
+ * keeps the three words as its own vocabulary; they map onto an outcome
+ * and a scope here.
  */
-async function answerApprovals(
+async function answerDecisions(
   ws: ExecWorkspace,
   answer: 'allow_once' | 'allow_session' | 'deny',
 ): Promise<void> {
-  for (const request of ws.approvals.list()) {
-    if (answer === 'deny') await ws.approvals.deny(request.id)
-    else await ws.approvals.grant(request.id, answer === 'allow_once' ? 'once' : 'session')
+  for (const record of ws.decisions.pending()) {
+    if (answer === 'deny') await ws.decisions.answer(record.id, Outcome.DENY)
+    else {
+      await ws.decisions.answer(
+        record.id,
+        Outcome.ALLOW,
+        answer === 'allow_once' ? Scope.ONCE : Scope.SESSION,
+      )
+    }
   }
 }
 
@@ -544,7 +552,7 @@ export async function runCase(
       checkOut: null,
     }
   }
-  if (c.answer !== undefined) await answerApprovals(ws, c.answer)
+  if (c.answer !== undefined) await answerDecisions(ws, c.answer)
   const result = await ws.execute(c.command, { sessionId: c.session })
   const elapsed = (performance.now() - start) / 1000
   const out = DEC.decode(result.stdout)

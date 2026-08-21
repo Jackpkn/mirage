@@ -22,14 +22,13 @@ import { IOResult } from '../io/types.ts'
 import { OpsRegistry, type RegisteredOp } from '../ops/registry.ts'
 import type {
   Action,
-  ApprovalDecision,
-  ApprovalRequest,
+  Decision,
   CommandContext,
   OpsContext,
   Policy,
   SessionContext,
 } from '../policy/index.ts'
-import { CallbackApprover } from '../policy/index.ts'
+import { Outcome, Scope, type AskHandler } from '../policy/index.ts'
 import { RAMResource } from '../resource/ram/ram.ts'
 import { Runtime } from '../runtime/base.ts'
 import { LINE_EXECUTOR, type LineExecutor } from '../runtime/mixin.ts'
@@ -1660,7 +1659,7 @@ describe('command permissions end to end', () => {
       '',
       "rm: cannot remove '/repo/shared/a': No such file or directory\n",
     ])
-    expect(ws.approvals.list().map((r) => r.sessionId)).toEqual([ws.sessionManager.defaultId])
+    expect(ws.decisions.pending().map((r) => r.sessionId)).toEqual([ws.sessionManager.defaultId])
     expect(await line(ws, 'ls /repo', 'veiled')).toEqual([0, '', ''])
     // A rule with no path in it still speaks: nothing hidden is named.
     expect(await line(ws, 'head /repo/private/k', 'veiled')).toEqual([
@@ -1710,7 +1709,7 @@ describe('ask end to end', () => {
     }
   }
 
-  async function askWs(options: { approver?: CallbackApprover } = {}): Promise<Workspace> {
+  async function askWs(options: { onAsk?: AskHandler } = {}): Promise<Workspace> {
     const parser = await getTestParser()
     const ws = new Workspace(
       { '/repo': new RAMResource(), '/scratch': new RAMResource() },
@@ -1719,7 +1718,7 @@ describe('ask end to end', () => {
         shellParser: parser,
         profiles: { default: ASK_DOC },
         policies: [new AskWc()],
-        ...(options.approver !== undefined ? { approver: options.approver } : {}),
+        ...(options.onAsk !== undefined ? { onAsk: options.onAsk } : {}),
       },
     )
     open.push(ws)
@@ -1737,8 +1736,8 @@ describe('ask end to end', () => {
 
   // The one request a step expects on the door; a missing one is the
   // test's failure, not a type to thread through.
-  function pendingRequest(ws: Workspace, command?: string): ApprovalRequest {
-    const found = ws.approvals.list().find((r) => command === undefined || r.command === command)
+  function pendingRequest(ws: Workspace, command?: string): Decision {
+    const found = ws.decisions.pending().find((r) => command === undefined || r.command === command)
     if (found === undefined) throw new Error(`no pending approval for ${command ?? 'any command'}`)
     return found
   }
@@ -1747,7 +1746,7 @@ describe('ask end to end', () => {
     const ws = await askWs()
     await ws.execute('mkdir -p /repo/d && touch /repo/d/x /scratch/z')
     // Asked: 126 in the requires-approval voice, quoting an id; the
-    // request is on ws.approvals with what was asked; a retry quotes the
+    // request is on ws.decisions with what was asked; a retry quotes the
     // same id and adds nothing.
     const [code, , err] = await line(ws, 'rm /scratch/z')
     expect(code).toBe(126)
@@ -1761,25 +1760,29 @@ describe('ask end to end', () => {
     ])
     expect(request.sessionId).toBe(ws.sessionManager.defaultId)
     expect(await line(ws, 'rm /scratch/z')).toEqual([126, '', err])
-    expect(ws.approvals.list()).toHaveLength(1)
+    expect(ws.decisions.pending()).toHaveLength(1)
     // The request names the agent of the call that asked, not the
     // workspace's constructor agent, so a shared workspace attributes
     // an approval to whoever raised it.
     expect(request.agentId).toBe('')
     const byBob = await ws.execute('rm /scratch/z2', { agentId: 'bob' })
     expect(byBob.exitCode).toBe(126)
-    expect(ws.approvals.list().map((r) => r.agentId)).toEqual(['', 'bob'])
+    expect(ws.decisions.pending().map((r) => r.agentId)).toEqual(['', 'bob'])
     // The agent rides with the execution, not the workspace: a line
     // asked through a nested eval keeps its caller's, and two lines in
     // flight at once keep their own.
+    // The substitution's own command is a command of the line, so the
+    // line is refused whole rather than running `echo` over an empty
+    // substitution and exiting 0, which used to leave the agent reading
+    // success for a removal that never happened.
     const nested = await ws.execute('echo $(rm /scratch/z3)', { agentId: 'carol' })
-    expect(nested.exitCode).toBe(0)
+    expect(nested.exitCode).toBe(126)
     await Promise.all([
       ws.execute('rm /scratch/z4', { agentId: 'dan' }),
       ws.execute("eval 'rm /scratch/z5'", { agentId: 'eve' }),
     ])
     const byAgent = Object.fromEntries(
-      ws.approvals.list().map((r) => [[r.command, ...r.argv].join(' '), r.agentId]),
+      ws.decisions.pending().map((r) => [[r.command, ...r.argv].join(' '), r.agentId]),
     )
     expect(byAgent).toEqual({
       'rm /scratch/z': '',
@@ -1788,15 +1791,15 @@ describe('ask end to end', () => {
       'rm /scratch/z4': 'dan',
       'rm /scratch/z5': 'eve',
     })
-    for (const r of ws.approvals.list()) {
-      if (r.agentId !== '' && r.agentId !== 'bob') await ws.approvals.deny(r.id)
+    for (const r of ws.decisions.pending()) {
+      if (r.agentId !== '' && r.agentId !== 'bob') await ws.decisions.answer(r.id, Outcome.DENY)
     }
-    const bobs = ws.approvals.list().find((r) => r.agentId === 'bob')
+    const bobs = ws.decisions.pending().find((r) => r.agentId === 'bob')
     if (bobs === undefined) throw new Error('no request from bob')
-    await ws.approvals.deny(bobs.id)
+    await ws.decisions.answer(bobs.id, Outcome.DENY)
     // Granted once: the exact retry passes, and the next one asks.
-    await ws.approvals.grant(request.id)
-    expect(ws.approvals.list()).toEqual([])
+    await ws.decisions.answer(request.id, Outcome.ALLOW)
+    expect(ws.decisions.pending()).toEqual([])
     expect((await line(ws, 'rm /scratch/z'))[0]).toBe(0)
     expect((await line(ws, 'cat /scratch/z'))[0]).toBe(1)
     const again = await line(ws, 'rm /scratch/z')
@@ -1808,7 +1811,7 @@ describe('ask end to end', () => {
     expect(asked[2].startsWith('head: requires approval: no standing approval')).toBe(true)
     // Denied: the retry is refused once in the deny voice, then the
     // question is open again.
-    await ws.approvals.deny(pendingRequest(ws, 'head').id)
+    await ws.decisions.answer(pendingRequest(ws, 'head').id, Outcome.DENY)
     expect(await line(ws, 'head /repo/d/x')).toEqual([
       126,
       '',
@@ -1823,7 +1826,7 @@ describe('ask end to end', () => {
     const ws = await askWs()
     await ws.execute('mkdir -p /repo/d && touch /repo/d/x /scratch/y /scratch/z')
     expect((await line(ws, 'rm /scratch/y'))[0]).toBe(126)
-    await ws.approvals.grant(pendingRequest(ws).id, 'session')
+    await ws.decisions.answer(pendingRequest(ws).id, Outcome.ALLOW, Scope.SESSION)
     // Every rm line passes now, in any directory of the session ...
     expect((await line(ws, 'rm /scratch/y'))[0]).toBe(0)
     expect((await line(ws, 'cd /scratch && rm z'))[0]).toBe(0)
@@ -1832,13 +1835,13 @@ describe('ask end to end', () => {
     // request (nothing for the host to answer; the battery cannot see
     // this, so it is pinned here).
     expect(await line(ws, 'cd /repo/d && rm x')).toEqual([1, '', 'rm: x: no deletes in the repo\n'])
-    expect(ws.approvals.list()).toEqual([])
+    expect(ws.decisions.pending()).toEqual([])
     // The grant is session state: on the record, and not another
     // session's.
     const record = ws.sessionManager.get(ws.sessionManager.defaultId).toJSON() as {
-      grants: { decision: string }[]
+      decisions: { outcome: string; scope: string }[]
     }
-    expect(record.grants[0]?.decision).toBe('allow_session')
+    expect(record.decisions[0]?.scope).toBe('session')
     ws.createSession('other')
     await ws.execute('touch /scratch/w', { sessionId: 'other' })
     const other = await line(ws, 'rm /scratch/w', 'other')
@@ -1856,7 +1859,7 @@ describe('ask end to end', () => {
     // The synthesized rule names the program, so a session grant covers
     // every wc line.
     expect(request.rule).toEqual({ reason: 'looks risky', commands: ['wc'] })
-    await ws.approvals.grant(request.id, 'session')
+    await ws.decisions.answer(request.id, Outcome.ALLOW, Scope.SESSION)
     expect(await line(ws, 'wc -c /scratch/z')).toEqual([0, '0 /scratch/z\n', ''])
     expect(await line(ws, 'wc -l /scratch/z')).toEqual([0, '0 /scratch/z\n', ''])
   })
@@ -1865,7 +1868,7 @@ describe('ask end to end', () => {
     const ws = await askWs()
     await ws.execute('touch /scratch/z')
     expect((await line(ws, 'rm /scratch/z'))[0]).toBe(126)
-    await ws.approvals.grant(pendingRequest(ws).id)
+    await ws.decisions.answer(pendingRequest(ws).id, Outcome.ALLOW)
     // execute({env}) runs the line in a fork of the session: the once
     // grant is read and consumed through the manager, so the fork
     // spends it for the session it forked from.
@@ -1876,15 +1879,19 @@ describe('ask end to end', () => {
     expect(again[2]).toContain('requires approval')
   })
 
-  it('a blocking approver answers inside the line', async () => {
-    const allowOnce = (_r: ApprovalRequest): Promise<ApprovalDecision> =>
-      Promise.resolve('allow_once')
-    const denyIt = (_r: ApprovalRequest): Promise<ApprovalDecision> => Promise.resolve('deny')
-    const yes = await askWs({ approver: new CallbackApprover(allowOnce) })
+  it('a blocking host answers inside the line', async () => {
+    // The host is a plain function over the ledger's own record, not a
+    // class implementing a protocol: it answers by returning the record
+    // with an outcome set.
+    const allowOnce = (r: Decision): Promise<Decision> =>
+      Promise.resolve({ ...r, outcome: Outcome.ALLOW, scope: Scope.ONCE })
+    const denyIt = (r: Decision): Promise<Decision> =>
+      Promise.resolve({ ...r, outcome: Outcome.DENY })
+    const yes = await askWs({ onAsk: allowOnce })
     await yes.execute('touch /scratch/z')
     expect((await line(yes, 'rm /scratch/z'))[0]).toBe(0)
-    expect(yes.approvals.list()).toEqual([])
-    const no = await askWs({ approver: new CallbackApprover(denyIt) })
+    expect(yes.decisions.pending()).toEqual([])
+    const no = await askWs({ onAsk: denyIt })
     await no.execute('touch /scratch/z')
     expect(await line(no, 'rm /scratch/z')).toEqual([126, '', 'rm: policy denied: sign-off\n'])
     expect((await line(no, 'cat /scratch/z'))[0]).toBe(0)
@@ -2010,19 +2017,19 @@ describe('a walk below the operand meets the rule guard', () => {
       '',
       'grep: /data/t/asked/a: Permission denied\n',
     ])
-    expect(ws.approvals.list()).toEqual([])
+    expect(ws.decisions.pending()).toEqual([])
     const [code, , err] = await line(ws, 'grep a /data/t/asked/a')
     expect(code).toBe(126)
     expect(err).toContain('grep: requires approval: nod')
-    const [request] = ws.approvals.list()
+    const [request] = ws.decisions.pending()
     if (request === undefined) throw new Error('no pending request')
-    await ws.approvals.grant(request.id)
+    await ws.decisions.answer(request.id, Outcome.ALLOW)
     expect(await line(ws, 'grep a /data/t/asked/a')).toEqual([0, 'a\n', ''])
     // A standing grant covers the walk too.
     await line(ws, 'grep a /data/t/asked/a')
-    const [second] = ws.approvals.list()
+    const [second] = ws.decisions.pending()
     if (second === undefined) throw new Error('no pending request')
-    await ws.approvals.grant(second.id, 'session')
+    await ws.decisions.answer(second.id, Outcome.ALLOW, Scope.SESSION)
     expect(await line(ws, 'grep -r a /data/t/asked')).toEqual([0, '/data/t/asked/a:a\n', ''])
   })
 

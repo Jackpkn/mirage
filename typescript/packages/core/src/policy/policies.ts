@@ -67,11 +67,11 @@ export function renderPending(subject: string, pending: Pending): [Uint8Array, n
  * Narrow a hook's answer where VALIDITY admits no Ask, which the loop
  * already refuses inside; reaching one here is a programming error.
  */
-function denyOnly(hook: Hook, verdict: Deny | Ask | null): Deny | null {
-  if (verdict !== null && verdict.kind === 'ask') {
-    throw new PolicyError(`${hook} cannot answer with an Ask: ${JSON.stringify(verdict)}`)
+function denyOnly(hook: Hook, action: Deny | Ask | null): Deny | null {
+  if (action !== null && action.kind === 'ask') {
+    throw new PolicyError(`${hook} cannot answer with an Ask: ${JSON.stringify(action)}`)
   }
-  return verdict
+  return action
 }
 
 /**
@@ -251,31 +251,31 @@ export class Policies {
 
   /** Fire preCommand across the policies; the first Deny wins, else the first Ask. */
   async preCommand(ctx: CommandContext): Promise<Deny | Ask | null> {
-    const [verdict] = await this.fire('preCommand', ctx)
-    return verdict
+    const [action] = await this.fire('preCommand', ctx)
+    return action
   }
 
   /** Fire preOps across the policies; the first Deny wins. */
   async preOps(ctx: OpsContext): Promise<Deny | null> {
-    const [verdict] = await this.fire('preOps', ctx)
-    return denyOnly('preOps', verdict)
+    const [action] = await this.fire('preOps', ctx)
+    return denyOnly('preOps', action)
   }
 
   /** Fire postOps; a Deny suppresses the result, Limits merge. */
   async postOps(ctx: OpsResultContext): Promise<[Deny | null, Limit | null]> {
-    const [verdict, limit] = await this.fire('postOps', ctx)
-    return [denyOnly('postOps', verdict), limit]
+    const [action, limit] = await this.fire('postOps', ctx)
+    return [denyOnly('postOps', action), limit]
   }
 
   /** Fire postExecute; Limits merge to the boundary bound. */
   async postExecute(ctx: ExecuteResultContext): Promise<[Deny | null, Limit | null]> {
-    const [verdict, limit] = await this.fire('postExecute', ctx)
-    return [denyOnly('postExecute', verdict), limit]
+    const [action, limit] = await this.fire('postExecute', ctx)
+    return [denyOnly('postExecute', action), limit]
   }
 
   /** Fire preSession across the policies; the first Deny wins. */
   async preSession(ctx: SessionContext): Promise<Deny | null> {
-    const [verdict] = await this.fire('preSession', ctx)
-    return denyOnly('preSession', verdict)
+    const [action] = await this.fire('preSession', ctx)
+    return denyOnly('preSession', action)
   }
 }

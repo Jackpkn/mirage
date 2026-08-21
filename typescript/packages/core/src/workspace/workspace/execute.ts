@@ -34,6 +34,7 @@ import type { ExecuteFn } from '../expand/node.ts'
 import type { MountRegistry } from '../mount/registry.ts'
 import type { Namespace } from '../mount/namespace/namespace.ts'
 import type { ExecuteNodeDeps } from '../node/execute_node.ts'
+import { prejudgeLine } from '../node/explain.ts'
 import { runCommandTree } from '../node/run_tree.ts'
 import type { DriftQueue } from '../snapshot/drift.ts'
 import type { SessionManager } from '../session/manager.ts'
@@ -360,6 +361,22 @@ async function runParsedLine(
       )
     }
     return new ExecuteResult(result.stdout, result.stderr ?? new Uint8Array(), result.exitCode)
+  }
+  // The line is the unit a rule judges, so every command in it is
+  // judged before any of it runs. Nothing here replaces the per-command
+  // gate below, which still binds each command's own entry gate; this
+  // only stops a line a rule refuses from running half-way.
+  const prejudged = await prejudgeLine(
+    rootNode,
+    effectiveSession,
+    env.registry,
+    env.namespace,
+    callAgentId,
+    reparse,
+  )
+  if (prejudged !== null) {
+    targetSession.lastExitCode = prejudged.exitCode
+    return new ExecuteResult(new Uint8Array(), prejudged.stderr, prejudged.exitCode)
   }
   const runBody = (): Promise<[ByteSource | null, IOResult, ExecutionNode]> =>
     runWithSession(

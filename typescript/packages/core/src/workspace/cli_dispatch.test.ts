@@ -12,6 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import { Outcome } from '../policy/index.ts'
 import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { beforeAll, describe, expect, it } from 'vitest'
@@ -150,10 +151,10 @@ describe('CLI dispatch e2e', () => {
     expect(dec.decode(asked.stderr).startsWith('h1: requires approval: outbound needs a nod')).toBe(
       true,
     )
-    const request = ws.approvals.list()[0]
+    const request = ws.decisions.pending()[0]
     if (request === undefined) throw new Error('no pending approval')
     expect(request.command).toBe('h1')
-    await ws.approvals.grant(request.id)
+    await ws.decisions.answer(request.id, Outcome.ALLOW)
     const granted = await ws.execute('h1 message send -t x hi', { sessionId: 'c' })
     expect([granted.exitCode, dec.decode(granted.stdout)]).toEqual([0, 'sent[one] to=x: hi\n'])
     const missing = await ws.execute('h2 message send -t x hi', { sessionId: 's' })

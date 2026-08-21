@@ -30,6 +30,7 @@ from mirage.shell.parse import (find_syntax_error, find_unterminated_backtick,
 from mirage.workspace.abort import MirageAbortError
 from mirage.workspace.node import provision_node, run_command_tree
 from mirage.workspace.node.admission import admit_line
+from mirage.workspace.node.explain import prejudge_line
 from mirage.workspace.session import (get_current_session_for,
                                       reset_current_session,
                                       set_current_session)
@@ -218,6 +219,17 @@ async def execute_line(
                 line_runtime, command, stdin, effective_session,
                 ws._registry.mounts(), ws._registry.policies,
                 ws._dispatcher.invalidate_all_after_remote)
+            session.last_exit_code = io.exit_code
+            return io
+        # The line is the unit a rule judges, so every command in it is
+        # judged before any of it runs. Nothing here replaces the
+        # per-command gate below, which still binds each command's own
+        # entry gate; this only stops a line a rule refuses from
+        # running half-way.
+        refusal = await prejudge_line(ast, effective_session, ws._registry,
+                                      ws._namespace, agent or "")
+        if refusal is not None:
+            io = IOResult(exit_code=refusal.exit_code, stderr=refusal.stderr)
             session.last_exit_code = io.exit_code
             return io
         io, _ = await run_command_tree(

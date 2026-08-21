@@ -12,6 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import { checkCliVerbs } from '../session/validate.ts'
 import type { FileCache } from '../../cache/file/mixin.ts'
 import { RAMResource } from '../../resource/ram/ram.ts'
 import { IOResult } from '../../io/types.ts'
@@ -31,7 +32,7 @@ import type { CLIInstall } from '../cli/types.ts'
 import { resolveLimit } from '../../policy/index.ts'
 import { PermissionsPolicy } from '../../policy/builtin/permissions.ts'
 import { PolicyError } from '../../policy/errors.ts'
-import { Approvals } from '../../policy/approvals.ts'
+import { Decisions } from '../../policy/decisions.ts'
 import { JobTable } from '../../shell/job_table/index.ts'
 import type { ShellParser } from '../../shell/parse.ts'
 import { buildFileCache } from './cache.ts'
@@ -49,7 +50,7 @@ import { readSnapshotTar } from '../snapshot/tar_io.ts'
 import type { WorkspaceStateDict } from '../snapshot/types.ts'
 import type { FileEvent, FileStat } from '../../types.ts'
 import { ConsistencyPolicy, DriftPolicy, MountMode, PathSpec } from '../../types.ts'
-import type { Policies } from '../../policy/index.ts'
+import type { Explanation, Policies } from '../../policy/index.ts'
 import type { PolicyFn } from '../../runtime/policy/index.ts'
 import type { TSNodeLike } from '../../shell/types.ts'
 import type { ExecuteFn } from '../expand/node.ts'
@@ -67,6 +68,7 @@ import type { EvalResult } from '../../runtime/types.ts'
 import { PyodideUnavailableError } from '../../runtime/python/types.ts'
 import { Dispatcher } from '../dispatcher/index.ts'
 import { Namespace } from '../mount/namespace/namespace.ts'
+import { explainLine } from '../node/explain.ts'
 import { provisionNode } from '../node/provision_node.ts'
 import { buildFilePrompt } from '../file_prompt.ts'
 import { SessionManager } from '../session/manager.ts'
@@ -192,9 +194,9 @@ export class Workspace {
     this.registry.policies.add(new PermissionsPolicy(this.sessionManager))
     for (const entry of options.policies ?? []) this.registry.policies.add(entry)
     // The approval door an Ask is taken to (design 3.9): grants live on
-    // the sessions, the host answers through `approver` (the recording
-    // one when none is wired) and reads `ws.approvals`.
-    this.registry.approvals = new Approvals(this.sessionManager, options.approver ?? null)
+    // the sessions, the host answers through `onAsk` (or just records
+    // the question when none is wired) and reads `ws.decisions`.
+    this.registry.decisions = new Decisions(this.sessionManager, options.onAsk ?? null)
     // Installed CLIs, fully separate from mounts: a spec name resolves
     // against the named registry and every entry installs through the
     // same fail-loud path as registerCli.
@@ -480,8 +482,8 @@ export class Workspace {
    * `grant(id, scope)` or `deny(id)` one, and the agent's retry passes
    * or is refused.
    */
-  get approvals(): Approvals {
-    return this.registry.approvals
+  get decisions(): Decisions {
+    return this.registry.decisions
   }
 
   get ops(): OpsRegistry {
@@ -546,9 +548,24 @@ export class Workspace {
       inline = withInline(inline, { mounts: parseProfileMounts(options.mounts) })
     }
     const compiled = compileProfile(withInline(base, inline))
+    checkCliVerbs(compiled.commands, this.cliVerbs())
     const session = this.sessionManager.create(sessionId)
     applyProfile(session, compiled)
     return session
+  }
+
+  /**
+   * The verbs each installed CLI declares, keyed by head word.
+   *
+   * Read at `createSession` rather than at compile time because a CLI is
+   * registered on the workspace after it is built.
+   */
+  private cliVerbs(): ReadonlyMap<string, ReadonlySet<string>> {
+    const out = new Map<string, ReadonlySet<string>>()
+    for (const [name, install] of this.registry.clis.items()) {
+      out.set(name, new Set(install.spec.subcommands.map((child) => child.name)))
+    }
+    return out
   }
 
   getSession(sessionId: string): Session {
@@ -575,6 +592,28 @@ export class Workspace {
   async ensureSessionsLoaded(): Promise<void> {
     await this.meta.ensure()
     await this.sessionManager.ensureLoaded()
+  }
+
+  /**
+   * What a line would do under a session's role, without running any of
+   * it: one Explanation per command the gate reads, in gate order,
+   * nested lines included.
+   *
+   * The dry run of the gate every command passes through, so this and
+   * the refusal an agent would read come out of one place and cannot
+   * disagree. It runs no command, expands nothing, spends no grant and
+   * puts no question to a host, which is what makes it safe to call
+   * about a line nobody typed.
+   *
+   * Host-side only. The structure of a role's rules is an operator's
+   * business, so there is no builtin an agent can type to read it.
+   */
+  async explain(line: string, sessionId = ''): Promise<Explanation[]> {
+    await this.ensureSessionsLoaded()
+    const session = this.getSession(sessionId === '' ? this.defaultSessionId : sessionId)
+    const parser = await this.getShellParser()
+    const reparse = (text: string): TSNodeLike => parser.parse(text)
+    return explainLine(parser.parse(line), session, this.registry, this.namespace, '', reparse)
   }
 
   get workspaceId(): string {

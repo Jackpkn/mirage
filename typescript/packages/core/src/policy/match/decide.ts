@@ -12,7 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import type { Decision } from '../config.ts'
+import type { Ruling } from '../types.ts'
 import { VERB_ORDER } from '../constants.ts'
 import {
   Outcome,
@@ -33,7 +33,7 @@ import {
 } from './rule.ts'
 
 /**
- * Whether one subject's verdict outranks the line's best so far: the
+ * Whether one subject's decision outranks the line's best so far: the
  * stronger verb first, then the deeper anchor.
  *
  * The mirror image of `betterMatch`, and deliberately so. Two rules
@@ -109,7 +109,7 @@ export function sourceOf(rule: CommandRule): string {
  * Ranking across subjects is the whole answer for a deny, which refuses
  * the line, and only half of it for an ask, which is a question the host
  * still has to answer. So every ask that won a subject of its own is
- * reported (`Decision.asks`) and the door requires all of them: with
+ * reported (`Ruling.asks`) and the door requires all of them: with
  * `ask cp /a/*` and a deeper `ask cp /deep/b/*`, `cp /a/x /deep/b/y` used
  * to present the deeper one alone, and a nod for the destination ran the
  * line without the source ever being asked about.
@@ -117,13 +117,13 @@ export function sourceOf(rule: CommandRule): string {
  * `PermissionsPolicy` renders this into the outcome table and `explain`
  * reports it, so the two cannot disagree about what a line would do.
  */
-export function decide(ctx: CommandContext, rules: AdmissionRules | null): Decision {
+export function decide(ctx: CommandContext, rules: AdmissionRules | null): Ruling {
   if (rules === null) {
-    return { outcome: Outcome.RUN, rule: null, matchedPath: null, source: '', asks: [] }
+    return { outcome: Outcome.ALLOW, rule: null, matchedPath: null, source: '', asks: [] }
   }
   if (!lineAllowed(ctx, rules)) {
     return {
-      outcome: Outcome.NOT_ALLOWED,
+      outcome: Outcome.DENY,
       rule: null,
       matchedPath: null,
       source: 'commands.allow',
@@ -140,8 +140,8 @@ export function decide(ctx: CommandContext, rules: AdmissionRules | null): Decis
     }
   }
   let best: [number, number] | null = null
-  let chosen: Decision = {
-    outcome: Outcome.RUN,
+  let chosen: Ruling = {
+    outcome: Outcome.ALLOW,
     rule: null,
     matchedPath: null,
     source: '',

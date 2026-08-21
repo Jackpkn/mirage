@@ -14,12 +14,10 @@
 
 export type { Policy } from './base.ts'
 export { PolicyDenied } from './errors.ts'
-export { Approvals, askRule } from './approvals.ts'
-export { CallbackApprover, RecordApprover, requestId, type Approver } from './approver.ts'
+export { Decisions, askRule, covers, decisionId, type AskHandler } from './decisions.ts'
 export { MountRootPolicy } from './builtin/mount_root.ts'
 export { PermissionsPolicy } from './builtin/permissions.ts'
 export { decide, outranks, ruleAt, sourceOf } from './match/decide.ts'
-export { type Decision } from './config.ts'
 export { anchorDepth } from '../utils/hidden.ts'
 export {
   betterMatch,
@@ -44,22 +42,22 @@ export {
 } from './policies.ts'
 export {
   type Action,
-  type ApprovalDecision,
-  type ApprovalRequest,
   type Ask,
   type CommandContext,
   type AdmissionRules,
   type Deny,
   type DenyScope,
   type ExecuteResultContext,
+  type Explanation,
   type CommandRule,
-  type Grant,
-  type GrantScope,
   type OpsContext,
   type OpsResultContext,
   Outcome,
   type Pending,
+  type Decision,
+  type Ruling,
+  Scope,
+  type SessionDecisionsQuery,
   type SessionCommandsQuery,
   type SessionContext,
-  type SessionGrantsQuery,
 } from './types.ts'

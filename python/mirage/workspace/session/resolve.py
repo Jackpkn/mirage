@@ -21,6 +21,7 @@ from mirage.utils.hidden import classify_paths, classify_vars
 from mirage.workspace.session.constants import DEFAULT_PROFILE
 from mirage.workspace.session.session import Session, vars_from_env
 from mirage.workspace.session.shell_dirs import set_cwd
+from mirage.workspace.session.validate import check_rules
 
 from mirage.workspace.session.permissions import (  # isort: skip
     CommandsBlock, CompiledProfile, MountCommandsBlock, PathsBlock,
@@ -340,6 +341,8 @@ def compile_profile(effective: SessionProfile | None) -> CompiledProfile:
                                env=None,
                                cwd=None,
                                commands=None)
+    commands = compile_commands(effective)
+    check_rules(commands)
     return CompiledProfile(
         mount_modes=_modes(effective),
         hidden_paths=_hidden(effective),
@@ -347,7 +350,7 @@ def compile_profile(effective: SessionProfile | None) -> CompiledProfile:
             effective.vars.hide if effective.vars is not None else ()),
         env=dict(effective.env) if effective.env is not None else None,
         cwd=effective.cwd,
-        commands=compile_commands(effective),
+        commands=commands,
     )
 
 

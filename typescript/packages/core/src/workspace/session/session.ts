@@ -17,14 +17,14 @@ import type { AsyncLineIterator } from '../../io/async_line_iterator.ts'
 import type { ShellArray } from '../../shell/array.ts'
 import type { ShellVar } from '../../shell/variable.ts'
 import { attrsFromLetters, makeVar, storedAttrs, VarAttr, withValue } from '../../shell/variable.ts'
-import type { AdmissionRules, Grant } from '../../policy/types.ts'
+import type { AdmissionRules, Decision } from '../../policy/types.ts'
 import {
   commandsFromJSON,
   commandsToJSON,
-  grantFromJSON,
-  grantToJSON,
+  decisionFromJSON,
+  decisionToJSON,
   type CommandsJSON,
-  type GrantJSON,
+  type DecisionJSON,
 } from './serialize.ts'
 import type { HiddenPaths, HiddenVars, MountMode } from '../../types.ts'
 
@@ -141,7 +141,7 @@ export interface SessionInit {
    * state like functions and cwd, persisted, read and written through
    * the manager by id so a fork shares them, never another session's.
    */
-  grants?: readonly Grant[]
+  decisions?: readonly Decision[]
   generation?: number
   pipelineTimeoutSeconds?: number | null
   lastBgJobId?: number | null
@@ -299,7 +299,7 @@ export class Session {
   hiddenPaths: HiddenPaths | null
   hiddenVars: HiddenVars | null
   commands: AdmissionRules | null
-  grants: readonly Grant[]
+  decisions: readonly Decision[]
   generation: number
   pipelineTimeoutSeconds: number | null
   lastBgJobId: number | null
@@ -321,7 +321,7 @@ export class Session {
     this.hiddenPaths = init.hiddenPaths ?? null
     this.hiddenVars = init.hiddenVars ?? null
     this.commands = init.commands ?? null
-    this.grants = init.grants ?? []
+    this.decisions = init.decisions ?? []
     this.generation = init.generation ?? 0
     this.pipelineTimeoutSeconds = init.pipelineTimeoutSeconds ?? null
     this.lastBgJobId = init.lastBgJobId ?? null
@@ -373,7 +373,7 @@ export class Session {
       hiddenPaths: overrides.hiddenPaths ?? this.hiddenPaths,
       hiddenVars: overrides.hiddenVars ?? this.hiddenVars,
       commands: overrides.commands ?? this.commands,
-      grants: overrides.grants ?? this.grants,
+      decisions: overrides.decisions ?? this.decisions,
       generation: overrides.generation ?? this.generation,
       pipelineTimeoutSeconds: overrides.pipelineTimeoutSeconds ?? this.pipelineTimeoutSeconds,
       lastBgJobId: overrides.lastBgJobId ?? this.lastBgJobId,
@@ -558,7 +558,7 @@ export class Session {
       }
     }
     if (this.commands !== null) data.commands = commandsToJSON(this.commands)
-    if (this.grants.length > 0) data.grants = this.grants.map(grantToJSON)
+    if (this.decisions.length > 0) data.decisions = this.decisions.map(decisionToJSON)
     return data
   }
 
@@ -572,7 +572,7 @@ export class Session {
     hidden_paths?: { paths?: string[]; patterns?: string[] } | null
     hidden_vars?: { names?: string[]; patterns?: string[] } | null
     commands?: CommandsJSON | null
-    grants?: GrantJSON[] | null
+    decisions?: DecisionJSON[] | null
     generation?: number
   }): Session {
     return new Session({
@@ -603,7 +603,7 @@ export class Session {
           ? { names: data.hidden_vars.names ?? [], patterns: data.hidden_vars.patterns ?? [] }
           : null,
       commands: data.commands != null ? commandsFromJSON(data.commands) : null,
-      grants: data.grants != null ? data.grants.map(grantFromJSON) : [],
+      decisions: data.decisions != null ? data.decisions.map(decisionFromJSON) : [],
     })
   }
 }

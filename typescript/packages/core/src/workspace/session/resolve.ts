@@ -12,6 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import { checkRules } from './validate.ts'
 import { PolicyError } from '../../policy/errors.ts'
 import type { CommandRule, AdmissionRules } from '../../policy/types.ts'
 import type { HiddenPaths, MountMode } from '../../types.ts'
@@ -276,13 +277,15 @@ export function compileProfile(effective: SessionProfile | null): CompiledProfil
       commands: null,
     }
   }
+  const commands = compileCommands(effective)
+  checkRules(commands)
   return {
     mountModes: modesOf(effective),
     hiddenPaths: hiddenOf(effective),
     hiddenVars: classifyVars(effective.vars?.hide ?? []),
     env: effective.env ?? null,
     cwd: effective.cwd ?? null,
-    commands: compileCommands(effective),
+    commands,
   }
 }
 

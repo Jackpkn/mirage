@@ -15,7 +15,8 @@
 from collections.abc import Mapping
 from typing import Any
 
-from mirage.policy.types import AdmissionRules, CommandRule, Grant
+from mirage.policy.match import Outcome
+from mirage.policy.types import AdmissionRules, CommandRule, Decision, Scope
 
 
 def rule_to_dict(rule: CommandRule) -> dict[str, Any]:
@@ -72,27 +73,44 @@ def commands_from_dict(data: Mapping[str, Any]) -> AdmissionRules:
         deny=tuple(rule_from_dict(r) for r in data.get("deny", ())))
 
 
-def grant_to_dict(grant: Grant) -> dict[str, Any]:
-    """A host grant as the session record stores it.
+def decision_to_dict(record: Decision) -> dict[str, Any]:
+    """A ledger record as the session record stores it.
 
     Args:
-        grant (Grant): the grant.
+        record (Decision): the record.
     """
     return {
-        "decision": grant.decision,
-        "rule": rule_to_dict(grant.rule),
-        "argv": list(grant.argv),
-        "cwd": grant.cwd,
+        "id": record.id,
+        "session_id": record.session_id,
+        "agent_id": record.agent_id,
+        "command": record.command,
+        "argv": list(record.argv),
+        "cwd": record.cwd,
+        "paths": list(record.paths),
+        "reason": record.reason,
+        "rule": rule_to_dict(record.rule),
+        "outcome": record.outcome.value if record.outcome else None,
+        "scope": record.scope.value,
+        "note": record.note,
     }
 
 
-def grant_from_dict(data: Mapping[str, Any]) -> Grant:
-    """A host grant read back from a session record.
+def decision_from_dict(data: Mapping[str, Any]) -> Decision:
+    """A ledger record read back from a session record.
 
     Args:
-        data (Mapping[str, Any]): what ``grant_to_dict`` wrote.
+        data (Mapping[str, Any]): what ``decision_to_dict`` wrote.
     """
-    return Grant(decision=data["decision"],
-                 rule=rule_from_dict(data["rule"]),
-                 argv=tuple(data.get("argv", ())),
-                 cwd=data.get("cwd", "/"))
+    outcome = data.get("outcome")
+    return Decision(id=data["id"],
+                    session_id=data.get("session_id", ""),
+                    agent_id=data.get("agent_id", ""),
+                    command=data.get("command", ""),
+                    argv=tuple(data.get("argv", ())),
+                    cwd=data.get("cwd", "/"),
+                    paths=tuple(data.get("paths", ())),
+                    reason=data.get("reason", ""),
+                    rule=rule_from_dict(data["rule"]),
+                    outcome=Outcome(outcome) if outcome else None,
+                    scope=Scope(data.get("scope", Scope.ONCE.value)),
+                    note=data.get("note", ""))

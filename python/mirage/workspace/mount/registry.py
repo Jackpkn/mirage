@@ -18,7 +18,7 @@ from mirage.cache.file.mixin import FileCacheMixin
 from mirage.cache.manager import CacheManager
 from mirage.commands.builtin.general import COMMANDS as GENERAL_COMMANDS
 from mirage.ops.config import OpsMount
-from mirage.policy import Approvals, MountRootPolicy, OutputCapPolicy, Policies
+from mirage.policy import Decisions, MountRootPolicy, OutputCapPolicy, Policies
 from mirage.resource.base import BaseResource
 from mirage.resource.dev import DevResource
 from mirage.runtime.base import Runtime
@@ -102,10 +102,10 @@ class MountRegistry:
         self.policies = Policies(
             [MountRootPolicy(),
              OutputCapPolicy(self.limit_override)])
-        # The approval door the executor takes an Ask to, hosted here
+        # The decision ledger the executor takes an Ask to, hosted here
         # for the same reason as the policies: the workspace replaces
-        # it with one bound to its session manager and approver.
-        self.approvals = Approvals()
+        # it with one bound to its session manager and ask handler.
+        self.decisions = Decisions()
 
         # Installed CLIs. Not mount state: CLIs are fully separate from
         # mounts (a CLI exists because it was installed, never because

@@ -20,6 +20,8 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from mirage.policy import Scope
+from mirage.policy.match import Outcome
 from mirage.types import FileStat, PathSpec
 
 # integ/runtime holds the runtime suite (its own schema and runners,
@@ -327,23 +329,26 @@ def bind_mount(case: dict, mount_path: str) -> dict:
     return bound
 
 
-async def answer_approvals(ws, answer: str) -> None:
-    """The host's side of the ask arm: answer every approval waiting on
+async def answer_decisions(ws, answer: str) -> None:
+    """The host's side of the ask arm: answer every question waiting on
     the workspace the way the case says (``allow_once``, ``allow_session``
-    or ``deny``), so the command that follows finds the grant (or the
+    or ``deny``), so the command that follows finds the answer (or the
     refusal) the way an agent's retry would. How a case exercises the
-    ask arm, since the battery has no host of its own.
+    ask arm, since the battery has no host of its own. The case keeps
+    the three words as its own vocabulary; they map onto an outcome and
+    a scope here.
 
     Args:
         ws: the workspace the case runs against.
-        answer (str): the decision for every pending request.
+        answer (str): the answer for every waiting record.
     """
-    for request in ws.approvals.list():
+    for record in ws.decisions.pending():
         if answer == "deny":
-            await ws.approvals.deny(request.id)
+            await ws.decisions.answer(record.id, Outcome.DENY)
         else:
-            await ws.approvals.grant(
-                request.id, "once" if answer == "allow_once" else "session")
+            await ws.decisions.answer(
+                record.id, Outcome.ALLOW,
+                Scope.ONCE if answer == "allow_once" else Scope.SESSION)
 
 
 async def run_case(ws, case: dict) -> tuple[int, str, str, float, str | None]:
@@ -377,7 +382,7 @@ async def run_case(ws, case: dict) -> tuple[int, str, str, float, str | None]:
         return 0, provision_line(
             plan) + "\n", "", time.monotonic() - start, None
     if case.get("answer") is not None:
-        await answer_approvals(ws, case["answer"])
+        await answer_decisions(ws, case["answer"])
     result = await ws.execute(case["command"], session_id=case.get("session"))
     elapsed = time.monotonic() - start
     out = await result.stdout_str()

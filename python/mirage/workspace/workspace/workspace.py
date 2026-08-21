@@ -30,13 +30,14 @@ from mirage.observe.observer import Observer
 from mirage.observe.record import OpRecord
 from mirage.observe.store import ObserverStore
 from mirage.ops import Ops
-from mirage.policy import (Approvals, Approver, PermissionsPolicy, Policies,
-                           Policy, PolicyError)
+from mirage.policy import (AskHandler, Decisions, Explanation,
+                           PermissionsPolicy, Policies, Policy, PolicyError)
 from mirage.provision import ProvisionResult
 from mirage.resource.history import HISTORY_PREFIX, HistoryViewResource
 from mirage.runtime.base import Runtime
 from mirage.runtime.policy import PolicyDecision, PolicyFn
 from mirage.runtime.resolver import PrefixResolver
+from mirage.shell import parse
 from mirage.shell.job_table import ConsoleFactory, JobTable
 from mirage.types import (ConsistencyPolicy, DriftPolicy, FileEvent, FileStat,
                           JsonValue, MountBackend, MountMode, PathSpec)
@@ -47,10 +48,12 @@ from mirage.workspace.file_prompt import build_file_prompt
 from mirage.workspace.mount import MountEntry, MountRegistry
 from mirage.workspace.mount.namespace import Namespace
 from mirage.workspace.mount.namespace.store import NamespaceStore
+from mirage.workspace.node.explain import explain_line
 from mirage.workspace.session import (Session, SessionManager, SessionProfile,
                                       SessionStore)
 from mirage.workspace.session.resolve import (apply_profile, compile_profile,
                                               resolve_profile, with_inline)
+from mirage.workspace.session.validate import check_cli_verbs
 from mirage.workspace.snapshot import (DriftQueue, apply_state_dict,
                                        build_mount_args, install_fingerprints,
                                        read_tar)
@@ -109,7 +112,7 @@ class Workspace:
         | None = None,
         profile: str | None = None,
         policies: list[Policy] | None = None,
-        approver: Approver | None = None,
+        on_ask: AskHandler | None = None,
         clis: dict[str, tuple[str | CLISpec, dict[str, Any] | None]]
         | None = None,
     ) -> None:
@@ -164,10 +167,11 @@ class Workspace:
         self._registry.policies.add(PermissionsPolicy(self._session_mgr))
         for entry in policies or []:
             self._registry.policies.add(entry)
-        # The approval door an Ask is taken to (design 3.9): grants live
-        # on the sessions, the host answers through `approver` (the
-        # recording one when none is wired) and reads `ws.approvals`.
-        self._registry.approvals = Approvals(self._session_mgr, approver)
+        # The ledger an Ask is taken to (design 3.9): records live on
+        # the sessions, the host answers through `on_ask` (or just
+        # records the question when none is wired) and reads
+        # `ws.decisions`.
+        self._registry.decisions = Decisions(self._session_mgr, on_ask)
         self._meta = WorkspaceMeta(self._workspace_id, self._state_store,
                                    self._session_mgr, session_id,
                                    session_id_explicit)
@@ -250,6 +254,35 @@ class Workspace:
         """
         return await self.observer.command_events()
 
+    async def explain(self,
+                      line: str,
+                      session_id: str = "") -> list[Explanation]:
+        """What a line would do under a session's role, without running
+        any of it.
+
+        The dry run of the gate every command passes through, so this
+        and the refusal an agent would read come out of one place and
+        cannot disagree. It runs no command, expands nothing, spends no
+        grant and puts no question to a host, which is what makes it
+        safe to call about a line nobody typed.
+
+        Host-side only. The structure of a role's rules is an operator's
+        business, so there is no builtin an agent can type to read it.
+
+        Args:
+            line (str): the line to judge, as an agent would type it.
+            session_id (str): whose role to judge it under; the default
+                session when empty.
+
+        Returns:
+            list[Explanation]: one per command the gate reads, in gate
+            order, nested lines included.
+        """
+        await self.ensure_sessions_loaded()
+        session = self.get_session(session_id or self.default_session_id)
+        return await explain_line(parse(line), session, self._registry,
+                                  self._namespace)
+
     @property
     def ops(self) -> Ops:
         return self._ops
@@ -272,12 +305,12 @@ class Workspace:
         return self._registry.policies
 
     @property
-    def approvals(self) -> Approvals:
-        """The host's door on asked commands: ``list()`` the requests
-        waiting, ``grant(id, scope)`` or ``deny(id)`` one, and the
-        agent's retry passes or is refused.
+    def decisions(self) -> Decisions:
+        """The host's door on asked commands: ``list()`` every record,
+        ``pending()`` the ones waiting, ``answer(id, outcome, scope)``
+        one, and the agent's retry passes or is refused.
         """
-        return self._registry.approvals
+        return self._registry.decisions
 
     @property
     def max_drain_bytes(self) -> int | None:
@@ -697,9 +730,22 @@ class Workspace:
             inline = with_inline(
                 inline, SessionProfile.model_validate({"mounts": mounts}))
         compiled = compile_profile(with_inline(base, inline))
+        check_cli_verbs(compiled.commands, self._cli_verbs())
         session = self._session_mgr.create(session_id)
         apply_profile(session, compiled)
         return session
+
+    def _cli_verbs(self) -> dict[str, frozenset[str]]:
+        """The verbs each installed CLI declares, keyed by head word.
+
+        Read at ``create_session`` rather than at compile time because a
+        CLI is registered on the workspace after it is built.
+        """
+        return {
+            name:
+            frozenset(child.name for child in (install.spec.subcommands or ()))
+            for name, install in self._registry.clis.items().items()
+        }
 
     def _role(self,
               profile: str | SessionProfile | None) -> SessionProfile | None:

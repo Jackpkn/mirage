@@ -39,7 +39,7 @@ INHERITED_FIELDS: tuple[str, ...] = (
     "hidden_paths",
     "hidden_vars",
     "commands",
-    "grants",
+    "decisions",
     "generation",
     "pipeline_timeout_seconds",
     "last_bg_job_id",

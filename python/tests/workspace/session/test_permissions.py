@@ -13,6 +13,7 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import asyncio
+import dataclasses
 import re
 
 import pytest
@@ -20,10 +21,10 @@ from pydantic import ValidationError
 
 from mirage.commands.cli.specs import cli_spec_for
 from mirage.context import reset_current_session, set_current_session
-from mirage.policy import (Action, ApprovalRequest, Ask, CallbackApprover,
-                           CommandContext, Policy)
+from mirage.policy import Action, Ask, CommandContext, Decision, Policy, Scope
 from mirage.policy.constants import DEFAULT_ASK_REASON, DEFAULT_DENY_REASON
 from mirage.policy.errors import PolicyError
+from mirage.policy.match import Outcome
 from mirage.policy.types import CommandRule
 from mirage.resource.ram import RAMResource
 from mirage.runtime.base import Runtime
@@ -1394,8 +1395,8 @@ async def test_a_hidden_path_reads_as_absent_to_every_rule():
         assert await _line(ws, "rm /repo/shared/a", "veiled") == (
             1, "",
             "rm: cannot remove '/repo/shared/a': No such file or directory\n")
-        assert [r.session_id
-                for r in ws.approvals.list()] == [ws._session_mgr.default_id]
+        assert [r.session_id for r in ws.decisions.pending()
+                ] == [ws._session_mgr.default_id]
         assert await _line(ws, "ls /repo", "veiled") == (0, "", "")
         # A rule with no path in it still speaks: nothing hidden is named.
         assert await _line(ws, "head /repo/private/k",
@@ -1450,11 +1451,11 @@ async def test_an_asked_line_is_refused_until_the_host_answers():
     try:
         await ws.execute("mkdir -p /repo/d && touch /repo/d/x /scratch/z")
         # Asked: 126 in the requires-approval voice, quoting an id; the
-        # request is on ws.approvals with what was asked; a retry quotes
+        # request is on ws.decisions with what was asked; a retry quotes
         # the same id and adds nothing.
         code, _, err = await _line(ws, "rm /scratch/z")
         assert code == 126
-        (request, ) = ws.approvals.list()
+        (request, ) = ws.decisions.pending()
         assert err == (f"rm: requires approval: sign-off "
                        f"(approval {request.id})\n")
         assert (request.command, request.argv, request.cwd,
@@ -1462,25 +1463,30 @@ async def test_an_asked_line_is_refused_until_the_host_answers():
                                    ("/scratch/z", ))
         assert request.session_id == ws._session_mgr.default_id
         assert await _line(ws, "rm /scratch/z") == (126, "", err)
-        assert len(ws.approvals.list()) == 1
+        assert len(ws.decisions.pending()) == 1
         # The request names the agent of the call that asked, not the
         # workspace's default agent, so a shared workspace attributes an
         # approval to whoever raised it.
         assert request.agent_id == ""
         by_bob = await ws.execute("rm /scratch/z2", agent_id="bob")
         assert by_bob.exit_code == 126
-        assert [r.agent_id for r in ws.approvals.list()] == ["", "bob"]
+        assert [r.agent_id for r in ws.decisions.pending()] == ["", "bob"]
         # The agent rides with the execution, not the workspace: a line
         # asked through a nested eval keeps its caller's, and two lines
         # in flight at once keep their own.
+        #
+        # The substitution's own command is a command of the line, so
+        # the line is refused whole rather than running `echo` over an
+        # empty substitution and exiting 0, which used to leave the
+        # agent reading success for a removal that never happened.
         nested = await ws.execute("echo $(rm /scratch/z3)", agent_id="carol")
-        assert nested.exit_code == 0
+        assert nested.exit_code == 126
         await asyncio.gather(
             ws.execute("rm /scratch/z4", agent_id="dan"),
             ws.execute("eval 'rm /scratch/z5'", agent_id="eve"))
         by_agent = {
             r.command + " " + " ".join(r.argv): r.agent_id
-            for r in ws.approvals.list()
+            for r in ws.decisions.pending()
         }
         assert by_agent == {
             "rm /scratch/z": "",
@@ -1489,14 +1495,14 @@ async def test_an_asked_line_is_refused_until_the_host_answers():
             "rm /scratch/z4": "dan",
             "rm /scratch/z5": "eve",
         }
-        for r in ws.approvals.list():
+        for r in ws.decisions.pending():
             if r.agent_id not in ("", "bob"):
-                await ws.approvals.deny(r.id)
-        (bobs, ) = (r for r in ws.approvals.list() if r.agent_id == "bob")
-        await ws.approvals.deny(bobs.id)
+                await ws.decisions.answer(r.id, Outcome.DENY)
+        (bobs, ) = (r for r in ws.decisions.pending() if r.agent_id == "bob")
+        await ws.decisions.answer(bobs.id, Outcome.DENY)
         # Granted once: the exact retry passes, and the next one asks.
-        await ws.approvals.grant(request.id)
-        assert ws.approvals.list() == ()
+        await ws.decisions.answer(request.id, Outcome.ALLOW)
+        assert ws.decisions.pending() == ()
         assert (await _line(ws, "rm /scratch/z"))[0] == 0
         assert (await _line(ws, "cat /scratch/z"))[0] == 1
         code, _, err = await _line(ws, "rm /scratch/z")
@@ -1507,8 +1513,8 @@ async def test_an_asked_line_is_refused_until_the_host_answers():
         assert err.startswith("head: requires approval: no standing approval")
         # Denied: the retry is refused once in the deny voice, then the
         # question is open again.
-        pending = {r.command: r for r in ws.approvals.list()}
-        await ws.approvals.deny(pending["head"].id)
+        pending = {r.command: r for r in ws.decisions.pending()}
+        await ws.decisions.answer(pending["head"].id, Outcome.DENY)
         assert await _line(ws, "head /repo/d/x") == (
             126, "", "head: policy denied: no standing approval\n")
         code, _, err = await _line(ws, "head /repo/d/x")
@@ -1525,8 +1531,8 @@ async def test_a_session_grant_covers_the_rule_and_a_deny_is_never_reopened():
                          "/scratch/z")
         code, _, _ = await _line(ws, "rm /scratch/y")
         assert code == 126
-        (request, ) = ws.approvals.list()
-        await ws.approvals.grant(request.id, "session")
+        (request, ) = ws.decisions.pending()
+        await ws.decisions.answer(request.id, Outcome.ALLOW, Scope.SESSION)
         # Every rm line passes now, in any directory of the session ...
         assert (await _line(ws, "rm /scratch/y"))[0] == 0
         assert (await _line(ws, "cd /scratch && rm z"))[0] == 0
@@ -1537,11 +1543,12 @@ async def test_a_session_grant_covers_the_rule_and_a_deny_is_never_reopened():
         assert await _line(
             ws,
             "cd /repo/d && rm x") == (1, "", "rm: x: no deletes in the repo\n")
-        assert ws.approvals.list() == ()
-        # The grant is session state: on the record, and not another
+        assert ws.decisions.pending() == ()
+        # The answer is session state: on the record, and not another
         # session's.
         default = ws._session_mgr.get(ws._session_mgr.default_id)
-        assert default.to_dict()["grants"][0]["decision"] == "allow_session"
+        stored = default.to_dict()["decisions"][0]
+        assert (stored["outcome"], stored["scope"]) == ("allow", "session")
         ws.create_session("other")
         await ws.execute("touch /scratch/w", session_id="other")
         code, _, err = await _line(ws, "rm /scratch/w", "other")
@@ -1557,14 +1564,14 @@ async def test_a_coded_ask_routes_to_the_same_door():
         await ws.execute("touch /scratch/z")
         code, _, err = await _line(ws, "wc -c /scratch/z")
         assert code == 126
-        (request, ) = ws.approvals.list()
+        (request, ) = ws.decisions.pending()
         assert err == (f"wc: requires approval: looks risky "
                        f"(approval {request.id})\n")
         # The synthesized rule names the program, so a session grant
         # covers every wc line.
         assert request.rule == CommandRule(reason="looks risky",
                                            commands=("wc", ))
-        await ws.approvals.grant(request.id, "session")
+        await ws.decisions.answer(request.id, Outcome.ALLOW, Scope.SESSION)
         assert await _line(ws, "wc -c /scratch/z") == (0, "0 /scratch/z\n", "")
         assert await _line(ws, "wc -l /scratch/z") == (0, "0 /scratch/z\n", "")
     finally:
@@ -1578,8 +1585,8 @@ async def test_a_grant_is_consumed_through_a_fork():
         await ws.execute("touch /scratch/z")
         code, _, _ = await _line(ws, "rm /scratch/z")
         assert code == 126
-        (request, ) = ws.approvals.list()
-        await ws.approvals.grant(request.id)
+        (request, ) = ws.decisions.pending()
+        await ws.decisions.answer(request.id, Outcome.ALLOW)
         # execute(env=) runs the line in a fork of the session: the once
         # grant is read and consumed through the manager, so the fork
         # spends it for the session it forked from.
@@ -1591,24 +1598,27 @@ async def test_a_grant_is_consumed_through_a_fork():
         await ws.close()
 
 
-async def _host_allows_once(request: ApprovalRequest) -> str:
-    return "allow_once"
+async def _host_allows_once(record: Decision) -> Decision:
+    return dataclasses.replace(record, outcome=Outcome.ALLOW, scope=Scope.ONCE)
 
 
-async def _host_denies(request: ApprovalRequest) -> str:
-    return "deny"
+async def _host_denies(record: Decision) -> Decision:
+    return dataclasses.replace(record, outcome=Outcome.DENY)
 
 
 @pytest.mark.asyncio
-async def test_a_blocking_approver_answers_inside_the_line():
-    ws = _ask_ws(approver=CallbackApprover(_host_allows_once))
+async def test_a_blocking_host_answers_inside_the_line():
+    # The host is a plain coroutine over the ledger's own record, not a
+    # class implementing a protocol: it answers by returning the record
+    # with an outcome set.
+    ws = _ask_ws(on_ask=_host_allows_once)
     try:
         await ws.execute("touch /scratch/z")
         assert (await _line(ws, "rm /scratch/z"))[0] == 0
-        assert ws.approvals.list() == ()
+        assert ws.decisions.pending() == ()
     finally:
         await ws.close()
-    ws = _ask_ws(approver=CallbackApprover(_host_denies))
+    ws = _ask_ws(on_ask=_host_denies)
     try:
         await ws.execute("touch /scratch/z")
         assert await _line(
@@ -1745,16 +1755,16 @@ async def test_an_asked_scope_reached_by_a_walk_is_refused_until_named():
         assert await _line(
             ws, "grep -r a /data/t/asked",
             "g") == (2, "", "grep: /data/t/asked/a: Permission denied\n")
-        assert ws.approvals.list() == ()
+        assert ws.decisions.pending() == ()
         code, _, err = await _line(ws, "grep a /data/t/asked/a", "g")
         assert code == 126 and err.startswith("grep: requires approval: nod")
-        (request, ) = ws.approvals.list()
-        await ws.approvals.grant(request.id)
+        (request, ) = ws.decisions.pending()
+        await ws.decisions.answer(request.id, Outcome.ALLOW)
         assert await _line(ws, "grep a /data/t/asked/a", "g") == (0, "a\n", "")
         # A standing grant covers the walk too.
         code, _, err = await _line(ws, "grep a /data/t/asked/a", "g")
-        (request, ) = ws.approvals.list()
-        await ws.approvals.grant(request.id, "session")
+        (request, ) = ws.decisions.pending()
+        await ws.decisions.answer(request.id, Outcome.ALLOW, Scope.SESSION)
         assert await _line(ws, "grep -r a /data/t/asked",
                            "g") == (0, "/data/t/asked/a:a\n", "")
     finally:

@@ -20,7 +20,7 @@ from typing import Any
 
 from mirage.io.async_line_iterator import AsyncLineIterator
 from mirage.io.types import ByteSource
-from mirage.policy.types import AdmissionRules, Grant
+from mirage.policy.types import AdmissionRules, Decision
 from mirage.shell.array import ShellArray
 from mirage.shell.constants import SHELL_ARGV0
 from mirage.shell.types import FunctionBody
@@ -31,7 +31,8 @@ from mirage.workspace.session.constants import (CHILD_SHELL_FIELDS,
                                                 INHERITED_FIELDS)
 from mirage.workspace.session.serialize import (commands_from_dict,
                                                 commands_to_dict,
-                                                grant_from_dict, grant_to_dict)
+                                                decision_from_dict,
+                                                decision_to_dict)
 
 
 def copy_state(value: Any) -> Any:
@@ -155,7 +156,7 @@ class Session:
     # The host's standing answers to asked lines (design 3.9): session
     # state like functions and cwd, persisted, read and written through
     # the manager by id so a fork shares them, never another session's.
-    grants: tuple[Grant, ...] = ()
+    decisions: tuple[Decision, ...] = ()
     generation: int = 0
     pipeline_timeout_seconds: float | None = None
     last_bg_job_id: int | None = None
@@ -269,8 +270,8 @@ class Session:
             }
         if self.commands is not None:
             data["commands"] = commands_to_dict(self.commands)
-        if self.grants:
-            data["grants"] = [grant_to_dict(g) for g in self.grants]
+        if self.decisions:
+            data["decisions"] = [decision_to_dict(d) for d in self.decisions]
         return data
 
     @classmethod
@@ -291,9 +292,9 @@ class Session:
         paths = data.get("hidden_paths")
         vars_ = data.get("hidden_vars")
         commands = data.get("commands")
-        grants = data.get("grants")
+        decisions = data.get("decisions")
         if (modes is not None or paths is not None or vars_ is not None
-                or commands is not None or grants is not None):
+                or commands is not None or decisions is not None):
             data = dict(data)
         if modes is not None:
             data["mount_modes"] = {
@@ -310,8 +311,8 @@ class Session:
                 patterns=tuple(vars_.get("patterns", ())))
         if commands is not None:
             data["commands"] = commands_from_dict(commands)
-        if grants is not None:
-            data["grants"] = tuple(grant_from_dict(g) for g in grants)
+        if decisions is not None:
+            data["decisions"] = tuple(decision_from_dict(d) for d in decisions)
         return cls(**data)
 
     @property

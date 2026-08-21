@@ -49,17 +49,19 @@ class DenyScope(StrEnum):
 
 
 class Outcome(StrEnum):
-    """What the role's rules say about one line.
+    """What the role's rules say about one line: the document's own
+    three verbs and nothing else.
 
-    RUN is silence: no rule spoke. NOT_ALLOWED is the allow list
-    refusing a line whose head it installed. DENY and ASK name the rule
-    that spoke.
+    ALLOW is silence as well as consent, since a line no rule speaks
+    about runs. DENY covers both refusals, and ``Ruling.rule`` tells
+    them apart: a rule refused it, or, with no rule, the allow list did.
+    Both exit 126; only the wording differs, because one has an
+    operator's reason to print and the other has none.
     """
 
-    RUN = "run"
-    NOT_ALLOWED = "not_allowed"
-    DENY = "deny"
+    ALLOW = "allow"
     ASK = "ask"
+    DENY = "deny"
 
 
 @dataclass(frozen=True, slots=True)
@@ -128,12 +130,45 @@ class CommandRule:
 
 
 @dataclass(frozen=True, slots=True)
+class Ruling:
+    """The role's answer about one line, and what produced it.
+
+    Args:
+        outcome (Outcome): which verb spoke.
+        rule (CommandRule | None): the rule that spoke; None on ALLOW,
+            and on the DENY the allow list produces, which is not a
+            rule and so has no reason of its own to print.
+        matched_path (str | None): the operand a path-scoped rule
+            matched, as typed, which the GNU voice prints
+            (``rm: letters.txt: <reason>``); None when the rule reaches
+            the whole line.
+        source (str): where in the document the rule was written, for a
+            host reading a decision: ``top`` or ``mounts./repo``. Empty
+            on ALLOW, and ``commands.allow`` on the DENY the allow list
+            produces, which is the one place a source names no rule.
+        asks (tuple[CommandRule, ...]): every ask that won at a subject
+            of its own, ``rule`` among them, in the order the subjects
+            were read. Only ASK fills it, and the line runs only once
+            each has been answered: one nod covers the subject it was
+            given for and no other, so a deeper ask on a destination
+            cannot carry a source past the ask written for it. One
+            entry is the ordinary case.
+    """
+
+    outcome: Outcome
+    rule: CommandRule | None = None
+    matched_path: str | None = None
+    source: str = ""
+    asks: tuple[CommandRule, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class Ask:
     """Admit the command only with a host approval.
 
     A pre_command answer: ``PermissionsPolicy`` returns one for a
     ``commands.ask`` rule, a custom policy for a coded condition, and
-    both route to the workspace's approval door (``Approvals``). A Deny
+    both route to the workspace's decision ledger (``Decisions``). A Deny
     from any policy outranks it: the chain keeps looking past an Ask
     for a Deny, so an approval can never re-open a refusal. Command
     plane only: the op doors cannot wait on a host.
@@ -143,8 +178,8 @@ class Ask:
             in the requires-approval voice and to the host in the
             request.
         rule (CommandRule | None): the document rule that asked; None
-            for a coded condition, for which the door keys a session
-            grant on the program that asked.
+            for a coded condition, for which the ledger keys a session
+            answer on the program that asked.
         rules (tuple[CommandRule, ...]): every rule the line has to be
             granted, ``rule`` among them and usually alone: a line whose
             operands were each asked about by a different rule carries
@@ -239,6 +274,66 @@ class ApprovalRequest:
     rule: CommandRule
 
 
+class Scope(StrEnum):
+    """How far an answer reaches.
+
+    ONCE answers the one line that asked and is consumed by it, so the
+    next identical line asks again. SESSION answers every line the same
+    rule covers for the rest of the session. Nothing reaches further:
+    an answer is never inherited by another session, and never
+    re-opens a deny rule, which is consulted first.
+    """
+
+    ONCE = "once"
+    SESSION = "session"
+
+
+@dataclass(frozen=True, slots=True)
+class Decision:
+    """One asked line, and the answer to it once a host gives one.
+
+    The ledger's entry, and the only shape the permissions layer keeps
+    about an ask. It is written when a rule asks and rewritten when a
+    host answers, so listing what is waiting and reading what was
+    settled are the same query over the same records rather than two
+    stores that can disagree.
+
+    A retry is matched by comparing ``command``, ``argv`` and ``cwd``
+    against what was recorded, not by re-deriving an id, so two lines
+    that differ only where the recorded fields differ can never collide.
+
+    Args:
+        id (str): names this record, for a host to answer it by.
+        session_id (str): the session running the line.
+        agent_id (str): the agent the workspace attributes the line to.
+        command (str): the command name.
+        argv (tuple[str, ...]): the words after the name, as expanded.
+        cwd (str): the session working directory.
+        paths (tuple[str, ...]): the virtual paths the line names.
+        reason (str): the ask's reason, as the rule worded it.
+        rule (CommandRule): the rule that asked, synthesized for a
+            coded Ask.
+        outcome (Outcome | None): the host's answer, ALLOW or DENY;
+            None while nobody has answered. ASK is not an answer, it is
+            the question.
+        scope (Scope): how far the answer reaches.
+        note (str): what the host said when answering, if anything.
+    """
+
+    id: str
+    session_id: str
+    agent_id: str
+    command: str
+    argv: tuple[str, ...]
+    cwd: str
+    paths: tuple[str, ...]
+    reason: str
+    rule: CommandRule
+    outcome: Outcome | None = None
+    scope: Scope = Scope.ONCE
+    note: str = ""
+
+
 @dataclass(frozen=True, slots=True)
 class Pending:
     """The door's answer while the host has not decided: the line is
@@ -253,29 +348,34 @@ class Pending:
     reason: str
 
 
-class SessionGrantsQuery(Protocol):
-    """The session questions the approval door asks.
+class SessionDecisionsQuery(Protocol):
+    """The session questions the decision ledger asks.
 
-    The SessionManager satisfies it structurally, so the door reads and
-    writes a session's grants by id without this package importing the
-    workspace, and always on the registered session rather than the
+    The SessionManager satisfies it structurally, so the ledger reads
+    and writes a session's records by id without this package importing
+    the workspace, and always on the registered session rather than the
     fork a line may be running in.
     """
 
-    def grants_of(self, session_id: str) -> tuple[Grant, ...]:
-        """The grants a session holds, oldest first.
+    def decision_sessions(self) -> tuple[str, ...]:
+        """Every session id holding records, oldest first."""
+        ...
+
+    def decisions_of(self, session_id: str) -> tuple[Decision, ...]:
+        """The records a session holds, oldest first.
 
         Args:
             session_id (str): the session.
         """
         ...
 
-    def set_grants(self, session_id: str, grants: tuple[Grant, ...]) -> None:
-        """Replace a session's grants.
+    def set_decisions(self, session_id: str, records: tuple[Decision,
+                                                            ...]) -> None:
+        """Replace a session's records.
 
         Args:
             session_id (str): the session.
-            grants (tuple[Grant, ...]): the new list.
+            records (tuple[Decision, ...]): the new list.
         """
         ...
 
@@ -489,3 +589,48 @@ VALIDITY: dict[str, frozenset[str]] = {
     "post_execute": frozenset({Limit.kind}),
     "pre_session": frozenset({Deny.kind}),
 }
+
+
+@dataclass(frozen=True, slots=True)
+class Explanation:
+    """What one command of a line would do, without doing it.
+
+    Produced by the same gate the dispatcher runs, so a host reading
+    this and an agent typing the line cannot be told different things.
+    Everything the agent would see is here as it would arrive:
+    ``exit_code`` and ``stderr`` come out of the one outcome table, so
+    an explanation of a refused line is byte-identical to the refusal.
+
+    ``outcome`` is the document's answer and ``rule`` says who gave it.
+    The two refusals the allow list produces both arrive as ``DENY``
+    with no rule, and ``exit_code`` separates them: 127 for a head word
+    the session cannot see, which reads as bash's "command not found"
+    so an unlisted tool never leaks that it exists, and 126 for a line
+    whose head was visible but which no allow entry covers.
+
+    Args:
+        command (str): the head word, as the gate read it.
+        argv (tuple[str, ...]): the words after it.
+        outcome (Outcome): what the role's rules say.
+        rule (CommandRule | None): the rule that spoke, None when the
+            allow list did or when nothing did.
+        reason (str): the rule's reason, empty when there is no rule.
+        source (str): where in the document the rule was written.
+        matched_path (str | None): the operand a path-scoped rule
+            matched, as typed.
+        paths (tuple[str, ...]): the paths the rules were shown, after
+            the session's hides dropped what it cannot see.
+        exit_code (int): what the line would exit with, 0 to run.
+        stderr (str): what the agent would read, empty to run.
+    """
+
+    command: str
+    argv: tuple[str, ...] = ()
+    outcome: Outcome = Outcome.ALLOW
+    rule: CommandRule | None = None
+    reason: str = ""
+    source: str = ""
+    matched_path: str | None = None
+    paths: tuple[str, ...] = ()
+    exit_code: int = 0
+    stderr: str = ""
