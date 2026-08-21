@@ -118,6 +118,16 @@ describe('Namespace symlink table', () => {
     await ws.close()
   })
 
+  // What a readdir row's mark needs: the names, one level, no stats.
+  it('linkNamesUnder is one level of names', async () => {
+    const ws = new Workspace({ '/data': new RAMResource() })
+    await ws.namespace.symlink('/data/a', '/t1', 1)
+    await ws.namespace.symlink('/data/sub/b', '/t2', 1)
+    expect(ws.namespace.linkNamesUnder('/data')).toEqual(new Set(['a']))
+    expect(ws.namespace.linkNamesUnder('/other')).toEqual(new Set())
+    await ws.close()
+  })
+
   it('purgeUnder drops nested entries', async () => {
     const ws = new Workspace({ '/data': new RAMResource() })
     await ws.namespace.symlink('/data/sub/a', '/t1', 1)

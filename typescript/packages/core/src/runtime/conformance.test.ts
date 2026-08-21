@@ -604,11 +604,9 @@ function makeCountingBridge(seed: Record<string, string>): CountingBridge {
     }
     if (op === 'readdir') {
       const prefix = path.replace(/\/$/, '') + '/'
-      const entries: { path: string; size: number; isDir: boolean }[] = []
-      for (const [p, content] of files) {
-        if (p.startsWith(prefix) && !p.slice(prefix.length).includes('/')) {
-          entries.push({ path: p, size: content.length, isDir: false })
-        }
+      const entries: string[] = []
+      for (const p of files.keys()) {
+        if (p.startsWith(prefix) && !p.slice(prefix.length).includes('/')) entries.push(p)
       }
       return Promise.resolve(entries)
     }

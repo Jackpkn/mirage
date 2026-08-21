@@ -101,6 +101,12 @@ export type BridgeDispatchFn = (
  */
 export type PrefixSource = () => string[]
 
+/**
+ * Live view of the link names one directory owns, read per listing so a
+ * link created after construction is always seen.
+ */
+export type LinkChildrenSource = (directory: string) => Set<string>
+
 /** One interpreter execution request, language-agnostic. */
 export interface RunArgs {
   code: string

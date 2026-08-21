@@ -21,7 +21,7 @@ import pytest
 from mirage.ops.namespace_view import merge_readdir
 from mirage.runtime.resolver import PrefixResolver
 from mirage.runtime.vfs import RuntimeVFS
-from mirage.runtime.wasm.abi import FT_DIR, FT_REG
+from mirage.runtime.wasm.abi import FT_DIR, FT_REG, FT_SYMLINK
 from mirage.runtime.wasm.config import WasmFsConfig
 from mirage.runtime.wasm.types import GuestStat
 from mirage.runtime.wasm.vfs import WasmVFS
@@ -48,13 +48,28 @@ class FakeVFS(RuntimeVFS):
                  modified="2026-07-15T00:00:00Z"):
         super().__init__(dispatch=None,
                          loop=None,
-                         resolver=PrefixResolver(lambda: list(prefixes)))
+                         resolver=PrefixResolver(lambda: list(prefixes),
+                                                 self._link_names_under))
         self.files = dict(files or {})
         self.dirs = set(dirs or ())
         self.links = dict(links or {})
         self.modified = modified
         self.attrs = []
         self.calls = []
+
+    def _link_names_under(self, directory):
+        """The link names the node table owes a directory (the workspace's
+        own answer, over the double's link map).
+
+        Args:
+            directory (str): absolute virtual directory path.
+        """
+        base = directory.rstrip("/") + "/"
+        return {
+            path[len(base):]
+            for path in self.links
+            if path.startswith(base) and "/" not in path[len(base):]
+        }
 
     def _raw(self, op, path, **kwargs):
         self.calls.append((op, path, kwargs))
@@ -68,6 +83,11 @@ class FakeVFS(RuntimeVFS):
                                 size=len(target.encode()),
                                 modified=LINK_MTIME,
                                 type=FileType.SYMLINK)
+            # A following stat is the door's default, so a link answers
+            # for its target: the row says nothing about the link and the
+            # mark is the only thing that can.
+            if path in self.links:
+                return self._raw("stat", self.links[path], **kwargs)
             if path in self.files:
                 return FileStat(name=path,
                                 size=len(self.files[path]),
@@ -109,6 +129,7 @@ class FakeVFS(RuntimeVFS):
             prefix = path.rstrip("/") + "/"
             out = [p for p in self.files if p.startswith(prefix)]
             out += [d + "/" for d in self.dirs if d.startswith(prefix)]
+            out += [p for p in self.links if p.startswith(prefix)]
             if not out and path not in self.dirs and path != "/":
                 raise FileNotFoundError(path)
             # The real door merges child-mount names into readdir; the
@@ -193,6 +214,28 @@ def test_readdir_bridge_resolves_kind_from_slash_or_stat():
                      prefixes=["/data/"])
     fs = WasmVFS(core=bridge)
     assert fs.readdir("/data") == [("f.txt", FT_REG), ("sub", FT_DIR)]
+
+
+def test_readdir_reports_a_link_as_a_link():
+    # preview1 has the filetype and the door marks the row, so a guest
+    # that reads d_type (CPython's scandir does) answers is_symlink
+    # without a call of its own. A link to a file stats as that file, so
+    # only the mark can tell them apart.
+    bridge = FakeVFS(files={"/data/f.txt": b""},
+                     links={"/data/l": "/data/f.txt"},
+                     prefixes=["/data/"])
+    fs = WasmVFS(core=bridge)
+    assert fs.readdir("/data") == [("f.txt", FT_REG), ("l", FT_SYMLINK)]
+
+
+def test_readdir_reports_a_link_to_a_directory_as_a_link():
+    # The one that used to read as a plain directory, which is how a
+    # guest walk followed it.
+    bridge = FakeVFS(dirs={"/data/sub"},
+                     links={"/data/dl": "/data/sub"},
+                     prefixes=["/data/"])
+    fs = WasmVFS(core=bridge)
+    assert fs.readdir("/data") == [("dl", FT_SYMLINK), ("sub", FT_DIR)]
 
 
 def test_readdir_root_merges_host_bridge_and_mounts(tmp_path):

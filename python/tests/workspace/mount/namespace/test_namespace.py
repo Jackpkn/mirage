@@ -417,6 +417,15 @@ async def test_link_stats_under_is_one_level_only(namespace):
 
 
 @pytest.mark.asyncio
+async def test_link_names_under_is_one_level_of_names(namespace):
+    # What a readdir row's mark needs: the names, one level, no stats.
+    await namespace.symlink("/data/a", "/t1", 1.0)
+    await namespace.symlink("/data/sub/b", "/t2", 1.0)
+    assert namespace.link_names_under("/data") == {"a"}
+    assert namespace.link_names_under("/other") == set()
+
+
+@pytest.mark.asyncio
 async def test_link_stats_below_spans_the_whole_subtree(namespace):
     await namespace.symlink("/data/a", "/t1", 1.0)
     await namespace.symlink("/data/sub/b", "/t2", 1.0)

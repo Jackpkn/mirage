@@ -458,13 +458,34 @@ class Namespace:
         Args:
             directory (str): absolute virtual directory path.
         """
+        return [
+            link_stat(name, meta)
+            for name, meta in self._links_under(directory)
+        ]
+
+    def link_names_under(self, directory: str) -> set[str]:
+        """The names of the links living directly under a directory.
+
+        What a readdir row's link mark needs, which is a name question
+        rather than a stat one: the door already holds every entry's
+        stat and has only to learn which of those names the node table
+        owns.
+
+        Args:
+            directory (str): absolute virtual directory path.
+        """
+        return {name for name, _ in self._links_under(directory)}
+
+    def _links_under(self, directory: str) -> list[tuple[str, NodeMeta]]:
+        """The links living directly under a directory, as (name, meta).
+
+        Args:
+            directory (str): absolute virtual directory path.
+        """
         base = directory.rstrip("/") + "/"
-        out: list[FileStat] = []
-        for path, meta in self._nodes.items():
-            if (meta.target is not None and path.startswith(base)
-                    and "/" not in path[len(base):]):
-                out.append(link_stat(path[len(base):], meta))
-        return out
+        return [(path[len(base):], meta) for path, meta in self._nodes.items()
+                if meta.target is not None and path.startswith(base)
+                and "/" not in path[len(base):]]
 
     async def purge_under(self, directory: str) -> int:
         """Drop every node entry under a directory (``rm -r`` semantics).

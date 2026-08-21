@@ -67,13 +67,17 @@ describe('PyodideRuntime without JSPI', () => {
       await new Promise((resolve) => setTimeout(resolve, 1))
       if (op === 'read') return files.get(path) ?? new Uint8Array()
       if (op === 'readdir') {
-        const entries = []
-        for (const [p, content] of files) {
-          if (p.startsWith(path) && !p.slice(path.length).includes('/')) {
-            entries.push({ path: p, size: content.length, isDir: false })
-          }
-        }
-        return entries
+        return [...files.keys()].filter(
+          (p) => p.startsWith(path) && !p.slice(path.length).includes('/'),
+        )
+      }
+      if (op === 'stat') {
+        const found = files.get(path)
+        if (found === undefined)
+          throw Object.assign(new Error(`no such file: ${path}`), {
+            code: 'ENOENT',
+          })
+        return { size: found.length, isDir: false, mtimeMs: 0, mode: 0o100644 }
       }
       return undefined
     }
@@ -144,8 +148,14 @@ describe('PyodideRuntime without JSPI', () => {
         if (found === undefined) throw new Error(`no such file: ${path}`)
         return found
       }
-      if (op === 'readdir') {
-        return [...files].map(([p, v]) => ({ path: p, size: v.length, isDir: false }))
+      if (op === 'readdir') return [...files.keys()]
+      if (op === 'stat') {
+        const listed = files.get(path)
+        if (listed === undefined)
+          throw Object.assign(new Error(`no such file: ${path}`), {
+            code: 'ENOENT',
+          })
+        return { size: listed.length, isDir: false, mtimeMs: 0, mode: 0o100644 }
       }
       if (op === 'write' && bytes !== undefined) {
         files.set(path, new Uint8Array(bytes))

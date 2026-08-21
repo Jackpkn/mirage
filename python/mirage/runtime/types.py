@@ -78,6 +78,10 @@ class DispatchFn(Protocol):
 # added or removed after construction are always picked up.
 PrefixSource: TypeAlias = Callable[[], list[str]]
 
+# Live view of the link names one directory owns, read per listing so a
+# link created after construction is always seen.
+LinkChildrenSource: TypeAlias = Callable[[str], set[str]]
+
 
 @dataclass(frozen=True, slots=True)
 class VFSEntry:
@@ -94,9 +98,11 @@ class VFSEntry:
         size (int): rendered content bytes, 0 for directories and for
             entries whose stat answered absent.
         is_dir (bool): the entry is a directory.
-        is_link (bool): the entry is a namespace symlink. The TS
-            bridge marks it from its namespace; python rows carry
-            False until links enter dispatch (R8).
+        is_link (bool): the entry is a namespace symlink. Marked from
+            the name plane, which is the only authority for one: no
+            backend listing reports a link and stat follows, so a
+            directory link would otherwise read as a plain directory
+            and a cyclic one would recurse a whole-tree walk forever.
     """
 
     path: str

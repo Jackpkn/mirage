@@ -383,6 +383,40 @@
       ]
     },
     {
+      "id": "scandir_reports_a_link_as_a_link",
+      "hosts": [
+        "python"
+      ],
+      "world": {
+        "runtimes": [
+          "wasi",
+          "vfs"
+        ],
+        "mounts": {
+          "/ram": {
+            "resource": "ram",
+            "files": {
+              "t.txt": "hello\n",
+              "d/inner.txt": "x\n"
+            }
+          }
+        }
+      },
+      "steps": [
+        {
+          "command": "ln -s t.txt /ram/lk && ln -s d /ram/dlk",
+          "expect": { "exit": 0 }
+        },
+        {
+          "command": "python3 -c \"import os\nfor e in sorted(os.scandir('/ram'), key=lambda x: x.name):\n    print(e.name, 'link' if e.is_symlink() else ('dir' if e.is_dir() else 'file'))\"",
+          "expect": {
+            "exit": 0,
+            "stdout": "d dir\ndlk link\nlk link\nt.txt file\n"
+          }
+        }
+      ]
+    },
+    {
       "id": "rename_a_link_moves_the_name",
       "hosts": [
         "python"

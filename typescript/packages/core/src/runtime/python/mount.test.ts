@@ -44,23 +44,34 @@ function makeBridge(): {
     }
     if (op === 'read') return Promise.resolve(files.get(path) ?? new Uint8Array())
     const prefix = path
-    const entries: { path: string; size: number; isDir: boolean }[] = []
+    const entries: string[] = []
     const dirs = new Set<string>()
-    for (const [p, content] of files) {
+    for (const p of files.keys()) {
       if (p.startsWith(prefix)) {
         const rest = p.slice(prefix.length)
         if (!rest.includes('/')) {
-          entries.push({ path: p, size: content.length, isDir: false })
+          entries.push(p)
         } else {
           const seg = rest.split('/', 1)[0] ?? ''
           if (seg !== '') dirs.add(prefix + seg)
         }
       }
     }
+    // The door builds each row from a name plus one stat, so the double
+    // answers both, and a directory is whatever a deeper key implies.
+    if (op === 'stat') {
+      const found = files.get(path)
+      if (found !== undefined) {
+        return Promise.resolve({ size: found.length, isDir: false, mtimeMs: 0, mode: 0o100644 })
+      }
+      const deeper = [...files.keys()].some((p) => p.startsWith(path + '/'))
+      if (deeper) return Promise.resolve({ size: 0, isDir: true, mtimeMs: 0, mode: 0o040755 })
+      return Promise.reject(Object.assign(new Error(`no such file: ${path}`), { code: 'ENOENT' }))
+    }
     // The real door merges child mounts and directories into readdir
     // (R1), so the double reports them too: preload descends through
     // them exactly as it does against a live workspace.
-    for (const d of dirs) entries.push({ path: d, size: 0, isDir: true })
+    for (const d of dirs) entries.push(d)
     return Promise.resolve(entries)
   }
   return { dispatch, calls, files }
@@ -274,8 +285,9 @@ describe('PyodideRuntime mount visibility', () => {
         return Promise.reject(new Error('backend unavailable'))
       }
       if (op === 'read') return Promise.resolve(new Uint8Array())
-      if (op === 'readdir') {
-        return Promise.resolve([{ path: '/ram/log.txt', size: 4, isDir: false }])
+      if (op === 'readdir') return Promise.resolve(['/ram/log.txt'])
+      if (op === 'stat') {
+        return Promise.resolve({ size: 4, isDir: false, mtimeMs: 0, mode: 0o100644 })
       }
       if (op === 'write' && bytes !== undefined) writes.push(new Uint8Array(bytes))
       return Promise.resolve(undefined)

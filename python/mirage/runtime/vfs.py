@@ -165,7 +165,7 @@ class RuntimeVFS:
         return self.call("stat", path)
 
     def readdir(self, path: str) -> list[VFSEntry]:
-        """List a directory as resolved entries (the TS bridge's shape).
+        """List a directory as resolved entries (the TS door's shape).
 
         A backend that slash-marks directories skips the stat; every
         other entry is classified by the stat the readdir just
@@ -174,22 +174,50 @@ class RuntimeVFS:
         dangling link) rides as a size-0 file instead of failing the
         whole listing: the guest's own open reports the miss.
 
+        The link mark comes from the name plane, since stat follows and
+        no backend listing reports a link. One table read per listing,
+        and it only ever marks a name the listing itself returned, so a
+        link the session hides stays hidden: the dispatcher filtered it
+        out of the entries above and an unmatched mark marks nothing.
+
         Args:
             path (str): guest-absolute virtual path.
         """
         entries: list[VFSEntry] = []
+        links = self._link_names(path)
         for raw in self.call("readdir", path):
+            linked = raw.rstrip("/").rsplit("/", 1)[-1] in links
             if raw.endswith("/"):
-                entries.append(VFSEntry(path=raw, size=0, is_dir=True))
+                entries.append(
+                    VFSEntry(path=raw, size=0, is_dir=True, is_link=linked))
                 continue
             try:
                 st = self.call("stat", raw)
             except FileNotFoundError:
-                entries.append(VFSEntry(path=raw, size=0, is_dir=False))
+                entries.append(
+                    VFSEntry(path=raw, size=0, is_dir=False, is_link=linked))
                 continue
             entries.append(
-                VFSEntry(path=raw, size=content_size(st), is_dir=is_dir(st)))
+                VFSEntry(path=raw,
+                         size=content_size(st),
+                         is_dir=is_dir(st),
+                         is_link=linked))
         return entries
+
+    def _link_names(self, directory: str) -> set[str]:
+        """The link names the namespace owes `directory`, empty when none.
+
+        Compared by final segment, because backends disagree on entry
+        shape (bare names, trailing-slash names, full paths) and the
+        name is the part they agree on. The same normalization
+        ``merge_readdir`` dedupes on.
+
+        Args:
+            directory (str): guest-absolute virtual path being listed.
+        """
+        if self._resolver is None:
+            return set()
+        return self._resolver.link_children(directory)
 
     def create(self, path: str) -> None:
         self.call("create", path)
