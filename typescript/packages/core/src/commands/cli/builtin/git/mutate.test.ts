@@ -701,6 +701,27 @@ describe('symlinks', () => {
     expect(DEC.decode(listing.stdout)).toContain('link -> numbers.txt')
   })
 
+  it('retargets a link the other branch points elsewhere', async () => {
+    // symlink(2) does not overwrite, so the checkout removes the old name
+    // before writing the new one. Relying on the node table to replace the
+    // entry in place left the checkout refused with EEXIST and the link
+    // pointing at the other branch's target.
+    const h = await harness()
+    expect((await h.run('checkout -b first'))[0]).toBe(0)
+    await h.ws.execute('ln -s numbers.txt /repo/lk')
+    expect((await h.run('add lk'))[0]).toBe(0)
+    expect((await h.run('commit -m first'))[0]).toBe(0)
+    expect((await h.run('checkout -b second'))[0]).toBe(0)
+    await write(h, 'other.txt', 'other\n')
+    await h.ws.execute('ln -sf other.txt /repo/lk')
+    expect((await h.run('add -A'))[0]).toBe(0)
+    expect((await h.run('commit -m second'))[0]).toBe(0)
+    expect((await h.run('checkout first'))[0]).toBe(0)
+    expect(DEC.decode((await h.ws.execute('readlink /repo/lk')).stdout)).toBe('numbers.txt\n')
+    expect((await h.run('checkout second'))[0]).toBe(0)
+    expect(DEC.decode((await h.ws.execute('readlink /repo/lk')).stdout)).toBe('other.txt\n')
+  })
+
   it('replaces a link with the regular file the other branch records', async () => {
     // git 2.47: a path that is a symlink on one branch and a regular file on
     // the other comes back as a regular file, and the file the link pointed at

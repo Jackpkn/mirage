@@ -22,6 +22,7 @@ import { OpsRegistry } from '../ops/registry.ts'
 import { RAMResource } from '../resource/ram/ram.ts'
 import { createShellParser, type ShellParser } from '../shell/parse.ts'
 import { MountMode } from '../types.ts'
+import type { Action, OpsContext } from '../policy/index.ts'
 import { applyStateDict, toStateDict } from './snapshot/state.ts'
 import { Workspace } from './workspace/workspace.ts'
 
@@ -78,6 +79,63 @@ describe('symlinks (namespace-backed)', () => {
     await ws.execute('ln -s -f /data/b.txt /data/link.txt')
     const r = await ws.execute('readlink /data/link.txt')
     expect(dec(r.stdout)).toBe('/data/b.txt\n')
+    await ws.close()
+  })
+
+  it('ln -s refuses a name a file already holds', async () => {
+    // GNU refuses an occupied destination; the node table alone cannot
+    // see one. ln checked only its own table, so the link node landed on
+    // top of a live file: the bytes stayed in the backend, unreachable,
+    // and the name read as a dangling link.
+    const ws = buildWorkspace()
+    await ws.execute('echo hi > /data/a.txt')
+    const r = await ws.execute('ln -s /data/other /data/a.txt')
+    expect(r.exitCode).toBe(1)
+    expect(dec(r.stderr)).toBe("ln: failed to create symbolic link '/data/a.txt': File exists\n")
+    expect(dec((await ws.execute('cat /data/a.txt')).stdout)).toBe('hi\n')
+    await ws.close()
+  })
+
+  it('ln -sf replaces a regular file', async () => {
+    // GNU -f removes the destination and then links, so it replaces a
+    // regular file and not only a link (pinned against coreutils 9.7).
+    const ws = buildWorkspace()
+    await ws.execute('echo hi > /data/a.txt')
+    await ws.execute('echo t > /data/t.txt')
+    const r = await ws.execute('ln -sf /data/t.txt /data/a.txt')
+    expect(r.exitCode).toBe(0)
+    expect(dec((await ws.execute('readlink /data/a.txt')).stdout)).toBe('/data/t.txt\n')
+    expect(dec((await ws.execute('cat /data/a.txt')).stdout)).toBe('t\n')
+    await ws.close()
+  })
+
+  it('mv of a link passes the admission gate', async () => {
+    // The link rename is the door's, so a policy that denies it wins. mv
+    // used to move the node itself, which made it the one write in the
+    // shell no admission policy could see.
+    const ram = new RAMResource()
+    const ops = new OpsRegistry()
+    ops.registerResource(ram)
+    const ws = new Workspace(
+      { '/data': ram },
+      {
+        mode: MountMode.WRITE,
+        ops,
+        shellParser: parser,
+        policies: [
+          {
+            preOps: (ctx: OpsContext): Action | null =>
+              ctx.op === 'rename' ? { kind: 'deny', reason: 'frozen' } : null,
+          },
+        ],
+      },
+    )
+    await ws.execute('echo hi > /data/a.txt')
+    await ws.execute('ln -s /data/a.txt /data/lk')
+    const r = await ws.execute('mv /data/lk /data/lk2')
+    expect(r.exitCode).toBe(1)
+    expect(dec(r.stderr)).toBe("mv: cannot move '/data/lk' to '/data/lk2': Permission denied\n")
+    expect(dec((await ws.execute('readlink /data/lk')).stdout)).toBe('/data/a.txt\n')
     await ws.close()
   })
 

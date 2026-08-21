@@ -96,9 +96,11 @@ def link_stat(name: str, meta: NodeMeta) -> FileStat:
 
     Size is the target string's byte length and mode is left unset so
     the formatter supplies 0777, which is what a real symlink inode
-    reports (a link carries no permission bits of its own). Ownership is
-    not in that category: a link has a real uid/gid that ``chown -h``
-    writes and ``ls -l`` shows, so both ride through from the node. The
+    reports (a link carries no permission bits of its own). Ownership
+    and the stamps are not in that category: a link has a real uid/gid
+    that ``chown -h`` writes and ``ls -l`` shows, and real times that
+    ``touch -h`` and a guest's no-follow ``utime`` write, so all four
+    ride through from the node. The
     target rides along in ``extra`` so every surface that has to name it
     (ls -l's ``name -> target``, file's "symbolic link to") reads one
     fact rather than querying the link table a second time.
@@ -115,6 +117,7 @@ def link_stat(name: str, meta: NodeMeta) -> FileStat:
         type=FileType.SYMLINK,
         uid=meta.uid,
         gid=meta.gid,
+        atime=meta.atime,
         extra={LINK_TARGET_KEY: target},
     )
 

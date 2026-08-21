@@ -38,6 +38,14 @@ POLICY_WRITE_OPS = DISPATCH_WRITE_OPS | frozenset({"setattr", "symlink"})
 # directions (create and readlink) rather than a router to a mount.
 NAMESPACE_TABLE_OPS = frozenset({"symlink", "readlink"})
 
+# Ops the node table answers when the path itself is a link, and only
+# then. The name is the whole of what exists there, so forwarding one
+# reaches a backend that has never heard of it: an unlink answered
+# ENOENT with the link still in the table, and a rename moved nothing.
+# ``stat`` joins them only under ``nofollow``, which is how a caller
+# spells lstat; a following stat arrives already resolved to its target.
+LINK_ENTRY_OPS = frozenset({"unlink", "rename", "stat"})
+
 # Ops that create the path they name. A hidden target refuses these as
 # EACCES rather than ENOENT, because "does not exist" is nonsense as
 # the answer to a create the caller is spelling out; every other op on

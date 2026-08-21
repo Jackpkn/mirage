@@ -81,7 +81,12 @@ open('/ram/notes.txt', 'w').write('hello')              # writes flush back to R
     the same way it lands on a RAM one. Links the shell made are collected
     with the prefix, as links rather than as copies of their targets, so a
     cyclic one is safe to walk past. A `chmod` or `utime` a backend cannot
-    keep is stored in the namespace overlay and reported back by `stat`.
+    keep is stored in the namespace overlay and reported back by `stat`, and
+    an `lstat` reads the link's own row rather than its target's, so a
+    `follow_symlinks=False` stamp is visible right after it is written.
+    `os.rename` moves a link by its own name instead of following it, and
+    `os.symlink` onto a name that is taken raises `FileExistsError`, both as
+    POSIX has them.
   </Tab>
   <Tab title="Cross-mount">
     ```python

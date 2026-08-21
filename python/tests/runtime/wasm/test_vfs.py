@@ -28,6 +28,10 @@ from mirage.runtime.wasm.vfs import WasmVFS
 from mirage.types import FileStat, FileType
 from mirage.utils.stat_view import mtime_ns
 
+# The stamp a link's own row carries, deliberately not the stamp the
+# double gives a file, so a test can tell which row it was answered.
+LINK_MTIME = "2026-07-16T00:00:00Z"
+
 
 class FakeVFS(RuntimeVFS):
     """Core double: real routing and flush logic, fake dispatch.
@@ -55,6 +59,15 @@ class FakeVFS(RuntimeVFS):
     def _raw(self, op, path, **kwargs):
         self.calls.append((op, path, kwargs))
         if op == "stat":
+            # The door answers a no-follow stat of a link from the node
+            # table, with the link's own row: its stamp, and its size in
+            # target bytes.
+            if kwargs.get("nofollow") and path in self.links:
+                target = self.links[path]
+                return FileStat(name=path,
+                                size=len(target.encode()),
+                                modified=LINK_MTIME,
+                                type=FileType.SYMLINK)
             if path in self.files:
                 return FileStat(name=path,
                                 size=len(self.files[path]),
@@ -273,6 +286,12 @@ def test_lstat_reports_a_link_as_a_link_sized_by_its_target():
     assert st.is_link is True
     assert st.is_dir is False
     assert st.size == len("t.txt")
+    # The row the node table holds, asked for as an lstat: a version
+    # that rebuilt it here from the target string reported epoch zero
+    # for every link, so a no-follow utime persisted and stayed
+    # invisible to the guest that wrote it.
+    assert st.mtime_ns == mtime_ns(FileStat(name="l", modified=LINK_MTIME))
+    assert ("stat", "/data/l", {"nofollow": True}) in bridge.calls
 
 
 def test_lstat_of_a_plain_path_answers_exactly_as_stat():

@@ -299,6 +299,12 @@ export function isEisdir(err: unknown): boolean {
   return err instanceof Error && (err as Error & { code?: string }).code === 'EISDIR'
 }
 
+// Python's twin is `except FileExistsError`: the name is taken, which is
+// the door's answer to a create that will not overwrite (symlink(2)).
+export function isEexist(err: unknown): boolean {
+  return err instanceof Error && (err as Error & { code?: string }).code === 'EEXIST'
+}
+
 // Python's twin is `except PermissionError`: a refusal (a rule at the
 // command guard or the op door, a read-only mount), which a walk reports
 // per entry the way GNU reports an unreadable one.

@@ -42,7 +42,7 @@ from mirage.workspace.reconcile import Reconciler
 from mirage.workspace.snapshot.drift import DriftQueue
 
 from mirage.workspace.dispatcher.constants import (  # isort: skip
-    DISPATCH_READ_OPS, DISPATCH_WRITE_OPS, HIDDEN_CREATE_OPS,
+    DISPATCH_READ_OPS, DISPATCH_WRITE_OPS, HIDDEN_CREATE_OPS, LINK_ENTRY_OPS,
     NAMESPACE_TABLE_OPS, POLICY_WRITE_OPS, SETATTR_KEYS)
 
 
@@ -222,13 +222,7 @@ class Dispatcher:
                 and not path_allowed(dst.virtual)):
             raise PermissionError(errno.EACCES, os.strerror(errno.EACCES),
                                   dst.virtual)
-        # An unlink of a link is the removal half of `symlink`, and the
-        # door owns both: a link has no backend entry, so forwarding it
-        # reaches a backend that has never heard of the name and answers
-        # ENOENT with the link still there. An unlink of anything else
-        # is an ordinary backend write.
-        if op in NAMESPACE_TABLE_OPS or (
-                op == "unlink" and self._namespace.is_link(path.virtual)):
+        if self._table_answers(op, path.virtual, kwargs):
             return (await self._namespace_table_op(op, path, kwargs,
                                                    report), IOResult())
         # `nofollow` is the caller's AT_SYMLINK_NOFOLLOW: an op that acts
@@ -353,6 +347,13 @@ class Dispatcher:
             await self.invalidate_after_write(mount, path, observed=observed)
             if op == "rename" and isinstance(kwargs.get("dst"), PathSpec):
                 await self.invalidate_after_write(mount, kwargs["dst"])
+                # rename(2) replaces the destination, so a node the
+                # table holds at that name does not survive the move.
+                # A link left there shadowed the file that had just
+                # landed: the listing showed the new file, every read
+                # followed the old link, and the moved content was
+                # reachable under no name at all.
+                await self._namespace.unlink(kwargs["dst"].virtual)
         bound = await post_ops_gate(policies, op, path, write, mount.prefix,
                                     result)
         if bound is not None:
@@ -362,26 +363,54 @@ class Dispatcher:
             result = await apply_op_limit(result, bound)
         return result, IOResult()
 
+    def _table_answers(self, op: str, virtual: str, kwargs: dict[str,
+                                                                 Any]) -> bool:
+        """Whether the node table answers this op instead of a backend.
+
+        ``symlink`` and ``readlink`` always, because a link exists
+        nowhere else. The rest only when the path itself is a link, and
+        then for the same reason the create and the read are the door's:
+        forwarding reaches a backend that has never heard of the name.
+        A no-follow stat is the read half of that fact (lstat asks for
+        the link's own row, which only the table holds); a following
+        stat never arrives here, since the follow above rewrote it to
+        the target.
+
+        Args:
+            op (str): the dispatched op name.
+            virtual (str): the op's virtual path.
+            kwargs (dict[str, Any]): the op's arguments, read for the
+                caller's ``nofollow``.
+        """
+        if op in NAMESPACE_TABLE_OPS:
+            return True
+        if op not in LINK_ENTRY_OPS:
+            return False
+        if op == "stat" and not kwargs.get("nofollow"):
+            return False
+        return self._namespace.is_link(virtual)
+
     async def _namespace_table_op(self, op: str, path: PathSpec,
                                   kwargs: dict[str, Any],
                                   report: OpReport | None) -> Any:
         """Answer a node-table op at the door itself, gated like a backend.
 
         A symlink is namespace state with no backend behind it, so the
-        door owns both directions. Admission still fires exactly as for
-        a backend write: the link's turf is the longest mount prefix
-        above it (the same ownership rule ``_link_allowed`` reads for),
-        session grants and both gates run, and the write leaves an
-        OpRecord — a scoped kernel mount refuses exactly like a scoped
-        shell. A link above every mount is bare namespace structure and
-        clears the gates with an empty prefix.
+        door owns every verb that names one. Admission still fires
+        exactly as for a backend write: the link's turf is the longest
+        mount prefix above it (the same ownership rule ``_link_allowed``
+        reads for), session grants and both gates run, and the write
+        leaves an OpRecord — a scoped kernel mount refuses exactly like
+        a scoped shell. A link above every mount is bare namespace
+        structure and clears the gates with an empty prefix.
 
         Args:
-            op (str): ``symlink``, ``readlink``, or the ``unlink`` of a
-                path the node table holds a link for.
+            op (str): ``symlink`` or ``readlink``, or the ``unlink``,
+                ``rename`` or no-follow ``stat`` of a path the node
+                table holds a link for.
             path (PathSpec): the link's own path, never followed.
             kwargs (dict[str, Any]): op arguments (``target`` for
-                symlink).
+                symlink, ``dst`` for rename).
             report (OpReport | None): the caller's report, stamped when
                 the answer is in hand.
         """
@@ -393,14 +422,41 @@ class Dispatcher:
         write = op in POLICY_WRITE_OPS
         await pre_ops_gate(policies, op, path, write, owner or "",
                            _session_id())
+        result: str | FileStat | None = None
         if op == "unlink":
             target = self._namespace.readlink(path.virtual) or ""
             await self._namespace.unlink(path.virtual)
-            result: str | None = None
+        elif op == "rename":
+            target = self._namespace.readlink(path.virtual) or ""
+            dst = kwargs["dst"]
+            # The destination is a create there, gated like the source,
+            # the way the backend path gates both ends of a rename. It
+            # is then replaced as rename(2) replaces it: any node the
+            # table holds at that name (a link, an attr overlay) goes.
+            await pre_ops_gate(policies, op, dst, True, owner or "",
+                               _session_id())
+            await self._namespace.unlink(dst.virtual)
+            await self._namespace.rename(path.virtual, dst.virtual)
         elif op == "symlink":
             target = str(kwargs["target"])
+            # symlink(2) refuses an occupied name, and the door is the
+            # only place that can tell: the node table sees a link, and
+            # a probe sees the file or directory a backend holds. Left
+            # unchecked, the new node shadowed live data (the bytes
+            # stayed, the name read as a link) and could bury a mount
+            # root, which is the one name a deployment configured.
+            if await self._path_present(path):
+                raise FileExistsError(errno.EEXIST, os.strerror(errno.EEXIST),
+                                      path.virtual)
             await self._namespace.symlink(path.virtual, target, time.time())
-            result = None
+        elif op == "stat":
+            row = self._namespace.link_stat_at(path.virtual)
+            if row is None:
+                raise FileNotFoundError(errno.ENOENT,
+                                        os.strerror(errno.ENOENT),
+                                        path.virtual)
+            target = self._namespace.readlink(path.virtual) or ""
+            result = row
         else:
             found = self._namespace.readlink(path.virtual)
             if found is None:
@@ -443,15 +499,17 @@ class Dispatcher:
         store a directory is not an object but the set of keys under it,
         so ``stat`` misses what ``readdir`` would list, and a listing
         has to be non-empty to count because those stores answer a
-        missing prefix with ``[]``. The namespace is asked first, since
-        a directory that exists only because a mount or a link sits
-        below it is structure no backend can see. Mirrors
+        missing prefix with ``[]``. The namespace is asked first, since a
+        link, and a directory that exists only because a mount or a link
+        sits below it, are structure no backend can see. Mirrors
         ``resolve_path_stat``, which cannot be reused here: it dispatches,
         and the door is what dispatch is inside of.
 
         Args:
             path (PathSpec): the path to probe.
         """
+        if self._namespace.is_link(path.virtual):
+            return True
         prefixes = [m.prefix for m in self._namespace.registry.mounts()]
         if namespace_stat(prefixes, self._namespace, path.virtual) is not None:
             return True

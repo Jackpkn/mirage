@@ -148,3 +148,85 @@ describe('unlink of a namespace link', () => {
     }
   })
 })
+
+describe('the node table answers every verb that names a link', () => {
+  async function linkWorkspace(): Promise<Workspace> {
+    const parser = await getTestParser()
+    const ram = new RAMResource()
+    const ws = new Workspace(
+      { '/ram': ram },
+      { mode: MountMode.WRITE, shellParserFactory: () => Promise.resolve(parser) },
+    )
+    await ws.execute('echo hi > /ram/a.txt')
+    await ws.execute('mkdir /ram/d')
+    await ws.execute('ln -s a.txt /ram/link')
+    return ws
+  }
+
+  it('renames the link, which no backend can see', async () => {
+    // Same fact as the unlink above, one verb along: a guest's rename of
+    // a link forwarded to a backend that had never heard of the name, so
+    // it answered ENOENT with the link still under the old one.
+    const ws = await linkWorkspace()
+    try {
+      await ws.dispatch('rename', '/ram/link', [PathSpec.fromStrPath('/ram/moved')])
+      expect(DEC.decode((await ws.execute('readlink /ram/moved')).stdout)).toBe('a.txt\n')
+      expect((await ws.execute('readlink /ram/link')).exitCode).toBe(1)
+    } finally {
+      await ws.close()
+    }
+  })
+
+  it('answers a no-follow stat with the link row', async () => {
+    // lstat asks for the row only the node table holds; a following stat
+    // arrives resolved to the target and must not see a link at all.
+    const ws = await linkWorkspace()
+    try {
+      const row = (await ws.dispatch('stat', '/ram/link', [], { nofollow: true })) as {
+        type: string
+        size: number
+      }
+      expect(row.type).toBe('symlink')
+      expect(row.size).toBe('a.txt'.length)
+      const followed = (await ws.dispatch('stat', '/ram/link')) as { type: string }
+      expect(followed.type).not.toBe('symlink')
+    } finally {
+      await ws.close()
+    }
+  })
+
+  it('replaces a link that sits at a rename destination', async () => {
+    // rename(2) replaces the destination. A link left in the table there
+    // shadowed the file that had just landed: the listing showed the new
+    // file, every read followed the old link, and the moved content was
+    // reachable under no name at all. mv did this right at the command
+    // tier, so only the surfaces below it (a guest, a kernel mount) saw
+    // the broken state.
+    const ws = await linkWorkspace()
+    try {
+      await ws.dispatch('rename', '/ram/a.txt', [PathSpec.fromStrPath('/ram/link')])
+      expect(DEC.decode((await ws.execute('cat /ram/link')).stdout)).toBe('hi\n')
+      expect((await ws.execute('readlink /ram/link')).exitCode).toBe(1)
+    } finally {
+      await ws.close()
+    }
+  })
+
+  it('refuses a symlink onto a name that is taken', async () => {
+    // symlink(2) is EEXIST on an occupied name, and only the door can
+    // tell: a file and a directory are the backend's, a link is the node
+    // table's, and a mount root is the registry's. Unchecked, the node
+    // went on top and buried whatever was there.
+    const ws = await linkWorkspace()
+    try {
+      for (const occupied of ['/ram/a.txt', '/ram/d', '/ram/link', '/ram']) {
+        await expect(
+          ws.dispatch('symlink', occupied, [], { target: 'elsewhere' }),
+        ).rejects.toMatchObject({ code: 'EEXIST' })
+      }
+      expect(DEC.decode((await ws.execute('cat /ram/a.txt')).stdout)).toBe('hi\n')
+    } finally {
+      await ws.close()
+    }
+  })
+})

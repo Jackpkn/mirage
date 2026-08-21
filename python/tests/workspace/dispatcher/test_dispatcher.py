@@ -21,7 +21,8 @@ from mirage.policy import (Action, CommandRule, Deny, OpsContext, Policies,
                            Policy, PolicyDenied)
 from mirage.policy.rule import RulePolicy
 from mirage.resource.ram import RAMResource
-from mirage.types import ConsistencyPolicy, HiddenPaths, MountMode, PathSpec
+from mirage.types import (ConsistencyPolicy, FileType, HiddenPaths, MountMode,
+                          PathSpec)
 from mirage.workspace import Workspace
 from mirage.workspace.dispatcher import Dispatcher
 from mirage.workspace.session import Session
@@ -252,3 +253,82 @@ async def test_unlink_of_an_ordinary_file_still_reaches_the_backend():
         await ws.dispatch("unlink", PathSpec.from_str_path("/ram/a.txt"))
         listing = await ws.execute("ls /ram")
         assert (listing.stdout or b"").strip() == b""
+
+
+@pytest.mark.asyncio
+async def test_rename_moves_a_namespace_link():
+    # Same fact as the unlink above, one verb along: a guest's os.rename
+    # of a link forwarded to a backend that had never heard of the name,
+    # so it answered ENOENT with the link still under the old one.
+    with Workspace({"/ram/": RAMResource()}, mode=MountMode.WRITE) as ws:
+        await ws.execute("echo hi > /ram/a.txt")
+        await ws.execute("ln -s a.txt /ram/link")
+        await ws.dispatch("rename",
+                          PathSpec.from_str_path("/ram/link"),
+                          dst=PathSpec.from_str_path("/ram/moved"))
+        assert not ws._namespace.is_link("/ram/link")
+        assert ws._namespace.readlink("/ram/moved") == "a.txt"
+
+
+@pytest.mark.asyncio
+async def test_a_no_follow_stat_answers_a_links_own_row():
+    # lstat asks for the row only the node table holds. Without it every
+    # surface rebuilt the row from the target string and reported epoch
+    # zero, so a no-follow utime persisted and stayed invisible.
+    with Workspace({"/ram/": RAMResource()}, mode=MountMode.WRITE) as ws:
+        await ws.execute("echo hi > /ram/a.txt")
+        await ws.execute("ln -s a.txt /ram/link")
+        link = PathSpec.from_str_path("/ram/link")
+        row, _ = await ws.dispatch("stat", link, nofollow=True)
+        assert row.type == FileType.SYMLINK
+        assert row.size == len("a.txt")
+        await ws.dispatch("setattr",
+                          link,
+                          mode=None,
+                          uid=None,
+                          gid=None,
+                          atime=None,
+                          mtime="2020-01-02T03:04:05Z",
+                          nofollow=True)
+        row, _ = await ws.dispatch("stat", link, nofollow=True)
+        assert row.modified == "2020-01-02T03:04:05Z"
+        # Following is the other answer: the target's row, not the link's.
+        followed, _ = await ws.dispatch("stat", link)
+        assert followed.type != FileType.SYMLINK
+
+
+@pytest.mark.asyncio
+async def test_a_rename_replaces_a_link_at_the_destination():
+    # rename(2) replaces the destination. A link left in the table there
+    # shadowed the file that had just landed: the listing showed the new
+    # file, every read followed the old link, and the moved content was
+    # reachable under no name at all. mv did this right at the command
+    # tier, so only the surfaces below it (a guest, a kernel mount) saw
+    # the broken state.
+    with Workspace({"/ram/": RAMResource()}, mode=MountMode.WRITE) as ws:
+        await ws.execute("echo hi > /ram/a.txt")
+        await ws.execute("echo tgt > /ram/t.txt")
+        await ws.execute("ln -s t.txt /ram/link")
+        await ws.dispatch("rename",
+                          PathSpec.from_str_path("/ram/a.txt"),
+                          dst=PathSpec.from_str_path("/ram/link"))
+        assert not ws._namespace.is_link("/ram/link")
+        assert (await ws.execute("cat /ram/link")).stdout == b"hi\n"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("occupied",
+                         ["/ram/a.txt", "/ram/d", "/ram/link", "/ram"])
+async def test_symlink_refuses_an_occupied_name(occupied):
+    # symlink(2) is EEXIST on a name that is taken, and only the door can
+    # tell: a file and a directory are the backend's, a link is the node
+    # table's, and a mount root is the registry's. Unchecked, the node
+    # went on top and buried whatever was there.
+    with Workspace({"/ram/": RAMResource()}, mode=MountMode.WRITE) as ws:
+        await ws.execute("echo hi > /ram/a.txt; mkdir /ram/d")
+        await ws.execute("ln -s a.txt /ram/link")
+        with pytest.raises(FileExistsError):
+            await ws.dispatch("symlink",
+                              PathSpec.from_str_path(occupied),
+                              target="elsewhere")
+        assert (await ws.execute("cat /ram/a.txt")).stdout == b"hi\n"

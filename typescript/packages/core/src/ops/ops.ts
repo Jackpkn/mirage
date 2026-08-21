@@ -279,12 +279,15 @@ export class Ops {
   }
 
   /**
-   * Create or overwrite a namespace symlink at `path`.
+   * Create a namespace symlink at `path`.
    *
    * Routed through the door like every write: session grants and
    * admission policies fire on the link's turf, and the write lands on
-   * the ledger. The target is stored verbatim as typed. Mirrors
-   * Python's Ops.symlink.
+   * the ledger. The target is stored verbatim as typed. Throws EEXIST
+   * when something is already at `path` (a file, a directory, another
+   * link, a mount root): symlink(2) never overwrites, and the door is
+   * the layer that can see both planes to tell. Mirrors Python's
+   * Ops.symlink.
    */
   async symlink(path: string, target: string): Promise<void> {
     await this.through('symlink', path, [], { target })

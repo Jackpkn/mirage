@@ -404,7 +404,7 @@ class Ops:
         await self._call("create", path)
 
     async def symlink(self, path: str, target: str) -> None:
-        """Create or overwrite a namespace symlink at ``path``.
+        """Create a namespace symlink at ``path``.
 
         Routed through the door like every write: session grants and
         admission policies fire on the link's turf, and the write lands
@@ -413,6 +413,12 @@ class Ops:
         Args:
             path (str): Virtual path of the link.
             target (str): What the link points to, as typed.
+
+        Raises:
+            FileExistsError: something is already at ``path`` (a file, a
+                directory, another link, a mount root). symlink(2) never
+                overwrites, and the door is the layer that can see both
+                planes to tell.
         """
         await self._call("symlink", path, target=target)
 

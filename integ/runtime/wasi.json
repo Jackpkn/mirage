@@ -381,6 +381,138 @@
           }
         }
       ]
+    },
+    {
+      "id": "rename_a_link_moves_the_name",
+      "hosts": [
+        "python"
+      ],
+      "world": {
+        "runtimes": [
+          "wasi",
+          "vfs"
+        ],
+        "mounts": {
+          "/ram": {
+            "resource": "ram",
+            "files": {
+              "t.txt": "hello\n"
+            }
+          }
+        }
+      },
+      "steps": [
+        {
+          "command": "ln -s t.txt /ram/lk",
+          "expect": {
+            "exit": 0
+          }
+        },
+        {
+          "command": "python3 -c \"import os\nos.rename('/ram/lk', '/ram/moved')\nprint(os.readlink('/ram/moved'))\nprint(os.path.islink('/ram/lk'))\"",
+          "expect": {
+            "exit": 0,
+            "stdout": "t.txt\nFalse\n"
+          }
+        },
+        {
+          "command": "readlink /ram/moved",
+          "expect": {
+            "exit": 0,
+            "stdout": "t.txt\n"
+          }
+        }
+      ]
+    },
+    {
+      "id": "symlink_refuses_an_occupied_name",
+      "hosts": [
+        "python"
+      ],
+      "world": {
+        "runtimes": [
+          "wasi",
+          "vfs"
+        ],
+        "mounts": {
+          "/ram": {
+            "resource": "ram",
+            "files": {
+              "t.txt": "hello\n"
+            }
+          }
+        }
+      },
+      "steps": [
+        {
+          "command": "mkdir /ram/d",
+          "expect": {
+            "exit": 0
+          }
+        },
+        {
+          "command": "ln -s t.txt /ram/lk",
+          "expect": {
+            "exit": 0
+          }
+        },
+        {
+          "command": "python3 -c \"import errno, os\nfor p in ('/ram/t.txt', '/ram/d', '/ram/lk', '/ram'):\n    try:\n        os.symlink('elsewhere', p)\n        print(p, 'created')\n    except OSError as exc:\n        print(p, errno.errorcode[exc.errno])\"",
+          "expect": {
+            "exit": 0,
+            "stdout": "/ram/t.txt EEXIST\n/ram/d EEXIST\n/ram/lk EEXIST\n/ram EEXIST\n"
+          }
+        },
+        {
+          "command": "cat /ram/t.txt",
+          "expect": {
+            "exit": 0,
+            "stdout": "hello\n"
+          }
+        },
+        {
+          "command": "readlink /ram/lk",
+          "expect": {
+            "exit": 0,
+            "stdout": "t.txt\n"
+          }
+        }
+      ]
+    },
+    {
+      "id": "a_links_own_time_reaches_the_guest",
+      "hosts": [
+        "python"
+      ],
+      "world": {
+        "runtimes": [
+          "wasi",
+          "vfs"
+        ],
+        "mounts": {
+          "/ram": {
+            "resource": "ram",
+            "files": {
+              "t.txt": "hello\n"
+            }
+          }
+        }
+      },
+      "steps": [
+        {
+          "command": "ln -s t.txt /ram/lk",
+          "expect": {
+            "exit": 0
+          }
+        },
+        {
+          "command": "python3 -c \"import os\nos.utime('/ram/lk', (1000000000, 1000000000), follow_symlinks=False)\nst = os.lstat('/ram/lk')\nprint(int(st.st_mtime))\nprint(os.path.islink('/ram/lk'))\nprint(int(os.stat('/ram/t.txt').st_mtime) != 1000000000)\"",
+          "expect": {
+            "exit": 0,
+            "stdout": "1000000000\nTrue\nTrue\n"
+          }
+        }
+      ]
     }
   ]
 }

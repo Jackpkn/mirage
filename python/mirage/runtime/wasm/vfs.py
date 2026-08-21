@@ -22,8 +22,9 @@ from mirage.runtime.wasm.build import BuildDir
 from mirage.runtime.wasm.config import WasmFsConfig
 from mirage.runtime.wasm.constants import READONLY_HINT
 from mirage.runtime.wasm.types import GuestStat
+from mirage.types import FileStat
 from mirage.utils.path import owner_prefix
-from mirage.utils.stat_view import content_size, is_dir, mtime_ns
+from mirage.utils.stat_view import content_size, is_dir, is_link, mtime_ns
 
 
 class WasmVFS:
@@ -138,22 +139,18 @@ class WasmVFS:
         build = self._serving_build(path)
         if build is not None:
             return build.stat(path)
-        fs = self._core_call("stat", path)
-        ns = mtime_ns(fs)
-        # The filestat record has no validity channel, so an unknown
-        # mtime and epoch zero both encode as 0 on this wire.
-        return GuestStat(is_dir=is_dir(fs),
-                         size=content_size(fs),
-                         mtime_ns=0 if ns is None else ns)
+        return self._guest_stat(self._core_call("stat", path))
 
     def lstat(self, path: str) -> GuestStat:
         """Stat a guest path without following a trailing symlink.
 
-        The link's own row is the node table's, not a backend's, so it
-        is reached through the readlink op and nothing else: a link
-        sizes as its target string and every other path answers exactly
-        as `stat` does. A build path can never be a link, so it takes
-        the ordinary path.
+        A link's own row is the node table's, not a backend's, and the
+        door serves it under `nofollow`: the row carries the target's
+        byte length as the size, the link's own mtime, and whatever a
+        `chown -h` or a no-follow `utime` wrote, none of which a row
+        rebuilt here from the target string could report. Every other
+        path answers exactly as `stat` does. A build path can never be
+        a link, so it takes the ordinary path.
 
         Args:
             path (str): guest-absolute path.
@@ -163,28 +160,22 @@ class WasmVFS:
         """
         if self._serving_build(path) is not None:
             return self.stat(path)
-        target = self._readlink_or_none(path)
-        if target is None:
-            return self.stat(path)
-        return GuestStat(is_dir=False,
-                         size=len(target.encode()),
-                         mtime_ns=0,
-                         is_link=True)
+        return self._guest_stat(self._core_call("stat", path, nofollow=True))
 
-    def _readlink_or_none(self, path: str) -> str | None:
-        """The link target at `path`, or None when it is not a link.
+    @staticmethod
+    def _guest_stat(fs: FileStat) -> GuestStat:
+        """Translate one mirage stat row into a preview1 filestat.
 
         Args:
-            path (str): guest-absolute path.
+            fs (FileStat): the row the door answered with.
         """
-        try:
-            return str(self._core_call("readlink", path))
-        except OSError as exc:
-            # EINVAL is the node table's "not a link"; a miss answers it
-            # too, and the stat that follows is the one that reports it.
-            if exc.errno not in (host_errno.EINVAL, host_errno.ENOENT):
-                raise
-            return None
+        ns = mtime_ns(fs)
+        # The filestat record has no validity channel, so an unknown
+        # mtime and epoch zero both encode as 0 on this wire.
+        return GuestStat(is_dir=is_dir(fs),
+                         size=content_size(fs),
+                         mtime_ns=0 if ns is None else ns,
+                         is_link=is_link(fs))
 
     def stat_or_none(self, path: str) -> GuestStat | None:
         try:

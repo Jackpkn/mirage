@@ -13,6 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { PathSpec, wordText } from '../../../../types.ts'
+import { isEexist, isEisdir, isEnoent } from '../../../../utils/errors.ts'
 import { CycleError, gnuDirname } from '../../../../utils/path.ts'
 import { PolicyDenied } from '../../../../policy/index.ts'
 import type { DispatchFn } from '../../../../runtime/types.ts'
@@ -21,11 +22,16 @@ import type { Session } from '../../../session/session.ts'
 import { absPath, fail, ok, splitFlags, type Result } from '../shared.ts'
 import { posixRelative } from './links.ts'
 
-// ln -s TARGET LINK: create a namespace symbolic link. Flags: -f overwrite
-// an existing link, -v report the link, -r store the target relative to the
-// link's directory (GNU --relative). -n (--no-dereference) and -T
-// (--no-target-directory) are accepted no-ops: a namespace link name is
-// never dereferenced nor treated as a directory to descend into.
+// ln -s TARGET LINK: create a namespace symbolic link. Flags: -f remove the
+// destination first (GNU's own algorithm, so it replaces a regular file too),
+// -v report the link, -r store the target relative to the link's directory
+// (GNU --relative). -n (--no-dereference) and -T (--no-target-directory) are
+// accepted no-ops: a namespace link name is never dereferenced nor treated as
+// a directory to descend into.
+// Divergence: GNU reads a directory destination as "link inside it"
+// (`ln -s f.txt d` creates `d/f.txt`), and mirage refuses the name instead.
+// Refusing is the safe half of that gap: the version before the door owned the
+// existence rule buried the directory under a link node.
 export async function handleLn(
   namespace: Namespace,
   dispatch: DispatchFn,
@@ -63,15 +69,36 @@ export async function handleLn(
     }
     targetTyped = posixRelative(targetAbs, linkDir)
   }
-  const exists = namespace.isLink(linkAbs) && !flags.has('f')
-  if (namespace.isMountRoot(linkAbs) || exists) {
+  if (namespace.isMountRoot(linkAbs)) {
     return fail('ln', `ln: failed to create symbolic link '${wordText(linkArg)}': File exists\n`)
   }
+  const linkSpec = PathSpec.fromStrPath(linkAbs)
+  if (flags.has('f')) {
+    // GNU -f is "remove the destination, then link", which is why it
+    // replaces a regular file and not only a link. The door refuses an
+    // occupied name (symlink(2)'s EEXIST), so the removal is what makes
+    // the flag work rather than a formality; a destination that is not
+    // there is what -f is for, so its miss is the expected case and not
+    // an error.
+    try {
+      await dispatch('unlink', linkSpec)
+    } catch (err) {
+      if (isEisdir(err)) {
+        return fail('ln', `ln: ${wordText(linkArg)}: cannot overwrite directory\n`)
+      }
+      if (!isEnoent(err)) throw err
+    }
+  }
   // The write itself is a dispatch op, so session grants and admission
-  // policies fire at the door; a refusal renders in ln's own words.
+  // policies fire at the door; a refusal renders in ln's own words. The
+  // door owns the existence rule (it is the only layer that can see both
+  // the node table and the backend); ln owns the wording.
   try {
-    await dispatch('symlink', PathSpec.fromStrPath(linkAbs), [], { target: targetTyped })
+    await dispatch('symlink', linkSpec, [], { target: targetTyped })
   } catch (err) {
+    if (isEexist(err)) {
+      return fail('ln', `ln: failed to create symbolic link '${wordText(linkArg)}': File exists\n`)
+    }
     if (err instanceof PolicyDenied) {
       return fail(
         'ln',

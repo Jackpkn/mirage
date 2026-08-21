@@ -1274,3 +1274,61 @@ async def test_readlink_does_not_probe_past_a_policy_that_denies_stat():
     with pytest.raises(OSError) as caught:
         await ws.ops.readlink("/data/missing")
     assert caught.value.errno == errno.EINVAL
+
+
+@pytest.mark.asyncio
+async def test_ln_refuses_a_name_a_file_already_holds():
+    """GNU refuses an occupied destination; the node table alone cannot.
+
+    ``ln`` checked only its own table, so the link node landed on top of
+    a live file: the bytes stayed in the backend, unreachable, and the
+    name read as a dangling link. The door owns the rule now, because it
+    is the only layer that sees both planes.
+    """
+    ws = _ws()
+    await ws.execute("echo hi > /data/a.txt")
+    r = await ws.execute("ln -s /data/other /data/a.txt")
+    assert r.exit_code == 1
+    assert r.stderr.decode() == ("ln: failed to create symbolic link "
+                                 "'/data/a.txt': File exists\n")
+    assert (await ws.execute("cat /data/a.txt")).stdout == b"hi\n"
+
+
+@pytest.mark.asyncio
+async def test_ln_sf_replaces_a_regular_file():
+    # GNU -f removes the destination and then links, so it replaces a
+    # regular file and not only a link (pinned against coreutils 9.7).
+    ws = _ws()
+    await ws.execute("echo hi > /data/a.txt; echo t > /data/t.txt")
+    r = await ws.execute("ln -sf /data/t.txt /data/a.txt")
+    assert r.exit_code == 0
+    assert (await
+            ws.execute("readlink /data/a.txt")).stdout == b"/data/t.txt\n"
+    assert (await ws.execute("cat /data/a.txt")).stdout == b"t\n"
+
+
+@pytest.mark.asyncio
+async def test_mv_of_a_link_passes_the_admission_gate():
+    """The link rename is the door's, so a policy that denies it wins.
+
+    mv used to move the node itself, which meant the one write in the
+    shell that no admission policy could see.
+    """
+
+    class NoRename(Policy):
+
+        async def pre_ops(self, ctx):
+            if ctx.op == "rename":
+                return Deny(reason="frozen")
+            return None
+
+    ws = Workspace({"/data": (RAMResource(), MountMode.WRITE)},
+                   mode=MountMode.WRITE,
+                   policies=[NoRename()])
+    await ws.execute("echo hi > /data/a.txt")
+    await ws.execute("ln -s /data/a.txt /data/lk")
+    r = await ws.execute("mv /data/lk /data/lk2")
+    assert r.exit_code == 1
+    assert r.stderr.decode() == ("mv: cannot move '/data/lk' to "
+                                 "'/data/lk2': Permission denied\n")
+    assert (await ws.execute("readlink /data/lk")).stdout == b"/data/a.txt\n"

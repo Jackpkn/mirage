@@ -22,6 +22,7 @@ import { IOResult, type OpReport } from '../../io/types.ts'
 import {
   eacces,
   eaccesReadOnly,
+  eexist,
   einval,
   enoent,
   isMissError,
@@ -51,6 +52,7 @@ import {
   DISPATCH_READ_OPS,
   DISPATCH_WRITE_OPS,
   HIDDEN_CREATE_OPS,
+  LINK_ENTRY_OPS,
   NAMESPACE_TABLE_OPS,
   POLICY_WRITE_OPS,
   SETATTR_KEYS,
@@ -185,15 +187,11 @@ export class Dispatcher {
     if (opName === 'rename' && dstArg instanceof PathSpec && !pathAllowed(dstArg.virtual)) {
       throw eacces(dstArg.virtual)
     }
-    // An unlink of a link is the removal half of `symlink`, and the door owns
-    // both: a link has no backend entry, so forwarding it reaches a backend
-    // that has never heard of the name and answers ENOENT with the link still
-    // there. An unlink of anything else is an ordinary backend write.
-    if (
-      NAMESPACE_TABLE_OPS.has(opName) ||
-      (opName === 'unlink' && this.namespace.isLink(path.virtual))
-    ) {
-      return [await this.namespaceTableOp(opName, path, kwargs ?? {}, report), new IOResult()]
+    if (this.tableAnswers(opName, path.virtual, kwargs)) {
+      return [
+        await this.namespaceTableOp(opName, path, args ?? [], kwargs ?? {}, report),
+        new IOResult(),
+      ]
     }
     // `nofollow` is the caller's AT_SYMLINK_NOFOLLOW: an op that acts on
     // a link entry itself (chown -h writing the link's own attrs) keeps
@@ -395,6 +393,12 @@ export class Dispatcher {
       await this.invalidateAfterWriteByPath(p.virtual, observed)
       if (renameDst !== null) {
         await this.invalidateAfterWriteByPath(renameDst.virtual)
+        // rename(2) replaces the destination, so a node the table holds
+        // at that name does not survive the move. A link left there
+        // shadowed the file that had just landed: the listing showed the
+        // new file, every read followed the old link, and the moved
+        // content was reachable under no name at all.
+        await this.namespace.unlink(renameDst.virtual)
       }
     }
     if (opName === 'stat' && result instanceof FileStat) {
@@ -411,38 +415,84 @@ export class Dispatcher {
   }
 
   /**
+   * Whether the node table answers this op instead of a backend.
+   *
+   * `symlink` and `readlink` always, because a link exists nowhere else.
+   * The rest only when the path itself is a link, and then for the same
+   * reason the create and the read are the door's: forwarding reaches a
+   * backend that has never heard of the name. A no-follow stat is the
+   * read half of that fact (lstat asks for the link's own row, which
+   * only the table holds); a following stat never arrives here, since
+   * the follow below rewrote it to the target. Mirrors Python's
+   * Dispatcher._table_answers.
+   */
+  private tableAnswers(
+    opName: string,
+    virtual: string,
+    kwargs: Record<string, unknown> | undefined,
+  ): boolean {
+    if (NAMESPACE_TABLE_OPS.has(opName)) return true
+    if (!LINK_ENTRY_OPS.has(opName)) return false
+    if (opName === 'stat' && kwargs?.nofollow !== true) return false
+    return this.namespace.isLink(virtual)
+  }
+
+  /**
    * Answer a node-table op at the door itself, gated like a backend.
    *
    * A symlink is namespace state with no backend behind it, so the door
-   * owns both directions. Admission still fires exactly as for a
-   * backend write: the link's turf is the longest mount prefix above it
+   * owns every verb that names one. Admission still fires exactly as for
+   * a backend write: the link's turf is the longest mount prefix above it
    * (the same ownership rule the link read filter uses), session grants
    * and both gates run, and the write leaves an OpRecord — a scoped
    * kernel mount refuses exactly like a scoped shell. A link above
    * every mount is bare namespace structure and clears the gates with
-   * an empty prefix. Also answers the `unlink` of a path the node table holds
-   * a link for. Mirrors Python's Dispatcher._namespace_table_op.
+   * an empty prefix. Also answers the `unlink`, `rename` and no-follow
+   * `stat` of a path the node table holds a link for. Mirrors Python's
+   * Dispatcher._namespace_table_op.
    */
   private async namespaceTableOp(
     opName: string,
     path: PathSpec,
+    args: readonly unknown[],
     kwargs: OpKwargs,
     report: OpReport | undefined,
-  ): Promise<string | null> {
+  ): Promise<string | FileStat | null> {
     const start = performance.now()
     const owner = ownerPrefix(this.namespace.mountPrefixes(), path.virtual)
     const write = POLICY_WRITE_OPS.has(opName)
     await preOpsGate(this.policies, opName, path, write, owner ?? '', sessionId())
     let target: string
-    let result: string | null
+    let result: string | FileStat | null = null
     if (opName === 'unlink') {
       target = this.namespace.readlink(path.virtual) ?? ''
       await this.namespace.unlink(path.virtual)
-      result = null
+    } else if (opName === 'rename') {
+      target = this.namespace.readlink(path.virtual) ?? ''
+      const dst = args[0]
+      if (!(dst instanceof PathSpec)) throw new Error('rename op requires dst')
+      // The destination is a create there, gated like the source, the
+      // way the backend path gates both ends of a rename. It is then
+      // replaced as rename(2) replaces it: any node the table holds at
+      // that name (a link, an attr overlay) goes.
+      await preOpsGate(this.policies, opName, dst, true, owner ?? '', sessionId())
+      await this.namespace.unlink(dst.virtual)
+      await this.namespace.rename(path.virtual, dst.virtual)
     } else if (opName === 'symlink') {
       target = String(kwargs.target)
+      // symlink(2) refuses an occupied name, and the door is the only
+      // place that can tell: the node table sees a link, and a probe
+      // sees the file or directory a backend holds. Left unchecked, the
+      // new node shadowed live data (the bytes stayed, the name read as
+      // a link) and could bury a mount root, which is the one name a
+      // deployment configured.
+      if (await this.pathPresent(path)) throw eexist(path)
       await this.namespace.symlink(path.virtual, target, Date.now() / 1000)
-      result = null
+    } else if (opName === 'stat') {
+      const row = this.namespace.linkStatAt(path.virtual)
+      if (row === null) throw enoent(path)
+      target = this.namespace.readlink(path.virtual) ?? ''
+      result = row
     } else {
       const found = this.namespace.readlink(path.virtual)
       if (found === null) throw await this.readlinkMiss(path)
@@ -484,13 +534,14 @@ export class Dispatcher {
    * store a directory is not an object but the set of keys under it, so
    * `stat` misses what `readdir` would list, and a listing has to be
    * non-empty to count because those stores answer a missing prefix with
-   * `[]`. The namespace is asked first, since a directory that exists
-   * only because a mount or a link sits below it is structure no backend
-   * can see. Mirrors `resolvePathStat`, which cannot be reused here: it
-   * dispatches, and the door is what dispatch is inside of. Mirrors
-   * Python's Dispatcher._path_present.
+   * `[]`. The namespace is asked first, since a link, and a directory
+   * that exists only because a mount or a link sits below it, are
+   * structure no backend can see. Mirrors `resolvePathStat`, which
+   * cannot be reused here: it dispatches, and the door is what dispatch
+   * is inside of. Mirrors Python's Dispatcher._path_present.
    */
   private async pathPresent(path: PathSpec): Promise<boolean> {
+    if (this.namespace.isLink(path.virtual)) return true
     if (namespaceStat(this.namespace.mountPrefixes(), this.namespace, path.virtual) !== null) {
       return true
     }
