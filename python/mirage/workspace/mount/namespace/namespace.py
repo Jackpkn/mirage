@@ -471,10 +471,18 @@ class Namespace:
         stat and has only to learn which of those names the node table
         owns.
 
+        Resolves a link prefix first, because a listing does: a readdir
+        of ``/data/alias`` is dispatched at ``/data/real`` and answers
+        with that directory's entries, so the marks have to come from
+        there too or every link inside an aliased directory reads as
+        whatever its followed stat said. ``link_stats_under`` needs no
+        such resolution: it is handed the path the router already
+        rewrote.
+
         Args:
             directory (str): absolute virtual directory path.
         """
-        return {name for name, _ in self._links_under(directory)}
+        return {name for name, _ in self._links_under(self.follow(directory))}
 
     def _links_under(self, directory: str) -> list[tuple[str, NodeMeta]]:
         """The links living directly under a directory, as (name, meta).

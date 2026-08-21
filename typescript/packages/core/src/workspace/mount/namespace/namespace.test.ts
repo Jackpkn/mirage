@@ -128,6 +128,18 @@ describe('Namespace symlink table', () => {
     await ws.close()
   })
 
+  // A readdir of an alias is dispatched at its target and answers with
+  // that directory's entries, so the marks come from there. Asking the
+  // typed path left every link inside an aliased directory unmarked, and
+  // a dir link inside it then read as a directory a walk recurses.
+  it('linkNamesUnder answers for the directory a link names', async () => {
+    const ws = new Workspace({ '/data': new RAMResource() })
+    await ws.namespace.symlink('/data/real/lk', '/data/real/t.txt', 1)
+    await ws.namespace.symlink('/data/alias', '/data/real', 1)
+    expect(ws.namespace.linkNamesUnder('/data/alias')).toEqual(new Set(['lk']))
+    await ws.close()
+  })
+
   it('purgeUnder drops nested entries', async () => {
     const ws = new Workspace({ '/data': new RAMResource() })
     await ws.namespace.symlink('/data/sub/a', '/t1', 1)

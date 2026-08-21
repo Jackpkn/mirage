@@ -184,8 +184,12 @@ class RuntimeVFS:
             path (str): guest-absolute virtual path.
         """
         entries: list[VFSEntry] = []
+        listing = self.call("readdir", path)
+        # After the listing, not before: a directory that will not list
+        # (ENOENT, or a link cycle the namespace refuses to resolve)
+        # must fail as readdir, not as the mark read.
         links = self._link_names(path)
-        for raw in self.call("readdir", path):
+        for raw in listing:
             linked = raw.rstrip("/").rsplit("/", 1)[-1] in links
             if raw.endswith("/"):
                 entries.append(

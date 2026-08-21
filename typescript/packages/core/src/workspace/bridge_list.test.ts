@@ -93,6 +93,20 @@ describe('runtime door readdir', () => {
       isDir: false,
     })
   })
+
+  // Dispatch follows the alias and answers with the target's entries,
+  // so the marks have to come from the target too. Reading them off the
+  // typed path left a link inside an aliased directory unmarked, and a
+  // directory link there then read as a directory a guest walk descends.
+  it('marks the links inside a directory reached through a link', async () => {
+    const { ws } = mkWorld()
+    await ws.dispatch('mkdir', '/data/real')
+    await ws.fs.writeFile('/data/real/t.txt', 'hi')
+    await ws.namespace.symlink('/data/real/lk', '/data/real/t.txt', 1)
+    await ws.namespace.symlink('/data/alias', '/data/real', 1)
+    const entries = await doorOn(ws).readdir('/data/alias')
+    expect(entries.find((e) => e.path.endsWith('/lk'))).toMatchObject({ isLink: true })
+  })
 })
 
 // The wiring itself: the workspace hands its runtimes a resolver that

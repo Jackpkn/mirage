@@ -168,6 +168,9 @@ export class RuntimeVFS {
     if (!Array.isArray(out)) {
       throw new TypeError(`runtime vfs: readdir ${path} expected array`)
     }
+    // After the listing, not before: a directory that will not list
+    // (ENOENT, or a link cycle the namespace refuses to resolve) must
+    // fail as readdir, not as the mark read.
     const links = this.resolver.linkChildren(path)
     return await Promise.all(
       out.map(async (raw): Promise<VFSEntry> => {

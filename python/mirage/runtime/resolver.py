@@ -40,12 +40,15 @@ class MountResolver(Protocol):
         ...
 
     def link_children(self, directory: str) -> set[str]:
-        """The names of the symlinks living directly under ``directory``.
+        """The names of the symlinks in the directory ``directory`` names.
 
         Per directory, not per path, because a listing is where the
         answer is needed and one table read serves every entry in it;
         asked per entry it would be a readlink apiece for a fact the
-        name plane can hand over whole.
+        name plane can hand over whole. Answers for the directory the
+        path *names*, resolving a link the way the listing itself is
+        resolved, so a listing through an alias is marked from the
+        directory it actually read.
 
         Args:
             directory (str): absolute virtual directory path.
