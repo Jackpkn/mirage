@@ -25,6 +25,11 @@ import type { FSNode } from './types.ts'
 import { FileStat, FileType, type SetAttrFields } from '../../../types.ts'
 
 const enc = new TextEncoder()
+
+// The mount's own metadata, which the tree has no way to invent.
+const STORE_MODE = 0o660
+const STORE_MTIME = '2026-07-15T00:00:00Z'
+const STORE_MTIME_S = 1784073600
 const dec = new TextDecoder()
 
 interface Call {
@@ -108,7 +113,15 @@ describe('MirageFs', () => {
           )
         }
         return Promise.resolve(
-          new FileStat({ name: path, size: found.length, type: FileType.TEXT }),
+          new FileStat({
+            name: path,
+            size: found.length,
+            type: FileType.TEXT,
+            // Deliberately not the tree's own defaults, so a test can
+            // tell which of the two a guest's stat answered from.
+            mode: STORE_MODE,
+            modified: STORE_MTIME,
+          }),
         )
       }
       if (op === 'symlink' && dst !== undefined) links.set(path, dst)
@@ -386,6 +399,25 @@ import os
 _size = os.stat('${p}sized.txt').st_size
 `)
     expect(py.globals.get('_size')).toBe(9)
+  })
+
+  // Both come off the row the preload already had. Before this the node
+  // carried makeNode's defaults, so a chmod the shell made was invisible
+  // and every seeded file looked modified the moment the run started.
+  it('reports the mount mode and stamp through os.stat', async () => {
+    const p = prefix()
+    store.set(`${p}meta.txt`, enc.encode('abc'))
+    await mountPrefix(p)
+    await py.runPythonAsync(`
+import os, stat
+_st = os.stat('${p}meta.txt')
+_mode = stat.S_IMODE(_st.st_mode)
+_mtime = int(_st.st_mtime)
+_isreg = stat.S_ISREG(_st.st_mode)
+`)
+    expect(py.globals.get('_mode')).toBe(STORE_MODE)
+    expect(py.globals.get('_mtime')).toBe(STORE_MTIME_S)
+    expect(py.globals.get('_isreg')).toBe(true)
   })
 
   // A link is namespace state, so the mount that gets it need not be

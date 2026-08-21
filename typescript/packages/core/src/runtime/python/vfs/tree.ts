@@ -69,21 +69,51 @@ export class NodeTree {
   seed(seed: MirageFsSeed): void {
     for (const dir of seed.dirs) {
       const rel = this.relative(dir)
-      if (rel !== null) this.ensureDir(rel)
+      if (rel !== null) this.stamp(seed, dir, this.ensureDir(rel))
     }
     for (const path of seed.unreadable) {
       const node = this.placeFile(path)
-      if (node !== null) node.unreadable = true
+      if (node !== null) {
+        node.unreadable = true
+        this.stamp(seed, path, node)
+      }
     }
     for (const [path, bytes] of seed.files) {
       const node = this.placeFile(path)
       if (node === null) continue
       node.contents = bytes
       node.usedBytes = bytes.length
+      this.stamp(seed, path, node)
     }
     for (const [path, target] of seed.links) {
       const node = this.placeFile(path, LINK_MODE)
       if (node !== null) node.link = target
+    }
+  }
+
+  /**
+   * Put the mount's own mode and stamp on a node the seed just placed.
+   *
+   * Without it a seeded node carries `makeNode`'s defaults: 0o644
+   * whatever the mount holds, and the moment the node was built, so a
+   * chmod the shell made was invisible and every file the guest stats
+   * looked modified this second. Only seeded nodes are restamped: a
+   * file the guest creates during the run really was modified now.
+   *
+   * Args:
+   *   seed: the collected tree, holding what the rows reported.
+   *   path: guest-absolute path of the node.
+   *   node: the node just placed for it.
+   */
+  private stamp(seed: MirageFsSeed, path: string, node: FSNode): void {
+    const mode = seed.modes.get(path)
+    // Permission bits only: the kind is the tree's own decision, and a
+    // row that disagreed would otherwise turn a file into a directory.
+    if (mode !== undefined) node.mode = (node.mode & ~0o7777) | (mode & 0o7777)
+    const at = seed.stamps.get(path)
+    if (at !== undefined) {
+      node.atime = at.atimeMs
+      node.mtime = node.ctime = at.mtimeMs
     }
   }
 

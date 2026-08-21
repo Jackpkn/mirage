@@ -26,6 +26,8 @@ export class MirageFsSeed implements FSLike {
   readonly files = new Map<string, Uint8Array>()
   readonly unreadable = new Set<string>()
   readonly links = new Map<string, string>()
+  readonly modes = new Map<string, number>()
+  readonly stamps = new Map<string, { atimeMs: number; mtimeMs: number }>()
 
   mkdirTree(path: string): void {
     this.dirs.push(path)
@@ -44,6 +46,32 @@ export class MirageFsSeed implements FSLike {
    */
   symlink(path: string, target: string): void {
     this.links.set(path, target)
+  }
+
+  /**
+   * Note the mount's permission bits for a path.
+   *
+   * Recorded rather than applied: the node it belongs to does not exist
+   * until `NodeTree.seed` places it.
+   *
+   * Args:
+   *   path: guest-absolute path.
+   *   mode: the mount's mode, type bits included.
+   */
+  chmod(path: string, mode: number): void {
+    this.modes.set(path, mode)
+  }
+
+  /**
+   * Note the mount's stamps for a path, in milliseconds.
+   *
+   * Args:
+   *   path: guest-absolute path.
+   *   atimeMs: access stamp.
+   *   mtimeMs: modification stamp.
+   */
+  utime(path: string, atimeMs: number, mtimeMs: number): void {
+    this.stamps.set(path, { atimeMs, mtimeMs })
   }
 
   /**

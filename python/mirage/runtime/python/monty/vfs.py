@@ -12,7 +12,7 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from mirage.runtime.types import VFSEntry
+from mirage.runtime.types import VFSEntry, VFSStat
 from mirage.runtime.vfs import RuntimeVFS
 
 
@@ -58,6 +58,26 @@ class MontyVFS:
             return self._core.readdir(virtual)
         except (FileNotFoundError, IsADirectoryError, NotADirectoryError,
                 ValueError):
+            return None
+
+    def stat(self, virtual: str) -> VFSStat | None:
+        """The path's row, or None when the mount does not have it.
+
+        There is no TypeScript twin, and not for want of one: that
+        binding converts whatever its os callback returns structurally,
+        so a stat comes back to the guest as a dict and `st.st_size`
+        raises AttributeError. Python's binding hands over an `OSAccess`
+        subclass instead, which can build monty's own `StatResult`.
+
+        Args:
+            virtual (str): the path to stat.
+        """
+        if self._core is None or virtual in self._missing:
+            return None
+        try:
+            return self._core.stat(virtual)
+        except (FileNotFoundError, NotADirectoryError, ValueError):
+            self._missing.add(virtual)
             return None
 
     def is_link(self, virtual: str) -> bool:
