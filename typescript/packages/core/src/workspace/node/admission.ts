@@ -85,6 +85,12 @@ function norm(virtual: string): string {
 }
 
 /**
+ * The nodes a redirected statement may wrap whose last command is the
+ * one the redirect binds to.
+ */
+const REDIRECT_CHAIN: ReadonlySet<string> = new Set([NodeType.LIST, NodeType.PIPELINE])
+
+/**
  * A command the gate let through, and what its own I/O may touch.
  *
  * The gate judged the paths the line names; a walk below them reaches
@@ -258,6 +264,24 @@ export function classifiedWords(
 }
 
 /**
+ * The paths a statement's redirect targets name.
+ *
+ * Shared by admission and by the dry run, because a rule reads a
+ * redirect the same way in both: a target only the runtime can expand
+ * names no path here, and one that is not path-shaped is not a file.
+ */
+export function redirectPaths(
+  words: readonly Word[],
+  registry: MountRegistry,
+  cwd: string,
+): PathSpec[] {
+  return words
+    .filter((w) => w.text !== null)
+    .map((w) => classifyBarePath(wordValue(w), registry, cwd))
+    .filter((p): p is PathSpec => p instanceof PathSpec)
+}
+
+/**
  * Everything the gate decides about one command before anything is
  * spent on it: visibility, the classified context, and the policy
  * chain's answer.
@@ -419,10 +443,7 @@ async function admitWords(
   const args = words.slice(1).map(wordValue)
   const line = [name, ...args]
   const classified = classifiedWords(name, args, session, registry)
-  const redirects = redirectWords
-    .filter((w) => w.text !== null)
-    .map((w) => classifyBarePath(wordValue(w), registry, session.cwd))
-    .filter((p): p is PathSpec => p instanceof PathSpec)
+  const redirects = redirectPaths(redirectWords, registry, session.cwd)
   const verdict = await admit(
     name,
     args,
@@ -530,7 +551,7 @@ export async function admitLine(
       agentId,
       rules,
       reparse,
-      redirectWords(node, home),
+      statementRedirects(node, home),
     )
     if (refusal !== null) return refusal
   }
@@ -544,13 +565,30 @@ export async function admitLine(
  * command's arguments, like any other word). Heredoc and herestring
  * bodies are content, not paths, and a numeric target is an fd
  * duplication; neither names a file.
+ *
+ * A redirect binds to one command, and which one is a question about
+ * the tree rather than the statement: `a && b > f` and `a | b > f` both
+ * parse as a redirected_statement wrapping the whole list, so reading
+ * only its first child answered `a` and left `b`, the command bash
+ * actually opens the file for, with no target at all. The walk climbs
+ * the last-command chain instead, which is bash's own rule for a list
+ * and a pipeline. A compound (`{ }`, a loop, a subshell) redirects
+ * every command inside it, which is not a chain, so none is claimed
+ * here and the op door judges the write.
  */
-function redirectWords(node: TSNodeLike, home: string | null): Word[] {
-  const parent = node.parent
+export function statementRedirects(node: TSNodeLike, home: string | null): Word[] {
+  let owner = node
+  let parent = owner.parent
+  while (parent !== undefined && parent !== null && REDIRECT_CHAIN.has(parent.type)) {
+    const last = parent.namedChildren[parent.namedChildren.length - 1]
+    if (last === undefined || last.startIndex !== owner.startIndex) return []
+    owner = parent
+    parent = owner.parent
+  }
   if (parent === undefined || parent === null) return []
   if (parent.type !== NodeType.REDIRECTED_STATEMENT) return []
   const body = parent.namedChildren[0]
-  if (body === undefined || body.startIndex !== node.startIndex) return []
+  if (body === undefined || body.startIndex !== owner.startIndex) return []
   const [, redirects] = getRedirects(parent)
   const words: Word[] = []
   for (const r of redirects) {

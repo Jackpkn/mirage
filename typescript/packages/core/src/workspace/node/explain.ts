@@ -29,17 +29,38 @@ import type { MountRegistry } from '../mount/registry.ts'
 import type { Namespace } from '../mount/namespace/namespace.ts'
 import type { Session } from '../session/session.ts'
 import { homeDir } from '../session/shell_dirs.ts'
-import { Admitted, admit, classifiedWords, gate, type Refusal } from './admission.ts'
+import {
+  Admitted,
+  admit,
+  classifiedWords,
+  gate,
+  redirectPaths,
+  statementRedirects,
+  type Refusal,
+} from './admission.ts'
 import { innerLines, innerReadable, wordValue, type Word } from './inner_lines.ts'
 
 const DECODER = new TextDecoder()
 
-const SUBSHELL_NODES: ReadonlySet<string> = new Set([
+/**
+ * Nodes that run their commands in a child shell: a `cd` inside one
+ * applies to the rest of that child and is gone when it exits. A
+ * pipeline is not here because it forks per segment, not once.
+ */
+const FORK_SCOPES: ReadonlySet<string> = new Set([
   NodeType.SUBSHELL,
-  NodeType.PIPELINE,
   NodeType.COMMAND_SUBSTITUTION,
   NodeType.PROCESS_SUBSTITUTION,
 ])
+
+type WalkItem = [Word[], Word[], Session]
+
+/**
+ * A walk yields each command and returns the session its scope ends in,
+ * which is how a `cd` reaches the commands after it without escaping the
+ * child shell it ran in.
+ */
+type Walk = Generator<WalkItem, Session>
 
 function unreadableWord(raw: string): Explanation {
   const reason = `cannot read ${raw} before the runtime expands it`
@@ -115,7 +136,17 @@ async function explained(
   }
 }
 
-/** Explain one command and whatever lines it runs in turn. */
+/**
+ * Explain one command and whatever lines it runs in turn.
+ *
+ * The redirect targets are read as words of the command, exactly as
+ * admission reads them: the shell opens them on its own fds, outside the
+ * window the command's own gate covers, so a rule about `/protected`
+ * sees `echo x > /protected` only if they are passed here. Omitting them
+ * made the dry run answer ALLOW for a line the run then refused. They
+ * are empty for a command with none and for the inner lines a command
+ * runs, which admission reads the same way.
+ */
 export async function explainWords(
   words: readonly Word[],
   session: Session,
@@ -123,6 +154,7 @@ export async function explainWords(
   namespace: Namespace | null,
   agentId: string,
   reparse: (line: string) => TSNodeLike,
+  redirectWords: readonly Word[] = [],
 ): Promise<Explanation[]> {
   const head = words[0]
   if (head === undefined) return []
@@ -130,7 +162,17 @@ export async function explainWords(
   const name = wordValue(head)
   const args = words.slice(1).map(wordValue)
   const classified = classifiedWords(name, args, session, registry)
-  const gated = await gate(name, args, classified.slice(1), session, registry, namespace, agentId)
+  const gated = await gate(
+    name,
+    args,
+    classified.slice(1),
+    session,
+    registry,
+    namespace,
+    agentId,
+    null,
+    redirectPaths(redirectWords, registry, session.cwd),
+  )
   if (!Array.isArray(gated)) return [fromRefusal(name, args, gated)]
   const [ctx, asked] = gated
   const out = [await explained(ctx, session, registry, asked)]
@@ -145,30 +187,69 @@ export async function explainWords(
   return out
 }
 
+/** One command node's words, name first, the env prefix dropped. */
+function wordsOf(node: TSNodeLike, home: string | null): Word[] {
+  const [, parts] = splitEnvPrefix(getParts(node))
+  return parts.map((part) => ({ raw: getText(part), text: literalWord(part, home) }))
+}
+
 /**
- * Every command under a node, in source order, paired with whether it
- * runs in a child shell.
+ * Every command under one node, in source order, each with the session
+ * it is judged in; returns the session the node leaves behind.
  *
- * A command in a child shell performs a `cd` that is undone before the
- * next command of the line, so the walk must not carry it forward.
- * Pinned against bash: `( )`, a pipeline segment, `$( )` and `<( )`
- * each fork, and `&` backgrounds into a fork. A brace group and an `if`
- * body do not fork, so their `cd` does escape, which is why neither is
- * listed in SUBSHELL_NODES.
+ * A `cd` reaches the commands after it, and how far is the whole
+ * question. Pinned against bash: `( )`, `$( )` and `<( )` run their
+ * contents in a child shell, so a `cd` inside one applies to the rest of
+ * that child and is gone when it exits; a pipeline forks once per
+ * segment, so a `cd` in one segment reaches neither the next segment nor
+ * the line; `&` backgrounds into a fork; and a brace group or an `if`
+ * body does not fork at all, so its `cd` does escape. Reading a subshell
+ * as "no `cd` applies" rather than "no `cd` escapes" judged
+ * `(cd d && tar -c ..)` at the wrong directory, which made `..` read as
+ * a mount root.
  *
- * The fork is carried down rather than climbed back up because `&` is
- * not a wrapper node: it is a token following its command, visible only
- * to whoever holds the sibling list.
+ * The session is returned rather than carried down because that is what
+ * "escapes" means, and because `&` is not a wrapper node: it is a token
+ * following its command, visible only to whoever holds the sibling list.
  */
-function* forkedCommands(node: TSNodeLike, forked: boolean): Generator<[TSNodeLike, boolean]> {
+function* walkNode(node: TSNodeLike, session: Session, home: string | null): Walk {
+  if (node.type === NodeType.COMMAND) {
+    let walked = session
+    const words = wordsOf(node, home)
+    if (words.length > 0) {
+      yield [words, statementRedirects(node, home), session]
+      walked = afterCd(words, session)
+    }
+    // A substitution among the words runs in its own shell.
+    for (const child of node.children) yield* walkNode(child, session, home)
+    return walked
+  }
+  if (FORK_SCOPES.has(node.type)) {
+    yield* walkChildren(node, session, home)
+    return session
+  }
+  if (node.type === NodeType.PIPELINE) {
+    for (const child of node.children) yield* walkNode(child, session, home)
+    return session
+  }
+  return yield* walkChildren(node, session, home)
+}
+
+/**
+ * One scope's children in order, threading the cwd between them; returns
+ * the session the scope ends in.
+ */
+function* walkChildren(node: TSNodeLike, session: Session, home: string | null): Walk {
+  let walked = session
   const children = node.children
   for (let index = 0; index < children.length; index += 1) {
     const child = children[index]
     if (child === undefined) continue
-    const inner = forked || SUBSHELL_NODES.has(child.type) || children[index + 1]?.type === '&'
-    if (child.type === NodeType.COMMAND) yield [child, inner]
-    yield* forkedCommands(child, inner)
+    const ended = yield* walkNode(child, walked, home)
+    if (children[index + 1]?.type === '&') continue
+    walked = ended
   }
+  return walked
 }
 
 /**
@@ -197,21 +278,30 @@ function afterCd(words: readonly Word[], session: Session): Session {
  * The cwd is the one fact that moves as a line runs, and both readers
  * of a line need the same answer about it: a host asking what a line
  * would do and the pass deciding whether to let it run cannot differ,
- * or `explain` would report an allow the run then refuses.
+ * or `explain` would report an allow the run then refuses. The redirects
+ * ride along for the same reason: they are read here so both readers
+ * judge the file the shell opens, not just the operands.
  */
-function* walkedLine(root: TSNodeLike, session: Session): Generator<[Word[], Session]> {
-  const home = homeDir(session)
-  let walked = session
-  for (const [node, forked] of forkedCommands(root, false)) {
-    const [, parts] = splitEnvPrefix(getParts(node))
-    const words: Word[] = parts.map((part) => ({
-      raw: getText(part),
-      text: literalWord(part, home),
-    }))
-    if (words.length === 0) continue
-    yield [words, walked]
-    if (!forked) walked = afterCd(words, walked)
-  }
+function* walkedLine(root: TSNodeLike, session: Session): Generator<WalkItem> {
+  yield* walkNode(root, session, homeDir(session))
+}
+
+/**
+ * Whether an explanation refuses the line's intent, rather than just
+ * failing one command.
+ *
+ * A rule that named itself is a verdict. So is a refusal the document
+ * said nothing about: a coded policy answers on its own account, and
+ * with no permissions document there is no rule for it to point at, so
+ * reading "no rule" as "no verdict" made every coded policy invisible to
+ * the pass. What stays out is the rule-less DENY: a head word the
+ * session cannot see, a line no allow entry covers, and a word only the
+ * runtime can expand, each of which is answered where it happens rather
+ * than against the whole line.
+ */
+function isVerdict(expl: Explanation): boolean {
+  if (expl.exitCode === 0) return false
+  return expl.rule !== null || expl.outcome === Outcome.ALLOW
 }
 
 /**
@@ -247,9 +337,22 @@ function* walkedLine(root: TSNodeLike, session: Session): Generator<[Word[], Ses
  * rather than here.
  *
  * The pass is read-only (`explainWords`), so it spends no grant and
- * records no request; the one command it refuses on is then put through
- * the real gate, which is where an ask is recorded, exactly once, for a
- * line that will not run.
+ * records no request; a command it refuses on is then put through the
+ * real gate, which is where an ask is recorded, exactly once, for a line
+ * that will not run.
+ *
+ * Every command is judged whether or not the session carries a document.
+ * A coded policy refuses on its own account, and one is always
+ * registered (`MountRootPolicy`), so returning early on a session with
+ * no rules held the line for a document and let a policy keep the
+ * half-line behavior the pass exists to remove.
+ *
+ * A line with one command to judge is left to the per-command gate,
+ * which is not an optimization but the more faithful answer: there is no
+ * earlier command whose side effects a hold could save, and the gate
+ * refuses from inside the shell, so the line's own redirections still
+ * apply. This pass answers above them, so refusing `rm -rf /mnt 2>&1`
+ * here wrote the refusal to stderr where bash puts it on stdout.
  */
 export async function prejudgeLine(
   root: TSNodeLike,
@@ -259,11 +362,20 @@ export async function prejudgeLine(
   agentId: string,
   reparse: (line: string) => TSNodeLike,
 ): Promise<Refusal | null> {
-  if (session.commands === null) return null
-  for (const [words, walked] of walkedLine(root, session)) {
+  const judged: [Word[], Session, Explanation[]][] = []
+  for (const [words, redirects, walked] of walkedLine(root, session)) {
     if (words[0]?.text === null) continue
-    for (const expl of await explainWords(words, walked, registry, namespace, agentId, reparse)) {
-      if (expl.exitCode === 0 || expl.rule === null) continue
+    judged.push([
+      redirects,
+      walked,
+      await explainWords(words, walked, registry, namespace, agentId, reparse, redirects),
+    ])
+  }
+  if (judged.reduce((n, [, , explained]) => n + explained.length, 0) < 2) return null
+  for (const [redirects, walked, explained] of judged) {
+    const targets = redirectPaths(redirects, registry, walked.cwd)
+    for (const [index, expl] of explained.entries()) {
+      if (!isVerdict(expl)) continue
       const args = [...expl.argv]
       const classified = classifiedWords(expl.command, args, walked, registry)
       const answered = await admit(
@@ -274,8 +386,16 @@ export async function prejudgeLine(
         registry,
         namespace,
         agentId,
+        null,
+        // explainWords lists the statement's own command first and the
+        // lines it runs after it, so only the first explanation is the
+        // command the redirects belong to.
+        index === 0 ? targets : [],
       )
-      return answered instanceof Admitted ? null : answered
+      if (!(answered instanceof Admitted)) return answered
+      // The host answered this one inline. The rest of the line has not
+      // been judged yet, so the scan goes on: stopping here let a later
+      // command's deny run behind an approval.
     }
   }
   return null
@@ -304,8 +424,10 @@ export async function explainLine(
   reparse: (line: string) => TSNodeLike,
 ): Promise<Explanation[]> {
   const out: Explanation[] = []
-  for (const [words, walked] of walkedLine(root, session)) {
-    out.push(...(await explainWords(words, walked, registry, namespace, agentId, reparse)))
+  for (const [words, redirects, walked] of walkedLine(root, session)) {
+    out.push(
+      ...(await explainWords(words, walked, registry, namespace, agentId, reparse, redirects)),
+    )
   }
   return out
 }

@@ -56,6 +56,10 @@ from mirage.workspace.route import (SLASH_KEEPS_LAST, WordPolicy,
 from mirage.workspace.session import Session
 from mirage.workspace.session.shell_dirs import home_dir
 
+# The nodes a redirected statement may wrap whose last command is the
+# one the redirect binds to.
+REDIRECT_CHAIN = frozenset({NT.LIST, NT.PIPELINE})
+
 
 @dataclass(frozen=True, slots=True)
 class Refusal:
@@ -418,6 +422,28 @@ def classified_words(name: str, args: list[str], session: Session,
                           word_bases=word_bases)
 
 
+def redirect_paths(words: Sequence[Word], registry: MountRegistry,
+                   cwd: str) -> tuple[PathSpec, ...]:
+    """The paths a statement's redirect targets name.
+
+    Shared by admission and by the dry run, because a rule reads a
+    redirect the same way in both: a target only the runtime can expand
+    names no path here, and one that is not path-shaped is not a file.
+
+    Args:
+        words (Sequence[Word]): the redirect targets as the gate reads
+            them.
+        registry (MountRegistry): registry the paths are classified
+            against.
+        cwd (str): session working directory.
+    """
+    targets = [
+        classify_bare_path(w.value, registry, cwd) for w in words
+        if w.text is not None
+    ]
+    return tuple(p for p in targets if isinstance(p, PathSpec))
+
+
 async def _admit_words(
         words: list[Word],
         open_: bool,
@@ -451,11 +477,7 @@ async def _admit_words(
     args = [w.value for w in words[1:]]
     line = [name, *args]
     classified = classified_words(name, args, session, registry)
-    targets = [
-        classify_bare_path(w.value, registry, session.cwd)
-        for w in redirect_words if w.text is not None
-    ]
-    redirects = tuple(p for p in targets if isinstance(p, PathSpec))
+    redirects = redirect_paths(redirect_words, registry, session.cwd)
     action = await admit(name,
                          args,
                          classified[1:],
@@ -558,14 +580,14 @@ async def admit_line(
                                      namespace,
                                      agent_id,
                                      rules,
-                                     redirect_words=_redirect_words(
+                                     redirect_words=statement_redirects(
                                          node, home))
         if refusal is not None:
             return refusal
     return None
 
 
-def _redirect_words(node: Any, home: str | None) -> tuple[Word, ...]:
+def statement_redirects(node: Any, home: str | None) -> tuple[Word, ...]:
     """The redirect targets of the statement holding a command, as the
     gate reads its words: the raw text and the literal it names, None
     when only the runtime can expand it (refused wherever a rule reads
@@ -573,13 +595,29 @@ def _redirect_words(node: Any, home: str | None) -> tuple[Word, ...]:
     herestring bodies are content, not paths, and a numeric target is
     an fd duplication; neither names a file.
 
+    A redirect binds to one command, and which one is a question about
+    the tree rather than the statement: ``a && b > f`` and ``a | b > f``
+    both parse as a redirected_statement wrapping the whole list, so
+    reading only its first child answered ``a`` and left ``b``, the
+    command bash actually opens the file for, with no target at all.
+    The walk climbs the last-command chain instead, which is bash's own
+    rule for a list and a pipeline. A compound (``{ }``, a loop, a
+    subshell) redirects every command inside it, which is not a chain,
+    so none is claimed here and the op door judges the write.
+
     Args:
         node (Any): the command's tree-sitter node.
         home (str | None): the home directory a leading ``~`` names.
     """
-    parent = node.parent
+    owner = node
+    parent = owner.parent
+    while parent is not None and parent.type in REDIRECT_CHAIN:
+        if not parent.named_children or parent.named_children[-1] != owner:
+            return ()
+        owner = parent
+        parent = owner.parent
     if (parent is None or parent.type != NT.REDIRECTED_STATEMENT
-            or not parent.named_children or parent.named_children[0] != node):
+            or not parent.named_children or parent.named_children[0] != owner):
         return ()
     _, redirects = get_redirects(parent)
     return tuple(

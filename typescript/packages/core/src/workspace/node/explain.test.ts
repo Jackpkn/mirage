@@ -15,6 +15,7 @@
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { Outcome, Scope } from '../../policy/index.ts'
+import type { Action, CommandContext, Policy } from '../../policy/index.ts'
 import { RAMResource } from '../../resource/ram/ram.ts'
 import { MountMode } from '../../types.ts'
 import { getTestParser } from '../fixtures/workspace_fixture.ts'
@@ -99,7 +100,7 @@ describe('explain', () => {
       const ran = await w.execute(line, { sessionId: 's' })
       const [said] = await w.explain(line, 's')
       expect(said?.exitCode).toBe(ran.exitCode)
-      expect(said?.stderr).toBe(DEC.decode(ran.stderr ?? new Uint8Array()))
+      expect(said?.stderr).toBe(DEC.decode(ran.stderr))
     }
   })
 
@@ -181,7 +182,7 @@ describe('explain', () => {
     expect(removed?.outcome).toBe(Outcome.DENY)
     const ran = await w.execute(line, { sessionId: 's' })
     expect(removed?.exitCode).toBe(ran.exitCode)
-    expect(removed?.stderr).toBe(DEC.decode(ran.stderr ?? new Uint8Array()))
+    expect(removed?.stderr).toBe(DEC.decode(ran.stderr))
   })
 
   it('holds a line only as far as the text reaches', async () => {
@@ -206,7 +207,7 @@ describe('explain', () => {
     const w = await ws()
     const ran = await w.execute('(cd /data/prod && ls) && rm x.txt', { sessionId: 's' })
     expect(ran.exitCode).toBe(1)
-    expect(DEC.decode(ran.stderr ?? new Uint8Array())).not.toContain('production data is protected')
+    expect(DEC.decode(ran.stderr)).not.toContain('production data is protected')
     expect(await w.fs.readdir('/data/prod')).toContain('/data/prod/x.txt')
   })
 
@@ -222,5 +223,134 @@ describe('explain', () => {
     expect(asked?.outcome).toBe(Outcome.ASK)
     expect(asked?.exitCode).toBe(0)
     expect(asked?.stderr).toBe('')
+  })
+})
+
+const SEALED = parseSessionProfile({
+  commands: {
+    allow: ['ls', 'cat', 'rm', 'mkdir'],
+    deny: [{ reason: 'sealed until review', paths: ['/data/prod/*'] }],
+  },
+})
+
+async function sealedWs(): Promise<Workspace> {
+  const parser = await getTestParser()
+  const w = new Workspace(
+    { '/data': new RAMResource() },
+    { mode: MountMode.WRITE, shellParser: parser, profiles: { r: SEALED } },
+  )
+  open.push(w)
+  await w.execute('mkdir -p /data/prod')
+  await w.execute('echo x > /data/prod/x.txt')
+  await w.execute('echo a > /data/a.txt')
+  w.createSession('s', { profile: 'r' })
+  return w
+}
+
+class NoCat implements Policy {
+  preCommand(ctx: CommandContext): Action | null {
+    if (ctx.command !== 'cat') return null
+    return { kind: 'deny', reason: 'cat is refused by policy', scope: 'command' }
+  }
+}
+
+describe('prejudge', () => {
+  it('reads the statement’s redirect target', async () => {
+    // The shell opens a redirect on its own fd, outside the window the
+    // command's own gate covers, so admission reads the target as a word
+    // of the command. The dry run has to read it the same way or it
+    // answers ALLOW for a line the run refuses.
+    const w = await sealedWs()
+    const [said] = await w.explain('echo x > /data/prod/x.txt', 's')
+    expect(said?.outcome).toBe(Outcome.DENY)
+    expect(said?.reason).toBe('sealed until review')
+  })
+
+  it('holds the whole line for a rule on a redirect target', async () => {
+    // `a && b > f` parses as one redirected statement wrapping the list,
+    // so the target belongs to the last command of the chain, not the
+    // statement's first child.
+    const w = await sealedWs()
+    const ran = await w.execute('rm /data/a.txt && echo x > /data/prod/x.txt', { sessionId: 's' })
+    expect(ran.exitCode).not.toBe(0)
+    expect(DEC.decode(ran.stderr)).toContain('sealed until review')
+    expect(await w.fs.readdir('/data')).toContain('/data/a.txt')
+  })
+
+  it('holds the line for a coded policy with no document', async () => {
+    // A session with no permissions document still runs under whatever
+    // policies the deployment registered, and one is always registered
+    // (MountRootPolicy). Returning early on `commands === null` held the
+    // line for a document and left a policy with the half-line behavior
+    // the pass exists to remove.
+    const parser = await getTestParser()
+    const w = new Workspace(
+      { '/data': new RAMResource() },
+      { mode: MountMode.WRITE, shellParser: parser, policies: [new NoCat()] },
+    )
+    open.push(w)
+    await w.execute('echo a > /data/a.txt')
+    await w.execute('echo b > /data/b.txt')
+    const ran = await w.execute('rm /data/a.txt && cat /data/b.txt')
+    expect(ran.exitCode).not.toBe(0)
+    expect(DEC.decode(ran.stderr)).toContain('cat is refused by policy')
+    expect(await w.fs.readdir('/data')).toContain('/data/a.txt')
+  })
+
+  it('does not end the scan when an ask is answered inline', async () => {
+    // The host answers the cat inline, so admit admits it. The rest of
+    // the line has not been judged yet: reading that admission as "the
+    // line is fine" let the later deny run behind an approval, which is
+    // the half-line behavior in its worst form, since the agent was told
+    // yes.
+    const parser = await getTestParser()
+    const w = new Workspace(
+      { '/data': new RAMResource() },
+      {
+        mode: MountMode.WRITE,
+        shellParser: parser,
+        profiles: { r: ROLE },
+        onAsk: (record) =>
+          Promise.resolve({ ...record, outcome: Outcome.ALLOW, scope: Scope.ONCE }),
+      },
+    )
+    open.push(w)
+    await w.execute('mkdir -p /data/prod')
+    await w.execute('echo x > /data/prod/x.txt')
+    await w.execute('echo s > /data/secret.txt')
+    w.createSession('s', { profile: 'r' })
+    const ran = await w.execute('cat /data/secret.txt && rm /data/prod/x.txt', { sessionId: 's' })
+    expect(ran.exitCode).not.toBe(0)
+    expect(DEC.decode(ran.stderr)).toContain('production data is protected')
+    expect(DEC.decode(ran.stdout)).not.toContain('s')
+    expect(await w.fs.readdir('/data/prod')).toContain('/data/prod/x.txt')
+  })
+})
+
+describe('prejudge scope', () => {
+  it('moves the commands inside a subshell when it begins with a cd', async () => {
+    // The sibling test pins that the cd does not escape the subshell.
+    // This one pins the other half: inside it, the cd still applies, so
+    // the rule about /data/prod reads x.txt as the file it is. Reading a
+    // subshell as "no cd applies" judged the command at the session cwd.
+    const w = await ws()
+    const ran = await w.execute('(cd /data/prod && rm x.txt)', { sessionId: 's' })
+    expect(ran.exitCode).toBe(1)
+    expect(DEC.decode(ran.stderr)).toBe('rm: x.txt: production data is protected\n')
+    expect(await w.fs.readdir('/data/prod')).toContain('/data/prod/x.txt')
+  })
+
+  it('refuses a one-command line from inside the shell', async () => {
+    // Nothing runs before a single command, so there is no hold to buy
+    // and the per-command gate answers instead. That is the more
+    // faithful answer, not just the cheaper one: the gate refuses from
+    // inside the shell, so `2>&1` still moves the message, where this
+    // pass answers above the redirect layer and would leave it on
+    // stderr.
+    const w = await ws()
+    const ran = await w.execute('rm /data/prod/x.txt 2>&1', { sessionId: 's' })
+    expect(ran.exitCode).toBe(1)
+    expect(DEC.decode(ran.stdout)).toBe('rm: /data/prod/x.txt: production data is protected\n')
+    expect(DEC.decode(ran.stderr)).toBe('')
   })
 })

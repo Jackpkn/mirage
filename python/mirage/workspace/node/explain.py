@@ -12,30 +12,33 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from collections.abc import Iterator
+from collections.abc import Generator, Iterator
 from typing import Any
 
 from mirage.policy import (Ask, CommandContext, Deny, Explanation, Pending,
                            render_deny, render_pending)
 from mirage.policy.match import Outcome, decide
 from mirage.shell import parse
-from mirage.shell.types import NodeType
-from mirage.utils.path import resolve_path
 from mirage.shell.helpers import (get_parts, get_text, literal_word,
                                   split_env_prefix)
+from mirage.shell.types import NodeType
+from mirage.utils.path import resolve_path
 from mirage.workspace.mount import MountRegistry
 from mirage.workspace.mount.namespace import Namespace
 from mirage.workspace.node.admission import (Refusal, admit, classified_words,
-                                             gate)
+                                             gate, redirect_paths,
+                                             statement_redirects)
 from mirage.workspace.node.inner_lines import Word, inner_lines
 from mirage.workspace.session import Session
 from mirage.workspace.session.shell_dirs import home_dir
 
 UNREADABLE = "cannot read {raw} before the runtime expands it"
 
-SUBSHELL_NODES = frozenset({
+# Nodes that run their commands in a child shell: a ``cd`` inside one
+# applies to the rest of that child and is gone when it exits. A
+# pipeline is not here because it forks per segment, not once.
+FORK_SCOPES = frozenset({
     NodeType.SUBSHELL,
-    NodeType.PIPELINE,
     NodeType.COMMAND_SUBSTITUTION,
     NodeType.PROCESS_SUBSTITUTION,
 })
@@ -119,13 +122,21 @@ def _explained(ctx: CommandContext, session: Session, registry: MountRegistry,
 
 
 async def explain_words(
-    words: list[Word],
-    session: Session,
-    registry: MountRegistry,
-    namespace: Namespace | None,
-    agent_id: str = "",
+        words: list[Word],
+        session: Session,
+        registry: MountRegistry,
+        namespace: Namespace | None,
+        agent_id: str = "",
+        redirect_words: tuple[Word, ...] = (),
 ) -> list[Explanation]:
     """Explain one command and whatever lines it runs in turn.
+
+    The redirect targets are read as words of the command, exactly as
+    admission reads them: the shell opens them on its own fds, outside
+    the window the command's own gate covers, so a rule about
+    ``/protected`` sees ``echo x > /protected`` only if they are passed
+    here. Omitting them made the dry run answer ALLOW for a line the
+    run then refused.
 
     Args:
         words (list[Word]): the command's words, name first.
@@ -134,6 +145,10 @@ async def explain_words(
             decision ledger and the CLI installs.
         namespace (Namespace | None): the link table.
         agent_id (str): the agent the line is attributed to.
+        redirect_words (tuple[Word, ...]): the statement's redirect
+            targets, empty for a command that has none and for the
+            inner lines a command runs, which admission reads the same
+            way.
     """
     head = words[0]
     if head.text is None:
@@ -141,8 +156,15 @@ async def explain_words(
     name = head.value
     args = [w.value for w in words[1:]]
     classified = classified_words(name, args, session, registry)
-    gated = await gate(name, args, classified[1:], session, registry, namespace,
-                       agent_id)
+    gated = await gate(name,
+                       args,
+                       classified[1:],
+                       session,
+                       registry,
+                       namespace,
+                       agent_id,
+                       redirects=redirect_paths(redirect_words, registry,
+                                                session.cwd))
     if isinstance(gated, Refusal):
         return [_from_refusal(name, tuple(args), gated)]
     ctx, asked = gated
@@ -159,33 +181,109 @@ async def explain_words(
     return out
 
 
-def _forked_commands(node: Any, forked: bool) -> Iterator[tuple[Any, bool]]:
-    """Every command under a node, in source order, paired with whether
-    it runs in a child shell.
+def _is_verdict(expl: Explanation) -> bool:
+    """Whether an explanation refuses the line's intent, rather than
+    just failing one command.
 
-    A command in a child shell performs a ``cd`` that is undone before
-    the next command of the line, so the walk must not carry it
-    forward. Pinned against bash: ``( )``, a pipeline segment, ``$( )``
-    and ``<( )`` each fork, and ``&`` backgrounds into a fork. A brace
-    group and an ``if`` body do not fork, so their ``cd`` does escape,
-    which is why neither is listed in :data:`SUBSHELL_NODES`.
+    A rule that named itself is a verdict. So is a refusal the document
+    said nothing about: a coded policy answers on its own account, and
+    with no permissions document there is no rule for it to point at,
+    so reading "no rule" as "no verdict" made every coded policy invisible
+    to the pass. What stays out is the rule-less DENY: a head word the
+    session cannot see, a line no allow entry covers, and a word only
+    the runtime can expand, each of which the docstring above explains
+    is answered where it happens rather than against the whole line.
 
-    The fork is carried down rather than climbed back up because ``&``
-    is not a wrapper node: it is a token following its command, visible
-    only to whoever holds the sibling list.
+    Args:
+        expl (Explanation): one command's explanation.
+    """
+    if expl.exit_code == 0:
+        return False
+    return expl.rule is not None or expl.outcome is Outcome.ALLOW
+
+
+WalkItem = tuple[list[Word], tuple[Word, ...], Session]
+
+# A walk yields each command and returns the session its scope ends in,
+# which is how a `cd` reaches the commands after it without escaping the
+# child shell it ran in.
+Walk = Generator[WalkItem, None, Session]
+
+
+def _words_of(node: Any, home: str | None) -> list[Word]:
+    """One command node's words, name first, the env prefix dropped.
+
+    Args:
+        node (Any): the command's tree-sitter node.
+        home (str | None): the home directory a leading ``~`` names.
+    """
+    _, parts = split_env_prefix(get_parts(node))
+    return [Word(get_text(part), literal_word(part, home)) for part in parts]
+
+
+def _walk_node(node: Any, session: Session, home: str | None) -> Walk:
+    """Every command under one node, in source order, each with the
+    session it is judged in; returns the session the node leaves behind.
+
+    A ``cd`` reaches the commands after it, and how far is the whole
+    question. Pinned against bash: ``( )``, ``$( )`` and ``<( )`` run
+    their contents in a child shell, so a ``cd`` inside one applies to
+    the rest of that child and is gone when it exits; a pipeline forks
+    once per segment, so a ``cd`` in one segment reaches neither the
+    next segment nor the line; ``&`` backgrounds into a fork; and a
+    brace group or an ``if`` body does not fork at all, so its ``cd``
+    does escape. Reading a subshell as "no ``cd`` applies" rather than
+    "no ``cd`` escapes" judged ``(cd d && tar -c ..)`` at the wrong
+    directory, which made ``..`` read as a mount root.
+
+    The session is returned rather than carried down because that is
+    what "escapes" means, and because ``&`` is not a wrapper node: it is
+    a token following its command, visible only to whoever holds the
+    sibling list.
 
     Args:
         node (Any): the tree-sitter node to walk.
-        forked (bool): whether ``node`` itself runs in a child shell.
+        session (Session): the session this node begins in.
+        home (str | None): the home directory a leading ``~`` names.
     """
+    if node.type == NodeType.COMMAND:
+        walked = session
+        words = _words_of(node, home)
+        if words:
+            yield words, statement_redirects(node, home), session
+            walked = _after_cd(words, session)
+        for child in node.children:
+            # A substitution among the words runs in its own shell.
+            yield from _walk_node(child, session, home)
+        return walked
+    if node.type in FORK_SCOPES:
+        yield from _walk_children(node, session, home)
+        return session
+    if node.type == NodeType.PIPELINE:
+        for child in node.children:
+            yield from _walk_node(child, session, home)
+        return session
+    return (yield from _walk_children(node, session, home))
+
+
+def _walk_children(node: Any, session: Session, home: str | None) -> Walk:
+    """One scope's children in order, threading the cwd between them;
+    returns the session the scope ends in.
+
+    Args:
+        node (Any): the tree-sitter node whose children form the scope.
+        session (Session): the session the scope begins in.
+        home (str | None): the home directory a leading ``~`` names.
+    """
+    walked = session
     children = node.children
     for index, child in enumerate(children):
         after = children[index + 1] if index + 1 < len(children) else None
-        inner = (forked or child.type in SUBSHELL_NODES
-                 or (after is not None and after.type == "&"))
-        if child.type == NodeType.COMMAND:
-            yield child, inner
-        yield from _forked_commands(child, inner)
+        ended = yield from _walk_node(child, walked, home)
+        if after is not None and after.type == "&":
+            continue
+        walked = ended
+    return walked
 
 
 def _after_cd(words: list[Word], session: Session) -> Session:
@@ -211,31 +309,22 @@ def _after_cd(words: list[Word], session: Session) -> Session:
     return session.fork(cwd=resolve_path(target, session.cwd))
 
 
-def _walked_line(ast: Any,
-                 session: Session) -> Iterator[tuple[list[Word], Session]]:
-    """Every command of a line with the session it is judged in.
+def _walked_line(ast: Any, session: Session) -> Iterator[WalkItem]:
+    """Every command of a line with its redirect targets and the session
+    it is judged in.
 
     The cwd is the one fact that moves as a line runs, and both readers
     of a line need the same answer about it: a host asking what a line
     would do and the pass deciding whether to let it run cannot differ,
-    or ``explain`` would report an allow the run then refuses.
+    or ``explain`` would report an allow the run then refuses. The
+    redirects ride along for the same reason: they are read here so both
+    readers judge the file the shell opens, not just the operands.
 
     Args:
         ast (Any): the parsed tree-sitter root node.
         session (Session): the session running the line.
     """
-    home = home_dir(session)
-    walked = session
-    for node, forked in _forked_commands(ast, False):
-        _, parts = split_env_prefix(get_parts(node))
-        words = [
-            Word(get_text(part), literal_word(part, home)) for part in parts
-        ]
-        if not words:
-            continue
-        yield words, walked
-        if not forked:
-            walked = _after_cd(words, walked)
+    yield from _walk_node(ast, session, home_dir(session))
 
 
 async def prejudge_line(
@@ -281,9 +370,23 @@ async def prejudge_line(
     policy script rather than here.
 
     The pass is read-only (:func:`explain_line`), so it spends no grant
-    and records no request; the one command it refuses on is then put
-    through the real gate, which is where an ask is recorded, exactly
-    once, for a line that will not run.
+    and records no request; a command it refuses on is then put through
+    the real gate, which is where an ask is recorded, exactly once, for
+    a line that will not run.
+
+    Every command is judged whether or not the session carries a
+    document. A coded policy refuses on its own account, and one is
+    always registered (``MountRootPolicy``), so returning early on a
+    session with no rules held the line for a document and let a policy
+    keep the half-line behavior the pass exists to remove.
+
+    A line with one command to judge is left to the per-command gate,
+    which is not an optimization but the more faithful answer: there is
+    no earlier command whose side effects a hold could save, and the
+    gate refuses from inside the shell, so the line's own redirections
+    still apply. This pass answers above them, so refusing
+    ``rm -rf /mnt 2>&1`` here wrote the refusal to stderr where bash
+    puts it on stdout.
 
     Args:
         ast (Any): the parsed tree-sitter root node.
@@ -296,20 +399,39 @@ async def prejudge_line(
     Returns:
         The line's refusal, or None to run it.
     """
-    if session.commands is None:
-        return None
-    for words, walked in _walked_line(ast, session):
+    judged = []
+    for words, redirects, walked in _walked_line(ast, session):
         if words[0].text is None:
             continue
-        for expl in await explain_words(words, walked, registry, namespace,
-                                        agent_id):
-            if expl.exit_code == 0 or expl.rule is None:
+        judged.append((redirects, walked, await
+                       explain_words(words, walked, registry, namespace,
+                                     agent_id, redirects)))
+    if sum(len(explained) for _, _, explained in judged) < 2:
+        return None
+    for redirects, walked, explained in judged:
+        targets = redirect_paths(redirects, registry, walked.cwd)
+        for index, expl in enumerate(explained):
+            if not _is_verdict(expl):
                 continue
             args = list(expl.argv)
             classified = classified_words(expl.command, args, walked, registry)
-            answered = await admit(expl.command, args, classified[1:], walked,
-                                   registry, namespace, agent_id)
-            return answered if isinstance(answered, Refusal) else None
+            answered = await admit(
+                expl.command,
+                args,
+                classified[1:],
+                walked,
+                registry,
+                namespace,
+                agent_id,
+                # explain_words lists the statement's own command first
+                # and the lines it runs after it, so only the first
+                # explanation is the command the redirects belong to.
+                redirects=targets if index == 0 else ())
+            if isinstance(answered, Refusal):
+                return answered
+            # The host answered this one inline. The rest of the line
+            # has not been judged yet, so the scan goes on: stopping
+            # here let a later command's deny run behind an approval.
     return None
 
 
@@ -342,7 +464,7 @@ async def explain_line(
         agent_id (str): the agent the line is attributed to.
     """
     out: list[Explanation] = []
-    for words, walked in _walked_line(ast, session):
+    for words, redirects, walked in _walked_line(ast, session):
         out.extend(await explain_words(words, walked, registry, namespace,
-                                       agent_id))
+                                       agent_id, redirects))
     return out
