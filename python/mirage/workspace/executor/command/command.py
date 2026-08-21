@@ -52,7 +52,7 @@ from mirage.workspace.mount import MountCommandUnsupported, MountRegistry
 from mirage.workspace.mount.namespace import Namespace
 from mirage.workspace.mount.storage import make_storage_key
 from mirage.workspace.route import JOB_BUILTINS, Consumer, route
-from mirage.workspace.session import Session, assert_mount_allowed
+from mirage.workspace.session import Session
 from mirage.workspace.session.state import session_view
 from mirage.workspace.types import ExecutionNode
 
@@ -308,19 +308,6 @@ async def handle_command(
             exit_code=127,
             stderr=f"{cmd_name}: command not found".encode(),
         ), ExecutionNode(command=cmd_str, exit_code=127)
-
-    try:
-        assert_mount_allowed(mount.prefix)
-        for ps in routing_scopes:
-            target = registry.try_mount_for(ps.virtual)
-            if target is not None:
-                assert_mount_allowed(target.prefix)
-    except PermissionError as exc:
-        err = f"{cmd_name}: {exc}\n".encode()
-        return None, IOResult(exit_code=1,
-                              stderr=err), ExecutionNode(command=cmd_str,
-                                                         exit_code=1,
-                                                         stderr=err)
 
     # Parse flags upstream — mount receives clean args
     single_parsed = parse_flags(parts[1:], mount.spec_for(cmd_name), cmd_name,

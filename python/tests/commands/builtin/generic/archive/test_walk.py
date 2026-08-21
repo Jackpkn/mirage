@@ -83,7 +83,8 @@ def _cycle(entries: dict[str, str]) -> LinkView:
 
 
 def _mounts(descendants: tuple[str, ...] = (),
-            roots: tuple[str, ...] = ()) -> MountView:
+            roots: tuple[str, ...] = (),
+            hidden: tuple[str, ...] = ()) -> MountView:
 
     def root_of(path):
         for root in sorted(roots, key=len, reverse=True):
@@ -94,6 +95,10 @@ def _mounts(descendants: tuple[str, ...] = (),
     return MountView(
         descendants=lambda p:
         [d for d in descendants if d.startswith(p.rstrip("/") + "/")],
+        visible_descendants=lambda p: [
+            d for d in descendants
+            if d.startswith(p.rstrip("/") + "/") and d not in hidden
+        ],
         is_root=lambda p: p.rstrip("/") in {r.rstrip("/")
                                             for r in roots},
         root_of=root_of,
@@ -226,6 +231,30 @@ async def test_a_nested_mount_is_reported_and_its_contents_dropped():
     assert scan.crossings == ("/d/nested", )
     names = [e.name_path for e in scan.entries]
     assert names == ["/d", "/d/a.txt", "/d/nested"]
+
+
+@pytest.mark.asyncio
+async def test_a_hidden_nested_mount_prunes_but_is_never_named():
+    # The two questions the view answers apart. Pruning reads every
+    # descendant, so the parent backend's keys shadowed by the mount
+    # stay out of the archive; naming reads only the visible ones, so
+    # neither a member nor a "different filesystem" warning hands back
+    # the name the session's hides withhold.
+    # The mountpoint is not the parent's own directory entry (it belongs
+    # to another resource), but the parent backend does hold a key that
+    # the mount shadows, which is what pruning has to catch.
+    tree = _Tree({
+        "/d/a.txt": b"a",
+        "/d/nested/deep.txt": b"deep"
+    },
+                 dirs=("/d", ))
+    mounts = _mounts(descendants=("/d/nested", ),
+                     roots=("/", "/d/nested"),
+                     hidden=("/d/nested", ))
+    scan = await _scan(tree, _spec("/d"), mounts=mounts, recurse=True)
+    assert scan.crossings == ()
+    names = [e.name_path for e in scan.entries]
+    assert names == ["/d", "/d/a.txt"]
 
 
 @pytest.mark.asyncio

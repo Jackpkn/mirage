@@ -19,7 +19,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
 from mirage.policy.constants import DEFAULT_ASK_REASON, DEFAULT_DENY_REASON
-from mirage.policy.types import CommandRule, CommandsSpec
+from mirage.policy.types import AdmissionRules, CommandRule
 from mirage.types import HiddenPaths, HiddenVars, MountMode, parse_mount_mode
 from mirage.utils.hidden import is_glob
 
@@ -81,15 +81,18 @@ def _string_list(value: Any,
 
 
 def _absolute_paths(entries: tuple[str, ...], where: str) -> None:
-    """Refuse a relative path entry where paths are absolute.
+    """Refuse a relative path entry. Every path in the document is
+    absolute.
 
-    The workspace and profile tiers speak in virtual paths, so an
-    entry there is either absolute or a name pattern (``*.pem``, no
-    slash, matching a path component anywhere). A plain ``xxx`` or an
-    anchored ``secrets/*`` would otherwise be read from the root
+    An entry is either an absolute path or a name pattern (``*.pem``,
+    no slash, matching a path component anywhere). A plain ``xxx`` or
+    an anchored ``secrets/*`` would otherwise be read from the root
     (``/xxx``, ``/secrets/*``), which is never what a relative spelling
-    meant; the mount tier is the one place entries are relative, to
-    the mount root, and it is not checked here.
+    meant. There is no relative spelling anywhere: a mount section
+    spells its paths in full and they are checked against the mount
+    root (``_under_mount``), which is what a rebase used to do silently
+    and wrongly (``/repo/secret`` under ``/repo`` became
+    ``/repo/repo/secret``).
 
     Args:
         entries (tuple[str, ...]): the entries as written.
@@ -99,7 +102,36 @@ def _absolute_paths(entries: tuple[str, ...], where: str) -> None:
         if entry.startswith("/") or (is_glob(entry) and "/" not in entry):
             continue
         raise ValueError(f"{where}[{i}] must be an absolute path or a name "
-                         f"pattern at this tier: {entry!r} is relative")
+                         f"pattern: {entry!r} is relative")
+
+
+def _under_mount(entries: tuple[str, ...], root: str, where: str) -> None:
+    """Refuse a path entry in a mount's section that leaves the mount.
+
+    A mount's rules are about that mount, so a path under
+    ``mounts./repo`` names something inside ``/repo``. A name pattern
+    carries no anchor and is left alone; it means the same thing here
+    as anywhere else.
+
+    The root mount contains everything, and has to be spelled out:
+    ``root + "/"`` is ``"//"`` there, which no path starts with, so a
+    workspace mounted at ``/`` could write a section for its one mount
+    and then name nothing inside it.
+
+    Args:
+        entries (tuple[str, ...]): the entries as written.
+        root (str): the mount prefix, leading slash, no trailing one.
+        where (str): the field's name, for the message.
+    """
+    if root == "/":
+        return
+    for i, entry in enumerate(entries):
+        if not entry.startswith("/"):
+            continue
+        if entry == root or entry.startswith(root + "/"):
+            continue
+        raise ValueError(f"{where}[{i}] is outside the mount it is written "
+                         f"under: {entry!r} is not below {root!r}")
 
 
 def _scoped_rules(commands: Mapping[Any, Any], reason: str,
@@ -137,7 +169,7 @@ def _rule(entry: Any, where: str, default_reason: str) -> list[CommandRule]:
     """Coerce one ``deny`` or ``ask`` entry to its CommandRules.
 
     A bare string is one command pattern over the whole line, with the
-    arm's default reason. A mapping carries ``reason`` (defaulting) and
+    verb's default reason. A mapping carries ``reason`` (defaulting) and
     exactly one of: ``commands`` as a list, a whole-line rule on each
     pattern; ``commands`` as a mapping, each command pattern on its own
     paths (one command to many paths, one rule per command); ``paths``
@@ -149,7 +181,8 @@ def _rule(entry: Any, where: str, default_reason: str) -> list[CommandRule]:
     Args:
         entry (Any): one entry as written in the document.
         where (str): ``deny rule`` or ``ask rule``, for the messages.
-        default_reason (str): the arm's reason for a rule stating none.
+        default_reason (str): the verb's reason for a rule stating
+            none.
     """
     if isinstance(entry, CommandRule):
         # Already compiled: the resolver rebuilds blocks from rules, and
@@ -205,17 +238,17 @@ def _patterns(v: Any) -> Any:
 
 
 class PathsBlock(BaseModel):
-    """``paths:`` of one tier.
+    """``paths:`` of a role, or of one of its mount sections.
 
     ``hide`` entries use the document's one grammar: an entry with
     ``*``, ``?`` or ``[`` is a pattern, anything else an exact path
     and its subtree (``utils/hidden.classify_paths``); every entry
-    holds a token, and the tier that owns the block decides whether it
-    must be absolute (workspace, profile) or is mount-relative (mount).
+    holds a token and is absolute or a name pattern, wherever the block
+    is written.
     ``show`` arrives with its enforcement.
 
     Args:
-        hide (tuple[str, ...]): what the tier makes nonexistent.
+        hide (tuple[str, ...]): what the role makes nonexistent.
     """
 
     model_config = _DOC
@@ -242,21 +275,21 @@ class VarsBlock(BaseModel):
 
 
 class CommandsBlock(BaseModel):
-    """``commands:`` of the workspace and profile tiers.
+    """``commands:`` at the top level of a role.
 
-    ``allow`` lists the command patterns the tier installs; a name none
+    ``allow`` lists the command patterns the role installs; a name none
     of them starts with is not a command for the session (127, absent
     from ``type`` / ``which`` / ``man``), a line no pattern covers is
-    refused. Grammar-tier shell builtins and the agent's own functions
+    refused. The shell's own grammar builtins and the agent's functions
     are not subjects. ``ask`` rules are admitted only with a host
     approval; ``deny`` rules refuse with a reason. A bare string in
     either is one command pattern with the default reason.
 
     Args:
-        allow (tuple[str, ...] | None): the tier's allow patterns;
+        allow (tuple[str, ...] | None): the role's allow patterns;
             None (unstated) installs everything.
         ask (tuple[CommandRule, ...]): what needs sign-off, in order.
-        deny (tuple[CommandRule, ...]): the tier's refusals, in order.
+        deny (tuple[CommandRule, ...]): the role's refusals, in order.
     """
 
     model_config = _DOC
@@ -282,22 +315,23 @@ class CommandsBlock(BaseModel):
 
     @model_validator(mode="after")
     def _v_absolute(self) -> "CommandsBlock":
-        # This block is the workspace's or a profile's, never a mount's,
-        # so a rule's paths are virtual paths: absolute, or name patterns.
-        for arm, rules in (("ask", self.ask), ("deny", self.deny)):
+        # This block is the role's own, never a mount section's, so a
+        # rule's paths are virtual paths: absolute, or name patterns.
+        for verb, rules in (("ask", self.ask), ("deny", self.deny)):
             for rule in rules:
-                _absolute_paths(rule.paths, f"{arm} rule paths")
+                _absolute_paths(rule.paths, f"{verb} rule paths")
         return self
 
 
 class MountCommandsBlock(BaseModel):
-    """``commands:`` of a mount tier: ``ask`` and ``deny`` only.
+    """``commands:`` of one mount section: ``ask`` and ``deny`` only.
 
     A mount rule applies to a line that works inside the mount (its cwd
     or one of its paths lies under the root); its ``paths`` are
-    mount-relative. There is no mount-tier ``allow``: what a session
-    can see is a property of the session, and an operand cannot make a
-    command "not found".
+    absolute, like every other path in the document, and must name
+    something under that root. There is no ``allow`` here: what a
+    session can see is a property of the session, and an operand cannot
+    make a command "not found".
 
     Args:
         ask (tuple[CommandRule, ...]): what needs sign-off here.
@@ -320,79 +354,86 @@ class MountCommandsBlock(BaseModel):
         return _rules(v, "deny")
 
 
-class MountPermissions(BaseModel):
-    """``mounts.<prefix>.permissions``: mount-owned, relative to the
-    mount root, binding every session.
+class ProfileMount(BaseModel):
+    """One mount's entry in a profile: what this role may do there.
+
+    Every field is optional, and an omitted mount is not a refusal: the
+    mount is reachable at the mode it declares in the workspace's
+    ``mounts:``, which a role can only weaken (``weaker_mode``), never
+    raise. A role that must not touch a mount hides it, so the mount
+    reads as nonexistent rather than as a permission error naming
+    something the role cannot see.
+
+    ``commands`` here carries ask and deny only: an allow list installs
+    a command for the whole session, and visibility is answered before
+    any operand exists, so it cannot be per mount. Rules written here
+    apply to a line that works inside this mount, by cwd or by operand,
+    which is what a path-scoped rule cannot express (``cd /repo && git
+    commit`` names no path).
 
     Args:
-        paths (PathsBlock): the mount's hides, mount-relative.
-        commands (MountCommandsBlock): the mount's ask and deny rules.
+        mode (MountMode | None): this role's mode for the mount; None
+            keeps the mount's own.
+        commands (MountCommandsBlock | None): ask and deny rules for
+            lines working inside it.
+        paths (PathsBlock | None): hides under it.
     """
 
     model_config = _DOC
 
-    paths: PathsBlock = PathsBlock()
-    commands: MountCommandsBlock = MountCommandsBlock()
+    mode: MountMode | None = None
+    commands: MountCommandsBlock | None = None
+    paths: PathsBlock | None = None
 
-
-class WorkspacePermissions(BaseModel):
-    """Top-level ``permissions:``: workspace-wide, absolute paths,
-    binding every session.
-
-    Args:
-        commands (CommandsBlock): the workspace's deny rules.
-        paths (PathsBlock): the workspace's hides.
-    """
-
-    model_config = _DOC
-
-    commands: CommandsBlock = CommandsBlock()
-    paths: PathsBlock = PathsBlock()
-
-    @model_validator(mode="after")
-    def _v_absolute(self) -> "WorkspacePermissions":
-        _absolute_paths(self.paths.hide, "paths.hide")
-        return self
+    @field_validator("mode", mode="before")
+    @classmethod
+    def _v_mode(cls, v: Any) -> Any:
+        if v is None or isinstance(v, MountMode):
+            return v
+        if not isinstance(v, str):
+            raise ValueError("mount mode must be a mode name or alias")
+        return parse_mount_mode(v)
 
 
 class SessionProfile(BaseModel):
-    """One role's narrowing: the profile a session is created from, the
-    inline document that tightens it, and the shape of both.
+    """One role: the whole permission document a session runs under.
 
-    Configuration, not enforcement: the resolver compiles the fields
-    onto the session's own narrowing fields and the doors keep
-    enforcing. A profile is a template (``extends`` is field
-    inheritance: a stated field replaces the parent's, an absent one is
-    inherited); safety comes from the layer intersection at
-    evaluation, never from inheritance. Deliberately not named a View,
-    which per the view convention is a door-scoped handle an agent
-    holds, while a profile is what the embedder uses to *define* one.
-    Frozen so two agents with the same role share one object and
-    neither can bend the other's view. Every field is None when the
-    document leaves it unsaid, which is what inheritance reads.
+    A session is created from exactly one of these, and it is the only
+    place permissions are written. There is no workspace-wide block and
+    no mount-owned block above it, so reading this object is reading
+    everything the role may do; what a role does not say, it does not
+    restrict. Configuration, not enforcement: the resolver compiles it
+    onto the session's narrowing fields and the doors keep enforcing.
+    Deliberately not named a View, which per the view convention is a
+    door-scoped handle an agent holds, while a profile is what the
+    embedder uses to *define* one. Frozen so two agents with the same
+    role share one object and neither can bend the other's view.
+
+    Two rules decide a line against it, and they are the whole law.
+    A rule naming no path is read by verb (deny before ask before
+    allow), wherever it is written. A rule carrying paths, and every
+    hide, is read by anchor depth: the deeper entry wins, ties break by
+    verb.
 
     Args:
-        extends (str | None): the profile this one inherits from.
         cwd (str | None): the session's working directory at creation.
         env (dict[str, str] | None): a process environment seeded and
             exported into the session at creation.
-        mounts (dict[str, MountMode] | tuple[str, ...] | None): a
-            mapping of prefix to mode ceiling (``r`` / ``rw`` / ``rwx``
-            or the mode names), or a plain list of prefixes that keeps
-            each mount at its own configured mode; None leaves mounts
-            unrestricted.
-        paths (PathsBlock | None): the profile's hides.
-        vars (VarsBlock | None): the profile's hidden variables.
-        commands (CommandsBlock | None): the profile's allow list and
-            ask / deny rules.
+        mounts (dict[str, ProfileMount] | None): per-mount settings,
+            keyed by prefix: a mode, ask and deny rules for lines
+            working inside the mount, and hides under it. A mount the
+            mapping omits keeps its own mode and gains no rules.
+        paths (PathsBlock | None): the role's hides, absolute.
+        vars (VarsBlock | None): the role's hidden variables.
+        commands (CommandsBlock | None): the role's allow list and its
+            ask / deny rules, absolute paths.
     """
 
     model_config = _DOC
 
-    extends: str | None = None
     cwd: str | None = None
     env: dict[str, str] | None = None
-    mounts: dict[str, MountMode] | tuple[str, ...] | None = None
+    mounts: dict[str, ProfileMount] | None = None
     paths: PathsBlock | None = None
     vars: VarsBlock | None = None
     commands: CommandsBlock | None = None
@@ -402,27 +443,39 @@ class SessionProfile(BaseModel):
     def _v_mounts(cls, v: Any) -> Any:
         if v is None:
             return None
-        if isinstance(v, str):
-            return (_norm_prefix(v), )
-        if isinstance(v, Mapping):
-            modes: dict[str, MountMode] = {}
-            for prefix, mode in v.items():
-                if not isinstance(prefix, str):
-                    raise ValueError("mounts keys must be strings")
-                if not isinstance(mode, str):
-                    raise ValueError(
-                        f"mounts[{prefix}] must be a mode name or alias")
-                modes[_norm_prefix(prefix)] = parse_mount_mode(mode)
-            return modes
-        if not isinstance(v, (list, tuple)):
-            raise ValueError("mounts must be a mapping or a list of strings")
-        return tuple(
-            _norm_prefix(prefix) for prefix in _string_list(v, "mounts"))
+        if not isinstance(v, Mapping):
+            # A bare list used to mean "only these mounts", and now
+            # means nothing at all, so it fails loudly rather than
+            # quietly dropping the confinement it used to carry.
+            raise ValueError(
+                "mounts must be a mapping of prefix to its settings")
+        entries: dict[str, Any] = {}
+        for prefix, entry in v.items():
+            if not isinstance(prefix, str):
+                raise ValueError("mounts keys must be strings")
+            entries[_norm_prefix(prefix)] = ({
+                "mode": entry
+            } if isinstance(entry, str) else entry)
+        return entries
 
     @model_validator(mode="after")
     def _v_absolute(self) -> "SessionProfile":
+        # `commands` checks its own rule paths (CommandsBlock), so only
+        # the hides and the mount sections are left to this one.
         if self.paths is not None:
             _absolute_paths(self.paths.hide, "paths.hide")
+        for prefix, entry in (self.mounts or {}).items():
+            where = f"mounts[{prefix}]"
+            if entry.paths is not None:
+                _absolute_paths(entry.paths.hide, f"{where}.paths.hide")
+                _under_mount(entry.paths.hide, prefix, f"{where}.paths.hide")
+            if entry.commands is not None:
+                for verb, rules in (("ask", entry.commands.ask),
+                                    ("deny", entry.commands.deny)):
+                    for rule in rules:
+                        _absolute_paths(rule.paths, f"{where}.commands.{verb}")
+                        _under_mount(rule.paths, prefix,
+                                     f"{where}.commands.{verb}")
         return self
 
 
@@ -431,15 +484,14 @@ class CompiledProfile:
     """The session fields an effective profile compiles to.
 
     Args:
-        mount_modes (dict[str, MountMode] | None): per-mount ceilings;
-            a listed prefix with no ceiling carries the mount's own
-            mode as EXEC (no narrowing below the mount).
-        hidden_paths (HiddenPaths | None): the profile's own hides.
-        hidden_vars (HiddenVars | None): the profile's hidden variables.
+        mount_modes (dict[str, MountMode] | None): the mode each mount
+            section states; a mount absent from the map keeps its own.
+        hidden_paths (HiddenPaths | None): every path the role hides.
+        hidden_vars (HiddenVars | None): the role's hidden variables.
         env (dict[str, str] | None): variables to seed and export.
         cwd (str | None): the working directory to start in.
-        commands (CommandsSpec | None): the profile's own command
-            tier, evaluated after the bound tiers.
+        commands (AdmissionRules | None): the role's admission rules,
+            its own and its mount sections' in one list.
     """
 
     mount_modes: dict[str, MountMode] | None
@@ -447,4 +499,4 @@ class CompiledProfile:
     hidden_vars: HiddenVars | None
     env: dict[str, str] | None
     cwd: str | None
-    commands: CommandsSpec | None = None
+    commands: AdmissionRules | None = None

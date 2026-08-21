@@ -19,7 +19,6 @@ import { IOResult, type ByteSource } from '../../../io/types.ts'
 import { FileType, PathSpec, type FileStat } from '../../../types.ts'
 import { rstripSlash } from '../../../utils/slash.ts'
 import { enoent, isWalkError } from '../../../utils/errors.ts'
-import { mountAllowed } from '../../../context/session_context.ts'
 import type { CommandFnResult, CommandOpts } from '../../config.ts'
 import type { MountView } from '../../../ops/types.ts'
 import { fnmatch } from '../../../utils/fnmatch.ts'
@@ -52,17 +51,17 @@ interface TreeOpts {
 // Session-filtered, because a crossing entry is drawn from the mount
 // table alone: its row is synthesized as a directory without asking any
 // backend, so the dispatcher never gets the chance to refuse it and an
-// ungranted mount's name would reach the drawing. `ls` filters the same
-// fact through `childMountNames`. Note this is the opposite of what `du`
-// wants from the same view: there an ungranted mount still shadows the
-// parent's keys, so its prefix must stay in the list even though the
-// walk never enters it.
+// hidden mount's name would reach the drawing. `ls` filters the same
+// fact through `childMountNames`. `tree` names the boundary rather than
+// avoiding it, so it reads the visible list; `du` reads the other one
+// from the same view, because there a hidden mount still shadows the
+// parent's keys and its prefix has to stay.
 function childMounts(mounts: MountView | null, directory: string): string[] {
   if (mounts === null) return []
   const base = rstripSlash(directory) || '/'
-  return mounts.descendants(directory).filter((root) => {
+  return mounts.visibleDescendants(directory).filter((root) => {
     const parent = root.slice(0, root.lastIndexOf('/')) || '/'
-    return parent === base && mountAllowed(root)
+    return parent === base
   })
 }
 

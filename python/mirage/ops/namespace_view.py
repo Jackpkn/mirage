@@ -14,10 +14,10 @@
 
 from collections.abc import Iterable
 
-from mirage.context import mount_allowed, path_allowed
+from mirage.context import path_allowed
 from mirage.ops.config import NamespaceLinks
 from mirage.types import FileStat, FileType
-from mirage.utils.path import norm_dir, owner_prefix
+from mirage.utils.path import norm_dir
 
 
 def child_mount_names(prefixes: Iterable[str], parent: str) -> list[str]:
@@ -40,44 +40,23 @@ def child_mount_names(prefixes: Iterable[str], parent: str) -> list[str]:
         if p == norm or not p.startswith(norm):
             continue
         name = p[len(norm):].split("/", 1)[0]
-        if not name or not mount_allowed(p) or not path_allowed(norm + name):
+        if not name or not path_allowed(norm + name):
             continue
         out.add(name)
     return sorted(out)
 
 
-def _link_allowed(prefixes: Iterable[str], link: str) -> bool:
-    """Whether the current session may see the link at ``link``.
-
-    A link is namespace state, but its path lies on some mount's turf:
-    the longest mount prefix above it owns it, the same longest-match
-    rule dispatch resolves the path by. A scoped session that may not
-    touch that mount must not learn the link's name from a listing,
-    exactly as ``child_mount_names`` hides the mount itself. A link
-    above every mount is bare namespace structure and stays visible.
-
-    Args:
-        prefixes (Iterable[str]): the mount prefixes to derive from.
-        link (str): the link's virtual path.
-    """
-    owner = owner_prefix(prefixes, link)
-    return owner is None or mount_allowed(norm_dir(owner))
-
-
-def _link_names(prefixes: Iterable[str], links: NamespaceLinks | None,
-                parent: str) -> list[str]:
+def _link_names(links: NamespaceLinks | None, parent: str) -> list[str]:
     """Immediate child segments owed to links at or below ``parent``.
 
     Derived from every link path, not just direct children, exactly as
     mount prefixes are: ``ln`` allows a link below a directory chain no
     backend serves, and without its ancestors synthesized the link
     lists at its own parent yet is unreachable from a walk above it.
-    Session-filtered through ``_link_allowed``: a link below an
-    ungranted mount would otherwise leak that mount's name into a
-    listing ``child_mount_names`` had already filtered.
+    Session-filtered by the hides, the same predicate
+    ``child_mount_names`` applies to a mount's own name.
 
     Args:
-        prefixes (Iterable[str]): the mount prefixes to derive from.
         links (NamespaceLinks | None): the namespace symlink table.
         parent (str): directory whose child segments to enumerate.
     """
@@ -89,8 +68,7 @@ def _link_names(prefixes: Iterable[str], links: NamespaceLinks | None,
         if not link.startswith(norm):
             continue
         name = link[len(norm):].split("/", 1)[0]
-        if (name and _link_allowed(prefixes, link)
-                and path_allowed(norm + name)):
+        if name and path_allowed(norm + name):
             out.add(name)
     return sorted(out)
 
@@ -105,13 +83,12 @@ def namespace_names(prefixes: Iterable[str], links: NamespaceLinks | None,
     about what a directory holds.
 
     Args:
-        prefixes (Iterable[str]): the mount prefixes to derive from.
         links (NamespaceLinks | None): the namespace symlink table.
         parent (str): directory whose child segments to enumerate.
     """
     return sorted(
         set(child_mount_names(prefixes, parent))
-        | set(_link_names(prefixes, links, parent)))
+        | set(_link_names(links, parent)))
 
 
 def merge_readdir(entries: list[str], prefixes: Iterable[str],

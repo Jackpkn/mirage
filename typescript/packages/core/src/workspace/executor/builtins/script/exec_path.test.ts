@@ -138,11 +138,12 @@ describe('direct path execution', () => {
         mode: MountMode.WRITE,
         ops,
         shellParser: parser,
-        permissions: {
-          commands: {
-            deny: [{ reason: 'production scripts are sealed', paths: ['/data/prod/*'] }],
+        profiles: {
+          default: {
+            commands: {
+              deny: [{ reason: 'production scripts are sealed', paths: ['/data/prod/*'] }],
+            },
           },
-          paths: { hide: [] },
         },
       },
     )

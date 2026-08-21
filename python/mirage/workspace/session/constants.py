@@ -12,15 +12,9 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-# The profile a session is created from when none is named and the
+# The role a session is created from when none is named and the
 # workspace defines one of this name.
 DEFAULT_PROFILE = "default"
-
-# The profile fields inheritance copies: a stated field replaces the
-# parent's, an absent (None) one is inherited. `extends` itself is not
-# a field a child inherits.
-PROFILE_INHERITED_FIELDS: tuple[str, ...] = ("cwd", "env", "mounts", "paths",
-                                             "vars", "commands")
 
 # What a fork of a session carries over. Written down once because
 # `Session.fork` builds a copy from it and
@@ -44,9 +38,7 @@ INHERITED_FIELDS: tuple[str, ...] = (
     "mount_modes",
     "hidden_paths",
     "hidden_vars",
-    "bound_hidden",
     "commands",
-    "bound_commands",
     "grants",
     "generation",
     "pipeline_timeout_seconds",

@@ -15,7 +15,7 @@
 from collections.abc import Mapping
 from typing import Any
 
-from mirage.policy.types import CommandRule, CommandsSpec, Grant
+from mirage.policy.types import AdmissionRules, CommandRule, Grant
 
 
 def rule_to_dict(rule: CommandRule) -> dict[str, Any]:
@@ -46,27 +46,27 @@ def rule_from_dict(data: Mapping[str, Any]) -> CommandRule:
                        mount=data.get("mount", ""))
 
 
-def commands_to_dict(spec: CommandsSpec) -> dict[str, Any]:
-    """A compiled command tier as the session record stores it.
+def commands_to_dict(rules: AdmissionRules) -> dict[str, Any]:
+    """A session's compiled admission rules as the record stores them.
 
     Args:
-        spec (CommandsSpec): the tier.
+        rules (AdmissionRules): the compiled rules.
     """
     return {
-        "allow": list(spec.allow) if spec.allow is not None else None,
-        "ask": [rule_to_dict(r) for r in spec.ask],
-        "deny": [rule_to_dict(r) for r in spec.deny],
+        "allow": list(rules.allow) if rules.allow is not None else None,
+        "ask": [rule_to_dict(r) for r in rules.ask],
+        "deny": [rule_to_dict(r) for r in rules.deny],
     }
 
 
-def commands_from_dict(data: Mapping[str, Any]) -> CommandsSpec:
-    """A compiled command tier read back from a session record.
+def commands_from_dict(data: Mapping[str, Any]) -> AdmissionRules:
+    """A session's compiled admission rules read back from a record.
 
     Args:
         data (Mapping[str, Any]): what ``commands_to_dict`` wrote.
     """
     allow = data.get("allow")
-    return CommandsSpec(
+    return AdmissionRules(
         allow=tuple(allow) if allow is not None else None,
         ask=tuple(rule_from_dict(r) for r in data.get("ask", ())),
         deny=tuple(rule_from_dict(r) for r in data.get("deny", ())))

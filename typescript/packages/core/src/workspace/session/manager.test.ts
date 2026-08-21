@@ -14,7 +14,7 @@
 
 import { seedVar } from './state.ts'
 import { describe, expect, it } from 'vitest'
-import type { CommandsSpec, Grant } from '../../policy/types.ts'
+import type { AdmissionRules, Grant } from '../../policy/types.ts'
 import { MountMode } from '../../types.ts'
 import { SessionManager } from './manager.ts'
 import { RAMSessionStore } from './ram.ts'
@@ -298,70 +298,36 @@ describe('SessionManager dirty flush + CAS', () => {
   })
 })
 
-describe('SessionManager bound hides', () => {
-  it('stamps live, created and forked sessions', () => {
+describe('SessionManager admission rules', () => {
+  it("commandsOf answers the session's own rules", () => {
     const m = new SessionManager('def')
     const early = m.create('early')
-    const bound = { paths: ['/shared/finance'] }
-    m.boundHidden = bound
-    expect(m.boundHidden).toBe(bound)
-    expect(m.get('def').boundHidden).toBe(bound)
-    expect(early.boundHidden).toBe(bound)
-    const late = m.create('late', { mountModes: new Map([['/a', MountMode.READ]]) })
-    expect(late.boundHidden).toBe(bound)
-    expect(late.fork().boundHidden).toBe(bound)
-    expect(late.hiddenPaths).toBeNull()
-  })
-
-  it('ride hydration but never the store', async () => {
-    const store = new RAMSessionStore()
-    await store.set('restored', {
-      session_id: 'restored',
-      cwd: '/w',
-      env: {},
-      created_at: 1.0,
-      hidden_paths: { paths: ['/own'], patterns: [] },
-    })
-    const m = new SessionManager('def', store)
-    const bound = { paths: ['/shared/finance'] }
-    m.boundHidden = bound
-    await m.ensureLoaded()
-    const restored = m.get('restored')
-    expect(restored.boundHidden).toBe(bound)
-    expect(restored.hiddenPaths).toEqual({ paths: ['/own'], patterns: [] })
-    expect(m.get('def').boundHidden).toBe(bound)
-    expect('boundHidden' in restored.toJSON()).toBe(false)
-    expect('bound_hidden' in restored.toJSON()).toBe(false)
-    await m.flush()
-    const stored = await store.load()
-    expect(JSON.stringify([...stored.entries()])).not.toContain('bound')
-  })
-})
-
-describe('SessionManager bound command tiers', () => {
-  it('stamps live, created and forked sessions and answers commandsOf', () => {
-    const m = new SessionManager('def')
-    const early = m.create('early')
-    const bound: CommandsSpec[] = [{ allow: ['ls', 'git'], ask: [], deny: [] }]
-    m.boundCommands = bound
-    expect(m.boundCommands).toBe(bound)
-    expect(m.get('def').boundCommands).toBe(bound)
-    expect(early.boundCommands).toBe(bound)
+    const own: AdmissionRules = { allow: ['ls'], ask: [], deny: [] }
     const late = m.create('late')
-    expect(late.boundCommands).toBe(bound)
-    expect(late.fork().boundCommands).toBe(bound)
-    // commandsOf: the bound tiers, then the session's own; the bound
-    // tiers alone for an id the manager does not know (the empty id of
-    // an unbound door included), so it still fails toward refusal.
-    const own: CommandsSpec = { allow: ['ls'], ask: [], deny: [] }
     late.commands = own
-    expect(m.commandsOf('late')).toEqual([...bound, own])
-    expect(m.commandsOf('early')).toEqual(bound)
-    expect(m.commandsOf('nobody')).toEqual(bound)
-    expect(m.commandsOf('')).toEqual(bound)
+    expect(m.commandsOf('late')).toBe(own)
+    // A session the role never narrowed states no rules, and so does an
+    // id the manager does not know (the empty id of an unbound door
+    // included), unless a default role says otherwise.
+    expect(m.commandsOf('early')).toBeNull()
+    expect(m.commandsOf('nobody')).toBeNull()
+    expect(m.commandsOf('')).toBeNull()
+    expect(early.commands).toBeNull()
+    // With a default role compiled in, an unknown id answers its rules
+    // rather than nothing, so an unbound door still fails toward refusal.
+    m.defaultProfile = {
+      mountModes: null,
+      hiddenPaths: null,
+      hiddenVars: null,
+      env: null,
+      cwd: null,
+      commands: { allow: ['cat'], ask: [], deny: [] },
+    }
+    expect(m.commandsOf('nobody')).toEqual({ allow: ['cat'], ask: [], deny: [] })
+    expect(m.commandsOf('')).toEqual({ allow: ['cat'], ask: [], deny: [] })
   })
 
-  it('the command tier rides the record and the bound tiers do not', async () => {
+  it('the rules ride the session record', async () => {
     const store = new RAMSessionStore()
     await store.set('restored', {
       session_id: 'restored',
@@ -382,10 +348,6 @@ describe('SessionManager bound command tiers', () => {
       commands: { allow: ['cat'], ask: [], deny: [] },
     })
     const m = new SessionManager('def', store)
-    const bound: CommandsSpec[] = [
-      { allow: null, ask: [], deny: [{ reason: 'ro', commands: ['git push'], mount: '/repo' }] },
-    ]
-    m.boundCommands = bound
     await m.ensureLoaded()
     const restored = m.get('restored')
     expect(restored.commands).toEqual({
@@ -393,16 +355,16 @@ describe('SessionManager bound command tiers', () => {
       ask: [],
       deny: [{ reason: 'no', commands: ['rm'], paths: [], mount: '' }],
     })
-    expect(restored.boundCommands).toBe(bound)
-    expect(m.commandsOf('restored')).toEqual([...bound, restored.commands])
-    // The default session adopts its stored tier like its hidden specs.
+    expect(m.commandsOf('restored')).toBe(restored.commands)
+    // The default session adopts its stored rules like its hidden paths.
     expect(m.get('def').commands).toEqual({ allow: ['cat'], ask: [], deny: [] })
-    expect('boundCommands' in restored.toJSON()).toBe(false)
     await m.flush()
     const stored = await store.load()
-    const record = stored.get('restored') as { commands: { allow: string[] } }
+    const record = stored.get('restored') as {
+      commands: { allow: string[]; deny: { reason: string }[] }
+    }
     expect(record.commands.allow).toEqual(['ls', 'git log'])
-    expect(JSON.stringify([...stored.entries()])).not.toContain('bound')
+    expect(record.commands.deny[0]?.reason).toBe('no')
   })
 })
 

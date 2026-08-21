@@ -30,6 +30,31 @@ export function isGlob(entry: string): boolean {
 }
 
 /**
+ * How specific a path entry is: the number of literal components before
+ * its first wildcard.
+ *
+ * The one measure the permissions document's path axis orders by.
+ * `/repo/sealed/*` is 2, `/repo/*` and the plain subtree `/repo` are 1,
+ * and a slashless name pattern like `*.key` is 0, since it anchors
+ * nothing. Every pattern the document allows has an answer, so two
+ * entries about one path are always comparable and nothing is ever
+ * guessed.
+ *
+ * It lives here beside `isGlob` rather than in the policy layer because
+ * both gates need it: admission scores the rule that covers an operand,
+ * and the entry gate scores the rule that covers an entry reached
+ * mid-walk.
+ */
+export function anchorDepth(entry: string): number {
+  let depth = 0
+  for (const part of entry.replace(/^\/+|\/+$/g, '').split('/')) {
+    if (part === '' || isGlob(part)) break
+    depth += 1
+  }
+  return depth
+}
+
+/**
  * Compile document path entries into the matcher's shape: glob =
  * pattern, plain = exact subtree, in the order written. The same split
  * serves `paths.hide` and a `CommandRule`'s `paths`, so both planes

@@ -14,7 +14,7 @@
 
 import dataclasses
 
-from mirage.policy.types import CommandRule, CommandsSpec, Grant
+from mirage.policy.types import AdmissionRules, CommandRule, Grant
 from mirage.shell.variable import ShellVar, VarAttr
 from mirage.types import MountMode
 from mirage.workspace.session import Session
@@ -320,12 +320,12 @@ def test_a_payload_with_no_attributes_is_read_as_a_process_environment():
 
 
 def test_session_command_tier_round_trips_through_the_record():
-    own = CommandsSpec(allow=("ls", "git log"),
-                       ask=(CommandRule(reason="sign-off",
-                                        commands=("git push", ),
-                                        paths=("/repo/*", ),
-                                        mount="/repo"), ),
-                       deny=(CommandRule(reason="no", commands=("rm", )), ))
+    own = AdmissionRules(allow=("ls", "git log"),
+                         ask=(CommandRule(reason="sign-off",
+                                          commands=("git push", ),
+                                          paths=("/repo/*", ),
+                                          mount="/repo"), ),
+                         deny=(CommandRule(reason="no", commands=("rm", )), ))
     s = Session(session_id="s1", commands=own)
     d = s.to_dict()
     assert d["commands"] == {
@@ -347,7 +347,7 @@ def test_session_command_tier_round_trips_through_the_record():
     # list writes allow as null, distinct from an empty list.
     assert "commands" not in Session(session_id="s2").to_dict()
     bare = Session(session_id="s3",
-                   commands=CommandsSpec(deny=(CommandRule(reason="x"), )))
+                   commands=AdmissionRules(deny=(CommandRule(reason="x"), )))
     assert bare.to_dict()["commands"]["allow"] is None
     assert Session.from_dict(bare.to_dict()).commands == bare.commands
 

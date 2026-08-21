@@ -12,9 +12,10 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from mirage.policy.match.rule import (RuleMatch, io_refusal, match_io,
-                                      match_op, match_rule, rule_scope)
-from mirage.policy.types import (CommandContext, CommandRule, CommandsSpec,
+from mirage.policy.match.rule import (RuleMatch, Subject, io_refusal, match_io,
+                                      match_op, match_rule, op_refusal,
+                                      rule_reach, rule_scope, subjects)
+from mirage.policy.types import (AdmissionRules, CommandContext, CommandRule,
                                  OpsContext)
 from mirage.types import PathSpec
 from mirage.utils.hidden import classify_paths
@@ -60,7 +61,9 @@ def test_match_rule_by_command_pattern_operand_and_mount():
     hit = match_rule(
         scoped, scope,
         _ctx("rm", paths=(_path("/repo/x", raw="x"), ), cwd="/repo"))
-    assert hit == RuleMatch(operand="x")
+    # The depth is the matched entry's, which is what the path axis
+    # orders by.
+    assert hit == RuleMatch(operand="x", depth=1)
     assert match_rule(scoped, scope,
                       _ctx("rm", paths=(_path("/scratch/x"), ))) is None
     # A mount-tier rule applies to a line whose cwd or paths lie under
@@ -122,6 +125,38 @@ def test_match_op_only_for_pure_path_rules():
     assert not match_op(CommandRule(reason="x", commands=("rm", )), None, op)
 
 
+def test_op_refusal_reads_depth_before_verb_and_honours_a_grant():
+    broad = CommandRule(reason="repo is sealed", paths=("/repo/*", ))
+    carve = CommandRule(reason="outbox nod", paths=("/repo/outbox/*", ))
+    rules = AdmissionRules(deny=(broad, ), ask=(carve, ))
+    inside = OpsContext(op="write",
+                        path=_path("/repo/outbox/a"),
+                        write=True,
+                        prefix="/repo/")
+    # The deeper ask wins where both reach, exactly as the command door
+    # ranks them, so a broad deny cannot overrule an approved carve-out.
+    assert op_refusal(rules, inside, ()) == "outbox nod"
+    assert op_refusal(rules, inside, (carve, )) is None
+    # Outside the carve-out the deny is what is left, and a grant for
+    # the ask says nothing about it.
+    outside = OpsContext(op="write",
+                         path=_path("/repo/sealed/a"),
+                         write=True,
+                         prefix="/repo/")
+    assert op_refusal(rules, outside, (carve, )) == "repo is sealed"
+    # A metadata op is reached by neither: deny is present and refused.
+    stat = OpsContext(op="stat",
+                      path=_path("/repo/outbox/a"),
+                      write=False,
+                      prefix="/repo/")
+    assert op_refusal(rules, stat, ()) is None
+    # No rules at all, and a rule naming a command, are both silent.
+    assert op_refusal(None, inside, ()) is None
+    named = AdmissionRules(deny=(
+        CommandRule(reason="x", commands=("rm", ), paths=("/repo/*", )), ))
+    assert op_refusal(named, inside, ()) is None
+
+
 def _subtree_ctx(command: str, *operands: str) -> CommandContext:
     paths = tuple(_path(o, raw=o) for o in operands)
     return CommandContext(command=command,
@@ -142,19 +177,20 @@ def test_a_subtree_command_on_the_directory_holding_the_scope_matches():
     for command in ("rm", "rmdir"):
         for operand in ("/x/locked", "/x", "/"):
             assert match_rule(rule, scope, _subtree_ctx(
-                command, operand)) == RuleMatch(operand=operand)
+                command, operand)) == RuleMatch(operand=operand, depth=2)
         assert match_rule(rule, scope, _subtree_ctx(command,
                                                     "/x/other")) is None
     assert match_rule(rule, scope,
                       _subtree_ctx("mv", "/x/locked",
-                                   "/y")) == RuleMatch(operand="/x/locked")
+                                   "/y")) == RuleMatch(operand="/x/locked",
+                                                       depth=2)
     assert match_rule(rule, scope,
                       _subtree_ctx("mv", "/x",
-                                   "/y")) == RuleMatch(operand="/x")
+                                   "/y")) == RuleMatch(operand="/x", depth=2)
     # mv's destination matches only as the holding directory itself:
     # moving into it lands in the scope, moving into an ancestor does not.
     assert match_rule(rule, scope, _subtree_ctx(
-        "mv", "/z", "/x/locked")) == RuleMatch(operand="/x/locked")
+        "mv", "/z", "/x/locked")) == RuleMatch(operand="/x/locked", depth=2)
     assert match_rule(rule, scope, _subtree_ctx("mv", "/z", "/x")) is None
     # A reader given the same operand is not a whole-line refusal: its
     # I/O under the scope is the command tier's to refuse, file by file.
@@ -165,9 +201,47 @@ def test_a_subtree_command_on_the_directory_holding_the_scope_matches():
                         commands=("rm", ),
                         paths=("/x/locked/*", ))
     assert match_rule(named, classify_paths(named.paths),
-                      _subtree_ctx("rm", "/x")) == RuleMatch(operand="/x")
+                      _subtree_ctx("rm", "/x")) == RuleMatch(operand="/x",
+                                                             depth=2)
     assert match_rule(named, classify_paths(named.paths),
                       _subtree_ctx("mv", "/x", "/y")) is None
+
+
+def test_subjects_are_the_lines_paths_then_its_subtree_operands():
+    # A reader is asked one question per path: does it lie inside a
+    # scope. A subtree command is asked a second, per operand: does it
+    # hold one. `mv`'s destination is the operand where an ancestor of
+    # the scope does not count.
+    read = subjects(_subtree_ctx("cat", "/a", "/b"))
+    assert [(s.path.virtual, s.holds) for s in read] == [("/a", False),
+                                                         ("/b", False)]
+    moved = subjects(_subtree_ctx("mv", "/a", "/b"))
+    assert [(s.path.virtual, s.holds, s.ancestors) for s in moved] == [
+        ("/a", False, True),
+        ("/b", False, True),
+        ("/a", True, True),
+        ("/b", True, False),
+    ]
+    # A line naming no path is one subject, itself.
+    bare = subjects(_ctx("git", tokens=("git", "push")))
+    assert len(bare) == 1 and bare[0].path is None
+
+
+def test_rule_reach_scores_the_entry_that_reached_and_no_other():
+    inside = CommandRule(reason="x", paths=("/a/*", "/deep/b/c/*"))
+    scope = rule_scope(inside)
+    assert rule_reach(inside, scope, Subject(_path("/a/x"))) == 1
+    assert rule_reach(inside, scope, Subject(_path("/deep/b/c/x"))) == 3
+    assert rule_reach(inside, scope, Subject(_path("/elsewhere"))) is None
+    # A rule naming no paths reaches every subject at depth 0, which is
+    # off the path axis, and a line's own subject only through one.
+    pathless = CommandRule(reason="x")
+    assert rule_reach(pathless, None, Subject(_path("/a/x"))) == 0
+    assert rule_reach(pathless, None, Subject(None)) == 0
+    assert rule_reach(inside, scope, Subject(None)) is None
+    # Holding the scope is the subtree operand's question alone.
+    assert rule_reach(inside, scope, Subject(_path("/"))) is None
+    assert rule_reach(inside, scope, Subject(_path("/"), holds=True)) == 3
 
 
 def test_match_op_refuses_a_subtree_op_on_the_directory_holding_the_scope():
@@ -255,28 +329,47 @@ def test_io_refusal_applies_the_gate_precedence_to_an_entry():
     deny = CommandRule(reason="locked",
                        commands=("rm", ),
                        paths=("/data/both/locked/*", ))
-    ask_ws = CommandRule(reason="both: needs a nod",
-                         commands=("rm", ),
-                         paths=("/data/both/*", ))
-    ask_profile = CommandRule(reason="profile nod",
-                              commands=("rm", ),
-                              paths=("/data/both/*", ))
-    layers = (CommandsSpec(ask=(ask_ws, ),
-                           deny=(deny, )), CommandsSpec(ask=(ask_profile, )))
+    ask = CommandRule(reason="needs a nod",
+                      commands=("rm", ),
+                      paths=("/data/both/*", ))
+    later = CommandRule(reason="a later nod",
+                        commands=("rm", ),
+                        paths=("/data/both/*", ))
+    rules = AdmissionRules(ask=(ask, later), deny=(deny, ))
     tokens = ("rm", "-r", "/data/both")
-    # deny > ask, whatever the tier order.
-    assert io_refusal(layers, tokens, "/data/both/locked/y",
-                      (ask_ws, )) == "locked"
-    # The first matching ask rule in tier order speaks: refused without
-    # a grant under it, passed with one, and a later tier's rule never
-    # gets a say.
-    assert io_refusal(layers, tokens, "/data/both/a",
-                      ()) == "both: needs a nod"
-    assert io_refusal(layers, tokens, "/data/both/a", (ask_ws, )) is None
-    assert io_refusal(layers, tokens, "/data/both/a",
-                      (ask_profile, )) == "both: needs a nod"
+    # deny > ask, wherever either was written.
+    assert io_refusal(rules, tokens, "/data/both/locked/y",
+                      (ask, )) == "locked"
+    # The first matching ask rule speaks: refused without a grant under
+    # it, passed with one, and the later rule never gets a say.
+    assert io_refusal(rules, tokens, "/data/both/a", ()) == "needs a nod"
+    assert io_refusal(rules, tokens, "/data/both/a", (ask, )) is None
+    assert io_refusal(rules, tokens, "/data/both/a",
+                      (later, )) == "needs a nod"
     # An entry no rule holds passes; so does one a whole-line rule names.
-    assert io_refusal(layers, tokens, "/data/open/a", ()) is None
-    whole = (CommandsSpec(
-        deny=(CommandRule(reason="no", commands=("rm", )), )), )
+    assert io_refusal(rules, tokens, "/data/open/a", ()) is None
+    whole = AdmissionRules(
+        deny=(CommandRule(reason="no", commands=("rm", )), ))
     assert io_refusal(whole, tokens, "/data/x", ()) is None
+    assert io_refusal(None, tokens, "/data/x", ()) is None
+
+
+def test_io_refusal_orders_by_anchor_depth_like_the_admission_gate():
+    # A broad deny with an approved ask carved out of it. The gate
+    # admits `rm -r /repo` under the deeper ask, so the entry gate has
+    # to read the same way: taking every deny before any ask would
+    # refuse every entry the carve-out was written for, leaving a line
+    # that was admitted unable to touch anything.
+    deny = CommandRule(reason="ro repo",
+                       commands=("rm", ),
+                       paths=("/repo/*", ))
+    ask = CommandRule(reason="sealed",
+                      commands=("rm", ),
+                      paths=("/repo/sealed/*", ))
+    rules = AdmissionRules(ask=(ask, ), deny=(deny, ))
+    tokens = ("rm", "-r", "/repo")
+    assert io_refusal(rules, tokens, "/repo/sealed/secret", (ask, )) is None
+    # Without the grant the deeper ask still wins, and asks.
+    assert io_refusal(rules, tokens, "/repo/sealed/secret", ()) == "sealed"
+    # Outside the carve-out the broad deny is what is left.
+    assert io_refusal(rules, tokens, "/repo/other/x", (ask, )) == "ro repo"

@@ -12,6 +12,7 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any, ClassVar, Literal, Protocol
@@ -47,6 +48,20 @@ class DenyScope(StrEnum):
     OPERAND = "operand"
 
 
+class Outcome(StrEnum):
+    """What the role's rules say about one line.
+
+    RUN is silence: no rule spoke. NOT_ALLOWED is the allow list
+    refusing a line whose head it installed. DENY and ASK name the rule
+    that spoke.
+    """
+
+    RUN = "run"
+    NOT_ALLOWED = "not_allowed"
+    DENY = "deny"
+    ASK = "ask"
+
+
 @dataclass(frozen=True, slots=True)
 class Deny:
     """Refuse the command, op or session write, with a reason.
@@ -74,23 +89,23 @@ class CommandRule:
     about) matching commands, on matching paths when it names any.
 
     It is the compiled element of ``commands.deny`` and ``commands.ask``
-    at every tier and reaches the workspace only inside that document;
-    the internal RulePolicy is what evaluates it. The document writes a
-    rule in one of three shapes, and each compiles to rules of this
-    class: a list of command patterns (a whole-line rule on each, no
-    paths), a mapping of command pattern to its paths (one command to
-    many paths, one rule per command, so a path is never stated beside
-    a command it was not meant for), or paths alone (a rule on every
-    command, at the op door too). A command entry is a token-prefix
-    pattern over the line as the door normalizes it (``rm`` is every rm
-    line, ``git push`` every ``git push ...``, a ``*`` token any one
-    token). Path entries use the document's one grammar: an entry with
-    ``*``, ``?`` or ``[`` is a pattern (repo fnmatch dialect, ``*``
-    crossing ``/``, a slashless pattern matching any name component),
-    anything else is an exact path and its subtree. An entry holds a
-    token (a blank one would be the root), and at the workspace and
-    profile tiers it is absolute or a name pattern; only the mount
-    tier's entries are relative, to the mount root.
+    wherever the role writes one, and reaches the workspace only inside
+    that document; the internal RulePolicy is what evaluates it. The
+    document writes a rule in one of three shapes, and each compiles to
+    rules of this class: a list of command patterns (a whole-line rule
+    on each, no paths), a mapping of command pattern to its paths (one
+    command to many paths, one rule per command, so a path is never
+    stated beside a command it was not meant for), or paths alone (a
+    rule on every command, at the op door too). A command entry is a
+    token-prefix pattern over the line as the door normalizes it (``rm``
+    is every rm line, ``git push`` every ``git push ...``, a ``*`` token
+    any one token). Path entries use the document's one grammar: an
+    entry with ``*``, ``?`` or ``[`` is a pattern (repo fnmatch dialect,
+    ``*`` crossing ``/``, a slashless pattern matching any name
+    component), anything else is an exact path and its subtree. Every
+    entry is absolute or a name pattern, holds a token (a blank one
+    would be the root), and inside a mount section must name something
+    under that mount root.
 
     Args:
         reason (str): why the command is refused, shown on stderr.
@@ -99,10 +114,11 @@ class CommandRule:
             exactly one.
         paths (tuple[str, ...]): path entries; empty refuses the
             command regardless of its operands.
-        mount (str): set by the compiler for a mount-tier rule, the
-            mount root the rule is scoped to: it applies only to a line
-            whose cwd or paths lie under it. Empty for the workspace
-            and profile tiers; never typed in the document.
+        mount (str): set by the compiler for a rule written under a
+            ``mounts.<prefix>`` section, the mount root it is scoped to:
+            it applies only to a line whose cwd or paths lie under it.
+            Empty for a rule written at the top level; never typed in
+            the document.
     """
 
     reason: str
@@ -129,12 +145,20 @@ class Ask:
         rule (CommandRule | None): the document rule that asked; None
             for a coded condition, for which the door keys a session
             grant on the program that asked.
+        rules (tuple[CommandRule, ...]): every rule the line has to be
+            granted, ``rule`` among them and usually alone: a line whose
+            operands were each asked about by a different rule carries
+            them all. The door asks about them one at a time and runs
+            the line only once each is answered, so a nod given for one
+            operand cannot carry another. Empty for a coded Ask, whose
+            one rule the door synthesizes.
     """
 
     kind: ClassVar[str] = "ask"
 
     reason: str
     rule: CommandRule | None = None
+    rules: tuple[CommandRule, ...] = ()
 
 
 # The closed vocabulary of policy answers: a hook returns an Action to
@@ -167,7 +191,7 @@ class Grant:
     of the session and stays. Session state like functions and cwd:
     persisted with the session record, read through the session
     manager so a fork or a background copy shares it, never inherited
-    by another session. Consulted only after the deny arm, so a grant
+    by another session. Consulted only after the deny rules, so a grant
     never re-opens a deny.
 
     Args:
@@ -261,18 +285,20 @@ class SessionGrantsQuery(Protocol):
 
 
 @dataclass(frozen=True, slots=True)
-class CommandsSpec:
-    """One tier's ``commands`` block, compiled.
+class AdmissionRules:
+    """One role's admission rules, compiled: the whole permission
+    document a session runs under.
 
-    A session is evaluated over a tuple of these: the mount tiers in
-    registration order, the workspace tier, then the session's own
-    (profile tightened by the inline document). ``allow`` intersects
-    across tiers (a line must match one pattern in every tier that has
-    a list), ``ask`` and ``deny`` union, in tier order for the message.
+    A session is evaluated against exactly one of these. It holds the
+    role's allow list, its ask and deny rules, and the rules its mount
+    entries carry, each stamped with the mount it was written under so
+    it applies to a line working inside that mount. There is nothing
+    above it and nothing beside it: two rules that both match are
+    resolved by anchor depth, then by verb (``policy/match/decide``).
 
     Args:
-        allow (tuple[str, ...] | None): the tier's allow patterns; None
-            when the tier states no list (everything visible).
+        allow (tuple[str, ...] | None): the role's allow patterns; None
+            when it states no list (everything visible).
         ask (tuple[CommandRule, ...]): rules admitted only with an
             approval.
         deny (tuple[CommandRule, ...]): rules refused with a reason.
@@ -283,6 +309,12 @@ class CommandsSpec:
     deny: tuple[CommandRule, ...] = ()
 
 
+# The rules that apply to one line, each with the verb it carries, deny
+# before ask and in the order written. Built once per line by ``decide``
+# and read again at every subject of it.
+LiveRules = Sequence[tuple[Outcome, CommandRule]]
+
+
 class SessionCommandsQuery(Protocol):
     """The one session question the permissions policy asks.
 
@@ -291,10 +323,10 @@ class SessionCommandsQuery(Protocol):
     workspace.
     """
 
-    def commands_of(self, session_id: str) -> tuple[CommandsSpec, ...]:
-        """The compiled command layers of one session, bound tiers
-        first; the bound tiers alone for an id the manager does not
-        know, so an unbound door still fails toward refusal.
+    def commands_of(self, session_id: str) -> "AdmissionRules | None":
+        """The compiled admission rules of one session; the default
+        role's for an id the manager does not know, the empty id of an
+        unbound door included.
 
         Args:
             session_id (str): the session, empty when none is bound.

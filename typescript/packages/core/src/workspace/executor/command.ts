@@ -17,7 +17,6 @@ import { concatBytes } from '../../core/jq/format.ts'
 import type { ByteSource } from '../../io/types.ts'
 import { IOResult, materialize } from '../../io/types.ts'
 import type { Resource } from '../../resource/base.ts'
-import { assertMountAllowed, MountNotAllowedError } from '../../context/session_context.ts'
 import type { CallStack } from '../../shell/call_stack.ts'
 import type { JobTable } from '../../shell/job_table/index.ts'
 import { PathSpec } from '../../types.ts'
@@ -372,20 +371,6 @@ export async function handleCommand(
       new ExecutionNode({ command: cmdStr, exitCode: 127 }),
     ]
   }
-  try {
-    assertMountAllowed(mount.prefix)
-  } catch (err) {
-    if (err instanceof MountNotAllowedError) {
-      const errBytes = new TextEncoder().encode(`${cmdName}: ${err.message}\n`)
-      return [
-        null,
-        new IOResult({ exitCode: 1, stderr: errBytes }),
-        new ExecutionNode({ command: cmdStr, stderr: errBytes, exitCode: 1 }),
-      ]
-    }
-    throw err
-  }
-
   const parsedLine = parseFlags(parts.slice(1), mount.specFor(cmdName), cmdName, session.cwd)
   const { paths, flagKwargs, warnings: parseWarnings } = parsedLine
   const textsRaw = parsedLine.texts

@@ -15,7 +15,7 @@
 import { sessionPathAllowed } from '../../context/session_context.ts'
 import type { ByteSource } from '../../io/types.ts'
 import { PolicyDenied, askRule, renderDeny, renderPending } from '../../policy/index.ts'
-import type { CommandContext, CommandRule, CommandsSpec } from '../../policy/index.ts'
+import type { CommandContext, CommandRule, AdmissionRules } from '../../policy/index.ts'
 import { ioRefusal } from '../../policy/match/rule.ts'
 import { hasRules, readsArgs, scopesPaths } from '../../policy/match/reads.ts'
 import type { ValueType } from '../../commands/spec/types.ts'
@@ -92,20 +92,20 @@ function norm(virtual: string): string {
  * the door answered for this line, and the session's standing ones.
  */
 export class Admitted implements EntryGate {
-  readonly layers: readonly CommandsSpec[]
+  readonly rules: AdmissionRules | null
   readonly tokens: readonly string[]
   readonly judged: ReadonlySet<string>
   readonly granted: readonly CommandRule[]
   readonly scoped: boolean
 
   constructor(init: {
-    layers: readonly CommandsSpec[]
+    rules: AdmissionRules | null
     tokens: readonly string[]
     judged: ReadonlySet<string>
     granted: readonly CommandRule[]
     scoped: boolean
   }) {
-    this.layers = init.layers
+    this.rules = init.rules
     this.tokens = init.tokens
     this.judged = init.judged
     this.granted = init.granted
@@ -116,7 +116,7 @@ export class Admitted implements EntryGate {
   // running command.
   check(virtual: string): void {
     if (this.judged.has(norm(virtual))) return
-    const reason = ioRefusal(this.layers, this.tokens, virtual, this.granted)
+    const reason = ioRefusal(this.rules, this.tokens, virtual, this.granted)
     if (reason !== null) throw new PolicyDenied(reason, virtual)
   }
 }
@@ -280,13 +280,13 @@ export async function admit(
   if (verdict === null) {
     const granted = session.grants.filter((g) => g.decision === 'allow_session').map((g) => g.rule)
     if (asked !== null && asked.kind === 'ask') granted.unshift(askRule(ctx, asked))
-    const layers = session.commandLayers
+    const rules = session.commands
     return new Admitted({
-      layers,
+      rules,
       tokens,
       judged: new Set(ctx.paths.map((p) => norm(p.virtual))),
       granted,
-      scoped: scopesPaths(layers, name),
+      scoped: scopesPaths(rules, name),
     })
   }
   const [stderr, exitCode] =
@@ -348,13 +348,13 @@ async function admitWords(
   registry: MountRegistry,
   namespace: Namespace | null,
   agentId: string,
-  layers: readonly CommandsSpec[],
+  rules: AdmissionRules | null,
   reparse: (line: string) => TSNodeLike,
   redirectWords: readonly Word[] = [],
 ): Promise<Refusal | null> {
   const head = words[0]
   if (head === undefined) return null
-  if (head.text === null && hasRules(layers)) return refuse(head.raw, unreadable(head.raw))
+  if (head.text === null && hasRules(rules)) return refuse(head.raw, unreadable(head.raw))
   const name = wordValue(head)
   const args = words.slice(1).map(wordValue)
   const line = [name, ...args]
@@ -389,7 +389,7 @@ async function admitWords(
     if (globby) return refuse(name, 'expands a pattern only the runtime can read')
   }
   const unread = [...words.slice(1), ...redirectWords].find((w) => w.text === null)?.raw
-  if ((unread !== undefined || open) && readsArgs(layers, name)) {
+  if ((unread !== undefined || open) && readsArgs(rules, name)) {
     return refuse(
       name,
       unread !== undefined ? unreadable(unread) : 'runs on operands the gate cannot read',
@@ -397,7 +397,7 @@ async function admitWords(
   }
   for (const inner of innerLines(name, words.slice(1))) {
     if (!innerReadable(inner)) {
-      if (hasRules(layers)) return refuse(name, 'runs lines the gate cannot read')
+      if (hasRules(rules)) return refuse(name, 'runs lines the gate cannot read')
       continue
     }
     const innerRefusal =
@@ -410,7 +410,7 @@ async function admitWords(
             registry,
             namespace,
             agentId,
-            layers,
+            rules,
             reparse,
           )
     if (innerRefusal !== null) return innerRefusal
@@ -453,7 +453,7 @@ export async function admitLine(
   agentId: string,
   reparse: (line: string) => TSNodeLike,
 ): Promise<Refusal | null> {
-  const layers = session.commandLayers
+  const rules = session.commands
   const home = homeDir(session)
   for (const node of commandNodes(root)) {
     const [, parts] = splitEnvPrefix(getParts(node))
@@ -469,7 +469,7 @@ export async function admitLine(
       registry,
       namespace,
       agentId,
-      layers,
+      rules,
       reparse,
       redirectWords(node, home),
     )

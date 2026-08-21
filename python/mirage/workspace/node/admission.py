@@ -20,7 +20,7 @@ from typing import Any
 from mirage.commands.spec.types import ValueType
 from mirage.context.session_context import session_path_allowed
 from mirage.io.types import ByteSource
-from mirage.policy import (Ask, CommandContext, CommandRule, CommandsSpec,
+from mirage.policy import (AdmissionRules, Ask, CommandContext, CommandRule,
                            Deny, Pending, PolicyDenied, ask_rule, render_deny,
                            render_pending)
 from mirage.policy.match import has_rules, io_refusal, reads_args, scopes_paths
@@ -90,7 +90,7 @@ class Admitted:
     command renders as GNU's ``Permission denied``.
 
     Args:
-        layers (tuple[CommandsSpec, ...]): the session's command tiers.
+        rules (AdmissionRules | None): the session's admission rules.
         tokens (tuple[str, ...]): the line's tokens, command name first.
         judged (frozenset[str]): the virtual paths the gate judged.
         granted (tuple[CommandRule, ...]): the ask rules the line runs
@@ -100,7 +100,7 @@ class Admitted:
             command's paths (``EntryGate.scoped``).
     """
 
-    layers: tuple[CommandsSpec, ...]
+    rules: AdmissionRules | None
     tokens: tuple[str, ...]
     judged: frozenset[str]
     granted: tuple[CommandRule, ...]
@@ -115,7 +115,7 @@ class Admitted:
         """
         if _norm(virtual) in self.judged:
             return
-        reason = io_refusal(self.layers, self.tokens, virtual, self.granted)
+        reason = io_refusal(self.rules, self.tokens, virtual, self.granted)
         if reason is not None:
             raise PolicyDenied(errno.EACCES, reason, virtual)
 
@@ -299,12 +299,12 @@ async def admit(
         ]
         if isinstance(asked, Ask):
             granted.insert(0, ask_rule(ctx, asked))
-        layers = session.command_layers
-        return Admitted(layers=layers,
+        rules = session.commands
+        return Admitted(rules=rules,
                         tokens=tokens,
                         judged=frozenset(_norm(p.virtual) for p in ctx.paths),
                         granted=tuple(granted),
-                        scoped=scopes_paths(layers, name))
+                        scoped=scopes_paths(rules, name))
     err, code = (render_pending(name, verdict) if isinstance(verdict, Pending)
                  else render_deny(name, verdict))
     return Refusal(err, code)
@@ -358,7 +358,7 @@ async def _admit_words(
         registry: MountRegistry,
         namespace: Namespace | None,
         agent_id: str,
-        layers: tuple[CommandsSpec, ...],
+        rules: AdmissionRules | None,
         redirect_words: tuple[Word, ...] = (),
 ) -> Refusal | None:
     """Admit one command of a whole line on the words the gate read,
@@ -373,12 +373,12 @@ async def _admit_words(
             approval door and the CLI installs.
         namespace (Namespace | None): the link table.
         agent_id (str): the agent the line is attributed to.
-        layers (tuple[CommandsSpec, ...]): the session's command tiers.
+        rules (AdmissionRules | None): the session's admission rules.
         redirect_words (tuple[Word, ...]): the statement's redirect
             targets, as the gate reads them.
     """
     head = words[0]
-    if head.text is None and has_rules(layers):
+    if head.text is None and has_rules(rules):
         return _refuse(head.raw, _unreadable(head.raw))
     name = head.value
     args = [w.value for w in words[1:]]
@@ -417,14 +417,14 @@ async def _admit_words(
             return _refuse(name, "expands a pattern only the runtime can read")
     unread = next(
         (w.raw for w in (*words[1:], *redirect_words) if w.text is None), None)
-    if (unread is not None or open_) and reads_args(layers, name):
+    if (unread is not None or open_) and reads_args(rules, name):
         return _refuse(
             name,
             _unreadable(unread)
             if unread is not None else "runs on operands the gate cannot read")
     for inner in inner_lines(name, words[1:]):
         if not inner.readable:
-            if has_rules(layers):
+            if has_rules(rules):
                 return _refuse(name, "runs lines the gate cannot read")
             continue
         if inner.line is not None:
@@ -432,7 +432,7 @@ async def _admit_words(
                                        namespace, agent_id)
         else:
             refusal = await _admit_words(list(inner.argv), inner.open, session,
-                                         registry, namespace, agent_id, layers)
+                                         registry, namespace, agent_id, rules)
         if refusal is not None:
             return refusal
     return None
@@ -480,7 +480,7 @@ async def admit_line(
         namespace (Namespace | None): the link table.
         agent_id (str): the agent the line is attributed to.
     """
-    layers = session.command_layers
+    rules = session.commands
     home = home_dir(session)
     for node in command_nodes(ast):
         _, parts = split_env_prefix(get_parts(node))
@@ -495,7 +495,7 @@ async def admit_line(
                                      registry,
                                      namespace,
                                      agent_id,
-                                     layers,
+                                     rules,
                                      redirect_words=_redirect_words(
                                          node, home))
         if refusal is not None:

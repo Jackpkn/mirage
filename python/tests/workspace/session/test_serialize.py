@@ -12,7 +12,7 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from mirage.policy.types import CommandRule, CommandsSpec, Grant
+from mirage.policy.types import AdmissionRules, CommandRule, Grant
 from mirage.workspace.session.serialize import (commands_from_dict,
                                                 commands_to_dict,
                                                 grant_from_dict, grant_to_dict,
@@ -35,16 +35,16 @@ def test_rule_round_trips_and_writes_mount_only_when_set():
 
 
 def test_commands_round_trips_and_keeps_an_absent_allow_list():
-    spec = CommandsSpec(allow=("ls", "git log"),
-                        ask=(CommandRule(reason="sign-off",
-                                         commands=("git push", )), ),
-                        deny=(CommandRule(reason="no", commands=("rm", )), ))
+    spec = AdmissionRules(allow=("ls", "git log"),
+                          ask=(CommandRule(reason="sign-off",
+                                           commands=("git push", )), ),
+                          deny=(CommandRule(reason="no", commands=("rm", )), ))
     assert commands_from_dict(commands_to_dict(spec)) == spec
-    unlisted = CommandsSpec(deny=(CommandRule(reason="x"), ))
+    unlisted = AdmissionRules(deny=(CommandRule(reason="x"), ))
     data = commands_to_dict(unlisted)
     assert data["allow"] is None
     assert commands_from_dict(data) == unlisted
-    assert commands_from_dict({}) == CommandsSpec()
+    assert commands_from_dict({}) == AdmissionRules()
 
 
 def test_grant_round_trips_with_defaults():

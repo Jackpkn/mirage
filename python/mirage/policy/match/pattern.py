@@ -47,19 +47,37 @@ def pattern_matches(pattern: str, tokens: Sequence[str]) -> bool:
     return all(w == WILDCARD or w == t for w, t in zip(want, tokens))
 
 
+def pattern_reaches(pattern: str, path: Sequence[str]) -> bool:
+    """Whether a pattern can match some line running the node at a path.
+
+    Neither side has to be the longer one, which is what separates this
+    from :func:`pattern_matches`: only the words the two share are read.
+    A pattern that runs past the path narrows what is reachable below it
+    (``linear issue list`` reaches ``linear issue``, because one line of
+    that group is allowed); a path that runs past the pattern is already
+    covered (``linear issue`` reaches ``linear issue list``).
+
+    Args:
+        pattern (str): the pattern as written.
+        path (Sequence[str]): the node's canonical words, head first.
+    """
+    want = split_pattern(pattern)
+    return all(w == WILDCARD or w == t for w, t in zip(want, path))
+
+
 def pattern_names(pattern: str, name: str) -> bool:
     """Whether a pattern can match some line of a command.
 
     Visibility asks this: a name is installed for the session when a
     pattern of every allow list starts with it (or with the wildcard),
-    whatever the rest of the pattern requires of the line.
+    whatever the rest of the pattern requires of the line. The one-word
+    case of :func:`pattern_reaches`.
 
     Args:
         pattern (str): the pattern as written.
         name (str): the command name.
     """
-    want = split_pattern(pattern)
-    return not want or want[0] == WILDCARD or want[0] == name
+    return pattern_reaches(pattern, (name, ))
 
 
 def _unify(a: tuple[str, ...], b: tuple[str, ...]) -> tuple[str, ...] | None:

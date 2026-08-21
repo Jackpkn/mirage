@@ -12,7 +12,7 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import replace
 
 from mirage.commands.cli.constants import CLAP_EXIT, USAGE_EXIT
@@ -95,7 +95,8 @@ def owns_argv(node: CLISpec) -> bool:
 
 def node_help(name: str,
               node: CLISpec,
-              style: UsageStyle = UsageStyle.ARGPARSE) -> str:
+              style: UsageStyle = UsageStyle.ARGPARSE,
+              visible: Callable[[str], bool] | None = None) -> str:
     """A group node's help: the ordinary command help plus Commands rows.
 
     One renderer serves leaves and groups (a group is a spec whose
@@ -111,21 +112,31 @@ def node_help(name: str,
         style (UsageStyle): the ROOT's dialect, never the node's: a
             program answers in one voice at every level, the same rule
             the leaf refusal follows.
+        visible (Callable[[str], bool] | None): filter on a child's
+            canonical name, None to list every child. Only ``man``
+            passes one, since it renders for a session; a line that
+            reaches ``--help`` or the bare-group refusal was admitted
+            whole, so there is nothing left to filter there.
     """
     return render_help(name,
                        _listed(node),
-                       subcommands=_rows(node),
+                       subcommands=_rows(node, visible),
                        style=style)
 
 
-def _rows(node: CLISpec) -> list[tuple[str, str]]:
+def _rows(
+        node: CLISpec,
+        visible: Callable[[str], bool] | None = None) -> list[tuple[str, str]]:
     """The node's child rows, as the renderer lists them.
 
     Args:
         node (CLISpec): the group node.
+        visible (Callable[[str], bool] | None): filter on a child's
+            canonical name, None to list every child.
     """
     return [(_verb_display(child), child.description or "")
-            for child in node.subcommands]
+            for child in node.subcommands
+            if visible is None or visible(child.name)]
 
 
 def _listed(node: CLISpec) -> CLISpec:

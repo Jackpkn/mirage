@@ -17,7 +17,7 @@ import type { AsyncLineIterator } from '../../io/async_line_iterator.ts'
 import type { ShellArray } from '../../shell/array.ts'
 import type { ShellVar } from '../../shell/variable.ts'
 import { attrsFromLetters, makeVar, storedAttrs, VarAttr, withValue } from '../../shell/variable.ts'
-import type { CommandsSpec, Grant } from '../../policy/types.ts'
+import type { AdmissionRules, Grant } from '../../policy/types.ts'
 import {
   commandsFromJSON,
   commandsToJSON,
@@ -135,7 +135,7 @@ export interface SessionInit {
    * by the inline document): allow patterns, ask and deny rules. A
    * durable restriction like hiddenPaths, so it persists.
    */
-  commands?: CommandsSpec | null
+  commands?: AdmissionRules | null
   /**
    * The host's standing answers to asked lines (design 3.9): session
    * state like functions and cwd, persisted, read and written through
@@ -263,19 +263,6 @@ export class Session {
   // one channel. Python needs no equivalent: kill cancels the asyncio
   // task and cancellation is ambient.
   abortSignal: AbortSignal | null = null
-  // What the workspace and its mounts hide from every session
-  // (`permissions.paths.hide`, `mounts.<p>.permissions.paths.hide`),
-  // stamped by the SessionManager on create and hydrate and joined with
-  // hiddenPaths in the predicate. Deliberately NOT part of SessionInit
-  // and never persisted: it derives from the workspace's own
-  // configuration, so a restart or a config change never leaves a
-  // stale fold in the store. fork() carries it (a fork binds the same
-  // workspace).
-  boundHidden: HiddenPaths | null = null
-  // The workspace-bound command tiers (mounts in registration order,
-  // then the workspace), stamped and carried exactly like boundHidden,
-  // never persisted.
-  boundCommands: readonly CommandsSpec[] = []
   // Command-substitution tracking for assignment statements: how many
   // substitutions have run in this session, and the status of the
   // most recent one. An assignment statement snapshots the count
@@ -311,7 +298,7 @@ export class Session {
   mountModes: ReadonlyMap<string, MountMode> | null
   hiddenPaths: HiddenPaths | null
   hiddenVars: HiddenVars | null
-  commands: CommandsSpec | null
+  commands: AdmissionRules | null
   grants: readonly Grant[]
   generation: number
   pipelineTimeoutSeconds: number | null
@@ -394,8 +381,6 @@ export class Session {
     forked.getoptsPos = this.getoptsPos
     forked.getoptsOptind = this.getoptsOptind
     forked.abortSignal = this.abortSignal
-    forked.boundHidden = this.boundHidden
-    forked.boundCommands = this.boundCommands
     forked.cmdsubSeq = this.cmdsubSeq
     forked.cmdsubStatus = this.cmdsubStatus
     forked.shopts = { ...this.shopts }
@@ -575,14 +560,6 @@ export class Session {
     if (this.commands !== null) data.commands = commandsToJSON(this.commands)
     if (this.grants.length > 0) data.grants = this.grants.map(grantToJSON)
     return data
-  }
-
-  /**
-   * The command tiers this session runs under: the bound ones (mounts,
-   * then workspace), then its own.
-   */
-  get commandLayers(): readonly CommandsSpec[] {
-    return this.commands === null ? this.boundCommands : [...this.boundCommands, this.commands]
   }
 
   static fromJSON(data: {

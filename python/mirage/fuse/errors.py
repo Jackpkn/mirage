@@ -26,9 +26,9 @@ NO_XATTR = posix_errno(FsCondition.NO_XATTR)
 # nothing else: SFTP 3 reports a non-empty directory as asyncssh's
 # SFTPFailure, which is not an OSError and has no code of its own, so
 # only the wording separates it from any other server-side failure.
-# The needles that duplicated a typed arm are gone: "read-only" and
-# "not allowed to access mount" arrive as PermissionError, "no mount"
-# as ValueError, and classify names all three.
+# The needles that duplicated a typed arm are gone: "read-only" arrives
+# as PermissionError and "no mount" as ValueError, and classify names
+# both.
 _MESSAGE_CODES: tuple[tuple[tuple[str, ...], int], ...] = (
     (("not empty", "enotempty"), errno.ENOTEMPTY),
     (("not a directory", "enotdir"), errno.ENOTDIR),

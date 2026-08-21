@@ -127,6 +127,8 @@ def _mounts(descendants: tuple[str, ...] = (),
     return MountView(
         descendants=lambda p:
         [d for d in descendants if d.startswith(p.rstrip("/") + "/")],
+        visible_descendants=lambda p:
+        [d for d in descendants if d.startswith(p.rstrip("/") + "/")],
         is_root=lambda p: p.rstrip("/") in {r.rstrip("/")
                                             for r in roots},
         root_of=root_of,

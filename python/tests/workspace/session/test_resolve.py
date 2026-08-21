@@ -1,17 +1,19 @@
 import pytest
 
 from mirage.policy.errors import PolicyError
-from mirage.policy.types import CommandRule, CommandsSpec
+from mirage.policy.match.rule import match_op, rule_scope
+from mirage.policy.types import AdmissionRules, CommandRule, OpsContext
 from mirage.shell.variable import VarAttr
-from mirage.types import HiddenPaths, HiddenVars, MountMode
+from mirage.types import HiddenPaths, HiddenVars, MountMode, PathSpec
+from mirage.utils.hidden import path_hidden
 from mirage.workspace.session.session import Session
 
 from mirage.workspace.session.permissions import (  # isort: skip
-    CommandsBlock, MountCommandsBlock, MountPermissions, PathsBlock,
-    SessionProfile, VarsBlock, WorkspacePermissions)
+    CommandsBlock, MountCommandsBlock, PathsBlock, ProfileMount,
+    SessionProfile, VarsBlock)
 from mirage.workspace.session.resolve import (  # isort: skip
-    apply_profile, bound_commands, bound_hidden, compile_commands,
-    compile_profile, inherit, narrow, rebase, resolve_profile, tighten)
+    apply_profile, compile_commands, compile_profile, narrow, resolve_profile,
+    with_inline)
 
 PROFILES = {
     "default":
@@ -22,89 +24,38 @@ PROFILES = {
                        "/scratch": "rwx"
                    }),
     "reviewer":
-    SessionProfile(extends="default",
-                   paths=PathsBlock(hide=("/repo/.env", )),
+    SessionProfile(paths=PathsBlock(hide=("/repo/.env", )),
                    env={"ROLE": "reviewer"}),
-    "auditor":
-    SessionProfile(extends="reviewer", cwd="/repo"),
 }
 
 
-def test_inherit_copies_absent_fields_and_replaces_stated_ones():
-    reviewer = inherit(PROFILES, "reviewer")
-    assert reviewer.extends is None
-    assert reviewer.cwd == "/scratch"
-    assert reviewer.mounts == {
-        "/repo": MountMode.READ,
-        "/scratch": MountMode.EXEC
-    }
-    assert reviewer.paths == PathsBlock(hide=("/repo/.env", ))
-    # A stated field replaces the parent's, it does not merge into it.
-    assert reviewer.env == {"ROLE": "reviewer"}
-
-
-def test_inherit_walks_a_chain_root_first():
-    auditor = inherit(PROFILES, "auditor")
-    assert auditor.cwd == "/repo"
-    assert auditor.paths == PathsBlock(hide=("/repo/.env", ))
-    assert auditor.mounts is not None and "/repo" in auditor.mounts
-
-
-def test_inherit_of_a_root_is_the_root_without_extends():
-    assert inherit(PROFILES, "default") == PROFILES["default"]
-
-
-def test_inherit_rejects_unknown_names_and_cycles():
-    with pytest.raises(PolicyError, match="unknown profile 'nope'"):
-        inherit(PROFILES, "nope")
-    with pytest.raises(
-            PolicyError,
-            match="profile 'orphan' extends unknown profile 'gone'"):
-        inherit({"orphan": SessionProfile(extends="gone")}, "orphan")
-    loop = {
-        "a": SessionProfile(extends="b"),
-        "b": SessionProfile(extends="a"),
-    }
-    with pytest.raises(PolicyError, match="cycle: a -> b -> a"):
-        inherit(loop, "a")
-
-
 def test_resolve_profile_names_objects_and_the_default():
-    assert resolve_profile(PROFILES,
-                           "reviewer") == inherit(PROFILES, "reviewer")
-    assert resolve_profile(PROFILES, None) == PROFILES["default"]
+    assert resolve_profile(PROFILES, "reviewer") is PROFILES["reviewer"]
+    assert resolve_profile(PROFILES, None) is PROFILES["default"]
     assert resolve_profile({}, None) is None
     plain = SessionProfile(cwd="/x")
     assert resolve_profile(PROFILES, plain) is plain
-    child = SessionProfile(extends="default", cwd="/x")
-    resolved = resolve_profile(PROFILES, child)
-    assert resolved is not None
-    assert resolved.cwd == "/x" and resolved.env == {"PAGER": "cat"}
-    with pytest.raises(PolicyError):
-        resolve_profile(PROFILES, SessionProfile(extends="nope"))
 
 
-def test_tighten_intersects_mount_grants_at_the_weaker_mode():
+def test_resolve_profile_refuses_an_unknown_name():
+    with pytest.raises(PolicyError, match="unknown profile 'nope'"):
+        resolve_profile(PROFILES, "nope")
+
+
+def test_with_inline_takes_the_weaker_mode_per_mount():
     base = SessionProfile(mounts={"/a": "rwx", "/b": "r"})
     inline = SessionProfile(mounts={"/a": "rw", "/c": "rwx"})
-    out = tighten(base, inline)
-    assert out is not None
-    assert out.mounts == {"/a": MountMode.WRITE}
+    out = with_inline(base, inline)
+    assert out is not None and out.mounts is not None
+    # Every prefix either side names survives; a mount only the inline
+    # document names is not a grant, since a mount the role never named
+    # was already reachable at its own mode.
+    assert out.mounts["/a"].mode is MountMode.WRITE
+    assert out.mounts["/b"].mode is MountMode.READ
+    assert out.mounts["/c"].mode is MountMode.EXEC
 
 
-def test_tighten_mixes_the_list_and_mapping_forms():
-    ceilings = SessionProfile(mounts={"/a": "rw", "/b": "r"})
-    listed = SessionProfile(mounts=["/b", "/c"])
-    assert tighten(ceilings, listed).mounts == {"/b": MountMode.READ}
-    assert tighten(listed, ceilings).mounts == {"/b": MountMode.READ}
-    assert tighten(listed,
-                   SessionProfile(mounts=["/c", "/d"])).mounts == ("/c", )
-    # One side unstated leaves the other's grant alone.
-    assert tighten(ceilings, SessionProfile()).mounts == ceilings.mounts
-    assert tighten(SessionProfile(), listed).mounts == ("/b", "/c")
-
-
-def test_tighten_unions_hides_and_lets_inline_presets_win():
+def test_with_inline_unions_hides_and_lets_inline_presets_win():
     base = SessionProfile(cwd="/scratch",
                           env={
                               "PAGER": "cat",
@@ -116,7 +67,7 @@ def test_tighten_unions_hides_and_lets_inline_presets_win():
                             env={"A": "2"},
                             paths=PathsBlock(hide=("*.pem", "/repo/secrets")),
                             vars=VarsBlock(hide=("SLACK_TOKEN", )))
-    out = tighten(base, inline)
+    out = with_inline(base, inline)
     assert out is not None
     assert out.cwd == "/repo"
     assert out.env == {"PAGER": "cat", "A": "2"}
@@ -125,38 +76,130 @@ def test_tighten_unions_hides_and_lets_inline_presets_win():
     assert out.vars == VarsBlock(hide=("AWS_*", "SLACK_TOKEN"))
 
 
-def test_tighten_with_one_side_missing_is_the_other():
+def test_with_inline_merges_one_mount_section():
+    base = SessionProfile(
+        mounts={
+            "/repo":
+            ProfileMount(mode=MountMode.WRITE,
+                         commands=MountCommandsBlock(deny=("rm", )),
+                         paths=PathsBlock(hide=("/repo/.env", )))
+        })
+    inline = SessionProfile(
+        mounts={
+            "/repo":
+            ProfileMount(commands=MountCommandsBlock(ask=("git push", )),
+                         paths=PathsBlock(hide=("/repo/secrets", )))
+        })
+    entry = with_inline(base, inline).mounts["/repo"]
+    assert entry.mode is MountMode.WRITE
+    assert entry.commands is not None
+    assert [r.commands for r in entry.commands.deny] == [("rm", )]
+    assert [r.commands for r in entry.commands.ask] == [("git push", )]
+    assert entry.paths == PathsBlock(hide=("/repo/.env", "/repo/secrets"))
+
+
+def test_with_inline_with_one_side_missing_is_the_other():
     p = SessionProfile(cwd="/x")
-    assert tighten(None, p) is p
-    assert tighten(p, None) is p
-    assert tighten(None, None) is None
+    assert with_inline(None, p) is p
+    assert with_inline(p, None) is p
+    assert with_inline(None, None) is None
 
 
-def test_rebase_joins_every_entry_under_the_mount_root():
-    perms = MountPermissions(paths=PathsBlock(hide=(".env", "*.pem", "/abs/x",
-                                                    "docs/*")))
-    assert rebase("/repo/", perms) == ("/repo/.env", "/repo/*.pem",
-                                       "/repo/abs/x", "/repo/docs/*")
-    assert rebase("repo", None) == ()
-    # A blank entry is refused at the door, so the mount root is spelled
-    # "/" (and only that way): the mount tier is where a relative entry
-    # is legal, and "/" there is the root of the mount, not of the tree.
-    root = MountPermissions(paths=PathsBlock(hide=("a", "/b", "/")))
-    assert rebase("/", root) == ("/a", "/b", "/")
-    assert rebase("/repo", root) == ("/repo/a", "/repo/b", "/repo")
+def test_with_inline_adds_ask_and_deny_but_refuses_an_allow_list():
+    base = SessionProfile(commands=CommandsBlock(
+        allow=("ls", "git", "cat"), ask=("git push", ), deny=("rm", )))
+    inline = SessionProfile(commands=CommandsBlock(
+        deny=(CommandRule(reason="no", commands=("mv", )), )))
+    out = with_inline(base, inline)
+    assert out is not None and out.commands is not None
+    # The allow list is the role's alone, and the added rules land after
+    # it: an inline document restricts, it never installs.
+    assert out.commands.allow == ("ls", "git", "cat")
+    assert [r.commands for r in out.commands.ask] == [("git push", )]
+    assert [r.commands for r in out.commands.deny] == [("rm", ), ("mv", )]
+    with pytest.raises(PolicyError, match="not an allow list"):
+        with_inline(base,
+                    SessionProfile(commands=CommandsBlock(allow=("wc", ))))
+    # And with no role to add to: the refusal belongs to where the
+    # document was written, so a workspace that happens to declare no
+    # default role must not quietly accept what one with a role refuses.
+    with pytest.raises(PolicyError, match="not an allow list"):
+        with_inline(None,
+                    SessionProfile(commands=CommandsBlock(allow=("wc", ))))
 
 
-def test_bound_hidden_combines_workspace_and_rebased_mount_hides():
-    ws = WorkspacePermissions(paths=PathsBlock(hide=("/shared/finance", )))
-    mounts = {
-        "/repo/": MountPermissions(paths=PathsBlock(hide=(".env", "*.pem"))),
-        "/scratch/": None,
-    }
-    assert bound_hidden(ws, mounts) == HiddenPaths(paths=("/shared/finance",
-                                                          "/repo/.env"),
-                                                   patterns=("/repo/*.pem", ))
-    assert bound_hidden(None, {"/a/": None}) is None
-    assert bound_hidden(WorkspacePermissions(), {}) is None
+def test_with_inline_leaves_a_stated_block_alone_when_the_other_is_bare():
+    base = SessionProfile(commands=CommandsBlock(allow=("ls", )))
+    assert with_inline(base,
+                       SessionProfile(cwd="/x")).commands == (base.commands)
+    inline = SessionProfile(commands=CommandsBlock(deny=("rm", )))
+    assert with_inline(SessionProfile(cwd="/x"),
+                       inline).commands == inline.commands
+
+
+def test_compile_commands_lists_mount_rules_before_the_role_s_own():
+    rules = compile_commands(
+        SessionProfile(
+            commands=CommandsBlock(allow=("ls", ), deny=("shutdown", )),
+            mounts={
+                "/repo":
+                ProfileMount(commands=MountCommandsBlock(
+                    ask=("git rebase", ),
+                    deny=(CommandRule(reason="ro",
+                                      commands=("rm", ),
+                                      paths=("/repo/*.lock", )), ))),
+                "/scratch":
+                ProfileMount(mode=MountMode.READ),
+            }))
+    assert rules is not None
+    assert rules.allow == ("ls", )
+    # Every mount rule carries the root it was written under, which is
+    # what scopes it to a line working inside that mount; its paths are
+    # kept exactly as typed.
+    assert rules.deny[0] == CommandRule(reason="ro",
+                                        commands=("rm", ),
+                                        paths=("/repo/*.lock", ),
+                                        mount="/repo")
+    assert rules.deny[1].commands == ("shutdown", ) and not rules.deny[1].mount
+    assert rules.ask[0].commands == ("git rebase", )
+    assert rules.ask[0].mount == "/repo" and not rules.ask[0].paths
+
+
+def test_compile_commands_anchors_a_name_pattern_to_its_mount():
+    rules = compile_commands(
+        SessionProfile(
+            mounts={
+                "/repo":
+                ProfileMount(commands=MountCommandsBlock(
+                    deny=(CommandRule(reason="no pems", paths=("*.pem", )), )))
+            }))
+    assert rules is not None
+    rule = rules.deny[0]
+    assert rule.paths == ("/repo/*.pem", )
+    # The stamp scopes the rule at admission, but the op door reads the
+    # paths alone, so a raw name pattern refused a read in every other
+    # mount too.
+    scope = rule_scope(rule)
+    assert match_op(rule, scope, _read_op("/repo/deep/key.pem"))
+    assert not match_op(rule, scope, _read_op("/other/key.pem"))
+
+
+def _read_op(virtual: str) -> OpsContext:
+    return OpsContext(op="read",
+                      path=PathSpec(virtual=virtual,
+                                    directory=virtual.rsplit("/", 1)[0],
+                                    resource_path=virtual,
+                                    raw_path=virtual),
+                      write=False,
+                      prefix="/other")
+
+
+def test_compile_commands_is_none_when_the_role_states_no_rules():
+    assert compile_commands(SessionProfile()) is None
+    assert compile_commands(SessionProfile(commands=CommandsBlock())) is None
+    assert compile_commands(
+        SessionProfile(mounts={"/repo": ProfileMount(
+            mode=MountMode.READ)})) is None
 
 
 def test_compile_profile_turns_the_document_into_session_fields():
@@ -178,31 +221,38 @@ def test_compile_profile_turns_the_document_into_session_fields():
     assert out.cwd == "/scratch"
 
 
-def test_compile_profile_list_mounts_and_empty_profile():
-    listed = compile_profile(SessionProfile(mounts=["/a", "/b"]))
-    assert listed.mount_modes == {"/a": MountMode.EXEC, "/b": MountMode.EXEC}
+def test_compile_profile_collects_the_hides_of_every_mount_section():
+    out = compile_profile(
+        SessionProfile(paths=PathsBlock(hide=("/shared/finance", )),
+                       mounts={
+                           "/repo":
+                           ProfileMount(paths=PathsBlock(hide=("/repo/.env",
+                                                               "*.pem"))),
+                           "/scratch":
+                           ProfileMount(mode=MountMode.READ),
+                       }))
+    # The set is one list for the whole session, so a name pattern
+    # written under a mount has to carry the mount with it: raw,
+    # ``*.pem`` would hide ``/scratch/key.pem`` too.
+    assert out.hidden_paths == HiddenPaths(paths=("/shared/finance",
+                                                  "/repo/.env"),
+                                           patterns=("/repo/*.pem", ))
+    assert path_hidden(out.hidden_paths, "/repo/deep/key.pem")
+    assert not path_hidden(out.hidden_paths, "/scratch/key.pem")
+    role = compile_profile(SessionProfile(paths=PathsBlock(hide=("*.pem", ))))
+    assert path_hidden(role.hidden_paths, "/scratch/key.pem")
+
+
+def test_compile_profile_of_a_bare_or_absent_role_states_nothing():
     empty = compile_profile(None)
     assert (empty.mount_modes, empty.hidden_paths, empty.hidden_vars,
-            empty.env, empty.cwd) == (None, None, None, None, None)
-    bare = compile_profile(SessionProfile())
-    assert bare == empty
-
-
-def test_compile_profile_grants_infrastructure_beside_listed_mounts():
-    # A ceiling must never lock an agent out of the scratch root, /dev
-    # or the history view, so they ride along at EXEC when the profile
-    # lists mounts, and are not invented when it lists none.
-    infra = ("/", "/dev")
-    listed = compile_profile(SessionProfile(mounts={"/a": "r"}), infra)
-    assert listed.mount_modes == {
-        "/a": MountMode.READ,
-        "/": MountMode.EXEC,
-        "/dev": MountMode.EXEC,
-    }
-    own = compile_profile(SessionProfile(mounts={"/": "r"}), infra)
-    assert own.mount_modes is not None
-    assert own.mount_modes["/"] == MountMode.READ
-    assert compile_profile(SessionProfile(cwd="/a"), infra).mount_modes is None
+            empty.env, empty.cwd, empty.commands) == (None, None, None, None,
+                                                      None, None)
+    assert compile_profile(SessionProfile()) == empty
+    # A role that names a mount without a mode narrows nothing: the
+    # mount keeps whatever the workspace gave it.
+    assert compile_profile(
+        SessionProfile(mounts={"/a": ProfileMount()})).mount_modes is None
 
 
 def test_narrow_stamps_the_uneditable_fields_and_apply_seeds_the_rest():
@@ -227,101 +277,13 @@ def test_narrow_stamps_the_uneditable_fields_and_apply_seeds_the_rest():
     assert VarAttr.EXPORT in applied.vars["ROLE"].attrs
 
 
-def test_inherit_replaces_the_commands_block_whole():
-    profiles = {
-        "base":
-        SessionProfile(
-            commands=CommandsBlock(allow=("ls", "git"), deny=("rm", ))),
-        "child":
-        SessionProfile(extends="base", commands=CommandsBlock(allow=("ls", ))),
-        "grand":
-        SessionProfile(extends="child", cwd="/x"),
-    }
-    # A stated block replaces the parent's (field inheritance), an
-    # absent one is inherited; safety comes from tightening, not here.
-    assert inherit(profiles, "child").commands == CommandsBlock(allow=("ls", ))
-    assert inherit(profiles, "grand").commands == CommandsBlock(allow=("ls", ))
-
-
-def test_tighten_intersects_allow_and_unions_ask_and_deny():
-    base = SessionProfile(commands=CommandsBlock(
-        allow=("ls", "git", "cat"), ask=("git push", ), deny=("rm", )))
-    inline = SessionProfile(commands=CommandsBlock(
-        allow=("git log", "cat", "wc"),
-        deny=(CommandRule(reason="no", commands=("mv", )), )))
-    out = tighten(base, inline)
-    assert out is not None and out.commands is not None
-    assert out.commands.allow == ("git log", "cat")
-    assert [r.commands for r in out.commands.ask] == [("git push", )]
-    assert [r.commands for r in out.commands.deny] == [("rm", ), ("mv", )]
-    # One side without a list leaves the other's alone; one side without
-    # a block leaves the other's block.
-    only = tighten(base, SessionProfile(commands=CommandsBlock(deny=("cp", ))))
-    assert only is not None and only.commands is not None
-    assert only.commands.allow == ("ls", "git", "cat")
-    assert tighten(base, SessionProfile(cwd="/x")).commands == base.commands
-    assert tighten(SessionProfile(cwd="/x"),
-                   inline).commands == inline.commands
-
-
-def test_compile_commands_scopes_a_mount_tier_and_rebases_its_paths():
-    assert compile_commands(None) is None
-    assert compile_commands(CommandsBlock()) is None
-    # A workspace or profile tier compiles as written.
-    spec = compile_commands(CommandsBlock(allow=("ls", ), deny=("rm", )))
-    assert spec == CommandsSpec(allow=("ls", ),
-                                deny=(CommandRule(reason="denied by policy",
-                                                  commands=("rm", )), ))
-    # A mount tier: every rule scoped to the mount root, its paths
-    # rebased under it, no allow list.
-    mount = compile_commands(MountCommandsBlock(
-        ask=("git rebase", ),
-        deny=(CommandRule(reason="ro",
-                          commands=("rm", ),
-                          paths=("*.lock", "/docs")), )),
-                             mount="/repo/")
-    assert mount == CommandsSpec(
-        allow=None,
-        ask=(CommandRule(reason="no standing approval",
-                         commands=("git rebase", ),
-                         mount="/repo"), ),
-        deny=(CommandRule(reason="ro",
-                          commands=("rm", ),
-                          paths=("/repo/*.lock", "/repo/docs"),
-                          mount="/repo"), ))
-    # An empty mount block is nothing to evaluate.
-    assert compile_commands(MountCommandsBlock(), mount="/repo") is None
-
-
-def test_bound_commands_lists_mount_tiers_then_the_workspace():
-    layers = bound_commands(
-        WorkspacePermissions(commands=CommandsBlock(allow=("ls", ))), {
-            "/repo/":
-            MountPermissions(commands=MountCommandsBlock(deny=("git push", ))),
-            "/scratch/":
-            None,
-            "/s3/":
-            MountPermissions(paths=PathsBlock(hide=(".env", ))),
-        })
-    assert len(layers) == 2
-    assert layers[0].deny[0].mount == "/repo"
-    assert layers[1] == CommandsSpec(allow=("ls", ))
-    assert bound_commands(None, {"/a/": None}) == ()
-    assert bound_commands(WorkspacePermissions(), {}) == ()
-
-
-def test_compile_profile_and_narrow_carry_the_command_tier():
+def test_narrow_carries_the_role_s_admission_rules_onto_the_session():
     compiled = compile_profile(
         SessionProfile(commands=CommandsBlock(allow=("ls", ), ask=("git", ))))
-    assert compiled.commands == CommandsSpec(allow=("ls", ),
-                                             ask=(CommandRule(
-                                                 reason="no standing approval",
-                                                 commands=("git", )), ))
-    assert compile_profile(SessionProfile(cwd="/x")).commands is None
+    assert compiled.commands == AdmissionRules(
+        allow=("ls", ),
+        ask=(CommandRule(reason="no standing approval", commands=("git", )), ))
     session = Session(session_id="s")
     narrow(session, compiled)
     assert session.commands == compiled.commands
-    assert session.command_layers == (compiled.commands, )
-    bound = CommandsSpec(deny=(CommandRule(reason="x"), ))
-    session.bound_commands = (bound, )
-    assert session.command_layers == (bound, compiled.commands)
+    assert compile_profile(SessionProfile(cwd="/x")).commands is None

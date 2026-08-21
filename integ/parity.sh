@@ -43,6 +43,11 @@ mounts:
   /ro:
     resource: ram
     mode: READ
+profiles:
+  blind:
+    paths:
+      hide:
+        - /side
 YML
 
 # The workspace default stays WRITE so the implicit scratch root (always
@@ -120,7 +125,11 @@ probe() {
 
   $cli workspace delete pw >/dev/null 2>&1 </dev/null || true
 
-  # ── session modes: -m /mount:mode caps what a session may do per mount ──
+  # ── session modes: -m /mount:mode narrows a mount for this session ──
+  # Naming a mount is not an allowlist: a mount the session never names
+  # keeps its own mode, and narrowing only ever weakens (capped asks for
+  # write on a READ mount and stays read-only). Excluding a mount is a
+  # hide, which answers absence, so -p blind is the other half of this.
   $cli workspace delete gw >/dev/null 2>&1 </dev/null || true
   $cli workspace create "$MODES_YAML" --id gw >/dev/null </dev/null
   $cli execute -w gw -c 'echo hello > /data/a.txt' </dev/null >/dev/null
@@ -129,10 +138,12 @@ probe() {
   $cli session create gw --id writer -m /data:rw </dev/null >/dev/null
   $cli session create gw --id lister -m /data </dev/null >/dev/null
   $cli session create gw --id capped -m /ro:write </dev/null >/dev/null
+  $cli session create gw --id blind -p blind </dev/null >/dev/null
   echo "mode.reader_cat=$($cli execute -w gw -s reader -c 'cat /data/a.txt' </dev/null | sout)"
   echo "mode.reader_rm_err=$($cli execute -w gw -s reader -c 'rm /data/a.txt' </dev/null | serr)"
   echo "mode.reader_redirect=$($cli execute -w gw -s reader -c 'echo leak > /data/new.txt' </dev/null | verdict)"
-  echo "mode.reader_side_err=$($cli execute -w gw -s reader -c 'cat /side/s.txt' </dev/null | serr)"
+  echo "mode.reader_side=$($cli execute -w gw -s reader -c 'cat /side/s.txt' </dev/null | sout)"
+  echo "mode.blind_side_err=$($cli execute -w gw -s blind -c 'cat /side/s.txt' </dev/null | serr)"
   echo "mode.writer_write=$($cli execute -w gw -s writer -c 'echo w > /data/w.txt && cat /data/w.txt' </dev/null | sout)"
   echo "mode.lister_inherits=$($cli execute -w gw -s lister -c 'echo l > /data/l.txt && cat /data/l.txt' </dev/null | sout)"
   echo "mode.capped_ro=$($cli execute -w gw -s capped -c 'echo up > /ro/y.txt' </dev/null | verdict)"
@@ -241,7 +252,8 @@ expect "session.s2_pwd" "/"
 expect "mode.reader_cat" "hello"
 expect "mode.reader_rm_err" "rm: read-only mount at /data/"
 expect "mode.reader_redirect" "denied"
-expect "mode.reader_side_err" "cat: session 'reader' not allowed to access mount '/side'"
+expect "mode.reader_side" "aside"
+expect "mode.blind_side_err" "cat: /side/s.txt: No such file or directory"
 expect "mode.writer_write" "w"
 expect "mode.lister_inherits" "l"
 expect "mode.capped_ro" "denied"

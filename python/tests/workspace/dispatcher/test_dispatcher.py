@@ -21,7 +21,7 @@ from mirage.policy import (Action, CommandRule, Deny, OpsContext, Policies,
                            Policy, PolicyDenied)
 from mirage.policy.rule import RulePolicy
 from mirage.resource.ram import RAMResource
-from mirage.types import ConsistencyPolicy, FileType, MountMode, PathSpec
+from mirage.types import ConsistencyPolicy, HiddenPaths, MountMode, PathSpec
 from mirage.workspace import Workspace
 from mirage.workspace.dispatcher import Dispatcher
 from mirage.workspace.session import Session
@@ -186,63 +186,42 @@ async def test_structure_fallback_serves_when_no_policy_objects():
 
 @pytest.fixture
 def scoped_session():
-    """Bind a session granted only the deep nested mount."""
+    """Bind a session whose role hides the parent mount's own content,
+    leaving the mount nested below it reachable."""
     session = Session(session_id="agent",
-                      mount_modes={"/data/locked/inner/deep": MountMode.EXEC})
+                      hidden_paths=HiddenPaths(paths=("/data/locked/other",
+                                                      "/data/locked/f.txt")))
     token = set_current_session(session)
     yield session
     reset_current_session(token)
 
 
-def _ungranted_parent(dispatcher) -> None:
-    """Point the mocks at a real but ungranted mount whose subtree holds
-    a granted one: try_mount_for resolves the parent for every path, while
-    only the deep mount is in the session's grants."""
-    namespace = dispatcher._namespace
-    mount = MagicMock()
-    mount.prefix = "/data/locked/"
-    mount.execute_op = AsyncMock(return_value=b"cold")
-    namespace.try_mount_for = MagicMock(return_value=mount)
-    deep = MagicMock()
-    deep.prefix = "/data/locked/inner/deep/"
-    namespace.registry.mounts = MagicMock(return_value=[mount, deep])
-    namespace.symlink_targets = MagicMock(return_value={})
-
-
 @pytest.mark.asyncio
-async def test_ungranted_parent_serves_granted_structure(scoped_session):
-    # A granted mount below an ungranted one already put the parent's
-    # name in a listing, so walking down to the grant must answer; the
-    # backend never runs, so nothing of the parent's content leaks.
-    dispatcher, _ = _dispatcher(Policies())
-    _ungranted_parent(dispatcher)
-    result, _ = await dispatcher.dispatch("readdir", _path("/data/locked"))
-    assert result == ["/data/locked/inner"]
-    st, _ = await dispatcher.dispatch("stat", _path("/data/locked"))
-    assert st.type is FileType.DIRECTORY
-    mount = dispatcher._namespace.try_mount_for.return_value
-    mount.execute_op.assert_not_awaited()
-
-
-@pytest.mark.asyncio
-async def test_ungranted_parent_structure_still_clears_admission(
+async def test_a_structure_answer_still_clears_the_sessions_hides(
         scoped_session):
-    policies = Policies()
-    policies.add(DenyLocked())
-    dispatcher, _ = _dispatcher(policies)
-    _ungranted_parent(dispatcher)
-    with pytest.raises(PolicyDenied):
-        await dispatcher.dispatch("readdir", _path("/data/locked/inner"))
+    # The synthetic answer passes the session's view as well as the
+    # policy chain: it is produced above every backend, so a path the
+    # role hides would otherwise be served by the one code path that
+    # asks no mount anything.
+    dispatcher, _ = _dispatcher(Policies())
+    _structure_only(dispatcher)
+    result, _ = await dispatcher.dispatch("readdir",
+                                          _path("/data/locked/inner"))
+    assert result == ["/data/locked/inner/deep"]
+    with pytest.raises(FileNotFoundError):
+        await dispatcher.dispatch("readdir", _path("/data/locked/other"))
 
 
 @pytest.mark.asyncio
-async def test_ungranted_mount_without_structure_still_denies(scoped_session):
-    # A path the structure does not owe raises the canonical denial,
-    # and a write can never be served synthetically.
+async def test_a_hidden_path_denies_a_read_and_refuses_a_create(
+        scoped_session):
+    # The hide's two verdicts, at the door every surface comes through:
+    # absent on a read, EACCES on a create, and a write is never served
+    # from structure.
     dispatcher, _ = _dispatcher(Policies())
-    _ungranted_parent(dispatcher)
-    with pytest.raises(PermissionError):
-        await dispatcher.dispatch("readdir", _path("/data/locked/other"))
+    _structure_only(dispatcher)
+    with pytest.raises(FileNotFoundError):
+        await dispatcher.dispatch("stat", _path("/data/locked/other"))
     with pytest.raises(PermissionError):
         await dispatcher.dispatch("write",
                                   _path("/data/locked/f.txt"),

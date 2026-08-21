@@ -12,13 +12,10 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any
 
 from mirage.resource.base import BaseResource
 from mirage.types import Limit, MountBackend, MountMode
-from mirage.workspace.session.permissions import MountPermissions
 
 
 @dataclass(frozen=True)
@@ -32,7 +29,3 @@ class Mount:
     # directory appropriate for the backend. Ignored when backend is VFS.
     mountpoint: str | None = None
     command_limits: dict[str, Limit] = field(default_factory=dict)
-    # The mount-owned permissions block (`mounts.<p>.permissions` in
-    # YAML): relative to the mount root, binding every session. A plain
-    # document is accepted; normalize_resources validates it.
-    permissions: MountPermissions | Mapping[str, Any] | None = None

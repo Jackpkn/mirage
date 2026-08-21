@@ -622,15 +622,24 @@ export class MirageShellExecutor extends ShellExecutor {
    * narrowed to `read`, so mirage's own dispatch is what refuses the
    * write rather than a second permission layer bolted on here.
    *
-   * The twin narrows, never widens. Its grants are the source session's
-   * own, so a binding confined to `/allowed` stays confined: reading the
-   * mount table instead would hand a read-only call every mount in the
-   * workspace, which is a wider world than the same command gets outside
-   * read-only mode. Only an unconfined source falls back to the mount
-   * table, and then every mount has to appear in the map, since a prefix
-   * the map omits is not narrowed but invisible, and a session that
-   * cannot see `/` cannot even run `pwd`. The one mount that keeps its
-   * own mode is the null sink, per {@link SINK_PREFIX}.
+   * The twin narrows, never widens, and that takes every part of the
+   * source's view, which is what `narrow` in core stamps: modes, hidden
+   * paths, hidden variables, command rules. Its modes cover every mount
+   * at `read` (the one exception is the null sink, per
+   * {@link SINK_PREFIX}), which is at least as narrow as whatever the
+   * source held, since `read` is the weakest mode there is; naming a
+   * mount only narrows it, so a prefix the map omits would keep its own
+   * mode rather than disappear. The other three are copied from the
+   * source session rather than recompiled, because the role it was
+   * created under is not something a session records.
+   *
+   * Leaving any of them behind widens. Hides are the obvious one: a
+   * binding confined to `/allowed` would read `/secret` in read-only
+   * mode although the same command is refused outside it. Command rules
+   * are the one modes cannot stand in for, because a mode bounds a
+   * mount and an account CLI reaches a service: a role that denies
+   * `slack message send` or `git push` still denies it here, where
+   * every mount being `read` says nothing at all about it.
    *
    * The policy's `workspaceRoot` is deliberately not consulted anywhere:
    * it is a directory on the harness's machine, so containment against
@@ -643,13 +652,19 @@ export class MirageShellExecutor extends ShellExecutor {
     const sessionId = `${this.sessionId ?? 'mirage-dsh'}::read-only`
     await ws.ensureSessionsLoaded()
     if (ws.listSessions().some((s) => s.sessionId === sessionId)) return sessionId
-    const source = ws.getSession(this.sessionId ?? ws.defaultSessionId).mountModes
-    const prefixes = source === null ? ws.mounts().map((entry) => entry.prefix) : [...source.keys()]
+    const source = ws.getSession(this.sessionId ?? ws.defaultSessionId)
     const grants: Record<string, string> = {}
-    for (const prefix of prefixes) {
-      grants[prefix] = prefix.replace(/\/+$/, '') === SINK_PREFIX ? 'exec' : 'read'
+    for (const entry of ws.mounts()) {
+      grants[entry.prefix] = entry.prefix.replace(/\/+$/, '') === SINK_PREFIX ? 'exec' : 'read'
     }
-    setCwd(ws.createSession(sessionId, { mounts: grants }), this.workdir)
+    const hide = [...(source.hiddenPaths?.paths ?? []), ...(source.hiddenPaths?.patterns ?? [])]
+    const twin = ws.createSession(sessionId, {
+      mounts: grants,
+      ...(hide.length > 0 ? { permissions: { paths: { hide } } } : {}),
+    })
+    twin.commands = source.commands
+    twin.hiddenVars = source.hiddenVars
+    setCwd(twin, this.workdir)
     return sessionId
   }
 

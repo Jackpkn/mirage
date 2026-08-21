@@ -12,7 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { mountAllowed, pathAllowed } from '../../context/session_context.ts'
+import { pathAllowed } from '../../context/session_context.ts'
 import { mountKey } from '../../utils/key_prefix.ts'
 import { type ByteSource, IOResult, materialize } from '../../io/types.ts'
 import type { Resource } from '../../resource/base.ts'
@@ -85,9 +85,7 @@ async function mountDirs(
  * unobservable optimization.
  */
 function allowedDescendants(registry: MountRegistry, path: string): MountEntry[] {
-  return registry
-    .descendantMounts(path)
-    .filter((m) => mountAllowed(m.prefix) && pathAllowed('/' + stripSlash(m.prefix)))
+  return registry.descendantMounts(path).filter((m) => pathAllowed('/' + stripSlash(m.prefix)))
 }
 
 // The descendants `ls -R` should render a block for.

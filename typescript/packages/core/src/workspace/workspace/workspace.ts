@@ -18,7 +18,6 @@ import { IOResult } from '../../io/types.ts'
 import { type EventDict, Observer } from '../../observe/observer.ts'
 import type { OpRecord } from '../../observe/record.ts'
 import { type OpKwargs, OpsRegistry } from '../../ops/registry.ts'
-import { assertMountAllowed } from '../../context/session_context.ts'
 import { isMissingPath } from '../../utils/errors.ts'
 import { contentSize, isDir as statIsDir, mtimeMs } from '../../utils/stat_view.ts'
 import type { Resource } from '../../resource/base.ts'
@@ -31,6 +30,7 @@ import { runWithTimeout } from '../../commands/builtin/utils/limit.ts'
 import type { CLIInstall } from '../cli/types.ts'
 import { resolveLimit } from '../../policy/index.ts'
 import { PermissionsPolicy } from '../../policy/builtin/permissions.ts'
+import { PolicyError } from '../../policy/errors.ts'
 import { Approvals } from '../../policy/approvals.ts'
 import { JobTable } from '../../shell/job_table/index.ts'
 import type { ShellParser } from '../../shell/parse.ts'
@@ -72,16 +72,8 @@ import { buildFilePrompt } from '../file_prompt.ts'
 import { SessionManager } from '../session/manager.ts'
 import type { WorkspaceFields, WorkspaceStateStore } from '../store/base.ts'
 import type { Session } from '../session/session.ts'
-import type { SessionProfile, WorkspacePermissions } from '../session/permissions.ts'
-import {
-  applyProfile,
-  boundCommands,
-  boundHidden,
-  compileProfile,
-  inherit,
-  resolveProfile,
-  tighten,
-} from '../session/resolve.ts'
+import { parseProfileMounts, type SessionProfile } from '../session/permissions.ts'
+import { applyProfile, compileProfile, resolveProfile, withInline } from '../session/resolve.ts'
 import { newSessionId, newWorkspaceId } from '../../utils/ids.ts'
 import type { WatchRuntime } from '../../watch/base.ts'
 import { resolveControlStores } from './build.ts'
@@ -93,7 +85,7 @@ import { PolicyRouter } from './policy.ts'
 import { Runtimes } from './runtimes.ts'
 import type { ExecuteResult } from './types.ts'
 import { type ExecuteOptions, type MountSpec, type WorkspaceOptions } from './types.ts'
-import { commandName, infrastructurePrefixes } from './utils.ts'
+import { commandName } from './utils.ts'
 import { WatchManager } from './watch.ts'
 
 export { ExecuteResult } from './types.ts'
@@ -126,8 +118,8 @@ export class Workspace {
   private readonly runtimes: Runtimes
   private readonly policyRouter: PolicyRouter
   private readonly policy: PolicyFn | null
-  private readonly permissions: WorkspacePermissions | null
   private readonly profiles: Record<string, SessionProfile>
+  private readonly defaultProfileName: string | null
   // True when the workspace auto-added an empty `/` anchor (no user `/` mount).
   // The anchor is internal and is not forwarded into the Pyodide filesystem.
   private syntheticRootAnchor = false
@@ -182,20 +174,14 @@ export class Workspace {
     })
     rejectConfigScript('policy', options.policy)
     this.policy = options.policy ?? null
-    // The permissions document, workspace tier: `permissions` binds
-    // every session, `profiles` are the named templates a session is
-    // created from. Every named profile resolves once here so an
-    // unknown `extends` or a cycle fails at construction, not at the
-    // first createSession.
-    this.permissions = options.permissions ?? null
+    // The permission documents: one role per name, and the role a
+    // session gets when it names none. A role is the whole document a
+    // session runs under, so there is no workspace-wide block above it.
     this.profiles = { ...(options.profiles ?? {}) }
-    for (const name of Object.keys(this.profiles)) inherit(this.profiles, name)
-    // What the workspace and its mounts hide from every session,
-    // stamped onto the default session now and onto every session
-    // created or hydrated later.
-    const mountPermissions = new Map(Object.entries(options.mountPermissions ?? {}))
-    this.sessionManager.boundHidden = boundHidden(this.permissions, mountPermissions)
-    this.sessionManager.boundCommands = boundCommands(this.permissions, mountPermissions)
+    this.defaultProfileName = options.profile ?? null
+    if (this.defaultProfileName !== null && !(this.defaultProfileName in this.profiles)) {
+      throw new PolicyError(`unknown profile ${JSON.stringify(this.defaultProfileName)}`)
+    }
     // Admission policies, consulted in registration order after the
     // built-ins the registry seeds: the document's command tiers
     // (PermissionsPolicy, reading each session's compiled layers from
@@ -256,11 +242,9 @@ export class Workspace {
     // The workspace's own session is a session created without a name,
     // so `profiles.default` shapes it too (design 3.4): the primary
     // agent is not the one agent the document cannot reach.
-    const defaultProfile = resolveProfile(this.profiles, null)
+    const defaultProfile = this.roleFor(null)
     this.sessionManager.defaultProfile =
-      defaultProfile === null
-        ? null
-        : compileProfile(defaultProfile, infrastructurePrefixes(this.syntheticRootAnchor))
+      defaultProfile === null ? null : compileProfile(defaultProfile)
     for (const resource of [...this.registry.allMounts().map((m) => m.resource), this.cache]) {
       const resourceOps = resource.ops?.()
       if (resourceOps === undefined) continue
@@ -521,34 +505,47 @@ export class Workspace {
   }
 
   /**
-   * Create a session from a profile, optionally tightened inline.
+   * The role a session is created under: the name as given, else the
+   * workspace's default role.
+   */
+  private roleFor(profile: string | SessionProfile | null): SessionProfile | null {
+    if (profile === null && this.defaultProfileName !== null) {
+      return this.profiles[this.defaultProfileName] ?? null
+    }
+    return resolveProfile(this.profiles, profile)
+  }
+
+  /**
+   * Create a session under one role, with an optional inline document
+   * of its own.
    *
-   * The profile is a name from the workspace's `profiles` (or the
-   * `default` one when none is named and one exists), or a
-   * SessionProfile object; `permissions` and `mounts` narrow it further
-   * (mounts intersect at the weaker mode, hides union; design 3.4).
-   * Nothing here can widen what the profile grants. `mounts` is sugar
-   * for `permissions.mounts`: a map assigns each prefix a mode ceiling
-   * ('read', 'write', 'exec', or the filesystem aliases 'r', 'rw',
-   * 'rwx'); an array of prefixes keeps each mount at its own configured
-   * mode. Throws PolicyError on an unknown profile name or a broken
-   * chain.
+   * The role is a name from the workspace's `profiles`, or the workspace
+   * default when none is named, or a role document. The inline
+   * `permissions` and `mounts` may add ask and deny rules, hides and
+   * weaker modes; they may never add an allow entry, which is the one
+   * rule about combining two documents. `mounts` is sugar for
+   * `permissions.mounts`: a mapping assigns each prefix a mode ('read',
+   * 'write', 'exec', or the filesystem aliases 'r', 'rw', 'rwx'), which
+   * may only be weaker than the mount's own. A mount the mapping omits
+   * keeps its own mode, so this narrows and never confines; a role that
+   * must keep a session away from a mount hides it. Throws PolicyError
+   * on an unknown role name, or on an inline document with an allow
+   * list.
    */
   createSession(
     sessionId: string,
     options: {
-      mounts?: ReadonlyMap<string, string> | Record<string, string> | readonly string[] | null
+      mounts?: ReadonlyMap<string, unknown> | Record<string, unknown> | null
       profile?: string | SessionProfile | null
       permissions?: SessionProfile | null
     } = {},
   ): Session {
-    const base = resolveProfile(this.profiles, options.profile)
+    const base = this.roleFor(options.profile ?? null)
     let inline: SessionProfile | null = options.permissions ?? null
-    if (options.mounts != null) inline = tighten(inline, { mounts: options.mounts })
-    const compiled = compileProfile(
-      tighten(base, inline),
-      infrastructurePrefixes(this.syntheticRootAnchor),
-    )
+    if (options.mounts != null) {
+      inline = withInline(inline, { mounts: parseProfileMounts(options.mounts) })
+    }
+    const compiled = compileProfile(withInline(base, inline))
     const session = this.sessionManager.create(sessionId)
     applyProfile(session, compiled)
     return session
@@ -782,9 +779,6 @@ export class Workspace {
     }
     const result = this.registry.resolve(path)
     const [resource] = result
-    // resolve() above already threw for a path outside every mount.
-    const mount = this.registry.mountFor(path)
-    assertMountAllowed(mount.prefix)
     await this.ensureOpen(resource)
     return result
   }

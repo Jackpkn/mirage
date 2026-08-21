@@ -12,9 +12,9 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 
-from mirage.policy.match import head_visible
+from mirage.policy.match import head_visible, node_visible
 from mirage.shell.types import GRAMMAR_BUILTINS
 from mirage.workspace.mount import MountRegistry
 from mirage.workspace.route.constants import NAMESPACE_COMMANDS, SHELL_NAMES
@@ -23,9 +23,9 @@ from mirage.workspace.session import Session
 
 
 def listed(name: str, session: Session) -> bool:
-    """What the session's allow lists say about a tool word.
+    """What the session's allow list says about a tool word.
 
-    A tier without a list installs everything; a tier with one installs
+    A role without a list installs everything; a role with one installs
     only the names its patterns start with (``head_visible``). This is
     the raw answer; ``command_visible`` and ``_layers`` add the words
     that are never subjects.
@@ -34,8 +34,7 @@ def listed(name: str, session: Session) -> bool:
         name (str): expanded command name.
         session (Session): the shell session running the line.
     """
-    layers = session.command_layers
-    return not layers or head_visible(name, layers)
+    return head_visible(name, session.commands)
 
 
 def is_tool(name: str, session: Session) -> bool:
@@ -60,17 +59,37 @@ def is_tool(name: str, session: Session) -> bool:
 def command_visible(name: str, session: Session) -> bool:
     """Whether a session can see a command word at all.
 
-    The document's allow lists (``commands.allow`` at the workspace and
-    profile tiers) decide: a tool name no list of a tier starts a
-    pattern with is not installed for the session, so it is 127 at the
-    chokepoint and absent from every enumerator; a word that is not a
-    tool (``is_tool``) is always visible.
+    The role's allow list (``commands.allow``) decides: a tool name no
+    pattern of it starts with is not installed for the session, so it
+    is 127 at the chokepoint and absent from every enumerator; a word
+    that is not a tool (``is_tool``) is always visible.
 
     Args:
         name (str): expanded command name.
         session (Session): the shell session running the line.
     """
     return not is_tool(name, session) or listed(name, session)
+
+
+def verb_visible(head: str, path: Sequence[str], session: Session) -> bool:
+    """Whether a session can see one node of an installed CLI's tree.
+
+    ``command_visible`` answers for a word, which is all dispatch needs:
+    a CLI is routed by its head word and the verbs after it are the
+    program's own operand. Discovery needs the finer answer, because a
+    role allowed ``linear issue list`` is not allowed ``linear team``,
+    and a manual that lists the second is advertising a line that
+    cannot run. ``is_tool``'s exemptions have nothing to say here:
+    shell grammar and functions are single words, so a verb path only
+    ever belongs to a CLI whose head word already passed.
+
+    Args:
+        head (str): the installed head word, as typed.
+        path (Sequence[str]): canonical verb words after the head,
+            empty for the root.
+        session (Session): the shell session running the line.
+    """
+    return node_visible((head, *path), session.commands)
 
 
 def _layers(name: str, session: Session,

@@ -428,6 +428,7 @@ describe('structure-only directories', () => {
   // namespace merely owes children, which -R must still descend.
   const mountsAt = (...roots: string[]): MountView => ({
     descendants: (p) => roots.filter((r) => r.startsWith(`${rstripSlash(p)}/`)),
+    visibleDescendants: (p) => roots.filter((r) => r.startsWith(`${rstripSlash(p)}/`)),
     isRoot: (p) => roots.includes(rstripSlash(p)),
     rootOf: () => '/',
   })

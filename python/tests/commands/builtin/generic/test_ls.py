@@ -697,6 +697,8 @@ def _mount_view(*roots: str) -> MountView:
     """
     return MountView(descendants=lambda p:
                      [r for r in roots if r.startswith(p.rstrip("/") + "/")],
+                     visible_descendants=lambda p:
+                     [r for r in roots if r.startswith(p.rstrip("/") + "/")],
                      is_root=lambda p: p.rstrip("/") in roots,
                      root_of=lambda p: "/")
 

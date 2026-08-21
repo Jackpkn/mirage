@@ -41,9 +41,6 @@ export interface Mount {
   // Materialise the mount's backing folder even without a fixture --
   // folder-backed services 404 on a root nothing ever created.
   seed_root?: boolean
-  // The mount's own permissions block (`mounts.<p>.permissions` in
-  // YAML), validated by the parser the YAML door uses.
-  permissions?: unknown
   folder?: string
   bucket?: string
   volume?: string
@@ -77,28 +74,21 @@ export interface Target {
   // Scope an installed account CLI to this mount's folder, so the CLI and
   // the mount are pointed at the same place.
   cli_scope?: string
-  // The workspace tier of the permissions document (top-level
-  // `permissions:` in YAML), validated by the parser the YAML door
-  // uses; it binds every session the cases name.
-  permissions?: unknown
+  // The target's roles (`profiles:` in YAML). A role is the whole
+  // permission document a session runs under, per-mount rules included;
+  // validated by the parser the YAML door uses.
+  profiles?: Record<string, unknown>
+  // Which role shapes a session that names none, its own included.
+  profile?: string
   mounts: Mount[]
-  // Sessions a case can name via its `session` field. Grants take either the
-  // mapping form ({ '/data': 'read' }) or the list form (['/data'], which
-  // inherits the mount's own mode); a profile form is the permissions
-  // document itself.
-  sessions?: Record<
-    string,
-    | Record<string, string>
-    | string[]
-    | {
-        mounts?: Record<string, string> | string[]
-        paths?: { hide?: string[] }
-        vars?: { hide?: string[] }
-        commands?: { allow?: string[]; ask?: unknown[]; deny?: unknown[] }
-        env?: Record<string, string>
-        cwd?: string
-      }
-  >
+  // Sessions a case can name via its `session` field, through the two
+  // doors a host really has. A string names one of the target's roles,
+  // which is the whole document that session runs under. A mapping is
+  // an inline document added to the default role: it may add ask and
+  // deny rules and hides, never an allow list, so a session that needs
+  // its own allow list has to be a role. An empty mapping is the
+  // default role with nothing added.
+  sessions?: Record<string, string | Record<string, unknown> | null>
   // Session environment every case on this target runs under. The
   // conformance runner passes the same map to the real binary, so a CLI
   // option that reads a variable is compared under one environment.
@@ -181,7 +171,7 @@ export interface ExecWorkspace {
   mounts(): readonly { resource: { index?: { clear(): Promise<void> } } }[]
   createSession(
     sessionId: string,
-    options: { mounts?: Record<string, string> | string[]; profile?: SessionProfile },
+    options: { profile?: string | SessionProfile; permissions?: SessionProfile },
   ): unknown
   env: Record<string, string>
   approvals: {

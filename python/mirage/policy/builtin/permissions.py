@@ -12,34 +12,35 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+from mirage.context.session_context import (get_admission,
+                                            redirect_target_judged)
 from mirage.policy.base import Policy
-from mirage.policy.match import line_allowed, match_op, match_rule, rule_scope
+from mirage.policy.match import Outcome, decide, op_refusal
 from mirage.policy.types import (Action, Ask, CommandContext, Deny, DenyScope,
                                  OpsContext, SessionCommandsQuery)
 
 
 class PermissionsPolicy(Policy):
-    """The permissions document's ``commands`` blocks, enforced.
+    """The role's ``commands`` rules, enforced.
 
     Seeded by the workspace after ``MountRootPolicy`` (POSIX messages
     still win) and before user policies, so a document rule speaks
     before a coded one when both match. It reads the session's
-    compiled tiers through the narrow ``SessionCommandsQuery`` by the
+    compiled rules through the narrow ``SessionCommandsQuery`` by the
     session id the door put in the context, never through ambient
     state: an explicit fact survives the thread hop that drops a
     contextvar. Verdicts render through the one outcome table
     (``render_deny``), so an agent cannot tell a document deny from a
     coded one.
 
-    ``pre_command``: the allow arm (a line no allow list of a tier
-    covers is refused whole, though its head was visible), then the
-    deny arm (the first matching rule in tier order: whole-command or
-    operand-scoped by whether the rule names paths), then the ask arm
-    (the first matching ask rule in tier order raises an Ask, which
-    the approval door answers from the session's grants or the host).
-    ``pre_ops``: the pure path rules of every tier, so FUSE,
-    programmatic ops and the warm cache cannot bypass a path a
-    document protects; there is no ask at the op door.
+    ``pre_command`` renders one ``decide`` call, which is where the
+    law lives: the allow list first (a line it does not cover is
+    refused whole, though its head was visible), then the winning rule,
+    refused whole or per operand by whether it names paths, or taken to
+    the approval door when it asks. ``pre_ops`` walks the deny rules
+    that are pure paths, so FUSE, programmatic ops and the warm cache
+    cannot bypass a path the role protects; there is no ask at the op
+    door, which cannot wait on a host.
 
     Args:
         sessions (SessionCommandsQuery): the session manager, answering
@@ -50,29 +51,29 @@ class PermissionsPolicy(Policy):
         self._sessions = sessions
 
     async def pre_command(self, ctx: CommandContext) -> Action | None:
-        layers = self._sessions.commands_of(ctx.session_id)
-        if not layers:
-            return None
-        if not line_allowed(ctx, layers):
+        verdict = decide(ctx, self._sessions.commands_of(ctx.session_id))
+        if verdict.outcome is Outcome.NOT_ALLOWED:
             program = " ".join(ctx.program or (ctx.command, ))
             return Deny(f"{program} is not allowed")
-        for spec in layers:
-            for rule in spec.deny:
-                hit = match_rule(rule, rule_scope(rule), ctx)
-                if hit is None:
-                    continue
-                if hit.operand is None:
-                    return Deny(rule.reason)
-                return Deny(f"{hit.operand}: {rule.reason}", DenyScope.OPERAND)
-        for spec in layers:
-            for rule in spec.ask:
-                if match_rule(rule, rule_scope(rule), ctx) is not None:
-                    return Ask(rule.reason, rule)
-        return None
+        rule = verdict.rule
+        if rule is None:
+            return None
+        if verdict.outcome is Outcome.ASK:
+            return Ask(rule.reason, rule, verdict.asks)
+        if verdict.matched_path is None:
+            return Deny(rule.reason)
+        return Deny(f"{verdict.matched_path}: {rule.reason}",
+                    DenyScope.OPERAND)
 
     async def pre_ops(self, ctx: OpsContext) -> Action | None:
-        for spec in self._sessions.commands_of(ctx.session_id):
-            for rule in spec.deny:
-                if match_op(rule, rule_scope(rule), ctx):
-                    return Deny(rule.reason)
-        return None
+        if redirect_target_judged(ctx.path.virtual):
+            return None
+        # The grants belong to the line, not the session: a once grant
+        # is spent as the command is admitted, so by the time its own
+        # walk reaches this door the session holds nothing and only the
+        # bound gate still remembers the nod.
+        gate = get_admission()
+        granted = gate.granted if gate is not None else ()
+        reason = op_refusal(self._sessions.commands_of(ctx.session_id), ctx,
+                            granted)
+        return Deny(reason) if reason is not None else None

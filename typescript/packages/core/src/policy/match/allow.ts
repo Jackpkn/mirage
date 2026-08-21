@@ -12,21 +12,33 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import type { CommandContext, CommandsSpec } from '../types.ts'
-import { patternMatches, patternNames } from './pattern.ts'
+import type { CommandContext, AdmissionRules } from '../types.ts'
+import { patternMatches, patternReaches } from './pattern.ts'
 
 /**
- * Whether a session can see a command at all. A tier without an allow
- * list hides nothing; a tier with one hides every name none of its
- * patterns start with. Grammar-tier builtins and shell functions are
- * the caller's exemptions, not this one's.
+ * Whether a session can see one node of a program tree.
+ *
+ * A role without an allow list hides nothing; a role with one hides every
+ * node no pattern of it reaches. Only a CLI's verbs can be narrowed this
+ * way, and only because the walk canonicalizes them (an alias resolved,
+ * the global options before the verb dropped) before any pattern is read.
+ * A flag has no such normal form, so a pattern never means to speak about
+ * one.
  */
-export function headVisible(name: string, layers: readonly CommandsSpec[]): boolean {
-  for (const spec of layers) {
-    if (spec.allow === null) continue
-    if (!spec.allow.some((p) => patternNames(p, name))) return false
-  }
-  return true
+export function nodeVisible(path: readonly string[], rules: AdmissionRules | null): boolean {
+  if (rules?.allow == null) return true
+  return rules.allow.some((p) => patternReaches(p, path))
+}
+
+/**
+ * Whether a session can see a command at all. A role without an allow
+ * list hides nothing; a role with one hides every name none of its
+ * patterns start with. Grammar builtins and shell functions are the
+ * caller's exemptions, not this one's. The head-word case of
+ * `nodeVisible`.
+ */
+export function headVisible(name: string, rules: AdmissionRules | null): boolean {
+  return nodeVisible([name], rules)
 }
 
 /**
@@ -38,17 +50,14 @@ export function lineTokens(ctx: CommandContext): readonly string[] {
 }
 
 /**
- * Whether every tier with an allow list has a pattern for the line. A
+ * Whether the role's allow list has a pattern for the whole line. A
  * word that is not a tool (`ctx.tool` cleared by the door: shell grammar,
  * the agent's own function, an executed path) is always allowed here; a
  * deny rule is the only thing that can refuse it.
  */
-export function lineAllowed(ctx: CommandContext, layers: readonly CommandsSpec[]): boolean {
+export function lineAllowed(ctx: CommandContext, rules: AdmissionRules | null): boolean {
   if (ctx.tool === false) return true
+  if (rules?.allow == null) return true
   const tokens = lineTokens(ctx)
-  for (const spec of layers) {
-    if (spec.allow === null) continue
-    if (!spec.allow.some((p) => patternMatches(p, tokens))) return false
-  }
-  return true
+  return rules.allow.some((p) => patternMatches(p, tokens))
 }

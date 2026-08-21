@@ -19,36 +19,39 @@ import { MountMode } from '../../types.ts'
 import { classifyParts } from '../expand/classify/parts.ts'
 import { getTestParser } from '../fixtures/workspace_fixture.ts'
 import { Workspace } from '../workspace/workspace.ts'
+import { parseSessionProfile, type SessionProfile } from '../session/permissions.ts'
 import { Admitted, admit, admitLine, policyScopes } from './admission.ts'
 import { PolicyDenied } from '../../policy/index.ts'
-import type { CommandRule, CommandsSpec } from '../../policy/types.ts'
+import type { CommandRule, AdmissionRules } from '../../policy/types.ts'
 
 const DEC = new TextDecoder()
 
-const DOC = {
+const DOC = parseSessionProfile({
   commands: {
     allow: ['cat', 'rm', 'ls', 'ln', 'echo', 'head', 'grep', 'rg', 'cd', 'xargs', 'sh', 'mkdir'],
     deny: [
-      { reason: 'sealed', commands: ['cat'], paths: ['/data/secret*'] },
-      { reason: 'private', commands: ['ls', 'grep', 'rg'], paths: ['/data/private'] },
+      { reason: 'sealed', commands: { cat: ['/data/secret*'] } },
+      {
+        reason: 'private',
+        commands: { ls: ['/data/private'], grep: ['/data/private'], rg: ['/data/private'] },
+      },
     ],
   },
-  paths: { hide: [] },
-}
+})
 
 const open: Workspace[] = []
 afterEach(async () => {
   for (const ws of open.splice(0)) await ws.close()
 })
 
-async function ws(permissions: typeof DOC | null = DOC): Promise<Workspace> {
+async function ws(role: SessionProfile | null = DOC): Promise<Workspace> {
   const parser = await getTestParser()
   const w = new Workspace(
     { '/data': new RAMResource() },
     {
       mode: MountMode.WRITE,
       shellParser: parser,
-      ...(permissions !== null ? { permissions } : {}),
+      ...(role !== null ? { profiles: { default: role } } : {}),
     },
   )
   open.push(w)
@@ -325,9 +328,9 @@ describe('admission', () => {
   it('the admitted gate judges what the line did not name', () => {
     const deny: CommandRule = { reason: 'sealed', paths: ['/data/sealed'] }
     const ask: CommandRule = { reason: 'nod', commands: ['grep'], paths: ['/data/asked/*'] }
-    const layers: CommandsSpec[] = [{ allow: null, ask: [ask], deny: [deny] }]
+    const rules: AdmissionRules = { allow: null, ask: [ask], deny: [deny] }
     const gate = new Admitted({
-      layers,
+      rules,
       tokens: ['grep', '-r', 'x', '/data'],
       judged: new Set(['/data']),
       granted: [],
@@ -351,14 +354,14 @@ describe('admission', () => {
     // (the line was admitted on it), and a grant under the asking rule
     // opens its scope to the walk.
     new Admitted({
-      layers,
+      rules,
       tokens: ['grep', 'x', '/data/asked/a'],
       judged: new Set(['/data/asked/a']),
       granted: [],
       scoped: true,
     }).check('/data/asked/a')
     new Admitted({
-      layers,
+      rules,
       tokens: ['grep', '-r', 'x', '/data/asked'],
       judged: new Set(['/data/asked']),
       granted: [ask],

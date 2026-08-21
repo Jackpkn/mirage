@@ -18,7 +18,7 @@ from mirage.context import reset_current_session, set_current_session
 from mirage.ops.namespace_view import (child_mount_names, merge_readdir,
                                        namespace_listing, namespace_names,
                                        namespace_stat)
-from mirage.types import FileType, MountMode
+from mirage.types import FileType, HiddenPaths
 from mirage.workspace.session import Session
 
 PREFIXES = ["/base/", "/base/inner/", "/base/inner/deep/", "/other/", "/"]
@@ -36,9 +36,15 @@ class _Links:
 
 @pytest.fixture
 def scoped_session():
-    """Bind a session granted only /base/inner (and its descendants)."""
+    """Bind a session whose role hides /other and /top/secret.
+
+    Hiding is how a role puts a mount out of reach: naming mounts in a
+    role narrows their modes and never decides whether they exist, so
+    only a hide keeps a name out of a listing.
+    """
     session = Session(session_id="agent",
-                      mount_modes={"/base/inner": MountMode.EXEC})
+                      hidden_paths=HiddenPaths(paths=("/other",
+                                                      "/top/secret")))
     token = set_current_session(session)
     yield session
     reset_current_session(token)
@@ -59,8 +65,8 @@ def test_child_mount_names_keeps_hidden_names():
 
 
 def test_child_mount_names_filters_by_session(scoped_session):
-    # /base/inner is granted, so listing /base still shows the way to
-    # it; /other is not granted, so its name never surfaces.
+    # /base is visible, so listing / and /base still show the way down;
+    # /other is hidden, so its name never surfaces.
     assert child_mount_names(PREFIXES, "/") == ["base"]
     assert child_mount_names(PREFIXES, "/base") == ["inner"]
 
@@ -112,30 +118,32 @@ def test_structure_stat_agrees_with_the_listing():
     assert namespace_stat(PREFIXES, None, "/base/ghost") is None
 
 
-def test_structure_answers_hide_ungranted_mounts(scoped_session):
-    # /top exists only because an ungranted mount sits below it: to
-    # this session the namespace must deny knowing anything there.
+def test_structure_answers_hide_a_hidden_mount(scoped_session):
+    # /top exists only because a hidden mount sits below it: to this
+    # session the namespace must deny knowing anything there, or the
+    # parent's existence hands back the child's name.
     assert namespace_listing(["/top/secret/"], None, "/top") is None
     assert namespace_stat(["/top/secret/"], None, "/top") is None
-    # The granted mount keeps answering through the same session.
+    # A visible mount keeps answering through the same session.
     assert namespace_stat(PREFIXES, None, "/base") is not None
 
 
 def test_link_names_filter_by_owning_mount(scoped_session):
-    # A link below an ungranted mount must not leak that mount's name
-    # into a listing child_mount_names had already filtered; a link
-    # inside the granted mount keeps answering. Ownership is
-    # longest-match, the same rule dispatch resolves the path by.
+    # A link below a hidden mount must not leak that mount's name into
+    # a listing child_mount_names had already filtered; a link inside a
+    # visible mount keeps answering. Ownership is longest-match, the
+    # same rule dispatch resolves the path by.
     links = _Links({"/other/leak": "/tgt", "/base/inner/ok": "/tgt"})
     assert namespace_names(PREFIXES, links, "/") == ["base"]
-    assert namespace_listing(PREFIXES, links,
-                             "/base/inner") == ["/base/inner/ok"]
+    assert namespace_listing(PREFIXES, links, "/base/inner") == [
+        "/base/inner/deep", "/base/inner/ok"
+    ]
 
 
 def test_link_above_every_mount_stays_visible(scoped_session):
     # No mount owns /ghost/...: the link discloses nothing about any
-    # mount, so a scoped session still sees the chain (it may have
-    # created the link itself at a structure-only path).
+    # hidden path, so a scoped session still sees the chain (it may
+    # have created the link itself at a structure-only path).
     links = _Links({"/ghost/deep/lnk": "/base/inner"})
     assert namespace_listing(["/base/inner/"], links,
                              "/") == ["/base", "/ghost"]

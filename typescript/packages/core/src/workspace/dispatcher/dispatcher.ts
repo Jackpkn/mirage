@@ -47,10 +47,8 @@ import {
   SETATTR_KEYS,
 } from './constants.ts'
 import {
-  assertMountAllowed,
   effectiveMountMode,
   getCurrentSession,
-  MountNotAllowedError,
   pathAllowed,
 } from '../../context/session_context.ts'
 
@@ -230,7 +228,7 @@ export class Dispatcher {
         await postOpsGate(this.policies, opName, p, true, '', stored)
         return [stored, new IOResult()]
       }
-      const eligible = isMissingPath(err) || err instanceof MountNotAllowedError
+      const eligible = isMissingPath(err)
       let fallback = eligible ? this.namespaceResult(opName, p.virtual) : null
       if (fallback === null) throw err
       if (opName === 'readdir' && Array.isArray(fallback)) {
@@ -424,7 +422,6 @@ export class Dispatcher {
   ): Promise<string | null> {
     const start = performance.now()
     const owner = ownerPrefix(this.namespace.mountPrefixes(), path.virtual)
-    if (owner !== null) assertMountAllowed(owner)
     const write = POLICY_WRITE_OPS.has(opName)
     await preOpsGate(this.policies, opName, path, write, owner ?? '', sessionId())
     let target: string

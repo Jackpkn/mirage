@@ -34,14 +34,28 @@ export function patternMatches(pattern: string, tokens: readonly string[]): bool
 }
 
 /**
+ * Whether a pattern can match some line running the node at a path.
+ *
+ * Neither side has to be the longer one, which is what separates this
+ * from `patternMatches`: only the words the two share are read. A pattern
+ * that runs past the path narrows what is reachable below it (`linear
+ * issue list` reaches `linear issue`, because one line of that group is
+ * allowed); a path that runs past the pattern is already covered (`linear
+ * issue` reaches `linear issue list`).
+ */
+export function patternReaches(pattern: string, path: readonly string[]): boolean {
+  const want = splitPattern(pattern)
+  return want.slice(0, path.length).every((w, i) => w === WILDCARD || w === path[i])
+}
+
+/**
  * Whether a pattern can match some line of a command. Visibility asks
  * this: a name is installed for the session when a pattern of every
  * allow list starts with it (or with the wildcard), whatever the rest of
- * the pattern requires of the line.
+ * the pattern requires of the line. The one-word case of `patternReaches`.
  */
 export function patternNames(pattern: string, name: string): boolean {
-  const want = splitPattern(pattern)
-  return want.length === 0 || want[0] === WILDCARD || want[0] === name
+  return patternReaches(pattern, [name])
 }
 
 function unify(a: readonly string[], b: readonly string[]): string[] | null {

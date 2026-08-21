@@ -111,6 +111,88 @@
         "stdout": "",
         "stderr": "rm: command not found\n"
       }
+    },
+    {
+      "id": "cmd_a_role_is_the_whole_document",
+      "seq": 923020,
+      "targets": [
+        "ram-commands"
+      ],
+      "session": "reviewer",
+      "command": "cd /repo && git commit -m x",
+      "expect": {
+        "exit": 126,
+        "stdout": "",
+        "stderr": "git: policy denied: git commit is not allowed\n"
+      }
+    },
+    {
+      "id": "cmd_mount_section_matches_by_cwd",
+      "seq": 923021,
+      "targets": [
+        "ram-commands"
+      ],
+      "command": "cd /repo && git commit -m x",
+      "expect": {
+        "exit": 126,
+        "stdout": "",
+        "stderr": "git: policy denied: history is read-only here\n"
+      }
+    },
+    {
+      "id": "cmd_mount_section_does_not_reach_outside_the_mount",
+      "seq": 923022,
+      "targets": [
+        "ram-commands"
+      ],
+      "command": "cd /scratch && git commit -m x",
+      "expect": {
+        "exit": 128,
+        "stdout": "",
+        "stderr": "fatal: not a git repository (or any of the parent directories): .git\n"
+      }
+    },
+    {
+      "id": "cmd_inline_permissions_add_to_the_role",
+      "seq": 923024,
+      "targets": [
+        "ram-commands"
+      ],
+      "session": "frozen",
+      "command": "rm /repo/letters.txt",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "rm: /repo/letters.txt: no deletes in the repo\n"
+      }
+    },
+    {
+      "id": "cmd_inline_permissions_also_state_their_own",
+      "seq": 923025,
+      "targets": [
+        "ram-commands"
+      ],
+      "session": "frozen",
+      "command": "cat /scratch/locked/x",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "cat: /scratch/locked/x: frozen\n"
+      }
+    },
+    {
+      "id": "cmd_an_unnamed_mount_stays_reachable",
+      "seq": 923240,
+      "targets": [
+        "ram-commands"
+      ],
+      "session": "frozen",
+      "command": "cat /vault/d/sub/top.txt",
+      "expect": {
+        "exit": 0,
+        "stdout": "public\n",
+        "stderr": ""
+      }
     }
   ]
 }

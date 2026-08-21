@@ -116,8 +116,15 @@ class Approvals:
 
     async def resolve(self, ctx: CommandContext,
                       ask: Ask) -> Deny | Pending | None:
-        """The executor's branch for an Ask: a held grant answers it,
-        else the approver is asked now.
+        """The executor's branch for an Ask: held grants answer it, else
+        the approver is asked now.
+
+        Every rule the ask names has to be answered, because each won a
+        subject of its own and a nod covers the subject it was given
+        for. They are asked one at a time, the retry of the line raising
+        the next, and an exact-line grant is only spent once the whole
+        line is answered: spending one while another is still pending
+        would make the first question come back on every retry.
 
         Args:
             ctx (CommandContext): the asked line.
@@ -127,24 +134,38 @@ class Approvals:
             None to run the line, a Deny to refuse it, a Pending when
             the host has not decided.
         """
-        rule = ask_rule(ctx, ask)
+        rules = ask.rules or (ask_rule(ctx, ask), )
         argv = (ctx.command, *ctx.argv)
         held = self._grants(ctx.session_id)
-        # An exact-line grant answers the rule it was asked under, like
-        # a session grant: one that outlives a rule change (a persisted
-        # store reopened under an edited profile) must not answer the
-        # new rule's ask, and a stale denial must not speak in its voice.
-        for grant in held:
-            if (grant.decision in EXACT_LINE_DECISIONS and grant.argv == argv
-                    and grant.cwd == ctx.cwd and grant.rule == rule):
-                self._set(ctx.session_id,
-                          tuple(g for g in held if g is not grant))
-                if grant.decision == "deny":
-                    return Deny(ask.reason)
-                return None
-        for grant in held:
-            if grant.decision == "allow_session" and grant.rule == rule:
-                return None
+        answers = [(rule, self._answer(held, rule, argv, ctx.cwd))
+                   for rule in rules]
+        spent = tuple(g for _rule, g in answers
+                      if g is not None and g.decision in EXACT_LINE_DECISIONS)
+        refused = next(
+            (rule
+             for rule, g in answers if g is not None and g.decision == "deny"),
+            None)
+        if refused is not None:
+            self._spend(ctx.session_id, held, spent)
+            return Deny(refused.reason)
+        for rule, grant in answers:
+            if grant is not None:
+                continue
+            verdict = await self._ask_host(ctx, rule, argv)
+            if verdict is not None:
+                return verdict
+        self._spend(ctx.session_id, held, spent)
+        return None
+
+    async def _ask_host(self, ctx: CommandContext, rule: CommandRule,
+                        argv: tuple[str, ...]) -> Deny | Pending | None:
+        """Put one rule of a line to the approver, None when it said yes.
+
+        Args:
+            ctx (CommandContext): the asked line.
+            rule (CommandRule): the rule with no grant behind it.
+            argv (tuple[str, ...]): the line's words, name first.
+        """
         request = ApprovalRequest(id=request_id(ctx.session_id, ctx.cwd, argv),
                                   session_id=ctx.session_id,
                                   agent_id=ctx.agent_id,
@@ -152,18 +173,57 @@ class Approvals:
                                   argv=tuple(ctx.argv),
                                   cwd=ctx.cwd,
                                   paths=tuple(p.virtual for p in ctx.paths),
-                                  reason=ask.reason,
+                                  reason=rule.reason,
                                   rule=rule)
         decision = await self._approver.approve(request)
         if decision is None:
-            return Pending(request.id, ask.reason)
+            return Pending(request.id, rule.reason)
+        if decision == "deny":
+            return Deny(rule.reason)
         if decision == "allow_session":
             self._add(ctx.session_id,
                       Grant("allow_session", rule, argv, ctx.cwd))
-            return None
-        if decision == "deny":
-            return Deny(ask.reason)
         return None
+
+    @staticmethod
+    def _answer(held: tuple[Grant, ...], rule: CommandRule,
+                argv: tuple[str, ...], cwd: str) -> Grant | None:
+        """The grant standing behind one rule of a line, None when the
+        host has not answered it.
+
+        An exact-line grant answers the rule it was asked under, like a
+        session grant: one that outlives a rule change (a persisted
+        store reopened under an edited profile) must not answer the new
+        rule's ask, and a stale denial must not speak in its voice.
+
+        Args:
+            held (tuple[Grant, ...]): the session's grants.
+            rule (CommandRule): the rule to answer.
+            argv (tuple[str, ...]): the line's words, name first.
+            cwd (str): the session working directory.
+        """
+        for grant in held:
+            if (grant.decision in EXACT_LINE_DECISIONS and grant.argv == argv
+                    and grant.cwd == cwd and grant.rule == rule):
+                return grant
+        for grant in held:
+            if grant.decision == "allow_session" and grant.rule == rule:
+                return grant
+        return None
+
+    def _spend(self, session_id: str, held: tuple[Grant, ...],
+               spent: tuple[Grant, ...]) -> None:
+        """Drop the exact-line grants this line just used up.
+
+        Args:
+            session_id (str): the session running the line.
+            held (tuple[Grant, ...]): the session's grants as read.
+            spent (tuple[Grant, ...]): the ones the line consumed.
+        """
+        if not spent:
+            return
+        self._set(session_id,
+                  tuple(g for g in held if not any(g is s for s in spent)))
 
     def _take(self, approval_id: str) -> ApprovalRequest:
         recorder = self._approver

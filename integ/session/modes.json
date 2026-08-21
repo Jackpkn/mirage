@@ -74,7 +74,7 @@
       }
     },
     {
-      "id": "sess_ungranted_mount_denied",
+      "id": "sess_hidden_mount_reads_as_absent",
       "seq": 920006,
       "targets": [
         "ram",
@@ -85,7 +85,7 @@
       "expect": {
         "exit": 1,
         "stdout": "",
-        "stderr": "cat: session 'reader' not allowed to access mount '/data2'\n"
+        "stderr": "cat: /data2/sess/s.txt: No such file or directory\n"
       }
     },
     {
@@ -104,13 +104,13 @@
       }
     },
     {
-      "id": "sess_list_form_inherits_mount_mode",
+      "id": "sess_an_unnamed_mount_keeps_its_own_mode",
       "seq": 920008,
       "targets": [
         "ram",
         "disk"
       ],
-      "session": "lister",
+      "session": "unnamed",
       "command": "echo l > /data/sess/l.txt && cat /data/sess/l.txt",
       "expect": {
         "exit": 0,
@@ -176,7 +176,7 @@
       }
     },
     {
-      "id": "sess_root_unlisted_denied",
+      "id": "sess_root_hidden_reads_as_absent",
       "seq": 920021,
       "targets": [
         "ram-root"
@@ -186,7 +186,7 @@
       "expect": {
         "exit": 1,
         "stdout": "",
-        "stderr": "cat: session 'no_root' not allowed to access mount '/'\n"
+        "stderr": "cat: /root.txt: No such file or directory\n"
       }
     },
     {
@@ -260,7 +260,7 @@
       }
     },
     {
-      "id": "sess_readlink_ungranted_denied",
+      "id": "sess_readlink_hidden_denied",
       "seq": 920014,
       "targets": [
         "ram",

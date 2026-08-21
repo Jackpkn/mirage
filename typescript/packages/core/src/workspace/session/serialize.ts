@@ -12,7 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import type { ApprovalDecision, CommandRule, CommandsSpec, Grant } from '../../policy/types.ts'
+import type { ApprovalDecision, CommandRule, AdmissionRules, Grant } from '../../policy/types.ts'
 
 /** A compiled command tier as the session record stores it (the Python spelling). */
 export interface CommandsJSON {
@@ -47,7 +47,7 @@ export function ruleFromJSON(data: RuleJSON): CommandRule {
   }
 }
 
-export function commandsToJSON(spec: CommandsSpec): CommandsJSON {
+export function commandsToJSON(spec: AdmissionRules): CommandsJSON {
   return {
     allow: spec.allow === null ? null : [...spec.allow],
     ask: spec.ask.map(ruleToJSON),
@@ -55,7 +55,7 @@ export function commandsToJSON(spec: CommandsSpec): CommandsJSON {
   }
 }
 
-export function commandsFromJSON(data: CommandsJSON): CommandsSpec {
+export function commandsFromJSON(data: CommandsJSON): AdmissionRules {
   return {
     allow: data.allow ?? null,
     ask: data.ask.map(ruleFromJSON),

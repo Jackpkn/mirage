@@ -14,119 +14,92 @@
 
 import { describe, expect, it } from 'vitest'
 
+import { DEFAULT_ASK_REASON } from '../../policy/constants.ts'
 import { PolicyError } from '../../policy/errors.ts'
-import { MountMode } from '../../types.ts'
-import type { SessionProfile } from './permissions.ts'
+import { matchOp, ruleScope } from '../../policy/match/rule.ts'
+import type { OpsContext } from '../../policy/types.ts'
+import { MountMode, PathSpec } from '../../types.ts'
+import { pathHidden } from '../../utils/hidden.ts'
+import { parseSessionProfile, type SessionProfile } from './permissions.ts'
 import {
   applyProfile,
-  boundCommands,
-  boundHidden,
   compileCommands,
   compileProfile,
-  inherit,
   narrow,
-  rebase,
   resolveProfile,
-  tighten,
+  withInline,
 } from './resolve.ts'
 import { Session } from './session.ts'
 import { VarAttr } from '../../shell/variable.ts'
 
-const PROFILES: Record<string, SessionProfile> = {
-  default: { cwd: '/scratch', env: { PAGER: 'cat' }, mounts: { '/repo': 'r', '/scratch': 'rwx' } },
-  reviewer: { extends: 'default', paths: { hide: ['/repo/.env'] }, env: { ROLE: 'reviewer' } },
-  auditor: { extends: 'reviewer', cwd: '/repo' },
+function readOp(virtual: string): OpsContext {
+  return {
+    op: 'read',
+    path: new PathSpec({
+      virtual,
+      directory: virtual.slice(0, virtual.lastIndexOf('/')) || '/',
+      resourcePath: virtual,
+      rawPath: virtual,
+    }),
+    write: false,
+    prefix: '/other',
+  }
 }
 
-describe('inherit', () => {
-  it('copies absent fields and replaces stated ones', () => {
-    const reviewer = inherit(PROFILES, 'reviewer')
-    expect(reviewer.extends).toBeUndefined()
-    expect(reviewer.cwd).toBe('/scratch')
-    expect(reviewer.mounts).toEqual({ '/repo': 'r', '/scratch': 'rwx' })
-    expect(reviewer.paths).toEqual({ hide: ['/repo/.env'] })
-    // A stated field replaces the parent's, it does not merge into it.
-    expect(reviewer.env).toEqual({ ROLE: 'reviewer' })
-  })
-
-  it('walks a chain root first', () => {
-    const auditor = inherit(PROFILES, 'auditor')
-    expect(auditor.cwd).toBe('/repo')
-    expect(auditor.paths).toEqual({ hide: ['/repo/.env'] })
-    expect(auditor.mounts).toEqual({ '/repo': 'r', '/scratch': 'rwx' })
-  })
-
-  it('of a root is the root without extends', () => {
-    expect(inherit(PROFILES, 'default')).toEqual(PROFILES.default)
-  })
-
-  it('rejects unknown names and cycles', () => {
-    expect(() => inherit(PROFILES, 'nope')).toThrow(PolicyError)
-    expect(() => inherit(PROFILES, 'nope')).toThrow("unknown profile 'nope'")
-    expect(() => inherit({ orphan: { extends: 'gone' } }, 'orphan')).toThrow(
-      "profile 'orphan' extends unknown profile 'gone'",
-    )
-    expect(() => inherit({ a: { extends: 'b' }, b: { extends: 'a' } }, 'a')).toThrow(
-      'cycle: a -> b -> a',
-    )
-    // A prototype name is not a profile.
-    expect(() => inherit({}, 'toString')).toThrow(PolicyError)
-  })
-})
+const PROFILES: Record<string, SessionProfile> = {
+  default: parseSessionProfile({
+    cwd: '/scratch',
+    env: { PAGER: 'cat' },
+    mounts: { '/repo': 'r', '/scratch': 'rwx' },
+  }),
+  reviewer: parseSessionProfile({
+    paths: { hide: ['/repo/.env'] },
+    env: { ROLE: 'reviewer' },
+  }),
+}
 
 describe('resolveProfile', () => {
-  it('takes names, objects and the default', () => {
-    expect(resolveProfile(PROFILES, 'reviewer')).toEqual(inherit(PROFILES, 'reviewer'))
-    expect(resolveProfile(PROFILES, null)).toEqual(PROFILES.default)
+  it('names objects and the default', () => {
+    expect(resolveProfile(PROFILES, 'reviewer')).toBe(PROFILES.reviewer)
+    expect(resolveProfile(PROFILES, null)).toBe(PROFILES.default)
     expect(resolveProfile({}, null)).toBeNull()
     const plain: SessionProfile = { cwd: '/x' }
     expect(resolveProfile(PROFILES, plain)).toBe(plain)
-    const resolved = resolveProfile(PROFILES, { extends: 'default', cwd: '/x' })
-    expect(resolved?.cwd).toBe('/x')
-    expect(resolved?.env).toEqual({ PAGER: 'cat' })
-    expect(() => resolveProfile(PROFILES, { extends: 'nope' })).toThrow(PolicyError)
+  })
+
+  it('refuses an unknown name', () => {
+    expect(() => resolveProfile(PROFILES, 'nope')).toThrow(PolicyError)
+    expect(() => resolveProfile(PROFILES, 'nope')).toThrow('unknown profile "nope"')
   })
 })
 
-describe('tighten', () => {
-  it('intersects mount grants at the weaker mode', () => {
-    const out = tighten(
-      { mounts: { '/a': 'rwx', '/b': 'r' } },
-      { mounts: { '/a': 'rw', '/c': 'rwx' } },
-    )
-    expect(out?.mounts).toEqual(new Map([['/a', MountMode.WRITE]]))
-  })
-
-  it('mixes the list and mapping forms', () => {
-    const ceilings: SessionProfile = { mounts: { '/a': 'rw', '/b': 'r' } }
-    const listed: SessionProfile = { mounts: ['/b', '/c'] }
-    expect(tighten(ceilings, listed)?.mounts).toEqual(new Map([['/b', MountMode.READ]]))
-    expect(tighten(listed, ceilings)?.mounts).toEqual(new Map([['/b', MountMode.READ]]))
-    expect(tighten(listed, { mounts: ['/c', '/d'] })?.mounts).toEqual(['/c'])
-    // One side unstated leaves the other's grant alone (normalized).
-    expect(tighten(ceilings, {})?.mounts).toEqual(
-      new Map([
-        ['/a', MountMode.WRITE],
-        ['/b', MountMode.READ],
-      ]),
-    )
-    expect(tighten({}, listed)?.mounts).toEqual(['/b', '/c'])
+describe('withInline', () => {
+  it('takes the weaker mode per mount', () => {
+    const base = parseSessionProfile({ mounts: { '/a': 'rwx', '/b': 'r' } })
+    const inline = parseSessionProfile({ mounts: { '/a': 'rw', '/c': 'rwx' } })
+    const out = withInline(base, inline)
+    // Every prefix either side names survives; a mount only the inline
+    // document names is not a grant, since a mount the role never named
+    // was already reachable at its own mode.
+    expect(out?.mounts?.get('/a')?.mode).toBe(MountMode.WRITE)
+    expect(out?.mounts?.get('/b')?.mode).toBe(MountMode.READ)
+    expect(out?.mounts?.get('/c')?.mode).toBe(MountMode.EXEC)
   })
 
   it('unions hides and lets inline presets win', () => {
-    const out = tighten(
-      {
+    const out = withInline(
+      parseSessionProfile({
         cwd: '/scratch',
         env: { PAGER: 'cat', A: '1' },
         paths: { hide: ['/repo/.env', '*.pem'] },
         vars: { hide: ['AWS_*'] },
-      },
-      {
+      }),
+      parseSessionProfile({
         cwd: '/repo',
         env: { A: '2' },
         paths: { hide: ['*.pem', '/repo/secrets'] },
         vars: { hide: ['SLACK_TOKEN'] },
-      },
+      }),
     )
     expect(out?.cwd).toBe('/repo')
     expect(out?.env).toEqual({ PAGER: 'cat', A: '2' })
@@ -134,59 +107,134 @@ describe('tighten', () => {
     expect(out?.vars).toEqual({ hide: ['AWS_*', 'SLACK_TOKEN'] })
   })
 
+  it('merges one mount section', () => {
+    const base = parseSessionProfile({
+      mounts: {
+        '/repo': {
+          mode: 'rw',
+          commands: { deny: ['rm'] },
+          paths: { hide: ['/repo/.env'] },
+        },
+      },
+    })
+    const inline = parseSessionProfile({
+      mounts: {
+        '/repo': { commands: { ask: ['git push'] }, paths: { hide: ['/repo/secrets'] } },
+      },
+    })
+    const entry = withInline(base, inline)?.mounts?.get('/repo')
+    expect(entry?.mode).toBe(MountMode.WRITE)
+    expect(entry?.commands?.deny?.map((r) => r.commands)).toEqual([['rm']])
+    expect(entry?.commands?.ask?.map((r) => r.commands)).toEqual([['git push']])
+    expect(entry?.paths).toEqual({ hide: ['/repo/.env', '/repo/secrets'] })
+  })
+
   it('with one side missing is the other', () => {
     const p: SessionProfile = { cwd: '/x' }
-    expect(tighten(null, p)).toBe(p)
-    expect(tighten(p, null)).toBe(p)
-    expect(tighten(null, null)).toBeNull()
+    expect(withInline(null, p)).toBe(p)
+    expect(withInline(p, null)).toBe(p)
+    expect(withInline(null, null)).toBeNull()
+  })
+
+  it('adds ask and deny but refuses an allow list', () => {
+    const base = parseSessionProfile({
+      commands: { allow: ['ls', 'git', 'cat'], ask: ['git push'], deny: ['rm'] },
+    })
+    const inline = parseSessionProfile({
+      commands: { deny: [{ reason: 'no', commands: ['mv'] }] },
+    })
+    const out = withInline(base, inline)
+    // The allow list is the role's alone, and the added rules land after
+    // it: an inline document restricts, it never installs.
+    expect(out?.commands?.allow).toEqual(['ls', 'git', 'cat'])
+    expect(out?.commands?.ask?.map((r) => r.commands)).toEqual([['git push']])
+    expect(out?.commands?.deny?.map((r) => r.commands)).toEqual([['rm'], ['mv']])
+    expect(() => withInline(base, parseSessionProfile({ commands: { allow: ['wc'] } }))).toThrow(
+      'not an allow list',
+    )
+    // And with no role to add to: the refusal belongs to where the
+    // document was written, so a workspace that happens to declare no
+    // default role must not quietly accept what one with a role refuses.
+    expect(() => withInline(null, parseSessionProfile({ commands: { allow: ['wc'] } }))).toThrow(
+      'not an allow list',
+    )
+  })
+
+  it('leaves a stated block alone when the other is bare', () => {
+    const base = parseSessionProfile({ commands: { allow: ['ls'] } })
+    expect(withInline(base, { cwd: '/x' })?.commands).toEqual(base.commands)
+    const inline = parseSessionProfile({ commands: { deny: ['rm'] } })
+    expect(withInline({ cwd: '/x' }, inline)?.commands).toEqual(inline.commands)
   })
 })
 
-describe('rebase / boundHidden', () => {
-  it('joins every entry under the mount root', () => {
-    expect(rebase('/repo/', { paths: { hide: ['.env', '*.pem', '/abs/x', 'docs/*'] } })).toEqual([
-      '/repo/.env',
-      '/repo/*.pem',
-      '/repo/abs/x',
-      '/repo/docs/*',
-    ])
-    expect(rebase('repo', null)).toEqual([])
-    // A blank entry is refused at the door, so the mount root is spelled
-    // "/" (and only that way): the mount tier is where a relative entry
-    // is legal, and "/" there is the root of the mount, not of the tree.
-    expect(rebase('/', { paths: { hide: ['a', '/b', '/'] } })).toEqual(['/a', '/b', '/'])
-    expect(rebase('/repo', { paths: { hide: ['a', '/b', '/'] } })).toEqual([
-      '/repo/a',
-      '/repo/b',
-      '/repo',
-    ])
+describe('compileCommands', () => {
+  it("lists mount rules before the role's own", () => {
+    const rules = compileCommands(
+      parseSessionProfile({
+        commands: { allow: ['ls'], deny: ['shutdown'] },
+        mounts: {
+          '/repo': {
+            commands: {
+              ask: ['git rebase'],
+              deny: [{ reason: 'ro', commands: { rm: ['/repo/*.lock'] } }],
+            },
+          },
+          '/scratch': 'r',
+        },
+      }),
+    )
+    expect(rules?.allow).toEqual(['ls'])
+    // Every mount rule carries the root it was written under, which is
+    // what scopes it to a line working inside that mount; its paths are
+    // kept exactly as typed.
+    expect(rules?.deny[0]).toEqual({
+      reason: 'ro',
+      commands: ['rm'],
+      paths: ['/repo/*.lock'],
+      mount: '/repo',
+    })
+    expect(rules?.deny[1]?.commands).toEqual(['shutdown'])
+    expect(rules?.deny[1]?.mount).toBeUndefined()
+    expect(rules?.ask[0]?.commands).toEqual(['git rebase'])
+    expect(rules?.ask[0]?.mount).toBe('/repo')
+    expect(rules?.ask[0]?.paths).toBeUndefined()
   })
 
-  it('combines workspace and rebased mount hides', () => {
-    const mounts = new Map([
-      ['/repo/', { paths: { hide: ['.env', '*.pem'] } }],
-      ['/scratch/', null],
-    ])
-    expect(
-      boundHidden({ commands: { deny: [] }, paths: { hide: ['/shared/finance'] } }, mounts),
-    ).toEqual({
-      paths: ['/shared/finance', '/repo/.env'],
-      patterns: ['/repo/*.pem'],
-    })
-    expect(boundHidden(null, new Map([['/a/', null]]))).toBeNull()
-    expect(boundHidden({ commands: { deny: [] }, paths: { hide: [] } }, new Map())).toBeNull()
+  it('anchors a name pattern to its mount', () => {
+    const rules = compileCommands(
+      parseSessionProfile({
+        mounts: { '/repo': { commands: { deny: [{ reason: 'no pems', paths: ['*.pem'] }] } } },
+      }),
+    )
+    const rule = rules?.deny[0] ?? { reason: 'missing' }
+    expect(rule.paths).toEqual(['/repo/*.pem'])
+    // The stamp scopes the rule at admission, but the op door reads the
+    // paths alone, so a raw name pattern refused a read in every other
+    // mount too.
+    const scope = ruleScope(rule)
+    expect(matchOp(rule, scope, readOp('/repo/deep/key.pem'))).toBe(true)
+    expect(matchOp(rule, scope, readOp('/other/key.pem'))).toBe(false)
+  })
+
+  it('is null when the role states no rules', () => {
+    expect(compileCommands({})).toBeNull()
+    expect(compileCommands(parseSessionProfile({ commands: {} }))).toBeNull()
+    expect(compileCommands(parseSessionProfile({ mounts: { '/repo': 'r' } }))).toBeNull()
   })
 })
 
 describe('compileProfile', () => {
   it('turns the document into session fields', () => {
-    const out = compileProfile({
-      cwd: '/scratch',
-      env: { ROLE: 'x' },
-      mounts: { '/a': 'rw', '/b': 'r' },
-      paths: { hide: ['/a/secrets', '*.key'] },
-      vars: { hide: ['SLACK_TOKEN', 'AWS_*'] },
-    })
+    const out = compileProfile(
+      parseSessionProfile({
+        cwd: '/scratch',
+        env: { ROLE: 'x' },
+        mounts: { '/a': 'rw', '/b': 'r' },
+        paths: { hide: ['/a/secrets', '*.key'] },
+        vars: { hide: ['SLACK_TOKEN', 'AWS_*'] },
+      }),
+    )
     expect(out.mountModes).toEqual(
       new Map([
         ['/a', MountMode.WRITE],
@@ -199,13 +247,31 @@ describe('compileProfile', () => {
     expect(out.cwd).toBe('/scratch')
   })
 
-  it('list mounts and the empty profile', () => {
-    expect(compileProfile({ mounts: ['/a', '/b'] }).mountModes).toEqual(
-      new Map([
-        ['/a', MountMode.EXEC],
-        ['/b', MountMode.EXEC],
-      ]),
+  it('collects the hides of every mount section, anchored to it', () => {
+    const out = compileProfile(
+      parseSessionProfile({
+        paths: { hide: ['/shared/finance'] },
+        mounts: {
+          '/repo': { paths: { hide: ['/repo/.env', '*.pem'] } },
+          '/scratch': 'r',
+        },
+      }),
     )
+    // The set is one list for the whole session, so a name pattern
+    // written under a mount has to carry the mount with it: raw, `*.pem`
+    // would hide `/scratch/key.pem` too.
+    expect(out.hiddenPaths).toEqual({
+      paths: ['/shared/finance', '/repo/.env'],
+      patterns: ['/repo/*.pem'],
+    })
+    expect(pathHidden(out.hiddenPaths, '/repo/deep/key.pem')).toBe(true)
+    expect(pathHidden(out.hiddenPaths, '/scratch/key.pem')).toBe(false)
+    // The role's own hide is not a mount section's and stays global.
+    const role = compileProfile(parseSessionProfile({ paths: { hide: ['*.pem'] } }))
+    expect(pathHidden(role.hiddenPaths, '/scratch/key.pem')).toBe(true)
+  })
+
+  it('of a bare or absent role states nothing', () => {
     const empty = compileProfile(null)
     expect(empty).toEqual({
       mountModes: null,
@@ -216,36 +282,23 @@ describe('compileProfile', () => {
       commands: null,
     })
     expect(compileProfile({})).toEqual(empty)
-  })
-
-  it('grants infrastructure beside listed mounts', () => {
-    // A ceiling must never lock an agent out of the scratch root, /dev
-    // or the history view, so they ride along at EXEC when the profile
-    // lists mounts, and are not invented when it lists none.
-    const infra = ['/', '/dev']
-    expect(compileProfile({ mounts: { '/a': 'r' } }, infra).mountModes).toEqual(
-      new Map([
-        ['/a', MountMode.READ],
-        ['/', MountMode.EXEC],
-        ['/dev', MountMode.EXEC],
-      ]),
-    )
-    expect(compileProfile({ mounts: { '/': 'r' } }, infra).mountModes?.get('/')).toBe(
-      MountMode.READ,
-    )
-    expect(compileProfile({ cwd: '/a' }, infra).mountModes).toBeNull()
+    // A role that names a mount without a mode narrows nothing: the
+    // mount keeps whatever the workspace gave it.
+    expect(compileProfile(parseSessionProfile({ mounts: { '/a': {} } })).mountModes).toBeNull()
   })
 })
 
 describe('narrow / applyProfile', () => {
   it('narrow stamps the uneditable fields, applyProfile seeds the rest', () => {
-    const compiled = compileProfile({
-      cwd: '/a',
-      env: { ROLE: 'x' },
-      mounts: { '/a': 'rw' },
-      paths: { hide: ['/a/secrets'] },
-      vars: { hide: ['SLACK_TOKEN'] },
-    })
+    const compiled = compileProfile(
+      parseSessionProfile({
+        cwd: '/a',
+        env: { ROLE: 'x' },
+        mounts: { '/a': 'rw' },
+        paths: { hide: ['/a/secrets'] },
+        vars: { hide: ['SLACK_TOKEN'] },
+      }),
+    )
     const narrowed = new Session({ sessionId: 's1' })
     narrow(narrowed, compiled)
     expect(narrowed.mountModes).toEqual(new Map([['/a', MountMode.WRITE]]))
@@ -261,114 +314,19 @@ describe('narrow / applyProfile', () => {
     expect(applied.env.ROLE).toBe('x')
     expect(applied.vars.ROLE?.attrs.has(VarAttr.Export)).toBe(true)
   })
-})
 
-describe('command tiers', () => {
-  it('inherit replaces the commands block whole', () => {
-    const profiles: Record<string, SessionProfile> = {
-      base: { commands: { allow: ['ls', 'git'], deny: [{ reason: 'no', commands: ['rm'] }] } },
-      child: { extends: 'base', commands: { allow: ['ls'], deny: [] } },
-      grand: { extends: 'child', cwd: '/x' },
-    }
-    // A stated block replaces the parent's (field inheritance), an
-    // absent one is inherited; safety comes from tightening, not here.
-    expect(inherit(profiles, 'child').commands).toEqual({ allow: ['ls'], deny: [] })
-    expect(inherit(profiles, 'grand').commands).toEqual({ allow: ['ls'], deny: [] })
-  })
-
-  it('tighten intersects allow and unions ask and deny', () => {
-    const base: SessionProfile = {
-      commands: {
-        allow: ['ls', 'git', 'cat'],
-        ask: [{ reason: 'a', commands: ['git push'] }],
-        deny: [{ reason: 'no', commands: ['rm'] }],
-      },
-    }
-    const inline: SessionProfile = {
-      commands: { allow: ['git log', 'cat', 'wc'], deny: [{ reason: 'no', commands: ['mv'] }] },
-    }
-    const out = tighten(base, inline)
-    expect(out?.commands).toEqual({
-      allow: ['git log', 'cat'],
-      ask: [{ reason: 'a', commands: ['git push'] }],
-      deny: [
-        { reason: 'no', commands: ['rm'] },
-        { reason: 'no', commands: ['mv'] },
-      ],
-    })
-    // One side without a list leaves the other's alone; one side
-    // without a block leaves the other's block.
-    const only = tighten(base, { commands: { deny: [{ reason: 'x', commands: ['cp'] }] } })
-    expect(only?.commands?.allow).toEqual(['ls', 'git', 'cat'])
-    expect(tighten(base, { cwd: '/x' })?.commands).toEqual(base.commands)
-    expect(tighten({ cwd: '/x' }, inline)?.commands).toEqual(inline.commands)
-  })
-
-  it('compileCommands scopes a mount tier and rebases its paths', () => {
-    expect(compileCommands(null)).toBeNull()
-    expect(compileCommands({ deny: [] })).toBeNull()
-    // A workspace or profile tier compiles as written.
-    expect(compileCommands({ allow: ['ls'], deny: [{ reason: 'no', commands: ['rm'] }] })).toEqual({
-      allow: ['ls'],
-      ask: [],
-      deny: [{ reason: 'no', commands: ['rm'] }],
-    })
-    // A mount tier: every rule scoped to the mount root, its paths
-    // rebased under it, no allow list.
-    expect(
-      compileCommands(
-        {
-          ask: [{ reason: 'a', commands: ['git rebase'] }],
-          deny: [{ reason: 'ro', commands: ['rm'], paths: ['*.lock', '/docs'] }],
-        },
-        '/repo/',
-      ),
-    ).toEqual({
-      allow: null,
-      ask: [{ reason: 'a', commands: ['git rebase'], paths: [], mount: '/repo' }],
-      deny: [
-        { reason: 'ro', commands: ['rm'], paths: ['/repo/*.lock', '/repo/docs'], mount: '/repo' },
-      ],
-    })
-    // An empty mount block is nothing to evaluate.
-    expect(compileCommands({ ask: [], deny: [] }, '/repo')).toBeNull()
-  })
-
-  it('boundCommands lists mount tiers then the workspace', () => {
-    const layers = boundCommands(
-      { commands: { allow: ['ls'], deny: [] }, paths: { hide: [] } },
-      new Map([
-        [
-          '/repo/',
-          { paths: { hide: [] }, commands: { deny: [{ reason: 'no', commands: ['git push'] }] } },
-        ],
-        ['/scratch/', null],
-        ['/s3/', { paths: { hide: ['.env'] } }],
-      ]),
+  it("carries the role's admission rules onto the session", () => {
+    const compiled = compileProfile(
+      parseSessionProfile({ commands: { allow: ['ls'], ask: ['git'] } }),
     )
-    expect(layers).toHaveLength(2)
-    expect(layers[0]?.deny[0]?.mount).toBe('/repo')
-    expect(layers[1]).toEqual({ allow: ['ls'], ask: [], deny: [] })
-    expect(boundCommands(null, new Map([['/a/', null]]))).toEqual([])
-    expect(boundCommands({ commands: { deny: [] }, paths: { hide: [] } }, new Map())).toEqual([])
-  })
-
-  it('compileProfile and narrow carry the command tier', () => {
-    const compiled = compileProfile({
-      commands: { allow: ['ls'], ask: [{ reason: 'a', commands: ['git'] }], deny: [] },
-    })
     expect(compiled.commands).toEqual({
       allow: ['ls'],
-      ask: [{ reason: 'a', commands: ['git'] }],
+      ask: [{ reason: DEFAULT_ASK_REASON, commands: ['git'] }],
       deny: [],
     })
-    expect(compileProfile({ cwd: '/x' }).commands).toBeNull()
     const session = new Session({ sessionId: 's' })
     narrow(session, compiled)
     expect(session.commands).toEqual(compiled.commands)
-    expect(session.commandLayers).toEqual([compiled.commands])
-    const bound = { allow: null, ask: [], deny: [{ reason: 'x' }] }
-    session.boundCommands = [bound]
-    expect(session.commandLayers).toEqual([bound, compiled.commands])
+    expect(compileProfile({ cwd: '/x' }).commands).toBeNull()
   })
 })

@@ -19,6 +19,7 @@ import { RAMSessionStore } from './session/ram.ts'
 import { RAMResource } from '../resource/ram/ram.ts'
 import { FileType, MountMode, type FileStat } from '../types.ts'
 import { getTestParser, stderrStr, stdoutStr } from './fixtures/workspace_fixture.ts'
+import { parseSessionProfile } from './session/permissions.ts'
 import { Workspace } from './workspace/workspace.ts'
 
 const ENC = new TextEncoder()
@@ -94,15 +95,15 @@ describe('per-session mount grants', () => {
     expect(a.store.files.has('/y.txt')).toBe(false)
   })
 
-  // A mount with no grant at all takes the same shell-attributed line as a
-  // READ-granted one, on `>` and `>>` alike, and the rest of the line keeps
-  // running — matching python, whose guard raises a PermissionError that is
-  // already a member of FS_ERRORS.
+  // A hidden mount takes the same shell-attributed line as a READ-granted
+  // one, on `>` and `>>` alike, and the rest of the line keeps running.
+  // Creating under a hidden path is the one op a hide answers out loud,
+  // since a silent success would leave a file the session cannot see.
   it.each(['echo leaked > /b/y.txt; echo next', 'echo leaked >> /b/y.txt; echo next'])(
-    'shell-attributes %s for an ungranted mount',
+    'shell-attributes %s for a hidden mount',
     async (line) => {
       const { ws, b } = await makeGrantsWorkspace()
-      ws.createSession('agent', { mounts: { '/a': MountMode.WRITE } })
+      ws.createSession('agent', { profile: { paths: { hide: ['/b'] } } })
 
       const denied = await ws.execute(line, { sessionId: 'agent' })
       expect(denied.exitCode).toBe(0)
@@ -130,33 +131,57 @@ describe('per-session mount grants', () => {
     expect(stderrStr(denied)).toBe('/a/y.txt: Permission denied\n')
   })
 
-  it('list form inherits the mount mode', async () => {
-    const { ws, a } = await makeGrantsWorkspace()
-    ws.createSession('agent', { mounts: ['/a'] })
-
-    const io = await ws.execute('echo ok > /a/y.txt', { sessionId: 'agent' })
-    expect(io.exitCode).toBe(0)
-    expect(a.store.files.has('/y.txt')).toBe(true)
+  // A list used to mean "only these mounts are reachable"; a mount a role
+  // does not name now keeps its own mode, so the list would quietly drop
+  // the confinement it used to carry.
+  it('refuses a bare list of mounts', async () => {
+    const { ws } = await makeGrantsWorkspace()
+    expect(() =>
+      ws.createSession('agent', { mounts: ['/a'] as unknown as Record<string, unknown> }),
+    ).toThrow('mounts must be a mapping of prefix to its settings')
   })
 
-  it('ungranted mounts stay invisible', async () => {
+  it('a mount the role does not name stays reachable', async () => {
+    // The behavior change worth pinning: naming one mount is not an
+    // allowlist over the rest.
     const { ws } = await makeGrantsWorkspace()
     ws.createSession('agent', { mounts: { '/a': MountMode.READ } })
 
-    const denied = await ws.execute('cat /b/secret.txt', { sessionId: 'agent' })
-    expect(denied.exitCode).not.toBe(0)
-    expect(stderrStr(denied)).toContain('not allowed')
-    expect(stdoutStr(denied)).not.toContain('SECRET')
+    const io = await ws.execute('cat /b/secret.txt', { sessionId: 'agent' })
+    expect(io.exitCode).toBe(0)
+    expect(stdoutStr(io)).toContain('SECRET')
   })
 
-  it('a user-defined root mount is governed by grants', async () => {
+  it('a hidden mount reads as absent', async () => {
+    // A role narrows the mounts it names and never decides whether one
+    // exists, so keeping a session away from a mount is a hide, and a
+    // hide answers ENOENT: naming the mount in a refusal would confirm
+    // to the agent exactly what it was not meant to know is there.
+    const { ws } = await makeGrantsWorkspace()
+    ws.createSession('agent', { profile: { paths: { hide: ['/b'] } } })
+
+    const denied = await ws.execute('cat /b/secret.txt', { sessionId: 'agent' })
+    expect(denied.exitCode).not.toBe(0)
+    expect(stderrStr(denied)).toBe('cat: /b/secret.txt: No such file or directory\n')
+    expect(stdoutStr(denied)).not.toContain('SECRET')
+
+    const listed = await ws.execute('ls /', { sessionId: 'agent' })
+    expect(stdoutStr(listed).split(/\s+/)).not.toContain('b')
+  })
+
+  it('a user-defined root mount is governed like any other', async () => {
     const { ws } = await makeGrantsWorkspace({ rootMount: true })
-    ws.createSession('no_root', { mounts: { '/a': MountMode.WRITE } })
+    ws.createSession('no_root', {
+      profile: parseSessionProfile({
+        mounts: { '/a': MountMode.WRITE },
+        paths: { hide: ['/root.txt'] },
+      }),
+    })
     ws.createSession('root_ro', { mounts: { '/a': MountMode.WRITE, '/': MountMode.READ } })
 
     const denied = await ws.execute('cat /root.txt', { sessionId: 'no_root' })
     expect(denied.exitCode).not.toBe(0)
-    expect(stderrStr(denied)).toContain('not allowed')
+    expect(stderrStr(denied)).toContain('No such file or directory')
 
     const readOk = await ws.execute('cat /root.txt', { sessionId: 'root_ro' })
     expect(readOk.exitCode).toBe(0)
@@ -191,7 +216,7 @@ describe('per-session mount grants', () => {
   })
 })
 
-describe('structure below an ungranted mount', () => {
+describe('structure below a mount whose own content is hidden', () => {
   async function makeNestedWorkspace(): Promise<Workspace> {
     const parser = await getTestParser()
     const base = new RAMResource()
@@ -209,27 +234,31 @@ describe('structure below an ungranted mount', () => {
     return ws
   }
 
-  it('a session granted only a nested mount can walk down to it', async () => {
-    // The root listing deliberately shows `base` as the traversal path
-    // to the grant, so readdir and stat on /base must answer with the
-    // granted structure; the ungranted backend's own content never
-    // appears, and a path the structure does not owe still denies.
+  it('a session can still walk down to the nested mount', async () => {
+    // The root listing shows `base` as the traversal path to the nested
+    // mount, so readdir and stat on /base answer with the structure; the
+    // parent's own hidden content never appears, and a hidden path below
+    // it reads as absent rather than as a refusal naming it.
     const ws = await makeNestedWorkspace()
-    const sess = ws.createSession('agent', { mounts: ['/base/inner'] })
+    const sess = ws.createSession('agent', {
+      profile: { paths: { hide: ['/base/top.txt', '/base/other'] } },
+    })
     await runWithSession(sess, async () => {
       expect(await ws.dispatch('readdir', '/base')).toEqual(['/base/inner'])
       const st = (await ws.dispatch('stat', '/base')) as FileStat
       expect(st.type).toBe(FileType.DIRECTORY)
       expect(await ws.dispatch('readdir', '/base/inner')).toEqual(['/base/inner/deep.txt'])
-      await expect(ws.dispatch('readdir', '/base/other')).rejects.toThrow('not allowed')
+      await expect(ws.dispatch('readdir', '/base/other')).rejects.toMatchObject({
+        code: 'ENOENT',
+      })
     })
   })
 
-  it('a link below an ungranted mount stays out of a scoped listing', async () => {
+  it('a link below a hidden mount stays out of a scoped listing', async () => {
     const { ws } = await makeGrantsWorkspace()
     const ln = await ws.execute('ln -s /b/secret.txt /b/leak')
     expect(ln.exitCode).toBe(0)
-    const sess = ws.createSession('agent', { mounts: ['/a'] })
+    const sess = ws.createSession('agent', { profile: { paths: { hide: ['/b'] } } })
     await runWithSession(sess, async () => {
       const names = (await ws.dispatch('readdir', '/')) as string[]
       expect(names).not.toContain('/b')
@@ -284,9 +313,9 @@ describe('nested mount disclosure', () => {
     return ws
   }
 
-  it('tree does not disclose an ungranted nested mount', async () => {
+  it('tree does not disclose a hidden nested mount', async () => {
     const ws = await makeNested()
-    ws.createSession('agent', { mounts: { '/base': MountMode.READ } })
+    ws.createSession('agent', { profile: { paths: { hide: ['/base/private'] } } })
 
     const io = await ws.execute('tree /base', { sessionId: 'agent' })
     expect(io.exitCode).toBe(0)
@@ -294,11 +323,10 @@ describe('nested mount disclosure', () => {
     expect(stdoutStr(io)).toBe('/base\n`-- top.txt\n\n1 directory, 1 file\n')
   })
 
-  it('tree still crosses a granted nested mount', async () => {
+  it('tree still crosses a visible nested mount', async () => {
+    // The filter must not cost a session the mounts it can see.
     const ws = await makeNested()
-    ws.createSession('agent', {
-      mounts: { '/base': MountMode.READ, '/base/private': MountMode.READ },
-    })
+    ws.createSession('agent', { mounts: { '/base': MountMode.READ } })
 
     const io = await ws.execute('tree /base', { sessionId: 'agent' })
     expect(io.exitCode).toBe(0)

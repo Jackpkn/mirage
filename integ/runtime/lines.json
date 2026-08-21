@@ -91,24 +91,26 @@
             "resource": "ram"
           }
         },
-        "permissions": {
-          "commands": {
-            "deny": [
-              {
-                "reason": "no deletes",
-                "commands": [
-                  "rm"
-                ]
-              },
-              {
-                "reason": "sealed",
-                "commands": {
-                  "cat": [
-                    "/ram/secret*"
+        "profiles": {
+          "default": {
+            "commands": {
+              "deny": [
+                {
+                  "reason": "no deletes",
+                  "commands": [
+                    "rm"
                   ]
+                },
+                {
+                  "reason": "sealed",
+                  "commands": {
+                    "cat": [
+                      "/ram/secret*"
+                    ]
+                  }
                 }
-              }
-            ]
+              ]
+            }
           }
         }
       },

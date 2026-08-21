@@ -32,6 +32,33 @@ def is_glob(entry: str) -> bool:
     return any(ch in GLOB_CHARS for ch in entry)
 
 
+def anchor_depth(entry: str) -> int:
+    """How specific a path entry is: the number of literal components
+    before its first wildcard.
+
+    The one measure the permissions document's path axis orders by.
+    ``/repo/sealed/*`` is 2, ``/repo/*`` and the plain subtree
+    ``/repo`` are 1, and a slashless name pattern like ``*.key`` is 0,
+    since it anchors nothing. Every pattern the document allows has an
+    answer, so two entries about one path are always comparable and
+    nothing is ever guessed.
+
+    It lives here beside :func:`is_glob` rather than in the policy
+    layer because both gates need it: admission scores the rule that
+    covers an operand, and the entry gate scores the rule that covers
+    an entry reached mid-walk.
+
+    Args:
+        entry (str): a path entry as written in the document.
+    """
+    depth = 0
+    for part in entry.strip("/").split("/"):
+        if not part or is_glob(part):
+            break
+        depth += 1
+    return depth
+
+
 def classify_paths(entries: Iterable[str]) -> HiddenPaths | None:
     """Compile document path entries into the matcher's shape.
 

@@ -54,6 +54,11 @@ def _out(io):
         _materialize(io.stdout))
 
 
+def _err(io):
+    return io.stderr.decode() if isinstance(io.stderr, bytes) else _run(
+        _materialize(io.stderr))
+
+
 def test_help_flag_renders_help_through_executor():
     ws = _ws()
     io = _exec(ws, "cat --help")
@@ -147,9 +152,14 @@ def _cli_ws():
         "linear",
         CLISpec(name="linear",
                 description="Linear API client",
-                subcommands=(CLISpec(name="issue",
-                                     description="Manage issues",
-                                     fn=lambda: None), )))
+                subcommands=(
+                    CLISpec(name="issue",
+                            description="Manage issues",
+                            fn=lambda: None),
+                    CLISpec(name="team",
+                            description="Manage one",
+                            fn=lambda: None),
+                )))
     return ws
 
 
@@ -160,6 +170,26 @@ def test_installed_cli_is_discoverable_from_the_shell():
     assert _out(_exec(ws, "which linear")) == "linear\n"
     assert "Usage: linear" in _out(_exec(ws, "man linear"))
     assert "# clis" in _out(_exec(ws, "man"))
+
+
+def test_man_lists_only_the_cli_verbs_the_role_can_reach():
+    ws = _cli_ws()
+    ws.create_session("narrow",
+                      profile={"commands": {
+                          "allow": ["man", "linear issue"]
+                      }})
+    page = _out(_run(ws.execute("man linear", session_id="narrow")))
+    assert "issue" in page
+    assert "team" not in page
+    # The head word still routes, because one line of the tree runs.
+    assert _out(_run(ws.execute("which linear",
+                                session_id="narrow"))) == "linear\n"
+    # A verb the list does not reach has no page.
+    io = _run(ws.execute("man linear team", session_id="narrow"))
+    assert io.exit_code == 1
+    assert _err(io) == "man: no entry for linear team\n"
+    # The host's own view is unnarrowed.
+    assert "team" in _out(_exec(ws, "man linear"))
 
 
 def test_which_reports_a_missing_name_through_the_status_only():

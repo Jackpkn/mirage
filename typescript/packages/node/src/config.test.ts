@@ -486,38 +486,47 @@ describe('configToWorkspaceArgs', () => {
   })
 
   it('the permissions document maps to workspace args', async () => {
+    // `mounts:` is infrastructure and `profiles:` is every permission
+    // the deployment states, including the per-mount ones; there is no
+    // workspace `permissions:` block and no `permissions:` on a mount.
     const cfg = loadWorkspaceConfig({
       mounts: {
-        '/repo': { resource: 'ram', permissions: { paths: { hide: ['*.pem', '.env'] } } },
+        '/repo': { resource: 'ram' },
         '/scratch': { resource: 'ram', mode: 'rwx' },
       },
-      permissions: {
-        commands: {
-          deny: [
-            {
-              reason: 'production data is protected',
-              commands: { rm: ['/repo/prod/*'], mv: ['/repo/prod/*'] },
-            },
-            'python3',
-          ],
-        },
-        paths: { hide: ['/scratch/finance'] },
-      },
+      profile: 'reviewer',
       profiles: {
         default: {
           cwd: '/scratch',
           env: { PAGER: 'cat' },
           mounts: { '/repo': 'r', '/scratch': 'rwx' },
+          commands: {
+            deny: [
+              {
+                reason: 'production data is protected',
+                commands: { rm: ['/repo/prod/*'], mv: ['/repo/prod/*'] },
+              },
+              'python3',
+            ],
+          },
+          paths: { hide: ['/scratch/finance'] },
         },
         reviewer: {
-          extends: 'default',
+          mounts: { '/repo': { mode: 'r', paths: { hide: ['/repo/*.pem', '/repo/.env'] } } },
           paths: { hide: ['/repo/docs/internal'] },
           vars: { hide: ['AWS_*', 'SLACK_TOKEN'] },
         },
       },
     })
     const args = await configToWorkspaceArgs(cfg)
-    expect(args.options.permissions).toEqual({
+    expect(args.options.profile).toBe('reviewer')
+    expect(args.options.profiles?.default).toEqual({
+      cwd: '/scratch',
+      env: { PAGER: 'cat' },
+      mounts: new Map([
+        ['/repo', { mode: MountMode.READ }],
+        ['/scratch', { mode: MountMode.EXEC }],
+      ]),
       commands: {
         allow: null,
         ask: [],
@@ -529,23 +538,12 @@ describe('configToWorkspaceArgs', () => {
       },
       paths: { hide: ['/scratch/finance'] },
     })
-    expect(args.options.profiles).toEqual({
-      default: {
-        cwd: '/scratch',
-        env: { PAGER: 'cat' },
-        mounts: new Map([
-          ['/repo', MountMode.READ],
-          ['/scratch', MountMode.EXEC],
-        ]),
-      },
-      reviewer: {
-        extends: 'default',
-        paths: { hide: ['/repo/docs/internal'] },
-        vars: { hide: ['AWS_*', 'SLACK_TOKEN'] },
-      },
-    })
-    expect(args.options.mountPermissions).toEqual({
-      '/repo': { paths: { hide: ['*.pem', '.env'] }, commands: { ask: [], deny: [] } },
+    expect(args.options.profiles?.reviewer).toEqual({
+      mounts: new Map([
+        ['/repo', { mode: MountMode.READ, paths: { hide: ['/repo/*.pem', '/repo/.env'] } }],
+      ]),
+      paths: { hide: ['/repo/docs/internal'] },
+      vars: { hide: ['AWS_*', 'SLACK_TOKEN'] },
     })
     expect(args.resources['/scratch']?.[1]).toBe(MountMode.EXEC)
   })
@@ -557,29 +555,39 @@ describe('configToWorkspaceArgs', () => {
     expect(() =>
       loadWorkspaceConfig({
         mounts: { '/data': { resource: 'ram' } },
-        permissions: { commands: { deny: [{ reason: 'x', path: ['/data/prod/*'] }] } },
+        profiles: {
+          default: { commands: { deny: [{ reason: 'x', path: ['/data/prod/*'] }] } },
+        },
       }),
     ).toThrow(/deny\[0\]: unknown field `path`/)
   })
 
-  it('unshipped fields and a broken profile chain fail at load', () => {
+  it('unshipped and misspelled fields fail at load', () => {
     expect(() =>
       loadWorkspaceConfig({
         mounts: { '/data': { resource: 'ram' } },
         profiles: { a: { hidden_paths: { paths: ['/x'] } } },
       }),
     ).toThrow(/unknown field `hidden_paths`/)
+    // A mount section has no allow list, and a mount block has no
+    // permissions of its own any more.
     expect(() =>
       loadWorkspaceConfig({
-        mounts: { '/data': { resource: 'ram', permissions: { commands: { allow: ['ls'] } } } },
+        mounts: { '/data': { resource: 'ram' } },
+        profiles: { a: { mounts: { '/data': { commands: { allow: ['ls'] } } } } },
       }),
     ).toThrow(/unknown field `allow`/)
+    expect(() =>
+      loadWorkspaceConfig({
+        mounts: { '/data': { resource: 'ram', permissions: { paths: { hide: ['x'] } } } },
+      }),
+    ).toThrow(/unknown mount `\/data` key `permissions`/)
     expect(() =>
       loadWorkspaceConfig({
         mounts: { '/data': { resource: 'ram' } },
         profiles: { orphan: { extends: 'gone' } },
       }),
-    ).toThrow(/extends unknown profile 'gone'/)
+    ).toThrow(/unknown field `extends`/)
   })
 
   it('console redis block builds a factory that mints fresh keys', async () => {
@@ -899,10 +907,13 @@ describe('CLI to daemon round trip', () => {
   })
 })
 
-// integ/fixtures/config/{rejected,accepted}.json are the contract: the
-// python suite (tests/config/test_loader.py) reads the same two files, so
-// a config that loads in one language and not the other fails a test
-// until both loaders agree.
+// integ/fixtures/config/*.json are the contract: the python suite
+// (tests/config/test_loader.py) reads the same files, so a config that
+// loads in one language and not the other fails a test until both
+// loaders agree. The accepted half is one file per subject: every config
+// block that is not a permission verb, then a verb each.
+const ACCEPTED_FIXTURES = ['blocks', 'allow', 'ask', 'deny'] as const
+
 function fixtureCases(name: string): { name: string; config: Record<string, unknown> }[] {
   const path = fileURLToPath(
     new URL(`../../../../integ/fixtures/config/${name}.json`, import.meta.url),
@@ -926,12 +937,12 @@ describe('shared rejection fixture', () => {
   })
 })
 
-describe('shared acceptance fixture', () => {
+describe.each(ACCEPTED_FIXTURES)('shared acceptance fixture: %s', (fixture) => {
   // The key tables are copied by hand from Python's models, so the drift
   // this catches is a field added there and never mirrored here: every
-  // key of every block appears in the fixture, and an unmirrored one
+  // key of every block appears in the accepted set, and an unmirrored one
   // comes back as `unknown ... key`.
-  const cases = fixtureCases('accepted')
+  const cases = fixtureCases(fixture)
 
   it('has cases', () => {
     expect(cases.length).toBeGreaterThan(0)

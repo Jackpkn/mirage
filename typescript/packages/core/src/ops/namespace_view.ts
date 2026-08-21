@@ -12,8 +12,8 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { mountAllowed, pathAllowed } from '../context/session_context.ts'
-import { normDir, ownerPrefix, rstripSlash } from '../utils/slash.ts'
+import { pathAllowed } from '../context/session_context.ts'
+import { normDir, rstripSlash } from '../utils/slash.ts'
 import { FileStat, FileType } from '../types.ts'
 import type { NamespaceLinks } from './config.ts'
 import { compareCodePoints } from '../utils/sort.ts'
@@ -34,25 +34,10 @@ export function childMountNames(prefixes: readonly string[], parent: string): st
     const p = normDir(prefix)
     if (p === norm || !p.startsWith(norm)) continue
     const name = p.slice(norm.length).split('/', 1)[0] ?? ''
-    if (name === '' || !mountAllowed(p) || !pathAllowed(norm + name)) continue
+    if (name === '' || !pathAllowed(norm + name)) continue
     out.add(name)
   }
   return [...out].sort(compareCodePoints)
-}
-
-/**
- * Whether the current session may see the link at `link`.
- *
- * A link is namespace state, but its path lies on some mount's turf:
- * the longest mount prefix above it owns it, the same longest-match
- * rule dispatch resolves the path by. A scoped session that may not
- * touch that mount must not learn the link's name from a listing,
- * exactly as `childMountNames` hides the mount itself. A link above
- * every mount is bare namespace structure and stays visible.
- */
-function linkAllowed(prefixes: readonly string[], link: string): boolean {
-  const owner = ownerPrefix(prefixes, link)
-  return owner === null || mountAllowed(normDir(owner))
 }
 
 /**
@@ -62,22 +47,17 @@ function linkAllowed(prefixes: readonly string[], link: string): boolean {
  * mount prefixes are: `ln` allows a link below a directory chain no
  * backend serves, and without its ancestors synthesized the link lists
  * at its own parent yet is unreachable from a walk above it.
- * Session-filtered through `linkAllowed`: a link below an ungranted
- * mount would otherwise leak that mount's name into a listing
- * `childMountNames` had already filtered.
+ * Session-filtered by the hides, the same predicate `childMountNames`
+ * applies to a mount's own name.
  */
-function linkNames(
-  prefixes: readonly string[],
-  links: NamespaceLinks | null,
-  parent: string,
-): string[] {
+function linkNames(links: NamespaceLinks | null, parent: string): string[] {
   if (links === null) return []
   const norm = normDir(parent)
   const out = new Set<string>()
   for (const link of links.symlinkTargets().keys()) {
     if (!link.startsWith(norm)) continue
     const name = link.slice(norm.length).split('/', 1)[0] ?? ''
-    if (name !== '' && linkAllowed(prefixes, link) && pathAllowed(norm + name)) out.add(name)
+    if (name !== '' && pathAllowed(norm + name)) out.add(name)
   }
   return [...out].sort(compareCodePoints)
 }
@@ -95,9 +75,9 @@ export function namespaceNames(
   links: NamespaceLinks | null,
   parent: string,
 ): string[] {
-  return [
-    ...new Set([...childMountNames(prefixes, parent), ...linkNames(prefixes, links, parent)]),
-  ].sort(compareCodePoints)
+  return [...new Set([...childMountNames(prefixes, parent), ...linkNames(links, parent)])].sort(
+    compareCodePoints,
+  )
 }
 
 /**

@@ -21,7 +21,7 @@ from typing import Any
 from mirage.cache.file import io as cache_io
 from mirage.cache.manager import CacheManager
 from mirage.commands.builtin.utils.limit import apply_op_limit
-from mirage.context import get_current_session, mount_allowed, path_allowed
+from mirage.context import get_current_session, path_allowed
 from mirage.io import IOResult, OpReport
 from mirage.observe.context import record
 from mirage.observe.record import OpRecord
@@ -38,7 +38,6 @@ from mirage.workspace.mount import MountEntry
 from mirage.workspace.mount.namespace import Namespace
 from mirage.workspace.mount.namespace.overlay import merge_overlay_stat
 from mirage.workspace.reconcile import Reconciler
-from mirage.workspace.session import assert_mount_allowed
 from mirage.workspace.snapshot.drift import DriftQueue
 
 from mirage.workspace.dispatcher.constants import (  # isort: skip
@@ -260,19 +259,6 @@ class Dispatcher:
                 raise no_mount(path.virtual)
             return (await self._gated_namespace(op, path, fallback,
                                                 report), IOResult())
-        if not mount_allowed(mount.prefix):
-            # The mount is real but ungranted, and the namespace may
-            # still owe the session a directory here: a granted mount
-            # below it already put this path's name in a listing, so
-            # walking down to the grant must answer. The names are
-            # session-filtered, so nothing of the mount's own content
-            # leaks; a path the structure does not owe falls through to
-            # the canonical denial below.
-            fallback = self._namespace_result(op, path.virtual)
-            if fallback is not None:
-                return (await self._gated_namespace(op, path, fallback,
-                                                    report), IOResult())
-        assert_mount_allowed(mount.prefix)
         # Admission policies fire at the door, before the warm-cache
         # early return below: a cached read must be refused exactly
         # like a cold one, or the cache becomes a policy bypass.
@@ -402,8 +388,6 @@ class Dispatcher:
         owner = owner_prefix(
             (m.prefix for m in self._namespace.registry.mounts()),
             path.virtual)
-        if owner is not None:
-            assert_mount_allowed(owner)
         policies = self._namespace.registry.policies
         write = op in POLICY_WRITE_OPS
         await pre_ops_gate(policies, op, path, write, owner or "",

@@ -15,7 +15,13 @@
 import { describe, expect, it } from 'vitest'
 
 import { WILDCARD } from '../constants.ts'
-import { intersectPatterns, patternMatches, patternNames, splitPattern } from './pattern.ts'
+import {
+  intersectPatterns,
+  patternMatches,
+  patternNames,
+  patternReaches,
+  splitPattern,
+} from './pattern.ts'
 
 describe('patterns', () => {
   it('splitPattern drops trailing wildcards only', () => {
@@ -47,6 +53,26 @@ describe('patterns', () => {
     expect(patternNames('git log', 'git')).toBe(true)
     expect(patternNames('git log', 'log')).toBe(false)
     expect(patternNames('*', 'rm')).toBe(true)
+  })
+
+  it('patternReaches reads only the words the two share', () => {
+    // The pattern runs past the path: one line of that group is
+    // allowed, so the group is reachable.
+    expect(patternReaches('linear issue list', ['linear', 'issue'])).toBe(true)
+    expect(patternReaches('linear issue list', ['linear'])).toBe(true)
+    // The path runs past the pattern: already covered.
+    expect(patternReaches('linear issue', ['linear', 'issue', 'list'])).toBe(true)
+    // A word they share disagrees, at any depth.
+    expect(patternReaches('linear issue list', ['linear', 'team'])).toBe(false)
+    expect(patternReaches('linear issue list', ['linear', 'issue', 'create'])).toBe(false)
+    expect(patternReaches('linear issue', ['gws', 'issue'])).toBe(false)
+    // A wildcard is any one word, and a trailing one is dropped, so
+    // `linear issue *` reaches every leaf of that group.
+    expect(patternReaches('linear * list', ['linear', 'team', 'list'])).toBe(true)
+    expect(patternReaches('linear issue *', ['linear', 'issue', 'create'])).toBe(true)
+    expect(patternReaches('*', ['anything', 'at', 'all'])).toBe(true)
+    // An empty path asks nothing, so nothing can refuse it.
+    expect(patternReaches('linear issue', [])).toBe(true)
   })
 
   it('intersectPatterns unifies token by token', () => {

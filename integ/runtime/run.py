@@ -41,7 +41,6 @@ from mirage.runtime.policy import ScriptSource  # noqa: E402
 from mirage.runtime.table import build_runtime  # noqa: E402
 from mirage.runtime.types import RunResult  # noqa: E402
 from mirage.types import Limit, PathSpec  # noqa: E402
-from mirage.workspace.session import WorkspacePermissions  # noqa: E402
 
 HOST = "python"
 SUITE_DIR = Path(__file__).parent
@@ -357,9 +356,10 @@ async def _build_workspace(world: dict[str, Any], run_id: str) -> Workspace:
         kwargs["policy"] = ScriptSource(world["policy"])
     if "policies" in world:
         kwargs["policies"] = [_build_policy(s) for s in world["policies"]]
-    if "permissions" in world:
-        kwargs["permissions"] = WorkspacePermissions.model_validate(
-            world["permissions"])
+    if "profiles" in world:
+        kwargs["profiles"] = world["profiles"]
+    if "profile" in world:
+        kwargs["profile"] = world["profile"]
     ws = Workspace(mounts, mode=MountMode.EXEC, **kwargs)
     if "clis" in world:
         _install_clis(ws, world["clis"])

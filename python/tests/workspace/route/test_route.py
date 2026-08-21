@@ -14,12 +14,12 @@
 
 from mirage.commands.cli.types import CLISpec
 from mirage.io import IOResult
-from mirage.policy.types import CommandsSpec
+from mirage.policy.types import AdmissionRules
 from mirage.resource.ram import RAMResource
 from mirage.types import MountMode
 from mirage.workspace import Workspace
 from mirage.workspace.route import (SHELL_CONSUMERS, Consumer, command_visible,
-                                    route, route_all)
+                                    route, route_all, verb_visible)
 from mirage.workspace.session import Session
 
 
@@ -138,18 +138,35 @@ def test_route_agrees_with_the_first_layer_route_all_reports():
         assert route(name, session, ws._registry) is winner
 
 
+def test_verb_visible_answers_below_the_head_word_command_visible_answers():
+    session, ws = _fixture()
+    ws.register_cli("prog", _cli_tree())
+    session.commands = AdmissionRules(allow=("prog run", ))
+    # Dispatch routes by the head word, which stays visible: one line of
+    # the tree runs.
+    assert command_visible("prog", session)
+    assert route("prog", session, ws._registry) is Consumer.CLI
+    assert verb_visible("prog", (), session)
+    assert verb_visible("prog", ("run", ), session)
+    # A verb the list does not reach is not this session's to discover,
+    # though the head word it hangs off is.
+    assert not verb_visible("prog", ("stop", ), session)
+    # No list: every verb of every tree.
+    session.commands = None
+    assert verb_visible("prog", ("stop", ), session)
+
+
 def test_allow_lists_filter_the_tool_layers_and_spare_grammar_and_functions():
     session, ws = _fixture()
     ws.register_cli("prog", _cli_tree())
-    session.bound_commands = (CommandsSpec(allow=("cat", "prog run", "ln")), )
-    session.commands = CommandsSpec(allow=("cat", "prog", "ln", "sleep"))
+    session.commands = AdmissionRules(allow=("cat", "prog", "ln"))
     reg = ws._registry
-    # Listed at every tier: visible in its layer.
+    # Listed: visible in its layer, whichever layer that is.
     assert route("cat", session, reg) is Consumer.MOUNT
     assert route("prog", session, reg) is Consumer.CLI
     assert route("ln", session, reg) is Consumer.NAMESPACE
-    # Listed at one tier only, or at none: not a command for the session
-    # (sleep is a tool-tier builtin, rm a mount command).
+    # Unlisted: not a command for the session (sleep is a tool-tier
+    # builtin, rm a mount command).
     assert route("sleep", session, reg) is Consumer.UNKNOWN
     assert route("rm", session, reg) is Consumer.UNKNOWN
     assert route_all("rm", session, reg) == []
@@ -171,8 +188,8 @@ def test_allow_lists_filter_the_tool_layers_and_spare_grammar_and_functions():
     # hidden layer stays out of `type -a`.
     session.functions["rm"] = []
     assert route_all("rm", session, reg) == [Consumer.FUNCTION]
-    # No tiers at all: nothing filtered (the function still shadows).
+    # No allow list at all: nothing filtered (the function still
+    # shadows).
     session.commands = None
-    session.bound_commands = ()
     assert route_all("rm", session, reg) == [Consumer.FUNCTION, Consumer.MOUNT]
     assert route("sleep", session, reg) is Consumer.SESSION

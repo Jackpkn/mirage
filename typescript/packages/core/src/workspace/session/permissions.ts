@@ -13,18 +13,18 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { DEFAULT_ASK_REASON, DEFAULT_DENY_REASON } from '../../policy/constants.ts'
-import type { CommandRule, CommandsSpec } from '../../policy/types.ts'
+import type { CommandRule, AdmissionRules } from '../../policy/types.ts'
 import type { HiddenPaths, HiddenVars } from '../../types.ts'
 import { type MountMode, parseMountMode } from '../../types.ts'
 import { isGlob } from '../../utils/hidden.ts'
 import { stripSlash } from '../../utils/slash.ts'
 
 /**
- * `paths:` of one tier. `hide` entries use the document's one grammar:
- * an entry with `*`, `?` or `[` is a pattern, anything else an exact
- * path and its subtree (`utils/hidden.classifyPaths`); every entry holds
- * a token, and the tier that owns the block decides whether it must be
- * absolute (workspace, profile) or is mount-relative (mount). `show`
+ * `paths:` of a role, or of one of its mount sections. `hide` entries
+ * use the document's one grammar: an entry with `*`, `?` or `[` is a
+ * pattern, anything else an exact path and its subtree
+ * (`utils/hidden.classifyPaths`); every entry holds a token and is
+ * absolute or a name pattern, wherever the block is written. `show`
  * arrives with its enforcement.
  */
 export interface PathsBlock {
@@ -37,14 +37,14 @@ export interface VarsBlock {
 }
 
 /**
- * `commands:` of the workspace and profile tiers. `allow` lists the
- * command patterns the tier installs; a name none of them starts with is
- * not a command for the session (127, absent from `type` / `which` /
- * `man`), a line no pattern covers is refused. Grammar-tier shell
- * builtins and the agent's own functions are not subjects. `ask` rules
- * are admitted only with a host approval; `deny` rules refuse with a
- * reason. A bare string in either is one command pattern with the
- * default reason. `allow` null or absent (unstated) installs everything.
+ * `commands:` at the top level of a role. `allow` lists the command
+ * patterns the role installs; a name none of them starts with is not a
+ * command for the session (127, absent from `type` / `which` / `man`),
+ * a line no pattern covers is refused. The shell's own grammar builtins
+ * and the agent's functions are not subjects. `ask` rules are admitted
+ * only with a host approval; `deny` rules refuse with a reason. A bare
+ * string in either is one command pattern with the default reason.
+ * `allow` null or absent (unstated) installs everything.
  */
 export interface CommandsBlock {
   readonly allow?: readonly string[] | null
@@ -53,10 +53,11 @@ export interface CommandsBlock {
 }
 
 /**
- * `commands:` of a mount tier: `ask` and `deny` only. A mount rule
+ * `commands:` of one mount section: `ask` and `deny` only. A mount rule
  * applies to a line that works inside the mount (its cwd or one of its
- * paths lies under the root); its `paths` are mount-relative. There is
- * no mount-tier `allow`: what a session can see is a property of the
+ * paths lies under the root); its `paths` are absolute, like every other
+ * path in the document, and must name something under that root. There
+ * is no `allow` here: what a session can see is a property of the
  * session, and an operand cannot make a command "not found".
  */
 export interface MountCommandsBlock {
@@ -64,56 +65,62 @@ export interface MountCommandsBlock {
   readonly deny?: readonly CommandRule[]
 }
 
-/** `mounts.<prefix>.permissions`: mount-owned, relative to the mount root, binding every session. */
-export interface MountPermissions {
-  readonly paths: PathsBlock
-  readonly commands?: MountCommandsBlock
-}
-
-/** Top-level `permissions:`: workspace-wide, absolute paths, binding every session. */
-export interface WorkspacePermissions {
-  readonly commands: CommandsBlock
-  readonly paths: PathsBlock
+/**
+ * One mount's entry in a role: what this role may do there. Every field
+ * is optional, and an omitted mount is not a refusal: the mount is
+ * reachable at the mode it declares in the workspace's `mounts:`, which
+ * a role can only weaken (`weakerMode`), never raise. A role that must
+ * not touch a mount hides it, so the mount reads as nonexistent rather
+ * than as a permission error naming something the role cannot see.
+ *
+ * `commands` here carries ask and deny only: an allow list installs a
+ * command for the whole session, and visibility is answered before any
+ * operand exists, so it cannot be per mount. Rules written here apply to
+ * a line that works inside this mount, by cwd or by operand, which is
+ * what a path-scoped rule cannot express (`cd /repo && git commit` names
+ * no path).
+ */
+export interface ProfileMount {
+  readonly mode?: MountMode | null
+  readonly commands?: MountCommandsBlock | null
+  readonly paths?: PathsBlock | null
 }
 
 /**
- * One role's narrowing: the profile a session is created from, the
- * inline document that tightens it, and the shape of both.
+ * One role: the whole permission document a session runs under.
  *
- * Configuration, not enforcement: the resolver compiles the fields
- * onto the session's own narrowing fields and the doors keep
- * enforcing. A profile is a template (`extends` is field inheritance:
- * a stated field replaces the parent's, an absent one is inherited);
- * safety comes from the layer intersection at evaluation, never from
- * inheritance. Deliberately not named a View, which per the view
- * convention is a door-scoped handle an agent holds, while a profile
- * is what the embedder uses to *define* one. Immutable by type, so two
- * agents with the same role share one object and neither can bend the
- * other's view. Every field is absent/null when the document leaves it
- * unsaid, which is what inheritance reads.
+ * A session is created from exactly one of these, and it is the only
+ * place permissions are written. There is no workspace-wide block and
+ * no mount-owned block above it, so reading this object is reading
+ * everything the role may do; what a role does not say, it does not
+ * restrict. Configuration, not enforcement: the resolver compiles it
+ * onto the session's narrowing fields and the doors keep enforcing.
+ * Deliberately not named a View, which per the view convention is a
+ * door-scoped handle an agent holds, while a profile is what the
+ * embedder uses to *define* one. Immutable by type, so two agents with
+ * the same role share one object and neither can bend the other's view.
  *
- * `mounts` is a Map or Record of prefix to mode ceiling (a mode name or
- * `r` / `rw` / `rwx`), or an array of prefixes that keeps each mount at
- * its own configured mode; `parseProfileMounts` normalizes every
- * spelling and the resolver reads only the normalized form.
+ * Two rules decide a line against it, and they are the whole law. A
+ * rule naming no path is read by verb (deny before ask before allow),
+ * wherever it is written. A rule carrying paths, and every hide, is
+ * read by anchor depth: the deeper entry wins, ties break by verb.
+ *
+ * `mounts` is keyed by prefix; a bare mode string is sugar for the
+ * section that carries only a mode. `parseProfileMounts` normalizes
+ * every spelling and the resolver reads only the normalized form.
  */
 export interface SessionProfile {
-  readonly extends?: string | null
   readonly cwd?: string | null
   readonly env?: Readonly<Record<string, string>> | null
-  readonly mounts?:
-    | ReadonlyMap<string, string>
-    | Readonly<Record<string, string>>
-    | readonly string[]
-    | null
+  readonly mounts?: ReadonlyMap<string, ProfileMount> | null
   readonly paths?: PathsBlock | null
   readonly vars?: VarsBlock | null
   readonly commands?: CommandsBlock | null
 }
 
 /**
- * The session fields an effective profile compiles to. `commands` is
- * the profile's own command tier, evaluated after the bound tiers.
+ * The session fields a role compiles to. `commands` is the role's
+ * admission rules, its own and its mount sections' in one list.
  */
 export interface CompiledProfile {
   readonly mountModes: ReadonlyMap<string, MountMode> | null
@@ -121,7 +128,7 @@ export interface CompiledProfile {
   readonly hiddenVars: HiddenVars | null
   readonly env: Readonly<Record<string, string>> | null
   readonly cwd: string | null
-  readonly commands: CommandsSpec | null
+  readonly commands: AdmissionRules | null
 }
 
 const RULE_FIELDS = ['reason', 'commands', 'paths'] as const
@@ -129,9 +136,8 @@ const PATHS_FIELDS = ['hide'] as const
 const VARS_FIELDS = ['hide'] as const
 const COMMANDS_FIELDS = ['allow', 'ask', 'deny'] as const
 const MOUNT_COMMANDS_FIELDS = ['ask', 'deny'] as const
-const MOUNT_PERMISSIONS_FIELDS = ['paths', 'commands'] as const
-const WORKSPACE_PERMISSIONS_FIELDS = ['commands', 'paths'] as const
-const PROFILE_FIELDS = ['extends', 'cwd', 'env', 'mounts', 'paths', 'vars', 'commands'] as const
+const PROFILE_MOUNT_FIELDS = ['mode', 'commands', 'paths'] as const
+const PROFILE_FIELDS = ['cwd', 'env', 'mounts', 'paths', 'vars', 'commands'] as const
 
 // A document mapping, not merely "an object": a Set, a Date or any class
 // instance has no own enumerable string keys, so Object.entries would read
@@ -182,20 +188,45 @@ function stringList(raw: unknown, where: string, names?: string): readonly strin
 }
 
 /**
- * Refuse a relative path entry where paths are absolute. The workspace
- * and profile tiers speak in virtual paths, so an entry there is either
- * absolute or a name pattern (`*.pem`, no slash, matching a path
- * component anywhere). A plain `xxx` or an anchored `secrets/*` would
- * otherwise be read from the root (`/xxx`, `/secrets/*`), which is never
- * what a relative spelling meant; the mount tier is the one place entries
- * are relative, to the mount root, and it is not checked here.
+ * Refuse a relative path entry. Every path in the document is absolute:
+ * an entry is either an absolute path or a name pattern (`*.pem`, no
+ * slash, matching a path component anywhere). A plain `xxx` or an
+ * anchored `secrets/*` would otherwise be read from the root (`/xxx`,
+ * `/secrets/*`), which is never what a relative spelling meant. There is
+ * no relative spelling anywhere: a mount section spells its paths in
+ * full and they are checked against the mount root (`requireUnderMount`),
+ * which is what a rebase used to do silently and wrongly (`/repo/secret`
+ * under `/repo` became `/repo/repo/secret`).
  */
 function requireAbsolute(entries: readonly string[], where: string): void {
   entries.forEach((entry, i) => {
     if (entry.startsWith('/') || (isGlob(entry) && !entry.includes('/'))) return
     throw new Error(
-      `${where}[${String(i)}] must be an absolute path or a name pattern at this tier: ` +
+      `${where}[${String(i)}] must be an absolute path or a name pattern: ` +
         `${JSON.stringify(entry)} is relative`,
+    )
+  })
+}
+
+/**
+ * Refuse a path entry in a mount's section that leaves the mount. A
+ * mount's rules are about that mount, so a path under `mounts./repo`
+ * names something inside `/repo`. A name pattern carries no anchor and
+ * is left alone; it means the same thing here as anywhere else.
+ *
+ * The root mount contains everything, and has to be spelled out:
+ * `root + '/'` is `'//'` there, which no path starts with, so a
+ * workspace mounted at `/` could write a section for its one mount and
+ * then name nothing inside it.
+ */
+function requireUnderMount(entries: readonly string[], root: string, where: string): void {
+  if (root === '/') return
+  entries.forEach((entry, i) => {
+    if (!entry.startsWith('/')) return
+    if (entry === root || entry.startsWith(root + '/')) return
+    throw new Error(
+      `${where}[${String(i)}] is outside the mount it is written under: ` +
+        `${JSON.stringify(entry)} is not below ${JSON.stringify(root)}`,
     )
   })
 }
@@ -282,16 +313,12 @@ function parseAllow(raw: unknown, where: string): readonly string[] | null {
   return stringList(raw, `${where}.allow`, 'a command')
 }
 
-/**
- * Validate a `paths:` block. `absolute` is the workspace and profile
- * tiers' rule (entries are virtual paths or name patterns); the mount
- * tier leaves it false because its entries are relative to the mount.
- */
-export function parsePathsBlock(raw: unknown, where = 'paths', absolute = false): PathsBlock {
+/** Validate a `paths:` block. Every entry is absolute or a name pattern. */
+export function parsePathsBlock(raw: unknown, where = 'paths'): PathsBlock {
   const obj = asObject(raw, where)
   rejectUnknownKeys(obj, PATHS_FIELDS, where)
   const hide = stringList(obj.hide, `${where}.hide`, 'a path')
-  if (absolute) requireAbsolute(hide, `${where}.hide`)
+  requireAbsolute(hide, `${where}.hide`)
   return { hide }
 }
 
@@ -306,74 +333,69 @@ export function parseCommandsBlock(raw: unknown, where = 'commands'): CommandsBl
   rejectUnknownKeys(obj, COMMANDS_FIELDS, where)
   const ask = parseRules(obj.ask, where, 'ask')
   const deny = parseRules(obj.deny, where, 'deny')
-  // This block is the workspace's or a profile's, never a mount's, so a
-  // rule's paths are virtual paths: absolute, or name patterns.
+  // This block is the role's own, never a mount section's, so a rule's
+  // paths are virtual paths: absolute, or name patterns.
   for (const rule of ask) requireAbsolute(rule.paths ?? [], `${where}.ask rule paths`)
   for (const rule of deny) requireAbsolute(rule.paths ?? [], `${where}.deny rule paths`)
   return { allow: parseAllow(obj.allow, where), ask, deny }
 }
 
-/** Validate a mount tier's `commands:` block (`ask` and `deny` only). */
+/** Validate a mount section's `commands:` block (`ask` and `deny` only). */
 export function parseMountCommandsBlock(raw: unknown, where = 'commands'): MountCommandsBlock {
   const obj = asObject(raw, where)
   rejectUnknownKeys(obj, MOUNT_COMMANDS_FIELDS, where)
   return { ask: parseRules(obj.ask, where, 'ask'), deny: parseRules(obj.deny, where, 'deny') }
 }
 
-/** Validate a `mounts.<prefix>.permissions` block. */
-export function parseMountPermissions(raw: unknown, where = 'permissions'): MountPermissions {
-  const obj = asObject(raw, where)
-  rejectUnknownKeys(obj, MOUNT_PERMISSIONS_FIELDS, where)
-  return {
-    paths: obj.paths === undefined ? { hide: [] } : parsePathsBlock(obj.paths, `${where}.paths`),
-    commands:
-      obj.commands === undefined
-        ? { ask: [], deny: [] }
-        : parseMountCommandsBlock(obj.commands, `${where}.commands`),
+/** Validate one `mounts.<prefix>` section of a role. */
+export function parseProfileMount(raw: unknown, root: string, where: string): ProfileMount {
+  // A bare mode string is sugar for the section that carries only a mode.
+  const obj = typeof raw === 'string' ? { mode: raw } : asObject(raw, where)
+  rejectUnknownKeys(obj, PROFILE_MOUNT_FIELDS, where)
+  const out: { mode?: MountMode | null; commands?: MountCommandsBlock; paths?: PathsBlock } = {}
+  if (obj.mode !== undefined && obj.mode !== null) {
+    if (typeof obj.mode !== 'string') throw new Error(`${where}.mode must be a mode name or alias`)
+    out.mode = parseMountMode(obj.mode)
   }
-}
-
-/** Validate the top-level `permissions:` block. */
-export function parseWorkspacePermissions(
-  raw: unknown,
-  where = 'permissions',
-): WorkspacePermissions {
-  const obj = asObject(raw, where)
-  rejectUnknownKeys(obj, WORKSPACE_PERMISSIONS_FIELDS, where)
-  return {
-    commands:
-      obj.commands === undefined
-        ? { allow: null, ask: [], deny: [] }
-        : parseCommandsBlock(obj.commands, `${where}.commands`),
-    paths:
-      obj.paths === undefined ? { hide: [] } : parsePathsBlock(obj.paths, `${where}.paths`, true),
+  if (obj.paths !== undefined && obj.paths !== null) {
+    const paths = parsePathsBlock(obj.paths, `${where}.paths`)
+    requireUnderMount(paths.hide, root, `${where}.paths.hide`)
+    out.paths = paths
   }
+  if (obj.commands !== undefined && obj.commands !== null) {
+    const commands = parseMountCommandsBlock(obj.commands, `${where}.commands`)
+    for (const rule of commands.ask ?? [])
+      requireUnderMount(rule.paths ?? [], root, `${where}.commands.ask`)
+    for (const rule of commands.deny ?? [])
+      requireUnderMount(rule.paths ?? [], root, `${where}.commands.deny`)
+    out.commands = commands
+  }
+  return out
 }
 
 /**
- * Normalize the `mounts` spellings a profile or `createSession` accepts:
- * a Map or Record of prefix to mode (names or `r`/`rw`/`rwx`), a string,
- * or an array of prefixes.
+ * Normalize a role's `mounts` mapping: prefix to its settings, with a
+ * bare mode string as sugar for a section carrying only a mode. A bare
+ * list used to mean "only these mounts" and now means nothing at all,
+ * so it fails loudly rather than quietly dropping the confinement it
+ * used to carry.
  */
 export function parseProfileMounts(
   raw: unknown,
   where = 'mounts',
-): ReadonlyMap<string, MountMode> | readonly string[] | null {
+): ReadonlyMap<string, ProfileMount> | null {
   if (raw === undefined || raw === null) return null
-  if (typeof raw === 'string') return [normPrefix(raw)]
-  if (Array.isArray(raw)) return stringList(raw, where).map(normPrefix)
   let entries: [unknown, unknown][]
   if (raw instanceof Map) entries = [...raw.entries()]
   else if (isPlainObject(raw)) entries = Object.entries(raw)
-  else throw new Error(`${where} must be a mapping or a list of strings`)
-  const modes = new Map<string, MountMode>()
-  for (const [prefix, mode] of entries) {
+  else throw new Error(`${where} must be a mapping of prefix to its settings`)
+  const sections = new Map<string, ProfileMount>()
+  for (const [prefix, entry] of entries) {
     if (typeof prefix !== 'string') throw new Error(`${where} keys must be strings`)
-    if (typeof mode !== 'string')
-      throw new Error(`${where}[${prefix}] must be a mode name or alias`)
-    modes.set(normPrefix(prefix), parseMountMode(mode))
+    const root = normPrefix(prefix)
+    sections.set(root, parseProfileMount(entry, root, `${where}[${root}]`))
   }
-  return modes
+  return sections
 }
 
 /** Validate one profile (a `profiles.<name>` block, or an inline document). */
@@ -381,18 +403,13 @@ export function parseSessionProfile(raw: unknown, where = 'profile'): SessionPro
   const obj = asObject(raw, where)
   rejectUnknownKeys(obj, PROFILE_FIELDS, where)
   const out: {
-    extends?: string | null
     cwd?: string | null
     env?: Readonly<Record<string, string>> | null
-    mounts?: ReadonlyMap<string, string> | readonly string[] | null
+    mounts?: ReadonlyMap<string, ProfileMount> | null
     paths?: PathsBlock | null
     vars?: VarsBlock | null
     commands?: CommandsBlock | null
   } = {}
-  if (obj.extends !== undefined && obj.extends !== null) {
-    if (typeof obj.extends !== 'string') throw new Error(`${where}.extends must be a string`)
-    out.extends = obj.extends
-  }
   if (obj.cwd !== undefined && obj.cwd !== null) {
     if (typeof obj.cwd !== 'string') throw new Error(`${where}.cwd must be a string`)
     out.cwd = obj.cwd
@@ -408,7 +425,7 @@ export function parseSessionProfile(raw: unknown, where = 'profile'): SessionPro
     out.mounts = parseProfileMounts(obj.mounts, `${where}.mounts`)
   }
   if (obj.paths !== undefined && obj.paths !== null)
-    out.paths = parsePathsBlock(obj.paths, `${where}.paths`, true)
+    out.paths = parsePathsBlock(obj.paths, `${where}.paths`)
   if (obj.vars !== undefined && obj.vars !== null)
     out.vars = parseVarsBlock(obj.vars, `${where}.vars`)
   if (obj.commands !== undefined && obj.commands !== null)

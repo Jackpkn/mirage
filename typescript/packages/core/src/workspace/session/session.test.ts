@@ -18,7 +18,7 @@ import { varsFromEnv } from './session.ts'
 import { describe, expect, it } from 'vitest'
 import { Session } from './session.ts'
 import { MountMode } from '../../types.ts'
-import type { CommandsSpec, Grant } from '../../policy/types.ts'
+import type { AdmissionRules, Grant } from '../../policy/types.ts'
 
 describe('Session', () => {
   it('defaults cwd=/ and an env holding only the seeded $PWD', () => {
@@ -249,7 +249,7 @@ describe('a stored session keeps its attributes', () => {
 
 describe('the command tier round-trips through the record', () => {
   it('writes the Python spelling and reads it back', () => {
-    const own: CommandsSpec = {
+    const own: AdmissionRules = {
       allow: ['ls', 'git log'],
       ask: [{ reason: 'sign-off', commands: ['git push'], paths: ['/repo/*'], mount: '/repo' }],
       deny: [{ reason: 'no', commands: ['rm'] }],

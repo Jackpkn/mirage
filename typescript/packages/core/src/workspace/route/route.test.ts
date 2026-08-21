@@ -26,6 +26,7 @@ import {
   readsSubtrees,
   route,
   routeAll,
+  verbVisible,
   walksMounts,
 } from './index.ts'
 import { Session } from '../session/session.ts'
@@ -199,18 +200,35 @@ describe('walkers and subtree readers', () => {
 })
 
 describe('allow lists', () => {
+  it('verbVisible answers below the head word commandVisible answers', () => {
+    const { session, ws } = fixture()
+    ws.registerCli('prog', cliTree())
+    session.commands = { allow: ['prog run'], ask: [], deny: [] }
+    // Dispatch routes by the head word, which stays visible: one line
+    // of the tree runs.
+    expect(commandVisible('prog', session)).toBe(true)
+    expect(route('prog', session, ws.registry)).toBe(Consumer.CLI)
+    expect(verbVisible('prog', [], session)).toBe(true)
+    expect(verbVisible('prog', ['run'], session)).toBe(true)
+    // A verb the list does not reach is not this session's to discover,
+    // though the head word it hangs off is.
+    expect(verbVisible('prog', ['stop'], session)).toBe(false)
+    // No list: every verb of every tree.
+    session.commands = null
+    expect(verbVisible('prog', ['stop'], session)).toBe(true)
+  })
+
   it('filter the tool layers and spare grammar and functions', () => {
     const { session, ws } = fixture()
     ws.registerCli('prog', cliTree())
-    session.boundCommands = [{ allow: ['cat', 'prog run', 'ln'], ask: [], deny: [] }]
-    session.commands = { allow: ['cat', 'prog', 'ln', 'sleep'], ask: [], deny: [] }
+    session.commands = { allow: ['cat', 'prog', 'ln'], ask: [], deny: [] }
     const reg = ws.registry
-    // Listed at every tier: visible in its layer.
+    // Listed: visible in its layer, whichever layer that is.
     expect(route('cat', session, reg)).toBe(Consumer.MOUNT)
     expect(route('prog', session, reg)).toBe(Consumer.CLI)
     expect(route('ln', session, reg)).toBe(Consumer.NAMESPACE)
-    // Listed at one tier only, or at none: not a command for the
-    // session (sleep is a tool-tier builtin, rm a mount command).
+    // Unlisted: not a command for the session (sleep is a tool-tier
+    // builtin, rm a mount command).
     expect(route('sleep', session, reg)).toBe(Consumer.UNKNOWN)
     expect(route('rm', session, reg)).toBe(Consumer.UNKNOWN)
     expect(routeAll('rm', session, reg)).toEqual([])
@@ -232,9 +250,9 @@ describe('allow lists', () => {
     // hidden layer stays out of `type -a`.
     session.functions.rm = []
     expect(routeAll('rm', session, reg)).toEqual([Consumer.FUNCTION])
-    // No tiers at all: nothing filtered (the function still shadows).
+    // No allow list at all: nothing filtered (the function still
+    // shadows).
     session.commands = null
-    session.boundCommands = []
     expect(routeAll('rm', session, reg)).toEqual([Consumer.FUNCTION, Consumer.MOUNT])
     expect(route('sleep', session, reg)).toBe(Consumer.SESSION)
   })

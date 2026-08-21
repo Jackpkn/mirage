@@ -59,9 +59,22 @@ export type ChildMounts = (parent: string) => string[]
 // counted the parent backend's shadowed keys by the time any line filter
 // runs, so it reads the boundaries here too and excludes a descendant's
 // subtree while accounting.
+//
+// Two questions, two methods, because one name for both is what let a
+// hidden mount reach a user. **Avoiding** a boundary needs every mount
+// under the path, whatever the session can see: one it cannot see still
+// shadows the parent backend's keys, and those keys must stay out of a
+// walk's entries and a directory's total, or the size alone reports the
+// subtree. **Naming** a boundary needs only the mounts the session may
+// be told about: a member in an archive, a row in a tree, a "different
+// filesystem" warning all hand back a name, and a hidden mount's name is
+// the one thing the hide exists to withhold. A caller that needs both
+// (`tar` prunes by one and warns by the other) reads both.
 export interface MountView {
-  // Mount roots strictly under a path (a walker: tar, zip).
+  // Every mount root strictly under a path, for a caller avoiding one.
   descendants(path: string): string[]
+  // The ones this session may be told about, for a caller naming one.
+  visibleDescendants(path: string): string[]
   // Whether a path is a mount root itself.
   isRoot(path: string): boolean
   // The mount serving a path, so a walker can tell "still mine" from

@@ -168,6 +168,7 @@ def test_a_full_namespace_does_not_stop_the_relay_at_a_mount_root():
     nested = frozenset({"/a/one"})
     ns = NamespaceView(mounts=MountView(
         descendants=lambda p: [],
+        visible_descendants=lambda p: [],
         is_root=lambda p: p.rstrip("/") in nested,
         root_of=lambda p: "/"),
                        child_mounts=lambda p: ["one"] if p == "/a" else [])

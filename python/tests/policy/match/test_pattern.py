@@ -14,7 +14,8 @@
 
 from mirage.policy.constants import WILDCARD
 from mirage.policy.match.pattern import (intersect_patterns, pattern_matches,
-                                         pattern_names, split_pattern)
+                                         pattern_names, pattern_reaches,
+                                         split_pattern)
 
 
 def test_split_pattern_drops_trailing_wildcards_only():
@@ -48,6 +49,27 @@ def test_pattern_names_starts_a_line_of_the_command():
     assert pattern_names("git log", "git")
     assert not pattern_names("git log", "log")
     assert pattern_names("*", "rm")
+
+
+def test_pattern_reaches_reads_only_the_words_the_two_share():
+    # The pattern runs past the path: one line of that group is
+    # allowed, so the group is reachable.
+    assert pattern_reaches("linear issue list", ("linear", "issue"))
+    assert pattern_reaches("linear issue list", ("linear", ))
+    # The path runs past the pattern: already covered.
+    assert pattern_reaches("linear issue", ("linear", "issue", "list"))
+    # A word they share disagrees, at any depth.
+    assert not pattern_reaches("linear issue list", ("linear", "team"))
+    assert not pattern_reaches("linear issue list",
+                               ("linear", "issue", "create"))
+    assert not pattern_reaches("linear issue", ("gws", "issue"))
+    # A wildcard is any one word, and a trailing one is dropped, so
+    # `linear issue *` reaches every leaf of that group.
+    assert pattern_reaches("linear * list", ("linear", "team", "list"))
+    assert pattern_reaches("linear issue *", ("linear", "issue", "create"))
+    assert pattern_reaches("*", ("anything", "at", "all"))
+    # An empty path asks nothing, so nothing can refuse it.
+    assert pattern_reaches("linear issue", ())
 
 
 def test_intersect_patterns_unifies_token_by_token():

@@ -14,7 +14,6 @@
 
 import { PathSpec, wordText } from '../../../../types.ts'
 import { CycleError, gnuDirname } from '../../../../utils/path.ts'
-import { MountNotAllowedError } from '../../../../context/session_context.ts'
 import { PolicyDenied } from '../../../../policy/index.ts'
 import type { DispatchFn } from '../../../../runtime/types.ts'
 import type { Namespace } from '../../../mount/namespace/namespace.ts'
@@ -73,7 +72,7 @@ export async function handleLn(
   try {
     await dispatch('symlink', PathSpec.fromStrPath(linkAbs), [], { target: targetTyped })
   } catch (err) {
-    if (err instanceof PolicyDenied || err instanceof MountNotAllowedError) {
+    if (err instanceof PolicyDenied) {
       return fail(
         'ln',
         `ln: failed to create symbolic link '${wordText(linkArg)}': Permission denied\n`,
