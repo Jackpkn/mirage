@@ -504,7 +504,12 @@ class _OsRouter:
 
         The node table is asked first because a link is namespace state
         that no backend can see: a stat alone would silently answer for
-        the target, and a broken link would read as absent.
+        the target, and a broken link would read as absent. The readlink
+        probe is what asks, so the door's visibility gate decides
+        whether the link is there at all; the row behind it is then read
+        straight off the table, because it carries what a ``chown -h``
+        wrote and rebuilding the answer from the target string alone
+        reported the process defaults instead.
 
         Args:
             path (Any): the path to stat.
@@ -517,8 +522,14 @@ class _OsRouter:
         target = self._link_target(virtual)
         if target is None:
             return self._stat_of(virtual, self._run(self._ops.stat(virtual)))
-        return self._result(virtual, LINK_MODE, len(target.encode()), 1, None,
-                            None, None, None)
+        links = self._ops.links
+        row = None if links is None else links.link_stat_at(virtual)
+        if row is None:
+            # A facade built without a link table: the target string is
+            # the only fact there is.
+            return self._result(virtual, LINK_MODE, len(target.encode()), 1,
+                                None, None, None, None)
+        return self._stat_of(virtual, row)
 
     def access(self,
                path: Any,

@@ -55,6 +55,7 @@
     "  islink: True",
     "  lstat is a link: True",
     "  stat follows it: 12 bytes",
+    "  lchown then lstat: 4242:4343 mode 0o777",
     "",
     "--- metadata ---",
     "  chmod: 0o600",
@@ -75,6 +76,6 @@
     "  host path still reads: host bytes",
     "  host readlink(bytes): b'from_host.txt'",
     "",
-    "Stats: 34 ops, 38 bytes transferred"
+    "Stats: 36 ops, 38 bytes transferred"
   ]
 }

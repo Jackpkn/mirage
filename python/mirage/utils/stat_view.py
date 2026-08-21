@@ -57,9 +57,17 @@ def posix_mode(st: FileStat) -> int:
     backend that reports no mode keeps the default rw-r--r-- / rwxr-xr-x
     pair; there are no permissions to read on an object store.
 
+    A link is the exception in both halves: its type bits are S_IFLNK
+    and its permission bits are always 0777, because no POSIX system
+    consults the bits on a symlink. An overlay mode a ``chmod -h`` wrote
+    is therefore not reported here (ownership is, since ``chown -h``
+    does change what ``ls -l`` shows).
+
     Args:
         st (FileStat): the stat to translate.
     """
+    if is_link(st):
+        return LINK_MODE
     base = DIR_MODE if is_dir(st) else FILE_MODE
     if st.mode is None:
         return base
@@ -73,6 +81,15 @@ def is_dir(st: FileStat) -> bool:
         st (FileStat): the stat to inspect.
     """
     return st.type == FileType.DIRECTORY
+
+
+def is_link(st: FileStat) -> bool:
+    """Whether a FileStat describes a symlink.
+
+    Args:
+        st (FileStat): the stat to inspect.
+    """
+    return st.type == FileType.SYMLINK
 
 
 def content_size(st: FileStat) -> int:

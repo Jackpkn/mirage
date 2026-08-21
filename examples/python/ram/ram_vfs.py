@@ -106,6 +106,13 @@ async def main():
         print("  lstat is a link: "
               f"{stat_mod.S_ISLNK(os.lstat('/data/link').st_mode)}")
         print(f"  stat follows it: {os.stat('/data/link').st_size} bytes")
+        # A link has an owner of its own that chown -h writes, so lstat
+        # reads the link's row rather than rebuilding one from the
+        # target string. Its bits stay lrwxrwxrwx whatever chmod -h says.
+        os.lchown("/data/link", 4242, 4343)
+        link_st = os.lstat("/data/link")
+        print(f"  lchown then lstat: {link_st.st_uid}:{link_st.st_gid} "
+              f"mode {oct(stat_mod.S_IMODE(link_st.st_mode))}")
 
         print("\n--- metadata ---")
         os.chmod("/data/hello.txt", 0o600)

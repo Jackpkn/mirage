@@ -327,6 +327,27 @@ class TestLinks:
         assert patched.path.islink("/data/dir/link") is True
         assert patched.path.islink("/data/dir/a.txt") is False
 
+    def test_lstat_reports_what_chown_h_wrote_on_the_link(self):
+        _, patched = seeded()
+        patched.symlink("a.txt", "/data/dir/link")
+        patched.lchown("/data/dir/link", 4242, 4343)
+        st = patched.lstat("/data/dir/link")
+        # The link's own row, not the process defaults: chown -h writes
+        # ownership onto the node and ls -l shows it, so lstat must too.
+        assert (st.st_uid, st.st_gid) == (4242, 4343)
+        assert stat_mod.S_ISLNK(st.st_mode)
+        assert st.st_size == len("a.txt")
+
+    def test_a_link_stays_lrwxrwxrwx_after_chmod_h(self):
+        _, patched = seeded()
+        patched.symlink("a.txt", "/data/dir/link")
+        patched.chmod("/data/dir/link", 0o600, follow_symlinks=False)
+        st = patched.lstat("/data/dir/link")
+        # No POSIX system consults the bits on a symlink, so the overlay
+        # mode is stored but never reported for one.
+        assert stat_mod.S_IMODE(st.st_mode) == 0o777
+        assert stat_mod.S_ISLNK(st.st_mode)
+
     def test_stat_follows_the_link(self):
         _, patched = seeded()
         patched.symlink("a.txt", "/data/dir/link")
@@ -493,6 +514,26 @@ class TestProcessPatch:
                 assert os.path.exists("/mem/note.key") is False
                 with pytest.raises(FileNotFoundError):
                     os.stat("/mem/secrets/token.txt")
+            finally:
+                set_current_session(None)
+
+    def test_a_hidden_link_is_absent_through_lstat(self):
+        # lstat reads the link's row off the node table, so the gate has
+        # to be the readlink probe in front of it: the table itself has
+        # no session.
+        ws = Workspace({"/mem/": RAMResource()}, mode=MountMode.WRITE)
+        run(ws.ops.write("/mem/a.txt", b"hello"))
+        session = ws.create_session("agent")
+        session.hidden_paths = HiddenPaths(paths=(), patterns=("*.key", ))
+        with ws:
+            os.symlink("a.txt", "/mem/secret.key")
+            os.lchown("/mem/secret.key", 4242, 4343)
+            set_current_session(session)
+            try:
+                assert os.listdir("/mem") == ["a.txt"]
+                assert os.path.islink("/mem/secret.key") is False
+                with pytest.raises(FileNotFoundError):
+                    os.lstat("/mem/secret.key")
             finally:
                 set_current_session(None)
 
