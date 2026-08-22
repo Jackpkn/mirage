@@ -113,6 +113,43 @@ function makeResource(
   })
 }
 
+function leafDir(accessor: WikiAccessor, path: PathSpec): [Tree, string] {
+  const parts = path.resourcePath.split('/').filter((x) => x !== '')
+  const leaf = parts.pop() ?? ''
+  const dir = node(accessor.pages, parts.join('/'))
+  if (typeof dir === 'string') throw new Error(`ENOTDIR: ${path.virtual}`)
+  return [dir, leaf]
+}
+
+function write(accessor: WikiAccessor, path: PathSpec, data: Uint8Array): Promise<void> {
+  const [dir, leaf] = leafDir(accessor, path)
+  dir[leaf] = new TextDecoder().decode(data)
+  return Promise.resolve()
+}
+
+function exists(accessor: WikiAccessor, path: PathSpec): Promise<boolean> {
+  try {
+    node(accessor.pages, path.resourcePath)
+    return Promise.resolve(true)
+  } catch {
+    return Promise.resolve(false)
+  }
+}
+
+function unlink(accessor: WikiAccessor, path: PathSpec): Promise<void> {
+  const [dir, leaf] = leafDir(accessor, path)
+  Reflect.deleteProperty(dir, leaf)
+  return Promise.resolve()
+}
+
+function writableResource(): GenericResource<WikiAccessor> {
+  return new GenericResource<WikiAccessor>({
+    name: 'wiki',
+    accessor: new WikiAccessor(structuredClone(PAGES)),
+    io: { ...makeIO(), write, exists, unlink },
+  })
+}
+
 function commandNames(resource: GenericResource<WikiAccessor>): Set<string> {
   return new Set(resource.commands().map((rc) => rc.name))
 }
@@ -242,5 +279,43 @@ describe('GenericResource wires a backend from one CommandIO table', () => {
     } finally {
       await ws.close()
     }
+  })
+
+  it('leaves an optional method genuinely absent, not present-and-undefined', () => {
+    const resource = makeResource()
+    expect(resource.writeFile).toBeUndefined()
+    // `declare` emits no property, so a feature probe written either way
+    // agrees. A plain optional field would answer this one true.
+    expect('writeFile' in resource).toBe(false)
+    expect('rmR' in resource).toBe(false)
+  })
+
+  it('always answers the four the table cannot omit', () => {
+    const resource = makeResource()
+    for (const name of ['readFile', 'readdir', 'stat', 'streamPath'] as const) {
+      expect(typeof resource[name]).toBe('function')
+    }
+  })
+
+  it('installs a forwarder for each optional field the table carries', () => {
+    const resource = writableResource()
+    expect(typeof resource.writeFile).toBe('function')
+    expect(typeof resource.exists).toBe('function')
+    expect(typeof resource.unlink).toBe('function')
+    // Still absent: the table carries no mkdir, rename or du.
+    expect('mkdir' in resource).toBe(false)
+    expect('rename' in resource).toBe(false)
+    expect('du' in resource).toBe(false)
+  })
+
+  it('forwards an optional call through to the table', async () => {
+    const resource = writableResource()
+    const spec = new PathSpec({ resourcePath: 'new.md', virtual: '/new.md', directory: '/' })
+    expect(await resource.exists?.(spec)).toBe(false)
+    await resource.writeFile?.(spec, ENC.encode('written\n'))
+    expect(await resource.exists?.(spec)).toBe(true)
+    expect(await resource.readFile(spec)).toEqual(ENC.encode('written\n'))
+    await resource.unlink?.(spec)
+    expect(await resource.exists?.(spec)).toBe(false)
   })
 })
