@@ -22,7 +22,7 @@ import { hasRules, readsArgs, scopesPaths } from './reads.ts'
 const EMPTY: AdmissionRules = { allow: null, ask: [], deny: [] }
 
 describe('reads', () => {
-  it('hasRules is a role stating anything', () => {
+  it('hasRules is a profile stating anything', () => {
     expect(hasRules(null)).toBe(false)
     expect(hasRules(EMPTY)).toBe(false)
     expect(hasRules({ ...EMPTY, allow: [] })).toBe(true)

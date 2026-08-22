@@ -128,7 +128,7 @@ function renderSection(title: string, entries: readonly ManEntry[]): string {
  * lists the verbs and `man linear issue create` is the page for one leaf.
  *
  * The allow list narrows a tree the same way it narrows the bare listing,
- * one level down: a role holding `linear issue list` reads a manual for
+ * one level down: a profile holding `linear issue list` reads a manual for
  * that verb and nothing else, because a row it cannot run is an
  * advertisement for a 126.
  */

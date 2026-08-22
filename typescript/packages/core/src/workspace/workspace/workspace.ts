@@ -60,7 +60,7 @@ import { PrefixResolver } from '../../runtime/resolver.ts'
 import type { BridgeDispatchFn } from '../../runtime/types.ts'
 import { MontyUnavailableError } from '../../runtime/python/monty/index.ts'
 import type { Runtime, RuntimeEntry } from '../../runtime/base.ts'
-import { isEvaluator, type Evaluator } from '../../runtime/mixin.ts'
+import { isEvaluator } from '../../runtime/mixin.ts'
 import type { EvalResult } from '../../runtime/types.ts'
 import { PyodideUnavailableError } from '../../runtime/python/types.ts'
 import { Dispatcher } from '../dispatcher/index.ts'
@@ -71,9 +71,9 @@ import { buildFilePrompt } from '../file_prompt.ts'
 import { SessionManager } from '../session/manager.ts'
 import type { WorkspaceFields, WorkspaceStateStore } from '../store/base.ts'
 import type { Session } from '../session/session.ts'
-import { parseProfileMounts, type SessionProfile } from '../session/permissions.ts'
+import { parseProfileMounts, type SessionProfile } from '../../policy/profile.ts'
 import { applyProfile, compileProfile, resolveProfile, withInline } from '../session/resolve.ts'
-import { evaluateProfile, profileContext, profileEvaluator } from '../session/script.ts'
+import { permissionsFromScripts } from '../../policy/script.ts'
 import { newSessionId, newWorkspaceId } from '../../utils/ids.ts'
 import type { WatchRuntime } from '../../watch/base.ts'
 import { resolveControlStores } from './build.ts'
@@ -177,8 +177,8 @@ export class Workspace {
     })
     rejectConfigScript('policy', options.policy)
     this.policy = options.policy ?? null
-    // The permission documents: one role per name, and the role a
-    // session gets when it names none. A role is the whole document a
+    // The permission profiles: one per name, and the one a session
+    // gets when it names none. A profile is the whole document a
     // session runs under, so there is no workspace-wide block above it.
     this.profiles = { ...(options.profiles ?? {}) }
     this.defaultProfileName = options.profile ?? null
@@ -245,9 +245,8 @@ export class Workspace {
     // The workspace's own session is a session created without a name,
     // so `profiles.default` shapes it too (design 3.4): the primary
     // agent is not the one agent the document cannot reach.
-    const defaultProfile = this.roleFor(null)
-    this.sessionManager.defaultProfile =
-      defaultProfile === null ? null : compileProfile(defaultProfile)
+    const defaultBase = this.baseProfile(null)
+    this.sessionManager.defaultProfile = defaultBase === null ? null : compileProfile(defaultBase)
     for (const resource of [...this.registry.allMounts().map((m) => m.resource), this.cache]) {
       const resourceOps = resource.ops?.()
       if (resourceOps === undefined) continue
@@ -498,10 +497,11 @@ export class Workspace {
   }
 
   /**
-   * The role a session is created under: the name as given, else the
-   * workspace's default role.
+   * The base profile a session is created under, which the inline
+   * `permissions`/`mounts` options then layer onto: the profile as
+   * named, else the workspace default.
    */
-  private roleFor(profile: string | SessionProfile | null): SessionProfile | null {
+  private baseProfile(profile: string | SessionProfile | null): SessionProfile | null {
     if (profile === null && this.defaultProfileName !== null) {
       return this.profiles[this.defaultProfileName] ?? null
     }
@@ -509,21 +509,21 @@ export class Workspace {
   }
 
   /**
-   * Create a session under one role, with an optional inline document
-   * of its own.
+   * Create a session under one profile, with an optional inline
+   * document of its own.
    *
-   * The role is a name from the workspace's `profiles`, or the workspace
-   * default when none is named, or a role document. The inline
-   * `permissions` and `mounts` may add ask and deny rules, hides and
-   * weaker modes; they may never add an allow entry, which is the one
-   * rule about combining two documents. `mounts` is sugar for
+   * The profile is a name from the workspace's `profiles`, or the
+   * workspace default when none is named, or a profile document. The
+   * inline `permissions` and `mounts` may add ask and deny rules, hides
+   * and weaker modes; they may never add an allow entry, which is the
+   * one rule about combining two documents. `mounts` is sugar for
    * `permissions.mounts`: a mapping assigns each prefix a mode ('read',
    * 'write', 'exec', or the filesystem aliases 'r', 'rw', 'rwx'), which
    * may only be weaker than the mount's own. A mount the mapping omits
-   * keeps its own mode, so this narrows and never confines; a role that
-   * must keep a session away from a mount hides it. Throws PolicyError
-   * on an unknown role name, or on an inline document with an allow
-   * list.
+   * keeps its own mode, so this narrows and never confines; a profile
+   * that must keep a session away from a mount hides it. Throws
+   * PolicyError on an unknown profile name, or on an inline document
+   * with an allow list.
    */
   createSession(
     sessionId: string,
@@ -533,14 +533,14 @@ export class Workspace {
       permissions?: SessionProfile | null
     } = {},
   ): Session {
-    const base = this.roleFor(options.profile ?? null)
+    const base = this.baseProfile(options.profile ?? null)
     if (base?.script != null) {
       // Still a script means hydration has not run, and running it needs
       // an await this door does not have. Every caller that creates a
       // session already takes that door first, so this names it rather
       // than guessing on their behalf.
       throw new PolicyError(
-        'a role written by a script is ready only after ' +
+        'a profile that states a script is ready only after ' +
           'ensureSessionsLoaded(); await it before createSession()',
       )
     }
@@ -588,61 +588,36 @@ export class Workspace {
   /**
    * Hydrate sessions from the session store (idempotent). The discovery
    * record resolves first so a minted default session id can adopt the
-   * stored pointer before hydration keys off it.
+   * stored pointer before hydration keys off it. Profile scripts run
+   * here too, once each, because this is the async door every caller
+   * already takes before it creates a session.
    */
   async ensureSessionsLoaded(): Promise<void> {
     await this.meta.ensure()
-    await this.writeScriptedProfiles()
+    await this.evaluateProfileScripts()
     await this.sessionManager.ensureLoaded()
   }
 
   /**
-   * Replace each scripted role with the document its script wrote.
+   * Replace each profile's script with the permissions it produced.
    *
-   * Every script runs before any result is kept, so one broken role
-   * refuses the whole set rather than leaving the roles that happened to
-   * be evaluated first written and the rest still scripts. Without that,
-   * whether a session could be created depended on where its role sat in
-   * the mapping. A permission document is operator configuration, so a
-   * workspace that cannot realize the one it was given does not serve;
-   * the refusal names the role.
-   *
-   * Idempotent by construction: a written role no longer states a
-   * script, so a second hydration finds nothing left to run.
+   * One call into the policy layer, which runs every script before
+   * returning anything, so one broken profile refuses the whole set
+   * (see permissionsFromScripts). Idempotent by construction: a profile
+   * that has been evaluated no longer states a script, so a second
+   * hydration finds nothing left to run.
    */
-  private async writeScriptedProfiles(): Promise<void> {
-    const scripted = Object.entries(this.profiles).filter(([, role]) => role.script != null)
-    if (scripted.length === 0) return
+  private async evaluateProfileScripts(): Promise<void> {
+    const scripted = Object.fromEntries(
+      Object.entries(this.profiles).filter(([, profile]) => profile.script != null),
+    )
+    if (Object.keys(scripted).length === 0) return
     const mounts = this.mounts().map((entry) => entry.prefix)
-    const written: Record<string, SessionProfile> = {}
-    const engines = new Map<string, Runtime & Evaluator>()
-    try {
-      for (const [name, role] of scripted) {
-        const script = role.script
-        if (typeof script === 'string') {
-          throw new PolicyError(
-            `profile '${name}' names a script by path ('${script}'); ` +
-              `only the config door loads one, pass ScriptSource in code`,
-          )
-        }
-        if (script == null) continue
-        let engine = profileEvaluator(name, script, role.runtime ?? null)
-        // One engine per kind, not per role: each is a worker, so
-        // building one for every scripted role would spawn N of them to
-        // run N short programs.
-        const cached = engines.get(engine.name)
-        if (cached === undefined) engines.set(engine.name, engine)
-        else engine = cached
-        written[name] = await evaluateProfile(name, script, profileContext(name, mounts), engine)
-      }
-    } finally {
-      for (const engine of engines.values()) await engine.close()
-    }
-    Object.assign(this.profiles, written)
+    Object.assign(this.profiles, await permissionsFromScripts(scripted, mounts))
   }
 
   /**
-   * What a line would do under a session's role, without running any of
+   * What a line would do under a session's profile, without running any
    * it: one Explanation per command the gate reads, in gate order,
    * nested lines included.
    *
@@ -652,7 +627,7 @@ export class Workspace {
    * puts no question to a host, which is what makes it safe to call
    * about a line nobody typed.
    *
-   * Host-side only. The structure of a role's rules is an operator's
+   * Host-side only. The structure of a profile's rules is an operator's
    * business, so there is no builtin an agent can type to read it.
    */
   async explain(line: string, sessionId = ''): Promise<Explanation[]> {

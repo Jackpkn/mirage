@@ -177,7 +177,7 @@ describe('--help and man through the executor', () => {
     expect(stdoutStr(await ws.execute('man'))).toContain('# clis')
   })
 
-  it('man lists only the CLI verbs the role can reach', async () => {
+  it('man lists only the CLI verbs the profile can reach', async () => {
     const ws = await cliWs()
     ws.createSession('narrow', {
       profile: { commands: { allow: ['man', 'linear issue'], ask: [], deny: [] } },

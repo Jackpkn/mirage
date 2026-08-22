@@ -33,10 +33,7 @@ import {
   parseMountMode,
 } from '@struktoai/mirage-core/types'
 import { snakeToCamel } from '@struktoai/mirage-core/utils/normalize'
-import {
-  parseSessionProfile,
-  type SessionProfile,
-} from '@struktoai/mirage-core/workspace/session/permissions'
+import { parseSessionProfile, type SessionProfile } from '@struktoai/mirage-core/policy/profile'
 import type { WorkspaceStateStore } from '@struktoai/mirage-core/workspace/store/base'
 import { RAMWorkspaceStateStore } from '@struktoai/mirage-core/workspace/store/ram'
 import { S3WorkspaceStateStore } from '@struktoai/mirage-core/workspace/store/s3'
@@ -336,7 +333,7 @@ function validateConfigKeys(raw: Record<string, unknown>): void {
       rejectUnknownKeys(block, CLI_KEYS, `cli \`${name}\``)
     }
   }
-  // The roles validate through the core's own validators (the same
+  // The profiles validate through the core's own validators (the same
   // shape the SDK and REST take), so a typo like `path:` on a deny rule
   // fails here rather than widening the rule.
   if (raw.profiles !== undefined && raw.profiles !== null) {
@@ -417,19 +414,21 @@ function parseLimits(
 /**
  * Validate the `profiles:` block: every entry through the core profile
  * validator, so a misspelled field is a load error rather than a
- * first-session one. A role is the whole document it runs under, so
+ * first-session one. A profile is the whole document it runs under, so
  * there is no chain to resolve here.
  */
 function parseProfiles(raw: unknown): Record<string, SessionProfile> {
   if (!isPlainObject(raw)) throw new Error('config `profiles` must be a mapping')
   const out: Record<string, SessionProfile> = {}
   for (const [name, block] of Object.entries(raw)) {
-    const role = parseSessionProfile(block, `profile \`${name}\``)
+    const profile = parseSessionProfile(block, `profile \`${name}\``)
     // A path is what config carries; the wire carries content, so it is
     // read here (the docker build-context model). Code passes a loaded
     // ScriptSource, which is left alone.
     out[name] =
-      typeof role.script === 'string' ? { ...role, script: loadScriptSource(role.script) } : role
+      typeof profile.script === 'string'
+        ? { ...profile, script: loadScriptSource(profile.script) }
+        : profile
   }
   return out
 }
@@ -583,9 +582,9 @@ export interface WorkspaceConfigRaw {
   clis?: Record<string, CLIBlock> | null
   runtimes?: (string | Record<string, unknown>)[] | null
   policy?: string | null
-  /** The roles (`profiles:`); every entry validated by parseProfiles. */
+  /** The profiles (`profiles:`); every entry validated by parseProfiles. */
   profiles?: unknown
-  /** Which role shapes a session created without one. */
+  /** Which profile shapes a session created without one. */
   profile?: unknown
   mode?: string
   consistency?: string

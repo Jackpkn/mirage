@@ -50,12 +50,12 @@ describe('weakerMode', () => {
   })
 })
 
-describe('a role narrows the mounts it names', () => {
+describe('a profile narrows the mounts it names', () => {
   it('no bound session is unrestricted', () => {
     expect(effectiveMountMode('/anything', MountMode.WRITE)).toBe(MountMode.WRITE)
   })
 
-  it('a role naming no mount keeps every mode', async () => {
+  it('a profile naming no mount keeps every mode', async () => {
     await runWithSession(new Session({ sessionId: 'free' }), () => {
       expect(effectiveMountMode('/s3', MountMode.EXEC)).toBe(MountMode.EXEC)
       return Promise.resolve()
@@ -85,11 +85,11 @@ describe('a role narrows the mounts it names', () => {
     })
   })
 
-  it('a mount the role does not name keeps its own mode', async () => {
+  it('a mount the profile does not name keeps its own mode', async () => {
     // Naming three mounts is not an allowlist: a fourth is reachable at
-    // whatever the workspace gave it. A role that must not touch a
+    // whatever the workspace gave it. A profile that must not touch a
     // mount hides it, which reads as ENOENT rather than as a permission
-    // error naming something the role cannot see.
+    // error naming something the profile cannot see.
     await runWithSession(narrowedSession(), () => {
       expect(effectiveMountMode('/other', MountMode.EXEC)).toBe(MountMode.EXEC)
       expect(effectiveMountMode('/', MountMode.WRITE)).toBe(MountMode.WRITE)
@@ -148,8 +148,8 @@ describe('a binding belongs to the workspace that published it', () => {
 })
 
 describe('hides', () => {
-  it("a role's hides reach the predicate as paths and patterns", async () => {
-    // One list per session, built by the compiler from the role's own
+  it("a profile's hides reach the predicate as paths and patterns", async () => {
+    // One list per session, built by the compiler from the profile's own
     // `paths.hide` and every mount section's, exact entries and glob
     // patterns told apart once by `classifyPaths`.
     const sess = new Session({
@@ -190,7 +190,7 @@ describe('hides', () => {
     })
   })
 
-  it('a hide activates the gate and a role without one does not', async () => {
+  it('a hide activates the gate and a profile without one does not', async () => {
     const sess = new Session({ sessionId: 'agent', hiddenPaths: { paths: ['/repo/.env'] } })
     await runWithSession(sess, () => {
       expect(hiddenPathsActive()).toBe(true)

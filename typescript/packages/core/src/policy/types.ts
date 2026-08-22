@@ -37,7 +37,7 @@ interface MountRootQuery {
 export type DenyScope = 'command' | 'operand'
 
 /**
- * What the role's rules say about one line: the document's own three
+ * What the profile's rules say about one line: the document's own three
  * verbs and nothing else.
  *
  * ALLOW is silence as well as consent, since a line no rule speaks
@@ -70,7 +70,7 @@ export interface Deny {
  * One admission rule of the permissions document: refuse (or ask about)
  * matching commands, on matching paths when it names any. It is the
  * compiled element of `commands.deny` and `commands.ask` wherever the
- * role writes one, and reaches the workspace only inside that document;
+ * profile writes one, and reaches the workspace only inside that document;
  * the internal
  * RulePolicy is what evaluates it. The document writes a rule in one of
  * three shapes, and each compiles to rules of this shape: a list of
@@ -100,7 +100,7 @@ export interface CommandRule {
   mount?: string
 }
 
-/** The role's answer about one line, and what produced it. */
+/** The profile's answer about one line, and what produced it. */
 export interface Ruling {
   /** Which verb spoke. */
   readonly outcome: Outcome
@@ -242,14 +242,14 @@ export interface SessionDecisionsQuery {
 }
 
 /**
- * One role's admission rules, compiled: the whole permission document a
+ * One profile's admission rules, compiled: the whole permission document a
  * session runs under. A session is evaluated against exactly one of
- * these. It holds the role's allow list, its ask and deny rules, and
+ * these. It holds the profile's allow list, its ask and deny rules, and
  * the rules its mount sections carry, each stamped with the mount it
  * was written under so it applies to a line working inside that mount.
  * There is nothing above it and nothing beside it: two rules that both
  * match are resolved by anchor depth, then by verb (`policy/match/
- * decide`). `allow` null when the role states no list.
+ * decide`). `allow` null when the profile states no list.
  */
 export interface AdmissionRules {
   allow: readonly string[] | null
@@ -269,7 +269,7 @@ export type LiveRules = readonly (readonly [Outcome, CommandRule])[]
  * SessionManager satisfies it structurally, so the policy reads the
  * rules by session id without this package importing the workspace.
  * An id the manager does not know (or the empty id of an unbound door)
- * answers the default role's rules, so it still fails toward refusal.
+ * answers the default profile's rules, so it still fails toward refusal.
  */
 export interface SessionCommandsQuery {
   commandsOf(sessionId: string): AdmissionRules | null
@@ -413,7 +413,7 @@ export interface Explanation {
   readonly command: string
   /** The words after it. */
   readonly argv: readonly string[]
-  /** What the role's rules say. */
+  /** What the profile's rules say. */
   readonly outcome: Outcome
   /** The rule that spoke, null when the allow list did or nothing did. */
   readonly rule: CommandRule | null

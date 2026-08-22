@@ -16,10 +16,10 @@ import asyncio
 import copy
 from collections.abc import Mapping
 
+from mirage.policy.profile import CompiledProfile
 from mirage.policy.types import AdmissionRules, Decision
 from mirage.types import MountMode
 from mirage.workspace.record.types import CAS_MAX_RETRIES, generation_of
-from mirage.workspace.session.permissions import CompiledProfile
 from mirage.workspace.session.ram import RAMSessionStore
 from mirage.workspace.session.resolve import apply_profile, narrow
 from mirage.workspace.session.session import Session, vars_from_env
@@ -85,10 +85,10 @@ class SessionManager:
         """The admission rules one session runs under
         (SessionCommandsQuery).
 
-        The default role's rules for an id this manager does not know,
+        The default profile's rules for an id this manager does not know,
         the empty id of an unbound door included (FUSE, the host's own
         ``ws.ops``), so a door that names no session is judged like a
-        session that named no role rather than judged not at all.
+        session that named no profile rather than judged not at all.
 
         Args:
             session_id (str): the session, empty when none is bound.

@@ -19,7 +19,7 @@ import type { Action, CommandContext, Policy } from '../../policy/index.ts'
 import { RAMResource } from '../../resource/ram/ram.ts'
 import { MountMode } from '../../types.ts'
 import { getTestParser } from '../fixtures/workspace_fixture.ts'
-import { parseSessionProfile } from '../session/permissions.ts'
+import { parseSessionProfile } from '../../policy/profile.ts'
 import { Workspace } from '../workspace/workspace.ts'
 
 const DEC = new TextDecoder()

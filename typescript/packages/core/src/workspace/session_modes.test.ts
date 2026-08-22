@@ -19,7 +19,7 @@ import { RAMSessionStore } from './session/ram.ts'
 import { RAMResource } from '../resource/ram/ram.ts'
 import { FileType, MountMode, type FileStat } from '../types.ts'
 import { getTestParser, stderrStr, stdoutStr } from './fixtures/workspace_fixture.ts'
-import { parseSessionProfile } from './session/permissions.ts'
+import { parseSessionProfile } from '../policy/profile.ts'
 import { Workspace } from './workspace/workspace.ts'
 
 const ENC = new TextEncoder()
@@ -131,7 +131,7 @@ describe('per-session mount grants', () => {
     expect(stderrStr(denied)).toBe('/a/y.txt: Permission denied\n')
   })
 
-  // A list used to mean "only these mounts are reachable"; a mount a role
+  // A list used to mean "only these mounts are reachable"; a mount a profile
   // does not name now keeps its own mode, so the list would quietly drop
   // the confinement it used to carry.
   it('refuses a bare list of mounts', async () => {
@@ -141,7 +141,7 @@ describe('per-session mount grants', () => {
     ).toThrow('mounts must be a mapping of prefix to its settings')
   })
 
-  it('a mount the role does not name stays reachable', async () => {
+  it('a mount the profile does not name stays reachable', async () => {
     // The behavior change worth pinning: naming one mount is not an
     // allowlist over the rest.
     const { ws } = await makeGrantsWorkspace()
@@ -153,7 +153,7 @@ describe('per-session mount grants', () => {
   })
 
   it('a hidden mount reads as absent', async () => {
-    // A role narrows the mounts it names and never decides whether one
+    // A profile narrows the mounts it names and never decides whether one
     // exists, so keeping a session away from a mount is a hide, and a
     // hide answers ENOENT: naming the mount in a refusal would confirm
     // to the agent exactly what it was not meant to know is there.
@@ -201,14 +201,14 @@ describe('per-session mount grants', () => {
     expect(stdoutStr(io).trim()).toBe('1')
   })
 
-  it('rejects invalid roles', async () => {
+  it('rejects invalid profiles', async () => {
     const { ws } = await makeGrantsWorkspace()
     expect(() => ws.createSession('agent', { mounts: { '/a': 'admin' as MountMode } })).toThrow(
       'invalid mount mode',
     )
   })
 
-  it('accepts filesystem alias roles, rejects bit-style forms', async () => {
+  it('accepts filesystem alias profiles, rejects bit-style forms', async () => {
     const { ws } = await makeGrantsWorkspace()
     const sess = ws.createSession('agent', { mounts: { '/a': 'rw' } })
     expect(sess.mountModes?.get('/a')).toBe(MountMode.WRITE)

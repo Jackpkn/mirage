@@ -25,6 +25,9 @@ from mirage.policy.errors import PolicyDenied, PolicyError
 from mirage.policy.policies import (Policies, post_execute_gate, post_ops_gate,
                                     pre_ops_gate, pre_session_gate,
                                     render_deny, render_pending)
+from mirage.policy.profile import (CommandsBlock, CompiledProfile,
+                                   MountCommandsBlock, PathsBlock,
+                                   ProfileMount, SessionProfile, VarsBlock)
 
 from mirage.policy.types import (  # isort: skip
     VALIDITY, Action, Ask, CommandContext, CommandRule, AdmissionRules,
@@ -40,6 +43,8 @@ __all__ = [
     "AskHandler",
     "CommandContext",
     "CommandRule",
+    "CommandsBlock",
+    "CompiledProfile",
     "covers",
     "Decision",
     "decision_id",
@@ -53,11 +58,13 @@ __all__ = [
     "Explanation",
     "FALLBACK_LIMIT",
     "Limit",
+    "MountCommandsBlock",
     "MountRootPolicy",
     "MountRootQuery",
     "OpsContext",
     "OpsResultContext",
     "OutputCapPolicy",
+    "PathsBlock",
     "Pending",
     "PermissionsPolicy",
     "Policies",
@@ -69,6 +76,7 @@ __all__ = [
     "post_ops_gate",
     "pre_ops_gate",
     "pre_session_gate",
+    "ProfileMount",
     "render_deny",
     "render_pending",
     "resolve_across_mounts",
@@ -78,5 +86,7 @@ __all__ = [
     "SessionCommandsQuery",
     "SessionContext",
     "SessionDecisionsQuery",
+    "SessionProfile",
     "VALIDITY",
+    "VarsBlock",
 ]

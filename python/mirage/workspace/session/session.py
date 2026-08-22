@@ -148,7 +148,7 @@ class Session:
     # session door for vars), fork carries them, to_dict serializes.
     hidden_paths: HiddenPaths | None = None
     hidden_vars: HiddenVars | None = None
-    # The role's admission rules, compiled: its allow list, its ask and
+    # The profile's admission rules, compiled: its allow list, its ask and
     # deny rules, and every rule its mount entries carry. One document,
     # so there is nothing above it to join with. A durable restriction
     # like hidden_paths, so it persists with the session record.

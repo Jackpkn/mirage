@@ -19,7 +19,7 @@ import { MountMode } from '../../types.ts'
 import { classifyParts } from '../expand/classify/parts.ts'
 import { getTestParser } from '../fixtures/workspace_fixture.ts'
 import { Workspace } from '../workspace/workspace.ts'
-import { parseSessionProfile, type SessionProfile } from '../session/permissions.ts'
+import { parseSessionProfile, type SessionProfile } from '../../policy/profile.ts'
 import { Admitted, admit, admitLine, policyScopes } from './admission.ts'
 import { PolicyDenied } from '../../policy/index.ts'
 import type { CommandRule, AdmissionRules } from '../../policy/types.ts'
@@ -44,14 +44,14 @@ afterEach(async () => {
   for (const ws of open.splice(0)) await ws.close()
 })
 
-async function ws(role: SessionProfile | null = DOC): Promise<Workspace> {
+async function ws(profile: SessionProfile | null = DOC): Promise<Workspace> {
   const parser = await getTestParser()
   const w = new Workspace(
     { '/data': new RAMResource() },
     {
       mode: MountMode.WRITE,
       shellParser: parser,
-      ...(role !== null ? { profiles: { default: role } } : {}),
+      ...(profile !== null ? { profiles: { default: profile } } : {}),
     },
   )
   open.push(w)

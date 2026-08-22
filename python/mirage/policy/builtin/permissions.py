@@ -21,7 +21,7 @@ from mirage.policy.types import (Action, Ask, CommandContext, Deny, DenyScope,
 
 
 class PermissionsPolicy(Policy):
-    """The role's ``commands`` rules, enforced.
+    """The profile's ``commands`` rules, enforced.
 
     Seeded by the workspace after ``MountRootPolicy`` (POSIX messages
     still win) and before user policies, so a document rule speaks
@@ -39,7 +39,7 @@ class PermissionsPolicy(Policy):
     refused whole or per operand by whether it names paths, or taken to
     the approval door when it asks. ``pre_ops`` walks the deny rules
     that are pure paths, so FUSE, programmatic ops and the warm cache
-    cannot bypass a path the role protects; there is no ask at the op
+    cannot bypass a path the profile protects; there is no ask at the op
     door, which cannot wait on a host.
 
     Args:

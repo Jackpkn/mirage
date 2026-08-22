@@ -20,8 +20,8 @@ import { NAMESPACE_COMMANDS, SHELL_NAMES } from './constants.ts'
 import { Consumer } from './types.ts'
 
 /**
- * What the session's allow list says about a tool word. A role without a
- * list installs everything; a role with one installs only the names its
+ * What the session's allow list says about a tool word. A profile without a
+ * list installs everything; a profile with one installs only the names its
  * patterns start with (`headVisible`). This is the raw answer;
  * `commandVisible` and `layers` add the words that are never subjects.
  */
@@ -43,7 +43,7 @@ export function isTool(name: string, session: Session): boolean {
 }
 
 /**
- * Whether a session can see a command word at all. The role's allow list
+ * Whether a session can see a command word at all. The profile's allow list
  * (`commands.allow`) decides: a tool name no pattern of it starts with
  * is not installed for the session, so it is 127 at the chokepoint and
  * absent from every enumerator; a word that is not a tool (`isTool`) is
@@ -58,7 +58,7 @@ export function commandVisible(name: string, session: Session): boolean {
  *
  * `commandVisible` answers for a word, which is all dispatch needs: a CLI
  * is routed by its head word and the verbs after it are the program's own
- * operand. Discovery needs the finer answer, because a role allowed
+ * operand. Discovery needs the finer answer, because a profile allowed
  * `linear issue list` is not allowed `linear team`, and a manual that
  * lists the second is advertising a line that cannot run. `isTool`'s
  * exemptions have nothing to say here: shell grammar and functions are

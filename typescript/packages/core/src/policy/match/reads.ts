@@ -16,7 +16,7 @@ import type { CommandRule, AdmissionRules } from '../types.ts'
 import { patternNames, splitPattern } from './pattern.ts'
 
 /**
- * Whether the role states a command rule at all: an allow list, an ask
+ * Whether the profile states a command rule at all: an allow list, an ask
  * or a deny.
  */
 export function hasRules(rules: AdmissionRules | null): boolean {

@@ -56,13 +56,13 @@ export function registerSessionCommands(program: Command): void {
       "narrow a mount's mode for this session: '/data:read' (alias '/data:r'), " +
         "'/scratch:rw', '/bin:rwx', or a bare '/data' to keep the mount's own " +
         'mode; repeatable. This narrows only: a mount you do not name keeps its ' +
-        'own mode, and keeping a session away from one is a hide in its role',
+        'own mode, and keeping a session away from one is a hide in its profile',
       (value: string, prev: string[]) => prev.concat([value]),
       [] as string[],
     )
     .option(
       '-p, --profile <name>',
-      "the role this session runs under, by name from the workspace's profiles; " +
+      "the profile this session runs under, by name from the workspace's profiles; " +
         'omit it to take the workspace default',
     )
     .action(async (wsId: string, opts: { id?: string; mount?: string[]; profile?: string }) => {

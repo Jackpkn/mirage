@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { RAMResource } from '../../resource/ram/ram.ts'
-import { ScriptSource } from '../../runtime/policy/types.ts'
-import { MountMode } from '../../types.ts'
-import { getTestParser } from '../fixtures/workspace_fixture.ts'
-import { Workspace } from '../workspace/workspace.ts'
+import { RAMResource } from '../resource/ram/ram.ts'
+import { ScriptSource } from '../runtime/policy/types.ts'
+import { MountMode } from '../types.ts'
+import { getTestParser } from './fixtures/workspace_fixture.ts'
+import { Workspace } from './workspace/workspace.ts'
 
 const GOOD = "({commands: {allow: ['ls', 'cat', 'echo']}, cwd: '/data'})"
 
@@ -21,7 +21,7 @@ async function build(profiles: Record<string, unknown>, runtimes?: string[]) {
 }
 
 describe('profile scripts', () => {
-  it('runs a python role on monty, the engine both hosts name', async () => {
+  it('runs a python profile script on monty, the engine both hosts name', async () => {
     const src = "{'commands': {'allow': ['ls', 'echo']}, 'cwd': '/data'}"
     const ws = await build({ release: { script: new ScriptSource(src, 'python') } })
     await ws.ensureSessionsLoaded()
@@ -31,10 +31,11 @@ describe('profile scripts', () => {
     await ws.close()
   }, 120000)
 
-  it('runs a python role on pyodide when the role names it', async () => {
+  it('runs a python profile script on pyodide when the profile names it', async () => {
     // pyodide is this host's default python engine for *agent* code but
-    // not for roles, so naming it is the only way it writes one; that
-    // makes this the explicit-`runtime:` path against a real engine.
+    // not for profile scripts, so naming it is the only way it produces
+    // one; that makes this the explicit-`runtime:` path against a real
+    // engine.
     const src = "{'commands': {'allow': ['ls', 'echo']}, 'cwd': '/data'}"
     const ws = await build({
       release: { script: new ScriptSource(src, 'python'), runtime: 'pyodide' },
@@ -60,7 +61,7 @@ describe('profile scripts', () => {
     await ws.close()
   })
 
-  it('writes the role and enforces it', async () => {
+  it('produces the permissions and enforces them', async () => {
     const ws = await build({ release: { script: new ScriptSource(GOOD, 'js') } })
     await ws.ensureSessionsLoaded()
     ws.createSession('s', { profile: 'release' })
@@ -87,7 +88,7 @@ describe('profile scripts', () => {
   })
 
   it.each([[['bad', 'good']], [['good', 'bad']]])(
-    'one broken role refuses every scripted role (%s)',
+    'one broken profile refuses every scripted profile (%s)',
     async (order) => {
       const sources: Record<string, string> = {
         good: GOOD,

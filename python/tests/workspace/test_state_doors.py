@@ -68,7 +68,7 @@ def _two_mounts(policies=None) -> Workspace:
 
 def test_fuse_symlink_on_hidden_turf_is_refused():
     # The R8 hole: a session-scoped kernel mount could create a link on
-    # a mount the role hides, because the FUSE symlink path wrote the
+    # a mount the profile hides, because the FUSE symlink path wrote the
     # namespace table directly, at a layer no session view covers.
     ws = _two_mounts()
     sess = ws.create_session("agent", profile={"paths": {"hide": ["/b"]}})

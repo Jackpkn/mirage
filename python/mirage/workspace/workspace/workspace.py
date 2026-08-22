@@ -31,11 +31,12 @@ from mirage.observe.record import OpRecord
 from mirage.observe.store import ObserverStore
 from mirage.ops import Ops
 from mirage.policy import (AskHandler, Decisions, Explanation,
-                           PermissionsPolicy, Policies, Policy, PolicyError)
+                           PermissionsPolicy, Policies, Policy, PolicyError,
+                           SessionProfile)
+from mirage.policy.script import permissions_from_scripts
 from mirage.provision import ProvisionResult
 from mirage.resource.history import HISTORY_PREFIX, HistoryViewResource
 from mirage.runtime.base import Runtime
-from mirage.runtime.mixin import EvaluatorMixin
 from mirage.runtime.policy import PolicyDecision, PolicyFn
 from mirage.runtime.resolver import PrefixResolver
 from mirage.shell import parse
@@ -50,12 +51,9 @@ from mirage.workspace.mount import MountEntry, MountRegistry
 from mirage.workspace.mount.namespace import Namespace
 from mirage.workspace.mount.namespace.store import NamespaceStore
 from mirage.workspace.node.explain import explain_line
-from mirage.workspace.session import (Session, SessionManager, SessionProfile,
-                                      SessionStore)
+from mirage.workspace.session import Session, SessionManager, SessionStore
 from mirage.workspace.session.resolve import (apply_profile, compile_profile,
                                               resolve_profile, with_inline)
-from mirage.workspace.session.script import (evaluate_profile, profile_context,
-                                             profile_evaluator)
 from mirage.workspace.session.validate import check_cli_verbs
 from mirage.workspace.snapshot import (DriftQueue, apply_state_dict,
                                        build_mount_args, install_fingerprints,
@@ -120,9 +118,9 @@ class Workspace:
         | None = None,
     ) -> None:
         self._registry = MountRegistry()
-        # The permission documents: one role per name, and the role a
-        # session gets when it names none. A role is the whole document
-        # a session runs under, so there is no workspace-wide block
+        # The permission profiles: one per name, and the one a session
+        # gets when it names none. A profile is the whole document a
+        # session runs under, so there is no workspace-wide block
         # above it. Both accept the plain mapping a YAML file or the
         # TypeScript constructor would hold; model_validate is a no-op
         # on an already-built model.
@@ -161,7 +159,7 @@ class Workspace:
         self._default_agent_id = agent_id
         self._session_mgr = SessionManager(session_id, store=stores.sessions)
         # Admission policies, consulted in registration order after the
-        # built-ins the registry seeds: the role's admission rules
+        # built-ins the registry seeds: the profile's admission rules
         # (PermissionsPolicy, reading each session's compiled rules
         # from the manager by the id the door puts in the context), then
         # Policy instances, then anything added later through
@@ -200,11 +198,11 @@ class Workspace:
         # stamped onto the default session now and onto every session
         # created or hydrated later.
         # The workspace's own session is a session created without a
-        # name, so the default role shapes it too: the primary agent is
-        # not the one agent the document cannot reach.
-        default_role = self._role(None)
-        self._session_mgr.default_profile = (compile_profile(default_role)
-                                             if default_role is not None else
+        # name, so the default profile shapes it too: the primary agent
+        # is not the one agent the document cannot reach.
+        default_base = self._base_profile(None)
+        self._session_mgr.default_profile = (compile_profile(default_base)
+                                             if default_base is not None else
                                              None)
 
         self.observer = Observer(store=stores.observe)
@@ -261,8 +259,8 @@ class Workspace:
     async def explain(self,
                       line: str,
                       session_id: str = "") -> list[Explanation]:
-        """What a line would do under a session's role, without running
-        any of it.
+        """What a line would do under a session's profile, without
+        running any of it.
 
         The dry run of the gate every command passes through, so this
         and the refusal an agent would read come out of one place and
@@ -270,13 +268,14 @@ class Workspace:
         grant and puts no question to a host, which is what makes it
         safe to call about a line nobody typed.
 
-        Host-side only. The structure of a role's rules is an operator's
-        business, so there is no builtin an agent can type to read it.
+        Host-side only. The structure of a profile's rules is an
+        operator's business, so there is no builtin an agent can type
+        to read it.
 
         Args:
             line (str): the line to judge, as an agent would type it.
-            session_id (str): whose role to judge it under; the default
-                session when empty.
+            session_id (str): whose profile to judge it under; the
+                default session when empty.
 
         Returns:
             list[Explanation]: one per command the gate reads, in gate
@@ -697,12 +696,12 @@ class Workspace:
         profile: str | SessionProfile | Mapping[str, Any] | None = None,
         permissions: SessionProfile | Mapping[str, Any] | None = None,
     ) -> Session:
-        """Create a session under one role, with an optional inline
+        """Create a session under one profile, with an optional inline
         document of its own.
 
-        The role is a name from the workspace's ``profiles``, or the
-        workspace default when none is named, or a role document. The
-        inline ``permissions`` and ``mounts`` may add ask and deny
+        The profile is a name from the workspace's ``profiles``, or the
+        workspace default when none is named, or a profile document.
+        The inline ``permissions`` and ``mounts`` may add ask and deny
         rules, hides and weaker modes; they may never add an allow
         entry, which is the one rule about combining two documents.
 
@@ -713,28 +712,28 @@ class Workspace:
                 mode ("read", "write", "exec", or the filesystem aliases
                 "r", "rw", "rwx"), which may only be weaker than the
                 mount's own. A mount the mapping omits keeps its own
-                mode, so this narrows and never confines; a role that
-                must keep a session away from a mount hides it.
+                mode, so this narrows and never confines; a profile
+                that must keep a session away from a mount hides it.
             profile (str | SessionProfile | Mapping[str, Any] | None):
-                the role to create the session from: a name, a
+                the profile to create the session under: a name, a
                 SessionProfile, or its plain document.
             permissions (SessionProfile | Mapping[str, Any] | None): an
                 inline document of ask and deny rules and hides.
 
         Raises:
-            PolicyError: an unknown role name, or an inline document
+            PolicyError: an unknown profile name, or an inline document
                 that states an allow list.
         """
         if isinstance(profile, Mapping):
             profile = SessionProfile.model_validate(profile)
-        base = self._role(profile)
+        base = self._base_profile(profile)
         if base is not None and base.script is not None:
             # Still a script means hydration has not run, and running it
             # needs an await this door does not have. Every caller that
             # creates a session already takes that door first, so this
             # names it rather than guessing on their behalf.
             raise PolicyError(
-                "a role written by a script is ready only after "
+                "a profile that states a script is ready only after "
                 "ensure_sessions_loaded(); await it before create_session()")
         inline = (SessionProfile.model_validate(permissions)
                   if permissions is not None else None)
@@ -759,10 +758,12 @@ class Workspace:
             for name, install in self._registry.clis.items().items()
         }
 
-    def _role(self,
-              profile: str | SessionProfile | None) -> SessionProfile | None:
-        """The role a session is created under: the name as given, else
-        the workspace's default role.
+    def _base_profile(
+            self,
+            profile: str | SessionProfile | None) -> SessionProfile | None:
+        """The base profile a session is created under, which the
+        inline ``permissions``/``mounts`` arguments then layer onto:
+        the profile as named, else the workspace default.
 
         Args:
             profile (str | SessionProfile | None): what the caller
@@ -783,67 +784,39 @@ class Workspace:
 
         The discovery record resolves first so a minted default session
         id can adopt the stored pointer before hydration keys off it.
-        Roles written by a script are run here too, once each, because
-        this is the async door every caller already takes before it
-        creates a session and it is the last moment a failure can refuse
-        one that does not exist yet.
+        Profile scripts run here too, once each, because this is the
+        async door every caller already takes before it creates a
+        session and it is the last moment a failure can refuse one that
+        does not exist yet.
         """
         await self._meta.ensure()
-        await self._write_scripted_profiles()
+        await self._evaluate_profile_scripts()
         await self._session_mgr.ensure_loaded()
 
-    async def _write_scripted_profiles(self) -> None:
-        """Replace each scripted role with the document its script wrote.
+    async def _evaluate_profile_scripts(self) -> None:
+        """Replace each profile's script with the permissions it
+        produced.
 
-        Every script runs before any result is kept, so one broken role
-        refuses the whole set rather than leaving the roles that happened
-        to be evaluated first written and the rest still scripts. Without
-        that, whether a session could be created depended on where its
-        role sat in the mapping. A permission document is operator
-        configuration, so a workspace that cannot realize the one it was
-        given does not serve; the refusal names the role.
-
-        Idempotent by construction: a written role no longer states a
-        script, so a second hydration finds nothing left to run.
+        One call into the policy layer, which runs every script before
+        returning anything, so one broken profile refuses the whole set
+        (see permissions_from_scripts). Idempotent by construction: a
+        profile that has been evaluated no longer states a script, so a
+        second hydration finds nothing left to run.
 
         Raises:
             PolicyError: a script failed, or is still a path, which
                 means it reached the workspace without passing the
                 config door that loads one.
         """
-        scripted = [(name, role) for name, role in self._profiles.items()
-                    if role.script is not None]
+        scripted = {
+            name: profile
+            for name, profile in self._profiles.items()
+            if profile.script is not None
+        }
         if not scripted:
             return
         mounts = [entry.prefix for entry in self._registry.mounts()]
-        written: dict[str, SessionProfile] = {}
-        engines: dict[type[Runtime], Runtime] = {}
-        try:
-            for name, role in scripted:
-                script = role.script
-                if isinstance(script, str):
-                    raise PolicyError(
-                        f"profile {name!r} names a script by path "
-                        f"({script!r}); only the config door loads one, pass "
-                        f"ScriptSource in code")
-                assert script is not None
-                engine = profile_evaluator(name, script, role.runtime)
-                # One engine per kind, not per role: each is a worker
-                # subprocess, so building one for every scripted role
-                # would spawn N of them to run N short programs. Keyed on
-                # the class rather than the runtime's name, which is
-                # declared by Runtime and not by the evaluator capability
-                # this is typed as.
-                engine = engines.setdefault(type(engine), engine)
-                # profile_evaluator refuses anything that cannot
-                # evaluate, so this narrows a fact already established.
-                assert isinstance(engine, EvaluatorMixin)
-                written[name] = await evaluate_profile(
-                    name, script, profile_context(name, mounts), engine)
-        finally:
-            for engine in engines.values():
-                await engine.close()
-        self._profiles.update(written)
+        self._profiles.update(await permissions_from_scripts(scripted, mounts))
 
     @property
     def workspace_id(self) -> str:

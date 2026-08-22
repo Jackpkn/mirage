@@ -17,12 +17,12 @@ import asyncio
 import pytest
 
 from mirage.policy.match import Outcome
+from mirage.policy.profile import CompiledProfile
 from mirage.policy.types import AdmissionRules, CommandRule, Decision, Scope
 from mirage.resource.ram import RAMResource
 from mirage.types import HiddenPaths, HiddenVars, MountMode
 from mirage.workspace import Workspace
-from mirage.workspace.session import (CompiledProfile, RAMSessionStore,
-                                      SessionManager)
+from mirage.workspace.session import RAMSessionStore, SessionManager
 from mirage.workspace.session.state import seed_var
 
 
@@ -415,14 +415,14 @@ def test_commands_of_answers_the_sessions_own_rules():
     late = mgr.create("late")
     late.commands = own
     assert mgr.commands_of("late") is own
-    # A session the role never narrowed states no rules, and so does an
+    # A session the profile never narrowed states no rules, and so does an
     # id the manager does not know (the empty id of an unbound door
-    # included), unless a default role says otherwise.
+    # included), unless a default profile says otherwise.
     assert mgr.commands_of("early") is None
     assert mgr.commands_of("nobody") is None
     assert mgr.commands_of("") is None
     assert early.commands is None
-    # With a default role compiled in, an unknown id answers its rules
+    # With a default profile compiled in, an unknown id answers its rules
     # rather than nothing, so an unbound door still fails toward refusal.
     mgr.default_profile = CompiledProfile(
         mount_modes=None,

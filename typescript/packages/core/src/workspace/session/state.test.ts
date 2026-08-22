@@ -99,7 +99,7 @@ describe('sessionView', () => {
   })
 
   it('a shaped write gates the value that lands', async () => {
-    // `declare -l role; role=ADMIN` stores `admin`, so a rule refusing
+    // `declare -l profile; profile=ADMIN` stores `admin`, so a rule refusing
     // `admin` has to see `admin`, not the raw text: coercion runs
     // before the gate.
     const seen: (string | null)[] = []
@@ -113,10 +113,10 @@ describe('sessionView', () => {
     const policies = new Policies()
     policies.add(new Capture())
     const [view, session] = makeView(policies)
-    seedVar(session, 'role', '')
-    setAttr(session, 'role', VarAttr.Lower)
-    await expect(view.set('role', 'ADMIN')).rejects.toBeInstanceOf(PolicyDenied)
-    expect(session.env.role).toBe('')
+    seedVar(session, 'profile', '')
+    setAttr(session, 'profile', VarAttr.Lower)
+    await expect(view.set('profile', 'ADMIN')).rejects.toBeInstanceOf(PolicyDenied)
+    expect(session.env.profile).toBe('')
     seedVar(session, 'n', '0')
     setAttr(session, 'n', VarAttr.Integer)
     await view.set('n', '3+4')

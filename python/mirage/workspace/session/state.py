@@ -504,7 +504,7 @@ async def set_var(session: Session,
     # without per-read work. `-i` evaluates against the visible env,
     # and a bad expression raises the arithmetic error as bash does.
     # Coercion runs before the gate so a rule judges the value that
-    # will land: `declare -l role; role=ADMIN` stores `admin`, and a
+    # will land: `declare -l profile; profile=ADMIN` stores `admin`, and a
     # rule refusing `admin` must see that, not the raw text.
     if existing is not None and existing.attrs:
         value = coerce_value(value, existing.attrs,

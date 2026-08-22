@@ -259,7 +259,7 @@ async def du_operand_exists(path: PathSpec, stattable: bool,
     Where a dispatcher is wired it replaces the bound backend's stat,
     because that stat sees one accessor and knows nothing of hides:
     trusting it answered ``0 <path>`` for a hidden directory and
-    confirmed to the agent what the role was not meant to show it. The
+    confirmed to the agent what the profile was not meant to show it. The
     content probe behind it counts only what the session may see, so it
     cannot re-open what the first channel closed.
 

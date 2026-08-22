@@ -12,7 +12,7 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-# The role a session is created from when none is named and the
+# The profile a session is created from when none is named and the
 # workspace defines one of this name.
 DEFAULT_PROFILE = "default"
 

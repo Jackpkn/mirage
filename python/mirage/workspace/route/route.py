@@ -25,7 +25,7 @@ from mirage.workspace.session import Session
 def listed(name: str, session: Session) -> bool:
     """What the session's allow list says about a tool word.
 
-    A role without a list installs everything; a role with one installs
+    A profile without a list installs everything; a profile with one installs
     only the names its patterns start with (``head_visible``). This is
     the raw answer; ``command_visible`` and ``_layers`` add the words
     that are never subjects.
@@ -59,7 +59,7 @@ def is_tool(name: str, session: Session) -> bool:
 def command_visible(name: str, session: Session) -> bool:
     """Whether a session can see a command word at all.
 
-    The role's allow list (``commands.allow``) decides: a tool name no
+    The profile's allow list (``commands.allow``) decides: a tool name no
     pattern of it starts with is not installed for the session, so it
     is 127 at the chokepoint and absent from every enumerator; a word
     that is not a tool (``is_tool``) is always visible.
@@ -77,7 +77,7 @@ def verb_visible(head: str, path: Sequence[str], session: Session) -> bool:
     ``command_visible`` answers for a word, which is all dispatch needs:
     a CLI is routed by its head word and the verbs after it are the
     program's own operand. Discovery needs the finer answer, because a
-    role allowed ``linear issue list`` is not allowed ``linear team``,
+    profile allowed ``linear issue list`` is not allowed ``linear team``,
     and a manual that lists the second is advertising a line that
     cannot run. ``is_tool``'s exemptions have nothing to say here:
     shell grammar and functions are single words, so a verb path only

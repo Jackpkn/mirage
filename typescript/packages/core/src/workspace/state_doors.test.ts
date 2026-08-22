@@ -35,7 +35,7 @@ import { LINE_EXECUTOR, type LineExecutor } from '../runtime/mixin.ts'
 import type { RunResult } from '../runtime/types.ts'
 import { MountMode, ResourceName } from '../types.ts'
 import { cliSpecFor } from '../commands/cli/specs.ts'
-import { parseSessionProfile, type SessionProfile } from './session/permissions.ts'
+import { parseSessionProfile, type SessionProfile } from '../policy/profile.ts'
 import { getTestParser, stderrStr, stdoutStr } from './fixtures/workspace_fixture.ts'
 import { Workspace } from './workspace/workspace.ts'
 
@@ -900,8 +900,8 @@ describe('session profiles', () => {
     expect(s1.env.ROLE).toBe('analyst')
     const listing = await ws.execute('ls /a', { sessionId: 'agent1' })
     expect(stdoutStr(listing)).not.toContain('secrets')
-    const role = await ws.execute('echo "$ROLE"', { sessionId: 'agent1' })
-    expect(stdoutStr(role)).toBe('analyst\n')
+    const profile = await ws.execute('echo "$ROLE"', { sessionId: 'agent1' })
+    expect(stdoutStr(profile)).toBe('analyst\n')
   })
 
   it('explicit mounts can only weaken a mode, never raise it', async () => {
@@ -914,23 +914,23 @@ describe('session profiles', () => {
       { mode: MountMode.WRITE, shellParser: parser },
     )
     open.push(ws)
-    const role = parseSessionProfile({
+    const profile = parseSessionProfile({
       mounts: { '/a': 'write' },
       paths: { hide: ['/a/secrets'] },
     })
     const sess = ws.createSession('agent', {
       mounts: { '/a': 'read', '/b': 'read' },
-      profile: role,
+      profile: profile,
     })
     expect(sess.mountModes?.get('/a')).toBe(MountMode.READ)
     expect(sess.mountModes?.get('/b')).toBe(MountMode.READ)
     expect(sess.hiddenPaths).toEqual({ paths: ['/a/secrets'], patterns: [] })
-    const raised = ws.createSession('wider', { mounts: { '/a': 'rwx' }, profile: role })
+    const raised = ws.createSession('wider', { mounts: { '/a': 'rwx' }, profile: profile })
     expect(raised.mountModes?.get('/a')).toBe(MountMode.WRITE)
   })
 
-  it('a named role is the whole document, unnamed takes the default, unknown throws', async () => {
-    // Two roles, each the whole document it runs under: there is no
+  it('a named profile is the whole document, unnamed takes the default, unknown throws', async () => {
+    // Two profiles, each the whole document it runs under: there is no
     // inheritance, so reading one is reading everything it may do.
     const parser = await getTestParser()
     const ws = new Workspace(
@@ -964,7 +964,7 @@ describe('session profiles', () => {
     expect(dflt.hiddenPaths).toBeNull()
     expect(dflt.cwd).toBe('/b')
     expect(() => ws.createSession('x', { profile: 'nope' })).toThrow('unknown profile "nope"')
-    // An inline document adds to the named role: the weaker mode wins,
+    // An inline document adds to the named profile: the weaker mode wins,
     // hides union, and an allow list there is refused outright.
     const inline = ws.createSession('i', {
       profile: 'reviewer',
@@ -994,10 +994,10 @@ describe('session profiles', () => {
     expect(() => parseSessionProfile({ extends: 'default' })).toThrow('unknown field `extends`')
   })
 
-  it('a role keeps a mount away by hiding it, not by omitting it', async () => {
+  it('a profile keeps a mount away by hiding it, not by omitting it', async () => {
     // Omission is not a refusal, so exclusion is a hide: the mount
     // reads as nonexistent rather than as a permission error naming
-    // something the role cannot see.
+    // something the profile cannot see.
     const parser = await getTestParser()
     const ws = new Workspace(
       { '/a': new RAMResource(), '/b': new RAMResource() },
@@ -1018,8 +1018,8 @@ describe('session profiles', () => {
     expect(root.split(/\s+/)).not.toContain('a')
   })
 
-  it('the workspace names its default role by name', async () => {
-    // `profile:` on the workspace picks which role shapes a session
+  it('the workspace names its default profile by name', async () => {
+    // `profile:` on the workspace picks which profile shapes a session
     // created without one, including its own.
     const parser = await getTestParser()
     const profiles = {
@@ -1067,7 +1067,7 @@ describe('session profiles', () => {
     expect(dflt.cwd).toBe('/b')
     expect(stdoutStr(await ws.execute('pwd'))).toBe('/b\n')
     expect(stdoutStr(await ws.execute('echo "$PAGER"'))).toBe('cat\n')
-    // A mount the role does not name is reachable at its own mode: the
+    // A mount the profile does not name is reachable at its own mode: the
     // `mounts` mapping narrows, it is not an allowlist.
     expect((await ws.execute('ls /a')).exitCode).toBe(0)
     expect((await ws.execute('mkdir /b/vault')).exitCode).not.toBe(0)
@@ -1078,7 +1078,7 @@ describe('session profiles', () => {
     expect(own.hiddenPaths).toBeNull()
   })
 
-  it("a default role's hides, its own and its mount sections', bind every session", async () => {
+  it("a default profile's hides, its own and its mount sections', bind every session", async () => {
     // One document: `paths.hide` at the top and `mounts./repo`'s own,
     // compiled into the one hidden-paths spec every session carries.
     const parser = await getTestParser()
@@ -1118,14 +1118,14 @@ describe('session profiles', () => {
     expect(stdoutStr(await ws.execute('cat /other/.env'))).toBe('v')
     const late = ws.createSession('late')
     expect((await ws.execute('cat /other/pub/b.key', { sessionId: 'late' })).exitCode).not.toBe(0)
-    // The role is the session's own document now, so its hides are on
+    // The profile is the session's own document now, so its hides are on
     // the session rather than bound beside it.
     expect(late.hiddenPaths?.paths).toContain('/other/finance')
   })
 })
 
 describe('command permissions end to end', () => {
-  // One mount section, written the same way by both roles below: rules
+  // One mount section, written the same way by both profiles below: rules
   // here reach a line that works inside /repo, by cwd or by operand,
   // which is what a path-scoped rule cannot express (`cd /repo && git
   // commit` names no path).
@@ -1215,12 +1215,12 @@ describe('command permissions end to end', () => {
     expect(await line(ws, 'history')).toEqual([127, '', 'history: command not found\n'])
   })
 
-  it("a role's allow list is the only one a session reads", async () => {
+  it("a profile's allow list is the only one a session reads", async () => {
     const ws = await commandsWs()
     ws.createSession('rev', { profile: 'reviewer' })
     await ws.execute('mkdir -p /repo/d && touch /repo/d/x')
-    // The reviewer role lists `cat` and not python3, whatever the
-    // default role lists; it lists `git log`, so `git` is visible but a
+    // The reviewer profile lists `cat` and not python3, whatever the
+    // default profile lists; it lists `git log`, so `git` is visible but a
     // `git commit` line is covered by nothing (a refusal that names the
     // program, not "command not found").
     expect((await line(ws, 'cat /repo/d/x', 'rev'))[0]).toBe(0)

@@ -97,11 +97,11 @@ def _session_mode(mount_prefix: str) -> "MountMode":
     """The current session's mode cap for this mount.
 
     ``MountMode.EXEC`` (no narrowing) when no session is bound, when the
-    role names no mount, or when it names none for this one: a role's
+    profile names no mount, or when it names none for this one: a profile's
     mount sections narrow what the mount already offers and never
-    decide whether it exists. A role that must not reach a mount hides
+    decide whether it exists. A profile that must not reach a mount hides
     it, which answers ENOENT rather than a permission error naming
-    something the role cannot see.
+    something the profile cannot see.
 
     Args:
         mount_prefix (str): the mount's prefix, e.g. ``/s3``.
@@ -310,9 +310,9 @@ def effective_mount_mode(mount_prefix: str,
                          mount_mode: MountMode) -> MountMode:
     """The mount mode after narrowing by the current session's cap.
 
-    The mount's own mode is the strongest one available; a role's mode
-    can only weaken it (a READ mount stays read-only whatever the role
-    says). A mount the role does not name keeps its own mode.
+    The mount's own mode is the strongest one available; a profile's mode
+    can only weaken it (a READ mount stays read-only whatever the profile
+    says). A mount the profile does not name keeps its own mode.
 
     Args:
         mount_prefix (str): the mount's prefix, e.g. ``/s3``.

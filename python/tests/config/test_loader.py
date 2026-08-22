@@ -37,7 +37,7 @@ from mirage.workspace.store import (DiskWorkspaceStateStore,
                                     RAMWorkspaceStateStore,
                                     RedisWorkspaceStateStore)
 
-from mirage.workspace.session.permissions import (  # isort: skip
+from mirage.policy.profile import (  # isort: skip
     CommandsBlock, PathsBlock, ProfileMount, SessionProfile, VarsBlock)
 
 FIXTURES = Path(__file__).parent / "fixtures"

@@ -21,17 +21,17 @@ from mirage.commands.builtin.utils.limit import LimitExceededError
 from mirage.io import IOResult
 from mirage.policy import (CommandRule, ExecuteResultContext, OpsContext,
                            OpsResultContext, PolicyError)
+from mirage.policy.profile import SessionProfile
 from mirage.resource.ram import RAMResource
 from mirage.runtime.types import ScriptSource
 from mirage.types import Limit, MountMode, OnExceed
-from mirage.workspace.session import SessionProfile
 
-from mirage.workspace.session.permissions import (  # isort: skip
+from mirage.policy.profile import (  # isort: skip
     CommandsBlock, PathsBlock)
 
 
-def _role(**blocks) -> dict[str, SessionProfile]:
-    """The workspace's default role, spelled as one document.
+def _profile(**blocks) -> dict[str, SessionProfile]:
+    """The workspace's default profile, spelled as one document.
 
     Permissions live in exactly one place now, so what these tests used
     to pass as `permissions=` is `profiles.default`, which shapes the
@@ -53,7 +53,7 @@ async def test_workspace_guards_refuse_before_backend_io():
     ws = Workspace(
         {"/data/": RAMResource()},
         mode=MountMode.WRITE,
-        profiles=_role(commands=CommandsBlock(
+        profiles=_profile(commands=CommandsBlock(
             deny=(CommandRule(reason="production data is protected",
                               commands=("rm", ),
                               paths=("/data/prod/*", )), ))),
@@ -112,7 +112,7 @@ async def test_guards_cover_shell_builtins_and_namespace_routes():
     ws = Workspace(
         {"/data/": RAMResource()},
         mode=MountMode.WRITE,
-        profiles=_role(commands=CommandsBlock(deny=(
+        profiles=_profile(commands=CommandsBlock(deny=(
             CommandRule(reason="disabled", commands=("source", )),
             CommandRule(reason="frozen",
                         commands=("touch", ),
@@ -139,7 +139,7 @@ async def test_guards_cover_path_valued_flags():
     ws = Workspace(
         {"/data/": RAMResource()},
         mode=MountMode.WRITE,
-        profiles=_role(commands=CommandsBlock(
+        profiles=_profile(commands=CommandsBlock(
             deny=(CommandRule(reason="prod is protected",
                               commands=("shuf", ),
                               paths=("/data/prod/*", )), ))),
@@ -170,7 +170,7 @@ async def test_path_guards_hold_at_the_programmatic_door():
     ws = Workspace(
         {"/data/": RAMResource()},
         mode=MountMode.WRITE,
-        profiles=_role(commands=CommandsBlock(deny=(
+        profiles=_profile(commands=CommandsBlock(deny=(
             CommandRule(reason="prod is protected", paths=(
                 "/data/prod/*", )), ))),
     )
@@ -574,12 +574,12 @@ async def test_post_execute_sees_the_rightmost_producer():
 
 
 @pytest.mark.asyncio
-async def test_role_hides_bind_every_session_including_the_default():
+async def test_profile_hides_bind_every_session_including_the_default():
     ram = RAMResource()
     ws = Workspace({"/data/": ram},
                    mode=MountMode.WRITE,
-                   profiles=_role(paths=PathsBlock(hide=("/data/finance",
-                                                         "*.key"))))
+                   profiles=_profile(paths=PathsBlock(hide=("/data/finance",
+                                                            "*.key"))))
     try:
         await ws.execute("mkdir -p /data/finance /data/pub")
         await ws.ops.write("/data/pub/a.txt", b"a\n")
@@ -589,7 +589,7 @@ async def test_role_hides_bind_every_session_including_the_default():
         assert b"finance" not in listing.stdout
         assert b"b.key" not in listing.stdout
         assert b"a.txt" in listing.stdout
-        # ... and neither can one created later from the same role.
+        # ... and neither can one created later from the same profile.
         ws.create_session("late")
         gone = await ws.execute("cat /data/pub/b.key", session_id="late")
         assert gone.exit_code != 0
@@ -653,7 +653,7 @@ async def test_a_bare_name_under_deny_refuses_with_the_default_reason():
     # is one command name with the default reason.
     ws = Workspace({"/data/": RAMResource()},
                    mode=MountMode.WRITE,
-                   profiles=_role(commands=CommandsBlock(deny=("shred", ))))
+                   profiles=_profile(commands=CommandsBlock(deny=("shred", ))))
     try:
         result = await ws.execute("shred /data/x")
         assert result.exit_code == 126
@@ -662,14 +662,14 @@ async def test_a_bare_name_under_deny_refuses_with_the_default_reason():
         await ws.close()
 
 
-GOOD_ROLE = "{'commands': {'allow': ['ls', 'cat', 'echo']}}"
+GOOD_PROFILE = "{'commands': {'allow': ['ls', 'cat', 'echo']}}"
 
 
 def _scripted(**sources: str) -> dict[str, dict[str, ScriptSource]]:
-    """Roles written by scripts, one source per role name.
+    """Profiles produced by scripts, one source per profile name.
 
     Args:
-        sources (str): the program each named role is written by.
+        sources (str): the program that produces each named profile.
     """
     return {
         name: {
@@ -680,10 +680,10 @@ def _scripted(**sources: str) -> dict[str, dict[str, ScriptSource]]:
 
 
 @pytest.mark.asyncio
-async def test_a_scripted_role_is_the_document_its_script_wrote():
+async def test_a_scripted_profile_is_the_permissions_its_script_produced():
     ws = Workspace({"/data/": RAMResource()},
                    mode=MountMode.WRITE,
-                   profiles=_scripted(release=GOOD_ROLE))
+                   profiles=_scripted(release=GOOD_PROFILE))
     try:
         await ws.ensure_sessions_loaded()
         ws.create_session("s", profile="release")
@@ -695,10 +695,10 @@ async def test_a_scripted_role_is_the_document_its_script_wrote():
 
 
 @pytest.mark.asyncio
-async def test_a_scripted_role_is_not_ready_before_hydration():
+async def test_a_scripted_profile_is_not_ready_before_hydration():
     ws = Workspace({"/data/": RAMResource()},
                    mode=MountMode.WRITE,
-                   profiles=_scripted(release=GOOD_ROLE))
+                   profiles=_scripted(release=GOOD_PROFILE))
     try:
         with pytest.raises(PolicyError, match="ensure_sessions_loaded"):
             ws.create_session("s", profile="release")
@@ -708,11 +708,11 @@ async def test_a_scripted_role_is_not_ready_before_hydration():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("order", [("bad", "good"), ("good", "bad")])
-async def test_one_broken_role_refuses_every_scripted_role(order):
-    # Whether a role is usable must not depend on where it sits in the
-    # mapping: writing each result as it arrived left the roles ahead of
-    # the broken one written and the ones behind it still scripts.
-    sources = {"good": GOOD_ROLE, "bad": "raise ValueError('boom')"}
+async def test_one_broken_profile_refuses_every_scripted_profile(order):
+    # Whether a profile is usable must not depend on where it sits in the
+    # mapping: keeping each result as it arrived left the profiles ahead of
+    # the broken one done and the ones behind it still scripts.
+    sources = {"good": GOOD_PROFILE, "bad": "raise ValueError('boom')"}
     ws = Workspace({"/data/": RAMResource()},
                    mode=MountMode.WRITE,
                    profiles=_scripted(**{n: sources[n]
@@ -727,10 +727,10 @@ async def test_one_broken_role_refuses_every_scripted_role(order):
 
 
 @pytest.mark.asyncio
-async def test_hydrating_twice_runs_a_role_script_once():
+async def test_hydrating_twice_runs_a_profile_script_once():
     ws = Workspace({"/data/": RAMResource()},
                    mode=MountMode.WRITE,
-                   profiles=_scripted(release=GOOD_ROLE))
+                   profiles=_scripted(release=GOOD_PROFILE))
     try:
         await ws.ensure_sessions_loaded()
         await ws.ensure_sessions_loaded()
@@ -741,17 +741,17 @@ async def test_hydrating_twice_runs_a_role_script_once():
 
 
 @pytest.mark.asyncio
-async def test_a_role_script_runs_in_a_world_with_no_evaluator():
-    # A role is operator configuration, so the engine that writes it is
-    # a property of the role. The runtime world is the ordered set that
-    # serves *agent* code: it is mutable after construction and drops
-    # entries silently when an optional dependency is missing, so a role
-    # resolved out of it would stop working for reasons that have
-    # nothing to do with the role.
+async def test_a_profile_script_runs_in_a_world_with_no_evaluator():
+    # A profile is operator configuration, so the engine that produces it
+    # is a property of the profile. The runtime world is the ordered set
+    # that serves *agent* code: it is mutable after construction and
+    # drops entries silently when an optional dependency is missing, so a
+    # profile resolved out of it would stop working for reasons that have
+    # nothing to do with the profile.
     ws = Workspace({"/data/": RAMResource()},
                    mode=MountMode.WRITE,
                    runtimes=["vfs"],
-                   profiles=_scripted(release=GOOD_ROLE))
+                   profiles=_scripted(release=GOOD_PROFILE))
     try:
         await ws.ensure_sessions_loaded()
         ws.create_session("s", profile="release")
@@ -761,12 +761,12 @@ async def test_a_role_script_runs_in_a_world_with_no_evaluator():
 
 
 @pytest.mark.asyncio
-async def test_a_role_may_name_the_engine_its_script_runs_on():
+async def test_a_profile_may_name_the_engine_its_script_runs_on():
     ws = Workspace({"/data/": RAMResource()},
                    mode=MountMode.WRITE,
                    profiles={
                        "release": {
-                           "script": ScriptSource(GOOD_ROLE),
+                           "script": ScriptSource(GOOD_PROFILE),
                            "runtime": "monty"
                        }
                    })
@@ -779,12 +779,12 @@ async def test_a_role_may_name_the_engine_its_script_runs_on():
 
 
 @pytest.mark.asyncio
-async def test_a_role_naming_an_engine_that_cannot_evaluate_is_refused():
+async def test_a_profile_naming_an_engine_that_cannot_evaluate_is_refused():
     ws = Workspace({"/data/": RAMResource()},
                    mode=MountMode.WRITE,
                    profiles={
                        "release": {
-                           "script": ScriptSource(GOOD_ROLE),
+                           "script": ScriptSource(GOOD_PROFILE),
                            "runtime": "local"
                        }
                    })

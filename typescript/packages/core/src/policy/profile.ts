@@ -12,16 +12,16 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { DEFAULT_ASK_REASON, DEFAULT_DENY_REASON } from '../../policy/constants.ts'
-import type { CommandRule, AdmissionRules } from '../../policy/types.ts'
-import { ScriptSource } from '../../runtime/policy/types.ts'
-import type { HiddenPaths, HiddenVars } from '../../types.ts'
-import { type MountMode, parseMountMode } from '../../types.ts'
-import { isGlob } from '../../utils/hidden.ts'
-import { stripSlash } from '../../utils/slash.ts'
+import { DEFAULT_ASK_REASON, DEFAULT_DENY_REASON } from './constants.ts'
+import type { CommandRule, AdmissionRules } from './types.ts'
+import { ScriptSource } from '../runtime/policy/types.ts'
+import type { HiddenPaths, HiddenVars } from '../types.ts'
+import { type MountMode, parseMountMode } from '../types.ts'
+import { isGlob } from '../utils/hidden.ts'
+import { stripSlash } from '../utils/slash.ts'
 
 /**
- * `paths:` of a role, or of one of its mount sections. `hide` entries
+ * `paths:` of a profile, or of one of its mount sections. `hide` entries
  * use the document's one grammar: an entry with `*`, `?` or `[` is a
  * pattern, anything else an exact path and its subtree
  * (`utils/hidden.classifyPaths`); every entry holds a token and is
@@ -38,8 +38,8 @@ export interface VarsBlock {
 }
 
 /**
- * `commands:` at the top level of a role. `allow` lists the command
- * patterns the role installs; a name none of them starts with is not a
+ * `commands:` at the top level of a profile. `allow` lists the command
+ * patterns the profile installs; a name none of them starts with is not a
  * command for the session (127, absent from `type` / `which` / `man`),
  * a line no pattern covers is refused. The shell's own grammar builtins
  * and the agent's functions are not subjects. `ask` rules are admitted
@@ -67,12 +67,12 @@ export interface MountCommandsBlock {
 }
 
 /**
- * One mount's entry in a role: what this role may do there. Every field
+ * One mount's entry in a profile: what this profile may do there. Every field
  * is optional, and an omitted mount is not a refusal: the mount is
  * reachable at the mode it declares in the workspace's `mounts:`, which
- * a role can only weaken (`weakerMode`), never raise. A role that must
+ * a profile can only weaken (`weakerMode`), never raise. A profile that must
  * not touch a mount hides it, so the mount reads as nonexistent rather
- * than as a permission error naming something the role cannot see.
+ * than as a permission error naming something the profile cannot see.
  *
  * `commands` here carries ask and deny only: an allow list installs a
  * command for the whole session, and visibility is answered before any
@@ -88,18 +88,18 @@ export interface ProfileMount {
 }
 
 /**
- * One role: the whole permission document a session runs under.
+ * One profile: the whole permission document a session runs under.
  *
  * A session is created from exactly one of these, and it is the only
  * place permissions are written. There is no workspace-wide block and
  * no mount-owned block above it, so reading this object is reading
- * everything the role may do; what a role does not say, it does not
+ * everything the profile may do; what a profile does not say, it does not
  * restrict. Configuration, not enforcement: the resolver compiles it
  * onto the session's narrowing fields and the doors keep enforcing.
  * Deliberately not named a View, which per the view convention is a
  * door-scoped handle an agent holds, while a profile is what the
  * embedder uses to *define* one. Immutable by type, so two agents with
- * the same role share one object and neither can bend the other's view.
+ * the same profile share one object and neither can bend the other's view.
  *
  * Two rules decide a line against it, and they are the whole law. A
  * rule naming no path is read by verb (deny before ask before allow),
@@ -118,7 +118,7 @@ export interface SessionProfile {
   readonly vars?: VarsBlock | null
   readonly commands?: CommandsBlock | null
   /**
-   * A program that writes this role, instead of the fields above. A
+   * A program that writes this profile, instead of the fields above. A
    * string is the path form the config door accepts and loads; code
    * passes the loaded ScriptSource, so a path still spelled as a string
    * when the workspace reads it means the config layer never saw it.
@@ -133,7 +133,7 @@ export interface SessionProfile {
 }
 
 /**
- * The session fields a role compiles to. `commands` is the role's
+ * The session fields a profile compiles to. `commands` is the profile's
  * admission rules, its own and its mount sections' in one list.
  */
 export interface CompiledProfile {
@@ -162,7 +162,7 @@ const PROFILE_FIELDS = [
   'runtime',
 ] as const
 
-// The fields a scripted role may not also state: its script writes them,
+// The fields a scripted profile may not also state: its script writes them,
 // so one beside it would be a second author for one document with no
 // rule saying which wins.
 const PROFILE_DOCUMENT_FIELDS = ['cwd', 'env', 'mounts', 'paths', 'vars', 'commands'] as const
@@ -361,7 +361,7 @@ export function parseCommandsBlock(raw: unknown, where = 'commands'): CommandsBl
   rejectUnknownKeys(obj, COMMANDS_FIELDS, where)
   const ask = parseRules(obj.ask, where, 'ask')
   const deny = parseRules(obj.deny, where, 'deny')
-  // This block is the role's own, never a mount section's, so a rule's
+  // This block is the profile's own, never a mount section's, so a rule's
   // paths are virtual paths: absolute, or name patterns.
   for (const rule of ask) requireAbsolute(rule.paths ?? [], `${where}.ask rule paths`)
   for (const rule of deny) requireAbsolute(rule.paths ?? [], `${where}.deny rule paths`)
@@ -375,7 +375,7 @@ export function parseMountCommandsBlock(raw: unknown, where = 'commands'): Mount
   return { ask: parseRules(obj.ask, where, 'ask'), deny: parseRules(obj.deny, where, 'deny') }
 }
 
-/** Validate one `mounts.<prefix>` section of a role. */
+/** Validate one `mounts.<prefix>` section of a profile. */
 export function parseProfileMount(raw: unknown, root: string, where: string): ProfileMount {
   // A bare mode string is sugar for the section that carries only a mode.
   const obj = typeof raw === 'string' ? { mode: raw } : asObject(raw, where)
@@ -402,7 +402,7 @@ export function parseProfileMount(raw: unknown, root: string, where: string): Pr
 }
 
 /**
- * Normalize a role's `mounts` mapping: prefix to its settings, with a
+ * Normalize a profile's `mounts` mapping: prefix to its settings, with a
  * bare mode string as sugar for a section carrying only a mode. A bare
  * list used to mean "only these mounts" and now means nothing at all,
  * so it fails loudly rather than quietly dropping the confinement it

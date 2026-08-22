@@ -27,14 +27,14 @@ function ctx(
 }
 
 describe('allow lists', () => {
-  it("headVisible answers the role's one allow list", () => {
+  it("headVisible answers the profile's one allow list", () => {
     const rules: AdmissionRules = { allow: ['ls', 'git log'], ask: [], deny: [] }
     // A name is visible when it starts a pattern of the list.
     expect(headVisible('ls', rules)).toBe(true)
     expect(headVisible('git', rules)).toBe(true)
     expect(headVisible('cat', rules)).toBe(false)
     expect(headVisible('rm', rules)).toBe(false)
-    // A role without a list hides nothing, and neither does no role.
+    // A profile without a list hides nothing, and neither does no profile.
     expect(headVisible('rm', { allow: null, ask: [], deny: [{ reason: 'x' }] })).toBe(true)
     expect(headVisible('rm', null)).toBe(true)
   })
@@ -51,7 +51,7 @@ describe('allow lists', () => {
     expect(nodeVisible(['linear', 'issue', 'create'], rules)).toBe(false)
     // headVisible is the one-word case, and agrees.
     expect(headVisible('linear', rules)).toBe(nodeVisible(['linear'], rules))
-    // A role without a list hides no node of any tree.
+    // A profile without a list hides no node of any tree.
     expect(nodeVisible(['linear', 'team'], null)).toBe(true)
     expect(nodeVisible(['linear', 'team'], { allow: null, ask: [], deny: [{ reason: 'x' }] })).toBe(
       true,

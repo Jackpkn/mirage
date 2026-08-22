@@ -14,7 +14,7 @@
 
 import { Session, varsFromEnv } from './session.ts'
 import { setCwd } from './shell_dirs.ts'
-import type { CompiledProfile } from './permissions.ts'
+import type { CompiledProfile } from '../../policy/profile.ts'
 import { RAMSessionStore } from './ram.ts'
 import { applyProfile, narrow } from './resolve.ts'
 import { CAS_MAX_RETRIES, generationOf, type SessionFields, type SessionStore } from './store.ts'
@@ -65,7 +65,7 @@ export class SessionManager {
    * applied in full now (modes, hides, exported env, cwd), and its
    * narrowing stamped again after hydration, where a record from before
    * the profile existed would otherwise wake the primary agent
-   * unrestricted. null (no default role) leaves the session, and
+   * unrestricted. null (no default profile) leaves the session, and
    * hydration, as they were.
    */
   set defaultProfile(compiled: CompiledProfile | null) {
@@ -75,7 +75,7 @@ export class SessionManager {
 
   /**
    * The admission rules one session runs under (SessionCommandsQuery).
-   * The default role's rules for an id this manager does not know, the
+   * The default profile's rules for an id this manager does not know, the
    * empty id of an unbound door included, so a door that names no
    * session still fails toward refusal.
    */

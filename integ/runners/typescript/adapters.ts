@@ -94,7 +94,7 @@ import {
 import {
   parseSessionProfile,
   type SessionProfile,
-} from '@struktoai/mirage-core/workspace/session/permissions'
+} from '@struktoai/mirage-core/policy/profile'
 import { ScriptSource } from '@struktoai/mirage-core/runtime/policy/types'
 import * as lancedb from '@lancedb/lancedb'
 import { QdrantClient } from '@qdrant/js-client-rest'
@@ -209,8 +209,8 @@ function consoleFactoryFor(target: Target): ConsoleFactory | undefined {
     )
 }
 
-// The target's roles, and which one shapes a session that names none.
-// A role is the whole permission document, so this is every permission
+// The target's profiles, and which one shapes a session that names none.
+// A profile is the whole permission document, so this is every permission
 // the target states, including the per-mount ones; the parser is the
 // one the YAML door uses, so a case runs under exactly what a
 // deployment would write. Only the openers that consult it may declare
@@ -218,9 +218,9 @@ function consoleFactoryFor(target: Target): ConsoleFactory | undefined {
 // console block rides ram alone: an unwired opener would run the target
 // unbound and it would read as covered.
 /**
- * Wrap a role's inline script source the way the config door does.
+ * Wrap a profile's inline script source the way the config door does.
  *
- * A target is JSON, so it carries a role's script as source rather than
+ * A target is JSON, so it carries a profile's script as source rather than
  * as the path a YAML config would name. Loading is the config layer's
  * job everywhere else, so the battery does that one step here and hands
  * the workspace what code would pass.

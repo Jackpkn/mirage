@@ -307,14 +307,14 @@ describe('SessionManager admission rules', () => {
     const late = m.create('late')
     late.commands = own
     expect(m.commandsOf('late')).toBe(own)
-    // A session the role never narrowed states no rules, and so does an
+    // A session the profile never narrowed states no rules, and so does an
     // id the manager does not know (the empty id of an unbound door
-    // included), unless a default role says otherwise.
+    // included), unless a default profile says otherwise.
     expect(m.commandsOf('early')).toBeNull()
     expect(m.commandsOf('nobody')).toBeNull()
     expect(m.commandsOf('')).toBeNull()
     expect(early.commands).toBeNull()
-    // With a default role compiled in, an unknown id answers its rules
+    // With a default profile compiled in, an unknown id answers its rules
     // rather than nothing, so an unbound door still fails toward refusal.
     m.defaultProfile = {
       mountModes: null,

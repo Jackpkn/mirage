@@ -81,13 +81,13 @@ async def run_target(target: dict, cases: list[dict], root: Path,
                 await harness.seed_mount_root(ws, mount["path"])
         # Sessions a case can name via its "session" field, through the
         # two doors a host really has. A string names one of the
-        # target's roles (`profile=`), which is the whole document that
+        # target's profiles (`profile=`), which is the whole document that
         # session runs under. A mapping is an inline document added to
-        # the default role (`permissions=`): it may add ask and deny
+        # the default profile (`permissions=`): it may add ask and deny
         # rules and hides, never an allow list, so a session that needs
-        # its own allow list has to be a role. An empty mapping is the
-        # default role with nothing added.
-        # A role written by a script is ready only after hydration,
+        # its own allow list has to be a profile. An empty mapping is the
+        # default profile with nothing added.
+        # A profile written by a script is ready only after hydration,
         # which every embedding program already awaits before it creates
         # a session; the battery is a program like any other.
         await ws.ensure_sessions_loaded()

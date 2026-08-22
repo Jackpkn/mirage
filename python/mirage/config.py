@@ -27,6 +27,7 @@ from mirage.accessor.s3 import S3Config
 from mirage.cache.file.config import CacheConfig, RedisCacheConfig
 from mirage.cache.index.config import IndexConfig, RedisIndexConfig
 from mirage.commands.cli.types import CLISpec
+from mirage.policy.profile import SessionProfile
 from mirage.resource.registry import build_resource
 from mirage.runtime.base import Runtime
 from mirage.runtime.table import build_runtime
@@ -36,7 +37,6 @@ from mirage.shell.job_table import ConsoleFactory
 from mirage.types import (KERNEL_BACKENDS, ConsistencyPolicy, Limit,
                           MountBackend, MountMode, parse_mount_mode)
 from mirage.workspace.mount.spec import Mount
-from mirage.workspace.session.permissions import SessionProfile
 from mirage.workspace.store import (DEFAULT_STATE_ROOT,
                                     DiskWorkspaceStateStore,
                                     RAMWorkspaceStateStore,
@@ -510,12 +510,12 @@ class WorkspaceConfig(BaseModel):
     # load. Its last expression names the runtime for the line, or
     # None to fall to entry scripts.
     policy: str | None = None
-    # The permission documents: one role per name. A role is the whole
+    # The permission documents: one profile per name. A profile is the whole
     # document a session runs under, so there is no workspace-wide
     # block; the policy script is the line-level counterpart.
     profiles: dict[str, SessionProfile] | None = None
-    # The role a session gets when it names none; `default` when unset
-    # and a role of that name exists.
+    # The profile a session gets when it names none; `default` when unset
+    # and a profile of that name exists.
     profile: str | None = None
     mode: MountMode = MountMode.WRITE
     consistency: ConsistencyPolicy = ConsistencyPolicy.LAZY
@@ -542,7 +542,7 @@ class WorkspaceConfig(BaseModel):
 
     @model_validator(mode="after")
     def _v_profile(self) -> "WorkspaceConfig":
-        # The workspace's default role must be one it defines; the
+        # The workspace's default profile must be one it defines; the
         # loader's contract is a ValueError for a bad document.
         if self.profile is not None and self.profile not in (self.profiles
                                                              or {}):
@@ -597,9 +597,12 @@ class WorkspaceConfig(BaseModel):
             kwargs["policy"] = _load_script_source(self.policy)
         if self.profiles is not None:
             kwargs["profiles"] = {
-                name: (role if role.script is None else role.model_copy(
-                    update={"script": _load_script_source(str(role.script))}))
-                for name, role in self.profiles.items()
+                name:
+                (profile if profile.script is None else profile.model_copy(
+                    update={
+                        "script": _load_script_source(str(profile.script))
+                    }))
+                for name, profile in self.profiles.items()
             }
         if self.profile is not None:
             kwargs["profile"] = self.profile

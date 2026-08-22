@@ -14,7 +14,7 @@
 
 import { writeFileSync } from 'node:fs'
 import { ConsistencyPolicy } from '@struktoai/mirage-node'
-import { parseSessionProfile } from '@struktoai/mirage-core/workspace/session/permissions'
+import { parseSessionProfile } from '@struktoai/mirage-core/policy/profile'
 import { ADAPTERS, openConsistency } from './adapters.ts'
 import type { Case, Target } from './harness.ts'
 import {
@@ -81,15 +81,15 @@ async function runTarget(
   if (target.console !== undefined && target.mounts[0].resource !== 'ram') {
     throw new Error(`target ${target.id}: console targets ride ram mounts`)
   }
-  // Roles reach the workspace only through the openers that pass them
+  // Profiles reach the workspace only through the openers that pass them
   // on, for the same reason: a target that declares one on an opener
   // that drops it would run unbound and read as covered. Python needs no
   // such list because it builds every target's workspace in one place.
-  const ROLE_OPENERS = ['ram', 'disk', 'email']
-  const declaresRoles = target.profiles !== undefined || target.profile !== undefined
-  if (declaresRoles && !ROLE_OPENERS.includes(target.mounts[0].resource)) {
+  const PROFILE_OPENERS = ['ram', 'disk', 'email']
+  const declaresProfiles = target.profiles !== undefined || target.profile !== undefined
+  if (declaresProfiles && !PROFILE_OPENERS.includes(target.mounts[0].resource)) {
     throw new Error(
-      `target ${target.id}: roles ride ${ROLE_OPENERS.join(', ')} mounts`,
+      `target ${target.id}: profiles ride ${PROFILE_OPENERS.join(', ')} mounts`,
     )
   }
   const { ws, cleanup } = await ADAPTERS[target.mounts[0].resource](target)
@@ -108,13 +108,13 @@ async function runTarget(
       if (mount.seed_root) await seedMountRoot(ws, mount.path)
     }
     // Sessions a case can name via its `session` field, through the two
-    // doors a host really has. A string names one of the target's roles
+    // doors a host really has. A string names one of the target's profiles
     // (`profile`), which is the whole document that session runs under.
-    // A mapping is an inline document added to the default role
+    // A mapping is an inline document added to the default profile
     // (`permissions`): it may add ask and deny rules and hides, never an
     // allow list, so a session that needs its own allow list has to be a
-    // role. An empty mapping is the default role with nothing added.
-    // A role written by a script is ready only after hydration, which
+    // profile. An empty mapping is the default profile with nothing added.
+    // A profile written by a script is ready only after hydration, which
     // every embedding program already awaits before it creates a
     // session; the battery is a program like any other.
     await ws.ensureSessionsLoaded()

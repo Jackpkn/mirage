@@ -49,7 +49,7 @@ class DenyScope(StrEnum):
 
 
 class Outcome(StrEnum):
-    """What the role's rules say about one line: the document's own
+    """What the profile's rules say about one line: the document's own
     three verbs and nothing else.
 
     ALLOW is silence as well as consent, since a line no rule speaks
@@ -91,7 +91,7 @@ class CommandRule:
     about) matching commands, on matching paths when it names any.
 
     It is the compiled element of ``commands.deny`` and ``commands.ask``
-    wherever the role writes one, and reaches the workspace only inside
+    wherever the profile writes one, and reaches the workspace only inside
     that document; the internal RulePolicy is what evaluates it. The
     document writes a rule in one of three shapes, and each compiles to
     rules of this class: a list of command patterns (a whole-line rule
@@ -131,7 +131,7 @@ class CommandRule:
 
 @dataclass(frozen=True, slots=True)
 class Ruling:
-    """The role's answer about one line, and what produced it.
+    """The profile's answer about one line, and what produced it.
 
     Args:
         outcome (Outcome): which verb spoke.
@@ -317,18 +317,18 @@ class SessionDecisionsQuery(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class AdmissionRules:
-    """One role's admission rules, compiled: the whole permission
+    """One profile's admission rules, compiled: the whole permission
     document a session runs under.
 
     A session is evaluated against exactly one of these. It holds the
-    role's allow list, its ask and deny rules, and the rules its mount
+    profile's allow list, its ask and deny rules, and the rules its mount
     entries carry, each stamped with the mount it was written under so
     it applies to a line working inside that mount. There is nothing
     above it and nothing beside it: two rules that both match are
     resolved by anchor depth, then by verb (``policy/match/decide``).
 
     Args:
-        allow (tuple[str, ...] | None): the role's allow patterns; None
+        allow (tuple[str, ...] | None): the profile's allow patterns; None
             when it states no list (everything visible).
         ask (tuple[CommandRule, ...]): rules admitted only with an
             approval.
@@ -356,7 +356,7 @@ class SessionCommandsQuery(Protocol):
 
     def commands_of(self, session_id: str) -> "AdmissionRules | None":
         """The compiled admission rules of one session; the default
-        role's for an id the manager does not know, the empty id of an
+        profile's for an id the manager does not know, the empty id of an
         unbound door included.
 
         Args:
@@ -542,7 +542,7 @@ class Explanation:
     Args:
         command (str): the head word, as the gate read it.
         argv (tuple[str, ...]): the words after it.
-        outcome (Outcome): what the role's rules say.
+        outcome (Outcome): what the profile's rules say.
         rule (CommandRule | None): the rule that spoke, None when the
             allow list did or when nothing did.
         reason (str): the rule's reason, empty when there is no rule.
