@@ -258,6 +258,34 @@ def resolve_class(ref: str | type) -> type:
     return ref if isinstance(ref, type) else load_backend_class(ref)
 
 
+def _resolve_entry(name: str) -> ResourceEntry | None:
+    """Find the entry a mount's ``resource`` value names, or None.
+
+    Four rungs, in the order ``commands.cli.specs.cli_spec_for`` uses for
+    a ``cli`` value, because the two are the same question asked of two
+    tiers: builtin, explicitly registered, a colon reference naming code
+    directly, then ``mirage.resources`` entry points.
+
+    The colon rung needs no loader of its own. ``resolve_class`` already
+    reads a ``"source:ClassName"`` string, so the reference becomes an
+    ordinary entry with no config class, which means an out-of-tree class
+    carrying ``CONFIG_CLS`` gets its typed config built exactly as a
+    builtin's does. It is tried before the entry points because a colon
+    is unambiguous: the value names code, so there is nothing to discover
+    and no reason to pay for a scan of every installed package.
+
+    Args:
+        name (str): the mount's ``resource`` value.
+    """
+    entry = REGISTRY.get(name) or _CUSTOM.get(name)
+    if entry is not None:
+        return entry
+    if ":" in name:
+        return ResourceEntry(name, None)
+    _load_entry_point_resources()
+    return _CUSTOM.get(name)
+
+
 def build_resource(name: str,
                    config: dict[str, Any] | None = None) -> "BaseResource":
     """Construct a resource instance by its registry name.
@@ -266,7 +294,10 @@ def build_resource(name: str,
     importing this module does not pull in every resource's
     dependencies. Only the resources actually used get loaded. Lookup
     order: builtin ``REGISTRY``, then :func:`register_resource` names,
-    then ``mirage.resources`` entry points from installed packages.
+    then a colon reference naming a class directly
+    (``./wiki.py:WikiResource`` or ``mypkg.backends:WikiResource``), then
+    ``mirage.resources`` entry points from installed packages. See
+    :func:`_resolve_entry`.
 
     **Synchronous on purpose. Do not make this async.** It is the door
     every caller who describes a mount as data comes through: the YAML
@@ -289,7 +320,8 @@ def build_resource(name: str,
     ``static async create``.
 
     Args:
-        name (str): registry key such as ``"s3"`` or ``"ram"``.
+        name (str): registry key such as ``"s3"`` or ``"ram"``, or a
+            colon reference such as ``"./wiki.py:WikiResource"``.
         config (dict | None): kwargs for the resource's ``Config``
             class when one exists; otherwise raw resource kwargs
             (e.g. ``{"root": "/tmp"}`` for ``"disk"``).
@@ -298,13 +330,10 @@ def build_resource(name: str,
         BaseResource: a fresh resource instance.
 
     Raises:
-        KeyError: ``name`` is neither builtin, registered, nor
-            installed.
+        KeyError: ``name`` is neither builtin, registered, a colon
+            reference, nor installed.
     """
-    entry = REGISTRY.get(name)
-    if entry is None:
-        _load_entry_point_resources()
-        entry = _CUSTOM.get(name)
+    entry = _resolve_entry(name)
     if entry is None:
         raise KeyError(
             f"unknown resource {name!r}; known: {known_resources()}")

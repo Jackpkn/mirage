@@ -206,6 +206,32 @@ def test_register_resource_spec_string(clean_registry):
     assert built.root == "/spec"
 
 
+def test_colon_reference_builds_without_a_registry(clean_registry):
+    # A colon means the value names code, so it resolves with nothing
+    # registered and no entry points scanned.
+    built = build_resource("tests.resource.test_registry:FakeKwargsResource",
+                           {"root": "/ref"})
+    assert isinstance(built, FakeKwargsResource)
+    assert built.root == "/ref"
+
+
+def test_colon_reference_uses_the_config_cls_attribute(clean_registry):
+    built = build_resource(
+        "tests.resource.test_registry:FakeConfigClsResource",
+        {"url": "http://ref"})
+    assert built.config.url == "http://ref"
+
+
+def test_colon_reference_does_not_shadow_a_builtin_name(clean_registry):
+    # A registry name always wins, so a name can never be reread as code.
+    assert type(build_resource("ram")).__name__ == "RAMResource"
+
+
+def test_colon_reference_to_a_missing_attribute_raises(clean_registry):
+    with pytest.raises(ValueError):
+        build_resource("tests.resource.test_registry:NoSuchResource")
+
+
 def test_known_resources_includes_custom(clean_registry):
     register_resource("fake_custom", FakeCustomResource, FakeCustomConfig)
     names = known_resources()

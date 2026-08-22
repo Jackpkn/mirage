@@ -724,6 +724,63 @@ describe('clis section', () => {
   })
 })
 
+// Mirrors python/tests/config/test_loader.py's mounts `resource:` cases.
+// A `resource` value carrying a colon names a class the same way `cli:`
+// names a spec, which is what lets a deployment mount its own backend
+// from YAML without registering a factory in a host program.
+describe('mounts resource: reference', () => {
+  const CORE_RES = pathToFileURL(
+    resolve(fileURLToPath(import.meta.url), '../../../core/dist/index.js'),
+  ).href
+  const BACKEND =
+    `import {RAMResource} from ${JSON.stringify(CORE_RES)}\n` +
+    'export class WikiResource extends RAMResource {}\n'
+
+  it('builds a resource out of a file next to the config', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'mirage-res-'))
+    writeFileSync(join(dir, 'wiki.mjs'), BACKEND)
+    writeFileSync(
+      join(dir, 'ws.yaml'),
+      'mounts:\n  /wiki:\n    resource: ./wiki.mjs:WikiResource\n',
+    )
+    const cfg = loadWorkspaceConfigFile(join(dir, 'ws.yaml'))
+    const args = await configToWorkspaceArgs(cfg)
+    expect(args.resources['/wiki']?.[0]?.constructor.name).toBe('WikiResource')
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('rebases a relative ref onto the config file directory', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'mirage-res-'))
+    writeFileSync(join(dir, 'wiki.mjs'), BACKEND)
+    writeFileSync(
+      join(dir, 'ws.yaml'),
+      'mounts:\n  /wiki:\n    resource: ./wiki.mjs:WikiResource\n',
+    )
+    const cfg = loadWorkspaceConfigFile(join(dir, 'ws.yaml'))
+    expect(cfg.mounts['/wiki']?.resource).toBe(`${join(dir, 'wiki.mjs')}:WikiResource`)
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('leaves a package specifier alone', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'mirage-res-'))
+    writeFileSync(
+      join(dir, 'ws.yaml'),
+      'mounts:\n  /wiki:\n    resource: my-backends:WikiResource\n',
+    )
+    const cfg = loadWorkspaceConfigFile(join(dir, 'ws.yaml'))
+    expect(cfg.mounts['/wiki']?.resource).toBe('my-backends:WikiResource')
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('leaves a registry name alone', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'mirage-res-'))
+    writeFileSync(join(dir, 'ws.yaml'), 'mounts:\n  /data:\n    resource: ram\n')
+    const cfg = loadWorkspaceConfigFile(join(dir, 'ws.yaml'))
+    expect(cfg.mounts['/data']?.resource).toBe('ram')
+    rmSync(dir, { recursive: true, force: true })
+  })
+})
+
 // Mirrors python/tests/config/test_loader.py's `cli: ./tool.py:TREE`
 // cases. A `cli` value carrying a colon points at code rather than
 // naming a registered spec, which is what lets a deployment install its

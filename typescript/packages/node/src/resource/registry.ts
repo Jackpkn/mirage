@@ -19,6 +19,7 @@ import type { LanceDBConfig } from '@struktoai/mirage-core/resource/lancedb/conf
 import type { QdrantConfig } from '@struktoai/mirage-core/resource/qdrant/config'
 import { normalizeFields } from '@struktoai/mirage-core/utils/normalize'
 import { compareCodePoints } from '@struktoai/mirage-core/utils/sort'
+import { loadAttr } from './loader.ts'
 
 /**
  * Construct a resource by registry name. Mirrors Python's
@@ -322,18 +323,63 @@ export function register(name: string, factory: ResourceFactory): void {
 }
 
 /**
- * Build a resource instance by registry name. Builtins win over custom
- * registrations. Throws if the name is unknown.
+ * True when a loaded export answers the calls every mount makes on a
+ * resource.
+ *
+ * The check is `open`/`close`, the two the workspace calls on every mount
+ * whatever the backend is, so a value that passes cannot fail on the
+ * lifecycle. It exists because a colon reference loads whatever the file
+ * exports: without it a typo'd export name reaches `installMounts` and
+ * fails there, naming a frame the author never wrote.
+ */
+function looksLikeResource(value: unknown): boolean {
+  if (value === null || typeof value !== 'object') return false
+  const node = value as Record<string, unknown>
+  return typeof node.open === 'function' && typeof node.close === 'function'
+}
+
+/**
+ * Build a resource from a colon reference naming a class directly.
+ *
+ * `static create` is honored ahead of the constructor because that is
+ * how a backend whose setup needs I/O is spelled here (github and
+ * databricks_volume both do), and it is the one thing this tier has that
+ * Python's does not: `build_resource` is synchronous there, so an
+ * out-of-tree Python class hydrates lazily instead.
+ */
+async function buildFromRef(ref: string, config: Record<string, unknown>): Promise<Resource> {
+  const exported = await loadAttr(ref)
+  if (typeof exported !== 'function') {
+    throw new Error(`resource ref ${JSON.stringify(ref)} must name a class, got ${typeof exported}`)
+  }
+  const cls = exported as {
+    create?: (config: Record<string, unknown>) => unknown
+    new (config: Record<string, unknown>): unknown
+  }
+  const built = await (typeof cls.create === 'function' ? cls.create(config) : new cls(config))
+  if (!looksLikeResource(built)) {
+    throw new Error(`resource ref ${JSON.stringify(ref)} did not build a resource`)
+  }
+  return built as Resource
+}
+
+/**
+ * Build a resource instance by registry name, or from a colon reference
+ * naming a class directly (`./wiki.mjs:WikiResource`, or the package
+ * specifier `my-pkg/backends:WikiResource`).
+ *
+ * Builtins win over custom registrations, and both win over a reference,
+ * so a name can never be reinterpreted as code. Throws if the name is
+ * neither. Mirrors the ladder in Python's `_resolve_entry`, minus its
+ * entry-point rung: Node has no equivalent of `importlib.metadata`, so a
+ * package ships a resource here by exporting it and being named.
  */
 export async function buildResource(
   name: string,
   config: Record<string, unknown> = {},
 ): Promise<Resource> {
   const factory = REGISTRY[name] ?? CUSTOM[name]
-  if (factory === undefined) {
-    throw new Error(
-      `unknown resource ${JSON.stringify(name)}; known: ${knownResources().join(', ')}`,
-    )
-  }
-  return factory(config)
+  if (factory !== undefined) return factory(config)
+  if (name.includes(':')) return buildFromRef(name, config)
+  throw new Error(`unknown resource ${JSON.stringify(name)}; known: ${knownResources().join(', ')}`)
 }

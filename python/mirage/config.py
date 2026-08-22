@@ -394,7 +394,12 @@ def _absolutize_scripts(raw: dict[str, Any], base: Path) -> None:
         for block in clis.values():
             if isinstance(block, dict):
                 _absolutize_script_key(block, base)
-                _absolutize_cli_ref(block, base)
+                _absolutize_code_ref(block, "cli", base)
+    mounts = raw.get("mounts")
+    if isinstance(mounts, dict):
+        for block in mounts.values():
+            if isinstance(block, dict):
+                _absolutize_code_ref(block, "resource", base)
 
 
 def _absolutize_script_key(entry: dict[str, Any], base: Path) -> None:
@@ -411,23 +416,25 @@ def _absolutize_script_key(entry: dict[str, Any], base: Path) -> None:
         entry["script"] = str(base / script.strip())
 
 
-def _absolutize_cli_ref(entry: dict[str, Any], base: Path) -> None:
-    """Rebase one ``clis`` entry's path-form ``cli`` reference.
+def _absolutize_code_ref(entry: dict[str, Any], key: str, base: Path) -> None:
+    """Rebase a path-form colon reference under ``key``.
 
-    ``cli: ./tool.py:TREE`` means "next to the config file", the same
-    build-context rule ``script:`` follows; without this the pointer
-    reaches ``load_attr`` relative and resolves against the server
-    process's cwd. A module dotpath (``pkg.mod:TREE``) is left alone:
-    importlib resolves it, not the filesystem. The split matches
-    ``load_attr``'s own test, so the two cannot disagree about what a
-    path is.
+    ``cli: ./tool.py:TREE`` and ``resource: ./wiki.py:WikiResource`` both
+    mean "next to the config file", the same build-context rule
+    ``script:`` follows; without this the pointer reaches ``load_attr``
+    relative and resolves against the server process's cwd. A module
+    dotpath (``pkg.mod:TREE``) is left alone: importlib resolves it, not
+    the filesystem. The split matches ``load_attr``'s own test, so the
+    two cannot disagree about what a path is.
 
     Args:
-        entry (dict[str, Any]): a ``clis`` mapping entry, mutated in
-            place.
+        entry (dict[str, Any]): a ``clis`` or ``mounts`` mapping entry,
+            mutated in place.
+        key (str): the field holding the reference, ``cli`` or
+            ``resource``.
         base (Path): directory containing the config file.
     """
-    ref = entry.get("cli")
+    ref = entry.get(key)
     if not isinstance(ref, str) or ":" not in ref:
         return
     source, attr = ref.rsplit(":", 1)
@@ -435,7 +442,7 @@ def _absolutize_cli_ref(entry: dict[str, Any], base: Path) -> None:
         return
     if Path(source).is_absolute():
         return
-    entry["cli"] = f"{base / source}:{attr}"
+    entry[key] = f"{base / source}:{attr}"
 
 
 def _build_runtime_entries(

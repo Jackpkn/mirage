@@ -64,7 +64,19 @@ or ship it as a normal package with an entry point — discovered automatically 
 jira = "mypackage.backends:JiraResource"
 ```
 
-The entry point resolves to the resource class; declare a `CONFIG_CLS` class attribute when the constructor takes a typed config. See `examples/python/other/custom_resource.py` for a complete runnable backend in one file.
+The entry point resolves to the resource class; declare a `CONFIG_CLS` class attribute when the constructor takes a typed config.
+
+Neither step is needed to mount from YAML. A `resource` value carrying a colon names the class directly, the same way a `clis` entry's `cli` value names a spec tree, so a deployment can point at a file next to the config or at a class inside an installed package:
+
+```yaml
+mounts:
+  /jira:
+    resource: ./jira.py:JiraResource
+  /wiki:
+    resource: mypackage.backends:WikiResource
+```
+
+A relative path resolves against the config file's directory, not the server's working directory. A registry name always wins over a reference, so a name can never be reread as code. See `examples/python/other/custom_resource.py` for a complete runnable backend in one file.
 
 ## Contribute a Builtin Resource
 
