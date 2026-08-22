@@ -817,6 +817,13 @@ class Workspace:
             return
         mounts = [entry.prefix for entry in self._registry.mounts()]
         self._profiles.update(await permissions_from_scripts(scripted, mounts))
+        if self._default_profile_name in scripted:
+            # The constructor compiled the default profile before its
+            # script ran, which is the script-only placeholder, so
+            # without this the default session keeps running under
+            # empty permissions.
+            self._session_mgr.default_profile = compile_profile(
+                self._profiles[self._default_profile_name])
 
     @property
     def workspace_id(self) -> str:

@@ -29,7 +29,7 @@ class FakeEngine implements Evaluator {
     if (this.error !== null) return Promise.reject(this.error)
     return Promise.resolve({
       value: this.value,
-      stdout: null,
+      stdout: new Uint8Array(),
       stderr: null,
       exitCode: 0,
       status: 'complete',

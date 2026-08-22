@@ -23,7 +23,13 @@ class Recorder implements Evaluator {
     this.inputs = { ...(opts?.inputs ?? {}) }
     if (this.delayMs > 0) await new Promise((r) => setTimeout(r, this.delayMs))
     if (this.error !== null) throw this.error
-    return { value: this.value, stdout: null, stderr: null, exitCode: 0, status: 'complete' }
+    return {
+      value: this.value,
+      stdout: new Uint8Array(),
+      stderr: null,
+      exitCode: 0,
+      status: 'complete',
+    }
   }
 }
 

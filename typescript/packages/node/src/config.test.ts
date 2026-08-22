@@ -25,7 +25,7 @@ import { RedisWorkspaceStateStore } from './workspace/store/redis.ts'
 import { RedisConsoleStore } from './shell/console/redis/index.ts'
 import { RedisFileCacheStore } from './cache/file/redis.ts'
 import { Workspace } from './workspace.ts'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -903,6 +903,36 @@ describe('CLI to daemon round trip', () => {
     expect(Object.keys(wire)).toContain('default_session_id')
     const cfg = loadWorkspaceConfig(wire)
     expect(cfg.defaultSessionId).toBe('mysess')
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('rebases a profile script path onto the config dir before loading it', async () => {
+    // The check door validates the profile without reading its script:
+    // reading at validation resolved `roles/x.js` against the process
+    // cwd (this test's cwd is the package, not the config dir), so
+    // checking a file config from anywhere else failed with ENOENT.
+    const dir = mkdtempSync(join(tmpdir(), 'mirage-profile-script-'))
+    mkdirSync(join(dir, 'roles'))
+    writeFileSync(join(dir, 'roles', 'x.js'), "({commands: {allow: ['ls']}})\n")
+    const file = join(dir, 'w.yaml')
+    writeFileSync(
+      file,
+      [
+        'mounts:',
+        '  /data:',
+        '    resource: ram',
+        'profiles:',
+        '  release: {script: roles/x.js}',
+        '',
+      ].join('\n'),
+    )
+    const wire = checkWorkspaceConfigFile(file)
+    const profiles = wire.profiles as Record<string, Record<string, unknown>>
+    expect(profiles.release?.script).toBe(join(dir, 'roles', 'x.js'))
+    const args = await configToWorkspaceArgs(loadWorkspaceConfigFile(file))
+    const release = args.options.profiles?.release
+    expect(release?.script).toBeInstanceOf(ScriptSource)
+    expect((release?.script as ScriptSource).source).toContain('allow')
     rmSync(dir, { recursive: true, force: true })
   })
 })

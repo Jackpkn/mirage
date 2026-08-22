@@ -867,3 +867,25 @@ def test_shared_acceptance_fixture_is_accepted(fixture: str):
     # never mirrored into the TypeScript key tables fails there.
     for case in _shared_fixture_cases(fixture):
         load_config(case["config"])
+
+
+def test_profile_script_path_rebases_on_the_config_dir(tmp_path, monkeypatch):
+    # `script: roles/x.py` means "next to the config file", the same
+    # build-context rule the cli path form follows; without rebasing it
+    # resolves against the process cwd and only works by luck.
+    (tmp_path / "roles").mkdir()
+    (tmp_path / "roles" /
+     "x.py").write_text("{'commands': {'allow': ['ls']}}\n")
+    cfg_file = tmp_path / "ws.yaml"
+    cfg_file.write_text("""\
+mounts:
+  /data:
+    resource: ram
+profiles:
+  release: {script: roles/x.py}
+""")
+    monkeypatch.chdir(tmp_path.parent)
+    cfg = load_config(cfg_file)
+    release = cfg.to_workspace_kwargs()["profiles"]["release"]
+    assert isinstance(release.script, ScriptSource)
+    assert "allow" in release.script.source

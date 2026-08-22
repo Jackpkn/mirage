@@ -421,10 +421,29 @@ function parseProfiles(raw: unknown): Record<string, SessionProfile> {
   if (!isPlainObject(raw)) throw new Error('config `profiles` must be a mapping')
   const out: Record<string, SessionProfile> = {}
   for (const [name, block] of Object.entries(raw)) {
-    const profile = parseSessionProfile(block, `profile \`${name}\``)
-    // A path is what config carries; the wire carries content, so it is
-    // read here (the docker build-context model). Code passes a loaded
-    // ScriptSource, which is left alone.
+    // A path-form script stays the string the config wrote: the check
+    // door validates shape only, and runs before `absolutizeScripts`
+    // has rebased the path onto the config file's directory, so reading
+    // it here would resolve against the process cwd. The workspace door
+    // (`toWorkspaceOptions`) loads it, the python loader's split.
+    out[name] = parseSessionProfile(block, `profile \`${name}\``)
+  }
+  return out
+}
+
+/**
+ * Load each profile's path-form script into a ScriptSource.
+ *
+ * By this door the path is absolute for a file config (the check door
+ * rebased it onto the config file's directory); an object config's
+ * relative path resolves against the process cwd, as in Python. Code
+ * that passes a loaded ScriptSource is left alone.
+ */
+function loadProfileScripts(
+  profiles: Record<string, SessionProfile>,
+): Record<string, SessionProfile> {
+  const out: Record<string, SessionProfile> = {}
+  for (const [name, profile] of Object.entries(profiles)) {
     out[name] =
       typeof profile.script === 'string'
         ? { ...profile, script: loadScriptSource(profile.script) }
@@ -883,7 +902,7 @@ export async function configToWorkspaceArgs(cfg: WorkspaceConfigRaw): Promise<Wo
         ? { policy: loadScriptSource(cfg.policy) }
         : {}),
       ...(cfg.profiles !== undefined && cfg.profiles !== null
-        ? { profiles: parseProfiles(cfg.profiles) }
+        ? { profiles: loadProfileScripts(parseProfiles(cfg.profiles)) }
         : {}),
       ...(cfg.profile !== undefined && cfg.profile !== null
         ? { profile: cfg.profile as string }

@@ -614,6 +614,13 @@ export class Workspace {
     if (Object.keys(scripted).length === 0) return
     const mounts = this.mounts().map((entry) => entry.prefix)
     Object.assign(this.profiles, await permissionsFromScripts(scripted, mounts))
+    if (this.defaultProfileName !== null && this.defaultProfileName in scripted) {
+      // The constructor compiled the default profile before its script
+      // ran, which is the script-only placeholder, so without this the
+      // default session keeps running under empty permissions.
+      const produced = this.profiles[this.defaultProfileName]
+      this.sessionManager.defaultProfile = produced === undefined ? null : compileProfile(produced)
+    }
   }
 
   /**

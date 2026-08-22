@@ -7,7 +7,7 @@ import { Workspace } from './workspace/workspace.ts'
 
 const GOOD = "({commands: {allow: ['ls', 'cat', 'echo']}, cwd: '/data'})"
 
-async function build(profiles: Record<string, unknown>, runtimes?: string[]) {
+async function build(profiles: Record<string, unknown>, runtimes?: string[], profile?: string) {
   const shellParser = await getTestParser()
   return new Workspace(
     { '/data/': new RAMResource() },
@@ -16,6 +16,7 @@ async function build(profiles: Record<string, unknown>, runtimes?: string[]) {
       shellParser,
       profiles: profiles as never,
       ...(runtimes !== undefined ? { runtimes } : {}),
+      ...(profile !== undefined ? { profile } : {}),
     },
   )
 }
@@ -122,6 +123,21 @@ describe('profile scripts', () => {
       release: { script: new ScriptSource(GOOD, 'js'), runtime: 'pyodide' },
     })
     await expect(ws.ensureSessionsLoaded()).rejects.toThrow(/but names runtime 'pyodide'/)
+    await ws.close()
+  })
+
+  it('a scripted default profile shapes the default session', async () => {
+    // The constructor compiles the default profile before its script
+    // runs, which is the script-only placeholder; hydration recompiles
+    // it, or the primary agent keeps running under empty permissions.
+    const ws = await build(
+      { release: { script: new ScriptSource(GOOD, 'js') } },
+      undefined,
+      'release',
+    )
+    await ws.ensureSessionsLoaded()
+    expect((await ws.execute('echo hi')).exitCode).toBe(0)
+    expect((await ws.execute('rm /data/x')).exitCode).toBe(127)
     await ws.close()
   })
 

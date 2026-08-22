@@ -779,6 +779,24 @@ async def test_a_profile_may_name_the_engine_its_script_runs_on():
 
 
 @pytest.mark.asyncio
+async def test_a_scripted_default_profile_shapes_the_default_session():
+    # The constructor compiles the default profile before its script
+    # runs, which is the script-only placeholder; hydration recompiles
+    # it, or the primary agent keeps running under empty permissions.
+    ws = Workspace({"/data/": RAMResource()},
+                   mode=MountMode.WRITE,
+                   profiles=_scripted(release=GOOD_PROFILE),
+                   profile="release")
+    try:
+        await ws.ensure_sessions_loaded()
+        assert (await ws.execute("echo hi")).exit_code == 0
+        denied = await ws.execute("rm /data/x")
+        assert denied.exit_code == 127
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
 async def test_a_profile_naming_an_engine_that_cannot_evaluate_is_refused():
     ws = Workspace({"/data/": RAMResource()},
                    mode=MountMode.WRITE,
