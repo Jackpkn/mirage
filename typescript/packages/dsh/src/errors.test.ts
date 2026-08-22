@@ -52,6 +52,12 @@ describe('mapMirageError', () => {
     expect(mapMirageError(stamped('ENOTDIR'), 'read', '/a').code).toBe('FS_NOT_DIRECTORY')
     expect(mapMirageError(stamped('EACCES'), 'write', '/a').code).toBe('FS_PERMISSION_DENIED')
     expect(mapMirageError(stamped('EPERM'), 'write', '/a').code).toBe('FS_PERMISSION_DENIED')
+    // A policy refusal carries EACCES too, but wants the sandbox code: it
+    // is what makes dsh's tool layer offer the escalation, where a plain
+    // mount-mode refusal has nothing to escalate to.
+    const denied = Object.assign(new Error('no removes'), { code: 'EACCES' })
+    denied.name = 'PolicyDenied'
+    expect(mapMirageError(denied, 'write', '/a').code).toBe('FS_SANDBOX_DENIED')
     expect(mapMirageError(stamped('ENOENT'), 'read', '/a').code).toBe('FS_NOT_FOUND')
     expect(mapMirageError(stamped('EXDEV'), 'write', '/a').code).toBe('FS_IO_ERROR')
   })

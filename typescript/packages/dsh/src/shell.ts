@@ -76,6 +76,21 @@ const SINK_PREFIX = '/dev'
 // this executor just imposed.
 const DENIAL_SIGNATURES = ['read-only mount at ', ': Permission denied']
 
+// How the permission document refuses a line, whatever mode the call
+// carries. A role's own rules are not this executor's narrowing: a
+// `commands.deny` rule refuses under `workspace-write` just as readily,
+// so unlike DENIAL_SIGNATURES these are consulted for every call.
+//
+// Both spellings come from `policy/policies.ts`: `renderDeny` writes
+// `<cmd>: policy denied: <reason>` for a whole-line refusal, and
+// `renderPending` writes `<cmd>: requires approval: <reason> (approval
+// <id>)` for an ask nobody has answered. An operand-scoped deny is
+// deliberately absent — it carries the rule's own reason in the GNU
+// voice (`rm: letters.txt: <reason>`) with no fixed marker to match, and
+// guessing at one would report an ordinary command failure as a policy
+// refusal.
+const POLICY_SIGNATURES = [': policy denied: ', ': requires approval: ']
+
 /** Configuration for the mirage shell executor. */
 export interface MirageShellConfig {
   /**
@@ -533,18 +548,27 @@ export class MirageShellExecutor extends ShellExecutor {
   }
 
   /**
-   * Whether this run was refused a write by the read-only narrowing.
+   * Whether this run was refused, by the read-only narrowing or by the
+   * session's permission document.
    *
-   * mirage has no out-of-band denial channel: a refused write fails
+   * mirage has no out-of-band denial channel: a refused line fails
    * in-band with a nonzero exit, the way EROFS would. So the fact is
-   * read back off stderr, and only for a call that ran read-only, where
-   * this executor is what imposed the narrowing in the first place.
+   * read back off stderr, from two independent vocabularies.
+   *
+   * The narrowing's signatures are read only for a call that ran
+   * read-only, where this executor is what imposed it. The document's
+   * are read for every call, because a role's `commands.deny` and
+   * `commands.ask` rules are not this executor's doing and bind under
+   * `workspace-write` and `danger-full-access` alike — a mode says what
+   * the mounts allow, and says nothing about whether a rule forbids the
+   * line.
    *
    * @param spec the resolved spec this run was built from.
    * @param stderr the run's captured standard error.
-   * @returns true when the narrowing refused something.
+   * @returns true when something refused the run.
    */
   private wasDenied(spec: ShellExecSpec, stderr: string): boolean {
+    if (POLICY_SIGNATURES.some((signature) => stderr.includes(signature))) return true
     if (this.modeFor(spec) !== 'read-only') return false
     return DENIAL_SIGNATURES.some((signature) => stderr.includes(signature))
   }

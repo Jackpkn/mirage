@@ -14,12 +14,14 @@
 
 import { Service } from '@deepseek-ai/cordis'
 import type { Context } from '@deepseek-ai/cordis'
+import type { Explanation } from '@struktoai/mirage-core/policy/types'
 import type { Runtime, RuntimeEntry } from '@struktoai/mirage-core/runtime/base'
 import { buildRuntime } from '@struktoai/mirage-core/runtime/table'
 import { parseMountMode } from '@struktoai/mirage-core/types'
 import type { MountSpec } from '@struktoai/mirage-core/workspace/workspace/workspace'
-import { Workspace, buildResource } from '@struktoai/mirage-node'
-import type { Mount, NodeWorkspaceOptions } from '@struktoai/mirage-node'
+import { Workspace, buildResource, parseSessionProfile } from '@struktoai/mirage-node'
+import type { Mount, NodeWorkspaceOptions, SessionProfile } from '@struktoai/mirage-node'
+import { askThroughApproval } from './approval.ts'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -71,6 +73,27 @@ export interface MirageConfig {
    * the other, not both.
    */
   runtimes?: (string | MirageRuntimeBlock)[]
+  /**
+   * The roles (`profiles:` in mirage config), each a whole permission
+   * document: its `commands.allow` list, its `commands.ask` and
+   * `commands.deny` rules, the mount sections carrying rules of their
+   * own, and the paths and vars it hides. The YAML-friendly twin of
+   * `workspaceOptions.profiles`; pass one or the other, not both.
+   *
+   * Written as the document, not as an already-parsed profile: every
+   * entry goes through `parseSessionProfile`, so a misspelled field is a
+   * load error rather than a first-session one. That parse is what lets
+   * a dsh bundle patch carry a policy at all, since
+   * `workspaceOptions.profiles` wants profiles already parsed and a
+   * patch file holds plain YAML.
+   */
+  profiles?: Record<string, unknown>
+  /**
+   * Which role shapes a session created without one, the workspace's own
+   * session included. A name `profiles` does not define is an error. The
+   * YAML-friendly twin of `workspaceOptions.profile`.
+   */
+  profile?: string
   /** Options forwarded to the service-owned workspace's constructor. */
   workspaceOptions?: NodeWorkspaceOptions
 }
@@ -84,6 +107,22 @@ async function resolveMount(entry: MirageMountBlock): Promise<MountSpec> {
   const resource = await buildResource(entry.resource, entry.config ?? {})
   if (entry.mode === undefined) return resource
   return [resource, parseMountMode(entry.mode)]
+}
+
+/**
+ * Validate a `profiles` block: every role through the core document
+ * validator, naming the role in the error so a typo in a patch file
+ * points at the block that holds it.
+ *
+ * @param raw the roles as written, keyed by role name.
+ * @returns the parsed roles, ready for `WorkspaceOptions.profiles`.
+ */
+function parseProfiles(raw: Record<string, unknown>): Record<string, SessionProfile> {
+  const out: Record<string, SessionProfile> = {}
+  for (const [name, block] of Object.entries(raw)) {
+    out[name] = parseSessionProfile(block, `profile \`${name}\``)
+  }
+  return out
 }
 
 function toRuntimeEntry(entry: string | MirageRuntimeBlock): RuntimeEntry {
@@ -129,9 +168,18 @@ export class MirageService extends Service {
       // options can no longer reach it. Saying so beats accepting a config
       // whose runtimes silently never load, which is what the workspace and
       // mounts pair above already refuses to do.
-      if (config.runtimes !== undefined || config.workspaceOptions !== undefined) {
+      // `profiles` and `profile` join them for the same reason, and one
+      // more: an adopted workspace's roles and its `onAsk` are the
+      // embedder's own, so silently re-answering its asks through
+      // `ctx.approval` would take over a seam it may already have filled.
+      if (
+        config.runtimes !== undefined ||
+        config.workspaceOptions !== undefined ||
+        config.profiles !== undefined ||
+        config.profile !== undefined
+      ) {
         throw new Error(
-          'mirage: runtimes and workspaceOptions configure a service-owned workspace, not an adopted workspace',
+          'mirage: runtimes, profiles, profile and workspaceOptions configure a service-owned workspace, not an adopted workspace',
         )
       }
       this.built = config.workspace
@@ -148,6 +196,25 @@ export class MirageService extends Service {
       }
       options.runtimes = config.runtimes.map(toRuntimeEntry)
     }
+    if (config.profiles !== undefined) {
+      if (options.profiles !== undefined) {
+        throw new Error('mirage: pass profiles or workspaceOptions.profiles, not both')
+      }
+      options.profiles = parseProfiles(config.profiles)
+    }
+    if (config.profile !== undefined) {
+      if (options.profile !== undefined) {
+        throw new Error('mirage: pass profile or workspaceOptions.profile, not both')
+      }
+      options.profile = config.profile
+    }
+    // How an asked line gets answered. Installed for every service-owned
+    // workspace rather than only under a composed `ctx.approval`, because
+    // the two are one answer to mirage (an unset `onAsk` and a handler
+    // returning null both leave the ask pending) and installing always is
+    // what finds an approver composed after this plugin. An explicit
+    // `workspaceOptions.onAsk` is the embedder's decision and stands.
+    options.onAsk ??= askThroughApproval(ctx)
     this.plannedRuntimes = options.runtimes?.map(builtEntry)
     if (this.plannedRuntimes !== undefined) options.runtimes = [...this.plannedRuntimes]
     const blocks = Object.values(config.mounts).some(isMountBlock)
@@ -180,6 +247,41 @@ export class MirageService extends Service {
       throw new Error('mirage: workspace is not ready yet; await ctx.mirage.ready')
     }
     return this.built
+  }
+
+  /**
+   * The decision ledger: every ask this world has raised and every
+   * answer given, questions still waiting included.
+   *
+   * The host's handle on the ask layer. A composition with an approval
+   * channel answers inline and rarely reads this; one without it finds
+   * its pending questions here (`pending()`) and answers them out of
+   * band (`answer(id, outcome, scope)`), which is what makes an `ask`
+   * rule usable with no human at the keyboard.
+   */
+  get decisions(): Workspace['decisions'] {
+    return this.workspace.decisions
+  }
+
+  /**
+   * What a line would do here, without doing it: one `Explanation` per
+   * command, carrying the outcome, the rule that spoke and the exact
+   * exit code and stderr the agent would get.
+   *
+   * A dry run through the same gate the dispatcher uses, so a host
+   * reading this and an agent typing the line cannot be told different
+   * things. It spends no ONCE answer, records no question and never
+   * reaches the approval channel, which is what makes it safe to call
+   * about a line nobody typed — a pre-execute check, or an operator
+   * asking why a command was refused.
+   *
+   * @param line the command line to judge.
+   * @param sessionId the session to judge it in; the default when empty.
+   * @returns one explanation per command of the line.
+   */
+  async explain(line: string, sessionId = ''): Promise<Explanation[]> {
+    const ws = await this.ready
+    return ws.explain(line, sessionId)
   }
 
   /**

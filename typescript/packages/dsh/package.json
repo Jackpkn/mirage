@@ -1,6 +1,6 @@
 {
   "name": "@struktoai/mirage-dsh",
-  "version": "0.0.1",
+  "version": "0.0.5",
   "description": "DeepSeek Harness (dsh) providers backed by a mirage workspace: ctx.fs and ctx.shell over mounted resources",
   "homepage": "https://github.com/strukto-ai/mirage#readme",
   "bugs": {
@@ -60,13 +60,13 @@
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
-    "@deepseek-ai/dsh-fs": "0.1.0-rc.6",
-    "@deepseek-ai/dsh-shell": "0.1.0-rc.6"
+    "@deepseek-ai/dsh-fs": "0.1.1-rc.2",
+    "@deepseek-ai/dsh-shell": "0.1.1-rc.2"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
-    "@deepseek-ai/dsh-fs": "0.1.0-rc.6",
-    "@deepseek-ai/dsh-shell": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-fs": "0.1.1-rc.2",
+    "@deepseek-ai/dsh-shell": "0.1.1-rc.2",
     "tsup": "^8.5.0",
     "typescript": "^6.0.0",
     "vitest": "^3.2.6"

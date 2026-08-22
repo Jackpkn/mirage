@@ -120,6 +120,102 @@ await ctx.fs.writeText(await ctx.fs.resolve('/tmp/out.txt'), 'hi', undefined, un
 
 So `DSH_PERMISSION_MODE=read-only` confines a Mirage world, and the result reports the mode the command actually ran under. The `/dev` null sink stays writable, as that mode requires. The policy's `workspaceRoot` is a directory on the host and is deliberately never consulted: here the mounts and their modes are the boundary.
 
+## Permissions: allow, ask, deny
+
+A sandbox mode says where writes may land. It says nothing about which commands a session may run at all, and that is what a Mirage **permission document** is for. A role lists the tools it admits, the lines it refuses, and the lines a human has to sign off on:
+
+```yaml
+- id: mirage
+  config:
+    profiles:
+      agent:
+        commands:
+          allow: [cat, ls, grep, rm]
+          ask:
+            - { commands: [rm], reason: deletes are reviewed }
+          deny:
+            - { commands: [rm -rf], reason: no recursive deletes }
+    profile: agent
+```
+
+The same block works in code, as `MirageService`'s `profiles` and `profile`. Each role is validated as it loads, so a misspelled field is a startup error rather than a surprise on the first command. A word no `allow` entry covers is not a command here at all — the agent reads bash's own `command not found`, so an unlisted tool never leaks that it exists.
+
+`profiles` configures a workspace `MirageService` builds, so it pairs with `mounts` and is refused beside a live `workspace` — an adopted workspace's roles are the embedder's own, and so is how its asks get answered. Passing both would mean quietly taking over a seam that may already be filled. To adopt a workspace *and* route its asks through dsh, build the handler yourself and hand it to the workspace:
+
+```ts
+import { askThroughApproval } from '@struktoai/mirage-dsh'
+
+const ctx = new Context()
+const ws = new Workspace(mounts, { profiles, profile: 'agent', onAsk: askThroughApproval(ctx) })
+await ctx.plugin(MirageService, { workspace: ws }).await()
+```
+
+Building the handler before the plugins load is fine: it reads `ctx.approval` at ask time, not at construction, so an approval plugin composed later is still found.
+
+A **deny** refuses the line at 126. A command entry is a token-prefix pattern, so `rm` would cover every `rm` line while `rm -rf` covers only the recursive ones:
+
+```
+$ rm -rf /data/build
+rm: policy denied: no recursive deletes
+```
+
+An **ask** is put to the human through dsh's own approval channel, `ctx.approval` — the same prompt dsh already shows for its escalations, so nothing new appears in the UI. The bridge maps dsh's answer onto Mirage's ledger:
+
+| dsh answers | the line |
+| --- | --- |
+| `allowed-once` | runs, and only this line — the next `rm` asks again |
+| `rejected` | is refused |
+| `cancelled` (the prompt was dismissed) | is refused |
+| `unavailable` (nobody could answer) | is refused |
+
+Only `allowed-once` is a yes, and it grants exactly the line that asked; a single nod is never widened into a standing grant. The three refusals match what dsh does with the same vocabulary for its own escalations, where a rejection, a dismissal and an unanswerable ask all fail closed. A refused retry of the same line is answered from the record rather than prompting again, so a human who said no is not asked twice about it.
+
+A rule can also be scoped to one mount, so it applies only to a line working inside it. That is how a role asks about deletes in scratch space while leaving its own housekeeping elsewhere alone:
+
+```yaml
+mounts:
+  /tmp:
+    commands:
+      ask:
+        - { commands: [rm], reason: deletes are reviewed }
+```
+
+With **no approval plugin composed** — a headless run, a cron job, CI — an ask has nowhere to go, so it becomes a pending record instead of a refusal:
+
+```
+$ rm /data/notes.txt
+rm: requires approval: deletes are reviewed (approval 0efc4a8f6280)
+```
+
+This is deliberate: the document says `ask`, and silently rewriting that as `deny` would change what the operator wrote. The question is real and answerable, through `ctx.mirage.decisions`:
+
+```ts
+import { Outcome, Scope } from '@struktoai/mirage-core/policy/types'
+
+const [waiting] = ctx.mirage.decisions.pending('agent')
+await ctx.mirage.decisions.answer(waiting.id, Outcome.ALLOW, Scope.SESSION)
+```
+
+`ONCE` passes the retry of that one line; `SESSION` passes every line the same rule covers for the rest of the session. Nothing reaches further — an answer is never inherited by another session, and never re-opens a deny rule, which is consulted first.
+
+A refused line is reported as refused, whatever refused it: `result.sandbox.denied` is set for a policy deny and for an unanswered ask, not only for the read-only narrowing, and under `workspace-write` as readily as under `read-only`. A mode describes what the mounts allow and says nothing about whether a rule forbids the line. One gap is worth naming: a rule scoped to a path refuses one operand in GNU's own voice (`cat: /data/notes/a.txt: no notes`, exit 1), which carries no fixed marker, so that shape is not flagged — Mirage has no out-of-band denial channel on `ExecuteResult`, and inventing a marker would report ordinary command failures as policy refusals.
+
+Through `ctx.fs`, a rule refusal arrives as `FS_SANDBOX_DENIED` rather than `FS_PERMISSION_DENIED`, which is what makes dsh's tool layer attach its escalation hint. A plain mount-mode refusal keeps `FS_PERMISSION_DENIED`: a mode is the shape of this world, while a rule is a confinement the call may be entitled to escalate past.
+
+### Asking what a line would do
+
+`explain` runs a line through the same gate the dispatcher uses, without running it:
+
+```ts
+const [what] = await ctx.mirage.explain('rm /data/notes.txt')
+// what.outcome  'ask'
+// what.reason   'deletes are reviewed'
+// what.rule     the rule that spoke, and what.source where it was written
+// what.exitCode / what.stderr  exactly what the agent would get
+```
+
+It spends no approval, records no question and never reaches the human, so it is safe to call about a line nobody typed — a pre-execute check, or an operator asking why a command was refused. Because it is the same gate, an explanation of a refused line is byte-identical to the refusal.
+
 ## Custom backends
 
 A mount is not limited to the builtin resources (`ram`, `s3`, `slack`, `redis`, ...). Register your own resource factory host-side and its name becomes usable in a `mounts` block exactly like a builtin:
