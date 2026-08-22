@@ -24,7 +24,7 @@ import type { ProvisionFn, RegisteredCommand } from '../commands/config.ts'
 import { makeGenericOps } from '../ops/generic/factory.ts'
 import type { RegisteredOp } from '../ops/registry.ts'
 import type { FileStat, PathSpec } from '../types.ts'
-import { BaseResource, type Resource } from './base.ts'
+import { BaseResource, type Resource, type ResourceStateBase } from './base.ts'
 
 export interface GenericResourceOptions<A extends Accessor = Accessor> {
   /**
@@ -162,6 +162,20 @@ export class GenericResource<A extends Accessor = Accessor>
 
   open(): Promise<void> {
     return Promise.resolve()
+  }
+
+  // TypeScript cannot rebuild a mount from its state: `buildMountArgs`
+  // consults no registry and substitutes a RAMResource for anything it
+  // was not handed, so the bare `{type}` default would restore a custom
+  // backend as an empty directory. A GenericResource always holds a live
+  // accessor, so it always says this, which turns that silence into a
+  // refusal to load and makes `copy()` reuse this instance. A subclass
+  // that genuinely can restore itself overrides getState and drops the
+  // flag. Python needs none of this: its loader rebuilds the class from
+  // `resource_state.type` through its registry, which is why the field
+  // is inert there.
+  override getState(): ResourceStateBase {
+    return { type: this.kind, needs_override: true }
   }
 
   commands(): readonly RegisteredCommand[] {

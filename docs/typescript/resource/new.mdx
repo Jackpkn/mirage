@@ -6,8 +6,8 @@ description: Ship your own backend with GenericResource, or contribute a builtin
 
 A resource maps an external system to Mirage's filesystem operations and shell commands. There are two paths:
 
-- **Ship your own backend** — a single TypeScript file in your own project or package, built on `GenericResource`. No Mirage fork, no edits to Mirage source.
-- **Contribute a builtin** — the four-layer layout inside the Mirage repo, mirrored in Python.
+- **Ship your own backend**: a single TypeScript file in your own project or package, built on `GenericResource`. No Mirage fork, no edits to Mirage source.
+- **Contribute a builtin**: the four-layer layout inside the Mirage repo, mirrored in Python.
 
 ## Ship Your Own Backend
 
@@ -72,7 +72,11 @@ import { registerResourceFactory } from '@struktoai/mirage-node'
 registerResourceFactory('jira', (config) => Promise.resolve(new JiraResource(config as JiraConfig)))
 ```
 
-The registry takes a factory rather than a class because a browser backend is often reached through a dynamic import; `buildResource('jira', config)` then works exactly as it does for a builtin. See `examples/typescript/other/custom_resource.ts` for a complete runnable backend in one file, and `examples/python/other/custom_resource.py` for its Python twin — both are asserted against the same truth file, so the two SDKs cannot drift.
+The registry takes a factory rather than a class because a browser backend is often reached through a dynamic import; `buildResource('jira', config)` then works exactly as it does for a builtin.
+
+Snapshots are the one place the registry does not reach: `Workspace.load` builds its mounts before any factory is consulted, so a saved custom mount has to be handed back explicitly, as `Workspace.load(state, { resources: { '/jira/': new JiraResource(cfg) } })`. `GenericResource` says so in its own state, which is what turns a forgotten override into a refusal to load rather than a mount that comes back empty. `Workspace.copy` needs nothing, since it passes the live resource through.
+
+See `examples/typescript/other/custom_resource.ts` for a complete runnable backend in one file, and `examples/python/other/custom_resource.py` for its Python twin. Both are asserted against the same truth file, so the two SDKs cannot drift.
 
 ## Contribute a Builtin Resource
 
@@ -105,7 +109,7 @@ Tests are colocated: `<name>.test.ts` beside the source it covers.
 
 ## 1. Config, Accessor, and Registry
 
-Define the config as an interface plus a `resolve<Name>Config` that fills every default, and keep secrets out of anything that gets serialized. Create an `Accessor` subclass that owns the client or transport. Add the resource name to `ResourceName`, and add a factory to the runtime package's `resource/registry.ts` — that entry is what workspace config, snapshots, and the daemon construct through.
+Define the config as an interface plus a `resolve<Name>Config` that fills every default, and keep secrets out of anything that gets serialized. Create an `Accessor` subclass that owns the client or transport. Add the resource name to `ResourceName`, and add a factory to the runtime package's `resource/registry.ts`; that entry is what workspace config, snapshots, and the daemon construct through.
 
 Config keys arrive snake_case from YAML shared with Python and are mapped by `normalizeFields`, which already sends every unlisted key through `snakeToCamel`. Add a rename entry only for a key that mapping gets wrong.
 
@@ -180,7 +184,9 @@ export class MyResource extends BaseResource implements Resource {
 }
 ```
 
-Set `cachesReads` true only for stable, read-mostly content. Override `getState()` to carry the (redacted) config, and `close()` to release any client handles — calling `super.close()`, which closes the index store.
+Set `cachesReads` true only for stable, read-mostly content. Override `getState()` to carry the (redacted) config, and `close()` to release any client handles, calling `super.close()`, which closes the index store.
+
+A config-backed backend also sets `needs_override: true` in that state. TypeScript's loader consults no registry, so a mount it was not handed comes back as an empty `RAMResource`; the flag makes it refuse instead. Python does not need it, which is why the flag is written on only a handful of resources there and read on none.
 
 ## 6. Snapshot Support
 

@@ -22,6 +22,7 @@ import { IOResult } from '../io/types.ts'
 import type { RegisteredOp } from '../ops/registry.ts'
 import { FileStat, FileType, MountMode, PathSpec } from '../types.ts'
 import { getTestParser, stdoutStr } from '../workspace/fixtures/workspace_fixture.ts'
+import { buildMountArgs, toStateDict } from '../workspace/snapshot/state.ts'
 import { Workspace } from '../workspace/workspace/workspace.ts'
 import { GenericResource, type GenericResourceOptions } from './generic.ts'
 
@@ -146,8 +147,24 @@ describe('GenericResource wires a backend from one CommandIO table', () => {
     ).toThrow(/non-empty name/)
   })
 
-  it('reports the name as its snapshot type', async () => {
-    expect(await makeResource().getState()).toEqual({ type: 'wiki' })
+  it('reports the name as its snapshot type, and asks to be handed back', () => {
+    expect(makeResource().getState()).toEqual({ type: 'wiki', needs_override: true })
+  })
+
+  it('refuses to restore rather than substituting an empty mount', async () => {
+    const parser = await getTestParser()
+    const ws = new Workspace(
+      { '/wiki/': makeResource() },
+      { mode: MountMode.READ, shellParser: parser },
+    )
+    try {
+      const state = await toStateDict(ws)
+      expect(() => buildMountArgs(state)).toThrow(/must include overrides for: \/wiki\//)
+      // A copy hands the live resource straight back, so it still loads.
+      expect(() => buildMountArgs(state, { '/wiki/': makeResource() })).not.toThrow()
+    } finally {
+      await ws.close()
+    }
   })
 
   it('carries the prompts', () => {

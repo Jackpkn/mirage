@@ -143,7 +143,10 @@ def test_requires_name():
 
 
 def test_get_state():
-    assert make_resource().get_state() == {"type": "wiki"}
+    assert make_resource().get_state() == {
+        "type": "wiki",
+        "needs_override": True,
+    }
 
 
 def test_declaration_flags_forwarded():
