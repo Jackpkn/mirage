@@ -2477,7 +2477,8 @@
               }
             }
           }
-        }
+        },
+        "scripted": "scripted"
       },
       "profile": "default",
       "profiles": {
@@ -2628,6 +2629,12 @@
               "git status",
               "xargs"
             ]
+          }
+        },
+        "scripted": {
+          "script": {
+            "language": "python",
+            "source": "allow = ['ls', 'cat', 'echo']\nrule = {'reason': 'written by ' + ctx['profile'],\n        'commands': {'cat': ['/repo/sealed/*']}}\n{'commands': {'allow': allow, 'deny': [rule]}}\n"
           }
         }
       }

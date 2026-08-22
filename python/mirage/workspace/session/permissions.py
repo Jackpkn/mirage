@@ -20,6 +20,7 @@ from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
 from mirage.policy.constants import DEFAULT_ASK_REASON, DEFAULT_DENY_REASON
 from mirage.policy.types import AdmissionRules, CommandRule
+from mirage.runtime.types import ScriptSource
 from mirage.types import HiddenPaths, HiddenVars, MountMode, parse_mount_mode
 from mirage.utils.hidden import is_glob
 
@@ -415,6 +416,12 @@ class SessionProfile(BaseModel):
     hide, is read by anchor depth: the deeper entry wins, ties break by
     verb.
 
+    A role may instead be *written by a script*, which states ``script``
+    and nothing else. The script runs once per role when the workspace
+    hydrates, and what it returns is validated as one of these, so every
+    reader below this point sees a plain document and neither ``explain``
+    nor the resolver has a second shape to handle.
+
     Args:
         cwd (str | None): the session's working directory at creation.
         env (dict[str, str] | None): a process environment seeded and
@@ -427,6 +434,16 @@ class SessionProfile(BaseModel):
         vars (VarsBlock | None): the role's hidden variables.
         commands (CommandsBlock | None): the role's allow list and its
             ask / deny rules, absolute paths.
+        script (ScriptSource | str | None): a program that writes this
+            role. A ``str`` is the path form the config door accepts and
+            loads; code passes the loaded ``ScriptSource``, so a path
+            still spelled as a string when the workspace reads it means
+            the config layer never saw it, and is refused there.
+        runtime (str | None): the engine ``script`` runs on. Unset picks
+            the sandboxed engine for the script's language, which is the
+            only one either language has today. Meaningless without a
+            script, so stating one there is an error rather than a knob
+            that does nothing.
     """
 
     model_config = _DOC
@@ -437,6 +454,8 @@ class SessionProfile(BaseModel):
     paths: PathsBlock | None = None
     vars: VarsBlock | None = None
     commands: CommandsBlock | None = None
+    script: ScriptSource | str | None = None
+    runtime: str | None = None
 
     @field_validator("mounts", mode="before")
     @classmethod
@@ -457,6 +476,28 @@ class SessionProfile(BaseModel):
                 "mode": entry
             } if isinstance(entry, str) else entry)
         return entries
+
+    @model_validator(mode="after")
+    def _v_script_alone(self) -> "SessionProfile":
+        # A scripted role is written by its program, so an inline field
+        # beside it would be a second author for one document with no
+        # rule saying which wins. Refused at load rather than merged.
+        if self.script is None:
+            if self.runtime is not None:
+                raise ValueError(
+                    "runtime names the engine a script runs on, and this "
+                    "profile states no script")
+            return self
+        written = [
+            name
+            for name in ("cwd", "env", "mounts", "paths", "vars", "commands")
+            if getattr(self, name) is not None
+        ]
+        if written:
+            raise ValueError(
+                f"a profile states either script or its document, not both; "
+                f"script is set beside {', '.join(written)}")
+        return self
 
     @model_validator(mode="after")
     def _v_absolute(self) -> "SessionProfile":

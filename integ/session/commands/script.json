@@ -1,0 +1,35 @@
+{
+  "cases": [
+    {
+      "id": "script_role_allows_what_its_script_wrote",
+      "seq": 923080,
+      "targets": ["ram-commands"],
+      "session": "scripted",
+      "command": "echo written-by-a-script",
+      "expect": {"exit": 0, "stdout": "written-by-a-script\n", "stderr": ""}
+    },
+    {
+      "id": "script_role_hides_what_its_script_left_out",
+      "seq": 923081,
+      "targets": ["ram-commands"],
+      "session": "scripted",
+      "command": "rm /scratch/z",
+      "expect": {"exit": 127, "stdout": "", "stderr": "rm: command not found\n"}
+    },
+    {
+      "id": "script_role_denies_with_a_reason_it_computed",
+      "seq": 923082,
+      "targets": ["ram-commands"],
+      "session": "scripted",
+      "command": "cat /repo/sealed/k",
+      "expect": {"exit": 1, "stdout": "", "stderr": "cat: /repo/sealed/k: written by scripted\n"}
+    },
+    {
+      "id": "script_role_leaves_other_sessions_alone",
+      "seq": 923083,
+      "targets": ["ram-commands"],
+      "command": "echo unscripted",
+      "expect": {"exit": 0, "stdout": "unscripted\n", "stderr": ""}
+    }
+  ]
+}

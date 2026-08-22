@@ -35,6 +35,7 @@ from mirage.policy import (AskHandler, Decisions, Explanation,
 from mirage.provision import ProvisionResult
 from mirage.resource.history import HISTORY_PREFIX, HistoryViewResource
 from mirage.runtime.base import Runtime
+from mirage.runtime.mixin import EvaluatorMixin
 from mirage.runtime.policy import PolicyDecision, PolicyFn
 from mirage.runtime.resolver import PrefixResolver
 from mirage.shell import parse
@@ -53,6 +54,8 @@ from mirage.workspace.session import (Session, SessionManager, SessionProfile,
                                       SessionStore)
 from mirage.workspace.session.resolve import (apply_profile, compile_profile,
                                               resolve_profile, with_inline)
+from mirage.workspace.session.script import (evaluate_profile, profile_context,
+                                             profile_evaluator)
 from mirage.workspace.session.validate import check_cli_verbs
 from mirage.workspace.snapshot import (DriftQueue, apply_state_dict,
                                        build_mount_args, install_fingerprints,
@@ -725,6 +728,14 @@ class Workspace:
         if isinstance(profile, Mapping):
             profile = SessionProfile.model_validate(profile)
         base = self._role(profile)
+        if base is not None and base.script is not None:
+            # Still a script means hydration has not run, and running it
+            # needs an await this door does not have. Every caller that
+            # creates a session already takes that door first, so this
+            # names it rather than guessing on their behalf.
+            raise PolicyError(
+                "a role written by a script is ready only after "
+                "ensure_sessions_loaded(); await it before create_session()")
         inline = (SessionProfile.model_validate(permissions)
                   if permissions is not None else None)
         if mounts is not None:
@@ -772,9 +783,67 @@ class Workspace:
 
         The discovery record resolves first so a minted default session
         id can adopt the stored pointer before hydration keys off it.
+        Roles written by a script are run here too, once each, because
+        this is the async door every caller already takes before it
+        creates a session and it is the last moment a failure can refuse
+        one that does not exist yet.
         """
         await self._meta.ensure()
+        await self._write_scripted_profiles()
         await self._session_mgr.ensure_loaded()
+
+    async def _write_scripted_profiles(self) -> None:
+        """Replace each scripted role with the document its script wrote.
+
+        Every script runs before any result is kept, so one broken role
+        refuses the whole set rather than leaving the roles that happened
+        to be evaluated first written and the rest still scripts. Without
+        that, whether a session could be created depended on where its
+        role sat in the mapping. A permission document is operator
+        configuration, so a workspace that cannot realize the one it was
+        given does not serve; the refusal names the role.
+
+        Idempotent by construction: a written role no longer states a
+        script, so a second hydration finds nothing left to run.
+
+        Raises:
+            PolicyError: a script failed, or is still a path, which
+                means it reached the workspace without passing the
+                config door that loads one.
+        """
+        scripted = [(name, role) for name, role in self._profiles.items()
+                    if role.script is not None]
+        if not scripted:
+            return
+        mounts = [entry.prefix for entry in self._registry.mounts()]
+        written: dict[str, SessionProfile] = {}
+        engines: dict[type[Runtime], Runtime] = {}
+        try:
+            for name, role in scripted:
+                script = role.script
+                if isinstance(script, str):
+                    raise PolicyError(
+                        f"profile {name!r} names a script by path "
+                        f"({script!r}); only the config door loads one, pass "
+                        f"ScriptSource in code")
+                assert script is not None
+                engine = profile_evaluator(name, script, role.runtime)
+                # One engine per kind, not per role: each is a worker
+                # subprocess, so building one for every scripted role
+                # would spawn N of them to run N short programs. Keyed on
+                # the class rather than the runtime's name, which is
+                # declared by Runtime and not by the evaluator capability
+                # this is typed as.
+                engine = engines.setdefault(type(engine), engine)
+                # profile_evaluator refuses anything that cannot
+                # evaluate, so this narrows a fact already established.
+                assert isinstance(engine, EvaluatorMixin)
+                written[name] = await evaluate_profile(
+                    name, script, profile_context(name, mounts), engine)
+        finally:
+            for engine in engines.values():
+                await engine.close()
+        self._profiles.update(written)
 
     @property
     def workspace_id(self) -> str:

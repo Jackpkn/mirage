@@ -87,6 +87,10 @@ async def run_target(target: dict, cases: list[dict], root: Path,
         # rules and hides, never an allow list, so a session that needs
         # its own allow list has to be a role. An empty mapping is the
         # default role with nothing added.
+        # A role written by a script is ready only after hydration,
+        # which every embedding program already awaits before it creates
+        # a session; the battery is a program like any other.
+        await ws.ensure_sessions_loaded()
         for session_id, spec in (target.get("sessions") or {}).items():
             if isinstance(spec, str):
                 ws.create_session(session_id, profile=spec)

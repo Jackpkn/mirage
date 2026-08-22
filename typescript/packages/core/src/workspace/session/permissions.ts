@@ -14,6 +14,7 @@
 
 import { DEFAULT_ASK_REASON, DEFAULT_DENY_REASON } from '../../policy/constants.ts'
 import type { CommandRule, AdmissionRules } from '../../policy/types.ts'
+import { ScriptSource } from '../../runtime/policy/types.ts'
 import type { HiddenPaths, HiddenVars } from '../../types.ts'
 import { type MountMode, parseMountMode } from '../../types.ts'
 import { isGlob } from '../../utils/hidden.ts'
@@ -116,6 +117,19 @@ export interface SessionProfile {
   readonly paths?: PathsBlock | null
   readonly vars?: VarsBlock | null
   readonly commands?: CommandsBlock | null
+  /**
+   * A program that writes this role, instead of the fields above. A
+   * string is the path form the config door accepts and loads; code
+   * passes the loaded ScriptSource, so a path still spelled as a string
+   * when the workspace reads it means the config layer never saw it.
+   */
+  readonly script?: ScriptSource | string | null
+  /**
+   * The engine `script` runs on. Unset picks the sandboxed engine for
+   * the script's language. Meaningless without a script, so stating one
+   * there is an error rather than a knob that does nothing.
+   */
+  readonly runtime?: string | null
 }
 
 /**
@@ -137,7 +151,21 @@ const VARS_FIELDS = ['hide'] as const
 const COMMANDS_FIELDS = ['allow', 'ask', 'deny'] as const
 const MOUNT_COMMANDS_FIELDS = ['ask', 'deny'] as const
 const PROFILE_MOUNT_FIELDS = ['mode', 'commands', 'paths'] as const
-const PROFILE_FIELDS = ['cwd', 'env', 'mounts', 'paths', 'vars', 'commands'] as const
+const PROFILE_FIELDS = [
+  'cwd',
+  'env',
+  'mounts',
+  'paths',
+  'vars',
+  'commands',
+  'script',
+  'runtime',
+] as const
+
+// The fields a scripted role may not also state: its script writes them,
+// so one beside it would be a second author for one document with no
+// rule saying which wins.
+const PROFILE_DOCUMENT_FIELDS = ['cwd', 'env', 'mounts', 'paths', 'vars', 'commands'] as const
 
 // A document mapping, not merely "an object": a Set, a Date or any class
 // instance has no own enumerable string keys, so Object.entries would read
@@ -409,7 +437,33 @@ export function parseSessionProfile(raw: unknown, where = 'profile'): SessionPro
     paths?: PathsBlock | null
     vars?: VarsBlock | null
     commands?: CommandsBlock | null
+    script?: ScriptSource | string | null
+    runtime?: string | null
   } = {}
+  if (obj.script !== undefined && obj.script !== null) {
+    if (!(obj.script instanceof ScriptSource) && typeof obj.script !== 'string') {
+      throw new Error(`${where}.script must be a script path or source`)
+    }
+    const stated = PROFILE_DOCUMENT_FIELDS.filter(
+      (field) => obj[field] !== undefined && obj[field] !== null,
+    )
+    if (stated.length > 0) {
+      throw new Error(
+        `${where} states either script or its document, not both; ` +
+          `script is set beside ${stated.join(', ')}`,
+      )
+    }
+    out.script = obj.script
+  }
+  if (obj.runtime !== undefined && obj.runtime !== null) {
+    if (typeof obj.runtime !== 'string') throw new Error(`${where}.runtime must be a string`)
+    if (out.script === undefined) {
+      throw new Error(
+        `${where}.runtime names the engine a script runs on, and this profile states no script`,
+      )
+    }
+    out.runtime = obj.runtime
+  }
   if (obj.cwd !== undefined && obj.cwd !== null) {
     if (typeof obj.cwd !== 'string') throw new Error(`${where}.cwd must be a string`)
     out.cwd = obj.cwd

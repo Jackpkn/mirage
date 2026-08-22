@@ -424,7 +424,12 @@ function parseProfiles(raw: unknown): Record<string, SessionProfile> {
   if (!isPlainObject(raw)) throw new Error('config `profiles` must be a mapping')
   const out: Record<string, SessionProfile> = {}
   for (const [name, block] of Object.entries(raw)) {
-    out[name] = parseSessionProfile(block, `profile \`${name}\``)
+    const role = parseSessionProfile(block, `profile \`${name}\``)
+    // A path is what config carries; the wire carries content, so it is
+    // read here (the docker build-context model). Code passes a loaded
+    // ScriptSource, which is left alone.
+    out[name] =
+      typeof role.script === 'string' ? { ...role, script: loadScriptSource(role.script) } : role
   }
   return out
 }
@@ -672,6 +677,11 @@ function absolutizeScripts(raw: Record<string, unknown>, base: string): void {
       if (!isPlainObject(block)) continue
       absolutizeScriptKey(block, base)
       absolutizeCliRef(block, base)
+    }
+  }
+  if (isPlainObject(raw.profiles)) {
+    for (const block of Object.values(raw.profiles)) {
+      if (isPlainObject(block)) absolutizeScriptKey(block, base)
     }
   }
 }

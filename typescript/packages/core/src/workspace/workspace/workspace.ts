@@ -60,7 +60,7 @@ import { PrefixResolver } from '../../runtime/resolver.ts'
 import type { BridgeDispatchFn } from '../../runtime/types.ts'
 import { MontyUnavailableError } from '../../runtime/python/monty/index.ts'
 import type { Runtime, RuntimeEntry } from '../../runtime/base.ts'
-import { isEvaluator } from '../../runtime/mixin.ts'
+import { isEvaluator, type Evaluator } from '../../runtime/mixin.ts'
 import type { EvalResult } from '../../runtime/types.ts'
 import { PyodideUnavailableError } from '../../runtime/python/types.ts'
 import { Dispatcher } from '../dispatcher/index.ts'
@@ -73,6 +73,7 @@ import type { WorkspaceFields, WorkspaceStateStore } from '../store/base.ts'
 import type { Session } from '../session/session.ts'
 import { parseProfileMounts, type SessionProfile } from '../session/permissions.ts'
 import { applyProfile, compileProfile, resolveProfile, withInline } from '../session/resolve.ts'
+import { evaluateProfile, profileContext, profileEvaluator } from '../session/script.ts'
 import { newSessionId, newWorkspaceId } from '../../utils/ids.ts'
 import type { WatchRuntime } from '../../watch/base.ts'
 import { resolveControlStores } from './build.ts'
@@ -533,6 +534,16 @@ export class Workspace {
     } = {},
   ): Session {
     const base = this.roleFor(options.profile ?? null)
+    if (base?.script != null) {
+      // Still a script means hydration has not run, and running it needs
+      // an await this door does not have. Every caller that creates a
+      // session already takes that door first, so this names it rather
+      // than guessing on their behalf.
+      throw new PolicyError(
+        'a role written by a script is ready only after ' +
+          'ensureSessionsLoaded(); await it before createSession()',
+      )
+    }
     let inline: SessionProfile | null = options.permissions ?? null
     if (options.mounts != null) {
       inline = withInline(inline, { mounts: parseProfileMounts(options.mounts) })
@@ -581,7 +592,53 @@ export class Workspace {
    */
   async ensureSessionsLoaded(): Promise<void> {
     await this.meta.ensure()
+    await this.writeScriptedProfiles()
     await this.sessionManager.ensureLoaded()
+  }
+
+  /**
+   * Replace each scripted role with the document its script wrote.
+   *
+   * Every script runs before any result is kept, so one broken role
+   * refuses the whole set rather than leaving the roles that happened to
+   * be evaluated first written and the rest still scripts. Without that,
+   * whether a session could be created depended on where its role sat in
+   * the mapping. A permission document is operator configuration, so a
+   * workspace that cannot realize the one it was given does not serve;
+   * the refusal names the role.
+   *
+   * Idempotent by construction: a written role no longer states a
+   * script, so a second hydration finds nothing left to run.
+   */
+  private async writeScriptedProfiles(): Promise<void> {
+    const scripted = Object.entries(this.profiles).filter(([, role]) => role.script != null)
+    if (scripted.length === 0) return
+    const mounts = this.mounts().map((entry) => entry.prefix)
+    const written: Record<string, SessionProfile> = {}
+    const engines = new Map<string, Runtime & Evaluator>()
+    try {
+      for (const [name, role] of scripted) {
+        const script = role.script
+        if (typeof script === 'string') {
+          throw new PolicyError(
+            `profile '${name}' names a script by path ('${script}'); ` +
+              `only the config door loads one, pass ScriptSource in code`,
+          )
+        }
+        if (script == null) continue
+        let engine = profileEvaluator(name, script, role.runtime ?? null)
+        // One engine per kind, not per role: each is a worker, so
+        // building one for every scripted role would spawn N of them to
+        // run N short programs.
+        const cached = engines.get(engine.name)
+        if (cached === undefined) engines.set(engine.name, engine)
+        else engine = cached
+        written[name] = await evaluateProfile(name, script, profileContext(name, mounts), engine)
+      }
+    } finally {
+      for (const engine of engines.values()) await engine.close()
+    }
+    Object.assign(this.profiles, written)
   }
 
   /**

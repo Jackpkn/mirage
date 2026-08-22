@@ -22,6 +22,7 @@ from mirage.io import IOResult
 from mirage.policy import (CommandRule, ExecuteResultContext, OpsContext,
                            OpsResultContext, PolicyError)
 from mirage.resource.ram import RAMResource
+from mirage.runtime.types import ScriptSource
 from mirage.types import Limit, MountMode, OnExceed
 from mirage.workspace.session import SessionProfile
 
@@ -657,5 +658,138 @@ async def test_a_bare_name_under_deny_refuses_with_the_default_reason():
         result = await ws.execute("shred /data/x")
         assert result.exit_code == 126
         assert result.stderr == b"shred: policy denied: denied by policy\n"
+    finally:
+        await ws.close()
+
+
+GOOD_ROLE = "{'commands': {'allow': ['ls', 'cat', 'echo']}}"
+
+
+def _scripted(**sources: str) -> dict[str, dict[str, ScriptSource]]:
+    """Roles written by scripts, one source per role name.
+
+    Args:
+        sources (str): the program each named role is written by.
+    """
+    return {
+        name: {
+            "script": ScriptSource(src)
+        }
+        for name, src in sources.items()
+    }
+
+
+@pytest.mark.asyncio
+async def test_a_scripted_role_is_the_document_its_script_wrote():
+    ws = Workspace({"/data/": RAMResource()},
+                   mode=MountMode.WRITE,
+                   profiles=_scripted(release=GOOD_ROLE))
+    try:
+        await ws.ensure_sessions_loaded()
+        ws.create_session("s", profile="release")
+        assert (await ws.execute("echo hi", session_id="s")).exit_code == 0
+        denied = await ws.execute("rm /data/x", session_id="s")
+        assert denied.exit_code == 127
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_a_scripted_role_is_not_ready_before_hydration():
+    ws = Workspace({"/data/": RAMResource()},
+                   mode=MountMode.WRITE,
+                   profiles=_scripted(release=GOOD_ROLE))
+    try:
+        with pytest.raises(PolicyError, match="ensure_sessions_loaded"):
+            ws.create_session("s", profile="release")
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("order", [("bad", "good"), ("good", "bad")])
+async def test_one_broken_role_refuses_every_scripted_role(order):
+    # Whether a role is usable must not depend on where it sits in the
+    # mapping: writing each result as it arrived left the roles ahead of
+    # the broken one written and the ones behind it still scripts.
+    sources = {"good": GOOD_ROLE, "bad": "raise ValueError('boom')"}
+    ws = Workspace({"/data/": RAMResource()},
+                   mode=MountMode.WRITE,
+                   profiles=_scripted(**{n: sources[n]
+                                         for n in order}))
+    try:
+        with pytest.raises(PolicyError, match="profile 'bad' script failed"):
+            await ws.ensure_sessions_loaded()
+        with pytest.raises(PolicyError, match="ensure_sessions_loaded"):
+            ws.create_session("s", profile="good")
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_hydrating_twice_runs_a_role_script_once():
+    ws = Workspace({"/data/": RAMResource()},
+                   mode=MountMode.WRITE,
+                   profiles=_scripted(release=GOOD_ROLE))
+    try:
+        await ws.ensure_sessions_loaded()
+        await ws.ensure_sessions_loaded()
+        ws.create_session("s", profile="release")
+        assert (await ws.execute("echo hi", session_id="s")).exit_code == 0
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_a_role_script_runs_in_a_world_with_no_evaluator():
+    # A role is operator configuration, so the engine that writes it is
+    # a property of the role. The runtime world is the ordered set that
+    # serves *agent* code: it is mutable after construction and drops
+    # entries silently when an optional dependency is missing, so a role
+    # resolved out of it would stop working for reasons that have
+    # nothing to do with the role.
+    ws = Workspace({"/data/": RAMResource()},
+                   mode=MountMode.WRITE,
+                   runtimes=["vfs"],
+                   profiles=_scripted(release=GOOD_ROLE))
+    try:
+        await ws.ensure_sessions_loaded()
+        ws.create_session("s", profile="release")
+        assert (await ws.execute("echo hi", session_id="s")).exit_code == 0
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_a_role_may_name_the_engine_its_script_runs_on():
+    ws = Workspace({"/data/": RAMResource()},
+                   mode=MountMode.WRITE,
+                   profiles={
+                       "release": {
+                           "script": ScriptSource(GOOD_ROLE),
+                           "runtime": "monty"
+                       }
+                   })
+    try:
+        await ws.ensure_sessions_loaded()
+        ws.create_session("s", profile="release")
+        assert (await ws.execute("echo hi", session_id="s")).exit_code == 0
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_a_role_naming_an_engine_that_cannot_evaluate_is_refused():
+    ws = Workspace({"/data/": RAMResource()},
+                   mode=MountMode.WRITE,
+                   profiles={
+                       "release": {
+                           "script": ScriptSource(GOOD_ROLE),
+                           "runtime": "local"
+                       }
+                   })
+    try:
+        with pytest.raises(PolicyError, match="cannot evaluate one"):
+            await ws.ensure_sessions_loaded()
     finally:
         await ws.close()

@@ -395,6 +395,11 @@ def _absolutize_scripts(raw: dict[str, Any], base: Path) -> None:
             if isinstance(block, dict):
                 _absolutize_script_key(block, base)
                 _absolutize_cli_ref(block, base)
+    profiles = raw.get("profiles")
+    if isinstance(profiles, dict):
+        for block in profiles.values():
+            if isinstance(block, dict):
+                _absolutize_script_key(block, base)
 
 
 def _absolutize_script_key(entry: dict[str, Any], base: Path) -> None:
@@ -591,7 +596,11 @@ class WorkspaceConfig(BaseModel):
         if self.policy is not None:
             kwargs["policy"] = _load_script_source(self.policy)
         if self.profiles is not None:
-            kwargs["profiles"] = dict(self.profiles)
+            kwargs["profiles"] = {
+                name: (role if role.script is None else role.model_copy(
+                    update={"script": _load_script_source(str(role.script))}))
+                for name, role in self.profiles.items()
+            }
         if self.profile is not None:
             kwargs["profile"] = self.profile
 
