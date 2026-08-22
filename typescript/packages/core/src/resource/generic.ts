@@ -1,0 +1,213 @@
+// ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+// ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
+
+import type { Accessor } from '../accessor/base.ts'
+import type { IndexConfig } from '../cache/index/config.ts'
+import {
+  type CommandIO,
+  type ResolveGlobOp,
+  makeGenericCommands,
+  resolveGlobOf,
+} from '../commands/builtin/generic_bind/index.ts'
+import type { ProvisionFn, RegisteredCommand } from '../commands/config.ts'
+import { makeGenericOps } from '../ops/generic/factory.ts'
+import type { RegisteredOp } from '../ops/registry.ts'
+import type { FileStat, PathSpec } from '../types.ts'
+import { BaseResource, type Resource, type ResourceStateBase } from './base.ts'
+
+export interface GenericResourceOptions<A extends Accessor = Accessor> {
+  /**
+   * Resource name the commands and ops register under, and the `type`
+   * key `getState` writes into a snapshot. Also the registry key when
+   * the backend is exposed through `registerResourceFactory`.
+   */
+  name: string
+  /** Backend handle passed to every core fn on the table. */
+  accessor: A
+  /** The backend's IO table. */
+  io: CommandIO<A>
+  /** LLM-facing description of the mounted layout. */
+  prompt?: string
+  /** Appended to `prompt` when the mount is writable. */
+  writePrompt?: string
+  /**
+   * Generic command names the backend replaces. Pass the replacements
+   * through `commands`.
+   */
+  overrides?: ReadonlySet<string>
+  /**
+   * Extra commands, from `command({...})`: bespoke verbs, or the
+   * replacements for whatever `overrides` suppressed.
+   */
+  commands?: readonly RegisteredCommand[]
+  /**
+   * Irregular VFS/FUSE handlers, layered over the auto-derived set. One
+   * carrying no filetype shadows the derived op of the same name.
+   *
+   * Plain records rather than Python's decorated functions: TypeScript's
+   * `op` is a *method* decorator, so a standalone handler has no
+   * decorator form to carry its registration.
+   */
+  ops?: readonly RegisteredOp[]
+  /** Per-command cost estimators replacing the catalog default. */
+  provisionOverrides?: Record<string, ProvisionFn<A>>
+  /**
+   * Derive the VFS/FUSE op set from the table (read/readdir/stat plus
+   * whatever mutations the table carries). Set false to register only
+   * the explicit `ops`.
+   */
+  autoOps?: boolean
+  /** Serve repeat reads from the file cache. Read-mostly content only. */
+  cachesReads?: boolean
+  /**
+   * Whether `io.stat` sizes every regular file without fetching it. A
+   * backend that renders its content on read leaves this false and rides
+   * the unknown-size machinery; a byte store sets it, which is also what
+   * makes the mount legal on FSKit.
+   */
+  sizesAlwaysKnown?: boolean
+  /**
+   * Whether `io.stat` fills `FileStat.fingerprint` with a stable
+   * per-path version marker. Setting it without that is not drift
+   * detection, it is a snapshot that claims to have one.
+   */
+  supportsSnapshot?: boolean
+  /** Cache-index configuration. Omitted leaves the lazy RAM default. */
+  index?: IndexConfig
+}
+
+/**
+ * A whole backend generated from one {@link CommandIO} table.
+ *
+ * The one-file path for a custom backend: supply an accessor and the
+ * core functions on a table (readdir/readBytes/readStream/stat at
+ * minimum) and the generic command set arrives wired, along with glob
+ * resolution and the VFS/FUSE ops. Optional fields on the table unlock
+ * more surface (`write` enables the byte-mutation family, `find` and
+ * `du` become native fast paths), and a command whose requirements the
+ * table cannot meet is never registered rather than registered and
+ * broken.
+ *
+ * The escape hatches are the ones the builtins use, because this class
+ * assembles exactly what they assemble by hand: `overrides` drops a
+ * generic command, `commands` appends a bespoke verb, `ops` layers an
+ * irregular handler over the derived set.
+ *
+ * Mirrors Python `mirage.resource.generic.GenericResource`. The accessor
+ * generic is the one thing it does not mirror: it type-checks the table
+ * against the accessor the core fns actually take, which Python leaves
+ * as `Any` for contravariance reasons documented on its own op
+ * protocols.
+ */
+export class GenericResource<A extends Accessor = Accessor>
+  extends BaseResource
+  implements Resource
+{
+  readonly kind: string
+  readonly accessor: A
+  readonly io: CommandIO<A>
+  readonly prompt: string
+  readonly writePrompt: string
+  readonly cachesReads: boolean
+  readonly sizesAlwaysKnown: boolean
+  readonly supportsSnapshot: boolean
+  readonly #commands: readonly RegisteredCommand[]
+  readonly #ops: readonly RegisteredOp[]
+  readonly #glob: ResolveGlobOp<A>
+
+  constructor(options: GenericResourceOptions<A>) {
+    super()
+    if (options.name === '') throw new Error('GenericResource requires a non-empty name')
+    this.kind = options.name
+    this.accessor = options.accessor
+    this.io = options.io
+    this.prompt = options.prompt ?? ''
+    this.writePrompt = options.writePrompt ?? ''
+    this.cachesReads = options.cachesReads ?? false
+    this.sizesAlwaysKnown = options.sizesAlwaysKnown ?? false
+    this.supportsSnapshot = options.supportsSnapshot ?? false
+    if (options.index !== undefined) this.setIndex(options.index)
+    this.#glob = resolveGlobOf(options.io)
+    this.#commands = [
+      ...makeGenericCommands<A>(options.name, options.io, {
+        ...(options.overrides !== undefined ? { overrides: options.overrides } : {}),
+        ...(options.provisionOverrides !== undefined
+          ? { provisionOverrides: options.provisionOverrides }
+          : {}),
+      }),
+      ...(options.commands ?? []),
+    ]
+    const userOps = options.ops ?? []
+    // A user op carrying no filetype replaces the derived op of the same
+    // name: the derived set is built with those names skipped, so
+    // registering both cannot leave two handlers competing for one key.
+    const shadowed = new Set(userOps.filter((ro) => ro.filetype === null).map((ro) => ro.name))
+    const derived =
+      options.autoOps === false
+        ? []
+        : makeGenericOps<A>(options.name, options.io, { overrides: shadowed })
+    this.#ops = [...derived, ...userOps]
+  }
+
+  open(): Promise<void> {
+    return Promise.resolve()
+  }
+
+  // TypeScript cannot rebuild a mount from its state: `buildMountArgs`
+  // consults no registry and substitutes a RAMResource for anything it
+  // was not handed, so the bare `{type}` default would restore a custom
+  // backend as an empty directory. A GenericResource always holds a live
+  // accessor, so it always says this, which turns that silence into a
+  // refusal to load and makes `copy()` reuse this instance. A subclass
+  // that genuinely can restore itself overrides getState and drops the
+  // flag. Python needs none of this: its loader rebuilds the class from
+  // `resource_state.type` through its registry, which is why the field
+  // is inert there.
+  override getState(): ResourceStateBase {
+    return { type: this.kind, needs_override: true }
+  }
+
+  commands(): readonly RegisteredCommand[] {
+    return this.#commands
+  }
+
+  ops(): readonly RegisteredOp[] {
+    return this.#ops
+  }
+
+  glob(paths: readonly PathSpec[], _prefix = ''): Promise<PathSpec[]> {
+    return this.#glob(this.accessor, paths, this.index)
+  }
+
+  // The four table fields every backend must supply, forwarded so a
+  // GenericResource answers the direct calls builtin resources answer.
+  // The optional ones are deliberately absent: a forwarder that throws
+  // for a table field the backend never filled would answer a feature
+  // probe with a lie.
+  readFile(path: PathSpec): Promise<Uint8Array> {
+    return this.io.readBytes(this.accessor, path, this.index)
+  }
+
+  readdir(path: PathSpec): Promise<string[]> {
+    return this.io.readdir(this.accessor, path, this.index)
+  }
+
+  stat(path: PathSpec): Promise<FileStat> {
+    return this.io.stat(this.accessor, path, this.index)
+  }
+
+  streamPath(path: PathSpec): AsyncIterable<Uint8Array> {
+    return this.io.readStream(this.accessor, path, this.index)
+  }
+}

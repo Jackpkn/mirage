@@ -143,7 +143,22 @@ def test_requires_name():
 
 
 def test_get_state():
-    assert make_resource().get_state() == {"type": "wiki"}
+    assert make_resource().get_state() == {
+        "type": "wiki",
+        "needs_override": True,
+    }
+
+
+def test_declaration_flags_forwarded():
+    resource = make_resource(sizes_always_known=True, supports_snapshot=True)
+    assert resource.SIZES_ALWAYS_KNOWN is True
+    assert resource.SUPPORTS_SNAPSHOT is True
+
+
+def test_declaration_flags_default_off():
+    resource = make_resource()
+    assert resource.SIZES_ALWAYS_KNOWN is False
+    assert resource.SUPPORTS_SNAPSHOT is False
 
 
 def test_prompts_set():
@@ -186,6 +201,10 @@ async def test_workspace_execution_end_to_end():
 
     result = await ws.execute("wiki_hello")
     assert await result.stdout_str() == "hello custom verb\n"
+
+    # The derived ops serve the VFS surface too, not just the commands.
+    assert "/wiki/guides/quickstart.md" in await ws.readdir("/wiki/guides")
+    assert (await ws.stat("/wiki/notes.md")).size == 18
 
 
 def test_auto_ops_derived_from_table():

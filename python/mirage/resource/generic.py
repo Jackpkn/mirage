@@ -63,6 +63,15 @@ class GenericResource(BaseResource):
             cost estimators replacing the catalog default.
         caches_reads (bool): serve repeat reads from the file cache;
             enable only for stable, read-mostly content.
+        sizes_always_known (bool): whether ``io.stat`` sizes every
+            regular file without fetching it. A backend that renders its
+            content on read leaves this False and rides the unknown-size
+            machinery; a byte store sets it, which is also what makes the
+            mount legal on FSKit.
+        supports_snapshot (bool): whether ``io.stat`` fills
+            ``FileStat.fingerprint`` with a stable per-path version
+            marker. Setting it without that is not drift detection, it is
+            a snapshot that claims to have one.
         index (IndexConfig | None): cache-index configuration.
     """
 
@@ -80,6 +89,8 @@ class GenericResource(BaseResource):
         provision_overrides: dict[str, Callable[..., Any]] | None = None,
         auto_ops: bool = True,
         caches_reads: bool = False,
+        sizes_always_known: bool = False,
+        supports_snapshot: bool = False,
         index: IndexConfig | None = None,
     ) -> None:
         super().__init__(index=index)
@@ -91,6 +102,8 @@ class GenericResource(BaseResource):
         self.PROMPT = prompt
         self.WRITE_PROMPT = write_prompt
         self.caches_reads = caches_reads
+        self.SIZES_ALWAYS_KNOWN = sizes_always_known
+        self.SUPPORTS_SNAPSHOT = supports_snapshot
         self._resolve = io.resolve_glob
         for fn in make_generic_commands(
                 name,
@@ -119,4 +132,10 @@ class GenericResource(BaseResource):
         return await self._resolve(self.accessor, paths, self._index)
 
     def get_state(self) -> dict[str, Any]:
-        return {"type": self.name}
+        # ``needs_override`` is inert for python's own loader, which
+        # rebuilds the class from ``type`` through the registry. It is
+        # written for a TypeScript reader, whose ``buildMountArgs``
+        # consults no registry and would otherwise restore this mount as
+        # an empty RAMResource; the builtins carrying the key do so for
+        # the same reason.
+        return {"type": self.name, "needs_override": True}

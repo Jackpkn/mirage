@@ -111,6 +111,7 @@ jobs:
           run integ/truth/watch_delta.json
           run integ/truth/permissions.json
           run integ/truth/typescript/custom_command.json
+          run integ/truth/custom_resource.json
           run integ/truth/typescript/filetype.json
           run integ/truth/typescript/pyodide_basic.json
           run integ/truth/typescript/pyodide_env.json
