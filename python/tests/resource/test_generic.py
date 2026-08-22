@@ -232,3 +232,56 @@ def test_user_ops_shadow_derived():
     reads = [ro for ro in resource.ops_list() if ro.name == "read"]
     assert len(reads) == 1
     assert reads[0].fn is my_read
+
+
+def test_direct_ops_bound_from_table():
+    resource = make_resource()
+    assert set(resource._ops) == {
+        "readdir",
+        "read_bytes",
+        "read_stream",
+        "stat",
+    }
+    with pytest.raises(AttributeError):
+        resource.write
+    with pytest.raises(AttributeError):
+        resource.unlink
+
+
+@pytest.mark.asyncio
+async def test_direct_op_reads_through_accessor():
+    resource = make_resource()
+    spec = PathSpec(resource_path="notes.md",
+                    virtual="/notes.md",
+                    directory="/")
+    assert await resource.read_bytes(spec) == b"agents speak bash\n"
+
+
+def test_direct_ops_cover_the_builtin_vocabulary():
+    # A kit backend built on a builtin's own table must publish at least
+    # the names that builtin publishes, or an out-of-tree caller that
+    # moved off the builtin loses attributes for ops the table still has.
+    from mirage.accessor.ram import RAMAccessor
+    from mirage.commands.builtin.ram.io import IO as RAM_IO
+    from mirage.resource.ram.ram import RAMResource
+    from mirage.resource.ram.store import RAMStore
+
+    kit = GenericResource(name="ram-kit",
+                          accessor=RAMAccessor(RAMStore()),
+                          io=RAM_IO)
+    assert set(RAMResource._ops) <= set(kit._ops)
+
+
+@pytest.mark.asyncio
+async def test_direct_op_matches_the_builtin_answer():
+    from mirage.accessor.ram import RAMAccessor
+    from mirage.commands.builtin.ram.io import IO as RAM_IO
+    from mirage.resource.ram.ram import RAMResource
+
+    builtin = RAMResource()
+    spec = PathSpec(resource_path="f.txt", virtual="/f.txt", directory="/")
+    await builtin.write(spec, b"same bytes\n")
+    kit = GenericResource(name="ram-kit",
+                          accessor=RAMAccessor(builtin._store),
+                          io=RAM_IO)
+    assert await kit.read_bytes(spec) == await builtin.read_bytes(spec)
