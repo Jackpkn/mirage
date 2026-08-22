@@ -14,7 +14,7 @@
 
 from typing import Any
 
-from mirage.utils.naming import parse_id_name
+from mirage.utils.naming import SEPARATOR, fit_id_name, parse_id_name
 from mirage.utils.sanitize import sanitize_name
 
 split_suffix_id = parse_id_name
@@ -30,31 +30,34 @@ def team_dirname(team: dict[str, Any]) -> str:
             parts.append(sanitized_name)
     if not parts:
         parts.append("team")
-    return f"{'__'.join(parts)}__{team['id']}"
+    # fit_id_name rather than make_id_name: the parts are already
+    # sanitized and joined with the separator, and re-sanitizing would
+    # collapse that `__` to `_`.
+    return fit_id_name(SEPARATOR.join(parts), team["id"])
 
 
 def member_filename(user: dict[str, Any]) -> str:
     label = sanitize_name(
         user.get("displayName") or user.get("name") or user.get("email")
         or "user")
-    return f"{label}__{user['id']}.json"
+    return fit_id_name(label, user["id"], ".json")
 
 
 def issue_dirname(issue: dict[str, Any]) -> str:
     key = issue.get("identifier") or issue.get("id") or "issue"
-    return f"{sanitize_name(key)}__{issue['id']}"
+    return fit_id_name(sanitize_name(key), issue["id"])
 
 
 def project_filename(project: dict[str, Any]) -> str:
     label = sanitize_name(project.get("name") or "project")
-    return f"{label}__{project['id']}.json"
+    return fit_id_name(label, project["id"], ".json")
 
 
 def cycle_filename(cycle: dict[str, Any]) -> str:
     label = sanitize_name(cycle.get("name") or "cycle")
-    return f"{label}__{cycle['id']}.json"
+    return fit_id_name(label, cycle["id"], ".json")
 
 
 def document_filename(document: dict[str, Any]) -> str:
     label = sanitize_name(document.get("title") or "document")
-    return f"{label}__{document['id']}.json"
+    return fit_id_name(label, document["id"], ".json")

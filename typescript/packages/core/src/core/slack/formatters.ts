@@ -35,7 +35,7 @@ export function dmDirname(
 
 /** Compute the VFS filename for a user, of the form `name__U123.json`. */
 export function userFilename(u: { id: string; name?: string }): string {
-  return `${makeIdName(u.name ?? '', u.id, true)}.json`
+  return makeIdName(u.name ?? '', u.id, true, '.json')
 }
 
 /**

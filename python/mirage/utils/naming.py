@@ -12,7 +12,46 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from mirage.utils.sanitize import path_safe_name, sanitize_name
+from mirage.utils.sanitize import (NAME_MAX_BYTES, byte_len, path_safe_name,
+                                   sanitize_name, truncate_bytes)
+
+SEPARATOR = "__"
+
+
+def fit_id_name(label: str, resource_id: str, suffix: str = "") -> str:
+    """Join an already-transformed label to its id inside NAME_MAX.
+
+    The id and the suffix are what make the name *address* something, so
+    they are spent first and never trimmed; the label takes whatever of the
+    255 bytes is left. Trimming the id instead would leave a name that no
+    longer resolves, and `parse_id_name` splits on the last separator, so a
+    shortened label still round-trips.
+
+    Budgets in bytes, not characters: ``sanitize_name`` caps at 100
+    characters and ``path_safe_name`` does not cap at all, so a CJK display
+    name reached 621 bytes against a 255-byte NAME_MAX and the filesystem
+    refused the name outright.
+
+    Takes the label already transformed because callers differ on the
+    transform: most pass one name through ``sanitize_name``, while Linear's
+    team directory joins two sanitized parts with the separator itself --
+    re-sanitizing that would collapse ``__`` to ``_`` and change the name's
+    shape.
+
+    Args:
+        label (str): the display half, already sanitized or path-escaped.
+        resource_id (str): the id the name has to keep addressing.
+        suffix (str): file extension, counted against the budget.
+
+    Returns:
+        str: ``<label>__<resource_id><suffix>``, at most NAME_MAX bytes
+        unless the id alone cannot fit.
+    """
+    budget = NAME_MAX_BYTES - (len(SEPARATOR) + byte_len(resource_id) +
+                               byte_len(suffix))
+    if byte_len(label) > budget:
+        label = truncate_bytes(label, budget).rstrip("_")
+    return f"{label}{SEPARATOR}{resource_id}{suffix}"
 
 
 def make_id_name(
@@ -20,11 +59,12 @@ def make_id_name(
     resource_id: str,
     *,
     path_safe: bool = False,
+    suffix: str = "",
 ) -> str:
     """Build a name with embedded ID for VFS paths.
 
     Used by resources that encode resource IDs in filenames
-    for reverse lookups (Discord, Slack, Linear, Trello).
+    for reverse lookups (Discord, Slack, gcal calendars, Linear, Trello).
 
     By default applies the full ``sanitize_name`` transform: replaces
     unsafe shell chars and spaces with underscores. Set
@@ -46,9 +86,12 @@ def make_id_name(
         resource_id (str): resource-specific unique ID.
         path_safe (bool): if True, preserve spelling and only escape
             the path separator. Otherwise apply full sanitization.
+        suffix (str): file extension to append; pass it here rather than
+            concatenating it afterwards, so it is counted against the
+            NAME_MAX budget instead of pushing the name past it.
     """
     transform = path_safe_name if path_safe else sanitize_name
-    return f"{transform(display_name)}__{resource_id}"
+    return fit_id_name(transform(display_name), resource_id, suffix)
 
 
 def parse_id_name(

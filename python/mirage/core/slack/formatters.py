@@ -49,7 +49,7 @@ def dm_dirname(dm: dict[str, Any], user_map: dict[str, str]) -> str:
 def user_filename(u: dict[str, Any]) -> str:
     """Compute the VFS filename for a user, of the form `name__U123.json`."""
     name = u.get("name", u.get("id", "unknown"))
-    return f"{make_id_name(name, u['id'], path_safe=True)}.json"
+    return make_id_name(name, u["id"], path_safe=True, suffix=".json")
 
 
 def build_query(pattern: str, scope: SlackScope) -> str:
