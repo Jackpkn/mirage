@@ -81,14 +81,20 @@ async function walkTree(
   let dirs = 0
   let files = 0
   let unopened = 0
+  // The mount table is read before the backend, not merged after it. A
+  // directory that exists only because mounts sit under it (`/repos` when
+  // `/repos/alpha` is mounted) has no backend to list it, so the readdir
+  // throws and a merge below it never runs: `tree` reported the one path
+  // whose children it could name for certain as unopenable.
+  const nested = childMounts(treeOpts.mounts, path.virtual)
   let entries: string[]
   try {
     entries = await readdir(path)
   } catch (err) {
     if (!isWalkError(err)) throw err
-    return { dirs, files, failed: true, unopened: 1 }
+    if (nested.length === 0) return { dirs, files, failed: true, unopened: 1 }
+    entries = []
   }
-  const nested = childMounts(treeOpts.mounts, path.virtual)
   if (nested.length > 0) entries = [...new Set([...entries, ...nested])]
   entries.sort(compareCodePoints)
   const filtered: { spec: PathSpec; name: string; isDir: boolean; crossing: boolean }[] = []

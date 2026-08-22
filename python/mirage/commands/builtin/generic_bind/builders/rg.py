@@ -35,6 +35,7 @@ async def rg(ops: CommandIO, accessor: Accessor, paths: list[PathSpec],
         read_bytes=bound_op(ops.read_bytes, accessor, opts.index),
         read_stream=bound_op(ops.read_stream, accessor, opts.index),
         stdin=opts.stdin,
+        mounts=opts.ns.mounts if opts.ns is not None else None,
     )
 
 

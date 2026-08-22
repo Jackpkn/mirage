@@ -14,6 +14,7 @@
 
 import { specOf } from '../../spec/builtins.ts'
 import { FlagView } from '../../spec/types.ts'
+import { operandStat } from '../utils/operands.ts'
 import { IOResult, type ByteSource } from '../../../io/types.ts'
 import { FileType, LINK_TARGET_KEY, type FileStat, type PathSpec } from '../../../types.ts'
 import { isoToEpoch } from '../../../utils/dates.ts'
@@ -311,7 +312,7 @@ export async function statGeneric(
     }
     let s: FileStat
     try {
-      s = await stat(p)
+      s = await operandStat(p, stat, opts.statPath, opts.ns?.mounts)
     } catch (e) {
       // GNU stat keeps reporting the remaining operands, exit 1.
       if (!isFsError(e)) throw e

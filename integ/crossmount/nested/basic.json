@@ -299,6 +299,84 @@
         "stdout": "/data/dlink/leaf.txt\n/data/dlink/leaf.txt\n",
         "stderr": ""
       }
+    },
+    {
+      "id": "nest_namespace_ancestor_stat",
+      "seq": 950024,
+      "targets": [
+        "ram-nested"
+      ],
+      "command": "stat /ghost",
+      "expect": {
+        "exit": 0,
+        "stdout": "name=ghost size=None modified=None type=directory\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "nest_namespace_ancestor_file",
+      "seq": 950025,
+      "targets": [
+        "ram-nested"
+      ],
+      "command": "file /ghost",
+      "expect": {
+        "exit": 0,
+        "stdout": "/ghost: directory\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "nest_namespace_ancestor_tree",
+      "seq": 950026,
+      "targets": [
+        "ram-nested"
+      ],
+      "command": "tree /ghost",
+      "expect": {
+        "exit": 0,
+        "stdout": "/ghost\n`-- deep\n    `-- g.txt\n\n2 directories, 1 file\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "nest_namespace_ancestor_grep_r",
+      "seq": 950027,
+      "targets": [
+        "ram-nested"
+      ],
+      "command": "grep -r ghost /ghost",
+      "expect": {
+        "exit": 0,
+        "stdout": "/ghost/deep/g.txt:ghost\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "nest_child_mount_root_stat_names_the_path",
+      "seq": 950028,
+      "targets": [
+        "ram-nested"
+      ],
+      "command": "stat /data/inner",
+      "expect": {
+        "exit": 0,
+        "stdout": "name=inner size=None modified=None type=directory\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "nest_mount_root_stat_names_the_path",
+      "seq": 950029,
+      "targets": [
+        "ram-nested"
+      ],
+      "command": "stat /ghost/deep",
+      "expect": {
+        "exit": 0,
+        "stdout": "name=deep size=None modified=None type=directory\n",
+        "stderr": ""
+      }
     }
   ]
 }

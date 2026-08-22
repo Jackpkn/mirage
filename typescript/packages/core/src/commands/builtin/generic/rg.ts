@@ -15,6 +15,7 @@
 import { mountKey, mountPrefixOf } from '../../../utils/key_prefix.ts'
 import { cacheAwareStream } from '../../../cache/read_through.ts'
 import { exitOnEmpty } from '../../../io/stream.ts'
+import { mountParentReaddir, mountParentStat } from '../utils/operands.ts'
 import { IOResult, materialize, type ByteSource } from '../../../io/types.ts'
 import { FileType, PathSpec, type FileStat } from '../../../types.ts'
 import { fsStrerror, isFsError, isWalkError } from '../../../utils/errors.ts'
@@ -163,8 +164,12 @@ export async function rgGeneric(
     }
   }
 
-  const readdirFn = (p: string): Promise<string[]> => readdir(makeSpec(p, first))
-  const statFn = (p: string): Promise<FileStat> => stat(makeSpec(p, first))
+  const mounts = opts.ns?.mounts
+  const readdirFn = mountParentReaddir(
+    (p: string): Promise<string[]> => readdir(makeSpec(p, first)),
+    mounts,
+  )
+  const statFn = mountParentStat((p: string): Promise<FileStat> => stat(makeSpec(p, first)), mounts)
   const readBytesFn = (p: string): Promise<Uint8Array> => materialize(stream(makeSpec(p, first)))
 
   if (isDir && opts.filetypeFns !== null && Object.keys(opts.filetypeFns).length > 0) {

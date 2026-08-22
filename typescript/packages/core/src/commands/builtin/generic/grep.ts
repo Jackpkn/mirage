@@ -18,6 +18,7 @@ import { isMissingPath } from '../../../utils/errors.ts'
 import { mountKey, mountPrefixOf } from '../../../utils/key_prefix.ts'
 import { cacheAwareStream } from '../../../cache/read_through.ts'
 import { exitOnEmpty, quietMatch } from '../../../io/stream.ts'
+import { mountParentReaddir, mountParentStat } from '../utils/operands.ts'
 import { IOResult, materialize, type ByteSource } from '../../../io/types.ts'
 import { FileType, PathSpec, type FileStat } from '../../../types.ts'
 import { respellRaw } from '../../../utils/path.ts'
@@ -165,8 +166,15 @@ export async function grepGeneric(
   if (paths.length > 0) {
     const first = paths[0]
     if (first === undefined) return [null, new IOResult()]
-    const readdirFn = (p: string): Promise<string[]> => readdir(makeSpec(p, first))
-    const statFn = (p: string): Promise<FileStat> => stat(makeSpec(p, first))
+    const mounts = opts.ns?.mounts
+    const readdirFn = mountParentReaddir(
+      (p: string): Promise<string[]> => readdir(makeSpec(p, first)),
+      mounts,
+    )
+    const statFn = mountParentStat(
+      (p: string): Promise<FileStat> => stat(makeSpec(p, first)),
+      mounts,
+    )
     const readBytesFn = (p: string): Promise<Uint8Array> => materialize(stream(makeSpec(p, first)))
 
     if (f.filesOnly) {

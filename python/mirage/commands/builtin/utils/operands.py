@@ -18,10 +18,72 @@ from dataclasses import dataclass
 from functools import partial
 
 from mirage.io.types import ByteSource, IOResult, materialize
-from mirage.types import (FileType, PathSpec, PolymorphicReadFn, ReadBytesFn,
-                          StatFn)
+from mirage.ops.types import MountView, StatPath
+from mirage.types import (FileStat, FileType, PathSpec, PolymorphicReadFn,
+                          ReadBytesFn, StatFn)
 from mirage.utils.errors import FS_ERRORS, eisdir, fs_error_line
 from mirage.utils.stream import ensure_stream
+
+
+def operand_name(path: PathSpec) -> str:
+    """What a stat row's ``name`` should say for this operand.
+
+    The basename, or ``/`` for the workspace root, which is the spelling
+    ``namespace_stat`` already uses for a namespace-only directory.
+
+    Args:
+        path (PathSpec): the operand.
+    """
+    return path.virtual.rstrip("/").rsplit("/", 1)[-1] or "/"
+
+
+async def operand_stat(
+    path: PathSpec,
+    *,
+    stat_fn: StatFn,
+    stat_path: StatPath | None = None,
+    mounts: MountView | None = None,
+) -> FileStat:
+    """Stat one operand the way a reporting command needs it.
+
+    Two things no single backend stat can get right, both about paths
+    that are namespace structure rather than backend state:
+
+    A path that only exists because mounts sit under it (``/repos`` when
+    ``/repos/alpha`` is mounted) has no backend to answer for it, so the
+    backend stat raises and the operand reads as absent. ``stat_path``
+    routes through the dispatcher, which answers such a path from the
+    mount table, so it is asked second and only on a miss. Its row is
+    already named from the path.
+
+    A mount root has a backend, but that backend names its own root
+    rather than the path: ram answers ``/``, and disk answers the host
+    directory's basename, which leaks the path behind the mount. So the
+    row is renamed here, the way ``ls`` renames a child-mount row for the
+    same reason.
+
+    Args:
+        path (PathSpec): the operand to stat.
+        stat_fn (StatFn): the backend stat.
+        stat_path (StatPath | None): dispatcher-backed stat of one path;
+            absent outside a workspace.
+        mounts (MountView | None): the mount boundaries; absent outside a
+            workspace.
+
+    Raises:
+        OSError: neither channel could answer, re-raised from the backend
+            so the caller reports the error it would have reported.
+    """
+    try:
+        row = await stat_fn(path)
+    except FS_ERRORS:
+        fallback = None if stat_path is None else await stat_path(path.virtual)
+        if fallback is None:
+            raise
+        return fallback
+    if mounts is not None and mounts.is_root(path.virtual):
+        return row.model_copy(update={"name": operand_name(path)})
+    return row
 
 
 async def split_readable(

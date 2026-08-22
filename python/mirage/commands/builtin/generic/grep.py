@@ -21,12 +21,15 @@ from mirage.commands.builtin.utils.output import (format_optional_records,
                                                   format_records)
 from mirage.commands.builtin.utils.stream import _resolve_source
 from mirage.commands.builtin.utils.wrap import (call_read_bytes, call_readdir,
-                                                call_stat)
+                                                call_stat,
+                                                mount_parent_readdir,
+                                                mount_parent_stat)
 from mirage.commands.errors import UsageError
 from mirage.commands.spec import SPECS
 from mirage.commands.spec.types import FlagValue, FlagView
 from mirage.io.stream import exit_on_empty, quiet_match
 from mirage.io.types import ByteSource, IOResult
+from mirage.ops.types import MountView
 from mirage.types import FileStat, FileType, PathSpec
 from mirage.utils.key_prefix import mount_prefix_of
 from mirage.utils.path import respell_raw
@@ -100,6 +103,7 @@ async def grep(
     read_bytes: Callable[..., Awaitable[bytes]],
     read_stream: Callable[..., AsyncIterator[bytes]] | None,
     stdin: ByteSource | None = None,
+    mounts: MountView | None = None,
 ) -> tuple[ByteSource | None, IOResult]:
     """Run grep-style fallback search over backend paths or stdin.
 
@@ -134,8 +138,10 @@ async def grep(
     if paths:
         mount_prefix = mount_prefix_of(paths[0].virtual,
                                        paths[0].resource_path)
-        rd = partial(call_readdir, readdir, prefix=mount_prefix)
-        st = partial(call_stat, stat, prefix=mount_prefix)
+        rd = mount_parent_readdir(
+            partial(call_readdir, readdir, prefix=mount_prefix), mounts)
+        st = mount_parent_stat(partial(call_stat, stat, prefix=mount_prefix),
+                               mounts)
         rb = partial(call_read_bytes, read_bytes, prefix=mount_prefix)
 
         if f.files_only:

@@ -115,12 +115,19 @@ async def _walk(
     dirs = 0
     files = 0
     unopened = 0
+    # The mount table is read before the backend, not merged after it. A
+    # directory that exists only because mounts sit under it (`/repos`
+    # when `/repos/alpha` is mounted) has no backend to list it, so the
+    # readdir raises and a merge below it never runs: `tree` reported the
+    # one path whose children it could name for certain as unopenable.
+    child_mounts = _child_mounts(mounts, path.virtual)
     try:
         entries = sorted(await readdir(path, index))
     except WALK_ERRORS as exc:
-        warnings.append(f"tree: '{path.raw_path}': {exc}")
-        return lines, dirs, files, 1
-    child_mounts = _child_mounts(mounts, path.virtual)
+        if not child_mounts:
+            warnings.append(f"tree: '{path.raw_path}': {exc}")
+            return lines, dirs, files, 1
+        entries = []
     if child_mounts:
         entries = sorted(set(entries) | set(child_mounts))
 

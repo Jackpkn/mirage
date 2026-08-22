@@ -13,7 +13,8 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { IOResult, materialize } from '../../../io/types.ts'
-import { FileType, PathSpec, type FileStat } from '../../../types.ts'
+import type { MountView, StatPath } from '../../../ops/types.ts'
+import { FileStat, FileType, PathSpec } from '../../../types.ts'
 import { mountKey } from '../../../utils/key_prefix.ts'
 import { eisdir, fsErrorLine, isFsError } from '../../../utils/errors.ts'
 import { resolvePath } from '../../../utils/path.ts'
@@ -22,6 +23,117 @@ import { stripSlash } from '../../../utils/slash.ts'
 const ENC = new TextEncoder()
 
 type Stat = (p: PathSpec) => Promise<FileStat>
+
+// What a stat row's `name` should say for a path: the basename, or `/`
+// for the workspace root, which is the spelling `namespaceStat` already
+// uses for a namespace-only directory. Mirrors Python's `operand_name`,
+// which takes a PathSpec because its one caller outside this module has
+// one; here both callers hold the virtual string.
+function operandName(virtual: string): string {
+  const trimmed = virtual.replace(/\/+$/, '')
+  const cut = trimmed.lastIndexOf('/')
+  return trimmed.slice(cut + 1) || '/'
+}
+
+/**
+ * Stat one operand the way a reporting command needs it.
+ *
+ * Two things no single backend stat can get right, both about paths that
+ * are namespace structure rather than backend state:
+ *
+ * A path that only exists because mounts sit under it (`/repos` when
+ * `/repos/alpha` is mounted) has no backend to answer for it, so the
+ * backend stat throws and the operand reads as absent. `statPath` routes
+ * through the dispatcher, which answers such a path from the mount table,
+ * so it is asked second and only on a miss. Its row is already named from
+ * the path.
+ *
+ * A mount root has a backend, but that backend names its own root rather
+ * than the path: ram answers `/`, and disk answers the host directory's
+ * basename, which leaks the path behind the mount. So the row is renamed
+ * here, the way `ls` renames a child-mount row for the same reason.
+ *
+ * Mirrors Python `mirage.commands.builtin.utils.operands.operand_stat`.
+ */
+export async function operandStat(
+  path: PathSpec,
+  stat: Stat,
+  statPath?: StatPath | null,
+  mounts?: MountView | null,
+): Promise<FileStat> {
+  let row: FileStat
+  try {
+    row = await stat(path)
+  } catch (e) {
+    if (!isFsError(e)) throw e
+    const fallback =
+      statPath === undefined || statPath === null ? null : await statPath(path.virtual)
+    if (fallback === null) throw e
+    return fallback
+  }
+  if (mounts?.isRoot(path.virtual) === true) {
+    return row.with({ name: operandName(path.virtual) })
+  }
+  return row
+}
+
+/**
+ * Wrap a walker's readdir so a mount parent lists as empty, not absent.
+ *
+ * A directory that exists only because mounts sit under it has no backend
+ * to list it, so the readdir throws and a recursive command reports the
+ * operand missing even as the fan-out searches the mounts below it and
+ * prints hits. Empty is the honest answer for the primary backend: the
+ * directory is there, and it owns nothing in it.
+ *
+ * Empty rather than the mount names, because the fan-out already runs the
+ * command once per descendant mount and concatenates. Listing them here
+ * would search each one twice.
+ */
+export function mountParentReaddir(
+  readdir: (p: string) => Promise<string[]>,
+  mounts?: MountView | null,
+): (p: string) => Promise<string[]> {
+  if (mounts === undefined || mounts === null) return readdir
+  return async (p: string) => {
+    try {
+      return await readdir(p)
+    } catch (e) {
+      if (!isFsError(e)) throw e
+      if (mounts.descendants(p).length === 0) throw e
+      return []
+    }
+  }
+}
+
+/**
+ * Wrap a walker's stat so a mount parent reports as a directory.
+ *
+ * The twin of `mountParentReaddir`, and the reason a recursive search over
+ * `/repos` reported it missing while still printing hits from
+ * `/repos/alpha`: the operand was statted before it was walked, the
+ * primary backend has no such path, and the miss was reported as absence.
+ *
+ * The mount table decides, not the dispatcher. A dispatched stat would
+ * answer for paths inside the descendant mounts too, which is exactly what
+ * the primary run must not see: the fan-out searches each of them
+ * separately, so claiming their entries here would search them twice.
+ */
+export function mountParentStat(
+  stat: (p: string) => Promise<FileStat>,
+  mounts?: MountView | null,
+): (p: string) => Promise<FileStat> {
+  if (mounts === undefined || mounts === null) return stat
+  return async (p: string) => {
+    try {
+      return await stat(p)
+    } catch (e) {
+      if (!isFsError(e)) throw e
+      if (mounts.descendants(p).length === 0) throw e
+      return new FileStat({ name: operandName(p), type: FileType.DIRECTORY })
+    }
+  }
+}
 
 // True when any operand still carries a glob to expand. Backend push-down
 // branches read paths[0] directly to build SQL, so they must not run before

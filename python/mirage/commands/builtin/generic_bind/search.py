@@ -145,6 +145,7 @@ def make_search(
                 bound_op(io.read_bytes, accessor, opts.index))
             if stream else None,
             stdin=opts.stdin,
+            mounts=opts.ns.mounts if opts.ns is not None else None,
         )
 
     return search_cmd
