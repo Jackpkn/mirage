@@ -23,22 +23,26 @@ pydantic_monty: Any
 MemoryFile: Any
 MontyFileHandle: Any
 OSAccess: Any
+StatResult: Any
 path_from_arg: Any
 try:
     import pydantic_monty as _pydantic_monty
     from pydantic_monty import MemoryFile as _MemoryFile
     from pydantic_monty import MontyFileHandle as _MontyFileHandle
     from pydantic_monty import OSAccess as _OSAccess
+    from pydantic_monty import StatResult as _StatResult
     from pydantic_monty.os_access import path_from_arg as _path_from_arg
 except ImportError:
     pydantic_monty = None
     MemoryFile = None
     MontyFileHandle = None
     OSAccess = object
+    StatResult = None
     path_from_arg = None
 else:
     pydantic_monty = _pydantic_monty
     MemoryFile = _MemoryFile
     MontyFileHandle = _MontyFileHandle
     OSAccess = _OSAccess
+    StatResult = _StatResult
     path_from_arg = _path_from_arg

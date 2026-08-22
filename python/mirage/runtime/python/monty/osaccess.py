@@ -20,7 +20,8 @@ from typing import Any
 from mirage.runtime.errors import CrossMountError
 from mirage.runtime.handles import parse_mode
 from mirage.runtime.python.monty.binding import (MemoryFile, MontyFileHandle,
-                                                 OSAccess, path_from_arg)
+                                                 OSAccess, StatResult,
+                                                 path_from_arg)
 from mirage.runtime.python.monty.constants import (EXDEV_MESSAGE,
                                                    FILE_EXISTS_MESSAGE)
 from mirage.runtime.python.monty.vfs import MontyVFS
@@ -167,9 +168,33 @@ class MirageOSAccess(OSAccess):
         return bool(super().path_is_symlink(path))
 
     def path_stat(self, path: PurePosixPath):
-        self._ensure_file(path)
-        self._ensure_dir(path)
-        return super().path_stat(path)
+        """The path's stat, answered from the mount's own row when it has one.
+
+        Monty's answer is its in-memory tree's, and for a materialized
+        file that means the `MemoryFile` defaults: 0o644 whatever the
+        mount holds, and an mtime of the moment it was materialized. So
+        a chmod the shell made was invisible and every mounted file
+        read as modified just now. The row the door already builds
+        carries both, and monty's own `StatResult` takes them.
+
+        A path no mount serves (monty's own tree, a guest temp file)
+        still answers from the tree, which is the only place it exists.
+
+        Args:
+            path (PurePosixPath): the guest path to stat.
+        """
+        st = self._vfs.stat(str(path))
+        if st is None:
+            self._ensure_file(path)
+            self._ensure_dir(path)
+            return super().path_stat(path)
+        # 0 is the door's spelling of "no stamp", and monty reads a 0.0
+        # as epoch zero rather than substituting the host clock, so an
+        # unknown mtime stays unknown instead of becoming now.
+        mtime = st.mtime_ns / 1_000_000_000
+        if st.is_dir:
+            return StatResult.dir_stat(mode=st.mode, mtime=mtime)
+        return StatResult.file_stat(size=st.size, mode=st.mode, mtime=mtime)
 
     def path_iterdir(self, path: PurePosixPath) -> list[PurePosixPath]:
         remote = self._list_remote(str(path))

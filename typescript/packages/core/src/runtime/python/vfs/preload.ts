@@ -29,6 +29,32 @@ export interface FSLike {
    * reachable at all.
    */
   symlink?(path: string, target: string): void
+  /**
+   * The mount's permission bits for a path already written. Spelled the
+   * way Emscripten's own FS spells it, so a target that is a real FS
+   * satisfies it as it stands; a target with no notion of a mode omits
+   * it and its files keep the tree's default.
+   */
+  chmod?(path: string, mode: number): void
+  /** The mount's stamps, in milliseconds, as Emscripten's FS takes them. */
+  utime?(path: string, atimeMs: number, mtimeMs: number): void
+}
+
+/**
+ * Carry a row's mode and stamp onto the target it was just written to.
+ *
+ * The row already holds both (the door stats every entry it does not
+ * slash-mark), so this costs no extra call. Without it a seeded tree
+ * reports the tree's own defaults: 0o644 whatever the mount says, and
+ * an mtime of the moment the node was built, so every file a guest
+ * stats looks like it was modified this second.
+ *
+ * A slash-marked row carries neither and is left alone; so is a link,
+ * whose mode is fixed at 0o777 on every POSIX system.
+ */
+function applyMeta(fs: FSLike, entry: VFSEntry): void {
+  if (entry.mode !== undefined) fs.chmod?.(entry.path, entry.mode)
+  if (entry.mtimeMs !== undefined) fs.utime?.(entry.path, entry.mtimeMs, entry.mtimeMs)
 }
 
 async function preloadEntry(fs: FSLike, vfs: RuntimeVFS, entry: VFSEntry): Promise<void> {
@@ -53,6 +79,7 @@ async function preloadEntry(fs: FSLike, vfs: RuntimeVFS, entry: VFSEntry): Promi
   }
   if (entry.isDir) {
     fs.mkdirTree(entry.path)
+    applyMeta(fs, entry)
     const next = entry.path.endsWith('/') ? entry.path : entry.path + '/'
     if (vfs.mountOf(entry.path) === next) {
       // A nested mount served through its parent keeps the failure
@@ -75,11 +102,13 @@ async function preloadEntry(fs: FSLike, vfs: RuntimeVFS, entry: VFSEntry): Promi
   try {
     const bytes = await vfs.read(entry.path)
     fs.writeFile(entry.path, bytes)
+    applyMeta(fs, entry)
   } catch (err) {
     // The mount listed it, so it exists; we just cannot serve it. Say so
     // rather than leaving a hole the guest would read as absence and an
     // append would fill by replacing the file.
     fs.markUnreadable?.(entry.path)
+    applyMeta(fs, entry)
     console.warn(
       `mirage preload: cannot read ${entry.path}: ${err instanceof Error ? err.message : String(err)}`,
     )

@@ -19,7 +19,7 @@ import { PyodideRuntime } from '../pyodide.ts'
 import { buildRuntime } from '../../table.ts'
 import { getTestParser } from '../../../workspace/fixtures/workspace_fixture.ts'
 import { RAMResource } from '../../../resource/ram/ram.ts'
-import { MountMode } from '../../../types.ts'
+import { FileStat, FileType, MountMode } from '../../../types.ts'
 import { Workspace } from '../../../workspace/workspace/workspace.ts'
 import { PrefixResolver } from '../../resolver.ts'
 
@@ -69,7 +69,7 @@ function makeBridge(seed: Record<string, Uint8Array>): {
       if (found === undefined) {
         return Promise.reject(Object.assign(new Error(path), { code: 'ENOENT' }))
       }
-      return Promise.resolve({ size: found.length, isDir: false, mtimeMs: 0, mode: 0o100644 })
+      return Promise.resolve(new FileStat({ name: path, size: found.length, type: FileType.TEXT }))
     }
     const prefix = path
     const entries: string[] = []

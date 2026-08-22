@@ -28,10 +28,14 @@ class FakeDispatch:
     def __init__(self,
                  files: dict[str, bytes],
                  supports_append: bool = True,
-                 links: dict[str, str] | None = None) -> None:
+                 links: dict[str, str] | None = None,
+                 stat_mode: int | None = None,
+                 stat_modified: str | None = None) -> None:
         self.files = files
         self.supports_append = supports_append
         self.links = dict(links or {})
+        self.stat_mode = stat_mode
+        self.stat_modified = stat_modified
         self.writes: list[tuple[str, bytes]] = []
         self.appends: list[tuple[str, bytes]] = []
         self.created: list[str] = []
@@ -51,7 +55,9 @@ class FakeDispatch:
             if virtual in self.files:
                 return FileStat(name=virtual,
                                 size=len(self.files[virtual]),
-                                type=FileType.TEXT), None
+                                type=FileType.TEXT,
+                                mode=self.stat_mode,
+                                modified=self.stat_modified), None
             raise FileNotFoundError(virtual)
         if op == "readdir":
             # Full virtual paths, the door's own shape.
@@ -127,6 +133,40 @@ def test_monty_reads_virtual_file_via_dispatch():
         runtime.run(RunArgs(code="print(open('/s3/a.txt').read().upper())")))
     assert result.exit_code == 0
     assert result.stdout == b"VIRTUAL\n"
+
+
+def test_monty_stat_answers_from_the_mounts_own_row():
+    # Monty stats out of its in-memory tree, where a materialized file
+    # is a MemoryFile with 0o644 and the moment it was fetched. So a
+    # chmod the shell made was invisible and every mounted file read as
+    # modified just now; the door's row holds both facts.
+    dispatch = FakeDispatch({"/s3/a.txt": b"hello"},
+                            stat_mode=0o600,
+                            stat_modified="2026-07-15T00:00:00Z")
+    runtime = MontyRuntime()
+    runtime.attach(dispatch, PrefixResolver(lambda: []))
+    result = asyncio.run(
+        runtime.run(
+            RunArgs(code="from pathlib import Path\n"
+                    "st = Path('/s3/a.txt').stat()\n"
+                    "print(oct(st.st_mode), int(st.st_mtime), st.st_size)")))
+    assert result.exit_code == 0
+    assert result.stdout == b"0o100600 1784073600 5\n"
+
+
+def test_monty_stat_reports_an_unknown_stamp_as_epoch_zero():
+    # A backend with no timestamp answers 0, not the host clock: monty
+    # substitutes time.time() for a mtime of None, which is how every
+    # mounted file came to look freshly modified.
+    dispatch = FakeDispatch({"/s3/a.txt": b"hi"})
+    runtime = MontyRuntime()
+    runtime.attach(dispatch, PrefixResolver(lambda: []))
+    result = asyncio.run(
+        runtime.run(
+            RunArgs(code="from pathlib import Path\n"
+                    "print(int(Path('/s3/a.txt').stat().st_mtime))")))
+    assert result.exit_code == 0
+    assert result.stdout == b"0\n"
 
 
 def test_monty_missing_virtual_file():

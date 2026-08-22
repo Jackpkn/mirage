@@ -22,6 +22,7 @@ import { RuntimeVFS } from '../runtime/vfs.ts'
 import { MountMode } from '../types.ts'
 import { getTestParser } from './fixtures/workspace_fixture.ts'
 import { Workspace } from './workspace/workspace.ts'
+import { FILE_MODE } from '../utils/stat_view.ts'
 
 function mkWorld(): { ws: Workspace; ops: OpsRegistry; resource: RAMResource } {
   const resource = new RAMResource()
@@ -87,11 +88,9 @@ describe('runtime door readdir', () => {
     await ws.namespace.symlink('/data/lnk', '/data/a.txt', 1)
     const entries = await doorOn(ws).readdir('/data')
     expect(entries.find((e) => e.path.endsWith('/lnk'))).toMatchObject({ size: 5, isLink: true })
-    expect(entries.find((e) => e.path.endsWith('/a.txt'))).toEqual({
-      path: '/data/a.txt',
-      size: 5,
-      isDir: false,
-    })
+    const plain = entries.find((e) => e.path.endsWith('/a.txt'))
+    expect(plain).toMatchObject({ path: '/data/a.txt', size: 5, isDir: false, mode: FILE_MODE })
+    expect(plain?.isLink).toBeUndefined()
   })
 
   // Dispatch follows the alias and answers with the target's entries,

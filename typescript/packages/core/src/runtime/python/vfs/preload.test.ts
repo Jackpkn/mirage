@@ -14,9 +14,11 @@
 
 import { describe, expect, it, vi } from 'vitest'
 import { preloadInto } from './preload.ts'
-import { RuntimeVFS, type VFSStat } from '../../vfs.ts'
+import { RuntimeVFS } from '../../vfs.ts'
+import { FileStat, FileType } from '../../../types.ts'
 import type { BridgeDispatchFn } from '../../types.ts'
 import { PrefixResolver } from '../../resolver.ts'
+import { MirageFsSeed } from './seed.ts'
 
 interface FakeFS {
   mkdirTree(path: string): void
@@ -53,12 +55,12 @@ function makeFakeFS(withLinks = true): FakeFS {
 
 // The door builds each row from a name plus one stat, so a double
 // standing in for the bridge has to answer both.
-function fileStat(size: number): VFSStat {
-  return { size, isDir: false, mtimeMs: 0, mode: 0o100644 }
+function fileStat(size: number): FileStat {
+  return new FileStat({ name: 'f', size, type: FileType.TEXT })
 }
 
-function dirStat(): VFSStat {
-  return { size: 0, isDir: true, mtimeMs: 0, mode: 0o040755 }
+function dirStat(): FileStat {
+  return new FileStat({ name: 'd', type: FileType.DIRECTORY })
 }
 
 // A resolver whose name plane holds exactly these link names.
@@ -89,6 +91,47 @@ describe('preloadInto', () => {
     const bbin = fs._files.get('/ram/b.bin')
     if (bbin === undefined) throw new Error('unreachable')
     expect(Array.from(bbin)).toEqual([1, 2, 3])
+  })
+
+  // The row already carries both (the door stats every entry it does not
+  // slash-mark), so the seed gets the mount's metadata for free. Without
+  // it every seeded node reported 0o644 and the moment it was built.
+  it('carries each row mode and stamp onto the seed', async () => {
+    const stat = new FileStat({
+      name: 'a.txt',
+      size: 5,
+      type: FileType.TEXT,
+      mode: 0o600,
+      modified: '2026-07-15T00:00:00Z',
+    })
+    const dispatch = vi.fn<BridgeDispatchFn>((op, path) => {
+      if (op === 'readdir' && path === '/ram/') return Promise.resolve(['/ram/a.txt'])
+      if (op === 'stat' && path === '/ram/a.txt') return Promise.resolve(stat)
+      if (op === 'read' && path === '/ram/a.txt') return Promise.resolve(new Uint8Array([1]))
+      return Promise.reject(new Error(`unexpected ${op} ${path}`))
+    })
+    const seed = new MirageFsSeed()
+    await preloadInto(seed, new RuntimeVFS(dispatch), '/ram/')
+    expect(seed.modes.get('/ram/a.txt')).toBe(0o100600)
+    expect(seed.stamps.get('/ram/a.txt')).toEqual({
+      atimeMs: 1784073600000,
+      mtimeMs: 1784073600000,
+    })
+  })
+
+  // A slash-marked row never stat'd, so there is nothing to carry and
+  // the node keeps the tree's default rather than a fabricated one.
+  it('records no metadata for a row that carries none', async () => {
+    const dispatch = vi.fn<BridgeDispatchFn>((op, path) => {
+      if (op === 'readdir' && path === '/ram/') return Promise.resolve(['/ram/sub/'])
+      if (op === 'readdir' && path === '/ram/sub/') return Promise.resolve([])
+      return Promise.reject(new Error(`unexpected ${op} ${path}`))
+    })
+    const seed = new MirageFsSeed()
+    await preloadInto(seed, new RuntimeVFS(dispatch), '/ram/')
+    expect(seed.dirs).toContain('/ram/sub/')
+    expect(seed.modes.size).toBe(0)
+    expect(seed.stamps.size).toBe(0)
   })
 
   it('recurses into subdirectories', async () => {

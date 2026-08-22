@@ -15,7 +15,7 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { OpsRegistry } from '../ops/registry.ts'
 import { RAMResource } from '../resource/ram/ram.ts'
-import { MountMode } from '../types.ts'
+import { FileStat, FileType, MountMode } from '../types.ts'
 import { getTestParser, stderrStr, stdoutStr } from '../workspace/fixtures/workspace_fixture.ts'
 import { Workspace } from '../workspace/workspace/workspace.ts'
 import { MontyRuntime } from './python/monty/index.ts'
@@ -23,7 +23,6 @@ import { PyodideRuntime } from './python/pyodide.ts'
 import { QuickJsRuntime } from './js/quickjs.ts'
 import type { BridgeDispatchFn, RunArgs } from './types.ts'
 import { PrefixResolver } from './resolver.ts'
-import { DIR_MODE, FILE_MODE } from '../utils/stat_view.ts'
 
 // The runtime conformance suite: one capability table, executed against
 // every runtime in that runtime's own idiom, with the outcome verified
@@ -39,6 +38,18 @@ import { DIR_MODE, FILE_MODE } from '../utils/stat_view.ts'
 // spelling exists at all. py monty serves all of them.
 const MONTY_OPEN_UNSUPPORTED =
   'ts monty: builtin open and Path.stat answer PermissionError on mount paths'
+
+// Path.stat is not a missing case, it is a shape the seam cannot carry:
+// the binding converts whatever the os callback returns structurally, so
+// every candidate (plain object, class instance, tuple, proxy) arrives in
+// the guest as a dict or a list and `st.st_size` raises AttributeError.
+// The JS package exports no StatResult to build the real thing with,
+// where python's binding hands over an OSAccess subclass and constructs
+// monty's own. Declining, so the sandbox raises PermissionError, is the
+// honest answer until the binding grows a stat shape. Probed against
+// @pydantic/monty 0.0.19.
+const MONTY_STAT_UNSUPPORTED =
+  'ts monty: the os callback cannot return an os.stat_result (@pydantic/monty 0.0.19)'
 
 // The pyodide shim patches only open/io.open, os.listdir, os.stat and
 // os.scandir, so every mutation spelling mutates MEMFS and never
@@ -140,7 +151,7 @@ const MONTY_ROWS: Row[] = [
     line: `python3 -c "from pathlib import Path; print(Path('/data/st.txt').stat().st_size)"`,
     setup: ['echo -n four > /data/st.txt'],
     lineOut: '4',
-    broken: MONTY_OPEN_UNSUPPORTED,
+    broken: MONTY_STAT_UNSUPPORTED,
   },
   {
     capability: 'append',
@@ -596,10 +607,10 @@ function makeCountingBridge(seed: Record<string, string>): CountingBridge {
     if (op === 'stat') {
       const hit = files.get(path)
       if (hit !== undefined)
-        return Promise.resolve({ size: hit.length, isDir: false, mtimeMs: 0, mode: FILE_MODE })
+        return Promise.resolve(new FileStat({ name: path, size: hit.length, type: FileType.TEXT }))
       const dir = path.replace(/\/$/, '')
       const isDir = dirs.has(dir) || [...files.keys()].some((p) => p.startsWith(dir + '/'))
-      if (isDir) return Promise.resolve({ size: 0, isDir: true, mtimeMs: 0, mode: DIR_MODE })
+      if (isDir) return Promise.resolve(new FileStat({ name: path, type: FileType.DIRECTORY }))
       return Promise.reject(new Error(`ENOENT ${path}`))
     }
     if (op === 'readdir') {

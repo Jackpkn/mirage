@@ -16,15 +16,13 @@ import errno as host_errno
 from pathlib import Path
 from typing import Any
 
+from mirage.runtime.types import VFSStat
 from mirage.runtime.vfs import RuntimeVFS
 from mirage.runtime.wasm.abi import FT_DIR, FT_REG, FT_SYMLINK
 from mirage.runtime.wasm.build import BuildDir
 from mirage.runtime.wasm.config import WasmFsConfig
 from mirage.runtime.wasm.constants import READONLY_HINT
-from mirage.runtime.wasm.types import GuestStat
-from mirage.types import FileStat
 from mirage.utils.path import owner_prefix
-from mirage.utils.stat_view import content_size, is_dir, is_link, mtime_ns
 
 
 class WasmVFS:
@@ -35,11 +33,12 @@ class WasmVFS:
     the workspace mounts. A mount prefix always wins, anything else
     falls to the build, and a path neither side holds is ENOENT.
 
-    Its second job is shape. `RuntimeVFS` answers in mirage's terms
-    (`FileStat`, virtual paths); preview1 asks in its own (`GuestStat`,
-    `(name, filetype)` pairs, errno). Translating between them is why
-    quickjs still builds one of these even with no build directory to
-    route to.
+    Its second job is shape. `RuntimeVFS` answers in virtual paths
+    and one `VFSStat` per path; preview1 asks in `(name, filetype)`
+    pairs and errno, and its filestat record has no mode field at all,
+    so the type bits are read out of the mode and the rest is dropped.
+    Translating between them is why quickjs still builds one of these
+    even with no build directory to route to.
 
     Args:
         config (WasmFsConfig | dict | None): the knobs, chiefly which
@@ -127,7 +126,7 @@ class WasmVFS:
             raise FileNotFoundError(path)
         return self._core.call(op, path, **kwargs)
 
-    def stat(self, path: str) -> GuestStat:
+    def stat(self, path: str) -> VFSStat:
         """Stat a guest path.
 
         Args:
@@ -139,9 +138,9 @@ class WasmVFS:
         build = self._serving_build(path)
         if build is not None:
             return build.stat(path)
-        return self._guest_stat(self._core_call("stat", path))
+        return self._core_stat(path)
 
-    def lstat(self, path: str) -> GuestStat:
+    def lstat(self, path: str) -> VFSStat:
         """Stat a guest path without following a trailing symlink.
 
         A link's own row is the node table's, not a backend's, and the
@@ -160,24 +159,20 @@ class WasmVFS:
         """
         if self._serving_build(path) is not None:
             return self.stat(path)
-        return self._guest_stat(self._core_call("stat", path, nofollow=True))
+        return self._core_stat(path, nofollow=True)
 
-    @staticmethod
-    def _guest_stat(fs: FileStat) -> GuestStat:
-        """Translate one mirage stat row into a preview1 filestat.
+    def _core_stat(self, path: str, nofollow: bool = False) -> VFSStat:
+        """The door's own stat, or ENOENT when no workspace is attached.
 
         Args:
-            fs (FileStat): the row the door answered with.
+            path (str): guest-absolute path.
+            nofollow (bool): report a trailing symlink itself.
         """
-        ns = mtime_ns(fs)
-        # The filestat record has no validity channel, so an unknown
-        # mtime and epoch zero both encode as 0 on this wire.
-        return GuestStat(is_dir=is_dir(fs),
-                         size=content_size(fs),
-                         mtime_ns=0 if ns is None else ns,
-                         is_link=is_link(fs))
+        if self._core is None:
+            raise FileNotFoundError(path)
+        return self._core.stat(path, nofollow=nofollow)
 
-    def stat_or_none(self, path: str) -> GuestStat | None:
+    def stat_or_none(self, path: str) -> VFSStat | None:
         try:
             return self.stat(path)
         except (FileNotFoundError, NotADirectoryError):
