@@ -18,9 +18,11 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from mirage.core.slack.config import SlackConfig
-from mirage.core.slack.formatters import build_query, format_file_grep_results
+from mirage.core.slack.formatters import (build_query, channel_dirname,
+                                          format_file_grep_results)
 from mirage.core.slack.scope import SearchTarget
 from mirage.core.slack.search import search_files
+from mirage.utils.sanitize import NAME_MAX_BYTES, byte_len
 
 
 @pytest.mark.asyncio
@@ -145,3 +147,25 @@ def test_format_file_grep_results_preserves_special_chars():
     assert "F1ABC" in line
     blob_segment = line.split("/files/")[1].split(":")[0]
     assert blob_segment == "Q4 Report (final)__F1ABC.pdf"
+
+
+def test_a_long_channel_name_reports_the_path_readdir_emits():
+    """The file-hit formatter shares the message formatter's bug and fix."""
+    name = "会議" * 100
+    raw = json.dumps({
+        "files": {
+            "matches": [{
+                "id": "F001",
+                "name": "report.pdf",
+                "timestamp": 1712707200
+            }],
+        },
+    }).encode()
+    scope = SearchTarget(container="channels",
+                         channel_name=name,
+                         channel_id="C001")
+    line = format_file_grep_results(raw, scope, "/slack")[0]
+    dirname = line.split("/slack/channels/")[1].split("/")[0]
+
+    assert dirname == channel_dirname({"id": "C001", "name": name})
+    assert byte_len(dirname) <= NAME_MAX_BYTES

@@ -13,13 +13,16 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
 from mirage.cache.index import RAMIndexCacheStore
 from mirage.core.notion import readdir as readdir_mod
+from mirage.core.notion.pathing import format_segment
 from mirage.types import PathSpec
 from mirage.utils.key_prefix import mount_key
+from mirage.utils.sanitize import NAME_MAX_BYTES, byte_len
 
 _ACCESSOR = SimpleNamespace(config=None)
 
@@ -91,3 +94,27 @@ async def test_pages_listing_stores_remote_time():
     lookup = await index.get(f"/notion/pages/Top1__{TOP_ID}")
     assert lookup.entry is not None
     assert lookup.entry.remote_time == "2026-01-02T00:00:00.000Z"
+
+
+@pytest.mark.asyncio
+async def test_a_long_child_page_title_fits_name_max(monkeypatch):
+    """The child rows composed the pair inline, skipping the budget."""
+    title = "会議" * 100
+    child_id = "bbbb2222-3333-4444-5555-666677778888"
+    monkeypatch.setattr(
+        readdir_mod,
+        "list_block_children",
+        AsyncMock(return_value=[{
+            "type": "child_page",
+            "id": child_id,
+            "child_page": {
+                "title": title
+            },
+        }]),
+    )
+
+    out = await readdir_mod.readdir(_ACCESSOR, _spec(f"/pages/Top1__{TOP_ID}"))
+    names = [p.rsplit("/", 1)[1] for p in out if not p.endswith("page.json")]
+
+    assert names == [format_segment(title, child_id)]
+    assert byte_len(names[0]) <= NAME_MAX_BYTES

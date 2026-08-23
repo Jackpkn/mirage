@@ -37,7 +37,7 @@ export function channelDirname(c: { id: string; name?: string }): string {
 }
 
 export function memberFilename(m: { id: string; name?: string }): string {
-  return `${makeIdName(m.name ?? '', m.id, true)}.json`
+  return makeIdName(m.name ?? '', m.id, true, '.json')
 }
 
 export const DiscordIndexEntry = {
