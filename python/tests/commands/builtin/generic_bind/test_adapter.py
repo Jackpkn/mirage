@@ -19,6 +19,7 @@ from mirage.commands.builtin.generic_bind.adapter import (CommandIO, Operation,
                                                           dir_aware_stat,
                                                           dir_aware_stream)
 from mirage.commands.config import CommandOpts
+from mirage.ops.types import NamespaceView
 from mirage.types import ContentType, FileStat, FileType, PathSpec
 from mirage.utils.glob_walk import DEFAULT_MAX_GLOB_MATCHES
 
@@ -123,21 +124,19 @@ NO_NS = CommandOpts()
 
 
 def _ns_dir(directory: str) -> CommandOpts:
-    """A bag whose dispatcher calls one path a directory and nothing else."""
+    """A bag whose namespace owes one path a child name and nothing else."""
 
-    async def stat_path(virtual: str) -> FileStat | None:
-        if virtual != directory:
-            return None
-        return FileStat(name="x", type=FileType.DIRECTORY)
+    def child_mounts(parent: str) -> list[str]:
+        return ["alpha"] if parent == directory else []
 
-    return CommandOpts(stat_path=stat_path)
+    return CommandOpts(ns=NamespaceView(child_mounts=child_mounts))
 
 
 @pytest.mark.asyncio
 async def test_dir_aware_stat_refuses_a_namespace_only_mount_parent():
     # No backend knows the path: its keys live in a mount nested under it,
     # so neither the stat nor the parent-listing probe can see it, and the
-    # dispatcher is the only thing that can call it a directory.
+    # name plane is the only thing that can call it a directory.
     stat = dir_aware_stat(_probe_ops({"/ghost"}), None, _ns_dir("/ghost"))
     with pytest.raises(IsADirectoryError):
         await stat(PathSpec.from_str_path("/ghost"))

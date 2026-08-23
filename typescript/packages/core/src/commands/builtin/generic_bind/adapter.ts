@@ -525,18 +525,26 @@ async function isImplicitDir<A extends Accessor>(
 // Whether a path no backend knows is a directory the namespace owns: the
 // third way a read operand can be a directory, after the explicit stat row
 // and the implicit keyed-backend prefix. A directory that exists only
-// because mounts sit under it (`/repos` when `/repos/alpha` is mounted)
-// belongs to no backend at all, so the mount this command is bound to can
-// neither stat it nor list it, and every read command reported it missing
-// while stat, file, ls, du, find and tree all called it a directory. Asked
-// through the dispatcher rather than the mount table, because a read
-// command wants only the operand's own row and the dispatcher already
-// filters what the session may be told about; a walker needs the other
-// door (see `MountView` in ops/types.ts) and nothing here walks.
-async function isNamespaceDir(opts: CommandOpts, p: PathSpec): Promise<boolean> {
-  if (opts.statPath === undefined) return false
-  const row = await opts.statPath(p.virtual)
-  return row?.type === FileType.DIRECTORY
+// because a mount or a link sits under it (`/repos` when `/repos/alpha` is
+// mounted) belongs to no backend at all, so the mount this command is bound
+// to can neither stat it nor list it, and every read command reported it
+// missing while stat, file, ls, du, find and tree all called it a directory.
+//
+// The names the namespace owes the path, not a dispatched stat. Both answer
+// for a mount parent, but a dispatched stat also answers from a backend's own
+// listing, and a backend that answers a path it does not hold with entries
+// rather than a miss turns every such path into a directory: postgres reads
+// any first segment as a schema and lists `tables` and `views` under it, so
+// `cat /pg/nope.txt` refused a directory that is not there. The namespace
+// cannot over-claim that way, because it derives a segment only from a mount
+// prefix or a link path it actually holds, and it is the same authority
+// `namespaceListing` gates on, so the listing and this refusal cannot
+// disagree. It is hide-filtered for free, which is what keeps the parent of a
+// mount the session may not be told about reading as absence.
+function isNamespaceDir(opts: CommandOpts, p: PathSpec): boolean {
+  const children = opts.ns?.childMounts
+  if (children === undefined) return false
+  return children(p.virtual).length > 0
 }
 
 // The one place the read family decides what a directory is, shared by the
@@ -554,7 +562,7 @@ async function statRefusingDirs<A extends Accessor>(
   } catch (e) {
     if ((e as { code?: string }).code !== 'ENOENT') throw e
     if (await isImplicitDir(ops, accessor, p, index)) throw eisdir(p)
-    if (await isNamespaceDir(opts, p)) throw eisdir(p)
+    if (isNamespaceDir(opts, p)) throw eisdir(p)
     throw e
   }
   if (st.type === FileType.DIRECTORY) throw eisdir(p)
@@ -564,7 +572,7 @@ async function statRefusingDirs<A extends Accessor>(
 // Stat for the read-family chokepoint (`splitReadable`): a directory operand
 // fails with EISDIR instead of succeeding (explicit, via the stat type) or
 // failing with ENOENT (implicit keyed-backend directory via a readdir probe,
-// or a namespace-only mount parent via the dispatcher), so cat/head/tail
+// or a namespace-only mount parent via the name plane), so cat/head/tail
 // report GNU's `Is a directory` and keep the remaining operands (#457).
 //
 // Takes the whole `opts` rather than its index because this is where every

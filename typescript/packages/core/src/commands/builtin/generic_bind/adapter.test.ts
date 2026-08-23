@@ -31,14 +31,11 @@ const accessor = {} as never
 // No namespace facts, which is what a command bound outside a workspace
 // gets: the two probes below the backend are the only ones that can fire.
 const NO_NS = {} as CommandOpts
-// The one a mount parent needs: no backend row, a dispatcher that calls
-// the path a directory.
+// The one a mount parent needs: no backend row, a name plane that owes the
+// path a child name.
 function nsDir(dir: string): CommandOpts {
   return {
-    statPath: (virtual: string) =>
-      Promise.resolve(
-        virtual === dir ? new FileStat({ name: 'x', type: FileType.DIRECTORY }) : null,
-      ),
+    ns: { childMounts: (parent: string) => (parent === dir ? ['alpha'] : []) },
   } as CommandOpts
 }
 

@@ -613,32 +613,39 @@ async def _is_implicit_dir(ops: CommandIO, accessor: Accessor, path: PathSpec,
     return any(norm(entry) == target for entry in entries)
 
 
-async def _is_namespace_dir(opts: CommandOpts, path: PathSpec) -> bool:
+def _is_namespace_dir(opts: CommandOpts, path: PathSpec) -> bool:
     """Whether a path no backend knows is a directory the namespace owns.
 
     The third way a read operand can be a directory, after the explicit
     stat row and the implicit keyed-backend prefix. A directory that
-    exists only because mounts sit under it (``/repos`` when
+    exists only because a mount or a link sits under it (``/repos`` when
     ``/repos/alpha`` is mounted) belongs to no backend at all: the keys
     live in another resource, so the mount this command is bound to can
     neither stat it nor list it, and every read command reported it
     missing while stat, file, ls, du, find and tree all called it a
     directory.
 
-    Asked through the dispatcher rather than the mount table, because a
-    read command wants only the operand's own row and the dispatcher
-    already filters what the session may be told about. A walker needs
-    the other door (see ``MountView`` in ``ops/types.py``); nothing here
-    walks.
+    The names the namespace owes the path, not a dispatched stat. Both
+    answer for a mount parent, but a dispatched stat also answers from a
+    backend's own listing, and a backend that answers a path it does not
+    hold with entries rather than a miss turns every such path into a
+    directory: postgres reads any first segment as a schema and lists
+    ``tables`` and ``views`` under it, so ``cat /pg/nope.txt`` refused a
+    directory that is not there. The namespace cannot over-claim that
+    way, because it derives a segment only from a mount prefix or a link
+    path it actually holds, and it is the same authority
+    ``namespace_listing`` gates on, so the listing and this refusal
+    cannot disagree. It is hide-filtered for free, which is what keeps
+    the parent of a mount the session may not be told about reading as
+    absence.
 
     Args:
-        opts (CommandOpts): the invocation's bag, for ``stat_path``.
+        opts (CommandOpts): the invocation's bag, for ``ns.child_mounts``.
         path (PathSpec): the operand whose stat raised ENOENT.
     """
-    if opts.stat_path is None:
+    if opts.ns is None or opts.ns.child_mounts is None:
         return False
-    row = await opts.stat_path(path.virtual)
-    return row is not None and row.type == FileType.DIRECTORY
+    return bool(opts.ns.child_mounts(path.virtual))
 
 
 async def _stat_refusing_dirs(ops: CommandIO, accessor: Accessor,
@@ -648,7 +655,7 @@ async def _stat_refusing_dirs(ops: CommandIO, accessor: Accessor,
     except FileNotFoundError:
         if await _is_implicit_dir(ops, accessor, path, opts.index):
             raise eisdir(path) from None
-        if await _is_namespace_dir(opts, path):
+        if _is_namespace_dir(opts, path):
             raise eisdir(path) from None
         raise
     if getattr(st, "type", None) == FileType.DIRECTORY:
@@ -663,7 +670,7 @@ def dir_aware_stat(ops: CommandIO, accessor: Accessor,
     A directory operand fails with EISDIR instead of succeeding
     (explicit, via the stat type) or failing with ENOENT (implicit
     keyed-backend directory via a readdir probe, or a namespace-only
-    mount parent via the dispatcher), so cat/head/tail report GNU's
+    mount parent via the name plane), so cat/head/tail report GNU's
     ``Is a directory`` and keep the remaining operands (#457). Called as
     ``stat(path)``; mirrors ``dirAwareStat`` in adapter.ts.
 
@@ -677,7 +684,7 @@ def dir_aware_stat(ops: CommandIO, accessor: Accessor,
         ops (CommandIO): Backend I/O bundle providing ``stat``/``readdir``.
         accessor (Accessor): Backend accessor bound into stats.
         opts (CommandOpts): the invocation's bag, for the index and the
-            dispatcher-backed stat.
+            namespace's child names.
     """
     return functools.partial(_stat_refusing_dirs, ops, accessor, opts)
 
@@ -707,6 +714,6 @@ def dir_aware_stream(ops: CommandIO, accessor: Accessor,
             and ``read_stream``.
         accessor (Accessor): Backend accessor bound into reads.
         opts (CommandOpts): the invocation's bag, for the index and the
-            dispatcher-backed stat.
+            namespace's child names.
     """
     return functools.partial(_stream_refusing_dirs, ops, accessor, opts)
