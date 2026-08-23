@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from mirage.core.hierarchy.codec import DATE, JSON_NAME, Codec
 from mirage.core.hierarchy.scope import (ROOT, Scope, ScopeMatch, Slot,
                                          make_detect_scope)
-from mirage.types import FileType
+from mirage.types import ContentType
 
 
 def is_container(text: str) -> bool:
@@ -47,13 +47,13 @@ SCOPES = (
     Scope(kind="user",
           segments=("users", Slot("user", JSON_NAME, id_key="user_id")),
           leaf=True,
-          filetype=FileType.JSON),
+          filetype=ContentType.JSON),
     Scope(kind="channel", segments=_CHANNEL),
     Scope(kind="day", segments=_DAY),
     Scope(kind="messages",
           segments=_DAY + ("chat.jsonl", ),
           leaf=True,
-          filetype=FileType.TEXT),
+          filetype=ContentType.TEXT),
     Scope(kind="files", segments=_DAY + ("files", )),
     Scope(kind="file_blob", segments=_DAY + ("files", Slot("blob")),
           leaf=True),

@@ -45,7 +45,8 @@ def _stat_from_entry(entry: dict[str, Any]) -> FileStat:
     return FileStat(
         name=name,
         size=size if isinstance(size, int) else None,
-        type=guess_type(name),
+        type=FileType.FILE,
+        content=guess_type(name),
         modified=modified,
         fingerprint=modified or None,
         extra={
@@ -111,7 +112,8 @@ async def stat(
     return FileStat(
         name=result.entry.vfs_name or result.entry.name,
         size=result.entry.size,
-        type=guess_type(result.entry.vfs_name),
+        type=FileType.FILE,
+        content=guess_type(result.entry.vfs_name),
         modified=result.entry.remote_time,
         fingerprint=result.entry.remote_time or None,
         extra={

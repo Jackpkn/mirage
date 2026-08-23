@@ -6,8 +6,8 @@ from mirage.commands.builtin.generic.stat import stat
 from mirage.io.types import materialize
 from mirage.ops.types import LinkView
 from mirage.resource.ram import RAMResource
-from mirage.types import (LINK_TARGET_KEY, FileStat, FileType, MountMode,
-                          PathSpec)
+from mirage.types import (LINK_TARGET_KEY, ContentType, FileStat, FileType,
+                          MountMode, PathSpec)
 from mirage.workspace import Workspace
 
 _MTIME = "2026-01-02T15:30:45Z"
@@ -27,8 +27,11 @@ def _fs(**kw: object) -> FileStat:
     base: dict[str, object] = dict(name="f.txt",
                                    size=6,
                                    modified=_MTIME,
-                                   type=FileType.TEXT)
+                                   type=FileType.FILE,
+                                   content=ContentType.TEXT)
     base.update(kw)
+    if base.get("type") is not FileType.FILE and "content" not in kw:
+        base.pop("content", None)
     return FileStat(**base)
 
 

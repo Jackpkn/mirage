@@ -85,7 +85,8 @@ async def stat(
         return FileStat(name=entry.name,
                         size=entry.size,
                         modified=entry.remote_time or None,
-                        type=guess_type(entry.name))
+                        type=FileType.FILE,
+                        content=guess_type(entry.name))
     parent = virtual_key.rsplit("/", 1)[0] or "/"
     parent_listing = await index.list_dir(parent)
     if parent_listing.entries is not None:
@@ -106,4 +107,5 @@ async def stat(
     return FileStat(name=name,
                     size=size,
                     modified=modified,
-                    type=guess_type(name))
+                    type=FileType.FILE,
+                    content=guess_type(name))

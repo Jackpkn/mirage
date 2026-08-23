@@ -52,12 +52,16 @@ def test_entry_of_reports_a_directory_without_a_fingerprint():
 
 
 def test_entry_of_prefers_the_backend_fingerprint():
-    stat = FileStat(name="f.txt", size=3, modified="T", fingerprint="etag-1")
+    stat = FileStat(type=FileType.FILE,
+                    name="f.txt",
+                    size=3,
+                    modified="T",
+                    fingerprint="etag-1")
     assert entry_of("/m/f.txt", stat).fingerprint == "etag-1"
 
 
 def test_entry_of_falls_back_to_the_composite():
-    stat = FileStat(name="f.txt", size=3, modified="T")
+    stat = FileStat(type=FileType.FILE, name="f.txt", size=3, modified="T")
     assert entry_of("/m/f.txt", stat).fingerprint == "T|3"
 
 
@@ -90,7 +94,11 @@ def test_readdir_walk_descends_and_reports_leaves():
         },
         "/m/data/a.txt": {
             "stat":
-            FileStat(name="a.txt", size=5, modified="T1", fingerprint="fp-a")
+            FileStat(type=FileType.FILE,
+                     name="a.txt",
+                     size=5,
+                     modified="T1",
+                     fingerprint="fp-a")
         },
         "/m/data/sub": {
             "children": ["/m/data/sub/deep.txt"],
@@ -98,7 +106,8 @@ def test_readdir_walk_descends_and_reports_leaves():
         },
         "/m/data/sub/deep.txt": {
             "stat":
-            FileStat(name="deep.txt",
+            FileStat(type=FileType.FILE,
+                     name="deep.txt",
                      size=4,
                      modified="T2",
                      fingerprint="fp-d")
@@ -138,7 +147,11 @@ def test_readdir_walk_skips_an_entry_that_vanished_mid_walk():
         },
         "/m/data/here.txt": {
             "stat":
-            FileStat(name="here.txt", size=1, modified="T", fingerprint="fp")
+            FileStat(type=FileType.FILE,
+                     name="here.txt",
+                     size=1,
+                     modified="T",
+                     fingerprint="fp")
         },
     })
     entries = asyncio.run(_collect(walk, _root("/m/data", "data")))
@@ -171,7 +184,11 @@ def test_readdir_walk_starts_from_an_empty_index_on_every_call():
         return ["/m/data/a.txt"] if spec.virtual == "/m/data" else []
 
     async def stat(spec: PathSpec, index: IndexCacheStore) -> FileStat:
-        return FileStat(name="a.txt", size=1, modified="T", fingerprint="fp")
+        return FileStat(type=FileType.FILE,
+                        name="a.txt",
+                        size=1,
+                        modified="T",
+                        fingerprint="fp")
 
     walk = ReaddirWalk(readdir, stat)
     root = _root("/m/data", "data")

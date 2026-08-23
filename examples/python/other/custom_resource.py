@@ -19,7 +19,7 @@ from mirage import MountMode, Workspace
 from mirage.sdk import (NULL_INDEX, Accessor, CommandIO, CommandSpec, FileStat,
                         GenericResource, IndexCacheStore, IOResult, PathSpec,
                         command, register_resource, stream_from_bytes)
-from mirage.types import FileType
+from mirage.types import ContentType, FileType
 
 # A whole custom backend in one script: three async core functions over
 # your data source, one CommandIO table, one GenericResource. Every
@@ -84,7 +84,10 @@ async def stat(
     name = path.virtual.rstrip("/").rsplit("/", 1)[-1] or "/"
     if isinstance(node, dict):
         return FileStat(name=name, size=None, type=FileType.DIRECTORY)
-    return FileStat(name=name, size=len(node.encode()), type=FileType.TEXT)
+    return FileStat(name=name,
+                    size=len(node.encode()),
+                    type=FileType.FILE,
+                    content=ContentType.TEXT)
 
 
 # Optional: a bespoke domain verb, registered alongside the generics.

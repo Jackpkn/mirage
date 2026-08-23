@@ -18,7 +18,8 @@ from datetime import datetime
 from enum import Enum, StrEnum
 from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Protocol, TypeAlias
 
-from pydantic import BaseModel, ConfigDict, Field, NonNegativeInt
+from pydantic import (BaseModel, ConfigDict, Field, NonNegativeInt,
+                      model_validator)
 
 if TYPE_CHECKING:
     import aiohttp
@@ -62,8 +63,34 @@ class LsSortBy(str, Enum):
 
 
 class FileType(str, Enum):
+    """POSIX file type (the `st_mode` kind), the switch behavior branches on.
+
+    One per entry, always present. Directory and symlink are their own
+    kinds; every regular file is FILE and carries its content shape on
+    FileStat.content. Distinct from ContentType, which is only a
+    rendering hint for a FILE.
+
+    The full POSIX set is enumerated so the model is comprehensive. Only
+    DIRECTORY, FILE and SYMLINK are produced today; CHAR_DEVICE,
+    BLOCK_DEVICE, FIFO and SOCKET are declared but not yet emitted, and
+    the render/derivation tables (find letter, st_mode bits, ls char)
+    grow a row for one the moment a backend starts producing it.
+    """
     DIRECTORY = "directory"
+    FILE = "file"
     SYMLINK = "symlink"
+    CHAR_DEVICE = "char_device"
+    BLOCK_DEVICE = "block_device"
+    FIFO = "fifo"
+    SOCKET = "socket"
+
+
+class ContentType(str, Enum):
+    """A regular file's content shape: the rendering hint (file/ls color).
+
+    Only meaningful for a FILE; a directory or symlink carries none. Not
+    a node kind -- nothing branches control flow on it.
+    """
     TEXT = "text"
     BINARY = "binary"
     JSON = "json"
@@ -90,12 +117,22 @@ class FileStat(BaseModel):
     modified: str | None = None
     fingerprint: str | None = None
     revision: str | None = None
-    type: FileType | None = None
+    type: FileType
+    content: ContentType | None = None
     mode: int | None = None
     uid: int | str | None = None
     gid: int | str | None = None
     atime: str | None = None
     extra: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _content_only_on_file(self) -> "FileStat":
+        # content is a FILE's rendering hint; a directory or symlink has
+        # none. None on a FILE means "unknown", which is allowed.
+        if self.type is not FileType.FILE and self.content is not None:
+            raise ValueError(f"content must be None for {self.type.value}, "
+                             f"got {self.content.value}")
+        return self
 
 
 # Any value that survives a JSON round trip: what a decoded payload

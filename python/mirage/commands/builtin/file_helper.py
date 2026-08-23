@@ -13,12 +13,12 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 from mirage.commands.builtin.constants import FILE_MIME_MAP
-from mirage.types import FileStat, FileType
+from mirage.types import ContentType, FileStat, FileType
 
 
 def format_file_result(
     path: str,
-    result: FileType | str,
+    result: ContentType | FileType | str,
     brief: bool,
     mime: bool,
 ) -> str:
@@ -26,33 +26,35 @@ def format_file_result(
 
     Args:
         path (str): operand as typed, omitted under -b.
-        result (FileType | str): detected type, or a ready description.
+        result (ContentType | FileType | str): detected type, or a ready
+            description.
         brief (bool): -b, drop the filename column.
         mime (bool): -i, map the type to its MIME spelling.
     """
-    key = result.value if isinstance(result, FileType) else str(result)
+    key = (result.value if isinstance(result, (ContentType,
+                                               FileType)) else str(result))
     desc = FILE_MIME_MAP.get(key, key) if mime else key
     if brief:
         return desc
     return f"{path}: {desc}"
 
 
-def _detect(path: str, header: bytes, s: FileStat) -> FileType | str:
-    if s.type and s.type != FileType.BINARY:
-        return s.type
-    magic: list[tuple[bytes, FileType]] = [
-        (b"\x89PNG", FileType.IMAGE_PNG),
-        (b"\xff\xd8\xff", FileType.IMAGE_JPEG),
-        (b"GIF8", FileType.IMAGE_GIF),
-        (b"PK\x03\x04", FileType.ZIP),
-        (b"\x1f\x8b", FileType.GZIP),
-        (b"%PDF", FileType.PDF),
-        (b"{\n", FileType.JSON),
-        (b"[{", FileType.JSON),
+def _detect(path: str, header: bytes, s: FileStat) -> ContentType | str:
+    if s.content is not None and s.content != ContentType.BINARY:
+        return s.content
+    magic: list[tuple[bytes, ContentType]] = [
+        (b"\x89PNG", ContentType.IMAGE_PNG),
+        (b"\xff\xd8\xff", ContentType.IMAGE_JPEG),
+        (b"GIF8", ContentType.IMAGE_GIF),
+        (b"PK\x03\x04", ContentType.ZIP),
+        (b"\x1f\x8b", ContentType.GZIP),
+        (b"%PDF", ContentType.PDF),
+        (b"{\n", ContentType.JSON),
+        (b"[{", ContentType.JSON),
     ]
     for sig, ftype in magic:
         if header.startswith(sig):
             return ftype
     if all(b < 128 for b in header[:256] if b != 0):
-        return FileType.TEXT
-    return FileType.BINARY
+        return ContentType.TEXT
+    return ContentType.BINARY

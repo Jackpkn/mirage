@@ -21,7 +21,7 @@ from mirage.commands.builtin.slack.grep import grep
 from mirage.commands.builtin.slack.rg import rg
 from mirage.commands.config import CommandOpts
 from mirage.io.types import IOResult
-from mirage.types import FileStat, FileType, PathSpec
+from mirage.types import ContentType, FileStat, FileType, PathSpec
 from mirage.utils.key_prefix import mount_key
 
 
@@ -187,8 +187,10 @@ async def test_grep_falls_back_when_native_search_raises():
             new=AsyncMock(return_value=b""),
     ), patch(
             "mirage.commands.builtin.slack.grep._stat",
-            new=AsyncMock(return_value=FileStat(
-                name="chat.jsonl", type=FileType.TEXT, size=0)),
+            new=AsyncMock(return_value=FileStat(name="chat.jsonl",
+                                                type=FileType.FILE,
+                                                content=ContentType.TEXT,
+                                                size=0)),
     ):
         out, io = await grep(
             accessor, paths, ['hello'],

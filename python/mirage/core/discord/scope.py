@@ -14,7 +14,7 @@
 
 from mirage.core.hierarchy.codec import DATE, JSON_NAME
 from mirage.core.hierarchy.scope import Scope, Slot, make_detect_scope
-from mirage.types import FileType
+from mirage.types import ContentType
 
 _GUILD = (Slot("guild", id_key="guild_id"), )
 _CHANNEL = _GUILD + ("channels", Slot("channel", id_key="channel_id"))
@@ -34,12 +34,12 @@ SCOPES = (
           segments=_GUILD +
           ("members", Slot("member", JSON_NAME, id_key="user_id")),
           leaf=True,
-          filetype=FileType.JSON),
+          filetype=ContentType.JSON),
     Scope(kind="day", segments=_DAY),
     Scope(kind="messages",
           segments=_DAY + ("chat.jsonl", ),
           leaf=True,
-          filetype=FileType.TEXT),
+          filetype=ContentType.TEXT),
     Scope(kind="files", segments=_DAY + ("files", )),
     Scope(kind="file_blob", segments=_DAY + ("files", Slot("blob")),
           leaf=True),

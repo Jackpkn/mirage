@@ -25,7 +25,7 @@ from mirage.runtime.errors import CrossMountError
 from mirage.runtime.resolver import PrefixResolver
 from mirage.runtime.types import VFSEntry, VFSStat
 from mirage.runtime.vfs import RuntimeVFS
-from mirage.types import FileStat, FileType
+from mirage.types import ContentType, FileStat, FileType
 from mirage.utils.errors import OperationNotSupportedError
 from mirage.utils.stat_view import DIR_MODE, FILE_MODE, LINK_MODE
 from mirage.workspace.session import Session
@@ -138,7 +138,11 @@ def test_readdir_lifts_names_into_entries():
     vfs = ListingVFS(
         listing=["/data/sub/", "/data/a.txt", "/data/ghost.txt"],
         stats={
-            "/data/a.txt": FileStat(name="a.txt", size=4, type=FileType.TEXT),
+            "/data/a.txt":
+            FileStat(name="a.txt",
+                     size=4,
+                     type=FileType.FILE,
+                     content=ContentType.TEXT),
         },
     )
     assert vfs.readdir("/data/") == [
@@ -180,8 +184,16 @@ def test_readdir_marks_the_names_the_resolver_calls_links():
     vfs = ListingVFS(
         listing=["/data/lnk", "/data/a.txt"],
         stats={
-            "/data/lnk": FileStat(name="lnk", size=5, type=FileType.TEXT),
-            "/data/a.txt": FileStat(name="a.txt", size=5, type=FileType.TEXT),
+            "/data/lnk":
+            FileStat(name="lnk",
+                     size=5,
+                     type=FileType.FILE,
+                     content=ContentType.TEXT),
+            "/data/a.txt":
+            FileStat(name="a.txt",
+                     size=5,
+                     type=FileType.FILE,
+                     content=ContentType.TEXT),
         },
         links=["lnk"],
     )
@@ -211,7 +223,8 @@ def test_stat_projects_one_struct_for_every_surface():
             "/data/a.txt":
             FileStat(name="a.txt",
                      size=4,
-                     type=FileType.TEXT,
+                     type=FileType.FILE,
+                     content=ContentType.TEXT,
                      mode=0o700,
                      modified="2026-07-15T00:00:00Z"),
         },
@@ -226,7 +239,10 @@ def test_stat_projects_one_struct_for_every_surface():
 
 def test_stat_reports_an_unknown_stamp_as_epoch_zero():
     vfs = ListingVFS(listing=[],
-                     stats={"/data/a.txt": FileStat(name="a.txt", size=1)})
+                     stats={
+                         "/data/a.txt":
+                         FileStat(name="a.txt", size=1, type=FileType.FILE)
+                     })
     assert vfs.stat("/data/a.txt").mtime_ns == 0
 
 
@@ -255,7 +271,8 @@ def test_readdir_carries_the_metadata_only_where_it_stated():
             "/data/a.txt":
             FileStat(name="a.txt",
                      size=4,
-                     type=FileType.TEXT,
+                     type=FileType.FILE,
+                     content=ContentType.TEXT,
                      mode=0o600,
                      modified="2026-07-15T00:00:00Z"),
         },

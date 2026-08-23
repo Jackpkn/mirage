@@ -31,7 +31,8 @@ async def stat(accessor: NextcloudAccessor,
         return FileStat(name=entry.name,
                         size=entry.size,
                         modified=entry.remote_time or None,
-                        type=guess_type(entry.name))
+                        type=FileType.FILE,
+                        content=guess_type(entry.name))
     parent = virtual_key.rsplit("/", 1)[0] or "/"
     parent_listing = await index.list_dir(parent)
     if parent_listing.entries is not None:
@@ -48,7 +49,8 @@ async def stat(accessor: NextcloudAccessor,
             name=stripped.rsplit("/", 1)[-1],
             size=md.content_length,
             modified=modified,
-            type=guess_type(raw),
+            type=FileType.FILE,
+            content=guess_type(raw),
             fingerprint=md.etag,
             extra={"etag": md.etag} if md.etag else {},
         )

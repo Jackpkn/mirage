@@ -18,7 +18,7 @@ from mirage.core.hierarchy.codec import JSON_NAME, Codec
 from mirage.core.hierarchy.scope import (DetectFn, Scope, ScopeMatch, Segment,
                                          Slot, make_detect_scope)
 from mirage.resource.qdrant.config import QdrantConfig
-from mirage.types import FileType
+from mirage.types import ContentType
 from mirage.utils.filetype import image_type_for_extension
 
 TXT = Codec(suffix=".txt")
@@ -53,13 +53,13 @@ def scopes_for(config: QdrantConfig) -> tuple[Scope, ...]:
         Scope(kind="row_json",
               segments=full + (Slot("row_id", JSON_NAME), ),
               leaf=True,
-              filetype=FileType.TEXT))
+              filetype=ContentType.TEXT))
     if config.text_field:
         scopes.append(
             Scope(kind="row_text",
                   segments=full + (Slot("row_id", TXT), ),
                   leaf=True,
-                  filetype=FileType.TEXT))
+                  filetype=ContentType.TEXT))
     if config.blob_field:
         blob = Codec(suffix="." + config.blob_ext)
         scopes.append(

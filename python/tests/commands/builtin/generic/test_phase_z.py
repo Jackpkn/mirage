@@ -5,7 +5,7 @@ from mirage.commands.builtin.generic.jq import jq
 from mirage.commands.builtin.generic.patch import patch
 from mirage.commands.builtin.generic.tsort import tsort
 from mirage.commands.builtin.generic.unzip import unzip
-from mirage.types import FileStat, FileType, PathSpec
+from mirage.types import ContentType, FileStat, FileType, PathSpec
 from mirage.utils.key_prefix import mount_key
 
 
@@ -42,7 +42,9 @@ def _make_backend(files: dict[str, bytes]):
 
 
 async def _stat_file(path) -> FileStat:
-    return FileStat(name=path.virtual, type=FileType.TEXT)
+    return FileStat(name=path.virtual,
+                    type=FileType.FILE,
+                    content=ContentType.TEXT)
 
 
 @pytest.mark.asyncio

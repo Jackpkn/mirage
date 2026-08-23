@@ -1,7 +1,7 @@
 import pytest
 
 from mirage.commands.builtin.generic.grep import grep
-from mirage.types import FileStat, FileType, PathSpec
+from mirage.types import ContentType, FileStat, FileType, PathSpec
 from mirage.utils.key_prefix import mount_key
 
 
@@ -54,7 +54,8 @@ def _make_backend(files: dict[str, bytes], dirs: set[str] | None = None):
         if p in files:
             return FileStat(name=p.rsplit("/", 1)[-1] or p,
                             size=len(files[p]),
-                            type=FileType.TEXT)
+                            type=FileType.FILE,
+                            content=ContentType.TEXT)
         if p.rstrip("/") in inferred_dirs or p in inferred_dirs:
             return FileStat(name=p.rsplit("/", 1)[-1] or "/",
                             type=FileType.DIRECTORY)
@@ -318,7 +319,8 @@ def _make_prefixed_backend(files: dict[str, bytes], mount_prefix: str):
         if p in full_files:
             return FileStat(name=p.rsplit("/", 1)[-1],
                             size=len(full_files[p]),
-                            type=FileType.TEXT)
+                            type=FileType.FILE,
+                            content=ContentType.TEXT)
         if p.rstrip("/") in inferred_dirs:
             return FileStat(name=p.rsplit("/", 1)[-1] or "/",
                             type=FileType.DIRECTORY)

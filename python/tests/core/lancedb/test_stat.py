@@ -18,7 +18,7 @@ from mirage.cache.index.ram import RAMIndexCacheStore
 from mirage.core.lancedb.read import read
 from mirage.core.lancedb.readdir import readdir
 from mirage.core.lancedb.stat import stat
-from mirage.types import FileType, PathSpec
+from mirage.types import ContentType, FileType, PathSpec
 
 
 def _ps(path: str) -> PathSpec:
@@ -37,14 +37,14 @@ async def test_stat_group_dir_is_directory(accessor):
 @pytest.mark.asyncio
 async def test_stat_card_is_text_with_size(accessor):
     s = await stat(accessor, _ps("/animals/cat/big/1.md"))
-    assert s.type == FileType.TEXT
+    assert s.content == ContentType.TEXT
     assert s.size and s.size > 0
 
 
 @pytest.mark.asyncio
 async def test_stat_blob_is_image(accessor):
     s = await stat(accessor, _ps("/animals/cat/big/1.png"))
-    assert s.type == FileType.IMAGE_PNG
+    assert s.content == ContentType.IMAGE_PNG
     assert s.size == len(b"PNG-1")
 
 

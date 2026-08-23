@@ -26,7 +26,7 @@ from mirage.commands.config import CommandOpts
 from mirage.core.hierarchy.scope import ScopeMatch
 from mirage.core.hierarchy.search import SearchQuery
 from mirage.io.types import ByteSource
-from mirage.types import FileStat, FileType, PathSpec
+from mirage.types import ContentType, FileStat, FileType, PathSpec
 from mirage.utils.errors import enoent
 from tests.core.hierarchy.conftest import FakeAccessor, detect_scope, spec
 
@@ -42,7 +42,10 @@ async def _read_op(accessor: FakeAccessor,
 async def _stat_op(accessor: FakeAccessor,
                    path: PathSpec,
                    index=NULL_INDEX) -> FileStat:
-    return FileStat(name="a.json", type=FileType.JSON, size=len(CONTENT))
+    return FileStat(name="a.json",
+                    type=FileType.FILE,
+                    content=ContentType.JSON,
+                    size=len(CONTENT))
 
 
 async def _readdir_op(accessor: FakeAccessor,

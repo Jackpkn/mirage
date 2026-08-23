@@ -20,7 +20,7 @@ from mirage.cache.index.config import IndexEntry
 from mirage.core.box.read import read
 from mirage.core.box.readdir import readdir
 from mirage.core.box.stat import stat
-from mirage.types import FileType, PathSpec
+from mirage.types import ContentType, FileType, PathSpec
 
 
 @pytest.mark.asyncio
@@ -56,7 +56,7 @@ async def test_stat_file_carries_box_metadata(accessor, index):
         accessor,
         PathSpec(resource_path="a.txt", virtual="/a.txt", directory="/"),
         index)
-    assert info.type == FileType.TEXT
+    assert info.content == ContentType.TEXT
     assert info.size == 5
     assert info.modified == "2026-04-01T00:00:00+00:00"
     assert info.fingerprint == "2026-04-01T00:00:00+00:00"

@@ -278,7 +278,8 @@ def entry_stat(item: dict[str, Any]) -> FileStat:
         name=name,
         size=item.get("size"),
         modified=item.get("lastModifiedDateTime"),
-        type=guess_type(name),
+        type=FileType.FILE,
+        content=guess_type(name),
         fingerprint=item.get("cTag"),
         extra={
             "id": item.get("id"),
@@ -645,7 +646,8 @@ async def stat_item(config: MsGraphConfig, loc: DriveLoc, virtual: str,
         return FileStat(name=entry.name,
                         size=entry.size,
                         modified=entry.remote_time or None,
-                        type=guess_type(entry.name),
+                        type=FileType.FILE,
+                        content=guess_type(entry.name),
                         extra=dict(entry.extra))
     parent = virtual_key.rsplit("/", 1)[0] or "/"
     parent_listing = await index.list_dir(parent)

@@ -5,7 +5,7 @@ from mirage.cache.index import NULL_INDEX, IndexCacheStore
 from mirage.core.dify.client import get_document_detail
 from mirage.core.dify.path import resolve_path
 from mirage.core.dify.tree import extract_document_size
-from mirage.types import FileStat, FileType, JsonValue, PathSpec
+from mirage.types import ContentType, FileStat, FileType, JsonValue, PathSpec
 
 
 async def stat_light(accessor: DifyAccessor,
@@ -27,7 +27,8 @@ async def stat_light(accessor: DifyAccessor,
         extra["source_size"] = resolved.entry.size
     return FileStat(
         name=resolved.entry.name,
-        type=FileType.TEXT,
+        type=FileType.FILE,
+        content=ContentType.TEXT,
         size=None,
         modified=timestamp_to_zulu(resolved.entry.remote_time),
         fingerprint=None,
@@ -64,7 +65,8 @@ async def stat(accessor: DifyAccessor,
         extra["indexing_status"] = detail.get("indexing_status")
     return FileStat(
         name=resolved.entry.name,
-        type=FileType.TEXT,
+        type=FileType.FILE,
+        content=ContentType.TEXT,
         size=None,
         modified=timestamp_to_zulu(detail.get("updated_at")),
         fingerprint=None,

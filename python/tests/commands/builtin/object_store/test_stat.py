@@ -23,7 +23,7 @@ from mirage.commands.builtin.object_store.stat import make_stat
 from mirage.commands.config import CommandOpts
 from mirage.io.types import materialize
 from mirage.ops.types import NamespaceView, StatOverlay
-from mirage.types import FileStat, FileType, PathSpec
+from mirage.types import ContentType, FileStat, FileType, PathSpec
 
 _BACKEND_MTIME = "2020-05-05T05:05:05Z"
 _OVERLAY_MTIME = "2024-01-01T00:00:00Z"
@@ -34,7 +34,8 @@ def _backend_stat() -> FileStat:
                     size=6,
                     modified=_BACKEND_MTIME,
                     mode=0o644,
-                    type=FileType.TEXT)
+                    type=FileType.FILE,
+                    content=ContentType.TEXT)
 
 
 async def _fake_stat_core(_accessor: Accessor,

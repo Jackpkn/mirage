@@ -22,10 +22,7 @@ _ASCII_DIGITS = frozenset("0123456789")
 _TYPE_LABELS = {
     FileType.DIRECTORY: "directory",
     FileType.SYMLINK: "symbolic link",
-    FileType.TEXT: "regular file",
-    FileType.BINARY: "regular file",
-    FileType.JSON: "regular file",
-    FileType.CSV: "regular file",
+    FileType.FILE: "regular file",
 }
 
 _DEFAULT_OWNER = "user"
@@ -352,8 +349,12 @@ def _render_stat(s: FileStat) -> str:
     Args:
         s (FileStat): the stat to render.
     """
+    # The record's type= shows a regular file's content shape and a
+    # non-regular node's kind, so one field reads the way it always has.
+    shown = (s.content.value if s.type is FileType.FILE
+             and s.content is not None else s.type.value)
     return (f"name={s.name} size={s.size} modified={s.modified}"
-            f" type={s.type.value if s.type else None}")
+            f" type={shown}")
 
 
 async def stat(

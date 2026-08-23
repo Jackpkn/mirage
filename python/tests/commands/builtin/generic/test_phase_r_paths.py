@@ -5,7 +5,7 @@ from mirage.commands.builtin.generic.dirname import dirname
 from mirage.commands.builtin.generic.mktemp import mktemp
 from mirage.commands.builtin.generic.readlink import readlink
 from mirage.commands.builtin.generic.realpath import realpath
-from mirage.types import FileStat, PathSpec
+from mirage.types import FileStat, FileType, PathSpec
 from mirage.utils.key_prefix import mount_key
 
 
@@ -56,7 +56,7 @@ async def test_dirname_multiple():
 async def test_realpath_normalizes():
 
     async def stat_fn(path):
-        return FileStat(name="x")
+        return FileStat(type=FileType.FILE, name="x")
 
     out, _ = await realpath([_spec("/a/./b/../c")], stat_fn=stat_fn)
     assert out == b"/a/c\n"
@@ -66,7 +66,7 @@ async def test_realpath_normalizes():
 async def test_realpath_exists_check_passes():
 
     async def stat_fn(path):
-        return FileStat(name="x")
+        return FileStat(type=FileType.FILE, name="x")
 
     out, _ = await realpath([_spec("/a/b")], stat_fn=stat_fn, e=True)
     assert out == b"/a/b\n"
@@ -89,7 +89,7 @@ async def test_realpath_exists_check_fails():
 async def test_realpath_multiple():
 
     async def stat_fn(path):
-        return FileStat(name="x")
+        return FileStat(type=FileType.FILE, name="x")
 
     out, _ = await realpath([_spec("/a"), _spec("/b/../c")], stat_fn=stat_fn)
     assert out == b"/a\n/c\n"

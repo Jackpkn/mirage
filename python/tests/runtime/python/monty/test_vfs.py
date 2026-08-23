@@ -17,7 +17,7 @@ import errno
 from mirage.runtime.python.monty.vfs import MontyVFS
 from mirage.runtime.resolver import PrefixResolver
 from mirage.runtime.vfs import RuntimeVFS
-from mirage.types import FileStat, FileType
+from mirage.types import ContentType, FileStat, FileType
 
 
 class CountingCore(RuntimeVFS):
@@ -48,7 +48,8 @@ class CountingCore(RuntimeVFS):
                 raise FileNotFoundError(path)
             return FileStat(name=path,
                             size=len(self.files[path]),
-                            type=FileType.TEXT)
+                            type=FileType.FILE,
+                            content=ContentType.TEXT)
         if op == "readdir":
             # Full virtual paths, the door's own shape.
             prefix = path.rstrip("/") + "/"

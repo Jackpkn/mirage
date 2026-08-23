@@ -26,7 +26,7 @@ from mirage.runtime.python.wasi import WASI_HOME_ENV
 from mirage.runtime.resolver import PrefixResolver
 from mirage.runtime.table import build_runtime
 from mirage.runtime.types import RunArgs
-from mirage.types import FileStat, FileType
+from mirage.types import ContentType, FileStat, FileType
 
 
 def _wasi_available() -> bool:
@@ -153,7 +153,8 @@ class CountingDispatch:
         if virtual in self.files:
             return FileStat(name=virtual.rsplit("/", 1)[-1],
                             size=len(self.files[virtual]),
-                            type=FileType.TEXT)
+                            type=FileType.FILE,
+                            content=ContentType.TEXT)
         trimmed = virtual.rstrip("/")
         is_dir = trimmed in self.dirs or any(
             p.startswith(trimmed + "/") for p in self.files)

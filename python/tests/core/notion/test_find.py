@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 import pytest
 
 from mirage.core.notion import find as find_mod
-from mirage.types import FileStat, FileType, PathSpec
+from mirage.types import ContentType, FileStat, FileType, PathSpec
 from mirage.utils.key_prefix import mount_key
 
 _DIRS = {"/db", "/db/sub"}
@@ -45,7 +45,8 @@ async def _fake_stat(accessor, path, index=None):
                         type=FileType.DIRECTORY,
                         modified="2026-07-14T12:00:00Z")
     return FileStat(name=key.rsplit("/", 1)[-1],
-                    type=FileType.TEXT,
+                    type=FileType.FILE,
+                    content=ContentType.TEXT,
                     size=_FILES.get(key),
                     modified=("2026-07-15T12:00:00Z" if key == "/db/page1.md"
                               else "2026-07-13T12:00:00Z"))

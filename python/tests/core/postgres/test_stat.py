@@ -21,7 +21,7 @@ from mirage.accessor.postgres import PostgresAccessor
 from mirage.cache.index.ram import RAMIndexCacheStore
 from mirage.core.postgres.stat import stat
 from mirage.resource.postgres.config import PostgresConfig
-from mirage.types import FileType, PathSpec
+from mirage.types import ContentType, FileType, PathSpec
 from mirage.utils.key_prefix import mount_key
 
 
@@ -78,7 +78,7 @@ async def test_stat_database_json(accessor, index):
         PathSpec(resource_path="database.json",
                  virtual="/database.json",
                  directory="/database.json"), index)
-    assert result.type == FileType.JSON
+    assert result.content == ContentType.JSON
     assert result.name == "database.json"
 
 
@@ -138,7 +138,7 @@ async def test_stat_entity_schema_json(accessor, index):
         PathSpec(resource_path="public/tables/users/schema.json",
                  virtual="/public/tables/users/schema.json",
                  directory="/public/tables/users/schema.json"), index)
-    assert result.type == FileType.JSON
+    assert result.content == ContentType.JSON
     assert result.name == "schema.json"
     assert result.extra == {
         "schema": "public",
@@ -172,7 +172,7 @@ async def test_stat_entity_rows_jsonl(accessor, index, monkeypatch):
         PathSpec(resource_path="public/tables/users/rows.jsonl",
                  virtual="/public/tables/users/rows.jsonl",
                  directory="/public/tables/users/rows.jsonl"), index)
-    assert result.type == FileType.TEXT
+    assert result.content == ContentType.TEXT
     assert result.name == "rows.jsonl"
     assert result.size is None
     assert result.fingerprint is not None
@@ -204,7 +204,7 @@ async def test_stat_view_entity_rows(accessor, index, monkeypatch):
         PathSpec(resource_path="analytics/views/daily_revenue/rows.jsonl",
                  virtual="/analytics/views/daily_revenue/rows.jsonl",
                  directory="/analytics/views/daily_revenue/rows.jsonl"), index)
-    assert result.type == FileType.TEXT
+    assert result.content == ContentType.TEXT
     assert result.extra["kind"] == "views"
 
 

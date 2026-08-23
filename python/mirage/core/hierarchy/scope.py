@@ -16,7 +16,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from mirage.core.hierarchy.codec import RAW, Codec
-from mirage.types import FileType, PathSpec
+from mirage.types import ContentType, PathSpec
 
 ROOT = "root"
 INVALID = "invalid"
@@ -63,7 +63,7 @@ class Scope:
             slots.
         leaf (bool): whether the position is a file rather than a
             directory.
-        filetype (FileType | None): rendered type of a leaf; None on
+        filetype (ContentType | None): rendered type of a leaf; None on
             directories.
         probed (bool): whether stat must prove existence (parent listing
             by default); False for positions that exist by construction,
@@ -72,7 +72,7 @@ class Scope:
     kind: str
     segments: tuple[Segment, ...]
     leaf: bool = False
-    filetype: FileType | None = None
+    filetype: ContentType | None = None
     probed: bool = True
 
 

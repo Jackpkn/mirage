@@ -22,7 +22,7 @@ from mirage.cache.index import RAMIndexCacheStore
 from mirage.core.redis.mkdir import mkdir
 from mirage.ops.redis import OPS
 from mirage.resource.redis.store import RedisStore
-from mirage.types import FileType, PathSpec
+from mirage.types import ContentType, FileType, PathSpec
 
 
 def _op(name: str):
@@ -101,7 +101,7 @@ async def test_op_stat_file(accessor, index):
     result = await stat(accessor, _scope("/hello.txt"), index=index)
     assert result.name == "hello.txt"
     assert result.size == 5
-    assert result.type == FileType.TEXT
+    assert result.content == ContentType.TEXT
 
 
 @pytest.mark.asyncio

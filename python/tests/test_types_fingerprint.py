@@ -12,14 +12,17 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from mirage.types import FileStat, FileType
+from mirage.types import ContentType, FileStat, FileType
 
 
 def test_file_stat_has_fingerprint_field():
-    st = FileStat(name="x", type=FileType.TEXT, fingerprint="abc123")
+    st = FileStat(name="x",
+                  type=FileType.FILE,
+                  content=ContentType.TEXT,
+                  fingerprint="abc123")
     assert st.fingerprint == "abc123"
 
 
 def test_file_stat_fingerprint_defaults_none():
-    st = FileStat(name="x", type=FileType.TEXT)
+    st = FileStat(name="x", type=FileType.FILE, content=ContentType.TEXT)
     assert st.fingerprint is None

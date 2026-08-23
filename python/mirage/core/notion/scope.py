@@ -13,7 +13,7 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 from mirage.core.hierarchy.scope import Scope, Slot, make_detect_scope
-from mirage.types import FileType
+from mirage.types import ContentType
 
 # A page tree nests arbitrarily, so the page level is one VARIADIC slot:
 # `pages/a__1/b__2` is a page at any depth, and the slots hold the DEEPEST
@@ -34,22 +34,22 @@ SCOPES = (
     Scope(kind="page_json",
           segments=("pages", _PAGE, "page.json"),
           leaf=True,
-          filetype=FileType.JSON),
+          filetype=ContentType.JSON),
     Scope(kind="page", segments=("pages", _PAGE)),
     Scope(kind="database_json",
           segments=_DB + ("database.json", ),
           leaf=True,
-          filetype=FileType.JSON),
+          filetype=ContentType.JSON),
     Scope(kind="database", segments=_DB),
     Scope(kind="data_source_json",
           segments=_DS + ("data_source.json", ),
           leaf=True,
-          filetype=FileType.JSON),
+          filetype=ContentType.JSON),
     Scope(kind="data_source", segments=_DS),
     Scope(kind="page_json",
           segments=_DS + (_PAGE, "page.json"),
           leaf=True,
-          filetype=FileType.JSON),
+          filetype=ContentType.JSON),
     Scope(kind="page", segments=_DS + (_PAGE, )),
 )
 

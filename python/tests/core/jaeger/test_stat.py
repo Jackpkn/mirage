@@ -21,7 +21,7 @@ from mirage.cache.index.ram import RAMIndexCacheStore
 from mirage.core.jaeger.stat import stat
 from mirage.core.render.json import json_bytes
 from mirage.resource.jaeger.config import JaegerConfig
-from mirage.types import FileType, PathSpec
+from mirage.types import ContentType, FileType, PathSpec
 
 TRACE_A = "a" * 32
 TRACE_B = "b" * 32
@@ -98,7 +98,7 @@ async def test_stat_operations_file(accessor, index):
             result = await stat(accessor,
                                 spec("services/checkout/operations.json"),
                                 index)
-    assert result.type == FileType.JSON
+    assert result.content == ContentType.JSON
     # The service listing sized it, so stat agrees with what read returns.
     assert result.size == len(json_bytes(operations))
 
@@ -110,7 +110,7 @@ async def test_stat_listed_trace(accessor, index):
             result = await stat(
                 accessor, spec(f"services/checkout/traces/{TRACE_A}.json"),
                 index)
-    assert result.type == FileType.JSON
+    assert result.content == ContentType.JSON
     assert result.extra["trace_id"] == TRACE_A
     # The listing that proved existence also seeded the rendered size.
     assert result.size == len(json_bytes({"traceID": TRACE_A}))
