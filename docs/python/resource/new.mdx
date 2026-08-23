@@ -30,20 +30,28 @@ async def read_bytes(accessor, path, index=None) -> bytes: ...
 async def stat(accessor, path, index=None) -> FileStat: ...
 
 
-def make_jira_resource(config) -> GenericResource:
-    io = CommandIO(
-        readdir=readdir,
-        read_bytes=read_bytes,
-        read_stream=partial(stream_from_bytes, read_bytes),
-        stat=stat,
-        is_mounted=lambda a: True,
-        local=False,
-    )
-    return GenericResource(name="jira", accessor=JiraAccessor(config), io=io,
-                           prompt="Issues rendered as .json files.")
+class JiraResource(GenericResource):
+    CONFIG_CLS = JiraConfig
+
+    def __init__(self, config: JiraConfig) -> None:
+        super().__init__(
+            name="jira",
+            accessor=JiraAccessor(config),
+            io=CommandIO(
+                readdir=readdir,
+                read_bytes=read_bytes,
+                read_stream=partial(stream_from_bytes, read_bytes),
+                stat=stat,
+                is_mounted=lambda a: True,
+                local=False,
+            ),
+            prompt="Issues rendered as .json files.",
+        )
 ```
 
-Mount it like any builtin: `Workspace({"/jira/": make_jira_resource(cfg)})`.
+Mount it like any builtin: `Workspace({"/jira/": JiraResource(cfg)})`. A class rather than a
+factory function, because that is what the registry and the config reference below both name;
+`examples/python/other/custom_resource.py` is the same shape end to end.
 
 The escape hatches mirror what builtins use: optional `CommandIO` fields unlock more surface (`write` enables the byte-mutation family; `find` and `du` become native fast paths), `overrides=` suppresses a generic command you replace, and `commands=[...]` adds bespoke `@command` verbs.
 
