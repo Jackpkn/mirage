@@ -29,7 +29,7 @@ async def wc(ops: CommandIO, accessor: Accessor, paths: list[PathSpec],
              opts: CommandOpts) -> tuple[ByteSource | None, IOResult]:
     resolved = await resolve_or_empty(ops, accessor, paths, opts.index)
     return await wc_generic(resolved, list(texts), opts,
-                            dir_aware_stream(ops, accessor, opts.index))
+                            dir_aware_stream(ops, accessor, opts))
 
 
 BUILDER = Builder('wc', wc, None, False, wc_aggregate, read=True)

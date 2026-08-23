@@ -21,6 +21,6 @@ export const EXPAND_BUILDER: Builder = {
   fn: async (ops, accessor, paths, _texts, opts) => {
     const idx = opts.index ?? undefined
     const resolved = paths.length > 0 ? await resolveGlobOf(ops)(accessor, paths, idx) : []
-    return expandGeneric(resolved, opts, dirAwareStream(ops, accessor, idx))
+    return expandGeneric(resolved, opts, dirAwareStream(ops, accessor, opts))
   },
 }

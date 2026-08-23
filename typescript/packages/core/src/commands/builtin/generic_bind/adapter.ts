@@ -522,31 +522,61 @@ async function isImplicitDir<A extends Accessor>(
   }
 }
 
+// Whether a path no backend knows is a directory the namespace owns: the
+// third way a read operand can be a directory, after the explicit stat row
+// and the implicit keyed-backend prefix. A directory that exists only
+// because mounts sit under it (`/repos` when `/repos/alpha` is mounted)
+// belongs to no backend at all, so the mount this command is bound to can
+// neither stat it nor list it, and every read command reported it missing
+// while stat, file, ls, du, find and tree all called it a directory. Asked
+// through the dispatcher rather than the mount table, because a read
+// command wants only the operand's own row and the dispatcher already
+// filters what the session may be told about; a walker needs the other
+// door (see `MountView` in ops/types.ts) and nothing here walks.
+async function isNamespaceDir(opts: CommandOpts, p: PathSpec): Promise<boolean> {
+  if (opts.statPath === undefined) return false
+  const row = await opts.statPath(p.virtual)
+  return row?.type === FileType.DIRECTORY
+}
+
+// The one place the read family decides what a directory is, shared by the
+// stat and the stream chokepoints so the two cannot drift.
+async function statRefusingDirs<A extends Accessor>(
+  ops: CommandIO<A>,
+  accessor: A,
+  opts: CommandOpts,
+  p: PathSpec,
+): Promise<FileStat> {
+  const index = opts.index ?? undefined
+  let st: FileStat
+  try {
+    st = await ops.stat(accessor, p, index)
+  } catch (e) {
+    if ((e as { code?: string }).code !== 'ENOENT') throw e
+    if (await isImplicitDir(ops, accessor, p, index)) throw eisdir(p)
+    if (await isNamespaceDir(opts, p)) throw eisdir(p)
+    throw e
+  }
+  if (st.type === FileType.DIRECTORY) throw eisdir(p)
+  return st
+}
+
 // Stat for the read-family chokepoint (`splitReadable`): a directory operand
 // fails with EISDIR instead of succeeding (explicit, via the stat type) or
-// failing with ENOENT (implicit keyed-backend directory, via a readdir
-// probe), so cat/head/tail report GNU's `Is a directory` and keep the
-// remaining operands (#457).
+// failing with ENOENT (implicit keyed-backend directory via a readdir probe,
+// or a namespace-only mount parent via the dispatcher), so cat/head/tail
+// report GNU's `Is a directory` and keep the remaining operands (#457).
+//
+// Takes the whole `opts` rather than its index because this is where every
+// read command decides what a directory is, and the facts that answer that
+// question arrive on the bag: threading them one at a time would mean
+// editing every one of the two dozen builders again for the next one.
 export function dirAwareStat<A extends Accessor>(
   ops: CommandIO<A>,
   accessor: A,
-  index?: IndexCacheStore,
+  opts: CommandOpts,
 ): (p: PathSpec) => Promise<FileStat> {
-  return async (p) => {
-    let st: FileStat
-    try {
-      st = await ops.stat(accessor, p, index)
-    } catch (e) {
-      if (
-        (e as { code?: string }).code === 'ENOENT' &&
-        (await isImplicitDir(ops, accessor, p, index))
-      )
-        throw eisdir(p)
-      throw e
-    }
-    if (st.type === FileType.DIRECTORY) throw eisdir(p)
-    return st
-  }
+  return (p) => statRefusingDirs(ops, accessor, opts, p)
 }
 
 // Stat through the backend, then merge the namespace attr overlay, so the
@@ -578,36 +608,26 @@ export function requireOp<T>(op: T | undefined, name: string): T {
 async function* streamRefusingDirs<A extends Accessor>(
   ops: CommandIO<A>,
   accessor: A,
+  opts: CommandOpts,
   p: PathSpec,
-  index?: IndexCacheStore,
 ): AsyncIterable<Uint8Array> {
-  let st: FileStat
-  try {
-    st = await ops.stat(accessor, p, index)
-  } catch (e) {
-    if (
-      (e as { code?: string }).code === 'ENOENT' &&
-      (await isImplicitDir(ops, accessor, p, index))
-    )
-      throw eisdir(p)
-    throw e
-  }
-  if (st.type === FileType.DIRECTORY) throw eisdir(p)
-  yield* ops.readStream(accessor, p, index)
+  await statRefusingDirs(ops, accessor, opts, p)
+  yield* ops.readStream(accessor, p, opts.index ?? undefined)
 }
 
 // Read stream for the read-family per-operand chokepoint (`readOperands`):
 // the operand is stat'ed first so a directory fails with EISDIR before any
 // backend read runs (sftp reads of a directory raise an opaque `Failure`,
-// not ENOENT), and an ENOENT for an implicit keyed-backend directory is
-// refined the same way `dirAwareStat` does, before the generic formats the
-// stderr line (#457). Mirrors the Python `_read_refusing_dirs`.
+// not ENOENT), and an ENOENT for an implicit keyed-backend directory or a
+// namespace-only mount parent is refined the same way `dirAwareStat` does,
+// before the generic formats the stderr line (#457). Mirrors the Python
+// `dir_aware_stream`.
 export function dirAwareStream<A extends Accessor>(
   ops: CommandIO<A>,
   accessor: A,
-  index?: IndexCacheStore,
+  opts: CommandOpts,
 ): (p: PathSpec) => AsyncIterable<Uint8Array> {
-  return (p) => streamRefusingDirs(ops, accessor, p, index)
+  return (p) => streamRefusingDirs(ops, accessor, opts, p)
 }
 
 export type BuilderFn<A extends Accessor = Accessor> = (

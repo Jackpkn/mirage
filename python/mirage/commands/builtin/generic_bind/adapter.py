@@ -613,13 +613,42 @@ async def _is_implicit_dir(ops: CommandIO, accessor: Accessor, path: PathSpec,
     return any(norm(entry) == target for entry in entries)
 
 
+async def _is_namespace_dir(opts: CommandOpts, path: PathSpec) -> bool:
+    """Whether a path no backend knows is a directory the namespace owns.
+
+    The third way a read operand can be a directory, after the explicit
+    stat row and the implicit keyed-backend prefix. A directory that
+    exists only because mounts sit under it (``/repos`` when
+    ``/repos/alpha`` is mounted) belongs to no backend at all: the keys
+    live in another resource, so the mount this command is bound to can
+    neither stat it nor list it, and every read command reported it
+    missing while stat, file, ls, du, find and tree all called it a
+    directory.
+
+    Asked through the dispatcher rather than the mount table, because a
+    read command wants only the operand's own row and the dispatcher
+    already filters what the session may be told about. A walker needs
+    the other door (see ``MountView`` in ``ops/types.py``); nothing here
+    walks.
+
+    Args:
+        opts (CommandOpts): the invocation's bag, for ``stat_path``.
+        path (PathSpec): the operand whose stat raised ENOENT.
+    """
+    if opts.stat_path is None:
+        return False
+    row = await opts.stat_path(path.virtual)
+    return row is not None and row.type == FileType.DIRECTORY
+
+
 async def _stat_refusing_dirs(ops: CommandIO, accessor: Accessor,
-                              index: IndexCacheStore,
-                              path: PathSpec) -> FileStat:
+                              opts: CommandOpts, path: PathSpec) -> FileStat:
     try:
-        st: FileStat = await ops.stat(accessor, path, index)
+        st: FileStat = await ops.stat(accessor, path, opts.index)
     except FileNotFoundError:
-        if await _is_implicit_dir(ops, accessor, path, index):
+        if await _is_implicit_dir(ops, accessor, path, opts.index):
+            raise eisdir(path) from None
+        if await _is_namespace_dir(opts, path):
             raise eisdir(path) from None
         raise
     if getattr(st, "type", None) == FileType.DIRECTORY:
@@ -628,47 +657,56 @@ async def _stat_refusing_dirs(ops: CommandIO, accessor: Accessor,
 
 
 def dir_aware_stat(ops: CommandIO, accessor: Accessor,
-                   index: IndexCacheStore) -> OperationFn:
+                   opts: CommandOpts) -> OperationFn:
     """Bound stat for the read-family chokepoint (``split_readable``).
 
     A directory operand fails with EISDIR instead of succeeding
     (explicit, via the stat type) or failing with ENOENT (implicit
-    keyed-backend directory, via a readdir probe), so cat/head/tail
-    report GNU's ``Is a directory`` and keep the remaining operands
-    (#457). Called as ``stat(path)``; mirrors ``dirAwareStat`` in
-    adapter.ts.
+    keyed-backend directory via a readdir probe, or a namespace-only
+    mount parent via the dispatcher), so cat/head/tail report GNU's
+    ``Is a directory`` and keep the remaining operands (#457). Called as
+    ``stat(path)``; mirrors ``dirAwareStat`` in adapter.ts.
+
+    Takes the whole ``opts`` rather than its index because this is where
+    every read command decides what a directory is, and the facts that
+    answer that question arrive on the bag: threading them one at a time
+    would mean editing every one of the two dozen builders again for the
+    next one.
 
     Args:
         ops (CommandIO): Backend I/O bundle providing ``stat``/``readdir``.
         accessor (Accessor): Backend accessor bound into stats.
-        index (IndexCacheStore): Index cache store bound into stats.
+        opts (CommandOpts): the invocation's bag, for the index and the
+            dispatcher-backed stat.
     """
-    return functools.partial(_stat_refusing_dirs, ops, accessor, index)
+    return functools.partial(_stat_refusing_dirs, ops, accessor, opts)
 
 
 async def _stream_refusing_dirs(ops: CommandIO, accessor: Accessor,
-                                index: IndexCacheStore,
+                                opts: CommandOpts,
                                 path: PathSpec) -> AsyncIterator[bytes]:
-    await _stat_refusing_dirs(ops, accessor, index, path)
-    async for chunk in ops.read_stream(accessor, path, index):
+    await _stat_refusing_dirs(ops, accessor, opts, path)
+    async for chunk in ops.read_stream(accessor, path, opts.index):
         yield chunk
 
 
 def dir_aware_stream(ops: CommandIO, accessor: Accessor,
-                     index: IndexCacheStore) -> OperationFn:
+                     opts: CommandOpts) -> OperationFn:
     """Bound read stream for the per-operand chokepoint (``read_operands``).
 
     The operand is stat'ed first so a directory fails with EISDIR before
     any backend read runs (sftp reads of a directory raise an opaque
     ``Failure``, not ENOENT), and an ENOENT for an implicit keyed-backend
-    directory is refined the same way ``dir_aware_stat`` does, before the
-    generic formats the stderr line (#457). Called as ``read(path)``;
-    mirrors ``dirAwareStream`` in adapter.ts.
+    directory or a namespace-only mount parent is refined the same way
+    ``dir_aware_stat`` does, before the generic formats the stderr line
+    (#457). Called as ``read(path)``; mirrors ``dirAwareStream`` in
+    adapter.ts.
 
     Args:
         ops (CommandIO): Backend I/O bundle providing ``stat``/``readdir``
             and ``read_stream``.
         accessor (Accessor): Backend accessor bound into reads.
-        index (IndexCacheStore): Index cache store bound into reads.
+        opts (CommandOpts): the invocation's bag, for the index and the
+            dispatcher-backed stat.
     """
-    return functools.partial(_stream_refusing_dirs, ops, accessor, index)
+    return functools.partial(_stream_refusing_dirs, ops, accessor, opts)
