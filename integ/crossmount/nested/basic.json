@@ -560,6 +560,158 @@
         "stdout": "/data/top.txt:top\n",
         "stderr": ""
       }
+    },
+    {
+      "id": "nest_namespace_ancestor_cat",
+      "note": "A read command decides what a directory is at one chokepoint, and it knew two kinds: the explicit stat row and the implicit prefix a keyed backend answers a readdir for. A namespace-only mount parent is the third, belonging to no backend at all, and without it every read command called the path missing while stat, file, ls, du, find, tree and test -d all called it a directory. Fixing the chokepoint fixed the whole family at once, so these cases are a sample of it rather than a list.",
+      "seq": 950043,
+      "targets": [
+        "ram-nested"
+      ],
+      "command": "cat /ghost",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "cat: /ghost: Is a directory\n"
+      }
+    },
+    {
+      "id": "nest_namespace_ancestor_wc",
+      "seq": 950044,
+      "targets": [
+        "ram-nested"
+      ],
+      "command": "wc -l /ghost",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "wc: /ghost: Is a directory\n"
+      }
+    },
+    {
+      "id": "nest_namespace_ancestor_head",
+      "seq": 950045,
+      "targets": [
+        "ram-nested"
+      ],
+      "command": "head /ghost",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "head: /ghost: Is a directory\n"
+      }
+    },
+    {
+      "id": "nest_namespace_ancestor_tail",
+      "seq": 950046,
+      "targets": [
+        "ram-nested"
+      ],
+      "command": "tail /ghost",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "tail: /ghost: Is a directory\n"
+      }
+    },
+    {
+      "id": "nest_namespace_ancestor_md5sum",
+      "note": "The stream half of the chokepoint rather than the stat half, so both are covered: the checksum family reads through dir_aware_stream where cat reads through dir_aware_stat.",
+      "seq": 950047,
+      "targets": [
+        "ram-nested"
+      ],
+      "command": "md5sum /ghost",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "md5sum: /ghost: Is a directory\n"
+      }
+    },
+    {
+      "id": "nest_namespace_ancestor_cut",
+      "seq": 950048,
+      "targets": [
+        "ram-nested"
+      ],
+      "command": "cut -d, -f1 /ghost",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "cut: /ghost: Is a directory\n"
+      }
+    },
+    {
+      "id": "nest_namespace_ancestor_cat_keeps_siblings",
+      "note": "GNU names the directory and reads the rest of the line. Reporting it as a missing operand did that too, so the wording is the whole difference and the operand handling must not regress with it.",
+      "seq": 950049,
+      "targets": [
+        "ram-nested"
+      ],
+      "command": "cat /ghost /data/top.txt",
+      "expect": {
+        "exit": 1,
+        "stdout": "top\n",
+        "stderr": "cat: /ghost: Is a directory\n"
+      }
+    },
+    {
+      "id": "nest_hidden_mount_parent_cat",
+      "note": "The hide outranks the directory synthesis, and it comes for free: the dispatcher the chokepoint asks already filters what the session may be told about, so the operand falls back to the absence every other verb reports for it.",
+      "seq": 950050,
+      "targets": [
+        "ram-nested"
+      ],
+      "session": "blind",
+      "command": "cat /ghost",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "cat: /ghost: No such file or directory\n"
+      }
+    },
+    {
+      "id": "nest_hidden_mount_parent_wc",
+      "seq": 950051,
+      "targets": [
+        "ram-nested"
+      ],
+      "session": "blind",
+      "command": "wc -l /ghost",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "wc: /ghost: No such file or directory\n"
+      }
+    },
+    {
+      "id": "nest_hidden_mount_root_listing",
+      "note": "The name plane's own leak, one layer below the verbs above. A mount name is derived for every ancestor segment it runs through, and the visibility test was applied to the segment rather than to the mount, so a session that hid /ghost/deep still learned /ghost from a root listing while every verb applied to /ghost answered ENOENT. A hide is subtree-closed, so testing the deeper path can only withhold a segment, never grant one.",
+      "seq": 950052,
+      "targets": [
+        "ram-nested"
+      ],
+      "session": "blind",
+      "command": "ls /",
+      "expect": {
+        "exit": 0,
+        "stdout": "data\ndev\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "nest_root_listing_unfiltered",
+      "note": "The control for the case above: with no session bound the segment is still owed and still listed.",
+      "seq": 950053,
+      "targets": [
+        "ram-nested"
+      ],
+      "command": "ls /",
+      "expect": {
+        "exit": 0,
+        "stdout": "data\ndev\nghost\n",
+        "stderr": ""
+      }
     }
   ]
 }
