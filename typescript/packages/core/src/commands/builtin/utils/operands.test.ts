@@ -13,10 +13,11 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { describe, expect, it } from 'vitest'
+import type { MountView } from '../../../ops/types.ts'
 import type { FileStat } from '../../../types.ts'
-import { PathSpec } from '../../../types.ts'
-import { enoent } from '../../../utils/errors.ts'
-import { resolveScript, splitReadable } from './operands.ts'
+import { FileType, PathSpec } from '../../../types.ts'
+import { eacces, enoent } from '../../../utils/errors.ts'
+import { mountParentReaddir, mountParentStat, resolveScript, splitReadable } from './operands.ts'
 
 function spec(virtual: string): PathSpec {
   return PathSpec.fromStrPath(virtual)
@@ -68,5 +69,78 @@ describe('resolveScript', () => {
     const s = resolveScript('sub/run.mjs', '/data')
     expect(s.virtual).toBe('/data/sub/run.mjs')
     expect(s.directory).toBe('/data/sub/')
+  })
+})
+
+function mountsOf(descendants: string[], hidden: string[] = []): MountView {
+  const under = (p: string) => descendants.filter((d) => d.startsWith(`${p.replace(/\/+$/, '')}/`))
+  return {
+    descendants: under,
+    visibleDescendants: (p) => under(p).filter((d) => !hidden.includes(d)),
+    isRoot: (p) => descendants.includes(p.replace(/\/+$/, '')),
+    rootOf: () => '/',
+  }
+}
+
+const absentDir = (p: string) => Promise.reject(enoent(spec(p)))
+const deniedDir = (p: string) => Promise.reject(eacces(spec(p)))
+
+describe('mountParentReaddir', () => {
+  it('lists a mount parent as empty', async () => {
+    const rd = mountParentReaddir(absentDir, mountsOf(['/ghost/deep']))
+    expect(await rd('/ghost')).toEqual([])
+  })
+
+  it('rethrows where no mount sits below', async () => {
+    const rd = mountParentReaddir(absentDir, mountsOf(['/ghost/deep']))
+    await expect(rd('/nope')).rejects.toThrow()
+  })
+
+  it('rethrows when the only mount below is hidden', async () => {
+    // Answering at all says the directory is there, so the parent of a
+    // mount the session may not be told about has to keep reading as
+    // absent: keyed on every descendant instead of the visible ones,
+    // this returned an empty listing and a recursive search reported an
+    // ordinary no-match where every other verb reports ENOENT.
+    const rd = mountParentReaddir(absentDir, mountsOf(['/ghost/deep'], ['/ghost/deep']))
+    await expect(rd('/ghost')).rejects.toThrow()
+  })
+
+  it('answers when one of two mounts below is visible', async () => {
+    const mounts = mountsOf(['/ghost/deep', '/ghost/seen'], ['/ghost/deep'])
+    const rd = mountParentReaddir(absentDir, mounts)
+    expect(await rd('/ghost')).toEqual([])
+  })
+
+  it('passes a readable listing through', async () => {
+    const rd = mountParentReaddir(() => Promise.resolve(['a.txt']), mountsOf([]))
+    expect(await rd('/x')).toEqual(['a.txt'])
+  })
+})
+
+describe('mountParentStat', () => {
+  const absentStat = (p: string): Promise<FileStat> => Promise.reject(enoent(spec(p)))
+
+  it('synthesizes a directory row for a mount parent', async () => {
+    const st = mountParentStat(absentStat, mountsOf(['/ghost/deep']))
+    const row = await st('/ghost')
+    expect(row.name).toBe('ghost')
+    expect(row.type).toBe(FileType.DIRECTORY)
+    expect(row.size).toBeNull()
+  })
+
+  it('rethrows where no mount sits below', async () => {
+    const st = mountParentStat(absentStat, mountsOf(['/ghost/deep']))
+    await expect(st('/nope')).rejects.toThrow()
+  })
+
+  it('rethrows a refusal that is not an absence', async () => {
+    const st = mountParentStat(deniedDir, mountsOf(['/ghost/deep']))
+    await expect(st('/ghost')).rejects.toThrow()
+  })
+
+  it('rethrows when the only mount below is hidden', async () => {
+    const st = mountParentStat(absentStat, mountsOf(['/ghost/deep'], ['/ghost/deep']))
+    await expect(st('/ghost')).rejects.toThrow()
   })
 })

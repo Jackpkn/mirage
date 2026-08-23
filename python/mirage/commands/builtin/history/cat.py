@@ -38,6 +38,6 @@ async def cat(accessor: HistoryAccessor, paths: list[PathSpec],
     return await cat_generic(resolved,
                              list(texts),
                              opts,
-                             dir_aware_stat(IO, accessor, opts.index),
+                             dir_aware_stat(IO, accessor, opts),
                              bound_op(IO.read_stream, accessor, opts.index),
                              local=IO.local)

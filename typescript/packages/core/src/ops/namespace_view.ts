@@ -19,25 +19,53 @@ import type { NamespaceLinks } from './config.ts'
 import { compareCodePoints } from '../utils/sort.ts'
 
 /**
- * Immediate child segments of mounts strictly under `parent`.
+ * The child segments of `parent` that some allowed path runs through.
  *
- * Session-filtered: a child name appears only when some mount whose
- * prefix runs through it is visible to the current session, so a scoped
- * session never learns an ungranted mount's name from a listing. Hidden
- * names (leading dot) are included; presentation filtering is the
- * consumer's job, exactly as for backend entries.
+ * The one session filter both namespace enumerations share, because both
+ * owe a segment to a deeper thing rather than to an entry of its own: a
+ * mount prefix and a link path each synthesize every directory above it,
+ * and the segment is visible exactly when at least one of the things that
+ * synthesized it is.
+ *
+ * The full path is what gets tested, never the segment. A hide is
+ * subtree-closed on all three of its planes (an exact entry contains its
+ * subtree, a component pattern matches any segment, an anchored one is
+ * tested against every ancestor), so testing the deeper path is strictly
+ * stronger: a segment can only be withheld by this, never granted.
+ * Testing the segment instead is what leaked the name of a namespace-only
+ * ancestor whose only mount or link the session hides, a directory that
+ * answers ENOENT to every verb applied to it.
  */
-export function childMountNames(prefixes: readonly string[], parent: string): string[] {
+export function visibleChildSegments(paths: Iterable<string>, parent: string): string[] {
   const norm = normDir(parent)
   const out = new Set<string>()
-  for (const prefix of prefixes) {
-    const p = normDir(prefix)
-    if (p === norm || !p.startsWith(norm)) continue
-    const name = p.slice(norm.length).split('/', 1)[0] ?? ''
-    if (name === '' || !pathAllowed(norm + name)) continue
+  for (const path of paths) {
+    if (!path.startsWith(norm)) continue
+    const name = path.slice(norm.length).split('/', 1)[0] ?? ''
+    if (name === '' || out.has(name) || !pathAllowed(path)) continue
     out.add(name)
   }
   return [...out].sort(compareCodePoints)
+}
+
+/**
+ * Immediate child segments of mounts strictly under `parent`.
+ *
+ * Session-filtered by `visibleChildSegments`: a child name appears only
+ * when some mount whose prefix runs through it is visible to the current
+ * session, so a scoped session never learns an ungranted mount's name
+ * from a listing. Hidden names (leading dot) are included; presentation
+ * filtering is the consumer's job, exactly as for backend entries.
+ */
+export function childMountNames(prefixes: readonly string[], parent: string): string[] {
+  const norm = normDir(parent)
+  const below: string[] = []
+  for (const prefix of prefixes) {
+    const p = normDir(prefix)
+    if (p === norm || !p.startsWith(norm)) continue
+    below.push(rstripSlash(p))
+  }
+  return visibleChildSegments(below, parent)
 }
 
 /**
@@ -47,19 +75,14 @@ export function childMountNames(prefixes: readonly string[], parent: string): st
  * mount prefixes are: `ln` allows a link below a directory chain no
  * backend serves, and without its ancestors synthesized the link lists
  * at its own parent yet is unreachable from a walk above it.
- * Session-filtered by the hides, the same predicate `childMountNames`
- * applies to a mount's own name.
+ * Session-filtered by `visibleChildSegments`, the same predicate
+ * `childMountNames` applies to a mount prefix: the link path is tested,
+ * not the segment, so a namespace-only ancestor whose only link the
+ * session hides is not named either.
  */
 function linkNames(links: NamespaceLinks | null, parent: string): string[] {
   if (links === null) return []
-  const norm = normDir(parent)
-  const out = new Set<string>()
-  for (const link of links.symlinkTargets().keys()) {
-    if (!link.startsWith(norm)) continue
-    const name = link.slice(norm.length).split('/', 1)[0] ?? ''
-    if (name !== '' && pathAllowed(norm + name)) out.add(name)
-  }
-  return [...out].sort(compareCodePoints)
+  return visibleChildSegments(links.symlinkTargets().keys(), parent)
 }
 
 /**

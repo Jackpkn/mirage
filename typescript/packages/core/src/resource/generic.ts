@@ -24,7 +24,7 @@ import type { ProvisionFn, RegisteredCommand } from '../commands/config.ts'
 import { makeGenericOps } from '../ops/generic/factory.ts'
 import type { RegisteredOp } from '../ops/registry.ts'
 import type { FileStat, PathSpec } from '../types.ts'
-import { BaseResource, type Resource, type ResourceStateBase } from './base.ts'
+import { BaseResource, type FindOptions, type Resource, type ResourceStateBase } from './base.ts'
 
 export interface GenericResourceOptions<A extends Accessor = Accessor> {
   /**
@@ -126,6 +126,24 @@ export class GenericResource<A extends Accessor = Accessor>
   readonly #ops: readonly RegisteredOp[]
   readonly #glob: ResolveGlobOp<A>
 
+  // The optional surface, declared but not defined. `declare` emits no
+  // property, so a field the table does not carry stays genuinely absent
+  // and `typeof r.writeFile === 'function'` answers truthfully. The
+  // constructor installs a forwarder for each field the table does carry,
+  // which is what Python's `_ops` map does through `__getattr__`.
+  declare writeFile?: (path: PathSpec, data: Uint8Array) => Promise<void>
+  declare appendFile?: (path: PathSpec, data: Uint8Array) => Promise<void>
+  declare exists?: (path: PathSpec) => Promise<boolean>
+  declare mkdir?: (path: PathSpec, options?: { recursive?: boolean }) => Promise<void>
+  declare rmdir?: (path: PathSpec) => Promise<void>
+  declare unlink?: (path: PathSpec) => Promise<void>
+  declare rename?: (src: PathSpec, dst: PathSpec) => Promise<void>
+  declare truncate?: (path: PathSpec, length: number) => Promise<void>
+  declare copy?: (src: PathSpec, dst: PathSpec) => Promise<void>
+  declare rmR?: (path: PathSpec) => Promise<void>
+  declare du?: (path: PathSpec) => Promise<number>
+  declare find?: (path: PathSpec, options?: FindOptions) => Promise<string[]>
+
   constructor(options: GenericResourceOptions<A>) {
     super()
     if (options.name === '') throw new Error('GenericResource requires a non-empty name')
@@ -158,6 +176,26 @@ export class GenericResource<A extends Accessor = Accessor>
         ? []
         : makeGenericOps<A>(options.name, options.io, { overrides: shadowed })
     this.#ops = [...derived, ...userOps]
+    this.#installOptional(options.io)
+  }
+
+  // Each forwarder reads `this.index` when called rather than capturing
+  // it, because `setIndex` can replace it after construction.
+  #installOptional(io: CommandIO<A>): void {
+    const { write, append, exists, mkdir, rmdir, unlink } = io
+    const { rename, truncate, copy, rmR, du, find } = io
+    if (write !== undefined) this.writeFile = (p, d) => write(this.accessor, p, d)
+    if (append !== undefined) this.appendFile = (p, d) => append(this.accessor, p, d)
+    if (exists !== undefined) this.exists = (p) => exists(this.accessor, p)
+    if (mkdir !== undefined) this.mkdir = (p, o) => mkdir(this.accessor, p, o?.recursive)
+    if (rmdir !== undefined) this.rmdir = (p) => rmdir(this.accessor, p)
+    if (unlink !== undefined) this.unlink = (p) => unlink(this.accessor, p)
+    if (rename !== undefined) this.rename = (s, d) => rename(this.accessor, s, d)
+    if (truncate !== undefined) this.truncate = (p, n) => truncate(this.accessor, p, n)
+    if (copy !== undefined) this.copy = (s, d) => copy(this.accessor, s, d)
+    if (rmR !== undefined) this.rmR = (p) => rmR(this.accessor, p)
+    if (du !== undefined) this.du = (p) => du.size(this.accessor, p, this.index)
+    if (find !== undefined) this.find = (p, o) => find(this.accessor, p, o ?? {})
   }
 
   open(): Promise<void> {
@@ -192,9 +230,10 @@ export class GenericResource<A extends Accessor = Accessor>
 
   // The four table fields every backend must supply, forwarded so a
   // GenericResource answers the direct calls builtin resources answer.
-  // The optional ones are deliberately absent: a forwarder that throws
-  // for a table field the backend never filled would answer a feature
-  // probe with a lie.
+  // These are unconditional because the table cannot omit them; the rest
+  // are installed per instance above. What stays banned either way is a
+  // forwarder that throws for a field the backend never filled, which
+  // would answer a feature probe with a lie.
   readFile(path: PathSpec): Promise<Uint8Array> {
     return this.io.readBytes(this.accessor, path, this.index)
   }

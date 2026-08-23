@@ -60,7 +60,7 @@ async def rg(accessor: GitHubAccessor, paths: list[PathSpec], texts: list[str],
     return await generic_rg(
         paths,
         texts,
-        opts.flags,
+        opts,
         readdir=bound_op(_readdir, accessor, opts.index),
         stat=bound_op(_stat, accessor, opts.index),
         read_bytes=bound_op(github_read, accessor, opts.index),

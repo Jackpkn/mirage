@@ -129,7 +129,14 @@ class BaseResource:
         return CapacityResult(state=CapacityState.UNKNOWN)
 
     def __getattr__(self, name: str) -> Any:
-        fn = type(self)._ops.get(name)
+        # Read through the instance, not the class. A builtin sets ``_ops``
+        # as a class attribute and resolves the same either way, but a kit
+        # backend has no class of its own to hang one on and builds the map
+        # per instance in ``GenericResource.__init__``; ``type(self)._ops``
+        # read past it and reported every op the table carried as missing.
+        # No recursion: ``_ops`` is always found, on the class if nowhere
+        # else, so this lookup never re-enters ``__getattr__``.
+        fn = self._ops.get(name)
         if fn is not None:
             return partial(fn, self.accessor)
         raise AttributeError(
