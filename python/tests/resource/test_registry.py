@@ -19,6 +19,7 @@ from pathlib import Path
 import pytest
 
 from mirage.resource import registry
+from mirage.resource.base import BaseResource
 from mirage.resource.hf_buckets import HfBucketsResource
 from mirage.resource.registry import (REGISTRY, build_resource,
                                       known_resources, register_resource)
@@ -148,24 +149,47 @@ class FakeCustomConfig:
         self.url = url
 
 
-class FakeCustomResource:
+# The colon rung is the one that accepts a class subclassing nothing, so
+# these stand in for a real out-of-tree backend and subclass BaseResource
+# the way one does. NotAResource below is the class that does not, and
+# NamelessResource is a real subclass that leaves the key empty.
+class FakeCustomResource(BaseResource):
+
+    name = "fake_custom"
 
     def __init__(self, config: FakeCustomConfig) -> None:
+        super().__init__()
         self.config = config
 
 
-class FakeKwargsResource:
+class FakeKwargsResource(BaseResource):
+
+    name = "fake_kwargs"
+
+    def __init__(self, root: str = "/") -> None:
+        super().__init__()
+        self.root = root
+
+
+class FakeConfigClsResource(BaseResource):
+
+    name = "fake_attr"
+    CONFIG_CLS = FakeCustomConfig
+
+    def __init__(self, config: FakeCustomConfig) -> None:
+        super().__init__()
+        self.config = config
+
+
+class NotAResource:
 
     def __init__(self, root: str = "/") -> None:
         self.root = root
 
 
-class FakeConfigClsResource:
+class NamelessResource(BaseResource):
 
-    CONFIG_CLS = FakeCustomConfig
-
-    def __init__(self, config: FakeCustomConfig) -> None:
-        self.config = config
+    name = ""
 
 
 @pytest.fixture
@@ -204,6 +228,56 @@ def test_register_resource_spec_string(clean_registry):
                       "tests.resource.test_registry:FakeKwargsResource")
     built = build_resource("fake_spec", {"root": "/spec"})
     assert built.root == "/spec"
+
+
+def test_colon_reference_builds_without_a_registry(clean_registry):
+    # A colon means the value names code, so it resolves with nothing
+    # registered and no entry points scanned.
+    built = build_resource("tests.resource.test_registry:FakeKwargsResource",
+                           {"root": "/ref"})
+    assert isinstance(built, FakeKwargsResource)
+    assert built.root == "/ref"
+
+
+def test_colon_reference_uses_the_config_cls_attribute(clean_registry):
+    built = build_resource(
+        "tests.resource.test_registry:FakeConfigClsResource",
+        {"url": "http://ref"})
+    assert built.config.url == "http://ref"
+
+
+def test_colon_reference_does_not_shadow_a_builtin_name(clean_registry):
+    # A registry name always wins, so a name can never be reread as code.
+    assert type(build_resource("ram")).__name__ == "RAMResource"
+
+
+def test_colon_reference_to_a_missing_attribute_raises(clean_registry):
+    with pytest.raises(ValueError):
+        build_resource("tests.resource.test_registry:NoSuchResource")
+
+
+def test_colon_reference_refuses_a_class_that_is_not_a_resource(
+        clean_registry):
+    # Nothing validated this rung, so a class subclassing nothing reached
+    # install_mounts and then crashed there on a method the caller never
+    # called. The subclass check is the same one check_resource makes at
+    # the mount door, moved to the door the author actually called.
+    with pytest.raises(TypeError, match="not a BaseResource subclass"):
+        build_resource("tests.resource.test_registry:NotAResource")
+
+
+def test_colon_reference_refuses_a_resource_with_no_name(clean_registry):
+    # The name is how a command or op registered for this backend is
+    # found, so an empty one registers nothing and fails nowhere.
+    with pytest.raises(TypeError, match="has no name"):
+        build_resource("tests.resource.test_registry:NamelessResource")
+
+
+def test_a_registry_name_is_not_re_validated(clean_registry):
+    # Only the colon rung is checked: a builtin is known good, and
+    # register_resource is called by the embedding program.
+    register_resource("fake_bare", NotAResource)
+    assert build_resource("fake_bare", {"root": "/x"}).root == "/x"
 
 
 def test_known_resources_includes_custom(clean_registry):

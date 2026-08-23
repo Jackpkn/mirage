@@ -21,6 +21,6 @@ export const CUT_BUILDER: Builder = {
   fn: async (ops, accessor, paths, _texts, opts) => {
     const idx = opts.index ?? undefined
     const resolved = paths.length > 0 ? await resolveGlobOf(ops)(accessor, paths, idx) : []
-    return cutGeneric(resolved, opts, dirAwareStream(ops, accessor, idx))
+    return cutGeneric(resolved, opts, dirAwareStream(ops, accessor, opts))
   },
 }

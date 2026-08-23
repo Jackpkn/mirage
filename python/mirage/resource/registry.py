@@ -14,12 +14,10 @@
 
 import importlib.metadata
 import logging
-from typing import TYPE_CHECKING, Any, NamedTuple
+from typing import Any, NamedTuple
 
+from mirage.resource.base import BaseResource
 from mirage.resource.loader import load_backend_class
-
-if TYPE_CHECKING:
-    from mirage.resource.base import BaseResource
 
 logger = logging.getLogger(__name__)
 
@@ -258,15 +256,82 @@ def resolve_class(ref: str | type) -> type:
     return ref if isinstance(ref, type) else load_backend_class(ref)
 
 
+def _resolve_entry(name: str) -> ResourceEntry | None:
+    """Find the entry a mount's ``resource`` value names, or None.
+
+    Four rungs, in the order ``commands.cli.specs.cli_spec_for`` uses for
+    a ``cli`` value, because the two are the same question asked of two
+    tiers: builtin, explicitly registered, a colon reference naming code
+    directly, then ``mirage.resources`` entry points.
+
+    The colon rung needs no loader of its own. ``resolve_class`` already
+    reads a ``"source:ClassName"`` string, so the reference becomes an
+    ordinary entry with no config class, which means an out-of-tree class
+    carrying ``CONFIG_CLS`` gets its typed config built exactly as a
+    builtin's does. It is tried before the entry points because a colon
+    is unambiguous: the value names code, so there is nothing to discover
+    and no reason to pay for a scan of every installed package.
+
+    Args:
+        name (str): the mount's ``resource`` value.
+    """
+    entry = REGISTRY.get(name) or _CUSTOM.get(name)
+    if entry is not None:
+        return entry
+    if ":" in name:
+        return ResourceEntry(name, None)
+    _load_entry_point_resources()
+    return _CUSTOM.get(name)
+
+
+def _resource_defect(built: BaseResource) -> str | None:
+    """The reason a colon-referenced class cannot serve as a resource.
+
+    A sentence rather than a bool, because a colon reference loads
+    whatever the module exports and "did not build a resource" does not
+    tell the author what is wrong. Only that rung is checked: a builtin
+    is known good, and ``register_resource`` is called by the embedding
+    program rather than by a line an agent types.
+
+    The subclass check is the contract, not a structural one, because
+    that is what the mount door enforces:
+    ``workspace/workspace/mounts.py::check_resource`` refuses anything
+    failing ``isinstance(resource, BaseResource)``. A structural check
+    here would accept a class that supplies every member and then watch
+    it be rejected two doors later, which is the opposite of what this
+    guard is for. Deliberately unlike the TypeScript twin, which does
+    check members: ``Resource`` is an interface there, erased at runtime,
+    so structural is the only contract there is and nothing downstream
+    can ask for more. Here ``BaseResource`` supplies every member, so a
+    subclass cannot be missing one and there is nothing left to check
+    but the name.
+
+    Args:
+        built (BaseResource): the instance the referenced class produced.
+    """
+    if not isinstance(built, BaseResource):
+        return (f"built a {type(built).__name__}, which is not a "
+                "BaseResource subclass")
+    # A resource is keyed by its name: it is how a command or op
+    # registered for this backend is found, so an empty one silently
+    # registers nothing.
+    if not isinstance(built.name, str) or not built.name:
+        return "has no name"
+    return None
+
+
 def build_resource(name: str,
-                   config: dict[str, Any] | None = None) -> "BaseResource":
+                   config: dict[str, Any] | None = None) -> BaseResource:
     """Construct a resource instance by its registry name.
 
     Resolves resource and config classes lazily via importlib, so
     importing this module does not pull in every resource's
     dependencies. Only the resources actually used get loaded. Lookup
     order: builtin ``REGISTRY``, then :func:`register_resource` names,
-    then ``mirage.resources`` entry points from installed packages.
+    then a colon reference naming a class directly
+    (``./wiki.py:WikiResource`` or ``mypkg.backends:WikiResource``), then
+    ``mirage.resources`` entry points from installed packages. See
+    :func:`_resolve_entry`.
 
     **Synchronous on purpose. Do not make this async.** It is the door
     every caller who describes a mount as data comes through: the YAML
@@ -289,7 +354,8 @@ def build_resource(name: str,
     ``static async create``.
 
     Args:
-        name (str): registry key such as ``"s3"`` or ``"ram"``.
+        name (str): registry key such as ``"s3"`` or ``"ram"``, or a
+            colon reference such as ``"./wiki.py:WikiResource"``.
         config (dict | None): kwargs for the resource's ``Config``
             class when one exists; otherwise raw resource kwargs
             (e.g. ``{"root": "/tmp"}`` for ``"disk"``).
@@ -298,13 +364,10 @@ def build_resource(name: str,
         BaseResource: a fresh resource instance.
 
     Raises:
-        KeyError: ``name`` is neither builtin, registered, nor
-            installed.
+        KeyError: ``name`` is neither builtin, registered, a colon
+            reference, nor installed.
     """
-    entry = REGISTRY.get(name)
-    if entry is None:
-        _load_entry_point_resources()
-        entry = _CUSTOM.get(name)
+    entry = _resolve_entry(name)
     if entry is None:
         raise KeyError(
             f"unknown resource {name!r}; known: {known_resources()}")
@@ -314,6 +377,12 @@ def build_resource(name: str,
     if config_ref is None:
         config_ref = getattr(resource_cls, "CONFIG_CLS", None)
     if config_ref is None:
-        return resource_cls(**cfg_dict)
-    config_cls = resolve_class(config_ref)
-    return resource_cls(config_cls(**cfg_dict))
+        built = resource_cls(**cfg_dict)
+    else:
+        config_cls = resolve_class(config_ref)
+        built = resource_cls(config_cls(**cfg_dict))
+    if ":" in name:
+        defect = _resource_defect(built)
+        if defect is not None:
+            raise TypeError(f"resource ref {name!r} {defect}")
+    return built

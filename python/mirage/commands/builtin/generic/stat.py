@@ -3,13 +3,14 @@ from dataclasses import dataclass
 from itertools import groupby
 
 from mirage.commands.builtin.utils.formatting import _ls_mode_string
+from mirage.commands.builtin.utils.operands import operand_stat
 from mirage.commands.builtin.utils.output import format_records
 from mirage.commands.config import CommandOpts
 from mirage.commands.spec import SPECS
 from mirage.commands.spec.types import FlagValue, FlagView
 from mirage.core.timeutil import iso_to_epoch
 from mirage.io.types import ByteSource, IOResult
-from mirage.ops.types import LinkView
+from mirage.ops.types import LinkView, MountView, StatPath
 from mirage.types import LINK_TARGET_KEY, FileStat, FileType, PathSpec, StatFn
 from mirage.utils.errors import FS_ERRORS, fs_error_line
 
@@ -365,6 +366,8 @@ async def stat(
     f: str | None = None,
     L: bool = False,
     links: LinkView | None = None,
+    stat_path: StatPath | None = None,
+    mounts: MountView | None = None,
 ) -> tuple[ByteSource | None, IOResult]:
     """Report file status, GNU stat semantics.
 
@@ -376,6 +379,12 @@ async def stat(
         L (bool): dereference symlinks instead of reporting the link.
         links (LinkView | None): the namespace's symlink facts;
             absent when the workspace holds no links.
+        stat_path (StatPath | None): dispatcher-backed stat of one path,
+            which is what answers a directory that exists only because
+            mounts sit under it.
+        mounts (MountView | None): the mount boundaries, so a mount root
+            reports its own name rather than the backend's name for its
+            root.
     """
     if not paths:
         raise ValueError("stat: missing operand")
@@ -394,7 +403,10 @@ async def stat(
                 lines.append(_render_stat(linked))
             continue
         try:
-            s = await stat_fn(p)
+            s = await operand_stat(p,
+                                   stat_fn=stat_fn,
+                                   stat_path=stat_path,
+                                   mounts=mounts)
         except FS_ERRORS as exc:
             # GNU stat keeps reporting the remaining operands, exit 1.
             err += fs_error_line("stat", p, exc).encode()
@@ -440,4 +452,6 @@ async def stat_generic(
                       c=parsed.format,
                       f=parsed.file_system,
                       L=parsed.deref,
-                      links=opts.ns.links if opts.ns is not None else None)
+                      links=opts.ns.links if opts.ns is not None else None,
+                      stat_path=opts.stat_path,
+                      mounts=opts.ns.mounts if opts.ns is not None else None)

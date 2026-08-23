@@ -32,7 +32,7 @@ async def cat(ops: CommandIO, accessor: Accessor, paths: list[PathSpec],
     return await cat_generic(resolved,
                              list(texts),
                              opts,
-                             dir_aware_stat(ops, accessor, opts.index),
+                             dir_aware_stat(ops, accessor, opts),
                              bound_op(ops.read_stream, accessor, opts.index),
                              local=ops.local)
 

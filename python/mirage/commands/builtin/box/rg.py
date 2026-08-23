@@ -13,6 +13,7 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 from collections.abc import Mapping
+from dataclasses import replace
 
 from mirage.accessor.box import BoxAccessor
 from mirage.commands.builtin.box.pushdown import narrow_scope
@@ -102,7 +103,7 @@ async def rg(accessor: BoxAccessor, paths: list[PathSpec], texts: list[str],
     return await generic_rg(
         paths,
         texts,
-        run_flags,
+        replace(opts, flags=run_flags),
         readdir=bound_op(_readdir, accessor, opts.index),
         stat=bound_op(_stat, accessor, opts.index),
         read_bytes=bound_op(_read, accessor, opts.index),

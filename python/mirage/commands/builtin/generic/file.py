@@ -4,12 +4,13 @@ from dataclasses import dataclass
 
 from mirage.commands.builtin.constants import MIME_SYMLINK
 from mirage.commands.builtin.file_helper import _detect, format_file_result
+from mirage.commands.builtin.utils.operands import operand_stat
 from mirage.commands.builtin.utils.output import format_records
 from mirage.commands.config import CommandOpts
 from mirage.commands.spec import SPECS
 from mirage.commands.spec.types import FlagValue, FlagView
 from mirage.io.types import ByteSource, IOResult
-from mirage.ops.types import LinkView
+from mirage.ops.types import LinkView, MountView, StatPath
 from mirage.types import LINK_TARGET_KEY, FileStat, FileType, PathSpec, StatFn
 from mirage.utils.path import CycleError
 
@@ -50,6 +51,8 @@ async def file_cmd(
     b: bool = False,
     i: bool = False,
     links: LinkView | None = None,
+    stat_path: StatPath | None = None,
+    mounts: MountView | None = None,
 ) -> tuple[ByteSource | None, IOResult]:
     """Describe each operand's content type, GNU file semantics.
 
@@ -64,6 +67,10 @@ async def file_cmd(
         links (LinkView | None): the namespace's symlink facts. Without
             -L the operand arrives unfollowed, so a link is described as
             a link rather than sniffed as its target.
+        stat_path (StatPath | None): dispatcher-backed stat of one path,
+            which is what answers a directory that exists only because
+            mounts sit under it.
+        mounts (MountView | None): the mount boundaries.
     """
     if not paths:
         raise ValueError("file: missing operand")
@@ -77,7 +84,10 @@ async def file_cmd(
                                        MIME_SYMLINK if i else described, b,
                                        False))
                 continue
-        s = await stat_fn(p)
+        s = await operand_stat(p,
+                               stat_fn=stat_fn,
+                               stat_path=stat_path,
+                               mounts=mounts)
         if s.type == FileType.DIRECTORY:
             lines.append(
                 format_file_result(p.raw_path, FileType.DIRECTORY, b, i))
@@ -115,9 +125,12 @@ async def file_generic(
     stat_fn: StatFn,
 ) -> tuple[ByteSource | None, IOResult]:
     parsed = parse_flags(opts.flags)
-    return await file_cmd(paths,
-                          read_bytes=read_bytes,
-                          stat_fn=stat_fn,
-                          b=parsed.brief,
-                          i=parsed.mime,
-                          links=opts.ns.links if opts.ns is not None else None)
+    return await file_cmd(
+        paths,
+        read_bytes=read_bytes,
+        stat_fn=stat_fn,
+        b=parsed.brief,
+        i=parsed.mime,
+        links=opts.ns.links if opts.ns is not None else None,
+        stat_path=opts.stat_path,
+        mounts=opts.ns.mounts if opts.ns is not None else None)

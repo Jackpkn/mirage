@@ -29,8 +29,8 @@ async def sha384sum(ops: CommandIO, accessor: Accessor, paths: list[PathSpec],
                     opts: CommandOpts) -> tuple[ByteSource | None, IOResult]:
     resolved = await resolve_or_empty(ops, accessor, paths, opts.index)
     return await sha384sum_generic(resolved, list(texts), opts,
-                                   dir_aware_stat(ops, accessor, opts.index),
-                                   dir_aware_stream(ops, accessor, opts.index))
+                                   dir_aware_stat(ops, accessor, opts),
+                                   dir_aware_stream(ops, accessor, opts))
 
 
 BUILDER = Builder('sha384sum', sha384sum, None, False, None, read=True)

@@ -14,6 +14,7 @@
 
 import { specOf } from '../../spec/builtins.ts'
 import { FlagView } from '../../spec/types.ts'
+import { operandStat } from '../utils/operands.ts'
 import { IOResult, type ByteSource } from '../../../io/types.ts'
 import { FileType, type FileStat, type PathSpec } from '../../../types.ts'
 import type { CommandFnResult, CommandOpts } from '../../config.ts'
@@ -72,7 +73,7 @@ export async function fileGeneric(
         continue
       }
     }
-    const s = await stat(p)
+    const s = await operandStat(p, stat, opts.statPath, opts.ns?.mounts)
     if (s.type === FileType.DIRECTORY) {
       lines.push(formatFileResult(p.rawPath, FileType.DIRECTORY, brief, mime))
       continue

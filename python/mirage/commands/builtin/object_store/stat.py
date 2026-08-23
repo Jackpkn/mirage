@@ -17,19 +17,26 @@ from functools import partial
 from typing import Any
 
 from mirage.accessor.base import Accessor
-from mirage.commands.builtin.generic.stat import stat as generic_stat
+from mirage.commands.builtin.generic.stat import stat_generic
 from mirage.commands.builtin.generic_bind.adapter import (CommandIO, bound_op,
                                                           overlaid_stat)
 from mirage.commands.config import CommandOpts
 from mirage.commands.registry import command
 from mirage.commands.spec import SPECS
-from mirage.commands.spec.types import FlagView
 from mirage.io.types import ByteSource, IOResult
 from mirage.types import PathSpec
 
 
 def make_stat(resource: str, io: CommandIO) -> Callable[..., Any]:
     """Build the index-threaded stat override for one keyed store.
+
+    Wiring only, and it delegates to ``stat_generic`` rather than to the
+    generic itself, so every fact the generic reads off ``CommandOpts``
+    reaches a keyed store too. Reading the flags here and calling the
+    generic with keywords is how the mount boundaries and the dispatched
+    stat went missing on s3 and gridfs: the two arguments were added to
+    the generic and to the one builder that calls it, and this wrapper
+    named the older set.
 
     Args:
         resource (str): resource name the command registers under.
@@ -46,8 +53,7 @@ def make_stat(resource: str, io: CommandIO) -> Callable[..., Any]:
     ) -> tuple[ByteSource | None, IOResult]:
         if not paths:
             raise ValueError("stat: missing operand")
-        fl = FlagView(opts.flags, spec=SPECS["stat"])
-        paths = await resolve_glob(accessor, paths, opts.index)
+        resolved = await resolve_glob(accessor, paths, opts.index)
         stat_fn = bound_op(stat_core, accessor, opts.index)
         overlay = opts.ns.stat_overlay if opts.ns is not None else None
         if overlay is not None:
@@ -55,13 +61,7 @@ def make_stat(resource: str, io: CommandIO) -> Callable[..., Any]:
                               partial(stat_core, accessor),
                               overlay,
                               index=opts.index)
-        return await generic_stat(
-            paths,
-            stat_fn=stat_fn,
-            c=fl.as_str("c"),
-            f=fl.as_str("f"),
-            L=fl.as_bool("L"),
-            links=opts.ns.links if opts.ns is not None else None)
+        return await stat_generic(resolved, list(texts), opts, stat_fn)
 
     wrapped: Callable[..., Any] = command("stat",
                                           resource=resource,

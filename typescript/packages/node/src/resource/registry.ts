@@ -19,6 +19,7 @@ import type { LanceDBConfig } from '@struktoai/mirage-core/resource/lancedb/conf
 import type { QdrantConfig } from '@struktoai/mirage-core/resource/qdrant/config'
 import { normalizeFields } from '@struktoai/mirage-core/utils/normalize'
 import { compareCodePoints } from '@struktoai/mirage-core/utils/sort'
+import { loadAttr } from './loader.ts'
 
 /**
  * Construct a resource by registry name. Mirrors Python's
@@ -321,19 +322,85 @@ export function register(name: string, factory: ResourceFactory): void {
   CUSTOM[name] = factory
 }
 
+// Every member `Resource` declares non-optionally, which is the whole set a
+// mount reaches for whatever the backend is: `open`/`close` on the
+// lifecycle, `getState`/`loadState` on save and load. Checking a subset only
+// moves the failure later and into a frame the author never wrote, which is
+// the very thing this guard exists to prevent: `open`/`close` alone accepted
+// a class whose missing `getState` crashed `Workspace.save()` instead.
+const RESOURCE_METHODS = ['open', 'close', 'getState', 'loadState'] as const
+
 /**
- * Build a resource instance by registry name. Builtins win over custom
- * registrations. Throws if the name is unknown.
+ * The reason a loaded export cannot serve as a resource, or null when it
+ * can.
+ *
+ * A string rather than a boolean because a colon reference loads whatever
+ * the file exports, and "did not build a resource" does not tell the author
+ * which member they forgot.
+ *
+ * Structural, and deliberately unlike the python twin, which checks
+ * `isinstance(built, BaseResource)` instead. The contract differs because the
+ * languages do: python's mount door already refuses a non-subclass
+ * (`workspace/workspace/mounts.py::check_resource`), so a structural check
+ * there would accept what a later door rejects. `Resource` here is an
+ * interface, erased at runtime, so there is no subclass to test and nothing
+ * downstream can ask for more than the members. Both guards end at the same
+ * place: the name a resource is keyed by must not be empty.
+ */
+function resourceDefect(value: unknown): string | null {
+  if (value === null || typeof value !== 'object') return `built a ${typeof value}`
+  const node = value as Record<string, unknown>
+  const missing = RESOURCE_METHODS.filter((name) => typeof node[name] !== 'function')
+  if (missing.length > 0) return `is missing ${missing.join(', ')}`
+  // A resource is keyed by `kind`: it is how a command or op registered for
+  // this backend is found, so an empty one silently registers nothing.
+  if (typeof node.kind !== 'string' || node.kind === '') return 'has no kind'
+  return null
+}
+
+/**
+ * Build a resource from a colon reference naming a class directly.
+ *
+ * `static create` is honored ahead of the constructor because that is
+ * how a backend whose setup needs I/O is spelled here (github and
+ * databricks_volume both do), and it is the one thing this tier has that
+ * Python's does not: `build_resource` is synchronous there, so an
+ * out-of-tree Python class hydrates lazily instead.
+ */
+async function buildFromRef(ref: string, config: Record<string, unknown>): Promise<Resource> {
+  const exported = await loadAttr(ref)
+  if (typeof exported !== 'function') {
+    throw new Error(`resource ref ${JSON.stringify(ref)} must name a class, got ${typeof exported}`)
+  }
+  const cls = exported as {
+    create?: (config: Record<string, unknown>) => unknown
+    new (config: Record<string, unknown>): unknown
+  }
+  const built = await (typeof cls.create === 'function' ? cls.create(config) : new cls(config))
+  const defect = resourceDefect(built)
+  if (defect !== null) {
+    throw new Error(`resource ref ${JSON.stringify(ref)} ${defect}`)
+  }
+  return built as Resource
+}
+
+/**
+ * Build a resource instance by registry name, or from a colon reference
+ * naming a class directly (`./wiki.mjs:WikiResource`, or the package
+ * specifier `my-pkg/backends:WikiResource`).
+ *
+ * Builtins win over custom registrations, and both win over a reference,
+ * so a name can never be reinterpreted as code. Throws if the name is
+ * neither. Mirrors the ladder in Python's `_resolve_entry`, minus its
+ * entry-point rung: Node has no equivalent of `importlib.metadata`, so a
+ * package ships a resource here by exporting it and being named.
  */
 export async function buildResource(
   name: string,
   config: Record<string, unknown> = {},
 ): Promise<Resource> {
   const factory = REGISTRY[name] ?? CUSTOM[name]
-  if (factory === undefined) {
-    throw new Error(
-      `unknown resource ${JSON.stringify(name)}; known: ${knownResources().join(', ')}`,
-    )
-  }
-  return factory(config)
+  if (factory !== undefined) return factory(config)
+  if (name.includes(':')) return buildFromRef(name, config)
+  throw new Error(`unknown resource ${JSON.stringify(name)}; known: ${knownResources().join(', ')}`)
 }

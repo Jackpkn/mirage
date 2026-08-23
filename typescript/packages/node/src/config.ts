@@ -694,7 +694,12 @@ function absolutizeScripts(raw: Record<string, unknown>, base: string): void {
     for (const block of Object.values(raw.clis)) {
       if (!isPlainObject(block)) continue
       absolutizeScriptKey(block, base)
-      absolutizeCliRef(block, base)
+      absolutizeCodeRef(block, 'cli', base)
+    }
+  }
+  if (isPlainObject(raw.mounts)) {
+    for (const block of Object.values(raw.mounts)) {
+      if (isPlainObject(block)) absolutizeCodeRef(block, 'resource', base)
     }
   }
   if (isPlainObject(raw.profiles)) {
@@ -713,21 +718,22 @@ function absolutizeScriptKey(entry: Record<string, unknown>, base: string): void
 }
 
 /**
- * Rebase one `clis` entry's path-form `cli` reference onto `base`.
+ * Rebase a path-form colon reference under `key` onto `base`.
  *
- * `cli: ./tool.mjs:TREE` means "next to the config file", the same
- * build-context rule `script:` follows; without this the pointer reaches
- * `loadAttr` relative and resolves against the server process's cwd. A
- * package specifier (`my-clis:JIRA`) is left alone: Node resolves it,
- * not the filesystem. The split is `splitRef`/`isModulePath`, the same
- * pair `loadAttr` uses, so the two cannot disagree about what a path is.
+ * `cli: ./tool.mjs:TREE` and `resource: ./wiki.mjs:WikiResource` both
+ * mean "next to the config file", the same build-context rule `script:`
+ * follows; without this the pointer reaches `loadAttr` relative and
+ * resolves against the server process's cwd. A package specifier
+ * (`my-clis:JIRA`) is left alone: Node resolves it, not the filesystem.
+ * The split is `splitRef`/`isModulePath`, the same pair `loadAttr` uses,
+ * so the two cannot disagree about what a path is.
  */
-function absolutizeCliRef(entry: Record<string, unknown>, base: string): void {
-  const ref = entry.cli
+function absolutizeCodeRef(entry: Record<string, unknown>, key: string, base: string): void {
+  const ref = entry[key]
   if (typeof ref !== 'string' || !ref.includes(':')) return
   const [source, attr] = splitRef(ref)
   if (!isModulePath(source) || isAbsolute(source)) return
-  entry.cli = `${join(base, source)}:${attr}`
+  entry[key] = `${join(base, source)}:${attr}`
 }
 
 /**
@@ -994,12 +1000,14 @@ async function buildCliEntries(
     if (block.config !== undefined && !isPlainObject(block.config)) {
       throw new Error(`clis entry '${name}': config must be a mapping`)
     }
-    // A `cli` value carrying a colon points at code the way `resource:`
-    // never does: `./tool.mjs:TALLY` (a file) or `my-clis:JIRA` (a
-    // package specifier). A bare name stays a name for the workspace to
-    // resolve against the registered specs. Mirrors the `":" in name`
-    // branch of Python's `cli_spec_for`, one layer up: `cliSpecFor`
-    // lives in core, which has no filesystem and is synchronous.
+    // A `cli` value carrying a colon points at code: `./tool.mjs:TALLY`
+    // (a file) or `my-clis:JIRA` (a package specifier). A bare name stays
+    // a name for the workspace to resolve against the registered specs.
+    // Mirrors the `":" in name` branch of Python's `cli_spec_for`, one
+    // layer up: `cliSpecFor` lives in core, which has no filesystem and
+    // is synchronous. A `resource:` value reads the same way, resolved by
+    // `buildResource` rather than here, because a mount block reaches the
+    // registry and a `clis` block does not.
     const entry = hasScript
       ? new CLISpec({
           name,

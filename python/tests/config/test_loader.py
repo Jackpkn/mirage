@@ -685,6 +685,56 @@ clis:
 
 
 @pytest.mark.asyncio
+async def test_mounts_path_form_resource_rebases_on_the_config_dir(
+        tmp_path, monkeypatch):
+    # `resource: ./wiki.py:WikiResource` reads the same way `cli:` does,
+    # so it follows the same build-context rule.
+    (tmp_path / "wiki.py").write_text("""\
+from mirage.resource.ram.ram import RAMResource
+
+
+class WikiResource(RAMResource):
+    pass
+""")
+    cfg_file = tmp_path / "ws.yaml"
+    cfg_file.write_text("""\
+mounts:
+  /wiki:
+    resource: ./wiki.py:WikiResource
+""")
+    monkeypatch.chdir(tmp_path.parent)
+    cfg = load_config(cfg_file)
+    assert cfg.mounts[
+        "/wiki"].resource == f"{tmp_path / 'wiki.py'}:WikiResource"
+    mount = cfg.to_workspace_kwargs()["resources"]["/wiki"]
+    assert type(mount.resource).__name__ == "WikiResource"
+
+
+@pytest.mark.asyncio
+async def test_mounts_module_dotpath_resource_is_left_alone(tmp_path):
+    cfg_file = tmp_path / "ws.yaml"
+    cfg_file.write_text("""\
+mounts:
+  /wiki:
+    resource: mypkg.backends:WikiResource
+""")
+    cfg = load_config(cfg_file)
+    assert cfg.mounts["/wiki"].resource == "mypkg.backends:WikiResource"
+
+
+@pytest.mark.asyncio
+async def test_mounts_registry_name_is_left_alone(tmp_path):
+    cfg_file = tmp_path / "ws.yaml"
+    cfg_file.write_text("""\
+mounts:
+  /data:
+    resource: ram
+""")
+    cfg = load_config(cfg_file)
+    assert cfg.mounts["/data"].resource == "ram"
+
+
+@pytest.mark.asyncio
 async def test_clis_module_dotpath_reference_is_left_alone(tmp_path):
     # importlib resolves a dotpath, not the filesystem, so rebasing it
     # would break the import.

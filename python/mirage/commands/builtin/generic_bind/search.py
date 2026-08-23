@@ -136,7 +136,7 @@ def make_search(
         return await generic(
             resolved,
             texts,
-            opts.flags,
+            opts,
             readdir=bound_op(io.readdir, accessor, opts.index),
             stat=bound_op(io.stat, accessor, opts.index),
             read_bytes=bound_op(io.read_bytes, accessor, opts.index),

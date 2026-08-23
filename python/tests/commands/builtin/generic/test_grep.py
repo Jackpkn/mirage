@@ -1,6 +1,8 @@
 import pytest
 
 from mirage.commands.builtin.generic.grep import grep
+from mirage.commands.config import CommandOpts
+from mirage.ops.types import MountView, NamespaceView
 from mirage.types import ContentType, FileStat, FileType, PathSpec
 from mirage.utils.key_prefix import mount_key
 
@@ -96,6 +98,7 @@ async def test_grep_stdin_basic():
     output, io = await grep(
         [],
         ["apple"],
+        CommandOpts(),
         readdir=readdir,
         stat=stat,
         read_bytes=rb,
@@ -116,6 +119,7 @@ async def test_grep_file_basic():
     output, io = await grep(
         [_spec("/a.txt")],
         ["ap"],
+        CommandOpts(),
         readdir=readdir,
         stat=stat,
         read_bytes=rb,
@@ -133,6 +137,7 @@ async def test_grep_single_dir_operand_warns():
     output, io = await grep(
         [_spec("/d")],
         ["ap"],
+        CommandOpts(),
         readdir=readdir,
         stat=stat,
         read_bytes=rb,
@@ -149,11 +154,11 @@ async def test_grep_ignore_case():
     output, _ = await grep(
         [_spec("/a.txt")],
         ["apple"],
+        CommandOpts(flags={"i": True}),
         readdir=readdir,
         stat=stat,
         read_bytes=rb,
         read_stream=rs,
-        flags={"i": True},
     )
     decoded = (await _drain_async(output)).decode()
     assert "Apple" in decoded
@@ -166,11 +171,11 @@ async def test_grep_invert():
     output, _ = await grep(
         [_spec("/a.txt")],
         ["banana"],
+        CommandOpts(flags={"v": True}),
         readdir=readdir,
         stat=stat,
         read_bytes=rb,
         read_stream=rs,
-        flags={"v": True},
     )
     decoded = (await _drain_async(output)).decode()
     assert "apple" in decoded
@@ -185,11 +190,11 @@ async def test_grep_count_only():
     output, _ = await grep(
         [_spec("/a.txt")],
         ["ap"],
+        CommandOpts(flags={"c": True}),
         readdir=readdir,
         stat=stat,
         read_bytes=rb,
         read_stream=rs,
-        flags={"c": True},
     )
     decoded = (await _drain_async(output)).decode().strip()
     assert decoded == "2"
@@ -201,6 +206,7 @@ async def test_grep_no_match_returns_exit_1():
     output, io = await grep(
         [_spec("/a.txt")],
         ["zzz"],
+        CommandOpts(),
         readdir=readdir,
         stat=stat,
         read_bytes=rb,
@@ -220,11 +226,11 @@ async def test_grep_recursive_finds_files_in_subdirs():
     output, io = await grep(
         [_spec("/dir")],
         ["ap"],
+        CommandOpts(flags={"r": True}),
         readdir=readdir,
         stat=stat,
         read_bytes=rb,
         read_stream=rs,
-        flags={"r": True},
     )
     decoded = (await _drain_async(output)).decode()
     assert "apple" in decoded
@@ -240,14 +246,14 @@ async def test_grep_recursive_single_file_prefixes_filename():
     output, _ = await grep(
         [_spec("/log.txt")],
         ["error"],
+        CommandOpts(flags={
+            "r": True,
+            "n": True
+        }),
         readdir=readdir,
         stat=stat,
         read_bytes=rb,
         read_stream=rs,
-        flags={
-            "r": True,
-            "n": True
-        },
     )
     decoded = (await _drain_async(output)).decode()
     assert decoded == "/log.txt:2:error here\n/log.txt:4:error again\n"
@@ -262,14 +268,14 @@ async def test_grep_files_only_lists_matching_files():
     output, _ = await grep(
         [_spec("/dir")],
         ["apple"],
+        CommandOpts(flags={
+            "r": True,
+            "args_l": True
+        }),
         readdir=readdir,
         stat=stat,
         read_bytes=rb,
         read_stream=rs,
-        flags={
-            "r": True,
-            "args_l": True
-        },
     )
     decoded = (await _drain_async(output)).decode()
     assert "/dir/a.txt" in decoded
@@ -353,14 +359,14 @@ async def test_grep_recursive_files_only_mount_prefix():
     output, _ = await grep(
         [p],
         ["apple"],
+        CommandOpts(flags={
+            "r": True,
+            "args_l": True
+        }),
         readdir=readdir,
         stat=stat,
         read_bytes=rb,
         read_stream=None,
-        flags={
-            "r": True,
-            "args_l": True
-        },
     )
     decoded = (await _drain_async(output)).decode().strip()
     assert decoded == "/s3/dir/a.txt"
@@ -373,11 +379,11 @@ async def test_grep_count_only_no_match_exit_1():
     output, io = await grep(
         [_spec("/a.txt")],
         ["zzz"],
+        CommandOpts(flags={"c": True}),
         readdir=readdir,
         stat=stat,
         read_bytes=rb,
         read_stream=rs,
-        flags={"c": True},
     )
     decoded = (await _drain_async(output)).decode().strip()
     assert decoded == "0"
@@ -390,12 +396,12 @@ async def test_grep_stdin_count_only_no_match_exit_1():
     output, io = await grep(
         [],
         ["zzz"],
+        CommandOpts(flags={"c": True}),
         readdir=readdir,
         stat=stat,
         read_bytes=rb,
         read_stream=rs,
         stdin=b"hello\nworld\n",
-        flags={"c": True},
     )
     decoded = (await _drain_async(output)).decode().strip()
     assert decoded == "0"
@@ -411,11 +417,11 @@ async def test_grep_count_only_multi_file_no_match_exit_1():
     output, io = await grep(
         [_spec("/a.txt"), _spec("/b.txt")],
         ["zzz"],
+        CommandOpts(flags={"c": True}),
         readdir=readdir,
         stat=stat,
         read_bytes=rb,
         read_stream=rs,
-        flags={"c": True},
     )
     decoded = (await _drain_async(output)).decode()
     assert decoded.splitlines() == ["/a.txt:0", "/b.txt:0"]
@@ -431,11 +437,11 @@ async def test_grep_count_only_multi_file_match_exit_0():
     output, io = await grep(
         [_spec("/a.txt"), _spec("/b.txt")],
         ["hello"],
+        CommandOpts(flags={"c": True}),
         readdir=readdir,
         stat=stat,
         read_bytes=rb,
         read_stream=rs,
-        flags={"c": True},
     )
     decoded = (await _drain_async(output)).decode()
     assert decoded.splitlines() == ["/a.txt:1", "/b.txt:0"]
@@ -448,14 +454,14 @@ async def test_grep_recursive_count_only_no_match_exit_1():
     output, io = await grep(
         [_spec("/d")],
         ["zzz"],
+        CommandOpts(flags={
+            "r": True,
+            "c": True
+        }),
         readdir=readdir,
         stat=stat,
         read_bytes=rb,
         read_stream=rs,
-        flags={
-            "r": True,
-            "c": True
-        },
     )
     decoded = (await _drain_async(output)).decode()
     assert decoded.splitlines() == ["/d/a.txt:0"]
@@ -468,7 +474,7 @@ async def test_grep_single_file_dash_h_prefixes_filename():
     output, io = await grep(
         [_spec("/a.txt")],
         ["apple"],
-        {"H": True},
+        CommandOpts(flags={"H": True}),
         readdir=readdir,
         stat=stat,
         read_bytes=rb,
@@ -485,10 +491,10 @@ async def test_grep_single_file_dash_h_count_prefixes_filename():
     output, io = await grep(
         [_spec("/a.txt")],
         ["a"],
-        {
+        CommandOpts(flags={
             "H": True,
             "c": True
-        },
+        }),
         readdir=readdir,
         stat=stat,
         read_bytes=rb,
@@ -507,7 +513,7 @@ async def test_grep_multi_file_no_filename_suppresses_prefix():
     output, io = await grep(
         [_spec("/a.txt"), _spec("/b.txt")],
         ["ap"],
-        {"h": True},
+        CommandOpts(flags={"h": True}),
         readdir=readdir,
         stat=stat,
         read_bytes=rb,
@@ -526,7 +532,7 @@ async def test_grep_quiet_multi_file_suppresses_output():
     output, io = await grep(
         [_spec("/a.txt"), _spec("/b.txt")],
         ["apple"],
-        {"q": True},
+        CommandOpts(flags={"q": True}),
         readdir=readdir,
         stat=stat,
         read_bytes=rb,
@@ -545,7 +551,7 @@ async def test_grep_quiet_multi_file_no_match_exits_1():
     output, io = await grep(
         [_spec("/a.txt"), _spec("/b.txt")],
         ["zzz"],
-        {"q": True},
+        CommandOpts(flags={"q": True}),
         readdir=readdir,
         stat=stat,
         read_bytes=rb,
@@ -564,10 +570,10 @@ async def test_grep_quiet_recursive_suppresses_output():
     output, io = await grep(
         [_spec("/dir")],
         ["ap"],
-        {
+        CommandOpts(flags={
             "q": True,
             "r": True
-        },
+        }),
         readdir=readdir,
         stat=stat,
         read_bytes=rb,
@@ -586,10 +592,10 @@ async def test_grep_quiet_files_only_suppresses_output():
     output, io = await grep(
         [_spec("/a.txt"), _spec("/b.txt")],
         ["apple"],
-        {
+        CommandOpts(flags={
             "q": True,
             "args_l": True
-        },
+        }),
         readdir=readdir,
         stat=stat,
         read_bytes=rb,
@@ -608,10 +614,10 @@ async def test_grep_quiet_count_zero_counts_exits_1():
     output, io = await grep(
         [_spec("/a.txt"), _spec("/b.txt")],
         ["zzz"],
-        {
+        CommandOpts(flags={
             "q": True,
             "c": True
-        },
+        }),
         readdir=readdir,
         stat=stat,
         read_bytes=rb,
@@ -630,6 +636,7 @@ async def test_grep_multi_file_missing_operand_matches_still_exit_2():
     output, io = await grep(
         [_spec("/a.txt"), _spec("/nope.txt")],
         ["o"],
+        CommandOpts(),
         readdir=readdir,
         stat=stat,
         read_bytes=rb,
@@ -668,15 +675,67 @@ async def test_grep_recursive_not_a_directory_operand_keeps_the_others():
     output, io = await grep(
         [_spec("/a.txt/x"), _spec("/real")],
         ["foo"],
+        CommandOpts(flags={
+            "r": True,
+            "args_l": True
+        }),
         readdir=readdir_enotdir,
         stat=stat_enoent,
         read_bytes=rb,
         read_stream=rs,
-        flags={
-            "r": True,
-            "args_l": True
-        },
     )
     decoded = (await _drain_async(output)).decode()
     assert decoded == "/real/b.txt\n"
     assert b"/a.txt/x" in (io.stderr or b"")
+
+
+def _mount_parent_ns(descendant: str) -> NamespaceView:
+    """A bag whose mount table puts one mount under a path."""
+
+    def descendants(parent: str) -> list[str]:
+        base = parent.rstrip("/") or "/"
+        return [descendant] if descendant.startswith(f"{base}/") else []
+
+    return NamespaceView(mounts=MountView(descendants=descendants,
+                                          visible_descendants=descendants,
+                                          is_root=lambda p: False,
+                                          root_of=lambda p: "/"))
+
+
+@pytest.mark.asyncio
+async def test_grep_reads_the_mount_boundaries_off_the_bag():
+    # The boundaries used to arrive as their own keyword, which every
+    # caller but the two shared builders omitted, so a namespace-only
+    # ancestor read as missing on every bespoke backend. Reading them off
+    # the bag is what makes that impossible to get wrong: this call passes
+    # no boundary argument at all, the way a wrapper does.
+    readdir, stat, rb, rs = _make_backend({})
+    output, io = await grep(
+        [_spec("/ghost")],
+        ["x"],
+        CommandOpts(flags={"r": True}, ns=_mount_parent_ns("/ghost/deep")),
+        readdir=readdir,
+        stat=stat,
+        read_bytes=rb,
+        read_stream=rs,
+    )
+    # No hits and no error: the primary backend owns nothing under the
+    # parent, and the fan-out searches the mount below it separately.
+    assert io.exit_code == 1
+    assert io.stderr in (None, b"")
+
+
+@pytest.mark.asyncio
+async def test_grep_still_reports_a_path_with_no_mount_below_it():
+    readdir, stat, rb, rs = _make_backend({})
+    _, io = await grep(
+        [_spec("/nope")],
+        ["x"],
+        CommandOpts(flags={"r": True}, ns=_mount_parent_ns("/ghost/deep")),
+        readdir=readdir,
+        stat=stat,
+        read_bytes=rb,
+        read_stream=rs,
+    )
+    assert io.exit_code == 2
+    assert b"/nope" in (io.stderr or b"")

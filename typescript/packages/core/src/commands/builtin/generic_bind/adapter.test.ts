@@ -15,6 +15,7 @@
 import { stripSlash } from '../../../utils/slash.ts'
 import { describe, expect, it } from 'vitest'
 import type { Accessor } from '../../../accessor/base.ts'
+import type { CommandOpts } from '../../config.ts'
 import { FileStat, FileType, PathSpec } from '../../../types.ts'
 import { enoent } from '../../../utils/errors.ts'
 import {
@@ -27,6 +28,16 @@ import {
 import { runWithAdmission } from '../../../context/session_context.ts'
 
 const accessor = {} as never
+// No namespace facts, which is what a command bound outside a workspace
+// gets: the two probes below the backend are the only ones that can fire.
+const NO_NS = {} as CommandOpts
+// The one a mount parent needs: no backend row, a name plane that owes the
+// path a child name.
+function nsDir(dir: string): CommandOpts {
+  return {
+    ns: { childMounts: (parent: string) => (parent === dir ? ['alpha'] : []) },
+  } as CommandOpts
+}
 
 function glob(dir: string, pattern: string): PathSpec {
   return new PathSpec({
@@ -112,19 +123,34 @@ function dirOps(implicitDirs: readonly string[], explicitDirs: readonly string[]
 
 describe('dirAwareStat', () => {
   it('refuses an implicit keyed-backend directory with EISDIR', async () => {
-    const stat = dirAwareStat(dirOps(['/sub']), accessor)
+    const stat = dirAwareStat(dirOps(['/sub']), accessor, NO_NS)
     await expect(stat(PathSpec.fromStrPath('/sub'))).rejects.toMatchObject({ code: 'EISDIR' })
   })
 
   it('refuses a stat-typed directory with EISDIR', async () => {
-    const stat = dirAwareStat(dirOps([], ['/sub']), accessor)
+    const stat = dirAwareStat(dirOps([], ['/sub']), accessor, NO_NS)
     await expect(stat(PathSpec.fromStrPath('/sub'))).rejects.toMatchObject({ code: 'EISDIR' })
   })
 
   it('keeps ENOENT for a genuinely missing path', async () => {
     const failing: CommandIO = { ...dirOps([]), stat: (_a, p) => Promise.reject(enoent(p)) }
-    const stat = dirAwareStat(failing, accessor)
+    const stat = dirAwareStat(failing, accessor, NO_NS)
     await expect(stat(PathSpec.fromStrPath('/nope.txt'))).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('refuses a namespace-only mount parent with EISDIR', async () => {
+    // No backend knows the path: its keys live in a mount nested under it,
+    // so neither the stat nor the parent-listing probe can see it, and the
+    // dispatcher is the only thing that can say it is a directory.
+    const failing: CommandIO = { ...dirOps([]), stat: (_a, p) => Promise.reject(enoent(p)) }
+    const stat = dirAwareStat(failing, accessor, nsDir('/ghost'))
+    await expect(stat(PathSpec.fromStrPath('/ghost'))).rejects.toMatchObject({ code: 'EISDIR' })
+  })
+
+  it('keeps ENOENT when the dispatcher does not know the path either', async () => {
+    const failing: CommandIO = { ...dirOps([]), stat: (_a, p) => Promise.reject(enoent(p)) }
+    const stat = dirAwareStat(failing, accessor, nsDir('/elsewhere'))
+    await expect(stat(PathSpec.fromStrPath('/ghost'))).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
   it('ignores fabricated children from synthetic hierarchies', async () => {
@@ -139,7 +165,7 @@ describe('dirAwareStat', () => {
         return Promise.resolve([`${target}/tables`, `${target}/views`])
       },
     }
-    const stat = dirAwareStat(lying, accessor)
+    const stat = dirAwareStat(lying, accessor, NO_NS)
     await expect(stat(PathSpec.fromStrPath('/nope.txt'))).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
@@ -149,19 +175,19 @@ describe('dirAwareStat', () => {
       stat: (_a, p) => Promise.reject(enoent(p)),
       readdir: () => Promise.reject(new Error("Table 'nope.txt' was not found")),
     }
-    const stat = dirAwareStat(throwing, accessor)
+    const stat = dirAwareStat(throwing, accessor, NO_NS)
     await expect(stat(PathSpec.fromStrPath('/nope.txt'))).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
   it('passes regular files through', async () => {
-    const stat = dirAwareStat(dirOps([]), accessor)
+    const stat = dirAwareStat(dirOps([]), accessor, NO_NS)
     await expect(stat(PathSpec.fromStrPath('/f.txt'))).resolves.toMatchObject({ size: 0 })
   })
 })
 
 describe('dirAwareStream', () => {
   it('refuses an implicit directory with EISDIR when consumed', async () => {
-    const stream = dirAwareStream(dirOps(['/sub']), accessor)
+    const stream = dirAwareStream(dirOps(['/sub']), accessor, NO_NS)
     const consume = async () => {
       for await (const chunk of stream(PathSpec.fromStrPath('/sub'))) {
         throw new Error(`no data expected, got ${String(chunk.byteLength)} bytes`)
@@ -179,7 +205,7 @@ describe('dirAwareStream', () => {
         throw new Error('Failure')
       },
     }
-    const stream = dirAwareStream(sshLike, accessor)
+    const stream = dirAwareStream(sshLike, accessor, NO_NS)
     const consume = async () => {
       for await (const chunk of stream(PathSpec.fromStrPath('/sub'))) {
         throw new Error(`no data expected, got ${String(chunk.byteLength)} bytes`)
@@ -189,7 +215,7 @@ describe('dirAwareStream', () => {
   })
 
   it('streams regular files untouched', async () => {
-    const stream = dirAwareStream(dirOps([]), accessor)
+    const stream = dirAwareStream(dirOps([]), accessor, NO_NS)
     const chunks: Uint8Array[] = []
     for await (const chunk of stream(PathSpec.fromStrPath('/f.txt'))) chunks.push(chunk)
     expect(new TextDecoder().decode(chunks[0])).toBe('data')

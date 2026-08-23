@@ -22,6 +22,7 @@ from mirage.commands.builtin.generic.head import head_multi
 from mirage.commands.builtin.generic.rg import rg as generic_rg
 from mirage.commands.builtin.generic.tail import tail_multi
 from mirage.commands.builtin.generic.wc import format_multi
+from mirage.commands.config import CommandOpts
 from mirage.io.types import materialize
 from mirage.types import ContentType, FileStat, FileType, PathSpec
 from mirage.utils.key_prefix import mount_key
@@ -122,7 +123,8 @@ async def test_generic_grep_serves_cache_without_backend():
     manager = await _warm_manager()
     prev = push_cache_manager(manager)
     try:
-        out, io = await generic_grep([_spec()], ("alpha", ), {},
+        out, io = await generic_grep([_spec()], ("alpha", ),
+                                     CommandOpts(),
                                      readdir=_readdir,
                                      stat=_stat,
                                      read_bytes=reader,
@@ -139,7 +141,8 @@ async def test_generic_rg_serves_cache_without_backend():
     manager = await _warm_manager()
     prev = push_cache_manager(manager)
     try:
-        out, io = await generic_rg([_spec()], ("alpha", ), {},
+        out, io = await generic_rg([_spec()], ("alpha", ),
+                                   CommandOpts(),
                                    readdir=_readdir,
                                    stat=_stat,
                                    read_bytes=reader,
