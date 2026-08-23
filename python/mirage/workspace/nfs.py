@@ -90,11 +90,17 @@ class NFSManager:
         Raises:
             ValueError: the mountpoint already serves another prefix.
         """
+        # Collision answers from the registry BEFORE the path is
+        # touched: a colliding mountpoint may be a live mount served by
+        # this very loop, and prepare_mountpoint stats it (makedirs ->
+        # isdir), which is the self-touch deadlock in miniature.
+        if mountpoint is not None:
+            for other_prefix, (other_path, _) in self._mounts.items():
+                if other_path == mountpoint:
+                    raise ValueError(
+                        f"nfs mountpoint {mountpoint!r} already serves "
+                        f"{other_prefix!r}")
         resolved, owns = prepare_mountpoint(mountpoint)
-        for other_prefix, (other_path, _) in self._mounts.items():
-            if other_path == resolved:
-                raise ValueError(f"nfs mountpoint {resolved!r} already serves "
-                                 f"{other_prefix!r}")
         if self._handle is None:
             self._config = config or NFSConfig()
             self._fs, self._handle = await self._start(ops, self._config)

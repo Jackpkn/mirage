@@ -103,6 +103,32 @@ def test_mountpoint_collision_is_refused(tmp_path):
     assert len(rec.mounts) == 1
 
 
+def test_collision_is_detected_before_the_path_is_touched(
+        tmp_path, monkeypatch):
+    # A colliding mountpoint may be a LIVE mount served by this very
+    # loop; prepare_mountpoint stats it (makedirs -> isdir), which is
+    # the self-touch deadlock. The registry check must come first.
+    manager, rec = make()
+    target = str(tmp_path / "same")
+    touched: list[str] = []
+
+    def spy_prepare(mountpoint):
+        touched.append(mountpoint)
+        return mountpoint, False
+
+    import mirage.workspace.nfs as module
+    monkeypatch.setattr(module, "prepare_mountpoint", spy_prepare)
+
+    async def run():
+        await manager.setup(None, "/", target)
+        touched.clear()
+        with pytest.raises(ValueError):
+            await manager.setup(None, "/docs", target)
+
+    asyncio.run(run())
+    assert touched == []
+
+
 def test_a_failed_mount_leaves_no_registration(tmp_path):
     rec = Recorder()
 
