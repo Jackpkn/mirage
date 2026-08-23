@@ -20,30 +20,61 @@ from mirage.types import FileStat, FileType
 from mirage.utils.path import norm_dir
 
 
+def visible_child_segments(paths: Iterable[str], parent: str) -> list[str]:
+    """The child segments of ``parent`` that some allowed path runs through.
+
+    The one session filter both namespace enumerations share, because
+    both owe a segment to a deeper thing rather than to an entry of its
+    own: a mount prefix and a link path each synthesize every directory
+    above it, and the segment is visible exactly when at least one of
+    the things that synthesized it is.
+
+    The full path is what gets tested, never the segment. A hide is
+    subtree-closed on all three of its planes (an exact entry contains
+    its subtree, a component pattern matches any segment, an anchored
+    one is tested against every ancestor), so testing the deeper path is
+    strictly stronger: a segment can only be withheld by this, never
+    granted. Testing the segment instead is what leaked the name of a
+    namespace-only ancestor whose only mount or link the session hides,
+    a directory that answers ENOENT to every verb applied to it.
+
+    Args:
+        paths (Iterable[str]): full paths owing ``parent`` a segment,
+            mount prefixes or link paths.
+        parent (str): directory whose child segments to enumerate.
+    """
+    norm = norm_dir(parent)
+    out: set[str] = set()
+    for path in paths:
+        if not path.startswith(norm):
+            continue
+        name = path[len(norm):].split("/", 1)[0]
+        if not name or name in out or not path_allowed(path):
+            continue
+        out.add(name)
+    return sorted(out)
+
+
 def child_mount_names(prefixes: Iterable[str], parent: str) -> list[str]:
     """Immediate child segments of mounts strictly under ``parent``.
 
-    Session-filtered: a child name appears only when some mount whose
-    prefix runs through it is visible to the current session, so a
-    scoped session never learns an ungranted mount's name from a
-    listing. Hidden names (leading dot) are included; presentation
-    filtering is the consumer's job, exactly as for backend entries.
+    Session-filtered by :func:`visible_child_segments`: a child name
+    appears only when some mount whose prefix runs through it is visible
+    to the current session, so a scoped session never learns an
+    ungranted mount's name from a listing. Hidden names (leading dot)
+    are included; presentation filtering is the consumer's job, exactly
+    as for backend entries.
 
     Args:
         prefixes (Iterable[str]): the mount prefixes to derive from.
         parent (str): directory whose child mounts to enumerate.
     """
     norm = norm_dir(parent)
-    out: set[str] = set()
-    for prefix in prefixes:
-        p = norm_dir(prefix)
-        if p == norm or not p.startswith(norm):
-            continue
-        name = p[len(norm):].split("/", 1)[0]
-        if not name or not path_allowed(norm + name):
-            continue
-        out.add(name)
-    return sorted(out)
+    below = [
+        norm_dir(prefix).rstrip("/") for prefix in prefixes
+        if norm_dir(prefix) != norm and norm_dir(prefix).startswith(norm)
+    ]
+    return visible_child_segments(below, parent)
 
 
 def _link_names(links: NamespaceLinks | None, parent: str) -> list[str]:
@@ -53,8 +84,10 @@ def _link_names(links: NamespaceLinks | None, parent: str) -> list[str]:
     mount prefixes are: ``ln`` allows a link below a directory chain no
     backend serves, and without its ancestors synthesized the link
     lists at its own parent yet is unreachable from a walk above it.
-    Session-filtered by the hides, the same predicate
-    ``child_mount_names`` applies to a mount's own name.
+    Session-filtered by :func:`visible_child_segments`, the same
+    predicate ``child_mount_names`` applies to a mount prefix: the link
+    path is tested, not the segment, so a namespace-only ancestor whose
+    only link the session hides is not named either.
 
     Args:
         links (NamespaceLinks | None): the namespace symlink table.
@@ -62,15 +95,7 @@ def _link_names(links: NamespaceLinks | None, parent: str) -> list[str]:
     """
     if links is None:
         return []
-    norm = norm_dir(parent)
-    out: set[str] = set()
-    for link in links.symlink_targets():
-        if not link.startswith(norm):
-            continue
-        name = link[len(norm):].split("/", 1)[0]
-        if name and path_allowed(norm + name):
-            out.add(name)
-    return sorted(out)
+    return visible_child_segments(links.symlink_targets(), parent)
 
 
 def namespace_names(prefixes: Iterable[str], links: NamespaceLinks | None,
