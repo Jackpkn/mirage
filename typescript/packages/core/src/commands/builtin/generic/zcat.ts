@@ -17,7 +17,7 @@ import type { PathSpec } from '../../../types.ts'
 import { gunzip } from '../../../utils/compress.ts'
 import type { CommandFnResult, CommandOpts } from '../../config.ts'
 import { readStdinAsync } from '../utils/stream.ts'
-import { operandsIo, readOperands } from '../utils/operands.ts'
+import { operandsIo, readOperandsCoded } from '../utils/operands.ts'
 
 const ENC = new TextEncoder()
 
@@ -31,8 +31,11 @@ export async function zcatGeneric(
   if (paths.length > 0) {
     // A missing operand is reported and skipped; the remaining operands
     // still decompress (GNU zcat).
-    const [ok, err] = await readOperands(paths, stream, 'zcat')
-    const io = operandsIo(err)
+    // zcat is gzip's front end, so its exit code is gzip's: a directory
+    // is a warning (2) and a missing file is an error (1), which no other
+    // member of this family distinguishes. Hence the coded read.
+    const [ok, err, code] = await readOperandsCoded(paths, stream, 'zcat')
+    const io = operandsIo(err, { exitCode: code })
     if (ok.length === 0 && err !== '') return [null, io]
     const parts: Uint8Array[] = []
     let total = 0

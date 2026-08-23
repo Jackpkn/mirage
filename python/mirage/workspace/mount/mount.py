@@ -37,8 +37,8 @@ from mirage.policy import resolve_limit
 from mirage.resource.base import BaseResource
 from mirage.runtime.base import Runtime
 from mirage.runtime.types import DispatchFn
-from mirage.types import (ConsistencyPolicy, Limit, MountMode, PathSpec,
-                          Producer)
+from mirage.types import (ConsistencyPolicy, FileType, Limit, MountMode,
+                          PathSpec, Producer)
 from mirage.utils.errors import enotsup
 from mirage.utils.key_prefix import mount_key
 
@@ -497,6 +497,21 @@ class MountEntry:
                 here.
         """
         extension = get_extension(paths[0].virtual) if paths else None
+        # A filetype handler is selected from the operand's NAME, and a
+        # directory can carry any extension, so the cascade would hand a
+        # renderer a directory to read. One stat settles it, and only when
+        # a handler for this exact extension exists, so a mount with no
+        # filetype registrations never reaches the probe. The built-in is
+        # what a directory should get: it owns GNU's `Is a directory`
+        # wording, and the renderer owns nothing but its own format.
+        # The DISPATCHER's stat, not the backend's, so a mount root and a
+        # namespace-only directory answer too; None means neither plane
+        # saw anything, in which case the renderer reports its own miss.
+        if (extension is not None and paths and stat_path is not None
+                and (cmd_name, extension) in self._cmds):
+            entry = await stat_path(paths[0].virtual)
+            if entry is not None and entry.type == FileType.DIRECTORY:
+                extension = None
 
         handlers = self._resolve_cascade(cmd_name, extension, self._cmds,
                                          self._general_cmds)

@@ -18,6 +18,7 @@ from typing import Any
 from mirage.commands.builtin.utils.limit import CommandTimeoutError
 from mirage.commands.errors import UsageError
 from mirage.commands.spec.types import FlagValue
+from mirage.commands.spec.usage import read_fail_exit
 from mirage.context import path_allowed
 from mirage.io import IOResult
 from mirage.io.stream import materialize, wrap_cachable_streams
@@ -436,7 +437,7 @@ async def run_on_mount(
         # ValueError, or a filesystem OSError) becomes this command's
         # IOResult, prefixed with the command name like GNU (prog: message)
         # and the TypeScript executor.
-        return None, IOResult(exit_code=1,
+        return None, IOResult(exit_code=read_fail_exit(cmd_name, exc),
                               stderr=format_fs_error(cmd_name, exc, paths))
 
     if cmd_name == "find":

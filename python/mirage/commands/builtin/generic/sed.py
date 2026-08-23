@@ -7,6 +7,7 @@ from mirage.commands.builtin.utils.stream import _read_stdin_async
 from mirage.commands.config import CommandOpts
 from mirage.commands.spec import SPECS
 from mirage.commands.spec.types import FlagValue, FlagView
+from mirage.commands.spec.usage import read_fail_exit
 from mirage.io.types import ByteSource, IOResult
 from mirage.types import PathSpec
 from mirage.utils.errors import FS_ERRORS, fs_error_line
@@ -44,10 +45,19 @@ async def sed(
         # substitutes the first match on *each* line, matching GNU sed. A
         # buffer-wide re.sub anchors at the buffer ends and only touches the
         # first match overall. See strukto-ai/mirage#326.
-        # A failed operand is skipped and reported, and the remaining
-        # operands still process, per GNU sed (which keeps going on a
-        # missing file; the repo exits 1 where GNU exits 2).
+        # sed owns its exit code here rather than letting the
+        # executor's chokepoint pick it, because GNU sed splits a failed
+        # operand two ways (GNU sed 4.9). An OPEN error (a missing file)
+        # is exit 2, reported, and the remaining operands still process:
+        # `sed -n p nope ok.txt ok2.txt` prints both files. A READ error
+        # (a directory, which opens fine and then fails) is exit 4 and
+        # FATAL: `sed -n p dir ok.txt` prints nothing, `sed -n p ok.txt
+        # dir ok2.txt` stops after ok.txt, and `sed -n p dir dir` reports
+        # one line, not two. Hence the running max for the code and the
+        # break for the read error; every other command in this family
+        # continues past a directory, and only sed does not.
         err = b""
+        code = 0
         if in_place:
             if write_bytes is None:
                 raise NotImplementedError(
@@ -59,6 +69,9 @@ async def sed(
                     data = await read_bytes(p)
                 except FS_ERRORS as exc:
                     err += fs_error_line("sed", p, exc).encode()
+                    code = max(code, read_fail_exit("sed", exc))
+                    if isinstance(exc, IsADirectoryError):
+                        break
                     continue
                 text = data.decode(errors="replace")
                 new_text = _execute_program(text,
@@ -71,7 +84,7 @@ async def sed(
                 edited.append(p)
             return None, IOResult(writes=writes,
                                   cache=[p.mount_path for p in edited],
-                                  exit_code=1 if err else 0,
+                                  exit_code=code,
                                   stderr=err or None)
 
         outputs: list[str] = []
@@ -81,6 +94,9 @@ async def sed(
                 data = await read_bytes(p)
             except FS_ERRORS as exc:
                 err += fs_error_line("sed", p, exc).encode()
+                code = max(code, read_fail_exit("sed", exc))
+                if isinstance(exc, IsADirectoryError):
+                    break
                 continue
             text = data.decode(errors="replace")
             new_text = _execute_program(text,
@@ -91,7 +107,7 @@ async def sed(
             read_ok.append(p)
         return "".join(outputs).encode(), IOResult(
             cache=[p.mount_path for p in read_ok],
-            exit_code=1 if err else 0,
+            exit_code=code,
             stderr=err or None)
 
     if paths:
@@ -103,12 +119,16 @@ async def sed(
         all_outputs: list[str] = []
         writes = {}
         err = b""
+        code = 0
         edited = []
         for p in paths:
             try:
                 data = await read_bytes(p)
             except FS_ERRORS as exc:
                 err += fs_error_line("sed", p, exc).encode()
+                code = max(code, read_fail_exit("sed", exc))
+                if isinstance(exc, IsADirectoryError):
+                    break
                 continue
             text = data.decode(errors="replace")
             result = _execute_program(text,
@@ -129,12 +149,12 @@ async def sed(
         if modifying:
             return None, IOResult(writes=writes,
                                   cache=[p.mount_path for p in edited],
-                                  exit_code=1 if err else 0,
+                                  exit_code=code,
                                   stderr=err or None)
         # GNU concatenates per-file output with no separator (each file's
         # output already carries its own newlines).
-        return "".join(all_outputs).encode(), IOResult(
-            exit_code=1 if err else 0, stderr=err or None)
+        return "".join(all_outputs).encode(), IOResult(exit_code=code,
+                                                       stderr=err or None)
 
     raw = await _read_stdin_async(stdin)
     if raw is None:

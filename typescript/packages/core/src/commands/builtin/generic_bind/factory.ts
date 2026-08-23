@@ -25,6 +25,7 @@ import {
   type StatOp,
   resolveGlobOf,
   supports,
+  withDirGuard,
   withHiddenGuard,
   withRuleGuard,
 } from './adapter.ts'
@@ -157,11 +158,23 @@ export function makeGenericCommands<A extends Accessor = Accessor>(
     // stores a link. The adapter is built once per backend and the names
     // are session-scoped, so the fact is stamped on per invocation and
     // every builder keeps calling resolveGlobOf(ops) unchanged.
+    //
+    // withDirGuard wraps here rather than beside the other guards above
+    // because it reads the same namespace fact: a directory that exists
+    // only because a mount or a link sits under it is invisible to the
+    // backend, so the guard has to close over an adapter that already
+    // carries globChildren.
+    // The conditional spread is not a leftover: exactOptionalPropertyTypes
+    // refuses an explicit `undefined` for an optional field, so an absent
+    // namespace has to mean an absent key rather than an undefined value.
+    // Python's `glob_children` is `| None` and takes the uniform path.
     const fn: CommandFn = (accessor, paths, texts, opts) =>
       b.fn(
-        opts.ns?.childMounts === undefined
-          ? cmdOps
-          : { ...cmdOps, globChildren: opts.ns.childMounts },
+        withDirGuard(
+          opts.ns?.childMounts === undefined
+            ? cmdOps
+            : { ...cmdOps, globChildren: opts.ns.childMounts },
+        ),
         accessor,
         paths,
         texts,

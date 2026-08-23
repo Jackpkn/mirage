@@ -13,11 +13,14 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { UsageError } from '../errors.ts'
+import { gnuStrerror } from '../../utils/errors.ts'
 import {
   OLD_OPTION_EXIT,
   OPERAND_EXIT,
   PYTHON_NAMES,
   pythonUsage,
+  READ_FAIL_EXIT,
+  READ_FAIL_EXIT_ISDIR,
   USAGE_EXIT,
   USAGE_HINT_PREFIX,
 } from './constants.ts'
@@ -31,6 +34,65 @@ export function usageExitCode(cmdName: string): number {
 /** Exit code of a command refused on one operand before it ran. */
 export function operandExitCode(cmdName: string): number {
   return OPERAND_EXIT[cmdName] ?? 1
+}
+
+/**
+ * The exit code for a command that could not read an operand.
+ *
+ * Read off the command, not off the errno, because that is how GNU's own
+ * codes fall; the errno is consulted only for the four commands that do
+ * answer a directory and a missing file differently. Mirrors the python
+ * `read_fail_exit`.
+ *
+ * Gated on READ_FAIL_CODES, and nothing wider: the tables are keyed by
+ * command and the executor's chokepoints catch everything a command can
+ * throw, so a loose gate makes them answer in the wrong voice. Two cases
+ * set the width. A bad script is not a filesystem error at all (`sed
+ * 's/o/O/0'` is exit 1, not sed's 2). And EACCES is as often a WRITE
+ * refusal as a read one (`sed -i` on a read-only backend is exit 1, not
+ * 4), which the chokepoint cannot tell apart. EACCES on a genuine read is
+ * the one case this leaves at 1 where GNU would answer the command's
+ * code; that is the safe side, and it is what the executor already did
+ * before the tables existed.
+ */
+const READ_FAIL_CODES: ReadonlySet<string> = new Set(['ENOENT', 'EISDIR', 'ENOTDIR'])
+
+function readFailCode(cmdName: string, isDir: boolean): number {
+  if (isDir) {
+    const isdir = READ_FAIL_EXIT_ISDIR[cmdName]
+    if (isdir !== undefined) return isdir
+  }
+  return READ_FAIL_EXIT[cmdName] ?? 1
+}
+
+export function readFailExitCode(cmdName: string, err: unknown): number {
+  const code = (err as { code?: string }).code
+  if (code === undefined || !READ_FAIL_CODES.has(code)) return 1
+  return readFailCode(cmdName, code === 'EISDIR')
+}
+
+/**
+ * The same code, for a read failure known only as a rendered line.
+ *
+ * The cross-mount stream path fetches each operand with a native `cat`
+ * sub-run, so a failed operand arrives as cat's rendered stderr rather
+ * than as an error. That line is already respelled into the real
+ * command's voice, and the exit code has to follow it or `sort a
+ * /other/missing` answers 1 while `sort missing` answers 2, a split GNU
+ * does not have. Classified against the very strerrors the renderer
+ * wrote, so the forward and backward directions cannot drift; a line that
+ * carries none of them is not a failed read and keeps the catch-all 1.
+ *
+ * Mirrors the python `read_fail_exit_line`.
+ */
+export function readFailExitCodeFromLine(cmdName: string, rendered: string): number {
+  for (const code of READ_FAIL_CODES) {
+    const strerror = gnuStrerror(code)
+    if (strerror !== null && rendered.includes(strerror)) {
+      return readFailCode(cmdName, code === 'EISDIR')
+    }
+  }
+  return 1
 }
 
 /**

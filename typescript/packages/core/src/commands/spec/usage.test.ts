@@ -23,6 +23,7 @@ import {
   missingValueError,
   oldOptionError,
   unknownOptionError,
+  readFailExitCode,
   usageExitCode,
 } from './usage.ts'
 
@@ -164,5 +165,41 @@ describe('oldOptionError', () => {
     )
     // tar's own fatal error, not argp's 64.
     expect(code).toBe(2)
+  })
+})
+
+describe('readFailExitCode', () => {
+  const fsErr = (code: string, msg = '/x'): Error => Object.assign(new Error(msg), { code })
+
+  it('reads the code off the command, not the errno', () => {
+    expect(readFailExitCode('cat', fsErr('ENOENT'))).toBe(1)
+    expect(readFailExitCode('sort', fsErr('ENOENT'))).toBe(2)
+    expect(readFailExitCode('sort', fsErr('EISDIR'))).toBe(2)
+    expect(readFailExitCode('unzip', fsErr('ENOENT'))).toBe(9)
+  })
+
+  it('splits by errno for the four commands that do', () => {
+    // sed opens the directory and fails on the read (4) where a missing
+    // file fails at open (2); the gzip family calls a directory a warning
+    // (2) and a missing file an error (1); zgrep inverts that.
+    expect(readFailExitCode('sed', fsErr('EISDIR'))).toBe(4)
+    expect(readFailExitCode('sed', fsErr('ENOENT'))).toBe(2)
+    expect(readFailExitCode('zcat', fsErr('EISDIR'))).toBe(2)
+    expect(readFailExitCode('zcat', fsErr('ENOENT'))).toBe(1)
+    expect(readFailExitCode('zgrep', fsErr('EISDIR'))).toBe(1)
+    expect(readFailExitCode('zgrep', fsErr('ENOENT'))).toBe(2)
+  })
+
+  it('ignores anything that is not a failed read', () => {
+    // The executor's chokepoints catch every error a command can throw,
+    // so a table keyed by command has to be gated on the narrow errno
+    // set. A bad script is not a filesystem error at all, and EACCES is
+    // as often a write refusal as a read one: `sed -i` on a backend with
+    // no write op is refused with EACCES and must stay 1, which is what
+    // integ's lancedb_sed_i_readonly and notion_sed_i_readonly pin.
+    expect(readFailExitCode('sed', fsErr('EACCES', '-i not supported'))).toBe(1)
+    expect(readFailExitCode('sed', new Error('bad script'))).toBe(1)
+    expect(readFailExitCode('sort', fsErr('EACCES'))).toBe(1)
+    expect(readFailExitCode('sort', new Error('transport'))).toBe(1)
   })
 })

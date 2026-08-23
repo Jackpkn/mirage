@@ -19,6 +19,7 @@ import { type FileStat, PathSpec } from '../../../../types.ts'
 import type { CommandOpts } from '../../../config.ts'
 import type { DispatchFn, OperandRun, RunSingle } from './types.ts'
 import type { FlagValue } from '../../../spec/types.ts'
+import { readFailExitCode } from '../../../spec/usage.ts'
 
 const ENC = new TextEncoder()
 
@@ -53,7 +54,10 @@ export async function runOperands(
       merged.set(existing, 0)
       merged.set(line, existing.byteLength)
       io.stderr = merged
-      io.exitCode = 1
+      // The command's own code for a failed read, not the catch-all: a
+      // lazy operand that fails here is the same failure the single-mount
+      // run reports eagerly, and it must answer the same number.
+      io.exitCode = readFailExitCode(cmdName, e)
       data = new Uint8Array()
     }
     results.push({ scope, data, io })

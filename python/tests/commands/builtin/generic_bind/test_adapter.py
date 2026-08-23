@@ -17,7 +17,8 @@ import pytest
 from mirage.accessor.base import NOOPAccessor
 from mirage.commands.builtin.generic_bind.adapter import (CommandIO, Operation,
                                                           dir_aware_stat,
-                                                          dir_aware_stream)
+                                                          dir_aware_stream,
+                                                          with_dir_guard)
 from mirage.commands.config import CommandOpts
 from mirage.ops.types import NamespaceView
 from mirage.types import ContentType, FileStat, FileType, PathSpec
@@ -327,3 +328,202 @@ async def test_rule_guard_asks_the_bound_gate_and_leaves_stat_alone():
     assert ("read", "/data/locked/y") in calls
     assert ("rename", "/data/a", "/data/locked/y") not in calls
     assert ("rename", "/data/a", "/data/b") in calls
+
+
+def _keyed_read_ops(implicit_dirs: set[str] | None = None,
+                    explicit_dirs: set[str] | None = None,
+                    files: dict[str, bytes] | None = None,
+                    read_error: type[BaseException] = FileNotFoundError,
+                    children: dict[str, list[str]] | None = None) -> CommandIO:
+    """A keyed backend: no directory objects, so a read of one misses.
+
+    Reads raise ``read_error`` for anything that is not a stored file,
+    which is what RAM/S3/Redis do for a directory (there is no key
+    there) and what an sftp read of a directory does with a non-OSError
+    (asyncssh SFTPFailure).
+    """
+    dirs = implicit_dirs or set()
+    typed = explicit_dirs or set()
+    stored = files or {}
+    owed = children or {}
+
+    async def stat(_accessor, path, _index):
+        if path.virtual in typed:
+            return FileStat(name=path.virtual, type=FileType.DIRECTORY)
+        if path.virtual in stored:
+            return FileStat(type=FileType.FILE,
+                            name=path.virtual,
+                            size=len(stored[path.virtual]))
+        raise FileNotFoundError(path.virtual)
+
+    async def readdir(_accessor, path, _index):
+        target = path.virtual.rstrip("/") or "/"
+        entries = [d for d in dirs if (d.rsplit("/", 1)[0] or "/") == target]
+        if path.virtual in dirs:
+            entries.append(path.virtual.rstrip("/") + "/child.txt")
+        return entries
+
+    async def read_bytes(_accessor, path, _index=None, **_kwargs):
+        if path.virtual in stored:
+            return stored[path.virtual]
+        raise read_error(path.virtual)
+
+    async def read_stream(_accessor, path, _index=None, **_kwargs):
+        if path.virtual in stored:
+            yield stored[path.virtual]
+            return
+        raise read_error(path.virtual)
+
+    async def read_range(_accessor, path, _index=None, **_kwargs):
+        if path.virtual in stored:
+            return stored[path.virtual]
+        raise read_error(path.virtual)
+
+    return CommandIO(
+        readdir=readdir,
+        read_bytes=read_bytes,
+        read_stream=read_stream,
+        read_range=read_range,
+        stat=stat,
+        is_mounted=lambda _a: True,
+        glob_children=(lambda p: owed.get(p, [])) if owed else None)
+
+
+async def _drain(stream) -> list[bytes]:
+    return [chunk async for chunk in stream]
+
+
+@pytest.mark.asyncio
+async def test_dir_guard_refuses_an_explicit_directory_on_every_slot():
+    ops = with_dir_guard(_keyed_read_ops(explicit_dirs={"/sub"}))
+    path = PathSpec.from_str_path("/sub")
+    with pytest.raises(IsADirectoryError):
+        await ops.read_bytes(None, path)
+    with pytest.raises(IsADirectoryError):
+        await ops.read_range(None, path)
+    with pytest.raises(IsADirectoryError):
+        await _drain(ops.read_stream(None, path))
+
+
+@pytest.mark.asyncio
+async def test_dir_guard_refuses_an_implicit_keyed_directory():
+    ops = with_dir_guard(_keyed_read_ops(implicit_dirs={"/sub"}))
+    path = PathSpec.from_str_path("/sub")
+    with pytest.raises(IsADirectoryError):
+        await ops.read_bytes(None, path)
+    with pytest.raises(IsADirectoryError):
+        await _drain(ops.read_stream(None, path))
+
+
+@pytest.mark.asyncio
+async def test_dir_guard_refuses_a_namespace_only_directory():
+    # /a/b holds no key in this backend; it exists because a mount or a
+    # link sits under it, which only the namespace can see.
+    ops = with_dir_guard(_keyed_read_ops(children={"/a/b": ["inner"]}))
+    path = PathSpec.from_str_path("/a/b")
+    with pytest.raises(IsADirectoryError):
+        await ops.read_bytes(None, path)
+
+
+@pytest.mark.asyncio
+async def test_dir_guard_refines_a_non_oserror_read_failure():
+    # An sftp read of a directory raises asyncssh's SFTPFailure, which is
+    # not an OSError, so the errno-only path cannot see it. The stat says
+    # directory, and that is what decides.
+    ops = with_dir_guard(
+        _keyed_read_ops(explicit_dirs={"/sub"}, read_error=RuntimeError))
+    with pytest.raises(IsADirectoryError):
+        await ops.read_bytes(None, PathSpec.from_str_path("/sub"))
+
+
+@pytest.mark.asyncio
+async def test_dir_guard_leaves_a_real_miss_alone():
+    ops = with_dir_guard(_keyed_read_ops())
+    path = PathSpec.from_str_path("/nope.txt")
+    with pytest.raises(FileNotFoundError):
+        await ops.read_bytes(None, path)
+    with pytest.raises(FileNotFoundError):
+        await _drain(ops.read_stream(None, path))
+
+
+@pytest.mark.asyncio
+async def test_dir_guard_reraises_an_unrelated_failure_untouched():
+    ops = with_dir_guard(_keyed_read_ops(read_error=PermissionError))
+    with pytest.raises(PermissionError):
+        await ops.read_bytes(None, PathSpec.from_str_path("/locked.txt"))
+
+
+@pytest.mark.asyncio
+async def test_dir_guard_leaves_a_successful_read_alone():
+    ops = with_dir_guard(_keyed_read_ops(files={"/f.txt": b"data"}))
+    path = PathSpec.from_str_path("/f.txt")
+    assert await ops.read_bytes(None, path) == b"data"
+    assert await _drain(ops.read_stream(None, path)) == [b"data"]
+    assert await ops.read_range(None, path) == b"data"
+
+
+@pytest.mark.asyncio
+async def test_dir_guard_names_the_virtual_path_not_the_backend_one():
+    # A raw disk error names the host path; the refusal is built from the
+    # operand's own PathSpec so the mount's host root never leaks.
+    ops = with_dir_guard(
+        _keyed_read_ops(
+            explicit_dirs={"/mnt/sub"},
+            read_error=lambda _p: IsADirectoryError("/private/var/host/sub")))
+    with pytest.raises(IsADirectoryError) as caught:
+        await ops.read_bytes(None, PathSpec.from_str_path("/mnt/sub"))
+    assert str(caught.value) == "/mnt/sub"
+
+
+@pytest.mark.asyncio
+async def test_dir_guard_probe_failure_keeps_the_reads_own_error():
+    # A probe that blows up is a negative probe. Surfacing it would swap
+    # the read's error for one from a call the user never made.
+    async def stat(_accessor, _path, _index):
+        raise RuntimeError("transport reset")
+
+    async def readdir(_accessor, _path, _index):
+        raise RuntimeError("transport reset")
+
+    async def read_bytes(_accessor, path, _index=None, **_kwargs):
+        raise PermissionError(path.virtual)
+
+    async def unused(*_args):
+        raise AssertionError("not used")
+
+    ops = with_dir_guard(
+        CommandIO(readdir=readdir,
+                  read_bytes=read_bytes,
+                  read_stream=unused,
+                  stat=stat,
+                  is_mounted=lambda _a: True))
+    with pytest.raises(PermissionError):
+        await ops.read_bytes(None, PathSpec.from_str_path("/locked.txt"))
+
+
+@pytest.mark.asyncio
+async def test_dir_guard_keeps_a_refusal_on_a_file_the_parent_lists():
+    # A rule guard refuses the read of a real file. Its parent's listing
+    # names it, so the implicit-directory probe would answer "directory"
+    # if it were consulted, and `grep -r` reported EISDIR where GNU
+    # reports the refusal. A stat that answered has already settled it.
+    async def stat(_accessor, path, _index):
+        return FileStat(type=FileType.FILE, name=path.virtual, size=1)
+
+    async def readdir(_accessor, path, _index):
+        return [path.virtual.rstrip("/") + "/a"]
+
+    async def read_bytes(_accessor, path, _index=None, **_kwargs):
+        raise PermissionError(path.virtual)
+
+    async def unused(*_args):
+        raise AssertionError("not used")
+
+    ops = with_dir_guard(
+        CommandIO(readdir=readdir,
+                  read_bytes=read_bytes,
+                  read_stream=unused,
+                  stat=stat,
+                  is_mounted=lambda _a: True))
+    with pytest.raises(PermissionError):
+        await ops.read_bytes(None, PathSpec.from_str_path("/asked/a"))
