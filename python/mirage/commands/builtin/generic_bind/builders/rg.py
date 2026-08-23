@@ -29,13 +29,12 @@ async def rg(ops: CommandIO, accessor: Accessor, paths: list[PathSpec],
     return await generic_rg(
         paths,
         texts,
-        opts.flags,
+        opts,
         readdir=bound_op(ops.readdir, accessor, opts.index),
         stat=bound_op(ops.stat, accessor, opts.index),
         read_bytes=bound_op(ops.read_bytes, accessor, opts.index),
         read_stream=bound_op(ops.read_stream, accessor, opts.index),
         stdin=opts.stdin,
-        mounts=opts.ns.mounts if opts.ns is not None else None,
     )
 
 

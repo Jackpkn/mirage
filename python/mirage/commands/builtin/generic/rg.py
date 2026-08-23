@@ -1,5 +1,4 @@
-from collections.abc import (AsyncIterator, Awaitable, Callable, Mapping,
-                             Sequence)
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from functools import partial
 
@@ -17,12 +16,12 @@ from mirage.commands.builtin.utils.wrap import (call_read_bytes, call_readdir,
                                                 call_stat,
                                                 mount_parent_readdir,
                                                 mount_parent_stat)
+from mirage.commands.config import CommandOpts
 from mirage.commands.errors import UsageError
 from mirage.commands.spec import SPECS
-from mirage.commands.spec.types import FlagValue, FlagView
+from mirage.commands.spec.types import FlagView
 from mirage.io.stream import exit_on_empty
 from mirage.io.types import ByteSource, IOResult
-from mirage.ops.types import MountView
 from mirage.types import FileStat, FileType, PathSpec
 from mirage.utils.errors import FS_ERRORS, WALK_ERRORS, fs_strerror
 from mirage.utils.key_prefix import mount_prefix_of
@@ -88,29 +87,33 @@ def parse_flags(fl: FlagView, never_match: bool) -> RgFlags:
 
 async def rg(
     paths: list[PathSpec],
-    texts: Sequence[str] = (),
-    flags: Mapping[str, FlagValue] | None = None,
+    texts: Sequence[str],
+    opts: CommandOpts,
     *,
     readdir: Callable[..., Awaitable[list[str]]],
     stat: Callable[..., Awaitable[FileStat]],
     read_bytes: Callable[..., Awaitable[bytes]],
     read_stream: Callable[..., AsyncIterator[bytes]] | None,
     stdin: ByteSource | None = None,
-    mounts: MountView | None = None,
 ) -> tuple[ByteSource | None, IOResult]:
     """Run ripgrep-style fallback search over backend paths or stdin.
 
-    Interprets the raw flag kwargs itself (TS rgGeneric parity), so backend
-    wrappers only wire paths, texts, flags, and backend I/O.
+    Interprets the flags itself (TS rgGeneric parity), so backend
+    wrappers only wire paths, texts, the bag, and backend I/O.
 
     Args:
         paths (list[PathSpec]): Backend paths to search. Empty paths consume
             stdin.
         texts (Sequence[str]): positional TEXT operands (the pattern unless
             -e/-f supplied it).
-        flags (Mapping[str, FlagValue] | None): raw flag kwargs from the
-            dispatcher (e, f, i, v, n, c, args_l, w, F, o, H, I, m, A, B, C,
-            hidden, type, glob).
+        opts (CommandOpts): the invocation bag, read for the raw flag
+            kwargs and for the mount boundaries. The whole bag rather
+            than the two facts, so a wrapper cannot pass one and
+            forget the other: sixteen of this generic's nineteen call
+            sites omitted the boundaries when they were a keyword of
+            their own, which turned the mount-parent wrappers off on
+            every bespoke backend. Mirrors TS, whose generic has
+            always taken ``opts`` and read the boundaries off it.
         readdir (Callable[..., Awaitable[list[str]]]): Directory reader.
         stat (Callable[[PathSpec], Awaitable[FileStat]]): Backend stat reader.
         read_bytes (Callable[..., Awaitable[bytes]]): Whole-file reader.
@@ -123,12 +126,13 @@ async def rg(
     read_bytes = cache_aware_bound_bytes(read_bytes)
     if read_stream is not None:
         read_stream = cache_aware_bound_stream(read_stream)
-    fl = FlagView(flags, spec=SPECS["rg"])
+    fl = FlagView(opts.flags, spec=SPECS["rg"])
     pattern, never_match = await resolve_pattern(
         texts, fl, read_bytes, "rg: usage: rg [flags] pattern [path]")
     f = parse_flags(fl, never_match)
 
     if paths:
+        mounts = opts.ns.mounts if opts.ns is not None else None
         mount_prefix = mount_prefix_of(paths[0].virtual,
                                        paths[0].resource_path)
         rd = mount_parent_readdir(

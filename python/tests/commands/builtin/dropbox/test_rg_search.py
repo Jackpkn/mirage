@@ -112,7 +112,7 @@ async def test_narrowed_run_forces_filename_labels(harness, index):
     narrow, generic = harness
     narrow.return_value = ([spec("/data/a.txt")], True)
     await rg(make_accessor(), [scope()], ['needle'], CommandOpts(index=index))
-    assert generic.await_args.args[2].get("H") is True
+    assert generic.await_args.args[2].flags.get("H") is True
 
 
 @pytest.mark.asyncio
@@ -121,7 +121,7 @@ async def test_dash_upper_i_suppression_survives_narrowing(harness, index):
     narrow.return_value = ([spec("/data/a.txt")], True)
     await rg(make_accessor(), [scope()], ['needle'],
              CommandOpts(index=index, flags={'args_I': True}))
-    assert "H" not in generic.await_args.args[2]
+    assert "H" not in generic.await_args.args[2].flags
 
 
 @pytest.mark.asyncio
@@ -129,7 +129,7 @@ async def test_walk_fallback_leaves_flags_alone(harness, index):
     narrow, generic = harness
     narrow.return_value = ([scope()], False)
     await rg(make_accessor(), [scope()], ['needle'], CommandOpts(index=index))
-    assert "H" not in generic.await_args.args[2]
+    assert "H" not in generic.await_args.args[2].flags
 
 
 @pytest.mark.asyncio

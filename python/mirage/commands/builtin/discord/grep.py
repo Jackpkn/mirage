@@ -122,7 +122,7 @@ async def grep(accessor: DiscordAccessor, paths: list[PathSpec],
     out, io = await generic_grep(
         resolved,
         texts,
-        opts.flags,
+        opts,
         readdir=bound_op(_readdir, accessor, opts.index),
         stat=bound_op(_stat, accessor, opts.index),
         read_bytes=bound_op(discord_read, accessor, opts.index),
