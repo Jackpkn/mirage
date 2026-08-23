@@ -18,7 +18,7 @@ from opendal.exceptions import NotFound
 
 from mirage.accessor.nextcloud import NextcloudAccessor
 from mirage.cache.index import NULL_INDEX, IndexCacheStore
-from mirage.core.nextcloud.stat import stat
+from mirage.core.nextcloud.du.walk import stat_or_null
 from mirage.types import FileType, PathSpec
 
 logger = logging.getLogger(__name__)
@@ -35,10 +35,7 @@ async def entries(
         accessor (NextcloudAccessor): Nextcloud accessor.
         path (PathSpec): target path.
     """
-    try:
-        info = await stat(accessor, path, index=index)
-    except FileNotFoundError:
-        info = None
+    info = await stat_or_null(accessor, path, index=index)
     if info is not None and info.type != FileType.DIRECTORY:
         return [], info.size or 0
     pfx = path.mount_path.strip("/")

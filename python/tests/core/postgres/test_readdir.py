@@ -62,17 +62,20 @@ async def test_readdir_root_lists_database_json_and_schemas(accessor, index):
 
 @pytest.mark.asyncio
 async def test_readdir_schema_lists_kinds(accessor, index):
-    result = await readdir(
-        accessor,
-        PathSpec(resource_path="public",
-                 virtual="/public",
-                 directory="/public"), index)
+    with patch("mirage.core.postgres.readdir.client") as mc:
+        mc.list_schemas = AsyncMock(return_value=["public"])
+        result = await readdir(
+            accessor,
+            PathSpec(resource_path="public",
+                     virtual="/public",
+                     directory="/public"), index)
     assert result == ["/public/tables", "/public/views"]
 
 
 @pytest.mark.asyncio
 async def test_readdir_tables_kind_lists_tables(accessor, index):
     with patch("mirage.core.postgres.readdir.client") as mc:
+        mc.list_schemas = AsyncMock(return_value=["public"])
         mc.list_tables = AsyncMock(return_value=["users", "orders"])
         result = await readdir(
             accessor,
@@ -86,6 +89,7 @@ async def test_readdir_tables_kind_lists_tables(accessor, index):
 @pytest.mark.asyncio
 async def test_readdir_views_kind_unions_views_and_matviews(accessor, index):
     with patch("mirage.core.postgres.readdir.client") as mc:
+        mc.list_schemas = AsyncMock(return_value=["public"])
         mc.list_views = AsyncMock(return_value=["customer_360"])
         mc.list_matviews = AsyncMock(return_value=["daily_revenue"])
         result = await readdir(
@@ -99,11 +103,13 @@ async def test_readdir_views_kind_unions_views_and_matviews(accessor, index):
 
 @pytest.mark.asyncio
 async def test_readdir_entity_lists_schema_and_rows(accessor, index):
-    result = await readdir(
-        accessor,
-        PathSpec(resource_path="public/tables/users",
-                 virtual="/public/tables/users",
-                 directory="/public/tables/users"), index)
+    with patch("mirage.core.postgres.readdir.client") as mc:
+        mc.list_tables = AsyncMock(return_value=["users"])
+        result = await readdir(
+            accessor,
+            PathSpec(resource_path="public/tables/users",
+                     virtual="/public/tables/users",
+                     directory="/public/tables/users"), index)
     assert result == [
         "/public/tables/users/schema.json",
         "/public/tables/users/semantic.json",
@@ -113,11 +119,14 @@ async def test_readdir_entity_lists_schema_and_rows(accessor, index):
 
 @pytest.mark.asyncio
 async def test_readdir_view_entity_lists_schema_and_rows(accessor, index):
-    result = await readdir(
-        accessor,
-        PathSpec(resource_path="analytics/views/daily_revenue",
-                 virtual="/analytics/views/daily_revenue",
-                 directory="/analytics/views/daily_revenue"), index)
+    with patch("mirage.core.postgres.readdir.client") as mc:
+        mc.list_views = AsyncMock(return_value=["daily_revenue"])
+        mc.list_matviews = AsyncMock(return_value=[])
+        result = await readdir(
+            accessor,
+            PathSpec(resource_path="analytics/views/daily_revenue",
+                     virtual="/analytics/views/daily_revenue",
+                     directory="/analytics/views/daily_revenue"), index)
     assert result == [
         "/analytics/views/daily_revenue/schema.json",
         "/analytics/views/daily_revenue/semantic.json",
@@ -148,3 +157,40 @@ async def test_readdir_caches_root_listing(accessor, index):
             index)
     assert first == second
     assert mock_list_schemas.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_readdir_unknown_schema_raises(accessor, index):
+    with patch("mirage.core.postgres.readdir.client") as mc:
+        mc.list_schemas = AsyncMock(return_value=["public"])
+        with pytest.raises(FileNotFoundError):
+            await readdir(
+                accessor,
+                PathSpec(resource_path="nope.txt",
+                         virtual="/nope.txt",
+                         directory="/nope.txt"), index)
+
+
+@pytest.mark.asyncio
+async def test_readdir_kind_under_unknown_schema_raises(accessor, index):
+    with patch("mirage.core.postgres.readdir.client") as mc:
+        mc.list_schemas = AsyncMock(return_value=["public"])
+        mc.list_tables = AsyncMock(return_value=[])
+        with pytest.raises(FileNotFoundError):
+            await readdir(
+                accessor,
+                PathSpec(resource_path="nope/tables",
+                         virtual="/nope/tables",
+                         directory="/nope/tables"), index)
+
+
+@pytest.mark.asyncio
+async def test_readdir_unknown_entity_raises(accessor, index):
+    with patch("mirage.core.postgres.readdir.client") as mc:
+        mc.list_tables = AsyncMock(return_value=["users"])
+        with pytest.raises(FileNotFoundError):
+            await readdir(
+                accessor,
+                PathSpec(resource_path="public/tables/ghost",
+                         virtual="/public/tables/ghost",
+                         directory="/public/tables/ghost"), index)
