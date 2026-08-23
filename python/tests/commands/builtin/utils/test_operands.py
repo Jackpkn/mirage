@@ -31,7 +31,9 @@ def _stat_over(files: dict[str, bytes], dirs: set[str] | None = None):
             return FileStat(name=path.virtual, type=FileType.DIRECTORY)
         if path.virtual not in files:
             raise FileNotFoundError(path.virtual)
-        return FileStat(name=path.virtual, size=len(files[path.virtual]))
+        return FileStat(type=FileType.FILE,
+                        name=path.virtual,
+                        size=len(files[path.virtual]))
 
     return stat
 

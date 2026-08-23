@@ -3,7 +3,7 @@ import pytest
 from mirage.commands.builtin.generic.cut import cut
 from mirage.commands.builtin.generic.file import file_cmd
 from mirage.commands.builtin.generic.stat import stat as generic_stat
-from mirage.types import FileStat, FileType, PathSpec
+from mirage.types import ContentType, FileStat, FileType, PathSpec
 
 
 def _spec(path: str) -> PathSpec:
@@ -118,7 +118,8 @@ async def test_stat_default_format():
         return FileStat(name=path.virtual,
                         size=42,
                         modified="2026-01-01",
-                        type=FileType.TEXT)
+                        type=FileType.FILE,
+                        content=ContentType.TEXT)
 
     out, _ = await generic_stat([_spec("a.txt")], stat_fn=stat_fn)
     assert b"name=a.txt" in out
@@ -130,7 +131,10 @@ async def test_stat_default_format():
 async def test_stat_custom_format():
 
     async def stat_fn(path):
-        return FileStat(name="foo", size=10, type=FileType.TEXT)
+        return FileStat(name="foo",
+                        size=10,
+                        type=FileType.FILE,
+                        content=ContentType.TEXT)
 
     out, _ = await generic_stat([_spec("foo")], stat_fn=stat_fn, c="%n=%s")
     assert out == b"foo=10\n"
@@ -150,7 +154,7 @@ async def test_stat_format_F_directory():
 async def test_stat_format_F_regular():
 
     async def stat_fn(path):
-        return FileStat(name="x", type=FileType.JSON)
+        return FileStat(name="x", type=FileType.FILE, content=ContentType.JSON)
 
     out, _ = await generic_stat([_spec("x")], stat_fn=stat_fn, f="%F")
     assert out == b"regular file\n"
@@ -160,7 +164,10 @@ async def test_stat_format_F_regular():
 async def test_stat_multiple_paths():
 
     async def stat_fn(path):
-        return FileStat(name=path.virtual, size=1, type=FileType.TEXT)
+        return FileStat(name=path.virtual,
+                        size=1,
+                        type=FileType.FILE,
+                        content=ContentType.TEXT)
 
     out, _ = await generic_stat([_spec("a"), _spec("b")],
                                 stat_fn=stat_fn,
@@ -172,7 +179,7 @@ async def test_stat_multiple_paths():
 async def test_stat_missing_operand():
 
     async def stat_fn(path):
-        return FileStat(name="x")
+        return FileStat(type=FileType.FILE, name="x")
 
     with pytest.raises(ValueError, match="missing operand"):
         await generic_stat([], stat_fn=stat_fn)
@@ -182,7 +189,10 @@ async def test_stat_missing_operand():
 async def test_file_text_default():
 
     async def stat_fn(path):
-        return FileStat(name=path.virtual, size=5, type=FileType.TEXT)
+        return FileStat(name=path.virtual,
+                        size=5,
+                        type=FileType.FILE,
+                        content=ContentType.TEXT)
 
     async def read_bytes(path):
         return b"hello"
@@ -198,7 +208,10 @@ async def test_file_text_default():
 async def test_file_brief_mode():
 
     async def stat_fn(path):
-        return FileStat(name="f", size=4, type=FileType.TEXT)
+        return FileStat(name="f",
+                        size=4,
+                        type=FileType.FILE,
+                        content=ContentType.TEXT)
 
     async def read_bytes(path):
         return b"abcd"
@@ -214,7 +227,10 @@ async def test_file_brief_mode():
 async def test_file_mime_mode():
 
     async def stat_fn(path):
-        return FileStat(name="f.json", size=10, type=FileType.JSON)
+        return FileStat(name="f.json",
+                        size=10,
+                        type=FileType.FILE,
+                        content=ContentType.JSON)
 
     async def read_bytes(path):
         return b'{"a": 1}'
@@ -245,7 +261,10 @@ async def test_file_directory():
 async def test_file_multiple_paths():
 
     async def stat_fn(path):
-        return FileStat(name=path.virtual, size=3, type=FileType.TEXT)
+        return FileStat(name=path.virtual,
+                        size=3,
+                        type=FileType.FILE,
+                        content=ContentType.TEXT)
 
     async def read_bytes(path):
         return b"abc"
@@ -262,7 +281,10 @@ async def test_file_multiple_paths():
 async def test_file_read_error_logs_and_falls_back():
 
     async def stat_fn(path):
-        return FileStat(name="x", size=1, type=FileType.TEXT)
+        return FileStat(name="x",
+                        size=1,
+                        type=FileType.FILE,
+                        content=ContentType.TEXT)
 
     async def read_bytes(path):
         raise OSError("denied")
@@ -277,7 +299,7 @@ async def test_file_read_error_logs_and_falls_back():
 async def test_file_missing_operand():
 
     async def stat_fn(path):
-        return FileStat(name="x")
+        return FileStat(type=FileType.FILE, name="x")
 
     async def read_bytes(path):
         return b""

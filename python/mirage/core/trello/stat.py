@@ -15,22 +15,22 @@
 from mirage.core.hierarchy.stat import entry_stat, make_stat
 from mirage.core.trello.readdir import readdir
 from mirage.core.trello.scope import detect_scope
-from mirage.types import FileType
+from mirage.types import ContentType, FileType
 
 stat = make_stat(
     detect_scope,
     readdir,
     entry_stats={
         "workspace": entry_stat("workspace_id", FileType.DIRECTORY),
-        "workspace_json": entry_stat("workspace_id", FileType.JSON),
+        "workspace_json": entry_stat("workspace_id", ContentType.JSON),
         "board": entry_stat("board_id", FileType.DIRECTORY),
-        "board_json": entry_stat("board_id", FileType.JSON),
-        "member": entry_stat("member_id", FileType.JSON),
-        "label": entry_stat("label_id", FileType.JSON),
+        "board_json": entry_stat("board_id", ContentType.JSON),
+        "member": entry_stat("member_id", ContentType.JSON),
+        "label": entry_stat("label_id", ContentType.JSON),
         "list": entry_stat("list_id", FileType.DIRECTORY),
-        "list_json": entry_stat("list_id", FileType.JSON),
+        "list_json": entry_stat("list_id", ContentType.JSON),
         "card": entry_stat("card_id", FileType.DIRECTORY),
-        "card_json": entry_stat("card_id", FileType.JSON),
-        "comments_jsonl": entry_stat("card_id", FileType.TEXT),
+        "card_json": entry_stat("card_id", ContentType.JSON),
+        "comments_jsonl": entry_stat("card_id", ContentType.TEXT),
     },
 )

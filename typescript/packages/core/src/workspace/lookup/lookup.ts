@@ -13,15 +13,14 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { headVisible, nodeVisible } from '../../policy/match/allow.ts'
-import { GRAMMAR_BUILTINS, type ShellBuiltin } from '../../shell/types.ts'
 import type { MountRegistry } from '../mount/registry.ts'
 import type { Session } from '../session/session.ts'
 import { NAMESPACE_COMMANDS, SHELL_NAMES } from './constants.ts'
 import { Consumer } from './types.ts'
 
 /**
- * What the session's allow list says about a tool word. A role without a
- * list installs everything; a role with one installs only the names its
+ * What the session's allow list says about a tool word. A profile without a
+ * list installs everything; a profile with one installs only the names its
  * patterns start with (`headVisible`). This is the raw answer;
  * `commandVisible` and `layers` add the words that are never subjects.
  */
@@ -30,20 +29,23 @@ export function listed(name: string, session: Session): boolean {
 }
 
 /**
- * Whether a command word is a tool the allow lists govern. Three kinds
- * of word are never subjects: the shell's own grammar (the grammar-tier
- * builtins), a path being executed (its lines are each checked as they
- * run), and the agent's own function where the function is what runs,
- * which in this shell means a name no builtin owns (builtins shadow
- * functions), so a function cannot resurrect a hidden builtin.
+ * Whether a command word is a tool the allow lists govern. Every named
+ * command is a subject, shell builtins included: an allow list stating
+ * `cat` leaves no `echo` and no `cd`. Two kinds of word are not,
+ * because neither is a name the list could hold: a path being executed
+ * (its lines are each checked as they run), and the agent's own
+ * function where the function is what runs, which in this shell means
+ * a name no builtin owns (builtins shadow functions), so a function
+ * cannot resurrect a hidden builtin, and its body's lines each pass
+ * this gate themselves.
  */
 export function isTool(name: string, session: Session): boolean {
-  if (GRAMMAR_BUILTINS.has(name as ShellBuiltin) || name.includes('/')) return false
+  if (name.includes('/')) return false
   return !(name in session.functions && !SHELL_NAMES.has(name))
 }
 
 /**
- * Whether a session can see a command word at all. The role's allow list
+ * Whether a session can see a command word at all. The profile's allow list
  * (`commands.allow`) decides: a tool name no pattern of it starts with
  * is not installed for the session, so it is 127 at the chokepoint and
  * absent from every enumerator; a word that is not a tool (`isTool`) is
@@ -58,7 +60,7 @@ export function commandVisible(name: string, session: Session): boolean {
  *
  * `commandVisible` answers for a word, which is all dispatch needs: a CLI
  * is routed by its head word and the verbs after it are the program's own
- * operand. Discovery needs the finer answer, because a role allowed
+ * operand. Discovery needs the finer answer, because a profile allowed
  * `linear issue list` is not allowed `linear team`, and a manual that
  * lists the second is advertising a line that cannot run. `isTool`'s
  * exemptions have nothing to say here: shell grammar and functions are
@@ -72,18 +74,18 @@ export function verbVisible(head: string, path: readonly string[], session: Sess
 /**
  * Yield every layer holding the name, most-preferred first.
  *
- * The one place precedence is written down: `route` reads the first
- * yield and `routeAll` reads all of them. Lazy on purpose, so the winner
+ * The one place precedence is written down: `lookup` reads the first
+ * yield and `lookupAll` reads all of them. Lazy on purpose, so the winner
  * costs exactly what it did before the split (a name an installed CLI
  * answers never reaches the mount lookup). The document's visibility
  * filter lives here too, so `type`, `which`, `command -v` and dispatch
- * agree on what a session can see: an unlisted tool word yields nothing
- * (grammar and functions are not subjects, and a function named after a
- * hidden builtin is as unreachable as the builtin).
+ * agree on what a session can see: an unlisted word yields nothing,
+ * builtins included (only functions are not subjects, and a function
+ * named after a hidden builtin is as unreachable as the builtin).
  */
 function* layers(name: string, session: Session, registry: MountRegistry): Generator<Consumer> {
   const installed = listed(name, session)
-  if (SHELL_NAMES.has(name) && (installed || GRAMMAR_BUILTINS.has(name as ShellBuiltin))) {
+  if (SHELL_NAMES.has(name) && installed) {
     yield Consumer.SESSION
   }
   if (installed && NAMESPACE_COMMANDS.has(name)) yield Consumer.NAMESPACE
@@ -118,13 +120,13 @@ function* layers(name: string, session: Session, registry: MountRegistry): Gener
  * command executes (docker vs vfs), never whether the name exists.
  *
  * This is the winner only. A name can sit in more than one layer at once
- * (a function shadowing an installed CLI); `routeAll` reports them all,
+ * (a function shadowing an installed CLI); `lookupAll` reports them all,
  * which is what `type -a` prints. Reading one item off the generator is
  * what makes that sharing free: the lookups after the winner never run,
  * so dispatch pays exactly what it did when this was a chain of `if`
  * arms.
  */
-export function route(name: string, session: Session, registry: MountRegistry): Consumer {
+export function lookup(name: string, session: Session, registry: MountRegistry): Consumer {
   for (const consumer of layers(name, session, registry)) return consumer
   return Consumer.UNKNOWN
 }
@@ -132,10 +134,10 @@ export function route(name: string, session: Session, registry: MountRegistry): 
 /**
  * Every layer holding the name, most-preferred first.
  *
- * Empty when nothing holds it, where `route` says UNKNOWN. Only
+ * Empty when nothing holds it, where `lookup` says UNKNOWN. Only
  * introspection (`type -a`, `which -a`) needs this: dispatch runs the
  * winner and never asks what it shadowed.
  */
-export function routeAll(name: string, session: Session, registry: MountRegistry): Consumer[] {
+export function lookupAll(name: string, session: Session, registry: MountRegistry): Consumer[] {
   return [...layers(name, session, registry)]
 }

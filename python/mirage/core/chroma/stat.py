@@ -1,7 +1,7 @@
 from mirage.cache.index import NULL_INDEX, IndexCacheStore
 from mirage.core.chroma.path import resolve_path
 from mirage.core.chroma.sizes import ensure_dir_sizes
-from mirage.types import FileStat, FileType, PathSpec
+from mirage.types import ContentType, FileStat, FileType, PathSpec
 from mirage.utils.path import parent
 
 
@@ -34,7 +34,8 @@ async def stat(accessor,
             entry = refreshed.entry
     return FileStat(
         name=entry.name,
-        type=FileType.TEXT,
+        type=FileType.FILE,
+        content=ContentType.TEXT,
         size=entry.size,
         modified=entry.extra.get("updated_at"),
         fingerprint=None,

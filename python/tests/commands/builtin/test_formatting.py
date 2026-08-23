@@ -16,7 +16,7 @@ import pytest
 
 from mirage.commands.builtin.utils.formatting import (_human_size,
                                                       format_ls_long)
-from mirage.types import FileStat, FileType
+from mirage.types import ContentType, FileStat, FileType
 
 # Read off GNU coreutils 9.7 (`ls -lh` on a file of each size, debian
 # stable-slim). The three rows that matter are the ones a plain
@@ -60,7 +60,8 @@ def test_human_size_matches_gnu(size: int, expected: str):
 def test_format_ls_long_regular_file():
     stat = FileStat(name="file.txt",
                     size=5,
-                    type=FileType.TEXT,
+                    type=FileType.FILE,
+                    content=ContentType.TEXT,
                     modified="2026-01-01T00:00:00Z")
     [line] = format_ls_long([stat])
     assert line == "-rw-r--r-- 1 user user 5 Jan  1 00:00 file.txt"
@@ -80,11 +81,13 @@ def test_format_ls_long_size_alignment():
     stats = [
         FileStat(name="a",
                  size=5,
-                 type=FileType.TEXT,
+                 type=FileType.FILE,
+                 content=ContentType.TEXT,
                  modified="2026-01-01T00:00:00Z"),
         FileStat(name="b",
                  size=1234,
-                 type=FileType.TEXT,
+                 type=FileType.FILE,
+                 content=ContentType.TEXT,
                  modified="2026-01-01T00:00:00Z"),
     ]
     lines = format_ls_long(stats)
@@ -95,7 +98,8 @@ def test_format_ls_long_size_alignment():
 def test_format_ls_long_human_size():
     stat = FileStat(name="big",
                     size=2048,
-                    type=FileType.TEXT,
+                    type=FileType.FILE,
+                    content=ContentType.TEXT,
                     modified="2026-01-01T00:00:00Z")
     [line] = format_ls_long([stat], human=True)
     assert "2.0K" in line
@@ -103,6 +107,10 @@ def test_format_ls_long_human_size():
 
 
 def test_format_ls_long_missing_modified():
-    stat = FileStat(name="x", size=0, type=FileType.TEXT, modified=None)
+    stat = FileStat(name="x",
+                    size=0,
+                    type=FileType.FILE,
+                    content=ContentType.TEXT,
+                    modified=None)
     [line] = format_ls_long([stat])
     assert "Jan  1 00:00" in line

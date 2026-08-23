@@ -16,10 +16,10 @@ import asyncio
 import copy
 from collections.abc import Mapping
 
-from mirage.policy.types import AdmissionRules, Decision
+from mirage.policy.profile import CompiledProfile
+from mirage.policy.types import AdmissionRules, Decision, ProfileScript
 from mirage.types import MountMode
 from mirage.workspace.record.types import CAS_MAX_RETRIES, generation_of
-from mirage.workspace.session.permissions import CompiledProfile
 from mirage.workspace.session.ram import RAMSessionStore
 from mirage.workspace.session.resolve import apply_profile, narrow
 from mirage.workspace.session.session import Session, vars_from_env
@@ -85,10 +85,10 @@ class SessionManager:
         """The admission rules one session runs under
         (SessionCommandsQuery).
 
-        The default role's rules for an id this manager does not know,
+        The default profile's rules for an id this manager does not know,
         the empty id of an unbound door included (FUSE, the host's own
         ``ws.ops``), so a door that names no session is judged like a
-        session that named no role rather than judged not at all.
+        session that named no profile rather than judged not at all.
 
         Args:
             session_id (str): the session, empty when none is bound.
@@ -98,6 +98,24 @@ class SessionManager:
             return (self._default_profile.commands
                     if self._default_profile is not None else None)
         return session.commands
+
+    def script_of(self, session_id: str) -> ProfileScript | None:
+        """The profile script one session runs under
+        (SessionScriptsQuery).
+
+        The default profile's for an id this manager does not know, the
+        same fallback ``commands_of`` makes and for the same reason: a
+        door that names no session is judged like a session that named
+        no profile.
+
+        Args:
+            session_id (str): the session, empty when none is bound.
+        """
+        session = self._sessions.get(session_id)
+        if session is None:
+            return (self._default_profile.script
+                    if self._default_profile is not None else None)
+        return session.script
 
     def decision_sessions(self) -> tuple[str, ...]:
         """Every session id holding ledger records
@@ -207,6 +225,7 @@ class SessionManager:
                     default.hidden_paths = stored.hidden_paths
                     default.hidden_vars = stored.hidden_vars
                     default.commands = stored.commands
+                    default.script = stored.script
                     # The host's standing answers are session state
                     # like cwd: dropped here, an approved line would
                     # ask again after a restart and the next flush

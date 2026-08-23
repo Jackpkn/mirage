@@ -103,7 +103,7 @@ async def test_delete_unknown_session_404():
 
 @pytest.mark.asyncio
 async def test_create_session_refuses_a_bare_mount_list():
-    # A list of prefixes used to mean "only these mounts". A role now
+    # A list of prefixes used to mean "only these mounts". A profile now
     # narrows the mounts it names and never decides whether one exists,
     # so the list would be a silent no-op that still reads like
     # confinement: the door refuses it instead.
@@ -147,7 +147,7 @@ async def test_create_session_with_mount_modes():
 
 
 @pytest.mark.asyncio
-async def test_create_session_rejects_bad_role():
+async def test_create_session_rejects_bad_profile():
     app = build_app(idle_grace_seconds=10.0)
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport,
@@ -167,7 +167,7 @@ async def test_create_session_rejects_bad_role():
 
 @pytest.mark.asyncio
 async def test_create_session_rejects_an_unknown_profile():
-    # PolicyError is not a ValueError, so naming an unknown role used to
+    # PolicyError is not a ValueError, so naming an unknown profile used to
     # escape the handler as a 500: the caller's typo read as our bug.
     app = build_app(idle_grace_seconds=10.0)
     transport = ASGITransport(app=app)

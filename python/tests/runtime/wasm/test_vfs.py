@@ -25,7 +25,7 @@ from mirage.runtime.vfs import RuntimeVFS
 from mirage.runtime.wasm.abi import FT_DIR, FT_REG, FT_SYMLINK
 from mirage.runtime.wasm.config import WasmFsConfig
 from mirage.runtime.wasm.vfs import WasmVFS
-from mirage.types import FileStat, FileType
+from mirage.types import ContentType, FileStat, FileType
 from mirage.utils.stat_view import FILE_MODE, mtime_ns
 
 # The stamp a link's own row carries, deliberately not the stamp the
@@ -92,7 +92,8 @@ class FakeVFS(RuntimeVFS):
                 return FileStat(name=path,
                                 size=len(self.files[path]),
                                 modified=self.modified,
-                                type=FileType.TEXT)
+                                type=FileType.FILE,
+                                content=ContentType.TEXT)
             # The real door answers a directory for a structure-only
             # path (a mount prefix with no backend object behind it).
             roots = {p.rstrip("/") or "/" for p in self.prefixes()}
@@ -311,7 +312,8 @@ def test_stat_reads_offsetless_stamps_as_utc():
         assert got_naive == got_aware
         assert got_naive == mtime_ns(
             FileStat(name="f",
-                     type=FileType.TEXT,
+                     type=FileType.FILE,
+                     content=ContentType.TEXT,
                      modified="2026-01-02T03:04:05"))
     finally:
         if previous is None:
@@ -334,7 +336,8 @@ def test_lstat_reports_a_link_as_a_link_sized_by_its_target():
     # that rebuilt it here from the target string reported epoch zero
     # for every link, so a no-follow utime persisted and stayed
     # invisible to the guest that wrote it.
-    assert st.mtime_ns == mtime_ns(FileStat(name="l", modified=LINK_MTIME))
+    assert st.mtime_ns == mtime_ns(
+        FileStat(name="l", type=FileType.SYMLINK, modified=LINK_MTIME))
     assert ("stat", "/data/l", {"nofollow": True}) in bridge.calls
 
 

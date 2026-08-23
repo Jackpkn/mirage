@@ -58,6 +58,7 @@ async def stat(accessor: DiskAccessor,
                     size=st.st_size,
                     modified=modified,
                     fingerprint=modified,
-                    type=guess_type(p.name),
+                    type=FileType.FILE,
+                    content=guess_type(p.name),
                     mode=st.st_mode & 0o7777,
                     atime=epoch_to_iso(st.st_atime))

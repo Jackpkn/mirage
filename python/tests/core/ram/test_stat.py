@@ -17,7 +17,7 @@ import pytest
 from mirage.accessor.ram import RAMAccessor
 from mirage.core.ram.stat import stat
 from mirage.resource.ram.store import RAMStore
-from mirage.types import FileType, PathSpec
+from mirage.types import ContentType, FileType, PathSpec
 
 
 @pytest.fixture
@@ -57,7 +57,7 @@ async def test_stat_file(accessor):
                  directory="/hello.txt"))
     assert result.name == "hello.txt"
     assert result.size == 11
-    assert result.type == FileType.TEXT
+    assert result.content == ContentType.TEXT
 
 
 @pytest.mark.asyncio
@@ -85,7 +85,7 @@ async def test_stat_json_file(accessor):
         PathSpec(resource_path="data.json",
                  virtual="/data.json",
                  directory="/data.json"))
-    assert result.type == FileType.JSON
+    assert result.content == ContentType.JSON
     assert result.size == 16
 
 
@@ -96,4 +96,4 @@ async def test_stat_image_file(accessor):
         PathSpec(resource_path="img.png",
                  virtual="/img.png",
                  directory="/img.png"))
-    assert result.type == FileType.IMAGE_PNG
+    assert result.content == ContentType.IMAGE_PNG

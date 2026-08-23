@@ -6,7 +6,7 @@ from mirage.commands.builtin.generic.cmp import cmp_cmd
 from mirage.commands.builtin.generic.md5 import md5
 from mirage.commands.builtin.generic.sha256sum import sha256sum_generic
 from mirage.commands.config import CommandOpts
-from mirage.types import FileStat, FileType, PathSpec
+from mirage.types import ContentType, FileStat, FileType, PathSpec
 
 
 def _spec(path: str) -> PathSpec:
@@ -39,7 +39,10 @@ def _make_stat(files: dict[str, bytes]):
         key = path.virtual if isinstance(path, PathSpec) else path
         if key not in files:
             raise FileNotFoundError(key)
-        return FileStat(name=key, size=len(files[key]), type=FileType.TEXT)
+        return FileStat(name=key,
+                        size=len(files[key]),
+                        type=FileType.FILE,
+                        content=ContentType.TEXT)
 
     return stat
 

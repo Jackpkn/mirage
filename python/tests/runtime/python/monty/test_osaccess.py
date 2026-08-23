@@ -18,7 +18,7 @@ import errno
 from mirage.runtime.python import MontyRuntime
 from mirage.runtime.resolver import PrefixResolver
 from mirage.runtime.types import RunArgs
-from mirage.types import FileStat, FileType
+from mirage.types import ContentType, FileStat, FileType
 from mirage.utils.errors import OperationNotSupportedError
 
 
@@ -55,7 +55,8 @@ class FakeDispatch:
             if virtual in self.files:
                 return FileStat(name=virtual,
                                 size=len(self.files[virtual]),
-                                type=FileType.TEXT,
+                                type=FileType.FILE,
+                                content=ContentType.TEXT,
                                 mode=self.stat_mode,
                                 modified=self.stat_modified), None
             raise FileNotFoundError(virtual)

@@ -23,7 +23,7 @@ from mirage.cache.index.ram import RAMIndexCacheStore
 from mirage.core.s3.readdir import readdir
 from mirage.core.s3.stat import stat
 from mirage.resource.s3 import S3Config
-from mirage.types import FileType, PathSpec
+from mirage.types import ContentType, FileType, PathSpec
 from mirage.utils.key_prefix import mount_key
 
 
@@ -69,7 +69,7 @@ class TestStatDirectoryFallback:
             result = await stat(s3_accessor, path)
             assert result.name == "file.txt"
             assert result.size == 1024
-            assert result.type == FileType.TEXT
+            assert result.content == ContentType.TEXT
 
     @pytest.mark.asyncio
     async def test_stat_directory_prefix_fallback(self, s3_accessor):
@@ -172,7 +172,7 @@ class TestStatIndexCache:
         result = await stat(s3_accessor, path, index)
         assert result.name == "file.txt"
         assert result.size == 2048
-        assert result.type == FileType.TEXT
+        assert result.content == ContentType.TEXT
 
 
 class TestReaddirIndexEntries:

@@ -17,7 +17,7 @@ import pytest
 from mirage.commands.builtin.utils.wrap import (mount_parent_readdir,
                                                 mount_parent_stat)
 from mirage.ops.types import MountView
-from mirage.types import FileStat, FileType
+from mirage.types import ContentType, FileStat, FileType
 
 
 def _mounts(descendants: tuple[str, ...] = (),
@@ -45,7 +45,10 @@ async def _listing(path):
 
 
 async def _row(path):
-    return FileStat(name="a.txt", type=FileType.TEXT, size=1)
+    return FileStat(name="a.txt",
+                    type=FileType.FILE,
+                    content=ContentType.TEXT,
+                    size=1)
 
 
 @pytest.mark.asyncio

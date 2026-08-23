@@ -42,7 +42,7 @@ interface CreateSessionBody {
    * mapping omits keeps its own mode.
    */
   mounts?: Record<string, string> | null
-  /** The role this session runs under, by name from the workspace. */
+  /** The profile this session runs under, by name from the workspace. */
   profile?: string | null
 }
 

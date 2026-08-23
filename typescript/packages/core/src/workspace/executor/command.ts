@@ -24,7 +24,7 @@ import type { MountEntry } from '../mount/mount.ts'
 import type { Namespace } from '../mount/namespace/namespace.ts'
 import { MountCommandUnsupported, type MountRegistry } from '../mount/registry.ts'
 import { makeStorageKey } from '../mount/storage.ts'
-import { Consumer, JOB_BUILTINS, route } from '../route/index.ts'
+import { Consumer, JOB_BUILTINS, lookup } from '../lookup/index.ts'
 import { type Runtime } from '../../runtime/base.ts'
 import type { PolicyDecision } from '../../runtime/policy/index.ts'
 import type { Session } from '../session/session.ts'
@@ -68,7 +68,7 @@ import { compareCodePoints } from '../../utils/sort.ts'
 
 export { ReturnSignal } from './control.ts'
 
-// One handler per JOB_BUILTINS member; route already narrowed the name.
+// One handler per JOB_BUILTINS member; lookup already narrowed the name.
 const JOB_HANDLERS: Record<
   string,
   (
@@ -182,7 +182,7 @@ export async function handleCommand(
   // backend work. The admission policies (fired upstream at the
   // dispatch chokepoint) stay ahead of this so
   // protective refusals keep their specific messages.
-  if (route(cmdName, session, registry) === Consumer.UNKNOWN) {
+  if (lookup(cmdName, session, registry) === Consumer.UNKNOWN) {
     const errBytes = new TextEncoder().encode(`${cmdName}: command not found\n`)
     return [
       null,

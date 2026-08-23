@@ -3,7 +3,7 @@ from types import SimpleNamespace
 import pytest
 
 from mirage.commands.builtin.generic.tree import tree
-from mirage.types import FileStat, FileType, PathSpec
+from mirage.types import ContentType, FileStat, FileType, PathSpec
 
 
 def _spec(path: str) -> PathSpec:
@@ -13,7 +13,10 @@ def _spec(path: str) -> PathSpec:
 
 
 def _file(name: str, size: int = 0) -> FileStat:
-    return FileStat(name=name, size=size, type=FileType.TEXT)
+    return FileStat(name=name,
+                    size=size,
+                    type=FileType.FILE,
+                    content=ContentType.TEXT)
 
 
 def _dir(name: str) -> FileStat:
@@ -467,15 +470,24 @@ async def test_tree_marks_a_subdirectory_it_may_not_open_and_exits_2():
         "/r":
         FileStat(name="r", type=FileType.DIRECTORY),
         "/r/a":
-        FileStat(name="a", type=FileType.TEXT, size=1),
+        FileStat(name="a",
+                 type=FileType.FILE,
+                 content=ContentType.TEXT,
+                 size=1),
         "/r/locked":
         FileStat(name="locked", type=FileType.DIRECTORY),
         "/r/locked/y":
-        FileStat(name="y", type=FileType.TEXT, size=1),
+        FileStat(name="y",
+                 type=FileType.FILE,
+                 content=ContentType.TEXT,
+                 size=1),
         "/r/sub":
         FileStat(name="sub", type=FileType.DIRECTORY),
         "/r/sub/y":
-        FileStat(name="y", type=FileType.TEXT, size=1),
+        FileStat(name="y",
+                 type=FileType.FILE,
+                 content=ContentType.TEXT,
+                 size=1),
     })
 
     async def guarded(p: PathSpec, index=None) -> list[str]:

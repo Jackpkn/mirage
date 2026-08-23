@@ -13,12 +13,13 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 from mirage.policy.match import Outcome
-from mirage.policy.types import AdmissionRules, CommandRule, Decision, Scope
-from mirage.workspace.session.serialize import (commands_from_dict,
-                                                commands_to_dict,
-                                                decision_from_dict,
-                                                decision_to_dict,
-                                                rule_from_dict, rule_to_dict)
+from mirage.policy.types import (AdmissionRules, CommandRule, Decision,
+                                 ProfileScript, Scope)
+from mirage.runtime.types import ScriptSource
+
+from mirage.workspace.session.serialize import (  # isort: skip
+    commands_from_dict, commands_to_dict, decision_from_dict, decision_to_dict,
+    rule_from_dict, rule_to_dict, script_from_dict, script_to_dict)
 
 
 def test_rule_round_trips_and_writes_mount_only_when_set():
@@ -47,6 +48,20 @@ def test_commands_round_trips_and_keeps_an_absent_allow_list():
     assert data["allow"] is None
     assert commands_from_dict(data) == unlisted
     assert commands_from_dict({}) == AdmissionRules()
+
+
+def test_script_round_trips_with_its_language_and_engine():
+    entry = ProfileScript(profile="release",
+                          script=ScriptSource("None\n", language="js"),
+                          runtime="quickjs")
+    data = script_to_dict(entry)
+    assert data == {
+        "profile": "release",
+        "language": "js",
+        "source": "None\n",
+        "runtime": "quickjs",
+    }
+    assert script_from_dict(data) == entry
 
 
 def test_decision_round_trips_with_defaults():

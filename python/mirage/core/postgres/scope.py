@@ -14,7 +14,7 @@
 
 from mirage.core.hierarchy.codec import Codec
 from mirage.core.hierarchy.scope import Scope, Slot, make_detect_scope
-from mirage.types import FileType
+from mirage.types import ContentType
 
 ENTITY_FILES = ("schema.json", "semantic.json", "rows.jsonl")
 
@@ -39,7 +39,7 @@ SCOPES = (
     Scope(kind="database_json",
           segments=("database.json", ),
           leaf=True,
-          filetype=FileType.JSON,
+          filetype=ContentType.JSON,
           probed=False),
     Scope(kind="schema", segments=(Slot("schema"), )),
     Scope(kind="kind", segments=(Slot("schema"), Slot("kind", KIND))),
@@ -49,17 +49,17 @@ SCOPES = (
           segments=(Slot("schema"), Slot("kind",
                                          KIND), Slot("entity"), "schema.json"),
           leaf=True,
-          filetype=FileType.JSON),
+          filetype=ContentType.JSON),
     Scope(kind="entity_semantic",
           segments=(Slot("schema"), Slot("kind", KIND), Slot("entity"),
                     "semantic.json"),
           leaf=True,
-          filetype=FileType.JSON),
+          filetype=ContentType.JSON),
     Scope(kind="entity_rows",
           segments=(Slot("schema"), Slot("kind",
                                          KIND), Slot("entity"), "rows.jsonl"),
           leaf=True,
-          filetype=FileType.TEXT),
+          filetype=ContentType.TEXT),
 )
 
 detect_scope = make_detect_scope(SCOPES)

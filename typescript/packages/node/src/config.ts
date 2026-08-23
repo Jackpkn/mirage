@@ -33,10 +33,7 @@ import {
   parseMountMode,
 } from '@struktoai/mirage-core/types'
 import { snakeToCamel } from '@struktoai/mirage-core/utils/normalize'
-import {
-  parseSessionProfile,
-  type SessionProfile,
-} from '@struktoai/mirage-core/workspace/session/permissions'
+import { parseSessionProfile, type SessionProfile } from '@struktoai/mirage-core/policy/profile'
 import type { WorkspaceStateStore } from '@struktoai/mirage-core/workspace/store/base'
 import { RAMWorkspaceStateStore } from '@struktoai/mirage-core/workspace/store/ram'
 import { S3WorkspaceStateStore } from '@struktoai/mirage-core/workspace/store/s3'
@@ -336,7 +333,7 @@ function validateConfigKeys(raw: Record<string, unknown>): void {
       rejectUnknownKeys(block, CLI_KEYS, `cli \`${name}\``)
     }
   }
-  // The roles validate through the core's own validators (the same
+  // The profiles validate through the core's own validators (the same
   // shape the SDK and REST take), so a typo like `path:` on a deny rule
   // fails here rather than widening the rule.
   if (raw.profiles !== undefined && raw.profiles !== null) {
@@ -417,14 +414,40 @@ function parseLimits(
 /**
  * Validate the `profiles:` block: every entry through the core profile
  * validator, so a misspelled field is a load error rather than a
- * first-session one. A role is the whole document it runs under, so
+ * first-session one. A profile is the whole document it runs under, so
  * there is no chain to resolve here.
  */
 function parseProfiles(raw: unknown): Record<string, SessionProfile> {
   if (!isPlainObject(raw)) throw new Error('config `profiles` must be a mapping')
   const out: Record<string, SessionProfile> = {}
   for (const [name, block] of Object.entries(raw)) {
+    // A path-form script stays the string the config wrote: the check
+    // door validates shape only, and runs before `absolutizeScripts`
+    // has rebased the path onto the config file's directory, so reading
+    // it here would resolve against the process cwd. The workspace door
+    // (`toWorkspaceOptions`) loads it, the python loader's split.
     out[name] = parseSessionProfile(block, `profile \`${name}\``)
+  }
+  return out
+}
+
+/**
+ * Load each profile's path-form script into a ScriptSource.
+ *
+ * By this door the path is absolute for a file config (the check door
+ * rebased it onto the config file's directory); an object config's
+ * relative path resolves against the process cwd, as in Python. Code
+ * that passes a loaded ScriptSource is left alone.
+ */
+function loadProfileScripts(
+  profiles: Record<string, SessionProfile>,
+): Record<string, SessionProfile> {
+  const out: Record<string, SessionProfile> = {}
+  for (const [name, profile] of Object.entries(profiles)) {
+    out[name] =
+      typeof profile.script === 'string'
+        ? { ...profile, script: loadScriptSource(profile.script) }
+        : profile
   }
   return out
 }
@@ -578,9 +601,9 @@ export interface WorkspaceConfigRaw {
   clis?: Record<string, CLIBlock> | null
   runtimes?: (string | Record<string, unknown>)[] | null
   policy?: string | null
-  /** The roles (`profiles:`); every entry validated by parseProfiles. */
+  /** The profiles (`profiles:`); every entry validated by parseProfiles. */
   profiles?: unknown
-  /** Which role shapes a session created without one. */
+  /** Which profile shapes a session created without one. */
   profile?: unknown
   mode?: string
   consistency?: string
@@ -677,6 +700,11 @@ function absolutizeScripts(raw: Record<string, unknown>, base: string): void {
   if (isPlainObject(raw.mounts)) {
     for (const block of Object.values(raw.mounts)) {
       if (isPlainObject(block)) absolutizeCodeRef(block, 'resource', base)
+    }
+  }
+  if (isPlainObject(raw.profiles)) {
+    for (const block of Object.values(raw.profiles)) {
+      if (isPlainObject(block)) absolutizeScriptKey(block, base)
     }
   }
 }
@@ -880,7 +908,7 @@ export async function configToWorkspaceArgs(cfg: WorkspaceConfigRaw): Promise<Wo
         ? { policy: loadScriptSource(cfg.policy) }
         : {}),
       ...(cfg.profiles !== undefined && cfg.profiles !== null
-        ? { profiles: parseProfiles(cfg.profiles) }
+        ? { profiles: loadProfileScripts(parseProfiles(cfg.profiles)) }
         : {}),
       ...(cfg.profile !== undefined && cfg.profile !== null
         ? { profile: cfg.profile as string }

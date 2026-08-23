@@ -17,7 +17,7 @@ import pytest
 from mirage.commands.cli.builtin.git.discover import discover
 from mirage.commands.cli.builtin.git.errors import (  # yapf: disable
     InvalidGitFileError, NotARepositoryError, NoWorkingDirectoryError)
-from mirage.types import FileStat, FileType
+from mirage.types import ContentType, FileStat, FileType
 
 
 def _stat_over(present: set[str], files: set[str] = frozenset()):
@@ -30,7 +30,9 @@ def _stat_over(present: set[str], files: set[str] = frozenset()):
 
     async def stat_path(path: str) -> FileStat | None:
         if path in files:
-            return FileStat(name=path.rsplit("/", 1)[-1], type=FileType.TEXT)
+            return FileStat(name=path.rsplit("/", 1)[-1],
+                            type=FileType.FILE,
+                            content=ContentType.TEXT)
         if path not in present:
             return None
         return FileStat(name=path.rsplit("/", 1)[-1], type=FileType.DIRECTORY)

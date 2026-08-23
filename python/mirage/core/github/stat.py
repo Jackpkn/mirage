@@ -59,7 +59,8 @@ async def stat(
         return FileStat(
             name=result.entry.name,
             size=result.entry.size,
-            type=guess_type(result.entry.name),
+            type=FileType.FILE,
+            content=guess_type(result.entry.name),
             fingerprint=result.entry.id,
             extra={"sha": result.entry.id},
         )

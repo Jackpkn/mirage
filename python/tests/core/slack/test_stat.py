@@ -20,7 +20,7 @@ from mirage.accessor.slack import SlackAccessor
 from mirage.cache.index import IndexEntry, RAMIndexCacheStore
 from mirage.core.slack.config import SlackConfig
 from mirage.core.slack.stat import stat
-from mirage.types import FileType, PathSpec
+from mirage.types import ContentType, FileType, PathSpec
 
 
 @pytest.fixture
@@ -94,7 +94,7 @@ async def test_stat_user(accessor, index):
                                  virtual="/users/alice__U001.json",
                                  directory="/users/alice__U001.json"),
                         index=index)
-    assert result.type == FileType.JSON
+    assert result.content == ContentType.JSON
     assert result.extra["user_id"] == "U001"
 
 
@@ -117,7 +117,7 @@ async def test_stat_jsonl(accessor, index):
                  virtual="/channels/general__C001/2023-11-14/chat.jsonl",
                  directory="/channels/general__C001/2023-11-14/chat.jsonl"),
         index=index)
-    assert result.type == FileType.TEXT
+    assert result.content == ContentType.TEXT
     assert result.name == "chat.jsonl"
     assert result.size == 42
 
@@ -235,7 +235,7 @@ async def test_stat_file_blob_pdf(accessor, index):
             directory="/channels/general__C001/2026-04-10/files/report__F1.pdf"
         ),
         index=index)
-    assert s.type == FileType.PDF
+    assert s.content == ContentType.PDF
     assert s.size == 4096
 
 
@@ -265,7 +265,7 @@ async def test_stat_file_blob_text(accessor, index):
             directory="/channels/general__C001/2026-04-10/files/notes__F2.txt"
         ),
         index=index)
-    assert s.type == FileType.TEXT
+    assert s.content == ContentType.TEXT
 
 
 @pytest.mark.asyncio
@@ -293,7 +293,7 @@ async def test_stat_file_blob_unknown_mimetype_is_binary(accessor, index):
             virtual="/channels/general__C001/2026-04-10/files/data__F3.bin",
             directory="/channels/general__C001/2026-04-10/files/data__F3.bin"),
         index=index)
-    assert s.type == FileType.BINARY
+    assert s.content == ContentType.BINARY
     assert s.size == 2048
 
 

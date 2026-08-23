@@ -23,7 +23,7 @@ from mirage.core.hierarchy.stat import make_stat
 from mirage.core.postgres import client
 from mirage.core.postgres.readdir import readdir
 from mirage.core.postgres.scope import detect_scope
-from mirage.types import FileStat, FileType, PathSpec
+from mirage.types import ContentType, FileStat, FileType, PathSpec
 from mirage.utils.errors import enoent
 
 
@@ -89,7 +89,8 @@ async def _rows_stat(accessor: PostgresAccessor, match: ScopeMatch,
     # see the CLAUDE.md FUSE rules). The storage size remains in extra.
     return FileStat(
         name="rows.jsonl",
-        type=FileType.TEXT,
+        type=FileType.FILE,
+        content=ContentType.TEXT,
         size=None,
         fingerprint=fingerprint,
         extra={

@@ -19,7 +19,8 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
 from mirage.policy.constants import DEFAULT_ASK_REASON, DEFAULT_DENY_REASON
-from mirage.policy.types import AdmissionRules, CommandRule
+from mirage.policy.types import AdmissionRules, CommandRule, ProfileScript
+from mirage.runtime.types import ScriptSource
 from mirage.types import HiddenPaths, HiddenVars, MountMode, parse_mount_mode
 from mirage.utils.hidden import is_glob
 
@@ -238,7 +239,7 @@ def _patterns(v: Any) -> Any:
 
 
 class PathsBlock(BaseModel):
-    """``paths:`` of a role, or of one of its mount sections.
+    """``paths:`` of a profile, or of one of its mount sections.
 
     ``hide`` entries use the document's one grammar: an entry with
     ``*``, ``?`` or ``[`` is a pattern, anything else an exact path
@@ -248,7 +249,7 @@ class PathsBlock(BaseModel):
     ``show`` arrives with its enforcement.
 
     Args:
-        hide (tuple[str, ...]): what the role makes nonexistent.
+        hide (tuple[str, ...]): what the profile makes nonexistent.
     """
 
     model_config = _DOC
@@ -275,21 +276,23 @@ class VarsBlock(BaseModel):
 
 
 class CommandsBlock(BaseModel):
-    """``commands:`` at the top level of a role.
+    """``commands:`` at the top level of a profile.
 
-    ``allow`` lists the command patterns the role installs; a name none
+    ``allow`` lists the command patterns the profile installs; a name none
     of them starts with is not a command for the session (127, absent
     from ``type`` / ``which`` / ``man``), a line no pattern covers is
-    refused. The shell's own grammar builtins and the agent's functions
-    are not subjects. ``ask`` rules are admitted only with a host
-    approval; ``deny`` rules refuse with a reason. A bare string in
+    refused. Shell builtins are subjects like everything else: a list
+    stating only ``cat`` leaves no ``echo`` and no ``cd``. The agent's
+    own functions are the one exemption, safe because every line of a
+    body passes the gate itself. ``ask`` rules are admitted only with a
+    host approval; ``deny`` rules refuse with a reason. A bare string in
     either is one command pattern with the default reason.
 
     Args:
-        allow (tuple[str, ...] | None): the role's allow patterns;
+        allow (tuple[str, ...] | None): the profile's allow patterns;
             None (unstated) installs everything.
         ask (tuple[CommandRule, ...]): what needs sign-off, in order.
-        deny (tuple[CommandRule, ...]): the role's refusals, in order.
+        deny (tuple[CommandRule, ...]): the profile's refusals, in order.
     """
 
     model_config = _DOC
@@ -315,7 +318,7 @@ class CommandsBlock(BaseModel):
 
     @model_validator(mode="after")
     def _v_absolute(self) -> "CommandsBlock":
-        # This block is the role's own, never a mount section's, so a
+        # This block is the profile's own, never a mount section's, so a
         # rule's paths are virtual paths: absolute, or name patterns.
         for verb, rules in (("ask", self.ask), ("deny", self.deny)):
             for rule in rules:
@@ -355,14 +358,14 @@ class MountCommandsBlock(BaseModel):
 
 
 class ProfileMount(BaseModel):
-    """One mount's entry in a profile: what this role may do there.
+    """One mount's entry in a profile: what this profile may do there.
 
     Every field is optional, and an omitted mount is not a refusal: the
     mount is reachable at the mode it declares in the workspace's
-    ``mounts:``, which a role can only weaken (``weaker_mode``), never
-    raise. A role that must not touch a mount hides it, so the mount
+    ``mounts:``, which a profile can only weaken (``weaker_mode``), never
+    raise. A profile that must not touch a mount hides it, so the mount
     reads as nonexistent rather than as a permission error naming
-    something the role cannot see.
+    something the profile cannot see.
 
     ``commands`` here carries ask and deny only: an allow list installs
     a command for the whole session, and visibility is answered before
@@ -372,7 +375,7 @@ class ProfileMount(BaseModel):
     commit`` names no path).
 
     Args:
-        mode (MountMode | None): this role's mode for the mount; None
+        mode (MountMode | None): this profile's mode for the mount; None
             keeps the mount's own.
         commands (MountCommandsBlock | None): ask and deny rules for
             lines working inside it.
@@ -396,24 +399,33 @@ class ProfileMount(BaseModel):
 
 
 class SessionProfile(BaseModel):
-    """One role: the whole permission document a session runs under.
+    """One profile: the whole permission document a session runs under.
 
     A session is created from exactly one of these, and it is the only
     place permissions are written. There is no workspace-wide block and
     no mount-owned block above it, so reading this object is reading
-    everything the role may do; what a role does not say, it does not
+    everything the profile may do; what a profile does not say, it does not
     restrict. Configuration, not enforcement: the resolver compiles it
     onto the session's narrowing fields and the doors keep enforcing.
     Deliberately not named a View, which per the view convention is a
     door-scoped handle an agent holds, while a profile is what the
     embedder uses to *define* one. Frozen so two agents with the same
-    role share one object and neither can bend the other's view.
+    profile share one object and neither can bend the other's view.
 
     Two rules decide a line against it, and they are the whole law.
     A rule naming no path is read by verb (deny before ask before
     allow), wherever it is written. A rule carrying paths, and every
     hide, is read by anchor depth: the deeper entry wins, ties break by
     verb.
+
+    A profile may also state a ``script``: a program evaluated at the
+    admission gate for every command a session under the profile runs.
+    It is handed the command's facts as one ``ctx`` value and its last
+    expression answers allow (no opinion), deny or ask, so it expresses
+    the conditions a declarative rule cannot; like every policy, it can
+    only restrict, never grant past a deny. The document is optional
+    beside it: a profile stating only ``script`` and ``runtime`` hides
+    nothing, and the script is its whole admission policy.
 
     Args:
         cwd (str | None): the session's working directory at creation.
@@ -423,10 +435,20 @@ class SessionProfile(BaseModel):
             keyed by prefix: a mode, ask and deny rules for lines
             working inside the mount, and hides under it. A mount the
             mapping omits keeps its own mode and gains no rules.
-        paths (PathsBlock | None): the role's hides, absolute.
-        vars (VarsBlock | None): the role's hidden variables.
-        commands (CommandsBlock | None): the role's allow list and its
+        paths (PathsBlock | None): the profile's hides, absolute.
+        vars (VarsBlock | None): the profile's hidden variables.
+        commands (CommandsBlock | None): the profile's allow list and its
             ask / deny rules, absolute paths.
+        script (ScriptSource | str | None): the profile's per-command
+            program. A ``str`` is the path form the config door accepts
+            and loads; code passes the loaded ``ScriptSource``, so a path
+            still spelled as a string when the workspace reads it means
+            the config layer never saw it, and is refused there.
+        runtime (str | None): the engine ``script`` runs on, required
+            beside it: there is no default engine, because an engine the
+            operator never chose should not be the one their policy runs
+            on. Meaningless without a script, so stating one there is an
+            error rather than a knob that does nothing.
     """
 
     model_config = _DOC
@@ -437,6 +459,8 @@ class SessionProfile(BaseModel):
     paths: PathsBlock | None = None
     vars: VarsBlock | None = None
     commands: CommandsBlock | None = None
+    script: ScriptSource | str | None = None
+    runtime: str | None = None
 
     @field_validator("mounts", mode="before")
     @classmethod
@@ -457,6 +481,23 @@ class SessionProfile(BaseModel):
                 "mode": entry
             } if isinstance(entry, str) else entry)
         return entries
+
+    @model_validator(mode="after")
+    def _v_script_runtime(self) -> "SessionProfile":
+        # The pair travels together: a script must say what runs it (no
+        # default engine exists to guess one), and a runtime without a
+        # script names an engine for a program that does not exist.
+        if self.script is None:
+            if self.runtime is not None:
+                raise ValueError(
+                    "runtime names the engine a script runs on, and this "
+                    "profile states no script")
+            return self
+        if self.runtime is None:
+            raise ValueError(
+                "a profile script states the engine it runs on; set runtime "
+                "beside script")
+        return self
 
     @model_validator(mode="after")
     def _v_absolute(self) -> "SessionProfile":
@@ -486,12 +527,14 @@ class CompiledProfile:
     Args:
         mount_modes (dict[str, MountMode] | None): the mode each mount
             section states; a mount absent from the map keeps its own.
-        hidden_paths (HiddenPaths | None): every path the role hides.
-        hidden_vars (HiddenVars | None): the role's hidden variables.
+        hidden_paths (HiddenPaths | None): every path the profile hides.
+        hidden_vars (HiddenVars | None): the profile's hidden variables.
         env (dict[str, str] | None): variables to seed and export.
         cwd (str | None): the working directory to start in.
-        commands (AdmissionRules | None): the role's admission rules,
+        commands (AdmissionRules | None): the profile's admission rules,
             its own and its mount sections' in one list.
+        script (ProfileScript | None): the profile's per-command script,
+            which ``ScriptPolicy`` evaluates at the admission gate.
     """
 
     mount_modes: dict[str, MountMode] | None
@@ -500,3 +543,4 @@ class CompiledProfile:
     env: dict[str, str] | None
     cwd: str | None
     commands: AdmissionRules | None = None
+    script: ProfileScript | None = None

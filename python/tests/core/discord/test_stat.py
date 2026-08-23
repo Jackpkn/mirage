@@ -17,7 +17,7 @@ import pytest
 from mirage.core.discord.entry import snowflake_to_iso
 from mirage.core.discord.render import history_jsonl_bytes
 from mirage.core.discord.stat import stat
-from mirage.types import FileType, PathSpec
+from mirage.types import ContentType, FileType, PathSpec
 from tests.core.discord.conftest import CHANNELS, DAY, MESSAGES, SEALED_DAY
 
 pytestmark = pytest.mark.asyncio
@@ -74,7 +74,7 @@ async def test_stat_channel(api, accessor, index):
 async def test_stat_member(api, accessor, index):
     row = await stat(accessor, spec(f"/{GUILD_DIR}/members/alice__U001.json"),
                      index)
-    assert row.type is FileType.JSON
+    assert row.content is ContentType.JSON
     assert row.extra["user_id"] == "U001"
     assert row.size is not None and row.size > 0
 
@@ -102,7 +102,7 @@ async def test_stat_day_under_bogus_channel_is_enoent(api, accessor, index):
 
 async def test_stat_chat_jsonl(api, accessor, index):
     row = await stat(accessor, spec(f"/{CHANNEL}/{DAY}/chat.jsonl"), index)
-    assert row.type is FileType.TEXT
+    assert row.content is ContentType.TEXT
     assert row.size == len(history_jsonl_bytes(MESSAGES))
 
 
@@ -112,7 +112,7 @@ async def test_stat_chat_jsonl_sealed_day_has_unknown_size(
     # date dir; the file still stats, with the size left unknown.
     row = await stat(accessor, spec(f"/{CHANNEL}/{SEALED_DAY}/chat.jsonl"),
                      index)
-    assert row.type is FileType.TEXT
+    assert row.content is ContentType.TEXT
     assert row.size is None
 
 

@@ -22,14 +22,15 @@ from mirage.core.mem0.client import get_memory
 from mirage.core.mem0.readdir import readdir
 from mirage.core.mem0.scope import detect_scope
 from mirage.core.render.json import json_bytes
-from mirage.types import FileStat, FileType, PathSpec
+from mirage.types import ContentType, FileStat, FileType, PathSpec
 
 
 def _file_stat(memory: dict[str, Any]) -> FileStat:
     body = json_bytes(memory)
     return FileStat(
         name=f"{memory['id']}.json",
-        type=FileType.JSON,
+        type=FileType.FILE,
+        content=ContentType.JSON,
         size=len(body),
         modified=memory.get("updated_at") or memory.get("created_at"),
         extra={

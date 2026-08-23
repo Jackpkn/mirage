@@ -15,14 +15,14 @@
 import pytest
 
 from mirage.core.chroma.stat import stat, stat_name
-from mirage.types import FileType, PathSpec
+from mirage.types import ContentType, FileType, PathSpec
 from mirage.utils.key_prefix import mount_key
 
 
 @pytest.mark.asyncio
 async def test_stat_file(chroma_accessor, chroma_index, quickstart_path):
     result = await stat(chroma_accessor, quickstart_path, chroma_index)
-    assert result.type == FileType.TEXT
+    assert result.content == ContentType.TEXT
     assert result.name == "quickstart"
     assert result.size == 12
     assert result.modified == "2026-02-01T00:00:00Z"

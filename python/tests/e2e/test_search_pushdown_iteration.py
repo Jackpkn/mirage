@@ -18,7 +18,7 @@ import pytest
 
 from mirage import MountMode, Workspace
 from mirage.resource.slack import SlackConfig, SlackResource
-from mirage.types import FileStat, FileType
+from mirage.types import ContentType, FileStat, FileType
 
 DAYS = [f"2026-{m:02d}-{d:02d}" for m in range(1, 5) for d in range(1, 16)]
 
@@ -38,8 +38,10 @@ async def test_slack_grep_glob_expanded_to_60_paths_reads_those_60_days():
     expanded = " ".join(f"/slack/channels/general__C1/{day}/chat.jsonl"
                         for day in DAYS)
     read = AsyncMock(return_value=b'{"text":"hello there"}\n')
-    stat = AsyncMock(
-        return_value=FileStat(name="chat.jsonl", type=FileType.TEXT, size=23))
+    stat = AsyncMock(return_value=FileStat(name="chat.jsonl",
+                                           type=FileType.FILE,
+                                           content=ContentType.TEXT,
+                                           size=23))
     try:
         with patch(
                 "mirage.commands.builtin.slack.grep.search_messages",

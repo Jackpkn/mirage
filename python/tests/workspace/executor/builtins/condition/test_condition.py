@@ -18,7 +18,7 @@ import pytest
 
 from mirage import MountMode, RAMResource, Workspace
 from mirage.io import IOResult
-from mirage.types import FileStat, FileType, PathSpec
+from mirage.types import ContentType, FileStat, FileType, PathSpec
 from mirage.workspace.executor.builtins.condition import CondContext, eval_flat
 from mirage.workspace.mount.namespace import Namespace
 from mirage.workspace.session import Session
@@ -77,7 +77,10 @@ class _UnknownSizeDispatch:
     async def __call__(self, op: str, scope: PathSpec,
                        **kwargs: Any) -> tuple[Any, IOResult]:
         if op == "stat":
-            stat = FileStat(name="x", size=None, type=FileType.TEXT)
+            stat = FileStat(name="x",
+                            size=None,
+                            type=FileType.FILE,
+                            content=ContentType.TEXT)
             return stat, IOResult()
         if op == "read":
             return self.content, IOResult()

@@ -25,8 +25,8 @@ from mirage.workspace.cli.types import CLIInstall
 from mirage.workspace.executor.builtins.man.types import ManEntry
 from mirage.workspace.executor.builtins.shared import Result
 from mirage.workspace.executor.builtins.types import BuiltinCall
+from mirage.workspace.lookup import command_visible, verb_visible
 from mirage.workspace.mount.registry import DEV_PREFIX, MountRegistry
-from mirage.workspace.route import command_visible, verb_visible
 from mirage.workspace.session import Session
 from mirage.workspace.types import ExecutionNode
 
@@ -183,7 +183,7 @@ def _render_cli_entry(head: str, verbs: Sequence[str], spec: CLISpec,
     the page for one leaf.
 
     The allow list narrows a tree the same way it narrows the bare
-    listing, one level down: a role holding ``linear issue list`` reads
+    listing, one level down: a profile holding ``linear issue list`` reads
     a manual for that verb and nothing else, because a row it cannot
     run is an advertisement for a 126.
 

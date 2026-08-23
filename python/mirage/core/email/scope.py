@@ -14,7 +14,7 @@
 
 from mirage.core.hierarchy.codec import DATE, Codec
 from mirage.core.hierarchy.scope import Scope, Slot, make_detect_scope
-from mirage.types import FileType
+from mirage.types import ContentType
 
 EMAIL_JSON = Codec(suffix=".email.json")
 
@@ -32,7 +32,7 @@ SCOPES = (
     Scope(kind="message",
           segments=_DAY + (Slot("message", EMAIL_JSON, id_key="uid"), ),
           leaf=True,
-          filetype=FileType.JSON),
+          filetype=ContentType.JSON),
     Scope(kind="attachment_dir",
           segments=_DAY + (Slot("attachment_dir", id_key="uid"), )),
     Scope(kind="attachment",

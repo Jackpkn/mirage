@@ -23,7 +23,7 @@ from mirage.commands.builtin.generic.rg import rg as generic_rg
 from mirage.commands.builtin.generic.tail import tail_multi
 from mirage.commands.builtin.generic.wc import format_multi
 from mirage.io.types import materialize
-from mirage.types import FileStat, FileType, PathSpec
+from mirage.types import ContentType, FileStat, FileType, PathSpec
 from mirage.utils.key_prefix import mount_key
 
 _PAYLOAD = b"alpha\nbeta\n"
@@ -53,7 +53,10 @@ async def _warm_manager() -> CacheManager:
 
 
 async def _stat(path) -> FileStat:
-    return FileStat(name="a.txt", type=FileType.TEXT, size=len(_PAYLOAD))
+    return FileStat(name="a.txt",
+                    type=FileType.FILE,
+                    content=ContentType.TEXT,
+                    size=len(_PAYLOAD))
 
 
 async def _readdir(path) -> list[str]:

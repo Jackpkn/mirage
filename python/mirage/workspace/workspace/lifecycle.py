@@ -141,6 +141,7 @@ async def close_async(ws: "Workspace", ) -> None:
         await ws.job_table.kill_all()
         await ws.job_table.close_consoles()
         drain_tasks = list(ws._cache._drain_tasks.values())
+        await ws._script_policy.close()
         for line_runtime in ws._runtimes.entries:
             await line_runtime.close()
         resources = {

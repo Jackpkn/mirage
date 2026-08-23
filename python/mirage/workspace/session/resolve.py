@@ -15,7 +15,7 @@
 from collections.abc import Mapping
 
 from mirage.policy.errors import PolicyError
-from mirage.policy.types import AdmissionRules, CommandRule
+from mirage.policy.types import AdmissionRules, CommandRule, ProfileScript
 from mirage.types import HiddenPaths, MountMode, weaker_mode
 from mirage.utils.hidden import classify_paths, classify_vars
 from mirage.workspace.session.constants import DEFAULT_PROFILE
@@ -23,7 +23,7 @@ from mirage.workspace.session.session import Session, vars_from_env
 from mirage.workspace.session.shell_dirs import set_cwd
 from mirage.workspace.session.validate import check_rules
 
-from mirage.workspace.session.permissions import (  # isort: skip
+from mirage.policy.profile import (  # isort: skip
     CommandsBlock, CompiledProfile, MountCommandsBlock, PathsBlock,
     ProfileMount, SessionProfile, VarsBlock)
 
@@ -32,22 +32,22 @@ def resolve_profile(
     profiles: Mapping[str, SessionProfile],
     profile: str | SessionProfile | None,
 ) -> SessionProfile | None:
-    """The role a session is created from.
+    """The profile a session is created from.
 
     A name is looked up as written; a profile object is itself; None
     picks ``profiles.default`` when the workspace defines one and
     leaves the session unrestricted otherwise. There is no inheritance
-    chain: a role is the whole document, so nothing is assembled from
+    chain: a profile is the whole document, so nothing is assembled from
     somewhere else before it is read.
 
     Args:
         profiles (Mapping[str, SessionProfile]): the workspace's named
-            roles.
+            profiles.
         profile (str | SessionProfile | None): what ``create_session``
             was given.
 
     Raises:
-        PolicyError: the name is not a role the workspace defines.
+        PolicyError: the name is not a profile the workspace defines.
     """
     if profile is None:
         return profiles.get(DEFAULT_PROFILE)
@@ -63,7 +63,7 @@ def _union_hide(a: PathsBlock | VarsBlock | None,
     """Every entry of both blocks, first spelling wins, order kept.
 
     Args:
-        a (PathsBlock | VarsBlock | None): the role's block.
+        a (PathsBlock | VarsBlock | None): the profile's block.
         b (PathsBlock | VarsBlock | None): the inline block.
     """
     out: list[str] = []
@@ -78,8 +78,8 @@ def refuse_allow(inline: CommandsBlock | None) -> None:
     """Refuse an allow list in an inline document.
 
     The refusal belongs to *where the document was written*, not to
-    whether a role happened to resolve, so both paths into
-    ``with_inline`` run it: a workspace with no default role must not
+    whether a profile happened to resolve, so both paths into
+    ``with_inline`` run it: a workspace with no default profile must not
     quietly accept a list a workspace with one refuses.
 
     Args:
@@ -95,15 +95,15 @@ def refuse_allow(inline: CommandsBlock | None) -> None:
 
 def _add_commands(base: CommandsBlock | None,
                   inline: CommandsBlock | None) -> CommandsBlock | None:
-    """The role's commands block with the inline document's rules added.
+    """The profile's commands block with the inline document's rules added.
 
     An inline document may only restrict, so it carries ask and deny
     rules and never an allow list: a list there would install a command
-    the role does not have, which is the one thing a per-call document
+    the profile does not have, which is the one thing a per-call document
     must not do.
 
     Args:
-        base (CommandsBlock | None): the role's block.
+        base (CommandsBlock | None): the profile's block.
         inline (CommandsBlock | None): what ``create_session`` added.
 
     Raises:
@@ -125,7 +125,7 @@ def _add_mount(base: ProfileMount | None,
     mode, both rule lists, both hide lists.
 
     Args:
-        base (ProfileMount | None): the role's entry, None when it
+        base (ProfileMount | None): the profile's entry, None when it
             names no settings for this mount.
         inline (ProfileMount | None): the inline entry.
     """
@@ -163,22 +163,31 @@ def _rules_of(block: MountCommandsBlock | None,
 
 def with_inline(base: SessionProfile | None,
                 inline: SessionProfile | None) -> SessionProfile | None:
-    """A role with the inline document of one ``create_session`` added.
+    """A profile with the inline document of one ``create_session`` added.
 
     The one rule about combining two documents: an inline document may
-    add ask and deny rules and hides, never an allow list, and that
-    holds even when there is no role to add to. Modes take the weaker
-    of the two, ``cwd`` and ``env`` are the inline document's when it
-    states them (they are session presets, not permissions). Either
-    side None returns the other unchanged.
+    add ask and deny rules and hides, never an allow list and never a
+    script, and that holds even when there is no profile to add to.
+    Modes take the weaker of the two, ``cwd`` and ``env`` are the
+    inline document's when it states them (they are session presets,
+    not permissions). Either side None returns the other unchanged; the
+    profile's script survives the merge, since the inline document can
+    only add rules beside it.
 
     Args:
-        base (SessionProfile | None): the resolved role.
+        base (SessionProfile | None): the resolved profile.
         inline (SessionProfile | None): what ``create_session`` added.
+
+    Raises:
+        PolicyError: the inline document states an allow list or a
+            script.
     """
     if inline is None:
         return base
     refuse_allow(inline.commands)
+    if inline.script is not None:
+        raise PolicyError("inline permissions may add ask and deny rules, "
+                          "not a script; state one on the profile")
     if base is None:
         return inline
     hide_paths = _union_hide(base.paths, inline.paths)
@@ -205,6 +214,8 @@ def with_inline(base: SessionProfile | None,
         vars=(VarsBlock(hide=hide_vars) if
               (base.vars is not None or inline.vars is not None) else None),
         commands=_add_commands(base.commands, inline.commands),
+        script=base.script,
+        runtime=base.runtime,
     )
 
 
@@ -264,15 +275,15 @@ def _scoped_rules(rules: tuple[CommandRule, ...],
 
 
 def compile_commands(profile: SessionProfile) -> AdmissionRules | None:
-    """A role's admission rules: its own, plus every mount entry's,
-    in one list; None when the role states none.
+    """A profile's admission rules: its own, plus every mount entry's,
+    in one list; None when the profile states none.
 
     Mount rules come first so the entry closest to the data speaks
     first when several rules match at the same anchor depth and only
     the message differs.
 
     Args:
-        profile (SessionProfile): the resolved role.
+        profile (SessionProfile): the resolved profile.
     """
     ask: list[CommandRule] = []
     deny: list[CommandRule] = []
@@ -291,13 +302,13 @@ def compile_commands(profile: SessionProfile) -> AdmissionRules | None:
 
 
 def _hidden(profile: SessionProfile) -> HiddenPaths | None:
-    """Every path the role hides: its own entries, and each mount
+    """Every path the profile hides: its own entries, and each mount
     entry's anchored to the mount it was written under, since the set
     is one list for the whole session and nothing in it remembers which
     section an entry came from (:func:`_anchored`).
 
     Args:
-        profile (SessionProfile): the resolved role.
+        profile (SessionProfile): the resolved profile.
     """
     entries: list[str] = []
     if profile.paths is not None:
@@ -311,12 +322,12 @@ def _hidden(profile: SessionProfile) -> HiddenPaths | None:
 def _modes(profile: SessionProfile) -> dict[str, MountMode] | None:
     """The mode each mount section states, None when none does.
 
-    A mount the role does not name is absent from the map and keeps
+    A mount the profile does not name is absent from the map and keeps
     the mode it declares in the workspace's ``mounts:``; the map only
     narrows, it never grants.
 
     Args:
-        profile (SessionProfile): the resolved role.
+        profile (SessionProfile): the resolved profile.
     """
     modes = {
         prefix: entry.mode
@@ -326,13 +337,46 @@ def _modes(profile: SessionProfile) -> dict[str, MountMode] | None:
     return modes or None
 
 
-def compile_profile(effective: SessionProfile | None) -> CompiledProfile:
-    """The session fields a role compiles to.
+def compile_script(effective: SessionProfile,
+                   name: str) -> ProfileScript | None:
+    """The profile's per-command script, compiled onto the session.
 
     Args:
-        effective (SessionProfile | None): the resolved role with any
+        effective (SessionProfile): the resolved profile.
+        name (str): the profile's name, empty for a document passed
+            without one; what the script reads as ``ctx["profile"]``.
+
+    Raises:
+        PolicyError: the script is still a path, which means it reached
+            the workspace without passing the config door that loads
+            one.
+    """
+    if effective.script is None:
+        return None
+    if isinstance(effective.script, str):
+        raise PolicyError(
+            f"profile {name!r} names a script by path "
+            f"({effective.script!r}); only the config door loads one, pass "
+            f"ScriptSource in code")
+    # The validator refuses a script without a runtime, so this narrows
+    # a fact already established.
+    assert effective.runtime is not None
+    return ProfileScript(profile=name,
+                         script=effective.script,
+                         runtime=effective.runtime)
+
+
+def compile_profile(effective: SessionProfile | None,
+                    name: str = "") -> CompiledProfile:
+    """The session fields a profile compiles to.
+
+    Args:
+        effective (SessionProfile | None): the resolved profile with any
             inline document already added; None is an unrestricted
             session.
+        name (str): the profile's name, empty for a document passed
+            without one; carried onto its script for ``ctx["profile"]``
+            and for refusals to print.
     """
     if effective is None:
         return CompiledProfile(mount_modes=None,
@@ -351,33 +395,36 @@ def compile_profile(effective: SessionProfile | None) -> CompiledProfile:
         env=dict(effective.env) if effective.env is not None else None,
         cwd=effective.cwd,
         commands=commands,
+        script=compile_script(effective, name),
     )
 
 
 def narrow(session: Session, compiled: CompiledProfile) -> None:
-    """Stamp a compiled role's narrowing onto a session.
+    """Stamp a compiled profile's narrowing onto a session.
 
-    The four fields no shell line can edit: the per-mount modes, hidden
-    paths, hidden variables, the admission rules. Applied at creation
+    The five fields no shell line can edit: the per-mount modes, hidden
+    paths, hidden variables, the admission rules, the profile's
+    script. Applied at creation
     and again whenever a stored record could carry a stale copy (the
     default session after hydration), so the document, not the store,
     is what an agent runs under.
 
     Args:
         session (Session): the session to narrow.
-        compiled (CompiledProfile): the effective role.
+        compiled (CompiledProfile): the effective profile.
     """
     session.mount_modes = (dict(compiled.mount_modes)
                            if compiled.mount_modes is not None else None)
     session.hidden_paths = compiled.hidden_paths
     session.hidden_vars = compiled.hidden_vars
     session.commands = compiled.commands
+    session.script = compiled.script
 
 
 def apply_profile(session: Session, compiled: CompiledProfile) -> None:
-    """Narrow a fresh session and seed its scratch state from the role.
+    """Narrow a fresh session and seed its scratch state from the profile.
 
-    A role's env is a *process* environment, the same shape
+    A profile's env is a *process* environment, the same shape
     ``ws.env = {...}`` speaks, so every name in it is exported: seeding
     them plain left ``$TOKEN`` expanding while every command, CLI and
     guest runtime in the profiled session saw nothing, since all three
@@ -388,7 +435,7 @@ def apply_profile(session: Session, compiled: CompiledProfile) -> None:
 
     Args:
         session (Session): the session just created.
-        compiled (CompiledProfile): the effective role.
+        compiled (CompiledProfile): the effective profile.
     """
     narrow(session, compiled)
     if compiled.env:

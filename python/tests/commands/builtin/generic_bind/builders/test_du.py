@@ -40,7 +40,9 @@ def _ops(max_du_entries: int | None = None) -> CommandIO:
         if virtual in TREE:
             return FileStat(name=virtual, type=FileType.DIRECTORY)
         if virtual in SIZES:
-            return FileStat(name=virtual, size=SIZES[virtual])
+            return FileStat(type=FileType.FILE,
+                            name=virtual,
+                            size=SIZES[virtual])
         raise FileNotFoundError(virtual)
 
     async def read_bytes(_accessor, _path, _index=None):

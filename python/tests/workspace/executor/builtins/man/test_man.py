@@ -244,7 +244,7 @@ def test_handle_man_lists_only_the_verbs_the_allow_list_reaches():
     assert "issue" in top
     assert "team" not in top
     # The same narrowing one level down, where the pattern names the
-    # only leaf the role holds.
+    # only leaf the profile holds.
     inner = asyncio.run(handle_man(["linear", "issue"], reg,
                                    session))[0].decode()
     assert "create" in inner

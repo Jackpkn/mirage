@@ -16,7 +16,9 @@ from collections.abc import Mapping
 from typing import Any
 
 from mirage.policy.match import Outcome
-from mirage.policy.types import AdmissionRules, CommandRule, Decision, Scope
+from mirage.policy.types import (AdmissionRules, CommandRule, Decision,
+                                 ProfileScript, Scope)
+from mirage.runtime.types import ScriptSource
 
 
 def rule_to_dict(rule: CommandRule) -> dict[str, Any]:
@@ -71,6 +73,32 @@ def commands_from_dict(data: Mapping[str, Any]) -> AdmissionRules:
         allow=tuple(allow) if allow is not None else None,
         ask=tuple(rule_from_dict(r) for r in data.get("ask", ())),
         deny=tuple(rule_from_dict(r) for r in data.get("deny", ())))
+
+
+def script_to_dict(entry: ProfileScript) -> dict[str, Any]:
+    """A session's profile script as the record stores it.
+
+    Args:
+        entry (ProfileScript): the compiled script entry.
+    """
+    return {
+        "profile": entry.profile,
+        "language": entry.script.language,
+        "source": entry.script.source,
+        "runtime": entry.runtime,
+    }
+
+
+def script_from_dict(data: Mapping[str, Any]) -> ProfileScript:
+    """A session's profile script read back from a record.
+
+    Args:
+        data (Mapping[str, Any]): what ``script_to_dict`` wrote.
+    """
+    return ProfileScript(profile=data.get("profile", ""),
+                         script=ScriptSource(data["source"],
+                                             language=data["language"]),
+                         runtime=data["runtime"])
 
 
 def decision_to_dict(record: Decision) -> dict[str, Any]:

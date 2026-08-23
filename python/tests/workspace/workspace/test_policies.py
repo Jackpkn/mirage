@@ -21,16 +21,17 @@ from mirage.commands.builtin.utils.limit import LimitExceededError
 from mirage.io import IOResult
 from mirage.policy import (CommandRule, ExecuteResultContext, OpsContext,
                            OpsResultContext, PolicyError)
+from mirage.policy.profile import SessionProfile
 from mirage.resource.ram import RAMResource
+from mirage.runtime.types import ScriptSource
 from mirage.types import Limit, MountMode, OnExceed
-from mirage.workspace.session import SessionProfile
 
-from mirage.workspace.session.permissions import (  # isort: skip
+from mirage.policy.profile import (  # isort: skip
     CommandsBlock, PathsBlock)
 
 
-def _role(**blocks) -> dict[str, SessionProfile]:
-    """The workspace's default role, spelled as one document.
+def _profile(**blocks) -> dict[str, SessionProfile]:
+    """The workspace's default profile, spelled as one document.
 
     Permissions live in exactly one place now, so what these tests used
     to pass as `permissions=` is `profiles.default`, which shapes the
@@ -52,7 +53,7 @@ async def test_workspace_guards_refuse_before_backend_io():
     ws = Workspace(
         {"/data/": RAMResource()},
         mode=MountMode.WRITE,
-        profiles=_role(commands=CommandsBlock(
+        profiles=_profile(commands=CommandsBlock(
             deny=(CommandRule(reason="production data is protected",
                               commands=("rm", ),
                               paths=("/data/prod/*", )), ))),
@@ -111,7 +112,7 @@ async def test_guards_cover_shell_builtins_and_namespace_routes():
     ws = Workspace(
         {"/data/": RAMResource()},
         mode=MountMode.WRITE,
-        profiles=_role(commands=CommandsBlock(deny=(
+        profiles=_profile(commands=CommandsBlock(deny=(
             CommandRule(reason="disabled", commands=("source", )),
             CommandRule(reason="frozen",
                         commands=("touch", ),
@@ -138,7 +139,7 @@ async def test_guards_cover_path_valued_flags():
     ws = Workspace(
         {"/data/": RAMResource()},
         mode=MountMode.WRITE,
-        profiles=_role(commands=CommandsBlock(
+        profiles=_profile(commands=CommandsBlock(
             deny=(CommandRule(reason="prod is protected",
                               commands=("shuf", ),
                               paths=("/data/prod/*", )), ))),
@@ -169,7 +170,7 @@ async def test_path_guards_hold_at_the_programmatic_door():
     ws = Workspace(
         {"/data/": RAMResource()},
         mode=MountMode.WRITE,
-        profiles=_role(commands=CommandsBlock(deny=(
+        profiles=_profile(commands=CommandsBlock(deny=(
             CommandRule(reason="prod is protected", paths=(
                 "/data/prod/*", )), ))),
     )
@@ -573,12 +574,12 @@ async def test_post_execute_sees_the_rightmost_producer():
 
 
 @pytest.mark.asyncio
-async def test_role_hides_bind_every_session_including_the_default():
+async def test_profile_hides_bind_every_session_including_the_default():
     ram = RAMResource()
     ws = Workspace({"/data/": ram},
                    mode=MountMode.WRITE,
-                   profiles=_role(paths=PathsBlock(hide=("/data/finance",
-                                                         "*.key"))))
+                   profiles=_profile(paths=PathsBlock(hide=("/data/finance",
+                                                            "*.key"))))
     try:
         await ws.execute("mkdir -p /data/finance /data/pub")
         await ws.ops.write("/data/pub/a.txt", b"a\n")
@@ -588,7 +589,7 @@ async def test_role_hides_bind_every_session_including_the_default():
         assert b"finance" not in listing.stdout
         assert b"b.key" not in listing.stdout
         assert b"a.txt" in listing.stdout
-        # ... and neither can one created later from the same role.
+        # ... and neither can one created later from the same profile.
         ws.create_session("late")
         gone = await ws.execute("cat /data/pub/b.key", session_id="late")
         assert gone.exit_code != 0
@@ -652,10 +653,232 @@ async def test_a_bare_name_under_deny_refuses_with_the_default_reason():
     # is one command name with the default reason.
     ws = Workspace({"/data/": RAMResource()},
                    mode=MountMode.WRITE,
-                   profiles=_role(commands=CommandsBlock(deny=("shred", ))))
+                   profiles=_profile(commands=CommandsBlock(deny=("shred", ))))
     try:
         result = await ws.execute("shred /data/x")
         assert result.exit_code == 126
         assert result.stderr == b"shred: policy denied: denied by policy\n"
+    finally:
+        await ws.close()
+
+
+# A per-command judge: deny cat under /data/sealed/ with a computed
+# reason, take shred to the approval door, stay silent otherwise.
+JUDGE = """\
+c = ctx['command']
+hit = False
+for p in c['paths']:
+    if p.startswith('/data/sealed/'):
+        hit = True
+verdict = None
+if c['name'] == 'cat' and hit:
+    verdict = {'deny': 'sealed by ' + ctx['profile']}
+if c['name'] == 'shred':
+    verdict = {'ask': 'sign-off'}
+verdict
+"""
+
+
+def _scripted(source: str = JUDGE,
+              runtime: str = "monty") -> dict[str, dict[str, object]]:
+    """One scripted profile named release: the per-command program and
+    nothing else, so what runs is purely the script's decision.
+
+    Args:
+        source (str): the program evaluated per command.
+        runtime (str): the engine it runs on.
+    """
+    return {
+        "release": {
+            "script": ScriptSource(source),
+            "runtime": runtime,
+        }
+    }
+
+
+@pytest.mark.asyncio
+async def test_a_profile_script_judges_each_command():
+    ws = Workspace({"/data/": RAMResource()},
+                   mode=MountMode.WRITE,
+                   profiles=_scripted())
+    try:
+        await ws.execute("mkdir -p /data/sealed && echo k > /data/sealed/k")
+        ws.create_session("s", profile="release")
+        assert (await ws.execute("echo hi", session_id="s")).exit_code == 0
+        denied = await ws.execute("cat /data/sealed/k", session_id="s")
+        assert denied.exit_code == 126
+        assert denied.stderr == b"cat: policy denied: sealed by release\n"
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_the_script_reads_resolved_paths_not_typed_words():
+    # `cd /data && cat sealed/k` names no /data/sealed word; the gate
+    # hands the script the resolved operand, so the deny still lands.
+    ws = Workspace({"/data/": RAMResource()},
+                   mode=MountMode.WRITE,
+                   profiles=_scripted())
+    try:
+        ws.create_session("s", profile="release")
+        denied = await ws.execute("cd /data && cat sealed/k", session_id="s")
+        assert denied.exit_code == 126
+        assert denied.stderr == b"cat: policy denied: sealed by release\n"
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_a_script_only_profile_installs_everything():
+    # No allow list, so nothing is hidden: a command no document names
+    # runs whenever the script stays silent on it.
+    ws = Workspace({"/data/": RAMResource()},
+                   mode=MountMode.WRITE,
+                   profiles=_scripted())
+    try:
+        await ws.execute("echo x > /data/x")
+        ws.create_session("s", profile="release")
+        assert (await ws.execute("rm /data/x", session_id="s")).exit_code == 0
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_a_document_may_ride_beside_the_script():
+    # Optional, not required: a profile stating both keeps the allow
+    # list's hiding, and the script adds its verdicts beside it.
+    profiles = _scripted()
+    profiles["release"]["commands"] = {"allow": ["ls", "cat", "echo"]}
+    ws = Workspace({"/data/": RAMResource()},
+                   mode=MountMode.WRITE,
+                   profiles=profiles)
+    try:
+        ws.create_session("s", profile="release")
+        hidden = await ws.execute("rm /data/x", session_id="s")
+        assert hidden.exit_code == 127
+        denied = await ws.execute("cat /data/sealed/k", session_id="s")
+        assert denied.exit_code == 126
+        assert denied.stderr == b"cat: policy denied: sealed by release\n"
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_an_ask_it_computed_takes_the_approval_door():
+    ws = Workspace({"/data/": RAMResource()},
+                   mode=MountMode.WRITE,
+                   profiles=_scripted())
+    try:
+        ws.create_session("s", profile="release")
+        held = await ws.execute("shred /data/x", session_id="s")
+        assert held.exit_code == 126
+        assert held.stderr is not None
+        assert held.stderr.startswith(b"shred: requires approval: sign-off")
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_a_scripted_profile_leaves_other_sessions_alone():
+    ws = Workspace({"/data/": RAMResource()},
+                   mode=MountMode.WRITE,
+                   profiles=_scripted())
+    try:
+        await ws.execute("mkdir -p /data/sealed && echo k > /data/sealed/k")
+        ws.create_session("s", profile="release")
+        read = await ws.execute("cat /data/sealed/k")
+        assert read.exit_code == 0
+        assert read.stdout == b"k\n"
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_a_scripted_default_profile_shapes_the_default_session():
+    ws = Workspace({"/data/": RAMResource()},
+                   mode=MountMode.WRITE,
+                   profiles=_scripted(),
+                   profile="release")
+    try:
+        assert (await ws.execute("echo hi")).exit_code == 0
+        denied = await ws.execute("cat /data/sealed/k")
+        assert denied.exit_code == 126
+        assert denied.stderr == b"cat: policy denied: sealed by release\n"
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_a_profile_script_runs_in_a_world_with_no_evaluator():
+    # A profile is operator configuration, so the engine that judges for
+    # it is a property of the profile. The runtime world is the ordered
+    # set that serves *agent* code: it is mutable after construction and
+    # drops entries silently when an optional dependency is missing, so
+    # an engine resolved out of it would stop working for reasons that
+    # have nothing to do with the profile.
+    ws = Workspace({"/data/": RAMResource()},
+                   mode=MountMode.WRITE,
+                   runtimes=["vfs"],
+                   profiles=_scripted())
+    try:
+        ws.create_session("s", profile="release")
+        denied = await ws.execute("cat /data/sealed/k", session_id="s")
+        assert denied.exit_code == 126
+        assert denied.stderr == b"cat: policy denied: sealed by release\n"
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_a_broken_script_fails_closed_per_command():
+    # Silence on failure would run exactly the commands the script
+    # existed to judge.
+    ws = Workspace({"/data/": RAMResource()},
+                   mode=MountMode.WRITE,
+                   profiles=_scripted(source="raise ValueError('boom')"))
+    try:
+        ws.create_session("s", profile="release")
+        refused = await ws.execute("echo hi", session_id="s")
+        assert refused.exit_code == 126
+        assert refused.stderr is not None
+        assert b"profile 'release' script failed" in refused.stderr
+        assert (await ws.execute("echo hi")).exit_code == 0
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_an_engine_that_cannot_evaluate_fails_closed():
+    ws = Workspace({"/data/": RAMResource()},
+                   mode=MountMode.WRITE,
+                   profiles=_scripted(runtime="local"))
+    try:
+        ws.create_session("s", profile="release")
+        refused = await ws.execute("echo hi", session_id="s")
+        assert refused.exit_code == 126
+        assert refused.stderr is not None
+        assert b"cannot evaluate one" in refused.stderr
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_a_profile_script_states_its_runtime():
+    with pytest.raises(ValueError, match="set runtime beside script"):
+        Workspace({"/data/": RAMResource()},
+                  mode=MountMode.WRITE,
+                  profiles={"release": {
+                      "script": ScriptSource(JUDGE)
+                  }})
+
+
+@pytest.mark.asyncio
+async def test_an_inline_document_may_not_add_a_script():
+    ws = Workspace({"/data/": RAMResource()}, mode=MountMode.WRITE)
+    try:
+        with pytest.raises(PolicyError, match="not a script"):
+            ws.create_session("s",
+                              permissions=SessionProfile(
+                                  script=ScriptSource(JUDGE), runtime="monty"))
     finally:
         await ws.close()

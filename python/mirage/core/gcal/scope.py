@@ -16,7 +16,7 @@ from mirage.core.gcal.day import valid_day
 from mirage.core.hierarchy.codec import Codec
 from mirage.core.hierarchy.scope import Scope, Slot, make_detect_scope
 from mirage.resource.gcal.event_entry import EVENT_SUFFIX
-from mirage.types import FileType
+from mirage.types import ContentType
 
 
 def is_event_name(text: str) -> bool:
@@ -50,12 +50,12 @@ SCOPES = (
     Scope(kind="calendar_json",
           segments=_CAL + ("calendar.json", ),
           leaf=True,
-          filetype=FileType.JSON),
+          filetype=ContentType.JSON),
     Scope(kind="day", segments=_DAY),
     Scope(kind="event",
           segments=_DAY + (Slot("event", EVENT_NAME), ),
           leaf=True,
-          filetype=FileType.JSON),
+          filetype=ContentType.JSON),
 )
 
 detect_scope = make_detect_scope(SCOPES)

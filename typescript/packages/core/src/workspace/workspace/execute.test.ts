@@ -90,7 +90,7 @@ describe('nested evals run in the live ambient session', () => {
   })
 
   it("cmdsub keeps the named session's hides", async () => {
-    // A nested eval runs under the same session, so what the role hides
+    // A nested eval runs under the same session, so what the profile hides
     // is as absent inside `$()` as outside it.
     const ws = await makeTwoMounts()
     ws.createSession('agent', { profile: { paths: { hide: ['/b'] } } })

@@ -27,7 +27,7 @@ import type { AskHandler, Policy } from '../../policy/index.ts'
 import type { PolicyDecision, PolicyFn } from '../../runtime/policy/index.ts'
 import type { RuntimeEntry } from '../../runtime/base.ts'
 import type { NamespaceStore } from '../mount/namespace/store.ts'
-import type { SessionProfile } from '../session/permissions.ts'
+import type { SessionProfile } from '../../policy/profile.ts'
 import type { SessionStore } from '../session/store.ts'
 import type { WorkspaceStateStore } from '../store/base.ts'
 
@@ -115,7 +115,7 @@ export interface WorkspaceOptions {
    */
   policy?: PolicyFn
   /**
-   * The roles (`profiles:` in YAML). A role is the whole permission
+   * The profiles (`profiles:` in YAML). A profile is the whole permission
    * document a session runs under, so there is no workspace-wide block
    * and no mount-owned block above it. Each is a parsed profile, not the
    * document as written: run the document through `parseSessionProfile`
@@ -127,7 +127,7 @@ export interface WorkspaceOptions {
    */
   profiles?: Readonly<Record<string, SessionProfile>> | null
   /**
-   * Which role shapes a session created without one, the workspace's own
+   * Which profile shapes a session created without one, the workspace's own
    * session included. A name this document does not define is an error.
    */
   profile?: string | null

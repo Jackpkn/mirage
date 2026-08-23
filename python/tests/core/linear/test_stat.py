@@ -26,7 +26,7 @@ from mirage.core.linear.normalize import normalize_team, to_json_bytes
 from mirage.core.linear.read import read
 from mirage.core.linear.readdir import readdir
 from mirage.core.linear.stat import stat
-from mirage.types import FileType, PathSpec
+from mirage.types import ContentType, FileType, PathSpec
 
 _COMMENTS_PATH = ("/teams/ENG__Engineering__TEAM1/issues"
                   "/ENG-123__ISSUE1/comments.jsonl")
@@ -114,7 +114,7 @@ async def test_stat_issue_json(accessor, index):
         ),
     )
     result = await stat(accessor, PathSpec.from_str_path(_ISSUE_PATH), index)
-    assert result.type == FileType.JSON
+    assert result.content == ContentType.JSON
     assert result.size == 321
     assert result.modified == "2026-04-05T00:00:00Z"
     assert result.extra["issue_id"] == "ISSUE1"
@@ -135,7 +135,7 @@ async def test_stat_comments_jsonl(accessor, index):
     )
     result = await stat(accessor, PathSpec.from_str_path(_COMMENTS_PATH),
                         index)
-    assert result.type == FileType.TEXT
+    assert result.content == ContentType.TEXT
     assert result.size == 57
     assert result.modified == "2026-04-06T00:00:00Z"
 
@@ -151,7 +151,7 @@ async def test_stat_team_json_reports_rendered_size(accessor, index,
         accessor,
         PathSpec.from_str_path("/teams/ENG__Engineering__TEAM1/team.json"),
         index)
-    assert result.type == FileType.JSON
+    assert result.content == ContentType.JSON
     assert result.size == len(to_json_bytes(normalize_team(_TEAM)))
     assert result.modified == "2026-04-05T00:00:00Z"
     assert result.extra["team_id"] == "TEAM1"

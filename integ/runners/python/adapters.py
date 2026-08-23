@@ -108,6 +108,7 @@ from mirage.resource.supabase import SupabaseConfig, SupabaseResource
 from mirage.resource.tencent import TencentConfig, TencentResource
 from mirage.resource.trello import TrelloConfig, TrelloResource
 from mirage.resource.wasabi import WasabiConfig, WasabiResource
+from mirage.runtime.types import ScriptSource
 from mirage.shell.console import JobConsole
 from mirage.shell.console.redis import RedisConsoleStore
 from mirage.shell.job_table import ConsoleFactory
@@ -2228,7 +2229,7 @@ async def build_mounts(
         built[mount["path"]] = resource
         mode = MountMode.READ if mount.get("mode") == "read" else None
         # A mount states infrastructure only: what it is, where it is,
-        # how it is served. Its permissions live in the role, under
+        # how it is served. Its permissions live in the profile, under
         # `profiles.<name>.mounts.<prefix>`.
         if mode is not None:
             mounts[mount["path"]] = (resource, mode)
@@ -2326,11 +2327,11 @@ async def open_target(
     mounts, cleanups = await build_mounts(target, run_id, service)
     agent_id = target.get("agentId")
     factory = console_factory(target, run_id)
-    # The target's roles, and which one shapes a session that names
-    # none. A role is the whole permission document, so this is every
+    # The target's profiles, and which one shapes a session that names
+    # none. A profile is the whole permission document, so this is every
     # permission the target states; the models are the ones the YAML
     # door validates with.
-    profiles = target.get("profiles") or None
+    profiles = scripted_profiles(target.get("profiles") or None)
     default_profile = target.get("profile")
     if consistency is not None:
         ws = Workspace(mounts,
@@ -2389,3 +2390,29 @@ async def open_consistency(
         functools.partial(teardown_target, [read_ws, shadow_ws],
                           [*read_cleanups, *shadow_cleanups], service),
     )
+
+
+def scripted_profiles(profiles: dict | None) -> dict | None:
+    """Wrap a profile's inline script source the way the config door does.
+
+    A target is JSON, so it carries a profile's script as source rather
+    than as the path a YAML config would name. Loading is the config
+    layer's job everywhere else, so the battery does that one step here
+    and hands the workspace what code would pass.
+
+    Args:
+        profiles (dict | None): the target's profiles as written.
+    """
+    if not profiles:
+        return profiles
+    out: dict = {}
+    for name, doc in profiles.items():
+        script = doc.get("script") if isinstance(doc, dict) else None
+        if isinstance(script, dict):
+            doc = {
+                **doc, "script":
+                ScriptSource(script["source"],
+                             language=script.get("language", "python"))
+            }
+        out[name] = doc
+    return out

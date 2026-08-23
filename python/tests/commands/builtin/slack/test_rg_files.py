@@ -22,7 +22,7 @@ from mirage.commands.builtin.slack.rg import rg
 from mirage.commands.config import CommandOpts
 from mirage.core.slack.config import SlackConfig
 from mirage.io.stream import materialize
-from mirage.types import FileStat, FileType, PathSpec
+from mirage.types import ContentType, FileStat, FileType, PathSpec
 from mirage.utils.key_prefix import mount_key
 
 
@@ -157,7 +157,8 @@ async def test_grep_files_dir_redirects_to_per_file_scan(accessor, index):
             patch("mirage.commands.builtin.slack.grep._stat",
                   new_callable=AsyncMock,
                   return_value=FileStat(name="report.txt",
-                                        type=FileType.TEXT)),
+                                        type=FileType.FILE,
+                                        content=ContentType.TEXT)),
     ):
         from mirage.commands.builtin.slack.grep import grep
         out, io = await grep(accessor, [

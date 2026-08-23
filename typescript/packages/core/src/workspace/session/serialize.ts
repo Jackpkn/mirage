@@ -12,8 +12,16 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import type { CommandRule, AdmissionRules, Decision, Outcome } from '../../policy/types.ts'
+import type {
+  CommandRule,
+  AdmissionRules,
+  Decision,
+  Outcome,
+  ProfileScript,
+} from '../../policy/types.ts'
 import type { Scope } from '../../policy/types.ts'
+import { ScriptSource } from '../../runtime/policy/types.ts'
+import type { RuntimeLanguage } from '../../runtime/types.ts'
 
 /** A compiled command tier as the session record stores it (the Python spelling). */
 export interface CommandsJSON {
@@ -61,6 +69,31 @@ export function commandsFromJSON(data: CommandsJSON): AdmissionRules {
     allow: data.allow ?? null,
     ask: data.ask.map(ruleFromJSON),
     deny: data.deny.map(ruleFromJSON),
+  }
+}
+
+/** A session's profile script as the record stores it (the Python spelling). */
+export interface ScriptJSON {
+  profile: string
+  language: string
+  source: string
+  runtime: string
+}
+
+export function scriptToJSON(entry: ProfileScript): ScriptJSON {
+  return {
+    profile: entry.profile,
+    language: entry.script.language,
+    source: entry.script.source,
+    runtime: entry.runtime,
+  }
+}
+
+export function scriptFromJSON(data: ScriptJSON): ProfileScript {
+  return {
+    profile: data.profile,
+    script: new ScriptSource(data.source, data.language as RuntimeLanguage),
+    runtime: data.runtime,
   }
 }
 

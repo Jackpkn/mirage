@@ -93,7 +93,7 @@ async def test_cmdsub_reads_the_named_sessions_cwd():
 
 @pytest.mark.asyncio
 async def test_cmdsub_keeps_the_named_sessions_hides():
-    # A nested eval runs under the same session, so what the role hides
+    # A nested eval runs under the same session, so what the profile hides
     # is as absent inside `$()` as outside it.
     ws = _two_mounts()
     ws.create_session("agent", profile={"paths": {"hide": ["/b"]}})

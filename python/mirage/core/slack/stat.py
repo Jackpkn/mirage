@@ -20,7 +20,7 @@ from mirage.core.hierarchy.stat import make_stat
 from mirage.core.slack.readdir import readdir
 from mirage.core.slack.scope import detect_scope
 from mirage.core.timeutil import epoch_to_iso
-from mirage.types import FileStat, FileType, PathSpec
+from mirage.types import ContentType, FileStat, FileType, PathSpec
 from mirage.utils.errors import enoent
 from mirage.utils.filetype import filetype_from_mimetype
 from mirage.utils.key_prefix import mount_key, mount_prefix_of
@@ -52,7 +52,8 @@ def _user_stat(match: ScopeMatch, path: PathSpec,
                entry: IndexEntry) -> FileStat:
     return FileStat(
         name=entry.vfs_name or entry.name,
-        type=FileType.JSON,
+        type=FileType.FILE,
+        content=ContentType.JSON,
         size=entry.size,
         extra={"user_id": entry.id},
     )
@@ -68,7 +69,8 @@ def _file_blob_stat(match: ScopeMatch, path: PathSpec,
     mimetype = entry.extra.get("mimetype", "")
     return FileStat(
         name=entry.vfs_name or entry.name,
-        type=filetype_from_mimetype(mimetype),
+        type=FileType.FILE,
+        content=filetype_from_mimetype(mimetype),
         size=entry.size,
         modified=_slack_modified(entry.remote_time),
         extra={"file_id": entry.id},
@@ -125,7 +127,10 @@ def _chat_stat(match: ScopeMatch, path: PathSpec,
     # A denied or empty day lists no chat.jsonl, and the kit reports the
     # absent entry as ENOENT: slack does not fabricate a sizeless file
     # for a sealed day (discord deliberately does; see its override).
-    return FileStat(name="chat.jsonl", type=FileType.TEXT, size=entry.size)
+    return FileStat(name="chat.jsonl",
+                    type=FileType.FILE,
+                    content=ContentType.TEXT,
+                    size=entry.size)
 
 
 stat = make_stat(

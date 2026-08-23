@@ -26,6 +26,7 @@ from mirage.runtime.policy.types import (DenyResult, PolicyContext,
                                          PolicyDecision, PolicyFn,
                                          PolicyResult, PolicyScript,
                                          RouteResult, ScriptSource)
+from mirage.runtime.script import eval_with_ctx
 from mirage.runtime.table import bind_commands, catch_all, runtime_bindings_for
 from mirage.runtime.types import EvalValue, Language
 
@@ -104,9 +105,8 @@ async def _eval_source(source: str, ctx_payload: dict[str, EvalValue],
             "(install with: pip install mirage-ai[monty], or use a "
             "Python callable instead)")
     try:
-        result = await asyncio.wait_for(evaluator.eval(
-            source, inputs={"ctx": ctx_payload}),
-                                        timeout=POLICY_EVAL_TIMEOUT_SECONDS)
+        return await eval_with_ctx(source, ctx_payload, evaluator,
+                                   POLICY_EVAL_TIMEOUT_SECONDS)
     except asyncio.TimeoutError as exc:
         raise PolicyError(f"policy script timed out after "
                           f"{POLICY_EVAL_TIMEOUT_SECONDS:g}s") from exc
@@ -114,7 +114,6 @@ async def _eval_source(source: str, ctx_payload: dict[str, EvalValue],
         prefix = ("policy script syntax error: "
                   if exc.syntax else "policy script failed: ")
         raise ValueError(prefix + str(exc))
-    return result.value
 
 
 async def evaluate_script(script: PolicyScript, ctx: PolicyContext,

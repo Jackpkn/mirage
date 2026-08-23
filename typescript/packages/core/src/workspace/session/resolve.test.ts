@@ -20,7 +20,7 @@ import { matchOp, ruleScope } from '../../policy/match/rule.ts'
 import type { OpsContext } from '../../policy/types.ts'
 import { MountMode, PathSpec } from '../../types.ts'
 import { pathHidden } from '../../utils/hidden.ts'
-import { parseSessionProfile, type SessionProfile } from './permissions.ts'
+import { parseSessionProfile, type SessionProfile } from '../../policy/profile.ts'
 import {
   applyProfile,
   compileCommands,
@@ -79,7 +79,7 @@ describe('withInline', () => {
     const inline = parseSessionProfile({ mounts: { '/a': 'rw', '/c': 'rwx' } })
     const out = withInline(base, inline)
     // Every prefix either side names survives; a mount only the inline
-    // document names is not a grant, since a mount the role never named
+    // document names is not a grant, since a mount the profile never named
     // was already reachable at its own mode.
     expect(out?.mounts?.get('/a')?.mode).toBe(MountMode.WRITE)
     expect(out?.mounts?.get('/b')?.mode).toBe(MountMode.READ)
@@ -144,7 +144,7 @@ describe('withInline', () => {
       commands: { deny: [{ reason: 'no', commands: ['mv'] }] },
     })
     const out = withInline(base, inline)
-    // The allow list is the role's alone, and the added rules land after
+    // The allow list is the profile's alone, and the added rules land after
     // it: an inline document restricts, it never installs.
     expect(out?.commands?.allow).toEqual(['ls', 'git', 'cat'])
     expect(out?.commands?.ask?.map((r) => r.commands)).toEqual([['git push']])
@@ -152,9 +152,9 @@ describe('withInline', () => {
     expect(() => withInline(base, parseSessionProfile({ commands: { allow: ['wc'] } }))).toThrow(
       'not an allow list',
     )
-    // And with no role to add to: the refusal belongs to where the
+    // And with no profile to add to: the refusal belongs to where the
     // document was written, so a workspace that happens to declare no
-    // default role must not quietly accept what one with a role refuses.
+    // default profile must not quietly accept what one with a profile refuses.
     expect(() => withInline(null, parseSessionProfile({ commands: { allow: ['wc'] } }))).toThrow(
       'not an allow list',
     )
@@ -169,7 +169,7 @@ describe('withInline', () => {
 })
 
 describe('compileCommands', () => {
-  it("lists mount rules before the role's own", () => {
+  it("lists mount rules before the profile's own", () => {
     const rules = compileCommands(
       parseSessionProfile({
         commands: { allow: ['ls'], deny: ['shutdown'] },
@@ -217,7 +217,7 @@ describe('compileCommands', () => {
     expect(matchOp(rule, scope, readOp('/other/key.pem'))).toBe(false)
   })
 
-  it('is null when the role states no rules', () => {
+  it('is null when the profile states no rules', () => {
     expect(compileCommands({})).toBeNull()
     expect(compileCommands(parseSessionProfile({ commands: {} }))).toBeNull()
     expect(compileCommands(parseSessionProfile({ mounts: { '/repo': 'r' } }))).toBeNull()
@@ -266,12 +266,12 @@ describe('compileProfile', () => {
     })
     expect(pathHidden(out.hiddenPaths, '/repo/deep/key.pem')).toBe(true)
     expect(pathHidden(out.hiddenPaths, '/scratch/key.pem')).toBe(false)
-    // The role's own hide is not a mount section's and stays global.
-    const role = compileProfile(parseSessionProfile({ paths: { hide: ['*.pem'] } }))
-    expect(pathHidden(role.hiddenPaths, '/scratch/key.pem')).toBe(true)
+    // The profile's own hide is not a mount section's and stays global.
+    const profile = compileProfile(parseSessionProfile({ paths: { hide: ['*.pem'] } }))
+    expect(pathHidden(profile.hiddenPaths, '/scratch/key.pem')).toBe(true)
   })
 
-  it('of a bare or absent role states nothing', () => {
+  it('of a bare or absent profile states nothing', () => {
     const empty = compileProfile(null)
     expect(empty).toEqual({
       mountModes: null,
@@ -280,9 +280,10 @@ describe('compileProfile', () => {
       env: null,
       cwd: null,
       commands: null,
+      script: null,
     })
     expect(compileProfile({})).toEqual(empty)
-    // A role that names a mount without a mode narrows nothing: the
+    // A profile that names a mount without a mode narrows nothing: the
     // mount keeps whatever the workspace gave it.
     expect(compileProfile(parseSessionProfile({ mounts: { '/a': {} } })).mountModes).toBeNull()
   })
@@ -315,7 +316,7 @@ describe('narrow / applyProfile', () => {
     expect(applied.vars.ROLE?.attrs.has(VarAttr.Export)).toBe(true)
   })
 
-  it("carries the role's admission rules onto the session", () => {
+  it("carries the profile's admission rules onto the session", () => {
     const compiled = compileProfile(
       parseSessionProfile({ commands: { allow: ['ls'], ask: ['git'] } }),
     )

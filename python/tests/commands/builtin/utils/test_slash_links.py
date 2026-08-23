@@ -18,7 +18,7 @@ from mirage.commands.builtin.utils.slash_links import (is_slashed_link,
                                                        mkdir_link_refusal,
                                                        rm_link_refusal)
 from mirage.ops.types import LinkView
-from mirage.types import FileStat, FileType, PathSpec
+from mirage.types import ContentType, FileStat, FileType, PathSpec
 
 
 def _spec(virtual: str, raw_path: str) -> PathSpec:
@@ -56,7 +56,7 @@ def _links(link_at: str | None, target: FileStat | None) -> LinkView:
 
 
 DIR = FileStat(name="sub", type=FileType.DIRECTORY)
-FILE = FileStat(name="reg", type=FileType.TEXT)
+FILE = FileStat(name="reg", type=FileType.FILE, content=ContentType.TEXT)
 
 
 def test_is_slashed_link_needs_both_the_slash_and_the_link():

@@ -18,7 +18,7 @@ import type { CallStack } from '../../shell/call_stack.ts'
 import { PathSpec, wordText } from '../../types.ts'
 import { literalWord, markGlobs, unmarkGlobs } from '../../utils/glob_walk.ts'
 import type { MountRegistry } from '../mount/registry.ts'
-import { WordPolicy, endOptionsAfterProgram, route, wordPolicy } from '../route/index.ts'
+import { WordPolicy, endOptionsAfterProgram, lookup, wordPolicy } from '../lookup/index.ts'
 import type { Session } from '../session/session.ts'
 import { classifyParts } from './classify/index.ts'
 import type { NamespaceLinks } from '../../ops/config.ts'
@@ -108,7 +108,7 @@ export async function expandArgv(
   const tail = shadowed ? line : endOptionsAfterProgram(name, line)
   const lineWords = [...expanded.slice(0, consumed), ...tail]
 
-  const policy = wordPolicy(route(name, session, registry))
+  const policy = wordPolicy(lookup(name, session, registry))
   let wordKinds: (ValueType | null)[] | null = null
   let wordBases: (string | null)[] | null = null
   if (policy === WordPolicy.MOUNT) {
