@@ -86,6 +86,12 @@ describe('gws tree', () => {
       'delete',
       'export',
     ])
+    expect(leaf('slides').subcommands.map((v) => v.name)).toEqual(['presentations'])
+    expect(leaf('slides', 'presentations').subcommands.map((v) => v.name)).toEqual([
+      'get',
+      'create',
+      'batchUpdate',
+    ])
     expect(leaf('gmail', 'users', 'messages').subcommands.map((v) => v.name)).toEqual([
       'list',
       'get',
@@ -109,6 +115,9 @@ describe('gws tree', () => {
     ).toEqual(['read', 'write', 'append'])
     expect(leaf('docs', 'write').write).toBe(true)
     expect(leaf('drive', 'files', 'list').write).toBe(false)
+    expect(leaf('slides', 'presentations', 'get').write).toBe(false)
+    expect(leaf('slides', 'presentations', 'create').write).toBe(true)
+    expect(leaf('slides', 'presentations', 'batchUpdate').write).toBe(true)
     expect(leaf('drive', 'files', 'delete').write).toBe(true)
   })
 
