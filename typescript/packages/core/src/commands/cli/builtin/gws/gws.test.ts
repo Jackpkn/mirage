@@ -92,6 +92,11 @@ describe('gws tree', () => {
       'create',
       'batchUpdate',
     ])
+    expect(leaf('drive', 'permissions').subcommands.map((v) => v.name)).toEqual([
+      'create',
+      'list',
+      'delete',
+    ])
     expect(leaf('gmail', 'users', 'messages').subcommands.map((v) => v.name)).toEqual([
       'list',
       'get',
@@ -119,6 +124,10 @@ describe('gws tree', () => {
     expect(leaf('slides', 'presentations', 'create').write).toBe(true)
     expect(leaf('slides', 'presentations', 'batchUpdate').write).toBe(true)
     expect(leaf('drive', 'files', 'delete').write).toBe(true)
+    expect(leaf('drive', 'permissions', 'list').write).toBe(false)
+    expect(leaf('drive', 'permissions', 'create').write).toBe(true)
+    expect(leaf('drive', 'permissions', 'delete').write).toBe(true)
+    expect(leaf('gmail', 'users', 'messages', 'trash').write).toBe(true)
   })
 
   it('nests calendar passthroughs by discovery resource', () => {
