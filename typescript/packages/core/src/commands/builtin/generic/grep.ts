@@ -321,7 +321,7 @@ export async function grepGeneric(
     // exit 1, which is right for cat and wrong for grep.
     let firstStat: FileStat
     try {
-      firstStat = await stat(first)
+      firstStat = await statFn(first.virtual)
     } catch (err) {
       if (!isMissingPath(err)) throw err
       return [
